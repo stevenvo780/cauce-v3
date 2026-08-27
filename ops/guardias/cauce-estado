@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""cauce-estado <alias> — ¿este agente está trabajando o está muerto?
+
+Una pantalla con lo único que contesta esa pregunta, cruzando las tres fuentes que hay:
+
+  * systemd  : la unit del adaptador (activa, desde cuándo, cuántos reinicios)
+  * el contenedor : el proceso del adaptador y su TIEMPO DE CPU. Una unit activa no prueba
+                    nada: un agente inerte se delata porque acumula segundos de CPU en horas.
+  * el marcador de attach : si alguien está adentro por consola, el agente está mudo A PROPÓSITO.
+  * el gateway (mTLS) : presencia/latido, cola de entregas y línea de tiempo de ACKs. Desde
+                    kratos no hay Postgres (sin psql, 5432 cerrado, sin ssh a agora-storage):
+                    el gateway es la única ventana a la base, y alcanza.
+
+    cauce-estado <alias>     una pantalla
+    cauce-estado             toda la flota, una línea por agente
+    cauce-estado --json      lo mismo en JSON
+"""
+import datetime
+import importlib.machinery
+import importlib.util
+import json
+import shlex
+import os
+import subprocess
+import sys
+import time
+
+MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
+HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
+
+
+def die(msg):
+    print('cauce-estado: %s' % msg, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def sh(args, timeout=60):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
+def sesiones_mod():
+    ruta = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cauce-sesiones')
+    if not os.path.exists(ruta):
+        die('falta %s (se instala junto a cauce-estado)' % ruta)
+    # Sin esto el import deja un __pycache__ dentro de ~/.local/bin.
+    sys.dont_write_bytecode = True
+    cargador = importlib.machinery.SourceFileLoader('cauce_sesiones', ruta)
+    modulo = importlib.util.module_from_spec(importlib.util.spec_from_loader('cauce_sesiones', cargador))
+    cargador.exec_module(modulo)
+    return modulo
+
+
+def unit_of(alias):
+    return HOST_NATIVE.get(alias, 'cauce-v3-container-%s' % alias)
+
+
+# 2026-08-17 zeus: los 15 alias del VPS tienen su unit EN EL VPS, bajo el usuario `stev` de esa
+# maquina. Preguntando `systemctl --user` aqui, kratos contestaba `inactive` para todos ellos —que
+# es lo correcto para kratos— y este CLI lo publicaba como "CAIDO". Comprobado que era falso: argos,
+# dado por caido, contesto una entrega real y su unit alla estaba `active`.
+# kant y salva SI los supervisa kratos, asi que esos dos se siguen midiendo en local.
+LOCALES = {'kant', 'salva'}
+VPS_SSH = "vps-tn"  # en kratos el alias es vps-tn, no vpstn (ese es el mio)
+
+
+def alias_de_unit(unit):
+    """`cauce-v3-container-argos` / `cauce-v3-host-kant` -> `argos` / `kant`."""
+    for prefijo in ('cauce-v3-container-', 'cauce-v3-host-'):
+        if unit.startswith(prefijo):
+            return unit[len(prefijo):].replace('.service', '')
+    return unit
+
+
+def propiedades(unit, claves):
+    alias = alias_de_unit(unit)
+    pedido = ['systemctl', '--user', 'show', unit] + ['-p' + k for k in claves]
+    if alias in LOCALES:
+        crudo = sh(pedido)
+    else:
+        # Misma formula que usa el `cauce` de kratos para reenviar al VPS.
+        remoto = ('U=$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/$U '
+                  + ' '.join(pedido))
+        crudo = sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+                    VPS_SSH, remoto])
+    salida = {}
+    for linea in crudo.splitlines():
+        if '=' in linea:
+            clave, valor = linea.split('=', 1)
+            salida[clave] = valor
+    return salida
+
+
+def segundos_cpu(texto):
+    """'01:23' o '1-02:03:04' de ps → segundos."""
+    if not texto:
+        return None
+    dias, _, resto = texto.partition('-')
+    if not resto:
+        resto, dias = dias, '0'
+    partes = resto.split(':')
+    try:
+        numeros = [float(p) for p in partes]
+    except ValueError:
+        return None
+    total = 0.0
+    for numero in numeros:
+        total = total * 60 + numero
+    return total + int(float(dias or 0)) * 86400
+
+
+_PS_CACHE = []
+
+
+def procesos_host():
+    """Una sola foto de la tabla de procesos de kratos. Los adaptadores de los alias en
+    contenedor corren ACÁ (`cauce-container-runtime.py run --alias X`, que hace docker exec
+    hacia adentro); el de kant corre directo como MainPID de su unit. Mirar el host evita un
+    docker exec por alias y sirve igual para los dos casos."""
+    # 2026-08-17 zeus: los adaptadores de los 15 alias en contenedor ya NO corren en kratos —
+    # migraron al VPS el 12-ago—, asi que se toman DOS fotos y se juntan: la local (kant, salva) y
+    # la del VPS. Con una sola, el CLI declaraba "SIN ADAPTADOR" a toda la flota.
+    if not _PS_CACHE:
+        local = sh(['ps', '-eo', 'pid,etime,time,pcpu,args', '--no-headers'])
+        remoto = sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
+                     'ps -eo pid,etime,time,pcpu,args --no-headers'], timeout=90)
+        _PS_CACHE.append((local or '') + '\n' + (remoto or ''))
+    filas = []
+    for linea in _PS_CACHE[0].splitlines():
+        partes = linea.split(None, 4)
+        if len(partes) == 5:
+            filas.append(partes)
+    return filas
+
+
+def proceso_adaptador(alias, host_native, unidad):
+    """El proceso del adaptador de ESE alias y su CPU acumulada. La unit activa no prueba nada:
+    un agente inerte se delata porque no gasta CPU (segundos en horas).
+
+    Dos casos distintos y hay que respetarlos:
+      * alias en contenedor: la unit lanza un `docker exec` (MainPID, CPU 0 siempre) que a su vez
+        corre `cauce-container-runtime.py run --alias X`. El que trabaja es ESE, no el MainPID.
+      * kant (host-native): todo corre bajo la unit, así que CPUUsageNSec del cgroup es exacto.
+    """
+    if host_native:
+        principal = str(unidad.get('MainPID') or '')
+        fila = next((f for f in procesos_host() if f[0] == principal), None)
+        try:
+            cpu_s = int(unidad.get('CPUUsageNSec')) / 1e9
+        except (TypeError, ValueError):
+            cpu_s = segundos_cpu(fila[2]) if fila else None
+        if fila is None and cpu_s is None:
+            return None
+        return {'pid': principal, 'edad': fila[1] if fila else '?',
+                'cpu': reloj(cpu_s), 'pcpu': fila[3] if fila else '?',
+                'cpu_s': cpu_s, 'edad_s': segundos_cpu(fila[1]) if fila else None,
+                'fuente': 'cgroup de la unit'}
+    for pid, edad, cpu, pcpu, args in procesos_host():
+        # El cliente `docker exec` lleva los mismos argumentos y nunca gasta CPU: no es el que trabaja.
+        if args.startswith('docker ') or 'cauce-container-runtime.py' not in args:
+            continue
+        if ('--alias %s ' % alias) not in args + ' ':
+            continue
+        return {'pid': pid, 'edad': edad, 'cpu': cpu, 'pcpu': pcpu,
+                'cpu_s': segundos_cpu(cpu), 'edad_s': segundos_cpu(edad),
+                'fuente': 'cauce-container-runtime'}
+    return None
+
+
+def reloj(segundos):
+    if segundos is None:
+        return '?'
+    segundos = int(segundos)
+    return '%02d:%02d:%02d' % (segundos // 3600, (segundos % 3600) // 60, segundos % 60)
+
+
+def harness_vivo(info, alias):
+    """El proceso del harness dentro del contenedor (el que ejecuta dist/src/bin/<harness>.js).
+    Es lo único que pertenece a Cauce ahí adentro: en los mismos contenedores conviven procesos
+    de otras flotas que no hay que confundir con esto."""
+    cmd = ("ps -eo args --no-headers 2>/dev/null | grep -F 'adapter-sdk/dist/src/bin/' "
+           "| grep -F '/%s/' | grep -v grep | head -1" % alias)
+    # El contenedor tampoco esta en kratos: el `docker exec` va por el VPS.
+    if info.get('alias') in LOCALES or info['container'] in ('ws-isa',):
+        return bool(sh(['docker', 'exec', info['container'], 'sh', '-lc', cmd], timeout=30))
+    return bool(sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
+                    'docker exec %s sh -lc %s' % (info['container'], shlex.quote(cmd))],
+                   timeout=60))
+
+
+def marcador(alias):
+    path = os.path.join(MARKERS, '%s.json' % alias)
+    try:
+        with open(path) as handle:
+            datos = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(int(datos.get('attach_pid')), 0)
+        datos['vivo'] = True
+    except (OSError, TypeError, ValueError):
+        datos['vivo'] = False
+    return datos
+
+
+def presencia(mod, alias):
+    codigo, datos = mod.gateway(alias, '/v3/status')
+    if codigo != 200 or not isinstance(datos, dict):
+        return None, None
+    mia = next((p for p in (datos.get('presence') or []) if p.get('alias') == alias), None)
+    return mia, datos
+
+
+def epoca(texto):
+    """ISO-8601 del gateway → epoch local. None si no se puede leer."""
+    if not isinstance(texto, str) or not texto:
+        return None
+    try:
+        return int(datetime.datetime.fromisoformat(texto.replace('Z', '+00:00')).timestamp())
+    except (ValueError, TypeError):
+        return None
+
+
+def actividad(mod, alias):
+    """Último ACK y última entrega completada para ESE alias, desde la línea de tiempo."""
+    codigo, datos = mod.gateway(alias, '/v3/console/messages')
+    if codigo != 200 or not isinstance(datos, dict):
+        return None
+    ultimo_ack = ultima_hecha = None
+    ack_estado = None
+    for mensaje in (datos.get('items') or []):
+        for entrega in (mensaje.get('deliveries') or []):
+            if entrega.get('recipient_alias') != alias:
+                continue
+            for evento in (entrega.get('timeline') or []):
+                if evento.get('status') == 'published':
+                    continue
+                cuando = epoca(evento.get('at'))
+                if cuando is None:
+                    continue
+                if ultimo_ack is None or cuando > ultimo_ack:
+                    ultimo_ack, ack_estado = cuando, evento.get('status')
+                if evento.get('status') == 'done' and (ultima_hecha is None or cuando > ultima_hecha):
+                    ultima_hecha = cuando
+    return {'ultimo_ack': ultimo_ack, 'ack_estado': ack_estado, 'ultima_hecha': ultima_hecha}
+
+
+def veredicto(datos):
+    """La conclusión, en una línea. El orden importa: primero lo que explica el silencio."""
+    if datos['marcador'] and datos['marcador'].get('vivo'):
+        return ('MUDO A PROPÓSITO', 'hay un attach abierto (pid %s, hace %s): el adaptador está '
+                'parado y las entregas se encolan.'
+                % (datos['marcador'].get('attach_pid'),
+                   humano(int(time.time()) - int(datos['marcador'].get('started_at', 0)))))
+    if datos['marcador'] and not datos['marcador'].get('vivo'):
+        return ('MARCADOR HUÉRFANO', 'el attach murió sin restaurar. cauce-attach-guard lo levanta '
+                'en ≤2 min; si no, systemctl --user start %s' % datos['unit'])
+    if datos['unidad'].get('ActiveState') != 'active':
+        return ('CAÍDO', 'la unit %s está %s y nadie la paró desde la consola.'
+                % (datos['unit'], datos['unidad'].get('ActiveState')))
+    if datos['proceso'] is None:
+        return ('SIN ADAPTADOR', 'la unit está activa pero no hay proceso de adaptador para este '
+                'alias: arrancó y se murió sin que systemd lo note.')
+    if datos.get('harness_vivo') is False:
+        return ('SIN HARNESS', 'el adaptador corre en el host pero adentro del contenedor no hay '
+                'proceso del harness: no puede ejecutar nada.')
+    presente = datos['presencia']
+    if presente is not None and not presente.get('online'):
+        return ('SIN LATIDO', 'el adaptador corre pero el gateway no lo ve online (último latido %s).'
+                % (presente.get('last_heartbeat_at') or '?'))
+    cpu, edad = datos['proceso'].get('cpu_s'), datos['proceso'].get('edad_s')
+    # Menos de ~2 segundos de CPU por hora encendido es un agente que no ejecuta nada.
+    if cpu is not None and edad and edad > 3600 and (cpu / edad) < 0.0005:
+        return ('INERTE', 'lleva %s vivo y sólo %ss de CPU: está prendido pero no procesa nada.'
+                % (datos['proceso']['edad'], int(cpu)))
+    vivas = len(datos['cola']['vivas']) if datos['cola'] else 0
+    if vivas:
+        return ('TRABAJANDO', '%d entrega(s) en vuelo o en cola.' % vivas)
+    return ('VIVO Y OCIOSO', 'sin entregas pendientes.')
+
+
+def humano(segundos):
+    segundos = max(0, int(segundos))
+    if segundos < 90:
+        return '%ds' % segundos
+    if segundos < 5400:
+        return '%dm' % (segundos // 60)
+    if segundos < 172800:
+        return '%dh' % (segundos // 3600)
+    return '%dd' % (segundos // 86400)
+
+
+def desde(stamp):
+    if not stamp:
+        return 'nunca'
+    return '%s (hace %s)' % (time.strftime('%m-%d %H:%M', time.localtime(stamp)),
+                             humano(time.time() - stamp))
+
+
+def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
+    info = mod.alias_info(alias)
+    host_native = alias in HOST_NATIVE
+    unit = unit_of(alias)
+    if bus is None:
+        presente, estado_bus = presencia(mod, alias)
+    else:
+        estado_bus = bus
+        presente = next((p for p in (bus.get('presence') or []) if p.get('alias') == alias), None)
+    datos = {
+        'alias': alias, 'unit': unit, 'info': info,
+        'unidad': propiedades(unit, ['ActiveState', 'SubState', 'ActiveEnterTimestamp',
+                                     'NRestarts', 'MainPID', 'CPUUsageNSec']),
+        'marcador': marcador(alias),
+        'presencia': presente,
+        'bus': estado_bus,
+        'cola': mod.cola(alias),
+        'actividad': None if ligero else actividad(mod, alias),
+    }
+    datos['proceso'] = proceso_adaptador(alias, host_native, datos['unidad'])
+    datos['harness_vivo'] = None if ligero or host_native else harness_vivo(info, alias)
+    if con_sesiones:
+        inventario = mod.inventario(alias)
+        datos['sesiones'] = {
+            'total': len(inventario['sesiones']),
+            'dm': (inventario['dm'] or {}).get('abrev'),
+            'dm_ultimo': (inventario['dm'] or {}).get('mtime'),
+            'reciente': (inventario['reciente'] or {}).get('abrev'),
+            'partidas': sum(len(v) for v in inventario['duplicadas'].values()),
+        }
+    datos['veredicto'] = veredicto(datos)
+    return datos
+
+
+def pantalla(datos):
+    alias = datos['alias']
+    titulo, explicacion = datos['veredicto']
+    print('%s · %s · %s' % (alias, datos['info'].get('harness'), datos['info'].get('container')))
+    print('=' * 78)
+    print('  %-18s %s' % (titulo, explicacion))
+    print('')
+    unidad = datos['unidad']
+    print('  adaptador   unit %s: %s/%s desde %s · %s reinicios'
+          % (datos['unit'], unidad.get('ActiveState', '?'), unidad.get('SubState', '?'),
+             (unidad.get('ActiveEnterTimestamp') or '?'), unidad.get('NRestarts', '?')))
+    proceso = datos['proceso']
+    if proceso:
+        print('              proceso pid %s · vivo hace %s · CPU acumulada %s (%s%%)%s'
+              % (proceso['pid'], proceso['edad'], proceso['cpu'], proceso['pcpu'],
+                 '' if datos.get('harness_vivo') is not False else ' · SIN harness adentro'))
+    else:
+        print('              proceso: NO hay adaptador corriendo para este alias')
+    presente = datos['presencia']
+    if presente:
+        print('  bus         %s · epoch %s · último latido %s'
+              % ('online' if presente.get('online') else 'OFFLINE', presente.get('epoch'),
+                 desde(epoca(presente.get('last_heartbeat_at')))))
+    else:
+        print('  bus         el gateway no contestó o no publica presencia de este alias')
+    marca = datos['marcador']
+    if marca:
+        print('  attach      %s · sesión %s · pid %s · abierto hace %s'
+              % ('ABIERTO' if marca.get('vivo') else 'MARCADOR HUÉRFANO (el pid murió)',
+                 str(marca.get('session'))[:8], marca.get('attach_pid'),
+                 humano(int(time.time()) - int(marca.get('started_at', 0)))))
+    else:
+        print('  attach      nadie adentro por consola')
+    print('  %s' % ('cola        ' + datos_cola(datos)))
+    act = datos['actividad']
+    if act:
+        print('  último ACK  %s%s' % (desde(act['ultimo_ack']),
+                                      ' (%s)' % act['ack_estado'] if act['ack_estado'] else ''))
+        print('  última OK   %s' % desde(act['ultima_hecha']))
+    else:
+        print('  último ACK  el gateway no contestó')
+    ses = datos.get('sesiones')
+    if ses:
+        print('  sesiones    %d en total · DM del dueño: %s (último turno %s) · más reciente: %s'
+              % (ses['total'], ses['dm'] or '—', desde(ses['dm_ultimo']), ses['reciente'] or '—'))
+        if ses['partidas']:
+            print('              %d de ellas son la misma conversación partida (ia %s --lista)'
+                  % (ses['partidas'], alias))
+
+
+def datos_cola(datos):
+    cola = datos['cola']
+    if cola is None:
+        return 'el gateway no contestó (no hay Postgres alcanzable desde kratos)'
+    partes = []
+    nombres = {'pending': 'en cola', 'started': 'en vuelo', 'retrying': 'reintentando',
+               'dead': 'muertas'}
+    for clave in ('pending', 'started', 'retrying', 'dead'):
+        if cola['por_estado'].get(clave):
+            partes.append('%d %s' % (cola['por_estado'][clave], nombres[clave]))
+    if not partes:
+        return 'nada pendiente'
+    linea = ', '.join(partes)
+    esperas = [epoca(i.get('available_at')) for i in cola['vivas']]
+    esperas = [e for e in esperas if e]
+    if esperas:
+        linea += ' · la más vieja espera hace %s' % humano(time.time() - min(esperas))
+    return linea
+
+
+def resumen_flota(mod):
+    try:
+        aliases = sorted(json.load(open(mod.MAP))['aliases'])
+    except (OSError, ValueError, KeyError):
+        die('no puedo leer %s' % mod.MAP)
+    # Una sola lectura de presencia para toda la flota: /v3/status ya la trae completa.
+    bus = None
+    for alias in aliases:
+        _codigo, respuesta = mod.gateway(alias, '/v3/status')
+        if isinstance(respuesta, dict) and respuesta.get('presence'):
+            bus = respuesta
+            break
+    print('%-10s %-18s %-9s %-7s %s' % ('ALIAS', 'ESTADO', 'CPU', 'COLA', 'DETALLE'))
+    for alias in aliases:
+        try:
+            datos = reunir(mod, alias, con_sesiones=False, ligero=True, bus=bus)
+        except SystemExit:
+            continue
+        titulo, explicacion = datos['veredicto']
+        proceso = datos['proceso'] or {}
+        vivas = len(datos['cola']['vivas']) if datos['cola'] else '?'
+        print('%-10s %-18s %-9s %-7s %s'
+              % (alias, titulo, proceso.get('cpu', '—'), vivas, explicacion[:70]))
+
+
+def main():
+    args = sys.argv[1:]
+    como_json = '--json' in args
+    args = [a for a in args if not a.startswith('--')]
+    mod = sesiones_mod()
+    if not args:
+        resumen_flota(mod)
+        return 0
+    datos = reunir(mod, args[0])
+    if como_json:
+        print(json.dumps(datos, ensure_ascii=False, default=str))
+    else:
+        pantalla(datos)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""cauce-quien-consume -- que contenedor gasta que cuenta Claude, y cuanto le queda.
+
+  cauce-quien-consume            # tabla
+  cauce-quien-consume --json     # crudo
+  cauce-quien-consume --local    # solo los contenedores de ESTE host (uso interno)
+
+POR QUE EXISTE
+  La TUI de cuotas dice "b2b 1% libre" pero no dice QUIEN la esta gastando, asi que el saldo no
+  se puede atribuir a nadie ni se sabe a quien hay que mover de cuenta.
+
+POR QUE NO `claude auth status`
+  MIENTE. Tanto `claude auth status` como ~/.claude.json leen `oauthAccount.emailAddress`, un
+  campo que se escribe al hacer login y no se corrige cuando la credencial pasa a ser de otra
+  cuenta. Medido el 2026-08-05: ws-prizma decia steven y consumia saldantia. Quien paga es el
+  TOKEN, y al token solo se le puede preguntar al endpoint OAuth de perfil. Ojo tambien con
+  `display_name`, que devuelve "Stev" para cuentas distintas: la identidad es `account.email`.
+
+QUE NO HACE
+  No renueva tokens vencidos: renovar rota el refresh token y puede tumbar la sesion viva de un
+  agente. Un token vencido se responde como vencido, con la ultima identidad verificada y su
+  fecha, nunca como si fuera de ahora. Tampoco copia credenciales entre contenedores.
+"""
+from __future__ import annotations
+import argparse, calendar, json, os, subprocess, sys, time
+
+HOST_REMOTO = "vps"
+COMPARTIDO = os.environ.get("CAUCE_QC_COMPARTIDO",
+               "/datos/agents/shared/.local/share/ai-usage-live")
+CACHE = os.path.expanduser("~/.local/share/ai-usage-live/cuentas-por-contenedor.json")
+# Mas viejo que esto, el saldo no se publica: se publica "?". Un numero rancio parece cierto.
+FRESCURA_MAX_S = 45 * 60
+
+# --------------------------------------------------------------------------- sonda (va dentro)
+SONDA = r'''
+import json, os, sys, time, urllib.request, urllib.error
+out = {"cliDice": None, "apiDice": None, "estado": None, "plan": None, "org": None,
+       "credMtime": None, "cliMtime": None}
+try:
+    j = os.path.expanduser("~/.claude.json")
+    d = json.load(open(j))
+    out["cliDice"] = (d.get("oauthAccount") or {}).get("emailAddress")
+    out["cliMtime"] = os.path.getmtime(j)
+except Exception:
+    pass
+try:
+    cred = os.path.expanduser("~/.claude/.credentials.json")
+    out["credMtime"] = os.path.getmtime(cred)
+    o = json.load(open(cred))["claudeAiOauth"]
+    tok = o["accessToken"]; exp = float(o.get("expiresAt") or 0) / 1000.0
+except Exception as e:
+    out["estado"] = "sin credenciales"; print(json.dumps(out)); sys.exit(0)
+if not exp:
+    out["estado"] = "credencial sin expiracion legible"; print(json.dumps(out)); sys.exit(0)
+if exp <= time.time():
+    out["estado"] = "token vencido hace %dh%02dm" % divmod(int((time.time()-exp)/60), 60)
+    print(json.dumps(out)); sys.exit(0)
+try:
+    req = urllib.request.Request("https://api.anthropic.com/api/oauth/profile", headers={
+        "Authorization": "Bearer %s" % tok, "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "cauce-quien-consume/1.0"})
+    r = json.load(urllib.request.urlopen(req, timeout=25))
+    # account.email, NUNCA display_name (devuelve "Stev" para cuentas distintas).
+    out["apiDice"] = (r.get("account") or {}).get("email")
+    org = r.get("organization") or {}
+    out["org"] = org.get("rate_limit_tier") or org.get("organization_type")
+    out["estado"] = "verificado por API" if out["apiDice"] else "API sin email"
+except urllib.error.HTTPError as e:
+    out["estado"] = "HTTP %s" % e.code
+except Exception as e:
+    out["estado"] = type(e).__name__
+print(json.dumps(out))
+'''
+
+
+def sh(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def barre_local(host):
+    """Corre la sonda dentro de cada contenedor con credenciales de Claude Code."""
+    filas = []
+    names = sh(["docker", "ps", "--format", "{{.Names}}"]).stdout.split()
+    for c in sorted(names):
+        # El usuario NO se adivina: se le pregunta al contenedor cual es el HOME que tiene la
+        # credencial. Adivinando (dev/node/root) se caian los claw*, que corren como "claw", y
+        # esos contenedores desaparecian del mapa sin que nada avisara.
+        d = sh(["docker", "exec", c, "sh", "-c",
+                'for h in /root /home/*; do [ -f "$h/.claude/.credentials.json" ] && echo "$h"; done'])
+        homes = [h for h in d.stdout.split() if h]
+        if not homes:
+            continue
+        home = homes[0]
+        usuario = "root" if home == "/root" else os.path.basename(home)
+        r = sh(["docker", "exec", "-i", "-u", usuario, c, "python3", "-"], input=SONDA, timeout=90)
+        try:
+            d = json.loads(r.stdout.strip().splitlines()[-1])
+        except Exception:
+            d = {"estado": "sin salida de la sonda (falta python3?)"}
+        d.update(contenedor=c, host=host, usuario=usuario)
+        filas.append(d)
+    return filas
+
+
+def saldos():
+    """Saldo por cuenta desde claude-accounts.json (la sonda CDP que ya corre cada 10 min)."""
+    try:
+        d = json.load(open(os.path.join(COMPARTIDO, "claude-accounts.json")))
+        # capturedAt viene en UTC con Z: timegm, no mktime (mktime interpreta hora local y en
+        # kratos, que va en -05, restaria 5 horas y el fichero pareceria fresco cuando no lo es).
+        cap = calendar.timegm(time.strptime(d["capturedAt"][:19], "%Y-%m-%dT%H:%M:%S"))
+        edad = time.time() - cap
+    except Exception:
+        return {}, None
+    # Sin dato NO es saldo: si el fichero envejecio, se devuelve vacio y la columna sale "?".
+    if edad > FRESCURA_MAX_S:
+        return {}, d.get("capturedAt")
+    out = {}
+    for a in d.get("accounts") or []:
+        if a.get("ok") and a.get("email"):
+            out[a["email"].lower()] = a
+    return out, d.get("capturedAt")
+
+
+def carga_cache():
+    try:
+        return json.load(open(CACHE))
+    except Exception:
+        return {}
+
+
+def guarda_cache(c):
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    tmp = CACHE + ".tmp"
+    json.dump(c, open(tmp, "w"), ensure_ascii=False, indent=1)
+    os.replace(tmp, CACHE)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--local", action="store_true", help="solo este host, salida JSON (uso interno)")
+    a = p.parse_args()
+
+    if a.local:
+        print(json.dumps(barre_local(os.uname().nodename))); return 0
+
+    filas = barre_local("kratos")
+    # El otro host: se le manda ESTE MISMO fichero por stdin, no hay copia que mantener.
+    try:
+        yo = open(os.path.abspath(__file__), encoding="utf-8").read()
+        r = sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", HOST_REMOTO,
+                "python3 - --local"], input=yo, timeout=300)
+        for f in json.loads(r.stdout.strip().splitlines()[-1]):
+            f["host"] = HOST_REMOTO
+            filas.append(f)
+    except Exception as e:
+        print("aviso: no pude barrer %s (%s)" % (HOST_REMOTO, type(e).__name__), file=sys.stderr)
+
+    cache = carga_cache()
+    ahora = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for f in filas:
+        clave = "%s/%s" % (f["host"], f["contenedor"])
+        if f.get("apiDice"):
+            cache[clave] = {"cuenta": f["apiDice"], "verificadoEn": ahora}
+        else:
+            prev = cache.get(clave)
+            if prev:
+                f["apiDice"] = prev["cuenta"]
+                f["verificadoEn"] = prev["verificadoEn"]
+    guarda_cache(cache)
+
+    # Nota medida (2026-08-06): en ws-zeus la credencial se reescribio a las 10:37:48 mientras
+    # ~/.claude.json seguia intacto desde 10:27:54; en esa ventana `claude auth status` decia
+    # saldantia y el token era de juanotalora653. Por eso la unica verdad es el endpoint OAuth.
+    # Toda discrepancia medida se deja escrita: son ventanas cortas (duran hasta que el
+    # contenedor reescribe su cache) y si no se registran al verlas, se pierden.
+    disc = [f for f in filas if f.get("apiDice") and f.get("cliDice")
+            and f["apiDice"].lower() != f["cliDice"].lower()
+            and str(f.get("estado", "")).startswith("verificado")]
+    if disc:
+        try:
+            with open(os.path.expanduser("~/.local/share/ai-usage-live/discrepancias.log"), "a") as fh:
+                for f in disc:
+                    fh.write("%s %s/%s API=%s CLI=%s\n" % (ahora, f["host"], f["contenedor"],
+                                                           f["apiDice"], f["cliDice"]))
+        except Exception:
+            pass
+
+    sal, capturedAt = saldos()
+    for f in filas:
+        c = sal.get(str(f.get("apiDice") or "").lower())
+        f["libre"] = c.get("remainingPercent") if c else None
+        f["ventana"] = c.get("window") if c else None
+        f["resetInSeconds"] = c.get("resetInSeconds") if c else None
+
+    if a.json:
+        print(json.dumps({"generado": ahora, "saldosDe": capturedAt, "contenedores": filas},
+                         ensure_ascii=False, indent=1)); return 0
+
+    print("== quien gasta que cuenta Claude ==  %s UTC   (saldos de %s)" % (ahora[11:19], capturedAt or "?"))
+    print("   %-6s %-18s %-30s %-9s %-30s %s" % ("HOST", "CONTENEDOR", "CUENTA REAL (API)", "LIBRE", "EL CLI DICE", "ESTADO"))
+    for f in sorted(filas, key=lambda x: (x["host"], x["contenedor"])):
+        real = f.get("apiDice") or "?"
+        if f.get("verificadoEn") and not f.get("estado", "").startswith("verificado"):
+            real += "*"                                     # * = identidad de la ultima verificacion
+        libre = "?" if f.get("libre") is None else "%d%% %s" % (f["libre"], (f.get("ventana") or "")[:4])
+        cli = f.get("cliDice") or "?"
+        # Solo se marca la discrepancia MEDIDA (API != CLI). No se marca "credencial mas nueva
+        # que el nombre cacheado": un simple refresco de token reescribe la credencial sin
+        # cambiar de cuenta, asi que ese aviso se encendia en casi todos los contenedores y
+        # dejaba de significar nada.
+        marca = ("  <-- NO COINCIDE: el CLI miente"
+                 if (f.get("apiDice") and cli and f["apiDice"].lower() != cli.lower()) else "")
+        print("   %-6s %-18s %-30s %-9s %-30s %s%s" % (
+            f["host"], f["contenedor"], real, libre, cli, f.get("estado") or "?", marca))
+    print("   * = no se pudo verificar ahora (token vencido); es la ultima identidad verificada, no una suposicion del CLI.")
+    print("   LIBRE '?' = la sonda de esa cuenta no tiene lectura fresca. Un hueco, nunca un numero viejo.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

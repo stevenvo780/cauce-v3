@@ -1,0 +1,33 @@
+#!/bin/bash
+# Propaga /datos/agents/shared/.codex/auth.json a los codex-home de los agentes que NO
+# montan el directorio compartido. Solo auth.json: config.toml es por agente y no se toca.
+# Idempotente: si el destino ya es identico, no escribe (asi el path unit no se realimenta).
+set -u
+SRC=/datos/agents/shared/.codex/auth.json
+LOG=/home/stev/.local/state/cauce-codex-sync.log
+
+[ -r "$SRC" ] || { echo "$(date -Is) FALTA $SRC" >> "$LOG"; exit 1; }
+
+TARGETS="
+/datos/miguel-config/.openclaw
+/datos/claw-config/.openclaw
+/datos/agent-v2/tenants/jhon/agents/hegel/oc/.openclaw
+/datos/agent-v2/tenants/pablo/agents/marcas/oc/.openclaw
+/datos/agent-v2/tenants/pablo/agents/personal/oc/.openclaw
+"
+
+src_sum=$(sha256sum "$SRC" | cut -d' ' -f1)
+changed=0
+for base in $TARGETS; do
+  ch="$base/agents/main/agent/codex-home"
+  auth="$ch/auth.json"
+  [ -d "$ch" ] || continue
+  if [ -f "$auth" ] && [ "$(sha256sum "$auth" | cut -d' ' -f1)" = "$src_sum" ]; then
+    continue
+  fi
+  install -o stev -g stev -m 600 "$SRC" "$auth" && changed=$((changed+1))
+  mkdir -p "$(dirname "$LOG")"
+  echo "$(date -Is) actualizado $auth" >> "$LOG"
+done
+[ "$changed" -gt 0 ] && echo "$(date -Is) sincronizados=$changed" >> "$LOG"
+exit 0

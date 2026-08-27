@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# cauce-soltar <alias> — suelta el pestillo de la sesion compartida.
+#
+# Una sola degradacion renombra la ventana tmux a "CAUCE-DEGRADADO", y como el codigo busca una
+# ventana llamada "agente", a partir de ahi TODOS los turnos reportan tui_absent aunque la TUI
+# este perfectamente viva. Se auto-enclava y no se suelta solo. Esto le devuelve el nombre.
+# El arreglo de fondo (no renombrar) esta en la rama, commit b7dc588, sin desplegar.
+set -uo pipefail
+A=${1:?uso: cauce-soltar <alias>}
+OPS=$HOME/.local/share/cauce-v3/ops
+line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$A" 2>/dev/null) \
+  || { echo "alias desconocido: $A"; exit 2; }
+ctr=$(echo "$line" | cut -f3); usr=$(echo "$line" | cut -f4)
+docker exec --user "$usr" "$ctr" sh -lc "
+  tmux -L cauce rename-window -t cauce-$A:0 agente 2>/dev/null
+  tmux -L cauce set-option -t cauce-$A -u window-status-style 2>/dev/null
+  tmux -L cauce set-option -t cauce-$A -u status-style 2>/dev/null
+  echo '  ventana:'; tmux -L cauce list-windows -t cauce-$A 2>&1
+  echo '  pid del panel:' \$(tmux -L cauce list-panes -t cauce-$A -F '#{pane_pid}' 2>/dev/null)
+"

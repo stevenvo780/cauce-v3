@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""cauce-esfuerzo — ver y cambiar el esfuerzo de cada agente de la flota, desde kratos.
+
+    cauce-esfuerzo                          estado de los 15 alias
+    cauce-esfuerzo <alias> <nivel>          cambia un alias
+    cauce-esfuerzo @codex   <nivel>         todos los alias de ese harness
+    cauce-esfuerzo all      <nivel>         toda la flota
+    cauce-esfuerzo <alias> --modelo <id>    además fija el modelo exacto
+
+Niveles: low · medium · high · xhigh   (max = xhigh)
+
+Qué toca cada harness:
+    codex     model_reasoning_effort en su config.toml
+    claude    effortLevel en su settings.json (el modelo solo cambia con --modelo:
+              válidos verificados: sonnet · opus · opus[1m] · fable)
+    openclaw  agents.defaults.model.primary, validado contra los modelos declarados en el
+              archivo; si el espacio tiene settings.json de Claude, también su effortLevel
+    hermes    no tiene esfuerzo: muestra HERMES_INFERENCE_MODEL y no lo toca
+
+Toma efecto en la próxima entrega del alias; no reinicia nada. Cada escritura deja un .bak-<fecha>.
+"""
+import json, os, re, shutil, sys, time
+
+HOME = os.path.expanduser('~')
+CODEX_SHARED = '/datos/agents/shared/.codex/config.toml'
+CODEX_HOST = f'{HOME}/.codex/config.toml'
+CODEX_PABLO = '/datos/agents/pablo-config/.codex-dev/config.toml'
+CLAUDE_SHARED = '/datos/agents/shared/.claude/settings.json'
+CLAUDE_PABLO = '/datos/agents/pablo-config/.claude/settings.json'
+OC = '/datos/claw-config/.openclaw/openclaw.json'
+OC_MIGUEL = '/datos/miguel-config/.openclaw/openclaw.json'
+OC_HEGEL = '/datos/agent-v2/tenants/jhon/agents/hegel/oc/.openclaw/openclaw.json'
+OC_MIDAS = '/datos/agent-v2/tenants/pablo/agents/marcas/oc/.openclaw/openclaw.json'
+OC_SENECA = '/datos/agent-v2/tenants/pablo/agents/personal/oc/.openclaw/openclaw.json'
+
+# settings.json de Claude que acompaña a un espacio openclaw (su runtime claude-cli los lee)
+OPENCLAW_CLAUDE = {
+    OC: '/datos/claw-config/.claude/settings.json',
+    OC_MIGUEL: '/datos/miguel-config/.claude/settings.json',
+}
+
+# alias -> (tenant, harness, archivo de configuración)
+FLEET = {
+    'kant':     ('Steven', 'codex',    CODEX_HOST),
+    'socrates': ('Steven', 'codex',    CODEX_SHARED),
+    'zeus':     ('Steven', 'claude',   CLAUDE_SHARED),
+    'jarvis':   ('Steven', 'openclaw', OC),
+    'argos':    ('Steven', 'hermes',   f'{HOME}/.config/cauce-v3/container-aliases/argos.env'),
+    'kratos':   ('Miguel', 'codex',    CODEX_SHARED),
+    'atlas':    ('Miguel', 'codex',    CODEX_SHARED),
+    'iza':      ('Miguel', 'hermes',   f'{HOME}/.config/cauce-v3/container-aliases/iza.env'),
+    'janus':    ('Miguel', 'openclaw', OC_MIGUEL),
+    'dedalo':   ('Pablo',  'codex',    CODEX_PABLO),
+    'vulcano':  ('Pablo',  'claude',   CLAUDE_PABLO),
+    'midas':    ('Pablo',  'openclaw', OC_MIDAS),
+    'seneca':   ('Pablo',  'openclaw', OC_SENECA),
+    'salva':    ('Isa',    'codex',    CODEX_SHARED),
+    'hegel':    ('Jhon',   'openclaw', OC_HEGEL),
+}
+
+LEVELS = ['low', 'medium', 'high', 'xhigh']
+OPENCLAW_BY_LEVEL = {
+    'low': 'minimax/MiniMax-M3',
+    'medium': 'anthropic/claude-sonnet-5',
+    'high': 'anthropic/claude-opus-4-8[1m]',
+    'xhigh': 'anthropic/claude-fable-5',
+}
+
+
+def backup(path):
+    shutil.copy2(path, f'{path}.bak-{time.strftime("%Y%m%d-%H%M%S")}')
+
+
+def read_current(harness, path):
+    if not os.path.exists(path):
+        return '(archivo ausente)'
+    try:
+        if harness == 'codex':
+            src = open(path).read()
+            eff = re.search(r'^model_reasoning_effort\s*=\s*"([^"]+)"', src, re.M)
+            mod = re.search(r'^model\s*=\s*"([^"]+)"', src, re.M)
+            return f'{eff.group(1) if eff else "sin fijar"} · {mod.group(1) if mod else "?"}'
+        if harness == 'claude':
+            d = json.load(open(path))
+            return f'{d.get("effortLevel", "sin fijar")} · {d.get("model", "default")}'
+        if harness == 'openclaw':
+            d = json.load(open(path))
+            primary = (((d.get('agents') or {}).get('defaults') or {}).get('model') or {}).get('primary', 'sin fijar')
+            extra = ''
+            side = OPENCLAW_CLAUDE.get(path)
+            if side and os.path.exists(side):
+                try:
+                    extra = ' · claude=' + str(json.load(open(side)).get('effortLevel', 'sin fijar'))
+                except Exception:
+                    extra = ''
+            return primary + extra
+        if harness == 'hermes':
+            m = re.search(r'^HERMES_INFERENCE_MODEL=(.*)$', open(path).read(), re.M)
+            return (m.group(1).strip() if m else 'sin fijar') + ' (sin esfuerzo)'
+    except Exception as exc:
+        return f'ILEGIBLE: {type(exc).__name__}'
+    return '?'
+
+
+def sharers(path, alias):
+    return sorted(a for a, (_t, _h, p) in FLEET.items() if p == path and a != alias)
+
+
+def set_codex(path, level, model):
+    src = open(path).read()
+    if re.search(r'^model_reasoning_effort\s*=', src, re.M):
+        out = re.sub(r'^model_reasoning_effort\s*=.*$', f'model_reasoning_effort = "{level}"', src, flags=re.M)
+    else:
+        out = src.rstrip('\n') + f'\nmodel_reasoning_effort = "{level}"\n'
+    if model:
+        out = (re.sub(r'^model\s*=.*$', f'model = "{model}"', out, flags=re.M)
+               if re.search(r'^model\s*=', out, re.M) else out.rstrip('\n') + f'\nmodel = "{model}"\n')
+    backup(path)
+    open(path, 'w').write(out)
+    return level + (f' · {model}' if model else '')
+
+
+def set_claude_settings(path, level, model):
+    """El esfuerzo real de Claude Code es effortLevel; el modelo solo cambia si se pide."""
+    d = json.load(open(path)) if os.path.exists(path) else {}
+    d['effortLevel'] = level
+    if model:
+        d['model'] = model
+    if os.path.exists(path):
+        backup(path)
+    open(path, 'w').write(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
+    return level + (f' · {model}' if model else '')
+
+
+def set_openclaw(path, level, model):
+    d = json.load(open(path))
+    declared = list((((d.get('agents') or {}).get('defaults') or {}).get('models') or {}))
+    value = model or OPENCLAW_BY_LEVEL[level]
+    if declared and value not in declared:
+        raise ValueError(f'{value} no está declarado en el archivo. Declarados: ' + ', '.join(declared))
+    d.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = value
+    backup(path)
+    open(path, 'w').write(json.dumps(d, indent=1, ensure_ascii=False) + '\n')
+    side = OPENCLAW_CLAUDE.get(path)
+    if side and os.path.exists(side):
+        set_claude_settings(side, level, None)
+        return f'{value} · effortLevel claude={level}'
+    return value
+
+
+def show():
+    print(f'{"ALIAS":10} {"TENANT":7} {"HARNESS":9} {"ESFUERZO · MODELO":40} CONFIG')
+    for alias, (tenant, harness, path) in FLEET.items():
+        print(f'{alias:10} {tenant:7} {harness:9} {read_current(harness, path):40} {path.replace(HOME, "~")}')
+    print('\nUn archivo compartido cambia a todos los alias que lo usan (se avisa al aplicar).')
+    print('Uso: cauce-esfuerzo <alias|@codex|@claude|@openclaw|all> <low|medium|high|xhigh>')
+
+
+def targets(selector):
+    if selector == 'all':
+        return list(FLEET)
+    if selector.startswith('@'):
+        return [a for a, (_t, h, _p) in FLEET.items() if h == selector[1:]]
+    if selector in FLEET:
+        return [selector]
+    raise SystemExit(f'alias desconocido: {selector}. Conocidos: ' + ', '.join(FLEET))
+
+
+def main():
+    args = list(sys.argv[1:])
+    model = None
+    if '--modelo' in args:
+        i = args.index('--modelo')
+        model = args[i + 1]
+        del args[i:i + 2]
+    if not args:
+        show()
+        return
+
+    selector = args[0]
+    level = args[1] if len(args) > 1 else 'high'
+    if level == 'max':
+        level = 'xhigh'
+    if level not in LEVELS:
+        raise SystemExit(f'nivel inválido: {level}. Opciones: ' + ', '.join(LEVELS) + ', max')
+
+    done = set()
+    for alias in targets(selector):
+        _tenant, harness, path = FLEET[alias]
+        if harness == 'hermes':
+            print(f'  – {alias:9} hermes no tiene esfuerzo; modelo actual {read_current(harness, path)}')
+            continue
+        if path in done:
+            continue
+        if not os.path.exists(path):
+            print(f'  ✗ {alias:9} {path} no existe')
+            continue
+        also = sharers(path, alias)
+        try:
+            if harness == 'codex':
+                value = set_codex(path, level, model)
+            elif harness == 'claude':
+                value = set_claude_settings(path, level, model)
+            else:
+                value = set_openclaw(path, level, model)
+        except Exception as exc:
+            print(f'  ✗ {alias:9} {exc}')
+            continue
+        done.add(path)
+        extra = f'  (también aplica a: {", ".join(also)})' if also else ''
+        print(f'  ✓ {alias:9} {harness:9} → {value}{extra}')
+
+    print('\nToma efecto en la próxima entrega de cada alias. No hace falta reiniciar nada.')
+
+
+if __name__ == '__main__':
+    main()

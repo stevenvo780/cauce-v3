@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""cauce-attach-guard — que ningún agente quede mudo porque alguien cerró mal una terminal.
+
+Corre por timer cada 2 minutos. Dos trabajos, en este orden de confianza:
+
+1. **Marcadores huérfanos (acción):** `cauce-attach` deja `~/.local/state/cauce-attach/<alias>.json`
+   con el pid del attach antes de parar la unit. Si ese pid ya no existe y la unit sigue parada,
+   la levanta y borra el marcador. Es el caso "se cortó el ssh y el agente quedó apagado".
+
+2. **Units caídas sin marcador (solo aviso):** las registra en el log pero NO las toca. Una unit
+   parada sin marcador puede ser una parada deliberada (rollout, cutover, mantenimiento) y
+   arrancarla a ciegas sería peor que el problema.
+
+Idempotente y barato: si no hay nada que hacer, no escribe nada.
+"""
+import json, os, subprocess, sys, time
+
+MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
+LOG = os.path.join(MARKERS, 'guard.log')
+MAP = os.path.expanduser('~/.local/share/cauce-v3/ops/container-aliases.json')
+HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
+
+
+def sh(args):
+    return subprocess.run(args, capture_output=True, text=True).stdout.strip()
+
+
+def log(line):
+    os.makedirs(MARKERS, exist_ok=True)
+    with open(LOG, 'a') as handle:
+        handle.write(f'{time.strftime("%Y-%m-%dT%H:%M:%S%z")} {line}\n')
+    print(line)
+
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def unit_of(alias):
+    return HOST_NATIVE.get(alias, f'cauce-v3-container-{alias}')
+
+
+def main():
+    if os.path.isdir(MARKERS):
+        for name in sorted(os.listdir(MARKERS)):
+            if not name.endswith('.json'):
+                continue
+            path = os.path.join(MARKERS, name)
+            try:
+                marker = json.load(open(path))
+            except (OSError, ValueError):
+                log(f'marcador ilegible, lo borro: {path}')
+                os.unlink(path)
+                continue
+            alias, unit, pid = marker.get('alias'), marker.get('unit'), marker.get('attach_pid')
+            edad = int(time.time()) - int(marker.get('started_at', 0))
+            if alive(pid):
+                continue
+            estado = sh(['systemctl', '--user', 'is-active', unit])
+            if estado != 'active':
+                subprocess.run(['systemctl', '--user', 'start', unit], check=False)
+                time.sleep(2)
+                nuevo = sh(['systemctl', '--user', 'is-active', unit])
+                log(f'RESTAURADO {alias}: el attach (pid {pid}) murió, marcador de {edad}s, '
+                    f'{unit} estaba {estado} -> {nuevo}')
+            else:
+                log(f'marcador huérfano de {alias} pero {unit} ya estaba activa: lo borro')
+            os.unlink(path)
+
+    try:
+        aliases = sorted(json.load(open(MAP))['aliases'])
+    except (OSError, ValueError, KeyError):
+        aliases = []
+    caidas = [alias for alias in aliases
+              if sh(['systemctl', '--user', 'is-active', unit_of(alias)]) not in ('active', '')
+              and not os.path.exists(os.path.join(MARKERS, f'{alias}.json'))]
+    if caidas:
+        log(f'AVISO: units caídas SIN marcador de attach (no las toco): {", ".join(caidas)}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

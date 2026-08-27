@@ -1,0 +1,6 @@
+[Unit]
+Description=Propaga la credencial Codex compartida a los codex-home sin mount
+
+[Service]
+Type=oneshot
+ExecStart=/home/stev/.local/bin/cauce-codex-sync

@@ -1,0 +1,7 @@
+[Unit]
+Description=Cauce V3 - restaura adaptadores que un attach dejó parados
+Documentation=man:cauce-attach(1)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/cauce-attach-guard

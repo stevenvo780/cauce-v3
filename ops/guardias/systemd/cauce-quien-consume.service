@@ -1,0 +1,9 @@
+[Unit]
+Description=Mapa contenedor -> cuenta Claude REAL (por endpoint OAuth de perfil)
+[Service]
+Type=oneshot
+# Corre periodico A PROPOSITO, no solo a mano: la identidad solo se puede verificar mientras el
+# access token de ese contenedor esta vigente (~8h y se renueva al usarse). Pasando cada 10 min,
+# todo contenedor que trabaje queda verificado en algun momento y su identidad queda cacheada;
+# si se consultara solo a demanda, los contenedores ociosos saldrian "?" para siempre.
+ExecStart=/bin/bash -lc '/home/stev/.local/bin/cauce-quien-consume --json > /home/stev/.local/share/ai-usage-live/mapa-cuentas.json.tmp && mv /home/stev/.local/share/ai-usage-live/mapa-cuentas.json.tmp /home/stev/.local/share/ai-usage-live/mapa-cuentas.json'

@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresca el mapa contenedor -> cuenta Claude cada 10 min
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=true
+[Install]
+WantedBy=timers.target

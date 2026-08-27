@@ -12,6 +12,24 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 
 | Archivo | Dónde va instalado | Qué hace |
 |---|---|---|
+| `cauce-ai-live` | `kratos:~/.local/bin/` + timer 10min | Cuota REAL por cuenta vía CDP (no estimada) |
+| `cauce-attach` | `kratos:~/.local/bin/` | Entra a LA sesión real del agente (claude --resume / codex resume) con guardas |
+| `cauce-attach-guard` | `kratos:~/.local/bin/` + timer 2min | Repone adaptadores parados por un attach mal cerrado |
+| `cauce-codex-sync` | `kratos:~/.local/bin/` + path-unit | Propaga auth.json compartido de codex a los agentes sin bind-mount |
+| `cauce-cred-guard-kratos.py` | `kratos:~/.local/bin/` + timer 15min | Mide credenciales de los alias que viven EN kratos y empuja huellas al VPS |
+| `cauce-credenciales` | `kratos:~/.local/bin/` | Audita y renueva credenciales OAuth de toda la flota (detecta bind-mounts compartidos) |
+| `cauce-destrabar-telegram` | `kratos:~/.local/bin/` | Destraba el cursor de Telegram atascado por un adjunto no descargable |
+| `cauce-directo` | `kratos:~/.local/bin/` | Abre un alias sin los 4 saltos de pty (evita ptys huérfanas) |
+| `cauce-esfuerzo` | `kratos:~/.local/bin/` | Ve/cambia modelo y nivel de esfuerzo por agente/harness/todos |
+| `cauce-estado` | `kratos:~/.local/bin/` | ¿Trabaja o está muerto? — systemd+CPU+attach+latido del gateway por alias o flota |
+| `cauce-modal-sweeper` | `kratos:~/.local/bin/` | Destraba el modal 'Update available' de codex (agente vivo pero mudo) |
+| `cauce-panel-guard` | `kratos:~/.local/bin/` + timer | Repone la sesión tmux compartida (panel) si muere sola |
+| `cauce-quien-consume` | `kratos:~/.local/bin/` + timer | Mapa contenedor→cuenta REAL de Claude (el auth status puede mentir) |
+| `cauce-sesiones` | `kratos:~/.local/bin/` | Lista sesiones reales por agente |
+| `cauce-soltar` | `kratos:~/.local/bin/` | Suelta una sesión/plaza tomada |
+| `cauce-tmux-panel` | `kratos:~/.local/bin/` | Panel tmux de un alias |
+| `cauce-v3-medico-monitor` | `kratos:~/.local/bin/` + timer | El MÉDICO de la flota (3.207 líneas): vigila, adjudica y avisa — 55 iteraciones rescatadas de .bak |
+| `cauce-watch` | `kratos:~/.local/bin/` | Watch de la flota |
 | `cred-guard.py` | `kratos:~/.local/bin/` | Revisa las 14 credenciales de la flota: quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores |
 | `cred-guard.sh` | `kratos:~/.local/bin/` | Envoltorio del anterior: deja estado en `~/.local/state/cred-guard.{txt,log}` |
 | `polidin-guard.sh` | `kratos:~/.local/bin/` | Repone el túnel `ws-zeus:12222 → 10.88.88.31:22` cuando muere |

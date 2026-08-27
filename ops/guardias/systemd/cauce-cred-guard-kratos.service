@@ -1,0 +1,8 @@
+[Unit]
+Description=Cauce V3 - mide las credenciales de los alias que viven en kratos (salva) y las empuja al VPS
+Documentation=file:/home/stev/.local/bin/cauce-cred-guard-kratos.py
+
+[Service]
+Type=oneshot
+ExecStart=/home/stev/.local/bin/cauce-cred-guard-kratos.py
+TimeoutStartSec=120

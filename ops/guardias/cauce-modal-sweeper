@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Destraba los modales que dejan a un agente VIVO PERO MUDO.
+#
+# El caso que lo motivó (2026-08-08, salva/Isa): el CLI de codex muestra
+#   "✨ Update available! X -> Y" con tres opciones, y espera una tecla que nadie va a apretar.
+# Mientras tanto el agente sigue aceptando entregas y RENOVANDO LA RESERVA cada 60 s, así que
+# nunca vencen, nunca fallan y nunca avisan: la dueña ve un agente parado que en realidad está
+# produciendo. salva cerró un entregable entero sin que Isa viera nada.
+#
+# Por qué un barredor y no "actualizar y listo": la actualización sólo resetea el reloj. La
+# PRÓXIMA versión trae el mismo diálogo. Esto es la cura; aquello es la tregua.
+#
+# Elige SIEMPRE "3. Skip until next version": actualizar el toolchain de un alias ajeno es otra
+# decisión (el binario vendorizado de codex gatea qué modelos puede usar cada uno), y "2. Skip"
+# vuelve a preguntar enseguida.
+#
+# Sólo manda teclas cuando el modal está REALMENTE en pantalla. Nunca a ciegas.
+set -u
+# El match NO puede ser la frase suelta: en la prueba del 2026-08-08 el barredor detectó
+# "Update available" en el SCROLLBACK de mi propia terminal —era el comando que yo acababa de
+# escribir— y le mandó "3"+Enter a `cauce-zeus`, mi sesión viva. El "3" apareció tecleado en mi
+# panel. Mandar teclas a una sesión por lo que dice su historial es una forma de corromper el
+# trabajo de otro agente.
+# Tres guardas, y las tres tienen que pasar:
+#   1. el modal REAL trae también sus opciones numeradas;
+#   2. el cursor `›` marca que hay un menú esperando (no es texto histórico);
+#   3. la marca tiene que estar en las ÚLTIMAS líneas: un modal vivo está al pie, no en el medio.
+MARCA='Update available'
+OPCION='Skip until next version'
+COLA_LINEAS=12
+
+es_modal_vivo() {   # $1 = contenido del panel
+  local p=$1 cola
+  case "$p" in *"$MARCA"*) ;; *) return 1 ;; esac
+  case "$p" in *"$OPCION"*) ;; *) return 1 ;; esac
+  cola=$(printf '%s\n' "$p" | tail -n "$COLA_LINEAS")
+  case "$cola" in *"$MARCA"*) ;; *) return 1 ;; esac
+  case "$cola" in *"›"*) ;; *) return 1 ;; esac
+  return 0
+}
+LOG=${LOG:-$HOME/.local/state/cauce-modal-sweeper.log}
+mkdir -p "$(dirname "$LOG")"
+di() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
+
+barrer_host() {   # $1 = etiqueta, $2 = prefijo de ejecución ("" local, "ssh vps sudo" remoto)
+  local host=$1; shift
+  local ejec=("$@")
+  local nombres
+  nombres=$("${ejec[@]}" docker ps --format '{{.Names}}' 2>/dev/null) || return 0
+  for c in $nombres; do
+    local sesiones
+    sesiones=$("${ejec[@]}" docker exec -u dev "$c" tmux -L cauce ls 2>/dev/null | cut -d: -f1) || continue
+    [ -z "$sesiones" ] && continue
+    for s in $sesiones; do
+      local pantalla
+      pantalla=$("${ejec[@]}" docker exec -u dev "$c" tmux -L cauce capture-pane -p -t "$s" 2>/dev/null)
+      es_modal_vivo "$pantalla" || continue
+      local linea
+      linea=$(printf '%s\n' "$pantalla" | grep -m1 "$MARCA" | tr -s ' ')
+      di "MODAL en $host/$c/$s ->$linea"
+      "${ejec[@]}" docker exec -u dev "$c" tmux -L cauce send-keys -t "$s" "3" 2>/dev/null
+      sleep 1
+      "${ejec[@]}" docker exec -u dev "$c" tmux -L cauce send-keys -t "$s" Enter 2>/dev/null
+      sleep 3
+      # VERIFICAR POR EFECTO: que el modal ya no esté. Mandar la tecla no es haberlo destrabado.
+      pantalla=$("${ejec[@]}" docker exec -u dev "$c" tmux -L cauce capture-pane -p -t "$s" 2>/dev/null)
+      if es_modal_vivo "$pantalla"; then
+        di "  NO SE DESTRABO $host/$c/$s: el modal sigue en pantalla (revisar a mano)"
+      else
+        di "  destrabado $host/$c/$s"
+      fi
+    done
+  done
+}
+
+barrer_host kratos
+barrer_host vps ssh -o BatchMode=yes -o ConnectTimeout=10 vps sudo
+exit 0

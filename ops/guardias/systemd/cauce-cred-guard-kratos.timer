@@ -1,0 +1,10 @@
+[Unit]
+Description=Empuja al VPS la medicion de credenciales de kratos cada 15 min (el VPS la da por STALE a los 60)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

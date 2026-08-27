@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""cauce-credenciales — audita y renueva las credenciales de suscripción de toda la flota.
+
+    cauce-credenciales                 tabla: qué está vivo, qué vence, qué falta
+    cauce-credenciales --renovar       recorre TODO lo que necesita login, uno por uno
+    cauce-credenciales --renovar <espacio>[:<proveedor>]   sólo eso
+
+Los espacios son contenedores (o el host para kant). Un mismo archivo puede servir a varios alias
+porque los homes están bind-montados: la tabla lo dice para que no lo renueves dos veces.
+
+Nada de API keys: Claude y ChatGPT van SIEMPRE por suscripción (OAuth), que es la política de la casa.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+MAPA = os.path.expanduser('~/.local/share/cauce-v3/ops/container-aliases.json')
+AHORA = datetime.now(timezone.utc)
+
+# espacio -> (contenedor|None si es el host, usuario, home, alias que sirve)
+EXTRA_HOST = ('host:kratos', None, os.environ.get('USER', 'stev'), '/home/stev/red-servidores', ['kant'])
+
+
+def sh(args, timeout=25):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return ''
+
+
+def en_espacio(contenedor, usuario, guion, timeout=25):
+    if contenedor is None:
+        return sh(['bash', '-lc', guion], timeout)
+    return sh(['docker', 'exec', '--user', usuario, contenedor, 'bash', '-lc', guion], timeout)
+
+
+def espacios():
+    """Un espacio por (contenedor, usuario, home): los alias que lo comparten viajan juntos."""
+    datos = json.load(open(MAPA))['aliases']
+    agrupados = {}
+    for alias, v in sorted(datos.items()):
+        clave = (v['container'], v['user'], v['home'])
+        agrupados.setdefault(clave, []).append(alias)
+    salida = [(c, c, u, h, a) for (c, u, h), a in agrupados.items()]
+    salida.append(EXTRA_HOST)
+    return salida
+
+
+def estado_claude(contenedor, usuario, home):
+    raw = en_espacio(contenedor, usuario, f'cat {home}/.claude/.credentials.json 2>/dev/null')
+    if not raw:
+        return 'AUSENTE', ''
+    try:
+        oauth = json.loads(raw).get('claudeAiOauth') or {}
+    except ValueError:
+        return 'ILEGIBLE', ''
+    vence = oauth.get('expiresAt')
+    cuenta = en_espacio(contenedor, usuario,
+                        f'python3 -c "import json;d=json.load(open(\'{home}/.claude.json\'));'
+                        f'print((d.get(\'oauthAccount\') or {{}}).get(\'emailAddress\',\'\'))" 2>/dev/null')
+    if not vence:
+        return 'sin vencimiento', cuenta
+    cuando = datetime.fromtimestamp(vence / 1000, timezone.utc)
+    if cuando < AHORA:
+        return f'VENCIDO {cuando:%d-%b %H:%M}', cuenta
+    horas = (cuando - AHORA).total_seconds() / 3600
+    return f'ok ({horas:.0f} h)', cuenta
+
+
+def estado_codex(contenedor, usuario, home):
+    salida = en_espacio(contenedor, usuario, 'timeout 15 codex login status 2>&1 | head -2')
+    if not salida:
+        return 'sin CLI', ''
+    if 'Logged in' in salida:
+        return 'ok', salida.split('using')[-1].strip() if 'using' in salida else ''
+    if 'Error' in salida or 'error' in salida:
+        return 'ROTO', salida[:60]
+    if 'Not logged' in salida:
+        return 'SIN SESIÓN', ''
+    return salida[:40], ''
+
+
+def estado_gemini(contenedor, usuario, home):
+    raw = en_espacio(contenedor, usuario, f'cat {home}/.gemini/oauth_creds.json 2>/dev/null')
+    activa = en_espacio(contenedor, usuario,
+                        f'python3 -c "import json;print(json.load(open(\'{home}/.gemini/google_accounts.json\')).get(\'active\') or \'\')" 2>/dev/null')
+    if not raw:
+        return ('AUSENTE' if not activa else 'SIN TOKEN'), activa
+    try:
+        vence = json.loads(raw).get('expiry_date')
+    except ValueError:
+        return 'ILEGIBLE', activa
+    if not vence:
+        return 'sin vencimiento', activa
+    cuando = datetime.fromtimestamp(vence / 1000, timezone.utc)
+    if cuando < AHORA:
+        return f'VENCIDO {cuando:%d-%b}', activa
+    return f'ok ({(cuando - AHORA).total_seconds()/3600:.0f} h)', activa
+
+
+PROVEEDORES = {'claude': estado_claude, 'codex': estado_codex, 'gemini': estado_gemini}
+
+RENOVAR = {
+    # proveedor -> (argv dentro del espacio, qué tiene que hacer el humano)
+    'claude': ('claude', 'escribí /login y seguí el enlace; al terminar, /exit'),
+    'codex': ('codex login', 'seguí el enlace que imprime y volvé'),
+    'gemini': ('gemini', 'escribí /auth y elegí la cuenta de Google; al terminar, /quit'),
+}
+
+
+def auditar():
+    filas = []
+    print(f'{"ESPACIO":24} {"ALIAS QUE SIRVE":34} {"CLAUDE":22} {"CODEX":16} GEMINI')
+    for nombre, contenedor, usuario, home, alias in espacios():
+        estados = {}
+        for proveedor, fn in PROVEEDORES.items():
+            estados[proveedor] = fn(contenedor, usuario, home)
+        filas.append((nombre, contenedor, usuario, home, alias, estados))
+        print(f'{nombre:24} {",".join(alias)[:33]:34} '
+              f'{estados["claude"][0]:22} {estados["codex"][0]:16} {estados["gemini"][0]}')
+    print()
+    pendientes = [(n, c, u, h, a, e) for n, c, u, h, a, e in filas
+                  if any(v[0].startswith(('VENCIDO', 'AUSENTE', 'ROTO', 'SIN')) for v in e.values())]
+    if not pendientes:
+        print('nada que renovar: todo vigente')
+    else:
+        print('necesitan login:')
+        for nombre, _c, _u, _h, alias, estados in pendientes:
+            malos = [p for p, v in estados.items() if v[0].startswith(('VENCIDO', 'AUSENTE', 'ROTO', 'SIN'))]
+            print(f'  {nombre:24} {",".join(malos)}   (alias: {",".join(alias)})')
+        print('\nrenovalos con:  cauce-credenciales --renovar')
+    return filas
+
+
+def renovar(objetivo=None):
+    for nombre, contenedor, usuario, home, alias, estados in auditar():
+        for proveedor, (estado, _detalle) in estados.items():
+            if not estado.startswith(('VENCIDO', 'AUSENTE', 'ROTO', 'SIN')):
+                continue
+            if objetivo and objetivo not in (nombre, f'{nombre}:{proveedor}'):
+                continue
+            comando, instruccion = RENOVAR[proveedor]
+            print(f'\n=== {nombre} · {proveedor} ({estado}) · sirve a {",".join(alias)}')
+            print(f'    {instruccion}')
+            respuesta = input('    ¿abrir ahora? [s/N/q] ').strip().lower()
+            if respuesta == 'q':
+                return
+            if respuesta != 's':
+                continue
+            if contenedor is None:
+                subprocess.run(['bash', '-lc', f'cd {home} && {comando}'])
+            else:
+                subprocess.run(['docker', 'exec', '-it', '--user', usuario, '-w', home, contenedor,
+                                'bash', '-lc', comando])
+
+
+if __name__ == '__main__':
+    argumentos = sys.argv[1:]
+    if '--renovar' in argumentos:
+        indice = argumentos.index('--renovar')
+        renovar(argumentos[indice + 1] if len(argumentos) > indice + 1 else None)
+    else:
+        auditar()

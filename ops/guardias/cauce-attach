@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""cauce-attach <alias> — entra a LA sesión del agente, no a una nueva.
+
+El adaptador no deja un proceso vivo entre entregas: la sesión de un agente es un id + su
+transcript. Entrar de verdad es `claude --resume <id>` / `codex resume <id>` con ese mismo id.
+
+Pero un agente no tiene UNA sesión: tiene una por conversación, por puente y por reintento
+(ver cauce-sesiones). "La más reciente" casi nunca es la del DM de Telegram del dueño: suele
+ser la última delegación entre agentes. Entrar a ciegas es lo que se siente como hablar con
+otra instancia que no recuerda nada.
+
+Cuatro garantías, en este orden:
+
+1. **Sabés a dónde entrás.** Antes de abrir nada se dice de qué conversación viene esa sesión,
+   por qué puente entró, cuántos turnos tiene y cuándo fue el último. Si la que abriría no es
+   la del DM de Telegram del dueño, avisa y deja elegir.
+2. **Un solo escritor.** Si ya hay una sesión interactiva abierta sobre ese transcript, se niega
+   a abrir otra y te dice en qué tty está. Dos procesos escribiendo el mismo `.jsonl` lo corrompen.
+3. **El agente queda mudo mientras estás adentro, y se avisa fuerte.** Se para su unit systemd
+   para que el adaptador no escriba en paralelo: mientras tanto NO responde Telegram ni el bus.
+   Las entregas se encolan en Postgres, que es durable, y se procesan al salir. Si el alias tiene
+   egreso proactivo habilitado, además se avisa por Telegram al entrar y al salir; si no lo tiene,
+   se dice por qué y al salir se informa qué llegó mientras tanto.
+4. **Nunca queda parado por accidente.** Antes de parar nada se escribe un marcador con el pid
+   del attach; si tu terminal muere sin restaurar, `cauce-attach-guard` (timer systemd cada 2 min)
+   ve el marcador huérfano y levanta la unit igual.
+
+    cauce-attach <alias>                 la sesión del DM del dueño (o la más reciente, ver abajo)
+    cauce-attach <alias> --lista         qué sesiones tiene y de qué conversación, sin entrar
+    cauce-attach <alias> --dm            sin preguntar: la del DM de Telegram del dueño
+    cauce-attach <alias> --reciente      sin preguntar: la de último turno, sea cual sea
+    cauce-attach <alias> --sesion <id>   una sesión concreta (basta el prefijo que muestra --lista)
+    cauce-attach <alias> --sin-parar     NO para el adaptador (dos escritores: solo para leer)
+    cauce-attach <alias> --forzar        entra aunque ya haya otra sesión interactiva abierta
+    cauce-attach <alias> --sin-aviso     no intenta avisar por Telegram
+    cauce-attach <alias> --simular       muestra a qué entraría y no toca nada (ni unit ni CLI)
+
+Sin tty (script, pipe) no pregunta nada: mantiene el comportamiento histórico —la más reciente—
+y deja el aviso impreso, para no cambiarle el default a nada que ya dependa de esto.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+
+OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
+MAP = os.path.join(OPS, 'container-aliases.json')
+MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
+PKI = os.path.expanduser('~/.config/cauce-v3/container-pki')
+AVISO_CONF = os.path.expanduser('~/.config/cauce-v3/attach-aviso.json')
+GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
+HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
+ATTACHABLE = {'claude', 'codex'}
+
+
+def die(msg):
+    print(f'cauce-attach: {msg}', file=sys.stderr)
+    raise SystemExit(1)
+
+
+def sh(args, **kw):
+    return subprocess.run(args, capture_output=True, text=True, **kw).stdout.strip()
+
+
+def in_container(container, script):
+    return sh(['docker', 'exec', container, 'sh', '-lc', script])
+
+
+def sesiones_mod():
+    """cauce-sesiones vive al lado nuestro en ~/.local/bin y es la única fuente de verdad
+    sobre qué sesión es cuál. Se importa por ruta para no inventar un paquete ni un PYTHONPATH."""
+    ruta = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cauce-sesiones')
+    if not os.path.exists(ruta):
+        die(f'falta {ruta} (se instala junto a cauce-attach)')
+    # Sin extensión .py importlib no infiere cargador: hay que dárselo explícito.
+    # Sin esto el import deja un __pycache__ dentro de ~/.local/bin.
+    sys.dont_write_bytecode = True
+    cargador = importlib.machinery.SourceFileLoader('cauce_sesiones', ruta)
+    spec = importlib.util.spec_from_loader('cauce_sesiones', cargador)
+    modulo = importlib.util.module_from_spec(spec)
+    cargador.exec_module(modulo)
+    return modulo
+
+
+def unit_of(alias):
+    return HOST_NATIVE.get(alias, f'cauce-v3-container-{alias}')
+
+
+def interactive_writers(info, native, host_native):
+    """Sesiones interactivas ya abiertas sobre ESE id. Devuelve [(pid, tty, etime)]."""
+    grep = f"claude --resume {native}|codex resume {native}"
+    cmd = (f"ps -eo pid,tty,etime,args --no-headers 2>/dev/null | grep -E '{grep}' | grep -v grep")
+    raw = sh(['sh', '-lc', cmd]) if host_native else in_container(info['container'], cmd)
+    rows = []
+    for line in raw.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) >= 3:
+            rows.append((parts[0], parts[1], parts[2]))
+    return rows
+
+
+def unit_active(unit):
+    return sh(['systemctl', '--user', 'is-active', unit]) == 'active'
+
+
+def write_marker(alias, unit, native):
+    os.makedirs(MARKERS, exist_ok=True)
+    path = os.path.join(MARKERS, f'{alias}.json')
+    with open(path, 'w') as handle:
+        json.dump({'alias': alias, 'unit': unit, 'session': native,
+                   'attach_pid': os.getpid(), 'started_at': int(time.time())}, handle)
+    return path
+
+
+# --------------------------------------------------------------------------------------------
+# Egreso: la única vía por la que un aviso puede salir de kratos hacia el chat del dueño.
+#
+# El gateway acepta mTLS con los certificados por alias de ~/.config/cauce-v3/container-pki.
+# `POST /v3/messages` publica AL BUS (llega a agentes, nunca a un chat: el esquema público no
+# puede expresar un destino de canal, y es deliberado). La única superficie que sí puede es
+# `POST /v3/egress/notifications`, y exige dos cosas que hoy zeus no tiene: el permiso `notify`
+# en su principal del registro mTLS y un destino declarado en egress_destinations. Mientras
+# falte cualquiera de las dos, el gateway responde 403 y acá se degrada a un aviso en pantalla
+# (nunca se bloquea el attach por esto). El README explica las dos filas que lo habilitan.
+# --------------------------------------------------------------------------------------------
+def destino_de(alias):
+    conf = {}
+    try:
+        with open(AVISO_CONF) as handle:
+            conf = json.load(handle)
+    except (OSError, ValueError):
+        pass
+    por_alias = (conf.get('aliases') or {}).get(alias) or {}
+    return por_alias.get('destino') or conf.get('destino') or 'steven_dm'
+
+
+def avisar(mod, alias, texto, sufijo, prueba=False):
+    """Aviso proactivo al chat del dueño. Devuelve una línea para imprimir, nunca lanza.
+    Con prueba=True usa el dry_run del gateway: valida destino y permiso sin escribirle a nadie."""
+    destino = destino_de(alias)
+    cuerpo = {'destination': destino, 'kind': 'alert', 'body': texto,
+              'idempotency_key': f'attach:{alias}:{os.getpid()}:{int(time.time())}:{sufijo}',
+              'dry_run': bool(prueba)}
+    codigo, datos = mod.gateway(alias, '/v3/egress/notifications', cuerpo)
+    if codigo == 202:
+        return (f'egreso proactivo OK contra «{destino}» (dry_run, no se envió nada).' if prueba
+                else f'aviso por Telegram enviado a «{destino}».')
+    if codigo == 403:
+        motivo = (datos or {}).get('denial_code') if isinstance(datos, dict) else None
+        detalle = f' ({motivo})' if motivo else ''
+        return ('no pude avisar por Telegram: el gateway rechaza el egreso proactivo de '
+                f'{alias}{detalle}.\n              Falta `notify` en su principal mTLS y/o el '
+                f'destino «{destino}» declarado. Ver README (2 filas, sin reconstruir imagen).')
+    if codigo is None:
+        return f'no pude avisar por Telegram: {datos}'
+    return f'no pude avisar por Telegram: el gateway respondió {codigo}.'
+
+
+# --------------------------------------------------------------------------------------------
+# Elección de sesión
+# --------------------------------------------------------------------------------------------
+def describir(mod, alias, fila):
+    puente = fila.get('puente')
+    via = 'su propio bot' if puente in (None, alias) else f'el bot de {puente}'
+    turnos = fila.get('turnos') or 0
+    cuando = (f"último {mod.cuando(fila['mtime'])} ({mod.hace(fila['mtime'])})"
+              if fila.get('mtime') else 'sin transcript en disco')
+    return (f"{fila.get('abrev') or fila['native'][:8]}  {fila.get('donde')}  ·  entró por {via}"
+            f"  ·  {turnos} turnos  ·  {cuando}")
+
+
+def resolver_prefijo(sesiones, pedido):
+    exactas = [f for f in sesiones if f['native'] == pedido]
+    if exactas:
+        return exactas[0]
+    candidatas = [f for f in sesiones if f['native'].startswith(pedido)]
+    if len(candidatas) == 1:
+        return candidatas[0]
+    if not candidatas:
+        return None
+    die('el prefijo «%s» es ambiguo: %s' % (pedido, ', '.join(f['native'] for f in candidatas)))
+
+
+def elegir(mod, alias, datos, preferencia, interactivo):
+    """Devuelve (fila_elegida, [avisos]) sin abrir nada todavía."""
+    sesiones, dm, reciente = datos['sesiones'], datos['dm'], datos['reciente']
+    avisos = []
+    if preferencia == 'dm':
+        if dm is None:
+            die(f'{alias} no tiene ninguna sesión de DM de Telegram todavía (probá --reciente).')
+        return dm, avisos
+    if preferencia == 'reciente' or dm is None or reciente is None:
+        if dm is None and reciente is not None:
+            avisos.append(f'{alias} no tiene sesión de DM de Telegram: abro la de último turno.')
+        return reciente, avisos
+    if dm['native'] == reciente['native']:
+        return dm, avisos
+
+    avisos.append('la sesión de último turno NO es la del DM de Telegram del dueño:')
+    avisos.append('  último turno : ' + describir(mod, alias, reciente))
+    avisos.append('  DM del dueño : ' + describir(mod, alias, dm))
+    if dm.get('clase') == 'dm_ajeno':
+        avisos.append(f"  (ese DM entró por el bot de {dm.get('puente')}, no por el de {alias})")
+    if not interactivo:
+        avisos.append('sin terminal para preguntar: abro la de último turno, como siempre.')
+        avisos.append(f'  para entrar a la del DM:  cauce-attach {alias} --dm')
+        return reciente, avisos
+
+    print('cauce-attach: ' + avisos[0])
+    for linea in avisos[1:]:
+        print('              ' + linea)
+    print('')
+    print('  1) la del DM de Telegram   ' + describir(mod, alias, dm))
+    print('  2) la de último turno      ' + describir(mod, alias, reciente))
+    print(f'  3) ver las {len(sesiones)} sesiones y salir')
+    try:
+        respuesta = input('  ¿cuál abro? [1] ').strip() or '1'
+    except (EOFError, KeyboardInterrupt):
+        print('')
+        raise SystemExit(1)
+    if respuesta == '2':
+        return reciente, []
+    if respuesta == '3':
+        mod.tabla(datos)
+        raise SystemExit(0)
+    if respuesta not in ('1', ''):
+        elegida = resolver_prefijo(sesiones, respuesta)
+        if elegida is not None:
+            return elegida, []
+        print('  no entendí; abro la del DM.')
+    return dm, []
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        die('uso: cauce-attach <alias> [--lista] [--dm] [--reciente] [--sesion <id>] '
+            '[--sin-parar] [--forzar] [--sin-aviso]')
+    alias = args[0]
+    listar = '--lista' in args
+    parar = '--sin-parar' not in args
+    forzar = '--forzar' in args
+    sin_aviso = '--sin-aviso' in args
+    simular = '--simular' in args
+    pedida = args[args.index('--sesion') + 1] if '--sesion' in args else None
+    preferencia = 'dm' if '--dm' in args else 'reciente' if '--reciente' in args else 'auto'
+
+    mod = sesiones_mod()
+    info = mod.alias_info(alias)
+    harness = info.get('harness')
+    host_native = alias in HOST_NATIVE
+    unit = unit_of(alias)
+
+    if harness not in ATTACHABLE:
+        die(f'{alias} usa {harness}: no tiene CLI con sesión reanudable.\n'
+            f'             para verlo en vivo: ia {alias} watch')
+
+    datos = mod.inventario(alias)
+    if datos.get('error'):
+        die(f'no pude leer las sesiones de {alias}: {datos["error"]}')
+    sesiones = datos['sesiones']
+    if listar:
+        mod.tabla(datos)
+        return 0
+    if not sesiones:
+        die(f'{alias} no tiene sesiones registradas todavía.')
+
+    if pedida is not None:
+        elegida = resolver_prefijo(sesiones, pedida)
+        if elegida is None:
+            die(f'{alias} no tiene ninguna sesión que empiece con «{pedida}» '
+                f'(mirá: cauce-attach {alias} --lista)')
+        avisos = []
+    else:
+        elegida, avisos = elegir(mod, alias, datos, preferencia, sys.stdin.isatty())
+
+    native = elegida['native']
+    transcript = elegida.get('transcripto') or '(sin transcript)'
+
+    # ---- garantía 2: un solo escritor
+    abiertas = interactive_writers(info, native, host_native)
+    # Un proceso sin tty ('?') no es una terminal humana: es el adaptador ejecutando el harness
+    # para una entrega. Bloquear por eso confundiría; lo que hay que hacer es esperar unos segundos.
+    humanas = [row for row in abiertas if row[1] not in ('?', '-')]
+    sin_tty = [row for row in abiertas if row[1] in ('?', '-')]
+    if humanas and not forzar:
+        detalle = '\n'.join(f'                pid {p} en {t} (hace {e})' for p, t, e in humanas)
+        libre = ''
+        if datos['dm'] is not None and datos['dm']['native'] != native and not datos['dm']['abiertas']:
+            libre = (f'\n             La del DM de Telegram ({datos["dm"].get("abrev")}) SÍ está '
+                     f'libre:  cauce-attach {alias} --dm')
+        die(f'ya hay {len(humanas)} terminal(es) abiertas sobre {native}:\n{detalle}\n'
+            f'             Dos procesos sobre el mismo transcript lo corrompen. Cerrá esa terminal,\n'
+            f'             o mirá sin escribir con: ia {alias} watch  (o forzá con --forzar).{libre}')
+    if sin_tty and not forzar:
+        die(f'{alias} está procesando una entrega ahora mismo ({len(sin_tty)} proceso(s) del '
+            f'adaptador sobre esa sesión).\n             Esperá unos segundos y reintentá; '
+            f'mientras tanto: ia {alias} watch.')
+
+    cwd = elegida.get('cwd') or info['home']
+
+    for indice, linea in enumerate(avisos):
+        print(('cauce-attach: ' if indice == 0 else '              ') + linea)
+    print(f'cauce-attach: {alias} · {harness} · ENTRO A {describir(mod, alias, elegida)}')
+    print(f'              cwd {cwd}')
+    print(f'              transcript {transcript}')
+    if datos['dm'] is not None and datos['dm']['native'] == native:
+        print('              es la MISMA sesión que usa el DM de Telegram del dueño.')
+    elif datos['dm'] is not None:
+        print(f'              OJO: el DM de Telegram usa otra sesión '
+              f'({datos["dm"].get("abrev")}); esta no recuerda esa conversación.')
+    duplicadas = datos['duplicadas'].get(mod.clave_conversacion(elegida))
+    if duplicadas:
+        print(f'              esa conversación está partida en {len(duplicadas)} sesiones '
+              f'(cauce-attach {alias} --lista).')
+
+    antes = mod.cola(alias)
+    print('              ' + mod.linea_cola(antes))
+
+    if simular:
+        print(f'              [--simular] no paro {unit} ni abro el harness.')
+        if not sin_aviso:
+            print('              [--simular] egreso: ' + avisar(mod, alias, f'{alias}: simulacro de '
+                                                                      f'attach, ignorar.', 'test',
+                                                                prueba=True))
+        return 0
+
+    marker = None
+    parado = False
+    if parar and unit_active(unit):
+        marker = write_marker(alias, unit, native)
+        subprocess.run(['systemctl', '--user', 'stop', unit], check=False)
+        for _ in range(20):
+            if not unit_active(unit):
+                break
+            time.sleep(0.5)
+        parado = True
+        print('')
+        print('  ' + '=' * 68)
+        print(f'  MIENTRAS ESTÉS ACÁ ADENTRO, {alias.upper()} NO RESPONDE TELEGRAM NI EL BUS.')
+        print('  Su adaptador está parado para que no haya dos escritores. Las entregas')
+        print('  quedan encoladas (son durables) y se procesan cuando salgas.')
+        print(f'  Salir: /exit o Ctrl-D  →  se levanta {unit} solo.')
+        print('  ' + '=' * 68)
+        if not sin_aviso:
+            print('  ' + avisar(mod, alias, f'{alias}: el operador está en sesión interactiva conmigo '
+                                       f'por consola. Estoy mudo acá hasta que salga; tu mensaje '
+                                       f'queda encolado y lo proceso apenas vuelva.', 'in'))
+        print('')
+    elif not parar:
+        print('              AVISO: --sin-parar; si llega una entrega vas a tener dos escritores.')
+
+    try:
+        if host_native:
+            cli = ['claude', '--resume', native] if harness == 'claude' else ['codex', 'resume', native]
+            subprocess.run(['bash', '-lc', f'cd {cwd} && ' + ' '.join(cli)], check=False)
+        else:
+            cli = ['claude', '--resume', native] if harness == 'claude' else ['codex', 'resume', native]
+            subprocess.run(['docker', 'exec', '-it', '--user', info['user'], '-w', cwd,
+                            info['container'], 'bash', '-lc', ' '.join(cli)], check=False)
+    finally:
+        if parado:
+            print(f'\ncauce-attach: levantando {unit} de nuevo…')
+            subprocess.run(['systemctl', '--user', 'start', unit], check=False)
+            time.sleep(2)
+            estado = sh(['systemctl', '--user', 'is-active', unit]) or 'desconocido'
+            print(f'              unit: {estado}')
+            if estado == 'active' and marker and os.path.exists(marker):
+                os.unlink(marker)
+            despues = mod.cola(alias)
+            if despues is not None:
+                previos = {i.get('delivery_id') for i in (antes or {'items': []})['items']}
+                nuevas = [i for i in despues['items'] if i.get('delivery_id') not in previos]
+                if nuevas:
+                    quienes = sorted({i.get('actor_alias') or '?' for i in nuevas})
+                    print(f'              llegaron {len(nuevas)} entregas mientras estabas adentro '
+                          f'(de: {", ".join(quienes)}). Se están procesando.')
+                else:
+                    print('              no llegó ninguna entrega nueva mientras estabas adentro.')
+            if not sin_aviso:
+                print('              ' + avisar(mod, alias, f'{alias}: el operador salió de la sesión '
+                                                       f'interactiva. Vuelvo a atender Telegram y '
+                                                       f'el bus; proceso la cola.', 'out'))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

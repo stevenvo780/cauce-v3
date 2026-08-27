@@ -1,0 +1,9 @@
+[Unit]
+Description=Vigila la credencial Codex compartida y resincroniza los agentes sin mount
+
+[Path]
+PathModified=/datos/agents/shared/.codex/auth.json
+Unit=cauce-codex-sync.service
+
+[Install]
+WantedBy=default.target

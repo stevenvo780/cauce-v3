@@ -1,0 +1,35 @@
+#!/bin/bash
+# cauce-destrabar-telegram <alias> — saltea la actualizacion de Telegram que dejo sordo a un alias.
+#
+# POR QUE EXISTE (2026-08-20, zeus). Un adjunto que no se puede descargar hace que el sondeo del
+# puente falle y NUNCA consuma esa actualizacion: el cursor no avanza y el alias pierde TODA su
+# entrada de Telegram, no solo el fichero. Ese dia le paso a `zeus` y a `jarvis` a la vez y
+# estuvieron ~1 h sordos con el resto de la flota sana. El arreglo de codigo esta en el commit
+# 6cbd70e del repo; hasta que ese puente se despliegue, esto es el destrabador manual.
+#
+# Como se reconoce: el alias no recibe NADA por Telegram (ni texto), su fila en
+# `channel_bridge_cursors` tiene `updated_at` viejo, y el log del puente repite
+# `Telegram file download failed` para su bot.
+set -euo pipefail
+A=${1:-}
+[ -n "$A" ] || { echo "uso: $(basename "$0") <alias>"; exit 2; }
+PSQL='docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -qAt'
+
+echo "== fallos de descarga de $A en los ultimos 10 min =="
+n=$(ssh -o BatchMode=yes root@100.64.0.6 "docker logs --since 10m cauce-v3-prod-telegram-bridge-1 2>&1 | grep -c '\"alias\":\"$A\".*file download failed'" || echo 0)
+echo "   $n"
+if [ "$n" = "0" ]; then
+  echo "   OJO: sin fallos de descarga. Puede que no sea este problema — no lo saltees a ciegas."
+fi
+
+antes=$(ssh -o BatchMode=yes root@100.64.0.6 "$PSQL -c \"select next_update_id from channel_bridge_cursors where alias='$A';\"")
+echo "== cursor antes: $antes =="
+ssh -o BatchMode=yes root@100.64.0.6 "$PSQL -c \"update channel_bridge_cursors set next_update_id = next_update_id + 1, updated_at = now() where alias='$A';\"" >/dev/null
+despues=$(ssh -o BatchMode=yes root@100.64.0.6 "$PSQL -c \"select next_update_id from channel_bridge_cursors where alias='$A';\"")
+echo "== cursor despues: $despues =="
+echo
+echo "El mensaje saltado SE PIERDE: hay que reenviarlo. Para revertir:"
+echo "  update channel_bridge_cursors set next_update_id=$antes where alias='$A';"
+echo
+echo "Comproba en 60 s que dejo de fallar:"
+echo "  ssh root@100.64.0.6 \"docker logs --since 60s cauce-v3-prod-telegram-bridge-1 | grep -c 'file download failed'\""

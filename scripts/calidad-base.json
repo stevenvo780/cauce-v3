@@ -22,7 +22,8 @@
   "tests/gateway-hardening/delivery-admission.test.ts": 924,
   "tests/gateway-hardening/gateway-security.test.ts": 850,
   "tests/store-hardening/adversarial-postgres.test.ts": 858,
-  "ops/cli/cauce": 1139
+  "ops/cli/cauce": 1139,
+  "ops/guardias/cauce-v3-medico-monitor": 3208
  },
  "fechas": {
   "console/src/features/accounts/AccountsPage.test.tsx": 1,
@@ -56,7 +57,15 @@
   "packages/adapter-sdk/test/harness-turn-failure.test.ts": 1,
   "packages/adapter-sdk/test/output-parser-contract.test.ts": 1,
   "packages/adapter-sdk/test/output-parser-lost-delegations.test.ts": 3,
-  "packages/adapter-sdk/test/output-parser-sobre-roto.test.ts": 1
+  "packages/adapter-sdk/test/output-parser-sobre-roto.test.ts": 1,
+  "ops/guardias/cauce-ai-live": 1,
+  "ops/guardias/cauce-destrabar-telegram": 1,
+  "ops/guardias/cauce-directo": 1,
+  "ops/guardias/cauce-estado": 2,
+  "ops/guardias/cauce-modal-sweeper": 2,
+  "ops/guardias/cauce-panel-guard": 1,
+  "ops/guardias/cauce-quien-consume": 1,
+  "ops/guardias/cauce-v3-medico-monitor": 57
  },
  "comentarios": {
   "console/src/App.invariantes.test.tsx": 47,
@@ -815,6 +824,13 @@
   "ops/cli/cauce": 287,
   "ops/cli/cauce-huerfanas": 17,
   "ops/cli/cauce-panel": 15,
-  "ops/cli/cauce-reponer": 33
+  "ops/cli/cauce-reponer": 33,
+  "ops/guardias/cauce-destrabar-telegram": 12,
+  "ops/guardias/cauce-directo": 12,
+  "ops/guardias/cauce-modal-sweeper": 27,
+  "ops/guardias/cauce-panel-guard": 47,
+  "ops/guardias/cauce-soltar": 7,
+  "ops/guardias/cauce-tmux-panel": 11,
+  "ops/guardias/cauce-v3-medico-monitor": 709
  }
 }

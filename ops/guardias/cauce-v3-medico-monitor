@@ -1,0 +1,3207 @@
+#!/usr/bin/env python3
+"""Medico de la flota Cauce V3: encuentra los fallos MUDOS y repara los que puede.
+
+POR QUE EXISTE
+La noche del 2026-08-05 cuatro agentes estuvieron mudos durante horas y ninguna senal lo
+delato: la unidad decia `active`, el lease latia, la entrega no vencia nunca y el `exit 0`
+del adaptador era 0. Siempre lo detecto Steven antes que el sistema. Este guardia busca
+exactamente esas cuatro firmas, cada hora, y arregla solo lo que esta PROBADO que se puede
+arreglar sin costarle a nadie su trabajo en vuelo.
+
+LOS CUATRO FALLOS MUDOS QUE VIGILA
+  1) POLLER TRABADO   getWebhookInfo con pending_update_count > 0 MIENTRAS el cursor de ese
+                      alias en channel_bridge_cursors no avanza. Hacen falta LAS DOS: un
+                      cursor viejo por si solo no prueba nada (si nadie le escribio, es
+                      normal). NUNCA se llama a getUpdates: confirmaria y DESTRUIRIA los
+                      mensajes acumulados y le mandaria un 409 al puente.
+  2) TURNO COLGADO    un puente de turno (openclaw-stdin-bridge.mjs / hermes-stdin-bridge.py)
+                      vivo mas de 30 min. El adaptador le renueva la reserva cada 60 s, asi
+                      que la entrega NUNCA vence ni falla: el agente queda mudo y nada alerta.
+  3) ENTREGA TRABADA  deliveries en claimed/accepted/started con mas de ~20 min.
+  4) CREDENCIAL ROTA  refreshToken ausente/vacio, o la MISMA huella en varios contenedores
+                      (el refresh de OAuth es de un solo uso: el primero que refresca deja a
+                      los demas con uno gastado). Se publica solo la huella, nunca el secreto.
+
+QUE REPARA SOLO (y nada mas que esto)
+  - Turno colgado > 30 min: mata ESE proceso POR PID. Nunca `pkill`, nunca por nombre, y
+    solo procesos cuyo argv es un puente de turno: jamas el adaptador ni el panel.
+  - Poller trabado: reinicia el puente de Telegram, COMO MAXIMO UNA VEZ por corrida y solo
+    si hay pendientes reales.
+  - Adaptador caido/colgado: SOLO con --reiniciar-adaptadores, y solo si el alias cumple
+    TODAS las condiciones del ciclo de rescate (ver ciclo_rescate).
+  Todo lo demas se registra y se escala; no se toca.
+
+COMPROBACION POR EFECTO
+Ninguna reparacion se da por buena porque el comando salio 0. Se vuelve a medir DESPUES:
+el PID dejo de existir, el cursor avanzo, la entrega salio de su estado trabado. Si no se
+pudo comprobar, se dice "no verificado", nunca "reparado".
+
+DONDE CORRE
+En kratos, como timer systemd de usuario (Linger=yes). Va aqui y no en agora-storage porque
+es el UNICO host con malla completa: alcanza por SSH a agora-storage (base, tokens, puente)
+y al VPS (donde viven 14 de los 16 adaptadores). agora-storage no tiene llave hacia el VPS
+ni hacia kratos, asi que ahi el guardia quedaria ciego justo para el fallo #2, que es el que
+causo la caida. Los contenedores no sirven: no tienen cron ni systemd.
+
+SECRETOS
+Los tokens de Telegram NO salen nunca de agora-storage: las sondas se ejecutan alli por SSH
+y solo devuelven el conteo. Este archivo referencia credenciales por ruta; jamas las imprime,
+las loguea ni las commitea.
+"""
+import argparse
+import csv
+import datetime
+import fcntl
+import hashlib
+import io
+import json
+import time
+import os
+import re
+import subprocess
+import sys
+
+# El libro de tareas (entregado != cumplido) vive en un modulo aparte, al lado de este fichero.
+# Si falta, el guardia sigue haciendo todo lo demas: un libro ausente no puede costar los
+# cuatro chequeos de fallo mudo, que es lo que mantiene viva a la flota.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import libro_tareas
+except Exception as _e_libro:  # noqa: BLE001
+    libro_tareas = None
+    _MOTIVO_SIN_LIBRO = "%s: %s" % (type(_e_libro).__name__, _e_libro)
+
+AGORA = "root@100.64.0.6"  # 2026-08-17 zeus: era la IP PUBLICA 76.13.118.239 y la
+# sonda de telegram reventaba por timeout de SSH (3 veces en la bitacora), dejando
+# CIEGO al guardia entero. La VPN es el camino que ya usa VPS y mi alias agora-storage.
+VPS = "root@100.64.0.11"  # 2026-08-12 zeus: la flota migro a OVH; 72.61.9.153 es la maquina VIEJA (apagada/caida)
+
+# NO se delimita la salida con un caracter. Se pide CSV y se parsea CSV: ver `sql()`.
+# (Antes: `-At -F'~'`. Ese `-F` es exactamente lo que reventó tres veces.)
+#
+# `-v ON_ERROR_STOP=1` NO ES COSMETICO. Sin el, psql leyendo de un fichero/stdin imprime el
+# error por stderr y SALE 0: `sql()` miraba el `rc`, veia 0, y devolvia CERO FILAS. Una
+# consulta rota se leia como "no hay nada que reportar" —sin sonda rota, sin linea, sin
+# nada—, que es peor que el reventon del `~`: al menos aquel dejaba una linea. Medido:
+# `select 1/0` sale rc=0 sin la opcion y rc=3 con ella.
+PG = ("docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce "
+      "-At -v ON_ERROR_STOP=1 -f -")
+
+# El modulo `csv` corta los campos en 128 KiB y ahi levanta `_csv.Error`. Un `last_error` no
+# llega, pero ese tope es otro borde escondido del mismo tipo —el parser reventando por el
+# TAMANO del texto de un error en vez de por su contenido—, y la salida de psql ya vive entera
+# en memoria de todos modos: se sube y se deja dicho, en vez de descubrirlo en una corrida.
+csv.field_size_limit(16 * 1024 * 1024)
+PUENTE_TELEGRAM = "cauce-v3-prod-telegram-bridge-1"
+TOKEN_DIR = "/etc/cauce-v3/telegram-runtime"
+TOKEN_AVISO = TOKEN_DIR + "/zeus.token"
+CHAT_STEVEN = "6979524541"
+
+# Umbrales. Un turno real dura minutos; 30 min es holgado a proposito para no matar trabajo
+# legitimo. El cursor se compara solo cuando ADEMAS hay pendientes en Telegram.
+MIN_TURNO_COLGADO = 30
+MIN_ENTREGA_TRABADA = 20
+# 2026-08-19 zeus: techo para "turno largo SANO". Renovar la reserva prueba que el ADAPTADOR
+# vive, no que el TRABAJO avance: un arnes trabado en un modal renueva igual. Medido con
+# heraclito, que estuvo 12 h renovando sin producir nada y el guardia lo tuvo todo ese tiempo
+# como apunte que no despierta a nadie, hasta que el tope de 12 h del bus lo mato. 180 min esta
+# muy por encima de cualquier turno legitimo y deja 9 h de margen antes de ese tope.
+TECHO_TURNO_LARGO = 180
+MIN_CURSOR_QUIETO = 15
+# Cartas muertas: lo que se vigila es la TASA diaria, no el acumulado. El regimen medido es de
+# 10-25 por dia; 40 deja aire para un dia flojo sin tragarse una fuga de verdad.
+UMBRAL_DLQ_DIA = 40
+SILENCIO_MIN = 90  # no repetir un aviso identico antes de esto
+
+# El bug `exit 78/CONFIG` que impedia reiniciar adaptadores esta arreglado solo en este
+# release. Reiniciar un alias que aun corre el viejo puede dejarlo en `failed` sin arrancar,
+# asi que el reinicio automatico se limita a los que corren ESTE bundle, comprobado por
+# digest leido del proceso vivo en el momento (no por una lista fija de alias).
+RELEASE_CON_FIX78 = "bus-v3-20260806-tmux-identidad"
+DIGEST_CON_FIX78 = "sha256:4bf530650a579d9ffa70bc40dd49a9e4bc4668701a404b0dc1f6d24ef2d00874"
+
+# Estos SIETE alias todavia pierden TODO su contexto al reiniciarse: su panel arranca con un
+# `exec claude` / `exec codex` pelado, sin reanudar la sesion anterior. Reiniciarlos no es una
+# reparacion, es amnesia: el agente vuelve vivo pero sin saber en que estaba, y el trabajo en
+# curso se pierde entero. Hay otro agente arreglando el SDK; MIENTRAS TANTO EL GUARDIA NO LOS
+# REINICIA, LOS REPORTA. Cuando el SDK reanude sesion, esta lista se vacia y se borra.
+ALIAS_PIERDEN_CONTEXTO = ("zeus", "socrates", "kratos", "atlas", "vulcano", "dedalo", "salva")
+
+ESTADO_DIR = os.path.expanduser("~/.local/state/cauce-medico")
+BITACORA_JSONL = os.path.join(ESTADO_DIR, "bitacora.jsonl")
+BITACORA_LOG = os.path.join(ESTADO_DIR, "bitacora.log")
+ESTADO_JSON = os.path.join(ESTADO_DIR, "estado.json")
+LOCK = os.path.join(ESTADO_DIR, "lock")
+# El libro de tareas: junto a la bitacora, NO en otro lado. Es estado del medico, del mismo
+# tipo y con la misma vida que `bitacora.jsonl`, y lo commitea el mismo `git_commit` local.
+LIBRO_JSON = os.path.join(ESTADO_DIR, "libro-tareas.json")
+LIBRO_MD = os.path.join(ESTADO_DIR, "libro-tareas.md")
+EVIDENCIA_JSON = os.path.join(ESTADO_DIR, "evidencia-esperada.json")
+
+# Un puente de turno. Es lo UNICO que se mata automaticamente: es de un solo uso por diseno,
+# lleva el alias en su propia ruta, y no es ni el adaptador ni el panel.
+RE_PUENTE = re.compile(
+    r"/opt/cauce-v3-adapter/(?P<alias>[a-zA-Z0-9_-]+)/releases/[^/\s]+"
+    r"/packages/adapter-sdk/dist/bridge/(openclaw-stdin-bridge\.mjs|hermes-stdin-bridge\.py)"
+)
+RE_PUENTE_NATIVO = re.compile(
+    r"/\.local/share/cauce-v3-adapter/releases/[^/\s]+"
+    r"/packages/adapter-sdk/dist/bridge/(openclaw-stdin-bridge\.mjs|hermes-stdin-bridge\.py)"
+)
+RE_ADAPTADOR = re.compile(r"cauce-container-runtime\.py\s+run\s+--alias\s+(?P<alias>\S+)")
+RE_BUNDLE = re.compile(r"--bundle\s+(?P<bundle>\S+)")
+RE_DIGEST = re.compile(r"--bundle-digest\s+(?P<digest>\S+)")
+RE_CTR = re.compile(r"--container-id\s+(?P<ctr>\S+)")
+
+
+def ahora():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def sh(host, comando, entrada=None, timeout=90):
+    """Ejecuta en kratos (local), en el VPS o en agora-storage. Devuelve (rc, out, err)."""
+    if host == "kratos":
+        cmd = ["bash", "-lc", comando]
+    else:
+        destino = VPS if host == "vps" else AGORA
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", destino, comando]
+    try:
+        # stdin explicito: sin esto, un `ssh` hijo se come el stdin del propio guardia (y con
+        # el, el resto del script cuando se lo invoca por heredoc). Ya mordio una vez.
+        if entrada is None:
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True,
+                               text=True, timeout=timeout)
+        else:
+            r = subprocess.run(cmd, input=entrada, capture_output=True, text=True,
+                               timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout tras %ds" % timeout
+    except Exception as e:  # noqa: BLE001
+        return 1, "", "%s: %s" % (type(e).__name__, e)
+
+
+def sql(consulta, columnas=None):
+    """Consulta a la base de Cauce. La query viaja por stdin: sin comillas que escapar.
+
+    Devuelve una lista de filas; cada fila es una lista de strings con EXACTAMENTE las columnas
+    que pidio la consulta, pase lo que pase dentro de ellas.
+
+    POR QUE NO SE PARTE POR UN CARACTER. Este parser reventó TRES veces por el mismo motivo:
+    texto libre de `last_error` metido en un formato delimitado por un caracter.
+      1) saltos de linea dentro de `last_error`  -> "expected 3, got 1"
+      2) un `~` dentro de `last_error` (iza, 1463 caracteres) -> "expected 3, got 4"
+      3) y el siguiente caracter raro habria sido el tercero: el separador es del formato, pero
+         el contenido lo elige un mensaje de error que escribe cualquiera.
+    Cada reventon se lleva por delante todo lo que venga DESPUES dentro del mismo `try`: la
+    ultima vez desaparecieron del informe 1342 dead-letters y seis alias con trabajo perdido, y
+    el guardia PARECIA sano porque el fallo salia como una linea gris entre veinte.
+
+    Aplanar caracteres en la consulta (`replace(chr(10),' ')`) es perseguir bordes: siempre
+    queda uno. Aqui se cambia el FORMATO, no el contenido: `COPY ... TO STDOUT WITH (FORMAT
+    csv, FORCE_QUOTE *)` hace que Postgres emita CSV con TODOS los valores entre comillas y las
+    comillas internas dobladas, y se parsea con el modulo `csv`, que entiende ese mismo
+    formato. Con eso, una virgulilla, un salto de linea, una coma, un tabulador o una comilla
+    dentro de `last_error` son datos, no estructura: NO pueden cambiar el numero de columnas.
+
+    `columnas` es un contrato opcional: si la base devuelve otro ancho, se falla con un mensaje
+    que dice que pasó, en vez de con un "too many values to unpack" a 700 lineas de distancia.
+    """
+    cuerpo = consulta.strip().rstrip(";").strip()
+    if not cuerpo:
+        raise RuntimeError("consulta vacia")
+    orden = "COPY (%s) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);" % cuerpo
+    rc, out, err = sh("agora", PG, entrada=orden)
+    if rc != 0:
+        raise RuntimeError("psql rc=%d: %s" % (rc, err.strip()[:200]))
+    # newline="" es lo que pide el modulo `csv`: el que trocea las filas es el lector de CSV,
+    # que sabe que un salto de linea ENTRE COMILLAS es parte del dato y no el fin de la fila.
+    filas = [f for f in csv.reader(io.StringIO(out, newline="")) if f]
+    if columnas is not None:
+        malas = [f for f in filas if len(f) != columnas]
+        if malas:
+            raise RuntimeError(
+                "la consulta declaro %d columna(s) y la base devolvio %d fila(s) con otro "
+                "ancho (la primera trae %d): revisa la CONSULTA, no el texto de los datos"
+                % (columnas, len(malas), len(malas[0])))
+    return filas
+
+
+def panel_del_alias(alias):
+    """Las ultimas lineas del panel tmux del alias. SOLO LECTURA. None si no se puede.
+
+    El contenedor se resuelve por el `--container-id` del proceso vivo, NO por
+    `agents.container_name`: el 2026-08-17 esa columna declaraba `ws-humanizar` para iza cuando su
+    proceso corria en `claw-iza`, y leer el panel del contenedor equivocado habria devuelto el de
+    atlas como si fuera de iza.
+    """
+    # 2026-08-19 zeus: LOS DOS HOSTS, no solo el VPS. `salva` corre en `ws-isa` sobre kratos y su
+    # hallazgo llegaba con "no encontre el proceso de salva en el VPS: sin panel que leer" -sin
+    # causa-, cuando su panel traia la causa entera (un modal de limite de Codex esperando
+    # respuesta, que lo dejaba mudo sin perder ningun trabajo). `sh()` ya sabia hablar con kratos;
+    # esta funcion tenia "vps" en duro.
+    porque = None
+    for host in ("vps", "kratos"):
+        rc, out, _ = sh(host, "ps -eo args | grep 'run --alias %s ' | grep -v grep | "
+                              "grep -oE '\\-\\-container-id [a-f0-9]+' | head -1 | awk '{print $2}'"
+                        % alias, timeout=45)
+        cid = (out or "").strip()
+        if rc != 0 or not cid:
+            porque = ("no encontre el proceso de %s ni en el VPS ni en kratos: sin panel que leer"
+                      % alias)
+            continue
+        rc, out, err = sh(host,
+                          "docker exec %s sh -lc \"tmux -L cauce capture-pane -p -t cauce-%s\" "
+                          "2>&1 | grep -v '^[[:space:]]*$' | tail -30" % (cid, alias), timeout=60)
+        txt = (out or err or "").strip()
+        if "tmux: not found" in txt:
+            return None, ("el contenedor de %s NO TIENE tmux: no hay panel, y por eso su sesion no "
+                          "puede ser compartida. Eso es una averia en si, no una falta de dato"
+                          % alias)
+        if rc != 0 or not txt:
+            porque = "no pude capturar el panel de %s en %s (rc=%d)" % (alias, host, rc)
+            continue
+        return txt, None
+    return None, porque or "no pude leer el panel de %s en ningun host" % alias
+
+
+def causa_en_el_panel(texto):
+    """Traduce el panel a una causa NOMBRADA, o None si no reconozco ninguna. PURA."""
+    if not texto:
+        return None
+    t = texto.lower()
+    # 2026-08-19 zeus: `weekly limit` NO calza con `usage limit`, y es el texto que mas veces dejo
+    # mudo a un alias esta madrugada (heraclito, 02:12-04:57). Va PRIMERO por ser mas especifico.
+    # Y no se llama "sin credito" a proposito: el mismo texto se curo con un `/login` sobre la
+    # MISMA cuenta -04:57, cuenta `juanotalora653@gmail.com`, la sonda seguia marcando weekly 0% y
+    # despues cerro 6 entregas `done`-. O sea que el panel dice "estoy bloqueado" pero NO dice por
+    # que: saldo agotado y credencial vencida se ven identicos desde afuera.
+    if "weekly limit" in t or "hit your limit" in t or "usage-credits" in t:
+        return ("BLOQUEADO POR LIMITE **O** POR CREDENCIAL RANCIA: el panel dice que llego al tope, "
+                "pero ese mismo texto lo produce un token vencido. DESEMPATE BARATO Y PRIMERO: "
+                "`/login` sobre la MISMA cuenta. Si vuelve a trabajar era el token; si sigue mudo "
+                "era el saldo. NO muevas al alias de cuenta antes de probar eso -es lo caro y lo "
+                "que rompe cosas-. Y el porcentaje de la sonda NO decide: el 2026-08-19 la cuenta "
+                "marcaba weekly 0% y el alias cerraba entregas normalmente")
+    if "usage limit" in t or "purchase more credits" in t:
+        return ("PROVEEDOR SIN CREDITO: dice 'usage limit'. No es trabajo perdido y ningun "
+                "reintento ni reinicio lo arregla; hace falta credito (dinero, humano)")
+    # zeus 2026-08-22, medido con argos: el arnes openclaw NO tiene panel de tmux, asi que
+    # `causa_en_el_panel` nunca se llegaba a llamar y el hallazgo salia `trabajo_perdido`
+    # gravedad 80 -mandando a reinyectar- con la causa escrita, en ingles y en claro, dentro
+    # del propio `last_error`. Estas dos ramas existen para el texto que SI viaja por el bus.
+    if "not logged in" in t or "please run /login" in t:
+        return ("SIN CREDENCIAL: el CLI contesta 'Not logged in'. Medido en argos el 2026-08-22: "
+                "su `~/.claude/.credentials.json` era un fichero de CERO bytes propiedad de root "
+                "desde el 15-ago -una rotacion a medias-, y los dos peldanos anthropic de su "
+                "cadena llevaban una semana muertos sin que nadie lo notara. Comprobalo con "
+                "`sha256sum`: e3b0c44298fc... es el hash del fichero VACIO. No se reinyecta: se "
+                "repone la credencial y se prueba por efecto con `claude -p ok`")
+    if "all models failed" in t or "fallbacksummaryerror" in t:
+        return ("CADENA DE MODELOS AGOTADA: fallaron TODOS los peldanos, no solo el primero. "
+                "El texto del bus nombra unicamente al primero y TRUNCA POR EL MEDIO justo donde "
+                "van los otros -medido: '… [398 caracteres omitidos] …' se come las razones 2 a 5-. "
+                "Reinyectar no arregla nada. Hay que auditar la cadena PELDANO A PELDANO en el "
+                "`openclaw.json` del alias y probar cada proveedor por separado")
+    if "press enter" in t or "esc to go back" in t or "1." in t and "2." in t and "switch to" in t:
+        return ("MODAL ABIERTO: la TUI esta esperando una tecla. Se come turnos ENTEROS, incluso ya "
+                "terminados. Se contesta en el panel; mirar que opcion NO degrada el modelo")
+    # 2026-08-19 zeus: la revocacion va ANTES de la credencial generica, y con su propio texto.
+    # El panel de dedalo decia "your refresh token was revoked / Please log out and sign in again"
+    # y esta funcion devolvia None -ninguna de las tres palabras que buscaba aparece ahi-, asi que
+    # el hallazgo salia como `trabajo_perdido` y mandaba a reinyectar lo que no puede correr.
+    if "revoked" in t or "sign in again" in t or "could not be refreshed" in t:
+        return ("CREDENCIAL REVOCADA: la cadena de este alias fue invalidada, casi siempre porque "
+                "OTRO alias inicio sesion en la MISMA cuenta (Codex admite una sola credencial "
+                "viva por cuenta). No es trabajo perdido y ningun reintento lo arregla. ADJUDICA "
+                "ASI: compara `account_id` y el mtime de `~/.codex/auth.json` entre todos los "
+                "alias de arnes codex -leyendo el fichero, NUNCA invocando el CLI de codex, que "
+                "revoca la cadena viva-; el mtime mas nuevo sobre la misma cuenta es quien revoco "
+                "al resto. OJO: relogear a la victima revoca al otro y muda el problema. Dos "
+                "alias sobre una cuenta es suma cero: se arregla con otra CUENTA, no con otro "
+                "login")
+    if "login" in t or "authenticate" in t or "not authenticated" in t:
+        return "CREDENCIAL: el panel pide autenticacion"
+    return None
+
+
+_MESES = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+          "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def detalle_congelado(alias, vuelve, total, cuando):
+    """Texto del hallazgo `congelado_tras_recuperar_credito`. PURO.
+
+    2026-08-20 zeus: hasta hoy, si la hora prometida por el proveedor ya habia pasado, esto
+    se publicaba como `proveedor_sin_credito` con "NECESITA UNA PERSONA -y dinero-". Es la
+    conclusion equivocada, y cara: el panel es SCROLLBACK, no estado actual. El cartel de
+    limite sigue ahi porque nadie escribio nada despues, no porque el limite siga vigente.
+    Medido con salva: 22 h caido, la cuota volvio a las 03:46 y a las 03:55 el panel seguia
+    identico y sin consumir CPU; lo reinicie y a los 2 minutos cerro una entrega en `done`.
+    """
+    return ("%s se quedo CONGELADO en el cartel de limite: su proveedor dijo que volvia el "
+            "%s UTC, esa hora YA PASO y el alias no reintenta solo -la TUI se queda en el "
+            "cartel para siempre-. NO hace falta dinero: hace falta REINICIARLO "
+            "(`cauce %s off && cauce %s on`). Comproba antes que la cuota volvio de verdad; "
+            "si tras el reinicio, y con saldo, sigue fallando, ENTONCES si es dinero. "
+            "(%d falla(s) en 24 h, la ultima %s UTC)"
+            % (alias, vuelve.strftime("%Y-%m-%d %H:%M"), alias, alias, total, cuando))
+
+
+def cuanto_falta(segundos):
+    """Cuenta atras legible. PURA.
+
+    2026-08-20 zeus: se imprimia con `%.0f h`, asi que 17 minutos salian como "faltan 0 h".
+    El propio texto del apunte dice "si llega la fecha y sigue fallando, entonces SI es una
+    alarma": mostrar 0 h cuando todavia faltan minutos invita exactamente al falso positivo
+    que ese apunte existe para evitar.
+    """
+    minutos = int(segundos // 60)
+    if minutos < 60:
+        return "faltan %d min" % max(minutos, 0)
+    if minutos < 60 * 24:
+        return "faltan %dh%02dm" % (minutos // 60, minutos % 60)
+    return "faltan %.0f h" % (minutos / 60.0)
+
+
+def _reset_solo_hora(texto, ahora=None):
+    """`try again at 3:46 AM` -SIN fecha- -> datetime UTC de HOY, o None. PURA.
+
+    2026-08-20 zeus: codex publica las DOS formas del aviso. La larga trae dia y anio
+    (`try again at Aug 20th, 2026 3:46 AM`); la corta trae solo la hora, y es la que tenia
+    salva en el panel. Con la corta no se puede saber el dia, asi que solo se acepta si esa
+    hora TODAVIA no paso hoy: si ya paso, el mensaje es viejo y suponer "manana" taparia
+    hasta 24 h de caida real. En ese caso se devuelve None y el llamador escala, que es el
+    lado barato de equivocarse.
+    """
+    m = re.search(r"try again at\s+(\d{1,2}):(\d{2})\s*(AM|PM)", texto or "", re.IGNORECASE)
+    if not m:
+        return None
+    hora = int(m.group(1))
+    minuto = int(m.group(2))
+    if m.group(3).upper() == "PM" and hora != 12:
+        hora += 12
+    elif m.group(3).upper() == "AM" and hora == 12:
+        hora = 0
+    ahora = ahora or datetime.datetime.now(datetime.timezone.utc)
+    try:
+        cuando = ahora.replace(hour=hora, minute=minuto, second=0, microsecond=0)
+    except ValueError:
+        return None
+    return cuando if cuando > ahora else None
+
+
+def reset_del_panel(texto):
+    """`try again at Aug 20th, 2026 3:46 AM` -> datetime UTC, o None. PURA.
+
+    El proveedor publica en el panel CUANDO vuelve. Mientras ese momento no llegue, el
+    hallazgo no es una alarma: es un apunte con fecha. Si no se puede parsear se devuelve
+    None y el llamador ESCALA -no adivinamos un plazo-.
+
+    La zona horaria NO viene en el texto y se asume UTC. Si la real fuese UTC-5 el guardia
+    volveria a gritar unas horas antes de tiempo, que es el lado barato de equivocarse.
+    """
+    if not texto:
+        return None
+    m = re.search(r"try again at\s+([A-Za-z]{3})[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?,\s*"
+                  r"(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*(AM|PM))?", texto, re.IGNORECASE)
+    if not m:
+        return _reset_solo_hora(texto)
+    mes = _MESES.get(m.group(1).lower())
+    if not mes:
+        return None
+    try:
+        hora = int(m.group(4) or 0)
+        minuto = int(m.group(5) or 0)
+        ampm = (m.group(6) or "").upper()
+        if ampm == "PM" and hora != 12:
+            hora += 12
+        elif ampm == "AM" and hora == 12:
+            hora = 0
+        return datetime.datetime(int(m.group(3)), mes, int(m.group(2)), hora, minuto,
+                                 tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+# --------------------------------------------------------------------------- inventario
+
+def inventario():
+    """Los alias que existen, segun la base. Es la fuente de verdad de QUIEN existe."""
+    filas = sql("select tenant_id, alias, coalesce(container_name,'') from agents "
+                "where enabled order by alias;", columnas=3)
+    return {a: {"tenant": t, "contenedor_db": c} for t, a, c in filas}
+
+
+def procesos(host):
+    """Todos los procesos del host, ya troceados. Los procesos de un contenedor son visibles
+    en el `ps` del anfitrion, asi que un solo barrido por host los ve todos."""
+    rc, out, _ = sh(host, "ps -eo pid,etimes,pcpu,rss,args --no-headers")
+    if rc != 0:
+        return []
+    filas = []
+    for linea in out.split("\n"):
+        partes = linea.strip().split(None, 4)
+        if len(partes) < 5:
+            continue
+        try:
+            filas.append({"host": host, "pid": int(partes[0]), "etimes": int(partes[1]),
+                          "pcpu": float(partes[2]), "rss": int(partes[3]), "args": partes[4]})
+        except ValueError:
+            continue
+    return filas
+
+
+def unidades(host):
+    """Estado de las unidades de adaptador (son units de USUARIO de stev en los dos hosts)."""
+    if host == "kratos":
+        # 2026-08-14 (zeus): sin XDG_RUNTIME_DIR, `systemctl --user` no encuentra el bus
+        # del usuario y devuelve CERO unidades. La rama del VPS ya lo fijaba; la de
+        # kratos no, asi que la sonda venia ciega en kratos y el guardia no podia ver
+        # que alias quedaban sin supervisor. MEDIDO: 0 unidades sin la variable, 2 con
+        # ella (salva y kant). El fallo no daba error: devolvia una lista vacia, que se
+        # lee igual que "todo bien".
+        base = "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user"
+    else:
+        base = "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user"
+    rc, out, _ = sh(host, base + " list-units 'cauce-v3-container-*' 'cauce-v3-host-*' "
+                          "--all --no-legend --plain --no-pager")
+    if rc != 0:
+        return {}
+    res = {}
+    for linea in out.split("\n"):
+        partes = linea.split()
+        if len(partes) < 4 or not partes[0].startswith("cauce-v3-"):
+            continue
+        unidad = partes[0]
+        m = re.match(r"cauce-v3-(?:container|host)-(.+)\.service$", unidad)
+        if not m:
+            continue
+        res[m.group(1)] = {"unidad": unidad, "host": host,
+                           "active": partes[2], "sub": partes[3]}
+    return res
+
+
+# --- UN APAGADO ORDENADO NO ES UNA CAIDA --------------------------------------------------
+# BUG MEDIDO 2026-08-13 (zeus): el guardia grito "no se ve adaptador vivo ni unidad activa en
+# ningun host" con gravedad 95 dos veces esta noche, con atlas y con socrates, y las dos veces
+# era FALSO: los habian reiniciado a proposito y el guardia paso por el hueco. La lista de
+# unidades se toma UNA vez al principio de la corrida y este aviso se emite minutos despues,
+# sin volver a mirar; un reinicio entero cabe holgado en ese hueco.
+#
+# El discriminante es el que pedia el caso: un apagado ORDENADO se ve distinto de una caida.
+# Medido con `systemctl show` sobre las dos unidades que dispararon el falso positivo:
+#   atlas     InactiveEnter 04:03:17 -> ActiveEnter 04:03:44   (27 s)  Result=success
+#   socrates  InactiveEnter 03:42:35 -> ActiveEnter 03:43:09   (34 s)  Result=success
+# Una caida deja `Result` en exit-code / signal / timeout / oom-kill / core-dump, y no trae un
+# arranque limpio detras. Un reinicio deliberado deja `Result=success` y una parada RECIENTE.
+#
+# Se remide la unidad AHORA (no es un sleep: es dejar de concluir sobre una muestra vieja, lo
+# mismo que ya hace la rama `adaptador_caido` desde el 2026-08-11) y se pregunta por el EFECTO:
+#   - si ya esta `active`     -> se recupero solo / nunca estuvo caido: no es hallazgo.
+#   - si esta `activating`    -> esta arrancando ahora mismo: no es hallazgo.
+#   - si esta parada limpia   -> apagado ordenado hace menos de VENTANA_REINICIO_S: es un
+#     y RECIENTE                reinicio en curso, no un alias mudo. Queda como apunte.
+#   - cualquier otra cosa     -> se avisa igual, como siempre.
+# Los timestamps se leen en forma MONOTONA (microsegundos desde el arranque) y se restan
+# contra `/proc/uptime` del mismo host: asi no depende del locale del `date` ni del reloj.
+VENTANA_REINICIO_S = 600      # 10 min: ~18x la parada mas larga medida (34 s), con margen de
+# sobra para un `restart` lento, y suficientemente corto para que un alias realmente caido no
+# se esconda mas de una corrida del guardia (que corre cada 15 min).
+
+
+def estado_fresco_unidad(host, unidad):
+    """Remide UNA unidad AHORA. Devuelve dict o None si no se pudo medir.
+
+    None significa "no lo pude medir", que NO es lo mismo que "esta bien": el que llama tiene
+    que seguir avisando en ese caso. Una sonda rota no acredita nada (misma regla que ya rige
+    para `unidades()` y `procesos()` en esta corrida).
+    """
+    base = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if host == "kratos"
+            else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
+    rc, out, _ = sh(host, "cat /proc/uptime; %s show %s -p ActiveState,SubState,Result,"
+                          "ActiveEnterTimestampMonotonic,InactiveEnterTimestampMonotonic"
+                    % (base, unidad), timeout=40)
+    if rc != 0 or not out.strip():
+        return None
+    lineas = out.strip().split("\n")
+    try:
+        uptime_s = float(lineas[0].split()[0])
+    except (IndexError, ValueError):
+        return None
+    d = {}
+    for linea in lineas[1:]:
+        if "=" in linea:
+            k, _, v = linea.partition("=")
+            d[k.strip()] = v.strip()
+    if "ActiveState" not in d:
+        return None
+
+    def _antiguedad(campo):
+        try:
+            us = int(d.get(campo, "0"))
+        except ValueError:
+            return None
+        if us <= 0:
+            return None
+        return uptime_s - (us / 1000000.0)
+
+    return {"unidad": unidad, "host": host,
+            "active": d.get("ActiveState", ""), "sub": d.get("SubState", ""),
+            "result": d.get("Result", ""),
+            "hace_activa_s": _antiguedad("ActiveEnterTimestampMonotonic"),
+            "hace_parada_s": _antiguedad("InactiveEnterTimestampMonotonic")}
+
+
+def _lee_reinicio(fresco, ventana_s=VENTANA_REINICIO_S):
+    """(es_reinicio, motivo) a partir de UNA medicion ya tomada. PURA: no toca red, para poder
+    probarla. `False, ""` = avisar como siempre."""
+    unidad, host = fresco["unidad"], fresco["host"]
+    if fresco["active"] == "active" and fresco["sub"] != "failed":
+        # Cubre DOS casos, los dos reales: (a) el alias se reinicio en el hueco entre la muestra
+        # y el aviso, y ya volvio; (b) la unidad ELEGIDA arriba era la sobra `inactive` que dejo
+        # una mudanza en el otro host, mientras la de verdad esta arriba. En los dos, con la
+        # unidad activa AHORA no se puede concluir que el alias este sin adaptador.
+        return True, ("la unidad %s en %s esta ACTIVA al remedirla (arriba hace %s s): la "
+                      "muestra del principio de la corrida no alcanza para declararlo mudo"
+                      % (unidad, host,
+                         int(fresco["hace_activa_s"]) if fresco["hace_activa_s"] else "?"))
+    if fresco["active"] in ("activating", "reloading", "deactivating"):
+        return True, ("la unidad %s en %s esta en '%s': esta arrancando o parando ahora mismo, "
+                      "no esta caida" % (unidad, host, fresco["active"]))
+    parada = fresco["hace_parada_s"]
+    if fresco["result"] == "success" and parada is not None and parada < ventana_s:
+        return True, ("la unidad %s en %s se paro ORDENADAMENTE (Result=success) hace %d s, "
+                      "dentro de la ventana de reinicio de %d s: es un apagado deliberado en "
+                      "curso, no una caida" % (unidad, host, int(parada), ventana_s))
+    return False, ""
+
+
+def en_ventana_de_reinicio(host, unidad, ventana_s=VENTANA_REINICIO_S):
+    """(es_reinicio, motivo) para UNA unidad, remedida AHORA. Envoltorio de `_lee_reinicio`.
+    Un `None` (no se pudo medir) NO es "esta bien": se devuelve `False` y se avisa como
+    siempre, que de una sonda rota no se concluye nada."""
+    fresco = estado_fresco_unidad(host, unidad)
+    if fresco is None:
+        return False, ""
+    return _lee_reinicio(fresco, ventana_s)
+
+
+def mapa_adaptadores(procs):
+    """alias -> adaptador vivo (host, pid, bundle, digest, contenedor). Se descubre del
+    proceso VIVO, no del inventario: el inventario y el Description de las units mienten
+    despues de una mudanza (ya paso), el argv del proceso no."""
+    res = {}
+    for p in procs:
+        m = RE_ADAPTADOR.search(p["args"])
+        if not m:
+            continue
+        alias = m.group("alias")
+        b = RE_BUNDLE.search(p["args"])
+        d = RE_DIGEST.search(p["args"])
+        c = RE_CTR.search(p["args"])
+        res[alias] = {"host": p["host"], "pid": p["pid"], "etimes": p["etimes"],
+                      "bundle": os.path.basename(b.group("bundle")) if b else "",
+                      "digest": d.group("digest") if d else "",
+                      "contenedor": c.group("ctr") if c else ""}
+    return res
+
+
+def clientes_tmux(alias, adaptador):
+    """Cuantos clientes de tmux hay atados al panel del alias. Reiniciar o matar algo de un
+    alias con la TUI de su dueno abierta le tumba la sesion: no se hace solo."""
+    sesion = "cauce-%s" % alias
+    if not adaptador:
+        return None
+    if adaptador.get("contenedor"):
+        cmd = "docker exec %s tmux -L cauce list-clients -t %s 2>/dev/null" % (
+            adaptador["contenedor"], sesion)
+    else:
+        cmd = "tmux -L cauce list-clients -t %s 2>/dev/null" % sesion
+    rc, out, _ = sh(adaptador["host"], cmd, timeout=30)
+    if rc != 0:
+        return 0
+    return len([l for l in out.strip().split("\n") if l.strip()])
+
+
+# ------------------------------------------------------------------------------ sondas
+
+SONDA_TELEGRAM = r'''
+import json, glob, os, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+# En paralelo a proposito: 16 llamadas en serie tardaban mas de 180 s y la sonda moria por
+# timeout, que es como no tener sonda.
+def una(f):
+    alias = os.path.basename(f)[:-6]
+    try:
+        tok = open(f).read().strip()
+        # SOLO getWebhookInfo. getUpdates confirmaria y DESTRUIRIA los acumulados.
+        url = "https://api.telegram.org/bot%s/getWebhookInfo" % tok
+        with urllib.request.urlopen(url, timeout=20) as r:
+            d = json.load(r)["result"]
+        return alias, {"pendientes": d.get("pending_update_count"),
+                       "webhook": d.get("url") or "",
+                       "ultimo_error": d.get("last_error_message")}
+    except Exception as e:
+        return alias, {"error": type(e).__name__}
+ficheros = sorted(glob.glob("/etc/cauce-v3/telegram-runtime/*.token"))
+with ThreadPoolExecutor(max_workers=8) as ex:
+    salida = dict(ex.map(una, ficheros))
+print(json.dumps(salida))
+'''
+
+
+def sonda_telegram():
+    """Se ejecuta EN agora-storage para que los tokens no salgan de ese host."""
+    # UN timeout de red no puede dejar ciego al informe entero. La sonda es de SOLO LECTURA
+    # (corre en agora para que los tokens no salgan de ese host), asi que reintentar es seguro.
+    # Solo se reintenta el fallo de CONEXION (255 = ssh, 124 = timeout); cualquier otro rc se
+    # reporta tal cual, porque entonces el problema no es la red y insistir lo esconde.
+    rc, out, err = sh("agora", "python3 -", entrada=SONDA_TELEGRAM, timeout=180)
+    if rc in (124, 255):
+        rc2, out2, err2 = sh("agora", "python3 -", entrada=SONDA_TELEGRAM, timeout=180)
+        if rc2 == 0:
+            rc, out, err = rc2, out2, err2
+        else:
+            return {}, ("sonda telegram rc=%d y el reintento tambien fallo (rc=%d): %s"
+                        % (rc, rc2, (err2 or err).strip()[:130]))
+    if rc != 0:
+        return {}, "sonda telegram rc=%d: %s" % (rc, err.strip()[:150])
+    try:
+        return json.loads(out.strip().split("\n")[-1]), None
+    except Exception as e:  # noqa: BLE001
+        return {}, "sonda telegram ilegible: %s" % e
+
+
+SONDA_CRED = r'''
+import json, io, os, sys, hashlib
+p = sys.argv[1]
+if not os.path.exists(p):
+    print(json.dumps({"falta": True})); raise SystemExit
+d = json.load(io.open(p, encoding="utf-8"))
+o = d.get("claudeAiOauth") or d.get("tokens") or d
+rt = o.get("refreshToken") or o.get("refresh_token") or ""
+# Solo la huella: identifica la cuenta sin permitir reconstruir el secreto.
+at = o.get("accessToken") or o.get("access_token") or ""
+exp = o.get("expiresAt") or o.get("expires_at") or 0
+print(json.dumps({"huella": hashlib.sha256(rt.encode()).hexdigest()[:10] if rt else None,
+                  "huella_acc": hashlib.sha256(at.encode()).hexdigest()[:10] if at else None,
+                  "exp": exp}))
+'''
+
+
+def sonda_credenciales(adaptadores):
+    """Huella de la credencial de cada contenedor con adaptador vivo. Detecta las dos firmas
+    de 'credencial rota que miente': sin refreshToken, o la misma huella compartida.
+
+    EL DISCRIMINANTE ES (huella, CONTENEDOR), NO (huella, alias). MEDIDO 2026-08-13 (zeus):
+    el aviso "credencial COMPARTIDA (huella 0911427b90) entre: atlas, kratos; al rotar se
+    pisan" es un FALSO POSITIVO PERMANENTE. atlas y kratos son dos ALIAS del MISMO contenedor
+    (ws-humanizar): comparten `/home/dev/.claude/.credentials.json` porque comparten el HOME,
+    no porque cada uno tenga su copia -es un solo inodo (13544331). Al renovarse, se renueva
+    en sitio y los dos ven el token nuevo: no hay nada que pisarse. Barrida la huella en los
+    15 contenedores del VPS: 0911427b90 aparece en EXACTAMENTE UNO; ninguna huella se repite
+    entre contenedores distintos.
+    El peligro REAL que esta regla existe para atrapar es OTRO: dos CONTENEDORES DISTINTOS con
+    COPIAS del mismo refresh_token si se matan entre si (el primero que refresca revoca al
+    otro, "Your authentication token has been invalidated" -paso de verdad con codex de argos
+    y zeus). Por eso `huellas` guarda (alias, contenedor) y `compartidas` solo dispara cuando
+    una MISMA huella aparece en MAS DE UN contenedor: dos alias del mismo contenedor jamas
+    activan la alarma, por diseno, no por casualidad."""
+    vistos, huellas, problemas = {}, {}, []
+    for alias, ad in sorted(adaptadores.items()):
+        ctr = ad.get("contenedor")
+        if not ctr:
+            continue
+        if ctr in vistos:
+            huellas.setdefault(vistos[ctr], []).append((alias, ctr))
+            continue
+        for ruta in ("/home/dev/.claude/.credentials.json", "/home/claw/.claude/.credentials.json"):
+            cmd = "docker exec -i %s python3 -c \"$(cat)\" %s" % (ctr, ruta)
+            rc, out, _ = sh(ad["host"], cmd, entrada=SONDA_CRED, timeout=40)
+            if rc != 0 or not out.strip():
+                continue
+            try:
+                d = json.loads(out.strip().split("\n")[-1])
+            except Exception:  # noqa: BLE001
+                continue
+            if d.get("falta"):
+                continue
+            h = d.get("huella")
+            if h is None:
+                # setup-token: NO tiene refreshToken A PROPOSITO y dura ~364 dias. No es un
+                # fallo: es el patron correcto. Solo es problema si el access ya vencio o esta
+                # por vencer, porque entonces si enmudece y no hay con que renovar.
+                # EPOCH0 2026-08-11 (zeus): un "exp" ausente o 0 NO es un token vencido: es que
+                # no se pudo leer la caducidad. Tomarlo como epoch 1970 produce "vence en -496233 h"
+                # (56 anios) y un aviso de credencial rota sobre un alias sano. Paso con zeus el
+                # 2026-08-11 12:29Z: su fichero tenia refreshToken y el access vigente 8 h, medido
+                # con esta misma sonda. Una medicion fallida no es un resultado negativo.
+                exp_ms = int(d.get("exp") or 0)
+                if exp_ms <= 0:
+                    continue
+                horas = (exp_ms/1000.0 - time.time())/3600.0
+                if horas > 168:
+                    continue  # token largo vigente: sano, y sin refresh no hay carrera que perder
+                problemas.append({"alias": alias, "contenedor": ctr,
+                                  "detalle": "sin refreshToken y el access vence en %.0f h: "
+                                             "no puede renovar, enmudece" % horas})
+            else:
+                vistos[ctr] = h
+                huellas.setdefault(h, []).append((alias, ctr))
+            break
+    compartidas = {}
+    for h, quienes in huellas.items():
+        contenedores = {c for _, c in quienes}
+        if len(contenedores) > 1:
+            compartidas[h] = sorted({a for a, _ in quienes})
+    return problemas, compartidas
+
+
+# ------------------------------------------------------------------------------ chequeos
+
+def turnos_muertos_de_zeus(lista):
+    """De las entregas que zeus tomo y no cerro, las que de verdad estan MUERTAS.
+
+    Despertar a una persona exige evidencia POSITIVA de que el medico no esta vivo, no la mera
+    ausencia de progreso: una entrega tomada y sin cerrar es exactamente lo que se ve SIEMPRE
+    que zeus esta trabajando (p90 de turno 31 min, umbral 20). La senal de vida es la RESERVA:
+    mientras el lease no vence, alguien lo esta renovando, o sea el adaptador sigue en pie.
+    `lease_min` en None significa que no se pudo leer: eso es ceguera, no muerte, y tampoco
+    escala. MEDIDO 2026-08-13: sin este filtro, Steven recibia "zeus no esta en pie" cada vez
+    que un turno pasaba de 20 minutos.
+    """
+    return [x for x in lista
+            if x.get("lease_min") is not None and x["lease_min"] < 0]
+
+
+def cursores():
+    filas = sql("select alias, next_update_id, "
+                "round(extract(epoch from (now()-updated_at))/60) "
+                "from channel_bridge_cursors;", columnas=3)
+    return {a: {"cursor": int(c), "quieto_min": int(float(m))} for a, c, m in filas}
+
+
+def entregas_trabadas():
+    """Las entregas en vuelo, con lo que hace falta para saber si ALGUIEN LAS ESTA TRABAJANDO.
+
+    La edad sola no distingue un turno largo de un turno muerto (por eso el guardia reportaba
+    los turnos reales del medico como "trabados" cada hora). Se traen ademas dos medidas del
+    MOVIMIENTO de la fila:
+      quieto_min: minutos desde el ultimo avance real de la entrega
+      lease_min : minutos que le quedan a la reserva (negativo = vencida)
+    `greatest` en Postgres ignora los NULL, y `created_at` nunca lo es: la cuenta siempre sale.
+    """
+    filas = sql(
+        "select recipient_tenant, recipient_alias, status, attempt, "
+        "round(extract(epoch from (now()-created_at))/60), id, "
+        "round(extract(epoch from (now()-greatest(created_at, claimed_at, "
+        "  execution_started_at, updated_at)))/60), "
+        "coalesce(round(extract(epoch from (claim_expires_at-now()))/60)::text,'') "
+        "from deliveries where status in ('claimed','accepted','started') "
+        "order by created_at;", columnas=8)
+    salida = []
+    for f in filas:
+        if len(f) < 8:
+            continue
+        t, a, s, i, m, d, q, lease = f[:8]
+        try:
+            lease_min = int(float(lease)) if str(lease).strip() else None
+        except ValueError:
+            lease_min = None
+        try:
+            quieto = int(float(q))
+        except ValueError:
+            quieto = None
+        salida.append({"tenant": t, "alias": a, "status": s, "intento": int(i),
+                       "edad_min": int(float(m)), "id": d,
+                       "quieto_min": quieto, "lease_min": lease_min})
+    return salida
+
+
+# --- QUIEN ESCRIBIO EL `last_error` -------------------------------------------------------
+# BUG MEDIDO 2026-08-13 (zeus): el aviso de `respuesta_perdida` citaba el `last_error` de la
+# entrega como prueba de que la respuesta murio EN EL CAMINO DE VUELTA, y se lo atribuia al
+# remitente. Pero `last_error` es una columna de la ENTREGA, y quien termina una entrega es su
+# DESTINATARIO: cuando un agente RECHAZA lo que le llega, su motivo -texto suyo, en prosa-
+# queda escrito ahi. Es decir: en esas filas el texto lo escribio justamente el alias que el
+# aviso decia que "ESPERABA" la respuesta a ciegas. Nadie esperaba nada: la habia leido y la
+# habia rechazado. Casos reales de esta noche, los tres con `recipient_alias=seneca`:
+#   4aa49b90  "Confirmado: todavia no esta todo desplegado. Verificacion independiente..."
+#   009392ec  "Entrega duplicada: no contiene un resultado nuevo de Vulcano..."
+#   26eff7ab  "Entrega duplicada de Zeus, sin informacion nueva..."
+#
+# El discriminante NO es el idioma ni el largo (medido: `Harness exited with code 1 without
+# structured output: openclaw stdin bridge failed...` son 1137 caracteres y es del transporte).
+# Es el ORIGEN: los diagnosticos del transporte son un conjunto CERRADO de frases que emite el
+# adaptador/bus, siempre en la MISMA forma y al principio del texto. Lo que no calza con
+# ninguna, lo escribio una persona o un agente.
+#
+# CONTRASTADO CONTRA LA BASE (30 dias, entregas dead/failed de tipo agent.response, n=1155):
+#   793 calzan con este patron -> son del transporte
+#   362 no calzan -> se auditaron los 362 uno por stem y son TODOS prosa de alguien:
+#       221 "cancelado por zeus 2026-07-28: aviso de fracaso duplicado..." (operador)
+#        ~30 "Argos - <alias>, transporte cancelado. Acta NN..." (argos rechazando)
+#        ~25 "EXERCISE_ID=PROMETEO-... STATUS=FAIL" (banco de pruebas)
+#         2 "Cancelled by operator Steven:kant (ops/zeus maintenance...)"
+#         y los de seneca/atlas de esta noche.
+#   Cero diagnosticos del transporte se colaron del lado equivocado.
+RE_ERROR_DE_TRANSPORTE = re.compile(
+    r"^\s*(?:ACK timeout"
+    r"|Harness "
+    r"|A harness "
+    r"|A failed harness "
+    r"|Previous harness "
+    r"|OpenClaw result "
+    r"|Hermes result "
+    r"|Structured output is missing"
+    r"|Claude Code result "
+    r"|Codex result "
+    r"|Delivery expired"
+    r"|Adapter "
+    r"|Transport )")
+
+
+def error_de_transporte(err):
+    """True si este `last_error` lo escribio el TRANSPORTE (y por lo tanto se puede citar como
+    prueba de que la respuesta no llego). False = lo escribio el destinatario o un operador, y
+    entonces la entrega SI se vio: no se perdio en el camino, se rechazo.
+
+    Ante la duda NO se calla nada: el que no calza no desaparece, se reporta por el otro canal
+    (`respuesta_rechazada`) con la autoria puesta donde corresponde. Si el bus estrena un
+    diagnostico nuevo que este patron no conoce, el peor caso es que aparezca en la lista
+    equivocada -visible igual-, nunca que se pierda.
+    """
+    return bool(RE_ERROR_DE_TRANSPORTE.match(err or ""))
+
+
+def respuestas_perdidas(horas=24):
+    """(perdidas, rechazadas): dos cosas distintas que antes se contaban como una.
+
+    `perdidas`   = la respuesta murio en el camino de vuelta. Deja CIEGAS a las dos puntas.
+    `rechazadas` = la respuesta LLEGO y el destinatario la rechazo, dejando por escrito su
+                   motivo en `last_error`. Nadie quedo ciego: hay un alias que la leyo.
+
+    Medido en prod (24 h): 18/18 delegaciones muertas avisaron al que las pidio; 0/4 respuestas
+    muertas avisaron a nadie. El aviso busca al padre en `agent_output_materializations`, que
+    tiene fila para 220/220 delegaciones y 0/210 respuestas: sin fila, el store se calla.
+
+    `recipient_alias` es el DESTINATARIO; `actor_alias`, quien la contesto. Solo en el grupo
+    `perdidas` el destinatario es ademas "el que esperaba a ciegas": en `rechazadas` es el
+    AUTOR del texto de `last_error`, y decir que esperaba algo es exactamente el bug de arriba.
+    """
+    filas = sql(
+        "select d.recipient_tenant, d.recipient_alias, coalesce(m.actor_alias,'?'), "
+        "left(d.id::text,8), "
+        "to_char(d.terminal_at at time zone 'UTC','MM-DD HH24:MI'), "
+        "left(coalesce(d.last_error,''),110), "
+        "(select count(*) from deliveries d2 "
+        " join messages m2 on m2.id = d2.message_id "
+        " where d2.recipient_alias = d.recipient_alias and d2.status = 'done' "
+        # 2026-08-18 zeus: era `> d.terminal_at`, y el fan-in se emite en el MISMO segundo en
+        # que la respuesta se da por muerta -es su consecuencia-, asi que el `>` estricto lo
+        # dejaba fuera por un empate. Se ancla en `created_at`: el texto existe desde que la
+        # respuesta se creo, no desde que el bus se rindio.
+        "   and d2.created_at >= d.created_at "
+        "   and length(coalesce(m.body->>'text','')) > 40 "
+        "   and position("
+        # 2026-08-18 zeus: se buscaba en `m2.body->>'text'`, pero el fan-in lleva ahi un
+        # texto generico ("Synthesize one non-empty final reply...") y el contenido real en
+        # `body->fanin_data_v1->responses[]->untrusted_text`. Buscando en el cuerpo ENTERO se
+        # cubren los dos casos. Sin esto, la via que mas veces reentrega una respuesta era
+        # justo la que el chequeo no miraba, y el aviso salia con gravedad 82.
+        "         left(regexp_replace(coalesce(m.body->>'text',''),'\\s+',' ','g'),60) "
+        "         in regexp_replace(coalesce(m2.body::text,''),'\\s+',' ','g')) > 0)::text "
+        "from deliveries d join messages m on m.id = d.message_id "
+        "where d.status in ('dead','failed') "
+        "  and d.terminal_at > now() - interval '%d hours' "
+        "  and coalesce(m.body->>'type','') = 'agent.response' "
+        "order by d.terminal_at desc;" % int(horas), columnas=7)
+    perdidas, rechazadas = {}, {}
+    for f in filas:
+        if len(f) < 7:
+            continue
+        tenant, destinatario, contesto, did, cuando, err, rescate = f[:7]
+        err = (err or "").strip()
+        item = {"tenant": tenant, "contesto": contesto, "id": did,
+                "cuando": cuando, "error": err,
+                "rescatada": (rescate or "0").strip() not in ("", "0")}
+        destino = perdidas if error_de_transporte(err) else rechazadas
+        destino.setdefault(destinatario, []).append(item)
+    return perdidas, rechazadas
+
+
+def captura_en_vuelo(alias):
+    """Lo que se va a PERDER si se reinicia este alias. Se guarda ANTES de tocar nada: si el
+    rescate falla, este registro es lo unico que permite recuperarlo a mano."""
+    filas = sql(
+        "select d.id, d.message_id, m.actor_alias, m.tenant_id, m.room_id, m.lane, "
+        "m.priority, m.request_id, replace(coalesce(m.body->>'text',''), chr(10), ' ') "
+        "from deliveries d join messages m on m.id = d.message_id "
+        "where d.recipient_alias = '%s' "
+        "and d.status in ('claimed','accepted','started');" % alias.replace("'", "''"),
+        columnas=9)
+    return [{"delivery": f[0], "message": f[1], "actor": f[2], "tenant": f[3],
+             "room": f[4], "lane": f[5], "priority": f[6], "request_id": f[7],
+             "texto": f[8][:400]} for f in filas if len(f) >= 9]
+
+
+# --------------------------------------------------------------------------- reparaciones
+
+def matar_por_pid(host, pid, args_esperados):
+    """Mata UN proceso por PID, reconfirmando su identidad justo antes. Nunca por nombre."""
+    rc, out, _ = sh(host, "tr '\\0' ' ' < /proc/%d/cmdline 2>/dev/null" % pid, timeout=30)
+    if rc != 0 or not out.strip():
+        return False, "el proceso ya no existe"
+    if not RE_PUENTE.search(out) and not RE_PUENTE_NATIVO.search(out):
+        # Cambio de identidad: el PID se reutilizo. No se toca.
+        return False, "el PID cambio de identidad, no se toca"
+    sh(host, "kill -TERM %d" % pid, timeout=30)
+    sh(host, "sleep 10", timeout=40)
+    rc, _, _ = sh(host, "test -d /proc/%d" % pid, timeout=30)
+    if rc == 0:
+        sh(host, "kill -KILL %d" % pid, timeout=30)
+        sh(host, "sleep 5", timeout=30)
+        rc, _, _ = sh(host, "test -d /proc/%d" % pid, timeout=30)
+    return (rc != 0), ("el proceso desaparecio" if rc != 0 else "SIGUE VIVO tras SIGKILL")
+
+
+def reiniciar_puente_telegram():
+    rc, _, err = sh("agora", "docker restart %s" % PUENTE_TELEGRAM, timeout=180)
+    return rc == 0, (err.strip()[:150] if rc != 0 else "docker restart devolvio 0")
+
+
+def ciclo_rescate(alias, adaptador, apuntes):
+    """Reinicia un adaptador SIN perder el trabajo en vuelo.
+
+    Sin el paso de re-inyeccion, reiniciar es DESTRUIR: la entrega en vuelo muere con
+    `SHUTDOWN` en attempt=1 y no se reintenta nunca. Por eso el orden es obligatorio:
+      1 capturar lo que se va a perder (y dejarlo en la bitacora ANTES de tocar nada)
+      2 reiniciar
+      3 verificar que volvio (active, no failed)
+      4 leer la salida entera: `arranco SIN sesion compartida` es FALLO, no exito
+      5 re-inyectar por la API con idempotency_key derivada del delivery original
+      6 verificar POR EFECTO que la entrega llego a done
+    """
+    if not adaptador:
+        return {"resultado": "omitido", "razon": "no se ve el adaptador vivo"}
+    if alias in ALIAS_PIERDEN_CONTEXTO:
+        # No es una precaucion teorica: su panel arranca con `exec claude` pelado y el agente
+        # vuelve sin saber en que estaba. Se REPORTA para que lo mire una persona.
+        return {"resultado": "omitido",
+                "razon": "%s todavia PIERDE TODO SU CONTEXTO al reiniciarse (panel con `exec` "
+                         "pelado, sin reanudar sesion): reiniciarlo es amnesia, no reparacion. "
+                         "Se reporta; lo arregla el SDK, no el guardia." % alias}
+    # Reiniciar con trabajo en vuelo lo mata con `attempt=1` y NO se reintenta solo. Mientras
+    # la re-inyeccion no este implementada, esto es destruir trabajo, no rescatarlo.
+    en_vuelo = captura_en_vuelo(alias)
+    if en_vuelo:
+        return {"resultado": "omitido", "perdido": en_vuelo,
+                "razon": "%d entrega(s) EN VUELO: reiniciar ahora las mata con attempt=1 y "
+                         "nadie las reintenta (la re-inyeccion automatica no existe todavia)"
+                         % len(en_vuelo)}
+    if adaptador.get("bundle") != RELEASE_CON_FIX78 or adaptador.get("digest") != DIGEST_CON_FIX78:
+        return {"resultado": "omitido",
+                "razon": "release sin el fix de exit 78 (%s): reiniciarlo puede dejarlo "
+                         "en failed sin arrancar" % (adaptador.get("bundle") or "?")}
+    n = clientes_tmux(alias, adaptador)
+    if n:
+        return {"resultado": "omitido",
+                "razon": "%d cliente(s) de tmux atados: reiniciar le tumba la TUI a su dueno" % n}
+
+    perdido = captura_en_vuelo(alias)          # paso 1
+    apuntes.append({"tipo": "captura_previa", "alias": alias, "entregas": perdido})
+
+    unidad = "cauce-v3-container-%s.service" % alias
+    base = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if adaptador["host"] == "kratos"
+            else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
+    rc, out, err = sh(adaptador["host"], "%s restart %s 2>&1" % (base, unidad), timeout=180)
+    salida_arranque = (out + err)[-2000:]      # paso 4: se guarda ENTERA, no se filtra
+    sh(adaptador["host"], "sleep 15", timeout=40)
+    _, estado, _ = sh(adaptador["host"], "%s is-active %s" % (base, unidad), timeout=40)
+    estado = estado.strip()
+    if estado != "active":                     # paso 3
+        return {"resultado": "fallo", "estado": estado, "perdido": perdido,
+                "salida": salida_arranque,
+                "razon": "quedo en '%s': NO se re-inyecta nada contra un alias muerto" % estado}
+
+    sin_panel = "SIN sesion compartida" in salida_arranque
+    return {"resultado": "reiniciado", "estado": estado, "perdido": perdido,
+            "sin_sesion_compartida": sin_panel, "salida": salida_arranque,
+            "reinyeccion": "NO IMPLEMENTADA EN AUTOMATICO: ver informe"}
+
+
+# ---------------------------------------------------------------------------- reportar
+
+PLANTILLA_AVISO = r'''
+import json, sys, urllib.parse, urllib.request
+texto = json.load(sys.stdin)["texto"]
+tok = open("%s").read().strip()
+d = urllib.parse.urlencode({"chat_id": "%s", "text": texto}).encode()
+with urllib.request.urlopen("https://api.telegram.org/bot%%s/sendMessage" %% tok, d, timeout=25) as r:
+    r.read()
+print("enviado")
+''' % (TOKEN_AVISO, CHAT_STEVEN)
+
+
+def avisar(texto):
+    """Manda el aviso al chat de Steven. Se ejecuta EN agora-storage: el token no sale de ahi.
+    Es la misma via que ya usa cauce-guardia-nocturna, probada."""
+    rc, out, err = sh("agora", "python3 -", entrada=PLANTILLA_AVISO.replace(
+        "json.load(sys.stdin)", "json.loads(%r)" % json.dumps({"texto": texto})), timeout=60)
+    return rc == 0 and "enviado" in out, err.strip()[:150]
+
+
+# El despacho a zeus se ejecuta EN agora-storage: el certificado de cliente no sale de ahi.
+# `/v3/messages` vive A PROPOSITO fuera de `/v3/console/` porque es superficie maquina-a-maquina
+# y un demonio con certificado de cliente jamas manda `Origin` (ver el comentario en
+# services/gateway/src/app.ts). Por eso aqui NO se manda ese header.
+DESPACHO = r'''
+import json, ssl, sys, http.client
+payload = json.loads(sys.stdin.read())
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.load_verify_locations("/etc/cauce-v3/pki/ca.crt")
+ctx.load_cert_chain("/etc/cauce-v3/pki/console-client.crt",
+                    "/etc/cauce-v3/pki/console-client.key")
+c = http.client.HTTPSConnection("100.64.0.6", 8443, context=ctx, timeout=25)
+c.request("POST", "/v3/messages", body=json.dumps(payload).encode(),
+          headers={"content-type": "application/json", "accept": "application/json"})
+r = c.getresponse()
+print(r.status)
+print(r.read().decode("utf-8", "replace")[:500])
+'''
+
+# Gravedad: un agente mudo primero, la degradacion al final. Ordena que se despacha cuando hay
+# mas hallazgos que cupo.
+GRAVEDAD = {"adaptador_caido": 100, "sin_adaptador": 95,
+            # Un bucle de sondeo va ALTO aunque nada este roto: se lleva la cuota de toda la
+            # flota en horas y deja a los 15 alias sin poder trabajar. Es el unico hallazgo que
+            # se dispara con TODO en verde, y por eso hay que verlo antes que a los rotos.
+            "bucle_de_cuota": 92,
+            # 2026-08-12 zeus: medido. Un cron corto que corre sobre un proveedor con
+            # saldo de sobra NO es el incidente de argos, que quemo cuota de CLAUDE.
+            # Se sigue viendo (nunca se silencia), pero deja de gritar y de tapar
+            # el bucle de verdad cuando aparezca.
+            "bucle_de_cuota_barato": 35,
+            "poller_trabado": 90,
+            # El canal por el que EL PROPIO MEDICO se entera de los fallos, roto en silencio:
+            # tan grave como un poller trabado, porque si esto pasa desapercibido, todo lo
+            # demas que el guardia "reporta" puede estar cayendose igual sin que nadie lo note.
+            "aviso_propio_muerto": 90,
+            "trabajo_perdido": 80, "encargo_sin_hacer": 75, "entrega_trabada": 70,
+            # Un alias que no puede ejecutar es MAS grave que una entrega perdida: pierde todas
+            # las siguientes tambien, y en silencio. argos estuvo asi 7 dias (15 al 22 de agosto).
+            "credencial_vacia": 88, "cadena_de_modelos_agotada": 82,
+            # POR ENCIMA de trabajo_perdido a proposito: cuando muere la delegacion de IDA
+            # el que pidio se entera y reintenta. Cuando muere la respuesta de VUELTA quedan
+            # ciegos los DOS —el que pregunto espera para siempre, el que contesto cree que
+            # entrego— y nadie tiene motivo para volver a mirar.
+            "respuesta_perdida": 82,
+            # ...y MUY por debajo, su gemela mal leida hasta el 2026-08-13: la respuesta que el
+            # destinatario RECHAZO. Aqui no hay nadie ciego -el destinatario la leyo y escribio
+            # por que la devuelve-, asi que no comparte la gravedad de la que se pierde de
+            # verdad. Se sigue viendo (el que contesto puede no saber que se la rechazaron),
+            # pero no tapa a las de arriba. En la muestra de 30 dias es el 31% del total
+            # (362/1155): con la gravedad de 82 esto solo era ruido alto.
+            "respuesta_rechazada": 30,
+            "turno_colgado": 65, "encargo_bloqueado": 55,
+            # Renovando la reserva desde hace horas sin terminar. Por encima de `entrega_trabada`
+            # (70) a proposito: aqui el reloj corre hacia el tope de 12 h del bus, y cuando salta
+            # el trabajo se pierde ENTERO.
+            "turno_largo_sin_fin": 72,
+            # DOS colas distintas, dos etiquetas distintas. `dead_letters` (a secas) ya no
+            # existe: ese nombre decia una cosa y contaba la otra.
+            "dead_letters_bus": 78,        # entregas del bus muertas = trabajo sin hacer
+            "dead_letters_salida": 60,     # respuestas que no llegaron a un humano
+            # Un agente que declara QUE acceso le falta no perdio trabajo: informa. Va a la
+            # lista de "necesita una persona", no a la de "se perdio trabajo", y por debajo de
+            # ella: nadie tiene que reparar nada aqui, hay que DARLE algo.
+            "bloqueado_por_acceso": 55,
+            "adaptador_huerfano": 50, "credencial": 40,
+            # 2026-08-17 zeus: el panel dice "usage limit" y el guardia lo publicaba como
+            # `trabajo_perdido` gravedad 80. Es su propio texto el que lo desmiente: "No es
+            # trabajo perdido y ningun reintento ni reinicio lo arregla". Va con los que
+            # NECESITAN UNA PERSONA, y por debajo de `bloqueado_por_acceso` (55) porque aquel
+            # se destraba dando un acceso y este ademas hay que PAGARLO.
+            # 2026-08-19 zeus: la cadena del alias fue invalidada por el login de OTRO alias en
+            # la misma cuenta. No es trabajo perdido -ningun reintento lo arregla- y no se
+            # destraba desde la consola: hace falta una PERSONA, y a veces otra CUENTA, porque
+            # relogear a la victima revoca al otro. Va entre `bloqueado_por_acceso` (55) y
+            # `proveedor_sin_credito` (45).
+            "credencial_revocada": 50,
+            "proveedor_sin_credito": 45,
+            # 2026-08-20 zeus: no es lo mismo "sin credito" que "congelado con credito ya
+            # repuesto". Lo segundo lo arregla un reinicio y lo arreglo yo; por eso pesa mas.
+            "congelado_tras_recuperar_credito": 70,
+            # Un sintoma que YA SE CURO no es un hallazgo. Se deja registrado y abajo del todo.
+            "trabajo_perdido_recuperado": 15,
+            # Fallas que eran TODAS sondas: no hay trabajo que rescatar. Se ve, no grita.
+            "fallas_solo_de_sondas": 10,
+            # `failed` puesto A PROPOSITO por un bloqueo permanente, CON respuesta entregada.
+            # No es trabajo perdido: es la respuesta. Se ve, no grita.
+            "fallo_declarado_con_respuesta": 10,
+            # Sin credito PERO con fecha de vuelta publicada por el proveedor: cierto, sabido
+            # y sin nada que hacer hasta esa hora. Queda escrito; vuelve a gritar (45) si la
+            # fecha pasa y el alias sigue fallando.
+            "proveedor_sin_credito_con_fecha": 12}
+
+# UNA SONDA QUE REVIENTA ES UN GUARDIA CIEGO, NO UN AVISO MENOR. Estaban en 25/28/30, por
+# debajo de todo, y por eso el fallo mas peligroso del guardia se leia como ruido: cuando
+# `sonda_cola` reventó, del informe desaparecieron 1342 dead-letters y seis alias con trabajo
+# perdido, y la unica senal fue una linea gris de gravedad 25 entre veinte. Lo que una sonda
+# rota se lleva NO es su propia linea: es todo lo que esa sonda mide, y eso no aparece por
+# ningun otro lado. Va por encima de casi todo, y cubre a CUALQUIER `sonda_*`, incluidas las
+# que se agreguen despues (`sonda_cuentas` caia al 10 por defecto sin que nadie lo notara).
+GRAVEDAD_SONDA_ROTA = 92
+MAX_FALLOS_SEGUIDOS = 3   # circuit breaker: un guardia roto que grita es peor que uno apagado
+
+
+def robo_cpu_agora():
+    """% de CPU que el hipervisor le roba a agora, o None si no se pudo medir.
+
+    Una sonda que revienta con rc=124 puede ser una sonda ROTA... o una maquina a la que no le
+    dan procesador. Son averias OPUESTAS: la primera se arregla tocando el guardia; la segunda
+    NO se arregla desde dentro, y mandar a alguien a "arreglar la sonda" lo manda a reparar un
+    instrumento que esta sano. Distinguirlas cuesta un segundo.
+
+    Medido el 2026-08-23: el robo estuvo clavado en 90,0% con una variacion de una decima
+    durante mas de una hora. Esa planitud es la firma de un TOPE del proveedor; un vecino
+    ruidoso daria una sierra.
+    """
+    prog = (
+        "import time\n"
+        "def leer():\n"
+        "    v=[int(x) for x in open('/proc/stat').readline().split()[1:]]\n"
+        "    return sum(v), v[7]\n"
+        "a=leer()\n"
+        "time.sleep(1)\n"
+        "b=leer()\n"
+        "dt=b[0]-a[0]\n"
+        "ds=b[1]-a[1]\n"
+        "print(round(100.0*ds/dt,1) if dt>0 else -1)\n"
+    )
+    try:
+        rc, out, _err = sh("agora", "python3 -", entrada=prog, timeout=25)
+    except Exception:  # noqa: BLE001
+        return None
+    if rc != 0 or not out.strip():
+        return None
+    try:
+        v = float(out.strip().splitlines()[-1])
+    except Exception:  # noqa: BLE001
+        return None
+    return v if v >= 0 else None
+
+
+def es_sonda_rota(tipo):
+    return str(tipo or "").startswith("sonda_")
+
+
+def gravedad(tipo):
+    if es_sonda_rota(tipo):
+        return GRAVEDAD_SONDA_ROTA
+    return GRAVEDAD.get(tipo, 10)
+
+
+def bloqueo_de_acceso(texto):
+    """(bool, motivo) si el AGENTE declaro que le falta un acceso. La regla vive en el libro,
+    que es el modulo que sabe de encargos; si el libro no cargo no se inventa una respuesta
+    (y `sonda_libro` ya esta gritando con gravedad 92)."""
+    if libro_tareas is None:
+        return False, ""
+    try:
+        return libro_tareas.bloqueado_por_acceso(texto)
+    except Exception:  # noqa: BLE001
+        return False, ""
+
+
+# --- HUECO 2: el canal por el que el medico se entera de sus PROPIOS fallos, roto en silencio
+# MEDIDO: los avisos automaticos que el guardia le manda a zeus (via `publicar()`, atribuidos a
+# `kant` por la identidad prestada) murieron SEIS veces en 24 h sin que nadie se enterara,
+# porque el `body` de `publicar()` no lleva `type` (ni `agent.message` ni `agent.response`:
+# tipo NULO), y eso los deja afuera de las DOS redes que existian:
+#   - `libro_tareas.CONSULTA_ENCARGOS` filtra explicitamente por `body->>'type'` (con toda
+#     razon: el ruido de maquina no puede volverse una "tarea" a retomar), asi que el libro
+#     nunca los ve.
+#   - El paso 6 de aqui abajo (`trabajo_perdido`) SI los alcanzaria por status, pero su calculo
+#     de "recuperada" mira si el alias cerro CUALQUIER cosa despues: zeus cierra decenas de
+#     entregas por dia, asi que un aviso muerto del guardia siempre sale "recuperado" por una
+#     entrega sin ninguna relacion, y el sintoma real queda tapado.
+# Por eso esto NO reusa ninguna de las dos: identifica las entregas del PROPIO guardia por la
+# marca que ya pone `publicar()` (`body->>'guardia' = 'cauce-medico-monitor'`), sin depender de
+# `type` ni de si el alias esta ocupado con otra cosa.
+def canal_roto_ahora(ultima_muerte_ts, ultima_entrega_ok_ts):
+    """(bool) si el canal está realmente roto AHORA (función pura, testeable).
+
+    Un canal cuyo ÚLTIMO evento fue una entrega EXITOSA no está roto, incluso si hubo
+    muertes en la ventana de 24h. Solo está roto si la muerte más reciente es POSTERIOR
+    a la entrega exitosa más reciente.
+
+    Parámetros:
+      ultima_muerte_ts: timestamp (str 'YYYY-MM-DD HH:MI' o None) de la muerte más reciente.
+      ultima_entrega_ok_ts: timestamp (str 'YYYY-MM-DD HH:MI' o None) de la entrega OK más reciente.
+
+    Devuelve:
+      - False si no hay muerte (canal no está roto por definición).
+      - True si hay muerte pero nunca entrega OK (canal está roto, nunca se recuperó).
+      - True si la muerte es POSTERIOR a la última OK (canal roto ahora).
+      - False si la última OK es POSTERIOR a la muerte (canal se recuperó, no escalar).
+    """
+    # `sql()` lee con COPY ... FORMAT csv: un NULL de Postgres NO llega como None, llega como
+    # CADENA VACIA. Medido 2026-08-13 (zeus) contra la base real. Sin esta normalizacion la
+    # comparacion de abajo seria '2026-08-13 01:54' > '' -> True, que aqui da la respuesta
+    # correcta por casualidad; dejarlo librado a esa casualidad es lo que rompe el arreglo la
+    # proxima vez que alguien cambie el formato de salida. Se normaliza a proposito.
+    ultima_muerte_ts = (ultima_muerte_ts or "").strip() or None
+    ultima_entrega_ok_ts = (ultima_entrega_ok_ts or "").strip() or None
+    if ultima_muerte_ts is None:
+        # Sin muertes -> no está roto
+        return False
+    if ultima_entrega_ok_ts is None:
+        # Hay muerte, pero nunca entrega OK -> está roto
+        return True
+    # Ambas existen: roto si la muerte es MÁS RECIENTE que la última OK
+    # (comparación lexicográfica válida con formato YYYY-MM-DD HH:MI)
+    return ultima_muerte_ts > ultima_entrega_ok_ts
+
+
+def avisos_propios_muertos(filas):
+    """(lista de hallazgos `escalar`) a partir de filas YA leidas de la base:
+    [alias, cuenta, ultima_muerte_UTC, ultimo_last_error, ultima_ok_UTC].
+    FUNCION PURA a proposito: separarla de `main()` es lo que permite probarla sin
+    levantar las otras diez sondas de una corrida entera (mismo patron que
+    `gravedad()`/`bloqueo_de_acceso()`)."""
+    salida = []
+    for alias, n, cuando, ultimo, cuando_ok in filas:
+        # Discriminante: el canal solo está roto si la muerte es más reciente que la OK
+        if not canal_roto_ahora(cuando, cuando_ok):
+            # Canal se recuperó después de la muerte, o nunca hubo muerte: no escalar
+            continue
+        salida.append({
+            "tipo": "aviso_propio_muerto", "alias": alias,
+            "detalle": ("%s entrega(s) del PROPIO guardia hacia %s murieron en las ultimas "
+                        "24 h sin llegar (la ultima, %s UTC): el canal por el que el medico "
+                        "avisa de los fallos se rompio, y nadie se entero" % (n, alias, cuando)),
+            "evidencia": {
+                "como se identifica": "body->>'guardia' = 'cauce-medico-monitor' (no depende "
+                                       "de body->>'type', que aqui sale NULO)",
+                "ultimo last_error (crudo)": (ultimo or "")[:400],
+                "ultima_entrega_OK": cuando_ok or "(nunca)",
+                "consulta": "select d.* from deliveries d join messages m on m.id=d.message_id "
+                            "where m.body->>'guardia'='cauce-medico-monitor' and d.recipient_"
+                            "alias='%s' and d.status in ('failed','dead') order by "
+                            "d.created_at desc" % alias.replace("'", "''"),
+            }})
+    return salida
+
+
+# --- cuentas de IA: anticipar el agotamiento ------------------------------------------------
+# El 2026-08-05 la cuenta `saldantia` se agoto 53 min y dejo SIETE contenedores sin poder
+# trabajar; nadie se entero hasta que lo vio Steven. El dato ya existe y es fresco.
+CUENTAS_LIVE = "/datos/agents/shared/.local/share/ai-usage-live/claude-accounts.json"
+UMBRAL_CUENTA_PCT = 10        # por debajo de esto, la cuenta esta por morir
+UMBRAL_RESET_LEJOS_S = 3600   # ...y ademas le falta mucho para resetear (ventana SEMANAL)
+# NO TODAS LAS VENTANAS SON LA MISMA COSA, y tratarlas igual me hizo gritar tres veces seguidas
+# por algo que no era (2026-08-08, 10:03/10:23/10:43). El recolector marca cada cuenta con su
+# `window`: `weekly` se agota por DIAS, `session` es un bloque de ~5 h que se recicla solo.
+#   - juan: 1%, `session`, resetea en 86 min -> con el umbral unico de 1 h esto escalaba en
+#     gravedad 10 diciendo "se van a quedar sin poder trabajar". Se arregla solo antes de que
+#     nadie pueda mover nada.
+#   - y en el mismo aviso se recomendaba como destino "b2b 16%", que TAMBIEN es `session` y
+#     reseteaba en 6 min: o sea, se proponia mover carga a la cuenta que en ese instante estaba
+#     PEOR que la denunciada. Comparar porcentajes de ventanas distintas no compara nada.
+# Para una ventana de sesion solo hay motivo de alarma si le queda MUCHO por delante: estar bajo
+# el 10% con mas de 3 h de bloque restante significa que se fundio el 90% en menos de dos horas.
+UMBRAL_RESET_LEJOS_SESION_S = 10800
+# La capacidad NO es el numero de contenedores: mandar carga pesada a una 5x la funde en una
+# hora (juan bajo de 70% a 27% en 90 min). Se anota el plan para poder elegir bien el destino.
+# Censo MEDIDO el 2026-08-17 08:05 UTC leyendo `oauthAccount.emailAddress` de cada `.claude.json`
+# (la etiqueta de cuenta; NO se toca el token ni `.credentials.json`), cruzado con el arnes real de
+# cada alias (`ps -eo args | grep adapter-sdk/dist/src/bin`).
+#
+# POR QUE ESTA ACA Y NO SE CALCULA: este guardia corre en kratos y kratos NO ve el docker del VPS,
+# asi que no puede enumerar los contenedores. El mapa envejece SOLO cuando alguien hace un
+# `claude auth login`, que es un acto deliberado y raro; el aviso lleva la fecha para que se vea.
+#
+# El tercer campo es el que decide quien sufre: `openclaw` tiene escalera de modelos y cae a otro
+# proveedor; `codex` no usa la cuenta Claude en absoluto; `claude` NO TIENE A DONDE CAER.
+CENSO_CUENTA = {
+    # 2026-08-18: zeus NO esta en b2b, esta en saldantia. Medido con `claude auth status`
+    # dentro de ws-zeus. Con el archivado aca, saldantia quedaba "toda openclaw" y el guardia
+    # concluia que su agotamiento no dejaba mudo a nadie -cuando el mudo era el medico-.
+    "b2b": [("kant", "kratos host-native", "claude"),
+            ("midas", "agv2-pablo-marcas-oc", "openclaw")],
+    "steven": [("iza", "claw-iza", "openclaw"),
+               ("janus", "claw-miguel", "openclaw"),
+               ("seneca", "agv2-pablo-personal-oc", "openclaw"),
+               ("kratos", "ws-humanizar", "codex"),
+               ("atlas", "ws-humanizar", "codex"),
+               ("vulcano", "ws-pablo", "claude")],
+    "saldantia": [("zeus", "ws-zeus", "claude"),
+                  ("jarvis", "claw", "openclaw"),
+                  ("hegel", "agv2-jhon-hegel-oc", "openclaw")],
+    "juan": [("heraclito", "agv2-jhon-heraclito-oc", "claude")],
+}
+# Sin login de Claude, y no lo necesitan (su arnes no es Claude): argos (openclaw con su propia
+# escalera), tales (codex), socrates (codex). dedalo responde loggedIn sin email y corre codex.
+CENSO_FECHA = "2026-08-18 07:15 UTC (medido con `claude auth status`)"
+# Un censo escrito a mano envejece en silencio: el del 17-ago tenia a zeus en la cuenta
+# equivocada y por eso el guardia afirmaba que nadie se quedaba mudo. Pasados unos dias, la
+# conclusion "no despierta a nadie" deja de ser un hecho y se declara NO VERIFICADA.
+DIAS_CENSO_CADUCA = 3
+
+
+def nadie_bloqueado_por(etiqueta):
+    """(True, motivo) si se midio el panel de TODOS los consumidores y ninguno muestra bloqueo.
+
+    (False, motivo) en cualquier otro caso: sin censo, censo rancio, un panel ilegible, o alguno
+    realmente bloqueado. NO es pura -lee paneles por SSH/docker-, y por eso solo se llama cuando
+    el hallazgo iba a escalar igual.
+
+    El porcentaje de la sonda NO decide: decide el panel del alias. Medido el 2026-08-19 con
+    `juan` al 0% semanal y heraclito cerrando 6 entregas `done` con esa misma cuenta.
+    """
+    filas = CENSO_CUENTA.get(etiqueta)
+    if not filas:
+        return False, "no hay censo para esta cuenta: no puedo saber a quien afecta"
+    if censo_rancio():
+        return False, ("el censo es del %s, mas de %d dias: no afirmo un negativo con datos "
+                       "viejos" % (CENSO_FECHA, DIAS_CENSO_CADUCA))
+    medidos = []
+    for alias_c, _ctr, _arnes in filas:
+        panel, por_que_no = panel_del_alias(alias_c)
+        if not panel:
+            return False, ("no pude leer el panel de %s (%s): sin eso no se si esta bloqueado"
+                           % (alias_c, por_que_no))
+        causa_c = causa_en_el_panel(panel)
+        if causa_c:
+            return False, "%s SI esta bloqueado -- %s" % (alias_c, causa_c[:140])
+        medidos.append(alias_c)
+    return True, ("medi el panel de %s y ninguno muestra causa de bloqueo"
+                  % ", ".join(medidos))
+
+
+def censo_rancio():
+    """True si el censo lleva mas de DIAS_CENSO_CADUCA dias sin re-medirse. PURA salvo el reloj."""
+    try:
+        fecha = datetime.datetime.strptime(CENSO_FECHA[:16], "%Y-%m-%d %H:%M").replace(
+            tzinfo=datetime.timezone.utc)
+    except (ValueError, TypeError):
+        return True  # si no se puede fechar, se trata como rancio: nunca al reves
+    dias = (datetime.datetime.now(datetime.timezone.utc) - fecha).total_seconds() / 86400.0
+    return dias > DIAS_CENSO_CADUCA
+CENSO_COMANDO = ("la cuenta VIVA la dice `claude auth status` dentro del contenedor, NO el campo "
+                 "oauthAccount de ~/.claude.json, que queda rancio. Y si el alias fija "
+                 "CLAUDE_CONFIG_DIR (kant: /home/stev/red-servidores/.claude), hay que exportarlo "
+                 "antes o se lee un config que el alias nunca usa.")
+
+
+def censo_de(etiqueta):
+    """Devuelve (quien_la_usa, quien_no_tiene_escalera) ya formateados para la evidencia."""
+    filas = CENSO_CUENTA.get(etiqueta)
+    if not filas:
+        return ("censo sin entrada para esta cuenta: levantalo a mano", "desconocido")
+    usa = ", ".join("%s (%s, arnes %s)" % f for f in filas)
+    mudos = [f[0] for f in filas if f[2] == "claude"]
+    if mudos:
+        sin = ("%s -- arnes `claude`, SIN escalera de modelos: si la cuenta rechaza se quedan "
+               "mudos, no caen a otro proveedor" % ", ".join(mudos))
+    elif censo_rancio():
+        # NO se afirma un negativo con un censo viejo. Es como se colo el error de zeus.
+        sin = ("NO VERIFICADO: segun el censo del %s ninguno se quedaria mudo, pero ese censo "
+               "tiene mas de %d dias y ya se equivoco una vez (tenia a zeus en la cuenta que no "
+               "era). Rehacelo antes de fiarte: `docker exec <ctr> sh -lc 'claude auth status'` "
+               "en cada contenedor" % (CENSO_FECHA, DIAS_CENSO_CADUCA))
+    else:
+        sin = ("ninguno: todos tienen escalera (openclaw) o no usan la cuenta Claude (codex)")
+    return (usa, sin)
+
+
+PLAN_CUENTA = {"steven": "Max 20x", "saldantia": "Max 20x",
+               "juan": "Max 5x", "b2b": "Max 5x"}
+
+# UNA SOLA MUESTRA MALA NO ES UN HALLAZGO. MEDIDO 2026-08-13 (zeus): el guardia aviso
+# (gravedad 10) que `steven` "no responde el sondeo" en la captura de las 07:22:24Z, con
+#   "JS: Uncaught (in promise) TypeError: Failed to execute 'fetch' on 'Window': Failed to
+#    parse URL from /api/account"
+# En la captura SIGUIENTE, 07:32:24Z -diez minutos despues-, `steven` volvio con ok:True y
+# las cuatro cuentas sanas: se curo solo en UN ciclo. Y el error tiene forma CONOCIDA: un
+# `fetch` de URL RELATIVA sin origen es la sonda del NAVEGADOR ejecutando contra una pestana
+# que perdio su pagina (CDP contra un tab sin `claude.ai` cargado), no una cuenta caida ni
+# agotada. Por eso hacen falta UMBRAL_RACHA_CUENTA_ROTA corridas SEGUIDAS de `ok:false` antes
+# de escalar -no CUALQUIER `ok:false` aislado-, y el texto distingue explicitamente un fallo
+# del INSTRUMENTO de sondeo de una cuenta realmente sin saldo (si no, alguien lee "no responde"
+# y cree que se quedo sin cuota).
+UMBRAL_RACHA_CUENTA_ROTA = 2
+
+# Firma del navegador ejecutando SIN pagina cargada (CDP contra un tab con `about:blank` o que
+# navego lejos de claude.ai): un `fetch` relativo revienta porque no hay `location.origin`. Es
+# un conjunto CERRADO de frases que emite el runtime de JS del navegador, igual que
+# RE_ERROR_DE_TRANSPORTE es un conjunto cerrado de frases del adaptador/bus (mismo criterio:
+# lo que no calza, no se da por sano a ciegas, sigue tratandose como posible cuenta real).
+RE_ERROR_DE_INSTRUMENTO_SONDA = re.compile(
+    r"Uncaught \(in promise\)"
+    r"|TypeError: Failed to execute 'fetch'"
+    r"|Failed to parse URL from"
+    r"|chrome-error://",
+    re.IGNORECASE)
+
+
+def es_fallo_de_instrumento(texto):
+    """True si el `ok:false` de una sonda de cuenta trae la FORMA de un fallo del INSTRUMENTO
+    (el navegador/CDP que hace el sondeo), no de la cuenta. Ver RE_ERROR_DE_INSTRUMENTO_SONDA
+    y el comentario junto a UMBRAL_RACHA_CUENTA_ROTA para la evidencia medida."""
+    return bool(RE_ERROR_DE_INSTRUMENTO_SONDA.search(str(texto or "")))
+
+
+def sonda_cuenta_racha(racha_prev, etiqueta, ok):
+    """Corridas SEGUIDAS de `ok:false` para `etiqueta`. `ok:True` CORTA la racha (se curo):
+    sin esto, un fallo aislado hace 10 corridas y uno de ayer se sumarian como si fueran
+    consecutivos, que no es lo que dice "persistente"."""
+    if ok:
+        return 0
+    return int((racha_prev or {}).get(etiqueta, 0)) + 1
+
+
+def hallazgo_cuenta_rota(etiqueta, plan, cuenta, racha_prev, capturado):
+    """Arma (racha_nueva, entrada_o_None) para un registro `ok:false` de `claude-accounts.json`.
+
+    `entrada_o_None` es None mientras la racha no llegue a UMBRAL_RACHA_CUENTA_ROTA: UNA
+    muestra mala no escala (ver comentario junto a UMBRAL_RACHA_CUENTA_ROTA). Al escalar, el
+    `detalle` dice explicitamente si el patron calza con un fallo del INSTRUMENTO de sondeo o
+    si de verdad no se sabe -nunca se afirma "cuenta agotada" con esta sola evidencia, eso lo
+    decide la rama de porcentaje mas abajo."""
+    racha = sonda_cuenta_racha(racha_prev, etiqueta, False)
+    if racha < UMBRAL_RACHA_CUENTA_ROTA:
+        return racha, None
+    registro = json.dumps(cuenta)
+    if es_fallo_de_instrumento(registro):
+        motivo = ("el INSTRUMENTO de sondeo (navegador/fetch) fallo -la firma es la de una "
+                  "pestana que perdio su pagina, NO necesariamente que la cuenta este caida "
+                  "o agotada")
+    else:
+        motivo = "no responde el sondeo (motivo sin forma conocida de fallo de instrumento)"
+    detalle = ("la cuenta %s (%s) %s, persistente en %d corridas seguidas"
+              % (etiqueta, plan, motivo, racha))
+    return racha, {"tipo": "cuenta_ia", "alias": etiqueta, "detalle": detalle,
+                   "evidencia": {"fichero": CUENTAS_LIVE, "capturedAt": capturado,
+                                 "racha corridas seguidas": racha, "registro": registro}}
+
+
+TOPE_POR_CORRIDA = 5      # mas que esto es un volcado, no un encargo
+REAVISO_HORAS = 6         # un hallazgo que sigue igual no se repite antes de esto
+OLVIDO_HORAS = 48         # cuanto se recuerda un hallazgo que dejo de verse (ver memoria_hallazgos)
+
+# Va al FINAL del cuerpo de la entrega a zeus, siempre. Un despacho trae varios hallazgos
+# independientes entre si: resolverlos en serie multiplica el tiempo que la flota pasa rota.
+# DIRECTIVA PERMANENTE de Steven, pedida tres veces: el medico ORQUESTA, no ejecuta. Por eso
+# el recordatorio no es un consejo sobre estos hallazgos, es una regla sobre como trabajar, y
+# viaja en las DOS cosas que el guardia manda (aqui y en libro_tareas.texto_reintento).
+RECORDATORIO_PARALELO = (
+    "RECORDATORIO PERMANENTE: no ejecutes vos, ORQUESTA. Antes de tocar cualquier herramienta, "
+    "preguntate si esto lo puede hacer un lane en paralelo. Casi siempre si.\n"
+    "Atacá estos hallazgos EN PARALELO (subagentes o workflow), no de a uno. "
+    "Preferí workflow cuando hay muchos ítems del mismo tipo que pasan por las mismas etapas; "
+    "subagentes cuando los frentes son distintos entre sí.")
+
+# Steven solo se entera por Telegram cuando el propio medico (zeus) no puede recibir ni actuar.
+# Estas son las firmas de "zeus no esta en pie": si aparece alguna, la entrega no despierta a
+# nadie y hay que saltar la via normal.
+#
+# `aviso_propio_muerto` entra aqui A PROPOSITO (HUECO 2, medido: 6 avisos del guardia a zeus
+# muertos en 24h y nadie se entero): si los avisos que el guardia le manda a zeus se estan
+# muriendo, esperar a que ESE MISMO canal (la entrega normal a zeus) avise del problema es
+# esperar a que el enfermo se diagnostique solo. Hace falta el atajo directo a Telegram.
+TIPOS_ZEUS_CAIDO = ("adaptador_caido", "sin_adaptador", "entrega_trabada", "poller_trabado",
+                    "aviso_propio_muerto")
+
+
+def pares_de_evidencia(ev):
+    """La evidencia es un campo ACCESORIO del hallazgo: su FORMA no puede tumbar al guardia.
+
+    2026-08-12: el motivo `respuesta_perdida` -- justo el que caza las respuestas que mueren en
+    silencio -- traia una LISTA donde este renderizador hacia `.items()`. Reventaba con
+    AttributeError DESPUES de imprimir los hallazgos y ANTES de despacharlos, asi que el guardia
+    veia los 11 problemas y no avisaba de ninguno. Cuatro corridas seguidas; a la tercera el
+    disyuntor lo dejo mudo del todo. Un guardia que se calla por la forma de un campo decorativo
+    es peor que no tenerlo. Ahora se acepta cualquier forma razonable y lo raro se rinde como texto.
+    """
+    if not ev:
+        return []
+    if isinstance(ev, dict):
+        return [(str(k), v) for k, v in ev.items()]
+    if isinstance(ev, (list, tuple)):
+        pares = []
+        for i, item in enumerate(ev):
+            if isinstance(item, dict) and "que" in item:
+                pares.append((str(item.get("que")), item.get("valor", "")))
+            elif isinstance(item, dict):
+                pares.extend((str(k), v) for k, v in item.items())
+            else:
+                pares.append(("evidencia[%d]" % i, item))
+        return pares
+    return [("evidencia", ev)]
+
+
+# BUG MEDIDO 2026-08-13 (zeus): `deliveries.last_error` para la entrega 8e3ea69e (recipient
+# heraclito, contestada por zeus) trae, LITERAL, 120 caracteres:
+#   "Claude Code result reported a failed turn: result subtype 'success'\n\nYou've hit your
+#   session limit \xb7 resets 6:50pm (UTC)"
+# El texto lo escribio el transporte de zeus (matchea `RE_ERROR_DE_TRANSPORTE`), pero el CLI de
+# Claude le mezclo su propio banner de rate-limit, con un salto de linea de por medio, ANTES de
+# que quedara grabado en la base. `respuestas_perdidas()` cita ese `last_error` tal cual dentro
+# de un `detalle` -que el resto del render trata como UNA linea logica-, asi que el banner
+# aparece SUELTO, sin prefijo `HALLAZGO`/`ESCALAR` ni alias, partiendo el aviso en dos: en
+# `bitacora.log` aparecio 102 veces en 7 dias, siempre en la misma posicion relativa (justo
+# despues del hallazgo de heraclito). Y como ese mismo `detalle` contaminado entra al `cuerpo`
+# que se hashea para la `idempotency_key` (ver `publicar()`), la promesa de que el cuerpo es
+# "una funcion PURA de los hallazgos" queda rota: pasa a ser funcion de los hallazgos MAS
+# cualquier cosa que un CLI ajeno haya escrito por su cuenta, en cualquier parte de la cadena.
+#
+# No importa si ESTE `last_error` en particular es estable entre corridas (lo es: viene de una
+# columna de la base, no de un subproceso que el guardia relanza) - la garantia tiene que valer
+# para CUALQUIER texto libre que un agente, un CLI o un subproceso puedan escribir, hoy o
+# manana. Por eso el arreglo va en el UNICO punto de salida de `detalle` (bitacora y cuerpo del
+# aviso), no en cada sitio que arma un `detalle`: ninguna fuente, presente o futura, puede
+# volver a partir el reporte.
+_RE_ESPACIOS_DE_CONTROL = re.compile(r"\s+")
+
+
+def una_linea(texto, limite=4000):
+    """Aplana cualquier texto a UNA sola linea logica.
+
+    Colapsa saltos de linea, tabs y corridas de espacios a un unico espacio, y recorta si hace
+    falta. Es el unico lugar por el que pasa un `detalle` antes de entrar a la bitacora o al
+    cuerpo que se hashea para la `idempotency_key`: la salida de un subproceso -o de cualquier
+    texto libre ajeno que haya llegado hasta aca, por SQL o por lo que sea- nunca puede meter un
+    salto de linea que el render lea como un hallazgo propio, sin prefijo y sin alias.
+    """
+    if texto is None:
+        return ""
+    plano = _RE_ESPACIOS_DE_CONTROL.sub(" ", str(texto)).strip()
+    if limite and len(plano) > limite:
+        plano = plano[:limite].rstrip() + "…[truncado]"
+    return plano
+
+
+def memoria_hallazgos(visto_antes, visto_ahora, t0):
+    """Conserva lo que NO se vio en ESTA corrida en vez de olvidarlo.
+
+    `visto_ahora` se arma de cero con los hallazgos de la corrida en curso. Si se guardara tal
+    cual, un hallazgo que desaparece un rato y vuelve entra como `nuevo`: `veces` vuelve a 1 y
+    se despacha otra vez, saltandose REAVISO_HORAS. Eso es lo que se ve como "la misma alerta
+    dos veces", y esta MEDIDO en la BD de PROD el 2026-08-06: la clave trabajo_perdido|hegel
+    fue 1 -> 8 -> 1 y zeus recibio el mismo hallazgo en corridas distintas del mismo dia.
+    Por eso la memoria se ARRASTRA; solo se olvida cuando lleva OLVIDO_HORAS sin verse (si no,
+    el fichero de estado crece para siempre).
+    """
+    fusion = dict(visto_ahora)
+    for clave, v in (visto_antes if isinstance(visto_antes, dict) else {}).items():
+        if clave in fusion:
+            continue
+        ref = v.get("ultimo_visto") or v.get("ultimo_despacho") or v.get("primera_vez")
+        try:
+            viejo = (t0 - datetime.datetime.fromisoformat(ref)).total_seconds() \
+                >= OLVIDO_HORAS * 3600
+        except Exception:  # noqa: BLE001
+            viejo = True   # sin fecha utilizable no se puede sostener la memoria: se suelta
+        if not viejo:
+            fusion[clave] = v
+    return fusion
+
+
+_VOLATIL = [
+    (re.compile(r"dentro de\s+\d+\s*min"), "dentro de N min"),
+    (re.compile(r"vuelve en\s+\d+\s*min"), "vuelve en N min"),
+    (re.compile(r"\"resetInSeconds\":\s*\d+"), '"resetInSeconds": N'),
+    (re.compile(r"\"capturedAt\":\s*\"[^\"]*\""), '"capturedAt": "T"'),
+    (re.compile(r"antiguedad del dato\s*\n?\s*\d+\s*min"), "antiguedad del dato N min"),
+    (re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\d]*Z?"), "T"),
+    (re.compile(r"hasta\s+\d+\s*min"), "hasta N min"),
+]
+
+
+def _texto_estable(texto):
+    """El mismo aviso con los contadores que bajan solos neutralizados. PURA.
+
+    Solo se usa para la HUELLA de deduplicacion; el texto que se envia no se toca. Si esto
+    dejara de reconocer un patron, el peor caso es el de siempre -un aviso repetido-, nunca
+    un aviso perdido: es el lado barato de equivocarse.
+    """
+    for patron, reemplazo in _VOLATIL:
+        texto = patron.sub(reemplazo, texto)
+    return texto
+
+
+def publicar(tenant, alias, cuerpo, clave, extra=None):
+    """Publica UNA entrega Cauce. Es la unica canieria de salida del guardia.
+
+    La usan las DOS cosas que el guardia manda, y no hay ninguna mas:
+      - el aviso al medico (zeus), que es el auto-despertar; y
+      - la reanudacion de un encargo sin cumplir, que va al alias responsable.
+    Las dos son `POST /v3/messages` con el mismo certificado y el mismo marcado. No hay un
+    segundo canal, ni Telegram, ni notify: el unico Telegram que queda es la rama de "zeus
+    caido", que ya existia y no se toca.
+    """
+    marca = "[GUARDIA AUTOMATICO - cauce-medico-monitor - NO es kant]"
+    texto = marca + "\n" + cuerpo
+    # 2026-08-19 zeus: la huella se calcula sobre el texto NORMALIZADO, no sobre el crudo. El
+    # cuerpo lleva contadores que bajan solos ("dentro de 1222 min", `resetInSeconds`,
+    # `capturedAt`), asi que la clave cambiaba en cada corrida y la deduplicacion no se disparaba
+    # NUNCA: una condicion estable —`juan` al 0% durante 19 h— generaba una entrega por corrida.
+    # Los PORCENTAJES se conservan a proposito: pasar de 5% a 0% es un cambio material y debe
+    # volver a avisar. Lo que se calla es "lo mismo, N minutos despues".
+    huella = hashlib.sha256(_texto_estable(texto).encode("utf-8")).hexdigest()[:16]
+    body = {"text": texto, "guardia": "cauce-medico-monitor", "es_automatico": True,
+            "identidad_prestada": "console-client->Steven/kant"}
+    body.update(extra or {})
+    payload = {
+        "room_id": "grp.steven",
+        "recipients": [{"tenant_id": tenant, "alias": alias}],
+        "body": body,
+        "idempotency_key": "medico-%s-%s" % (
+            re.sub(r"[^a-zA-Z0-9_.-]", "_", clave)[:32], huella),
+    }
+    prog = DESPACHO.replace("json.loads(sys.stdin.read())", "json.loads(%r)" % json.dumps(payload))
+    rc, out, err = sh("agora", "python3 -", entrada=prog, timeout=90)
+    lineas = [l for l in out.strip().split("\n") if l.strip()]
+    estado = lineas[0] if lineas else "?"
+    return (rc == 0 and estado == "202"), (out.strip() + " " + err.strip())[:400]
+
+
+def despachar_a_zeus(cuerpo, clave):
+    """Deja el trabajo en la cola de zeus como una entrega Cauce normal.
+
+    Cauce es event-driven: zeus no existe entre entregas, asi que publicar una entrega es la
+    UNICA forma de despertarlo.
+
+    La `idempotency_key` sale del HASH DEL CUERPO, no del alias ni de la hora. Medido contra el
+    gateway: misma clave + mismo cuerpo -> `duplicate: true` (dedup limpio), pero misma clave +
+    cuerpo distinto -> **409 conflict** y la entrega se pierde en silencio. Con la clave por
+    contenido las dos cosas salen bien solas: un hallazgo identico no vuelve a despertar a zeus,
+    y uno que cambio si entra como entrega nueva.
+    """
+    # IDENTIDAD: el certificado `console-client` mapea a Steven/kant, asi que la entrega llega
+    # con sender_alias=kant y el guardia PARECE kant. Eso contamina la atribucion de un
+    # companero: zeus no podria distinguir un aviso automatico de un pedido real de kant, y las
+    # respuestas le rebotarian a el. Lo correcto es un principal propio (cert + entrada en
+    # mtls_identities.json + membership), pero eso toca la identidad del cliente de consola y
+    # se decide antes de tocarlo. Mientras tanto se marca de forma inequivoca: una primera
+    # linea visible y un campo estable en el body que se detecta sin leer prosa (MessageBody
+    # es un record abierto: solo restringe timeout_ms y attachments_v1).
+    return publicar("Steven", "zeus", cuerpo, clave)
+
+
+def git_commit(mensaje):
+    """Commit LOCAL de la bitacora. El repo no tiene remoto a proposito: un push automatico
+    de madrugada y sin revision es justo lo que hay que poder deshacer."""
+    if not os.path.isdir(os.path.join(ESTADO_DIR, ".git")):
+        sh("kratos", "git -C %s init -q" % ESTADO_DIR, timeout=40)
+        with open(os.path.join(ESTADO_DIR, ".gitignore"), "w") as f:
+            # Nunca versionar nada que pueda arrastrar un secreto.
+            f.write("lock\n*.token\n*.key\n*.crt\n.env\n")
+    sh("kratos", "git -C %s add -A" % ESTADO_DIR, timeout=40)
+    rc, _, _ = sh("kratos", "git -C %s diff --cached --quiet" % ESTADO_DIR, timeout=40)
+    if rc == 0:
+        return False
+    seguro = mensaje.replace("'", "").replace("\n", " ")[:400]
+    rc, _, _ = sh("kratos", "git -C %s -c user.name=cauce-medico "
+                            "-c user.email=medico@cauce.local commit -q -m '%s'"
+                            % (ESTADO_DIR, seguro), timeout=60)
+    return rc == 0
+
+
+# -------------------------------------------------------------------------------- main
+
+def main():
+    ap = argparse.ArgumentParser(description="Medico de la flota Cauce V3")
+    ap.add_argument("--solo-detectar", action="store_true",
+                    help="no repara nada; solo mide y reporta")
+    ap.add_argument("--reiniciar-adaptadores", action="store_true",
+                    help="habilita el ciclo de rescate (capturar->reiniciar->verificar->"
+                         "re-inyectar). Apagado por defecto")
+    ap.add_argument("--sin-aviso", action="store_true", help="no manda Telegram")
+    ap.add_argument("--sin-entrega", action="store_true",
+                    help="corrida de INSPECCION: mide, imprime y anota en la bitacora, pero "
+                         "NO publica la entrega a zeus. Usalo siempre que corras el guardia "
+                         "a mano: `--sin-aviso` solo calla el Telegram de emergencia")
+    args = ap.parse_args()
+
+    os.makedirs(ESTADO_DIR, exist_ok=True)
+    candado = open(LOCK, "w")
+    try:
+        fcntl.flock(candado, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("ya hay una corrida en curso, salgo sin hacer nada")
+        return 0
+
+    t0 = ahora()
+    hallazgos, acciones, escalar, apuntes = [], [], [], []
+
+    inv = inventario()
+    procs = procesos("kratos") + procesos("vps")
+    adaptadores = mapa_adaptadores(procs)
+    # La MISMA unidad existe en los dos hosts: cuando un alias se muda al VPS, en kratos queda
+    # la definicion vieja en `inactive/dead`. Fusionarlas a ciegas hace que la sobra tape la
+    # verdad (atlas y dedalo estaban `failed` en el VPS y quedaban ocultos por el `dead` de
+    # kratos). La unidad que manda es la del host donde corre el adaptador VIVO.
+    unids_por_host = {"vps": unidades("vps"), "kratos": unidades("kratos")}
+    # Un sondeo de unidades que falla devuelve {} y es INDISTINGUIBLE de "no hay unidades".
+    # Con esa ambiguedad, un alias host-native se declara MUDO en gravedad 95 sin estar caido:
+    # kant no aparece en `mapa_adaptadores` porque su argv no lleva el alias, asi que depende
+    # ENTERAMENTE de esta sonda. Paso el 2026-08-07 22:39:31Z -- correr el guardia desde una
+    # sesion SSH sin XDG_RUNTIME_DIR rompe `systemctl --user` ("Failed to connect to user
+    # scope bus") y el aviso de gravedad 95 salio igual, con kant vivo y con una entrega en
+    # vuelo. En esta flota los dos hosts SIEMPRE tienen al menos una unidad cauce: un mapa
+    # vacio es sonda rota, no ausencia, y de una sonda rota no se concluye nada.
+    # Misma regla que para las unidades, que aqui faltaba: en esta flota los dos hosts SIEMPRE
+    # tienen procesos de adaptador.  devuelve [] cuando el ssh o el ps fallan, asi que
+    # una sonda rota se leia como "ningun adaptador vivo" y salia "adaptador vivo: NINGUNO".
+    # Una medicion fallida NO es un resultado negativo.
+    procs_rotos = [h for h in ("kratos", "vps") if not any(p["host"] == h for p in procs)]
+    for h in procs_rotos:
+        escalar.append({"tipo": "sonda_procesos", "alias": "-",
+                        "detalle": "el sondeo de procesos en %s no devolvio NINGUN proceso: la "
+                                   "sonda esta rota, no se puede concluir que ningun alias tenga "
+                                   "adaptador vivo" % h})
+    sondas_rotas = [h for h, u in unids_por_host.items() if not u] + procs_rotos
+    for h in sondas_rotas:
+        escalar.append({"tipo": "sonda_unidades", "alias": "-",
+                        "detalle": "el sondeo de unidades en %s no devolvio NINGUNA unidad "
+                                   "cauce: la sonda esta rota, no se puede concluir que "
+                                   "ningun alias este sin adaptador (mirar XDG_RUNTIME_DIR "
+                                   "y `systemctl --user` para el usuario stev)" % h})
+    unids = {}
+    for alias in set(unids_por_host["vps"]) | set(unids_por_host["kratos"]):
+        candidatos = [u for h in ("vps", "kratos")
+                      for u in [unids_por_host[h].get(alias)] if u]
+        vivo = adaptadores.get(alias, {}).get("host")
+        elegida = next((u for u in candidatos if u["host"] == vivo), None)
+        if elegida is None:
+            # Sin adaptador vivo: `failed` dice mas que un `inactive` que puede ser una sobra.
+            elegida = next((u for u in candidatos if u["active"] == "failed"),
+                           next((u for u in candidatos if u["active"] == "active"),
+                                candidatos[0]))
+        unids[alias] = elegida
+
+    # --- 1) poller trabado -------------------------------------------------------------
+    tg, err_tg = sonda_telegram()
+    if err_tg:
+        escalar.append({"tipo": "sonda_telegram", "detalle": err_tg})
+    curs = cursores()
+    trabados = []
+    for alias, d in sorted(tg.items()):
+        if d.get("error") or alias not in curs:
+            continue
+        pend = d.get("pendientes") or 0
+        quieto = curs[alias]["quieto_min"]
+        # LAS DOS condiciones. Un cursor viejo solo no prueba nada.
+        if pend > 0 and quieto >= MIN_CURSOR_QUIETO:
+            trabados.append(alias)
+            hallazgos.append({"modo": 1, "alias": alias,
+                              "detalle": "poller trabado: %d pendientes en Telegram y el "
+                                         "cursor lleva %d min sin avanzar" % (pend, quieto)})
+
+    if trabados and not args.solo_detectar:
+        antes = {a: curs[a]["cursor"] for a in trabados}
+        ok, det = reiniciar_puente_telegram()          # como maximo UNA vez por corrida
+        sh("kratos", "sleep 25", timeout=60)
+        despues = cursores()
+        avanzo = [a for a in trabados
+                  if despues.get(a, {}).get("cursor", -1) != antes.get(a)]
+        acciones.append({"accion": "reiniciar_puente_telegram", "alias": trabados,
+                         "ok": ok, "detalle": det,
+                         "verificado": ("el cursor avanzo en: %s" % ", ".join(avanzo))
+                         if avanzo else "NO VERIFICADO: ningun cursor avanzo todavia"})
+
+    # --- 2) turno colgado --------------------------------------------------------------
+    nativos = [a for a, u in unids.items() if u["unidad"].startswith("cauce-v3-host-")]
+    for p in procs:
+        m = RE_PUENTE.search(p["args"])
+        alias = m.group("alias") if m else None
+        if alias is None and RE_PUENTE_NATIVO.search(p["args"]):
+            # Adaptador host-native: el argv no lleva el alias. Solo se atribuye si no hay
+            # ambiguedad posible.
+            alias = nativos[0] if len(nativos) == 1 else None
+        if alias is None:
+            continue
+        mins = p["etimes"] // 60
+        if mins < MIN_TURNO_COLGADO:
+            continue
+        hallazgos.append({"modo": 2, "alias": alias,
+                          "detalle": "turno colgado %d min (pid %d, cpu %.1f%%, rss %d MB)"
+                                     % (mins, p["pid"], p["pcpu"], p["rss"] // 1024)})
+        if args.solo_detectar:
+            continue
+        antes = [e for e in entregas_trabadas() if e["alias"] == alias]
+        ok, det = matar_por_pid(p["host"], p["pid"], p["args"])
+        efecto = "no verificado"
+        if ok:
+            sh("kratos", "sleep 20", timeout=50)
+            despues = [e for e in entregas_trabadas() if e["alias"] == alias]
+            ids_antes = {e["id"] for e in antes}
+            ids_despues = {e["id"] for e in despues}
+            cerradas = ids_antes - ids_despues
+            efecto = ("el alias volvio a cerrar entregas (%d salieron de su estado trabado)"
+                      % len(cerradas)) if cerradas else \
+                     "NO VERIFICADO: las entregas siguen en el mismo estado"
+        acciones.append({"accion": "matar_turno_colgado", "alias": alias, "pid": p["pid"],
+                         "host": p["host"], "ok": ok, "detalle": det, "verificado": efecto})
+
+    # --- 3) entregas tomadas y nunca terminadas ----------------------------------------
+    # UN TURNO LARGO NO ES UN TURNO TRABADO. Antes bastaba con la edad, y por eso el guardia
+    # reportaba cada hora "zeus: 3 entregas trabadas hasta 288 min" cuando eran turnos del
+    # propio medico trabajando de verdad: el medico se perseguia a si mismo y llenaba el canal
+    # de ruido. Ahora se exige ademas que la fila este QUIETA (o la reserva vencida).
+    todas_en_vuelo = entregas_trabadas()
+    en_vuelo_alias = {e["alias"] for e in todas_en_vuelo}     # para el libro: no apilar trabajo
+    por_alias, largos = {}, {}
+    for e in todas_en_vuelo:
+        if e["edad_min"] < MIN_ENTREGA_TRABADA:
+            continue
+        if libro_tareas is not None:
+            progresa, motivo = libro_tareas.entrega_progresa(e)
+        else:
+            # 2026-08-13 (zeus, pedido de Steven): NO se concluye "trabado" desde la CEGUERA.
+            # Este `else` decia False, o sea: si el libro no carga, toda entrega larga pasa a
+            # `por_alias`, y para zeus eso alimenta `motivos_zeus`, que ES el Telegram directo a
+            # Steven diciendo "zeus no esta en pie". Medido hoy: la sonda del libro reventó por
+            # un timeout de psql y a Steven le llegaron avisos de que yo estaba caido mientras
+            # yo estaba trabajando. No poder medir no es una medicion. Se trata como turno largo
+            # -queda escrito en la bitacora- y NUNCA despierta a una persona.
+            progresa, motivo = True, ("NO SE PUDO MEDIR (falta el modulo del libro): "
+                                      "se asume que avanza para no despertar a nadie desde la ceguera")
+        e["por_que"] = motivo
+        if progresa and e["edad_min"] >= TECHO_TURNO_LARGO:
+            # "Progresa" deja de ser tranquilizador pasado el techo: la reserva se renueva
+            # sola aunque el arnes este detenido esperando una tecla.
+            e["por_que"] = ("%s -- PERO lleva %d min: pasado el techo de %d, que la reserva "
+                            "siga viva ya no prueba que el trabajo avance"
+                            % (motivo, e["edad_min"], TECHO_TURNO_LARGO))
+            progresa = False
+            e["zombi"] = True
+        (largos if progresa else por_alias).setdefault(e["alias"], []).append(e)
+    for alias, lista in sorted(largos.items()):
+        # Se deja escrito en la bitacora, pero NO es un hallazgo y NO despierta a nadie.
+        apuntes.append({"tipo": "turno_largo_sano", "alias": alias,
+                        "detalle": "%d entrega(s) de hasta %d min que SI avanzan: %s"
+                                   % (len(lista), max(x["edad_min"] for x in lista),
+                                      lista[0]["por_que"])})
+    for alias, lista in sorted(por_alias.items()):
+        edad = max(x["edad_min"] for x in lista)
+        estados = ", ".join(sorted({x["status"] for x in lista}))
+        hallazgos.append({"modo": 3, "alias": alias,
+                          "detalle": "%d entrega(s) trabadas hasta %d min (%s); %s"
+                                     % (len(lista), edad, estados, lista[0]["por_que"])})
+        if args.reiniciar_adaptadores and not args.solo_detectar:
+            r = ciclo_rescate(alias, adaptadores.get(alias), apuntes)
+            r.update({"accion": "ciclo_rescate", "alias": alias})
+            if r.get("resultado") == "reiniciado":
+                acciones.append(r)
+            else:
+                # zeus 2026-08-22: ANTES esto se metia crudo en `escalar`, y el renderizador
+                # (`e["tipo"]`, `e["detalle"]`, subindice duro) reventaba con KeyError. O sea:
+                # el unico camino por el que el guardia dice "intente rescatar y NO pude" era
+                # tambien el camino por el que el informe ENTERO se perdia -hallazgos de otros
+                # alias incluidos-. Un guardia que se calla justo cuando algo va mal.
+                r.setdefault("tipo", "rescate_no_aplicado")
+                r.setdefault("detalle",
+                             "no se pudo rescatar a %s automaticamente: %s"
+                             % (alias, r.get("razon", "sin razon declarada")))
+                escalar.append(r)
+        else:
+            zombis = [x for x in lista if x.get("zombi")]
+            if zombis and len(zombis) == len(lista):
+                escalar.append({"tipo": "turno_largo_sin_fin", "alias": alias,
+                                "detalle": "%d entrega(s) llevan hasta %d min RENOVANDO la "
+                                           "reserva sin terminar. Que la reserva siga viva "
+                                           "prueba que el adaptador respira, no que el trabajo "
+                                           "avance: un arnes detenido en un modal renueva igual. "
+                                           "MIRA EL PANEL del alias antes de reinyectar o "
+                                           "reiniciar. Si llega al tope del bus (12 h) el trabajo "
+                                           "se pierde entero" % (len(lista), edad),
+                                "evidencia": {"por que ya no cuenta como sano":
+                                              lista[0].get("por_que", "-")}})
+            else:
+                escalar.append({"tipo": "entrega_trabada", "alias": alias,
+                                "detalle": "%d entrega(s) hasta %d min; rescate automatico "
+                                           "deshabilitado" % (len(lista), edad)})
+
+    # --- 3b) la respuesta que murio de vuelta ------------------------------------------
+    # No es lo mismo que `trabajo_perdido`: aqui el trabajo SI se hizo y se contesto, y lo que
+    # se perdio es la respuesta. Por eso el que pregunto no reintenta (cree que sigue en curso)
+    # y el que contesto tampoco (cree que entrego). Sin este aviso, nadie vuelve a mirar nunca.
+    try:
+        mudas, rechazadas = respuestas_perdidas()
+    except Exception as e:                                        # noqa: BLE001
+        mudas, rechazadas = {}, {}
+        escalar.append({"tipo": "sonda_respuestas", "alias": "-",
+                        "detalle": "no pude medir las respuestas perdidas: %s" % e})
+    for espera in list(mudas):
+        # Una respuesta que alguien ya reinyecto a mano NO es trabajo perdido: queda
+        # escrita en la bitacora y no despierta a nadie. Sin esto el mismo hallazgo se
+        # repite cada corrida durante 24 h aunque este reparado -paso 5 veces el 13-ago-.
+        ya = [x for x in mudas[espera] if x.get("rescatada")]
+        mudas[espera] = [x for x in mudas[espera] if not x.get("rescatada")]
+        if ya:
+            apuntes.append({"tipo": "respuesta_rescatada", "alias": espera,
+                            "detalle": "%d respuesta(s) que murieron de vuelta pero cuyo texto "
+                                       "SI llego: una entrega posterior a %s lo contiene -sea "
+                                       "una reinyeccion a mano o el fan-in que se lo devolvio-. "
+                                       "Nadie quedo ciego, no se reclama. Ids: %s"
+                                       % (len(ya), espera,
+                                          ", ".join(x["id"] for x in ya[:4]))})
+        if not mudas[espera]:
+            del mudas[espera]
+    for espera, lista in sorted(mudas.items(), key=lambda kv: -len(kv[1])):
+        muestra = lista[0]
+        detalle = ("%d respuesta(s) que %s ESPERABA murieron en el camino de vuelta en 24 h. "
+                   "El que pregunto sigue esperando y el que contesto cree que entrego: nadie "
+                   "va a reintentar solo. La mas reciente [%s] la contesto %s a las %s UTC, y "
+                   "el transporte anoto: %s"
+                   % (len(lista), espera, muestra["id"], muestra["contesto"],
+                      muestra["cuando"], muestra["error"] or "sin error registrado"))
+        hallazgos.append({"modo": 3, "alias": espera, "detalle": detalle})
+        escalar.append({"tipo": "respuesta_perdida", "alias": espera, "detalle": detalle,
+                        "evidencia": {"respuestas muertas (id, quien contesto, cuando)":
+                                      "; ".join("%s de %s %s" % (x["id"], x["contesto"],
+                                                                 x["cuando"])
+                                                for x in lista[:3])}})
+    # --- 3c) la respuesta que NO se perdio: la rechazo el destinatario -------------------
+    # Mismo dato, autoria distinta, y por eso frase distinta. Aqui el `last_error` lo escribio
+    # el DESTINATARIO al rechazar la entrega, asi que no se lo atribuye al remitente ni se
+    # dice que nadie espera a ciegas: hay un alias que la leyo y explico por que la devuelve.
+    # No se silencia -el que contesto puede no saber que se la rechazaron- pero no grita.
+    for destinatario, lista in sorted(rechazadas.items(), key=lambda kv: -len(kv[1])):
+        muestra = lista[0]
+        detalle = ("%d respuesta(s) dirigidas a %s no quedaron entregadas, pero NO se "
+                   "perdieron en el camino: %s las rechazo y dejo escrito el motivo. La mas "
+                   "reciente [%s] la contesto %s a las %s UTC, y el motivo que escribio %s "
+                   "fue: %s"
+                   % (len(lista), destinatario, destinatario, muestra["id"],
+                      muestra["contesto"], muestra["cuando"], destinatario,
+                      muestra["error"] or "sin motivo registrado"))
+        hallazgos.append({"modo": 3, "alias": destinatario, "detalle": detalle})
+        escalar.append({"tipo": "respuesta_rechazada", "alias": destinatario,
+                        "detalle": detalle,
+                        "evidencia": {"respuestas rechazadas (id, quien contesto, cuando)":
+                                      "; ".join("%s de %s %s" % (x["id"], x["contesto"],
+                                                                 x["cuando"])
+                                                for x in lista[:3])}})
+
+    # --- 4) credencial rota que miente -------------------------------------------------
+    sin_rt, compartidas = sonda_credenciales(adaptadores)
+    for p in sin_rt:
+        hallazgos.append({"modo": 4, "alias": p["alias"], "detalle": p["detalle"]})
+        escalar.append({"tipo": "credencial", "alias": p["alias"], "detalle": p["detalle"]})
+    for h, quienes in sorted(compartidas.items()):
+        d = "credencial COMPARTIDA (huella %s) entre: %s; al rotar se pisan" % (
+            h, ", ".join(sorted(set(quienes))))
+        hallazgos.append({"modo": 4, "alias": ",".join(sorted(set(quienes))), "detalle": d})
+        escalar.append({"tipo": "credencial", "alias": ",".join(sorted(set(quienes))),
+                        "detalle": d})
+
+    # --- 5) cuenta de IA por agotarse (anticipar, no enterarse despues) ------------------
+    # DETECTA y PREPARA; no rota ni hace login solo. La rotacion automatica es razonable, pero
+    # un proceso que hace logins OAuth de madrugada y repetidamente puede parecerle abuso al
+    # proveedor y costarnos una cuenta: esa es una decision de Steven, no del guardia (§6).
+    # racha_cuentas_ok_false SIEMPRE se define aqui (incluso si el try de abajo revienta antes
+    # de tocarla) porque el `json.dump` final la persiste sin condicion; asi una corrida rota
+    # no le borra al guardia la memoria de rachas que ya llevaba.
+    racha_cuentas_ok_false = {}
+    try:
+        # Se lee ANTES del bucle: es el unico punto que necesita la racha de la corrida
+        # ANTERIOR (ver sonda_cuenta_racha / UMBRAL_RACHA_CUENTA_ROTA). Lectura propia y
+        # tolerante a fallos, en el mismo estilo que el resto de este fichero: cada seccion
+        # trae lo que necesita, sin depender de que otra seccion ya lo haya leido.
+        try:
+            _racha_estado = json.load(open(ESTADO_JSON))
+        except Exception:  # noqa: BLE001
+            _racha_estado = {}
+        racha_prev_cuentas = (_racha_estado.get("cuenta_ia_racha_ok_false")
+                              if isinstance(_racha_estado, dict) else None) or {}
+        rc_c, out_c, _ = sh("kratos", "cat %s" % CUENTAS_LIVE, timeout=30)
+        if rc_c == 0 and out_c.strip():
+            datos = json.loads(out_c)
+            capturado = datos.get("capturedAt", "?")
+            # La lista de destinos tiene que estar COMPLETA antes de emitir ningun hallazgo.
+            # Acumulada dentro del mismo bucle, una cuenta agotada que apareciera 2a en el
+            # fichero solo veia los destinos ya iterados: el aviso del 2026-08-07 recomendo
+            # "steven 12%" (la cuenta MAS cargada) y omitio juan 46% y b2b 51%, que estaban
+            # despues en la lista. Por eso va en una pasada previa.
+            # La ANTIGUEDAD del dato va en el aviso: una entrega puede quedar retenida en la cola
+            # de zeus y llegar con una foto de hace dos horas. Decidir mover una cuenta con datos
+            # viejos es peor que no decidir (paso el 2026-08-08: el aviso decia `juan 11%` cuando
+            # ya estaba en 0%).
+            antiguedad_txt = "desconocida"
+            try:
+                cap = datetime.datetime.fromisoformat(capturado.replace("Z", "+00:00"))
+                mins = int((ahora() - cap).total_seconds() // 60)
+                antiguedad_txt = ("%d min%s" % (mins, "  <-- DATO VIEJO, re-medir antes de mover"
+                                                " nada" if mins > 30 else ""))
+            except Exception:  # noqa: BLE001
+                pass
+            agotadas = []
+            libres = []
+            for c in datos.get("accounts", []):
+                pct_l = c.get("remainingPercent")
+                if isinstance(pct_l, int) and pct_l >= UMBRAL_CUENTA_PCT:
+                    et_l = c.get("label", "?")
+                    # La VENTANA va en el texto, siempre. Sin ella este renglon invita a comparar
+                    # un 16% de bloque de 5 h con un 0% semanal como si midieran lo mismo, que es
+                    # exactamente el error que se recomendo el 2026-08-08.
+                    libres.append("%s %d%% (%s, ventana %s, vuelve en %d min)"
+                                  % (et_l, pct_l,
+                                     PLAN_CUENTA.get(et_l, "plan desconocido"),
+                                     c.get("window", "?"),
+                                     (c.get("resetInSeconds") or 0) // 60))
+
+            for c in datos.get("accounts", []):
+                etiqueta = c.get("label", "?")
+                pct = c.get("remainingPercent")
+                reset_s = c.get("resetInSeconds") or 0
+                plan = PLAN_CUENTA.get(etiqueta, "plan desconocido")
+                if not c.get("ok", True):
+                    # UNA SOLA MUESTRA MALA NO ALARMA: hace falta persistencia entre corridas.
+                    # Ver UMBRAL_RACHA_CUENTA_ROTA y hallazgo_cuenta_rota para la evidencia
+                    # medida (2026-08-13, zeus) de que esto se cura solo en un ciclo.
+                    racha, entrada = hallazgo_cuenta_rota(etiqueta, plan, c, racha_prev_cuentas,
+                                                          capturado)
+                    racha_cuentas_ok_false[etiqueta] = racha
+                    if entrada:
+                        escalar.append(entrada)
+                    continue
+                racha_cuentas_ok_false[etiqueta] = 0   # respondio: corta cualquier racha previa
+                if (isinstance(pct, int) and pct < UMBRAL_CUENTA_PCT
+                        and reset_s > (UMBRAL_RESET_LEJOS_SESION_S
+                                       if c.get("window") == "session"
+                                       else UMBRAL_RESET_LEJOS_S)):
+                    agotadas.append("%s %d%% (%s, ventana %s, vuelve en %d min)"
+                                    % (etiqueta, pct, plan, c.get("window", "?"), reset_s // 60))
+                    escalar.append({
+                        "tipo": "cuenta_ia", "alias": etiqueta,
+                        "detalle": "la cuenta %s (%s) esta al %d%% en ventana %s y no resetea "
+                                   "hasta dentro de %d min: los contenedores que la usan se van "
+                                   "a quedar sin poder trabajar"
+                                   % (etiqueta, plan, pct, c.get("window", "?"), reset_s // 60),
+                        "evidencia": {"fichero": CUENTAS_LIVE, "capturedAt": capturado,
+                                      "antiguedad del dato": antiguedad_txt,
+                                      "registro": json.dumps(c),
+                                      "cuentas con holgura": ", ".join(libres) or "NINGUNA",
+                                      "quien usa esta cuenta (censo %s)" % CENSO_FECHA:
+                                          censo_de(etiqueta)[0],
+                                      "sin escalera de modelos":
+                                          censo_de(etiqueta)[1],
+                                      "refrescar el censo": CENSO_COMANDO,
+                                      "ojo": "elegir destino por CAPACIDAD (20x vs 5x), no por "
+                                             "numero de contenedores; NUNCA copiar el fichero "
+                                             "de credencial entre contenedores (fue lo que "
+                                             "mato a hegel, seneca e iza): cada contenedor "
+                                             "hace su propio `claude auth login`"}})
+                    # UNA CUENTA AL 0% SIN NADIE EXPUESTO NO DESPIERTA A NADIE.
+                    # Si todos los que la usan tienen escalera (openclaw) o no usan Claude (codex),
+                    # el 0% no impide un solo turno: medido con saldantia el 2026-08-17, hegel
+                    # contesto con claude-opus-4-8 sobre la cuenta "agotada" y jarvis cayo a gemini.
+                    # Queda escrito en la bitacora, pero no es un hallazgo.
+                    # EL EFECTO MANDA SOBRE EL PORCENTAJE. Antes de despertar a nadie, se mira
+                    # el panel de cada consumidor: es donde el bloqueo se ve. Si todos se pudieron
+                    # medir y ninguno esta bloqueado, es un apunte. Si falta uno, si el censo esta
+                    # rancio, o si alguno SI lo esta, escala igual -ver nadie_bloqueado_por-.
+                    sin_bloqueo, por_que = nadie_bloqueado_por(etiqueta)
+                    if sin_bloqueo:
+                        movido = escalar.pop()
+                        movido["detalle"] += (
+                            " — pero NINGUN consumidor esta bloqueado ahora mismo: %s. El "
+                            "porcentaje no predice el bloqueo; el panel si. No se escala." % por_que)
+                        movido["evidencia"]["EFECTO medido en los consumidores"] = por_que
+                        apuntes.append(movido)
+                    elif censo_de(etiqueta)[1].startswith("ninguno"):
+                        movido = escalar.pop()
+                        movido["detalle"] += (
+                            " — pero NINGUN consumidor queda sin trabajar: todos los que usan esta "
+                            "cuenta tienen escalera de modelos o no usan Claude. No despierta a nadie.")
+                        apuntes.append(movido)
+    except Exception as e:  # noqa: BLE001
+        escalar.append({"tipo": "sonda_cuentas", "alias": "-",
+                        "detalle": "no se pudieron leer las cuentas de IA: %s" % e})
+
+    # --- 5bis) EL BUCLE QUE SE COME LA CUOTA -------------------------------------------
+    # POR QUE EXISTE (auditoria del 2026-08-10, 35 MB de transcripciones de argos).
+    # argos se encargo a si mismo un cron de 5 min que le preguntaba ESTADO. Disparo 380 veces,
+    # 378 cerraron diciendo "HEARTBEAT_OK" sin cambiar nada, y se llevo el 69,7% de 115 millones
+    # de tokens. Nadie lo vio hasta que Steven se quedo sin las cuatro cuentas de Claude.
+    #
+    # LA SEÑAL NO ES UN ERROR: todos esos turnos cerraron en `done`. Un guardia que solo mira
+    # fallos no lo ve nunca. Lo que delata al bucle es el VOLUMEN sin resultado: muchas entregas
+    # a un mismo alias, todas cerrando bien, disparadas por un reloj y no por una persona.
+    #
+    # Por eso se mide la TASA, no el estado. Un alias que atiende mas de UMBRAL_TURNOS_HORA
+    # entregas en una hora no esta trabajando: esta girando. El umbral sale de la medicion: el
+    # bucle daba ~20/hora (uno cada 3 min); el trabajo real de un dia normal no pasa de 6.
+    # DONDE MIRAR, que es la parte que casi me sale mal: el bucle NO aparece en la tabla
+    # `deliveries`. Un cron de openclaw abre el turno por dentro del contenedor y nunca crea una
+    # entrega, asi que la base no lo ve: en la hora pico del incidente la tabla mostraba 24
+    # entregas normales, ninguna del bucle. Contar entregas habria dado un guardia que grita en
+    # dias de trabajo intenso y calla justo el dia que se quema la cuota.
+    # Se mira, entonces, la fuente real: los crons de openclaw dentro de cada contenedor.
+    UMBRAL_CRON_MIN = 30   # por debajo de esto, un cron que abre turno de agente es un lazo
+    try:
+        # 2026-08-21 zeus: el comando sale a una constante para poder REPETIRLO, y el stderr
+        # deja de tirarse. Un rc=255 es fallo de TRANSPORTE ssh (known_hosts rancio, descarte por
+        # MaxStartups), no del comando: se cura al segundo intento. Cuatro corridas seguidas
+        # dejaron al guardia CIEGO por esto, y el aviso solo sabia decir "rc=255".
+        _CMD_CRONS = (
+            "for C in $(docker ps --format '{{.Names}}'); do "
+            "  docker exec \"$C\" bash -lc 'openclaw cron list 2>/dev/null' 2>/dev/null "
+            "  | awk -v c=\"$C\" 'NR>1 && $0 !~ /^$/ {print c\"|\"$0}'; done"
+        )
+        rc_c, salida_c, err_c = sh("vps", _CMD_CRONS, timeout=180)
+        if rc_c == 255:
+            time.sleep(2)
+            rc_c, salida_c, err_c = sh("vps", _CMD_CRONS, timeout=180)
+        if rc_c == 0:
+            for linea in salida_c.splitlines():
+                cont, _, resto = linea.partition("|")
+                m = re.search(r"every\s+(\d+)\s*([mh])", resto)
+                if not m:
+                    continue
+                minutos = int(m.group(1)) * (60 if m.group(2) == "h" else 1)
+                if minutos >= UMBRAL_CRON_MIN:
+                    continue
+                # El modelo sale en la propia linea de `openclaw cron list`. Lo que hace
+                # dano es el bucle sobre la cuota ESCASA (Claude/Codex); sobre MiniMax o Gemini
+                # el mismo patron cuesta poco y suele ser una ETL silenciosa legitima.
+                mm = re.search(r"(anthropic|claude|codex|gpt|minimax|antigravity|gemini|opencode)[/\w.-]*",
+                               resto, re.IGNORECASE)
+                proveedor = mm.group(0) if mm else "desconocido"
+                escaso = bool(re.match(r"(anthropic|claude|codex|gpt)", proveedor, re.IGNORECASE))
+                if escaso:
+                    tipo_b = "bucle_de_cuota"
+                    detalle_b = ("hay un cron de openclaw cada %d min en %s que abre turno de agente "
+                                 "sobre cuota ESCASA (%s). Ese es EXACTAMENTE el patron que el "
+                                 "2026-08-10 se llevo el 69,7%% de 115 M de tokens de argos: 380 "
+                                 "disparos, 378 cerrando 'HEARTBEAT_OK' sin cambiar nada. Miralo y "
+                                 "matalo si pregunta ESTADO en vez de encargar trabajo; subirle el "
+                                 "intervalo NO alcanza" % (minutos, cont, proveedor))
+                else:
+                    tipo_b = "bucle_de_cuota_barato"
+                    detalle_b = ("hay un cron de openclaw cada %d min en %s sobre un proveedor "
+                                 "barato (%s). No es el incidente de argos —aquel quemaba Claude— "
+                                 "pero sigue abriendo un turno de agente cada %d min: revisalo si "
+                                 "no produce un artefacto nuevo en cada corrida. Para decidir, mira "
+                                 "`openclaw cron show <id> --json`: si `delivery.mode` es none y el "
+                                 "prompt escribe un fichero, es una ETL silenciosa legitima"
+                                 % (minutos, cont, proveedor, minutos))
+                hallazgo_b = {
+                    "tipo": tipo_b, "alias": cont,
+                    "detalle": detalle_b,
+                    "evidencia": {
+                        "linea del cron": resto.strip()[:200],
+                        "proveedor": proveedor,
+                        "por que no lo ve la base": "un cron de openclaw abre el turno dentro del "
+                                                    "contenedor y NO crea entrega: en `deliveries` "
+                                                    "no aparece ni una",
+                        "umbral": "%d min" % UMBRAL_CRON_MIN,
+                    },
+                }
+                # ADJUDICACION AUTOMATICA (2026-08-12 zeus). Preguntar por el intervalo no
+                # distingue el bucle del trabajo: lo que separa al incidente de argos de una ETL
+                # legitima es si el turno PRODUCE algo. Se mide, no se supone:
+                #   delivery.mode == none  Y  el prompt escribe un fichero  =>  ETL, va a apuntes.
+                # Un cron adjudicado sigue quedando escrito en la bitacora; lo que deja de hacer
+                # es despertar a nadie cada 15 min, que es como un guardia se vuelve ruido y tapa
+                # el bucle de verdad. Si la comprobacion NO se puede hacer, se escala igual: una
+                # medicion fallida no es un permiso.
+                mid = re.match(r"\s*([0-9a-fA-F-]{36})", resto)
+                adjudicado = False
+                if mid:
+                    rc_s, salida_s, _ = sh(
+                        "vps",
+                        "docker exec %s bash -lc 'openclaw cron show %s --json' 2>/dev/null"
+                        % (cont, mid.group(1)),
+                        timeout=60,
+                    )
+                    if rc_s == 0 and salida_s.strip():
+                        try:
+                            cron = json.loads(salida_s)
+                            modo = ((cron.get("delivery") or {}).get("mode") or "").lower()
+                            prompt = str(((cron.get("payload") or {}).get("message") or ""))
+                            escribe = bool(re.search(r"\bWrite\b|cat\s*>|sobrescrib|>>\s*/|"
+                                                     r"/[\w./-]+\.(md|json|csv|txt)", prompt))
+                            if modo == "none" and escribe:
+                                adjudicado = True
+                                apuntes.append({
+                                    "tipo": "bucle_de_cuota_adjudicado", "alias": cont,
+                                    "detalle": "cron %s cada %d min en %s (%s): ETL silenciosa "
+                                               "legitima, no bucle. delivery.mode=none y el prompt "
+                                               "escribe un fichero. Adjudicado midiendo, no "
+                                               "suponiendo; queda en bitacora y no despierta a "
+                                               "nadie. Si algun dia empieza a entregar mensajes o "
+                                               "deja de escribir, vuelve a saltar solo."
+                                               % (mid.group(1)[:8], minutos, cont, proveedor),
+                                })
+                        except Exception as e:  # noqa: BLE001
+                            escalar.append({"tipo": "sonda_bucle", "alias": cont,
+                                            "detalle": "no se pudo leer la definicion del cron %s "
+                                                       "para adjudicarlo (%s): se escala sin "
+                                                       "adjudicar" % (mid.group(1)[:8], e)})
+                    else:
+                        escalar.append({"tipo": "sonda_bucle", "alias": cont,
+                                        "detalle": "`openclaw cron show %s --json` no devolvio nada "
+                                                   "(rc=%d): no se pudo adjudicar, se escala igual"
+                                                   % (mid.group(1)[:8], rc_s)})
+                if not adjudicado:
+                    escalar.append(hallazgo_b)
+        else:
+            escalar.append({"tipo": "sonda_bucle", "alias": "-",
+                            "detalle": "no se pudieron listar los crons de openclaw en el VPS "
+                                       "(rc=%d): %s" % (rc_c, (err_c or "sin stderr").strip().replace("\n", " ")[:200])})
+    except Exception as e:  # noqa: BLE001
+        escalar.append({"tipo": "sonda_bucle", "alias": "-",
+                        "detalle": "no se pudo revisar el bucle de cuota: %s" % e})
+
+    # --- 6) trabajo perdido de verdad: dead-letters y `failed` que nadie reintenta -------
+    # Una entrega `failed` con attempt=1 NO se reintenta sola: es trabajo de una persona que
+    # se perdio en silencio. Las dead-letters son lo mismo un escalon mas abajo. Sin mirarlas,
+    # "reparar la infraestructura" deja la maquina sana y el trabajo muerto igual.
+    try:
+        # ESTA es la consulta que reventó dos veces (saltos de linea y un `~`), y con ella se
+        # iban del informe las dead-letters de mas abajo. Ya no se aplana ni se re-une nada:
+        # `sql()` pide CSV y declara el ancho, asi que el texto de `last_error` no puede tocar
+        # la estructura de la fila. El unico `replace` que queda es COSMETICO —que la evidencia
+        # entre en una linea del informe—, no una muleta del parseo.
+        # SE PREGUNTAN TRES COSAS POR ALIAS, NO UNA:
+        #   n          cuantas fallaron en la ventana;
+        #   err        que dijo LA ULTIMA (antes era `max(last_error)`, que es el maximo
+        #              ALFABETICO: devolvia un error cualquiera de la ventana, no el vigente);
+        #   recuperadas cuantas entregas cerro en `done` DESPUES de esa ultima falla.
+        # La tercera es la que faltaba. Sin ella el guardia trataba cualquier error de las
+        # ultimas 24 h como un problema ACTUAL: el 2026-08-06 reporto `hegel / trabajo_perdido`
+        # con gravedad 80 citando un `401 OAuth access token has been revoked` de las 01:52,
+        # cuando la credencial de hegel habia rotado sola a las 02:17 y desde entonces llevaba
+        # doce entregas cerradas. Un sintoma que ya se curo no es un hallazgo: es ruido, y el
+        # ruido tapa lo que si importa. Un hallazgo se reporta solo si PERSISTE.
+        perdidas = sql(
+            "with fallas as ("
+            " select recipient_alias as alias, count(*) as n, max(created_at) as ultima"
+            " from deliveries where status in ('failed','dead') and attempt <= 1"
+            " and created_at > now() - interval '24 hours' group by recipient_alias), "
+            "ultima_falla as ("
+            " select distinct on (recipient_alias) recipient_alias as alias,"
+            " replace(replace(coalesce(last_error,''), chr(10), ' '), chr(13), ' ') as err"
+            " from deliveries where status in ('failed','dead') and attempt <= 1"
+            " and created_at > now() - interval '24 hours'"
+            " order by recipient_alias, created_at desc), "
+            # CUARTA pregunta (2026-08-17 zeus): cuantas de esas fallas eran SONDAS. Sin
+            # esto el guardia contaba 3 fallas de tales y pedia rescatar trabajo, cuando las
+            # 3 eran pruebas de vida mias y de kant. El conteo no distingue una queja de un
+            # cliente de un `PROBAR-`; el CUERPO si.
+            "sondas as ("
+            " select d.recipient_alias as alias, count(*) as s"
+            " from deliveries d join messages m on m.id = d.message_id"
+            " where d.status in ('failed','dead') and d.attempt <= 1"
+            " and d.created_at > now() - interval '24 hours'"
+            " and (coalesce(m.body->>'text','') ilike '%prueba de vida%'"
+            "   or coalesce(m.body->>'text','') like '%PROBAR-%'"
+            "   or coalesce(m.body->>'text','') ilike '%no es trabajo%')"
+            " group by d.recipient_alias), "
+            # QUINTA pregunta (2026-08-18 zeus): cuantas de esas fallas son TRABAJO PERDIDO DE
+            # VERDAD, o sea ni sonda ni contestada. `failed` no quiere decir "no se hizo":
+            # quiere decir "el agente lo marco como fallido". heraclito contesto `failed` a
+            # proposito -bloqueo permanente, no tiene la credencial- y su respuesta completa
+            # quedo en `last_error`, que el guardia publicaba como prueba de trabajo perdido.
+            # Si hay `reply` estructurado, el que pregunto RECIBIO la respuesta.
+            "mudas as ("
+            " select d.recipient_alias as alias, count(*) as m"
+            " from deliveries d join messages m2 on m2.id = d.message_id"
+            " where d.status in ('failed','dead') and d.attempt <= 1"
+            " and d.created_at > now() - interval '24 hours'"
+            " and coalesce(d.result->'output'->>'reply','') = ''"
+            " and not (coalesce(m2.body->>'text','') ilike '%prueba de vida%'"
+            "       or coalesce(m2.body->>'text','') like '%PROBAR-%'"
+            "       or coalesce(m2.body->>'text','') ilike '%no es trabajo%')"
+            " group by d.recipient_alias) "
+            "select f.alias, f.n::text, u.err, "
+            "to_char(f.ultima at time zone 'UTC','YYYY-MM-DD HH24:MI'), "
+            "(select count(*) from deliveries s where s.recipient_alias = f.alias"
+            " and s.status = 'done'"
+            " and coalesce(s.terminal_at, s.updated_at) > f.ultima)::text, "
+            "coalesce(so.s, 0)::text, coalesce(mu.m, 0)::text "
+            "from fallas f join ultima_falla u on u.alias = f.alias "
+            "left join sondas so on so.alias = f.alias "
+            "left join mudas mu on mu.alias = f.alias "
+            "order by f.n desc;", columnas=7)
+        for alias, n, ultimo, cuando, posteriores, n_sondas, n_mudas in perdidas:
+            recuperadas = int(posteriores) if posteriores.isdigit() else 0
+            evidencia = {"ultima falla (UTC)": cuando,
+                         "last_error de la ULTIMA falla (crudo)": ultimo[:400],
+                         "entregas cerradas en `done` despues de esa falla": str(recuperadas)}
+            bloqueo, por_que = bloqueo_de_acceso(ultimo)
+            # MEDIDO 2026-08-13 (zeus). `bloqueado_por_acceso` era un PESTILLO SIN RESET. Se
+            # deduce de un `last_error` VIEJO -o sea de una DECLARACION del agente en un
+            # instante-, nunca de un estado medido, y nada la reconfirma nunca. Caso real: iza
+            # declaro a las 01:07 que se habia quedado sin el mount de /workspace; yo se lo
+            # devolvi a las 16:40 y el aviso seguia saliendo a las 22:34, con gravedad 55 y
+            # "NECESITA UNA PERSONA", 21 h despues y con la puerta ya abierta.
+            #
+            # NO se toca el criterio original -que el alias cierre otras entregas no destraba
+            # ESTA-, porque es correcto: se puede cerrar trabajo y seguir sin un acceso concreto.
+            # Lo que se agrega es caducidad. Pasadas unas horas, una declaracion que nadie
+            # reconfirmo Y que convive con entregas cerradas deja de despertar a nadie y pasa a
+            # la bitacora, diciendo como reconfirmarla: MIDIENDO el acceso, no releyendo el
+            # last_error. Un bloqueo fresco escala igual que siempre.
+            HORAS_DECLARACION_CADUCA = 6
+            sin_reconfirmar = False
+            if bloqueo and recuperadas:
+                try:
+                    momento = datetime.datetime.strptime(cuando, "%Y-%m-%d %H:%M").replace(
+                        tzinfo=datetime.timezone.utc)
+                    horas = (datetime.datetime.now(datetime.timezone.utc)
+                             - momento).total_seconds() / 3600.0
+                    sin_reconfirmar = horas >= HORAS_DECLARACION_CADUCA
+                except (ValueError, TypeError):
+                    # Si no se puede fechar, se escala: una medicion fallida no es un permiso.
+                    sin_reconfirmar = False
+            if bloqueo and sin_reconfirmar:
+                apuntes.append({"tipo": "bloqueado_por_acceso_sin_reconfirmar", "alias": alias,
+                                "detalle": "%s declaro a las %s UTC que le faltaba un acceso "
+                                           "(%s). Fue hace mas de %d h y desde entonces cerro "
+                                           "%d entrega(s): la declaracion NO se reconfirmo y "
+                                           "puede estar ya resuelta, asi que no despierta a "
+                                           "nadie. Para reconfirmarla hay que MEDIR el acceso "
+                                           "dentro de su contenedor; releer el last_error solo "
+                                           "repite la declaracion vieja"
+                                           % (alias, cuando, por_que,
+                                              HORAS_DECLARACION_CADUCA, recuperadas)})
+            elif bloqueo:
+                # SE MIRA ANTES QUE LA RECUPERACION a proposito: que el alias haya seguido
+                # cerrando otras entregas no destraba ESTA. El acceso sigue faltando.
+                evidencia["por que se clasifica asi"] = (
+                    "el agente %s: no es un fallo suyo ni trabajo perdido, es un acceso que no "
+                    "tiene. NO se reintenta: la puerta sigue cerrada" % por_que)
+                escalar.append({"tipo": "bloqueado_por_acceso", "alias": alias,
+                                "detalle": "%s declara que le falta un acceso para poder "
+                                           "trabajar (%s): NECESITA UNA PERSONA, no un "
+                                           "reintento" % (alias, por_que),
+                                "evidencia": evidencia})
+            elif recuperadas:
+                # Mismo trato que `turno_largo_sano`: queda escrito en la bitacora, pero NO es
+                # un hallazgo y NO despierta a nadie.
+                apuntes.append({"tipo": "trabajo_perdido_recuperado", "alias": alias,
+                                "detalle": "%s fallo(s) en 24 h, la ultima a las %s UTC, y %s "
+                                           "cerro %d entrega(s) DESPUES de esa: el sintoma ya "
+                                           "no persiste, no se reporta como fallo actual. Si "
+                                           "alguna de esas tareas quedo sin hacer, la levanta "
+                                           "el libro de tareas por su lado"
+                                           % (n, cuando, alias, recuperadas)})
+            else:
+                # PROCESS_EXIT_AMBIGUOUS no es una causa: es "murio y no sabemos por que".
+                # Publicarlo como trabajo perdido manda a reinyectar algo que no va a correr.
+                causa = None
+                panel_txt = None
+                if "without structured output" in ultimo:
+                    # El guardia lo MIDE en vez de recomendarme que lo mida yo.
+                    panel, por_que_no = panel_del_alias(alias)
+                    if panel:
+                        panel_txt = panel
+                        causa = causa_en_el_panel(panel)
+                        evidencia["CAUSA leida en el PANEL"] = causa or (
+                            "no reconozco una causa nombrada; ultimas lineas del panel abajo")
+                        evidencia["panel (ultimas lineas)"] = panel[-600:]
+                    else:
+                        evidencia["panel"] = por_que_no
+                    # zeus 2026-08-22: el panel es la MEJOR fuente, no la unica. Los alias con
+                    # arnes openclaw no tienen panel de tmux -argos da
+                    # `error connecting to /tmp/tmux-1000/cauce (No such file or directory)`-, y
+                    # cuando el panel falta el guardia se quedaba sin causa aunque el `last_error`
+                    # dijera literalmente "You've reached your Codex subscription usage limit".
+                    # Se lee el error DESPUES del panel, nunca antes: el panel sigue mandando.
+                    if not causa:
+                        causa = causa_en_el_panel(ultimo)
+                        if causa:
+                            evidencia["CAUSA leida en el `last_error` (no habia panel)"] = causa
+                    evidencia["OJO: este error NO dice la causa"] = (
+                        "`without structured output` solo dice que el arnes murio sin salida "
+                        "estructurada. La causa real casi nunca viaja por el bus: vive en el "
+                        "PANEL del alias. Medido el 2026-08-17 con tales: el bus decia \"el turno "
+                        "termino en la terminal sin ningun mensaje del agente\" y el panel decia "
+                        "\"You've hit your usage limit ... try again at Aug 20th, 2026 3:46 AM\". "
+                        "Era el proveedor sin credito, no trabajo perdido, y ningun reintento ni "
+                        "reinicio lo habria arreglado. CAPTURA EL PANEL ANTES de reinyectar o "
+                        "reiniciar: docker exec <ctr> tmux -L cauce capture-pane -p "
+                        "-t cauce-<alias> | tail -30")
+                # CALCULADO, no recordado. La nota vieja hablaba de "las 3 de tales" en
+                # duro: no valia para ningun otro alias y envejecia mal.
+                try:
+                    total = int(n)
+                except (TypeError, ValueError):
+                    total = 0
+                try:
+                    sondas = int(n_sondas)
+                except (TypeError, ValueError):
+                    sondas = 0
+                try:
+                    mudas = int(n_mudas)
+                except (TypeError, ValueError):
+                    mudas = 0
+                # `reales` = ni sonda ni contestada. Es la unica cuenta que significa
+                # "trabajo que nadie hizo y del que nadie recibio respuesta".
+                reales = max(0, min(mudas, total))
+                respondidas = max(0, total - sondas - reales)
+                evidencia["de esas fallas, cuantas eran SONDAS"] = (
+                    "%d de %d (pruebas de vida: `Prueba de vida...`, `PROBAR-...`). "
+                    "Reinyectar una sonda es ruido: mira el `body` del mensaje, no el conteo"
+                    % (sondas, total))
+                if respondidas:
+                    evidencia["OJO: cuantas CONTESTARON igual"] = (
+                        "%d de %d traen `result->output->reply` no vacio: el agente marco el "
+                        "turno `failed` A PROPOSITO -bloqueo permanente- y el que pregunto SI "
+                        "recibio la respuesta. Eso no es trabajo perdido, y su texto es lo que "
+                        "aparece arriba como `last_error`" % (respondidas, total))
+
+                if causa and causa.startswith(("SIN CREDENCIAL", "CADENA DE MODELOS AGOTADA")):
+                    # Mismo criterio que PROVEEDOR SIN CREDITO y CREDENCIAL REVOCADA: la causa ya
+                    # se conoce, asi que el titular tiene que decirla. Llamar a esto
+                    # `trabajo_perdido` manda a reinyectar algo que va a morir igual.
+                    evidencia["por que se clasifica asi"] = (
+                        "el alias no puede EJECUTAR: %s. Reinyectar es gastar un reintento en "
+                        "balde. Se repara la cadena o la credencial, y se prueba POR EFECTO "
+                        "-`claude -p ok` dentro del contenedor- antes de darlo por bueno"
+                        % causa.split(":")[0])
+                    escalar.append({"tipo": ("credencial_vacia"
+                                             if causa.startswith("SIN CREDENCIAL")
+                                             else "cadena_de_modelos_agotada"),
+                                    "alias": alias,
+                                    "detalle": "%s no puede ejecutar (%d falla(s) en 24 h, la "
+                                               "ultima %s UTC). %s"
+                                               % (alias, total, cuando, causa),
+                                    "evidencia": evidencia})
+                elif causa and causa.startswith("CREDENCIAL REVOCADA"):
+                    # Mismo arreglo que se hizo para PROVEEDOR SIN CREDITO el 2026-08-17: la causa
+                    # ya se calculaba y se imprimia, pero el titular seguia diciendo
+                    # `trabajo_perdido` gravedad 80 y mandando a reinyectar algo que no puede
+                    # correr sin credencial. NO se silencia: se escala con el tipo correcto.
+                    evidencia["por que se clasifica asi"] = (
+                        "lo dice el panel del propio alias: su cadena fue revocada. No hay trabajo "
+                        "que rescatar ni nada que reiniciar. Y OJO con el arreglo obvio: relogear "
+                        "a la victima revoca al otro alias que comparte la cuenta y muda el "
+                        "problema en vez de resolverlo")
+                    escalar.append({"tipo": "credencial_revocada", "alias": alias,
+                                    "detalle": "%s no puede ejecutar: su credencial fue REVOCADA "
+                                               "(%d falla(s) en 24 h, la ultima %s UTC). No "
+                                               "reinyectes: sin credencial todo reintento muere "
+                                               "igual. Adjudica comparando `account_id` y el mtime "
+                                               "de `~/.codex/auth.json` entre los alias de arnes "
+                                               "codex -leyendo el FICHERO, nunca el CLI-"
+                                               % (alias, total, cuando),
+                                    "evidencia": evidencia})
+                elif causa and causa.startswith("PROVEEDOR SIN CREDITO"):
+                    # El guardia ya lo sabia y lo escribia; lo que faltaba era CLASIFICARLO asi.
+                    evidencia["por que se clasifica asi"] = (
+                        "lo dice el panel del propio alias: se quedo sin credito. No hay trabajo "
+                        "que rescatar ni nada que reiniciar; hace falta una PERSONA que pague o "
+                        "que le cambie el proveedor")
+                    # El proveedor publica CUANDO vuelve. Hasta esa hora esto no es una alarma:
+                    # es cierto, esta sabido y no hay nada que hacer. Repetirlo cada corrida
+                    # durante dias entrena a saltearse los avisos.
+                    vuelve = reset_del_panel(panel_txt)
+                    ahora_utc = datetime.datetime.now(datetime.timezone.utc)
+                    if vuelve and vuelve > ahora_utc:
+                        faltan = cuanto_falta((vuelve - ahora_utc).total_seconds())
+                        evidencia["cuando vuelve, segun el PROPIO panel"] = (
+                            "%s UTC (%s). Zona asumida UTC: el panel no la dice"
+                            % (vuelve.strftime("%Y-%m-%d %H:%M"), faltan))
+                        apuntes.append({"tipo": "proveedor_sin_credito_con_fecha",
+                                        "alias": alias,
+                                        "detalle": "%s esta sin credito y su proveedor dice que "
+                                                   "vuelve el %s UTC (%s). No se "
+                                                   "escala: no hay nada que hacer hasta esa hora. "
+                                                   "Si llega la fecha y sigue fallando, entonces "
+                                                   "SI es una alarma"
+                                                   % (alias, vuelve.strftime("%Y-%m-%d %H:%M"),
+                                                      faltan),
+                                        "evidencia": evidencia})
+                    else:
+                        if vuelve:
+                            evidencia["la fecha que dio el proveedor YA PASO"] = (
+                                "dijo que volvia el %s UTC. El panel es SCROLLBACK, no estado "
+                                "actual: el cartel sigue ahi porque nadie escribio nada despues, "
+                                "no porque el limite siga vigente. Ya no prueba falta de credito"
+                                % vuelve.strftime("%Y-%m-%d %H:%M"))
+                            escalar.append({"tipo": "congelado_tras_recuperar_credito",
+                                            "alias": alias,
+                                            "detalle": detalle_congelado(alias, vuelve, total,
+                                                                         cuando),
+                                            "evidencia": evidencia})
+                        else:
+                            escalar.append({"tipo": "proveedor_sin_credito", "alias": alias,
+                                            "detalle": "%s no puede ejecutar: su proveedor esta "
+                                                       "sin credito (%d falla(s) en 24 h, la "
+                                                       "ultima %s UTC) y el panel NO dice cuando "
+                                                       "vuelve. NECESITA UNA PERSONA -y dinero-, "
+                                                       "no un reintento ni un reinicio"
+                                                       % (alias, total, cuando),
+                                            "evidencia": evidencia})
+                elif total and reales == 0:
+                    # Nada que rescatar: o eran sondas, o el agente contesto igual. Se anota.
+                    if respondidas and not sondas:
+                        detalle = ("%s marco %d turno(s) como `failed` en 24 h pero CONTESTO en "
+                                   "todos: hay `reply` estructurado y el que pregunto lo "
+                                   "recibio. No es trabajo perdido -es un bloqueo declarado-. "
+                                   "Reinyectarlo repite la misma respuesta y quema un turno"
+                                   % (alias, respondidas))
+                    else:
+                        detalle = ("%s fallo %d vez/veces en 24 h: %d eran SONDAS y %d "
+                                   "contestaron igual. No se perdio ningun trabajo real. El "
+                                   "alias puede estar caido, pero eso lo dice otro hallazgo"
+                                   % (alias, total, sondas, respondidas))
+                    # La etiqueta tiene que decir la verdad tambien cuando NO hubo sondas:
+                    # llamar "fallas_solo_de_sondas" a un bloqueo declarado seria mentir en el
+                    # titulo, que es justo lo que le critique al guardia hace dos horas.
+                    tipo_ap = ("fallo_declarado_con_respuesta"
+                               if respondidas and not sondas else "fallas_solo_de_sondas")
+                    apuntes.append({"tipo": tipo_ap, "alias": alias,
+                                    "detalle": detalle, "evidencia": evidencia})
+                else:
+                    escalar.append({"tipo": "trabajo_perdido", "alias": alias,
+                                    # Campo MAQUINA, no prosa: lo lee el repaso contra el libro
+                                    # de tareas mas abajo. `cuando` ya viajaba, pero solo dentro
+                                    # de una frase, y nadie puede comparar fechas contra una frase.
+                                    "ultimo_fallo": cuando,
+                                    "detalle": "%s entrega(s) failed/dead con attempt<=1 en 24 h "
+                                               "y NINGUNA cerrada desde la ultima (%s UTC): no se "
+                                               "reintentan solas, son trabajo perdido. %d de esas "
+                                               "%d NO eran sondas"
+                                               % (n, cuando, reales, total),
+                                    "evidencia": evidencia})
+        # HAY DOS COLAS DE CARTAS MUERTAS, Y EL GUARDIA MIRABA LA QUE MENOS IMPORTA.
+        #   dead_letters         entregas del bus que murieron: TRABAJO que no se hizo. 2213
+        #                        sin resolver, y NUNCA aparecio en un informe.
+        #   outbox_dead_letters  respuestas que no salieron a Telegram. 1342, de las cuales
+        #                        1328 son `recipient is offline`: no llegaron a un humano,
+        #                        pero no son trabajo sin hacer.
+        # Se consultaba la segunda y se publicaba con la etiqueta `dead_letters`, o sea el
+        # numero decia una cosa y media otra. Arreglar el parser NO hacia visibles las 2213:
+        # eran dos fallos distintos que se veian como uno.
+        #
+        # Y SE VIGILA LA TASA, NO EL ACUMULADO. 1957 de las 2213 son del 27 y 28 de julio
+        # (diagnostico completo en /workspace/DLQ-DIAGNOSTICO-2026-08-06.md); el regimen
+        # normal es 10-25 por dia. Publicar el total todos los dias es gritar por una cicatriz
+        # y entrenar a que se ignore el aviso justo cuando haya una fuga de verdad. El total
+        # va SIEMPRE en la evidencia; lo que decide si se despierta a alguien es el ultimo dia.
+        dl = sql("select "
+                 "(select count(*) from dead_letters where resolved_at is null)::text, "
+                 "(select count(*) from dead_letters "
+                 " where created_at > now() - interval '24 hours')::text, "
+                 "(select round(count(*)/6.0, 1) from dead_letters "
+                 " where created_at > now() - interval '7 days' "
+                 "   and created_at <= now() - interval '24 hours')::text, "
+                 "(select count(*) from outbox_dead_letters where resolved_at is null)::text, "
+                 "(select count(*) from outbox_dead_letters "
+                 " where created_at > now() - interval '24 hours')::text;", columnas=5)
+        if dl:
+            bus_abiertas, bus_dia, bus_base, salida_abiertas, salida_dia = dl[0]
+            for tipo, etiqueta, abiertas, dia, tabla in (
+                    ("dead_letters_bus", "entregas del bus que murieron (trabajo sin hacer)",
+                     bus_abiertas, bus_dia, "dead_letters"),
+                    ("dead_letters_salida", "respuestas que no salieron a Telegram",
+                     salida_abiertas, salida_dia, "outbox_dead_letters")):
+                n_ab = int(abiertas) if abiertas.isdigit() else 0
+                n_dia = int(dia) if dia.isdigit() else 0
+                if not n_ab and not n_dia:
+                    continue
+                evidencia = {"tabla": tabla,
+                             "sin resolver (acumulado, incluye lo historico)": str(n_ab),
+                             "nuevas en las ultimas 24 h": str(n_dia),
+                             "media diaria de los 6 dias anteriores": bus_base
+                             if tabla == "dead_letters" else "(no se mide para esta cola)",
+                             "consulta": "select * from %s where resolved_at is null "
+                                         "order by created_at desc" % tabla}
+                if n_dia > UMBRAL_DLQ_DIA:
+                    escalar.append({"tipo": tipo, "alias": "-",
+                                    "detalle": "%d carta(s) muerta(s) NUEVAS en 24 h en `%s` "
+                                               "(%s); el regimen normal es <= %d/dia: esto es "
+                                               "una fuga viva, no la cicatriz vieja"
+                                               % (n_dia, tabla, etiqueta, UMBRAL_DLQ_DIA),
+                                    "evidencia": evidencia})
+                else:
+                    apuntes.append({"tipo": tipo, "alias": "-",
+                                    "detalle": "`%s`: %d sin resolver en total (%s), pero solo "
+                                               "%d en las ultimas 24 h: dentro del regimen "
+                                               "normal (<= %d/dia). El acumulado es historico; "
+                                               "no se despierta a nadie por el"
+                                               % (tabla, n_ab, etiqueta, n_dia, UMBRAL_DLQ_DIA)})
+    except Exception as e:  # noqa: BLE001
+        escalar.append({"tipo": "sonda_cola", "alias": "-",
+                        "detalle": "no se pudo medir la cola perdida: %s" % e})
+
+    # --- 6.5) HUECO 2: las propias entregas del guardia tambien pueden morir en silencio ----
+    # Ver el comentario largo junto a `avisos_propios_muertos()`: esto NO reusa el filtro por
+    # `type` del libro ni el calculo de "recuperada" del paso 6, que son justo los dos que lo
+    # dejaban ciego. `sonda_propias_muertas` (prefijo `sonda_`) hereda la gravedad de sonda rota
+    # sola: si ESTA consulta revienta, es el mismo apagon que cualquier otra sonda.
+    try:
+        filas_propias = sql(
+            "select d.recipient_alias, count(*)::text, "
+            "to_char(max(d.created_at) at time zone 'UTC','YYYY-MM-DD HH24:MI'), "
+            "replace(replace(coalesce((array_agg(d.last_error order by d.created_at desc))[1], "
+            "''), chr(10), ' '), chr(13), ' '), "
+            "coalesce(to_char((select max(d2.created_at) from deliveries d2 "
+            "  join messages m2 on m2.id = d2.message_id "
+            "  where m2.body->>'guardia' = 'cauce-medico-monitor' "
+            "  and d2.recipient_alias = d.recipient_alias "
+            "  and d2.status = 'done' "
+            "  and d2.created_at > now() - interval '24 hours') "
+            "at time zone 'UTC','YYYY-MM-DD HH24:MI'), NULL) "
+            "from deliveries d join messages m on m.id = d.message_id "
+            "where m.body->>'guardia' = 'cauce-medico-monitor' "
+            "and d.status in ('failed','dead') "
+            "and d.created_at > now() - interval '24 hours' "
+            "group by d.recipient_alias order by d.recipient_alias;", columnas=5)
+        escalar.extend(avisos_propios_muertos(filas_propias))
+    except Exception as e:  # noqa: BLE001
+        escalar.append({"tipo": "sonda_propias_muertas", "alias": "-",
+                        "detalle": "no se pudo medir si el guardia se avisa a si mismo (y por "
+                                   "eso mismo esto puede estar rompiendose en silencio): %s"
+                                   % e})
+
+    # --- extra: adaptadores caidos (se reporta, no se toca sin el ciclo de rescate) -----
+    for alias, u in sorted(unids.items()):
+        if u["active"] not in ("failed",) and u["sub"] != "failed":
+            continue
+        # Una unidad `failed` NO significa que el alias este mudo: el supervisor no senala
+        # procesos que el no rastrea, asi que el adaptador ANTERIOR puede seguir vivo y
+        # atendiendo (pasa con el exit 78). Distinguir los dos casos importa: con el huerfano
+        # vivo el alias contesta pero se quedo SIN supervisor —si ese proceso muere, no lo
+        # repone nadie—; sin huerfano, el alias esta mudo de verdad.
+        ad = adaptadores.get(alias)
+        huerfano = bool(ad) and ad.get("etimes", 0) > 0
+        # Evidencia CRUDA, no un resumen: un "atlas esta raro" obliga a re-medirlo todo desde
+        # cero; el `exit 78` textual y el journal dejan arrancar del punto correcto.
+        base_ctl = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if u["host"] == "kratos"
+                    else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
+        _, ev_show, _ = sh(u["host"], "%s show %s -p ActiveState,SubState,ExecMainStatus,"
+                                      "Result,NRestarts,InactiveEnterTimestamp"
+                           % (base_ctl, u["unidad"]), timeout=40)
+        _, ev_log, _ = sh(u["host"], "%s status %s --no-pager -n 25 2>&1 | tail -25"
+                          % (base_ctl, u["unidad"]), timeout=40)
+        evidencia = {
+            "host": u["host"],
+            "systemctl show": ev_show.strip(),
+            "systemctl status (ultimas 25)": ev_log.strip(),
+            "adaptador vivo": ("pid %d, %d s de vida, bundle %s" % (
+                ad["pid"], ad["etimes"], ad.get("bundle", "?")) if ad else "NINGUNO"),
+        }
+        # RECHEQUEO 2026-08-11 (zeus): la DECISION de arriba usa la muestra de unidades
+        # tomada al principio de la corrida, pero la evidencia se mide RECIEN AHORA. Entre las dos
+        # cosas pasan minutos, y un alias reiniciado en ese hueco se reporta "MUDO gravedad 100"
+        # con un bloque de evidencia que dice  justo debajo: el informe se
+        # contradice a si mismo y quema una entrega de zeus. Paso el 2026-08-11 03:28Z con argos,
+        # reiniciado a las 03:23:05 y con entregas confirmadas a las 03:27. Si la medicion fresca
+        # dice que ya esta arriba, se recupero solo: no es hallazgo.
+        if "ActiveState=active" in ev_show and "SubState=failed" not in ev_show:
+            continue
+        if huerfano:
+            det = ("unidad %s en failed (exit 78) pero el adaptador ANTERIOR sigue vivo "
+                   "(pid %d, %d h) y atendiendo: el alias contesta pero quedo SIN supervisor"
+                   % (u["unidad"], ad["pid"], ad["etimes"] // 3600))
+        else:
+            det = "unidad %s en %s y no se ve adaptador vivo: el alias esta MUDO" % (
+                u["unidad"], u["active"])
+        hallazgos.append({"modo": 0, "alias": alias, "detalle": det})
+        escalar.append({"tipo": "adaptador_huerfano" if huerfano else "adaptador_caido",
+                        "alias": alias, "detalle": det, "evidencia": evidencia})
+    # Si la sonda de unidades esta rota, la ausencia no se puede acreditar: se omite.
+    for alias in (sorted(inv) if not sondas_rotas else []):
+        # Una unidad `inactive` que sobro de una mudanza NO es un adaptador: si no hay proceso
+        # vivo y ninguna unidad activa, ese alias no esta atendido por nadie.
+        if alias in adaptadores or unids.get(alias, {}).get("active") == "active":
+            continue
+        # ...pero antes de gritar con gravedad 95, se remide: la muestra de unidades es de hace
+        # minutos y un reinicio deliberado entero cabe en ese hueco (atlas y socrates,
+        # 2026-08-13, los dos falsos). Se miran TODAS las unidades del alias -puede tener una
+        # en cada host- y basta con que UNA explique la ausencia para no avisar.
+        candidatas = [(h, u["unidad"]) for h in ("vps", "kratos")
+                      for u in [unids_por_host[h].get(alias)] if u]
+        reinicio, fresco_por_unidad = "", []
+        for h, unidad in candidatas:
+            fresco = estado_fresco_unidad(h, unidad)
+            fresco_por_unidad.append((h, unidad, fresco))
+            if fresco is None:
+                continue
+            es_reinicio, motivo = _lee_reinicio(fresco)
+            if es_reinicio:
+                reinicio = motivo
+                break
+        if reinicio:
+            apuntes.append({"tipo": "reinicio_en_curso", "alias": alias,
+                            "detalle": "NO se avisa 'sin adaptador': %s" % reinicio})
+            continue
+        detalle_fresco = "; ".join(
+            "%s/%s -> %s" % (h, u, "no se pudo remedir" if f is None
+                             else "%s/%s Result=%s" % (f["active"], f["sub"], f["result"]))
+            for h, u, f in fresco_por_unidad)
+        escalar.append({"tipo": "sin_adaptador", "alias": alias,
+                        "detalle": "no se ve adaptador vivo ni unidad activa en ningun host",
+                        "evidencia": {"remedido al momento del aviso":
+                                      detalle_fresco or "sin unidad en ningun host"}})
+
+    # --- 7) EL LIBRO DE TAREAS: que una entrega llegue a `done` no significa que este hecha ---
+    # Va DENTRO de esta corrida, no en un timer aparte. Sus hallazgos entran en la MISMA lista
+    # `escalar` que todo lo demas, asi que pasan por el mismo filtro de "solo lo nuevo o lo que
+    # empeoro" y viajan en la MISMA entrega a zeus: un hallazgo, un aviso.
+    resumen_libro = None
+    if libro_tareas is None:
+        escalar.append({"tipo": "sonda_libro", "alias": "-",
+                        "detalle": "no se pudo cargar el libro de tareas: %s" % _MOTIVO_SIN_LIBRO})
+    else:
+        try:
+            # Quien puede recibir un reenvio: adaptador VIVO y sin problema abierto. Mandarle
+            # trabajo a un alias que el propio guardia acaba de declarar caido es pegarle al
+            # vacio y gastar un reintento en balde.
+            rotos = {e.get("alias") for e in escalar
+                     if e.get("tipo") in ("adaptador_caido", "sin_adaptador", "poller_trabado")}
+            online = set(adaptadores) - rotos
+
+            def _publicar_libro(tenant, alias, cuerpo, clave):
+                return publicar(tenant or inv.get(alias, {}).get("tenant") or "Steven",
+                                alias, cuerpo, clave)
+
+            resumen_libro = libro_tareas.correr(
+                {"sql": sql, "sh": sh, "publicar": _publicar_libro,
+                 "online": online, "en_vuelo": en_vuelo_alias,
+                 "reenviar": not args.solo_detectar},
+                {"libro": LIBRO_JSON, "md": LIBRO_MD, "evidencia": EVIDENCIA_JSON})
+
+            # UN HALLAZGO, UN AVISO: lo que el guardia ya reporta por otro camino no se avisa
+            # dos veces; se mete DENTRO del hallazgo que ya existe como evidencia extra.
+            # zeus 2026-08-22: `trabajo_perdido` se calcula en el paso 6, MUCHO antes de que
+            # el libro corra, y miraba solo la tabla `deliveries`: entrega failed + ninguna
+            # cerrada despues = trabajo perdido. Nunca consultaba `evidencia-esperada.json`,
+            # que es el unico cierre durable que tiene esta casa. Consecuencia medida: un
+            # encargo cuya evidencia SI existe -el trabajo se hizo y se comprobo, solo que lo
+            # entrego otra entrega- seguia gritando "trabajo perdido, reinyecta" cada 15 min.
+            # Reinyectar eso es rehacer trabajo hecho, y ademas entrena a ignorar el aviso.
+            # Aqui NO se silencia nada a ciegas: solo baja a apunte el alias cuyo encargo esta
+            # en `cumplido` -o sea con la evidencia declarada COMPROBADA por libro_tareas- y
+            # cerrado DESPUES del ultimo fallo. Si la evidencia es anterior al fallo, el aviso
+            # se queda como esta: acredita otra cosa, no esta.
+            _encargos = (resumen_libro.get("libro") or {}).get("encargos") or {}
+            _cumplidos = {}
+            for _e in _encargos.values():
+                if _e.get("estado") != libro_tareas.CUMPLIDO:
+                    continue
+                _resp, _cerr = _e.get("responsable"), _e.get("cerrado_en")
+                if not _resp or not _cerr:
+                    continue
+                if _cerr > (_cumplidos.get(_resp) or ""):
+                    _cumplidos[_resp] = _cerr
+            _quedan = []
+            for _h in escalar:
+                _cerr = _cumplidos.get(_h.get("alias"))
+                if (_h.get("tipo") == "trabajo_perdido" and _h.get("ultimo_fallo")
+                        and _cerr and _cerr[:19] > str(_h["ultimo_fallo"])[:19]):
+                    _ev = dict(_h.get("evidencia") or {})
+                    _ev["por que baja a apunte"] = (
+                        "el libro tiene un encargo de %s en `cumplido` cerrado el %s UTC, "
+                        "POSTERIOR al ultimo fallo (%s UTC). `cumplido` no es que alguien lo "
+                        "diga: es que la evidencia declarada en evidencia-esperada.json se "
+                        "COMPROBO. El trabajo esta hecho; reinyectar seria rehacerlo"
+                        % (_h.get("alias"), _cerr, _h["ultimo_fallo"]))
+                    apuntes.append({"tipo": "trabajo_perdido_con_evidencia",
+                                    "alias": _h.get("alias"),
+                                    "detalle": _h.get("detalle", ""), "evidencia": _ev})
+                else:
+                    _quedan.append(_h)
+            if len(_quedan) != len(escalar):
+                escalar[:] = _quedan
+
+            nuevos_h, fundidos = libro_tareas.fusionar_hallazgos(
+                escalar, resumen_libro["hallazgos"])
+            for h in nuevos_h:
+                hallazgos.append({"modo": 7, "alias": h["alias"], "detalle": h["detalle"]})
+            for f in fundidos:
+                apuntes.append({"tipo": "hallazgo_fundido", "alias": f["alias"],
+                                "detalle": "%s se avisa DENTRO de %s (no se duplica)"
+                                           % (f["tipo"], f["dentro_de"])})
+            for r in resumen_libro["reenviados"]:
+                acciones.append({"accion": "retomar_encargo", "alias": r["alias"],
+                                 "ok": r["ok"],
+                                 "verificado": ("entrega publicada (intento %d/%d): %s"
+                                                % (r["intento"], libro_tareas.MAX_REINTENTOS,
+                                                   r["detalle"])) if r["ok"]
+                                 else "NO SE PUDO REENVIAR: %s" % r["detalle"]})
+            apuntes.append({"tipo": "libro_de_tareas", "alias": "-",
+                            "detalle": "%d encargo(s) en el libro; %s; reenviados %d, "
+                                       "saltados %d"
+                                       % (resumen_libro["total"],
+                                          ", ".join("%s=%d" % (k, v) for k, v in
+                                                    sorted(resumen_libro["cuentas"].items())
+                                                    if v),
+                                          len(resumen_libro["reenviados"]),
+                                          len(resumen_libro["plan"]["saltados"]))})
+        except Exception as e:  # noqa: BLE001
+            # El libro NUNCA puede costar los chequeos de fallo mudo, que son los que mantienen
+            # viva a la flota.
+            escalar.append({"tipo": "sonda_libro", "alias": "-",
+                            "detalle": "el libro de tareas fallo: %s: %s"
+                                       % (type(e).__name__, str(e)[:200])})
+
+    # --- EL GUARDIA CIEGO: una sonda que revienta se GRITA, no se susurra ----------------
+    # Cuando una sonda falla, lo que se pierde NO es su linea del informe: es TODO lo que esa
+    # sonda mide, y no aparece por ningun otro lado. La corrida de las 10:14 UTC del 2026-08-06
+    # es el caso exacto: `sonda_cola` reventó, el informe salio con 14 lineas de aspecto normal
+    # y sin las 1342 dead-letters ni la mitad de los alias con trabajo perdido. Y el guardia ya
+    # retoma encargos solo (esa misma corrida republico tres): uno autonomo que ademas puede
+    # quedarse ciego sin decirlo es peor que uno que no hace nada. Por eso el aviso va ARRIBA
+    # del todo, en el log y en el cuerpo de la entrega a zeus, y no se puede confundir con una
+    # linea mas.
+    ciegas = [e for e in escalar if es_sonda_rota(e.get("tipo"))]
+    aviso_ciego = ""
+    if ciegas:
+        _nombres = ", ".join(sorted({str(e.get("tipo")) for e in ciegas}))
+        # Antes de mandar a nadie a arreglar el guardia, comprobar si el guardia esta sano y lo
+        # que falta es CPU. Son averias opuestas y el consejo correcto es el contrario.
+        _robo = robo_cpu_agora()
+        if _robo is not None and _robo >= 50.0:
+            aviso_ciego = (
+                "!! GUARDIA CIEGO POR FALTA DE CPU, NO POR UNA SONDA ROTA: %d sonda(s) no "
+                "pudieron medir (%s). El hipervisor le esta robando el %.1f%% de la CPU a agora, "
+                "asi que TODA consulta expira. NO hay nada que arreglar en el guardia: lo que "
+                "falta es procesador, y eso no se arregla desde dentro ni subiendo el timeout. "
+                "Aun asi, lo que esas sondas miden SIGUE sin aparecer aqui: no lo leas como "
+                "'sin novedad' ni como una lista completa." % (len(ciegas), _nombres, _robo))
+        else:
+            aviso_ciego = (
+                "!! GUARDIA CIEGO: %d sonda(s) reventaron en esta corrida (%s). Lo que esas "
+                "sondas miden NO ESTA en este informe: no lo leas como 'sin novedad' ni como "
+                "una lista completa. Arreglar la sonda va PRIMERO." % (len(ciegas), _nombres))
+
+    # --- bitacora ----------------------------------------------------------------------
+    registro = {"ts": t0.isoformat(), "modo": "detectar" if args.solo_detectar else "reparar",
+                "alias_vistos": len(inv), "hallazgos": hallazgos, "acciones": acciones,
+                "escalar": escalar, "apuntes": apuntes,
+                "sondas_rotas": sorted({str(e.get("tipo")) for e in ciegas}),
+                "duracion_s": round((ahora() - t0).total_seconds(), 1)}
+    with open(BITACORA_JSONL, "a") as f:
+        f.write(json.dumps(registro, ensure_ascii=False) + "\n")
+
+    lineas = ["", "=" * 78,
+              "MEDICO CAUCE V3 - %s UTC (%s)" % (t0.strftime("%Y-%m-%d %H:%M"), registro["modo"]),
+              "alias en la base: %d | adaptadores vivos: %d" % (len(inv), len(adaptadores))]
+    if aviso_ciego:
+        lineas += ["  " + aviso_ciego, "  " + "!" * 74]
+    # una_linea() en cada `detalle`/`razon`/`verificado`: son texto libre -puede venir de un
+    # `last_error` de la base, de la salida de un subproceso, de lo que sea- y el formato de
+    # ABAJO asume UNA linea logica por hallazgo. Sin esto, un salto de linea embebido aparece
+    # como una linea suelta, sin prefijo `HALLAZGO`/`ACCION`/`ESCALAR` y sin alias: se lee como
+    # un hallazgo propio y nadie sabe de donde salio (MEDIDO: el banner de rate-limit de un CLI
+    # de Claude, colado por `last_error`, ver comentario junto a `una_linea()`).
+    for h in hallazgos:
+        lineas.append("  HALLAZGO[%s] %-11s %s" % (h["modo"], h["alias"], una_linea(h["detalle"])))
+    for a in acciones:
+        lineas.append("  ACCION    %-11s %s -> ok=%s | %s"
+                      % (a.get("alias"), a.get("accion"), a.get("ok", a.get("resultado")),
+                         una_linea(a.get("verificado", a.get("razon", "")))))
+    for e in escalar:
+        # zeus 2026-08-22: `.get()` con relleno visible, no subindice duro. Un hallazgo al que
+        # le falte una clave tiene que salir FEO, no hacer desaparecer el informe entero. Ya
+        # paso: `ciclo_rescate` metia aqui un dict sin `tipo` ni `detalle`.
+        tipo_e = e.get("tipo") or "hallazgo_sin_tipo"
+        det_e = e.get("detalle")
+        if not det_e:
+            det_e = ("SIN `detalle`; se muestra el hallazgo crudo: "
+                     + json.dumps({k: v for k, v in e.items()
+                                   if k not in ("tipo", "alias")},
+                                  ensure_ascii=False, default=str)[:400])
+        lineas.append("  %-9s %-11s %s: %s"
+                      % ("CIEGO!!" if es_sonda_rota(tipo_e) else "ESCALAR",
+                         e.get("alias", "-"), tipo_e, una_linea(det_e)))
+    # 2026-08-17 zeus: los apuntes NO se escribian en ningun lado. La lista se llenaba en 14
+    # sitios y el renderizador solo iteraba hallazgos/acciones/escalar, asi que "bajar algo a
+    # apunte" no era degradarlo: era borrarlo -y tres comentarios del propio codigo prometian
+    # que "queda escrito en la bitacora"-. Van al final, sin gritar, pero EXISTEN.
+    for ap in apuntes:
+        detalle = ap.get("detalle")
+        if not detalle:
+            # `captura_previa` y compania traen otras claves; se muestra lo que haya en vez de
+            # tragarse la linea entera.
+            detalle = una_linea(json.dumps(
+                {k: v for k, v in ap.items() if k not in ("tipo", "alias")},
+                ensure_ascii=False)[:300])
+        lineas.append("  apunte    %-11s %s: %s"
+                      % (ap.get("alias", "-"), ap.get("tipo", "?"), una_linea(detalle)))
+    if not hallazgos and not escalar and not apuntes:
+        lineas.append("  sin novedad")
+    texto_log = "\n".join(lineas)
+    with open(BITACORA_LOG, "a") as f:
+        f.write(texto_log + "\n")
+    print(texto_log)
+
+    # --- aviso: silencio absoluto si no hay nada ----------------------------------------
+    try:
+        estado_prev = json.load(open(ESTADO_JSON))
+    except Exception:  # noqa: BLE001
+        estado_prev = {}
+    if not isinstance(estado_prev, dict):
+        estado_prev = {}
+    visto_antes = estado_prev.get("hallazgos_vistos", {})
+
+    if not hallazgos and not escalar and not acciones:
+        # OJO: aqui NO se vacia la memoria. Vaciarla convertia la primera corrida limpia en un
+        # borron: el hallazgo que volviera despues entraba como `nuevo` y se re-despachaba.
+        # cuenta_ia_racha_ok_false TAMBIEN tiene que sobrevivir esta escritura: `json.dump`
+        # reemplaza el fichero ENTERO, asi que si esta clave no va aca, una corrida "sin
+        # novedad" (que es exactamente lo que pasa con una racha de 1: no hay escalar todavia)
+        # le borraria al guardia la cuenta de rachas y la muestra 2, 3, 4... jamas llegaria a
+        # UMBRAL_RACHA_CUENTA_ROTA.
+        json.dump({"firma": "", "ts": t0.isoformat(),
+                   "hallazgos_vistos": memoria_hallazgos(visto_antes, {}, t0),
+                   "cuenta_ia_racha_ok_false": racha_cuentas_ok_false,
+                   "fallos_seguidos": 0}, open(ESTADO_JSON, "w"))
+        print("sin novedad: no se despacha nada ni se avisa a nadie")
+        return 0
+
+    # --- que se le entrega a zeus: solo lo nuevo o lo que empeoro -----------------------
+    # Sin esto, un problema que necesita a un humano despierta a zeus CADA hora para siempre,
+    # y cada despertar gasta cuota.
+    visto_ahora, a_despachar = {}, []
+    for e in escalar:
+        tipo = e.get("tipo", "?")
+        clave = "%s|%s" % (tipo, e.get("alias", "-"))
+        grav = gravedad(tipo)
+        antes = visto_antes.get(clave) or {}
+        veces = int(antes.get("veces", 0)) + 1
+        ultimo = antes.get("ultimo_despacho")
+        nuevo = not antes
+        empeoro = grav > int(antes.get("gravedad", 0))
+        caducado = False
+        if ultimo:
+            try:
+                caducado = (t0 - datetime.datetime.fromisoformat(ultimo)).total_seconds() \
+                           >= REAVISO_HORAS * 3600
+            except Exception:  # noqa: BLE001
+                caducado = True
+        else:
+            caducado = True
+        despachar_este = nuevo or empeoro or caducado
+        # OJO: aca NO se sella el despacho; se sella mas abajo y SOLO para lo que de verdad
+        # se publico. Sellarlo aca marcaba como "ya avisado" tres cosas que nunca salieron:
+        # (a) los sobrantes que TOPE_POR_CORRIDA deja fuera de `elegidos`, (b) las corridas
+        # --sin-entrega, que a proposito no publican, y (c) los despachos que fallan. Las tres
+        # se callaban hasta REAVISO_HORAS. Medido el 2026-08-12: 13 hallazgos a escalar con un
+        # tope de 5 => 8 sellados sin haber salido jamas.
+        visto_ahora[clave] = {"veces": veces, "gravedad": grav,
+                              "ultimo_visto": t0.isoformat(),
+                              "ultimo_despacho": antes.get("ultimo_despacho"),
+                              "primera_vez": antes.get("primera_vez", t0.isoformat())}
+        if despachar_este:
+            a_despachar.append((grav, veces, e))
+
+    a_despachar.sort(key=lambda x: (-x[0], x[2].get("alias", "")))
+    sobrantes = max(0, len(a_despachar) - TOPE_POR_CORRIDA)
+    elegidos = a_despachar[:TOPE_POR_CORRIDA]
+
+    ok_d, det_d = None, ""
+    if elegidos:
+        partes = ["MEDICO DE LA FLOTA - hallazgos que necesitan que actues.",
+                  "Corrida desde kratos. Evidencia CRUDA abajo; no re-midas lo que ya "
+                  "esta medido. La hora exacta de la corrida esta en la bitacora: el cuerpo de "
+                  "este aviso es a proposito una funcion PURA de los hallazgos, para que la "
+                  "idempotency_key por contenido deduplique de verdad.", ""]
+        # Lo primero que se lee, antes que cualquier hallazgo: si el guardia esta ciego, la
+        # lista de abajo esta INCOMPLETA y leerla como completa es la trampa.
+        if aviso_ciego:
+            partes += [aviso_ciego, ""]
+        for grav, veces, e in elegidos:
+            partes.append("### %s / %s  (gravedad %d)"
+                          % (e.get("alias", "-"), e.get("tipo"), grav))
+            # una_linea(): `detalle` es texto libre que puede venir de un `last_error` de la
+            # base o de la salida de un subproceso (ver comentario junto a `una_linea()`). Sin
+            # esto, un salto de linea embebido se manda TAL CUAL a zeus: aparece como una linea
+            # suelta en el medio del aviso, y ademas -por ser parte del `cuerpo` que se hashea
+            # para la `idempotency_key` en `publicar()`- deja de ser cierto que el cuerpo es
+            # "una funcion PURA de los hallazgos".
+            partes.append(una_linea(e.get("detalle", "")))
+            for k, v in pares_de_evidencia(e.get("evidencia")):
+                partes.append("  $ %s" % k)
+                for linea in str(v).strip().split("\n"):
+                    partes.append("    " + linea)
+            partes.append("")
+        if sobrantes:
+            partes.append("(+%d hallazgo(s) mas, de menor gravedad, en la bitacora)" % sobrantes)
+        partes += ["", "Lo que el guardia YA reparo solo en esta corrida:"]
+        partes += (["  - %s: %s -> %s" % (a.get("alias"), a.get("accion"),
+                                          una_linea(a.get("verificado")))
+                    for a in acciones] or ["  (nada: no habia nada de la lista auto-reparable)"])
+        partes += ["", "Bitacora completa: kratos:%s" % BITACORA_LOG,
+                   "El guardia NO reinicia adaptadores (falta la re-inyeccion del trabajo en "
+                   "vuelo); si hace falta reiniciar, es tuyo."]
+        # Pedido explicito de Steven: que el propio auto-mensaje se lo recuerde. Un despacho
+        # trae hasta TOPE_POR_CORRIDA hallazgos; atacarlos de a uno es la forma mas lenta.
+        partes += ["", RECORDATORIO_PARALELO]
+        if args.sin_entrega:
+            # Corrida de inspeccion: los hallazgos se imprimen y quedan en la bitacora, pero NO
+            # se publican. El 2026-08-07 dos corridas MIAS de diagnostico -- una de ellas rota a
+            # proposito, para probar un parche -- despertaron a la flota con gravedad 95 y 92
+            # sobre un kant que estaba vivo y con una entrega en vuelo. `--sin-aviso` no
+            # alcanzaba: solo calla el Telegram de emergencia, no esta entrega.
+            det_d = "--sin-entrega: corrida de inspeccion, no se publica nada"
+            print(det_d)
+        else:
+            ok_d, det_d = despachar_a_zeus("\n".join(partes),
+                                           "+".join(sorted(e.get("alias", "-")
+                                                           for _, _, e in elegidos)))
+            acciones.append({"accion": "despachar_a_zeus", "alias": "zeus", "ok": ok_d,
+                             "verificado": ("entrega publicada (202): %s" % det_d[:120]) if ok_d
+                             else "NO SE PUDO PUBLICAR: %s" % det_d[:200]})
+            print("despacho a zeus: ok=%s %s" % (ok_d, det_d[:200]))
+
+    # El sello del despacho vale para lo que SALIO, no para lo que se penso mandar.
+    if elegidos and ok_d and not args.sin_entrega:
+        for _, _, e in elegidos:
+            clave_e = "%s|%s" % (e.get("tipo", "?"), e.get("alias", "-"))
+            if clave_e in visto_ahora:
+                visto_ahora[clave_e]["ultimo_despacho"] = t0.isoformat()
+
+    # La firma es (modo, alias): estable a proposito. Si se armara con el texto del detalle,
+    # los contadores que lleva dentro (minutos, pid, horas) cambiarian en cada corrida y el
+    # guardia volveria a avisar del MISMO problema cada hora, que es como se vuelve ruido.
+    firma = " || ".join(sorted("%s:%s" % (h["modo"], h["alias"]) for h in hallazgos))
+
+    # UNA SOLA ALERTA POR HALLAZGO. La via es la entrega a zeus, y nada mas. El puente ya le
+    # muestra esa entrega a Steven en su chat, y despues le llega la respuesta de zeus: sumarle
+    # un aviso crudo del guardia era contarle lo mismo dos o tres veces, y la primera vez sin
+    # contexto y sin reparacion. zeus decide que merece molestarlo y se lo dice UNA vez, en sus
+    # palabras y ya con lo que hizo. (Reportado por Steven: "siento que esta duplicado el
+    # sistema, revisa que solo exista 1 alerta de esta para no tener duplicados".)
+    #
+    # LA UNICA EXCEPCION: que el medico mismo este caido o mudo. Ahi la entrega no despierta a
+    # nadie, nadie mas le va a avisar, y el guardia escribe directo diciendo POR QUE salta la
+    # via normal. Se mira lo ya medido en esta corrida; no se re-consulta nada.
+    reparados = [a for a in acciones if a.get("accion") != "despachar_a_zeus"]
+    motivos_zeus = []
+    # Con --sin-entrega no se publico A PROPOSITO: eso no es un fallo del canal, y tratarlo
+    # como tal dispararia el Telegram de emergencia en cada corrida de inspeccion.
+    if elegidos and not ok_d and not args.sin_entrega:
+        motivos_zeus.append("la entrega a zeus NO se pudo publicar: %s" % det_d[:200])
+    for e in escalar:
+        if (e.get("tipo") in TIPOS_ZEUS_CAIDO
+                and "zeus" in str(e.get("alias", "")).split(",")):
+            motivos_zeus.append("%s: %s" % (e.get("tipo"), str(e.get("detalle", ""))[:180]))
+    for h in hallazgos:                      # modo 2 = turno colgado: zeus vivo pero mudo
+        if h.get("modo") == 2 and h.get("alias") == "zeus":
+            motivos_zeus.append("turno colgado: %s" % str(h.get("detalle", ""))[:180])
+    # 2026-08-12 (zeus, pedido de Steven): faltaba el caso que de verdad lo dejo a ciegas hoy.
+    # Los motivos de arriba cubren "zeus caido" y "zeus tomo y no cerro", pero NO cubren el caso
+    # en que zeus esta trabajando de verdad y, mientras tanto, un mensaje de una PERSONA lleva
+    # media hora en su cola. Steven estuvo 87 minutos viendo solo "Recibido; estoy trabajando"
+    # sin manera de saber que su mensaje seguia en fila. Un guardia que solo mira si el medico
+    # respira no sirve: hay que mirar si la gente esta esperando.
+    filas_h = sql(
+        "SELECT count(*)::text, coalesce(max(round(extract(epoch from (now()-d.created_at))/60))::text,'0') "
+        "FROM deliveries d JOIN messages m ON m.id=d.message_id "
+        "WHERE d.recipient_alias='zeus' AND m.origin IS NOT NULL "
+        "AND d.status NOT IN ('done','dead','failed') "
+        "AND d.created_at < now() - interval '20 minutes' "
+        # Techo a proposito: mas alla de 6 h ya no es "esta esperando", es trabajo perdido, y
+        # eso lo cuentan los hallazgos de trabajo_perdido/encargo_sin_hacer. Sin este techo, las
+        # entregas zombi de una madrugada harian sonar este aviso cada 15 min para siempre.
+        "AND d.created_at > now() - interval '6 hours'", columnas=2)
+    try:
+        n_h = int((filas_h or [["0", "0"]])[0][0])
+        min_h = int((filas_h or [["0", "0"]])[0][1])
+    except Exception:  # noqa: BLE001
+        n_h, min_h = 0, 0
+    if n_h:
+        # El texto tiene que ser ESTABLE entre corridas: `avisar()` no deduplica nada, asi que un
+        # contador de minutos exacto convierte este aviso en una alarma cada 15 min por el MISMO
+        # problema. Por eso va en tramos.
+        tramo = "mas de 3 h" if min_h >= 180 else ("mas de 1 h" if min_h >= 60 else "mas de 20 min")
+        motivos_zeus.append(
+            "hay %d mensaje(s) de una PERSONA esperando en la cola de zeus hace %s: "
+            "zeus puede estar trabajando, pero quien escribio no lo sabe" % (n_h, tramo))
+
+    # 2026-08-13 (zeus, pedido de Steven): para DESPERTAR A UNA PERSONA hace falta evidencia
+    # POSITIVA de que zeus no esta vivo, no la mera ausencia de progreso. Una entrega tomada y
+    # sin cerrar es lo que se ve SIEMPRE que el medico esta trabajando: su p90 de turno son 31
+    # minutos y el umbral son 20. La senal de que el adaptador sigue en pie es la RESERVA: si el
+    # lease no vencio, alguien la esta renovando. Solo escala si TODAS vencieron.
+    lista_zeus = turnos_muertos_de_zeus(por_alias.get("zeus") or [])
+    if lista_zeus:
+        motivos_zeus.append("zeus tomo %d entrega(s), no las cerro y la reserva VENCIO "
+                            "(hasta %d min): no es un turno largo, es un turno muerto"
+                            % (len(lista_zeus), max(x["edad_min"] for x in lista_zeus)))
+    motivos_zeus = list(dict.fromkeys(motivos_zeus))    # sin repetir el mismo motivo
+
+    if motivos_zeus and not args.sin_aviso:
+        cuerpo = ["MEDICO CAUCE - te escribo DIRECTO porque el medico (zeus) no esta en pie.",
+                  "Lo normal es dejarle la entrega a zeus y que el te lo cuente ya reparado; "
+                  "ahora esa via no despierta a nadie, por eso salto el canal habitual.", ""]
+        for m in motivos_zeus[:4]:
+            cuerpo.append("- " + m)
+        cuerpo.append("")
+        cuerpo.append("Esperando a alguien: %d hallazgo(s) para revisar, %d reparado(s) solos."
+                      % (len(elegidos), len(reparados)))
+        cuerpo.append("log: kratos:%s" % BITACORA_LOG)
+        ok, det = avisar("\n".join(cuerpo))
+        if not ok:
+            print("AVISO NO ENVIADO: %s" % det)
+        else:
+            print("aviso DIRECTO a Steven (zeus caido/mudo): %d motivo(s)" % len(motivos_zeus))
+    elif args.sin_aviso:
+        print("--sin-aviso: no se manda Telegram")
+    elif elegidos or reparados:
+        print("una sola alerta por hallazgo: el detalle va por la entrega a zeus y a Steven "
+              "no se le escribe (zeus esta en pie y contesta)")
+    else:
+        print("nada nuevo respecto de la corrida anterior: no se avisa (silencio a proposito)")
+
+    json.dump({"firma": firma, "ts": t0.isoformat(),
+               "hallazgos_vistos": memoria_hallazgos(visto_antes, visto_ahora, t0),
+               "cuenta_ia_racha_ok_false": racha_cuentas_ok_false,
+               "fallos_seguidos": 0}, open(ESTADO_JSON, "w"))
+
+    if acciones:
+        git_commit("medico: %d reparacion(es) - %s | verificado por efecto; detalle en bitacora"
+                   % (len(acciones),
+                      ", ".join("%s/%s" % (a.get("alias"), a.get("accion")) for a in acciones)))
+    else:
+        git_commit("medico: corrida %s - %d hallazgo(s), %d a escalar"
+                   % (t0.strftime("%Y-%m-%dT%H:%M"), len(hallazgos), len(escalar)))
+    return 0
+
+
+def con_disyuntor():
+    """Circuit breaker. Si el guardia se rompe N veces seguidas deja de avisar: un monitor
+    roto que grita cada hora es peor que uno apagado, porque entrena a ignorarlo justo antes
+    de que avise de algo real. Avisa UNA sola vez al abrirse."""
+    try:
+        prev = json.load(open(ESTADO_JSON))
+        fallos = int(prev.get("fallos_seguidos", 0))
+    except Exception:  # noqa: BLE001
+        prev, fallos = {}, 0
+    try:
+        return main()
+    except Exception as e:  # noqa: BLE001
+        fallos += 1
+        detalle = "%s: %s" % (type(e).__name__, str(e)[:300])
+        try:
+            os.makedirs(ESTADO_DIR, exist_ok=True)
+            with open(BITACORA_LOG, "a") as f:
+                f.write("\n%s UTC EL GUARDIA FALLO (%d seguidas): %s\n"
+                        % (ahora().strftime("%Y-%m-%d %H:%M"), fallos, detalle))
+            prev["fallos_seguidos"] = fallos
+            json.dump(prev, open(ESTADO_JSON, "w"))
+        except Exception:  # noqa: BLE001
+            pass
+        if fallos == MAX_FALLOS_SEGUIDOS:
+            avisar("MEDICO CAUCE - el guardia se rompio %d veces seguidas y se calla hasta "
+                   "que alguien lo mire.\n\n%s\n\nlog: kratos:%s"
+                   % (fallos, detalle, BITACORA_LOG))
+        print("EL GUARDIA FALLO (%d seguidas): %s" % (fallos, detalle), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(con_disyuntor())

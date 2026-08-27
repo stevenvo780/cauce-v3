@@ -1,0 +1,16 @@
+[Unit]
+Description=Cauce V3 medico de la flota (encuentra los fallos MUDOS y repara los que puede)
+Documentation=file:/datos/workspaces/zeus/cauce-v3-sesion/ops/runbooks/manual-del-medico.md
+
+[Service]
+Type=oneshot
+# Va en kratos y no en agora-storage porque kratos es el UNICO host con malla completa:
+# alcanza a agora-storage (base, tokens, puente de Telegram) y al VPS (14 de los 16
+# adaptadores). Desde agora-storage el guardia quedaria ciego justo para el turno colgado.
+# Contencion 2026-08-06: el libro no correlaciona aun el acuse de agent.response
+# con la entrega original y puede reencolar trabajo ya terminado. Mantener las
+# sondas activas sin publicar reintentos hasta desplegar y verificar esa correlacion.
+ExecStart=%h/.local/bin/cauce-v3-medico-monitor --solo-detectar
+# Las sondas hablan con Telegram y con dos hosts por SSH: una corrida lenta es normal.
+TimeoutStartSec=20min
+Nice=10

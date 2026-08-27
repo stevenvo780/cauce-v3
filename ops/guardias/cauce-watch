@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""cauce-watch <alias> — stream en vivo de lo que está razonando un agente de la flota.
+
+Sigue el transcript más reciente del harness que use ese alias, sea claude, codex u openclaw,
+desde adentro de su contenedor. Solo lectura.
+
+El `tail` remoto lleva una marca única y se mata al salir: si el cliente muere (ssh cortado,
+timeout, Ctrl-C duro) el proceso de adentro del contenedor NO queda huérfano. Además se
+autolimita con `timeout` por si nadie llega a limpiarlo.
+"""
+import json, os, signal, subprocess, sys, time
+
+OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
+MAP = os.path.join(OPS, 'container-aliases.json')
+MAX_SECONDS = 14_400  # 4 h: techo duro del tail remoto, pase lo que pase
+
+TRANSCRIPTS = {
+    'claude':   ['{home}/.claude/projects'],
+    'codex':    ['{home}/.codex/sessions'],
+    'openclaw': ['{home}/.openclaw/agents', '{home}/.claude/projects'],
+    'hermes':   ['{home}/.local/state/cauce-v3/{alias}'],
+}
+
+
+def alias_info(alias):
+    try:
+        data = json.load(open(MAP))['aliases']
+    except OSError:
+        sys.exit(f'cauce-watch: no puedo leer {MAP}')
+    entry = data.get(alias)
+    if entry is None:
+        sys.exit(f'cauce-watch: alias desconocido: {alias}\nconocidos: ' + ', '.join(sorted(data)))
+    return entry
+
+
+def newest_file(container, dirs):
+    find = ' '.join(f'"{d}"' for d in dirs)
+    cmd = (f'find {find} -name "*.jsonl" -mmin -2880 -printf "%T@ %p\\n" 2>/dev/null '
+           '| sort -rn | head -1 | cut -d" " -f2-')
+    out = subprocess.run(['docker', 'exec', container, 'sh', '-lc', cmd],
+                         capture_output=True, text=True).stdout.strip()
+    return out or None
+
+
+def line_text(obj):
+    message = obj.get('message')
+    if isinstance(message, dict):
+        role = message.get('role') or obj.get('type') or '?'
+        content = message.get('content')
+        if isinstance(content, str) and content.strip():
+            return role, content.strip()
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get('type') == 'text' and part.get('text', '').strip():
+                    return role, part['text'].strip()
+                if part.get('type') == 'tool_use':
+                    return 'tool', f"{part.get('name')} {json.dumps(part.get('input', {}), ensure_ascii=False)[:240]}"
+                if part.get('type') == 'thinking' and part.get('thinking', '').strip():
+                    return 'thinking', part['thinking'].strip()
+        return None
+    payload = obj.get('payload')
+    if isinstance(payload, dict):
+        kind = payload.get('type') or obj.get('type') or '?'
+        for key in ('text', 'message', 'delta', 'content', 'command', 'reasoning'):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return kind, value.strip()
+            if isinstance(value, list):
+                for part in value:
+                    if isinstance(part, dict) and isinstance(part.get('text'), str) and part['text'].strip():
+                        return kind, part['text'].strip()
+        return None
+    for key in ('text', 'content', 'output'):
+        value = obj.get(key)
+        if isinstance(value, str) and value.strip():
+            return obj.get('role') or obj.get('type') or '?', value.strip()
+    return None
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit('uso: cauce-watch <alias>')
+    alias = sys.argv[1]
+    info = alias_info(alias)
+    container, home, harness = info['container'], info['home'], info.get('harness', 'claude')
+    dirs = [d.format(home=home, alias=alias) for d in TRANSCRIPTS.get(harness, TRANSCRIPTS['claude'])]
+
+    path = newest_file(container, dirs)
+    if not path:
+        print(f'cauce-watch: {alias} ({harness}) no tiene transcript reciente en {", ".join(dirs)}',
+              file=sys.stderr)
+        return 1
+
+    marker = f'cauce-watch-{alias}-{os.getpid()}-{int(time.time())}'
+    print(f'cauce-watch: {alias} · {harness} · {container}\n             {path}\n', file=sys.stderr)
+
+    # CAUCE_WATCH_TAG viaja en el entorno del proceso remoto: es la marca por la que lo matamos.
+    remote = f'CAUCE_WATCH_TAG={marker} exec timeout {MAX_SECONDS} tail -f -n 40 "{path}"'
+    proc = subprocess.Popen(['docker', 'exec', '-e', f'CAUCE_WATCH_TAG={marker}', container,
+                             'sh', '-lc', remote],
+                            stdout=subprocess.PIPE, text=True, errors='replace')
+
+    def limpiar(*_):
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        # matar el tail de adentro del contenedor por su marca, no por patrón genérico
+        subprocess.run(['docker', 'exec', container, 'sh', '-lc',
+                        f"for p in $(pgrep -f 'tail -f -n 40' 2>/dev/null); do "
+                        f"grep -qa '{marker}' /proc/$p/environ 2>/dev/null && kill $p; done"],
+                       capture_output=True)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, lambda *_: (limpiar(), sys.exit(0)))
+
+    ultimo_texto = None
+    try:
+        for raw in proc.stdout:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except ValueError:
+                continue
+            got = line_text(obj)
+            if not got:
+                continue
+            label, text = got
+            if text == ultimo_texto:
+                continue
+            ultimo_texto = text
+            print(f'[{label}] {text[:1500]}', flush=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        limpiar()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,11 @@
+[Unit]
+Description=Chequeo cada 2 min de adaptadores parados por un attach huérfano
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=cauce-attach-guard.service
+
+[Install]
+WantedBy=timers.target

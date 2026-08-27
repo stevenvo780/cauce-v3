@@ -1,0 +1,23 @@
+[Unit]
+Description=Corre el medico de la flota cada 15 minutos (cubre lo que cubria la guardia nocturna, retirada 2026-08-06)
+
+[Timer]
+# Cadencia subida 2026-08-06 de 1h a 15 min: se desactivo cauce-guardia-nocturna.timer
+# (agora-storage, systemd de sistema, cada 15 min, SOLO detectaba ENTREGA TRABADA/WEDGE) porque
+# el medico es un superconjunto estricto de lo que detectaba. Sin subir esta cadencia, apagar la
+# nocturna hubiera degradado la deteccion de una entrega trabada de 15 a 60 min.
+# Minutos 07,22,37,52 = mismos que usaba la nocturna, para no inventar una grilla nueva.
+# Costo medido en produccion el 2026-08-06: una corrida completa tarda ~1.5-2 min (rango real
+# 1m34s-2m07s en 5 corridas), asi que a cada 15 min la ocupacion es ~13%. El propio binario ya
+# tiene lock exclusivo no bloqueante (fcntl, ver LOCK en el script): si una corrida se alarga y
+# se pisa con la siguiente, la segunda se sale sola con "ya hay una corrida en curso, salgo sin
+# hacer nada" (visto en produccion). No hizo falta agregar RefuseManualStart ni un lock nuevo.
+# Detalle completo: kratos:~/.local/state/cauce-medico/CONSOLIDACION-ALERTAS.md
+OnCalendar=*-*-* *:07,22,37,52:00 UTC
+Persistent=true
+RandomizedDelaySec=30s
+AccuracySec=30s
+Unit=cauce-v3-medico-monitor.service
+
+[Install]
+WantedBy=timers.target
