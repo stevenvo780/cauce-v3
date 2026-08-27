@@ -16,9 +16,9 @@ import {
 } from './agent-state';
 import {
   aclCaption, layoutHypergraph, type HyperGraphModel, type Point,
-} from '../topology/hypergraph-layout';
+} from './hypergraph/hypergraph-layout';
 import type { FleetDelegationEdge } from '../../api/types';
-import { FlowArrow } from './live-hypergraph/FlowArrow';
+import { FlowArrow } from './hypergraph/FlowArrow';
 
 /**
  * El mapa: los muñecos de la flota colocados en su sala, con lo que se están pasando entre manos.

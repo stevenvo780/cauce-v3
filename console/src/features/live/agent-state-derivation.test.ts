@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent, FleetActivitySnapshot } from '../../api/types';
 import { mockActivity, topology } from '../../mocks/data';
-import { layoutHypergraph } from '../topology/hypergraph-layout';
+import { layoutHypergraph } from './hypergraph/hypergraph-layout';
 import {
   agentKey,
   buildLiveViews,

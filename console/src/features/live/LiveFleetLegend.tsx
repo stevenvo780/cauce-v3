@@ -1,6 +1,6 @@
 import type { FleetActivitySnapshot, TopologySnapshot } from '../../api/types';
-import { AclEdgeList } from '../topology/AclEdgeList';
-import { TenantCards } from '../topology/TenantCards';
+import { AclEdgeList } from './hypergraph/AclEdgeList';
+import { TenantCards } from './hypergraph/TenantCards';
 import { ActivityExplainers, FleetSignals } from './FleetActivityTable';
 import { LIVE_STATES, LIVE_STATE_META, STATE_ACCENT } from './agent-state';
 
