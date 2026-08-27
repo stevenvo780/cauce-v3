@@ -1,19 +1,20 @@
-# OpenCode/MiniMax — ORDEN ACTIVA (tareas LARGAS: suites pesadas + lectura total del repo)
+# OpenCode/MiniMax — ORDEN ACTIVA (continuación de las largas + huérfanos del mapa)
 
-Protocolo de siempre. Doctrina actualizada: **ya no existe `docs/bitacora`** (borrada — git es el archivo); nada se "archiva": lo consumido se borra con `git rm` y evidencia en el commit. Nuevo gate determinista: `pnpm lint` ahora incluye `lint:calidad` (trinquete: ningún fichero nuevo >800 líneas, ninguna fecha nueva en comentarios).
+Protocolo de siempre. Si las tareas largas previas (suites integration/e2e, mapa-de-ficheros) siguen a medias: **termínalas primero** — son tuyas y nadie más las hará.
 
-## Tarea 1 — Correr las DOS suites que faltan de la matriz (LARGAS, déjalas terminar)
-Como usuario normal (`stev`), una tras otra, capturando salida completa:
-1. `pnpm test:integration` (testcontainers, tarda)
-2. `pnpm test:e2e` (levanta PostgreSQL real + gateway + dispatcher; tarda más)
-Al terminar cada una: pega el resumen (ficheros/tests, verdes/rojos, duración) en `ordenes/reportes/minimax-matriz-cd.md`. Si hay ROJOS: NO arregles nada — lista cada uno con su error exacto y su fichero; el integrador los enruta. Verifica después que no quedaron contenedores huérfanos (`docker ps` antes/después pegado).
+## Tarea 1 — (si falta) Suites integration + e2e completas
+Como `stev`, dejarlas TERMINAR, resumen + rojos con error exacto a `ordenes/reportes/minimax-matriz-cd.md`, contenedores huérfanos verificados antes/después.
 
-## Tarea 2 — LECTURA TOTAL del repo → `docs/mapa-de-ficheros.md` (contexto largo, tu especialidad)
-Recorre TODOS los ficheros fuente trackeados (`git ls-files` filtrado a .ts/.tsx/.mjs/.py/.sh, sin tests) — unos ~400. LEE cada uno (no adivines por el nombre) y escribe UNA línea por fichero: `ruta — qué hace de verdad — sector dueño`. Agrupado por directorio, con subtotales de líneas. Regla de honestidad: si un fichero no hace lo que su nombre dice, márcalo con ⚠ y una palabra de por qué. Este mapa es para humanos e IAs nuevas: la verdad del árbol en un solo documento. (Los tests: solo una línea por SUITE, no por fichero.)
+## Tarea 2 — (si falta) `docs/mapa-de-ficheros.md` — lectura total
+Una línea honesta por fichero fuente, ⚠ donde el nombre mienta.
 
-## Tarea 3 — Mantenimiento de lo tuyo ya entregado
-1. `PENDIENTES-DEL-DUEÑO.md`: mantenlo al día si algo se resuelve (es LA página del dueño).
-2. Los reportes de `ordenes/reportes/` ya consumidos (verifica con git log que sus correcciones aterrizaron): `git rm` con evidencia. Se quedan los insumos activos (censo de comentarios, matriz, revisiones con intake pendiente, vistas-sin-uso).
-3. Foto final v2 cuando Codex y Gemini cierren (pregunta al dueño): tabla >800 contra el baseline de `scripts/calidad-base.json` — el objetivo es que el trinquete quede en cero.
+## Tarea 3 — HUÉRFANOS del mapa (tu especialidad: contexto largo + precisión mecánica)
+Con el mapa terminado, crúzalo: para cada fichero fuente NO-test, ¿quién lo importa/invoca? (`git grep` del basename y de sus exports principales). Produce `ordenes/reportes/minimax-huerfanos.md`: tabla de candidatos con CERO referencias entrantes (fuera de sí mismos), con la evidencia por fila. NO borres nada — el integrador revisa y ejecuta. Excluye entry-points obvios (main.ts, bin/, *.config.*, deploy/*.mjs referenciados por Dockerfile/compose).
+
+## Tarea 4 — Basura v3 (re-barrido de disco post-todo)
+`git status --ignored --porcelain` + `du` de cada ignorado presente: nueva tabla de lo acumulado desde el último barrido (builds regenerados, caches nuevos, .test-state, logs). Borra lo inequívoco (caches/builds regenerables), reporta lo dudoso.
+
+## Tarea 5 — Mantenimiento continuo
+`PENDIENTES-DEL-DUEÑO.md` al día; reportes consumidos → `git rm` con evidencia; enlaces sin rutas muertas tras los moves de todos.
 
 Push al cerrar cada tarea + reporte ≤5 líneas.
