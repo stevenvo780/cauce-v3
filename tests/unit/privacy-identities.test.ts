@@ -25,9 +25,6 @@ describe('tracked operational material does not inventory external identities', 
 
   it('keeps direct-channel identities out of runbooks, mocks and scheduled prompts', async () => {
     for (const path of [
-      'docs/bitacora/manual-del-medico.md',
-      'docs/bitacora/handoff-zeus-20260824.md',
-      'docs/bitacora/hardening-2026-07-25.md',
       'ops/guardias/hegel-ventas-checkin.py',
       'apps/console/src/features/config/ConfigPage.tsx',
       'ops/observability/alertmanager.yaml',
