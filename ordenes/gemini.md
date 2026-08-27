@@ -16,4 +16,7 @@ Protocolo `ordenes/00-PROTOCOLO.md`. Subagentes en paralelo (máx. 4, disjuntos)
 ## Tarea 4 — INTAKE de la matriz del integrador
 Claude está corriendo la matriz pesada completa (terminal-pty, services, gateway-hardening, store-hardening). Cuando publique `ordenes/reportes/claude-matriz-tests.md`: los rojos de TUS sectores (consola, canales, tests/) los arreglas tú con la regla de siempre (prohibido debilitar aserciones; bug real de producto → reporte). Los de store/gateway son de Codex.
 
+## Tarea 5 — Limpieza quirúrgica de comentarios de TUS sectores
+`ordenes/reportes/claude-censo-comentarios-basura.md`: borra SOLO lo marcado narrativo/mutilado/ceremonial de **apps/console y terminal-relay+telegram-bridge** (la consola concentra el grueso: ~1.400 líneas, mucho JSDoc ceremonial). Conserva invariantes; sql-strings intocables. Un commit por área con conteo antes/después. (adapter-sdk es de Codex — no lo toques.)
+
 Gate global por commit + push al cerrar + reporte ≤5 líneas.

@@ -21,4 +21,5 @@ Una sola tarea grande. **Lanza 4 subagentes SIMULTÁNEOS desde el arranque** (fi
    - La guardia SQL ya es recursiva (la arreglé yo, ae9f9e3): mantenla verde en tus próximas mudanzas.
    - Al partir NO borres bloques de doc que expliquen invariantes, y reindenta (la ola 1 dejó 46 firmas a columna 0 y e110f80 añadió 8 — repáralas de paso).
 2. `wc -l` de todo tu sector: lista final de lo que quede >800 con justificación de una línea.
-3. Gate GLOBAL por commit: `pnpm typecheck && pnpm lint && pnpm test:unit` (como usuario normal, no root). Push al cerrar + reporte ≤5 líneas.
+3. **Limpieza quirúrgica de comentarios de TU sector** (`ordenes/reportes/claude-censo-comentarios-basura.md`): borra SOLO lo marcado narrativo/mutilado/ceremonial de store+protocol (636 líneas), gateway y adapter-sdk — fichero a fichero con su cifra. Conserva invariantes (compacta los muy largos). PROHIBIDO tocar comentarios `--` dentro de template literals SQL (p.ej. fanin.ts:987-991 — cambian bytes; ya mordió con el sha256 de migraciones). Caso ejemplar: los `// S1`...`// S6` huérfanos de deliveries.ts (defínelos o bórralos). Un commit por paquete con conteo antes/después.
+4. Gate GLOBAL por commit: `pnpm typecheck && pnpm lint && pnpm test:unit` (como usuario normal, no root). Push al cerrar + reporte ≤5 líneas.
