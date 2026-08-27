@@ -7,7 +7,6 @@ import { lazy, Suspense, useEffect, useSyncExternalStore, type ComponentType } f
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LandingPage } from './features/landing/LandingPage';
-import { JobsRetiredNotice } from './features/landing/JobsRetiredNotice';
 import { NAV_ENTRIES, useNavAvailability } from './nav';
 import { onNavClick, redirect } from './navigation';
 
@@ -90,7 +89,6 @@ const routes: Route[] = [
     component: PAGES[entry.id],
   })),
   { id: 'ayuda', label: '', icon: Boxes, component: PAGES.ayuda },
-  { id: 'jobs', label: '', icon: Boxes, component: JobsRetiredNotice },
 ];
 
 /** Entradas visibles en la barra lateral de navegación. */
@@ -108,7 +106,6 @@ const ROUTE_ALIASES: Record<string, string> = {
   activity: 'live',
   fleet: 'live',
   topology: 'live',
-  adapters: '',
   help: 'ayuda',
 };
 

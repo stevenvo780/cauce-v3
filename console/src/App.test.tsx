@@ -240,30 +240,6 @@ it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async 
   expect(window.location.pathname).toBe('/config');
 });
 
-it('/adapters redirige a la portada, donde su contenido está plegado', async () => {
-  window.history.pushState({}, '', '/adapters');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
-  expect(await screen.findByText(/arneses declarados/i)).toBeInTheDocument();
-  // El alias resuelve a la cadena vacía: si la comprobación fuera por veracidad en vez de por
-  // `!== undefined`, la página sería la correcta y la URL seguiría diciendo /adapters para siempre.
-  expect(window.location.pathname).toBe('/');
-});
-
-it('/jobs no da 404 ni una página que nadie pidió: dice que se retiró y adónde ir', async () => {
-  window.history.pushState({}, '', '/jobs');
-  renderWithApi(<App />);
-
-  expect(await screen.findByText(/ya no es una vista de esta consola/i)).toBeInTheDocument();
-  // Dentro del contenido, no en la barra lateral: los dos rótulos existen también en el menú.
-  const contenido = within(screen.getByRole('main'));
-  expect(contenido.getByRole('link', { name: /queues & dlq/i })).toHaveAttribute('href', '/queues');
-  expect(contenido.getByRole('link', { name: /la flota ahora/i })).toHaveAttribute('href', '/live');
-  // NO se redirige: la URL se queda donde está, porque no hay heredera a la que mandar.
-  expect(window.location.pathname).toBe('/jobs');
-});
-
 it('la raíz "/" abre la portada, no la vista viva', async () => {
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);

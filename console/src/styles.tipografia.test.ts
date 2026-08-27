@@ -14,7 +14,6 @@ const HOJAS = [
   'features/messages/messages.css',
   'features/queues/queues.css',
   'features/accounts/licenses.css',
-  'features/topology/hypergraph.css',
   'features/auth/auth.css',
   'features/config/config.css',
   'features/config/toggles.css',

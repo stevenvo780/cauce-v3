@@ -1,6 +1,5 @@
 import type {
   AdapterPage,
-  AgentChainSnapshot,
   AgentDirective,
   AgentDocumentContent,
   AgentDocumentGuardado,
@@ -309,10 +308,6 @@ export class CauceApi {
     expectedRevision: number | null,
   ): Promise<unknown> {
     return agentApi.putAgentPerfil(this.boundRequest, tenantId, alias, profile, expectedRevision);
-  }
-
-  getAgentChain(traceId: string): Promise<AgentChainSnapshot> {
-    return agentApi.getAgentChain(this.boundRequest, traceId);
   }
 
   getTerminalCapability(): Promise<TerminalCapability> {

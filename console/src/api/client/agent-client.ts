@@ -1,5 +1,4 @@
 import type {
-  AgentChainSnapshot,
   AgentDirective,
   AgentDocumentContent,
   AgentDocumentGuardado,
@@ -185,10 +184,6 @@ export function putAgentPerfil(
       body: JSON.stringify({ expected_revision: expectedRevision, profile }),
     },
   );
-}
-
-export function getAgentChain(request: RequestFn, traceId: string): Promise<AgentChainSnapshot> {
-  return request(`/v3/console/chains/${encodeURIComponent(traceId)}`);
 }
 
 export async function getTerminalCapability(request: RequestFn): Promise<TerminalCapability> {

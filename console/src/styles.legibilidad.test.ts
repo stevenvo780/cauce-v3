@@ -16,7 +16,6 @@ const GLOBAL = leerCss('styles.css');
 const HOJAS_DE_LA_CONSOLA = [
   'features/live/live.css',
   'features/live/live-hypergraph.css',
-  'features/topology/hypergraph.css',
   'features/messages/messages.css',
   'features/terminal/terminal-panel.css',
   'features/config/config.css',

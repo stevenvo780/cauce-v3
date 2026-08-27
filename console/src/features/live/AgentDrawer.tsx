@@ -3,11 +3,10 @@ import { useEffect } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { AgentPerfilCampos, FleetActivityItem } from '../../api/types';
-import { Badge, EmptyState, Time, Tooltip, Unknown } from '../../components/ui';
+import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../navigation';
 import { AgentAvatar } from './AgentAvatar';
-import { ChainPanel } from './ChainPanel';
 import { DirectivaTab } from './DirectivaTab';
 import { FicherosTab } from './FicherosTab';
 import { PerfilTab } from './PerfilTab';
@@ -30,7 +29,7 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
  * su propia confirmación.
  */
 
-export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'cadena' | 'rol' | 'perfil' | 'ficheros';
+export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'rol' | 'perfil' | 'ficheros';
 
 /**
  * «Directiva» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el
@@ -45,7 +44,6 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'ahora', label: 'Ahora' },
   { id: 'conexion', label: 'Conexión' },
   { id: 'entregas', label: 'Entregas' },
-  { id: 'cadena', label: 'Cadena' },
   { id: 'rol', label: 'Directiva' },
   /*
    * «Perfil» va ENTRE «Directiva» y «Ficheros» porque ése es el orden real del dato: la directiva
@@ -60,18 +58,16 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
 export interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
-  traceId?: string;
   /** El único borrador editable es el perfil canónico; la proyección `role_brief` sólo se lee. */
   borradorPerfil?: Partial<AgentPerfilCampos>;
   onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
   onTab: (tab: DrawerTab) => void;
-  onTrace: (traceId: string | undefined) => void;
   onClose: () => void;
 }
 
 export function AgentDrawer({
-  view, tab, traceId, borradorPerfil, onBorradorPerfil,
-  onTab, onTrace, onClose,
+  view, tab, borradorPerfil, onBorradorPerfil,
+  onTab, onClose,
 }: AgentDrawerProps) {
   // Esc cierra desde donde sea. Un panel que sólo se cierra con la crucecita obliga a buscarla con
   // el ratón cada vez, y este cajón se abre y se cierra muchas veces seguidas al triar.
@@ -120,8 +116,7 @@ export function AgentDrawer({
       <div className="agent-drawer-body" role="tabpanel">
         {tab === 'ahora' ? <TabAhora view={view} /> : null}
         {tab === 'conexion' ? <TabConexion view={view} /> : null}
-        {tab === 'entregas' ? <TabEntregas view={view} onTrace={(id) => { onTrace(id); onTab('cadena'); }} /> : null}
-        {tab === 'cadena' ? <TabCadena view={view} traceId={traceId} onTrace={onTrace} /> : null}
+        {tab === 'entregas' ? <TabEntregas view={view} /> : null}
         {/* `key` por alias evita que las lecturas y el modal de un bot sobrevivan al cambio de
             agente. El único borrador editable vive en Perfil y ya viene indexado por alias. */}
         {tab === 'rol' ? (
@@ -256,7 +251,7 @@ function TabConexion({ view }: { view: LiveAgentView }) {
   );
 }
 
-function TabEntregas({ view, onTrace }: { view: LiveAgentView; onTrace: (traceId: string) => void }) {
+function TabEntregas({ view }: { view: LiveAgentView }) {
   const items = view.agent.in_flight_items ?? [];
   if (items.length === 0) {
     return <EmptyState>Ninguna entrega en vuelo. No hay nada que este agente tenga tomado ahora mismo.</EmptyState>;
@@ -267,7 +262,7 @@ function TabEntregas({ view, onTrace }: { view: LiveAgentView; onTrace: (traceId
           que usa el mapa para decidir si dibuja una flecha, así que la tarjeta y el dibujo no
           pueden contarse historias distintas del mismo encargo. */}
       {items.map((item, index) => (
-        <DeliveryCard item={item} key={item.delivery_id ?? index} origen={view.origenes[index]} onTrace={onTrace} />
+        <DeliveryCard item={item} key={item.delivery_id ?? index} origen={view.origenes[index]} />
       ))}
       {view.agent.in_flight_items_truncated ? (
         <p className="notice">
@@ -279,10 +274,9 @@ function TabEntregas({ view, onTrace }: { view: LiveAgentView; onTrace: (traceId
   );
 }
 
-function DeliveryCard({ item, origen, onTrace }: {
+function DeliveryCard({ item, origen }: {
   item: FleetActivityItem;
   origen: OrigenEncargo | undefined;
-  onTrace: (traceId: string) => void;
 }) {
   return (
     <article className="drawer-delivery">
@@ -307,11 +301,6 @@ function DeliveryCard({ item, origen, onTrace }: {
         >
           Ver en Queues
         </a>
-        {item.trace_id ? (
-          <button type="button" className="button small secondary" onClick={() => onTrace(item.trace_id as string)}>
-            Seguir la cadena
-          </button>
-        ) : null}
       </div>
     </article>
   );
@@ -333,46 +322,4 @@ function textoOrigen(origen: OrigenEncargo | undefined): string {
   return origen.tipo === 'agente'
     ? `${origen.alias}${donde}, otro agente`
     : `${origen.alias}${donde}, que no es un alias de la flota`;
-}
-
-function TabCadena({ view, traceId, onTrace }: {
-  view: LiveAgentView;
-  traceId?: string;
-  onTrace: (traceId: string | undefined) => void;
-}) {
-  const traces = [...new Set((view.agent.in_flight_items ?? [])
-    .map((item) => item.trace_id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0))];
-
-  if (traces.length === 0 && !traceId) {
-    return (
-      <EmptyState>
-        Este agente no tiene ninguna entrega en vuelo con trace, así que no hay cadena que seguir.
-      </EmptyState>
-    );
-  }
-
-  return (
-    <div className="drawer-chain">
-      {traces.length > 1 || (traces.length > 0 && !traceId) ? (
-        <div className="chip-list">
-          {traces.map((id) => (
-            <button
-              key={id}
-              type="button"
-              className={`chip chip-button${traceId === id ? ' is-active' : ''}`}
-              onClick={() => onTrace(id)}
-            >
-              <Tooltip label={<>Sigue esta cadena salto a salto: quién delegó a quién, qué ramas siguen vivas y cuáles se rechazaron.</>} focusable={false}>
-                <span className="mono">{compactId(id)}</span>
-              </Tooltip>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {traceId ? <ChainPanel traceId={traceId} /> : (
-        <EmptyState>Elegí una cadena de las de arriba para seguirla salto a salto.</EmptyState>
-      )}
-    </div>
-  );
 }

@@ -65,7 +65,7 @@ export function LiveFleetPage() {
 
   const snapshot = activity.data;
 
-  const [drawer, setDrawer] = useState<{ key: string; tab: DrawerTab; trace?: string } | null>(
+  const [drawer, setDrawer] = useState<{ key: string; tab: DrawerTab } | null>(
     () => leerQuery(),
   );
 
@@ -246,10 +246,10 @@ export function LiveFleetPage() {
   const feedState = activity.error ? 'error' : intervalMs <= 0 ? 'paused' : 'live';
   const edadSegundos = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
 
-  const abrirCajon = useCallback((key: string, tab: DrawerTab = 'ahora', trace?: string) => {
-    setDrawer({ key, tab, trace });
+  const abrirCajon = useCallback((key: string, tab: DrawerTab = 'ahora') => {
+    setDrawer({ key, tab });
     setSelected(key);
-    escribirQuery(key, tab, trace);
+    escribirQuery(key, tab);
   }, []);
 
   const cerrarCajon = useCallback(() => {
@@ -397,7 +397,6 @@ export function LiveFleetPage() {
         <AgentDrawer
           view={detail}
           tab={drawer.tab}
-          traceId={drawer.trace}
           borradorPerfil={borradoresPerfil[drawer.key]}
           onBorradorPerfil={(campos) => setBorradoresPerfil((actuales) => {
             if (campos === undefined) {
@@ -407,8 +406,7 @@ export function LiveFleetPage() {
             }
             return { ...actuales, [drawer.key]: campos };
           })}
-          onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab, drawer.trace); }}
-          onTrace={(trace) => { setDrawer((current) => (current ? { ...current, trace } : current)); escribirQuery(drawer.key, drawer.tab, trace); }}
+          onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab); }}
           onClose={cerrarCajon}
         />
       ) : null}
@@ -420,7 +418,7 @@ export function LiveFleetPage() {
   );
 }
 
-function escribirQuery(key?: string, tab?: DrawerTab, trace?: string): void {
+function escribirQuery(key?: string, tab?: DrawerTab): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
   if (!key) {
@@ -430,23 +428,21 @@ function escribirQuery(key?: string, tab?: DrawerTab, trace?: string): void {
   } else {
     url.searchParams.set('agente', key);
     url.searchParams.set('pestana', tab ?? 'ahora');
-    if (trace) url.searchParams.set('trace', trace);
-    else url.searchParams.delete('trace');
+    url.searchParams.delete('trace');
   }
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
 }
 
-function leerQuery(): { key: string; tab: DrawerTab; trace?: string } | null {
+function leerQuery(): { key: string; tab: DrawerTab } | null {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
   const key = params.get('agente');
   if (!key) return null;
   const tab = params.get('pestana');
-  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol', 'perfil', 'ficheros'];
+  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'rol', 'perfil', 'ficheros'];
   return {
     key,
     tab: valida.includes(tab as DrawerTab) ? tab as DrawerTab : 'ahora',
-    trace: params.get('trace') ?? undefined,
   };
 }
 
