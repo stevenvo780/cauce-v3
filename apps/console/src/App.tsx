@@ -55,6 +55,7 @@ const ConfigPage = deferredPage(async () => ({
 const TerminalPage = deferredPage(async () => ({
   default: (await import('./features/terminal/TerminalPage')).TerminalPage,
 }));
+import { HelpPage } from './features/help/HelpPage';
 const FleetAgentDetailPage = lazy(async () => ({
   default: (await import('./features/fleet/FleetAgentDetailPage')).FleetAgentDetailPage,
 }));
@@ -78,6 +79,7 @@ const PAGES: Record<string, ComponentType> = {
   observability: ObservabilityPage,
   config: ConfigPage,
   terminal: TerminalPage,
+  ayuda: HelpPage,
 };
 
 const routes: Route[] = [
@@ -87,6 +89,7 @@ const routes: Route[] = [
     icon: entry.icon,
     component: PAGES[entry.id],
   })),
+  { id: 'ayuda', label: '', icon: Boxes, component: PAGES.ayuda },
   { id: 'jobs', label: '', icon: Boxes, component: JobsRetiredNotice },
 ];
 
@@ -106,6 +109,7 @@ const ROUTE_ALIASES: Record<string, string> = {
   fleet: 'live',
   topology: 'live',
   adapters: '',
+  help: 'ayuda',
 };
 
 /**

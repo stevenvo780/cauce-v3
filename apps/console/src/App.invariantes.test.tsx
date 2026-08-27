@@ -31,12 +31,14 @@ const DESTINOS: Record<string, Destino> = {
    */
   config: { encabezado: /^ajustes y altas$/i },
   terminal: { encabezado: /^terminal de agentes$/i },
+  ayuda: { encabezado: /^ayuda y documentación$/i },
   /** Sin `<h1>`: es un aviso, no una vista. Ver `JobsRetiredNotice`. */
   jobs: { marca: /«Jobs» ya no es una vista de esta consola/i },
 };
 
 /** Cómo se alcanza cada ruta oculta: no tienen entrada de menú. */
 const RUTA_DIRECTA: Record<string, string> = {
+  ayuda: '/ayuda',
   jobs: '/jobs',
 };
 

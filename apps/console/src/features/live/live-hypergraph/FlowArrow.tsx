@@ -1,5 +1,5 @@
 import type { Point } from '../../topology/hypergraph-layout';
-import type { EdgeAggregate } from '../agent-state';
+import { aliasDe, type EdgeAggregate } from '../agent-state';
 
 interface FlowArrowProps {
   edge: EdgeAggregate;
@@ -31,11 +31,6 @@ export function FlowArrow({ edge, index, from, to, fromRadius, toRadius, width, 
       </circle>
     </g>
   );
-}
-
-function aliasDe(key: string): string {
-  const corte = key.indexOf('/');
-  return corte === -1 ? key : key.slice(corte + 1);
 }
 
 function curva(a: Point, b: Point, index: number, radioA: number, radioB: number): { path: string; medio: Point } {

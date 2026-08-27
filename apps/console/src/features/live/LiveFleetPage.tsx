@@ -1,4 +1,3 @@
-import { Pause, Play, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
@@ -6,18 +5,14 @@ import type {
   AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
 } from '../../api/types';
 import {
-  ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel, Time, Tooltip,
+  ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel,
 } from '../../components/ui';
-import { formatDurationSeconds } from '../../lib';
-import { ActivityExplainers, FleetActivityTable, FleetSignals } from './FleetActivityTable';
-import { AclEdgeList } from '../topology/AclEdgeList';
-import { TenantCards } from '../topology/TenantCards';
+import { FleetActivityTable } from './FleetActivityTable';
 import { AgentDrawer, type DrawerTab } from './AgentDrawer';
 import { AgentTooltipCard } from './AgentTooltipCard';
 import { FleetVerdict } from './FleetVerdict';
 import {
   BURST_MS,
-  LIVE_STATES,
   LIVE_STATE_META,
   buildLiveViews,
   detectPulses,
@@ -32,90 +27,21 @@ import {
 } from './agent-state';
 import { derivaDelRegistro } from './deriva';
 import { LiveHypergraph, type HypergraphLayer } from './LiveHypergraph';
+import { LiveFleetToolbar } from './LiveFleetToolbar';
+import { LiveFleetTally } from './LiveFleetTally';
+import { LiveFleetLegend } from './LiveFleetLegend';
 import './live.css';
 import './live-hypergraph.css';
 
 /**
- * «La flota ahora»: la única vista de lo que la flota está haciendo en este momento.
- *
- * Absorbió a "Fleet & presencia" y a "Tenants & ACL", que eran dos entradas de menú más para
- * responder preguntas que sólo tienen sentido *sobre un agente que ya estás mirando* —cómo está
- * conectado, con quién tiene permiso de hablar—. Ahora son una pestaña del cajón y un desplegable
- * de esta misma página, y el mapa no se pierde de vista para consultarlas. El menú pasó de trece
- * entradas a once.
- *
- * La jerarquía de arriba abajo ES el diseño, y responde en ese orden a *¿tengo que hacer algo?*:
- *   1. el veredicto, en una frase que se lee en tres segundos;
- *   2. la cinta de triage, ordenada por urgencia;
- *   3. el mapa, que es el centro;
- *   4. la lista, para lo que un dibujo hace peor (buscar un alias, leer una duración exacta).
- */
-
-const INTERVALS = [
-  { value: 2000, label: 'cada 2 s' },
-  { value: 4000, label: 'cada 4 s' },
-  { value: 10000, label: 'cada 10 s' },
-  { value: 30000, label: 'cada 30 s' },
-  { value: 0, label: 'en pausa' },
-];
-
-/**
- * Orden de la cinta de triage: de lo que exige acción a lo que no.
- *
- * Deliberadamente distinto del orden de `LIVE_STATES`, que es la PRECEDENCIA con la que se decide
- * el estado de un agente (`down` gana a todo) y no una jerarquía de atención. Ahí `settled` va
- * antes que `receiving` porque es un pulso transitorio que tiene que ganarle al estado estable;
- * acá va casi al final, porque "una entrega dejó de estar en vuelo" no pide nada por sí solo.
- */
-const TALLY_ORDER: readonly LiveState[] = [
-  'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
-];
-
-const STATE_ACCENT: Record<LiveState, string> = {
-  down: 'var(--red)',
-  blocked: 'var(--amber)',
-  delegating: 'var(--violet)',
-  // Gris, no verde. El chip cuenta entregas que salieron de vuelo con desenlace desconocido; con
-  // el --lime de antes, la fila anunciaba como buena noticia lo que también cubre a las que se
-  // murieron por deadline.
-  settled: 'var(--muted)',
-  receiving: 'var(--blue)',
-  thinking: 'var(--mint)',
-  idle: 'var(--faint)',
-};
-
-/**
  * Cuántos intervalos de refresco pueden pasar antes de que el dato deje de acreditar nada.
- *
- * Tres, no uno: un refresco perdido es normal en una red real y degradar el veredicto por eso
- * sería un guardia que grita en falso, que a la larga tapa el fallo verdadero. Tres seguidos ya no
- * es ruido. Con el feed en pausa se usa el intervalo más lento, porque pausar es una decisión del
- * operador y no un síntoma.
  */
 const STALE_FACTOR = 3;
 
 /**
  * Id de la sala sintética donde van los alias del registro que no tienen ninguna membresía.
- *
- * Lleva `__` a los dos lados a propósito: `rooms.id` en la base es un identificador tipo
- * `grp.miguel` y ninguno puede colisionar con esto, así que un recuadro «sin sala» nunca se
- * confunde con una sala real ni la pisa en el layout.
  */
 const SIN_SALA = '__sin_sala__';
-
-/** Lo que la nota borrada explicaba, ahora colgado del punto «En vivo» donde sí se busca. */
-const FEED_HINT = (
-  <>
-    <p>
-      <strong>Esto es polling</strong>, no un canal en vivo: el gateway no publica websocket ni SSE
-      para la consola (<code>/v3/ws</code> es el bus de los agentes, no un canal de lectura).
-    </p>
-    <p>
-      Por eso el intervalo se elige a mano y por eso se muestra la hora del servidor: lo que ves
-      es tan fresco como diga esa hora, ni un segundo más.
-    </p>
-  </>
-);
 
 interface TooltipTarget {
   anchor: DOMRect;
@@ -126,9 +52,6 @@ interface TooltipTarget {
 export function LiveFleetPage() {
   const api = useApi();
   const activity = useResource('live-fleet-activity', () => api.getFleetActivity());
-  // La topología aporta las SALAS, la capa de permisos, el selector de cliente y el desplegable
-  // "Permisos y salas": las cuatro cosas de UNA sola lectura, fuera del polling. Cambia cuando
-  // alguien toca la configuración, no cada cuatro segundos.
   const topology = useResource('live-topology', () => api.getTopology());
   const [intervalMs, setIntervalMs] = useState(4000);
   const [selected, setSelected] = useState<string>();
@@ -147,9 +70,6 @@ export function LiveFleetPage() {
     () => leerQuery(),
   );
 
-  // Los borradores del perfil viven acá y no dentro de la pestaña:
-  // cambiar de pestaña dentro del cajón la desmonta, y perder ahí siete campos a medio redactar
-  // -sin avisar- es peor cuanto más largo es lo que se estaba escribiendo.
   const [borradoresPerfil, setBorradoresPerfil] =
     useState<Record<string, Partial<AgentPerfilCampos>>>({});
 
@@ -205,19 +125,6 @@ export function LiveFleetPage() {
     [views, tenantFilter],
   );
 
-  /**
-   * El acotamiento por cliente llega hasta el DIBUJO, no sólo hasta el veredicto.
-   *
-   * Antes el mapa recibía `views` entera y la topología entera: con «Cliente = Miguel» seguían
-   * dibujados los muñecos de los otros cuatro clientes, con su globo completo y con clic que abría
-   * el cajón con sus entregas. El único rastro del filtro era el atenuado, que además se apagaba
-   * en cuanto el puntero rozaba cualquier nodo. La cabecera decía «los 3 alias que podés ver»
-   * mientras en el mismo pantallazo había quince muñecos: la frase contradecía al dibujo.
-   *
-   * Se filtra la TOPOLOGÍA y no sólo las vistas porque el mapa coloca los nodos desde la topología:
-   * pasarle sólo las vistas acotadas dejaría a los alias ajenos dibujados como «sin reportar», que
-   * es otra mentira —sí se sabe cómo están, sólo que no se están mirando—.
-   */
   const topologiaEnAlcance = useMemo(() => {
     const completa = topology.data;
     if (!completa || tenantFilter === 'todos') return completa;
@@ -230,53 +137,10 @@ export function LiveFleetPage() {
     };
   }, [topology.data, tenantFilter]);
 
-  /**
-   * EL DIBUJO SALE DEL REGISTRO DE AGENTES, NO DE LAS MEMBRESÍAS.
-   *
-   * Este `useMemo` es la corrección de un defecto arquitectónico, no un ajuste de presentación, y
-   * conviene dejar escrito el fallo entero porque desde la pantalla era imposible de adivinar.
-   *
-   * Esta página hace DOS lecturas y hasta ahora nadie las reconciliaba:
-   *
-   *   - `GET /v3/console/topology`  → decide QUIÉN se dibuja y en qué sala. Sale de `memberships`.
-   *   - `GET /v3/console/activity`  → decide CÓMO está cada uno. Su universo es
-   *     `agents ∪ entregas-abiertas ∪ connection_leases`.
-   *
-   * El "join" ocurría en el navegador (`LiveHypergraph` colocaba un muñeco por cada MIEMBRO y le
-   * pintaba encima `view?.state ?? 'unknown'`) y era ASIMÉTRICO en las dos direcciones:
-   *
-   *   - membresía SIN actividad  → muñeco dibujado y pintado «sin reportar». Así se veía
-   *     `quota-collector`, que es un principal `operator` y no un agente: no está en `agents` y
-   *     nunca lo estuvo, pero tenía membresía y por eso salía en el mapa de la flota.
-   *   - actividad SIN membresía  → el muñeco NO se dibujaba. Caía en `sinSala`, que era una lista
-   *     de nombres al pie. Así desapareció `gaia`: se dio de alta en `agents` y no se veía en
-   *     ninguna parte, mientras el operador miraba fijo la pantalla que debía mostrarla.
-   *
-   * Y el mismo defecto explicaba el tercer síntoma: los cuatro alias retirados seguían dibujados
-   * porque su baja se hizo en `agents` y sus membresías quedaron habilitadas. Tres fuentes de
-   * verdad para "quién es la flota", y la que mandaba en el dibujo era la que nadie tocaba.
-   *
-   * La regla, ahora, es una sola y se puede decir en una frase: **se dibuja un muñeco por cada
-   * participante que reporta actividad —cuyo núcleo es la tabla `agents`— y la membresía sólo
-   * decide DENTRO DE QUÉ RECUADRO va**. Consecuencias, todas deliberadas:
-   *
-   *   - un alias del registro sin ninguna membresía se dibuja igual, en un recuadro «sin sala».
-   *     No se esconde: "registrado y sin sala" es un dato operativo, y esconderlo fue el fallo;
-   *   - una membresía sin participante deja de existir para el mapa. No se puede pintar el estado
-   *     de algo que el plano de estado no conoce, y «sin reportar» era una respuesta inventada;
-   *   - dar de baja un alias vuelve a tener UN solo gesto que importa para esta vista: sacarlo del
-   *     registro de agentes. Lo que quede en `memberships` ya no puede resucitarlo en el dibujo.
-   *
-   * El recuadro sale de `view.rooms` cuando el servidor lo informa (ver el LATERAL de
-   * `FLEET_ACTIVITY_QUERY`); si ese campo no viene —gateway anterior—, se invierte el índice de
-   * la topología (`alias → sala`), que es la MISMA información leída al revés. Los dos caminos dan
-   * el mismo dibujo, así que la consola puede desplegarse sola, sin tocar el gateway.
-   */
   const topologiaDelMapa = useMemo<TopologySnapshot | undefined>(() => {
     const base = topologiaEnAlcance;
     if (!base) return base;
 
-    // alias → sala, invirtiendo la topología. Es el respaldo para cuando `view.rooms` no viene.
     const salaDeclarada = new Map<string, string>();
     for (const tenant of base.tenants ?? []) {
       for (const room of tenant.rooms ?? []) {
@@ -310,14 +174,12 @@ export function LiveFleetPage() {
       (base.tenants ?? []).map((tenant) => [tenant.id ?? '', tenant.label ?? tenant.id ?? null]),
     );
 
-    const tenants: TenantNode[] = [...salasPorTenant.entries()]
+    const tenantsNodes: TenantNode[] = [...salasPorTenant.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([tenantId, porSala]) => ({
         id: tenantId,
         label: etiquetaTenant.get(tenantId) ?? tenantId,
         rooms: [...porSala.entries()]
-          // Las salas declaradas primero y en orden estable: el layout es determinista y no
-          // queremos que el dibujo salte de sitio porque cambió el orden de llegada de un alias.
           .sort(([left], [right]) => Number(left === SIN_SALA) - Number(right === SIN_SALA)
             || left.localeCompare(right))
           .map(([roomId, miembros]) => ({
@@ -325,46 +187,27 @@ export function LiveFleetPage() {
             label: roomId === SIN_SALA
               ? 'sin sala'
               : etiquetaSala.get(`${tenantId}/${roomId}`) ?? roomId,
-            // `enabled: true` NO es una afirmación sobre la membresía: es el campo que el layout
-            // usa para atenuar, y acá el muñeco ya trae su propio estado desde la actividad. La
-            // decisión de registro (`agent_enabled`) la pinta `liveState()`, no esto.
             members: [...miembros].sort().map((alias) => ({ alias, enabled: true })),
           })),
       }));
 
-    return { ...base, tenants };
+    return { ...base, tenants: tenantsNodes };
   }, [topologiaEnAlcance, alcance]);
 
-  // Las flechas también se acotan: una delegación cuyo emisor o receptor está fuera del alcance no
-  // se puede dibujar sin sacar del cajón al muñeco que se acaba de esconder.
   const edgesEnAlcance = useMemo(() => {
     if (tenantFilter === 'todos') return edges;
     const dentro = new Set(alcance.map((view) => view.key));
     return edges.filter((edge) => dentro.has(edge.from) && dentro.has(edge.to));
   }, [edges, alcance, tenantFilter]);
 
-  // Cuántos alias quedan FUERA del recorte. Se declara en pantalla: un mapa que esconde sin
-  // decirlo miente por omisión, y desde el dibujo no hay forma de notarlo.
   const fueraDeAlcance = views.length - alcance.length;
-
-  // La cinta cuenta lo mismo que el veredicto y que el mapa. Contando `views` enteras, con un
-  // cliente elegido, los chips seguían sumando agentes que la página decía no estar mostrando.
   const tally = useMemo(() => stateTally(alcance), [alcance]);
 
-  /** alias → estado del muñeco. Se calcula sobre `views` ENTERA y no sobre el alcance: la tabla
-   *  recibe el snapshot completo y se acota con `onlyKeys`, no quitándole el estado a nadie. */
   const estadosVivos = useMemo(
     () => new Map(views.map((view) => [view.key, view.state])),
     [views],
   );
 
-  /**
-   * Un SOLO conjunto de alias resaltados para el mapa y la tabla a la vez.
-   *
-   * Los tres controles (chip de estado, buscador, cliente) se combinan en vez de pisarse: si están
-   * los tres puestos, se ve la intersección. Un filtro que anula a otro en silencio es peor que no
-   * tenerlo, porque el operador cree estar mirando algo que no está mirando.
-   */
   const spotlight = useMemo<Set<string> | null>(() => {
     const aguja = query.trim().toLowerCase();
     const acotado = tenantFilter !== 'todos';
@@ -380,39 +223,18 @@ export function LiveFleetPage() {
     );
   }, [views, stateFilter, query, tenantFilter]);
 
-  /**
-   * **La deriva entre el registro y las salas, en las DOS direcciones.**
-   *
-   * Lo que había acá se llamaba `sinReportar`, decía en su propio comentario que era «la
-   * diferencia simétrica entre `memberships` y `agents`» y NO lo era: el bucle recorría sólo las
-   * membresías. La otra mitad —un alias del registro sin una sola membresía habilitada, que es
-   * literalmente el caso `gaia`— valía cero siempre. El defecto que obligó a rehacer este mapa
-   * quedaba, después del arreglo, sin nadie que lo contara, y un cero se lee como «no hay deriva»,
-   * no como «no se miró». La cuenta vive ahora en `derivaDelRegistro`, que se puede probar en las
-   * dos direcciones sin montar la página.
-   *
-   * Se mide sobre el ALCANCE y no sobre `views` entera: con un cliente elegido, contar los alias
-   * de los otros cuatro como «sin sala» inventaría deriva que no existe, porque sus salas están
-   * fuera de `topologiaEnAlcance` a propósito.
-   */
   const deriva = useMemo(
     () => derivaDelRegistro(alcance, topologiaEnAlcance),
     [alcance, topologiaEnAlcance],
   );
 
-  /**
-   * Lo que hay detrás del desplegable «Permisos y salas», contado antes de abrirlo.
-   *
-   * Un `<details>` cerrado sin recuento es una puerta ciega: no se sabe si esconde tres filas o
-   * trescientas, así que o se abre siempre (y la página crece 855 px) o no se abre nunca.
-   */
   const resumenDePermisos = useMemo(() => {
     if (topology.error && !topology.data) return 'no se pudo leer';
-    const tenants = topologiaEnAlcance?.tenants ?? [];
-    if (tenants.length === 0) return 'sin datos';
-    const salas = tenants.reduce((total, tenant) => total + (tenant.rooms ?? []).length, 0);
+    const tenantsList = topologiaEnAlcance?.tenants ?? [];
+    if (tenantsList.length === 0) return 'sin datos';
+    const salas = tenantsList.reduce((total, tenant) => total + (tenant.rooms ?? []).length, 0);
     const permisos = (topologiaEnAlcance?.acl_edges ?? []).length;
-    return `${tenants.length} ${tenants.length === 1 ? 'cliente' : 'clientes'}, `
+    return `${tenantsList.length} ${tenantsList.length === 1 ? 'cliente' : 'clientes'}, `
       + `${salas} ${salas === 1 ? 'sala' : 'salas'}, ${permisos} ${permisos === 1 ? 'permiso' : 'permisos'}`;
   }, [topologiaEnAlcance, topology.data, topology.error]);
 
@@ -437,16 +259,6 @@ export function LiveFleetPage() {
     escribirQuery(undefined);
   }, []);
 
-  /**
-   * «Refrescar ahora» vuelve a leer las DOS fuentes.
-   *
-   * La topología está fuera del polling porque cambia cuando alguien toca la configuración, no
-   * cada cuatro segundos — pero eso dejaba un fallo sin salida: si `GET /v3/console/topology`
-   * fallaba al montar, no había un solo control en la página capaz de reintentarlo. El botón
-   * llamaba únicamente a `activity.reload`, y las dos vistas que sí exponían ese fallo (Fleet y
-   * Tenants & ACL) se borraron en este mismo cambio. La única recuperación era recargar el
-   * navegador, sin un mensaje que lo sugiriera.
-   */
   const { reload: recargarTopologia } = topology;
   const refrescarTodo = useCallback(() => {
     reload();
@@ -456,21 +268,10 @@ export function LiveFleetPage() {
   const enfocarCulpable = useCallback((key: string) => {
     setStateFilter(undefined);
     setSelected(key);
-    // El chip no abre el cajón: lleva el ojo al muñeco. Abrir un panel encima del mapa por hacer
-    // clic en un resumen sería quitarle al operador la vista de conjunto justo cuando la pidió.
     document.querySelector(`[data-agent-key="${cssEscape(key)}"]`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, []);
 
-  /**
-   * El fallo va PRIMERO, y no es un detalle de orden.
-   *
-   * Esta vista refresca sola cada 4 s. Con el error debajo del `loading`, el reintento que se
-   * dispara en cuanto una lectura vence vuelve a poner `loading: true` y la pantalla regresa al
-   * cartel de carga sin haber enseñado nunca el error: 
-   * gateway mudo, 36 s sin una sola alerta. Mientras no haya un solo dato que mostrar, lo último
-   * COMPROBADO es que la lectura falló, y eso es lo que se dice — con su botón.
-   */
   if (activity.error && !snapshot) {
     return <ErrorState error={activity.error} onRetry={activity.reload} reintentando={activity.loading} />;
   }
@@ -483,94 +284,28 @@ export function LiveFleetPage() {
         <PageHeader
           eyebrow="Flota"
           title="La flota ahora"
-          // La cabecera tiene que describir lo que HAY EN PANTALLA. Con un cliente elegido decía
-          // «los N alias que podés ver» contando sólo los suyos mientras el mapa dibujaba los de
-          // todos: la frase y el dibujo se contradecían en el mismo pantallazo.
           description={tenantFilter === 'todos'
             ? `Los ${alcance.length} alias que podés ver, qué tienen entre manos y quién se lo pidió.`
             : `Los ${alcance.length} alias de ${tenantFilter}, qué tienen entre manos y quién se lo pidió.`
               + ' Todo lo de abajo —veredicto, cinta, mapa y lista— está acotado a este cliente.'}
         />
 
-        <div className="live-toolbar">
-          <Tooltip label={FEED_HINT} focusable={false}>
-            <span className="live-feed-state" data-feed={feedState}>
-              <span className="live-feed-dot" aria-hidden="true" />
-              {feedState === 'error' ? 'Feed caído' : feedState === 'paused' ? 'En pausa' : 'En vivo'}
-            </span>
-          </Tooltip>
-
-          <label>
-            Refresco
-            <select
-              value={intervalMs}
-              onChange={(event) => setIntervalMs(Number(event.target.value))}
-              aria-label="Intervalo de refresco"
-            >
-              {INTERVALS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <button type="button" className="button secondary" onClick={refrescarTodo}>
-            {intervalMs <= 0 ? <Play size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}
-            Refrescar ahora
-          </button>
-
-          {/* La EDAD del dato, no sólo su hora. "14:02:11" obliga a restar de cabeza contra un
-              reloj que no está en pantalla; "hace 4 s" se lee de un vistazo, que es lo que hace
-              falta para saber si lo que estás mirando todavía vale. */}
-          <span className="muted live-age">
-            Servidor: <Time value={observedAt} />
-            {edadSegundos !== null ? <strong> · hace {formatDurationSeconds(edadSegundos)}</strong> : null}
-          </span>
-
-          <label className="live-search">
-            <Search size={15} aria-hidden="true" />
-            <span className="sr-only">Buscar un alias</span>
-            <input
-              type="search"
-              value={query}
-              placeholder="Buscar alias…"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </label>
-
-          {/* El selector sólo aparece si hay más de un cliente que acotar. Con uno solo sería un
-              control que no hace nada, así que en su lugar se declara el alcance y ya. */}
-          {tenants.length > 1 ? (
-            <label>
-              Cliente
-              <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)}>
-                <option value="todos">todos ({tenants.length})</option>
-                {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
-              </select>
-            </label>
-          ) : tenants.length === 1 ? (
-            <span className="badge badge-info">Vista acotada a {tenants[0]}</span>
-          ) : null}
-
-          {activity.error ? (
-            <span className="notice error">
-              Última lectura falló: {activity.error.message}. Se muestra el snapshot anterior.
-            </span>
-          ) : null}
-
-          {/* El fallo de la topología tiene que VERSE y tiene que poder reintentarse desde acá.
-              Sin este aviso, un `GET /v3/console/topology` caído dejaba la página con el mapa
-              vacío, «Permisos y salas» vacío, el selector de Cliente desaparecido y «Sin
-              reportar» en cero, todo con la misma cara que tiene una flota sin salas declaradas. */}
-          {topology.error ? (
-            <span className="notice error">
-              No se pudo leer la topología: {topology.error.message}. Sin ella no hay salas, ni
-              mapa, ni selector de cliente, ni «sin reportar» — no es que no existan.
-              <button type="button" className="button small secondary" onClick={recargarTopologia}>
-                Reintentar la topología
-              </button>
-            </span>
-          ) : null}
-        </div>
+        <LiveFleetToolbar
+          feedState={feedState}
+          intervalMs={intervalMs}
+          setIntervalMs={setIntervalMs}
+          refrescarTodo={refrescarTodo}
+          observedAt={observedAt}
+          edadSegundos={edadSegundos}
+          query={query}
+          setQuery={setQuery}
+          tenants={tenants}
+          tenantFilter={tenantFilter}
+          setTenantFilter={setTenantFilter}
+          activityError={activity.error}
+          topologyError={topology.error}
+          recargarTopologia={recargarTopologia}
+        />
 
         <FleetVerdict
           verdict={verdict}
@@ -578,55 +313,12 @@ export function LiveFleetPage() {
           onCulprit={(culprit) => enfocarCulpable(culprit.key)}
         />
 
-        {/* La cinta de triage: los siete chips ordenados por urgencia de izquierda a derecha, más
-            un octavo que sólo existe cuando hay a quién contar. */}
-        <div className="live-tally">
-          {TALLY_ORDER.map((state) => {
-            const meta = LIVE_STATE_META[state];
-            return (
-              <Tooltip key={state} label={meta.hint} focusable={false}>
-                <button
-                  type="button"
-                  className="live-tally-chip"
-                  style={{ ['--accent' as string]: STATE_ACCENT[state] }}
-                  data-empty={tally[state] === 0 ? 'true' : undefined}
-                  aria-pressed={stateFilter === state}
-                  onClick={() => setStateFilter((current) => (current === state ? undefined : state))}
-                  title={meta.hint}
-                >
-                  <span className="live-tally-swatch" aria-hidden="true" />
-                  {meta.label} <strong>{tally[state]}</strong>
-                </button>
-              </Tooltip>
-            );
-          })}
-          {/* Los dos chips de DERIVA, uno por dirección. Antes había uno solo y el otro lado
-              valía cero siempre — ver `derivaDelRegistro`. Ninguno de los dos es una avería por
-              sí mismo; los dos significan lo mismo cuando SUBEN: alguien dio un alta o una baja
-              tocando una sola de las dos tablas. */}
-          {deriva.sinRegistro > 0 ? (
-            <Tooltip
-              focusable={false}
-              label="Alias con membresía habilitada en una sala que NO tienen fila en el registro de agentes. No son una avería por sí solos: los principales de operador (por ejemplo el recolector de cuotas) viven así a propósito. Si este número sube tras un alta o una baja, es que se tocó una sola de las dos tablas."
-            >
-              <span className="live-tally-chip is-unreported" data-testid="deriva-sin-registro">
-                <span className="live-tally-swatch" aria-hidden="true" />
-                Fuera del registro <strong>{deriva.sinRegistro}</strong>
-              </span>
-            </Tooltip>
-          ) : null}
-          {deriva.sinSala > 0 ? (
-            <Tooltip
-              focusable={false}
-              label="Alias que SÍ están en el registro de agentes y no tienen ni una membresía habilitada. Se dibujan igual, en el recuadro «sin sala» —esconderlos fue el fallo que dejó a `gaia` invisible el día de su alta— pero nadie los contaba: alta en el registro sin sala es media alta."
-            >
-              <span className="live-tally-chip is-unreported" data-testid="deriva-sin-sala">
-                <span className="live-tally-swatch" aria-hidden="true" />
-                Sin sala <strong>{deriva.sinSala}</strong>
-              </span>
-            </Tooltip>
-          ) : null}
-        </div>
+        <LiveFleetTally
+          tally={tally}
+          stateFilter={stateFilter}
+          setStateFilter={setStateFilter}
+          deriva={deriva}
+        />
 
         <Panel
           title="Quién le habla a quién, ahora"
@@ -646,10 +338,6 @@ export function LiveFleetPage() {
             ))}
           </div>
 
-          {/* El recorte se DECLARA. Esconder muñecos sin decirlo convierte un mapa acotado en un
-              mapa incompleto, y desde el dibujo las dos cosas se ven idénticas. En la capa de
-              permisos hay además una omisión propia que hay que nombrar: los cruces ACL hacia los
-              otros clientes salen del dibujo junto con ellos. */}
           {fueraDeAlcance > 0 ? (
             <p className="notice" data-testid="aviso-recorte">
               Mapa acotado a <strong>{tenantFilter}</strong>: {fueraDeAlcance} alias de otros
@@ -659,10 +347,6 @@ export function LiveFleetPage() {
             </p>
           ) : null}
 
-          {/* Estado vacío, diseñado PRIMERO: el estado normal medido de esta flota es una entrega
-              en vuelo y cero en cola. Si la pantalla sólo se ve bien cuando hay incendio, se ve mal
-              casi siempre. Se mide sobre el ALCANCE, no sobre la flota entera: con un cliente
-              elegido, "la flota está libre" tenía que hablar de lo que se está mirando. */}
           {layer === 'ahora' && edgesEnAlcance.length === 0 && alcance.length > 0 ? (
             <p className="live-empty-calm">
               <strong>{tenantFilter === 'todos' ? 'La flota está libre.' : `Nadie de ${tenantFilter} tiene trabajo entre manos.`}</strong>
@@ -699,76 +383,16 @@ export function LiveFleetPage() {
           selectedKey={selected ?? null}
           onlyKeys={spotlight}
           filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
-          /* La tabla NO vuelve a decidir el estado de nadie: consume el que ya decidió esta
-             página, el mismo que pinta cada muñeco y cuenta cada chip. Es lo que hace imposible
-             que la fila diga «Libre» de un alias que el chip cuenta como «Caído». */
           estados={estadosVivos}
           onSelect={(key) => setHovered(key ?? undefined)}
           onOpen={(key) => abrirCajon(key)}
         />
 
-        {/*
-          La prioridad estaba al revés, y se midió el 2026-08-23.** El glosario de abajo —381 px
-          de alto— estaba SIEMPRE abierto, y las dos únicas secciones con datos medidos («Señales
-          activas» y «Permisos y salas») SIEMPRE plegadas. O sea que la pantalla dedicaba el pie
-          entero a explicar cómo leerse a sí misma y escondía lo que hay que leer.
-
-          Ahora: los datos abren, la explicación se pliega. Las señales activas se abren con
-          `open` —no se quitan del `<details>` para que se puedan cerrar cuando ya se conocen— y el
-          glosario pasa a ser el único desplegable cerrado de la vista.
-        */}
-        <details className="live-fold" open>
-          <summary>Señales activas</summary>
-          <FleetSignals snapshot={snapshot} />
-        </details>
-
-
-        {/*
-          Queda PLEGADO, y no por descuido. Medido a 1280×900: abierto añade 855 px a una página
-          que ya medía 3.948 y que Steven dice que no puede usar. Y a diferencia de las señales de
-          arriba, esto no cambia cada cuatro segundos: es la configuración —era la ruta «Tenants &
-          ACL» entera— y sólo se mueve cuando alguien la edita. Lo que sí se arregla es que el
-          desplegable deje de ser una puerta ciega: el resumen dice CUÁNTO hay detrás, así que se
-          abre sabiendo qué se va a encontrar.
-        */}
-        <details className="live-fold">
-          <summary>Permisos y salas · {resumenDePermisos}</summary>
-          {/* Comparten el `useResource('live-topology')` que el mapa ya pidió: cero fetch nuevo.
-              Esto era la ruta "Tenants & ACL" entera. Va sobre la topología ACOTADA, igual que el
-              mapa: si el selector de Cliente no acotara también esto, el desplegable seguiría
-              contando salas y permisos que la cabecera dice no estar mostrando. */}
-          <TenantCards tenants={topologiaEnAlcance?.tenants ?? []} />
-          <AclEdgeList edges={topologiaEnAlcance?.acl_edges ?? []} />
-        </details>
-
-        <details className="live-fold">
-          <summary>Cómo se lee un muñeco, y cómo leer los números</summary>
-          <p className="live-legend-lead">
-            Estas son las MISMAS palabras que usan el veredicto de arriba y la columna «Estado» de
-            la tabla: si el veredicto dice <strong>caído</strong>, la tabla dice <strong>Caído</strong>{' '}
-            y acá abajo se explica <strong>Caído</strong>. Hasta el 2026-08-23 eran tres palabras
-            distintas para lo mismo.
-          </p>
-          <p className="live-legend-lead">
-            <strong>Libre</strong> no es <strong>caído</strong> ni es <strong>sin reportar</strong>.
-            Libre es un agente conectado y sin trabajo, que es el estado normal de casi toda la
-            flota casi todo el tiempo. Caído es que el lease venció. Sin reportar es que la
-            topología lo declara y la actividad no dice nada de él — no se asume que esté sano, y
-            tampoco se lo acusa de estar roto.
-          </p>
-          <div className="live-legend">
-            {LIVE_STATES.map((state) => (
-              <div className="live-legend-item" key={state}>
-                <span className="live-legend-swatch" style={{ ['--accent' as string]: STATE_ACCENT[state] }} aria-hidden="true" />
-                <div>
-                  <strong>{LIVE_STATE_META[state].label}</strong>
-                  <span>{LIVE_STATE_META[state].hint}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <ActivityExplainers thresholds={snapshot?.thresholds} />
-        </details>
+        <LiveFleetLegend
+          snapshot={snapshot}
+          topologiaEnAlcance={topologiaEnAlcance}
+          resumenDePermisos={resumenDePermisos}
+        />
       </div>
 
       {drawer && detail ? (
@@ -791,8 +415,6 @@ export function LiveFleetPage() {
         />
       ) : null}
 
-      {/* UN solo globo para los quince muñecos, montado en `document.body`: dentro del `<svg>` lo
-          recortaría el `overflow` del contenedor con scroll justo en los nodos del borde. */}
       <FloatingTooltip anchor={tip?.anchor ?? null} open={tip !== null}>
         {tip ? <AgentTooltipCard view={tip.view} alias={tip.alias} /> : null}
       </FloatingTooltip>
@@ -800,13 +422,6 @@ export function LiveFleetPage() {
   );
 }
 
-/**
- * El enlace profundo va con `replaceState`, NUNCA con `pushState`.
- *
- * Este cajón se abre y se cierra decenas de veces en una sesión de triage. Con `pushState`, el
- * botón "atrás" del navegador dejaría de servir para volver a la pantalla anterior y pasaría a
- * recorrer, uno por uno, cada agente que se miró de pasada.
- */
 function escribirQuery(key?: string, tab?: DrawerTab, trace?: string): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
@@ -829,9 +444,6 @@ function leerQuery(): { key: string; tab: DrawerTab; trace?: string } | null {
   const key = params.get('agente');
   if (!key) return null;
   const tab = params.get('pestana');
-  // Esta lista es la que gobierna el enlace profundo `?pestana=`. Una pestaña que se añada a
-  // `DRAWER_TABS` y no acá se dibuja pero NO se puede enlazar: el parámetro cae al «ahora» y
-  // el operador que pega el enlace aterriza en otra pantalla sin que nada avise.
   const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'cadena', 'rol', 'perfil', 'ficheros'];
   return {
     key,
@@ -840,7 +452,6 @@ function leerQuery(): { key: string; tab: DrawerTab; trace?: string } | null {
   };
 }
 
-/** `CSS.escape` no existe en jsdom; el alias puede traer puntos y barras. */
 function cssEscape(value: string): string {
   return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
     ? CSS.escape(value)

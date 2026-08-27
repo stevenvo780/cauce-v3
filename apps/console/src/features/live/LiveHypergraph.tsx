@@ -5,6 +5,7 @@ import {
   AVATAR_UNIFORME,
   LIVE_STATE_META,
   aggregateEdges,
+  aliasDe,
   edgePairKey,
   grosorDe,
   radioDe,
@@ -121,11 +122,6 @@ interface Placed {
   point: Point;
   view: LiveAgentView | null;
   radius: number;
-}
-
-function aliasDe(key: string): string {
-  const corte = key.indexOf('/');
-  return corte === -1 ? key : key.slice(corte + 1);
 }
 
 export function LiveHypergraph({
