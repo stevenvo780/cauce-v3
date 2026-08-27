@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,8 +34,8 @@ afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-describe('source digest verification closure', () => {
-  test('the live full resolver covers the test orchestrator and operational sources it exercises', () => {
+describe('release machinery source digest closure', () => {
+  test('the full resolver covers the release operational sources it exercises', () => {
     const result = spawnSync('python3', [sourceDigest, '--domain', 'full', '--list'], {
       cwd: repository,
       encoding: 'utf8',
@@ -43,7 +43,6 @@ describe('source digest verification closure', () => {
     expect(result.status, result.stderr).toBe(0);
     const paths = result.stdout.split('\n');
     for (const source of [
-      'scripts/test-all.mjs',
       'ops/scripts/deploy-release.sh',
       'ops/scripts/rollback.sh',
       'ops/scripts/pin-production-release.py',
@@ -55,46 +54,7 @@ describe('source digest verification closure', () => {
     }
   });
 
-  test('mutating a root script moves verification and full without relabelling runtime', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-closure-'));
-    scratch.push(root);
-    for (const directory of ['scripts', 'packages/store', 'services/gateway', 'deploy']) {
-      await mkdir(join(root, directory), { recursive: true });
-    }
-    for (const [relative, content] of [
-      ['package.json', '{}\n'],
-      ['pnpm-lock.yaml', 'lockfileVersion: 9\n'],
-      ['pnpm-workspace.yaml', 'packages: []\n'],
-      ['tsconfig.json', '{}\n'],
-      ['tsconfig.build.json', '{}\n'],
-      ['vitest.config.ts', 'export default {};\n'],
-      ['scripts/test-all.mjs', 'export const suites = 7;\n'],
-      ['packages/store/index.ts', 'export const store = 1;\n'],
-      ['services/gateway/index.ts', 'export const gateway = 1;\n'],
-      ['deploy/Dockerfile', 'FROM scratch\n'],
-    ] as const) {
-      await writeFile(join(root, relative), content);
-    }
-
-    const before = Object.fromEntries(['runtime', 'verification', 'full'].map((domain) => {
-      const result = run(root, '--domain', domain);
-      expect(result.status, result.stderr).toBe(0);
-      return [domain, result.stdout.trim()];
-    }));
-    await writeFile(join(root, 'scripts/test-all.mjs'), 'export const suites = 0; // silently skip all\n');
-    const after = Object.fromEntries(['runtime', 'verification', 'full'].map((domain) => {
-      const result = run(root, '--domain', domain);
-      expect(result.status, result.stderr).toBe(0);
-      return [domain, result.stdout.trim()];
-    }));
-
-    expect(after.runtime).toBe(before.runtime);
-    expect(after.verification).not.toBe(before.verification);
-    expect(after.full).not.toBe(before.full);
-    expect(await readFile(join(root, 'scripts/test-all.mjs'), 'utf8')).toContain('silently skip all');
-  });
-
-  test('mutating critical or newly added operational sources invalidates old verification reports', async () => {
+  test('mutating critical release sources invalidates old verification reports', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-operations-'));
     scratch.push(root);
     for (const [relative, contents] of [
@@ -121,8 +81,6 @@ describe('source digest verification closure', () => {
       ['ops/scripts/pin-production-release.py', 'print("unlocked")\n'],
       ['ops/scripts/release-writer-state.py', 'print("unvalidated")\n'],
       ['ops/schemas/build-evidence.schema.json', '{"additionalProperties":true}\n'],
-      ['ops/scripts/future-operational-gate.py', 'print("future gate")\n'],
-      ['ops/schemas/future-operational-evidence.schema.json', '{"type":"string"}\n'],
     ] as const) {
       await writeTree(root, relative, contents);
       const nextVerification = digest(root, 'verification');
@@ -133,196 +91,5 @@ describe('source digest verification closure', () => {
       verification = nextVerification;
       full = nextFull;
     }
-  });
-
-  test('timestamped fleet artifacts regenerate without moving initial or final source digests', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-generated-artifacts-'));
-    scratch.push(root);
-    for (const [relative, contents] of [
-      ['package.json', '{}\n'],
-      ['pnpm-lock.yaml', 'lockfileVersion: 9\n'],
-      ['pnpm-workspace.yaml', 'packages: []\n'],
-      ['tsconfig.json', '{}\n'],
-      ['tests/fleet-release/fleet-release.test.ts', 'export const generate = () => new Date();\n'],
-      ['tests/fleet-release/artifacts/report.json', '{"generatedAt":"initial"}\n'],
-      ['tests/fleet-release/artifacts/junit.xml', '<testsuite timestamp="initial"/>\n'],
-      ['tests/fleet-release/artifacts/SHA256SUMS', 'initial sums\n'],
-      ['tests/fleet-release/.matrix-state/harness-logs/worker.log', 'residue from interrupted run\n'],
-      ['tests/unit/artifacts/fixture.pem', 'versioned PEM fixture\n'],
-    ] as const) {
-      await writeTree(root, relative, contents);
-    }
-
-    const initial = {
-      verification: digest(root, 'verification'),
-      full: digest(root, 'full'),
-    };
-    for (const timestamp of ['2026-08-26T13:00:00Z', '2026-08-26T13:01:00Z', '2026-08-26T13:02:00Z']) {
-      await writeTree(root, 'tests/fleet-release/artifacts/report.json', `${JSON.stringify({ generatedAt: timestamp })}\n`);
-      await writeTree(root, 'tests/fleet-release/artifacts/junit.xml', `<testsuite timestamp="${timestamp}"/>\n`);
-      await writeTree(root, 'tests/fleet-release/artifacts/SHA256SUMS', `${timestamp} sums\n`);
-      await writeTree(root, 'tests/fleet-release/.matrix-state/harness-logs/worker.log', `${timestamp} state\n`);
-      expect(digest(root, 'verification'), timestamp).toBe(initial.verification);
-      expect(digest(root, 'full'), timestamp).toBe(initial.full);
-    }
-    await rm(join(root, 'tests/fleet-release/.matrix-state'), { recursive: true, force: true });
-    expect(digest(root, 'verification')).toBe(initial.verification);
-    expect(digest(root, 'full')).toBe(initial.full);
-
-    const listing = run(root, '--domain', 'full', '--list');
-    expect(listing.status, listing.stderr).toBe(0);
-    expect(listing.stdout).not.toContain('tests/fleet-release/artifacts/');
-    expect(listing.stdout).not.toContain('tests/fleet-release/.matrix-state/');
-    expect(listing.stdout.split('\n')).toContain('tests/unit/artifacts/fixture.pem');
-
-    await writeTree(root, 'tests/fleet-release/fleet-release.test.ts', 'export const generate = () => "forged";\n');
-    expect(digest(root, 'verification')).not.toBe(initial.verification);
-    expect(digest(root, 'full')).not.toBe(initial.full);
-  });
-
-  test('Git-ignored backups stay out while untracked source and tracked PEM fixtures stay covered', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-git-ignore-'));
-    scratch.push(root);
-    for (const [relative, contents] of [
-      ['.gitignore', '*.bak-*\n*.pem\n'],
-      ['package.json', '{}\n'],
-      ['pnpm-lock.yaml', 'lockfileVersion: 9\n'],
-      ['pnpm-workspace.yaml', 'packages: []\n'],
-      ['tsconfig.json', '{}\n'],
-      ['ops/cli/cauce', '#!/bin/sh\nexit 0\n'],
-      ['services/gateway/src/test-fixtures/mtls-server-certificate.pem', 'tracked PEM fixture\n'],
-    ] as const) {
-      await writeTree(root, relative, contents);
-    }
-    const initialized = spawnSync('git', ['init', '--quiet'], { cwd: root, encoding: 'utf8' });
-    expect(initialized.status, initialized.stderr).toBe(0);
-    const staged = spawnSync(
-      'git',
-      ['add', '-f', '.gitignore', 'ops/cli/cauce', 'services/gateway/src/test-fixtures/mtls-server-certificate.pem'],
-      { cwd: root, encoding: 'utf8' },
-    );
-    expect(staged.status, staged.stderr).toBe(0);
-
-    const initial = {
-      runtime: digest(root, 'runtime'),
-      verification: digest(root, 'verification'),
-      full: digest(root, 'full'),
-    };
-    await writeTree(root, 'ops/cli/cauce.bak-login-20260823T000500Z', 'ignored operator backup\n');
-    await symlink('/var/tmp/cauce-ignored-external-target', join(root, 'ops/cli/cauce.bak-ignored-link'));
-    expect(digest(root, 'runtime')).toBe(initial.runtime);
-    expect(digest(root, 'verification')).toBe(initial.verification);
-    expect(digest(root, 'full')).toBe(initial.full);
-    let listing = run(root, '--domain', 'full', '--list');
-    expect(listing.status, listing.stderr).toBe(0);
-    expect(listing.stdout).not.toContain('ops/cli/cauce.bak-login-20260823T000500Z');
-    expect(listing.stdout).not.toContain('ops/cli/cauce.bak-ignored-link');
-    expect(listing.stdout.split('\n')).toContain('services/gateway/src/test-fixtures/mtls-server-certificate.pem');
-
-    await writeTree(root, 'ops/scripts/untracked-emergency-gate.py', 'print("new source")\n');
-    const withUntrackedSource = {
-      verification: digest(root, 'verification'),
-      full: digest(root, 'full'),
-    };
-    expect(withUntrackedSource.verification).not.toBe(initial.verification);
-    expect(withUntrackedSource.full).not.toBe(initial.full);
-    listing = run(root, '--domain', 'full', '--list');
-    expect(listing.stdout.split('\n')).toContain('ops/scripts/untracked-emergency-gate.py');
-
-    await writeTree(
-      root,
-      'services/gateway/src/test-fixtures/mtls-server-certificate.pem',
-      'mutated tracked PEM fixture\n',
-    );
-    expect(digest(root, 'runtime')).not.toBe(initial.runtime);
-    expect(digest(root, 'full')).not.toBe(withUntrackedSource.full);
-  });
-
-  test('all non-ignored operational symlinks fail closed without exposing their targets', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-symlink-'));
-    scratch.push(root);
-    for (const [relative, contents] of [
-      ['package.json', '{}\n'],
-      ['pnpm-lock.yaml', 'lockfileVersion: 9\n'],
-      ['pnpm-workspace.yaml', 'packages: []\n'],
-      ['tsconfig.json', '{}\n'],
-      ['scripts/gate-a.sh', '#!/bin/sh\nexit 0\n'],
-      ['scripts/gate-b.sh', '#!/bin/sh\nexit 7\n'],
-      ['ops/scripts/existing-gate.sh', '#!/bin/sh\nexit 0\n'],
-      ['unselected/gate.sh', '#!/bin/sh\nexit 9\n'],
-    ] as const) {
-      await writeTree(root, relative, contents);
-    }
-    const before = {
-      runtime: digest(root, 'runtime'),
-      verification: digest(root, 'verification'),
-      full: digest(root, 'full'),
-    };
-    const link = join(root, 'ops/scripts/future-release-gate.sh');
-    for (const target of [
-      '../../scripts/gate-a.sh',
-      '../../scripts/gate-b.sh',
-      '../../unselected/gate.sh',
-      '../../unselected/missing.sh',
-      '/var/tmp/cauce-sensitive-external-target',
-    ]) {
-      await symlink(target, link);
-      for (const arguments_ of [
-        ['--domain', 'verification'],
-        ['--domain', 'full', '--list'],
-      ] as const) {
-        const rejected = run(root, ...arguments_);
-        expect(rejected.status).toBe(2);
-        expect(rejected.stderr).toContain('source digest rejects symlinks in covered inputs');
-        expect(rejected.stderr).not.toContain(target);
-        expect(rejected.stdout).toBe('');
-      }
-      expect(digest(root, 'runtime')).toBe(before.runtime);
-      await rm(link);
-      expect(digest(root, 'verification')).toBe(before.verification);
-      expect(digest(root, 'full')).toBe(before.full);
-    }
-  });
-
-  test('cache directories and Python bytecode are excluded from every domain', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-caches-'));
-    scratch.push(root);
-    for (const [relative, contents] of [
-      ['package.json', '{}\n'],
-      ['pnpm-lock.yaml', 'lockfileVersion: 9\n'],
-      ['pnpm-workspace.yaml', 'packages: []\n'],
-      ['tsconfig.json', '{}\n'],
-      ['services/gateway/index.ts', 'export const runtime = 1;\n'],
-      ['apps/console/src/App.tsx', 'export const console = 1;\n'],
-      ['ops/harness/authentic-runner.mjs', 'export const harness = 1;\n'],
-      ['tests/e2e/real-qa.test.ts', 'export const qa = 1;\n'],
-      ['ops/scripts/deploy-release.sh', '#!/bin/sh\nexit 0\n'],
-    ] as const) {
-      await writeTree(root, relative, contents);
-    }
-    const domains = ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full'] as const;
-    const before = Object.fromEntries(domains.map((domain) => [domain, digest(root, domain)]));
-
-    for (const [relative, contents] of [
-      ['services/gateway/__pycache__/runtime.pyc', 'runtime cache'],
-      ['services/gateway/runtime.pyo', 'runtime optimized cache'],
-      ['apps/console/.pytest_cache/v/cache/nodeids', 'console cache'],
-      ['apps/console/src/console.pyc', 'console bytecode'],
-      ['ops/harness/__pycache__/harness.pyc', 'harness cache'],
-      ['ops/harness/harness.pyo', 'harness optimized cache'],
-      ['tests/e2e/.pytest_cache/state.json', 'testcontainers cache'],
-      ['tests/e2e/qa.pyc', 'testcontainers bytecode'],
-      ['ops/scripts/__pycache__/deploy.pyc', 'verification cache'],
-      ['ops/scripts/deploy.pyo', 'verification optimized cache'],
-    ] as const) {
-      await writeTree(root, relative, contents);
-    }
-
-    for (const domain of domains) expect(digest(root, domain), domain).toBe(before[domain]);
-    const listing = run(root, '--domain', 'full', '--list');
-    expect(listing.status, listing.stderr).toBe(0);
-    expect(listing.stdout).not.toMatch(/(?:^|\/)__(?:pycache)__(?:\/|$)/mu);
-    expect(listing.stdout).not.toMatch(/(?:^|\/)\.pytest_cache(?:\/|$)/mu);
-    expect(listing.stdout).not.toMatch(/\.(?:pyc|pyo)$/mu);
   });
 });

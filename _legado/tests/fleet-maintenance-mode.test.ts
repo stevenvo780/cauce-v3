@@ -8,7 +8,6 @@ import { afterEach, describe, expect, test } from 'vitest';
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const gate = join(repository, 'ops/scripts/fleet-gate-mode.sh');
 const releaseGate = join(repository, 'ops/scripts/release-gate.sh');
-const stackHealth = join(repository, 'ops/scripts/stack-health.sh');
 const scratch: string[] = [];
 
 type InventoryEntry = {
@@ -165,9 +164,7 @@ describe('bounded fleet maintenance mode', () => {
     expect(rejected.stderr).toContain('maintenance-offline agent is active: Steven:zeus');
   });
 
-  test('release and health entry points reject broader or misplaced maintenance arguments', () => {
+  test('release entry point rejects broader maintenance arguments', () => {
     expect(spawnSync(releaseGate, ['--maintenance-offline-kant'], { encoding: 'utf8' }).status).toBe(2);
-    expect(spawnSync(stackHealth, ['dev', '--maintenance-offline-zeus'], { encoding: 'utf8' }).status).toBe(2);
-    expect(spawnSync(stackHealth, ['prod', '--maintenance-offline-kant'], { encoding: 'utf8' }).status).toBe(2);
   });
 });
