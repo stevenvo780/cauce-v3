@@ -62,7 +62,7 @@ y cinco residuos finales incorporados después.
 operaciones activas permanecen vivos.
 
 Detalle: `_legado/README.md` sección "Pendiente de mover aquí" de rondas previas (en
-`ordenes/ronda1/codex.md` y `ordenes/ronda2/codex.md`); `plan-reestructura/12-cuarentena-legado.md`
+`ordenes/ronda1/codex.md` y `ordenes/ronda2/codex.md`); `docs/bitacora/plan-ejecutado/12-cuarentena-legado.md`
 L15 (cifra "17.686 líneas"; la cifra actual es 19.589 tras los refinamientos posteriores).
 
 Los targets y scripts de paquete que apuntaban a esta familia, y la validación que ejecutaba
@@ -83,15 +83,18 @@ presente.
 
 Detalle: discusión del razonamiento en `docs/bitacora/` si se necesita contexto.
 
-### 5. `contingentes/` — 52 ficheros del censo 2026-08-27 (origen: ronda 4 minimax)
+### 5. `contingentes/` — 68 ficheros del censo 2026-08-27 (origen: ronda 4 minimax + ronda 6 minimax)
 
-Moveriles de la Tarea 1+Tarea 2+Tarea 3 de `ordenes/ronda4/opencode-minimax.md`. La subruta se
-conserva exactamente para que el plan y los runbooks sigan siendo localizables
-(`ops/cli/...`, `ops/security/...`, etc.). Evidencia por fichero en
+Moveriles de la Tarea 1+Tarea 2+Tarea 3 de `ordenes/ronda4/opencode-minimax.md` (52 ficheros del
+censo inicial) más los 13 de la ronda 6 (`a959c46` + `90f690c` + `c9d87f3` + `0f77d25`): 6 schemas
+sin consumidor, 5 tests huérfanos, 4 scripts sin invocador real, y `Dockerfile`+`.dockerignore` de
+`ops/harness` sin construir. La subruta se conserva exactamente para que el plan y los runbooks
+sigan siendo localizables (`ops/cli/...`, `ops/security/...`, etc.). Evidencia por fichero en
 `plan-reestructura/censo-contingentes.md`.
 
 | Subruta | Ficheros | Por qué está aquí |
 |---|---|---|
+| `contingentes/` (raíz) (2) | `Dockerfile.harness-origen`, `dockerignore.harness-origen` | Origen de `ops/harness/Dockerfile`+`.dockerignore`: nadie construye esa imagen (todo el repo usa `deploy/Dockerfile`); commit `90f690c` (ronda 6) |
 | `contingentes/ops/ai-live/` (4) | `cauce-ai-live`, `.service`, `.timer`, `cdp.py` | Bridge de IA↔navegador vía CDP; cero consumidores en este host |
 | `contingentes/ops/cli/` (2) | `cauce-panel-guard`, `cauce-tmux-panel` | Binarios del panel y tmux por alias; fuentes para `/usr/local/sbin/cauce-*` en la TORRE; el censo no las vio (las 3 unidades que las invocaban fueron movidas por el integrador en `36c6465`) |
 | `contingentes/ops/config/` (2) | `cauce-ops.env.example`, `e2e.env.example` | Plantillas de entorno nunca leídas en caliente; los reales viven fuera del repo |
@@ -99,23 +102,29 @@ conserva exactamente para que el plan y los runbooks sigan siendo localizables
 | `contingentes/ops/container-runtime/` (1) | `salva-container-keepalive.sh` | Hook de keepalive para contenedores; sin servicio que lo invoque en este host |
 | `contingentes/ops/generated/container-systemd/` (32) | 15 `.service` + 2 SHA + 15 `.env.example` | Plantillas generadas para modo system/root; el vivo es `rootless/` (en `ops/generated/container-systemd/rootless/`); regenerar en `/tmp` da diff=0 contra lo checked-in |
 | `contingentes/ops/observability/` (3) | `agent-health-metrics.prom`, `alerts-agent-health.yaml`, `otel-collector.upstream.example.yaml` | Prom/Alertmanager/Otel no montados por ningún contenedor vivo (D2 del dossier FASE 3) |
-| `contingentes/ops/schemas/` (1) | `rollback-bridge.schema.json` | Schema del productor retirado; roto en 3 tests reales (`tests/unit/rollback-baseline.test.ts`, `tests/unit/source-digest-closure.test.ts`, `ops/tests/source-digest-domains.test.mjs`) — 2 ya movidos a `_legado/tests/` por el integrador |
-| `contingentes/ops/scripts/` (3) | `retire-session-host.sh`, `selftest-postgres.sh`, `smoke-authentic-restarts.sh` | Helpers de retirada/diagnóstico; cero llamador vivo confirmado por re-verificación in situ (Codex lo confirmó) |
+| `contingentes/ops/schemas/` (7) | `rollback-bridge.schema.json`, `dlq-no-replay-resolution.schema.json`, `dlq-reconciliation.schema.json`, `fleet-snapshot.schema.json`, `gate-snapshot.schema.json`, `physical-fleet-snapshot.schema.json`, `telegram-manual-replay.schema.json` | Schemas sin consumidor localizable en producción (Codex/Codex ronda 6 verificó los 6 nuevos en `a959c46`). El de rollback-bridge está roto en 3 tests reales (`tests/unit/rollback-baseline.test.ts`, `tests/unit/source-digest-closure.test.ts`, `ops/tests/source-digest-domains.test.mjs`) — 2 ya movidos a `_legado/tests/` por el integrador |
+| `contingentes/ops/scripts/` (7) | `retire-session-host.sh`, `selftest-postgres.sh`, `smoke-authentic-restarts.sh`, `aplicar-separacion-config.sh`, `censo-config-por-alias.py`, `diff-consola-visible.py`, `preflight.sh` | Helpers de retirada/diagnóstico; cero llamador vivo confirmado por re-verificación in situ. Los 4 últimos son los de ronda 6 (`0f77d25`): la suite operativa CONFIG_POR_ALIAS queda apagada por defecto (decisión del dueño en `censo-contingentes.md`) |
 | `contingentes/ops/security/` (2) | `README-seccomp.md`, `seccomp-userns.json` | Perfil seccomp para openclaw; ningún contenedor lo aplica |
 | `contingentes/ops/systemd/` (3) | `cauce-v3-panel-guard.service`, `.timer`, `cauce-v3-tmux@.service` | Units que invocan los binarios de `contingentes/ops/cli/`; el censo no las vio; el integrador las movió aquí en `36c6465` |
 | `contingentes/packages/adapter-sdk/docs/` (1) | `ADDING-HARNESS.md` | Guía para añadir un harness al SDK; los 3 binarios vivos (`openclaw`, `claude`, `codex`) ya están integrados |
 | `contingentes/scripts/` (1) | `verify.sh` | Helper de verificación sin llamador en este repo |
 
-### 6. `tests/` — cobertura de las piezas retiradas (origen: ronda 4 + ronda 5 integrador)
+Fuera de `_legado/` pero originados por la ronda 6: `ops/harness/CONTRACT.md` →
+`docs/bitacora/CONTRACT-harness-2026.md` (mismo commit `90f690c`); sin hogar en
+`_legado/contingentes/` porque describe un contrato del harness que el repo ya no usa pero
+conserva valor histórico.
+
+### 6. `tests/` — cobertura de las piezas retiradas (origen: ronda 4 + ronda 5 integrador + ronda 6 minimax)
 
 33 tests que cubrían las piezas en cuarentena. Si la pieza se revive, los tests vuelven con ella
 por subruta espejada. **No se ejecutan** (no están en `validate.sh`, `package.json`, `Makefile`).
+Los 5 de "Contingentes operativos" vienen de la ronda 6 (`c9d87f3`).
 
 | Familia | Ficheros | Por qué está aquí |
 |---|---|---|
 | Maquinaria de release y rollback (24) | `bootstrap-prod-env`, `compose-files-release`, `container-{cutover-rollback,release-evidence,release-pin}`, `deploy-release`, `fleet-{maintenance-mode,parity}`, `migrate-cli-production`, `pin-production-release`, `release-*`, `restore-release-integrity`, `rollback-*`, `schema-error-sanitization-release`, `source-{digest-closure,digest-release-wiring,hygiene}`, `terminal-release-gate`, `test_release_writer_rotation` | Cobertura de la maquinaria retirada (sección 3) y del rollback-bridge (sección 2) |
 | Servicios retirados (4) | `relay-worker`, `shadow-router-target-phase-postgres`, `shadow-inbox-fencing`, `terminal-relay-operability-shadow` | Cobertura de los servicios completos (sección 1) |
-| Contingentes operativos (5) | `aplicar-separacion-config`, `test_censo_config_por_alias`, `test_dlq_cli`, `test_generate_telegram_config`, `test_telegram_cutover_preflight` | Cobertura conservada con las piezas contingentes correspondientes |
+| Contingentes operativos (5) | `aplicar-separacion-config`, `test_censo_config_por_alias`, `test_dlq_cli`, `test_generate_telegram_config`, `test_telegram_cutover_preflight` | Cobertura conservada con las piezas contingentes correspondientes; ronda 6 (`c9d87f3`) verificó que ningún runner (`ops/scripts/validate.sh`, `package.json`, `ops/Makefile`) los invoca |
 
 Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnpm test:unit` ni
 `.github/workflows/ci.yml`.
@@ -124,8 +133,9 @@ Detalle: ningún test de `_legado/tests/` se ejecuta desde `make validate`, `pnp
 
 | Pieza | Líneas | Estado |
 |---|---|---|
-| 45 dudosos del censo (`plan-reestructura/censo-contingentes.md` L23–67) | n/d | Sin marcar; ronda 5 salta (Tarea 5 condicional) |
-| Suite operativa CONFIG_POR_ALIAS (`ops/scripts/{aplicar-separacion-config,censo-config-por-alias,separar-config-alias,update-alias-config}.sh/.py/.mjs` + sus 5 tests) | ~600 | Apagada por defecto; sigue activa en código |
+| 45 dudosos del censo (`plan-reestructura/censo-contingentes.md` L23–67) | n/d | Sin marcar; ronda 5 salta (Tarea 5 condicional). Algunos quedaron resueltos por las olas 2/3 (publish-intents no era legado, authentic se retira en la ronda actual); el censo se reescribió en `7a0f0d3` para reflejarlo |
+| Restos de la suite operativa CONFIG_POR_ALIAS (`ops/scripts/{separar-config-alias,update-alias-config}.sh` y ss wrappers no usados) | ~200 | Ronda 6 (`0f77d25`) movió los 4 scripts sin invocador real (los sujetos de los 5 tests movidos). Quedan 2 piezas aún en el árbol vivo, sin tests, sin llamador; decisión del dueño |
+| Suite QA "authentic" de Codex (ronda actual) | ~600 | `ops/compose.authentic.yaml` + `ops/scripts/smoke-{compose,runtime}-authentic.sh` + `qa:compose-authentic` y `qa:runtime-authentic` en `package.json` + aserción estática en `ops/scripts/validate.sh`. Codex la retira por exigir `relay-worker`/`shadow-router` en una imagen que ya no los construye — teatro roto por diseño |
 
 ## Referencias vivas rotas a sabiendas (se resuelven en FASE 3)
 
