@@ -1,32 +1,48 @@
-# Inventario de residuos del host — ronda 3 minimax
+# Inventario de residuos del host — ronda 6 minimax
 
 Inventario de residuos en la máquina, **solo reporte con comando de borrado
 propuesto por fila**. El dueño aprueba, nadie borra. Tareas explícitas:
 (a) contenedores docker de test huérfanos con fechas; (b) los 13 árboles
-`/opt/cauce-v3-release-*` con tamaño; (c) imágenes `rc-*` y `*-legacy` del
-registry local con fechas; (d) el clon muerto `/datos/workspaces/cauce-v3`.
+`/opt/cauce-v3-release-*` con tamaño; (c) imágenes `rc-*`/`*-legacy`/
+`verificacion-dockerfile-fix` del registry local y del daemon, con fechas
+y tamaño; (d) el clon muerto `/datos/workspaces/cauce-v3`.
 
-Medido el 2026-08-27 contra `main` (HEAD `cef78de`). Producción viva
+Medido el **2026-08-27** contra `main` (HEAD `7a0f0d3`). Producción viva
 **intacta**: containers `cauce-v3-prod-*`, registry local, `cauce-v3`
-no se tocan.
+no se tocan. NO se incluyen las imágenes activas `cauce-sep/{ctrl-infra,
+ws-humanizar, ws-prizma}`: son el runtime de la flota viva
+(medidas: 15 GB / 32 GB / 57 GB). Sí entran candidatos huérfanos del
+daemon y rc-s del registry.
 
 ## (a) Contenedores docker de test huérfanos
 
 Producción es el stack `cauce-v3-prod-*` (`gateway`, `dispatcher`,
 `telegram-bridge`, `terminal-relay`, `console`, `postgres`, `outbox-metrics`,
-`otel-collector`, `prometheus`, `migrator`, `registry`). Todo lo demás con
-prefijo `cauce-` o con nombre aleatorio de `docker run` cae en este grupo.
-Ninguno pertenece al release; el dueño decide.
+`otel-collector`, `prometheus`, `migrator`, `registry`). También son vivos
+y se quedan: `cauce-v3-registry`, `koinonia-{web,api,postgres}`,
+`medico-nav-{console,gateway,postgres}-1`, `claw`, `claw-miguel`,
+`claw-iza`, `ws-{zeus,humanizar,prizma}`, `agv2-miguel-finca-oc`,
+`graf-hub-dev-*`, `single-node-wazuh-*`, `headscale`, `headplane`,
+`vaultwarden`, `demeter-postgres`, `xenia-dev-postgres`, `agora-host-sync`.
+Sale de este grupo el stack `agv2-*` y los `edu-worker-*`.
 
-| Contenedor | Imagen | Creado | Estado actual | Comando propuesto |
+Huérfanos reales hoy (medido el 2026-08-27 ~05:08 UTC):
+
+| Contenedor | Imagen | Creado | Estado | Comando propuesto |
 |---|---|---|---|---|
-| `cauce-test-zeus` | `57c72fd2a128` (postgres:16-alpine) | 2026-08-24 22:09 UTC | Up 2 días | `docker rm -f cauce-test-zeus` |
-| `cauce-v3-restore-drill-20260825` | `57c72fd2a128` | 2026-08-25 16:16 UTC | Up 37 h (drill de restore) | `docker rm -f cauce-v3-restore-drill-20260825` |
+| `cauce-v3-restore-drill-20260825` | `57c72fd2a128` (postgres:16-alpine) | 2026-08-25 16:16 UTC | Up 37 h | `docker rm -f cauce-v3-restore-drill-20260825` |
+| `cauce-test-zeus` | `57c72fd2a128` | 2026-08-24 22:09 UTC | Up 2 días | `docker rm -f cauce-test-zeus` |
 | `cauce-inspect-migration024` | `7b88c1e8dc4e` | 2026-08-25 16:18 UTC | Exited (0) hace 37 h | `docker rm cauce-inspect-migration024` |
-| `dreamy_murdock` | `815cf6d03e5a` | 2026-08-25 22:59 UTC | Exited (1) hace 30 h | `docker rm dreamy_murdock` |
-| `eloquent_beaver` | `b5592a5fcdc2` | 2026-08-25 22:42 UTC | Exited (1) hace 30 h | `docker rm eloquent_beaver` |
+| `dreamy_murdock` | `815cf6d03e5a` | 2026-08-25 22:59 UTC | Exited (1) hace 31 h | `docker rm dreamy_murdock` |
+| `eloquent_beaver` | `b5592a5fcdc2` | 2026-08-25 22:42 UTC | Exited (1) hace 31 h | `docker rm eloquent_beaver` |
+| `hopeful_hopper` | `57c72fd2a128` | 2026-08-26 17:48 UTC | Up 12 h (healthy) | `docker rm -f hopeful_hopper` |
+| `practical_heyrovsky` | `57c72fd2a128` | 2026-08-26 06:36 UTC | Up 23 h (healthy) | `docker rm -f practical_heyrovsky` |
+| `frosty_meninsky` | `57c72fd2a128` | 2026-08-25 18:32 UTC | Up 35 h (healthy) | `docker rm -f frosty_meninsky` |
 
-Los nombres aleatorios (`hopeful_hopper`, `practical_heyrovsky`, `frosty_meninsky`) son `postgres:16-alpine` sanos y corriendo; **no los listo aquí** porque su estado es «Up healthy» y no hay señal de que sean huérfanos. Si el dueño confirma que sí, agregarlos.
+Los tres `*_hopper/*_heyrovsky/*_meninsky` están `Up (healthy)` y son
+postgres:16-alpine. No hay identificación de quién los levantó
+(nombres aleatorios de `docker run`). El dueño decide si son de tests
+pasados o quedaron enganchados.
 
 ## (b) Árboles `/opt/cauce-v3-release-*`
 
@@ -52,21 +68,21 @@ artefactos extra.
 | `/opt/cauce-v3-release-f1e54c9` | 25M | `rm -rf /opt/cauce-v3-release-f1e54c9` |
 | `/opt/cauce-v3-release-f6eb6b5` | 25M | `rm -rf /opt/cauce-v3-release-f6eb6b5` |
 
-**Total recuperable**: ~647 MB (293 + 12 × ~25-62 MB). El comando agregado
+**Total recuperable**: **~620 MB** (293 + 12 × ~25–62 MB). El comando agregado
 sería un `rm -rf /opt/cauce-v3-release-*` con glob, pero se lista uno por uno
 para que el dueño apruebe selectivamente.
 
-## (c) Imágenes `rc-*` y `*-legacy` del registry local
+## (c) Imágenes `rc-*`/`*-legacy`/`verificacion-dockerfile-fix` del registry y del daemon
 
-Registry: `cauce-v3-registry` en `127.0.0.1:5000`. Repos afectados:
-`cauce-v3-runtime`, `cauce-v3-console`, y los 4 `*-legacy`. Fecha leída del
-config blob (cuando disponible; los `rc-20260722` y `rc-1a2d2e3…` son los
-más viejos y su config devuelve `None` — pueden ser etiquetas huérfanas
-cuyo blob fue podado en algún momento).
+### c.1 — registry `127.0.0.1:5000` — tags `rc-<sha>` huérfanos
 
-### cauce-v3-runtime — tags `rc-*`
+Sólo los 9 `rc-<sha>` listados abajo: el resto de tags del registry (incluidos
+`rc13-20260722`, `rc-20260722`, `release-20260822`, etc.) los referencia el
+pipeline de release histórico y no se podan. Repos afectados: `cauce-v3-runtime`
+(63 tags totales, 9 `rc-<sha>`) y `cauce-v3-console` (50 tags totales, 9
+`rc-<sha>`); mismo set de hashes en ambos.
 
-| Tag | Creado | Comando propuesto |
+| Tag (runtime y console) | Creado | Comando propuesto |
 |---|---|---|
 | `rc-9c357d4e78ea2727b1321f188d37ceab3bd767c4` | 2026-08-26 22:00 UTC | borrar |
 | `rc-03e125acbcd7448691fc1a82ca7802d70f8645ac` | 2026-08-26 21:58 UTC | borrar |
@@ -78,35 +94,45 @@ cuyo blob fue podado en algún momento).
 | `rc-1a2d2e346e4a8b8f6cbbffa74c46482f02cc2b52` | (config blob podado) | borrar |
 | `rc-20260722` | (config blob podado) | borrar |
 
-### cauce-v3-runtime — tags `*-legacy`
+### c.2 — registry `127.0.0.1:5000` — tags `*-legacy`
 
-| Tag | Creado | Comando propuesto |
+| Repo:Tag | Tamaño (runtime) | Comando propuesto |
 |---|---|---|
-| `cauce-v3-runtime-legacy:pre-migration-20260826` | (config blob podado) | borrar |
-| `cauce-v3-runtime-directiva-legacy:pre-migration-20260826` | (config blob podado) | borrar |
+| `cauce-v3-runtime-legacy:pre-migration-20260826` | 313 MB | borrar |
+| `cauce-v3-runtime-directiva-legacy:pre-migration-20260826` | 313 MB | borrar |
+| `cauce-v3-console-legacy:pre-migration-20260826` | 79 MB | borrar |
+| `cauce-v3-postgres-legacy:pre-migration-72031de` | — | borrar |
+| `cauce-v3-postgres-index:pre-migration-72031de` | — | borrar |
 
-### cauce-v3-console — tags `rc-*` (mismo set de hashes que runtime)
+`cauce-v3-postgres-restore` no está huérfano (lo lee el flujo de restore real).
 
-| Tag | Creado | Comando propuesto |
-|---|---|---|
-| `rc-9c357d4…`, `rc-03e125a…`, `rc-72031de…`, `rc-4c42fbf…`, `rc-7931c00…`, `rc-1741218…`, `rc-9f831a7…` | 2026-08-25..27 | borrar |
-| `rc-1a2d2e3…`, `rc-20260722` | (podados) | borrar |
+### c.3 — imágenes locales del daemon (no en registry)
 
-### cauce-v3-console — tags `*-legacy`
+Distintas de las anteriores: viven sólo en el daemon local, **no han
+llegado al registry**, y no las levanta ningún container vivo.
 
-| Tag | Comando propuesto |
-|---|---|
-| `cauce-v3-console-legacy:pre-migration-20260826` | borrar |
+| Repo:Tag | Tamaño | Creado | Comando propuesto |
+|---|---|---|---|
+| `cauce-v3-runtime:verificacion-dockerfile-fix` | 80 MB | 2026-08-27 05:07 UTC | `docker rmi cauce-v3-runtime:verificacion-dockerfile-fix` |
+| `cauce-rollback-bridge:repro-598a2ab7` | 310 MB | — | `docker rmi cauce-rollback-bridge:repro-598a2ab7` |
+| `cauce-rollback-bridge:repro-598a2ab7-second` | 310 MB | — | `docker rmi cauce-rollback-bridge:repro-598a2ab7-second` |
+| `cauce-rollback-bridge:repro-v4-a` | 310 MB | — | `docker rmi cauce-rollback-bridge:repro-v4-a` |
+| `cauce-rollback-bridge:repro-v4-b` | 310 MB | — | `docker rmi cauce-rollback-bridge:repro-v4-b` |
 
-### cauce-v3-postgres-*
+El de nombre `verificacion-dockerfile-fix` se construyó hoy (39 min antes
+de la medición) y es muy probable que sea un artefacto del integrador o de
+un agente reciente; ningún container productivo lo usa. La familia
+`cauce-rollback-bridge:repro-*` son reproducciones de un bug cerrado; ni
+el bridge de rollback ni release alguna la invocan hoy.
 
-| Repo:Tag | Comando propuesto |
-|---|---|
-| `cauce-v3-postgres-legacy:pre-migration-72031de` | borrar |
-| `cauce-v3-postgres-index:pre-migration-72031de` | borrar |
+NO se incluyen en este grupo `cauce-sep/{ctrl-infra, ws-humanizar, ws-prizma}`
+(15/32/57 GB; runtime de la flota viva), ni `cauce-v3:{platform-evidence-focal,
+directiva-20260825, 20260823-integrada}` (las usa `medico-nav-*` o son
+imágenes vigentes del release), ni `cauce-console:platform-evidence-focal` /
+`cauce-console:20260823-integrada` (las usan los `medico-nav-console-1` y
+`cauce-v3-prod-console-1`).
 
-Comando agregado (los borra uno a uno; el registry es local, el riesgo es
-sólo llenar el disco):
+### c.4 — script de borrado del registry (uno a uno)
 
 ```sh
 for repo in cauce-v3-runtime cauce-v3-console; do
@@ -119,48 +145,56 @@ for repo in cauce-v3-runtime cauce-v3-console; do
              rc-9f831a7a21068e6230cc3bffd4eadc73247ea8d6 \
              rc-1a2d2e346e4a8b8f6cbbffa74c46482f02cc2b52 \
              rc-20260722; do
-    curl -sX DELETE "http://127.0.0.1:5000/v2/${repo}/manifests/$( \
-      curl -sH 'Accept: application/vnd.oci.image.manifest.v1+json' \
-           "http://127.0.0.1:5000/v2/${repo}/manifests/${tag}" \
-      )" >/dev/null
+    digest=$(curl -sH 'Accept: application/vnd.oci.image.manifest.v1+json' \
+                 "http://127.0.0.1:5000/v2/${repo}/manifests/${tag}" \
+                 | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('config',{}).get('digest','?'))")
+    curl -sX DELETE "http://127.0.0.1:5000/v2/${repo}/manifests/${digest}" >/dev/null
   done
+done
+
+for repo_tag in \
+  cauce-v3-runtime-legacy:pre-migration-20260826 \
+  cauce-v3-runtime-directiva-legacy:pre-migration-20260826 \
+  cauce-v3-console-legacy:pre-migration-20260826 \
+  cauce-v3-postgres-legacy:pre-migration-72031de \
+  cauce-v3-postgres-index:pre-migration-72031de; do
+  repo=${repo_tag%:*}; tag=${repo_tag#*:}
+  digest=$(curl -sH 'Accept: application/vnd.oci.image.manifest.v1+json' \
+               "http://127.0.0.1:5000/v2/${repo}/manifests/${tag}" \
+               | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('config',{}).get('digest','?'))")
+  curl -sX DELETE "http://127.0.0.1:5000/v2/${repo}/manifests/${digest}" >/dev/null
 done
 ```
 
-(Pegar el script en este reporte tal cual; el integrador decide.)
-
-**Importante**: NO borrar los tags `rc13-20260730`, `rc-20260722`, etc. que
-son los usados por el pipeline de release histórico — sólo los 9 `rc-<sha>`
-listados arriba. Los tags no-sha (`rc13-20260722`, etc.) son los artefactos
-de los rc-rondas previos que el pipeline aún puede referenciar; la poda se
-discute por separado.
-
 ## (d) Clon muerto `/datos/workspaces/cauce-v3`
 
-- Branch: `rescate/clon-hermano-20260827` (no mergeada en `origin/main`).
-- Último commit: `cd82359` «rescate: deriva local del clon hermano antes
+- Branch `HEAD`: `cd82359` «rescate: deriva local del clon hermano antes
   del archivado 2026-08-27».
-- HEAD: `9814409` (el ancestro común con `origin/main` en el momento del
-  archivado del 27-ago).
-- Remoto: `islazeus` (NO `origin`); el remoto «vivo» está en
-  `/datos/workspaces/zeus/cauce-v3` y se pushea a `github.com/stevenvo780/cauce-v3`.
+- Remoto `islazeus` apunta a `/datos/workspaces/zeus/cauce-v3` (el clon
+  vivo); `origin` apunta a `github.com/stevenvo780/cauce-v3.git`.
+- Tamaño medido el 2026-08-27: **366 MB** (era 600 MB antes del archivado;
+  incluye `node_modules` y otros).
 
 | Path | Comando propuesto |
 |---|---|
-| `/datos/workspaces/cauce-v3` (incluye `node_modules`) | `rm -rf /datos/workspaces/cauce-v3` |
+| `/datos/workspaces/cauce-v3` | `rm -rf /datos/workspaces/cauce-v3` |
 
-Tamaño aproximado (incluido `node_modules`): ~600 MB. La historia previa
-ya está en `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`
-y en el tar `/datos/workspaces/zeus/cauce-rescate-worktrees-20260827.tar.gz`;
-el clon se reconstruye desde el bundle si hace falta.
+La historia previa ya está en
+`/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`
+(7.3 MB) y en el tar
+`/datos/workspaces/zeus/cauce-rescate-worktrees-20260827.tar.gz`
+(14.1 MB); el clon se reconstruye desde el bundle si hace falta.
 
 ## Resumen ejecutivo
 
 | Categoría | Items | Espacio recuperable | Acción |
 |---|---|---|---|
-| Contenedores huérfanos | 5 | ~0 (containers stopped) | `docker rm [-f]` |
-| `/opt/cauce-v3-release-*` | 13 | ~647 MB | `rm -rf` selectivo |
-| Imágenes `rc-*` y `*-legacy` | 20 (9 runtime, 9 console, 4 legacy) | varias decenas de MB | `DELETE` en registry |
-| Clon muerto | 1 | ~600 MB | `rm -rf` |
+| Contenedores huérfanos | 8 (3 healthy postgres + 5 stopped/exited) | ~0 (containers) | `docker rm [-f]` |
+| `/opt/cauce-v3-release-*` | 13 | **~620 MB** | `rm -rf` selectivo |
+| Registry rc-sha (runtime+console) | 18 (9 × 2 repos) | varios cientos de MB | `DELETE` del manifest |
+| Registry *-legacy | 5 | varios cientos de MB | `DELETE` del manifest |
+| Imágenes locales del daemon | 5 (verificacion-dockerfile + 4 rollback-bridge repro) | ~1.3 GB | `docker rmi` |
+| Clon muerto | 1 | ~366 MB | `rm -rf` |
 
-Ninguna acción se ejecuta sin visto bueno del dueño.
+**Total recuperable: ~2.3 GB** (suma conservadora antes de GC de blobs en
+el registry). Ninguna acción se ejecuta sin visto bueno del dueño.
