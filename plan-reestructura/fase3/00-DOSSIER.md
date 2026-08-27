@@ -32,11 +32,20 @@ La readiness productiva recibe `wakePumpTelemetry` y exige, en este orden, los c
 10. Smoke del efecto real: mensaje A→B `done`; `GET .../documents` ≠ 404; **editar un fichero desde la API y leerlo cambiado dentro del contenedor**; sesión TUI viva >60 s.
 11. Registrar el deploy (fecha, commit, digests, smoke) en `deploy/HISTORIAL.md`.
 
+## ENSAYO GENERAL EJECUTADO (27-08 tarde) — la ventana ya no es teoría
+
+Contra un CLON de la base productiva (pg_dump 183MB, prod intocada y verificada intacta al cierre):
+- **La tanda 026–037 completa: 2,4–3,3 SEGUNDOS de SQL** (ciclo entero clonar+B1+migrar ≈ 50 s). Una sola transacción confirmada empíricamente (12 applied_at idénticos). Idempotente.
+- **Ruptura deliberada ensayada**: sin el remedio B1, revienta en la 034 exactamente como predijo el dossier — rápido (3,9 s), error explícito, **rollback impecable verificado** (esquema queda en 024, cero residuos): se aplica B1 y se relanza sin re-clonar.
+- B1 = exactamente las 3 filas previstas (ids verificados).
+- **Consola horneada y probada**: build 32 s, imagen 79,5MB nginx no-root, arranca, sirve 200, y el bundle CONTIENE el editor (`documents/` + `create_if_absent`). Imagen etiquetada `ensayo-fase3-console` lista para la ventana. (Nota día D: su nginx exige que `gateway` resuelva en la red — comportamiento esperado del proxy_pass.)
+- **Veredicto: la ventana puede contar con <1 minuto de migración**; el coste real es backup + ciclo de servicios.
+
 ## Decisiones que solo el dueño puede tomar
 
 | # | Decisión | Contexto |
 |---|---|---|
-| D1 | **Flota declarada de 029**: la migración deshabilita los alias que no estén en su lista (hoy tocaría a Jhon/heraclito, Jhon/tales, Miguel/gaia — heraclito y tales ya están fuera del mapa PTY y mudos 48h+). ¿Se deshabilitan (aplicar tal cual) o se edita la lista del SQL? | `migraciones.md` §029 |
+| D1 | **Flota declarada de 029 — ENSAYADA, es DOBLE**: (a) deshabilita 3 (Jhon/heraclito, Jhon/tales, Miguel/gaia — fila y FKs preservadas) y (b) **DA DE ALTA 4 agentes nuevos del tenant Pablo** (dedalo/codex, midas y seneca/openclaw, vulcano/claude — enabled=true; flota 14→18, 15 enabled). Los 4 de Pablo nacen SIN perfil (la 026 siembra antes; no rompe nada, pero no publican perfil hasta dárselo). ¿Aplicar tal cual (3 fuera + Pablo dentro), o editar la lista del SQL? | ensayo + `migraciones.md` §029 |
 | D2 | **Alertmanager**: el prometheus.yaml nuevo trae alertas de alertmanager pero el servicio no está en el compose. ¿Se despliega con receptor Telegram (7 variables a aprovisionar) o se recortan esas reglas? Sin decidir, `CauceAlertmanagerDown` (critical) queda encendida para siempre. | `compose-canonico.md` §6 |
 | D3 | **Desde dónde corre el deploy**: ¿el compose corre desde el repo (`/datos/workspaces/zeus/cauce-v3`) o se sigue copiando a `/opt`? Cambia el source de 4 binds. Recomendación: desde el repo — una fuente. | `compose-canonico.md` §5 |
 | D4 | ¿Bloque B de huérfanos (heraclito/tales, churn cero, alias ya fuera del mapa) se mata también? | `pty-huerfanos.md` |

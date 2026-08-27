@@ -7,7 +7,7 @@ Cada item es una decisión concreta: el checkbox es la aprobación; el link es l
 
 ## (1) Decisiones D1–D5 del dossier FASE 3 — el despliegue no arranca sin estas
 
-- [ ] **D1 — Flota declarada de 029**: la migración deshabilita los alias que no estén en su lista (hoy tocaría a `Jhon/heraclito`, `Jhon/tales`, `Miguel/gaia` — los dos primeros ya están fuera del mapa PTY y mudos 48h+). ¿Se aplica tal cual o se edita la lista del SQL?  → `plan-reestructura/fase3/migraciones.md` §029
+- [ ] **D1 — Flota de la 029 (ENSAYADA contra un clon de tu base — es decisión DOBLE)**: (a) deshabilita 3: `Jhon/heraclito`, `Jhon/tales`, `Miguel/gaia`; y (b) **DA DE ALTA los 4 agentes de Pablo**: `dedalo` (codex), `midas` y `seneca` (openclaw), `vulcano` (claude) — flota 14→18, 15 enabled. Los 4 de Pablo nacen sin perfil (no rompe; no publican perfil hasta dárselo). ¿Aplicar tal cual, o editar la lista del SQL antes?  → ensayo en `plan-reestructura/fase3/00-DOSSIER.md` §Ensayo
 - [ ] **D2 — Alertmanager**: el `prometheus.yaml` nuevo declara reglas de alertmanager pero el servicio no está en el compose. ¿Se despliega con receptor Telegram (7 variables nuevas a aprovisionar) o se recortan esas reglas? Sin decidir, `CauceAlertmanagerDown` queda critical encendida para siempre.  → `plan-reestructura/fase3/compose-canonico.md` §6
 - [ ] **D3 — Origen del compose**: ¿desde el repo (`/datos/workspaces/zeus/cauce-v3`) o se sigue copiando a `/opt`? Cambia el source de 4 binds. Recomendación: desde el repo — una sola fuente.  → `plan-reestructura/fase3/compose-canonico.md` §5
 - [ ] **D4 — Bloque B de pty-huérfanos** (heraclito/tales, churn cero, alias ya fuera del mapa): ¿se matan también? Son 2 de los 12 del kill-list.  → `plan-reestructura/fase3/pty-huerfanos.md`

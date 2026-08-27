@@ -16,7 +16,7 @@ Método: un agente por migración leyó el SQL completo y verificó cada precond
 | 026 agent_profile | bajo | **Aplicar tal cual** | Intachable: tabla nueva, 14 filas sembradas, 0 violaciones medidas. Es PRECONDICIÓN del gateway nuevo (repository.ts hace LEFT JOIN agent_profiles) |
 | 027 rol_agent_notify | bajo | **Aplicar tal cual** | No-op verificador contra los datos de hoy (fila existe, no diverge) |
 | 028 canonical_agent_role | medio | **Aplicar tal cual** | Backfills afectan 0 filas hoy. Depende duro de 026 (orden alfabético lo garantiza). Ojo al lock escalado sobre `agents` |
-| 029 reconcile_declared_fleet | **alto** | **Aplicar con DECISIÓN D1 resuelta** | Su lista de flota deseada no incluye 3 alias reales (heraclito, tales, gaia): el UPDATE los DESHABILITA. Técnicamente limpia (14 precondiciones verificadas); el riesgo es de intención, no de SQL |
+| 029 reconcile_declared_fleet | **alto** | **Aplicar con DECISIÓN D1 resuelta** | ENSAYADA contra clon: deshabilita heraclito/tales/gaia Y crea los 4 agentes de Pablo (dedalo, midas, seneca, vulcano) enabled — flota 14→18. Los 4 nuevos sin fila en agent_profiles (026 siembra antes; LEFT JOIN aguanta, no publican perfil). El riesgo es de intención, no de SQL |
 | 030 dlq_causal (2.211 líneas) | alto→ok | **Aplicar tal cual** | La puerta causal da 0/0/0 hoy (verificado ejecutando sus tres ramas como SELECT); 0 violaciones del CHECK nuevo; las columnas replay_* ya existen. El "riesgo alto" era de tamaño, no de contenido |
 | 031 connection_session_fencing | bajo | **Aplicar tal cual** | 2 sentencias sobre 14 filas |
 | 032 terminal_claim_fencing | bajo | **Aplicar tal cual** | `ADD COLUMN ... DEFAULT 0` no volátil = fast-default sin reescritura; CHECK valida 164 filas con 0 violaciones |
