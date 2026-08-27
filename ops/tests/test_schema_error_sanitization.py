@@ -22,7 +22,6 @@ from manifest_lib import safe_schema_diagnostic  # noqa: E402
 
 SCRIPTS = (
     "manifest_lib.py",
-    "validate-fleet-release-evidence.py",
 )
 
 
@@ -87,41 +86,6 @@ class SchemaErrorSanitizationTests(unittest.TestCase):
                 {"message", "instance", "validator_value"}.isdisjoint(attributes),
                 f"{name} accesses unsafe jsonschema rendering fields",
             )
-
-    def test_fleet_validator_schema_failure_never_prints_rejected_instance(self) -> None:
-        private_id = "d9428888-122b-4f8d-9a28-39e03a0f347a"
-        private_digest = "sha256:" + "c" * 64
-        with tempfile.TemporaryDirectory(prefix="cauce-schema-sanitize-") as temporary:
-            root = pathlib.Path(temporary)
-            scripts = root / "ops" / "scripts"
-            artifacts = root / "tests" / "fleet-release" / "artifacts"
-            scripts.mkdir(parents=True)
-            artifacts.mkdir(parents=True)
-            for name in (
-                "validate-fleet-release-evidence.py", "manifest_lib.py", "container_alias_lib.py",
-            ):
-                shutil.copy2(OPS / "scripts" / name, scripts / name)
-            shutil.copy2(
-                ROOT / "tests" / "fleet-release" / "fleet-release-report.schema.json",
-                root / "tests" / "fleet-release" / "fleet-release-report.schema.json",
-            )
-            (artifacts / "report.json").write_text(json.dumps({
-                "schemaVersion": private_id,
-                "sourceDigest": private_digest,
-            }), encoding="utf-8")
-
-            result = subprocess.run(
-                [sys.executable, str(scripts / "validate-fleet-release-evidence.py")],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-        output = result.stdout + result.stderr
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("schema rule", output)
-        self.assertNotIn(private_id, output)
-        self.assertNotIn(private_digest, output)
 
 
 if __name__ == "__main__":

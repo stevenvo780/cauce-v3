@@ -136,7 +136,7 @@ describe('source digest verification closure', () => {
     }
   });
 
-  test('timestamped fleet artifacts regenerate without moving initial or final source digests', async () => {
+  test('timestamped operational artifacts regenerate without moving initial or final source digests', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cauce-source-digest-generated-artifacts-'));
     scratch.push(root);
     for (const [relative, contents] of [
@@ -144,11 +144,9 @@ describe('source digest verification closure', () => {
       ['pnpm-lock.yaml', 'lockfileVersion: 9\n'],
       ['pnpm-workspace.yaml', 'packages: []\n'],
       ['tsconfig.json', '{}\n'],
-      ['tests/fleet-release/fleet-release.test.ts', 'export const generate = () => new Date();\n'],
-      ['tests/fleet-release/artifacts/report.json', '{"generatedAt":"initial"}\n'],
-      ['tests/fleet-release/artifacts/junit.xml', '<testsuite timestamp="initial"/>\n'],
-      ['tests/fleet-release/artifacts/SHA256SUMS', 'initial sums\n'],
-      ['tests/fleet-release/.matrix-state/harness-logs/worker.log', 'residue from interrupted run\n'],
+      ['ops/artifacts/report.json', '{"generatedAt":"initial"}\n'],
+      ['ops/artifacts/junit.xml', '<testsuite timestamp="initial"/>\n'],
+      ['ops/artifacts/SHA256SUMS', 'initial sums\n'],
       ['tests/unit/artifacts/fixture.pem', 'versioned PEM fixture\n'],
     ] as const) {
       await writeTree(root, relative, contents);
@@ -159,26 +157,17 @@ describe('source digest verification closure', () => {
       full: digest(root, 'full'),
     };
     for (const timestamp of ['2026-08-26T13:00:00Z', '2026-08-26T13:01:00Z', '2026-08-26T13:02:00Z']) {
-      await writeTree(root, 'tests/fleet-release/artifacts/report.json', `${JSON.stringify({ generatedAt: timestamp })}\n`);
-      await writeTree(root, 'tests/fleet-release/artifacts/junit.xml', `<testsuite timestamp="${timestamp}"/>\n`);
-      await writeTree(root, 'tests/fleet-release/artifacts/SHA256SUMS', `${timestamp} sums\n`);
-      await writeTree(root, 'tests/fleet-release/.matrix-state/harness-logs/worker.log', `${timestamp} state\n`);
+      await writeTree(root, 'ops/artifacts/report.json', `${JSON.stringify({ generatedAt: timestamp })}\n`);
+      await writeTree(root, 'ops/artifacts/junit.xml', `<testsuite timestamp="${timestamp}"/>\n`);
+      await writeTree(root, 'ops/artifacts/SHA256SUMS', `${timestamp} sums\n`);
       expect(digest(root, 'verification'), timestamp).toBe(initial.verification);
       expect(digest(root, 'full'), timestamp).toBe(initial.full);
     }
-    await rm(join(root, 'tests/fleet-release/.matrix-state'), { recursive: true, force: true });
-    expect(digest(root, 'verification')).toBe(initial.verification);
-    expect(digest(root, 'full')).toBe(initial.full);
 
     const listing = run(root, '--domain', 'full', '--list');
     expect(listing.status, listing.stderr).toBe(0);
-    expect(listing.stdout).not.toContain('tests/fleet-release/artifacts/');
-    expect(listing.stdout).not.toContain('tests/fleet-release/.matrix-state/');
+    expect(listing.stdout).not.toContain('ops/artifacts/');
     expect(listing.stdout.split('\n')).toContain('tests/unit/artifacts/fixture.pem');
-
-    await writeTree(root, 'tests/fleet-release/fleet-release.test.ts', 'export const generate = () => "forged";\n');
-    expect(digest(root, 'verification')).not.toBe(initial.verification);
-    expect(digest(root, 'full')).not.toBe(initial.full);
   });
 
   test('Git-ignored backups stay out while untracked source and tracked PEM fixtures stay covered', async () => {

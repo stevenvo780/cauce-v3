@@ -23,7 +23,6 @@ const SUITES = [
  * assume their build artifacts or host-level tooling.
  */
 const SEPARATELY_GATED = new Set([
-  'test:fleet-release',
   'test:container-supervisor',
   'test:container-cutover',
 ]);

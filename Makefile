@@ -1,6 +1,6 @@
 PNPM ?= pnpm
 
-.PHONY: install build lint typecheck test test-unit test-services test-integration test-fleet-release verify migrate-dev dev-gateway dev-dispatcher dev-telegram-bridge
+.PHONY: install build lint typecheck test test-unit test-services test-integration verify migrate-dev dev-gateway dev-dispatcher dev-telegram-bridge
 install:
 	$(PNPM) install --frozen-lockfile
 build:
@@ -17,8 +17,6 @@ test-services:
 	$(PNPM) test:services
 test-integration:
 	$(PNPM) test:integration
-test-fleet-release:
-	$(PNPM) test:fleet-release
 verify: lint typecheck test build
 migrate-dev:
 	$(PNPM) migrate:dev

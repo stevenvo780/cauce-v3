@@ -13,7 +13,7 @@ for path in sorted(root.glob('*.yaml')) + sorted((root.parent / 'deploy').glob('
     with path.open(encoding='utf-8') as stream:
         yaml.safe_load(stream)
     print(f'yaml ok: {path}')
-for path in sorted((root / 'schemas').glob('*.json')) + sorted((root.parent / 'tests' / 'fleet-release').glob('*schema.json')):
+for path in sorted((root / 'schemas').glob('*.json')):
     with path.open(encoding='utf-8') as stream:
         schema = json.load(stream)
     Draft202012Validator.check_schema(schema)
@@ -83,7 +83,6 @@ dev = (project / 'deploy/compose.dev.yaml').read_text(encoding='utf-8')
 overlay = (project / 'deploy/compose.postgres.yaml').read_text(encoding='utf-8')
 alert_overlay = (project / 'deploy/compose.alertmanager.yaml').read_text(encoding='utf-8')
 alert_config = (project / 'ops/observability/alertmanager.yaml').read_text(encoding='utf-8')
-authentic = (project / 'ops/compose.authentic.yaml').read_text(encoding='utf-8')
 console = (project / 'apps/console/nginx.conf').read_text(encoding='utf-8')
 required = {
     'production compose must not build mutable images': 'build:' not in prod,
@@ -97,7 +96,6 @@ required = {
     'dev compose must remain separate': 'NODE_ENV: development' in dev,
     'dev adapters must explicitly opt into non-production transport': dev.count('CAUCE_ENVIRONMENT: development') >= 2,
     'production includes Telegram bridge': 'services/telegram-bridge/dist/main.js' in prod,
-    'production includes identity-free shadow router': 'services/shadow-router/dist/main.js' in prod,
     'production PostgreSQL policy must be verify-full': 'PGSSLMODE: verify-full' in prod and 'sslmode=require' not in prod,
     'gateway health port must be explicit': 'CAUCE_HEALTH_PORT: "8081"' in prod,
     'per-request identity registries must be reached through a directory bind, never a file secret': all((
@@ -108,9 +106,6 @@ required = {
         'source: gateway_token_hashes' not in prod,
     )),
     'production compose must wire the complete OIDC BFF': all(value in prod for value in ('CAUCE_OIDC_AUTHORIZATION_URL', 'CAUCE_OIDC_TOKEN_URL', 'CAUCE_OIDC_CLIENT_ID', 'CAUCE_OIDC_REDIRECT_URI', 'gateway_oidc_session_key')),
-    'authentic compose must run every final service': all(f'  {name}:' in authentic for name in ('gateway', 'dispatcher', 'relay-worker', 'telegram-bridge', 'shadow-router')),
-    'authentic compose must use one final runtime image': authentic.count('<<: *final-runtime') == 6,
-    'authentic compose must include real PG, fake external HTTPS and Unix V2': '  postgres:' in authentic and 'https://webhook.test' in authentic and 'CAUCE_V2_TARGET_SOCKET' in authentic,
     'xterm CSP must allow only inline style attributes': "style-src-attr 'unsafe-inline'" in console and "style-src 'self' 'unsafe-inline'" not in console,
 }
 failed = [name for name, passed in required.items() if not passed]
@@ -179,16 +174,11 @@ PY
   export CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH=/dev/null CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH=/dev/null
   export CAUCE_RELAY_ALLOWED_ORIGINS=https://relay.invalid CAUCE_RELAY_ADAPTERS=telegram CAUCE_TELEGRAM_ALLOWED_ORIGINS=https://api.telegram.org
   export CAUCE_POSTGRES_PASSWORD_PATH=/dev/null CAUCE_POSTGRES_SERVER_CERT_PATH=/dev/null CAUCE_POSTGRES_SERVER_KEY_PATH=/dev/null
-  export CAUCE_AUTHENTIC_RUNTIME_IMAGE=cauce-validation-runtime:local CAUCE_AUTHENTIC_HELPER_IMAGE=cauce-validation-helper:local
-  export CAUCE_AUTHENTIC_FIXTURE_DIR=/tmp/cauce-validation-fixtures CAUCE_AUTHENTIC_ROUTER_DIR=/tmp/cauce-validation-router
-  export CAUCE_AUTHENTIC_V2_DIR=/tmp/cauce-validation-v2 CAUCE_AUTHENTIC_V3_DIR=/tmp/cauce-validation-v3
-  export CAUCE_AUTHENTIC_GATEWAY_PORT=18443 CAUCE_AUTHENTIC_CONTROL_PORT=19080 CAUCE_AUTHENTIC_UNIX_CONTROL_PORT=19081
   docker compose -f "$PROJECT/deploy/compose.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.postgres.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.alertmanager.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.dev.yaml" config --quiet
   docker compose -f "$ROOT/compose.test.yaml" config --quiet
-  docker compose -f "$ROOT/compose.authentic.yaml" config --quiet
   printf 'compose config ok\n'
 elif [[ ${CAUCE_RELEASE_VALIDATION:-0} == 1 ]]; then
   printf 'release validation failed: Docker Compose v2 unavailable\n' >&2

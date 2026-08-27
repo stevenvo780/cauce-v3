@@ -220,8 +220,6 @@ EXCLUDED_FILE_SUFFIXES = {".pyc", ".pyo"}
 EXCLUDED_SOURCE_PREFIXES = (pathlib.PurePosixPath("apps/console/src/features/_grafo"),)
 MUTABLE_OUTPUT_PREFIXES = (
     pathlib.PurePosixPath("ops/artifacts"),
-    pathlib.PurePosixPath("tests/fleet-release/artifacts"),
-    pathlib.PurePosixPath("tests/fleet-release/.matrix-state"),
 )
 
 

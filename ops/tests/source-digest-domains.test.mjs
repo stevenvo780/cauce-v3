@@ -87,12 +87,8 @@ assert(
   'versioned PEM fixtures are source and must remain covered',
 );
 assert(
-  ![...fullPaths].some((entry) => entry.startsWith('tests/fleet-release/artifacts/')),
-  'timestamped fleet-release outputs must not enter verification/full',
-);
-assert(
-  ![...fullPaths].some((entry) => entry.startsWith('tests/fleet-release/.matrix-state/')),
-  'ephemeral fleet matrix state must not enter verification/full',
+  ![...fullPaths].some((entry) => entry.startsWith('ops/artifacts/')),
+  'timestamped operational outputs must not enter verification/full',
 );
 assert(
   ![...fullPaths].some((entry) => /(?:^|\/)cauce\.bak-/u.test(entry)),
@@ -237,7 +233,6 @@ try {
   await write('ops/scripts/source-hygiene.py', 'print("hygiene")\n');
   await write('ops/scripts/migration-gate.mjs', 'export const migration = true;\n');
   await write('ops/scripts/physical-fleet-gate.py', 'print("fleet")\n');
-  await write('ops/scripts/validate-fleet-release-evidence.py', 'print("evidence")\n');
   await write('ops/scripts/source-digest.py', '# fixture\n');
   await write('ops/scripts/validate.sh', '#!/bin/sh\nexit 0\n');
   await write('ops/schemas/test-evidence.schema.json', '{}\n');
@@ -247,10 +242,9 @@ try {
   await write('tests/helpers/postgres.ts', 'export const postgres = 1;\n');
   await write('tests/unit/example.test.ts', 'export const unit = 1;\n');
   await write('tests/unit/artifacts/fixture.pem', 'versioned fixture bytes\n');
-  await write('tests/fleet-release/artifacts/report.json', '{"generatedAt":"2026-01-01T00:00:00Z"}\n');
-  await write('tests/fleet-release/artifacts/junit.xml', '<testsuite timestamp="old"/>\n');
-  await write('tests/fleet-release/artifacts/SHA256SUMS', 'old sums\n');
-  await write('tests/fleet-release/.matrix-state/harness-logs/worker.log', 'initial harness state\n');
+  await write('ops/artifacts/report.json', '{"generatedAt":"2026-01-01T00:00:00Z"}\n');
+  await write('ops/artifacts/junit.xml', '<testsuite timestamp="old"/>\n');
+  await write('ops/artifacts/SHA256SUMS', 'old sums\n');
   await write('eslint.config.js', 'export default [];\n');
   await write('node_modules/evil/index.js', 'module.exports = 1;\n');
   await write('.env.production', 'SECRET=must-never-be-hashed\n');
@@ -264,15 +258,14 @@ try {
     full: digestOf('full', sandbox),
   };
 
-  // 9a. The fleet generator rewrites timestamped evidence. It must leave the initial source digest
+  // 9a. Operational artifact generation rewrites timestamped evidence. It must leave the initial source digest
   //     unchanged, while a same-named directory outside the producer-owned output root remains a
   //     covered fixture rather than being excluded by basename.
-  await write('tests/fleet-release/artifacts/report.json', '{"generatedAt":"2026-08-26T13:45:00Z"}\n');
-  await write('tests/fleet-release/artifacts/junit.xml', '<testsuite timestamp="new"/>\n');
-  await write('tests/fleet-release/artifacts/SHA256SUMS', 'new sums\n');
-  await write('tests/fleet-release/.matrix-state/harness-logs/worker.log', 'rewritten harness state\n');
+  await write('ops/artifacts/report.json', '{"generatedAt":"2026-08-26T13:45:00Z"}\n');
+  await write('ops/artifacts/junit.xml', '<testsuite timestamp="new"/>\n');
+  await write('ops/artifacts/SHA256SUMS', 'new sums\n');
   for (const domain of ['runtime', 'console', 'harness', 'testcontainers', 'verification', 'full']) {
-    assert.equal(digestOf(domain, sandbox), before[domain], `fleet artifact generation changed ${domain}`);
+    assert.equal(digestOf(domain, sandbox), before[domain], `operational artifact generation changed ${domain}`);
   }
   const fixtureBase = digestOf('verification', sandbox);
   await write('tests/unit/artifacts/fixture.pem', 'mutated versioned fixture bytes\n');
@@ -484,10 +477,6 @@ try {
   assert(!listing.has('node_modules/evil/index.js'), 'node_modules must never be hashed');
   assert(!listing.has('.env.production'), 'private env files must never be hashed');
   assert(!listing.has('apps/console/src/features/_grafo/consultas-grafo.sql'), 'operator scratch leaked into full digest');
-  assert(![...listing].some((entry) => entry.startsWith('tests/fleet-release/artifacts/')),
-    'fleet generator outputs must never be hashed');
-  assert(![...listing].some((entry) => entry.startsWith('tests/fleet-release/.matrix-state/')),
-    'fleet ephemeral matrix state must never be hashed');
   assert(listing.has('tests/unit/artifacts/fixture.pem'), 'a source fixture named artifacts must remain hashed');
   assert(![...listing].some((entry) => entry.includes('/__pycache__/')), '__pycache__ must never be hashed');
   assert(![...listing].some((entry) => entry.includes('/.pytest_cache/')), '.pytest_cache must never be hashed');
@@ -502,7 +491,6 @@ try {
 const wiring = [
   ['scripts/smoke-compose-authentic.sh', ['--domain runtime', '--domain harness']],
   ['scripts/smoke-runtime-authentic.sh', ['--domain runtime', '--domain harness']],
-  ['scripts/validate-fleet-release-evidence.py', ['"--domain", "runtime"']],
   ['scripts/validate-testcontainers-evidence.py', ['source_digest("runtime")', 'source_digest("testcontainers")']],
 ];
 for (const [relative, needles] of wiring) {
@@ -511,23 +499,11 @@ for (const [relative, needles] of wiring) {
     assert(contents.includes(needle), `ops/${relative} must pass ${needle} to source-digest.py`);
   }
 }
-const fleetWiring = [
-  ['tests/fleet-release/fleet-release.test.ts', "'--domain', SOURCE_DIGEST_DOMAIN"],
-  ['tests/fleet-release/host-smoke.mjs', "'--domain', SOURCE_DIGEST_DOMAIN"],
-  ['tests/fleet-release/aggregate-host-smoke.mjs', "'--domain', SOURCE_DIGEST_DOMAIN"],
-];
-for (const [relative, needle] of fleetWiring) {
-  const contents = await readFile(path.join(root, relative), 'utf8');
-  assert(contents.includes(needle), `${relative} must pass ${needle} to source-digest.py`);
-}
 
 // 11. Every evidence schema must force its artifact to declare which domain backs it, so an
 //     artifact can never be silently reinterpreted against a different domain.
 const declared = [
   ['ops/schemas/test-evidence.schema.json', 'runtime'],
-  ['tests/fleet-release/fleet-release-report.schema.json', 'runtime'],
-  ['tests/fleet-release/host-smoke-evidence.schema.json', 'runtime'],
-  ['tests/fleet-release/host-smoke-aggregate.schema.json', 'runtime'],
 ];
 for (const [relative, domain] of declared) {
   const schema = JSON.parse(await readFile(path.join(root, relative), 'utf8'));
