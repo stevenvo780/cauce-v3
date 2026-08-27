@@ -1,16 +1,4 @@
 /*
- * Configuración en pestañas. Sigue el mismo vocabulario visual que el cajón de la flota
- * (`.agent-drawer-tabs`) a propósito: dos formas distintas de dibujar una pestaña en la misma
- * consola es una forma barata de que el operador crea que son cosas distintas.
- *
- * Acá viven las reglas de las pestañas, del catálogo de roles y —
- * TIPOGRÁFICA de toda la vista. Lo que ya estaba (`.config-editor`, `.config-preview`,
- * `.config-modal`…) sigue en `styles.css`: redefinirlo entero desde acá crearía dos sitios donde
- * cambiar lo mismo y uno de los dos se quedaría atrás. Lo que esta hoja sí hace es TAMAÑO y
- * MEDIDA, y lo hace desde un solo sitio, con variables.
- */
-
-/*
  * ══ La escala ══════════════════════════════════════════════════════════════════════════════════
  *
  * LA ESCALA YA NO SE DECLARA ACÁ. Vive en el `:root` de `styles.css`**, con los mismos cinco

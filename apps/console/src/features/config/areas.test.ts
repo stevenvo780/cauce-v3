@@ -107,9 +107,7 @@ it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que t
  * Estaba desplegada así: «El registro de bots, con qué programa corre cada uno y a qué cuentas de IA
  * llega». La primera mitad es falsa: `agents.harness_id` no decide con qué programa corre el bot —el
  * arnés real se deduce del binario en ejecución (`harnessFromCommand`,
- * services/gateway/src/console/agent-documents.ts:280)— y el 23-ago-2026 esa columna se equivocaba
- * en 5 de los 14 alias. Una frase que promete lo que la tabla de abajo no cumple es el defecto que
- * este cambio persigue, y estaba en el rótulo de entrada.
+ * services/gateway/src/console/agent-documents.ts:585).
  */
 it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot', () => {
   const agentes = CONFIG_AREAS.find((area) => area.id === 'agentes');

@@ -18,40 +18,28 @@ export const CAMPOS_INERTES: Record<string, Record<string, string>> = {
   agents: {
     harness_id:
       'No decide con qué programa corre el bot. El arnés REAL se deduce del binario en ejecución '
-      + '(`harnessFromCommand`, services/gateway/src/console/agent-documents.ts:280) o de las '
-      + 'capacidades del latido (`harnessFromCapabilities`, agent-documents.ts:301). Esta columna '
-      + 'sólo se repinta en el registro (packages/store/src/repository.ts:7605) y se usa como último '
+      + '(`harnessFromCommand`, services/gateway/src/console/agent-documents.ts:585) o de las '
+      + 'capacidades del latido (`harnessFromCapabilities`, agent-documents.ts:594). Esta columna '
+      + 'sólo se repinta en el registro (packages/store/src/repository.ts:5151) y se usa como último '
       + 'recurso en el inventario de documentos, que la marca NO fiable a la cara '
-      + '(agent-documents.routes.ts:136). El 23-ago-2026 no coincidía con el binario en 5 de los 14 '
-      + 'alias.',
-    container_name:
-      'No decide en qué contenedor se abre nada. La terminal resuelve el contenedor con '
-      + '`FLEET_PLACEMENTS`, una constante del propio servidor '
-      + '(services/gateway/src/terminal/authority.ts:24), copiada a propósito para no depender de '
-      + 'esta tabla. Acá es intención declarada: la ejecución real sigue siendo manual '
-      + '(docs/adr/006-agent-registry-and-deferred-execution.md:118).',
-    runtime_user:
-      'No decide con qué usuario se entra. La terminal usa lo que el pty-agent OBSERVA y, si no hay '
-      + 'observación, el `runtime_user` de `FLEET_PLACEMENTS` '
-      + '(services/gateway/src/terminal/plugin.ts:265), nunca esta columna.',
+      + '(agent-documents.routes.ts:199).',
     home_directory:
       'No resuelve ninguna ruta. El `HOME` que vale es el del proceso del arnés, medido dentro del '
-      + 'contenedor (`RuntimeFacts`, services/gateway/src/console/agent-documents.ts:44); esta '
+      + 'contenedor (`RuntimeFacts`, services/gateway/src/console/agent-documents.ts:30); esta '
       + 'columna sólo entra como pista cuando no hay medición, y esa respuesta viaja con su aviso de '
-      + 'que no es de fiar (agent-documents.routes.ts:136). Medido: daba `/home/dev` para un alias '
-      + 'que corre con `HOME=/home/claw`.',
+      + 'que no es de fiar (agent-documents.routes.ts:344).',
     state_directory:
       'No tiene lector fuera del propio registro que la repinta '
-      + '(packages/store/src/repository.ts:7605) y de esta pantalla. El directorio de estado que el '
+      + '(packages/store/src/repository.ts:5151) y de esta pantalla. El directorio de estado que el '
       + 'adaptador usa de verdad sale de su fichero local o de `CAUCE_STATE_DIR` '
-      + '(packages/adapter-sdk/src/bin/config.ts:256), no de la base.',
+      + '(packages/adapter-sdk/src/bin/config.ts:251), no de la base.',
   },
   harness_definitions: {
     command:
       'No lo lee nadie. `listAdapters` ni siquiera lo selecciona '
-      + '(packages/store/src/repository.ts:7566) y el adaptador toma su orden de su propia tabla '
+      + '(packages/store/src/repository.ts:5109) y el adaptador toma su orden de su propia tabla '
       + 'compilada (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su '
-      + 'fichero de configuración local (packages/adapter-sdk/src/bin/config.ts:184). Se guarda, se '
+      + 'fichero de configuración local (packages/adapter-sdk/src/bin/config.ts:179). Se guarda, se '
       + 'audita, se puede deshacer… y no cambia lo que se ejecuta.',
   },
 };

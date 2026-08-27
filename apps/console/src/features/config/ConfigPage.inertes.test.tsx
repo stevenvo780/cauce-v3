@@ -9,10 +9,8 @@ import { MARCA_INERTE } from './campos-inertes';
 /**
  * **Que la pantalla no mienta sobre lo que hace.**
  *
- * El encargo de Steven: «evitando mantener una lógica antigua basada en campos que luego no tienen
- * efecto real». La auditoría encontró seis: las cinco columnas de emplazamiento de `agents`
- * —`harness_id`, `container_name`, `runtime_user`, `home_directory`, `state_directory`— y
- * `harness_definitions.command`. Ninguna la obedece ningún camino de ejecución.
+ * El catálogo sólo marca las columnas que no tienen lector runtime: `harness_id`,
+ * `home_directory`, `state_directory` y `harness_definitions.command`.
  *
  * No se esconden: el servidor las publica y esconder un dato que hay es otra forma de mentir. Se
  * MARCAN, con el motivo a la vista y la cita de dónde sale el valor que sí manda.
@@ -76,7 +74,7 @@ function conHarnessReal() {
 }
 
 describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
-  it('marca las cinco columnas de emplazamiento del registro de agentes', async () => {
+  it('marca las tres columnas de emplazamiento del registro de agentes sin lector runtime', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
@@ -86,7 +84,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     // `sr-only` a propósito). Se ancla al principio: sin el `^`, «Contenedor» casa también con la
     // columna «Carpeta personal», cuyo motivo dice «medido dentro del contenedor».
     const registro = panelDe(/agent registry/i);
-    for (const rotulo of ['Harness', 'Contenedor', 'Usuario', 'Carpeta personal', 'state_directory']) {
+    for (const rotulo of ['Harness', 'Carpeta personal', 'state_directory']) {
       const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });
       expect(cabecera, `${rotulo} debería estar marcada`).toHaveTextContent(MARCA_INERTE);
     }
@@ -103,7 +101,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     await irA(user, AGENTES);
 
     const registro = panelDe(/agent registry/i);
-    for (const rotulo of ['Alias', 'Rol declarado', 'Habilitado']) {
+    for (const rotulo of ['Alias', 'Rol declarado', 'Habilitado', 'Contenedor', 'Usuario']) {
       const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });
       expect(cabecera, `${rotulo} NO debería estar marcada`).not.toHaveTextContent(MARCA_INERTE);
     }
@@ -119,7 +117,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     const cabecera = within(harneses).getByRole('columnheader', { name: /comando/i });
     expect(cabecera).toHaveTextContent(MARCA_INERTE);
     // El motivo viaja en el árbol accesible, no sólo en un globo que hay que provocar con el ratón.
-    expect(cabecera).toHaveTextContent(/repository\.ts:7566/);
+    expect(cabecera).toHaveTextContent(/repository\.ts:5109/);
   });
 
   /**

@@ -410,7 +410,7 @@ export class CauceApi {
    *
    * Va por `/v3/console/...` y NO por `/v3/messages/:id`, que existe en el gateway desde antes y
    * devuelve lo mismo. El motivo no es de gusto: `consola.humanizar.tech` publica una LISTA BLANCA
-   * en el borde (`ops/console-login/patch-caddy-lista-blanca.py`) que sólo deja pasar `/v3/auth/*`,
+   * en el borde que sólo deja pasar `/v3/auth/*`,
    * `/v3/status` y `/v3/console/*`; todo el resto de `/v3/*` es superficie máquina-a-máquina del
    * bus y se corta con 404 antes de llegar al gateway. Llamar a `/v3/messages/:id` desde la SPA
    * daría 404 en producción y 200 en desarrollo, que es la peor de las dos.

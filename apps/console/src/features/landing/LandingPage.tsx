@@ -83,12 +83,6 @@ export function LandingPage() {
         actions={<RefreshButton onClick={recargarTodo} loading={cargando} />}
       />
 
-      {/*
-        Los números van PRIMERO.**  las bandas de aviso —ocho,
-        ~580 px— ocupaban la primera pantalla entera y los cuatro números quedaban CORTADOS por el
-        borde inferior. Un resumen de conjunto cuyo resumen no se ve al entrar no es un resumen.
-        Los avisos no se pierden ni se esconden: bajan una fila y se agrupan por destino.
-      */}
       <div className="metrics-grid">
         <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail="leases vigentes" />
         <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />

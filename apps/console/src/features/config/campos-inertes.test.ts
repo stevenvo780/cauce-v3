@@ -20,11 +20,11 @@ describe('el catálogo de campos inertes', () => {
   it('marca `harness_definitions.command`, que no tiene ningún lector', () => {
     const motivo = motivoInerte('harness_definitions', 'command');
     expect(motivo).toBeDefined();
-    expect(motivo).toMatch(/repository\.ts:7566/);
+    expect(motivo).toMatch(/repository\.ts:5109/);
   });
 
-  it('marca las cinco columnas de emplazamiento de `agents`', () => {
-    for (const campo of ['harness_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory']) {
+  it('marca las tres columnas de emplazamiento de `agents` sin lector runtime', () => {
+    for (const campo of ['harness_id', 'home_directory', 'state_directory']) {
       expect(motivoInerte('agents', campo), `falta el motivo de agents.${campo}`).toBeDefined();
     }
   });
@@ -40,9 +40,11 @@ describe('el catálogo de campos inertes', () => {
     expect(motivoInerte('agents', 'role_brief')).toBeUndefined();
     expect(motivoInerte('agents', 'display_name')).toBeUndefined();
     expect(motivoInerte('agents', 'enabled')).toBeUndefined();
+    expect(motivoInerte('agents', 'container_name')).toBeUndefined();
+    expect(motivoInerte('agents', 'runtime_user')).toBeUndefined();
   });
 
-  /** CONTROL NEGATIVO: `capabilities` y `enabled` de un harness los lee `listAdapters` (:7566). */
+  /** CONTROL NEGATIVO: `capabilities` y `enabled` de un harness los lee `listAdapters` (:5109). */
   it('NO marca los campos de `harness_definitions` que sí tienen lector', () => {
     expect(motivoInerte('harness_definitions', 'capabilities')).toBeUndefined();
     expect(motivoInerte('harness_definitions', 'enabled')).toBeUndefined();
@@ -117,7 +119,7 @@ describe('la guarda: ningún campo con interruptor puede estar marcado como iner
 describe('las columnas inertes que de verdad se están pintando', () => {
   it('devuelve sólo las que la tabla trae, en el orden en que se piden', () => {
     expect(columnasInertesDe('agents', ['tenant_id', 'alias', 'harness_id', 'container_name']))
-      .toEqual(['harness_id', 'container_name']);
+      .toEqual(['harness_id']);
   });
 
   /**

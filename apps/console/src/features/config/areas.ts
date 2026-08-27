@@ -76,9 +76,7 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
      * La frase decía «El registro de bots, CON QUÉ PROGRAMA CORRE CADA UNO y a qué cuentas de IA
      * llega», y esa mitad del medio era falsa: `agents.harness_id` no elige el arnés. El arnés real
      * se deduce del binario en ejecución (`harnessFromCommand`,
-     * services/gateway/src/console/agent-documents.ts:280), y el 23-ago-2026 la columna se
-     * equivocaba en 5 de los 14 alias. El rótulo de entrada de la pestaña era el primer sitio donde
-     * la consola prometía algo que la tabla de abajo no cumple.
+     * services/gateway/src/console/agent-documents.ts:585).
      */
     label: 'Agentes y cuentas',
     descripcion: 'El registro de bots declarados y a qué cuentas de IA llega cada uno.',

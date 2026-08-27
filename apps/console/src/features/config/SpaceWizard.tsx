@@ -21,10 +21,10 @@ const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
  * `harnessCommand` YA NO EXISTE, y su ausencia es el cambio.
  *
  * `harness_definitions.command` se guardaba, se auditaba y se podía deshacer… y no lo lee nadie:
- * `listAdapters` ni siquiera lo selecciona (packages/store/src/repository.ts:7566), y el adaptador
+ * `listAdapters` ni siquiera lo selecciona (packages/store/src/repository.ts:5109), y el adaptador
  * toma la orden que ejecuta de su propia tabla compilada
  * (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su fichero de
- * configuración local (packages/adapter-sdk/src/bin/config.ts:184). Un campo de alta que escribe una
+ * configuración local (packages/adapter-sdk/src/bin/config.ts:179). Un campo de alta que escribe una
  * columna que nadie obedece es justo la promesa falsa que este cambio retira.
  *
  * No se pierde capacidad: `HarnessConfigMutationSchema` lo sigue admitiendo
