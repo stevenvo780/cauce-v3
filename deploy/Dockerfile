@@ -90,7 +90,7 @@ COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./package
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
 RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
 COPY --chown=node:node deploy/runtime-store.package.json ./packages/store/package.json
-COPY --chown=node:node deploy/readiness-probe.mjs deploy/local-readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/release-state-metrics.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/shadow-guard.mjs deploy/runtime-package-smoke.mjs ./deploy/
+COPY --chown=node:node deploy/readiness-probe.mjs deploy/local-readiness-probe.mjs deploy/unix-readiness-probe.mjs deploy/postgres-tls.mjs deploy/migrate.mjs deploy/migration-integrity.mjs deploy/schema-version.mjs deploy/fleet-snapshot.mjs deploy/outbox-metrics.mjs deploy/outbox-metrics-core.mjs deploy/release-state-metrics.mjs deploy/reconcile-stale-console-outbox.mjs deploy/reconcile-stale-console-outbox-core.mjs deploy/runtime-package-smoke.mjs ./deploy/
 COPY --chown=node:node deploy/runtime-entrypoint.sh ./deploy/runtime-entrypoint.sh
 RUN chmod 0555 ./deploy/runtime-entrypoint.sh
 USER node

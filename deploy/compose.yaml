@@ -80,6 +80,12 @@ services:
       CAUCE_CONSOLE_ORIGINS: ${CAUCE_CONSOLE_ORIGINS:?set exact HTTPS console origins}
       CAUCE_REQUIRE_ACK_CLAIMS: "1"
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      # Sin declararla aqui, la variable de prod.env NO llega al contenedor (el ancla
+      # no usa env_file) y el codigo cae a su default de 12 h. gateway y dispatcher
+      # deben leer el mismo valor: uno escribe el plazo, el otro lo cobra.
+      CAUCE_DELIVERY_LEASE_CAP_MS: ${CAUCE_DELIVERY_LEASE_CAP_MS:-21600000}
+      CAUCE_MAX_INFLIGHT_DELIVERIES: ${CAUCE_MAX_INFLIGHT_DELIVERIES:-2}
+      CAUCE_HUMAN_RESERVED_DELIVERIES: ${CAUCE_HUMAN_RESERVED_DELIVERIES:-2}
       CAUCE_MEDIA_DIR: /run/cauce-media
       CAUCE_MEDIA_MAX_BYTES: ${CAUCE_MEDIA_MAX_BYTES:-20971520}
       CAUCE_MEDIA_SWEEP_SECONDS: ${CAUCE_MEDIA_SWEEP_SECONDS:-60}
@@ -94,11 +100,9 @@ services:
       CAUCE_TERMINAL_RELAY_CA_FILE: /run/secrets/gateway_tls_ca
       CAUCE_TERMINAL_RELAY_CLIENT_CERT_FILE: /run/secrets/gateway_relay_client_cert
       CAUCE_TERMINAL_RELAY_CLIENT_KEY_FILE: /run/secrets/gateway_relay_client_key
-      CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: /run/secrets/terminal_gateway_client_cert
-      CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: /run/secrets/terminal_gateway_client_key
       # SHA-256 of the terminal-relay -> gateway mTLS leaf DER. The gateway recomputes it from
       # the peer certificate; an empty/mismatched release pin keeps the PTY plane closed.
-      CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:-}
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:?64 hex - sha256 del DER del leaf mTLS del relay}
       CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
       CAUCE_TERMINAL_SESSION_TTL_SECONDS: "900"
@@ -248,16 +252,16 @@ services:
       CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: /run/secrets/terminal_relay_tls_key
       CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: /run/secrets/gateway_client_ca
       # The console nginx and the gateway governance client are independent
-      # principals.  Always retain gateway-relay-client even when the operator
+      # principals.  Always retain gateway-client even when the operator
       # customises the console certificate CN list.
-      CAUCE_TERMINAL_RELAY_CONSOLE_CN: ${CAUCE_TERMINAL_CONSOLE_CN:-console-client},gateway-relay-client
+      CAUCE_TERMINAL_RELAY_CONSOLE_CN: ${CAUCE_TERMINAL_CONSOLE_CN:-console-client},gateway-client
       CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: /run/secrets/gateway_client_ca
       CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: /run/cauce-terminal/pty_agent_identities.json
       CAUCE_TERMINAL_GATEWAY_URL: https://gateway:8443
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
       CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE: /run/secrets/terminal_gateway_client_cert
       CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE: /run/secrets/terminal_gateway_client_key
-      CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:-}
+      CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:?64 hex - sha256 del DER del leaf mTLS del relay}
       CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
       CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC: "262144"
       CAUCE_TERMINAL_SCROLLBACK_BYTES: "20480"
@@ -342,6 +346,8 @@ services:
       DISPATCHER_POLL_MS: ${DISPATCHER_POLL_MS:-100}
       CAUCE_DISPATCHER_STALE_MS: ${CAUCE_DISPATCHER_STALE_MS:-5000}
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
+      # Mismo valor que en el gateway; config.ts exige >= CAUCE_ACK_DEADLINE_MS.
+      CAUCE_DELIVERY_LEASE_CAP_MS: ${CAUCE_DELIVERY_LEASE_CAP_MS:-21600000}
       ACK_TIMEOUT_MS: ${ACK_TIMEOUT_MS:-600000}
       INTERACTIVE_BURST: ${INTERACTIVE_BURST:-3}
     secrets: *runtime-secrets
@@ -396,46 +402,6 @@ services:
         condition: service_completed_successfully
     networks: [backend]
 
-  relay-worker:
-    <<: *runtime-service
-    profiles: [origin-relay]
-    command: ["node", "services/relay-worker/dist/main.js"]
-    environment:
-      DATABASE_URL_FILE: /run/secrets/database_url
-      NODE_ENV: production
-      PGSSLMODE: verify-full
-      PGSSLROOTCERT: /run/secrets/postgres_ca
-      PORT: "8083"
-      CAUCE_WEBHOOK_PROVIDER_MODULE: file:///run/secrets/relay_provider_module
-      CAUCE_RELAY_ALLOWED_ORIGINS: ${CAUCE_RELAY_ALLOWED_ORIGINS:-}
-      CAUCE_RELAY_ADAPTERS: ${CAUCE_RELAY_ADAPTERS:-}
-    secrets:
-      - source: database_url
-        target: database_url
-        uid: "1000"
-        gid: "1000"
-        mode: 0400
-      - source: postgres_ca
-        target: postgres_ca
-        uid: "1000"
-        gid: "1000"
-        mode: 0444
-      - source: relay_provider_module
-        target: relay_provider_module
-        uid: "1000"
-        gid: "1000"
-        mode: 0400
-    healthcheck:
-      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8083/health/ready", "ready"]
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 20s
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-    networks: [backend]
-
   telegram-bridge:
     <<: *runtime-service
     profiles: [telegram]
@@ -452,6 +418,12 @@ services:
       CAUCE_TELEGRAM_MEDIA_MAX_BYTES: ${CAUCE_MEDIA_MAX_BYTES:-20971520}
       CAUCE_TELEGRAM_MEDIA_TTL_SECONDS: ${CAUCE_MEDIA_TTL_SECONDS:-600}
       CAUCE_TELEGRAM_MEDIA_SWEEP_SECONDS: ${CAUCE_MEDIA_SWEEP_SECONDS:-60}
+      # Transcripcion de notas de voz (servicio GPU local via tailnet). Sin declararlas
+      # aqui, las variables de prod.env no llegan al contenedor y la transcripcion se apaga.
+      CAUCE_TELEGRAM_TRANSCRIPTION_URL: ${CAUCE_TELEGRAM_TRANSCRIPTION_URL:-}
+      CAUCE_TELEGRAM_TRANSCRIPTION_MODEL: ${CAUCE_TELEGRAM_TRANSCRIPTION_MODEL:-}
+      CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE: ${CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE:-}
+      CAUCE_TELEGRAM_TRANSCRIPTION_TIMEOUT_SECONDS: ${CAUCE_TELEGRAM_TRANSCRIPTION_TIMEOUT_SECONDS:-}
       CAUCE_TELEGRAM_EGRESS_LEASE_MS: ${CAUCE_TELEGRAM_EGRESS_LEASE_MS:-90000}
       CAUCE_TELEGRAM_UPDATE_STALE_MS: ${CAUCE_TELEGRAM_UPDATE_STALE_MS:-180000}
       CAUCE_TELEGRAM_EGRESS_STALE_MS: ${CAUCE_TELEGRAM_EGRESS_STALE_MS:-180000}
@@ -471,70 +443,6 @@ services:
       interval: 15s
       timeout: 5s
       retries: 8
-      start_period: 20s
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-    networks: [backend]
-
-  shadow-router:
-    <<: *runtime-service
-    profiles: [shadow]
-    command: ["node", "services/shadow-router/dist/main.js"]
-    environment:
-      DATABASE_URL_FILE: /run/secrets/database_url
-      NODE_ENV: production
-      PGSSLMODE: verify-full
-      PGSSLROOTCERT: /run/secrets/postgres_ca
-      SHADOW_ROUTER_MODE: ${SHADOW_ROUTER_MODE:-shadow}
-      SHADOW_ROUTER_TENANTS: ${SHADOW_ROUTER_TENANTS:-}
-      SHADOW_ROUTER_SOCKET: /run/cauce-shadow/router/router.sock
-      SHADOW_ROUTER_V2_SOCKET: /run/cauce-shadow/v2/ingress.sock
-      SHADOW_ROUTER_V3_SOCKET: /run/cauce-shadow/v3/ingress.sock
-      SHADOW_ROUTER_CUTOVER_DIRECTION: ${SHADOW_ROUTER_CUTOVER_DIRECTION:-}
-      SHADOW_ROUTER_ENABLE_CUTOVER: ${SHADOW_ROUTER_ENABLE_CUTOVER:-}
-      SHADOW_ROUTER_HEALTH_STALE_MS: ${SHADOW_ROUTER_HEALTH_STALE_MS:-30000}
-    secrets: *runtime-secrets
-    volumes:
-      - type: bind
-        source: ${CAUCE_SHADOW_ROUTER_SOCKET_DIR:-/dev/null}
-        target: /run/cauce-shadow/router
-      - type: bind
-        source: ${CAUCE_SHADOW_V2_SOCKET_DIR:-/dev/null}
-        target: /run/cauce-shadow/v2
-        read_only: true
-      - type: bind
-        source: ${CAUCE_SHADOW_V3_SOCKET_DIR:-/dev/null}
-        target: /run/cauce-shadow/v3
-        read_only: true
-    healthcheck:
-      test: ["CMD", "node", "deploy/unix-readiness-probe.mjs", "/run/cauce-shadow/router/router.sock", "/health/ready", "ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-    networks: [backend]
-
-  shadow-guard:
-    <<: *runtime-service
-    profiles: [shadow]
-    command: ["node", "deploy/shadow-guard.mjs"]
-    environment:
-      DATABASE_URL_FILE: /run/secrets/database_url
-      NODE_ENV: production
-      PGSSLMODE: verify-full
-      PGSSLROOTCERT: /run/secrets/postgres_ca
-      PORT: "8085"
-      CAUCE_SHADOW_MAX_SIDE_EFFECTS: "0"
-    secrets: *runtime-secrets
-    healthcheck:
-      test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8085/health/ready", "ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
       start_period: 20s
     depends_on:
       migrator:
@@ -682,8 +590,6 @@ secrets:
     file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH}
   console_gateway_client_key:
     file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH}
-  relay_provider_module:
-    file: ${CAUCE_RELAY_PROVIDER_MODULE_PATH:-/dev/null}
   # El canal PTY es opt-in: sin aprovisionar apuntan a /dev/null y el stack
   # sigue levantando; el gateway queda con CAUCE_TERMINAL_ENABLED=0 y el relay
   # falla cerrado sin certificado.
@@ -700,9 +606,9 @@ secrets:
   terminal_ticket_key:
     file: ${CAUCE_TERMINAL_TICKET_KEY_PATH:-/dev/null}
   gateway_relay_client_cert:
-    file: ${CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH:-/dev/null}
+    file: ${CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH:-/etc/cauce-v3/pki/gateway-client.crt}
   gateway_relay_client_key:
-    file: ${CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH:-/dev/null}
+    file: ${CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH:-/etc/cauce-v3/pki/gateway-client.key}
 
 volumes:
   prometheus_data:
