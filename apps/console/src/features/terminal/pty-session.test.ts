@@ -7,10 +7,8 @@ import {
   esRespuestaTecnicaDelTerminal,
   ptyCloseMessage,
   ptySessionPosicion,
-  ptySessionScroll,
   ptySessionText,
   ptySessionType,
-  ptySessionVolverAlFinal,
   readPtySession,
   subscribePtySession,
   websocketUrl,
@@ -462,33 +460,5 @@ it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al
   expect(despues.baseY).toBeGreaterThan(antes.baseY);
   expect(despues.viewportY).toBe(despues.baseY);
   // Y la vista lo sabe: sin esto el aviso de «hay salida nueva abajo» saldría estando ya abajo.
-  expect(readPtySession(SESSION).seguirAlFinal).toBe(true);
-});
-
-it('si subiste a leer, la salida nueva NO te arrastra — y se te ofrece volver al final', async () => {
-  const socket = open();
-  socket.emitControl(ready());
-  socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${i}`).join('\r\n') + '\r\n');
-  await settle();
-
-  // El operador sube 40 filas a leer algo.
-  ptySessionScroll(SESSION, -40);
-  await settle();
-  const arriba = ptySessionPosicion(SESSION);
-  expect(arriba.viewportY).toBeLessThan(arriba.baseY);
-  expect(readPtySession(SESSION).seguirAlFinal).toBe(false);
-
-  // Llega salida nueva: el búfer crece y la vista se queda EXACTAMENTE donde estaba.
-  socket.emitOutput('mas salida del agente\r\n');
-  await settle();
-  const tras = ptySessionPosicion(SESSION);
-  expect(tras.baseY).toBeGreaterThan(arriba.baseY);
-  expect(tras.viewportY).toBe(arriba.viewportY);
-
-  // Y el botón devuelve el seguimiento.
-  ptySessionVolverAlFinal(SESSION);
-  await settle();
-  const final = ptySessionPosicion(SESSION);
-  expect(final.viewportY).toBe(final.baseY);
   expect(readPtySession(SESSION).seguirAlFinal).toBe(true);
 });

@@ -79,16 +79,3 @@ export const LO_QUE_AJUSTES_GOBIERNA =
   + 'servidor al entregar (`selfRoleBrief`, packages/store/src/repository.ts:1821), viaja en el '
   + 'sobre como `self_role` y el adaptador lo antepone al contrato. Por eso un bot sin directiva '
   + 'propia —hermes— igual recibe identidad.';
-
-/** Los arneses del juego cerrado que la tabla no cubre. Tiene que ser siempre `[]`. */
-export function faltantesDelJuegoCerrado(
-  tabla: readonly ArnesReal[], esperados: readonly string[],
-): string[] {
-  const cubiertos = new Set(tabla.map((arnes) => arnes.id));
-  return esperados.filter((id) => !cubiertos.has(id)).sort();
-}
-
-/** Los que no leen ningún documento de instrucciones. Hoy es exactamente uno: hermes. */
-export function arnesesSinDirectivaPropia(tabla: readonly ArnesReal[]): string[] {
-  return tabla.filter((arnes) => arnes.directiva.trim() === '').map((arnes) => arnes.id).sort();
-}

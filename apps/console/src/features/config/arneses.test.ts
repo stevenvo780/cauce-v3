@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ARNESES_REALES, LO_QUE_AJUSTES_GOBIERNA, arnesesSinDirectivaPropia, faltantesDelJuegoCerrado,
+  ARNESES_REALES, LO_QUE_AJUSTES_GOBIERNA,
 } from './arneses';
 
 /**
@@ -22,18 +22,7 @@ const JUEGO_CERRADO = ['claude', 'codex', 'openclaw', 'hermes'] as const;
 
 describe('la tabla de arneses reales', () => {
   it('cubre el juego cerrado que el gateway sabe resolver, más el que no resuelve ninguno', () => {
-    expect(faltantesDelJuegoCerrado(ARNESES_REALES, JUEGO_CERRADO)).toEqual([]);
     expect(ARNESES_REALES.map((arnes) => arnes.id).sort()).toEqual([...JUEGO_CERRADO].sort());
-  });
-
-  /**
-   * CONTROL NEGATIVO POR MUTACIÓN: se le quita hermes a la tabla y se exige que lo señale. Hermes
-   * es justo el que se olvida —no lee ningún fichero de instrucciones, así que no tiene fila que
-   * escribir— y olvidarlo dejaría a su dueño creyendo que la pantalla no sabe nada de él.
-   */
-  it('señala un arnés que falta', () => {
-    const rota = ARNESES_REALES.filter((arnes) => arnes.id !== 'hermes');
-    expect(faltantesDelJuegoCerrado(rota, JUEGO_CERRADO)).toEqual(['hermes']);
   });
 
   it('el que lee algo dice DÓNDE, y ninguno repite la ruta de otro', () => {
@@ -49,7 +38,7 @@ describe('la tabla de arneses reales', () => {
   });
 
   it('hermes es el único que no lee ningún documento de instrucciones', () => {
-    expect(arnesesSinDirectivaPropia(ARNESES_REALES)).toEqual(['hermes']);
+    expect(ARNESES_REALES.filter((arnes) => arnes.directiva.trim() === '').map((arnes) => arnes.id)).toEqual(['hermes']);
   });
 
   /**

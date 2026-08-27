@@ -275,19 +275,6 @@ export function ptySessionType(sessionId: string, data: string): void {
   entries.get(sessionId)?.terminal.input(data);
 }
 
-export function ptySessionScroll(sessionId: string, lineas: number): void {
-  entries.get(sessionId)?.terminal.scrollLines(lineas);
-}
-
-export function ptySessionRedimensionar(sessionId: string, cols: number, rows: number): void {
-  entries.get(sessionId)?.terminal.resize(cols, rows);
-}
-
-export function ptySessionGeometria(sessionId: string): { cols: number; rows: number } | undefined {
-  const entry = entries.get(sessionId);
-  return entry ? { cols: entry.terminal.cols, rows: entry.terminal.rows } : undefined;
-}
-
 export function ptySessionPosicion(sessionId: string): { viewportY: number; baseY: number } {
   const entry = entries.get(sessionId);
   if (!entry) return { viewportY: 0, baseY: 0 };

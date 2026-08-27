@@ -1,5 +1,3 @@
-import { esCampoConmutable } from './interruptores';
-
 /**
  * Catálogo de campos mostrados en `/config` que no tienen efecto en la ejecución del sistema.
  */
@@ -68,19 +66,4 @@ export function motivoInerte(coleccion: string, campo: string): string | undefin
  */
 export function columnasInertesDe(coleccion: string, claves: readonly string[]): string[] {
   return claves.filter((clave) => motivoInerte(coleccion, clave) !== undefined);
-}
-
-/**
- * Los campos que están marcados inertes Y ADEMÁS se ofrecen como interruptor. Tiene que ser
- * siempre `[]`: la lista existe para que la prueba pueda mostrar CUÁL se coló, no un booleano que
- * obligue a buscarlo a mano.
- */
-export function sinConmutablesInertes(catalogo: Record<string, Record<string, string>>): string[] {
-  const choques: string[] = [];
-  for (const [coleccion, campos] of Object.entries(catalogo)) {
-    for (const campo of Object.keys(campos)) {
-      if (esCampoConmutable(coleccion, campo)) choques.push(`${coleccion}.${campo}`);
-    }
-  }
-  return choques.sort();
 }

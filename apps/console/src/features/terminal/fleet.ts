@@ -122,13 +122,6 @@ export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], fi
   });
 }
 
-export function adapterSummary(adapters: AdapterView[]): { healthy: number; total: number } {
-  return {
-    healthy: adapters.filter((adapter) => adapter.state === 'available').length,
-    total: adapters.length,
-  };
-}
-
 /**
  * Desglose de adaptadores disponibles, con fallo o sin reporte,
  * evitando interpretar estados no reportados como fallos confirmados.
@@ -316,12 +309,6 @@ export function resolveLiveTui(targets: TerminalTarget[] | null | undefined, age
     reason: `El agente PTY de ${agent.alias} no publica el modo ${LIVE_TUI_MODE}: no hay TUI que emitir, sólo shell nueva. Modos publicados: ${target.modes.length ? target.modes.join(', ') : 'ninguno'}.`,
     target,
   };
-}
-
-/** Modo preferido para este destino: la TUI viva si existe; si no, lo que el servidor publique. */
-export function preferredTerminalMode(target: TerminalTarget | undefined): string {
-  if (target?.modes.includes(LIVE_TUI_MODE)) return LIVE_TUI_MODE;
-  return target?.modes[0] ?? SHELL_MODE;
 }
 
 /** Cuántos destinos pueden emitir su TUI. Inventario ausente sigue siendo UNKNOWN. */

@@ -4,7 +4,6 @@ import {
   countLiveTuiTargets,
   countOnlinePtyTargets,
   fleetTerminalChip,
-  preferredTerminalMode,
   resolveLiveTui,
   resolveTerminalTarget,
   terminalTargetForAgent,
@@ -191,11 +190,7 @@ it('propaga el motivo del destino cuando la puerta se cierra antes de llegar al 
     .toBe('blocked');
 });
 
-it('prefiere la TUI viva sobre la shell y cuenta sólo los destinos que pueden emitirla', () => {
-  expect(preferredTerminalMode(target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }))).toBe('harness');
-  expect(preferredTerminalMode(target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] }))).toBe('shell');
-  expect(preferredTerminalMode(undefined)).toBe('shell');
-
+it('cuenta sólo los destinos que pueden emitir la TUI viva', () => {
   expect(countLiveTuiTargets(null)).toBeUndefined();
   expect(countLiveTuiTargets([
     target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }),

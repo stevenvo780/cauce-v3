@@ -1,6 +1,7 @@
-import { AREA_POR_DEFECTO, CONFIG_AREAS, LARGO_DESCRIPCION, agruparPorArea, areaDeColeccion, type ConfigArea } from './areas';
+import { AREA_POR_DEFECTO, CONFIG_AREAS, agruparPorArea, areaDeColeccion, type ConfigArea } from './areas';
 import { configCollections } from './collections';
 
+const LARGO_DESCRIPCION = 90;
 const vacia = (key: string) => ({ key, title: key, rows: [] });
 
 it('reparte las doce colecciones conocidas por área, sin perder ninguna', () => {

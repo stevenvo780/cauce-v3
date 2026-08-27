@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CAMPOS_INERTES, MARCA_INERTE, columnasInertesDe, motivoInerte, sinConmutablesInertes,
+  CAMPOS_INERTES, MARCA_INERTE, columnasInertesDe, motivoInerte,
 } from './campos-inertes';
 import { CAMPOS_CONMUTABLES, esCampoConmutable } from './interruptores';
 
@@ -88,17 +88,13 @@ describe('el catálogo de campos inertes', () => {
 
 describe('la guarda: ningún campo con interruptor puede estar marcado como inerte', () => {
   it('el catálogo real la cumple', () => {
-    expect(sinConmutablesInertes(CAMPOS_INERTES)).toEqual([]);
-  });
-
-  /**
-   * CONTROL NEGATIVO POR MUTACIÓN. Se le da de comer un catálogo que marca inerte justo el permiso
-   * que la pantalla ofrece como interruptor y se exige que lo señale. Un guardia que aprueba
-   * cualquier cosa es peor que no tenerlo.
-   */
-  it('señala un catálogo que marca inerte un campo conmutable', () => {
-    const roto = { ...CAMPOS_INERTES, acl_edges: { allow_route: 'inventado, repository.ts:1' } };
-    expect(sinConmutablesInertes(roto)).toEqual(['acl_edges.allow_route']);
+    const choques: string[] = [];
+    for (const [coleccion, campos] of Object.entries(CAMPOS_INERTES)) {
+      for (const campo of Object.keys(campos)) {
+        if (esCampoConmutable(coleccion, campo)) choques.push(`${coleccion}.${campo}`);
+      }
+    }
+    expect(choques).toEqual([]);
   });
 
   it('la premisa: los campos que usa el control negativo siguen siendo conmutables', () => {

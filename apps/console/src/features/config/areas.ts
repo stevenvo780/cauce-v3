@@ -22,9 +22,6 @@ export interface ConfigArea {
   detalle: string;
 }
 
-/** El tope de la frase que se lee sin plegar. Ver `descripcion`. */
-export const LARGO_DESCRIPCION = 90;
-
 /**
  * El orden de las pestañas es el orden en que se monta una flota: primero el espacio (quién existe
  * y dónde habla), después quién puede hablarle a quién, después qué hace cada bot, y al final el
