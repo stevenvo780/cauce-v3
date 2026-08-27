@@ -50,7 +50,7 @@ Lo que NO se hizo, a propósito:
 
 El nombre con letras necesita una tabla. Lo que sigue es esa tabla.
 
-## 2. Migración `024_role_templates.sql`
+## 2. Migración `024_agent_role_templates.sql`
 
 `022` no existe en el árbol (la serie salta de `021` a `023`), así que **el número libre es 024**.
 Se numera 024 y no 022: el runner de `packages/store/src/db.ts` aplica por orden de nombre de
@@ -117,7 +117,7 @@ CREATE INDEX IF NOT EXISTS agents_role_template_idx
   ON agents(role_template_id) WHERE role_template_id IS NOT NULL;
 ```
 
-Y su inversa en `packages/store/migrations/down/024_role_templates.sql`, siguiendo la convención
+Y su inversa en `packages/store/migrations/down/024_agent_role_templates.sql`, siguiendo la convención
 del directorio `down/`: `ALTER TABLE agents DROP COLUMN IF EXISTS role_template_id;` y
 `DROP TABLE IF EXISTS role_templates;`.
 
