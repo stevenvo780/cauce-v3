@@ -50,3 +50,6 @@ Contra un CLON de la base productiva (pg_dump 183MB, prod intocada y verificada 
 | D3 | **Desde dónde corre el deploy**: ¿el compose corre desde el repo (`/datos/workspaces/zeus/cauce-v3`) o se sigue copiando a `/opt`? Cambia el source de 4 binds. Recomendación: desde el repo — una fuente. | `compose-canonico.md` §5 |
 | D4 | ¿Bloque B de huérfanos (heraclito/tales, churn cero, alias ya fuera del mapa) se mata también? | `pty-huerfanos.md` |
 | D5 | El bucle de `dedalo`/`salva` viene de OTRO host: hace falta el mismo censo allí. ¿Cuándo? | `pty-huerfanos.md` |
+
+## Nota post-mudanza deploy/ (27-08 noche, commit f4ba129)
+Los digests de dominio CAMBIARON por la mudanza (source-digest.py hashea rutas relativas): runtime `94137da8…` → `c3537bd0…`, console `0b792f640…` → `006d79b7…`. NO es deriva de código — es la mudanza `deploy/{runtime,console,postgres}/`. Quien compare el digest del árbol contra la imagen de prod verá diferencia por esto. qa:runtime-packaging PASÓ tras la mudanza (33 migraciones dentro de la imagen): el contrato in-image `/app/deploy/*` quedó intacto.
