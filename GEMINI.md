@@ -25,6 +25,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 4. Comentarios: solo restricciones que el código no puede expresar. Prohibido narrar historia, fechar, citar incidentes o personas — los comentarios-ensayo de este repo llegaron a MENTIR y envenenaron a los modelos que los leían.
 5. Nada está "hecho" sin pegar la salida del gate. Un despliegue no está hecho sin mostrar el efecto real.
 6. Planes nuevos: máximo 100 líneas. Reportes: máximo 5 líneas de prosa.
+7. Subagentes: úsalos para lo paralelizable, con ficheros DISJUNTOS por subagente, tope 4, profundidad 1, y solo el proceso principal commitea (sección "Subagentes" del protocolo).
 
 ## NO TOCAR (sin excepción)
 
