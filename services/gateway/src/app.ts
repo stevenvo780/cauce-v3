@@ -42,7 +42,7 @@ import { createCoreRoutePhases } from './routes/core.js';
 import { registerConsolePublishIntentRoutes } from './routes/console-publish.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
 
-import { registerLegacyCandidateChainGateRoutes } from './routes/legado-candidato.js';
+import { registerLegacyCandidateChainGateRoutes } from './routes/chain-gates-legado.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {

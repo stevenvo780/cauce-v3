@@ -698,7 +698,7 @@
   "services/gateway/src/routes/core/http.ts": 10,
   "services/gateway/src/routes/core/outbox.ts": 9,
   "services/gateway/src/routes/core/publish.ts": 23,
-  "services/gateway/src/routes/legado-candidato.ts": 9,
+  "services/gateway/src/routes/chain-gates-legado.ts": 9,
   "services/gateway/src/routes/shared.ts": 21,
   "services/gateway/src/terminal.authority.test.ts": 14,
   "services/gateway/src/terminal.plugin.test.ts": 44,
