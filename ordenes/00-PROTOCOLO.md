@@ -21,8 +21,8 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 
 | Sector | Dueño | Revisor |
 |---|---|---|
-| `apps/console/**` | Codex Terra | Claude |
-| `services/terminal-relay/**`, `services/telegram-bridge/**` | Gemini (de vuelta 27-08) | Claude |
+| `apps/console/**` | Gemini | Claude |
+| `services/terminal-relay/**`, `services/telegram-bridge/**` | Gemini | Claude |
 | `packages/store/src/**`, `services/gateway/src/**`, maquinaria de release de `ops/scripts/` + sus tests | Codex | Claude |
 | Higiene de disco, `docs/`, residuos, verificaciones mecánicas | OpenCode/MiniMax | Claude |
 | `_legado/`, `plan-reestructura/`, `ordenes/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | dueño |
