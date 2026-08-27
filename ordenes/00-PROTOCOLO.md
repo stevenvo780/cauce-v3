@@ -41,10 +41,15 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 Todos los harness de la flota los soportan — **úsalos** para agilizar lo paralelizable (barridos, renombres masivos, verificaciones, extracciones módulo a módulo). Reglas, aprendidas de la quema de agosto:
 
 1. **Ficheros disjuntos por subagente** — un fichero tiene UN dueño por ronda. Reparte por fichero/directorio ANTES de lanzar, por escrito en el prompt de cada uno.
-2. **Tope de concurrencia: 4** subagentes, profundidad 1 (un subagente no lanza subagentes).
+2. **Tope de concurrencia por instancia**: MiniMax 6 subagentes (decírselo EXPLÍCITO en cada orden o no los usa); Gemini y Codex 4. Profundidad 1 (un subagente no lanza subagentes).
 3. **Solo el proceso principal commitea.** Los subagentes editan y reportan; el padre revisa, pasa el gate y hace el commit. Nunca dos procesos commiteando a la vez.
 4. Los subagentes heredan TODO este protocolo: sector de su instancia, NO-TOCAR, sin ramas, sin `add -A`, sin comentarios narrativos.
 5. Si un subagente reporta "hecho" sin evidencia (salida de comando, diff), su trabajo se verifica antes de commitear — la auditoría midió subagentes declarando "1091 tests pasan" cuando fallaban 53 ficheros.
+
+## Modo de sesión por instancia
+
+- **Gemini y MiniMax: sesión NUEVA por cada orden** (el dueño hace `new`). Las órdenes son autocontenidas: arranque = pull + protocolo + la orden; verificar con comandos qué está hecho, nunca confiar en memoria.
+- **Codex: sesión larga persistente** (re-leer contexto le cuesta mucho); su orden se mantiene estable hasta cerrarla.
 
 ## Al terminar cada tarea
 

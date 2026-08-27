@@ -1,20 +1,20 @@
-# OpenCode/MiniMax — ORDEN ACTIVA (continuación de las largas + huérfanos del mapa)
+# OpenCode/MiniMax — ORDEN ACTIVA (sesión nueva: NO necesitas historial; todo está aquí)
 
-Protocolo de siempre. Si las tareas largas previas (suites integration/e2e, mapa-de-ficheros) siguen a medias: **termínalas primero** — son tuyas y nadie más las hará.
+ARRANQUE: (1) `cd /datos/workspaces/zeus/cauce-v3 && git pull`; (2) lee `ordenes/00-PROTOCOLO.md`; (3) esta orden entera; (4) verifica con comandos qué existe ya. Reglas: directo a main, commit con pathspec, prohibido clean/reset/stash/ramas, nada de código de producto (.ts/.tsx/.py/.sh de src). **LANZA 6 SUBAGENTES EN PARALELO** (tu tope es 6, úsalo — p.ej. en la Tarea 2: reparte los directorios entre los 6); solo tú commiteas; push al cerrar cada tarea. Tus fortalezas: contexto larguísimo y constancia — estas tareas son de leer mucho y no rendirse.
 
-## Tarea 1 — (si falta) Suites integration + e2e completas
-Como `stev`, dejarlas TERMINAR, resumen + rojos con error exacto a `ordenes/reportes/minimax-matriz-cd.md`, contenedores huérfanos verificados antes/después.
+## Tarea 1 — Las dos suites largas (déjalas TERMINAR, tardan)
+Como usuario normal: `pnpm test:integration` y después `pnpm test:e2e`. Resumen de cada una (ficheros/tests verdes/rojos, duración) → `ordenes/reportes/minimax-matriz-cd.md`. Rojos: NO arregles nada; lista cada uno con su error textual. `docker ps` antes/después (cero contenedores huérfanos).
 
-## Tarea 2 — (si falta) `docs/mapa-de-ficheros.md` — lectura total
-Una línea honesta por fichero fuente, ⚠ donde el nombre mienta.
+## Tarea 2 — Lectura TOTAL → `docs/mapa-de-ficheros.md` (6 subagentes, un grupo de directorios cada uno)
+`git ls-files` filtrado a .ts/.tsx/.mjs/.py/.sh sin tests (~400): LEE cada fichero y escribe UNA línea: `ruta — qué hace de verdad — sector dueño`. ⚠ donde el nombre mienta. Tests: una línea por SUITE. Agrupado por directorio con subtotales.
 
-## Tarea 3 — HUÉRFANOS del mapa (tu especialidad: contexto largo + precisión mecánica)
-Con el mapa terminado, crúzalo: para cada fichero fuente NO-test, ¿quién lo importa/invoca? (`git grep` del basename y de sus exports principales). Produce `ordenes/reportes/minimax-huerfanos.md`: tabla de candidatos con CERO referencias entrantes (fuera de sí mismos), con la evidencia por fila. NO borres nada — el integrador revisa y ejecuta. Excluye entry-points obvios (main.ts, bin/, *.config.*, deploy/*.mjs referenciados por Dockerfile/compose).
+## Tarea 3 — Verificar los 105 candidatos huérfanos de `docs/grafo.md`
+El grafo (ya existe, sección "Candidatos huérfanos") lista 105 ficheros fuente sin referencia entrante detectada. Para CADA uno (repártelos entre 6 subagentes): re-verifica con `git grep` del basename Y de sus exports principales + revisa si es entry-point legítimo (bin/, main, config, referenciado por Dockerfile/compose/systemd/manifests). Produce `ordenes/reportes/minimax-huerfanos.md`: tabla veredicto huérfano-confirmado / falso-positivo (con la referencia que lo salva). NO borres nada — el integrador ejecuta.
 
-## Tarea 4 — Basura v3 (re-barrido de disco post-todo)
-`git status --ignored --porcelain` + `du` de cada ignorado presente: nueva tabla de lo acumulado desde el último barrido (builds regenerados, caches nuevos, .test-state, logs). Borra lo inequívoco (caches/builds regenerables), reporta lo dudoso.
+## Tarea 4 — Basura v3
+`git status --ignored --porcelain` + `du -sh` de cada ignorado presente en disco: borra lo regenerable inequívoco (caches, builds), tabla de lo dudoso en el mismo reporte de huérfanos.
 
-## Tarea 5 — Mantenimiento continuo
-`PENDIENTES-DEL-DUEÑO.md` al día; reportes consumidos → `git rm` con evidencia; enlaces sin rutas muertas tras los moves de todos.
+## Tarea 5 — Mantenimiento
+`PENDIENTES-DEL-DUEÑO.md` al día; reportes de `ordenes/reportes/` ya consumidos → `git rm` con evidencia; enlaces sin rutas muertas.
 
-Push al cerrar cada tarea + reporte ≤5 líneas.
+Reporte final ≤5 líneas por tarea + `git push origin main`.
