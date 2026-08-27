@@ -12,6 +12,9 @@ Ficheros: `migraciones.md` (las 12, veredicto a veredicto) · `compose-canonico.
 4. El bucle PTY (92% del tráfico) se apaga matando 12 huérfanos concretos — puede hacerse HOY, sin esperar la ventana. Sin arreglar el launcher, **reaparece en el próximo rollout**.
 5. Los 4 runtimes distintos que conviven hoy se unifican con el primer `up -d` canónico: es un cambio grande de código + esquema a la vez. La ventana debe asumirlo y tener el backup verificado antes.
 
+## Notas de health
+La readiness productiva recibe `wakePumpTelemetry` y exige, en este orden, los contratos 015 → 032 → 033 → 034 → 035 → 036 → 037 → 031; con producción aún en 024, el gateway nuevo queda `not_ready` hasta aplicar atómicamente 026–037.
+
 ## Orden de la ventana (propuesto)
 
 **Antes (sin ventana, cualquier día):**
