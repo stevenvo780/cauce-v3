@@ -4,26 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { useResource } from './use-resource';
 
 /**
- * **UN FALLO QUE SE PRODUCE Y NO LLEGA A DECIRSE.**
- *
- * Este fichero existe porque mis propias pruebas dieron VERDE mientras la consola seguía rota
- * en producción. El vencimiento del cliente HTTP funcionaba —`net::ERR_ABORTED` en el registro de
- * red de Chrome, a los 30 s clavados, medido sobre el build de producción— y la pantalla se
- * quedaba en el cartel de carga igual, 40 s de reloj sin una sola alerta. El error se producía y
- * se tiraba a la basura dos veces seguidas, por dos motivos independientes de este hook:
- *
- *  1. **La generación.** `useEffect` la subía en CADA pasada, y este efecto corre dos veces por
- *     montaje (también en el build de producción). La lectura arrancaba con `generation = 1`, el
- *     efecto dejaba `generationRef` en 2, y el `setState` del rechazo quedaba descartado por no
- *     coincidir. La generación existe para tirar la lectura de OTRA clave, no la que está en
- *     vuelo para la misma.
- *  2. **El reintento que borra el fallo.** `/live` refresca cada 4 s, así que cuando la lectura
- *     vencía había siete recargas encoladas. El `finally` arrancaba una en el acto y el `setState`
- *     de arranque ponía `error: undefined`: el fallo duraba menos que un tick y la pantalla volvía
- *     al spinner. Para siempre.
- *
- * Las dos se prueban acá, al nivel del hook y con el efecto corriendo dos veces de verdad
- * (`StrictMode`), que es lo que ninguna prueba de página estaba mirando.
+ * Verificación de visibilidad y persistencia de errores en `useResource`:
+ * comprueba que los rechazos de fetch no se descarten por desincronización de generación
+ * ni queden silenciados bajo recargas automáticas o StrictMode.
  */
 
 /** Un cargador que se puede resolver o rechazar a mano, y que cuenta cuántas veces lo llamaron. */

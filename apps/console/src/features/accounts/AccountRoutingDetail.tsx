@@ -7,27 +7,9 @@ import {
 } from './licenses';
 
 /**
- * **La ficha de ruteo y consumo de UNA cuenta** — lo que sobrevive del panel «Inventario de
- * cuentas» que «Cuotas y licencias» tenía duplicado.
- *
- * El 2026-08-22 se midió: `/quotas` y `/accounts` pedían **el mismo** `GET /v3/console/config` y
- * pintaban **las dos** un panel titulado literalmente «Inventario de cuentas». Steven pidió
- * fundirlos sin perder información, y ninguna de las dos tablas era superconjunto de la otra:
- *
- * - Sólo en `/accounts`: tipo de locator, `updated_at`, y las acciones (editar, habilitar,
- *   publicar). Todo eso vive ahora en la tabla de la pestaña «Inventario».
- * - Sólo en `/quotas`: el **plan**, el **motivo por el que esta cuenta no tiene consumo**, la lista
- *   **«Asignada a»** con alias, nombre, prioridad, estado y contenedor, y el **techo de ruteo**.
- *   Eso es lo que rinde este componente, como detalle desplegable de cada fila.
- *
- * O sea: una sola tabla, y ni un dato menos. Se despliega por fila en vez de mostrarse siempre
- * porque son cuatro secciones por cuenta: apiladas para todas las cuentas a la vez daban la página
- * de cuatro metros que la fusión venía a evitar.
- *
- * ⚠️ El motivo de consumo se muestra **sólo cuando su alcance es `account`**. Los motivos globales
- * —no hay muestra, ningún recolector publicó nunca— ya se declaran una vez en la cabecera de la
- * pestaña «Consumo»; repetirlos en cada ficha era el mismo cartel N veces, que no comunica más:
- * consigue que se lea menos.
+ * Ficha de ruteo y consumo desplegable para una cuenta:
+ * presenta plan, motivo de inactividad, agentes asignados y techo de ruteo.
+ * El motivo de consumo se muestra sólo cuando su alcance es `account`.
  */
 export function AccountRoutingDetail({ accountId, quotas, config }: {
   accountId: string;

@@ -1,24 +1,11 @@
 import { CauceApi, ApiError, TIEMPO_MAXIMO_MS } from './client';
 
 /**
- * **UNA PETICIÓN QUE NUNCA CIERRA ES UNA PANTALLA QUE NUNCA SALE DE LA CARGA.**
- *
- * //consola.humanizar.tech/live`, con la máquina del
- * gateway al 89,9% de steal time: la vista se quedó **180 segundos** en «Leyendo la actividad de
- * la flota…», con el cuerpo de la página en 329 caracteres —sólo el rótulo— y sin error, sin
- * botón de reintentar y sin límite de espera. `client.ts` tenía 355 líneas y CERO apariciones de
- * `timeout`, `AbortController`, `AbortSignal` o `setTimeout`.
- *
- * La lentitud es de la máquina; que no hubiera salida era del diseño. Estas pruebas fijan la
- * salida, y la fijan donde estaba el agujero: en el cliente, no en cada vista.
- *
- * El `fetcher` de estas pruebas **no respeta la señal a propósito**: devuelve una promesa que no
- * se resuelve nunca, que es exactamente lo que hace un socket contra un gateway estrangulado.
- * Si el corte dependiera de que `fetch` haga caso al `AbortSignal`, este fichero no probaría
- * nada — y el defecto medido volvería sin que ninguna prueba se enterase.
+ * Verificación de timeout y cancelación de peticiones en el cliente HTTP (`CauceApi`):
+ * asegura que peticiones sin respuesta sean abortadas y convertidas en un `ApiError` de tipo `timeout`.
  */
 
-/** Un fetch que se queda esperando para siempre, como el gateway del día de la medición. */
+/** Simula un fetch sin respuesta para probar el abort por timeout. */
 function fetchQueNuncaContesta(): { fetcher: typeof fetch; llamadas: () => number; senales: AbortSignal[] } {
   let llamadas = 0;
   const senales: AbortSignal[] = [];

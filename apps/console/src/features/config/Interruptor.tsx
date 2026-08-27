@@ -12,12 +12,9 @@ import type { ControlDeInterruptores, FalloDeInterruptor } from './use-interrupt
  * lo alcanza el tabulador, se activa con la barra espaciadora, un lector de pantalla lo anuncia como
  * «interruptor, activado» y el navegador ya sabe hacer todo eso sin una línea de JavaScript.
  *
- * El `aria-label` nombra la fila Y el permiso («Ruta en la arista Steven → Miguel»): veinticuatro
- * controles que sólo dicen «Ruta» son veinticuatro controles indistinguibles para quien no ve la
- * tabla.
+ * El `aria-label` nombra la fila y el permiso correspondiente para accesibilidad.
  *
- * `aria-busy` mientras la escritura vuela. No es decoración: es la única señal de que el estado que
- * se está pintando todavía no lo confirmó nadie.
+ * `aria-busy` mientras la escritura vuela.
  */
 export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: {
   interruptor: Interruptor;
@@ -33,15 +30,7 @@ export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: 
   const devolverElFoco = useRef(false);
   const volaba = useRef(false);
 
-  /**
-   * **Devolverle el foco al interruptor cuando la escritura termina.**
-   *
-   * MEDIDO en Chrome, con el teclado: mientras la escritura vuela la página entra en `busy` y todos
-   * los controles quedan `disabled` — y un elemento deshabilitado PIERDE el foco. O sea que quien
-   * navegaba con Tab pulsaba un interruptor con la barra espaciadora y aparecía con el foco en el
-   * `<body>`, al principio del documento, con diecinueve filas por recorrer otra vez. No daba ningún
-   * error y en jsdom no se ve: jsdom no aplica esa regla del navegador.
-   */
+  /** Devuelve el foco al interruptor cuando concluye la escritura en vuelo. */
   useEffect(() => {
     if (volaba.current && !enVuelo && devolverElFoco.current) {
       devolverElFoco.current = false;

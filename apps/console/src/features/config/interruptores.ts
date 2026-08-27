@@ -2,22 +2,8 @@ import type { ConfigMutation } from '../../api/types';
 import { claveDeFila } from './collection-table';
 
 /**
- * **Los permisos de `/config` son interruptores, no botones de texto.**
- *
- * Lo que había: la tabla de `Directed ACL` pintaba, por fila, una píldora «SÍ»/«NO» por cada
- * permiso Y ADEMÁS una columna «Acciones» con cuatro botones apilados —«Deshabilitar»,
- * «Quitar allow_route», «Quitar allow_read», «Quitar allow_control»—. Veinticuatro botones para
- * seis filas, la fila midiendo 147 px, y el mismo dato dicho dos veces: la píldora decía «SÍ» y el
- * botón de al lado decía «Deshabilitar». Medido en Chrome, no deducido.
- *
- * Un permiso es un booleano. La pieza que existe para escribir un booleano es un interruptor: dice
- * el estado y lo cambia en el mismo sitio, en una línea, sin repetirse. El dueño lo pidió con esas
- * palabras («esto se resolvía fácil con toggles»).
- *
- * Este módulo es la parte PURA: qué campos de qué colección son conmutables, qué mutación arma cada
- * uno, cómo se lee en castellano y cuál —uno solo— exige confirmación. No monta React y se prueba
- * sin navegador. El comportamiento optimista (pintar al instante y REVERTIR si el servidor lo
- * rechaza) vive en `use-interruptores.ts`.
+ * Especificación pura de interruptores de configuración (toggles):
+ * mapea campos booleanos de colecciones a sus mutaciones inversas y descripciones operativas.
  */
 
 export interface Interruptor {

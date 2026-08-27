@@ -119,25 +119,8 @@ it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot',
 });
 
 /**
- * **El defecto ESPEJO, y su cierre.**
- *
- * La auditoría de campos inertes encontró de paso su contrario. `agent_chain_policies` tiene cinco
- * columnas que la migración 019 añadió —`delegation_caps_enabled`, `max_fanout_per_turn`,
- * `max_edge_repeats_per_root`, `max_delegations_per_root`, `human_gate_enabled`—, las lee
- * `loadChainPolicy()` en `packages/store/src/repository.ts` y gobiernan de verdad el abanico de
- * delegaciones y la compuerta humana. Y no estaban ni en el esquema de la mutación ni en el
- * `SELECT` del snapshot: la consola ni las editaba ni las mostraba, y su única vía de cambio era
- * un `UPDATE` crudo contra la base.
- *
- * Esta prueba exigía la CONFESIÓN («no se ven ni se editan»), que era lo correcto mientras el
- * hueco existía. El 2026-08-25 se cerró —viajan en el snapshot, entran por la mutación con los
- * rangos del propio CHECK, y su inversa las repone—, así que ahora exige lo contrario: que la
- * pantalla diga que están AQUÍ.
- *
- * La afirmación de fondo no cambia y por eso el bloque se conserva: callar un tope que gobierna la
- * flota es la misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado.
- * `tests/unit/topes-de-delegacion-editables.test.ts` es quien mide que de verdad se pueden tocar;
- * ésta sólo mide que la pantalla no mienta sobre ello.
+ * Verifica que el área de Avisos y cadena declare los topes de delegación
+ * aplicados por `loadChainPolicy` en el backend.
  */
 it('«Avisos y cadena» dice que los topes de delegación se editan ACÁ, ya no que no se pueden tocar', () => {
   const avisos = CONFIG_AREAS.find((area) => area.id === 'avisos');

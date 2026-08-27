@@ -7,29 +7,8 @@ import { renderWithApi } from './test/render';
 import './styles.css';
 
 /**
- * EL SUELO TIPOGRÁFICO, COMPROBADO SOBRE LAS PÁGINAS MONTADAS DE VERDAD.
- *
- * El fichero hermano (`styles.tipografia.test.ts`) lee las HOJAS como texto. Eso atrapa el
- * `font-size` escrito de más, pero NO puede ver dos cosas que sí cuestan legibilidad:
- *
- *   · quién GANA la cascada cuando tres reglas compiten por el mismo elemento;
- *   · el tamaño que no está escrito en ninguna hoja porque lo pone el NAVEGADOR.
- *
- * El segundo es un defecto real y medido: `<small class="subline">` sale a **10,67 px** en Chrome
- * en 76 elementos de /queues, /observability, /accounts y /live. Ninguna hoja declara ese número;
- * `.subline` no declara `font-size` y manda la hoja de estilo del agente de usuario, que a `<small>`
- * le da `smaller`. Un censo de valores escritos no lo encuentra ni en principio.
- *
- * 🟢 **Lo que jsdom SÍ hace, y es lo que hace posible esta prueba.** MEDIDO acá, no supuesto:
- * `getComputedStyle(el).fontSize` devuelve la declaración GANADORA de la cascada como cadena sin
- * resolver — `.muted` → `"0.75rem"`, `.chip` → `"0.68rem"`, `.subline` → `"smaller"`. O sea que la
- * cascada sí está, incluida la del navegador. Lo que falta es la aritmética (`rem`→px, `var()`→
- * token, herencia), y ésa la pone este fichero.
- *
- * Lo que jsdom NO hace: layout.** No hay `scrollWidth`, no hay `getBoundingClientRect`. Por eso
- * acá NO hay ninguna prueba de desborde: sería `0 > 0` y daría verde siempre. Está medido como
- * aserto ejecutable en `styles.tipografia.test.ts` › «la premisa». El desborde se mide en Chrome de
- * verdad con `ops/console-legibilidad/medir-tipografia.mjs`.
+ * Verificación del suelo tipográfico sobre las vistas montadas:
+ * comprueba el cálculo efectivo de font-size resolviendo declaraciones ganadoras de la cascada.
  */
 
 const SUELO = 12.5;

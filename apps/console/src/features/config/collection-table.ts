@@ -49,17 +49,11 @@ const ETIQUETAS: Record<string, string> = {
   display_name: 'Nombre', is_hub: 'Hub', enabled: 'Habilitado',
   created_at: 'Alta', updated_at: 'Última edición',
   from_tenant: 'Desde', to_tenant: 'Hacia',
-  // Los cuatro permisos se llamaban como la columna de Postgres —`allow_route`, en inglés, en una
-  // pantalla en castellano— y encima con la cabecera en mayúsculas: `ALLOW_ROUTE`. El nombre de la
-  // columna no es una explicación de lo que concede, y quien la lee no puede deducirlo. Ahora se
-  // llaman por lo que hacen, y QUÉ hacen se explica en el tooltip de la cabecera
-  // (`EXPLICACION_DE_CAMPO` en `interruptores.ts`).
   allow_route: 'Ruta', allow_read: 'Lectura', allow_control: 'Control',
   allow_notify: 'Aviso proactivo', harness_id: 'Harness', command: 'Comando',
   capabilities: 'Capacidades', handle: 'Handle', adapter: 'Adaptador', channel: 'Canal',
   provider: 'Proveedor', account_id: 'Cuenta', agent_alias: 'Alias', priority: 'Prioridad',
   role_brief: 'Rol declarado', label: 'Etiqueta',
-  // Añadidos el 2026-08-23: los ocho que salían con el nombre de la columna de la base.
   container_name: 'Contenedor', runtime_user: 'Usuario', home_directory: 'Carpeta personal',
   image_id: 'Imagen', generation: 'Generación',
   protocol_version: 'Protocolo', last_seen_at: 'Última señal', connected_since: 'Conectado desde',
@@ -71,11 +65,7 @@ const ETIQUETAS: Record<string, string> = {
 };
 
 /**
- * Columnas que se funden en UNA de identidad.
- *
- * `Desde` y `Hacia` son dos columnas para un solo hecho —la arista— y separarlas obliga a leer dos
- * celdas y a reconstruir la dirección con la cabeza. Fundidas se leen de un golpe («Steven →
- * Miguel») y devuelven a la tabla el ancho que los interruptores necesitan.
+ * Columnas que se funden en una de identidad para mejorar la legibilidad de aristas y relaciones.
  */
 const IDENTIDAD_FUNDIDA: Record<string, { clave: string; etiqueta: string; campos: readonly string[]; union: string }> = {
   acl_edges: { clave: '__arista', etiqueta: 'Arista', campos: ['from_tenant', 'to_tenant'], union: ' → ' },

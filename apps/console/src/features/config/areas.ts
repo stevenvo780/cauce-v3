@@ -88,18 +88,6 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
     id: 'avisos',
     label: 'Avisos y cadena',
     descripcion: 'Qué ve un bot de la cadena que él disparó y a qué humanos puede escribirle.',
-    /*
-     * ARREGLADO el 2026-08-25. Este comentario decía que `agent_chain_policies` tenía cinco
-     * columnas más (migración 019) que el servidor SÍ aplica —`loadChainPolicy`,
-     * packages/store/src/repository.ts— y que ni el esquema de mutación ni el `SELECT` del
-     * snapshot incluían: o sea cinco topes que gobiernan la flota entera y sólo se podían tocar
-     * con un `UPDATE` a mano, sin revisión, sin inversa y sin quién lo hizo.
-     *
-     * Ahora viajan en el snapshot, entran por la mutación con los rangos del propio CHECK de
-     * Postgres, y su inversa los repone. Se deja escrito porque callar un tope que gobierna la
-     * flota es la misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado —
-     * y esa simetría es la que hay que seguir vigilando.
-     */
     detalle: 'Un aviso proactivo es un mensaje que nadie pidió: por eso cada destino declara a qué '
       + 'conversación va, cada cuánto y cuántas veces por día. Acá están también los cinco topes de '
       + 'delegación que el servidor aplica de verdad —abanico por turno, repeticiones de arista, '

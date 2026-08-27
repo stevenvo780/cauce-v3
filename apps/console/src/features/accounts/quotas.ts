@@ -151,23 +151,8 @@ export function formatUnits(used: number | null | undefined, limit: number | nul
  * ============================================================================================ */
 
 /**
- * «AGOTADO» y «100% libre», en la misma línea.**  la
- * tarjeta de `codex` pintaba la severidad PEOR de sus grupos (AGOTADO) al lado del
- * `effective_remaining_percent` que manda el servidor (100%), mientras sus propias filas decían
- * «Codex Pro 0% libre» y «codex_bengalfox 100% libre». Un operador que lee la cabecera y se va
- * concluye que hay saldo justo donde no lo hay.
- *
- * Lo peor no es el defecto: es que el equipo YA LO SABÍA. Tres tarjetas más abajo, en «Un número
- * por proveedor miente», hay un párrafo que describe EXACTAMENTE este riesgo, con estos números.
- * Se escribió la explicación y se dejó el número engañoso en 20 px azules. **Explicar un defecto
- * no es arreglarlo.**
- *
- * La regla, ahora: la cabecera muestra el PEOR porcentaje de las ventanas del proveedor, que es el
- * que va con la severidad que ya se pinta al lado. Si no se puede calcular ninguno —ningún grupo
- * informa porcentaje— no se muestra ninguno: no hay un número honesto que poner ahí.
- *
- * `effective_remaining_percent` no se tira: pasa al `title=` con su nombre, porque es lo que el
- * enrutador usa para elegir cuenta y hay que poder contrastarlo.
+ * Calcula el peor porcentaje restante de las ventanas de un proveedor para alinearlo
+ * con la severidad más restrictiva en la cabecera.
  */
 export function peorPorcentajeDelProveedor(provider: QuotaProviderReport): number | undefined {
   let peor: number | undefined;

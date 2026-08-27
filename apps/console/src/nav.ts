@@ -35,18 +35,8 @@ export interface NavEntry {
 }
 
 /**
- * Las entradas CON rótulo: la portada más siete. Las rutas ocultas viven en `App.tsx`.
- *
- * **Este es el menú final del 2026-08-22**, después de tres retiradas y dos fusiones sobre las once
- * entradas que había: se fue «Jobs» (cero filas en la tabla desde que existe la base), se plegó
- * «Adapters» en la portada, «Cuotas y licencias» se fundió en «Cuentas y cuotas» y «Audit» en
- * «Señales y auditoría». Cada retirada dejó su alias en `ROUTE_ALIASES` (`App.tsx`), o su aviso
- * cuando no hay heredera.
- *
- * El `id` de cada entrada tiene que estar en `PAGES` y NO puede ser una clave de
- * `ROUTE_ALIASES`.** Un id sin página se monta como `undefined` y un id tapado por un alias no se
- * alcanza nunca: las dos cosas fallan sin un error, y por eso las guarda la tabla de
- * `App.invariantes.test.tsx` y no la buena voluntad de quien edite esta lista.
+ * Entradas de navegación principal con rótulo visible. Las rutas ocultas viven en `App.tsx`.
+ * Cada `id` debe existir en `PAGES` y no puede ser clave de `ROUTE_ALIASES`.
  */
 export const NAV_ENTRIES: NavEntry[] = [
   { id: '', label: 'Portada', icon: LayoutDashboard, que: 'El resumen de conjunto: flota, colas, cuotas y lo que exige atención.' },
@@ -55,13 +45,6 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'messages', label: 'Mensajes', icon: MessageSquareText, que: 'La conversación con cada agente y el estado de cada entrega.' },
   { id: 'queues', label: 'Queues & DLQ', icon: ListRestart, que: 'Cada entrega pendiente, en reintento o muerta, con reinyectar y cancelar.' },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge, que: 'Las señales del gateway, el egress al origen y quién autorizó cada cosa.' },
-  // 'Configuración y altas' -> 'Ajustes y altas' (2026-08-23). Con la letra de la barra movil
-  // a 11 px, 'Configuración' sola mide 85,8 px y la celda da 68/78/85 px en 320/360/390: NO
-  // entra en NINGUN ancho, asi que el navegador la partia a mitad de palabra ('Configurac' /
-  // 'ión y altas'). 'Ajustes' mide 45,9 px y entra en los tres con holgura.
-  // OJO AL METODO: esto NO lo caza scrollWidth > clientWidth, porque `overflow-wrap:break-word`
-  // evita el desborde partiendo la palabra. La prueba automatica siempre dara 0. Se vio MIRANDO
-  // la barra renderizada. Si volves a tocar el tamano de letra, mira la barra, no midas el ancho.
   { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
   { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
 ];

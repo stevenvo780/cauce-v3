@@ -3,37 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * LA ESCALA TIPOGRÁFICA DE TODA LA CONSOLA, COMPROBADA SOBRE LAS HOJAS.
- *
- * El arreglo de legibilidad de 2026-08-24 se aplicó a UNA vista de ocho. MEDIDO por mí en Chrome de
- * verdad (`/usr/bin/google-chrome` por CDP, vite en modo mock, 1920×1080, tema claro), contando los
- * elementos de texto HOJA dentro de `main` con `getComputedStyle().fontSize` por debajo de 12,5 px:
- *
- *     /config          0      ← la única arreglada
- *     live           299      (mínimo 9,28 px)
- *     accounts       186      (mínimo 9,92 px)
- *     terminal       177      (mínimo 8,00 px)   ← NO es de este cambio, ver PENDIENTES
- *     portada         75      (mínimo 9,92 px)
- *     messages        72      (mínimo 9,60 px)
- *     queues          43      (mínimo 9,60 px)
- *     observability   37      (mínimo 10,88 px)
- *     ───────────────────
- *     total          889
- *
- * La escala ya existía y estaba razonada, pero encerrada en `.config-pagina`. Este fichero guarda
- * que siga declarada en `:root` —o sea, disponible en las ocho vistas— y que ninguna hoja del
- * reparto vuelva a escribir un `font-size` por debajo del suelo.
- *
- * LO QUE ESTE FICHERO NO PUEDE AFIRMAR: que no haya desbordes.** jsdom no calcula layout, y no
- * es una creencia heredada: está MEDIDO abajo, en «la premisa», con una caja de 100 px que contiene
- * un hijo de 5000 px. jsdom devuelve `scrollWidth: 0` y `clientWidth: 0`, o sea `0 > 0` = falso
- * SIEMPRE. Una prueba de desborde escrita acá no podría dar rojo ni con la hoja rota a propósito, y
- * una prueba que no puede fallar es un verde falso. El desborde se mide en Chrome, con
- * `ops/console-legibilidad/medir-tipografia.mjs`, y el resultado va en el informe del cambio.
- *
- * Cada aserto lleva su CONTROL NEGATIVO POR MUTACIÓN: se le da de comer la hoja rota —con los
- * valores EXACTOS que estaban desplegados— y se exige que la marque. Un guardia que aprueba
- * cualquier cosa es peor que no tenerlo.
+ * Validación de la escala tipográfica sobre las hojas de estilo:
+ * asegura que los tokens estén disponibles en `:root` y que ninguna regla descienda del umbral mínimo.
  */
 
 const RAIZ = resolve(process.cwd(), 'src');
@@ -46,16 +17,7 @@ const leer = (ruta: string): string => {
   });
 };
 
-/**
- * Las hojas bajo guardia. Es el REPARTO de este cambio, no la lista completa de la consola.
- *
- * PENDIENTES, y hay que decirlo en vez de esconderlo: `features/terminal/terminal-panel.css` y
- * `features/terminal/xterm-csp.css` NO están acá. Tienen 177 elementos por debajo del suelo medidos
- * en Chrome, con el mínimo de toda la consola (8,00 px en 4 elementos), y son el peor caso que
- * queda. Quedan fuera porque otro agente estaba escribiendo en ese directorio al mismo tiempo y dos
- * agentes en el mismo fichero se pisan. Cuando ese trabajo cierre, se añaden a esta lista y el
- * guardia empieza a cubrirlas: no hace falta tocar nada más que esta constante.
- */
+/** Hojas de estilo bajo verificación de escala tipográfica. */
 const HOJAS = [
   'styles.css',
   'features/live/live.css',
