@@ -1,51 +1,43 @@
-# Gemini — ORDEN ACTIVA (sesión nueva: NO necesitas historial; todo está aquí)
+# Gemini — ORDEN ACTIVA (sesión nueva; sector: consola + terminal-relay + telegram-bridge)
 
-ARRANQUE (siempre, en este orden): (1) `git pull`; (2) lee `ordenes/00-PROTOCOLO.md` completo; (3) lee esta orden entera; (4) VERIFICA con comandos qué está hecho ya — no confíes en memoria de nadie. Reglas clave: directo a main, commit con pathspec, `git add` solo tus rutas, prohibido clean/reset/stash/ramas, gate global `pnpm typecheck && pnpm lint && pnpm test:unit` (usuario normal, NO root). **Lanza 4 subagentes en paralelo** con ficheros disjuntos; solo tú commiteas; push al cerrar cada tarea.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos, no confíes en memoria. Reglas de siempre: main directo, commit con pathspec (`git commit <tus-rutas> -m`), `git add` solo de TUS rutas, sin clean/reset/stash/ramas, gate GLOBAL por commit (`pnpm typecheck && pnpm lint && pnpm test:unit`, como usuario normal NUNCA root), push al cerrar cada tarea + reporte ≤5 líneas.
 
-ESTADO VERIFICADO al escribir esto (27-08): NADA de lo siguiente está hecho (0/14 runbooks con el formato nuevo; sin tests de listas fijadas; comentarios sin limpiar; fault-compose.test.sh en ROJO). Si al verificar algo YA está verde, sáltalo y dilo en el reporte.
+Cierre anterior excelente (21 runbooks, suite PTY blindada con `test:pty` en el gate, fault-compose verde, −585 comentarios). Cuatro tareas nuevas; la materia prima ya está masticada por MiniMax — tú ejecutas.
 
-## Tarea 1 (CRÍTICA, seguridad) — Blindar la suite PTY (`ops/pty-agent/tests/`)
-1. Tests que fijen POR LITERAL la lista blanca de gobierno y `NEVER_SERVE` de `ops/pty-agent/cauce_pty_agent.py` (hoy: ampliar la blanca a `settings.json` deja 225 verdes mientras el agente puede REESCRIBIR `~/.claude/settings.json`). Ambas direcciones: crecer blanca = rojo; encoger NEVER_SERVE = rojo.
-2. Entorno determinista en setUp (umask 0022, TERM=xterm): hoy hay 3 ERROR + 3 FAIL según el host. Invocador oficial: `python3 -m unittest discover -s ops/pty-agent` (pytest NO existe aquí).
-3. Cobertura de `reap_orphan_agents` (en `ops/pty-agent/cauce-pty-launcher.sh`) con docker fake: mata solo huérfanos del alias con guarda de nombre, respeta al legítimo, tolera vacío.
-4. `READ_ALLOWED_BASENAMES` (constante muerta con comentario de invariante): usarla de verdad o `git rm` con evidencia.
-5. Engánchala al gate: script `"test:pty"` en package.json + entrada en `scripts/test-all.mjs` (respeta su assertMatrixIsComplete) + paso en `.github/workflows/ci.yml`.
+## Tarea 1 — El ANEXO que quedó pendiente: 22 símbolos muertos de tu sector
+Tu sesión anterior cerró antes de que llegara este anexo (censo simbólico, evidencia en `ordenes/reportes/claude-funciones-muertas.md`). Borra cada símbolo (con su test si solo su test lo usa), **re-verificando con `git grep` ANTES de borrar** (hay ediciones en vivo; los números de línea pueden haber derivado — busca por nombre):
+- `TEST_EXPIRED_AGENT_CERTIFICATE` en services/terminal-relay/src/relay-test-fixtures.ts
+- `TEST_EXPIRED_AGENT_PRIVATE_KEY` en services/terminal-relay/src/relay-test-fixtures.ts
+- `isValidCols` en services/terminal-relay/src/session-limits.ts
+- `isValidRows` en services/terminal-relay/src/session-limits.ts
+- `aliasError` en apps/console/src/features/accounts/registry.ts
+- `AgentKey` en apps/console/src/features/live/agent-state.ts
+- `DIARIO_DESDE` en apps/console/src/features/live/historial-rol.ts
+- `adapterSummary` en apps/console/src/features/terminal/fleet.ts
+- `SIN_DATO` en apps/console/src/lib.ts
+- `FairLaneScheduler` en services/dispatcher/src/scheduler.ts
+- `JobLane` en services/dispatcher/src/scheduler.ts
+- `extractCollectors` en apps/console/src/features/accounts/licenses.ts
+- `arnesesSinDirectivaPropia` en apps/console/src/features/config/arneses.ts
+- `ptySessionScroll` en apps/console/src/features/terminal/pty-session.ts
+- `LARGO_DESCRIPCION` en apps/console/src/features/config/areas.ts
+- `faltantesDelJuegoCerrado` en apps/console/src/features/config/arneses.ts
+- `sinConmutablesInertes` en apps/console/src/features/config/campos-inertes.ts
+- `ptySessionGeometria` en apps/console/src/features/terminal/pty-session.ts
+- `sePuedeEditar` en apps/console/src/features/live/ficheros.ts
+- `preferredTerminalMode` en apps/console/src/features/terminal/fleet.ts
+- `perfilYaExiste` en apps/console/src/features/live/perfil.ts
+- `ptySessionRedimensionar` en apps/console/src/features/terminal/pty-session.ts
 
-## Tarea 2 — Runbooks (14 ficheros de `ops/runbooks/`)
-Reescribir CADA uno: ≤80 líneas, secciones fijas "Cuándo usar / Pasos / Verificar efecto / Deshacer", cada comando verificado (ejecútalo si es de solo lectura; márcalo si muta), sin narrativa ni fechas. Los comandos-ya-inexistentes están listados en `ordenes/reportes/claude-revision-ola3.md` §runbooks. Un commit por runbook.
+## Tarea 2 — Duplicados de tu sector (mapa: `ordenes/reportes/minimax-duplicados.md` + `_parcial-dup-console.md`)
+- **El n.º 2 del top-8**: el resolutor de `@import` de CSS copiado **15 veces** en tests de consola, y DIVERGIÓ. Extrae UN helper de test (hogar único bajo el árbol de tests de consola) y haz que las 15 copias lo importen; sobrevive el comportamiento del más completo y anota en el commit qué divergencia mataste.
+- Los **13 grupos de "Consola + tests"** (~580 línea-ocurrencias): consolida cada grupo a hogar único. Si dos copias divergieron, decide con el gate en verde y deja la decisión anotada en el mensaje del commit.
+- NO toques grupos de `packages/`, `services/gateway` ni `ops/` — tienen otros dueños.
 
-## Tarea 3 — Limpieza quirúrgica de comentarios (consola + canales + services)
-Tabla por fichero en `ordenes/reportes/claude-censo-comentarios-basura.md`: borra SOLO narrativo/mutilado/ceremonial (consola ~1.400 líneas; services 192), conserva invariantes compactados, PROHIBIDO tocar comentarios dentro de template literals SQL. Conteo antes/después en cada commit.
+## Tarea 3 — Dientes de tu sector (mapa: `ordenes/reportes/minimax-dientes.md`)
+- Los **matcher-débil** de consola (3) y los de relay/telegram que haya entre los 8 totales: cambia cada matcher por uno que distinga acierto de fallo (el reporte cita el assert exacto).
+- De **"los 20 PEORES"** del reporte: arregla los que caigan en tu sector.
+- Los 74 "assert-sobre-texto" de consola: **NO** los conviertas en masa — solo los citados en el top-20; el resto espera al mega-refactor de consola.
 
-## Tarea 4 — Restos "authentic"
-`ops/scripts/{compose.sh,fault-compose.sh,systemd-stack.sh}` aún aceptan `authentic`; `ops/scripts/fault-compose.test.sh` está ROJO (RC=1). Retirar el caso en los tres + test en verde.
-
-## Tarea 5 — Los >800 no-Codex (`scripts/calidad-base.json`)
-Tests grandes restantes de consola/canales/tests, `ops/pty-agent/rollout-pty.py`, `ops/scripts/update-alias-config.py`: partir byte-puro. NO tocar `cauce_pty_agent.py` ni `cauce-container-runtime.py` (producción).
-
-Reporte final ≤5 líneas por tarea, con evidencia (comandos+salidas), y `git push origin main`.
-
-## ANEXO — funciones muertas de tu sector (censo simbólico, evidencia en ordenes/reportes/claude-funciones-muertas.md)
-Borra cada una (con su test si aplica), re-verificando el grep antes (ediciones en vivo):
-- `TEST_EXPIRED_AGENT_CERTIFICATE` en services/terminal-relay/src/relay-test-fixtures.ts:245
-- `TEST_EXPIRED_AGENT_PRIVATE_KEY` en services/terminal-relay/src/relay-test-fixtures.ts:266
-- `isValidCols` en services/terminal-relay/src/session-limits.ts:180
-- `isValidRows` en services/terminal-relay/src/session-limits.ts:184
-- `aliasError` en apps/console/src/features/accounts/registry.ts:423
-- `AgentKey` en apps/console/src/features/live/agent-state.ts:71
-- `DIARIO_DESDE` en apps/console/src/features/live/historial-rol.ts:25
-- `adapterSummary` en apps/console/src/features/terminal/fleet.ts:125
-- `SIN_DATO` en apps/console/src/lib.ts:7
-- `FairLaneScheduler` en services/dispatcher/src/scheduler.ts:4
-- `JobLane` en services/dispatcher/src/scheduler.ts:1
-- `extractCollectors` en apps/console/src/features/accounts/licenses.ts:471
-- `arnesesSinDirectivaPropia` en apps/console/src/features/config/arneses.ts:92
-- `ptySessionScroll` en apps/console/src/features/terminal/pty-session.ts:278
-- `LARGO_DESCRIPCION` en apps/console/src/features/config/areas.ts:26
-- `faltantesDelJuegoCerrado` en apps/console/src/features/config/arneses.ts:84
-- `sinConmutablesInertes` en apps/console/src/features/config/campos-inertes.ts:78
-- `ptySessionGeometria` en apps/console/src/features/terminal/pty-session.ts:286
-- `sePuedeEditar` en apps/console/src/features/live/ficheros.ts:42
-- `preferredTerminalMode` en apps/console/src/features/terminal/fleet.ts:322
-- `perfilYaExiste` en apps/console/src/features/live/perfil.ts:279
-- `ptySessionRedimensionar` en apps/console/src/features/terminal/pty-session.ts:282
+## Tarea 4 — P14: borrar comentarios por número en consola
+`ordenes/reportes/_parcial-p14-console-src.md` (~96 entradas) y `_parcial-p14-console-tests.md` (~101): borra por número **verificando el ancla** (la primera palabra citada) antes de cada borrado — las particiones de hoy desplazan líneas; si el ancla no coincide, localiza el bloque o salta y anótalo. Ni un byte de sql-strings; invariantes se conservan compactados.
