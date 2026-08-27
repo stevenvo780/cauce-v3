@@ -285,6 +285,7 @@ export function terminal(status: string): boolean {
 }
 
 const telegramRelayAcknowledgement = 'Recibido; estoy trabajando en ello.';
+const ackVentanaSilencioMs = 10 * 60 * 1000;
 
 function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
   if (chatType === 'private') return 'dm';
@@ -1001,6 +1002,20 @@ async publish(input: PublishMessage, options: PublishOptions = {}): Promise<Publ
         && authenticatedOrigin?.adapter === 'telegram'
         && authenticatedOrigin.channel === 'telegram';
       if (authenticatedTelegramIngress && authenticatedOrigin) {
+        const contactoPrevio = await client.query<{ last_inbound_at: Date }>(
+          `SELECT last_inbound_at FROM egress_contacts
+           WHERE tenant_id=$1 AND alias=$2 AND adapter='telegram' AND conversation_id=$3`,
+          [
+            input.tenant_id,
+            input.actor_alias,
+            authenticatedOrigin.conversation_id
+          ]
+        );
+        const ultimoEntrante = contactoPrevio.rows[0]
+          ? contactoPrevio.rows[0].last_inbound_at
+          : null;
+        const acusarAhora = !ultimoEntrante
+          || (Date.now() - new Date(ultimoEntrante).getTime()) > ackVentanaSilencioMs;
         // The only authenticated point where the system learns that a human
         // spoke to this alias. It shares the ingress transaction, so "prior
         // contact" is exactly "a durable inbound message exists". The session is
@@ -1022,7 +1037,7 @@ async publish(input: PublishMessage, options: PublishOptions = {}): Promise<Publ
             authenticated?.session_id === undefined ? null : sha256(authenticated.session_id)
           ]
         );
-        await client.query(
+        if (acusarAhora) await client.query(
           `INSERT INTO adapter_outbox(
              tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
            ) VALUES($1,'telegram','origin_relay',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)

@@ -178,6 +178,15 @@ async function notifyRelays(): Promise<Array<Record<string, unknown>>> {
   return result.rows;
 }
 
+async function acknowledgementRelays(): Promise<Array<{ message_id: string }>> {
+  const result = await pool.query<{ message_id: string }>(
+    `SELECT message_id FROM adapter_outbox
+     WHERE adapter='telegram' AND kind='origin_relay' AND payload->>'relay_kind'='ack'
+     ORDER BY created_at,id`
+  );
+  return result.rows;
+}
+
 /**
  * Real authenticated Telegram ingress so the destination has genuine prior
  * contact. It is routed to a different recipient on purpose, so it does not
@@ -400,6 +409,27 @@ describe('proactive egress idempotency', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.source).toBe('http');
     expect(rows[0]?.idempotency_key).toBe('http:k1');
+  });
+});
+
+describe('Telegram ingress acknowledgement window', () => {
+  it('emits the first ACK, suppresses a repeated ACK, and emits again after ten minutes', async () => {
+    const first = await repository.publish(telegramIngress());
+    expect(await acknowledgementRelays()).toEqual([{ message_id: first.message_id }]);
+
+    await repository.publish(telegramIngress());
+    expect(await acknowledgementRelays()).toEqual([{ message_id: first.message_id }]);
+
+    await pool.query(
+      `UPDATE egress_contacts SET last_inbound_at=now()-interval '11 minutes'
+       WHERE tenant_id='Steven' AND alias='argos' AND adapter='telegram' AND conversation_id=$1`,
+      [CHAT_ID]
+    );
+    const outsideWindow = await repository.publish(telegramIngress());
+    expect(await acknowledgementRelays()).toEqual([
+      { message_id: first.message_id },
+      { message_id: outsideWindow.message_id }
+    ]);
   });
 });
 

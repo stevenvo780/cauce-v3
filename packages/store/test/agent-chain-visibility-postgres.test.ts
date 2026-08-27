@@ -417,7 +417,7 @@ describe('interim chain progress towards Telegram', () => {
     };
   }
 
-  it('announces delegation and returns while siblings are still open', async () => {
+  it('announces the addressed delegation but suppresses a delegated branch return', async () => {
     await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 12 });
     const chain = await telegramChain('progress-basic');
     const root = await nextDelivery(chain.argos);
@@ -429,15 +429,42 @@ describe('interim chain progress towards Telegram', () => {
     await ackWith(chain.kant, first, [], 'branch one reply');
 
     const relays = await progressRelays();
-    expect(relays.map((relay) => relay.stage)).toEqual(['delegated', 'returned']);
+    expect(relays.map((relay) => relay.stage)).toEqual(['delegated']);
     expect(relays.every((relay) => relay.relay_kind === 'ack' && relay.terminal === false)).toBe(true);
     expect(relays.every((relay) => relay.root_message_id === chain.rootMessageId)).toBe(true);
     expect(relays[0]?.reply).toContain('argos delegó en Steven/kant, Steven/socrates');
-    expect(relays[1]?.reply).toContain('quedan 1 rama(s) en curso');
+    expect((await pool.query<{ emitted: number }>(
+      `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
+    )).rows[0]?.emitted).toBe(1);
+  });
+
+  it('preserves denied progress for a delegated branch', async () => {
+    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 12 });
+    const chain = await telegramChain('progress-denied');
+    const seneca = await consumer('Pablo', 'seneca');
+    const root = await nextDelivery(chain.argos);
+    await ackWith(chain.argos, root, [
+      { to: 'seneca', body: 'cross-tenant branch before reverse ACL revocation' }
+    ]);
+    const child = await nextDelivery(seneca);
+    await pool.query(
+      `UPDATE acl_edges SET allow_route=false
+       WHERE from_tenant='Pablo' AND to_tenant='Steven'`
+    );
+
+    await ackWith(seneca, child, [], 'denied branch reply');
+
+    const relays = await progressRelays();
+    expect(relays.map((relay) => relay.stage)).toEqual(['delegated', 'denied']);
+    expect(relays[1]?.reply).toContain('reverse_acl_unavailable');
+    expect(relays.every((relay) => relay.root_message_id === chain.rootMessageId)).toBe(true);
+    expect((await pool.query<{ emitted: number }>(
+      `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
+    )).rows[0]?.emitted).toBe(2);
   });
 
   it('stops exactly at the configured budget with a single capped notice', async () => {
-    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 2 });
+    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 1 });
     const chain = await telegramChain('progress-capped');
     const root = await nextDelivery(chain.argos);
     await ackWith(chain.argos, root, [
@@ -449,10 +476,10 @@ describe('interim chain progress towards Telegram', () => {
     await ackWith(chain.socrates, await nextDelivery(chain.socrates), [], 'two');
 
     const relays = await progressRelays();
-    expect(relays.map((relay) => relay.stage)).toEqual(['delegated', 'capped']);
+    expect(relays.map((relay) => relay.stage)).toEqual(['capped']);
     expect((await pool.query<{ emitted: number }>(
       `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
-    )).rows[0]?.emitted).toBe(2);
+    )).rows[0]?.emitted).toBe(1);
   });
 
   it('never double counts a replayed ACK', async () => {
