@@ -223,27 +223,6 @@ importers:
         specifier: ^8.18.3
         version: 8.21.1
 
-  services/relay-worker:
-    dependencies:
-      '@cauce/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@cauce/store':
-        specifier: workspace:*
-        version: link:../../packages/store
-
-  services/shadow-router:
-    dependencies:
-      '@cauce/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
-      '@cauce/store':
-        specifier: workspace:*
-        version: link:../../packages/store
-      pg:
-        specifier: ^8.16.3
-        version: 8.22.0
-
   services/telegram-bridge:
     dependencies:
       '@cauce/protocol':

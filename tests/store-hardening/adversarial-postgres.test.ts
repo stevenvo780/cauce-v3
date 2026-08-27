@@ -6,8 +6,6 @@ import {
 import {
   CauceRepository, createPool, subscribeDeliveryWakes, withTransaction, type DatabasePool
 } from '@cauce/store';
-import { PostgresShadowRepository } from '../../services/shadow-router/src/repository.js';
-import type { ShadowEnvelope } from '../../services/shadow-router/src/types.js';
 import { PostgresTelegramBridgeRepository } from '../../services/telegram-bridge/src/repository.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -616,7 +614,7 @@ describe('adversarial PostgreSQL store hardening', () => {
     expect(raced.flat()[0]).toMatchObject({ tenant_id: 'Isa', attempt: 1 });
   });
 
-  it('applies migration 005 and fences Telegram cursors and shadow inbox claims', async () => {
+  it('applies migration 005 and fences Telegram cursors', async () => {
     const telegram = new PostgresTelegramBridgeRepository(pool);
     await telegram.initializeCursor('900001', 'Steven', 'kant');
     const first = await telegram.acquirePollLease('900001', 'poller-a', 10_000);
@@ -629,40 +627,6 @@ describe('adversarial PostgreSQL store hardening', () => {
     expect(replacement).toMatchObject({ owner_id: 'poller-b', epoch: 2 });
     await expect(telegram.cursor(first!)).rejects.toThrow(/fenced/);
     await expect(telegram.cursor(replacement!)).resolves.toBe(7);
-
-    const shadow = new PostgresShadowRepository(pool);
-    const envelope: ShadowEnvelope = {
-      direction: 'v2-to-v3',
-      source_event_id: 'shadow-source-1',
-      tenant_id: 'Steven',
-      correlation: { request_id: 'request-1', trace_id: 'trace-1', conversation_key: 'conversation-1' },
-      payload: { text: 'synthetic' },
-      expects_human_reply: false,
-    };
-    await expect(shadow.enqueue(envelope, 'shadow')).resolves.toMatchObject({ duplicate: false });
-    await expect(shadow.enqueue(envelope, 'shadow')).resolves.toMatchObject({ duplicate: true });
-    const [claim] = await shadow.claim('shadow-a', 1, 10_000);
-    expect(claim).toMatchObject({ source_event_id: envelope.source_event_id, attempt: 1 });
-    await expect(shadow.health()).resolves.toMatchObject({
-      processing: 1, owned_processing: 1, orphaned_processing: 0,
-    });
-
-    // A fresh process cannot prove ownership of the still-live lease and must expose it as
-    // orphaned until recovery.  The original process can return a provably unstarted claim
-    // without burning an attempt, after which the replacement owns the exact new token.
-    const replacementShadow = new PostgresShadowRepository(pool);
-    await expect(replacementShadow.health()).resolves.toMatchObject({
-      processing: 1, owned_processing: 0, orphaned_processing: 1,
-    });
-    await shadow.releaseUnstartedInbox(claim!, 'test process stopped before route');
-    await expect(pool.query<{ status: string; attempts: number }>(
-      `SELECT status,attempts FROM shadow_router_inbox WHERE direction=$1 AND source_event_id=$2`,
-      [envelope.direction, envelope.source_event_id],
-    )).resolves.toMatchObject({ rows: [{ status: 'pending', attempts: 0 }] });
-    const [replacementClaim] = await replacementShadow.claim('shadow-b', 1, 10_000);
-    expect(replacementClaim).toMatchObject({ attempt: 1 });
-    await replacementShadow.completeInbox(replacementClaim!);
-    await expect(replacementShadow.claim('shadow-c', 1, 10_000)).resolves.toEqual([]);
   });
 
   it('bounds pool readiness waits and survives ten backend-loss cycles without unhandled rejection', async () => {
