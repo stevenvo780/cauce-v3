@@ -35,8 +35,8 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
 async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (await Promise.resolve().then(check).catch(() => false)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`condition not met within ${timeoutMs}ms`);
 }
@@ -666,28 +666,28 @@ describe('adversarial PostgreSQL store hardening', () => {
         );
         const backendPid = await pid;
         if (cycle === 4 || cycle === 9) {
-          await database.container.restart({ timeout: 0 });
+          await database.container.restart({ timeout: 0 }); const containerHost = database.container.getHost();
+          if (containerHost !== 'external') {
+            const nextUrl = new URL(database.url); const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
+            nextUrl.hostname = network ? database.container.getIpAddress(network) : containerHost;
+            nextUrl.port = String(network ? 5432 : database.container.getMappedPort(5432));
+            if (nextUrl.href !== database.url) {
+              await pool.end(); database.url = nextUrl.href; pool = createPool(database.url);
+              repository = new CauceRepository(pool);
+            }
+          }
         } else {
           await pool.query('SELECT pg_terminate_backend($1)', [backendPid]);
         }
-        const outcome = await transaction;
-        expect(outcome.resolved).toBe(false);
-        expect(outcome.error).toBeDefined();
-        await waitFor(async () => {
-          try {
-            await pool.query('SELECT 1');
-            return true;
-          } catch {
-            return false;
-          }
-        }, 15_000);
+        const outcome = await transaction; expect(outcome.resolved).toBe(false); expect(outcome.error).toBeDefined();
+        await waitFor(() => pool.query('SELECT 1').then(() => true), 60_000);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
-  }, 120_000);
+  }, 180_000);
 
   it('rejects stale job tokens after expiry and reclaims with a new token', async () => {
     const id = await repository.enqueueJob('Steven', 'batch', 0, 'token-test', { value: 1 });

@@ -39,12 +39,10 @@ import {
   registerConsoleRoutesPhase4,
 } from './routes/console.js';
 import { createCoreRoutePhases } from './routes/core.js';
+import { registerConsolePublishIntentRoutes } from './routes/console-publish.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
 
-import {
-  registerLegacyCandidateChainGateRoutes,
-  registerLegacyCandidatePublishIntentRoutes,
-} from './routes/legado-candidato.js';
+import { registerLegacyCandidateChainGateRoutes } from './routes/legado-candidato.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -386,11 +384,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   registerConsoleRoutesPhase2(app, consoleRoutes);
 
-  if (enableLegacyCandidateRoutes) {
-    registerLegacyCandidatePublishIntentRoutes(
-      app, options, repository, consolePublishTelemetry,
-    );
-  }
+  registerConsolePublishIntentRoutes(
+    app, options, repository, consolePublishTelemetry,
+  );
 
   const agentProfiles = registerConsoleRoutesPhase3(
     app, consoleRoutes, publishHandler,

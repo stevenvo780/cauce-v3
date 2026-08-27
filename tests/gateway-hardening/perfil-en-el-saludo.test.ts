@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { WsOutboundSchema } from '@cauce/protocol';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket, type RawData } from 'ws';
+import { capabilities, capabilityStrings } from '@cauce/adapter-sdk';
+import { WsOutboundSchema, type WsOutbound } from '@cauce/protocol';
+import type { DatabasePool } from '@cauce/store';
+import { buildGateway } from '../../services/gateway/src/index.js';
+import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
+import { fakeRepository, noDeliveryWakes } from './helpers.js';
 
 /**
  * Verifica la inclusión del perfil de agente en la trama `hello_ack`, validando compatibilidad
@@ -79,30 +86,126 @@ describe('el esquema del saludo acepta el perfil sin romper a quien no lo espera
   });
 });
 
+const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const sockets: WebSocket[] = [];
+
+afterEach(async () => {
+  for (const socket of sockets.splice(0)) socket.close();
+  await Promise.all(apps.splice(0).map(async (app) => app.close()));
+});
+
+function text(data: RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  return Buffer.from(data).toString('utf8');
+}
+
+function profilePool(): DatabasePool {
+  const result = (rows: unknown[]): { rows: unknown[]; rowCount: number } => ({ rows, rowCount: rows.length });
+  return {
+    query: vi.fn(async (sql: string, values: unknown[] = []) => {
+      const tenantId = String(values[0]);
+      const alias = String(values[1]);
+      if (sql.includes('FROM agent_profiles WHERE')) {
+        return result([{
+          tenant_id: tenantId, alias, purpose: 'operar la flota', role_summary: null,
+          human_brief: null, responsibilities: ['vigilar'], restrictions: ['no desplegar'],
+          tools: ['bash'], operating_rules: ['fallar cerrado'], revision: '1', applied_revision: null,
+        }]);
+      }
+      if (sql.includes('AS ruta')) {
+        return result([{ ruta: true, lectura: true, control: false, notify_rol: true }]);
+      }
+      if (sql.includes('FROM agent_account_bindings binding')) {
+        return result([{
+          provider: 'claude', account_id: 'saldantia', label: null,
+          remaining_percent: '75', window_key: 'weekly',
+        }]);
+      }
+      if (sql.includes('FROM agents agent')) {
+        return result([{
+          harness_id: 'codex', home_directory: '/home/dev', container_name: 'agent-midas',
+          capabilities: ['bash'], enabled: true,
+        }]);
+      }
+      if (sql.includes('FROM egress_destinations')) return result([{ total: '1' }]);
+      if (sql.includes('SELECT membership.alias')) return result([{ alias: 'kant' }]);
+      throw new Error(`unexpected profile query: ${sql}`);
+    }),
+  } as unknown as DatabasePool;
+}
+
+async function hello(
+  app: Awaited<ReturnType<typeof buildGateway>>,
+  alias: string,
+  requestedCapabilities: readonly string[],
+): Promise<WsOutbound> {
+  const port = (app.server.address() as AddressInfo).port;
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': alias },
+  });
+  sockets.push(socket);
+  const frame = new Promise<WsOutbound>((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('hello_ack timed out')), 5_000);
+    deadline.unref();
+    socket.once('message', (data) => {
+      clearTimeout(deadline);
+      const parsed = WsOutboundSchema.safeParse(JSON.parse(text(data)));
+      if (parsed.success) resolve(parsed.data);
+      else reject(parsed.error);
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    socket.once('open', resolve);
+    socket.once('error', reject);
+  });
+  socket.send(JSON.stringify({
+    type: 'hello', version: '3.0', tenant_id: 'Pablo', alias,
+    instance_id: `profile-${alias}`, capabilities: requestedCapabilities,
+  }));
+  return frame;
+}
+
 describe('el gateway no manda el perfil a quien no lo declaró', () => {
-  it('la capability tiene un nombre versionado, como las otras dos', async () => {
-    /*
-     * `agent_profile_v1`, no `agent_profile`. El sufijo es lo que permite cambiar la forma del
-     * campo sin dejar mudos a los adaptadores de la versión anterior: se declara `_v2` y el
-     * gateway sigue mandando `_v1` a quien sólo pida eso. Sin sufijo, el primer cambio de forma es
-     * otra vez el problema del `.strict()`.
-     */
-    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../services/gateway/src/routes/core.ts', import.meta.url), 'utf8'
-    ));
-    expect(fuente).toContain("hello.capabilities.includes('agent_profile_v1')");
+  it('gatea el perfil en dos saludos WebSocket reales según la capability negociada', async () => {
+    const app = await buildGateway({
+      pool: profilePool(),
+      repository: fakeRepository(),
+      authProvider: DevOnlyAuthProvider.forTests(),
+      deliveryWakeSubscriber: noDeliveryWakes,
+      outboxPollMs: 60_000,
+    });
+    apps.push(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+
+    const capable = await hello(app, 'midas', ['agent_profile_v1']);
+    expect(capable).toMatchObject({
+      type: 'hello_ack',
+      agent_profile: {
+        perfil: {
+          tenant_id: 'Pablo', alias: 'midas', purpose: 'operar la flota',
+          role_summary: null, human_brief: null, responsibilities: ['vigilar'],
+          restrictions: ['no desplegar'], tools: ['bash'], operating_rules: ['fallar cerrado'],
+        },
+        hechos: {
+          permisos: { ruta: true, lectura: true, control: false, notificacion: true },
+          cuotas: [{ proveedor: 'claude', cuenta: 'saldantia', limite: '75% disponible en la ventana weekly' }],
+          arnes: {
+            harness: 'codex', home: '/home/dev', contenedor: 'agent-midas', capacidades: ['bash'],
+          },
+          destinos: ['kant'],
+        },
+      },
+    });
+
+    const legacy = await hello(app, 'argos', []);
+    expect(legacy).toMatchObject({ type: 'hello_ack' });
+    expect(legacy).not.toHaveProperty('agent_profile');
   });
 
-  it('el adaptador declara esa MISMA capability, o el gateway no le mandaría nada', async () => {
-    /*
-     * Las dos puntas tienen que nombrar la misma cadena. Un desajuste de una letra deja el campo
-     * sin mandarse para siempre, sin error: el gateway cree que el adaptador no lo pidió y el
-     * adaptador espera un campo que no llega. Esta prueba es la única que puede verlo, porque el
-     * tipo de TS no cruza los dos ficheros.
-     */
-    const fuente = await import('node:fs/promises').then((fs) => fs.readFile(
-      new URL('../../packages/adapter-sdk/src/harnesses/shared.ts', import.meta.url), 'utf8'
-    ));
-    expect(fuente).toContain('agent_profile_v1: true');
+  it('el adaptador codifica el mismo nombre versionado en el hello', () => {
+    const requested = capabilityStrings(capabilities('codex', true));
+    expect(requested.filter((value) => value === 'agent_profile_v1')).toHaveLength(1);
+    expect(requested).not.toContain('agent_profile');
   });
 });

@@ -18,6 +18,7 @@ const laterVersions = [
   '034_terminal_relay_instance_fencing.sql',
   '035_agent_profile_runtime_adoption.sql',
   '036_shadow_router_target_phase.sql',
+  '037_console_publish_intent_indexes.sql',
 ] as const;
 
 let database: TestDatabase;

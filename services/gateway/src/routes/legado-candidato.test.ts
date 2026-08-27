@@ -9,9 +9,12 @@ interface RouteKey {
   readonly url: string;
 }
 
-const LEGACY_ROUTES: readonly RouteKey[] = [
+const CONSOLE_PUBLISH_ROUTES: readonly RouteKey[] = [
   { method: 'POST', url: '/v3/console/publish-intents' },
   { method: 'POST', url: '/v3/console/publish-intents/confirm' },
+];
+
+const CHAIN_GATE_ROUTES: readonly RouteKey[] = [
   { method: 'GET', url: '/v3/console/chain-gates' },
   { method: 'POST', url: '/v3/console/chain-gates/:gateId/answer' },
   { method: 'POST', url: '/v3/console/chain-gates/:gateId/cancel' },
@@ -66,21 +69,19 @@ describe('legacy-candidate route flag', () => {
   it.each([
     ['omitted', undefined],
     ['true', true],
-  ] as const)('registers all five routes when the flag is %s', async (_label, flag) => {
+  ] as const)('registers publish and chain-gate routes when the flag is %s', async (_label, flag) => {
     const { app } = await gateway(flag);
 
-    expect(LEGACY_ROUTES.map((route) => hasRoute(app, route))).toEqual([
-      true, true, true, true, true,
-    ]);
+    expect(CONSOLE_PUBLISH_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
+    expect(CHAIN_GATE_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
     expect(NEIGHBOR_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
   });
 
-  it('removes only the five candidate routes from their live neighbors when disabled', async () => {
+  it('keeps publish routes live and disables only chain-gate routes when the flag is false', async () => {
     const { app } = await gateway(false);
 
-    expect(LEGACY_ROUTES.map((route) => hasRoute(app, route))).toEqual([
-      false, false, false, false, false,
-    ]);
+    expect(CONSOLE_PUBLISH_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
+    expect(CHAIN_GATE_ROUTES.every((route) => hasRoute(app, route))).toBe(false);
     expect(NEIGHBOR_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
   });
 

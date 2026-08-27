@@ -31,6 +31,9 @@ const profileRuntimeDownPath = new URL(
 const shadowPhaseDownPath = new URL(
   '../migrations/down/036_shadow_router_target_phase.sql', import.meta.url,
 );
+const consolePublishIndexesDownPath = new URL(
+  '../migrations/down/037_console_publish_intent_indexes.sql', import.meta.url,
+);
 
 async function runSql(url: URL): Promise<void> {
   await pool.query(await readFile(url, 'utf8'));
@@ -62,6 +65,7 @@ async function downProfileDependentsIfApplied(): Promise<void> {
   // present, so exercise the real dependency order instead of using CASCADE or deleting ledger
   // rows. Migrations 029-034 do not reference agent_profiles and remain deliberately untouched.
   const dependents = [
+    ['037_console_publish_intent_indexes.sql', consolePublishIndexesDownPath],
     ['036_shadow_router_target_phase.sql', shadowPhaseDownPath],
     ['035_agent_profile_runtime_adoption.sql', profileRuntimeDownPath],
     ['028_canonical_agent_role.sql', canonicalDownPath],

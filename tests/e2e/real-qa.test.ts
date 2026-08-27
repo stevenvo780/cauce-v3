@@ -272,7 +272,7 @@ describe('real external QA harness', () => {
     await declareDeliveryConsumers([['Pablo', 'seneca', 'openclaw']]);
     const postgresMessage = await publishForRestart('Pablo', 'seneca', 'grp.steven');
     await database.container.restart({ timeout: 30_000 });
-    await waitFor(async () => database.pool.query('SELECT 1').then(() => true).catch(() => false), 45_000);
+    await reconnectDatabaseAfterContainerRestart();
     await consumeAfterRestart('Pablo', 'seneca', postgresMessage);
     results.push({ name: 'PostgreSQL restart preserves queued delivery', status: 'passed', evidence: 'real' });
 
@@ -323,6 +323,31 @@ async function restartGateway(): Promise<void> {
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address() as AddressInfo;
   httpUrl = `http://127.0.0.1:${address.port}`;
+}
+
+async function reconnectDatabaseAfterContainerRestart(): Promise<void> {
+  const containerHost = database.container.getHost();
+  let target = containerHost;
+  if (containerHost !== 'external') {
+    const endpoint = new URL(database.url);
+    const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
+    endpoint.hostname = network ? database.container.getIpAddress(network) : containerHost;
+    endpoint.port = String(network ? 5432 : database.container.getMappedPort(5432));
+    database.url = endpoint.toString();
+    database.pool.options.connectionString = database.url;
+    target = `${endpoint.hostname}:${endpoint.port}`;
+  }
+
+  let lastError: unknown;
+  await waitFor(async () => database.pool.query('SELECT 1').then(() => true).catch((error: unknown) => {
+    lastError = error;
+    return false;
+  }), 45_000).catch((error: unknown) => {
+    throw new Error(
+      `database pool did not reconnect to ${target}`,
+      { cause: lastError ?? error },
+    );
+  });
 }
 
 async function publishForRestart(tenant: 'Miguel' | 'Pablo', alias: string, room: string): Promise<string> {

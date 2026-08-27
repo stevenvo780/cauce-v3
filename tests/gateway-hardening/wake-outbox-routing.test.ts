@@ -355,7 +355,7 @@ describe('gateway selective durable wake routing', () => {
       return [wakeEvent(worker, recipient.tenant_id, recipient.alias)];
     });
     repository.ackOutbox = vi.fn<NonNullable<GatewayRepository['ackOutbox']>>(
-      async () => ({ status: 'failed', applied: false })
+      async () => ({ status: 'sent', applied: false })
     );
     const complete = vi.mocked(repository.completeOutbox!);
     const { app, port } = await start(repository, { wakePumpTelemetry: telemetry });
@@ -365,7 +365,10 @@ describe('gateway selective durable wake routing', () => {
     enabled = true;
     await waitFor(() => sawWake(connection));
     await waitFor(() => vi.mocked(repository.ackOutbox).mock.calls.length === 1);
-    await waitFor(() => error.mock.calls.some(([reason]) => fencedLogged(reason)));
+    await waitFor(() => error.mock.calls.some(([reason]) =>
+      reason instanceof StoreError
+      && reason.code === 'fenced'
+      && reason.message === 'wake outbox ACK was fenced'));
     expect(sawWake(connection)).toBe(true);
     expect(complete).not.toHaveBeenCalled();
     const fencedSnapshot = telemetry.snapshot();

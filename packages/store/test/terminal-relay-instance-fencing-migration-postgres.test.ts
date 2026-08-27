@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseClient, DatabasePool } from '../src/index.js';
@@ -17,6 +17,9 @@ const down035Path = new URL(`../migrations/down/${version035}`, import.meta.url)
 const version036 = '036_shadow_router_target_phase.sql';
 const up036Path = new URL(`../migrations/${version036}`, import.meta.url);
 const down036Path = new URL(`../migrations/down/${version036}`, import.meta.url);
+const version037 = '037_console_publish_intent_indexes.sql';
+const up037Path = new URL(`../migrations/${version037}`, import.meta.url);
+const down037Path = new URL(`../migrations/down/${version037}`, import.meta.url);
 const relayInstanceId = 'a'.repeat(64);
 const relayBootId = '11111111-1111-4111-8111-111111111111';
 
@@ -28,15 +31,19 @@ let up035: string;
 let down035: string;
 let up036: string;
 let down036: string;
+let up037: string;
+let down037: string;
 
 beforeAll(async () => {
-  [up, down, up035, down035, up036, down036] = await Promise.all([
+  [up, down, up035, down035, up036, down036, up037, down037] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
     readFile(up035Path, 'utf8'),
     readFile(down035Path, 'utf8'),
     readFile(up036Path, 'utf8'),
     readFile(down036Path, 'utf8'),
+    readFile(up037Path, 'utf8'),
+    readFile(down037Path, 'utf8'),
   ]);
   database = await startTestDatabase();
   pool = database.pool;
@@ -99,6 +106,34 @@ async function restoreLatestSchema(): Promise<void> {
   await pool.query(
     `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version036],
   );
+  if (!await consolePublishIndexesExist()) await pool.query(up037);
+  await markConsolePublishIndexesApplied();
+}
+
+async function markConsolePublishIndexesApplied(): Promise<void> {
+  await pool.query(
+    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version037],
+  );
+  await pool.query(
+    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
+     VALUES($1,$2,'applied-atomically')
+     ON CONFLICT(version) DO UPDATE SET
+       source_sha256=EXCLUDED.source_sha256,
+       source_origin=EXCLUDED.source_origin`,
+    [version037, createHash('sha256').update(up037).digest('hex')],
+  );
+}
+
+async function consolePublishIndexesExist(): Promise<boolean> {
+  const result = await pool.query<{ exists: boolean }>(
+    `SELECT to_regclass('public.audit_events_console_publish_key_037_idx') IS NOT NULL AS exists`,
+  );
+  return result.rows[0]?.exists === true;
+}
+
+async function removeLatestConsolePublishIndexes(): Promise<void> {
+  if (await consolePublishIndexesExist()) await pool.query(down037);
+  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
 }
 
 async function shadowPhaseExists(): Promise<boolean> {
@@ -121,6 +156,7 @@ beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query('DELETE FROM terminal_sessions');
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeLatestConsolePublishIndexes();
   await removeLatestShadowPhase();
   await removeLatestProfileLayer();
   if (await columnExists()) await pool.query(down);
