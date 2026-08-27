@@ -1,22 +1,20 @@
-# Codex — ORDEN ACTIVA (sesión larga; paraleliza en oleadas de 4; sector: store + gateway + adapter/protocol + ops/scripts)
+# Codex — ORDEN ACTIVA (sesión larga; oleadas de 4; sector: store + gateway + protocol/adapter-sdk/mcp + ops/{scripts,tests,harness,schemas})
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. OJO: el árbol CAMBIÓ esta noche — `apps/console` ahora es `console/` en la raíz, `deploy/` está agrupado por consumidor (`runtime/`, `console/`, `postgres/`), y las migraciones 029/036 no existen. Reglas de siempre: main directo, commit con pathspec, sin clean/reset/stash, gate global por commit COMO USUARIO NORMAL con `umask 022`, push por tarea + reporte ≤5 líneas.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. Evidencia madre: `ordenes/reportes/claude-megaauditoria.md` §3.1. Reglas: main directo, pathspec, sin clean/reset/stash, gate como usuario normal con `umask 022` (correr como root ahora está BLOQUEADO por guardia), **COMMIT+PUSH AL CERRAR CADA TAREA — tu ronda anterior dejó la cosecha sin commitear y las 2 tareas difíciles sin tocar: esta vez las difíciles van PRIMERO.**
 
-## Tarea 1 — El rojo determinista de `ops/tests/container-supervisor.test.mjs` (diagnóstico ya masticado)
-Falla SIEMPRE en el mismo punto: el subtest de flock (línea ~1127) — `waitForLogOrExit` (timeout fijo 15s, línea ~293) agota esperando que el PRIMER supervisor lanzado llegue a su barrera de docker-exec falso; el proceso NO sale (no es "exited before barrier"), se CUELGA antes del exec. Datos: llegó en su forma actual en `c7345da` (26-08); `validate.sh` abortaba antes (digest rojo, ya arreglado), así que **plausiblemente jamás pasó en esta máquina**; falla igual aislado (16 min de run). Investiga arnés vs producto: ¿el supervisor real (`ops/scripts/container-adapter-supervisor.sh`) se bloquea en el flock/gate del fixture, o el fixture arma mal la barrera? Arregla la causa raíz (si es producto, es un cuelgue REAL de arranque); prueba con el test completo en verde y pega la duración.
+## Tarea 1 (CARRYOVER, obligatoria antes que nada) — el rojo determinista del supervisor
+`ops/tests/container-supervisor.test.mjs` falla SIEMPRE en la barrera de flock (~línea 1127; `waitForLogOrExit` 15s, ~línea 293): el primer supervisor lanzado se CUELGA antes del docker-exec falso (no sale — se queda). Llegó en `c7345da` y plausiblemente jamás pasó en esta máquina. Investiga arnés vs producto (¿`container-adapter-supervisor.sh` se bloquea en el flock del fixture, o el fixture arma mal la barrera?). Si es producto, es un cuelgue REAL de arranque. Cierra con el test completo VERDE y pega la duración.
 
-## Tarea 2 — Dientes de tu sector (mapa: `ordenes/reportes/minimax-dientes.md`)
-- **Los 14 skips ambientales** (12 en `packages/adapter-sdk/test/shared-session.test.ts` por tmux + 2 en `harnesses.test.ts` por plataforma): son el corazón del adapter y el gate NUNCA los corre (saltan si no hay tmux). Decide y ejecuta: garantizar tmux en el entorno del gate y quitar el skip, o convertir el skip en FALLO ruidoso cuando falte tmux. Que el gate los corra de verdad.
-- Los matcher-débil restantes de packages/services (de los 8 del reporte; consola ya está).
-- De "los 20 PEORES": los de tu sector.
+## Tarea 2 (CARRYOVER, obligatoria) — los 14 skips ambientales
+12 en `packages/adapter-sdk/test/shared-session.test.ts` (tmux) + 2 en `harnesses.test.ts` (plataforma). El gate NUNCA los corre. Garantiza tmux en el entorno del gate y quita el skip, o convierte la ausencia en FALLO ruidoso. Que el gate los ejecute de verdad y pega el conteo.
 
-## Tarea 3 — Duplicados de tu sector (mapa: `ordenes/reportes/minimax-duplicados.md` + `_parcial-dup-backend.md` + `_parcial-dup-ops.md`)
-Del top-8 (el #1 de ops/cli+guardias NO es tuyo — lo ejecuta Claude, sector suyo): **#3** `stringField` ×7 según grep de hoy (una acepta string vacío — unifica con la semántica ESTRICTA; decide explícitamente si `registry.ts` entra); **#4** la forma del ACK de outbox ×3 (unifica en protocol); **#5** `EgressDestinationRow` vs `DestinationRow`; **#6** la whitelist de `container_ops_digest.py` duplicada dentro de su test (el test no prueba nada — haz que lea la real); **#7** el mapa tenant→alias ×3 en `ops/harness/` (OJO: harness se COPYa a la imagen; al unificar EXCLUYE las entradas de pablo — tenant retirado); **#8** `fakePool()`: 3 definiciones reales hoy (password-auth.test, oidc-bff.test, tests/gateway-hardening/helpers.ts — esta última es compartida: coordina, no la muevas sin avisar en tu reporte). Después los 18 grupos de backend (~497 línea-ocurrencias). Hogar único por grupo, gate por commit.
+## Tarea 3 — Lista §3.1 de la mega-auditoría (los ejecutables)
+1. `ops/scripts/validate.sh:6,197`: amplia ambos globs a los 10 `.sh` fuera (empieza por `scripts/test.sh`).
+2. `packages/mcp-fleet-monitor/package.json`: añade `esbuild` (pin de la raíz) y `@types/pg` a devDependencies (fallos verificados ocultando los de la raíz).
+3. `packages/store/src/repository/messages/_insert.ts` nuevo: `insertMessage`/`insertDelivery` con lista de columnas exportada; migra los 7 INSERT de messages y 6 de deliveries (y el INSERT…SELECT de `outbox/operator.ts:227`) en el MISMO cambio.
+4. `packages/protocol/src/schemas.ts` (1.093): parte por dominio de mensaje, barril re-export intacto.
+5. `ops/scripts/host-backup.sh:102`: quita la fecha del comentario, conserva la restricción.
+6. `packages/mcp-fleet-monitor/src/server.ts:253,261`: `shutdown(signal)` con try/catch, `process.once(..., () => { void shutdown(...) })`.
+7. Traspaso del ACK: avisa en tu reporte que `services/telegram-bridge/src/types.ts` (Gemini) puede importar de `@cauce/protocol/outbox-contracts` — dato: tus campos son `readonly`, los suyos mutables.
 
-## Tarea 4 — P14 por número en tu sector
-`ordenes/reportes/minimax-lineas-p14.md` + `_parcial-p14-store.md` + `_parcial-p14-services.md`: borra por número verificando ancla (primera palabra); las particiones de hoy desplazaron líneas. Ni un byte de sql-strings.
-
-## Recordatorios permanentes
-- Migraciones 029/036 NO existen — no las resucites; el runner tolera huecos.
-- Bases `cauce_test*` externas viejas: recréalas (huella de migraciones cambió). `cauce-test-zeus` (puerto 15433) sigue vivo con conexiones: coordina antes de tocarlo.
-- `ops/private/credentials/` PROHIBIDO tocar (regla nueva del protocolo).
+## Vigilancia (NO tocar hoy): `session-control.ts` (785), `container-adapter-supervisor.sh` (976), `chain-control/materialization.ts` (778), `mutations.ts` (728), `runner.mjs` (718) — no los engordes.

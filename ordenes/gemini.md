@@ -1,20 +1,17 @@
-# Gemini — ORDEN ACTIVA (sesión nueva; sector: consola + terminal-relay + telegram-bridge)
+# Gemini — ORDEN ACTIVA (sesión nueva; sector: console + terminal-relay + telegram-bridge + dispatcher + ops/pty-agent + ops/runbooks)
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. OJO: el árbol CAMBIÓ esta noche — **tu sector ya NO está en `apps/console`: está en `console/` en la raíz** (apps/ desapareció; la tabla de sectores ya dice `console/**`). Reglas de siempre: main directo, pathspec, sin clean/reset/stash, gate global por commit como usuario normal con `umask 022`, push por tarea + reporte ≤5 líneas.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. Evidencia madre: `ordenes/reportes/claude-megaauditoria.md` §3.2 (líneas exactas ahí). Reglas de siempre + `umask 022`; commit+push POR TAREA (tu mv de ayer quedó horas en el índice).
 
-## Tarea 1 — Retirada de vistas muertas (veredicto razonado FINAL, radio de explosión exacto)
-El dueño delegó el razonamiento y está hecho (evidencia: `plan-reestructura/plan-de-cierre.md` §3). Ejecuta EXACTAMENTE esto y nada más:
-- **`jobs` entera**: `console/src/features/landing/JobsRetiredNotice.tsx` (20 LOC) + su import y fila en `App.tsx` (~:10 y ~:93) + `DESTINOS.jobs`/`RUTA_DIRECTA.jobs` en `App.invariantes.test.tsx` + el caso de `App.test.tsx` (~:255-264). `RouteNotFound` ya cubre el caso mejor.
-- **`chains` entera**: `ChainPanel.tsx` (121) + `ChainPanel.test.tsx` + `TabCadena` en `AgentDrawer.tsx` (~:345-385) + el chip-list de traces y el estado `traceId`/`onTrace` que `LiveFleetPage` le pasa + `api/types/chains.ts` (66) + `getAgentChain` en `api/client/agent-client.ts:191`. **CUIDADO**: `TabEntregas` hace `onTrace(id)+onTab('cadena')` — quita ese salto o queda un botón muerto. El endpoint del gateway NO lo toques (arqueo posterior, otro sector).
-- **`hypergraph.css`** (256 LOC, huérfano real — el hipergrafo vivo usa `live-hypergraph.css`, clases `.lhg-*` vs `.hg-*`): bórralo + sus 2 entradas en las listas blancas de `styles.legibilidad.test.ts:19` y `styles.tipografia.test.ts:17` en el MISMO commit.
-- **Alias `adapters`**: la línea `adapters: ''` de ROUTE_ALIASES en `App.tsx` (~:111). `HarnessStrip` VIVE (lo monta la Portada) — no lo toques.
-- **PROHIBIDO tocar**: `audit`, `relays` (son pestañas vivas de /observability), `fleet/:tenant/:alias` (único deep-link al TUI desde /messages), `role-brief-tab` (capa 1 del editor de directivas + único camino de rollback del rol), y todo el resto de `features/topology/` (es el MOTOR DE LAYOUT de /live).
+## Tarea 1 — terminal-relay: primeras 14 suites de su vida
+`pnpm --filter @cauce/terminal-relay test` (el filter ya está cableado en `test:services`). Jamás se han ejecutado: presupuesta arreglos, no solo el run. Cierra con el conteo verde.
 
-## Tarea 2 — Renombre anti-purgas: `features/topology/` → `features/live/hypergraph/`
-El nombre "topology" es lo que hace que cada auditoría proponga borrar el motor de /live. Tras la Tarea 1, `git mv` de lo que queda en `console/src/features/topology/` (hypergraph-layout.ts, layout-{nodes,geometry,labels}.ts, hypergraph-layout.test.ts, AclEdgeList.tsx, TenantCards.tsx) a `console/src/features/live/hypergraph/`, Y FUSIONA ahí también el actual `console/src/features/live/live-hypergraph/FlowArrow.tsx` (una sola carpeta, no dos; ese fichero tiene un import roto pendiente a '../../topology' — arréglalo en la fusión), reapuntando TODOS los importadores (grep primero: LiveHypergraph, FlowArrow, LiveFleetLegend, agent-state-derivation.test, y los internos en cadena). mv + reapunte en el mismo commit (el reapunte es la segunda mitad del mv), gate verde.
+## Tarea 2 — La consola gana chequeo de tipos (el hallazgo #2 del sistema)
+`console/eslint.config.js:10` → `recommendedTypeChecked` + `projectService` (replica `eslint.config.js:18-25` de la raíz con sus 2 ajustes). EN DOS COMMITS: config con reglas ruidosas en `warn` → luego `error`. Después: **las 31 `no-floating-promises` de PRODUCCIÓN** (lista exacta con líneas en §3.2.3 — AccountsPage, FleetAgentDetailPage, LiveFleetPage, MessagesPage, ObservabilityPage, SessionStage, TerminalPage). Es el único hallazgo de toda la auditoría que ve el usuario final.
 
-## Tarea 3 — Dientes de consola restantes
-De `ordenes/reportes/minimax-dientes.md`: los "assert-sobre-texto" de consola citados en el top-20 (SOLO esos — el resto espera al mega-refactor).
+## Tarea 3 — Las 20 citas fichero:línea rotas (tabla completa en §3.2.4)
+Corrígelas verificando cada destino con grep ANTES de escribirlo. PRIORIDAD: las 3 de `selfRoleBrief` (función que NO EXISTE sosteniendo decisiones de producto). Y `campos-inertes.test.ts:23`: cambia el match de coordenada por match de símbolo (hoy es un test verde certificando una línea imposible).
 
-## Tarea 4 — Rebaba del renombre en tu sector
-`git grep -n "apps/console" -- console/ services/terminal-relay services/telegram-bridge` — si queda alguna mención en comentarios/docs de TU sector, corrígela (el código ya está limpio; esto es caza de prosa que mienta).
+## Tarea 4 — Dedup de tu sector (§3.2.8-15, mapa exacto ahí)
+`useFocusTrap` (único dup de producción), fixtures de relay (grant/CLAIM_TOKEN ×3, agentHello ×7), fakes del bridge (×2), ticket helper de terminal-pty (×3), agent-state fixtures, ConfigPage helpers (×3), renombre `navigation.ts→router.ts`, y recibe el ACK de Codex (`types.ts` importa de protocol + `effect_count?`).
+
+## Tarea 5 — Dos fechas narradas: `filtro-de-colas.ts:7` y `role-brief.ts:55` (regla 4).

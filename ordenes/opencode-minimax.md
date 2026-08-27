@@ -1,17 +1,18 @@
-# OpenCode/MiniMax — ORDEN ACTIVA (sesión nueva; 4 subagentes; verificación masiva post-purga)
+# OpenCode/MiniMax — ORDEN ACTIVA (sesión nueva; 4 subagentes; verificación mecánica masiva)
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos, no con memoria. Reglas: main directo, commit con pathspec, sin clean/reset/stash, nada de código de producto (tu producto son reportes y docs de tu sector). **4 subagentes en paralelo** (no 6: rate limit). Contexto del día: el dueño dictó que la flota REAL es lo que está activo en la BD (Pablo se retiró); se borraron las migraciones-ficción 029 y 036 con toda su maquinaria física (manifests, units, historicalAliases), más ~200 ficheros cambiados hoy entre particiones y purgas. Tus censos anteriores quedaron parcialmente desactualizados — esta ronda es ponerlos al día y cazar lo que miente.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. Evidencia madre: `ordenes/reportes/claude-megaauditoria.md` §3.3. Reglas: 4 subagentes máximo, nada de código de producto, push por tarea.
 
-## Tarea 1 — `docs/mapa-de-ficheros.md`: refresco TOTAL post-purga
-Es tuyo (114K) y hoy el árbol cambió masivamente. Verifica CADA entrada contra `git ls-files` HOY: ficheros que ya no existen (029/036, manifests de pablo, dlq si cayó, particiones renombradas), ficheros NUEVOS sin entrada (los módulos partidos de hoy: `repository/config/publish-policy.ts`, `routes/console/*`, `session-control/targets.ts`, `shared-session/session/*`, etc.), y cifras de líneas desviadas >20%. Edita el mapa directamente (es tu sector) y reporta el delta en ≤10 líneas.
+## Tarea 1 — Censo de TODAS las citas `fichero:línea` del árbol vivo (insumo del gate G7)
+Extrae con regex toda coordenada `ruta.ext:NNN` en comentarios/JSDoc/strings de console/, services/, packages/, ops/, scripts/, tests/. Por cada una: ¿el fichero existe? ¿tiene ≥NNN líneas? Entregable `ordenes/reportes/minimax-citas-rotas.md`: cita → veredicto → destino probable. (Gemini ya corrige las 20 conocidas de console/features/config — exclúyelas.)
 
-## Tarea 2 — Censo "docs que MIENTEN" (la contaminación más peligrosa)
-Todo doc que afirme algo falso contamina a cada IA que lo lea. Recorre: `README.md` raíz, `AGENTS.md`, `docs/arquitectura.md`, `ops/README.md`, los 14 runbooks de `ops/runbooks/`, y los README de packages/services. Para CADA afirmación factual (rutas, números, comandos, nombres de servicios, estados "X está en Y"), verifícala con un comando HOY. Entregable `ordenes/reportes/minimax-docs-que-mienten.md`: tabla doc → línea → afirmación → realidad medida → corrección propuesta. Los docs de TU sector (docs/) corrígelos tú directamente; los demás (AGENTS.md, READMEs de sectores ajenos) solo repórtalos — el integrador aplica.
+## Tarea 2 — Matriz de cobertura fichero → gate
+Para CADA fichero versionado: qué lo toca (eslint / bash -n / shellcheck / compile() / tsc / suite / **NINGUNO**), con la columna NINGUNO primero. Entregable `ordenes/reportes/minimax-cobertura-gate.md`. Nota: calidad.mjs ahora también ve ejecutables con shebang; verifica esa cobertura nueva.
 
-## Tarea 3 — Mapa de consumidores de credenciales (insumo del CLI integral del dueño)
-El dueño quiere una carpeta git-ignorada con TODAS las credenciales y a futuro un CLI integral de cauce. Necesitamos el mapa completo de consumo: qué código/script/unit lee qué ruta de `/etc/cauce-v3/**` (pki, secrets, aliases, telegram-runtime, terminal), qué variables `CAUCE_*_PATH` existen y quién las consume (busca en deploy/compose*.yaml, services/*/src/config*, ops/scripts, ops/systemd, packages/adapter-sdk). SOLO LECTURA de código y configs — JAMÁS imprimas el VALOR de un secreto, solo rutas y consumidores. Entregable `ordenes/reportes/minimax-mapa-credenciales.md`: ruta → quién la lee → para qué → cómo se rota hoy (si un runbook lo dice).
+## Tarea 3 — Auditoría del trinquete completo
+Las ~23 entradas de `lineas` y 32 de `fechas` de `scripts/calidad-base.json` contra el fichero real HOY: tabla de rancias (baseline >10% sobre lo real). El aviso automático ya existe (G8) — tu tabla confirma que no se le escapa nada.
 
-## Tarea 4 — Re-censo PTY huérfanos v2 (para el kill-list de la ventana)
-El censo anterior (`minimax-huerfanos.md`) quedó viejo: el bucle se calmó (launcher arreglado) y el dueño decidió que `heraclito`/`tales` (Jhon) están OPERATIVOS — fuera del kill-list. Re-mide HOY con comandos de solo lectura (docker ps, docker exec ... ps, logs recientes del relay): qué agentes pty viven en cada contenedor, churn de los últimos 2 días, y recalcula el kill-list SOLO con procesos demostrablemente muertos/duplicados de la flota real (11 alias en este host según `ops/container-aliases.json`; salva es de Isa y operativo). Entregable `ordenes/reportes/minimax-huerfanos-v2.md` con el kill-list final y el comando exacto por fila (NO ejecutes ningún kill).
+## Tarea 4 — Ejecuta TUS rojos del censo de docs
+De tu `ordenes/reportes/minimax-docs-que-mienten.md` (56 ROJO): corrige DIRECTAMENTE los que caen en docs/** (tu sector); los de README de otros sectores, déjalos en una tabla de traspaso por sector al final del reporte. El integrador reparte.
 
-Push al cerrar cada tarea + reporte ≤5 líneas por tarea.
+## Tarea 5 — Censo de propiedad del checkout
+Los ficheros root:root restantes (find -user root, fuera de .git/node_modules): lista + chown exacto por fila, SIN ejecutar. (La guardia anti-root ya bloquea la fuente; esto limpia el residuo histórico.)
