@@ -158,7 +158,6 @@ export class CauceApi {
   private boundRequest = <T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> =>
     this.request<T>(path, init, options);
 
-  // System & Auth
   login(email: string, password: string): Promise<ConsoleAuthState> {
     return systemApi.login(this.boundRequest, email, password, {
       setBffSessionSupported: (v) => { this.bffSessionSupported = v; },
@@ -225,7 +224,6 @@ export class CauceApi {
     return systemApi.getQuotas(this.boundRequest);
   }
 
-  // Messaging
   listMessages(): Promise<MessagePage> {
     return messagingApi.listMessages(this.boundRequest);
   }
@@ -270,7 +268,6 @@ export class CauceApi {
     return messagingApi.listOriginRelays(this.boundRequest);
   }
 
-  // Agent
   getFleetActivity(): Promise<FleetActivitySnapshot> {
     return agentApi.getFleetActivity(this.boundRequest);
   }

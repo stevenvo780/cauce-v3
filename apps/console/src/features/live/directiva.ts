@@ -24,12 +24,8 @@ function normalizar(texto: string): string {
 }
 
 /**
- * Los giros con los que la flota escribe REALMENTE la autonomía y los permisos.
- *
- * Salen de leer los 14 briefs de producción, no de imaginar sinónimos: todos tienen la misma
- * forma «… AUTONOMIA: decidí y actuá vos. Pedí permiso SOLO si…». Se buscan giros, no palabras
- * sueltas, porque «permiso» a secas aparece en manuales legítimos («el fichero necesita permiso
- * de lectura») y marcarlo ahí sería un guardia que grita en falso.
+ * Giros para detectar declaraciones de autonomía y permisos.
+ * Se buscan giros y no palabras sueltas para evitar falsos positivos.
  */
 const GIROS_DE_AUTONOMIA: Array<{ patron: RegExp; etiqueta: string }> = [
   { patron: /\bautonomia\b/, etiqueta: 'autonomía' },

@@ -1,9 +1,6 @@
 /**
  * Lecturas del inventario de licencias (`GET /v3/console/config`) cruzadas contra la muestra del
- * recolector de cuota. Este módulo tenía su propia página, `LicensesPage`; 
- * página vive fusionada; 
- * (`features/quotas/ConsumptionSection`). Acá queda sólo la lógica: extractores, frescura, consumo
- * por cuenta, asignaciones y huérfanos.
+ * recolector de cuota: extractores, frescura, consumo por cuenta, asignaciones y huérfanos.
  */
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import type {

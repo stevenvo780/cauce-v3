@@ -216,10 +216,7 @@ export class AdapterEngine {
   }
 
   /**
-   * Un latido de cola que el gateway no aplicó. Deja rastro y nada más: no confirma la garra (el
-   * watchdog debe seguir corriendo) ni la da por perdida (nadie la perdió). Existe para que un
-   * gateway sin la renovación en fase 'accepted' degrade a "la entrega encolada vence sola y se
-   * reintenta" en vez de morir con CLAIM_OWNERSHIP_LOST, que es no-retryable.
+   * Registra un latido de cola no aplicado sin confirmar ni abortar el lease.
    */
   logDroppedQueueRenewal(deliveryId: string, attempt: number): void {
     this.logger({
@@ -253,10 +250,7 @@ export class AdapterEngine {
     for (const record of this.store.pendingDeliveries()) {
       if (this.tasks.has(record.delivery_id)) continue;
       if (record.state === "started") {
-        // A store created by the historical split writer may contain `started` without the
-        // corresponding durable outbox entry. Reconstruct/replay that exact phase once before
-        // reporting interruption; the persistent lifecycle id prevents later reconnects from
-        // generating an endless sequence after the relay confirms it.
+        // Reconstruct and replay started phase before reporting interruption if outbox entry is missing.
         const recovered = await this.store.ensureCurrentLifecycleEvent(record);
         await this.replayPending(recovered);
         await this.finishError(recovered, interruptedStartedError(recovered));

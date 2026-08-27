@@ -65,7 +65,6 @@ export function LiveFleetPage() {
 
   const snapshot = activity.data;
 
-  // --- Estado del cajón, con enlace profundo -------------------------------------------------
   const [drawer, setDrawer] = useState<{ key: string; tab: DrawerTab; trace?: string } | null>(
     () => leerQuery(),
   );
@@ -112,7 +111,6 @@ export function LiveFleetPage() {
   );
   const origins = useMemo(() => humanOrigins(snapshot), [snapshot]);
 
-  // --- Acotamiento por cliente ---------------------------------------------------------------
   const tenants = useMemo(() => {
     const vistos = new Set<string>();
     for (const view of views) vistos.add(view.tenantId);

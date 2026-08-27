@@ -8,8 +8,7 @@ import { exactCancelReceipt, exactReplayReceipt } from './delivery-receipts';
 import { leerUltimoError } from './ultimo-error';
 
 /**
- * Los ocho estados de una entrega, en castellano. Eran los nombres de la columna `state` de la
- * base, en inglés y en mayúsculas, en una interfaz en castellano.
+ * Los ocho estados de una entrega, en castellano.
  */
 const ESTADO_ENTREGA: Readonly<Record<DeliveryState, string>> = {
   pending: 'PENDIENTE',
@@ -39,21 +38,12 @@ function stateTone(state?: DeliveryState | null): 'done' | 'danger' | 'warning' 
   return 'unknown';
 }
 
-// Los dos finales de ERROR son replayables: 'failed' también deja fila en `dead_letters`. Antes el
-// botón sólo aparecía en 'dead' y por eso 197 entregas de producción no tenían forma de rescate en
-// la consola.
+// Los dos estados finales de error son replayables: 'failed' y 'dead'.
 const replayableStates: ReadonlySet<string> = new Set(['dead', 'failed']);
 // Cancelar aplica a lo que todavía está vivo: pendiente, en backoff o en manos de un adaptador.
 const cancellableStates: ReadonlySet<string> = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
 
-/**
- * QUÉ HACE CADA BOTÓN, EN UNA FRASE, ANTES DE APRETARLO.
- *
- * Salido del recorrido del 2026-08-23: «la consola no le explica qué hace ese botón ni le pide
- * confirmación antes de reinyectar a la flota». Las dos acciones mueven trabajo real de agentes
- * vivos —un replay hace que un adaptador vuelva a recibir el mensaje y pueda volver a ACTUAR— y la
- * consola las ofrecía como un enlace cualquiera, a un clic, sin decir qué pasa después.
- */
+/** Explicación de cada acción antes de confirmar. */
 export const EXPLICACION_REPLAY =
   'Replay vuelve a encolar esta entrega: el adaptador del destinatario la recibe otra vez y puede '
   + 'volver a ejecutar lo que pida. No duplica el mensaje original ni borra la fila de dead letters.';
@@ -111,13 +101,6 @@ export function DeliveryTable({
   const [uncertain, setUncertain] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState<string>();
   const previousSnapshotVersion = useRef(snapshotVersion);
-  /**
-   * Ninguna de las dos acciones sale al servidor con un solo clic.
-   *
-   * Es producción viva con clientes reales dentro: un replay reinyecta trabajo en la cola de un
-   * agente que está corriendo. Antes de este cambio, «Replay» era un `<button>` que publicaba
-   * directamente — y con siete dead letters seguidas, siete clics sin una sola pregunta.
-   */
   const [pendiente, setPendiente] = useState<Pendiente>();
 
   useEffect(() => {
@@ -173,8 +156,6 @@ export function DeliveryTable({
       if (!exactCancelReceipt(result, deliveryId)) {
         throw new Error('el gateway no devolvió un recibo durable exacto de la cancelación');
       }
-      // Se dice explícitamente que sigue siendo replayable: la queja documentada del operador es
-      // que cancelar a mano en la base era irreversible.
       setNotice(`Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`);
       void onChanged().catch(() => undefined);
     } catch (error) {
@@ -265,13 +246,7 @@ export function DeliveryTable({
                   /></Badge></td>
                   <td data-label="Intentos"><Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} /></td>
                   <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
-                  {/*
-                    «Sin error» NO es UNKNOWN. Ver `ultimo-error.ts`: 31 de las 38 filas de
-                    producción pintaban un UNKNOWN ámbar sobre entregas terminadas BIEN, y el ojo
-                    del operador iba ahí en vez de a las 7 dead letters. `SIN_FALLO_TODAVIA` cubre
-                    el otro lado: una entrega que todavía no llegó a fallar dice «todavía no» y
-                    explica por qué en el `title=`, en vez de un UNKNOWN que parece una avería.
-                  */}
+                  {/* «Sin error» no es UNKNOWN; SIN_FALLO_TODAVIA cubre entregas que aún no han fallado. */}
                   <td data-label="Último error" className="error-copy">
                     {error.clase === 'texto' ? error.texto
                       : error.clase === 'sin-error' ? <span className="sin-error">sin error</span>

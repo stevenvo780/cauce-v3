@@ -421,10 +421,6 @@ export function ConfigPage() {
   }
 
   return <div className="config-pagina">
-    {/* UN nombre para la pantalla, y es el del menú lateral. Antes eran tres a la vez: el menú
-        decía «Ajustes y altas», el `h1` decía «Ajustes & rollback» y encima había un antetítulo
-        en inglés, «ATOMIC CONTROL PLANE», en una consola que está entera en castellano. Tres
-        nombres para una pantalla es tres veces la pregunta «¿es esto lo que buscaba?». */}
     <header className="config-encabezado">
       <div>
         <h1>Ajustes y altas</h1>
@@ -482,9 +478,6 @@ export function ConfigPage() {
     </> : null}
 
     <div className="config-area" role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
-      {/* «Alta rápida» y el wizard viven en «Espacios y miembros»: son exactamente las altas de
-          tenant, room, membership y agente que esa pestaña describe. No se movieron de la página,
-          se movieron de sitio DENTRO de la página, y la prueba dice en qué pestaña están. */}
       {areaVisible === 'espacios'
         ? <AltaDeEspacios soloLectura={soloLectura} busy={busy} onChange={change} />
         : null}

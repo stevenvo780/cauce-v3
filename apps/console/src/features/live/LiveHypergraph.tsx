@@ -34,8 +34,7 @@ import { FlowArrow } from './live-hypergraph/FlowArrow';
  *  - una flecha existe sólo si hay una entrega en vuelo de verdad (`delegationEdges` las deriva de
  *    `in_flight_items`; no se inventa ninguna);
  *  - un alias que la topología declara y la actividad no reporta se dibuja **sin reportar**, con
- *    su anillo punteado y la palabra escrita — nunca «caído», que era el bug de antes: afirmaba
- *    una avería a partir de un silencio;
+ *    su anillo punteado y la palabra escrita;
  *  - si el servidor no informa el trabajo cerrado en 24 h, TODOS los muñecos miden lo mismo y la
  *    leyenda lo dice, en vez de dibujar un cero que nadie midió.
  */
@@ -220,9 +219,6 @@ export function LiveHypergraph({
   }, []);
 
   if (model.edges.length === 0) {
-    // Tres causas distintas, tres carteles distintos. Antes las dos últimas compartían texto, y
-    // "no se pudo leer" quedaba disfrazado de "no hay nada configurado": el fallo desaparecía de
-    // la pantalla y con él la única pista de que había que reintentar.
     if (topologyError) {
       return (
         <div className="lhg-empty">
@@ -253,16 +249,7 @@ export function LiveHypergraph({
   const stallAfter = thresholds?.stall_after_seconds ?? 300;
 
   /**
-   * El foco SUMA al filtro; no lo reemplaza.
-   *
-   * Antes esto era un `if/else` excluyente y `focusKey` ganaba: bastaba con que el puntero rozara
-   * cualquier muñeco para que el resaltado del filtro (estado, buscador, cliente) se apagara
-   * entero. El operador acababa mirando un mapa sin acotar creyendo que seguía acotado, que es
-   * justo el modo de fallo que el filtro existe para evitar.
-   *
-   * `atenuando` no se deriva del tamaño del conjunto: un filtro que no casa con nadie deja el
-   * conjunto vacío, y con la regla vieja eso apagaba el atenuado y dejaba TODO encendido —o sea,
-   * "ningún resultado" se veía igual que "todos los resultados".
+   * El foco suma al filtro activo en vez de reemplazarlo.
    */
   const activos = new Set<string>(spotlight ?? []);
   if (focusKey) {
@@ -375,9 +362,6 @@ export function LiveHypergraph({
         <g className="lhg-bots">
           {placed.map((item) => {
             const view = item.view;
-            // Antes esto era `?? 'down'`, y era un BUG con consecuencias: un alias que la topología
-            // declara y la actividad no reporta se dibujaba CAÍDO, o sea que la vista afirmaba una
-            // avería a partir de un silencio. No informado no es lo mismo que roto.
             const estado: NodeState = view?.state ?? 'unknown';
             const meta = estado === 'unknown' ? LIVE_STATE_META.idle : LIVE_STATE_META[estado];
             const dim = atenuando && !activos.has(item.key);

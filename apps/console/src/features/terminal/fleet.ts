@@ -33,10 +33,7 @@ function normalized(value: string): string {
 }
 
 export function fleetAgentId(tenantId: string, alias: string): string {
-  // TenantSchema is case-sensitive. Folding here used to merge `Steven:operator` with
-  // `steven:operator`, after which topology, presence and PTY authority could come from different
-  // principals. Identity keys preserve the canonical wire values exactly; normalization is only
-  // for human search below.
+  // Identity keys preserve canonical wire values case-sensitively.
   return `${tenantId}:${alias}`;
 }
 

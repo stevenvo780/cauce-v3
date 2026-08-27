@@ -115,8 +115,6 @@ export function columnasDe(clave: string, filas: ReadonlyArray<Record<string, un
     }
   }
   const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
-  // La fusión sólo se aplica si el servidor publica TODOS los campos que la componen: con uno solo
-  // la columna quedaría a medias y el operador leería «Steven → » sin saber hacia dónde.
   const fundir = fusion !== undefined && fusion.campos.every((campo) => presentes.includes(campo));
   const orden = fundir && fusion
     ? [fusion.clave, ...presentes.filter((campo) => !fusion.campos.includes(campo)), ...extra]

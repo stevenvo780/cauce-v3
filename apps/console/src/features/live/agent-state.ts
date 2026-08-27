@@ -288,9 +288,6 @@ function horaCorta(marca: number): string {
   return new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' }).format(new Date(marca));
 }
 
-/**
- * **Si la lectura falló o el snapshot está rancio, el veredicto NUNCA es verde.**
- */
 export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInput): Verdict {
   const marca = typeof input.observedAt === 'string' ? Date.parse(input.observedAt) : Number.NaN;
   const edadMs = Number.isFinite(marca) ? input.nowMs - marca : Number.NaN;
@@ -342,7 +339,6 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
   };
 }
 
-// Re-export helper types and functions from agent-state-helpers
 export {
   aliasDe,
   plural,

@@ -21,38 +21,8 @@ export interface AgenteDeMensajeria extends FleetAgent {
 }
 
 /**
- * EL UNIVERSO DEL ROSTER NO SON LAS MEMBRESÍAS.
- *
- * Antes esta vista tenía UNA sola fuente de agentes, `buildFleetAgents(status, topology)`, que es
- * `memberships ∪ presence`. Los dos consumidores de `listMessages()` —el roster y
- * `transcriptForSession`— se apoyaban en ella, así que un mensaje dirigido a un alias que la
- * topología no declara y que no tiene lease vigente no aparecía en NINGUNA parte de `/messages`:
- * ni fila, ni hilo, ni aviso. Ningún error, ninguna cifra en cero, ninguna forma de notarlo desde
- * la pantalla.
- *
- * Es el mismo fallo que hizo desaparecer a `gaia` del mapa de flota: se la dio de alta en la
- * tabla `agents` y la vista se dibujaba desde `memberships`, así que la pantalla que tenía que
- * mostrarla no la mostraba mientras el operador la miraba fijo. La corrección de aquella vista
- * (ver `features/live/LiveFleetPage.tsx`) fue dibujar desde el participante que reporta actividad
- * y dejar la membresía sólo para decidir el recuadro. Acá va la misma regla, con un añadido que
- * esta pantalla sí puede afirmar por su cuenta:
- *
- *   **un hilo con mensajes NUNCA desaparece.** Si el servidor publicó un mensaje hacia o desde un
- *   alias, ese alias tiene fila en el roster aunque no esté en ninguna sala, no tenga lease y el
- *   registro no lo conozca. La membresía decide si se le PUEDE ESCRIBIR —eso lo resuelve
- *   `operatorRouteForAgent`, que bloquea con su motivo—, nunca si se le puede LEER.
- *
- * Las cuatro fuentes, y qué aporta cada una:
- *
- *   - `topology`  (`memberships`) → salas y estado de membresía. Sigue siendo quien decide si hay
- *     room de origen para publicar.
- *   - `status.presence`            → lease e instancia observadas.
- *   - `activity.agents`            → el REGISTRO (`agents ∪ entregas abiertas ∪ leases`). Es la
- *     fuente que faltaba, y la que contiene a los `gaia`.
- *   - `messages`                   → el último recurso, y el que hace la promesa indestructible:
- *     con el registro caído o incompleto, un hilo con historia sigue teniendo fila.
- *
- * No se inventa nadie: un alias que no aparece en ninguna de las cuatro no se dibuja.
+ * Construye el roster de mensajería agregando las cuatro fuentes:
+ * topología (memberships), presencia, registro de actividad y mensajes observados.
  */
 export function construirRosterDeMensajeria(entrada: {
   status?: SystemStatus;

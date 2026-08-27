@@ -1,23 +1,8 @@
 /**
- * **Lo que el servidor publica del cuerpo de un mensaje, y lo que NO.**
+ * Lo que el servidor publica del cuerpo de un mensaje (`left(body,240)`).
  *
- * `GET /v3/console/messages` no devuelve el mensaje: devuelve `left(body,240)`. Está escrito en
- * `packages/store/src/repository.ts`, en la consulta de `listMessages`, y la consola no lo decía
- * en ninguna parte. 
- * 100 items, largo máximo de `body_preview` = 240 caracteres exactos, mínimo 4. En pantalla se
- * leía «…Yo pare lo que habia arranca» y «…El dominio real es stevenvallejo», cortados a mitad de
- * palabra, sin puntos suspensivos, sin «ver más» —cero coincidencias de `ver mas|expandir|mostrar
- * todo` en el bundle desplegado— y con un panel de detalle que muestra room, lane, actor, tenant,
- * trace y message id pero NO el cuerpo.
- *
- * O sea: la consola presentaba un mensaje recortado con la misma cara con la que presenta uno
- * entero. Eso es mentir por omisión, que es exactamente lo que esta vista existe para no hacer.
- *
- * Este módulo es la parte pura del arreglo: el número que el servidor aplica y cómo se decide que
- * un texto viene cortado. Vive aparte para que una prueba pueda atarlo al SQL que lo produce
- * (`cuerpo-del-mensaje.test.ts`): si alguien cambia el `left(...,240)` de la consulta y no toca
- * esta constante, la consola vuelve a marcar el corte donde no está —o deja de marcarlo donde sí—
- * y ni el typecheck, ni el lint, ni ninguna prueba de DOM dicen una palabra.
+ * Define la longitud máxima de previsualización y cómo se detecta si un texto viene cortado,
+ * permitiendo validar la constante contra la consulta SQL en pruebas unitarias.
  */
 
 /** El `left(COALESCE(m.body->>'text',...),240)` de `CauceRepository.listMessages`. */
