@@ -1,29 +1,41 @@
 #!/usr/bin/env bash
 # Smoke post-deploy de Cauce V3: verifica EFECTOS reales, no botones verdes.
 # Sale 0 solo si todo pasa. Se puede correr suelto en cualquier momento.
-set -euo pipefail
-GW="${CAUCE_GATEWAY_URL:-https://100.64.0.11:8443}"
+set -uo pipefail
+CONSOLE="${CAUCE_CONSOLE_URL:-https://100.64.0.11:8444}"
 PG=(docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tA -c)
 fallo=0
-chk() { local nombre="$1"; shift; if "$@" >/dev/null 2>&1; then echo "OK  $nombre"; else echo "ROJO $nombre"; fallo=1; fi; }
 
-chk "gateway /health/ready"  curl -fsk --max-time 10 "$GW/health/ready"
-chk "gateway /v3/status"     curl -fsk --max-time 10 "$GW/v3/status"
+# 1) Salud del gateway por su puerto interno (8081), con el probe oficial de la imagen
+if docker exec cauce-v3-prod-gateway-1 node /app/deploy/readiness-probe.mjs http://127.0.0.1:8081/health/ready ready >/dev/null 2>&1; then
+  echo "OK  gateway /health/ready (probe interno)"
+else echo "ROJO gateway /health/ready"; fallo=1; fi
 
-ver="$("${PG[@]}" "SELECT max(version) FROM schema_migrations")"
+# 2) Contenedores healthy segun Docker
+for c in gateway dispatcher terminal-relay telegram-bridge console; do
+  st="$(docker inspect --format '{{.State.Health.Status}}' "cauce-v3-prod-$c-1" 2>/dev/null || echo ausente)"
+  if [ "$st" = "healthy" ]; then echo "OK  $c healthy"; else echo "ROJO $c: $st"; fallo=1; fi
+done
+
+# 3) Esquema en 037
+ver="$("${PG[@]}" "SELECT max(version) FROM schema_migrations" 2>/dev/null)"
 if [ "${ver:0:3}" = "037" ]; then echo "OK  esquema $ver"; else echo "ROJO esquema en '$ver' (esperaba 037_*)"; fallo=1; fi
 
-vivos="$("${PG[@]}" "SELECT count(*) FROM connection_leases WHERE last_heartbeat_at > now() - interval '60 seconds'")"
+# 4) La flota late: >=8 arriendos con heartbeat fresco (<60s)
+vivos="$("${PG[@]}" "SELECT count(*) FROM connection_leases WHERE last_heartbeat_at > now() - interval '60 seconds'" 2>/dev/null)"
 if [ "${vivos:-0}" -ge 8 ]; then echo "OK  flota: $vivos arriendos frescos"; else echo "ROJO flota: solo ${vivos:-0} arriendos frescos"; fallo=1; fi
 
-done1h="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > now() - interval '1 hour'")"
-if [ "${done1h:-0}" -ge 1 ]; then echo "OK  bus: $done1h entregas done en 1h"; else echo "ROJO bus: 0 entregas done en 1h"; fallo=1; fi
+# 5) El bus mueve mensajes (ventana 6h: las madrugadas son legitimamente quietas)
+done6h="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > now() - interval '6 hours'" 2>/dev/null)"
+if [ "${done6h:-0}" -ge 1 ]; then echo "OK  bus: $done6h entregas done en 6h"; else echo "ROJO bus: 0 entregas done en 6h"; fallo=1; fi
 
-conn="$(docker logs cauce-v3-prod-terminal-relay-1 --since 2m 2>/dev/null | grep -c 'terminal_relay_agent_connected"' || true)"
+# 6) El relay NO esta en bucle: <30 conexiones de agente en 2 min
+conn="$(docker logs cauce-v3-prod-terminal-relay-1 --since 2m 2>/dev/null | grep -c 'terminal_relay_agent_connected"')"
 if [ "${conn:-0}" -lt 30 ]; then echo "OK  relay: $conn conexiones/2min (sin bucle)"; else echo "ROJO relay: $conn conexiones/2min (supersede loop: plan-reestructura/fase3/pty-huerfanos.md)"; fallo=1; fi
 
-code="$(curl -sk --max-time 10 -o /dev/null -w '%{http_code}' "$GW/v3/console/agents/zeus/documents")"
-if [ "$code" != "404" ]; then echo "OK  ruta documents responde $code (existe)"; else echo "ROJO ruta documents: 404 (el editor sigue sin desplegar)"; fallo=1; fi
+# 7) Rutas de gobierno desplegadas, via el nginx de la consola (401/403 = existe; 404 = NO desplegada)
+code="$(curl -sk --max-time 10 -o /dev/null -w '%{http_code}' "$CONSOLE/v3/console/agents/zeus/documents" || echo 000)"
+if [ "$code" != "404" ] && [ "$code" != "000" ]; then echo "OK  ruta documents responde $code (existe)"; else echo "ROJO ruta documents: $code (404=sin desplegar, 000=consola inalcanzable)"; fallo=1; fi
 
 echo
 echo "== MANUAL (el dueño): editar un fichero de gobierno desde la consola y verificarlo DENTRO del"
