@@ -44,7 +44,6 @@ export {
 } from './repository/config.js';
 import type { Tenant } from '@cauce/protocol';
 import { withTransaction } from './db.js';
-import { selectAccountForAlias, type AccountSelection } from './accounts.js';
 
 
 
@@ -202,33 +201,6 @@ export class CauceRepository extends AgentNotificationsRepository {
         // se acaba de escribir es la que habilita el botón de replay.
         replayable: true
       };
-    });
-  }
-
-  /**
-   * Qué suscripción gasta el alias en su próxima ejecución (GET /v3/accounts/selection).
-   *
-   * `actorTenant`/`actorAlias` son la identidad mTLS AUTENTICADA y son TAMBIÉN el sujeto de la
-   * consulta: no hay parámetro para preguntar por otro alias. Es deliberado y es la mitad de la
-   * seguridad de esta ruta — la respuesta incluye el `credential_ref` de la cuenta, y aunque sea
-   * un locator y no un secreto, decirle a un agente dónde busca su credencial OTRO agente es
-   * exactamente el tipo de dato que no tiene por qué cruzar. Un alias sólo resuelve lo suyo.
-   *
-   * Nótese la diferencia con `getConfiguration()`, que NUNCA devuelve `credential_ref` ni a su
-   * pagador (ver configuration.ts): aquello alimenta un navegador, esto alimenta al adaptador que
-   * corre en el host que ya tiene el material montado. La migración 010 lo dice al describir el
-   * locator: "the borrower receives a reference it can only dereference on a host that already
-   * holds the material".
-   */
-  async selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection> {
-    // Mismo juego de caracteres que el CHECK de `provider_accounts.provider`. Se valida acá y no
-    // sólo en la ruta para que ningún llamador futuro pueda meter una cadena arbitraria en el
-    // parámetro de la consulta.
-    if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(provider)) {
-      throw new StoreError('invalid_input', `invalid provider name: ${provider}`);
-    }
-    return selectAccountForAlias(this.pool, {
-      tenant_id: actorTenant, alias: actorAlias, provider
     });
   }
 }
