@@ -1,5 +1,5 @@
 diff --git a/deploy/Dockerfile b/deploy/Dockerfile
-index e233a42..8b0c9f3 100644
+index e233a42cb3462f3b13e182b3e5f5111c4a913752..8b0c9f318139d7d4e673901297cccc62784e7e96 100644
 --- a/deploy/Dockerfile
 +++ b/deploy/Dockerfile
 @@ -1,4 +1,10 @@
@@ -116,14 +116,17 @@ index e233a42..8b0c9f3 100644
    CMD test -r /run/secrets/console_tls_ca && SSL_CERT_FILE=/run/secrets/console_tls_ca wget -q -O /dev/null https://console:8444/ || exit 1
 diff --git a/deploy/fleet-snapshot.mjs b/deploy/fleet-snapshot.mjs
 new file mode 100644
-index 0000000..dbf2b8f
+index 0000000000000000000000000000000000000000..783362f976e79a8bd74de4bef857afba3118aff8
 --- /dev/null
 +++ b/deploy/fleet-snapshot.mjs
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,68 @@
 +#!/usr/bin/env node
 +
-+import { createPool } from '../packages/store/dist/db.js';
-+import { assertProductionPostgresTls } from './postgres-tls.mjs';
++// This probe is container-only.  Absolute image paths let the authenticated legacy bootstrap
++// stream these exact versioned bytes into a private /tmp file when the pre-bootstrap image does
++// not contain deploy/fleet-snapshot.mjs yet.  Normal release images still execute it in /app.
++import { createPool } from 'file:///app/packages/store/dist/db.js';
++import { assertProductionPostgresTls } from 'file:///app/deploy/postgres-tls.mjs';
 +
 +const connectionString = process.env.DATABASE_URL;
 +if (!connectionString) throw new Error('DATABASE_URL is required');
@@ -187,7 +190,7 @@ index 0000000..dbf2b8f
 +}
 diff --git a/deploy/liveness-probe.mjs b/deploy/liveness-probe.mjs
 new file mode 100644
-index 0000000..718200d
+index 0000000000000000000000000000000000000000..718200d754374313b6a69cb159ca2ddeb3cf7fa0
 --- /dev/null
 +++ b/deploy/liveness-probe.mjs
 @@ -0,0 +1,183 @@
@@ -376,7 +379,7 @@ index 0000000..718200d
 +}
 diff --git a/deploy/outbox-metrics-core.mjs b/deploy/outbox-metrics-core.mjs
 new file mode 100644
-index 0000000..b2f5a3e
+index 0000000000000000000000000000000000000000..b2f5a3e154ecda5fd312be2c6a3171a76f303826
 --- /dev/null
 +++ b/deploy/outbox-metrics-core.mjs
 @@ -0,0 +1,165 @@
@@ -546,7 +549,7 @@ index 0000000..b2f5a3e
 +  return `${lines.join('\n')}\n`;
 +}
 diff --git a/deploy/outbox-metrics.mjs b/deploy/outbox-metrics.mjs
-index 255c123..f960fba 100755
+index 255c1231ede0960241b508415c7a23496c2166a7..f960fba13cecb1899e2523ef46d6726d91fc4ce7 100755
 --- a/deploy/outbox-metrics.mjs
 +++ b/deploy/outbox-metrics.mjs
 @@ -3,9 +3,11 @@ import { createServer } from 'node:http';
@@ -659,7 +662,7 @@ index 255c123..f960fba 100755
        response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
 diff --git a/deploy/release-state-metrics.d.mts b/deploy/release-state-metrics.d.mts
 new file mode 100644
-index 0000000..a4449ae
+index 0000000000000000000000000000000000000000..a4449aec3c5eca9023ac111d2473d6b324bd707f
 --- /dev/null
 +++ b/deploy/release-state-metrics.d.mts
 @@ -0,0 +1,11 @@
@@ -676,7 +679,7 @@ index 0000000..a4449ae
 +}): Promise<number>;
 diff --git a/deploy/release-state-metrics.mjs b/deploy/release-state-metrics.mjs
 new file mode 100644
-index 0000000..dc9ad75
+index 0000000000000000000000000000000000000000..dc9ad750d8d3bf83e60bdffa870671d2d3f1ebf8
 --- /dev/null
 +++ b/deploy/release-state-metrics.mjs
 @@ -0,0 +1,140 @@
@@ -822,7 +825,7 @@ index 0000000..dc9ad75
 +}
 diff --git a/deploy/rollback-bridge-http-probe.mjs b/deploy/rollback-bridge-http-probe.mjs
 new file mode 100644
-index 0000000..163faab
+index 0000000000000000000000000000000000000000..163faab3bc2b3f2b0c9d597dff9db0feeda822b7
 --- /dev/null
 +++ b/deploy/rollback-bridge-http-probe.mjs
 @@ -0,0 +1,141 @@
@@ -968,7 +971,7 @@ index 0000000..163faab
 +  await pool.end();
 +}
 diff --git a/deploy/runtime-package-smoke.mjs b/deploy/runtime-package-smoke.mjs
-index b73256c..9811632 100644
+index b73256c556adcc167e124e94ce5cd5578fa728ab..981163296f2c2fa4d9be7fcfd6311d77e6a702f9 100644
 --- a/deploy/runtime-package-smoke.mjs
 +++ b/deploy/runtime-package-smoke.mjs
 @@ -58,6 +58,7 @@ const bridgeReplies = {
@@ -991,7 +994,7 @@ index b73256c..9811632 100644
    let envelope;
    try {
 diff --git a/packages/adapter-sdk/src/sdk/engine.ts b/packages/adapter-sdk/src/sdk/engine.ts
-index 8d75f25..d9c4028 100644
+index 8d75f255a418fdd234a826b596e8fa8f7552197e..d9c402891baba3cf9c22cb74019c5968d89e9dce 100644
 --- a/packages/adapter-sdk/src/sdk/engine.ts
 +++ b/packages/adapter-sdk/src/sdk/engine.ts
 @@ -1,6 +1,7 @@
@@ -1070,7 +1073,7 @@ index 8d75f25..d9c4028 100644
      delivery: Delivery,
      session: HarnessSessionRequestScope,
 diff --git a/packages/adapter-sdk/test/engine.test.ts b/packages/adapter-sdk/test/engine.test.ts
-index 96d1281..ab236a6 100644
+index 96d1281249a330a0888a2846b132a4fec8b26297..ab236a6268fa6830a5db665c038c78baaae6ff51 100644
 --- a/packages/adapter-sdk/test/engine.test.ts
 +++ b/packages/adapter-sdk/test/engine.test.ts
 @@ -1306,6 +1306,54 @@ test("every harness runtime bypasses providers and native sessions for agent fan
@@ -1129,7 +1132,7 @@ index 96d1281..ab236a6 100644
    const context = await setup("engine-fanin-missing-data");
    const input: Delivery = {
 diff --git a/packages/protocol/src/schemas.ts b/packages/protocol/src/schemas.ts
-index fd36f63..bc75d0e 100644
+index fd36f63411b9fa21d4f531945d79a273e60b19fb..bc75d0ecc19f6a6db29ef6f27739c3f505763e0a 100644
 --- a/packages/protocol/src/schemas.ts
 +++ b/packages/protocol/src/schemas.ts
 @@ -336,6 +336,14 @@ export const AGENT_TO_AGENT_MESSAGE_TYPES = [
@@ -1159,7 +1162,7 @@ index fd36f63..bc75d0e 100644
  const ReservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
 diff --git a/packages/store/migrations/024_agent_role_templates.sql b/packages/store/migrations/024_agent_role_templates.sql
 new file mode 100644
-index 0000000..9b05e63
+index 0000000000000000000000000000000000000000..9b05e633e78cda98cd6c02dfdcea9e5c9df9ca58
 --- /dev/null
 +++ b/packages/store/migrations/024_agent_role_templates.sql
 @@ -0,0 +1,201 @@
@@ -1365,7 +1368,7 @@ index 0000000..9b05e63
 +  AFTER INSERT OR UPDATE OR DELETE ON agents
 +  FOR EACH ROW EXECUTE FUNCTION cauce_agents_role_brief_journal();
 diff --git a/packages/store/migrations/027_rol_agent_notify.sql b/packages/store/migrations/027_rol_agent_notify.sql
-index 74674f1..2f0e468 100644
+index 74674f1fd6e7f0292fa7b9057c69863d6aaed534..2f0e46848c98784b728ce56c3c796e3c402a308a 100644
 --- a/packages/store/migrations/027_rol_agent_notify.sql
 +++ b/packages/store/migrations/027_rol_agent_notify.sql
 @@ -27,11 +27,28 @@
@@ -1403,7 +1406,7 @@ index 74674f1..2f0e468 100644
 +END $$;
 diff --git a/packages/store/migrations/028_canonical_agent_role.sql b/packages/store/migrations/028_canonical_agent_role.sql
 new file mode 100644
-index 0000000..4a71bac
+index 0000000000000000000000000000000000000000..4a71bacd620f5a73a703d3e4cfe38a4a5450b199
 --- /dev/null
 +++ b/packages/store/migrations/028_canonical_agent_role.sql
 @@ -0,0 +1,244 @@
@@ -1653,7 +1656,7 @@ index 0000000..4a71bac
 +  FOR EACH ROW EXECUTE FUNCTION cauce_sync_role_template_to_profiles();
 diff --git a/packages/store/migrations/029_reconcile_declared_fleet.sql b/packages/store/migrations/029_reconcile_declared_fleet.sql
 new file mode 100644
-index 0000000..22dcf0f
+index 0000000000000000000000000000000000000000..22dcf0f075118d6566d2039e82c87736ab6c902d
 --- /dev/null
 +++ b/packages/store/migrations/029_reconcile_declared_fleet.sql
 @@ -0,0 +1,328 @@
@@ -1987,7 +1990,7 @@ index 0000000..22dcf0f
 + WHERE active AND completed_at IS NULL;
 diff --git a/packages/store/migrations/030_dlq_causal_reconciliation.sql b/packages/store/migrations/030_dlq_causal_reconciliation.sql
 new file mode 100644
-index 0000000..9520321
+index 0000000000000000000000000000000000000000..95203218dfa7b0a6bdaa42b8ee7eb2b7f498e28f
 --- /dev/null
 +++ b/packages/store/migrations/030_dlq_causal_reconciliation.sql
 @@ -0,0 +1,2211 @@
@@ -4204,7 +4207,7 @@ index 0000000..9520321
 +$$;
 diff --git a/packages/store/migrations/031_connection_session_fencing.sql b/packages/store/migrations/031_connection_session_fencing.sql
 new file mode 100644
-index 0000000..26f6fa1
+index 0000000000000000000000000000000000000000..62d0917f66ee3151b1e0739cabb7bb928487814e
 --- /dev/null
 +++ b/packages/store/migrations/031_connection_session_fencing.sql
 @@ -0,0 +1,12 @@
@@ -4222,7 +4225,7 @@ index 0000000..26f6fa1
 +  'Ephemeral per-hello fence. Rotated for every acquired/resumed connection; never an identity or execution epoch.';
 diff --git a/packages/store/migrations/032_terminal_session_claim_fencing.sql b/packages/store/migrations/032_terminal_session_claim_fencing.sql
 new file mode 100644
-index 0000000..284ad9c
+index 0000000000000000000000000000000000000000..284ad9cddc61c54808a54a161d3a4b1c530ba0c3
 --- /dev/null
 +++ b/packages/store/migrations/032_terminal_session_claim_fencing.sql
 @@ -0,0 +1,40 @@
@@ -4268,7 +4271,7 @@ index 0000000..284ad9c
 +  'PostgreSQL-clock lease deadline. Takeover rotates epoch only after this instant.';
 diff --git a/packages/store/migrations/033_terminal_browser_owner_fencing.sql b/packages/store/migrations/033_terminal_browser_owner_fencing.sql
 new file mode 100644
-index 0000000..76e094e
+index 0000000000000000000000000000000000000000..76e094e93e7c59c2e066b4320a3dff62d08a662d
 --- /dev/null
 +++ b/packages/store/migrations/033_terminal_browser_owner_fencing.sql
 @@ -0,0 +1,50 @@
@@ -4324,7 +4327,7 @@ index 0000000..76e094e
 +  'Monotonic browser ownership fence. Only explicit operator takeover rotates it; DELETE requires exact digest plus generation.';
 diff --git a/packages/store/migrations/034_terminal_relay_instance_fencing.sql b/packages/store/migrations/034_terminal_relay_instance_fencing.sql
 new file mode 100644
-index 0000000..ff0a16d
+index 0000000000000000000000000000000000000000..ff0a16daeeb505869253a2f29057bb9a286bad25
 --- /dev/null
 +++ b/packages/store/migrations/034_terminal_relay_instance_fencing.sql
 @@ -0,0 +1,56 @@
@@ -4386,7 +4389,7 @@ index 0000000..ff0a16d
 +  'UUIDv4 process generation holding the current relay claim. NULL only before consume or on legacy closed/revoked history.';
 diff --git a/packages/store/migrations/035_agent_profile_runtime_adoption.sql b/packages/store/migrations/035_agent_profile_runtime_adoption.sql
 new file mode 100644
-index 0000000..e49e653
+index 0000000000000000000000000000000000000000..e49e6535c09a606f2a4a0b34c6833654e27ab14e
 --- /dev/null
 +++ b/packages/store/migrations/035_agent_profile_runtime_adoption.sql
 @@ -0,0 +1,109 @@
@@ -4501,7 +4504,7 @@ index 0000000..e49e653
 +  'Behavioral ACK from a real fenced delivery after adapter-side exact document matching.';
 diff --git a/packages/store/migrations/036_shadow_router_target_phase.sql b/packages/store/migrations/036_shadow_router_target_phase.sql
 new file mode 100644
-index 0000000..caf1991
+index 0000000000000000000000000000000000000000..caf19911dc19a3ad465b689370c64f737b0349aa
 --- /dev/null
 +++ b/packages/store/migrations/036_shadow_router_target_phase.sql
 @@ -0,0 +1,248 @@
@@ -4753,9 +4756,77 @@ index 0000000..caf1991
 +
 +COMMENT ON COLUMN shadow_router_inbox.claim_target_started IS
 +  'Current fenced lease armed target dispatch; an unobserved outcome is replayed idempotently.';
+diff --git a/packages/store/migrations/037_console_publish_intent_indexes.sql b/packages/store/migrations/037_console_publish_intent_indexes.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..19822d9fece1db785fe1bc65561f606b641fc5d3
+--- /dev/null
++++ b/packages/store/migrations/037_console_publish_intent_indexes.sql
+@@ -0,0 +1,62 @@
++-- The console publish-intent journal is durable state in audit_events.  These expression indexes
++-- keep key/nonce lookup and latest bounded-head lookup independent of an actor's lifetime
++-- audit history.  Predicates use literal internal action names so PostgreSQL can prove partial-
++-- index eligibility even after a prepared statement switches to a generic plan.
++
++SELECT pg_advisory_xact_lock(783_003_003);
++SELECT pg_advisory_xact_lock(783_003_008);
++LOCK TABLE audit_events IN SHARE ROW EXCLUSIVE MODE;
++
++-- This state machine has never been deployed. Refuse to guess a head for experimental rows.
++-- Runtime rollback retains additive schema 037; destructive down/up is intentionally available
++-- only before the first journal write, so every forward application has one reproducible gate.
++DO $$
++BEGIN
++  IF EXISTS (SELECT 1 FROM audit_events WHERE action LIKE 'console.publish.%') THEN
++    RAISE EXCEPTION 'schema 037 requires an empty console publish-intent journal';
++  END IF;
++END
++$$;
++
++CREATE INDEX audit_events_console_publish_key_037_idx
++  ON audit_events (
++    tenant_id,
++    actor_alias,
++    (metadata->>'idempotency_key'),
++    id
++  )
++  WHERE action IN (
++    'console.publish.prepare',
++    'console.publish.confirm',
++    'console.publish.expire'
++  );
++
++CREATE INDEX audit_events_console_publish_nonce_037_idx
++  ON audit_events (
++    tenant_id,
++    actor_alias,
++    (metadata->>'operator_scope_hash'),
++    (metadata->>'intent_nonce_hash'),
++    id DESC
++  )
++  WHERE action='console.publish.prepare';
++
++CREATE INDEX audit_events_console_publish_rate_037_idx
++  ON audit_events (
++    tenant_id,
++    actor_alias,
++    (metadata->>'operator_scope_hash'),
++    created_at DESC,
++    id DESC
++  )
++  WHERE action='console.publish.prepare';
++
++CREATE INDEX audit_events_console_publish_head_037_idx
++  ON audit_events (
++    tenant_id,
++    actor_alias,
++    (metadata->>'operator_scope_hash'),
++    (metadata->>'conversation_hash'),
++    id DESC
++  )
++  WHERE action='console.publish.head';
 diff --git a/packages/store/migrations/down/024_agent_role_templates.sql b/packages/store/migrations/down/024_agent_role_templates.sql
 new file mode 100644
-index 0000000..9e172a3
+index 0000000000000000000000000000000000000000..9e172a323861514d23b49fe3eda54f1d180c8801
 --- /dev/null
 +++ b/packages/store/migrations/down/024_agent_role_templates.sql
 @@ -0,0 +1,47 @@
@@ -4808,7 +4879,7 @@ index 0000000..9e172a3
 +COMMIT;
 diff --git a/packages/store/migrations/down/028_canonical_agent_role.sql b/packages/store/migrations/down/028_canonical_agent_role.sql
 new file mode 100644
-index 0000000..ddb2acb
+index 0000000000000000000000000000000000000000..ddb2acbb65d1211da723fb38d4354af780b0f489
 --- /dev/null
 +++ b/packages/store/migrations/down/028_canonical_agent_role.sql
 @@ -0,0 +1,71 @@
@@ -4885,7 +4956,7 @@ index 0000000..ddb2acb
 +COMMIT;
 diff --git a/packages/store/migrations/down/029_reconcile_declared_fleet.sql b/packages/store/migrations/down/029_reconcile_declared_fleet.sql
 new file mode 100644
-index 0000000..e126b6e
+index 0000000000000000000000000000000000000000..e126b6ef97b52da433b078fb34658fbd5d21596e
 --- /dev/null
 +++ b/packages/store/migrations/down/029_reconcile_declared_fleet.sql
 @@ -0,0 +1,166 @@
@@ -5057,7 +5128,7 @@ index 0000000..e126b6e
 +COMMIT;
 diff --git a/packages/store/migrations/down/030_dlq_causal_reconciliation.sql b/packages/store/migrations/down/030_dlq_causal_reconciliation.sql
 new file mode 100644
-index 0000000..b924f4f
+index 0000000000000000000000000000000000000000..b924f4fcf8ffe0fbbcaf2a5c03cccc70922a7385
 --- /dev/null
 +++ b/packages/store/migrations/down/030_dlq_causal_reconciliation.sql
 @@ -0,0 +1,152 @@
@@ -5215,7 +5286,7 @@ index 0000000..b924f4f
 +DELETE FROM schema_migrations WHERE version='030_dlq_causal_reconciliation.sql';
 diff --git a/packages/store/migrations/down/031_connection_session_fencing.sql b/packages/store/migrations/down/031_connection_session_fencing.sql
 new file mode 100644
-index 0000000..8cc3d09
+index 0000000000000000000000000000000000000000..8cc3d09412c1df52afffb9ca138a2adf387ecc49
 --- /dev/null
 +++ b/packages/store/migrations/down/031_connection_session_fencing.sql
 @@ -0,0 +1,23 @@
@@ -5244,7 +5315,7 @@ index 0000000..8cc3d09
 + WHERE version='031_connection_session_fencing.sql';
 diff --git a/packages/store/migrations/down/032_terminal_session_claim_fencing.sql b/packages/store/migrations/down/032_terminal_session_claim_fencing.sql
 new file mode 100644
-index 0000000..1b2cc16
+index 0000000000000000000000000000000000000000..1b2cc163d856a599a39aaa5288283a241963f3d2
 --- /dev/null
 +++ b/packages/store/migrations/down/032_terminal_session_claim_fencing.sql
 @@ -0,0 +1,41 @@
@@ -5291,15 +5362,19 @@ index 0000000..1b2cc16
 + WHERE version='032_terminal_session_claim_fencing.sql';
 diff --git a/packages/store/migrations/down/033_terminal_browser_owner_fencing.sql b/packages/store/migrations/down/033_terminal_browser_owner_fencing.sql
 new file mode 100644
-index 0000000..4e1f3df
+index 0000000000000000000000000000000000000000..60254d8e24d0920931a95e20719bfc25c9609be3
 --- /dev/null
 +++ b/packages/store/migrations/down/033_terminal_browser_owner_fencing.sql
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,51 @@
 +-- Destructive downgrade is allowed only while 033 contains backfill-equivalent history.  Once a
 +-- real admission used a distinct request id or ownership rotated, dropping these columns would
 +-- erase the only causal fence and is refused.  Runtime rollback should retain this additive
 +-- schema, which older code can safely ignore.
 +
++-- Enter the same global migration critical section as applyMigrations() before taking the
++-- browser-owner-specific lock.  A manual down must never tear schema down while a forward runner
++-- is inspecting schema_migrations or applying a later migration.
++SELECT pg_advisory_xact_lock(783_003_003);
 +SELECT pg_advisory_xact_lock(783_003_004);
 +LOCK TABLE terminal_sessions IN ACCESS EXCLUSIVE MODE;
 +
@@ -5344,13 +5419,16 @@ index 0000000..4e1f3df
 + WHERE version='033_terminal_browser_owner_fencing.sql';
 diff --git a/packages/store/migrations/down/034_terminal_relay_instance_fencing.sql b/packages/store/migrations/down/034_terminal_relay_instance_fencing.sql
 new file mode 100644
-index 0000000..3d7ef92
+index 0000000000000000000000000000000000000000..71adfdc7be97a4cf3b2ea173357fc19ae0ea331a
 --- /dev/null
 +++ b/packages/store/migrations/down/034_terminal_relay_instance_fencing.sql
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,41 @@
 +-- Destructive downgrade is safe only before schema-034 has admitted any pinned session. Runtime
 +-- rollback should retain the additive columns; this inverse exists for isolated rollback proof.
 +
++-- Lock order is global migration fence first, then the relay-instance fence.  This matches every
++-- forward migrator and prevents a successful down from racing a concurrent applyMigrations().
++SELECT pg_advisory_xact_lock(783_003_003);
 +SELECT pg_advisory_xact_lock(783_003_005);
 +LOCK TABLE terminal_sessions IN ACCESS EXCLUSIVE MODE;
 +
@@ -5388,13 +5466,16 @@ index 0000000..3d7ef92
 + WHERE version='034_terminal_relay_instance_fencing.sql';
 diff --git a/packages/store/migrations/down/035_agent_profile_runtime_adoption.sql b/packages/store/migrations/down/035_agent_profile_runtime_adoption.sql
 new file mode 100644
-index 0000000..d8239e3
+index 0000000000000000000000000000000000000000..d26aee58d989b40ecc3f62d1cc57d568b467b763
 --- /dev/null
 +++ b/packages/store/migrations/down/035_agent_profile_runtime_adoption.sql
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,32 @@
 +-- Destructive schema downgrade is allowed only before runtime expectation/adoption evidence exists.
 +-- Runtime rollback normally retains this additive schema and uses the verified bridge image.
 +
++-- Serialize schema_migrations and teardown with the forward migration runner before entering the
++-- profile-runtime-specific critical section.
++SELECT pg_advisory_xact_lock(783_003_003);
 +SELECT pg_advisory_xact_lock(783_003_006);
 +LOCK TABLE agent_profile_runtime_adoptions, agent_profile_runtime_expectations IN ACCESS EXCLUSIVE MODE;
 +
@@ -5423,13 +5504,16 @@ index 0000000..d8239e3
 + WHERE version='035_agent_profile_runtime_adoption.sql';
 diff --git a/packages/store/migrations/down/036_shadow_router_target_phase.sql b/packages/store/migrations/down/036_shadow_router_target_phase.sql
 new file mode 100644
-index 0000000..99592cf
+index 0000000000000000000000000000000000000000..5dce4e84e4b4868ed2f0f9d9cc9b48a91658bdb4
 --- /dev/null
 +++ b/packages/store/migrations/down/036_shadow_router_target_phase.sql
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,37 @@
 +-- An old shadow worker cannot distinguish an unstarted processing lease after this column is
 +-- removed. Downgrade is therefore safe only with the inbox fully drained of processing claims.
 +
++-- The shared migration lock must be acquired before the shadow-phase lock.  Keeping this order
++-- identical to the forward runner closes the down/apply race without introducing lock inversion.
++SELECT pg_advisory_xact_lock(783_003_003);
 +SELECT pg_advisory_xact_lock(783_003_007);
 +LOCK TABLE shadow_router_inbox IN ACCESS EXCLUSIVE MODE;
 +
@@ -5461,8 +5545,103 @@ index 0000000..99592cf
 +
 +DELETE FROM schema_migrations
 + WHERE version='036_shadow_router_target_phase.sql';
+diff --git a/packages/store/migrations/down/037_console_publish_intent_indexes.sql b/packages/store/migrations/down/037_console_publish_intent_indexes.sql
+new file mode 100644
+index 0000000000000000000000000000000000000000..f8e9273260687fd946fe8a98bad3238b6807312a
+--- /dev/null
++++ b/packages/store/migrations/down/037_console_publish_intent_indexes.sql
+@@ -0,0 +1,89 @@
++-- Capture the exact migration generation before joining the global critical section. If a
++-- forward runner installs or rewrites 037 while this down waits, its row/ledger xmin or checksum
++-- changes and the post-lock CAS rejects the stale teardown. A concurrent no-op apply leaves this
++-- snapshot unchanged; serial order apply(no-op) -> explicit down is therefore safe and allowed.
++CREATE TEMP TABLE cauce_down_037_snapshot ON COMMIT DROP AS
++SELECT (
++         SELECT xmin::text FROM schema_migrations
++          WHERE version='037_console_publish_intent_indexes.sql'
++       ) AS migration_xmin,
++       (
++         SELECT xmin::text FROM schema_migration_ledger
++          WHERE version='037_console_publish_intent_indexes.sql'
++       ) AS ledger_xmin,
++       (
++         SELECT source_sha256 FROM schema_migration_ledger
++          WHERE version='037_console_publish_intent_indexes.sql'
++       ) AS source_sha256,
++       (
++         SELECT source_origin FROM schema_migration_ledger
++          WHERE version='037_console_publish_intent_indexes.sql'
++       ) AS source_origin;
++
++SELECT pg_advisory_xact_lock(783_003_003);
++SELECT pg_advisory_xact_lock(783_003_008);
++LOCK TABLE audit_events IN ACCESS EXCLUSIVE MODE;
++
++DO $$
++BEGIN
++  IF NOT EXISTS (
++    SELECT 1
++      FROM cauce_down_037_snapshot snapshot
++      JOIN schema_migrations migration
++        ON migration.version='037_console_publish_intent_indexes.sql'
++       AND migration.xmin::text=snapshot.migration_xmin
++      JOIN schema_migration_ledger ledger
++        ON ledger.version=migration.version
++       AND ledger.xmin::text=snapshot.ledger_xmin
++       AND ledger.source_sha256=snapshot.source_sha256
++       AND ledger.source_origin=snapshot.source_origin
++     WHERE snapshot.migration_xmin IS NOT NULL
++       AND snapshot.ledger_xmin IS NOT NULL
++       AND snapshot.source_sha256=
++           '0daeb89c224e940600562ab162fba03c4facd4cb0b80b65f20feedc02b33f281'
++       AND snapshot.source_origin='applied-atomically'
++  ) THEN
++    RAISE EXCEPTION
++      'cannot downgrade schema 037 from absent, incomplete, or concurrently changed ledger state';
++  END IF;
++
++  IF EXISTS (
++    SELECT 1 FROM schema_migrations
++     WHERE version>'037_console_publish_intent_indexes.sql'
++  ) THEN
++    RAISE EXCEPTION 'cannot downgrade schema 037 while a later migration is present';
++  END IF;
++
++  IF EXISTS (SELECT 1 FROM audit_events WHERE action LIKE 'console.publish.%') THEN
++    RAISE EXCEPTION 'cannot downgrade schema 037 after console publish journal use';
++  END IF;
++
++  IF 4<>(
++    SELECT count(*)
++      FROM pg_class index_relation
++      JOIN pg_namespace namespace ON namespace.oid=index_relation.relnamespace
++      JOIN pg_index index_value ON index_value.indexrelid=index_relation.oid
++     WHERE namespace.nspname='public'
++       AND index_relation.relname IN (
++         'audit_events_console_publish_key_037_idx',
++         'audit_events_console_publish_nonce_037_idx',
++         'audit_events_console_publish_rate_037_idx',
++         'audit_events_console_publish_head_037_idx'
++       )
++       AND index_value.indrelid='public.audit_events'::regclass
++       AND index_value.indisvalid
++       AND index_value.indisready
++       AND index_value.indislive
++  ) THEN
++    RAISE EXCEPTION 'cannot downgrade schema 037 from drifted index state';
++  END IF;
++END
++$$;
++
++DROP INDEX IF EXISTS audit_events_console_publish_head_037_idx;
++DROP INDEX IF EXISTS audit_events_console_publish_rate_037_idx;
++DROP INDEX IF EXISTS audit_events_console_publish_nonce_037_idx;
++DROP INDEX IF EXISTS audit_events_console_publish_key_037_idx;
++
++DELETE FROM schema_migrations
++ WHERE version='037_console_publish_intent_indexes.sql';
 diff --git a/packages/store/src/agent-profile.ts b/packages/store/src/agent-profile.ts
-index 23b2c02..16f77a0 100644
+index 23b2c02f4246cccc2a4a20ffa35398786fb9f099..16f77a0d79273c092c613908d2992a447094085c 100644
 --- a/packages/store/src/agent-profile.ts
 +++ b/packages/store/src/agent-profile.ts
 @@ -1,5 +1,5 @@
@@ -5495,7 +5674,7 @@ index 23b2c02..16f77a0 100644
  }
 -
 diff --git a/packages/store/src/configuration.ts b/packages/store/src/configuration.ts
-index b1810f5..5c15503 100644
+index b1810f569810f63aa834fc6517ebc3d26bd6e67f..5c15503fed9eea9b2cb60a37f967c5f1f6c61de1 100644
 --- a/packages/store/src/configuration.ts
 +++ b/packages/store/src/configuration.ts
 @@ -19,6 +19,9 @@ export class ConfigurationError extends Error {
@@ -5573,7 +5752,7 @@ index b1810f5..5c15503 100644
      };
    }
 diff --git a/packages/store/src/db.ts b/packages/store/src/db.ts
-index 39ca0ff..aeab41e 100644
+index 39ca0fff548e6390e06579ad3b4382dc79e65af4..aeab41e530f91ecbab1c3affec83bee13b49b783 100644
 --- a/packages/store/src/db.ts
 +++ b/packages/store/src/db.ts
 @@ -1,8 +1,13 @@
@@ -5796,7 +5975,7 @@ index 39ca0ff..aeab41e 100644
    pool: DatabasePool,
 diff --git a/packages/store/src/migration-integrity.ts b/packages/store/src/migration-integrity.ts
 new file mode 100644
-index 0000000..b686248
+index 0000000000000000000000000000000000000000..b686248d4615942cc1d8e3529cb22fcc133ff042
 --- /dev/null
 +++ b/packages/store/src/migration-integrity.ts
 @@ -0,0 +1,246 @@
@@ -6047,7 +6226,7 @@ index 0000000..b686248
 +  firstAtomicLedger: FIRST_ATOMIC_LEDGER_VERSION,
 +} as const;
 diff --git a/packages/store/src/repository.ts b/packages/store/src/repository.ts
-index de25038..457a8e7 100644
+index de250380b0a5aac5eab1ca1eae0b8e49e43cd3b8..457a8e7ea89b4fe3291d764523d74d83134bcfa5 100644
 --- a/packages/store/src/repository.ts
 +++ b/packages/store/src/repository.ts
 @@ -6,7 +6,7 @@ import type {
@@ -6109,8 +6288,537 @@ index de25038..457a8e7 100644
      const events = await this.pool.query<Record<string, unknown>>(
        `SELECT ack_delivery_id,ack_attempt,child_delivery_id,child_tenant,child_alias,outcome,
                error,error_code,coalesced,notice_message_id,created_at
+diff --git a/packages/store/test/agent-profile-runtime-adoption-migration-postgres.test.ts b/packages/store/test/agent-profile-runtime-adoption-migration-postgres.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..57306a2fb2f07e51ed8783c66e21eb2d020b04b1
+--- /dev/null
++++ b/packages/store/test/agent-profile-runtime-adoption-migration-postgres.test.ts
+@@ -0,0 +1,249 @@
++import { createHash, randomUUID } from 'node:crypto';
++import { readFile } from 'node:fs/promises';
++import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
++import type { DatabasePool } from '../src/index.js';
++import {
++  resetTestDatabase, startTestDatabase, type TestDatabase,
++} from '../../../tests/helpers/postgres.js';
++
++const version = '035_agent_profile_runtime_adoption.sql';
++const upPath = new URL(`../migrations/${version}`, import.meta.url);
++const downPath = new URL(`../migrations/down/${version}`, import.meta.url);
++const version036 = '036_shadow_router_target_phase.sql';
++const up036Path = new URL(`../migrations/${version036}`, import.meta.url);
++const down036Path = new URL(`../migrations/down/${version036}`, import.meta.url);
++const version037 = '037_console_publish_intent_indexes.sql';
++const up037Path = new URL(`../migrations/${version037}`, import.meta.url);
++const down037Path = new URL(`../migrations/down/${version037}`, import.meta.url);
++const document = {
++  name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md', sha: 'a'.repeat(64),
++} as const;
++
++let database: TestDatabase;
++let pool: DatabasePool;
++let up: string;
++let down: string;
++let up036: string;
++let down036: string;
++let up037: string;
++let down037: string;
++
++async function tableExists(name: string): Promise<boolean> {
++  const result = await pool.query<{ exists: boolean }>(
++    'SELECT to_regclass($1) IS NOT NULL AS exists', [name],
++  );
++  return result.rows[0]?.exists === true;
++}
++
++async function ensureUp(): Promise<void> {
++  if (!await tableExists('agent_profile_runtime_expectations')) await pool.query(up);
++  await pool.query(
++    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version],
++  );
++}
++
++async function shadowPhaseExists(): Promise<boolean> {
++  const result = await pool.query<{ exists: boolean }>(
++    `SELECT EXISTS(
++       SELECT 1 FROM information_schema.columns
++        WHERE table_schema='public' AND table_name='shadow_router_inbox'
++          AND column_name='claim_target_started'
++     ) AS exists`,
++  );
++  return result.rows[0]?.exists === true;
++}
++
++async function removeLatestShadowPhase(): Promise<void> {
++  if (await shadowPhaseExists()) await pool.query(down036);
++  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version036]);
++}
++
++async function restoreLatestShadowPhase(): Promise<void> {
++  if (!await shadowPhaseExists()) await pool.query(up036);
++  await pool.query(
++    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version036],
++  );
++}
++
++async function consolePublishIndexesExist(): Promise<boolean> {
++  const result = await pool.query<{ exists: boolean }>(
++    `SELECT to_regclass('public.audit_events_console_publish_key_037_idx') IS NOT NULL AS exists`,
++  );
++  return result.rows[0]?.exists === true;
++}
++
++async function removeLatestConsolePublishIndexes(): Promise<void> {
++  if (await consolePublishIndexesExist()) await pool.query(down037);
++  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
++}
++
++async function restoreLatestConsolePublishIndexes(): Promise<void> {
++  if (!await consolePublishIndexesExist()) await pool.query(up037);
++  await pool.query(
++    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version037],
++  );
++  await pool.query(
++    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
++     VALUES($1,$2,'applied-atomically')
++     ON CONFLICT(version) DO UPDATE SET
++       source_sha256=EXCLUDED.source_sha256,
++       source_origin=EXCLUDED.source_origin`,
++    [version037, createHash('sha256').update(up037).digest('hex')],
++  );
++}
++
++async function seedProfile(): Promise<number> {
++  await pool.query(`
++    INSERT INTO agents(
++      tenant_id,alias,harness_id,display_name,enabled,
++      container_name,runtime_user,home_directory,state_directory
++    ) VALUES(
++      'Steven','argos','claude','Argos',true,
++      'ws-argos','dev','/home/dev','/home/dev/.cauce/argos'
++    ) ON CONFLICT(tenant_id,alias) DO UPDATE SET enabled=true;
++    INSERT INTO agent_profiles(tenant_id,alias,role_summary)
++      VALUES('Steven','argos','Runtime profile migration fixture')
++      ON CONFLICT(tenant_id,alias) DO NOTHING;
++  `);
++  const result = await pool.query<{ revision: string | number }>(
++    `SELECT revision FROM agent_profiles WHERE tenant_id='Steven' AND alias='argos'`,
++  );
++  return Number(result.rows[0]?.revision);
++}
++
++async function seedDelivery(): Promise<string> {
++  const messageId = randomUUID();
++  const deliveryId = randomUUID();
++  await pool.query(
++    `INSERT INTO messages(
++       id,request_id,trace_id,tenant_id,room_id,actor_alias,body,lane,priority
++     ) VALUES($1,$2,$3,'Steven','grp.steven','kant',$4::jsonb,'interactive',0)`,
++    [messageId, randomUUID(), `profile-migration-${randomUUID()}`, JSON.stringify({ text: 'test' })],
++  );
++  await pool.query(
++    `INSERT INTO deliveries(id,message_id,recipient_tenant,recipient_alias)
++       VALUES($1,$2,'Steven','argos')`,
++    [deliveryId, messageId],
++  );
++  return deliveryId;
++}
++
++beforeAll(async () => {
++  [up, down, up036, down036, up037, down037] = await Promise.all([
++    readFile(upPath, 'utf8'),
++    readFile(downPath, 'utf8'),
++    readFile(up036Path, 'utf8'),
++    readFile(down036Path, 'utf8'),
++    readFile(up037Path, 'utf8'),
++    readFile(down037Path, 'utf8'),
++  ]);
++  database = await startTestDatabase();
++  pool = database.pool;
++}, 120_000);
++
++beforeEach(async () => {
++  await resetTestDatabase(pool);
++  await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
++  await removeLatestConsolePublishIndexes();
++  await removeLatestShadowPhase();
++  await ensureUp();
++});
++
++afterEach(async () => {
++  await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
++  await ensureUp();
++  await restoreLatestShadowPhase();
++  await restoreLatestConsolePublishIndexes();
++});
++
++afterAll(async () => {
++  await pool?.end();
++  await database?.container.stop();
++});
++
++describe('migration 035 durable runtime adoption invariants', () => {
++  it.each([
++    { label: 'not an array', documents: {} },
++    { label: 'empty', documents: [] },
++    { label: 'unknown key', documents: [{ ...document, bytes: 10 }] },
++    { label: 'relative path', documents: [{ ...document, path: 'AGENTS.md' }] },
++    { label: 'name and basename disagree', documents: [{ ...document, name: 'TOOLS.md' }] },
++    { label: 'non-canonical hash', documents: [{ ...document, sha: 'A'.repeat(64) }] },
++    { label: 'duplicate name', documents: [document, { ...document, path: '/tmp/AGENTS.md' }] },
++    { label: 'duplicate path', documents: [document, { ...document, name: 'TOOLS.md' }] },
++  ])('rejects malformed document evidence at the database boundary: $label', async ({ documents }) => {
++    const revision = await seedProfile();
++    await expect(pool.query(
++      `INSERT INTO agent_profile_runtime_expectations(
++         tenant_id,alias,revision,generation,documents
++       ) VALUES('Steven','argos',$1,'generation-a',$2::jsonb)`,
++      [revision, JSON.stringify(documents)],
++    )).rejects.toMatchObject({ constraint: 'agent_profile_runtime_expectations_documents_valid' });
++  });
++
++  it('requires direct adoption writes to match the current expectation and one delivery exactly once', async () => {
++    const revision = await seedProfile();
++    const deliveryId = await seedDelivery();
++    await pool.query(
++      `INSERT INTO agent_profile_runtime_expectations(
++         tenant_id,alias,revision,generation,documents
++       ) VALUES('Steven','argos',$1,'generation-a',$2::jsonb)`,
++      [revision, JSON.stringify([document])],
++    );
++    const insertAdoption = (generation: string, documents: unknown, id = deliveryId) => pool.query(
++      `INSERT INTO agent_profile_runtime_adoptions(
++         tenant_id,alias,revision,generation,documents,delivery_id,attempt,instance_id,epoch
++       ) VALUES('Steven','argos',$1,$2,$3::jsonb,$4,1,'adapter-a',1)`,
++      [revision, generation, JSON.stringify(documents), id],
++    );
++
++    await expect(insertAdoption('generation-b', [document])).rejects.toMatchObject({
++      constraint: 'agent_profile_runtime_adoptions_expectation',
++    });
++    await expect(insertAdoption('generation-a', [{ ...document, sha: 'b'.repeat(64) }]))
++      .rejects.toMatchObject({ constraint: 'agent_profile_runtime_adoptions_expectation' });
++    await expect(insertAdoption('generation-a', [document])).resolves.toBeDefined();
++
++    await pool.query(
++      `UPDATE agent_profile_runtime_expectations SET generation='generation-b'
++        WHERE tenant_id='Steven' AND alias='argos'`,
++    );
++    await expect(insertAdoption('generation-b', [document])).rejects.toMatchObject({
++      constraint: 'agent_profile_runtime_adoptions_delivery_id_key',
++    });
++  });
++
++  it('refuses destructive down after any evidence and round-trips only while unused', async () => {
++    const revision = await seedProfile();
++    await pool.query(
++      `INSERT INTO agent_profile_runtime_expectations(
++         tenant_id,alias,revision,generation,documents
++       ) VALUES('Steven','argos',$1,'generation-a',$2::jsonb)`,
++      [revision, JSON.stringify([document])],
++    );
++    await expect(pool.query(down)).rejects.toThrow(/runtime profile evidence has been recorded/u);
++    expect(await tableExists('agent_profile_runtime_expectations')).toBe(true);
++
++    await pool.query(`DELETE FROM agent_profile_runtime_expectations`);
++    await pool.query(down);
++    expect(await tableExists('agent_profile_runtime_expectations')).toBe(false);
++    expect(await tableExists('agent_profile_runtime_adoptions')).toBe(false);
++    const functions = await pool.query<{ count: string }>(
++      `SELECT count(*)::text AS count FROM pg_proc
++        WHERE proname IN (
++          'cauce_profile_runtime_documents_valid',
++          'cauce_profile_runtime_adoption_matches_expectation'
++        )`,
++    );
++    expect(functions.rows).toEqual([{ count: '0' }]);
++
++    await ensureUp();
++    expect(await tableExists('agent_profile_runtime_expectations')).toBe(true);
++  });
++
++  it('refuses down while a later migration is recorded', async () => {
++    await pool.query(`INSERT INTO schema_migrations(version) VALUES('999_future.sql')`);
++    await expect(pool.query(down)).rejects.toThrow(/later migration/u);
++    expect(await tableExists('agent_profile_runtime_expectations')).toBe(true);
++  });
++});
+diff --git a/packages/store/test/console-publish-intent-migration-postgres.test.ts b/packages/store/test/console-publish-intent-migration-postgres.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d9e6b31f8cd6c27cfa81d9348f9224703bd27e35
+--- /dev/null
++++ b/packages/store/test/console-publish-intent-migration-postgres.test.ts
+@@ -0,0 +1,268 @@
++import { createHash } from 'node:crypto';
++import { readFile } from 'node:fs/promises';
++import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
++import type { DatabasePool } from '../src/index.js';
++import {
++  resetTestDatabase, startTestDatabase, type TestDatabase,
++} from '../../../tests/helpers/postgres.js';
++
++const version = '037_console_publish_intent_indexes.sql';
++const upPath = new URL(`../migrations/${version}`, import.meta.url);
++const downPath = new URL(`../migrations/down/${version}`, import.meta.url);
++const indexNames = [
++  'audit_events_console_publish_key_037_idx',
++  'audit_events_console_publish_nonce_037_idx',
++  'audit_events_console_publish_rate_037_idx',
++  'audit_events_console_publish_head_037_idx',
++] as const;
++
++let database: TestDatabase;
++let pool: DatabasePool;
++let up: string;
++let down: string;
++
++async function existingIndexes(): Promise<string[]> {
++  const result = await pool.query<{ indexname: string }>(
++    `SELECT indexname FROM pg_indexes
++      WHERE schemaname='public' AND indexname=ANY($1::text[])
++      ORDER BY indexname`,
++    [[...indexNames]],
++  );
++  return result.rows.map((row) => row.indexname);
++}
++
++async function ensureUp(): Promise<void> {
++  if ((await existingIndexes()).length === 0) await pool.query(up);
++  await pool.query(
++    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version],
++  );
++  await pool.query(
++    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
++     VALUES($1,$2,'applied-atomically')
++     ON CONFLICT(version) DO UPDATE SET
++       source_sha256=EXCLUDED.source_sha256,
++       source_origin=EXCLUDED.source_origin`,
++    [version, createHash('sha256').update(up).digest('hex')],
++  );
++}
++
++async function seedScaleHistory(): Promise<void> {
++  await pool.query(
++    `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
++     SELECT 'Steven','kant','message.publish','allow',
++            jsonb_build_object('unrelated_sequence',sequence)
++       FROM generate_series(1,10000) AS sequence`,
++  );
++  await pool.query(
++    `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
++     SELECT 'Steven','kant','console.publish.prepare','allow',jsonb_build_object(
++       'version',1,
++       'idempotency_key','console:scale-' || sequence,
++       'semantic_hash',lpad(to_hex(sequence),64,'0'),
++       'conversation_hash',repeat('c',64),
++       'intent_nonce_hash',lpad(to_hex(sequence+100),64,'0'),
++       'operator_scope_hash',repeat('a',64)
++     )
++       FROM generate_series(1,32) AS sequence`,
++  );
++  await pool.query(
++    `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
++     VALUES(
++       'Steven','kant','console.publish.head','allow',
++       jsonb_build_object(
++         'version',1,
++         'operator_scope_hash',repeat('a',64),
++         'conversation_hash',repeat('c',64),
++         'sequence',1,
++         'intents','[]'::jsonb
++       )
++     )`,
++  );
++  await pool.query('ANALYZE audit_events');
++}
++
++async function explainWithGenericPlan(
++  name: string,
++  statement: string,
++  parameters: readonly string[],
++): Promise<string> {
++  const client = await pool.connect();
++  try {
++    await client.query('BEGIN');
++    await client.query(`SET LOCAL enable_seqscan=off`);
++    await client.query(`SET LOCAL plan_cache_mode='force_generic_plan'`);
++    await client.query(`PREPARE ${name} AS ${statement}`);
++    const literals = parameters.map((value) => `'${value.replaceAll("'", "''")}'`).join(',');
++    const result = await client.query<{ 'QUERY PLAN': string }>(
++      `EXPLAIN (COSTS OFF) EXECUTE ${name}(${literals})`,
++    );
++    await client.query('ROLLBACK');
++    return result.rows.map((row) => row['QUERY PLAN']).join('\n');
++  } catch (error) {
++    await client.query('ROLLBACK');
++    throw error;
++  } finally {
++    client.release();
++  }
++}
++
++beforeAll(async () => {
++  [up, down] = await Promise.all([
++    readFile(upPath, 'utf8'),
++    readFile(downPath, 'utf8'),
++  ]);
++  database = await startTestDatabase();
++  pool = database.pool;
++}, 180_000);
++
++beforeEach(async () => {
++  await resetTestDatabase(pool);
++  await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
++  await ensureUp();
++});
++
++afterEach(async () => {
++  await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
++  await ensureUp();
++});
++
++afterAll(async () => {
++  await pool?.end();
++  await database?.container.stop();
++});
++
++describe('migration 037 bounded console publish-intent journal indexes', () => {
++  it('installs the exact partial expression indexes used by literal journal queries', async () => {
++    const definitions = await pool.query<{ indexname: string; indexdef: string }>(
++      `SELECT indexname,indexdef FROM pg_indexes
++        WHERE schemaname='public' AND indexname=ANY($1::text[])
++        ORDER BY indexname`,
++      [[...indexNames]],
++    );
++    expect(definitions.rows.map((row) => row.indexname).sort())
++      .toEqual([...indexNames].sort());
++    const encoded = definitions.rows.map((row) => row.indexdef).join('\n');
++    expect(encoded).toContain("(metadata ->> 'idempotency_key'::text)");
++    expect(encoded).toContain("(metadata ->> 'operator_scope_hash'::text)");
++    expect(encoded).toContain("(metadata ->> 'intent_nonce_hash'::text)");
++    expect(encoded).toContain("(metadata ->> 'conversation_hash'::text)");
++    expect(encoded).toContain('created_at DESC');
++    expect(encoded).toContain("action = 'console.publish.prepare'::text");
++    expect(encoded).toContain("action = 'console.publish.head'::text");
++    expect(encoded).toContain("'console.publish.confirm'::text");
++    expect(encoded).toContain("'console.publish.expire'::text");
++  });
++
++  it('uses bounded journal indexes with a generic plan despite large unrelated history', async () => {
++    await seedScaleHistory();
++    const keyPlan = await explainWithGenericPlan(
++      'console_key_037',
++      `SELECT action,metadata FROM audit_events
++        WHERE tenant_id=$1 AND actor_alias=$2
++          AND metadata->>'idempotency_key'=$3
++          AND action IN (
++            'console.publish.prepare','console.publish.confirm','console.publish.expire'
++          )
++        ORDER BY id LIMIT 4`,
++      ['Steven', 'kant', 'console:scale-20'],
++    );
++    expect(keyPlan).toContain('audit_events_console_publish_key_037_idx');
++
++    const noncePlan = await explainWithGenericPlan(
++      'console_nonce_037',
++      `SELECT metadata FROM audit_events
++        WHERE tenant_id=$1 AND actor_alias=$2
++          AND action='console.publish.prepare'
++          AND metadata->>'operator_scope_hash'=$3
++          AND metadata->>'intent_nonce_hash'=$4
++        ORDER BY id DESC LIMIT 2`,
++      ['Steven', 'kant', 'a'.repeat(64), '0'.repeat(62) + '78'],
++    );
++    expect(noncePlan).toContain('audit_events_console_publish_nonce_037_idx');
++
++    const ratePlan = await explainWithGenericPlan(
++      'console_rate_037',
++      `WITH recent AS MATERIALIZED (
++         SELECT created_at FROM audit_events
++          WHERE tenant_id=$1 AND actor_alias=$2
++            AND action='console.publish.prepare'
++            AND metadata->>'operator_scope_hash'=$3
++            AND created_at>now()-interval '24 hours'
++          ORDER BY created_at DESC,id DESC LIMIT $5
++       )
++       SELECT created_at FROM recent
++        WHERE created_at>now()-interval '10 minutes'
++        OFFSET $4 LIMIT 1`,
++      ['Steven', 'kant', 'a'.repeat(64), '59', '200'],
++    );
++    expect(ratePlan).toContain('audit_events_console_publish_rate_037_idx');
++
++    const headPlan = await explainWithGenericPlan(
++      'console_head_037',
++      `SELECT metadata FROM audit_events
++        WHERE tenant_id=$1 AND actor_alias=$2
++          AND action='console.publish.head'
++          AND metadata->>'operator_scope_hash'=$3
++          AND metadata->>'conversation_hash'=$4
++        ORDER BY id DESC LIMIT 2`,
++      ['Steven', 'kant', 'a'.repeat(64), 'c'.repeat(64)],
++    );
++    expect(headPlan).toContain('audit_events_console_publish_head_037_idx');
++  });
++
++  it('round-trips only before journal use and preserves unrelated audit evidence', async () => {
++    await pool.query(
++      `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
++       VALUES('Steven','kant','message.publish','allow','{"unrelated":true}'::jsonb)`,
++    );
++    const before = await pool.query<{ count: string }>(
++      `SELECT count(*)::text AS count FROM audit_events`,
++    );
++    await pool.query(down);
++    expect(await existingIndexes()).toEqual([]);
++    expect((await pool.query(
++      `SELECT 1 FROM schema_migrations WHERE version=$1`, [version],
++    )).rowCount).toBe(0);
++    expect((await pool.query<{ count: string }>(
++      `SELECT count(*)::text AS count FROM audit_events`,
++    )).rows).toEqual(before.rows);
++
++    await ensureUp();
++    expect((await existingIndexes()).sort()).toEqual([...indexNames].sort());
++  });
++
++  it('refuses destructive down after the first console journal write', async () => {
++    await seedScaleHistory();
++    await expect(pool.query(down)).rejects.toThrow(/after console publish journal use/u);
++    expect((await existingIndexes()).sort()).toEqual([...indexNames].sort());
++  });
++
++  it('refuses downgrade while a later migration is recorded', async () => {
++    await pool.query(`INSERT INTO schema_migrations(version) VALUES('999_future.sql')`);
++    await expect(pool.query(down)).rejects.toThrow(/later migration/u);
++    expect((await existingIndexes()).sort()).toEqual([...indexNames].sort());
++  });
++
++  it('refuses downgrade from a drifted atomic source ledger', async () => {
++    await pool.query(
++      `UPDATE schema_migration_ledger SET source_sha256=repeat('b',64) WHERE version=$1`,
++      [version],
++    );
++    await expect(pool.query(down)).rejects.toThrow(/ledger state/u);
++    expect((await existingIndexes()).sort()).toEqual([...indexNames].sort());
++  });
++
++  it('rejects a first upgrade that would have to invent a head for existing prepares', async () => {
++    await pool.query(down);
++    await pool.query(
++      `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
++       VALUES(
++         'Steven','kant','console.publish.prepare','allow',
++         '{"version":1,"idempotency_key":"console:orphan"}'::jsonb
++       )`,
++    );
++    await expect(pool.query(up)).rejects.toThrow(/empty console publish-intent journal/u);
++    expect(await existingIndexes()).toEqual([]);
++    await pool.query(`DELETE FROM audit_events WHERE action='console.publish.prepare'`);
++  });
++});
 diff --git a/services/dispatcher/src/config.ts b/services/dispatcher/src/config.ts
-index b6a55fb..4012b46 100644
+index b6a55fb8b32cf42be5ff4f5aa7df18df6be2cf77..4012b46bb7433f6d599a2439c177692c17ca24b8 100644
 --- a/services/dispatcher/src/config.ts
 +++ b/services/dispatcher/src/config.ts
 @@ -25,6 +25,7 @@ export const DEFAULT_CHAIN_SWEEP_LIMIT = 5;
@@ -6142,7 +6850,7 @@ index b6a55fb..4012b46 100644
      ackTimeoutMs,
      interactiveBurst: positiveInteger(environment, 'INTERACTIVE_BURST', 3),
 diff --git a/services/dispatcher/src/main.ts b/services/dispatcher/src/main.ts
-index 2686505..011466e 100644
+index 268650516bad551faf455a42f5e212ca7ab3c391..011466ec57e8610c7e15e0d874dd0064204e7b7b 100644
 --- a/services/dispatcher/src/main.ts
 +++ b/services/dispatcher/src/main.ts
 @@ -50,8 +50,14 @@ const health = createServer(async (request, response) => {
@@ -6207,7 +6915,7 @@ index 2686505..011466e 100644
 +  }
 +}
 diff --git a/services/dispatcher/src/metrics.ts b/services/dispatcher/src/metrics.ts
-index 1a7eb25..bcf6969 100644
+index 1a7eb25c4d4727fcdd3675da025f0826c24df9ce..bcf6969c4b1d6a0e20b84c3b082600c578fd17b7 100644
 --- a/services/dispatcher/src/metrics.ts
 +++ b/services/dispatcher/src/metrics.ts
 @@ -12,6 +12,22 @@ interface CountRow {
@@ -6360,7 +7068,7 @@ index 1a7eb25..bcf6969 100644
 +  return parsed;
  }
 diff --git a/services/dispatcher/test/liveness.test.ts b/services/dispatcher/test/liveness.test.ts
-index bb6fd5e..dfc9ab3 100644
+index bb6fd5e9f490947df8d6aae36512c676fe273e4e..dfc9ab3df3f5c8224f35a20b4e4d1b1433e38720 100644
 --- a/services/dispatcher/test/liveness.test.ts
 +++ b/services/dispatcher/test/liveness.test.ts
 @@ -22,6 +22,17 @@ const failingPool = {
@@ -6467,7 +7175,7 @@ index bb6fd5e..dfc9ab3 100644
  
    it('publishes the tick age so Prometheus sees a stopped loop as well', async () => {
 diff --git a/services/gateway/src/app.ts b/services/gateway/src/app.ts
-index c949dc0..8a6eb06 100644
+index c949dc09316de50dafd0024a00ff8aa99a03ca1e..8a6eb06f17daa196d0da76bb180e4aa4b9c4f4a8 100644
 --- a/services/gateway/src/app.ts
 +++ b/services/gateway/src/app.ts
 @@ -33,6 +33,8 @@ import {
@@ -6573,7 +7281,7 @@ index c949dc0..8a6eb06 100644
      for (const session of sessions.values()) session.socket.close(1001, 'gateway shutdown');
      sessions.clear();
 diff --git a/services/gateway/src/health-progress.test.ts b/services/gateway/src/health-progress.test.ts
-index 8cf3168..f09ef9b 100644
+index 8cf3168bd77547be4c727aa181b555db198195b3..f09ef9b159ca5b88fd71d790598936a9425a4e80 100644
 --- a/services/gateway/src/health-progress.test.ts
 +++ b/services/gateway/src/health-progress.test.ts
 @@ -1,8 +1,16 @@
@@ -7596,7 +8304,7 @@ index 8cf3168..f09ef9b 100644
      const app = await buildLoopbackHealthProbe({ pool: answeringPool, ackProbe: async () => undefined });
      expect((await app.inject({ method: 'GET', url: '/health/ready' })).statusCode).toBe(200);
 diff --git a/services/gateway/src/health.ts b/services/gateway/src/health.ts
-index fbcd29e..4856ccf 100644
+index fbcd29e95c36a0efc97a58c28e301ccc592c85ab..4856ccfd4145672407bf81038ef99ef26adcc77e 100644
 --- a/services/gateway/src/health.ts
 +++ b/services/gateway/src/health.ts
 @@ -1,33 +1,1200 @@
@@ -8807,7 +9515,7 @@ index fbcd29e..4856ccf 100644
    const app = Fastify({ logger: options.logger ?? false });
    registerHealthRoutes(app, options);
 diff --git a/services/gateway/src/main.ts b/services/gateway/src/main.ts
-index 4ab7bfe..76e7724 100644
+index 4ab7bfee56344d44f92b3ecb652463263e92e1fe..76e7724e199068092622363e88313b7c9e257060 100644
 --- a/services/gateway/src/main.ts
 +++ b/services/gateway/src/main.ts
 @@ -8,12 +8,13 @@ import {
@@ -8868,7 +9576,7 @@ index 4ab7bfe..76e7724 100644
    if (health) await health.close();
 diff --git a/services/gateway/src/rollback-bridge-read-only.test.ts b/services/gateway/src/rollback-bridge-read-only.test.ts
 new file mode 100644
-index 0000000..2ea768d
+index 0000000000000000000000000000000000000000..2ea768d102d638306ee5ea3209730044cffdee3f
 --- /dev/null
 +++ b/services/gateway/src/rollback-bridge-read-only.test.ts
 @@ -0,0 +1,213 @@
@@ -9087,7 +9795,7 @@ index 0000000..2ea768d
 +});
 diff --git a/services/gateway/src/rollback-bridge-read-only.ts b/services/gateway/src/rollback-bridge-read-only.ts
 new file mode 100644
-index 0000000..2993930
+index 0000000000000000000000000000000000000000..29939306a9031150c832d197195423d97ddb8ba5
 --- /dev/null
 +++ b/services/gateway/src/rollback-bridge-read-only.ts
 @@ -0,0 +1,50 @@
@@ -9143,7 +9851,7 @@ index 0000000..2993930
 +}
 diff --git a/services/gateway/src/wake-pump-telemetry.ts b/services/gateway/src/wake-pump-telemetry.ts
 new file mode 100644
-index 0000000..8458599
+index 0000000000000000000000000000000000000000..84585997ae9d87082e2eb8473530383de9b5208c
 --- /dev/null
 +++ b/services/gateway/src/wake-pump-telemetry.ts
 @@ -0,0 +1,89 @@
@@ -9238,7 +9946,7 @@ index 0000000..8458599
 +}
 diff --git a/services/shadow-router/src/errors.ts b/services/shadow-router/src/errors.ts
 new file mode 100644
-index 0000000..c255688
+index 0000000000000000000000000000000000000000..c25568846a7e484af930422f5658b5e2cf040626
 --- /dev/null
 +++ b/services/shadow-router/src/errors.ts
 @@ -0,0 +1,26 @@
@@ -9269,7 +9977,7 @@ index 0000000..c255688
 +  }
 +}
 diff --git a/services/shadow-router/src/http.ts b/services/shadow-router/src/http.ts
-index 4c73abe..fc041f9 100644
+index 4c73abed629c62dd05ba2843cff01afbfc21de9c..fc041f94df2e52a7b6d2f94e27232caa1256616c 100644
 --- a/services/shadow-router/src/http.ts
 +++ b/services/shadow-router/src/http.ts
 @@ -1,14 +1,15 @@
@@ -9497,7 +10205,7 @@ index 4c73abe..fc041f9 100644
    return server;
  }
 diff --git a/services/shadow-router/src/index.ts b/services/shadow-router/src/index.ts
-index c99f28b..2e06ded 100644
+index c99f28b44dc73a208078219c4e5c4d229d97f846..2e06ded2cfbe3a64598e4716bf44db5f1c5698b3 100644
 --- a/services/shadow-router/src/index.ts
 +++ b/services/shadow-router/src/index.ts
 @@ -1,4 +1,6 @@
@@ -9508,7 +10216,7 @@ index c99f28b..2e06ded 100644
  export * from './router.js';
  export * from './target.js';
 diff --git a/services/shadow-router/src/main.ts b/services/shadow-router/src/main.ts
-index d390091..9685c91 100644
+index d390091763a0577279bf4d1c4b1b68c27a49a14f..9685c91433e91105d0bd44fb830e86c98441de19 100644
 --- a/services/shadow-router/src/main.ts
 +++ b/services/shadow-router/src/main.ts
 @@ -1,10 +1,13 @@
@@ -9636,7 +10344,7 @@ index d390091..9685c91 100644
  }
 diff --git a/services/shadow-router/src/progress.ts b/services/shadow-router/src/progress.ts
 new file mode 100644
-index 0000000..57c2bc1
+index 0000000000000000000000000000000000000000..57c2bc1d00204b9ac33bab69b6afe004f311e198
 --- /dev/null
 +++ b/services/shadow-router/src/progress.ts
 @@ -0,0 +1,197 @@
@@ -9838,7 +10546,7 @@ index 0000000..57c2bc1
 +  }
 +}
 diff --git a/services/shadow-router/src/repository.ts b/services/shadow-router/src/repository.ts
-index e4b70d6..9b66fa7 100644
+index e4b70d61fd7fe75c5ae584f6e688cbf8d1818e30..9b66fa75d629ca1ee5c1b9168917d921e3fcd682 100644
 --- a/services/shadow-router/src/repository.ts
 +++ b/services/shadow-router/src/repository.ts
 @@ -1,9 +1,10 @@
@@ -10281,7 +10989,7 @@ index e4b70d6..9b66fa7 100644
          `INSERT INTO shadow_human_reply_guards(
             tenant_id,correlation_key,direction,source_event_id,target_event_id
 diff --git a/services/shadow-router/src/router.ts b/services/shadow-router/src/router.ts
-index 74e1498..0783cc0 100644
+index 74e149824e798d809f77a1edfa76b98aa7428b5f..0783cc09c0718935919c7249f7df13d89045629d 100644
 --- a/services/shadow-router/src/router.ts
 +++ b/services/shadow-router/src/router.ts
 @@ -1,5 +1,6 @@
@@ -10488,7 +11196,7 @@ index 74e1498..0783cc0 100644
    }
  }
 diff --git a/services/shadow-router/src/target.ts b/services/shadow-router/src/target.ts
-index 3fff1e3..dc3fc9f 100644
+index 3fff1e3ddccbb357554d52447193dd55621e1515..dc3fc9fe529a18ad953dc4f466f550a56b29b48b 100644
 --- a/services/shadow-router/src/target.ts
 +++ b/services/shadow-router/src/target.ts
 @@ -4,7 +4,12 @@ import type {
@@ -10535,7 +11243,7 @@ index 3fff1e3..dc3fc9f 100644
  }
  
 diff --git a/services/shadow-router/src/types.ts b/services/shadow-router/src/types.ts
-index f885db7..d6f5413 100644
+index f885db732de2f76302be78aca62d9f0450f00aeb..d6f5413843400b5ba1e71785eebbdaa7b20a0c14 100644
 --- a/services/shadow-router/src/types.ts
 +++ b/services/shadow-router/src/types.ts
 @@ -40,10 +40,14 @@ export interface ShadowVerdict {
@@ -10621,7 +11329,7 @@ index f885db7..d6f5413 100644
    | 'shadowed' | 'compared_match' | 'compared_mismatch' | 'cutover_delivered'
    | 'human_reply_blocked' | 'failed';
 diff --git a/services/shadow-router/src/worker.ts b/services/shadow-router/src/worker.ts
-index 3f10b03..08fc455 100644
+index 3f10b034518972e506fd6fe77b06cf9545997aeb..08fc455de0769cdf94a3b52125d093a75daa3341 100644
 --- a/services/shadow-router/src/worker.ts
 +++ b/services/shadow-router/src/worker.ts
 @@ -1,6 +1,8 @@
@@ -10849,7 +11557,7 @@ index 3f10b03..08fc455 100644
  }
 diff --git a/services/shadow-router/test/http-health.test.ts b/services/shadow-router/test/http-health.test.ts
 new file mode 100644
-index 0000000..2c1d7a7
+index 0000000000000000000000000000000000000000..2c1d7a71b23aea642cf42294d93c85f3c925e7e2
 --- /dev/null
 +++ b/services/shadow-router/test/http-health.test.ts
 @@ -0,0 +1,247 @@
@@ -11102,7 +11810,7 @@ index 0000000..2c1d7a7
 +});
 diff --git a/services/shadow-router/test/progress.test.ts b/services/shadow-router/test/progress.test.ts
 new file mode 100644
-index 0000000..6b6a14a
+index 0000000000000000000000000000000000000000..6b6a14aa9d3116372a338dce56ee6174f90fea99
 --- /dev/null
 +++ b/services/shadow-router/test/progress.test.ts
 @@ -0,0 +1,65 @@
@@ -11173,7 +11881,7 @@ index 0000000..6b6a14a
 +});
 diff --git a/services/shadow-router/test/repository-health.test.ts b/services/shadow-router/test/repository-health.test.ts
 new file mode 100644
-index 0000000..1b3d628
+index 0000000000000000000000000000000000000000..1b3d6281b6a9169267954756b6fdffc483ae89b7
 --- /dev/null
 +++ b/services/shadow-router/test/repository-health.test.ts
 @@ -0,0 +1,114 @@
@@ -11292,7 +12000,7 @@ index 0000000..1b3d628
 +  });
 +});
 diff --git a/services/shadow-router/test/router.test.ts b/services/shadow-router/test/router.test.ts
-index 7ee94ab..06380e0 100644
+index 7ee94ab487ce14707f6516dbed93469fd3549d6f..06380e0ea50f74e50f380dd6379416352a03f639 100644
 --- a/services/shadow-router/test/router.test.ts
 +++ b/services/shadow-router/test/router.test.ts
 @@ -116,7 +116,7 @@ describe('identity-free shadow routing', () => {
@@ -11328,7 +12036,7 @@ index 7ee94ab..06380e0 100644
  
 diff --git a/services/shadow-router/test/worker-health.test.ts b/services/shadow-router/test/worker-health.test.ts
 new file mode 100644
-index 0000000..75b9818
+index 0000000000000000000000000000000000000000..75b9818da3d1a1be3996eae61e5b267b81223aef
 --- /dev/null
 +++ b/services/shadow-router/test/worker-health.test.ts
 @@ -0,0 +1,342 @@
@@ -11676,10 +12384,11 @@ index 0000000..75b9818
 +});
 diff --git a/tests/store-hardening/shadow-router-target-phase-postgres.test.ts b/tests/store-hardening/shadow-router-target-phase-postgres.test.ts
 new file mode 100644
-index 0000000..9c1e4ac
+index 0000000000000000000000000000000000000000..c8f4cd5610bd627fbd299bbeffa1225bc75b3b43
 --- /dev/null
 +++ b/tests/store-hardening/shadow-router-target-phase-postgres.test.ts
-@@ -0,0 +1,582 @@
+@@ -0,0 +1,622 @@
++import { createHash } from 'node:crypto';
 +import { readFile } from 'node:fs/promises';
 +import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 +import { MapShadowTargetRegistry } from '../../services/shadow-router/src/target.js';
@@ -11695,11 +12404,16 @@ index 0000000..9c1e4ac
 +const version = '036_shadow_router_target_phase.sql';
 +const upPath = new URL(`../../packages/store/migrations/${version}`, import.meta.url);
 +const downPath = new URL(`../../packages/store/migrations/down/${version}`, import.meta.url);
++const version037 = '037_console_publish_intent_indexes.sql';
++const up037Path = new URL(`../../packages/store/migrations/${version037}`, import.meta.url);
++const down037Path = new URL(`../../packages/store/migrations/down/${version037}`, import.meta.url);
 +
 +let database: TestDatabase;
 +let pool: DatabasePool;
 +let up: string;
 +let down: string;
++let up037: string;
++let down037: string;
 +
 +function envelope(source = 'shadow-phase-source'): ShadowEnvelope {
 +  return {
@@ -11730,16 +12444,49 @@ index 0000000..9c1e4ac
 +  );
 +}
 +
++async function consolePublishIndexesExist(): Promise<boolean> {
++  const result = await pool.query<{ exists: boolean }>(
++    `SELECT to_regclass('public.audit_events_console_publish_key_037_idx') IS NOT NULL AS exists`,
++  );
++  return result.rows[0]?.exists === true;
++}
++
++async function removeLatestConsolePublishIndexes(): Promise<void> {
++  if (await consolePublishIndexesExist()) await pool.query(down037);
++  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
++}
++
++async function restoreLatestConsolePublishIndexes(): Promise<void> {
++  if (!await consolePublishIndexesExist()) await pool.query(up037);
++  await pool.query(
++    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version037],
++  );
++  await pool.query(
++    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
++     VALUES($1,$2,'applied-atomically')
++     ON CONFLICT(version) DO UPDATE SET
++       source_sha256=EXCLUDED.source_sha256,
++       source_origin=EXCLUDED.source_origin`,
++    [version037, createHash('sha256').update(up037).digest('hex')],
++  );
++}
++
 +beforeAll(async () => {
-+  [up, down] = await Promise.all([readFile(upPath, 'utf8'), readFile(downPath, 'utf8')]);
++  [up, down, up037, down037] = await Promise.all([
++    readFile(upPath, 'utf8'),
++    readFile(downPath, 'utf8'),
++    readFile(up037Path, 'utf8'),
++    readFile(down037Path, 'utf8'),
++  ]);
 +  database = await startTestDatabase();
 +  pool = database.pool;
 +}, 120_000);
 +
 +beforeEach(async () => {
-+  await ensureUp();
 +  await resetTestDatabase(pool);
 +  await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
++  await removeLatestConsolePublishIndexes();
++  await ensureUp();
 +});
 +
 +afterEach(async () => {
@@ -11751,6 +12498,7 @@ index 0000000..9c1e4ac
 +      WHERE status='processing'`,
 +  ).catch(() => undefined);
 +  await ensureUp();
++  await restoreLatestConsolePublishIndexes();
 +});
 +
 +afterAll(async () => {
@@ -12264,7 +13012,7 @@ index 0000000..9c1e4ac
 +});
 diff --git a/tests/unit/liveness-probe.test.ts b/tests/unit/liveness-probe.test.ts
 new file mode 100644
-index 0000000..999c346
+index 0000000000000000000000000000000000000000..999c3463a6320faca88dc42d7858b8edb03b985e
 --- /dev/null
 +++ b/tests/unit/liveness-probe.test.ts
 @@ -0,0 +1,157 @@
@@ -12427,7 +13175,7 @@ index 0000000..999c346
 +});
 diff --git a/tests/unit/rollback-bridge.test.ts b/tests/unit/rollback-bridge.test.ts
 new file mode 100644
-index 0000000..df662dd
+index 0000000000000000000000000000000000000000..df662dd4e5ccd4915c887876f418235dc0f6eef6
 --- /dev/null
 +++ b/tests/unit/rollback-bridge.test.ts
 @@ -0,0 +1,140 @@

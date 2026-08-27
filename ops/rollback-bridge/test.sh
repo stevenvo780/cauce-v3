@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly BASE_COMMIT='79d6d8f1eae00e733bf2aeddaffeb592e5944687'
-readonly PATCH_SHA256='b782f27857ebb688228bf958beaddb01a7f05af546267c8c10fccd604414283f'
-readonly RESULT_TREE='c43adddfb54d26d6fc88b334613669d66fa0a656'
+readonly PATCH_SHA256='0f8f4754843ac0621109f2b74513d0388b947b0ac216561e5beaa52fdf62348f'
+readonly RESULT_TREE='4d8d5ae81f08f4bb34785d3a8325df888697effb'
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repository=$(git -C "$script_dir/../.." rev-parse --show-toplevel)

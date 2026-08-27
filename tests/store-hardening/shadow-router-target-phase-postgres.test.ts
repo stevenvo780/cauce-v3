@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MapShadowTargetRegistry } from '../../services/shadow-router/src/target.js';
@@ -13,11 +14,16 @@ import {
 const version = '036_shadow_router_target_phase.sql';
 const upPath = new URL(`../../packages/store/migrations/${version}`, import.meta.url);
 const downPath = new URL(`../../packages/store/migrations/down/${version}`, import.meta.url);
+const version037 = '037_console_publish_intent_indexes.sql';
+const up037Path = new URL(`../../packages/store/migrations/${version037}`, import.meta.url);
+const down037Path = new URL(`../../packages/store/migrations/down/${version037}`, import.meta.url);
 
 let database: TestDatabase;
 let pool: DatabasePool;
 let up: string;
 let down: string;
+let up037: string;
+let down037: string;
 
 function envelope(source = 'shadow-phase-source'): ShadowEnvelope {
   return {
@@ -48,16 +54,49 @@ async function ensureUp(): Promise<void> {
   );
 }
 
+async function consolePublishIndexesExist(): Promise<boolean> {
+  const result = await pool.query<{ exists: boolean }>(
+    `SELECT to_regclass('public.audit_events_console_publish_key_037_idx') IS NOT NULL AS exists`,
+  );
+  return result.rows[0]?.exists === true;
+}
+
+async function removeLatestConsolePublishIndexes(): Promise<void> {
+  if (await consolePublishIndexesExist()) await pool.query(down037);
+  else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
+}
+
+async function restoreLatestConsolePublishIndexes(): Promise<void> {
+  if (!await consolePublishIndexesExist()) await pool.query(up037);
+  await pool.query(
+    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version037],
+  );
+  await pool.query(
+    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
+     VALUES($1,$2,'applied-atomically')
+     ON CONFLICT(version) DO UPDATE SET
+       source_sha256=EXCLUDED.source_sha256,
+       source_origin=EXCLUDED.source_origin`,
+    [version037, createHash('sha256').update(up037).digest('hex')],
+  );
+}
+
 beforeAll(async () => {
-  [up, down] = await Promise.all([readFile(upPath, 'utf8'), readFile(downPath, 'utf8')]);
+  [up, down, up037, down037] = await Promise.all([
+    readFile(upPath, 'utf8'),
+    readFile(downPath, 'utf8'),
+    readFile(up037Path, 'utf8'),
+    readFile(down037Path, 'utf8'),
+  ]);
   database = await startTestDatabase();
   pool = database.pool;
 }, 120_000);
 
 beforeEach(async () => {
-  await ensureUp();
   await resetTestDatabase(pool);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeLatestConsolePublishIndexes();
+  await ensureUp();
 });
 
 afterEach(async () => {
@@ -69,6 +108,7 @@ afterEach(async () => {
       WHERE status='processing'`,
   ).catch(() => undefined);
   await ensureUp();
+  await restoreLatestConsolePublishIndexes();
 });
 
 afterAll(async () => {
