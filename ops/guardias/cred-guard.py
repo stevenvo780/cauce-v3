@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Vigila el estado de las credenciales de la flota sin exponer secretos.
+"""Vigila las credenciales de la flota SIN tocarlas ni imprimirlas.
 
-Detecta anomalías y estados de riesgo:
-  MUERTO     refreshToken ausente o vacío
+Por que existe: el trabajo manual de rotar no lo causa que los tokens venzan, lo causa COMPARTIR
+un mismo archivo entre varios contenedores. El refresh token de OAuth es de un solo uso y rota:
+el primero que refresca se lleva el nuevo y deja a los demas con uno gastado. El sintoma no es un
+error, es un agente que enmudece. El 2026-08-03 janus y claw-iza llevaban dias con
+refreshToken vacio y nadie lo vio.
+
+Que detecta, en orden de gravedad:
+  MUERTO     refreshToken ausente o vacio  -> no puede renovar, muere cuando venza el access
   URGENTE    vence en menos de 2 horas
-  COMPARTIDA dos o más contenedores con la misma huella de token
+  COMPARTIDA dos o mas contenedores con la MISMA huella -> se van a pisar
   OK
 
 La huella es sha256(refreshToken)[:10]: identifica la cuenta sin exponer el secreto.
-Salida: una línea por credencial + código de salida 1 si hay algo MUERTO o URGENTE.
+Salida: una linea por credencial + codigo de salida 1 si hay algo MUERTO o URGENTE.
 """
 import json, subprocess, hashlib, datetime, sys
 

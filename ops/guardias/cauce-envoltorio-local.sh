@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# cauce — envoltorio local: ejecuta el CLI `cauce` remoto en el host de destino.
+# cauce — envoltorio local: corre el `cauce` de verdad, que vive en kratos, sin tener que hacer
+# el ssh a mano. Lo escribio la sesion de relevo del 2026-07-31.
+#
+# Por que existe: el CLI real es kratos:~/.local/bin/cauce y necesita estar en la torre (habla con
+# docker y con las sesiones tmux de los contenedores). Desde el portatil hacia falta acordarse del
+# `ssh kratos` y ademas del `bash -lc`, porque kratos usa FISH y el quoting se rompe.
 #
 # Uso:  cauce                      lista la flota
 #       cauce <alias>              entra a la sesion (interactivo, pide TTY)

@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """Alta, baja y reparto de las cuentas de proveedor de la flota.
 
-GESTIÓN DE CUENTAS
-==================
-Permite consultar, asociar y verificar el reparto de cuentas de proveedor
-registradas en `provider_accounts` y `agent_account_bindings`.
+POR QUE EXISTE
+El registro ya estaba en la base desde la migración 010 —`provider_accounts`, el techo
+`alias_routing_ceiling` y `agent_account_bindings` con prioridad— pero sólo se podía tocar
+escribiendo SQL a mano contra producción. Eso hizo que nadie lo mantuviera: el 2026-08-04 el
+registro decía que seis alias usaban una cuenta cuyo archivo, en el disco, no era el que leían.
+Un registro que hay que editar a mano es un registro que miente.
 
-SEGURIDAD DE CREDENCIALES
-=========================
-No manipula credenciales directas. `credential_ref` es un localizador (ruta,
-variable de entorno o identificador de vault); el contenido no se lee ni se imprime.
+QUE NO HACE, A PROPOSITO
+No toca credenciales. `credential_ref` es un LOCATOR (una ruta, un nombre de variable, un
+identificador de vault); el contenido del archivo no se lee, no se copia y no se imprime nunca.
+Añadir una cuenta es registrar dónde vive, no moverla.
 
-REGLAS DE ASIGNACIÓN
-====================
-Dos contenedores no deben apuntar al mismo archivo de credenciales para evitar
-colisiones en la rotación de tokens de un solo uso. La función `verificar` comprueba
-estas condiciones.
+LA REGLA QUE HAY QUE RESPETAR AL AÑADIR CUENTAS
+Dos contenedores JAMAS deben apuntar al mismo archivo. Compartir la CUENTA está bien —varios
+logins independientes de la misma cuenta conviven, está medido—; lo que mata es compartir el
+ARCHIVO, porque el refresh token es de un solo uso y el que rota primero deja al resto con uno
+gastado. `verificar` es exactamente el chequeo de eso.
 """
 
 from __future__ import annotations
