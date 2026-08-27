@@ -5,6 +5,14 @@ Cada item es una decisión concreta: el checkbox es la aprobación; el link es l
 
 ---
 
+## SECUENCIA DE CIERRE ACORDADA (27-08 noche)
+
+1. **Las instancias cierran sus órdenes activas** (Codex: >800 + arneses; Gemini: PTY/runbooks/comentarios; MiniMax: dientes/duplicados/P14) + mi censo de funciones muertas → revisión final del integrador + foto v2.
+2. **Ajuste de rutas PRE-despliegue (alcance corto, seguro)**: reorden de `deploy/` (subcarpeta `runtime/`, ~11 referencias reales según el grafo) + coherencias menores — ejecuta Claude, re-validando después: render del compose rc=0 + re-build de ambas imágenes. NADA más se mueve antes del despliegue: los ensayos (migración 2,4s, imágenes verificadas) valen sobre las rutas actuales.
+3. **El dueño marca este doc** (D1 doble, D2-D5, dudosos) — puede pasar en paralelo desde YA.
+4. **PRIMEROS DESPLIEGUES REALES**: la ventana con el guion ensayado (backup → build → migrar → up → smoke). Objetivo: editor de contextos y TUI vivos por primera vez.
+5. **Post-primer-despliegue**: la cirugía grande de dominios (`flota/` unificando adapter-sdk+pty-agent+container-runtime, consola al nivel raíz, ops repartida) — con checklists del grafo, sobre un sistema que ya entrega.
+
 ## (1) Decisiones D1–D5 del dossier FASE 3 — el despliegue no arranca sin estas
 
 - [ ] **D1 — Flota de la 029 (ENSAYADA contra un clon de tu base — es decisión DOBLE)**: (a) deshabilita 3: `Jhon/heraclito`, `Jhon/tales`, `Miguel/gaia`; y (b) **DA DE ALTA los 4 agentes de Pablo**: `dedalo` (codex), `midas` y `seneca` (openclaw), `vulcano` (claude) — flota 14→18, 15 enabled. Los 4 de Pablo nacen sin perfil (no rompe; no publican perfil hasta dárselo). ¿Aplicar tal cual, o editar la lista del SQL antes?  → ensayo en `plan-reestructura/fase3/00-DOSSIER.md` §Ensayo
