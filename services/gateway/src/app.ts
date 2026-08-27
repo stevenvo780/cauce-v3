@@ -6,11 +6,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { WebSocket, type RawData } from 'ws';
 import {
   AliasSchema, ClaimedAckSchema,
-  ConsolePublishIntentConfirmResultSchema, ConsolePublishIntentConfirmSchema,
   ConsolePublishIntentExpiredSchema,
-  ConsolePublishIntentPrepareResultSchema, ConsolePublishIntentPrepareSchema,
-  ConsolePublishIntentRateLimitedSchema,
-  ConsolePublishIntentReconciliationSchema,
   ConfigChangeRequestSchema, ConfigMutationSchema, ConfigRollbackRequestSchema,
   CreateJobSchema, DeliveryIdSchema, HeartbeatSchema, HelloSchema,
   NotifyRequestSchema,
@@ -18,14 +14,13 @@ import {
   SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
   type ClaimedAck, type ConfigMutation,
   type ConsolePublishIntentConfirm, type ConsolePublishIntentConfirmResult,
-  type ConsolePublishIntentPrepare, type ConsolePublishIntentPrepareResult,
+  type ConsolePublishIntentPrepareResult,
   type DeliveryEnvelope, type Hello, type NotifyRequest,
   type ProfileRuntimeAdoptionEvidence, type ProfileRuntimeContract,
   type QuotaSampleRequest, type Tenant
 } from '@cauce/protocol';
 import {
   AgentProfileRepository, CauceRepository, PublishIntentExpiredError,
-  PublishIntentRateLimitedError, PublishIntentReconciliationRequired,
   StoreError, subscribeDeliveryWakes,
   type AccountSelection, type AckResult, type DatabasePool, type DeliveryLeaseCap,
   type ConnectionSessionFence, type FencedWakeOutboxRecipient, type LeaseResult,
@@ -59,6 +54,10 @@ import {
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
 } from './routes/shared.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
+import {
+  registerLegacyCandidateChainGateRoutes,
+  registerLegacyCandidatePublishIntentRoutes,
+} from './routes/legado-candidato.js';
 import {
   safeAuditPage, safeCancelReceipt, safeDlqPage, safeDlqResolution, safeReplayReceipt, sameTenantRows,
   visibleMessage, visibleMessageList, visibleOriginRelays, visibleQueue
@@ -311,6 +310,7 @@ export interface GatewayOptions {
   terminalCapability?: Readonly<Record<string, unknown>>;
   https?: HttpsServerOptions;
   exposeHealthRoutes?: boolean;
+  enableLegacyCandidateRoutes?: boolean;
   logger?: boolean;
 }
 
@@ -659,10 +659,6 @@ function rawDataText(data: RawData): string {
   return Buffer.from(data).toString('utf8');
 }
 
-function publicPublishIntent(value: unknown): ConsolePublishIntentPrepare {
-  return ConsolePublishIntentPrepareSchema.parse(value);
-}
-
 function claimFromDelivery(delivery: DeliveryClaimRecord, fallbackDeadlineMs: number): SessionClaim {
   if (typeof delivery.event_id !== 'string' || delivery.event_id.length === 0 ||
       typeof delivery.claim_token !== 'string' || delivery.claim_token.length === 0 ||
@@ -783,6 +779,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }
   const wakePumpTelemetry = options.wakePumpTelemetry ?? new WakePumpTelemetry();
   const consolePublishTelemetry = options.consolePublishTelemetry ?? new ConsolePublishTelemetry();
+  const enableLegacyCandidateRoutes = options.enableLegacyCandidateRoutes !== false;
   // Cota superior de un drain. Antes iba `undefined` y caía en el default 20 de
   // QueryDeliveriesSchema — un 20 que nadie eligió para este camino y que nadie podía ver leyendo
   // el gateway. El techo real por agente vive en agents.max_concurrent_deliveries y lo aplica
@@ -987,68 +984,11 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     } catch (error) { replyError(reply, error); }
   });
 
-  app.post('/v3/console/publish-intents', async (request, reply) => {
-    try {
-      const actor = await principal(request, options.authProvider);
-      requirePermission(actor, 'route');
-      if (repository.prepareConsolePublishIntent === undefined) {
-        throw new StoreError('not_found', 'durable console publish intents are unavailable');
-      }
-      const publicCommand = publicPublishIntent(request.body);
-      const command: TrustedPublishIntentCommand = {
-        ...trustedPublishSemantics(actor, publicCommand, request),
-        intent_nonce: publicCommand.intent_nonce,
-        requested_priority: publicCommand.priority,
-      };
-      const result = ConsolePublishIntentPrepareResultSchema.parse(
-        await repository.prepareConsolePublishIntent(
-          command,
-          consolePublishOperatorScope(actor),
-        ),
-      );
-      consolePublishTelemetry.record({ operation: 'prepare', result: result.state });
-      return reply.code(200).send(result);
-    } catch (error) {
-      if (error instanceof PublishIntentReconciliationRequired) {
-        consolePublishTelemetry.record({ operation: 'prepare', result: 'reconciliation_required' });
-        return reply.code(409).send(
-          ConsolePublishIntentReconciliationSchema.parse(error.reconciliation),
-        );
-      }
-      if (error instanceof PublishIntentRateLimitedError) {
-        consolePublishTelemetry.record({ operation: 'prepare', result: 'rate_limited' });
-        const limited = ConsolePublishIntentRateLimitedSchema.parse(error.rateLimit);
-        return reply.header('Retry-After', String(limited.retry_after_seconds))
-          .code(429).send(limited);
-      }
-      consolePublishTelemetry.record({ operation: 'prepare', result: 'error' });
-      replyError(reply, error);
-    }
-  });
-
-  app.post('/v3/console/publish-intents/confirm', async (request, reply) => {
-    try {
-      const actor = await principal(request, options.authProvider);
-      requirePermission(actor, 'route');
-      if (repository.confirmConsolePublishIntent === undefined) {
-        throw new StoreError('not_found', 'durable console publish intents are unavailable');
-      }
-      const confirmation = ConsolePublishIntentConfirmSchema.parse(request.body);
-      const result = ConsolePublishIntentConfirmResultSchema.parse(
-        await repository.confirmConsolePublishIntent(
-          actor.tenant_id,
-          actor.alias,
-          consolePublishOperatorScope(actor),
-          confirmation,
-        ),
-      );
-      consolePublishTelemetry.record({ operation: 'confirm', result: 'confirmed' });
-      return reply.code(200).send(result);
-    } catch (error) {
-      consolePublishTelemetry.record({ operation: 'confirm', result: 'error' });
-      replyError(reply, error);
-    }
-  });
+  if (enableLegacyCandidateRoutes) {
+    registerLegacyCandidatePublishIntentRoutes(
+      app, options, repository, consolePublishTelemetry,
+    );
+  }
 
   app.post('/v3/console/messages', publishHandler);
 
@@ -1450,68 +1390,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     } catch (error) { replyError(reply, error); }
   });
 
-  // Las preguntas que la flota le dejó a una persona. Es la LISTA VISIBLE que el gate promete:
-  // sin ella, sacar la espera humana del bus sólo la escondería en otro lado.
-  //
-  // Sin fachada sameTenantRows, por el mismo motivo que /v3/console/chains/:traceId: el store ya
-  // aplicó la visibilidad fila por fila (tenant propio, o arista ACL con allow_read), y aplastar
-  // por tenant acá dejaría a un operador del hub sin poder contestar la pregunta de un agente de
-  // otro tenant, que es justo para lo que existe esta lista.
-  app.get<{ Querystring: { status?: string; limit?: string } }>(
-    '/v3/console/chain-gates',
-    async (request, reply) => {
-      try {
-        const actor = await principal(request, options.authProvider);
-        requirePermission(actor, 'read');
-        if (repository.listChainGates === undefined) {
-          throw new StoreError('not_found', 'chain gates are not available in this deployment');
-        }
-        const limit = Number.parseInt(request.query.limit ?? '', 10);
-        return await repository.listChainGates(actor.tenant_id, actor.alias, {
-          status: request.query.status === 'all' ? 'all' : 'open',
-          ...(Number.isSafeInteger(limit) && limit > 0 ? { limit } : {})
-        });
-      } catch (error) { replyError(reply, error); }
-    }
-  );
-
-  // Contestar reanuda la rama suspendida con UNA entrega. Pide 'route' y no 'read' porque
-  // produce tráfico en el bus, igual que publicar.
-  app.post<{ Params: { gateId: string } }>(
-    '/v3/console/chain-gates/:gateId/answer',
-    async (request, reply) => {
-      try {
-        const actor = await principal(request, options.authProvider);
-        requirePermission(actor, 'route');
-        if (repository.answerChainGate === undefined) {
-          throw new StoreError('not_found', 'chain gates are not available in this deployment');
-        }
-        const body = request.body === null || typeof request.body !== 'object'
-          ? {}
-          : request.body as Record<string, unknown>;
-        const answer = typeof body.answer === 'string' ? body.answer : '';
-        return await repository.answerChainGate(
-          request.params.gateId, answer, actor.tenant_id, actor.alias
-        );
-      } catch (error) { replyError(reply, error); }
-    }
-  );
-
-  app.post<{ Params: { gateId: string } }>(
-    '/v3/console/chain-gates/:gateId/cancel',
-    async (request, reply) => {
-      try {
-        const actor = await principal(request, options.authProvider);
-        requirePermission(actor, 'route');
-        if (repository.cancelChainGate === undefined) {
-          throw new StoreError('not_found', 'chain gates are not available in this deployment');
-        }
-        return await repository.cancelChainGate(
-          request.params.gateId, actor.tenant_id, actor.alias
-        );
-      } catch (error) { replyError(reply, error); }
-    }
-  );
+  if (enableLegacyCandidateRoutes) {
+    registerLegacyCandidateChainGateRoutes(app, options, repository);
+  }
 
   app.get('/v3/console/config', async (request, reply) => {
     try {
