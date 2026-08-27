@@ -1112,35 +1112,6 @@ export abstract class AgentChainControlRepository extends AgentFaninRepository {
     );
   }
 
-
-
-
-
-  async listOriginRelays(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
-    await this.assertPermission(actorTenant, actorAlias, 'read');
-    const result = await this.pool.query<Record<string, unknown>>(
-      `SELECT outbox.id,outbox.tenant_id,outbox.adapter,outbox.request_id,outbox.message_id,
-              outbox.delivery_id,outbox.trace_id,outbox.origin,outbox.payload,outbox.status,
-              outbox.attempts,outbox.created_at,outbox.sent_at,message.actor_alias,
-              message.tenant_id AS message_tenant_id,delivery.recipient_tenant,delivery.recipient_alias
-       FROM adapter_outbox outbox JOIN messages message ON message.id=outbox.message_id
-       LEFT JOIN deliveries delivery ON delivery.id=outbox.delivery_id
-       WHERE outbox.kind='origin_relay' AND (
-         EXISTS (SELECT 1 FROM memberships source_member
-                 WHERE source_member.tenant_id=$1 AND source_member.room_id=message.room_id
-                   AND source_member.alias=$2 AND source_member.enabled AND message.tenant_id=$1)
-         OR (EXISTS (SELECT 1 FROM deliveries participant
-                     WHERE participant.id=outbox.delivery_id AND participant.recipient_tenant=$1
-                       AND participant.recipient_alias=$2)
-             AND (message.tenant_id=$1 OR EXISTS (
-               SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1
-                 AND edge.to_tenant=message.tenant_id AND edge.enabled AND edge.allow_read
-             )))
-       ) ORDER BY outbox.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
-    );
-    return { items: result.rows };
-  }
-
   /**
    * La LISTA VISIBLE de preguntas pendientes a una persona.
    *
