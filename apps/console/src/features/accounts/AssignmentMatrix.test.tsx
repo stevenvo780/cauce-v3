@@ -5,11 +5,8 @@ import { AccountsPage } from './AccountsPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
-/*
- * La matriz dejó de ser la ruta `/assignments` el 2026-08-06: es la segunda mitad de "Cuentas de
- * IA". Estos tests montan **AccountsPage**, no la matriz suelta, justamente para que fallen si
- * alguien vuelve a partir la vista en dos: si la matriz saliera de esta pantalla, ninguna de estas
- * aserciones encontraría su botón.
+/**
+ * Pruebas de asignación de cuentas de IA integradas dentro de AccountsPage.
  */
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }

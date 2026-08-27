@@ -84,12 +84,7 @@ describe('el tope de espera del cliente HTTP', () => {
   });
 
   it('con el tope apagado vuelve a colgarse: la salida es el tope, no otra cosa que lo tape', async () => {
-    /*
-     * CONTROL NEGATIVO del arreglo entero. Se reproduce el defecto medido —el mismo `fetcher` que
-     * no contesta, con el tope en 0— y se exige que la promesa siga colgada. Si esta prueba
-     * pasara a resolverse, sería que algo distinto del vencimiento está cerrando la lectura, y
-     * las tres de arriba estarían acreditando un mecanismo que no es el que funciona.
-     */
+    // Con timeout deshabilitado (0), la promesa permanece pendiente sin abortar.
     const { fetcher, senales } = fetchQueNuncaContesta();
     const api = new CauceApi('http://localhost', fetcher, undefined, 0);
 

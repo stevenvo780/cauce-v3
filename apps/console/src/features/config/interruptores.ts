@@ -180,15 +180,7 @@ function mutacion(
 }
 
 /**
- * **La ÚNICA confirmación que queda en toda la pantalla.**
- *
- * Confirmar cada clic era el defecto, no la salvaguarda: veinte «¿seguro?» seguidos enseñan a
- * apretar «Confirmar» sin leer, y el día que aparece el que importa ya nadie lo lee. Se guarda para
- * lo que en la práctica no tiene vuelta atrás desde esta misma pantalla: **quitar `allow_control`**.
- * Quien se lo quita a sí mismo pierde el permiso de escribir configuración, y volver a concedérselo
- * exige a otra identidad que todavía lo tenga.
- *
- * Encender `allow_control` NO confirma: se deshace con un clic en el mismo interruptor.
+ * Genera el mensaje de confirmación para acciones críticas (como revocar allow_control).
  */
 function confirmacion(campo: string, valor: boolean, sujeto: string): string | undefined {
   if (campo !== 'allow_control' || !valor) return undefined;

@@ -20,11 +20,7 @@ import { LiveFleetPage } from './LiveFleetPage';
  *    manual ni que no lo hay. Ese es el control negativo, y es el que esta consola ya falló antes
  *    en otras pantallas.
  *
- * DESDE 2026-08-24 las capas viven en un DIÁLOGO y no dentro del cajón, así que casi todo lo de
- * abajo se busca en `role="dialog"`. Lo que estos casos NO pueden demostrar —y hay que decirlo,
- * porque en esta consola ya costó cuatro verdes falsos— es que el diálogo QUEPA: jsdom no hace
- * layout, todas las cajas miden 0 y `getBoundingClientRect` devuelve ceros. Lo que sí prueban es
- * el foco, Escape, los roles ARIA y qué texto aparece y cuál no. La geometría se midió en Chrome.
+ * Las capas se presentan en un diálogo (`role="dialog"`). Pruebas de foco, Escape, roles ARIA y contenido.
  */
 
 beforeEach(() => {
@@ -173,10 +169,8 @@ it('lo que todavía no se puede hacer está en el pie y plegado, no como cuarta 
 });
 
 /**
- * EL CONTROL NEGATIVO PRINCIPAL. Con el gateway sin publicar los ficheros —que es lo que pasa hoy
- * en producción, comprobado alias por alias el 2026-08-24: 404 en los 14— la pantalla NO puede
- * decir «este alias no tiene CLAUDE.md»: no miró. Un negativo que nadie midió no es un hecho del
- * sistema, y de esos ya hubo demasiados acá.
+ * Control negativo: sin el endpoint de directiva publicado, se indica que no se miró
+ * sin asumir ausencia del manual.
  */
 it('sin el endpoint publicado dice que NO MIRÓ, y NO afirma que falte el manual', async () => {
   configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');

@@ -27,18 +27,7 @@ import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './land
  */
 
 /**
- * **Los atajos NO se escriben acá.** Salen de `NAV_ENTRIES`, la misma lista que dibuja la barra
- * lateral, y pasan por `useNavAvailability()`, la misma función que decide si una entrada está
- * disponible para QUIEN está mirando.
- *
- * Estaban escritos a mano, y el precio se midió el 2026-08-22: con un acceso sin `config.write`,
- * la barra lateral dejaba «Ajustes y altas» inerte con su motivo —el arreglo del commit
- * 252cf3c— y la portada, que es la primera pantalla de todo el mundo, ofrecía el mismo rótulo como
- * enlace vivo. El verificador hizo clic y navegó. Además la copia se llamaba «Configuration», que
- * ya no es el rótulo de nadie, y se olvidaba de «Ultimate Terminal».
- *
- * Se deshabilita en vez de esconder, por la misma razón que en la barra: un atajo que desaparece
- * no distingue «no tengo permiso» de «no existe», y uno visible que dice el motivo sí.
+ * Los atajos de la portada se derivan de NAV_ENTRIES y evalúan disponibilidad con useNavAvailability.
  */
 
 export function LandingPage() {

@@ -146,11 +146,6 @@ describe('lo que no se leyó no se afirma', () => {
   });
 });
 
-/**
- * `rotuloDeVistas` se retiró junto con el panel «El resto de la consola» (2026-08-23): era el
- * recuento de una lista que la portada ya no dibuja, porque era el menú lateral repetido. Sus
- * pruebas se van con él; el menú lo siguen guardando las invariantes de `App.invariantes.test.tsx`.
- */
 
 describe('agruparAlertas — una fila por vista, no una por hallazgo', () => {
   it('junta los avisos que se resuelven en el mismo sitio, sin perder ninguno', () => {

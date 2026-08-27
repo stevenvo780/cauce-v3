@@ -63,24 +63,7 @@ export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: 
 }
 
 /**
- * La cabecera de una columna, con el tooltip que explica QUÉ concede — o que AVISA de que no
- * concede nada.
- *
- * El dueño los pidió con esa palabra. Y hacían falta: la cabecera decía `ALLOW_CONTROL` —el nombre
- * de una columna de Postgres, en inglés, en mayúsculas— y en ningún sitio de la pantalla se decía
- * que es el permiso que deja a un cliente escribir la configuración de otro.
- *
- * `inerte` es el caso opuesto y por eso se pinta distinto: no es una ayuda que se ofrece a quien la
- * busque, es una corrección que hay que leer sin buscarla. Va con la palabra a la vista —no detrás
- * de un «?» que hay que provocar con el ratón— porque el defecto que arregla es exactamente que la
- * columna PARECÍA gobernar algo. El motivo entero viaja además en el árbol accesible: un globo que
- * sólo abre al pasar por encima deja fuera a quien navega con teclado o con lector de pantalla.
- *
- * Cuando una columna es inerte, su motivo DESPLAZA a la explicación: son dos frases sobre el mismo
- * campo y la que importa es la que dice que no tiene efecto. Hoy los dos mapas son disjuntos
- * (`campos-inertes.ts` no puede tocar nada conmutable, y lo guarda una prueba), así que este caso
- * no se da; se resuelve igual para que un futuro solapamiento no imprima dos frases que se
- * contradicen.
+ * Cabecera de columna con tooltip informativo o indicador de campo inerte.
  */
 export function CabeceraConAyuda({ etiqueta, explicacion, inerte }: {
   etiqueta: string;
@@ -162,10 +145,7 @@ export function ConfirmarQuitarControl({ control, busy }: {
 }
 
 /**
- * Una fecha como DISTANCIA, con la exacta entera en el `title` y en `dateTime`.
- *
- * La columna «Alta» repetía `1 jul 2026, 10:00:00` en las diecinueve filas, partido en tres líneas.
- * Nada se perdió: lo que cambia es cuál de los dos datos está a la vista.
+ * Renderiza una fecha relativa accesible, con la fecha ISO exacta en dateTime y title.
  */
 export function FechaRelativa({ value }: { value: unknown }) {
   const relativa = fechaRelativa(value);

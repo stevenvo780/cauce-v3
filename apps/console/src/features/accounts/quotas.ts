@@ -25,8 +25,7 @@ const SEVERITY_RANK: Record<QuotaSeverity, number> = {
   ok: 0,
 };
 
-/** unknown se ordena por encima de ok a propósito: un proveedor sin severidad legible no debe
- *  leerse como "todo bien" en un panel que existe para no repetir el incidente de la cuota agotada. */
+/** unknown se ordena por encima de ok: un proveedor sin severidad no debe asumirse sano. */
 export function severityRank(severity: QuotaSeverity | null | undefined): number {
   return severity && severity in SEVERITY_RANK ? SEVERITY_RANK[severity] : SEVERITY_RANK.unknown;
 }
@@ -60,12 +59,7 @@ export interface WindowFamilyGroup {
   label: string;
   windows: QuotaWindow[];
   worst: QuotaWindow;
-  /**
-   * true cuando hay más de una ventana bajo el mismo family: antigravity hoy reporta 8 ventanas
-   * (una por modelo) en un solo grupo, y una UI ingenua dibujaría 8 filas para una sola
-   * suscripción, ahogando a claude/codex que son las que realmente se agotan. Colapsado por
-   * defecto; expandible para ver cada modelo.
-   */
+  /** true cuando hay múltiples ventanas en la misma familia de cuotas (colapsado por defecto). */
   collapsible: boolean;
 }
 

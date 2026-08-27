@@ -50,10 +50,7 @@ function accountActions() {
 }
 
 /**
- * Desde la fusión del 2026-08-22, «Cuentas y cuotas» abre en la pestaña «Consumo»: el inventario y
- * sus formularios están a un clic. Estas pruebas dan ese clic explícitamente en vez de arrancar en
- * la pestaña que les convendría — si mañana se cambia cuál abre primero, hay que ver la prueba
- * fallar y decidirlo, no descubrirlo en producción.
+ * Abre explícitamente la pestaña de Inventario en Cuentas y cuotas.
  */
 async function openInventory(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });

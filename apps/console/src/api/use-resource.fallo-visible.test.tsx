@@ -43,11 +43,7 @@ async function enReposo(
 
 describe('useResource: el fallo tiene que llegar a la pantalla', () => {
   it('el rechazo de la PRIMERA lectura llega al estado, aunque el efecto haya corrido dos veces', async () => {
-    /*
-     * `StrictMode` monta, desmonta y vuelve a montar: exactamente lo que hacía subir la
-     * generación y descartar el resultado. Sin el arreglo, `error` se queda en `undefined` y este
-     * `waitFor` agota su tiempo — que es, punto por punto, lo que pasaba en pantalla.
-     */
+    // StrictMode desmonta y remonta; el error debe registrarse igualmente sin descartarse.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
 
@@ -61,11 +57,7 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
   });
 
   it('el fallo SOBREVIVE al reintento que el refresco automático dispara en el acto', async () => {
-    /*
-     * La secuencia medida en `/live`: la vista refresca cada 4 s, así que cuando la lectura de 30 s
-     * vence hay recargas encoladas y una arranca inmediatamente. Si el arranque limpiara el error,
-     * la pantalla volvería al cartel de carga sin haberlo enseñado nunca.
-     */
+    // Si el reintento automático arranca inmediatamente, el fallo previo no debe desaparecer hasta resolverse.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
     await waitFor(() => expect(pendientes).toHaveLength(1));

@@ -1,47 +1,5 @@
-/*
- * Interruptores de `/config`. Hoja PROPIA de esta feature: `styles.css` tiene dueño en otro carril
- * y redefinir ahí lo de acá crearía dos sitios donde cambiar lo mismo, con uno de los dos siempre
- * atrasado. Todo lo de este fichero cuelga de `.config-area`, así que no puede alcanzar a ninguna
- * otra vista de la consola.
- *
- * **Los tamaños de letra de acá no son números sueltos: citan la escala de `config.css`**
- * (`--tipo-cuerpo`, `--tipo-rotulo`, `--tipo-apunte`). Cuando eran `.68rem` y `.74rem` escritos a
- * mano no había forma de subir «el cuerpo» de la vista sin ir elemento por elemento por tres
- * hojas, y por eso dos rondas de arreglos de legibilidad no lo tocaron.
- */
-
-/* --- La fila -------------------------------------------------------------------------------
- *
- * MEDIDO en Chrome antes de tocar nada: la fila de `Directed ACL` medía 147 px porque la columna
- * «Acciones» apilaba cuatro botones de texto. Sin esa columna la fila la gobierna el padding
- * general de `td` (14 px arriba y abajo), y se bajó a 8 px para dejarla en ~44 px.
- *
- * 2026-08-24: con la letra de la celda a 14 px (antes 11,84) esos 8 px dejan la fila apretada —29
- * filas seguidas se leen como una parrilla, que es la queja—. Sube a 11 px: la fila queda en ~46
- * px, que es aire suficiente para seguir un renglón con la vista sin apoyar el dedo, y la tabla de
- * 29 filas sigue entrando en un scroll.
- */
-/*
- * **La página entera scrolleaba en horizontal en vez de la tabla.**
- *
- * MEDIDO en Chrome a 390 px de ancho: el `<section class="panel">` de `Directed ACL` medía 891 px
- * dentro de una ventana de 390 (y 684 los de «Espacios»), así que quien scrolleaba de lado era el
- * documento y no la tabla — con la barra lateral y la cabecera desplazándose también. El
- * `.table-wrap` ya tenía `overflow-x: auto` y NO servía de nada: un item de grid tiene
- * `min-width: auto`, o sea que el panel crece hasta el ancho mínimo de su contenido en vez de
- * quedarse en el de la columna, y entonces el `.table-wrap` nunca llega a desbordarse.
- *
- * Viene de antes de este cambio (medido sobre `consola/ronda2-20260823 @ c2a75d0`), pero se arregla
- * acá porque es la misma tabla y la corrección es de una línea.
- */
+/* Interruptores y tablas de configuración */
 .config-area > * { min-width: 0; }
-/*
- * `position: relative` no es decorativo: sin un bloque contenedor propio, el desbordamiento de la
- * tabla se PROPAGA a la región de scroll de la raíz y la página sigue moviéndose de lado aunque el
- * `.table-wrap` ya tenga su barra. MEDIDO a 390 px con `window.scrollTo(9999,0)` y leyendo
- * `window.scrollX`: 309 px de deriva en la base, 166 px con sólo el `min-width`, y 0 px con esto.
- * (`contain: paint` y `transform: translateZ(0)` lo arreglan igual; se elige el más barato.)
- */
 .config-area .table-wrap { position: relative; min-width: 0; max-width: 100%; }
 
 .config-area td { padding: 11px 12px; }

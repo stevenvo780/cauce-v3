@@ -69,12 +69,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
 
   if (!entrada.status) fuentesAusentes.push('Estado del sistema');
   if (!entrada.queues) fuentesAusentes.push('Colas y DLQ');
-  /**
-   * Nombra la LECTURA que no llegó (`GET /v3/console/quotas`), no la entrada de menú: desde el
-   * 2026-08-22 «Cuotas y licencias» no es una vista —es la pestaña «Consumo» de «Cuentas y
-   * cuotas»— y anunciar una vista que la barra lateral no tiene es la misma clase de mentira que
-   * esta portada existe para no cometer.
-   */
+  // Identifica la lectura de cuotas ausente.
   if (!entrada.quotas) fuentesAusentes.push('Consumo de cuotas');
   if (!entrada.activity) fuentesAusentes.push('Actividad de la flota');
 
@@ -219,14 +214,7 @@ export interface GrupoDeAlertas {
 }
 
 /**
- * La portada gastaba la primera pantalla entera en avisos.** 
- * 1280×900: ocho bandas de aviso ocupaban ~580 px y empujaban los CUATRO números —99/63/29/1—
- * fuera del borde inferior. Y de esas ocho, cuatro apuntaban al mismo sitio («La flota ahora») y
- * tres a otro («Cuentas y cuotas»): siete bandas para dos destinos.
- *
- * Se agrupan por destino, en el orden en que aparecieron —que es el orden de gravedad con el que
- * `resumenPortada` las produce— y sin perder ni una: cada una sigue con su frase y su cifra, pero
- * la fila, el icono y el enlace se escriben UNA vez por vista en vez de una por alerta.
+ * Agrupa las alertas por su ruta de destino conservando el orden de gravedad.
  */
 export function agruparAlertas(alertas: readonly Alerta[]): GrupoDeAlertas[] {
   const grupos: GrupoDeAlertas[] = [];

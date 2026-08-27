@@ -1,53 +1,9 @@
-/*
- * ══ La escala ══════════════════════════════════════════════════════════════════════════════════
- *
- * LA ESCALA YA NO SE DECLARA ACÁ. Vive en el `:root` de `styles.css`**, con los mismos cinco
- * escalones (26 → 17 → 14 → 13 → 12,5), el mismo suelo de 12,5 px y el razonamiento medido de cada
- * escalón, que se mudó entero con ella.
- *
- * Se mudó el 2026-08-24 y el motivo está medido: encerrada en `.config-pagina`, la escala existía
- * sólo en /config. Contando en Chrome a 1920×1080 los elementos de texto hoja de `main` por debajo
- * de 12,5 px: /config 0, y las otras siete vistas entre 37 y 299 — 889 en total. El arreglo se
- * había hecho una vez y alcanzaba a una vista de ocho.
- *
- * Y peor que lo estético: `toggles.css` YA citaba `var(--tipo-rotulo)` y `var(--tipo-apunte)`, y
- * esos componentes se usan también fuera de /config, donde la variable no existía. Una `var()` sin
- * declarar no hereda: el navegador descarta la declaración entera y manda la de al lado, sin un
- * solo aviso.
- *
- * Lo que SÍ sigue acá abajo es la MEDIDA (el ancho de la caja y el largo del renglón), porque eso
- * sí es propio de esta página y no de la consola entera.
- */
 .config-pagina {
-  /*
-   * ══ La medida ═════════════════════════════════════════════════════════════════════════════
-   *
-   * MEDIDO a 1600 px: `main` es `width: min(1500px, 100%)` menos 248 de barra lateral y 76 de
-   * padding = 1276 px de caja, y la prosa los cruzaba enteros. Son ~200 caracteres por renglón:
-   * el ojo pierde el principio de la línea siguiente y hay que releer. Eso solo ya es ilegible
-   * aunque la letra fuera grande.
-   *
-   * Dos topes, porque son dos problemas distintos: `max-width` frena la PÁGINA (las tablas
-   * quieren ancho, la prosa no) y `--medida` frena el RENGLÓN de texto corrido.
-   */
   max-width: 1180px;
   --medida: 74ch;
 }
 
-/* --- Cabecera de la página ------------------------------------------------------------------
- *
- * No usa `<PageHeader>` (el `.page-header` global) por dos motivos que sólo valen acá:
- *
- *  · el antetítulo. `PageHeader` exige `eyebrow`, y el de esta página decía «ATOMIC CONTROL
- *    PLANE» — en inglés, en una consola en castellano, encima de un `h1` que decía «Ajustes &
- *    rollback» mientras el menú lateral decía «Ajustes y altas». Tres nombres para una pantalla.
- *    Ahora hay UNO y es el del menú.
- *  · el tamaño. El `h1` global es `clamp(1.85rem, 4vw, 2.8rem)`; acá el título no compite con el
- *    contenido.
- *
- * Hacer optativo el `eyebrow` de `PageHeader` sería lo correcto, pero `components/ui.tsx` lo
- * comparten las ocho vistas y tres agentes están escribiendo en el árbol ahora mismo. Queda
- * anotado en el informe. */
+/* Cabecera de la página de configuración */
 .config-encabezado {
   display: flex;
   align-items: end;

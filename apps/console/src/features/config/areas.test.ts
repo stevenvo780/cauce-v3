@@ -38,15 +38,7 @@ it('«Roles» e «Historial» salen siempre, aunque no tengan ninguna colección
 });
 
 
-/* --- La prosa que se lee al entrar ------------------------------------------------------------
- *
- * MEDIDO en Chrome sobre `/config`: entre el título y el primer control había TRES párrafos de
- * prosa gris a 12,5 px, uno de ellos cruzando 1.250 px de renglón. Quien entra veinte veces al día
- * ya sabe qué es la pantalla y los vuelve a saltar veinte veces, pagando el scroll cada vez.
- *
- * La regla: lo que se lee sin plegar es UNA frase. Lo que sobra no se borra —es lo que explica por
- * qué la pestaña importa— sino que va a `detalle`, dentro de un `<details>` cerrado.
- */
+/* Regla de concisión para la descripción de área: una sola frase visible y detalle plegado. */
 
 /** El informe, no un booleano: hace falta poder darle de comer un área rota y ver que la nombra. */
 export function prosaDemasiadoLarga(areas: readonly ConfigArea[]): string[] {
@@ -102,12 +94,7 @@ it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que t
 });
 
 /**
- * **La descripción de «Agentes y cuentas» decía justo lo que la pantalla NO hace.**
- *
- * Estaba desplegada así: «El registro de bots, con qué programa corre cada uno y a qué cuentas de IA
- * llega». La primera mitad es falsa: `agents.harness_id` no decide con qué programa corre el bot —el
- * arnés real se deduce del binario en ejecución (`harnessFromCommand`,
- * services/gateway/src/console/agent-documents.ts:585).
+ * Verifica que la descripción de «Agentes y cuentas» sea exacta.
  */
 it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot', () => {
   const agentes = CONFIG_AREAS.find((area) => area.id === 'agentes');

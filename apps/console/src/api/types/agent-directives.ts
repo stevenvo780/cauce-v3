@@ -1,23 +1,9 @@
-// ------------------------------------------------------------------------------------------
-// LAS TRES CAPAS DE DIRECTIVA DE UN AGENTE
-//
-// Medido sobre producción el 23-ago-2026 (/workspace/DISENO-TRES-CAPAS-DE-DIRECTIVA.md): lo que
-// gobierna a un alias no vive en un sitio, vive en tres, y la consola sólo veía uno.
-//
-//   Capa 1 · `agents.role_brief` — QUIÉN SOS y QUÉ PODÉS DECIDIR. Está en la base, viaja en cada
-//            entrega, y es la única que la consola ya sabía editar. Llega por `/v3/console/config`.
-//   Capa 2 · `CLAUDE.md` / `AGENTS.md` — CÓMO SE TRABAJA AQUÍ. Es un FICHERO dentro del
-//            contenedor del alias, en dos niveles posibles (usuario y espacio de trabajo). Hoy
-//            sólo se toca por `docker exec`, que es exactamente por lo que nadie lo mantiene:
-//            janus tiene DOS a la vez y gaia no tiene NINGUNO.
-//   Capa 3 · La memoria — LO QUE ESE AGENTE APRENDIÓ. `~/.claude/projects`, `~/.openclaw/memory`.
-//            zeus tiene 18.212 ficheros ahí y gaia 2, y nadie lo ve desde el panel.
-//
-// Las capas 2 y 3 son ficheros de un contenedor, no filas de la base: el gateway tiene que
-// publicarlas. Estos tipos son el contrato con el que la consola las va a leer; mientras el
-// gateway no lo sirva, `getAgentDirective` devuelve `publicado: false` y la pantalla lo DICE con
-// esas palabras, en vez de pintar «sin CLAUDE.md» sobre una lectura que nunca ocurrió.
-// ------------------------------------------------------------------------------------------
+/**
+ * Tipos para las tres capas de directiva de un agente:
+ * Capa 1: agents.role_brief (base de datos)
+ * Capa 2: CLAUDE.md / AGENTS.md (fichero en contenedor)
+ * Capa 3: Memoria persistida (~/.claude/projects, ~/.openclaw/memory)
+ */
 
 /** Un `CLAUDE.md` / `AGENTS.md` concreto dentro del contenedor de un alias. */
 export interface AgentDirectiveFile {
@@ -40,7 +26,7 @@ export interface AgentDirectiveFile {
   reason?: string | null;
 }
 
-/** El índice de la memoria de un agente. Índice, no contenido: es lo que pidió Steven. */
+/** El índice de la memoria de un agente (metadatos de ficheros sin contenido). */
 export interface AgentMemoryIndexAvailable {
   root?: string | null;
   /** Total exacto; null significa que sólo se conoce `observed_at_least`. */
@@ -72,26 +58,9 @@ export interface AgentMemoryIndexUnavailable {
 /** `error` discrimina una medición fallida; los gateways nuevos no la esconden como `null`. */
 export type AgentMemoryIndex = AgentMemoryIndexAvailable | AgentMemoryIndexUnavailable;
 
-// ------------------------------------------------------------------------------------------
-// LOS FICHEROS QUE GOBIERNAN A UN AGENTE
-//
-// `GET /v3/console/tenants/:tenantId/agents/:alias/documents` da el INVENTARIO
-// (qué fichero es cuál y dónde vive)
-// y `.../documents/:kind/content` da y recibe el CONTENIDO.
-//
-// La honestidad de esta pantalla depende de leer bien tres campos, porque los tres significan
-// cosas distintas y los tres se parecen a «no se puede»:
-//
-//   `facts_source`   de dónde salió la RUTA. Sólo `measured` es de fiar; el registro se equivocaba
-//                    de arnés en 5 de los 14 alias, así que con cualquier otro valor la ruta es
-//                    una pista y no un hecho, y no se sirve contenido.
-//   `editable`       el fichero ENTERO se puede escribir.
-//   `projected_fields` el fichero entero NO sale nunca, pero estos campos suyos sí. Es el caso de
-//                    `openclaw.json`, que lleva `auth` y `secrets` en el mismo documento.
-//
-// Un documento sin `editable` y sin `projected_fields` es de sólo lectura, y `reason` dice por
-// qué CON PALABRAS, que es lo que pidió Steven: un hueco explicado vale más que un botón muerto.
-// ------------------------------------------------------------------------------------------
+/**
+ * Ficheros de gobierno de un agente: inventario y contenido de documentos.
+ */
 
 export type AgentDocumentKind =
   | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
@@ -171,11 +140,7 @@ export interface AgentDirective {
    */
   publicado: boolean;
   /**
-   * ¿El servidor MIDIÓ de verdad el contenedor? `publicado: true` sólo dice que la ruta existe;
-   * puede contestar 200 sin haber mirado nada (sin hechos de entorno, o con rutas deducidas del
-   * registro, que falla en 5 de 14 alias). Sin este campo la consola no puede distinguir «no hay
-   * fichero» de «no se miró», y llegó a afirmar lo primero cuando pasaba lo segundo.
-   * Los gateways anteriores no lo mandan: ahí vale la regla del `null` en `files`/`memory`.
+   * Indica si el servidor obtuvo hechos medidos del contenedor en vez de rutas inferidas.
    */
   medido?: boolean;
   /** Por qué no se pudo leer, cuando `publicado` es false. */
@@ -206,7 +171,6 @@ export interface RoleBriefHistoryEntry {
   new_brief?: string | null;
   previous_template_slug?: string | null;
   new_template_slug?: string | null;
-  /** Quién lo cambió. Hoy llega NULL por todos los caminos: ver el comentario de arriba. */
   actor_tenant?: string | null;
   actor_alias?: string | null;
   changed_at?: string | null;

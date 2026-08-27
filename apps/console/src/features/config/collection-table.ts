@@ -1,16 +1,7 @@
 import type { ConfigMutation } from '../../api/types';
 
 /**
- * Cómo se dibuja cada colección del snapshot de configuración COMO TABLA, y qué mutación arma cada
- * botón de una fila.
- *
- * Está en un `.ts` aparte y no dentro del `.tsx` por dos razones: `react-refresh/only-export-components`
- * falla el lint (`--max-warnings 0`) en cuanto un fichero de componentes exporta algo que no es un
- * componente, y porque estas funciones son puras y se prueban sin montar React.
- *
- * Por qué existe: la vista pintaba `{"id":"Isa","display_name":null,...}` en un `<pre>` por fila y
- * la ÚNICA forma de escribir era tipear la mutación a mano en JSON. El backend ya sabía escribir
- * doce recursos; lo que faltaba era pantalla.
+ * Renderizado de colecciones de configuración como tabla y construcción de mutaciones.
  */
 
 /**
@@ -26,23 +17,8 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
 };
 
 /**
- * Traducción de los nombres de campo del servidor. Lo que NO está acá se muestra con el nombre
- * crudo del servidor a propósito: inventarle un título castellano a un campo que no conocemos sería
- * afirmar que sabemos qué significa.
- */
-/**
- * El rótulo de cada columna, en castellano.
- *
- * Lo que no está acá se pinta con el nombre de la columna de la base.** 
- * las tablas mostraban cabeceras como `PROTOCOL_VERSION`, `LAST_SEEN_AT`, `CONTAINER_NAME`,
- * `RUNTIME_USER`, `HOME_DIRECTORY`, `PAYER_TENANT_ID`, `SHARED_WITH_POOL` y `EXTERNAL_ACCOUNT_ID`
- * —snake_case en inglés, en una interfaz en castellano— porque `columnasDe` cae al nombre crudo
- * cuando no hay entrada acá. No es una decisión: es el valor por defecto, y el valor por defecto
- * de una tabla que se alimenta del esquema es siempre el esquema.
- *
- * Los cuatro `allow_*` se dejan a propósito con su nombre técnico: son los nombres EXACTOS de las
- * columnas de `acl_edges` que se citan en los runbooks y en las consultas de diagnóstico, y
- * traducirlos rompería el puente entre lo que se ve y lo que se escribe en un `psql`.
+ * Rótulo en castellano de cada columna.
+ * Los campos no listados se muestran con su nombre de columna original.
  */
 const ETIQUETAS: Record<string, string> = {
   id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol',

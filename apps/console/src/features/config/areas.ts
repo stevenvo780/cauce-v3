@@ -1,19 +1,7 @@
 import type { ConfigCollection } from './collections';
 
 /**
- * En qué pestaña vive cada colección de configuración.
- *
- * `/config` era UN scroll con dieciséis paneles seguidos: el alta rápida, el wizard, el editor de
- * JSON crudo, doce tablas de colección y el audit trail, todo a la vez. Para cambiar una arista de
- * ACL había que pasar por delante del registro de agentes y del pool de cuentas. La queja del dueño
- * («pestañas, botones amigables, toggles, tooltips») es exactamente eso: la pantalla no está mal
- * *poblada*, está mal *ordenada*.
- *
- * Este mapa fija el ORDEN y el agrupamiento, NO el alcance. Igual que `collections.ts`, se deriva
- * del snapshot: una clave que el servidor publique mañana y que este mapa no conozca cae en «Otros»
- * y se sigue viendo. Un agrupador que se come lo que no reconoce es peor que no agrupar — repetiría
- * el defecto que `configCollections()` acaba de cerrar, donde seis claves hardcodeadas dejaban
- * invisibles a `chain_policies` y `egress_destinations`.
+ * Organización y agrupamiento de colecciones de configuración en pestañas.
  */
 
 export type ConfigAreaId =
@@ -23,14 +11,7 @@ export interface ConfigArea {
   id: ConfigAreaId;
   /** Lo que se lee en la pestaña. Lenguaje de negocio, no nombre de tabla. */
   label: string;
-  /**
-   * UNA frase de ~90 caracteres como mucho. Se pinta abierta bajo la pestaña activa.
-   *
-   * El tope no es estético. MEDIDO en Chrome: las siete descripciones eran de dos y tres frases y
-   * ocupaban tres párrafos de prosa gris ANTES del primer control de la página. Quien entra veinte
-   * veces al día ya sabe qué es la pantalla y los vuelve a saltar veinte veces, pagando el scroll
-   * cada vez. `LARGO_DESCRIPCION` lo comprueba en `areas.test.ts`.
-   */
+  /** Frase de ~90 caracteres visible bajo la pestaña activa. */
   descripcion: string;
   /**
    * El resto, plegado en un `<details>` CERRADO. Plegado y no borrado: acá está lo que explica
@@ -72,12 +53,6 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
   },
   {
     id: 'agentes',
-    /*
-     * La frase decía «El registro de bots, CON QUÉ PROGRAMA CORRE CADA UNO y a qué cuentas de IA
-     * llega», y esa mitad del medio era falsa: `agents.harness_id` no elige el arnés. El arnés real
-     * se deduce del binario en ejecución (`harnessFromCommand`,
-     * services/gateway/src/console/agent-documents.ts:585).
-     */
     label: 'Agentes y cuentas',
     descripcion: 'El registro de bots declarados y a qué cuentas de IA llega cada uno.',
     detalle: 'Es un registro declarado, no un mando: el programa que corre cada bot sale del '
