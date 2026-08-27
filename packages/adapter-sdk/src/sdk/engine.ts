@@ -7,7 +7,7 @@ import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type {
   HarnessAdapter, HarnessSessionReservation, RuntimeProfileMeasurement, SessionLane,
-} from "../harnesses/shared.js";
+} from "../contracts/harness.js";
 import type {
   AdapterLogger,
   CancelDelivery,

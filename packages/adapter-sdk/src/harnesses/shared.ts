@@ -26,4 +26,4 @@ export type {
   HarnessSessionReservation,
   RuntimeProfileMeasurement,
   SessionLane,
-} from "./shared/contracts.js";
+} from "../contracts/harness.js";

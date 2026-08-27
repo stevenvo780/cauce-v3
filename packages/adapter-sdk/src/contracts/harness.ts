@@ -1,13 +1,15 @@
-import type { DurableStore, SessionOrigin } from "../../sdk/durable-store.js";
+import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
   CommandRunner,
   HarnessAttachment,
   HarnessCommandOverride,
   HarnessDefinition,
   RelayOrigin,
-} from "../../sdk/types.js";
-import type { SelloDeContextoFijo } from "../contexto-fijo.js";
-import type { SharedSessionHarness } from "../../shared-session/types.js";
+} from "../sdk/types.js";
+import type { SelloDeContextoFijo } from "../harnesses/contexto-fijo.js";
+import type { SharedSessionHarness } from "../shared-session/types.js";
+
+export type { HarnessAdapter } from "../harnesses/shared/adapter.js";
 
 export interface HarnessRequestContext {
   readonly self_alias: string;

@@ -1,5 +1,5 @@
 import { abortReason } from "./errors.js";
-import type { HarnessSessionReservation } from "./contracts.js";
+import type { HarnessSessionReservation } from "../../contracts/harness.js";
 
 export class SessionReservation implements HarnessSessionReservation {
   private released = false;

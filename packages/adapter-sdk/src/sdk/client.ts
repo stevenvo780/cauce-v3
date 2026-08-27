@@ -6,7 +6,7 @@ import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
 import { AdapterError } from './errors.js';
-import type { HarnessAdapter } from '../harnesses/shared.js';
+import type { HarnessAdapter } from '../contracts/harness.js';
 import type {
   AdapterCapabilities,
   AdapterConfig,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { clampToRoleBriefLimit, isAgentToAgentBody } from "@cauce/protocol";
-import type { SessionLane } from "../../harnesses/shared.js";
+import type { SessionLane } from "../../contracts/harness.js";
 import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
 import { AdapterError } from "../errors.js";

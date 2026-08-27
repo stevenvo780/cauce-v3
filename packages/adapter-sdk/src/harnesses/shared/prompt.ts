@@ -1,7 +1,7 @@
 import { PROTOCOL_VERSION } from "../../sdk/types.js";
 import type { AdapterCapabilities, HarnessId, RelayOrigin } from "../../sdk/types.js";
 import { elFicheroYaLoDice, renglonDeContextoFijo } from "../contexto-fijo.js";
-import type { HarnessRequestContext } from "./contracts.js";
+import type { HarnessRequestContext } from "../../contracts/harness.js";
 
 export function capabilities(
   harness: HarnessId,

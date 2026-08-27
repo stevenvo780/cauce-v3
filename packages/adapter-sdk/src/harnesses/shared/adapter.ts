@@ -37,7 +37,7 @@ import type {
   HarnessSessionReservation,
   RuntimeProfileMeasurement,
   SessionLane,
-} from "./contracts.js";
+} from "../../contracts/harness.js";
 import {
   abortReason,
   abortadoPorApagado,

@@ -432,7 +432,6 @@
   "packages/adapter-sdk/src/harnesses/openclaw.ts": 3,
   "packages/adapter-sdk/src/harnesses/opencode.ts": 2,
   "packages/adapter-sdk/src/harnesses/shared/adapter.ts": 93,
-  "packages/adapter-sdk/src/harnesses/shared/contracts.ts": 43,
   "packages/adapter-sdk/src/harnesses/shared/errors.ts": 70,
   "packages/adapter-sdk/src/harnesses/shared/prompt.ts": 34,
   "packages/adapter-sdk/src/index.ts": 5,
@@ -823,6 +822,7 @@
   "deploy/runtime/runtime-entrypoint.sh": 1,
   "deploy/runtime/runtime-package-smoke.mjs": 9,
   "deploy/runtime/schema-version.mjs": 1,
-  "deploy/runtime/unix-readiness-probe.mjs": 1
+  "deploy/runtime/unix-readiness-probe.mjs": 1,
+  "packages/adapter-sdk/src/contracts/harness.ts": 43
  }
 }

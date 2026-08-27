@@ -1,5 +1,5 @@
 import type { ProfileRuntimeAdoptionEvidence } from "@cauce/protocol";
-import type { HarnessAdapter, RuntimeProfileMeasurement } from "../../harnesses/shared.js";
+import type { HarnessAdapter, RuntimeProfileMeasurement } from "../../contracts/harness.js";
 import type { DurableStore } from "../durable-store.js";
 import type { AdapterLogger, Clock, Delivery, DeliveryEvent } from "../types.js";
 
