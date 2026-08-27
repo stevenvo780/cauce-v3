@@ -11,5 +11,4 @@ if [ -z "${CAUCE_TEST_DOCKER_NETWORK:-}" ] && command -v docker >/dev/null 2>&1;
   fi
 fi
 
-export TESTCONTAINERS_RYUK_DISABLED=true
 exec pnpm exec vitest run "$@"
