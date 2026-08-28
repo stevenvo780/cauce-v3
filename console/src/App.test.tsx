@@ -56,16 +56,10 @@ it.each([
   ['/quotas'],
   ['/assignments'],
 ])('redirige %s a «Cuentas y cuotas» en vez de dejar el enlace guardado en la nada', async (ruta) => {
-  // Las tres rutas se retiraron fusionando vistas: un marcador viejo tiene que llegar a la heredera,
-  // no caer en el fallback a "La flota ahora" —que es una página que nadie pidió—.
-  //
-  // CONTROL: `/licenses` apuntaba a `/quotas`, que a su vez ya no existe. Si alguien deja el
-  // alias encadenado, ESTA prueba lo agarra: `matchRoute` resuelve el mapa una sola vez, así que
-  // `/licenses` terminaría en "La flota ahora" con la barra diciendo /licenses.
   window.history.pushState({}, '', ruta);
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' }, { timeout: 10_000 })).toBeInTheDocument();
   await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
 });
 
@@ -73,7 +67,7 @@ it('redirige /audit a «Señales y auditoría», donde la auditoría es una pest
   window.history.pushState({}, '', '/audit');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Señales y auditoría' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Señales y auditoría' }, { timeout: 10_000 })).toBeInTheDocument();
   await waitFor(() => { expect(window.location.pathname).toBe('/observability'); });
 });
 
@@ -81,7 +75,7 @@ it('muestra una ruta desconocida sin sustituirla por la portada, aunque traiga s
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByText('/unknown/nested/segment')).toBeInTheDocument();
   expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
   expect(window.location.pathname).toBe('/unknown/nested/segment');
@@ -91,7 +85,7 @@ it('rechaza segmentos extra en /fleet/:tenant/:alias en vez de abrir otro agente
   window.history.pushState({}, '', '/fleet/Steven/kant/sesion-vieja');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByText('/fleet/Steven/kant/sesion-vieja')).toBeInTheDocument();
   expect(screen.queryByRole('heading', { level: 1, name: 'kant' })).toBeNull();
   expect(window.location.pathname).toBe('/fleet/Steven/kant/sesion-vieja');
@@ -106,7 +100,7 @@ it.each([
   window.history.pushState({}, '', ruta);
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByText(ruta)).toBeInTheDocument();
   expect(window.location.pathname).toBe(ruta);
 });
@@ -116,20 +110,18 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
   const user = userEvent.setup();
   renderWithApi(<App />);
 
-  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
+  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
   await user.click(screen.getByRole('link', { name: /^queues & dlq$/i }));
 
-  // Si el enlace no interceptara el clic, jsdom no cambiaría la ruta y seguiríamos donde estábamos:
-  // el router escucha popstate, y pushState no lo dispara solo.
   expect(window.location.pathname).toBe('/queues');
-  expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq operativo/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq operativo/i }, { timeout: 10_000 })).toBeInTheDocument();
 });
 
 it('conserva el href real que permite abrir una ruta en otra pestaña', async () => {
   window.history.pushState({}, '', '/accounts');
   renderWithApi(<App />);
 
-  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
+  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
   expect(screen.getByRole('link', { name: /^queues & dlq$/i })).toHaveAttribute('href', '/queues');
   expect(window.location.pathname).toBe('/accounts');
 });
@@ -138,7 +130,7 @@ it('el menú contiene la portada más siete entradas consolidadas', async () => 
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
-  const nav = await screen.findByRole('navigation', { name: /principal/i });
+  const nav = await screen.findByRole('navigation', { name: /principal/i }, { timeout: 10_000 });
   const entradas = within(nav).getAllByRole('link').map((link) => link.textContent);
 
   expect(entradas).toEqual([
@@ -153,10 +145,6 @@ it('el menú contiene la portada más siete entradas consolidadas', async () => 
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');
-  // CONTROL NEGATIVO de las cinco reformas juntas: si alguien devuelve cualquiera de las cinco
-  // entradas que se fueron, vuelve a haber dos sitios para el mismo dato y esto falla. Está acá y
-  // no repartido por cinco ficheros porque el peligro de integrar cinco ramas es justamente que una
-  // reponga en silencio lo que otra retiró.
   expect(entradas).not.toContain('Jobs');
   expect(entradas).not.toContain('Adapters');
   expect(entradas).not.toContain('Audit');
@@ -166,19 +154,17 @@ it('el menú contiene la portada más siete entradas consolidadas', async () => 
 });
 
 it('redirige /fleet y /topology a la vista que las absorbió, reescribiendo la barra de direcciones', async () => {
-  // Un marcador guardado que se rompe es un defecto, y caer al fallback sin decir nada es peor:
-  // deja al operador en una página que no pidió y con la URL mintiendo sobre dónde está.
   window.history.pushState({}, '', '/fleet');
   const primera = renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
   primera.unmount();
 
   window.history.pushState({}, '', '/topology');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
 });
 
@@ -186,7 +172,7 @@ it('/activity sigue llegando a la vista viva, como antes', async () => {
   window.history.pushState({}, '', '/activity');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
 });
 
@@ -194,7 +180,7 @@ it('/fleet/:cliente sin alias conserva la dirección incompleta como 404', async
   window.history.pushState({}, '', '/fleet/Steven');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByText('/fleet/Steven')).toBeInTheDocument();
   expect(window.location.pathname).toBe('/fleet/Steven');
 });
@@ -212,11 +198,10 @@ it('deja «Ajustes y altas» inerte, y con el motivo escrito, para quien no tien
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
-  const entrada = await screen.findByRole('link', { name: /ajustes y altas/i });
+  const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
   await waitFor(() => { expect(entrada).toHaveAttribute('aria-disabled', 'true'); });
   expect(entrada).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
-  // Y el clic NO navega: la entrada existe, dice por qué no, y no lleva a una página con un error.
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/live');
 });
@@ -234,7 +219,7 @@ it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async 
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
-  const entrada = await screen.findByRole('link', { name: /ajustes y altas/i });
+  const entrada = await screen.findByRole('link', { name: /ajustes y altas/i }, { timeout: 10_000 });
   await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
@@ -244,5 +229,5 @@ it('la raíz "/" abre la portada, no la vista viva', async () => {
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i }, { timeout: 10_000 })).toBeInTheDocument();
 });

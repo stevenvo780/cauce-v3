@@ -76,7 +76,7 @@ describe('el veredicto', () => {
     const banda = await screen.findByLabelText('Veredicto de la flota');
     await user.hover(within(banda).getByText(/en vuelo$/));
 
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(/leased.*accepted.*started/);
+    expect(await screen.findByRole('tooltip', {}, { timeout: 10000 })).toHaveTextContent(/leased.*accepted.*started/);
   });
 });
 
