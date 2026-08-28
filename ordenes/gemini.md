@@ -1,21 +1,20 @@
-# Gemini — ORDEN ACTIVA: RONDA FLOTA-COMO-DATOS, carril G (+ el runbook que enseña la nueva era)
+# Gemini — ORDEN ACTIVA (ronda nocturna, larga y AUTÓNOMA — el dueño duerme, el integrador también)
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`plan-reestructura/flota-como-datos.md`** (§5 credenciales, §6 gates, §7 tu carril) → `docs/flota-y-participantes.md`. Tu mega-ronda quedó verificada COMPLETA (typechecked, 31 promesas, citas, relay corriendo — excelente). Reglas de siempre + `umask 022`, commit+push POR TAREA.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden. Tu ronda anterior: **console, terminal-relay y telegram-bridge a CERO problemas en nivel estricto** + G2 + G3 — de lo mejor de toda la restructuración. Esta noche NADIE revisa en vivo: cada tarea cierra con su comando en verde PEGADO en el commit y push inmediato. Si algo te bloquea, sáltalo, anótalo en tu reporte y sigue. Zonas EXCLUSIVAS de esta orden: `services/dispatcher/**` · `tests/**` (TODO el árbol de tests de la raíz) · `console/**` · `services/terminal-relay/**` · `services/telegram-bridge/**` · `ops/runbooks/**`. Nada de `ops/scripts`, `packages/*`, `services/gateway`.
 
-## G2 (primero — no depende de nadie) — `ops/pty-agent/publish-alias-key.sh`
-Envuelve el `derive-alias-key.py` existente y publica su stdout como `alias-key.hex` 0400 atómico (patrón de publicación de provision-terminal-client). Con test en la suite PTY. Es la pieza 3 del `cauce aprovisionar`.
+## Tarea 1 — Promover tus 3 zonas limpias al gate (que lo limpio se quede limpio)
+En `package.json` crea `lint:estricto:zonas` = `eslint -c eslint.estricto.config.js console services/terminal-relay services/telegram-bridge --max-warnings 0` y encadénalo dentro de `pnpm lint` (tras `lint:tooling`). Gate global verde, commit, push. A partir de aquí nadie puede ensuciar esas zonas sin ponerse rojo.
 
-## G3 — El runbook de la nueva era + purga de los pasos viejos
-`ops/runbooks/alta-y-baja-de-agente.md` (en ESPAÑOL — regla nueva de idioma): el flujo completo del diseño — INSERT en BD → export → regenerate → validate → aprovisionar → efecto verificado; y la baja inversa. PURGA de `authentication.md` y `container-adapters.md` todo paso que diga editar `container-aliases.json`/manifests A MANO (van a ser generados: documentarlo como prohibido). Criterio del diseño: el runbook debe poder ejecutarlo alguien que no lo escribió.
+## Tarea 2 — `services/dispatcher/src` a CERO (13 problemas — calentamiento)
+Mismo protocolo de siempre; ciérrala con `0 problems` pegado y añade la ruta a `lint:estricto:zonas`.
 
-## G1 (ÚLTIMO — espera la señal K2 del integrador en tu orden o en main: "snapshot real conmutado")
-Cuando `ops/container-aliases.json` cambie de bytes (flota de 14 + historicals desde BD): re-publica y re-firma el release PTY (mappingSha256 nuevo) UNA sola vez, y ajusta/ejercita los tests de `Fleet.load` con `historicalAliases` NO vacío y la flota real (recuerda: argos=openclaw, iza=openclaw@claw-miguel, gaia/heraclito/tales presentes — `grupos.json` tiene sus roles). `test_rollout_pty.py` verde con el mapping nuevo.
+## Tarea 3 — `tests/**` a CERO (419 problemas — el plato fuerte de la noche; oleadas de 4 por directorio)
+`tests/unit` · `tests/gateway-hardening` · `tests/store-hardening` · `tests/integration`+`e2e` · `tests/terminal-pty`+`helpers`. Por directorio: medir → `--fix` (commit) → a mano (commit) → `0 problems` pegado → añadir al script de zonas. OJO: `tests/helpers/postgres.ts` lo importan 46 ficheros con ruta literal — NO lo muevas ni renombres, solo límpialo por dentro. Los tests que ejecutan scripts por subproceso (25 de tests/unit leen deploy/ y ops/ del disco) NO cambian de comportamiento: solo limpieza de tipos/estilo. Gate global (incluido `pnpm test:unit`) verde por commit.
 
-## Mientras esperas G1: los "assert-sobre-texto" de consola del top-20 de dientes que quedaran pendientes, y comentarios de CÓDIGO NUEVO en inglés (regla de idioma del dueño 28-08).
+## Tarea 4 — Comentarios de código → INGLÉS en todo lo que toques (regla del dueño)
+En cada fichero de las Tareas 2-3 que abras: comentario en español → inglés conciso; narrativa/ceremonial/fechas/nombres → fuera; invariantes → traducidos con fuerza. `tests/**` es también zona de minimax-2 para traducción: coordinación simple — TÚ vas por directorio en el orden de la Tarea 3 y lo anotas en cada commit ("tests/unit traducido"); si al hacer pull ves que minimax-2 ya tradujo un directorio, no lo repitas.
 
-## Tarea PERMANENTE mientras esperas G1 — LA MOLIENDA DEL LINT ESTRICTO (dictado del dueño 28-08)
-El dueño ve los ficheros "plagados de mala escritura e imports sin usar". Medido: **4.355 problemas al nivel estricto** (`pnpm lint:estricto`, config en `eslint.estricto.config.js`: strictTypeChecked+stylistic) + los de `pnpm lint:py:estricto`. Protocolo de molienda POR ZONAS, la tuya primero:
-1. Mide la zona (`npx eslint -c eslint.estricto.config.js console` p.ej.) y pega el número.
-2. `--fix` para lo mecánico (938 son auto), commit; luego a mano lo real (no-unnecessary-condition, no-floating-promises restantes, unsafe-*…). NUNCA silencies con disable salvo falso positivo justificado en el propio disable.
-3. Zona en CERO → promuévela al gate: añade su ruta al script `lint:estricto` de una nueva cadena por-zona y avisa al integrador para encadenarla a `pnpm lint`.
-4. Orden de zonas: `console` → `services/terminal-relay` → `services/telegram-bridge` → `tests/` (las de Codex las muele Codex después). Comentarios de código que toques: pásalos a INGLÉS (regla de idioma).
+## Tarea 5 (si sobra noche) — Asserts-sobre-texto de consola del top-20 de `ordenes/reportes/minimax-dientes.md`
+Solo los citados en el top-20; conviértelos en asserts de comportamiento. Los 74 restantes esperan al mega-refactor.
+
+## Cierre: reporte en `ordenes/reportes/gemini-nocturna.md` — por tarea: comando de verificación + salida en verde + commits. ≤20 líneas. Push.
