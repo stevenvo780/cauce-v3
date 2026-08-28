@@ -52,26 +52,9 @@ export function tonoRoleBrief(largo: number): RoleBriefTono {
 }
 
 /**
- * GUARDA TEMPORAL — zeus 2026-08-22, y tiene fecha de retiro.
- *
- * El arreglo que unifica el tope en PUNTOS DE CÓDIGO toca `packages/protocol` y
- * `packages/adapter-sdk`, o sea el RUNTIME: el esquema que rechaza el sobre vive dentro de cada
- * contenedor de alias, no en el gateway. Ese rollout no salió todavía. Los adaptadores que HOY
- * corren en producción siguen midiendo `self_role` con `z.string().max(1200)`, que cuenta
- * unidades UTF-16.
- *
- * Y esta pantalla es justamente lo que vuelve ALCANZABLE ese agujero: hasta hoy nadie podía
- * escribir un brief sin pasar por psql. Un rol de 1200 puntos de código con emojis mide 1300 en
- * UTF-16: el store lo acepta, la base lo acepta, la pantalla diría «guardado»… y el alias deja de
- * consumir entregas, sin un solo error a la vista.
- *
- * Así que mientras el runtime desplegado mida en UTF-16, la consola obedece al MÁS ESTRICTO de los
- * dos. No es una restricción de producto: es no publicar un botón que puede dejar mudo a un agente.
- *
- * PARA RETIRARLA: cuando los 15 contenedores de alias corran un adapter-sdk con
- * `ROLE_BRIEF_MAX_CODE_POINTS`, se borra esta función y su uso en RoleBriefTab.tsx. Comprobalo por
- * efecto, no por el número de versión: guardá un brief de 1200 puntos con emoji y mirá que el alias
- * siga cerrando entregas.
+ * Guarda de compatibilidad con runtime: los adaptadores en ejecución validan longitud
+ * UTF-16 con `z.string().max(1200)`. Para evitar que un brief con emojis supere el límite UTF-16
+ * al ser procesado por el adaptador, se valida contra el más estricto entre UTF-16 y puntos de código.
  */
 export function bloqueoPorRuntimeDesplegado(text: string): string | undefined {
   const recortado = text.trim();

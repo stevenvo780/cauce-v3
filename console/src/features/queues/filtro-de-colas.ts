@@ -2,20 +2,8 @@ import type { DeliveryState, QueueItem } from '../../api/types';
 import { safeDeliveryState } from '../../lib';
 
 /**
- * **LAS 7 QUE IMPORTAN, SUELTAS ENTRE 38 FILAS.**
- *
- * Recorrido de producción del 2026-08-23. Lo bueno de `/queues` es que las tres tarjetas de arriba
- * contestan de un vistazo la pregunta con la que un operador entra: «Pendientes 0 / En retry 0 /
- * Dead letters 7 — requieren revisión». Lo malo empieza justo debajo: la tabla trae 38 filas, no
- * tiene UN solo control de filtro (medido: cero), y las 7 dead letters —las únicas sobre las que
- * hay algo que hacer— están repartidas entre 31 entregas terminadas bien. Y las tarjetas, que son
- * la respuesta correcta, no eran pulsables: decían dónde mirar y no llevaban ahí.
- *
- * Este módulo es la parte pura de esa reparación. Vive aparte de la pantalla para poder probarse
- * por tabla, y sobre todo para que el conjunto de estados de cada grupo tenga quien lo guarde: la
- * lección de `replayableStates` es reciente —era una constante dentro de `QueuesPage`, ninguna
- * prueba la fijaba, y quitarle `'failed'` dejaba la suite entera en verde mientras 197 entregas de
- * producción se quedaban sin rescate—.
+ * Agrupación de estados de colas para filtrado y fijación del conjunto de estados de cada grupo.
+ * Mantiene la correspondencia entre las métricas de cabecera y el filtrado de entregas.
  */
 
 export type GrupoDeEstado = 'todas' | 'revision' | 'retry' | 'pendientes';
