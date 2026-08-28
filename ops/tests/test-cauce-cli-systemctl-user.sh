@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the single-quoted grep patterns below are meant to stay literal
-# Reproduces the operational bug in ops/cli/cauce cmd_on/cmd_off: run via `su <alias> -c ...`
 # (no login session) there is no XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, so `systemctl --user`
 # cannot reach the bus and fails -- and the old `systemctl --user start "$u" || true` swallowed
 # that failure silently, leaving cmd_on to poll /proc for 120s over a unit that was never asked
