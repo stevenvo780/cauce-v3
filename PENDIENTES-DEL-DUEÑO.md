@@ -53,3 +53,8 @@ Por ssh verificado: ~30 variantes `cauce-*` + ~25 .bak en tu `~/.local/bin` de k
 
 anexo: COmo adjunto entonces veo que mucyhos antipatrones se siguen repitiendo por todo el sistema, hay que tirar un workflow gigante para revisar que no se repitan funcionaldaides inecxistentes o inconexas, codigo ma lescrito, codigo que se repite en varias partes, archivos demaciado grandes, falta de linerts, duplcaidos de dist o duplicados  de estos, mal ordenamiento de los archivos, sobre comentarios que ensucian los contextos de las IA, entre otros elementos y anti patrones que ya habia mencioando y que ya habiamos tratados estas preguntan levnata mi alarma de, realmente no se a terminado de ahcer un buen trabajo en la refactrorizacion, ordenamiento documentacion, para desaaparecer los anti patrones y que se pueda tener un sistema mas limpio, ordenado, documentado y funcional, por lo que se requiere una nueva ronda de refactorizacion y limpieza de todo el sistema para poder tener un sistema mas funcional y limpio.
 
+
+### [ ] (j) Libro de reconciliación BD↔físico — 4 respuestas y la ronda flota-como-datos arranca
+El diseño está en `plan-reestructura/flota-como-datos.md` (Anexo A con la evidencia). La regla de la ronda: el drift se corrige SIEMPRE en la BD, jamás parcheando ficheros. Necesito: (1) argos: ¿claude o hermes?; (2) iza: ¿openclaw@claw-miguel o hermes@ws-humanizar?; (3) kant: confirmar la rama host (BD parece la buena); (4) gaia/heraclito/tales: ¿en qué host corren físicamente, o se deshabilitan en BD hasta tener placement?
+
+**Respuesta:**
