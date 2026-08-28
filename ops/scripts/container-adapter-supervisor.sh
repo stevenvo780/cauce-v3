@@ -194,6 +194,9 @@ load_config() {
       CLAUDE_PERMISSION_MODE)
         [[ $harness == claude ]] || die "config key is not allowed for $harness: $key"
         ;;
+      CREDENTIAL_HOME)
+        [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
+        ;;
       *) die "container alias config key is not allowlisted: $key" ;;
     esac
     CONFIG[$key]=$value
@@ -880,6 +883,13 @@ start_adapter() {
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
+  if [[ -v CONFIG[CREDENTIAL_HOME] ]]; then
+    valid_absolute_path "${CONFIG[CREDENTIAL_HOME]}" || die "CREDENTIAL_HOME must be a canonical absolute path"
+    case "$harness" in
+      codex) environment+=("CODEX_HOME=${CONFIG[CREDENTIAL_HOME]}") ;;
+      claude) environment+=("CLAUDE_CONFIG_DIR=${CONFIG[CREDENTIAL_HOME]}") ;;
+    esac
+  fi
   if [[ -v CONFIG[CLAUDE_PERMISSION_MODE] ]]; then
     case "${CONFIG[CLAUDE_PERMISSION_MODE]}" in
       acceptEdits|auto|bypassPermissions|manual|dontAsk|plan) ;;

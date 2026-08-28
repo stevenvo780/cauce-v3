@@ -6,7 +6,7 @@
   "ops/pty-agent/cauce-pty-launcher.sh": 806,
   "ops/pty-agent/cauce_pty_agent.py": 2660,
   "ops/pty-agent/tests/test_read_governance.py": 853,
-  "ops/scripts/container-adapter-supervisor.sh": 989,
+  "ops/scripts/container-adapter-supervisor.sh": 999,
   "ops/scripts/generate-telegram-config.py": 840,
   "ops/tests/container-supervisor.test.mjs": 1713,
   "packages/adapter-sdk/test/shared-session-fixtures.ts": 857,
