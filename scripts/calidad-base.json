@@ -410,7 +410,7 @@
   "ops/scripts/validate-container-mount.py": 11,
   "ops/scripts/validate-manifests.py": 1,
   "ops/scripts/validate-testcontainers-evidence.py": 1,
-  "ops/scripts/validate.sh": 4,
+  "ops/scripts/validate.sh": 5,
   "ops/scripts/verify-hermes-runtime.py": 1,
   "ops/scripts/verify-manifest.sh": 1,
   "ops/tests/alias-runner.test.mjs": 1,
