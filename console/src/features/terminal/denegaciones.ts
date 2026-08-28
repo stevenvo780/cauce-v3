@@ -1,13 +1,13 @@
 /**
- * Traducción y formato accesible de denegaciones y conflictos de terminal PTY:
- * mapea los códigos del gateway (`TerminalDenial`, `TerminalConflict`) a explicaciones operativas.
+ * Translation and accessible formatting of PTY terminal denials and conflicts: maps gateway codes
+ * (`TerminalDenial`, `TerminalConflict`) to operational explanations.
  */
 
-/** Códigos de denegación 403/409 del gateway y estados de inventario. */
+/** 403/409 denial codes from the gateway and inventory states. */
 export type TerminalDenialCode =
-  /** La consola no envió un token CSRF válido. */
+  /** The console did not send a valid CSRF token. */
   | 'csrf_missing'
-  /** La cookie de consola no vale (o caducó). Tampoco es un permiso: es volver a entrar. */
+  /** The console cookie is invalid (or expired). It is not a permission: it is logging back in. */
   | 'unauthorized'
   | 'unknown_alias'
   | 'control_permission_required'
@@ -21,17 +21,17 @@ export type TerminalDenialCode =
   | 'not_installed';
 
 export interface TerminalDenialCopy {
-  /** Titular. Una frase corta que se entiende sin saber nada del gateway. */
+  /** Headline. A short sentence understood without knowing anything about the gateway. */
   titulo: string;
-  /** La puerta que se cerró, dicha con lo que el operador puede comprobar. */
+  /** The door that closed, said in terms the operator can verify. */
   porQue: string;
-  /** A quién pedirle que la abra. Nunca «al administrador»: el rol concreto. */
+  /** Who to ask to open it. Never "the administrator": the specific role. */
   quienLoLevanta: string;
 }
 
 /**
- * El dueño del bus. No se escribe un nombre propio: quien opera esta consola cambia, y un
- * nombre quemado en el código envejece peor que un rol.
+ * The bus owner. No proper name is written: whoever runs this console changes, and a name burned into
+ * code ages worse than a role.
  */
 const DUENO_DEL_BUS = 'el dueño del bus (quien administra Cauce)';
 
@@ -114,7 +114,7 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
   },
 };
 
-/** Todos los códigos, para recorrerlos en las pruebas y en la ayuda de la vista. */
+/** All codes, to iterate them in tests and the view's help. */
 export const TERMINAL_DENIAL_CODES = Object.keys(TERMINAL_DENY_MESSAGES) as TerminalDenialCode[];
 
 function esCodigo(value: string): value is TerminalDenialCode {
@@ -122,20 +122,19 @@ function esCodigo(value: string): value is TerminalDenialCode {
 }
 
 /**
- * Busca un código de denegación DENTRO de un texto del servidor.
+ * Looks up a denial code WITHIN a server-provided text.
  *
- * Hace falta porque el gateway manda el código de dos formas distintas: pelado en
- * `{reason:'no_grant'}` cuando rechaza el POST, y embebido en la prosa del inventario de destinos
- * (`'attribution_required: falta identidad por persona.'`). Las dos acaban en pantalla, así que las
- * dos tienen que traducirse. El borde de palabra evita que `no_grant` se encuentre dentro de
- * `no_grant_pendiente` o de una ruta.
+ * It is needed because the gateway sends the code in two different ways: bare in `{reason:'no_grant'}` when
+ * it rejects the POST, and embedded in the prose of the destination inventory
+ * (`'attribution_required: falta identidad por persona.'`). Both end up on screen, so both must be translated.
+ * The word boundary prevents `no_grant` from being found inside `no_grant_pendiente` or inside a path.
  */
 export function codigoDeDenegacion(texto: unknown): TerminalDenialCode | undefined {
   if (typeof texto !== 'string' || !texto.trim()) return undefined;
   const limpio = texto.trim();
   if (esCodigo(limpio)) return limpio;
-  // El fallo de CSRF no llega como código: llega como prosa del gateway («se requiere un token
-  // CSRF válido»). Es la única negativa que se reconoce por la palabra y no por el identificador.
+  // The CSRF failure does not arrive as a code: it arrives as gateway prose ("se requiere un token CSRF
+  // válido"). It is the only refusal recognized by the word, not by the identifier.
   if (/csrf/i.test(limpio)) return 'csrf_missing';
   for (const codigo of TERMINAL_DENIAL_CODES) {
     if (new RegExp(`(^|[^a-z_])${codigo}([^a-z_]|$)`).test(limpio)) return codigo;
@@ -144,36 +143,36 @@ export function codigoDeDenegacion(texto: unknown): TerminalDenialCode | undefin
 }
 
 export interface DenegacionExplicada {
-  /** El código crudo que se reconoció, para el `data-` y la auditoría. Nunca se pinta solo. */
+  /** The raw code that was recognized, for the `data-` attribute and the audit. Never painted alone. */
   codigo?: TerminalDenialCode;
   /**
-   * `true` cuando la culpa es de la CONSOLA y no del permiso del operador ni del alias. Lo pinta
-   * la vista para no mandar a nadie a pedir un permiso que ya tiene.
+   * `true` when the blame is on the CONSOLE and not on the operator's permission or the alias. The view
+   * paints it so it does not send anyone to ask for a permission they already have.
    */
   esDefectoDeLaConsola?: boolean;
   titulo: string;
   porQue: string;
   quienLoLevanta?: string;
-  /** El estado HTTP, cuando se conoce. La consola lo decía en ningún lado y es media respuesta. */
+  /** The HTTP status, when known. The console said it nowhere and that is half the answer. */
   estado?: number;
-  /** Todo junto en una línea, para los sitios que sólo tienen un `title=` o un `aria-label`. */
+  /** Everything in one line, for places that only have a `title=` or an `aria-label`. */
   linea: string;
 }
 
 /**
- * Traduce un rechazo del plano PTY. **Nunca devuelve el código crudo como titular.**
+ * Translates a refusal from the PTY plane. **Never returns the raw code as the headline.**
  *
- * Cuando el código no se reconoce —un gateway más nuevo que esta consola— se dice exactamente eso
- * y se muestra el texto del servidor como cita, no como explicación: inventar una traducción para
- * un código que no conocemos sería peor que no traducirlo. Y se preserva el texto original, que es
- * lo único comprobable que hay.
+ * When the code is not recognized —a gateway newer than this console— that is exactly what is said, and
+ * the server text is shown as a quote, not as an explanation: inventing a translation for a code we do not
+ * know would be worse than not translating it. And the original text is preserved, since that is the only
+ * thing that can be checked.
  */
 export function explicarDenegacionPty(entrada: {
-  /** `reason` del cuerpo, o el `message` del error, o la prosa del inventario. */
+  /** `reason` from the body, or the error's `message`, or the inventory prose. */
   texto?: unknown;
-  /** Estado HTTP, si lo hay. */
+  /** HTTP status, if any. */
   estado?: number;
-  /** Código explícito, cuando quien llama ya lo tiene separado. */
+  /** Explicit code, when the caller already has it separated. */
   codigo?: string;
 }): DenegacionExplicada {
   const codigo = codigoDeDenegacion(entrada.codigo) ?? codigoDeDenegacion(entrada.texto);
@@ -209,11 +208,11 @@ export function explicarDenegacionPty(entrada: {
 }
 
 /**
- * Reescribe una frase del servidor sustituyendo el código crudo por su castellano.
+ * Rewrites a server sentence by substituting the raw code with its translation.
  *
- * Es para los sitios que YA muestran la prosa del inventario (`target.reason`) y donde tirar el
- * texto del servidor perdería información: se cambia sólo la palabra que nadie entiende. Si no hay
- * código reconocible, devuelve el texto intacto — no se toca lo que ya estaba bien.
+ * It is for places that ALREADY show the inventory prose (`target.reason`) and where discarding the server
+ * text would lose information: only the word nobody understands is replaced. If there is no recognizable
+ * code, the text is returned untouched — what was already right is not touched.
  */
 export function traducirCodigosEnTexto(texto: unknown): string {
   if (typeof texto !== 'string' || !texto.trim()) return typeof texto === 'string' ? texto : '';

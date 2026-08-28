@@ -199,7 +199,7 @@
 .terminal-degraded strong { display: block; color: var(--text); font-size: var(--tipo-rotulo); }
 .terminal-degraded p { margin: 3px 0 0; font-size: var(--tipo-apunte); }
 
-.ultimate-terminal-shell { display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 1fr) minmax(0, 264px); min-height: 690px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
+.ultimate-terminal-shell { display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 1fr); position: relative; min-height: 690px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
 .terminal-fleet-sidebar { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); background: linear-gradient(180deg, #0e1726, #0a111c); }
 .terminal-fleet-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 16px 12px; }
 .terminal-fleet-head h2 { margin: 0; font-size: var(--tipo-panel); }
@@ -303,8 +303,7 @@
 kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-2); color: var(--terminal-soft); font: inherit; }
 .composer-blocked { display: flex; align-items: center; gap: 5px; margin: 8px 0 0; color: var(--red); font-size: var(--tipo-apunte); }
 
-.terminal-inspector, .terminal-control-inspector { min-width: 0; overflow-y: auto; background: #0d1624; }
-.terminal-control-inspector { max-height: 760px; border-left: 1px solid var(--border); }
+.terminal-inspector { min-width: 0; overflow-y: auto; background: #0d1624; }
 .terminal-inspector-section { padding: 15px 13px; border-bottom: 1px solid var(--border); }
 .inspector-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; color: var(--blue); }
 .inspector-title .eyebrow { margin-bottom: 2px; font-size: var(--tipo-apunte); }
@@ -343,7 +342,6 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
 .terminal-pty-capability dd, .session-facts dd { margin-top: 0; font-size: var(--tipo-rotulo); }
 .session-facts .inspector-footnote { display: flex; gap: 5px; }
 .terminal-doctrine { display: flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 5px 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: var(--tipo-apunte); text-align: center; }
-.terminal-adapter-mobile { display: none; }
 .terminal-pty-pane { padding: 12px; }
 .terminal-pty-warning { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--blue-dim); color: var(--blue); font-size: var(--tipo-apunte); }
 .terminal-pty-pane .pty-host { height: min(500px, 57vh); }

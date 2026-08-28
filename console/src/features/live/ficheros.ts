@@ -3,35 +3,36 @@ import type {
 } from '../../api/types';
 
 /**
- * LA LÓGICA DE «QUÉ SE PUEDE HACER CON ESTE FICHERO Y POR QUÉ NO».
+ * THE LOGIC OF "WHAT CAN BE DONE WITH THIS FILE AND WHY NOT".
  *
- * Fuera del componente por lo mismo que `directiva.ts` y `role-brief.ts`: exportar funciones desde
- * un fichero de componentes rompe el fast refresh de Vite y el lint corre con `--max-warnings 0`.
- * Y porque la regla que decide si un documento se ofrece editable tiene que poder probarse sola.
+ * It lives outside the component for the same reason as `directiva.ts` and `role-brief.ts`: exporting
+ * functions from a component file breaks Vite's fast refresh and this console's lint runs with
+ * `--max-warnings 0`. And because the rule that decides whether a document is offered editable must be
+ * testable on its own.
  *
- * Todo lo de aquí existe para una sola cosa: que la pantalla nunca diga «no disponible» a secas.
- * Hay CUATRO motivos distintos por los que un fichero puede no dejarse tocar, y confundirlos es lo
- * que convierte esta vista en un adorno:
+ * All of this exists for a single purpose: the screen must never say "not available" outright. There are
+ * FOUR distinct reasons why a file might not be touched, and confusing them is what turns this view into
+ * decoration:
  *
- *   1. El gateway no publica la ruta            → no se miró. Se arregla desplegando.
- *   2. La ruta no está MEDIDA en el contenedor  → la ruta no es de fiar. Se arregla midiendo.
- *   3. No hay canal hasta el disco del agente   → falta una pieza que aún no existe.
- *   4. El fichero mezcla credenciales           → NO se va a poder nunca por esta vía, y bien.
+ *   1. The gateway does not publish the route       -> it was not checked. Fixed by deploying.
+ *   2. The route is not MEASURED in the container   -> the route is not trustworthy. Fixed by measuring.
+ *   3. There is no channel to the agent's disk      -> a piece that does not yet exist is missing.
+ *   4. The file mixes credentials                   -> it will NEVER be writable this way, and rightly so.
  *
- * Los cuatro se parecen en pantalla y significan cosas opuestas. El 4 es una decisión; el 1 es un
- * despliegue pendiente. Pintarlos igual haría que Steven esperara a que «se arregle» algo que
- * está bien como está, o que diera por perdido algo que sólo hay que desplegar.
+ * All four look the same on screen and mean opposite things. The 4th is a decision; the 1st is a pending
+ * deployment. Painting them the same way would make the operator wait for something "to be fixed" that is
+ * already correct, or give up on something that only needs to be deployed.
  */
 
 export type ModoDocumento = 'entero' | 'proyectado' | 'solo-lectura';
 
 /**
- * Qué se puede hacer con un documento.
+ * What can be done with a document.
  *
- * `proyectado` es el caso de `openclaw.json`: el fichero entero NO sale nunca —lleva `auth` y
- * `secrets`— pero unos campos suyos sí. No es «editable a medias»: es un documento distinto, el
- * que se ve, y hay que decirlo con esas palabras antes de que alguien crea que está mirando el
- * fichero completo y borre lo que no ve.
+ * `proyectado` is the case of `openclaw.json`: the whole file NEVER leaves —it carries `auth` and
+ * `secrets`— but some of its fields do. It is not "half-editable": it is a different document, the one
+ * being seen, and that has to be said in those words before someone believes they are looking at the full
+ * file and deletes what they do not see.
  */
 export function modoDeDocumento(item: AgentDocumentItem): ModoDocumento {
   if (item.editable) return 'entero';
@@ -42,17 +43,17 @@ export function modoDeDocumento(item: AgentDocumentItem): ModoDocumento {
 export interface Explicacion {
   titulo: string;
   detalle: string;
-  /** `true` si esto se arregla con un despliegue o una medición; `false` si es una decisión. */
+  /** `true` if this is fixed by a deployment or a measurement; `false` if it is a decision. */
   pendiente: boolean;
 }
 
 /**
- * Traduce el fallo del servidor a algo que se pueda leer y, sobre todo, ACTUAR.
+ * Translates the server's failure into something that can be read and, above all, ACTED ON.
  *
- * El `detalle` del servidor se enseña TAL CUAL cuando viene, en vez de reescribirlo: esos
- * mensajes están redactados en el gateway con la razón medida (por qué `skills` no se sirve, por
- * qué no hay canal), y volver a redactarlos aquí sería tener la explicación en dos sitios que
- * pueden divergir. Lo que se añade es el titular y si hay algo que hacer.
+ * The server's `detalle` is shown AS-IS when it comes, instead of being rewritten: those messages are written
+ * in the gateway with the measured reason (why `skills` is not served, why there is no channel), and
+ * rewriting them here would mean keeping the explanation in two places that can diverge. What is added is
+ * the title and whether there is something to do.
  */
 export function explicarFallo(status: number | undefined, mensajeServidor?: string): Explicacion {
   const detalle = mensajeServidor?.trim();
@@ -102,11 +103,11 @@ export function explicarFallo(status: number | undefined, mensajeServidor?: stri
 }
 
 /**
- * El aviso de cabecera cuando las rutas NO están medidas.
+ * The header notice when the routes are NOT measured.
  *
- * Devuelve el `caveat` del servidor si viene. Nunca inventa uno: si el gateway dice que la fuente
- * es `measured`, no hay nada que advertir y devolver un aviso genérico «por si acaso» sería un
- * guardia que grita en falso, que es como se acaba ignorando el aviso que sí importa.
+ * It returns the server's `caveat` if it comes. It never invents one: if the gateway says the source is
+ * `measured`, there is nothing to warn about and returning a generic notice "just in case" would be a guard
+ * that cries wolf, which is how the notice that actually matters ends up being ignored.
  */
 export function avisoDeFuente(mapa: AgentDocumentsMap): string | undefined {
   if (!mapa.publicado) return mapa.motivo;
@@ -115,12 +116,11 @@ export function avisoDeFuente(mapa: AgentDocumentsMap): string | undefined {
 }
 
 /**
- * El aviso que hay que enseñar ANTES de dejar guardar, no después.
+ * The notice to show BEFORE allowing save, not after.
  *
- * Dos casos y los dos son de los que se lamentan luego: un `settings.json` puede llevar `hooks`,
- * que son órdenes de shell que el arnés ejecuta solo —editarlo desde una web es ejecutar código
- * dentro del contenedor—; y un documento proyectado enseña una parte del fichero, así que borrar
- * de la vista borra del documento.
+ * Two cases, and both are the kind people later regret: a `settings.json` may carry `hooks`, which are shell
+ * commands the harness executes on its own —editing it from a web is executing code inside the container—;
+ * and a projected document shows a part of the file, so deleting from the view deletes from the document.
  */
 export function avisoAntesDeGuardar(item: AgentDocumentItem): string | undefined {
   if (item.warning) return item.warning;
@@ -130,15 +130,15 @@ export function avisoAntesDeGuardar(item: AgentDocumentItem): string | undefined
   return undefined;
 }
 
-/** ¿Hay algo sin guardar? Comparación exacta: un espacio al final también es un cambio. */
+/** Is there something unsaved? Exact comparison: a trailing space also counts as a change. */
 export function hayCambios(original: string, borrador: string): boolean {
   return original !== borrador;
 }
 
 /**
- * Un 2xx aislado no significa «aplicado». Sólo el contrato nuevo, que trae el ACK de la sonda que
- * escribió en el contenedor, habilita esa palabra. La rama defensiva evita mentir durante un
- * despliegue escalonado si un gateway viejo devuelve la forma anterior.
+ * A lone 2xx does not mean "applied". Only the new contract, which carries the probe's ACK of writing in
+ * the container, authorizes that word. The defensive branch avoids lying during a staged deployment if an
+ * old gateway returns the previous shape.
  */
 export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
   if (esAckAplicado(resultado)) {
@@ -156,7 +156,7 @@ export interface AckAplicado {
   readonly bytes: number;
 }
 
-/** Sólo esta forma completa autoriza a limpiar el borrador visible. */
+/** Only this complete form authorizes clearing the visible draft. */
 export function esAckAplicado(resultado: AgentDocumentGuardado): resultado is AckAplicado {
   return resultado.ok === true
     && resultado.state === 'applied'

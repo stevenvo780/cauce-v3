@@ -3,28 +3,27 @@ import type {
 } from '../../api/types';
 
 /**
- * LA LÓGICA DEL EDITOR DE PERFIL, aparte de la pintura para poder probarla sola.
+ * THE PROFILE EDITOR LOGIC, separated from the paint so it can be tested on its own.
  *
- * Los SIETE campos autorados del alias (`agent_profiles`, migración 026) terminan, palabra por
- * palabra, dentro de los ficheros que LEE el arnés de ese alias. Qué fichero recibe cada campo NO
- * es fijo: lo decide `ficherosDelArnes` de `@cauce/protocol` según el arnés, y `destinosDelArnes`
- * reproduce acá ese reparto para poder rotularlo. `perfil.test.ts` ata la tabla contra la función
- * real de composición, que es lo que impide que se separen.
+ * The SEVEN authored fields of the alias (`agent_profiles`, migration 026) end up, word for word, in the
+ * files READ by that alias's harness. Which file receives each field is NOT fixed: it is decided by
+ * `ficherosDelArnes` in `@cauce/protocol` according to the harness, and `destinosDelArnes` reproduces that
+ * distribution here so it can be labeled. `perfil.test.ts` ties the table to the real composition function,
+ * which is what keeps them from drifting apart.
  *
- * Permisos, cuotas, arnés y alias alcanzables NO son campos: son HECHOS que se leen frescos de
- * `memberships`, `role_policies`, `provider_accounts` y `agents`. Aparecen en la vista previa
- * porque van al fichero, pero no tienen caja. Copiarlos como texto autorado sería una segunda
- * fuente de verdad que se desincroniza en silencio: se revoca un permiso y el fichero del
- * contenedor sigue diciendo que lo tiene.
+ * Permissions, quotas, harness, and reachable aliases are NOT fields: they are FACTS read fresh from
+ * `memberships`, `role_policies`, `provider_accounts`, and `agents`. They appear in the preview because they
+ * go into the file, but they have no input box. Copying them as authored text would be a second source of
+ * truth that silently desynchronizes: a permission gets revoked and the container's file keeps claiming it.
  *
- * La cuenta de unidades se mide con `max(puntos de código, unidades UTF-16)`, que es lo mismo que
- * miden el CHECK de Postgres y el compilador.
+ * The unit count is measured with `max(code points, UTF-16 units)`, the same thing the Postgres CHECK and
+ * the compiler measure.
  */
 
-/** Los campos de texto suelto, en el orden en que se pintan. */
+/** Free-text fields, in the order they are painted. */
 export const CAMPOS_DE_TEXTO = ['purpose', 'role_summary', 'human_brief'] as const;
 
-/** Los campos de lista, en el orden en que se pintan. */
+/** List fields, in the order they are painted. */
 export const CAMPOS_DE_LISTA = ['responsibilities', 'restrictions', 'tools', 'operating_rules'] as const;
 
 export type CampoDeTexto = (typeof CAMPOS_DE_TEXTO)[number];
@@ -36,12 +35,12 @@ export const CAMPOS_DEL_PERFIL: readonly CampoDelPerfil[] = [
 ];
 
 /**
- * Cómo se llama cada campo en pantalla, y qué se espera que ponga el operador ahí.
+ * How each field is named on screen, and what the operator is expected to put there.
  *
- * La ayuda no es decoración: los nombres de columna están en inglés porque el esquema lo está, y
- * `operating_rules` no le dice a nadie qué escribir. Sin esto el operador rellena `purpose` con lo
- * que debería ir en `role_summary` y el `SOUL.md` de openclaw acaba hablando de tareas — que es
- * exactamente cómo se le enseña a un modelo que su identidad son sus tareas.
+ * The help is not decoration: the column names are in English because the schema is, and `operating_rules`
+ * does not tell anyone what to write. Without this, the operator fills `purpose` with what should go in
+ * `role_summary`, and openclaw's `SOUL.md` ends up talking about tasks — which is exactly how you teach a
+ * model that its identity is its tasks.
  */
 export const ETIQUETAS: Record<CampoDelPerfil, { titulo: string; ayuda: string }> = {
   purpose: {
@@ -74,12 +73,12 @@ export const ETIQUETAS: Record<CampoDelPerfil, { titulo: string; ayuda: string }
   },
 };
 
-/** Dónde acaba un campo: un fichero con nombre, o una ausencia con la palabra que le toca. */
+/** Where a field ends up: a named file, or an absence with the word it deserves. */
 export type DestinoDelCampo =
   | { readonly tipo: 'fichero'; readonly nombre: string }
   | { readonly tipo: 'ausente'; readonly ausente: 'sin-dato' | 'no-aplica'; readonly motivo: string };
 
-/** El único arnés que reparte los campos en varios ficheros; claude y codex los juntan en uno. */
+/** The only harness that splits the fields across several files; claude and codex merge them into one. */
 const REPARTO_OPENCLAW: Record<CampoDelPerfil, string> = {
   purpose: 'SOUL.md',
   role_summary: 'IDENTITY.md',
@@ -98,12 +97,12 @@ function ficheroDelCampo(harness: string, campo: CampoDelPerfil): string | undef
 }
 
 /**
- * A qué fichero va cada campo EN ESTE alias, con el arnés que el servidor declara.
+ * Which file each field goes to IN THIS alias, with the harness the server declares.
  *
- * Sólo se afirma un destino si el arnés es de los que Cauce sabe componer Y el gateway publica ese
- * fichero entre los suyos: rotular `SOUL.md` sobre una respuesta que no lo trae sería prometer una
- * escritura que nadie va a acreditar. Un arnés que no sea claude, codex u openclaw no recibe
- * NINGÚN fichero —`nombresDelArnes` devuelve vacío—, y eso se dice, no se sustituye por openclaw.
+ * A destination is only asserted if the harness is one Cauce knows how to compose AND the gateway publishes
+ * that file among its own: labeling `SOUL.md` over a response that does not carry it would be promising a write
+ * nobody will attest. A harness that is not claude, codex, or openclaw does not receive ANY file
+ * —`nombresDelArnes` returns empty—, and that is stated, not substituted with openclaw.
  */
 export function destinosDelArnes(
   harness: string | null | undefined,
@@ -146,7 +145,7 @@ function ausenciaDeDestino(
   };
 }
 
-/** El motivo común cuando NINGÚN campo tiene destino; `undefined` en cuanto uno lo tenga. */
+/** The common reason when NO field has a destination; `undefined` as soon as one does. */
 export function motivoSinDestino(
   destinos: Record<CampoDelPerfil, DestinoDelCampo>,
 ): string | undefined {
@@ -160,16 +159,16 @@ export function motivoSinDestino(
 }
 
 /**
- * La cuenta que MANDA: la más estricta de las dos unidades. Misma aritmética que
- * `measureStrictestUnits` de `@cauce/protocol`, reimplementada porque la consola es un bundle de
- * navegador y `@cauce/protocol` arrastra `zod` entero; `perfil.test.ts` comprueba que las dos dan
- * el MISMO número sobre los casos que separan una unidad de la otra (acentos y emojis del BMP).
+ * The count that RULES: the stricter of the two units. Same arithmetic as `measureStrictestUnits` in
+ * `@cauce/protocol`, reimplemented because the console is a browser bundle and `@cauce/protocol` drags the
+ * whole `zod` along; `perfil.test.ts` checks that the two yield the SAME number on the cases that separate one
+ * unit from the other (BMP accents and emojis).
  */
 export function contarUnidades(texto: string): number {
   return Math.max(Array.from(texto).length, texto.length);
 }
 
-/** Lo que el operador tiene delante: el perfil guardado con el borrador encima si lo hay. */
+/** What the operator has in front of them: the saved profile with the draft on top if there is one. */
 export function camposVigentes(
   perfil: AgentPerfil | undefined,
   borrador: Partial<AgentPerfilCampos> | undefined,
@@ -187,7 +186,7 @@ export function camposVigentes(
   return { ...base, ...borrador };
 }
 
-/** Una lista se edita como texto, una entrada por línea. Las líneas en blanco no son entradas. */
+/** A list is edited as text, one entry per line. Blank lines are not entries. */
 export function lineasALista(texto: string): string[] {
   return texto.split('\n').map((linea) => linea.trim()).filter((linea) => linea.length > 0);
 }
@@ -196,7 +195,7 @@ export function listaALineas(items: readonly string[]): string {
   return items.join('\n');
 }
 
-/** ¿Cambió algo respecto de lo guardado? Compara valor a valor, no por identidad de objeto. */
+/** Did anything change from what is saved? Compares value by value, not by object identity. */
 export function hayCambios(
   perfil: AgentPerfil | undefined,
   campos: AgentPerfilCampos,
@@ -215,9 +214,9 @@ export function hayCambios(
 }
 
 /**
- * Lo que mide el perfil entero, con el mismo criterio que el techo de la migración 026: suma los
- * textos y TODAS las entradas de todas las listas. Un campo dentro de su tope no dice nada del
- * total: cuatro listas llenas dan 256.000 unidades con cada campo «dentro del suyo».
+ * What the whole profile measures, by the same criterion as migration 026's ceiling: it sums the texts and
+ * EVERY entry of every list. A field within its own ceiling says nothing about the total: four full lists give
+ * 256,000 units with every field "within its own".
  */
 export function unidadesDelPerfil(campos: AgentPerfilCampos): number {
   let total = 0;
@@ -228,7 +227,7 @@ export function unidadesDelPerfil(campos: AgentPerfilCampos): number {
   return total;
 }
 
-/** Qué campos se pasan de su tope, con el número medido. Vacío = todo entra. */
+/** Which fields exceed their ceiling, with the measured number. Empty = everything fits. */
 export function camposQueNoEntran(
   campos: AgentPerfilCampos,
   limites: AgentPerfil['limites'] | undefined,
@@ -261,7 +260,7 @@ export function camposQueNoEntran(
   return fuera;
 }
 
-/** Cuerpo canónico de la ruta aplicada; no contiene identidad ni acción controladas por el cliente. */
+/** Canonical body of the applied route; it does not contain client-controlled identity or action. */
 export function perfilParaGuardar(campos: AgentPerfilCampos): AgentPerfilValor {
   const texto = (valor: string): string | null => (valor.trim().length === 0 ? null : valor);
   return {
@@ -278,8 +277,8 @@ export function perfilParaGuardar(campos: AgentPerfilCampos): AgentPerfilValor {
 const SHA256 = /^[0-9a-f]{64}$/;
 
 /**
- * Un 2xx sólo acredita aplicación si converge la misma revisión y trae exactamente un ACK válido
- * por cada fichero esperado. Se valida en runtime porque el JSON remoto no conoce los tipos TS.
+ * A 2xx only attests application if the same revision converges and carries exactly one valid ACK per
+ * expected file. It is validated at runtime because the remote JSON does not know the TS types.
  */
 export function esPerfilAplicado(
   value: unknown,

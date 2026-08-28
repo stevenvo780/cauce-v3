@@ -95,22 +95,16 @@ function isContractError(code: string): (error: unknown) => boolean {
 }
 
 /**
- * El turno mudo se sigue rechazando, pero ya no con un `throw`.
+ * The silent turn is still rejected, but no longer with a `throw`.
  *
- * Antes esto era `assert.throws(isContractError("MISSING_FINAL_REPLY"))`. El test afirmaba el
- * contrato que ERA el bug: el throw sale de `validateDeliveryOutput` sin `output`, la entrega
- * queda con `result` NULL, y `agentResponseText` (packages/store/src/repository.ts:1089) no
- * tiene de donde sacar texto.  las cuatro preguntas de Miguel
- * a janus del 27-jul (16:13, 16:16, 18:24, 18:27) estan `status=failed` con `result` NULL y
- * sin ninguna respuesta posterior. Miguel no recibio nada.
- *
- * El diagnostico no cambia —sigue siendo un turno fallido, y sigue contando como fallido— pero
- * ahora viaja con texto, que es lo unico que la persona del otro lado puede leer.
+ * Throwing exits `validateDeliveryOutput` without an `output`, the delivery ends up
+ * with `result` NULL, and `agentResponseText` (packages/store/src/repository/agents/fanin/helpers.ts:62)
+ * has nothing to pull text from.
  */
 function assertSilencioDegradado(salida: ReturnType<typeof validateDeliveryOutput>): void {
   assert.equal(salida.status, "failed", "un turno mudo no puede pasar por 'done'");
   assert.equal(salida.retryable, false, "el turno ya corrio: reintentarlo duplica sus efectos");
-  // Lo que de verdad se esta probando: que hay algo que leer.
+  // What is actually being tested: that there is something to read.
   assert.ok((salida.reply ?? "").trim().length > 0, "el reply tiene que llegar con texto");
   assert.match(salida.reply ?? "", /Volve a preguntarme/u);
 }
@@ -147,12 +141,12 @@ test("Codex and Claude results use the same non-empty completion contract", () =
   }
 });
 
-// --- El volcado de una herramienta rota NO es una respuesta -------------------
-// Las dos cadenas de abajo estan copiadas TAL CUAL de `deliveries.result.output.reply` en
-// produccion. Las emite openclaw 2026.6.6, no nosotros: el grep del simbolo sobre packages/ no
-// da un solo resultado fuera de este arreglo, y el binario instalado en el contenedor `claw`
-// las clasifica el mismo en dist/helpers-CYQZyDV5.js:119-127 (`isCronToolWarning`,
-// `isCronMessagePresentationWarning`).
+// --- A broken-tool dump is NOT a reply ---------------------------------------
+// The two strings below are copied VERBATIM from `deliveries.result.output.reply` in
+// production. They are emitted by openclaw 2026.6.6, not by us: grepping the symbol over
+// packages/ yields no match outside this array, and the binary installed in the `claw`
+// container classifies them the same way at dist/helpers-CYQZyDV5.js:119-127
+// (`isCronToolWarning`, `isCronMessagePresentationWarning`).
 const AVISO_HERRAMIENTA =
   "⚠️ 🛠️ `ssh ws-prizma 'cd /workspace/clientes/b2b-sales && rg -n \"schema\"'` (exit 5)";
 const AVISO_MENSAJE = "⚠️ ✉️ Message failed";
@@ -164,21 +158,21 @@ function replyDe(reply: string | null): Record<string, unknown> {
 test("un volcado de herramienta como reply entero se degrada en vez de entregarse como respuesta", () => {
   for (const aviso of [AVISO_HERRAMIENTA, AVISO_MENSAJE]) {
     const salida = validateDeliveryOutput(validateStructuredOutput(replyDe(aviso)));
-    // Esto es lo que recibieron Pablo (seneca/grp.pablo, 3 el 26-jul) y Jhon (hegel/grp.jhon, 1
-    // el 28-jul) creyendo que era la contestacion del agente. Medidas 30 entregas 'done' asi.
+    // This is what Pablo (seneca/grp.pablo, 3 on 26-Jul) and Jhon (hegel/grp.jhon, 1 on 28-Jul)
+    // received thinking it was the agent's answer. 30 'done' deliveries measured like this.
     assert.equal(salida.status, "failed", `el aviso no puede pasar por respuesta: ${aviso}`);
     assert.equal(salida.retryable, false);
     assert.match(salida.reply ?? "", /se me rompio una herramienta/u);
-    // El volcado no se tira: sirve para diagnosticar, pero va rotulado como detalle tecnico.
+    // The dump is not discarded: it helps diagnostics, but is labeled as a technical detail.
     assert.ok(salida.reply?.includes(aviso), "el volcado tiene que sobrevivir como detalle");
   }
 });
 
 test("un aviso citado dentro de una respuesta de verdad no se toca", () => {
-  // El caso que no se puede romper: argos le explico a seneca, en 2.685 caracteres, que su
-  // entrega volvio como un aviso. Eso es analisis del fallo, no el fallo. De las 256 entregas
-  // 'done' cuyo reply contiene el simbolo, solo 30 son el volcado pelado; las otras 226 son
-  // respuestas y quedan intactas.
+  // The case that must not break: argos explained to seneca, in 2,685 characters, that its
+  // delivery came back as a warning. That is failure analysis, not the failure itself. Of the
+  // 256 'done' deliveries whose reply contains the symbol, only 30 are the bare dump; the
+  // other 226 are real replies and stay untouched.
   const analisis = `Tu entrega volvio como \`${AVISO_MENSAJE}\`, sin cuerpo.\nLo revise y el culpable es el bridge.`;
   const salida = validateDeliveryOutput(validateStructuredOutput(replyDe(analisis)));
   assert.equal(salida.status, "done");
@@ -186,9 +180,9 @@ test("un aviso citado dentro de una respuesta de verdad no se toca", () => {
 });
 
 test("el banner de sesion compartida de Cauce no se confunde con un aviso de openclaw", () => {
-  // Nuestro propio aviso tambien abre con "⚠" y tambien se pega delante del reply
-  // (src/shared-session/notice.ts). Si la regla se guiara por el simbolo se comeria respuestas
-  // reales de socrates, kratos, zeus, kant y dedalo: son 96 entregas medidas en produccion.
+  // Our own warning also opens with "⚠" and is also pasted in front of the reply
+  // (src/shared-session/notice.ts). If the rule keyed off the symbol it would eat real
+  // replies from socrates, kratos, zeus, kant and dedalo: 96 deliveries measured in production.
   const banner = "⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA\nEste turno NO pasó por la terminal.\n\nLa respuesta real.";
   const salida = validateDeliveryOutput(validateStructuredOutput(replyDe(banner)));
   assert.equal(salida.status, "done");
@@ -196,8 +190,8 @@ test("el banner de sesion compartida de Cauce no se confunde con un aviso de ope
 });
 
 test("el aviso de cola no le gana a la respuesta real en los payloads de openclaw", () => {
-  // El bug de origen: openclaw APENDA el aviso como un payload de texto mas, y el parser hacia
-  // `.at(-1)`, asi que el aviso le ganaba a la respuesta que estaba justo antes.
+  // The original bug: openclaw APPENDS the warning as one more text payload, and the parser
+  // did `.at(-1)`, so the warning won over the reply that sat just before it.
   const parsed = parseOpenClawOutput(JSON.stringify({
     payloads: [
       { text: JSON.stringify({ ...replyDe("La migracion corrio y quedo aplicada."), notify: [] }) },
@@ -209,8 +203,9 @@ test("el aviso de cola no le gana a la respuesta real en los payloads de opencla
 });
 
 test("si el aviso es lo unico que dijo el turno, el turno igual deja resultado", () => {
-  // Sin este camino el parser cae al desenvuelto de mas abajo y tira MalformedOutputError, que
-  // deja la entrega SIN `result` — exactamente el modo de fallo que este arreglo viene a quitar.
+  // Without this path the parser falls through to the unwrap below and throws
+  // MalformedOutputError, leaving the delivery WITHOUT `result` -- exactly the failure mode
+  // this fix comes to remove.
   const parsed = parseOpenClawOutput(JSON.stringify({ payloads: [{ text: AVISO_HERRAMIENTA }] }));
   assert.equal(parsed.output.reply, AVISO_HERRAMIENTA);
   const salida = validateDeliveryOutput(parsed.output);
@@ -219,7 +214,7 @@ test("si el aviso es lo unico que dijo el turno, el turno igual deja resultado",
 });
 
 test("con aviso de cola gana finalAssistantVisibleText, que es donde openclaw deja el texto real", () => {
-  // Es la misma recuperacion que hace openclaw en helpers-CYQZyDV5.js:152 (`hasRecoveredToolWarning`).
+  // It is the same recovery openclaw does at helpers-CYQZyDV5.js:152 (`hasRecoveredToolWarning`).
   const parsed = parseOpenClawOutput(JSON.stringify({
     payloads: [{ text: AVISO_MENSAJE }],
     finalAssistantVisibleText: "Revise los accesos y estan los tres activos.",
@@ -257,10 +252,11 @@ test("agent fan-in must synthesize instead of starting another delegation round"
 });
 
 /**
- * Rebotarle al remitente sigue sin valer, pero ya no con un `throw`. Lo que cambio es el PRECIO:
- * `AGENT_MESSAGE_PING_PONG` era no reintentable y se llevaba el `reply` ENTERO, o sea el trabajo.
- * Medido en 48 h (2026-08-04/05): 5 turnos asi en 5 alias de 4 tenants. Ahora se descarta el
- * mensaje, se avisa por que, y la respuesta llega. Ver test/pingpong-descarte.test.ts.
+ * Bouncing back to the sender still has no value, but no longer with a `throw`. What changed is
+ * the COST: `AGENT_MESSAGE_PING_PONG` was non-retryable and carried off the ENTIRE `reply`,
+ * that is, the work. Measured in 48 h (2026-08-04/05): 5 such turns in 5 aliases/4 tenants.
+ * Now the message is dropped, the reason is reported, and the reply is delivered.
+ * See test/pingpong-descarte.test.ts.
  */
 test("an internal delivery cannot send any message back to its sender", () => {
   const bounced = validateStructuredOutput({
@@ -581,10 +577,10 @@ test("failed fan-in cannot carry messages", () => {
 });
 
 test("un output failed pierde sus delegaciones pero conserva la respuesta", () => {
-  // Antes esto lanzaba FAILED_OUTPUT_MESSAGES_FORBIDDEN, y el throw se llevaba puesto el `reply`
-  // entero: al remitente le llegaba "could not complete the delegated request" y nada mas.
-  // Un turno failed no materializa mensajes de todos modos, asi que descartarlos no pierde nada;
-  // lo que se gana es que la respuesta del agente sobreviva y el sepa que se descartaron.
+  // Before this it threw FAILED_OUTPUT_MESSAGES_FORBIDDEN, and the throw took the `reply`
+  // with it: the sender got "could not complete the delegated request" and nothing else.
+  // A failed turn does not materialize messages anyway, so dropping them loses nothing; what
+  // is gained is that the agent's reply survives and it knows what was dropped.
   const failedWithMessages = delegatedOutput("socrates", {
     status: "failed",
     retryable: true,
@@ -653,9 +649,9 @@ test("accepts a well formed notify directive", () => {
 });
 
 test("una notify mal formada se descarta y la respuesta sobrevive", () => {
-  // Antes cada una de estas era un throw, y el throw se llevaba puesto el reply entero: el agente
-  // hacia el trabajo y el duenio recibia un error de esquema. `notify` es accesorio; si viene mal
-  // se descarta, se le explica al agente en su propia respuesta, y el turno sigue vivo.
+  // Before this each of these threw, and the throw took the whole reply with it: the agent
+  // did the work and the owner got a schema error. `notify` is accessory; if it is malformed
+  // it is dropped, the agent is told why in its own reply, and the turn stays alive.
   const casos: Array<[unknown, RegExp]> = [
     ["not-an-array", /no era una lista/u],
     [[{ to: "Steven.DM", kind: "alert", body: "x" }], /no es un handle de destino/u],
@@ -700,7 +696,7 @@ test("las notify agregadas se acotan sin tumbar el turno", () => {
 });
 
 test("artifacts ausente se normaliza a lista vacia", () => {
-  // Era obligatorio, y omitirlo costaba el turno entero por un campo que casi siempre es [].
+  // It used to be required, and omitting it cost the whole turn for a field that is almost always [].
   const salida = validateStructuredOutput({
     reply: "hecho",
     messages: [],
@@ -721,10 +717,10 @@ test("notify never satisfies the final reply requirement", () => {
     artifacts: [],
   });
   const salida = validateDeliveryOutput(notifyOnly);
-  // La regla no cambia: avisarle a un humano por DM no es contestarle a quien te pregunto.
+  // The rule does not change: notifying a human over DM is not replying to whoever asked you.
   assertSilencioDegradado(salida);
-  // Lo que cambia es que el aviso sobrevive. Con el `throw` se perdia tambien el `notify`, o sea
-  // que el turno no le llegaba NI al remitente NI a la persona a la que el agente queria avisar.
+  // What changes is that the notification survives. With the `throw` the `notify` was lost
+  // too, meaning the turn reached NEITHER the sender NOR the person the agent meant to alert.
   assert.equal(salida.notify?.length, 1);
   assert.equal(salida.notify?.[0]?.to, "steven.dm");
 });
@@ -740,8 +736,8 @@ test("a failed output may notify even though it may not delegate", () => {
   });
   assert.equal(validateDeliveryOutput(failed), failed);
 
-  // Y una delegacion en un turno failed ya no hace estallar el turno: se descarta y se avisa,
-  // sin tocar `notify`, que es el unico canal que sobrevive a un fallo.
+  // And a delegation in a failed turn no longer blows up the turn: it is dropped, the sender
+  // is told, and `notify` (the only channel that survives a failure) is left untouched.
   const conDelegacion = validateDeliveryOutput(validateStructuredOutput({
     reply: "falló",
     messages: [{ to: "socrates", body: "seguí vos" }],

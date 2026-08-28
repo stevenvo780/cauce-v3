@@ -98,8 +98,7 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
   expect(screen.getByText('Flota en vivo')).toBeInTheDocument();
-  expect(screen.getAllByRole('heading', { level: 3, name: 'Permisos efectivos' }).length).toBeGreaterThan(0);
-  expect(screen.getAllByRole('heading', { level: 3, name: 'Adaptadores' }).length).toBeGreaterThan(0);
+  expect(screen.getByRole('button', { name: /plano de control/i })).toBeInTheDocument();
   expect(screen.getByText('Ningún agente seleccionado')).toBeInTheDocument();
   for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
     expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
@@ -561,12 +560,15 @@ it.each([502, 503, 504])(
 
 describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
   it('pinta el estado de cada adaptador y NUNCA un tag sin renderizar', async () => {
+    const user = userEvent.setup();
     renderWithApi(<TerminalPage />);
 
-    // The inspector is painted twice (right column and bottom strip); CSS decides which one shows.
-    expect(await screen.findAllByText('Disponible')).not.toHaveLength(0);
-    expect(screen.getAllByText('Degradado')).not.toHaveLength(0);
-    expect(screen.getAllByText('Sin reportar')).not.toHaveLength(0);
+    // The inspector is mounted once now, and only while its dialog is open.
+    await user.click(await screen.findByRole('button', { name: /plano de control/i }));
+    const inspector = await screen.findByRole('dialog', { name: /plano de control/i });
+    expect(within(inspector).getAllByText('Disponible')).not.toHaveLength(0);
+    expect(within(inspector).getAllByText('Degradado')).not.toHaveLength(0);
+    expect(within(inspector).getAllByText('Sin reportar')).not.toHaveLength(0);
     // The exact bug, in case someone lets the JSX escape again.
     expect(screen.queryByText(/UNKNOWN VALUE=/i)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/<Unknown value/i);

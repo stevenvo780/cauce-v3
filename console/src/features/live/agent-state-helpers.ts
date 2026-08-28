@@ -12,8 +12,7 @@ import {
 } from './agent-state';
 
 /**
- * Extrae el alias de una clave tenant/alias.
- * Si la clave no contiene '/', devuelve la clave completa.
+ * Extracts the alias from a tenant/alias key. If the key does not contain '/', it returns the whole key.
  */
 export function aliasDe(key: string): string {
   const corte = key.indexOf('/');
@@ -32,7 +31,7 @@ export function humanSeconds(seconds: number): string {
   return minutes === 0 ? `${String(hours)} h` : `${String(hours)} h ${String(minutes)} min`;
 }
 
-/** Arista de delegación viva: `from` le pasó una entrega a `to`, y `to` la tiene en vuelo AHORA. */
+/** Live delegation edge: `from` passed a delivery to `to`, and `to` has it in flight NOW. */
 export interface DelegationEdge {
   from: string;
   to: string;
@@ -42,14 +41,14 @@ export interface DelegationEdge {
 }
 
 /**
- * Quién le pasó trabajo a quién, leído de las entregas en vuelo. `in_flight_items[].from_alias`
- * es el emisor de la entrega que el agente está procesando, así que una entrega que `b` tiene en
- * vuelo y que mandó `a` ES la arista `a → b`.
+ * Who passed work to whom, read from the in-flight deliveries. `in_flight_items[].from_alias` is the
+ * sender of the delivery the agent is processing, so a delivery that `b` has in flight and sent `a` IS
+ * the edge `a -> b`.
  *
- * Se descartan dos casos que no son delegación entre agentes:
- *  - `from` igual a `to`: el puente de Telegram publica el mensaje del dueño con el alias del
- *    propio agente, y eso es una persona escribiendo, no una delegación.
- *  - `from` que no es ningún alias de la flota: viene de fuera (una persona, un canal).
+ * Two cases that are not delegation between agents are discarded:
+ *  - `from` equal to `to`: the Telegram bridge publishes the owner's message with the agent's own
+ *    alias, and that is a person typing, not a delegation.
+ *  - `from` that is no alias of the fleet: it comes from outside (a person, a channel).
  */
 export function delegationEdges(snapshot: FleetActivitySnapshot | undefined): DelegationEdge[] {
   const agents = snapshot?.agents ?? [];
@@ -74,20 +73,20 @@ export function delegationEdges(snapshot: FleetActivitySnapshot | undefined): De
 }
 
 /**
- * Lo que se recuerda de UNA entrega en vuelo, para poder decir algo cuando desaparezca.
+ * What is remembered about ONE in-flight delivery, to be able to say something when it disappears.
  *
- * El `ack_deadline_at` que se le vio por última vez acredita un hecho comprobable: si ya
- * había pasado, esa entrega NO salió de vuelo por un cierre limpio.
+ * The `ack_deadline_at` that was last seen attests to a verifiable fact: if it had already passed,
+ * that delivery did NOT leave flight through a clean close.
  */
 export interface ItemMemory {
   deliveryId: string;
-  /** Último estado visto. Siempre uno de leased/accepted/started: es lo único que el SQL lista. */
+  /** Last seen state. Always one of leased/accepted/started: that is all the SQL lists. */
   status?: DeliveryState | null;
-  /** `ack_deadline_at` en ms, o `null` si el servidor no lo informó. Nunca se rellena con 0. */
+  /** `ack_deadline_at` in ms, or `null` if the server did not report it. Never filled with 0. */
   ackDeadlineMs: number | null;
 }
 
-/** Lo que hay que recordar de un snapshot para detectar transiciones en el siguiente. */
+/** What needs to be remembered from a snapshot to detect transitions in the next one. */
 export interface AgentMemory {
   items: ItemMemory[];
   queued: number;
@@ -123,8 +122,8 @@ export function rememberFleet(snapshot: FleetActivitySnapshot | undefined, nowMs
 }
 
 /**
- * Qué se sabe del desenlace de una entrega que salió de vuelo.
- * `desconocido` por defecto; `deadline_vencido` cuando ack_deadline_at ya había pasado.
+ * What is known about the outcome of a delivery that left flight.
+ * `desconocido` by default; `deadline_vencido` when ack_deadline_at had already passed.
  */
 export type PulseOutcome = 'desconocido' | 'deadline_vencido';
 
@@ -132,15 +131,15 @@ export interface Pulse {
   kind: 'received' | 'settled';
   atMs: number;
   deliveryId?: string;
-  /** Sólo en `settled`. */
+  /** Only in `settled`. */
   outcome?: PulseOutcome;
 }
 
 export type PulseMap = Record<string, Pulse[]>;
 
 /**
- * Compara dos snapshots y devuelve los pulsos nuevos. Un `delivery_id` que aparece es trabajo que
- * ENTRÓ; uno que desaparece es una entrega que dejó de estar en vuelo.
+ * Compares two snapshots and returns the new pulses. A `delivery_id` that appears is work that CAME IN;
+ * one that disappears is a delivery that stopped being in flight.
  */
 export function detectPulses(
   previous: FleetMemory,
@@ -229,19 +228,19 @@ export function buildLiveViews(
 }
 
 // ----------------------------------------------------------------------------------------------
-// Aristas agregadas por par.
+// Edges aggregated by pair.
 // ----------------------------------------------------------------------------------------------
 
 export interface EdgeAggregate {
   from: string;
   to: string;
-  /** Entregas de ese par en vuelo ahora. Mayor que 0 pinta la flecha de azul. */
+  /** Deliveries of that pair in flight right now. Greater than 0 paints the arrow blue. */
   inFlight: number;
-  /** Volumen del que sale el grosor. Sin dato del servidor, es el propio `inFlight`. */
+  /** Volume from which the thickness comes. Without server data, it is the `inFlight` itself. */
   total: number;
-  /** La más vieja de las que van en ese sentido, para decidir el ámbar contra el umbral. */
+  /** The oldest one going that direction, used to decide amber against the threshold. */
   oldestSeconds: number | null;
-  /** `true` si el volumen es el de la ventana del servidor y no un recuento de lo que se ve. */
+  /** `true` if the volume is the server's window one and not a count of what is seen. */
   totalFromServer: boolean;
 }
 
@@ -250,7 +249,7 @@ export function edgePairKey(from: string, to: string): string {
 }
 
 /**
- * Junta en UNA flecha las N entregas que van del mismo emisor al mismo receptor.
+ * Joins into ONE arrow the N deliveries that go from the same sender to the same receiver.
  */
 export function aggregateEdges(
   edges: readonly DelegationEdge[],
@@ -289,15 +288,15 @@ export function aggregateEdges(
 }
 
 // ----------------------------------------------------------------------------------------------
-// El trabajo que entra por un puente humano.
+// The work that comes in through a human bridge.
 // ----------------------------------------------------------------------------------------------
 
 export interface HumanOrigin {
-  /** `tenant/alias` del agente que recibió el encargo. */
+  /** `tenant/alias` of the agent that received the task. */
   agentKey: string;
-  /** Adaptador por el que entró: 'telegram', 'whatsapp'… Nunca el `conversation_id`. */
+  /** Adapter through which it came: 'telegram', 'whatsapp'… Never the `conversation_id`. */
   adapter: string;
-  /** Cuántas entregas en vuelo entraron por ahí. */
+  /** How many in-flight deliveries came in through there. */
   count: number;
 }
 
@@ -308,7 +307,7 @@ export type OrigenEncargo =
   | { tipo: 'desconocido' };
 
 /**
- * El emisor manda sobre `origin_adapter`, SIEMPRE.
+ * The sender governs `origin_adapter`, ALWAYS.
  */
 export function origenDeItem(
   item: FleetActivityItem,
@@ -332,7 +331,7 @@ export function origenDeItem(
   return { tipo: 'desconocido' };
 }
 
-/** Los orígenes de las entregas en vuelo de un agente, en el MISMO orden que `in_flight_items`. */
+/** The origins of an agent's in-flight deliveries, in the SAME order as `in_flight_items`. */
 export function origenesDeAgente(
   agent: FleetActivityAgent,
   known: ReadonlySet<string>,
@@ -360,10 +359,10 @@ export function humanOrigins(snapshot: FleetActivitySnapshot | undefined): Human
 }
 
 // ----------------------------------------------------------------------------------------------
-// Geometría del mapa.
+// Geometry of the map.
 // ----------------------------------------------------------------------------------------------
 
-/** Radio del muñeco cuando no hay con qué escalarlo, y los extremos cuando sí lo hay. */
+/** Radius of the doughboy when there is nothing to scale it with, and the extremes when there is. */
 export const AVATAR_UNIFORME = 26;
 export const AVATAR_MIN = 22;
 export const AVATAR_MAX = 34;
@@ -375,7 +374,7 @@ export function radioDe(closed24h: number | undefined, maxClosed: number | null)
   return AVATAR_MIN + (AVATAR_MAX - AVATAR_MIN) * Math.sqrt(Math.min(1, closed24h / maxClosed));
 }
 
-/** Grosor de la flecha por volumen. Techo explícito: una relación cargada no puede tapar el mapa. */
+/** Arrow thickness by volume. Explicit ceiling: a busy relationship cannot blanket the map. */
 export function grosorDe(total: number, maxTotal: number): number {
   if (maxTotal <= 1) return 1.5;
   return 1.5 + 3.5 * Math.min(1, (total - 1) / (maxTotal - 1));

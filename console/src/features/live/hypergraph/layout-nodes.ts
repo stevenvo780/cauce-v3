@@ -19,12 +19,12 @@ export const DEFAULTS = {
 } as const;
 
 /**
- * Separador de claves compuestas.
+ * Separator for compound keys.
  *
- * Los componentes se escapan con `encodeURIComponent`, que codifica la barra como `%2F`: así dos
- * pares distintos no pueden producir la misma clave (tenant `a` + room `b/c` no colisiona con
- * tenant `a/b` + room `c`). Se elige un separador **visible** a propósito: un carácter de control
- * dentro del fuente hace que `grep` clasifique el archivo como binario y deja de encontrarlo.
+ * Components are escaped with `encodeURIComponent`, which encodes the slash as `%2F`: this way two different
+ * pairs cannot produce the same key (tenant `a` + room `b/c` does not collide with tenant `a/b` + room `c`). A
+ * **visible** separator is chosen on purpose: a control character inside the source makes `grep` classify the
+ * file as binary and stop finding it.
  */
 export const SEP = '/';
 
@@ -44,19 +44,19 @@ export interface RawEdge {
 export interface RawNode {
   alias: string;
   label: string | null;
-  /** `false` gana sobre `true`: si alguna membresía lo declara deshabilitado, se muestra así. */
+  /** `false` wins over `true`: if some membership declares it disabled, it is shown that way. */
   enabled: boolean | null;
   tenants: Set<string>;
   edges: string[];
 }
 
 /**
- * Aplana el snapshot a nodos y hiperaristas.
+ * Flattens the snapshot into nodes and hyperedges.
  *
- * Regla de honestidad, la misma que ya sigue el resto de la consola: **nada se inventa**. Un tenant
- * sin id se identifica por su posición, un miembro sin alias se cuenta como `unknownMembers` y no
- * genera un nodo fantasma, y `enabled` ausente queda en `null` (UNKNOWN) en vez de asumirse `true`.
- * Un dibujo bonito que rellena huecos es peor que una tabla: parece completo.
+ * Rule of honesty, the same one the rest of the console already follows: **nothing is invented**. A tenant
+ * without an id is identified by its position, a member without an alias is counted as `unknownMembers` and
+ * does not generate a phantom node, and missing `enabled` stays as `null` (UNKNOWN) instead of being assumed
+ * `true`. A pretty drawing that fills gaps is worse than a table: it looks complete.
  */
 export function collect(tenants: TenantNode[]): { nodes: Map<string, RawNode>; edges: RawEdge[] } {
   const nodes = new Map<string, RawNode>();
@@ -81,7 +81,7 @@ export function collect(tenants: TenantNode[]): { nodes: Map<string, RawNode>; e
         if (existing) {
           existing.tenants.add(tenantId);
           if (!existing.edges.includes(key)) existing.edges.push(key);
-          // Una membresía deshabilitada en cualquier room basta para marcarlo: es la lectura segura.
+          // A disabled membership in any room is enough to mark it: that is the safe reading.
           if (member.enabled === false) existing.enabled = false;
           else if (existing.enabled === null && member.enabled === true) existing.enabled = true;
         } else {
@@ -110,13 +110,13 @@ export function collect(tenants: TenantNode[]): { nodes: Map<string, RawNode>; e
 }
 
 /**
- * Relajación determinista: cada nodo es atraído por las hiperaristas que lo contienen y repelido
- * por los nodos que se le acercan demasiado.
+ * Deterministic relaxation: each node is pulled by the hyperedges that contain it and pushed back by the nodes
+ * that get too close.
  *
- * No es un force-directed con temperatura ni con aleatoriedad; es un descenso fijo de `iterations`
- * pasos que, con las mismas entradas, converge siempre al mismo lugar. El efecto buscado es que un
- * alias compartido por dos rooms quede naturalmente entre las dos (y por lo tanto en el solapamiento
- * de ambas envolventes), sin tener que caso-especializar ese escenario.
+ * It is not a force-directed with temperature or randomness; it is a fixed descent of `iterations` steps that,
+ * with the same inputs, always converges to the same place. The intended effect is that an alias shared by two
+ * rooms naturally sits between the two (and therefore inside the overlap of both envelopes), without having to
+ * special-case that scenario.
  */
 export function relax(
   nodes: RawNode[],
@@ -130,8 +130,8 @@ export function relax(
   for (const node of nodes) {
     const incident = node.edges.map((key) => anchors.get(key)).filter((point): point is Point => Boolean(point));
     const base = incident.length > 0 ? centroidOf(incident) : { x: options.width / 2, y: options.height / 2 };
-    // El desplazamiento inicial evita que dos alias con las mismas membresías nazcan superpuestos
-    // (la repulsión sola no puede separarlos si arrancan en el mismo punto exacto).
+    // The initial offset prevents two aliases with the same memberships from being born overlapped
+    // (repulsion alone cannot separate them if they start at the exact same point).
     const angle = jitter(node.alias, 1) * Math.PI * 2;
     const radius = 6 + jitter(node.alias, 2) * 26;
     positions.set(node.alias, { x: base.x + Math.cos(angle) * radius, y: base.y + Math.sin(angle) * radius });
@@ -141,7 +141,7 @@ export function relax(
   for (let step = 0; step < options.iterations; step += 1) {
     const cooling = 1 - step / options.iterations;
 
-    // Atracción hacia el ancla de cada hiperarista incidente.
+    // Attraction towards the anchor of each incident hyperedge.
     for (const node of nodes) {
       const position = positions.get(node.alias);
       if (!position) continue;
@@ -154,7 +154,7 @@ export function relax(
       position.y += (target.y - position.y) * 0.06 * cooling;
     }
 
-    // Repulsión entre nodos demasiado próximos.
+    // Repulsion between too-close nodes.
     for (let i = 0; i < nodes.length; i += 1) {
       for (let j = i + 1; j < nodes.length; j += 1) {
         const a = positions.get(nodes[i].alias);
@@ -164,7 +164,7 @@ export function relax(
         let dy = b.y - a.y;
         let distance = Math.hypot(dx, dy);
         if (distance < 1e-6) {
-          // Empate exacto: se separa por una dirección derivada de los alias, no al azar.
+          // Exact tie: they are separated by a direction derived from the aliases, not at random.
           const angle = jitter(`${nodes[i].alias}|${nodes[j].alias}`, 3) * Math.PI * 2;
           dx = Math.cos(angle);
           dy = Math.sin(angle);
@@ -181,9 +181,9 @@ export function relax(
       }
     }
 
-    // Contención: nadie se sale del lienzo. Se recorta en vez de rebotar para no introducir
-    // oscilación. El margen sale de la caja real del nodo y de la banda reservada arriba para las
-    // etiquetas de sala: un nodo pegado al borde superior no dejaría dónde escribir `#sala`.
+    // Containment: nobody leaves the canvas. They are clipped instead of bouncing to avoid introducing
+    // oscillation. The margin comes from the node's real box and from the band reserved above for the
+    // room labels: a node stuck to the top edge would leave no room to write `#room`.
     const box = options.footprint;
     for (const node of nodes) {
       const position = positions.get(node.alias);
@@ -193,7 +193,7 @@ export function relax(
     }
   }
 
-  // Redondeo final: mantiene el SVG legible y hace que dos corridas idénticas sean idénticas byte a byte.
+  // Final rounding: keeps the SVG readable and makes two identical runs identical byte for byte.
   const result = new Map<string, Point>();
   for (const node of nodes) {
     const position = positions.get(node.alias);
@@ -204,18 +204,16 @@ export function relax(
 }
 
 /**
- * Pasada final: separa a empujones **cualquier** par de nodos cuyas cajas se toquen.
+ * Final pass: brute-force separates **any** pair of nodes whose boxes touch.
  *
- * La relajación de arriba es un compromiso entre atracción y repulsión, así que *tiende* a separar
- * pero no lo garantiza: con muchos alias en la misma sala converge con nodos encimados, y eso es
- * exactamente lo que se veía. Esto no negocia — empuja por el eje de menor penetración hasta que no
- * queda ningún solapamiento, y devuelve si lo consiguió para poder afirmarlo en un test en vez de
- * mirarlo a ojo.
+ * The relaxation above is a compromise between attraction and repulsion, so it *tends* to separate but does
+ * not guarantee it: with many aliases in the same room it converges with stacked nodes, which is exactly what
+ * was being seen. This one does not negotiate — it pushes along the axis of least penetration until no overlap
+ * remains, and returns whether it managed so this can be asserted in a test instead of being eyeballed.
  *
- * Se empuja por un solo eje (el que menos hay que mover) en vez de radialmente porque conserva
- * mucho mejor la agrupación por sala: dos nodos apilados en vertical se separan en vertical y
- * siguen dentro de su región, mientras que un empuje radial los manda a la diagonal y termina
- * sacando a uno de la envolvente a la que pertenece.
+ * It pushes along a single axis (the one that moves least) instead of radially because it preserves the
+ * grouping by room much better: two vertically stacked nodes separate vertically and stay inside their region,
+ * while a radial push sends them to the diagonal and ends up taking one out of the envelope it belongs to.
  */
 export function separate(
   order: string[],
@@ -238,8 +236,8 @@ export function separate(
         let dy = b.y - a.y;
         if (Math.abs(dx) >= width || Math.abs(dy) >= height) continue;
         touched = true;
-        // Empate exacto: se desempata por hash de los alias, nunca al azar — el layout tiene que
-        // ser reproducible entre refrescos o el operador pierde de vista al agente que seguía.
+        // Exact tie: broken by a hash of the aliases, never at random — the layout must be reproducible
+        // across refreshes or the operator loses sight of the agent they were tracking.
         if (dx === 0 && dy === 0) {
           const angle = jitter(`${order[i]}|${order[j]}`, 7) * Math.PI * 2;
           dx = Math.cos(angle) * 0.5;
@@ -258,8 +256,8 @@ export function separate(
         }
       }
     }
-    // Contención después de cada pasada: si un empujón sacó a alguien del lienzo, vuelve adentro y
-    // la pasada siguiente reparte la diferencia hacia el otro lado.
+    // Containment after each pass: if a push took someone out of the canvas, they go back in and the next
+    // pass distributes the difference towards the other side.
     for (const alias of order) {
       const point = positions.get(alias);
       if (!point) continue;
@@ -276,7 +274,7 @@ export function separate(
   }));
 }
 
-/** Ancla de cada hiperarista: tenants repartidos en una elipse, rooms en una órbita interna. */
+/** Anchor for each hyperedge: tenants spread on an ellipse, rooms on an inner orbit. */
 export function anchorEdges(edges: RawEdge[], options: Required<LayoutOptions>): Map<string, Point> {
   const tenantIds: string[] = [];
   for (const edge of edges) if (!tenantIds.includes(edge.tenantId)) tenantIds.push(edge.tenantId);
@@ -288,7 +286,7 @@ export function anchorEdges(edges: RawEdge[], options: Required<LayoutOptions>):
   const ry = options.height * 0.29;
 
   tenantIds.forEach((tenantId, tenantIndex) => {
-    // Cuando hay un solo tenant se centra; repartirlo en una elipse de un punto lo dejaría descentrado.
+    // When there is only one tenant it is centered; spreading it on a one-point ellipse would offset it.
     const tenantAngle = tenantIds.length === 1
       ? -Math.PI / 2
       : (tenantIndex / tenantIds.length) * Math.PI * 2 - Math.PI / 2;
@@ -310,7 +308,7 @@ export function anchorEdges(edges: RawEdge[], options: Required<LayoutOptions>):
   return anchors;
 }
 
-/** Curva dirigida entre dos centroides, curvada para que A→B y B→A no se pisen. */
+/** Directed curve between two centroids, curved so A→B and B→A do not collide. */
 export function arcBetween(from: Point, to: Point, bend: number): { path: string; midpoint: Point; angle: number } {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -320,8 +318,8 @@ export function arcBetween(from: Point, to: Point, bend: number): { path: string
     x: (from.x + to.x) / 2 + normal.x * bend,
     y: (from.y + to.y) / 2 + normal.y * bend,
   };
-  // Punto medio real de la Bézier cuadrática en t=0.5, no el promedio de extremos: si no, la
-  // etiqueta y la flecha quedan flotando fuera de la curva justamente cuando más se curva.
+  // Real midpoint of the quadratic Bézier at t=0.5, not the average of the endpoints: otherwise the
+  // label and the arrow float outside the curve precisely when it curves the most.
   const midpoint = {
     x: 0.25 * from.x + 0.5 * control.x + 0.25 * to.x,
     y: 0.25 * from.y + 0.5 * control.y + 0.25 * to.y,

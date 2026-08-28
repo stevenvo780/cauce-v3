@@ -135,8 +135,6 @@ export function conRevisionDelPerfil(text: string, revision: number): string {
  * `MEMORY.md` y `HEARTBEAT.md` en `openclaw` son gestionados por el agente y no se sobrescriben si existen.
  */
 
-// ── Los topes que declara openclaw ───────────────────────────────────────────────────────────
-
 /** Topes de tamaño por fichero y total para openclaw, medidos en unidades UTF-16. */
 export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 } as const;
 
@@ -161,21 +159,14 @@ export class ErrorDeTopeDelArnes extends Error {
   }
 }
 
-// ── La forma de lo que se genera ─────────────────────────────────────────────────────────────
-
-/** Cómo se trata un fichero que ya está en el disco del contenedor. */
 export type PoliticaDeFichero =
-  /** Se fusiona nuestro bloque conservando byte a byte todo lo de fuera. */
   | "bloque-gestionado"
-  /** Es del agente: si existe no se toca; si falta se crea vacío. */
   | "solo-si-falta";
 
 export interface FicheroGenerado {
   readonly nombre: string;
   readonly politica: PoliticaDeFichero;
-  /** El contenido COMPLETO que tiene que quedar en el disco. */
   readonly texto: string;
-  /** `false` cuando lo que hay en el disco ya es esto: no hay nada que escribir. */
   readonly escribir: boolean;
 }
 
@@ -183,7 +174,6 @@ export interface OpcionesDeProyeccionDelPerfil {
   readonly revision?: number;
 }
 
-/** Los nombres que le tocan a un arnés, sin generar nada. Un arnés desconocido no recibe ninguno. */
 export function nombresDelArnes(harness: string): readonly string[] {
   if (harness === "claude") return ["CLAUDE.md"];
   if (harness === "codex") return ["AGENTS.md"];
@@ -191,12 +181,6 @@ export function nombresDelArnes(harness: string): readonly string[] {
   return [];
 }
 
-// ── Reparto de secciones por fichero ────────────────────────────────────────
-
-/**
- * Distribuye las secciones autoradas del perfil en los ficheros soportados por openclaw.
- * Los hechos dinámicos no se persisten en ficheros estáticos.
- */
 function bloqueDeFichero(nombre: string, perfil: AgentProfile): string {
   if (nombre === "SOUL.md") {
     return unir([seccion("Identidad y propósito", perfil.purpose ?? undefined)]);
@@ -399,9 +383,7 @@ function comprobarTopes(harness: string, ficheros: readonly FicheroGenerado[]): 
   for (const fichero of ficheros) {
     // Los ficheros del agente (solo-si-falta) no computan para los topes gestionados.
     if (fichero.politica === "solo-si-falta") continue;
-    // Un fichero que la siembra no va a escribir (sin bloque propio, o bloque de otro alias)
-    // es asunto del dueño del workspace: su tamaño no puede vetar los ficheros que sí se
-    // escriben. El tope gobierna lo que Cauce escribe, no lo que ya vivía allí.
+    // Ficheros que la siembra no va a escribir no computan para topes gestionados.
     if (!fichero.escribir) continue;
     const medido = measureStrictestUnits(fichero.texto);
     if (medido > TOPES_OPENCLAW.porFichero) {

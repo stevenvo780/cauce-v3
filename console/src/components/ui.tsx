@@ -4,7 +4,7 @@ import { TIEMPO_MAXIMO_MS } from '../api/client';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
 
-// Re-export para que el resto de la consola siga importando su vocabulario visual de un solo sitio.
+// Re-export so the rest of the console keeps importing its visual vocabulary from a single place.
 export { FloatingTooltip, Tooltip, TOOLTIP_DELAY_MS } from './Tooltip';
 export type { FloatingTooltipProps, TooltipPlacement, TooltipProps } from './Tooltip';
 
@@ -68,23 +68,23 @@ export function Badge({ children, tone = 'unknown' }: {
 }
 
 /**
- * Un valor del servidor, o la palabra exacta con la que se dice que no está.
+ * A value from the server, or the exact word used to say it is not there.
  *
- * `ausente` existe porque «no lo sé», «todavía no toca» y «no aplica» NO son lo mismo y la consola
- * los decía todos igual. La LÓGICA no se toca: sigue siendo una ausencia, sigue sin ser un permiso
- * y sigue llevando la clase `.unknown` para que se vea. Lo que se elige es la palabra.
+ * `ausente` exists because "I don't know", "not yet due" and "not applicable" are NOT the same:
+ * the console used to say them all the same way. The LOGIC is untouched —still an absence, still
+ * not a permission, still carrying the `.unknown` class so it shows. What gets chosen is the word.
  *
- *  - `sin-dato` (por defecto) — nunca hubo dato o no se pudo leer.
- *  - `todavia-no` — el dato aún no existe porque el hecho no ocurrió: una entrega `pending` no
- *    tiene «último error» porque todavía no falló, y pintar eso de naranja como si fuera un
- *    desconocido es exactamente el falso positivo que sube el umbral y ciega al resto.
- *  - `no-aplica` — no existe para esta fila. Un guión, en gris apagado y no en ámbar: no
- *    tiene nada que reclamar.
+ *  - `sin-dato` (default) — there was never a value or it could not be read.
+ *  - `todavia-no` — the value does not exist yet because the event has not occurred: a `pending`
+ *    delivery has no "last error" because it has not failed yet, and painting it orange as if it
+ *    were an unknown is exactly the false positive that raises the threshold and blinds the rest.
+ *  - `no-aplica` — it does not exist for this row. A dash, in muted grey and not amber: there is
+ *    nothing to claim.
  */
 export function Unknown({ value, ausente = 'sin-dato', motivo }: {
   value: unknown;
   ausente?: 'sin-dato' | 'todavia-no' | 'no-aplica';
-  /** Se cuelga del `title=` cuando el valor falta: por qué falta, si se sabe. */
+  /** Hangs off `title=` when the value is missing: why it is missing, if known. */
   motivo?: string;
 }) {
   const text = display(value);
@@ -94,7 +94,7 @@ export function Unknown({ value, ausente = 'sin-dato', motivo }: {
     <span
       className={ausente === 'no-aplica' ? 'muted' : 'unknown'}
       title={motivo}
-      // El guión es decorativo para quien escucha: se anuncia la frase, no el carácter.
+      // The dash is decorative for the listener: it is the phrase that gets announced, not the character.
       aria-label={ausente === 'no-aplica' ? 'no aplica' : undefined}
     >
       {palabra}
@@ -103,11 +103,11 @@ export function Unknown({ value, ausente = 'sin-dato', motivo }: {
 }
 
 /**
- * Una fecha del servidor. Sin segundos a la vista, con el instante exacto en el `title=`.
+ * A timestamp from the server. No seconds on display, with the exact instant in the `title=`.
  *
- * `relativo` es para las columnas cuya pregunta real es *cuánto hace*: ahí un reloj de pared
- * obliga a restar de cabeza. La fecha absoluta no se pierde nunca — va al `title=` junto con los
- * segundos y la zona, que es donde los segundos sí sirven para cruzar contra un registro.
+ * `relativo` is for columns whose real question is *how long ago*: a wall clock there forces
+ * mental subtraction. The absolute date is never lost — it goes into the `title=` along with the
+ * seconds and the timezone, where seconds do serve to cross-check against a log.
  */
 export function Time({ value, relativo = false }: { value: unknown; relativo?: boolean }) {
   const formatted = timestamp(value);
@@ -126,21 +126,21 @@ export function Time({ value, relativo = false }: { value: unknown; relativo?: b
 }
 
 /**
- * A partir de cuándo un rótulo de carga deja de ser informativo y pasa a ser un spinner mudo.
+ * From what point a loading label stops being informative and becomes a mute spinner.
  *
- * No es un número de gusto: la referencia medida contra producción estrangulada (90% de steal
- * time) es `/v3/console/activity` en 0,8 s y `/v3/console/messages` en 4,9 s. Doce segundos no
- * interrumpen ninguna lectura sana y sí llegan mucho antes que el corte de `TIEMPO_MAXIMO_MS`,
- * que es justo lo que hace falta para poder anunciarlo.
+ * Not a matter of taste: the reference measured against a starved production (90% steal time)
+ * is `/v3/console/activity` at 0.8 s and `/v3/console/messages` at 4.9 s. Twelve seconds do not
+ * interrupt any healthy read and arrive well before the `TIEMPO_MAXIMO_MS` cutoff, which is
+ * exactly what is needed to be able to announce it.
  */
 export const PACIENCIA_MS = 12_000;
 
 /**
- * Tarjeta de estado de carga con aviso de tiempo prolongado y timeout configurable.
+ * Loading state card with a long-wait notice and a configurable timeout.
  */
 export function LoadingState({ label = 'Cargando datos del servidor…', paciencia = PACIENCIA_MS }: {
   label?: string;
-  /** Sólo para las pruebas y para quien tenga una espera legítimamente más larga. `0` la apaga. */
+  /** Only for tests and for whoever has a legitimately longer wait. `0` turns it off. */
   paciencia?: number;
 }) {
   const [tardando, setTardando] = useState(false);
@@ -170,7 +170,7 @@ export function LoadingState({ label = 'Cargando datos del servidor…', pacienc
 export function ErrorState({ error, onRetry, reintentando = false }: {
   error: Error;
   onRetry: () => void;
-  /** Indica si hay una solicitud de lectura en curso. */
+  /** Indicates whether a read request is in flight. */
   reintentando?: boolean;
 }) {
   return (
@@ -218,7 +218,7 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
 }
 
 /**
- * Componente accesible de pestañas para alternar vistas dentro de una página.
+ * Accessible tabs component to switch views within a page.
  */
 export function ViewTabs<T extends string>({ tabs, active, onSelect, label }: {
   tabs: readonly { id: T; label: string; badge?: ReactNode }[];
@@ -248,20 +248,20 @@ export function ViewTabs<T extends string>({ tabs, active, onSelect, label }: {
 }
 
 /**
- * El panel de una pestaña.
+ * The panel of a tab.
  *
- * `hidden` existe para las fusiones que llevan **formularios** dentro de las pestañas: desmontar el
- * panel inactivo tira el estado de React, o sea que empezar un alta de cuenta, ir a mirar el
- * consumo y volver dejaba el formulario en blanco. Un dato escrito por el operador que desaparece
- * al cambiar de pestaña es una regresión que la fusión no tiene por qué causar.
+ * `hidden` exists for merges that carry **forms** inside tabs: unmounting the inactive panel drops
+ * the React state, so starting an account signup, going to check consumption and coming back
+ * left the form blank. An operator-entered value that disappears when switching tabs is a
+ * regression the merge has no business causing.
  *
- * Se oculta con el atributo `hidden` y no con `display:none` en una clase, porque `hidden` saca el
- * panel del árbol de accesibilidad: un lector de pantalla no anuncia el contenido de la pestaña que
- * no está abierta, y `getByRole` tampoco lo encuentra — lo que hace que las pruebas tengan que
- * abrir la pestaña de verdad en vez de encontrar por casualidad el nodo escondido.
+ * It is hidden with the `hidden` attribute, not `display:none` in a class, because `hidden` pulls
+ * the panel out of the accessibility tree: a screen reader does not announce the contents of the
+ * tab that is not open, and `getByRole` cannot find it either — which forces tests to actually
+ * open the tab instead of stumbling onto a hidden node by accident.
  *
- * Quien no tenga estado que preservar (o cuyo contenido cueste una petición) sigue montando el
- * panel condicionalmente: ver `ObservabilityPage`, que no monta la auditoría hasta que se la pide.
+ * Whoever has no state to preserve (or whose content costs a request) keeps mounting the panel
+ * conditionally: see `ObservabilityPage`, which only mounts the audit when asked.
  */
 export function ViewTabPanel({ id, labelledBy, hidden = false, children }: {
   id: string;

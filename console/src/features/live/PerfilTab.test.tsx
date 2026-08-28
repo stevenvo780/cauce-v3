@@ -345,7 +345,7 @@ it('un alias codex junta los siete campos en AGENTS.md, sin nombrar ficheros aje
 it('sin arnés declarado dice «sin dato» y lo explica una vez, en vez de adivinar openclaw', async () => {
   await abrirCon({ harness: null, ficheros: [] });
   expect(rotuloDe(/Identidad y propósito/i)).toContain('sin dato');
-  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent ?? '')
+  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent)
     .toContain('no dice qué arnés');
   expect(screen.getByText(/Perfil de kant/i).closest('section')?.textContent ?? '')
     .not.toContain('SOUL.md');
@@ -354,6 +354,6 @@ it('sin arnés declarado dice «sin dato» y lo explica una vez, en vez de adivi
 it('un arnés que Cauce no sabe componer se marca «no aplica» y se nombra en la explicación', async () => {
   await abrirCon({ harness: 'hermes', ficheros: [] });
   expect(screen.getAllByLabelText('no aplica').length).toBe(7);
-  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent ?? '')
+  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent)
     .toContain('hermes');
 });

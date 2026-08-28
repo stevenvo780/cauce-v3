@@ -6,16 +6,16 @@ import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 
-// Techo de concurrencia por agente (agents.max_concurrent_deliveries).
+// Per-agent concurrency cap (agents.max_concurrent_deliveries).
 //
-// Lo que se está protegiendo, medido en producción: el gateway reclamaba de a 20 por drain
-// mientras el harness ejecuta UNA por sessionKey. argos llegó a 92 entregas en vuelo ejecutando 2,
-// con espera mediana de 3 horas y 73% muerto sin ejecutarse jamás. Reclamar no es gratis: arranca
-// ack_deadline_at, y ese reloj corre mientras la entrega hace cola detrás del mutex del harness.
+// What is being protected, measured in production: the gateway claimed 20 at a time per drain
+// while the harness runs ONE per sessionKey. argos reached 92 in-flight deliveries executing 2,
+// with a median wait of 3 hours and 73% dead without ever being executed. Claiming is not free:
+// it starts ack_deadline_at, and that clock runs while delivery queues behind the harness mutex.
 //
-// Estas pruebas fijan las dos mitades del contrato, porque una sin la otra es peor que no hacer
-// nada: (1) no se reclama por encima del techo, y (2) lo que NO se reclama sigue reclamable —
-// queda 'pending', intacto y sin haber gastado un intento.
+// These tests pin down the two halves of the contract, because one without the other is worse
+// than doing nothing: (1) nothing is claimed above the cap, and (2) what is NOT claimed stays
+// claimable — it remains 'pending', untouched and without having spent an attempt.
 
 let database: TestDatabase;
 let pool: DatabasePool;
@@ -67,11 +67,11 @@ async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
 }
 
 /**
- * `resetTestDatabase` trunca `agents`, así que por defecto ningún alias tiene fila. Reclamar en
- * ese estado falla cerrado: un consumidor debe declarar su capacidad durable. Cada prueba
- * declara explícitamente el agente que quiere acotar. Se inserta con
- * enabled=false y sin placement para no arrastrar las constraints agents_enabled_requires_runtime
- * ni agents_placement_atomic, que no tienen nada que ver con lo que se está probando.
+ * `resetTestDatabase` truncates `agents`, so by default no alias has a row. Claiming in that
+ * state fails closed: a consumer must declare its durable capacity. Each test explicitly declares
+ * the agent it wants to cap. It is inserted with enabled=false and without placement so as not to
+ * drag in the agents_enabled_requires_runtime or agents_placement_atomic constraints, which have
+ * nothing to do with what is being tested.
  */
 async function declareAgent(
   tenant: Tenant, alias: string, maxConcurrent: number | null
@@ -131,7 +131,7 @@ function progressAck(
 
 describe('per-agent delivery concurrency cap', () => {
   it('never hands out more than the agent can execute, however much is queued', async () => {
-    // El caso exacto del incidente en miniatura: mucha cola, un solo drain generoso.
+    // The exact case of the miniature incident: a large queue, a single generous drain.
     await declareAgent('Steven', 'argos', 2);
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');
@@ -140,13 +140,13 @@ describe('per-agent delivery concurrency cap', () => {
       argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000
     );
 
-    // Antes del arreglo esto devolvía 9: el límite pedido, no el ejecutable.
+    // Before the fix this returned 9: the requested limit, not the executable one.
     expect(claimed).toHaveLength(2);
   });
 
   it('leaves everything it did not claim as pending, with no attempt spent', async () => {
-    // La mitad que importa de verdad. Un techo que reclamara menos pero rompiera o encolara mal
-    // el resto sería un cambio peor que el problema: ahí es donde el backlog se incinera.
+    // The half that really matters. A cap that claimed less but broke or mis-queued the rest
+    // would be a change worse than the problem: that is where the backlog goes up in smoke.
     await declareAgent('Steven', 'argos', 2);
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');
@@ -157,7 +157,7 @@ describe('per-agent delivery concurrency cap', () => {
     const attempts = await pool.query<{ attempt: number }>(
       `SELECT DISTINCT attempt FROM deliveries WHERE recipient_alias='argos' AND status='pending'`
     );
-    // Ningún intento gastado y ningún reloj de ACK corriendo sobre lo no reclamado.
+    // No attempt spent and no ACK clock running on what was not claimed.
     expect(attempts.rows).toEqual([{ attempt: 0 }]);
     const armed = await pool.query<{ total: string }>(
       `SELECT count(*) AS total FROM deliveries
@@ -167,7 +167,7 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('counts what is already in flight, so repeated drains cannot stack past the cap', async () => {
-    // Un solo claim acotado no alcanza: el gateway drena muchas veces (wake, ACK, reconexión).
+    // A single bounded claim is not enough: the gateway drains many times (wake, ACK, reconnect).
     await declareAgent('Steven', 'argos', 3);
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');
@@ -221,8 +221,8 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('keeps counting a delivery the harness has accepted or started', async () => {
-    // 'accepted' y 'started' son ocupación real: el harness ya la tiene. Si el conteo mirara sólo
-    // 'leased', el primer ACK de progreso liberaría un cupo falso y volvería el sobre-reclamo.
+    // 'accepted' and 'started' are real occupancy: the harness already has it. If the count only
+    // looked at 'leased', the first progress ACK would free a false slot and bring back over-claim.
     await declareAgent('Steven', 'argos', 2);
     await publishMany(6);
     const argos = await consumer('Steven', 'argos');
@@ -245,7 +245,7 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('hands out the next batch as soon as a terminal ACK frees the slot', async () => {
-    // El drenaje. Si esto no pasa, el techo deja de ser un techo y pasa a ser un tapón.
+    // Drainage. If this does not happen, the cap stops being a cap and becomes a clog.
     await declareAgent('Steven', 'argos', 2);
     await publishMany(5);
     const argos = await consumer('Steven', 'argos');
@@ -276,7 +276,7 @@ describe('per-agent delivery concurrency cap', () => {
     );
     expect(afterTwo).toHaveLength(2);
 
-    // Las 5 llegaron a ejecutarse. Ninguna se perdió ni murió esperando.
+    // All 5 reached execution. None was lost or died waiting.
     const delivered = new Set([...first, ...afterOne, ...afterTwo].map((item) => item.delivery_id));
     expect(delivered.size).toBe(5);
   });
@@ -305,8 +305,8 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('rejects a consumer that has no durable capacity row', async () => {
-    // Fail-open convertía un inventario roto en capacidad ilimitada. Un lease no basta para
-    // inventar cuánto trabajo puede ejecutar un alias.
+    // Fail-open turned a broken inventory into unlimited capacity. A lease is not enough to
+    // invent how much work an alias can run.
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');
 
@@ -320,7 +320,7 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('treats a NULL cap as unlimited, the in-place escape hatch', async () => {
-    // Es el rollback sin deploy: UPDATE agents SET max_concurrent_deliveries=NULL.
+    // Rollback without deploy: UPDATE agents SET max_concurrent_deliveries=NULL.
     await declareAgent('Steven', 'argos', null);
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');
@@ -360,7 +360,7 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('caps each agent independently', async () => {
-    // El techo es del agente, no de la instalación: un agente lleno no puede frenar a otro.
+    // The cap belongs to the agent, not the installation: a full agent cannot slow another down.
     await declareAgent('Steven', 'argos', 1);
     await declareAgent('Steven', 'jarvis', 3);
     for (let index = 0; index < 5; index += 1) {
@@ -386,11 +386,11 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('wakes the recipient when the reaper kills the last in-flight delivery', async () => {
-    // El último camino por el que se libera un cupo: no un ACK, sino el reaper venciendo la garra.
-    // La rama de retry ya encolaba un wake; la de 'dead' no. Sin techo eso era inocuo — el reclamo
-    // previo ya se había llevado la cola. Con techo, un alias cuyas entregas en vuelo mueren todas
-    // por timeout se queda con cupo libre, sin ACK que vaya a llegar nunca (por eso vencieron) y
-    // con la cola quieta hasta que alguien publique un mensaje nuevo.
+    // The last path that frees a slot: not an ACK, but the reaper running out the ownership.
+    // The retry branch already enqueued a wake; the 'dead' branch did not. Without a cap this was
+    // harmless — the previous claim had already taken the queue. With a cap, an alias whose
+    // in-flight deliveries all die from timeout is left with a free slot, no ACK ever arriving
+    // (that is why they expired) and the queue idle until someone publishes a new message.
     await declareAgent('Steven', 'argos', 1);
     await publishMany(4);
     const argos = await consumer('Steven', 'argos');
@@ -400,7 +400,7 @@ describe('per-agent delivery concurrency cap', () => {
     );
     expect(claimed).toHaveLength(1);
 
-    // Agota los intentos para forzar la rama 'dead' y no la de reintento.
+    // Exhausts the attempts to force the 'dead' branch instead of the retry one.
     await pool.query(
       `UPDATE deliveries SET attempt=max_attempts WHERE id=$1`, [claimed[0]!.delivery_id]
     );
@@ -414,7 +414,7 @@ describe('per-agent delivery concurrency cap', () => {
     );
     expect(Number(wakes.rows[0]!.total)).toBe(1);
 
-    // Y el cupo liberado es reclamable de verdad.
+    // And the freed slot is really claimable.
     const afterReap = await repository.claimDeliveries(
       argos.tenant, argos.alias, argos.instanceId, argos.epoch, 20, 30_000
     );
@@ -422,10 +422,10 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('does not let concurrent claims for the same alias exceed the cap together', async () => {
-    // Dos drains simultáneos del mismo alias (un wake y un ACK, por ejemplo) leen y reclaman en
-    // transacciones distintas. Lo que impide que ambos vean en_vuelo=0 y reclamen el techo entero
-    // es el FOR UPDATE sobre delivery_lane_fairness, cuñado por (tenant_id, alias), que ya
-    // serializa el par ANTES de que se cuente. Esta prueba fija esa garantía.
+    // Two simultaneous drains of the same alias (a wake and an ACK, for example) read and claim
+    // in different transactions. What prevents both of them from seeing in_flight=0 and claiming
+    // the entire cap is the FOR UPDATE on delivery_lane_fairness, keyed by (tenant_id, alias),
+    // which already serializes the pair BEFORE the count. This test pins down that guarantee.
     await declareAgent('Steven', 'argos', 2);
     await publishMany(12);
     const argos = await consumer('Steven', 'argos');

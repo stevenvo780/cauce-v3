@@ -53,23 +53,16 @@ const labelValue = "approved-runtime";
 // pair co-located on ws-humanizar; iza/jarvis are openclaw agents under /home/claw; argos moved to /home/dev (ctrl-infra);
 // zeus is the fleet's only claude-harness alias.
 const aliasState = {
-  kant: "/var/lib/cauce-v3/aliases/kant",
-  argos: "/home/dev/.local/state/cauce-v3/argos",
-  atlas: "/home/dev/.local/state/cauce-v3/atlas",
-  iza: "/home/claw/.openclaw/cauce-v3/iza",
-  jarvis: "/home/claw/.openclaw/cauce-v3/jarvis",
-  kratos: "/home/dev/.local/state/cauce-v3/kratos",
+  kant: "/var/lib/cauce-v3/aliases/kant", argos: "/home/dev/.local/state/cauce-v3/argos",
+  atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
+  jarvis: "/home/claw/.openclaw/cauce-v3/jarvis", kratos: "/home/dev/.local/state/cauce-v3/kratos",
   zeus: "/home/dev/.local/state/cauce-v3/zeus",
 };
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
-  kant: "/var/lib/cauce-v3/aliases",
-  argos: "/home/dev/.local",
-  atlas: "/home/dev/.local",
-  iza: "/home/claw/.openclaw",
-  jarvis: "/home/claw/.openclaw",
-  kratos: "/home/dev/.local",
+  kant: "/var/lib/cauce-v3/aliases", argos: "/home/dev/.local", atlas: "/home/dev/.local",
+  iza: "/home/claw/.openclaw", jarvis: "/home/claw/.openclaw", kratos: "/home/dev/.local",
   zeus: "/home/dev/.local",
 };
 let bundleDigest;
@@ -92,18 +85,12 @@ function bundleDigestFor(pathname) {
 
 async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
   const values = {
-    BUNDLE_RELEASE: "release-1",
-    BUNDLE_SHA256: bundleDigest,
-    PKI_DIR: `${pkiRoot}/${alias}`,
-    RELAY_URL: "wss://gateway.example.invalid/v3/ws",
-    EXPECTED_IMAGE_ID: imageId,
-    EXPECTED_LABEL_KEY: labelKey,
-    EXPECTED_LABEL_VALUE: labelValue,
-    MOUNT_TYPE: "bind",
-    MOUNT_SOURCE: `${mountSourceRoot}/${alias}`,
-    MOUNT_DESTINATION: aliasMount[alias],
-    MOUNT_RW: "true",
-    CAUCE_SEMBRAR_PERFIL: "1",
+    BUNDLE_RELEASE: "release-1", BUNDLE_SHA256: bundleDigest, PKI_DIR: `${pkiRoot}/${alias}`,
+    RELAY_URL: "wss://gateway.example.invalid/v3/ws", EXPECTED_IMAGE_ID: imageId,
+    EXPECTED_LABEL_KEY: labelKey, EXPECTED_LABEL_VALUE: labelValue,
+    MOUNT_TYPE: "bind", MOUNT_SOURCE: aliasMount[alias],
+    MOUNT_NAME: "cauce-state", MOUNT_DESTINATION: aliasState[alias], MOUNT_RW: "1",
+    DEFAULT_TIMEOUT_MS: "120000", CAUCE_SEMBRAR_PERFIL: "0",
     ...(alias === "kant" || alias === "atlas" || alias === "kratos" ? { CONFIG_POR_ALIAS: "1" } : {}),
     ...(alias === "zeus" || alias === "kratos" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
     ...(alias === "argos" ? { OPENCLAW_WORKSPACE: "/home/dev/clawd" } : {}),

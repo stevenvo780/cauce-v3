@@ -7,16 +7,16 @@ import type {
 import { describeConfigError } from '../config/config-change';
 
 /**
- * Lectura del pool de suscripciones tal como lo publica `GET /v3/console/config`
- * (packages/store/src/configuration.ts). No hay endpoint propio: las cuatro tablas de la
- * migración 010 viajan dentro del mismo snapshot versionado, y toda escritura vuelve por
+ * Reading of the subscription pool as published by `GET /v3/console/config`
+ * (packages/store/src/configuration.ts). There is no dedicated endpoint: the four tables from
+ * migration 010 travel inside the same versioned snapshot, and all writes return via
  * `POST /v3/console/config/changes`.
  *
- * Reglas de honestidad que este módulo hace explícitas en el tipo, no en el render:
- *  - `credential_ref` NO existe en la respuesta: el servidor no lo devuelve ni a su pagador.
- *  - `external_account_id` / `credential_ref_kind` llegan en `null` cuando la cuenta la paga otro
- *    tenant. Eso es una redacción del servidor, no un dato vacío, y se modela como `'redacted'`.
- *  - Una clave ausente en el snapshot (gateway viejo) es `'absent'`: nunca se confunde con cero.
+ * Honesty rules this module makes explicit in the type, not in the render:
+ *  - `credential_ref` does NOT exist in the response: the server does not return it, not even to its payer.
+ *  - `external_account_id` / `credential_ref_kind` come as `null` when the account is paid by another
+ *    tenant. That is a server redaction, not an empty value, and is modelled as `'redacted'`.
+ *  - A key absent from the snapshot (old gateway) is `'absent'`: it is never confused with zero.
  */
 
 export type CredentialRefKind = 'env_path' | 'file' | 'secret_manager';
@@ -29,19 +29,19 @@ export const CREDENTIAL_REF_HINTS: Record<CredentialRefKind, string> = {
   secret_manager: 'Locator `esquema:path` con esquema vault, aws-sm, gcp-sm, op o azure-kv.',
 };
 
-// Mismas expresiones que packages/store/migrations/010_agent_account_registry.sql y
-// packages/protocol/src/schemas.ts. Se validan acá sólo para no gastar un round-trip en un
-// locator obviamente mal formado: la autoridad sigue siendo el CHECK de Postgres.
+// Same expressions as packages/store/migrations/010_agent_account_registry.sql and
+// packages/protocol/src/schemas.ts. Validated here only to avoid spending a round-trip on an
+// obviously malformed locator: the authority is still the Postgres CHECK.
 const ENV_PATH_REF = /^CAUCE_[A-Z0-9_]{1,120}_(PATH|FILE)$/;
 const SECRET_MANAGER_REF = /^(vault|aws-sm|gcp-sm|op|azure-kv):[a-z0-9][a-z0-9_.:/-]{0,254}$/;
-// eslint-disable-next-line no-control-regex -- espeja el CHECK `credential_ref !~ '[[:cntrl:]]'`.
+// eslint-disable-next-line no-control-regex -- mirrors the CHECK `credential_ref !~ '[[:cntrl:]]'`.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)/;
 const ACCOUNT_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const PROVIDER_ID = /^[a-z][a-z0-9_.-]{0,63}$/;
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
-/** Estado de un campo que el servidor puede anular por pertenecer al pagador. */
+/** State of a field the server may null out because it belongs to the payer. */
 export type FieldVisibility = 'visible' | 'redacted' | 'absent';
 
 export interface ProviderAccount {
@@ -53,8 +53,8 @@ export interface ProviderAccount {
   enabled: boolean | null;
   externalAccountId: string | null;
   credentialRefKind: CredentialRefKind | null;
-  /** `visible` sólo cuando el snapshot trajo el valor; `redacted` cuando el servidor lo anuló
-   *  porque la cuenta la paga otro tenant; `absent` cuando el gateway ni siquiera publicó la clave. */
+  /** `visible` only when the snapshot brought the value; `redacted` when the server nulled it
+   *  because the account is paid by another tenant; `absent` when the gateway did not even publish the key. */
   payerFields: FieldVisibility;
   createdAt: string | null;
   updatedAt: string | null;
@@ -75,7 +75,7 @@ export interface CeilingEntry {
   alias: string;
   accountId: string;
   accountPayerTenant: string | null;
-  /** Derivado del servidor: la cuenta la paga un tenant distinto del que rutea el alias. */
+  /** Derived from the server: the account is paid by a tenant different from the one routing the alias. */
   borrowed: boolean;
 }
 
@@ -87,7 +87,7 @@ export interface AccountBinding {
   enabled: boolean | null;
 }
 
-/** Una sección del snapshot: distingue "el gateway no publica esto" de "hay cero filas". */
+/** A section of the snapshot: distinguishes "the gateway does not publish this" from "there are zero rows". */
 export interface SnapshotSection<T> {
   available: boolean;
   items: T[];
@@ -120,8 +120,8 @@ function credentialRefKind(row: Record<string, unknown>): CredentialRefKind | nu
 }
 
 /**
- * `external_account_id` es NOT NULL en la base, así que un `null` sólo puede venir del CASE que lo
- * limita al pagador. Una clave ausente, en cambio, significa que el gateway no publica el campo.
+ * `external_account_id` is NOT NULL in the database, so a `null` can only come from the CASE that limits
+ * it to the payer. An absent key, on the other hand, means the gateway does not publish the field.
  */
 function payerFieldVisibility(row: Record<string, unknown>): FieldVisibility {
   if (!Object.prototype.hasOwnProperty.call(row, 'external_account_id')) return 'absent';
@@ -215,7 +215,7 @@ export function readBindings(snapshot?: ConfigurationSnapshot): SnapshotSection<
   });
 }
 
-/** El tenant del actor sale del `subject` que firma el servidor (`tenant:alias`), nunca del cliente. */
+/** The actor's tenant comes from the `subject` signed by the server (`tenant:alias`), never from the client. */
 export function viewerTenant(subject: unknown): string | undefined {
   if (typeof subject !== 'string') return undefined;
   const tenant = subject.split(':')[0]?.trim();
@@ -227,10 +227,10 @@ export type MatrixCellState = 'none' | 'ceiling-only' | 'bound-disabled' | 'boun
 export interface MatrixCell {
   accountId: string;
   state: MatrixCellState;
-  /** La cuenta la paga otro tenant. Sólo tiene sentido cuando hay techo. */
+  /** The account is paid by another tenant. Only meaningful when there is a ceiling. */
   borrowed: boolean;
   priority: number | null;
-  /** Posición 1..n dentro del orden de fallback efectivo del alias; null si no participa. */
+  /** Position 1..n within the effective fallback order of the alias; null if it does not participate. */
   rank: number | null;
 }
 
@@ -244,10 +244,10 @@ export interface FallbackStep {
 export interface MatrixRow {
   agent: AgentRegistration;
   cells: MatrixCell[];
-  /** Reintentos, en orden. El intento 1 nunca pasa por acá: corre sin override y el CLI resuelve
-   *  la credencial ya logueada en el container (ADR-006). */
+  /** Retries, in order. Attempt 1 never goes through here: it runs without override and the CLI
+   *  resolves the credential already logged into the container (ADR-006). */
   fallback: FallbackStep[];
-  /** Cuentas dentro del techo que ningún binding habilitado usa: alcanzables pero nunca elegidas. */
+  /** Accounts inside the ceiling that no enabled binding uses: reachable but never picked. */
   idleCeiling: string[];
 }
 
@@ -262,9 +262,9 @@ function compareBindings(
 }
 
 /**
- * Matriz agente × cuenta. Las columnas son las cuentas visibles del snapshot; una celda sólo tiene
- * estado cuando existe la fila de techo, porque `agent_account_bindings` referencia al techo y no a
- * `provider_accounts`: sin techo no puede haber binding.
+ * Agent x account matrix. The columns are the visible accounts from the snapshot; a cell only has
+ * a state when the ceiling row exists, because `agent_account_bindings` references the ceiling and
+ * not `provider_accounts`: without a ceiling there can be no binding.
  */
 export function buildAssignmentMatrix(
   agents: AgentRegistration[],
@@ -380,7 +380,7 @@ export function createAccountMutation(draft: AccountDraft): ConfigMutation {
   };
 }
 
-/** Único update aceptado por el servidor: identidad, pagador y locator son inmutables. */
+/** Only update accepted by the server: identity, payer, and locator are immutable. */
 export function updateAccountMutation(
   id: string,
   patch: { label: string | null; sharedWithPool: boolean; enabled: boolean },
@@ -420,8 +420,8 @@ export function bindingMutation(
 }
 
 /**
- * El preview del servidor devuelve la mutación tal cual se envió. `credential_ref` es un locator y
- * no un secreto, pero un valor así en pantalla se lee como uno: la consola no lo reimprime.
+ * The server preview returns the mutation exactly as sent. `credential_ref` is a locator and not
+ * a secret, but a value like that on screen reads as one: the console does not reprint it.
  */
 export function redactPreview(result: ConfigurationChangeResult): string {
   return JSON.stringify(
@@ -448,10 +448,10 @@ function borrowersOf(context: RegistryContext, accountId: string, payerTenant: s
 }
 
 /**
- * El store colapsa 23503/23505/23514/23P01 en un único 409 «configuration change violates a durable
- * constraint», así que el mensaje del servidor no dice cuál falló. Lo que sí es determinable es
- * QUÉ restricciones puede violar cada mutación: se nombran ésas y, cuando el snapshot muestra cuál
- * está incumplida, se señala. Nunca se inventa una causa que no se pueda sostener.
+ * The store collapses 23503/23505/23514/23P01 into a single 409 "configuration change violates a
+ * durable constraint", so the server message does not say which one failed. What IS determinable
+ * is WHICH constraints each mutation can violate: those are named, and when the snapshot shows
+ * which one is being broken, it is pointed out. A cause that cannot be sustained is never made up.
  */
 function constraintCause(mutation: ConfigMutation, context: RegistryContext): string {
   const prefix = 'El servidor rechazó el cambio con 409 y no publica qué restricción falló.';
@@ -528,9 +528,9 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
 }
 
 /**
- * Traducción honesta de los rechazos del control plane para los recursos del registro. Reusa
- * `describeConfigError` para el choque optimista de revisión, que es idéntico en todas las
- * pantallas de configuración.
+ * Honest translation of control-plane rejections for the registry's resources. Reuses
+ * `describeConfigError` for the optimistic-revision clash, which is identical across every
+ * configuration screen.
  */
 export function describeRegistryError(
   error: unknown,

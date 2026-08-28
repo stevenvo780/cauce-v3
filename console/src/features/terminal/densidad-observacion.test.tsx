@@ -49,7 +49,7 @@ describe('la página del terminal, sin ninguna sesión abierta', () => {
     const { container } = renderWithApi(<TerminalPage />);
 
     await screen.findByRole('button', { name: /abrir sesión con kant/i });
-    // Scoped to the strip: "Adaptadores" and "Canal" are also said in the right inspector,
+    // Scoped to the strip: "Adaptadores" and "Canal" are also said by the control plane dialog,
     // and a test that counts them across the whole page measures something else.
     const tira = container.querySelector('.terminal-overview');
     expect(tira).not.toBeNull();

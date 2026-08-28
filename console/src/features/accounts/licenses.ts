@@ -1,6 +1,6 @@
 /**
- * Lecturas del inventario de licencias (`GET /v3/console/config`) cruzadas contra la muestra del
- * recolector de cuota: extractores, frescura, consumo por cuenta, asignaciones y huérfanos.
+ * Reads of the license inventory (`GET /v3/console/config`) cross-referenced with the quota
+ * collector sample: extractors, freshness, per-account consumption, bindings, and orphans.
  */
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import type {
@@ -9,7 +9,7 @@ import type {
 } from '../../api/types';
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Tipos internos
+// Internal types
 
 export interface Collector {
   host: string | null;
@@ -60,7 +60,7 @@ export interface AliasRoutingCeiling {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Freshness: ¿está caduca la sonda?
+// Freshness: is the probe stale?
 
 export type FreshnessState = 'fresh' | 'stale' | 'absent';
 
@@ -71,9 +71,9 @@ export interface Freshness {
 }
 
 /**
- * Determina si un collector está fresco, caduco o ausente.
- * La frescura se mide contra `received_at` (reloj del servidor), no `captured_at`.
- * El parámetro `now` se reserva para testing y permite inyectar un timestamp específico.
+ * Determines whether a collector is fresh, stale, or absent.
+ * Freshness is measured against `received_at` (server clock), not `captured_at`.
+ * The `now` parameter is reserved for testing and lets you inject a specific timestamp.
  */
 export function freshness(
   collector: (Collector | QuotaCollector) | null | undefined,
@@ -92,9 +92,9 @@ export function freshness(
   if (collector.stale === true) {
     const ageSeconds = collector.age_seconds ?? null;
     /*
-     * `age_seconds` ya es la antigüedad de la muestra: negarlo imprimía "caduco hace -1h 29m", un
-     * tiempo negativo hacia el pasado que no significa nada. Visto en pantalla contra la columna
-     * "Edad" de la misma fila, que decía 1h 29m.
+     * `age_seconds` is already the sample's age: negating it printed "stale for -1h 29m", a
+     * negative time into the past that means nothing. Seen on screen against the "Age" column
+     * of the same row, which said 1h 29m.
      */
     const ageLabel = ageSeconds !== null
       ? `caduco hace ${formatDurationSeconds(Math.abs(ageSeconds))}`
@@ -128,43 +128,43 @@ export function freshness(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Consumo por cuenta: honestidad obligatoria
+// Per-account consumption: mandatory honesty
 
 export interface WindowSummary {
   window_key: string | null;
   label: string | null;
-  used_percent: number | string; // string = "?" para datos caduc/ausentes
-  remaining_percent: number | string; // string = "?" para datos caduc/ausentes
+  used_percent: number | string; // string = "?" for stale/missing data
+  remaining_percent: number | string; // string = "?" for stale/missing data
   reset_in: string;
   reset_at: string | null;
   severity: string | null;
 }
 
 /**
- * Alcance de un motivo de indisponibilidad.
+ * Scope of an unavailability reason.
  *
- * `global`: la causa es de toda la muestra —no hay snapshot, o ningún recolector publicó nunca—.
- * Es idéntica para TODAS las cuentas, así que la vista la declara una sola vez arriba: repetir el
- * mismo cartel en cada tarjeta no comunica más, satura y consigue que se lea menos.
+ * `global`: the cause is the whole sample —there is no snapshot, or no collector has ever
+ * published one. It is identical for ALL accounts, so the view declares it once at the top:
+ * repeating the same banner on every card adds no information, clutters, and gets read less.
  *
- * `account`: la causa es de esta cuenta o de su proveedor —el recolector no la trajo, su sonda
- * murió, no tiene ventanas—. No se puede leer en ningún otro lado de la página, así que va en la
- * tarjeta, que es donde explica el hueco que el operador está mirando.
+ * `account`: the cause is this account or its provider —the collector did not bring it, its probe
+ * died, it has no windows. It cannot be read anywhere else on the page, so it goes on the card,
+ * where it explains the gap the operator is looking at.
  */
 export type ConsumptionScope = 'global' | 'account';
 
 export interface AccountConsumption {
   available: boolean;
-  reason?: string; // si available=false, por qué no hay dato
-  /** Presente sólo cuando `available` es false. Ver `ConsumptionScope`. */
+  reason?: string; // if available=false, why there is no data
+  /** Present only when `available` is false. See `ConsumptionScope`. */
   scope?: ConsumptionScope;
   plan: string | null;
   windows: WindowSummary[];
 }
 
 /**
- * Extrae el consumo de una cuenta. Si los datos no son confiables (sonda caduca, ≥ null),
- * devuelve `available: false` sin números. NUNCA devuelve números en ese caso.
+ * Extracts the consumption of an account. If the data is not trustworthy (stale probe, >= null),
+ * returns `available: false` without numbers. NEVER returns numbers in that case.
  */
 export function accountConsumption(
   accountId: string,
@@ -182,7 +182,7 @@ export function accountConsumption(
     };
   }
 
-  // Si no hay collectors en absoluto, todo está indisponible
+  // If there are no collectors at all, everything is unavailable
   if (!quotas.collectors || quotas.collectors.length === 0) {
     return {
       available: false,
@@ -193,7 +193,7 @@ export function accountConsumption(
     };
   }
 
-  // Busca el proveedor(es) que conozca esta cuenta
+  // Look for the provider(s) that know this account
   const relevantProviders = (quotas.providers ?? []).filter((p) => {
     if (!p.groups) return false;
     return p.groups.some((g) => g.account_id === accountId);
@@ -210,11 +210,11 @@ export function accountConsumption(
   }
 
   /*
-   * Sonda caída. `ok: false` es INFORMACIÓN ("el CLI dejó de responder"), no ausencia de dato, y
-   * es la trampa exacta que hay que evitar: sin este corte, un proveedor con la sonda muerta cae
-   * más abajo en "sin ventanas de cuota para esta cuenta", que se lee como una ausencia benigna
-   * y no como lo que es. Los proveedores caídos se descartan; si no queda ninguno vivo que
-   * conozca la cuenta, no se devuelve ningún número.
+   * Probe down. `ok: false` is INFORMATION ("the CLI stopped responding"), not a data absence,
+   * and it is the exact trap to avoid: without this split, a provider with a dead probe falls
+   * further down into "no quota windows for this account", which reads as a benign absence
+   * instead of what it is. Down providers are discarded; if no live provider knows the account,
+   * no number is returned.
    */
   const liveProviders = relevantProviders.filter((provider) => provider.ok !== false);
   if (liveProviders.length === 0) {
@@ -230,10 +230,10 @@ export function accountConsumption(
     };
   }
 
-  // Extrae el plan del primer proveedor vivo
+  // Extracts the plan from the first live provider
   const plan = liveProviders[0]?.plan ?? null;
 
-  // Agrupa todas las windows de todas las groups de todos los proveedores vivos
+  // Aggregate every window from every group of every live provider
   const allGroups = liveProviders.flatMap((p) => p.groups ?? []).filter((g) => g.account_id === accountId);
   const allWindows = allGroups.flatMap((g) => g.windows ?? []);
 
@@ -247,13 +247,13 @@ export function accountConsumption(
     };
   }
 
-  // Verifica la frescura de TODOS los collectors
+  // Check the freshness of ALL collectors
   const staleCollectors = (quotas.collectors ?? []).filter((c) => {
     const f = freshness(c, thresholds, now);
     return f.state === 'stale' || f.state === 'absent';
   });
 
-  // Si ALGÚN collector está caduco, todos los porcentajes se vuelven "?"
+  // If ANY collector is stale, every percentage becomes "?"
   const allStale = staleCollectors.length > 0;
 
   const windows: WindowSummary[] = allWindows.map((w): WindowSummary => {
@@ -262,7 +262,7 @@ export function accountConsumption(
     const resetInSeconds = w.reset_in_seconds;
     const resetAt = w.reset_at;
 
-    // Honestidad: si la sonda está caduca o los números son null, mostrar "?"
+    // Honesty: if the probe is stale or the numbers are null, show "?"
     const usedDisplay = allStale || used === null || used === undefined ? '?' : used;
     const remainingDisplay = allStale || remaining === null || remaining === undefined ? '?' : remaining;
     const resetInDisplay = resetInSeconds !== null && resetInSeconds !== undefined
@@ -288,7 +288,7 @@ export function accountConsumption(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Asignaciones por cuenta: ¿quién la tiene?
+// Per-account bindings: who has it?
 
 export interface AssignedAgent {
   alias: string | null;
@@ -300,8 +300,8 @@ export interface AssignedAgent {
 }
 
 /**
- * Lista los agentes asignados a una cuenta, ordenados por prioridad.
- * Priority 0 = primaria, 1+ = fallbacks.
+ * Lists the agents bound to an account, sorted by priority.
+ * Priority 0 = primary, 1+ = fallbacks.
  */
 export function accountAssignments(
   accountId: string,
@@ -334,7 +334,7 @@ export function accountAssignments(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Huérfanos: las tres direcciones
+// Orphans: the three directions
 
 export interface Orphans {
   accountsWithoutQuotas: ProviderAccount[];
@@ -349,10 +349,10 @@ export interface Orphans {
 }
 
 /**
- * Encuentra huérfanos en tres direcciones:
- * 1. Cuentas registradas sin datos de cuota (el recolector no las conoce)
- * 2. Grupos de cuota sin cuenta del registro (unbound_groups)
- * 3. Agentes sin ninguna binding
+ * Finds orphans in three directions:
+ * 1. Registered accounts with no quota data (the collector does not know them)
+ * 2. Quota groups with no registry account (unbound_groups)
+ * 3. Agents with no binding
  */
 export function orphans(
   accounts: ProviderAccount[],
@@ -396,11 +396,11 @@ export function orphans(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Formateadores de UI
+// UI formatters
 
 /**
- * Formatea "segundos hasta reset" como "en 2 h 51 min", "en 12 min", etc.
- * Si es null, devuelve UNKNOWN. Si es <= 0, prepend "hace".
+ * Formats "seconds until reset" as "in 2 h 51 min", "in 12 min", etc.
+ * If null, returns UNKNOWN. If <= 0, prepends "ago".
  */
 export function formatResetIn(seconds: unknown): string {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
@@ -413,7 +413,7 @@ export function formatResetIn(seconds: unknown): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
-// Extractores de configuración
+// Configuration extractors
 
 export function extractProviderAccounts(config: ConfigurationSnapshot | null | undefined): ProviderAccount[] {
   if (!config?.provider_accounts) return [];

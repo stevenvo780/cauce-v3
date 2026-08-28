@@ -100,9 +100,9 @@ const MENU = routes.filter((route) => route.label !== '');
 /* Rutas que aceptan segmentos detrás del id, con su aridad exacta. Una vista que navega a una
    subruta no declarada aquí acaba en «Ruta no encontrada», y ningún test lo ve: los suyos afirman
    sobre `pathname`, que cambia igual cuando el destino no existe. */
-const SUBDETALLES: Record<string, number> = { fleet: 2, messages: 2 };
+const SUBDETALLES: Partial<Record<string, number>> = { fleet: 2, messages: 2 };
 
-const ROUTE_ALIASES: Record<string, string> = {
+const ROUTE_ALIASES: Partial<Record<string, string>> = {
   licenses: 'accounts',
   quotas: 'accounts',
   assignments: 'accounts',
@@ -116,7 +116,7 @@ const ROUTE_ALIASES: Record<string, string> = {
 
 /** Tablas de rutas y alias exportadas para verificación de navegación e invariantes en tests. */
 export const ROUTE_TABLE: readonly Readonly<Route>[] = routes;
-export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES;
+export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES as Record<string, string>;
 
 /**
  * Una URL que la consola no declara no se convierte silenciosamente en una vista válida. Conservar

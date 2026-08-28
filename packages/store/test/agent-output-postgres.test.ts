@@ -14,20 +14,10 @@ let pool: DatabasePool;
 let repository: CauceRepository;
 
 const ROUTABLE_FLEET_EXCEPT_ARGOS = [
-  'Isa:salva',
-  'Jhon:hegel',
-  'Miguel:atlas',
-  'Miguel:iza',
-  'Miguel:janus',
-  'Miguel:kratos',
-  'Pablo:dedalo',
-  'Pablo:midas',
-  'Pablo:seneca',
-  'Pablo:vulcano',
-  'Steven:jarvis',
-  'Steven:kant',
-  'Steven:socrates',
-  'Steven:zeus'
+  'Isa:salva', 'Jhon:hegel', 'Miguel:atlas', 'Miguel:iza',
+  'Miguel:janus', 'Miguel:kratos', 'Pablo:dedalo', 'Pablo:midas',
+  'Pablo:seneca', 'Pablo:vulcano', 'Steven:jarvis', 'Steven:kant',
+  'Steven:socrates', 'Steven:zeus'
 ] as const;
 
 function command(overrides: Partial<PublishMessage> = {}): PublishMessage {

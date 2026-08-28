@@ -40,7 +40,7 @@ describe('randomUuid sobrevive fuera de un contexto seguro', () => {
   });
 
   it('CONTROL NEGATIVO — sin ninguna fuente de aleatoriedad falla con una frase, no con un TypeError', () => {
-    vi.stubGlobal('crypto', {} as unknown as Crypto);
+    vi.stubGlobal('crypto', {});
     expect(() => randomUuid()).toThrowError(/aleatoriedad/);
   });
 });

@@ -18,7 +18,7 @@ function emptyPerfil(tenantId: string, alias: string): AgentProfileLike {
 /** Minimal in-memory stand-in for `AgentProfileRepository`: same two async methods, CAS included. */
 class FakeAgentProfileRepository {
   readonly rows = new Map<string, { perfil: AgentProfileLike; revision: number }>();
-  readonly replaceCalls: Array<{ input: AgentProfileLike; expectedRevision: number | null }> = [];
+  readonly replaceCalls: { input: AgentProfileLike; expectedRevision: number | null }[] = [];
   /** Set from a test to bump a row's revision right after it is read, simulating a racing writer. */
   onRead?: (tenantId: string, alias: string) => void;
 
@@ -44,7 +44,7 @@ class FakeAgentProfileRepository {
     this.replaceCalls.push({ input, expectedRevision });
     const k = key(input.tenant_id, input.alias);
     const row = this.rows.get(k);
-    if (row === undefined || row.revision !== expectedRevision) {
+    if (row?.revision !== expectedRevision) {
       throw new Error(`agent profile revision changed from ${String(expectedRevision)}`);
     }
     const nextRevision = row.revision + 1;

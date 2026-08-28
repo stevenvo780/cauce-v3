@@ -301,7 +301,7 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
       const destinos = destinosDelArnes(harness, nombres);
       for (const campo of CAMPOS_DEL_PERFIL) {
         expect(reparto[campo], `${harness}/${campo} no cayó en un único fichero`).toHaveLength(1);
-        expect(destinos[campo]).toEqual({ tipo: 'fichero', nombre: reparto[campo]?.[0] });
+        expect(destinos[campo]).toEqual({ tipo: 'fichero', nombre: reparto[campo][0] });
       }
     });
   }

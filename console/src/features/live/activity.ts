@@ -4,11 +4,11 @@ import { LIVE_STATE_META, type LiveState } from './agent-state';
 
 export { formatDurationSeconds } from '../../lib';
 
-/** Mismo vocabulario de tonos que ya usa <Badge>; no se agrega ninguno nuevo. */
+/** Same tone vocabulary already used by <Badge>; no new one is added. */
 export type BadgeTone = 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
 
 /**
- * Etiquetas legibles para los estados de trabajo de la flota.
+ * Readable labels for the fleet's work states.
  */
 export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
   idle: 'Libre',
@@ -27,7 +27,7 @@ export const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
 };
 
 /**
- * Etiquetas para señales de actividad y anomalías de la flota.
+ * Labels for activity signals and fleet anomalies.
  */
 export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   saturated: 'Saturado',
@@ -50,11 +50,11 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
 };
 
 /**
- * Mapeo de estados vivos consolidados para los agentes de la flota.
+ * Consolidated live-state mapping for the fleet's agents.
  */
 export type EstadosVivos = ReadonlyMap<string, LiveState>;
 
-/** Tono de insignia por estado. Deriva del `tone` de `LIVE_STATE_META`, sin inventar ninguno. */
+/** Badge tone per state. Derived from the `tone` of `LIVE_STATE_META`, without inventing any. */
 export const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
   down: 'danger',
   blocked: 'danger',
@@ -66,9 +66,9 @@ export const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
 };
 
 /**
- * El rótulo de la columna ESTADO. Con el estado derivado disponible manda ése; sin él se cae al
- * `work_state` del servidor, que ya habla el mismo vocabulario — un `undefined` silencioso no
- * puede dejar la celda en blanco.
+ * The header of the STATE column. With the derived state available, that one wins; without it, it falls
+ * back to the server's `work_state`, which already speaks the same vocabulary — a silent `undefined`
+ * cannot leave the cell blank.
  */
 export function estadoDeFila(
   agent: FleetActivityAgent, estados?: EstadosVivos,
@@ -82,8 +82,8 @@ export function estadoDeFila(
   };
 }
 
-/** Traduce el estado de una fila a la forma en que se grita: `data-urgency` y el resaltado de
- *  styles.css. Mira PRIMERO el estado del muñeco, que es el que también decide su color. */
+/** Translates the row's state into the way it is shouted: `data-urgency` and the highlight in
+ *  styles.css. It looks FIRST at the doughboy's state, which is also the one deciding its color. */
 export function rowUrgency(
   state: FleetWorkState | null | undefined, live?: LiveState,
 ): 'critical' | 'warning' | undefined {
@@ -94,10 +94,10 @@ export function rowUrgency(
 }
 
 /**
- * seconds_since_last_ack en null NO es "recién ackeado": es "ningún ACK aplicado dentro de la
- * ventana de búsqueda del servidor (ack_lookback_seconds)", la señal más grave que existe en este
- * panel. Devolver "0" o "-" acá pintaría de sano justo al agente que motivó este panel. Por eso
- * el resultado siempre lleva la palabra "ACK" y nunca es un número desnudo cuando es null.
+ * seconds_since_last_ack at null is NOT "just acked": it is "no ACK applied within the server's search
+ * window (ack_lookback_seconds)", the most serious signal that exists on this panel. Returning "0" or
+ * "-" here would paint healthy exactly the agent that motivated this panel. For that reason the result
+ * always carries the word "ACK" and is never a bare number when it is null.
  */
 export function formatAckAge(secondsSinceLastAck: number | null | undefined, ackLookbackSeconds: number | null | undefined): string {
   if (secondsSinceLastAck === null || secondsSinceLastAck === undefined) {
@@ -109,9 +109,9 @@ export function formatAckAge(secondsSinceLastAck: number | null | undefined, ack
 }
 
 /**
- * "Sin entregas en vuelo" es un cero conocido, no un desconocido: oldest_in_flight_seconds viene
- * null exactamente cuando in_flight = 0. Se distingue explícitamente de UNKNOWN con un guión,
- * para no hacerle preguntar al operador "¿esto no se pudo leer, o no hay nada que leer?".
+ * "No in-flight deliveries" is a known zero, not an unknown: oldest_in_flight_seconds comes as null
+ * exactly when in_flight = 0. It is distinguished explicitly from UNKNOWN with a dash, so the operator
+ * is not left wondering "could this not be read, or is there simply nothing to read?".
  */
 export function formatInFlightAge(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return '—';
@@ -127,9 +127,9 @@ const STATE_RANK: Record<FleetWorkState, number> = {
 };
 
 /**
- * Ausencia o valor no reconocido de work_state se ordena PRIMERO, no último: es el mismo
- * principio "fallar visible" del resto del contrato. Un servidor que dejara de mandar el campo
- * no debe esconder al agente detrás de los que sí lo reportan.
+ * Absence or unrecognized value of work_state is sorted FIRST, not last: it is the same "fail visibly"
+ * principle as the rest of the contract. A server that stopped sending the field must not hide the
+ * agent behind the ones that do report it.
  */
 function stateRank(state: FleetWorkState | null | undefined): number {
   if (state && state in STATE_RANK) return STATE_RANK[state];
@@ -137,22 +137,22 @@ function stateRank(state: FleetWorkState | null | undefined): number {
 }
 
 /**
- * El orden de los chips de la cinta, de izquierda a derecha. La tabla ordena por lo MISMO: si la
- * cinta dice que lo primero que hay que mirar son los caídos y la lista de abajo los pone entre
- * medias, el subtítulo «ordenados por urgencia» deja de ser cierto.
+ * The order of the chips on the strip, from left to right. The table sorts by the SAME thing: if the
+ * strip says the first thing to look at is the fallen ones and the list below puts them somewhere in the
+ * middle, the "sorted by urgency" subtitle stops being true.
  */
 const ORDEN_VIVO: readonly LiveState[] = [
   'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
 ];
 
-/** Orden de triage: lo más urgente arriba, para que 71 entregas en vuelo no pasen inadvertidas
- *  entre quince filas alfabéticas. */
+/** Triage order: the most urgent at the top, so that 71 in-flight deliveries do not go unnoticed
+ *  among fifteen alphabetical rows. */
 export function sortByUrgency(
   agents: readonly FleetActivityAgent[], estados?: EstadosVivos,
 ): FleetActivityAgent[] {
   const rango = (agent: FleetActivityAgent): number => {
     const live = estados?.get(agentKeyOf(agent));
-    // Sin estado derivado se ordena por el del servidor, desplazado para no cruzar las escalas.
+    // Without a derived state, it is sorted by the server's, shifted so the scales do not cross.
     if (!live) return estados ? -1 : stateRank(agent.work_state);
     return ORDEN_VIVO.indexOf(live);
   };
@@ -165,8 +165,8 @@ export function sortByUrgency(
   });
 }
 
-/** Mismo criterio visual que FleetPage.agentStateBadge: online/expirado/unknown según lease_until,
- *  distinguiendo "nunca hubo presencia" (presence ausente) de "presence con epoch/expiry ilegibles". */
+/** Same visual criterion as FleetPage.agentStateBadge: online/expired/unknown per lease_until,
+ *  distinguishing "never had presence" (missing presence) from "presence with unreadable epoch/expiry". */
 export function presenceBadge(agent: FleetActivityAgent): { tone: BadgeTone; label: string } {
   const state = leaseState(agent.presence?.lease_until);
   if (state === 'online') return { tone: 'online', label: 'Conectado' };
@@ -179,7 +179,7 @@ export function agentRowKey(agent: FleetActivityAgent): string {
 }
 
 /**
- * Clave de identificación del agente (`tenant/alias`) utilizada en el hipergrafo y actividad.
+ * Agent identification key (`tenant/alias`) used in the hypergraph and activity.
  */
 export function agentKeyOf(agent: FleetActivityAgent): string {
   return `${agent.tenant_id}/${agent.alias}`;
@@ -189,7 +189,7 @@ export function agentDisplayName(agent: FleetActivityAgent): string {
   return agent.display_name ?? agent.alias;
 }
 
-/** started avanzó más que leased/accepted; matiz suave, no una alarma nueva por sí sola. */
+/** started moved further than leased/accepted; soft nuance, not a single alarm on its own. */
 export function inFlightItemTone(status: string | null | undefined): BadgeTone {
   if (status === 'started') return 'running';
   if (status === 'leased' || status === 'accepted') return 'info';
@@ -197,7 +197,7 @@ export function inFlightItemTone(status: string | null | undefined): BadgeTone {
 }
 
 /* ============================================================================================ *
- * Resumen de señales por fila: deduplicación de señales visibles en tabla.
+ * Per-row signal summary: deduplication of signals visible in the table.
  * ============================================================================================ */
 
 export interface SenalPintada {
@@ -207,23 +207,23 @@ export interface SenalPintada {
 }
 
 export interface ResumenDeSenales {
-  /** El titular de la celda. Siempre exactamente uno. */
+  /** The headline of the cell. Always exactly one. */
   estado: SenalPintada;
-  /** Las señales que AÑADEN algo al titular. Como mucho `TOPE_DE_SENALES`. */
+  /** The signals that ADD something to the headline. At most `TOPE_DE_SENALES`. */
   senales: SenalPintada[];
-  /** Cuántas quedaron fuera del recuadro por el tope. 0 cuando entran todas. */
+  /** How many were left out of the box because of the cap. 0 when they all fit. */
   ocultas: number;
-  /** Detalle completo de señales medidas para el tooltip. */
+  /** Full detail of measured signals for the tooltip. */
   detalle: string;
 }
 
 /**
- * Lo que la columna «Presencia» de la misma fila ya está diciendo. Se pasa para no repetirlo.
- * `sin-presencia` significa «no se sabe / no se está mostrando», y entonces no se deduplica nada.
+ * What the "Presence" column of the same row is already saying. Passed in to avoid repeating it.
+ * `sin-presencia` means "not known / not being shown", and then nothing is deduplicated.
  */
 export type PresenciaDeLaFila = 'conectado' | 'caido' | 'nunca' | 'sin-presencia';
 
-/** Traduce la insignia de presencia que ya se pinta al vocabulario de la deduplicación. */
+/** Translates the presence badge already painted into the deduplication vocabulary. */
 export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila {
   const estado = leaseState(agent.presence?.lease_until);
   if (estado === 'online') return 'conectado';
@@ -231,11 +231,11 @@ export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila 
   return agent.presence ? 'sin-presencia' : 'nunca';
 }
 
-/** Cuántas señales caben al lado del estado antes de plegarse en un «+N». */
+/** How many signals fit next to the state before folding into a "+N". */
 export const TOPE_DE_SENALES = 2;
 
 /**
- * Determina qué señales se omiten por estar ya implícitas en el estado principal o presencia.
+ * Decides which signals are omitted because they are already implicit in the main state or presence.
  */
 function implicadas(
   state: FleetWorkState | undefined,
@@ -254,8 +254,8 @@ function implicadas(
 }
 
 /**
- * Lo que se pinta en la celda «Estado» de una fila: un titular y, como mucho, dos señales que
- * añadan algo. El resto se pliega en «+N» y el `title=` lo dice todo.
+ * What is painted in the "State" cell of a row: a headline and, at most, two signals that add
+ * something. The rest folds into "+N" and the `title=` says it all.
  */
 export function resumirSenales(
   state: FleetWorkState | null | undefined,
@@ -272,12 +272,12 @@ export function resumirSenales(
       : { clave: 'sin-estado', label: 'Sin dato de estado', tone: 'unknown' });
 
   const fuera = implicadas(estadoValido, activas, presencia);
-  // Conserva la señal 'saturated' si el titular no la explicita.
+  // Keep the 'saturated' signal if the headline does not spell it out.
   if (estado.label !== FLAG_LABEL.saturated) fuera.delete('saturated');
 
   const visibles = activas
     .filter((flag) => !fuera.has(flag))
-    // Y lo que el titular ya dice con esas mismas palabras tampoco se repite al lado.
+    // And what the headline already says in those same words is not repeated next to it either.
     .filter((flag) => FLAG_LABEL[flag] !== estado.label)
     .map((flag): SenalPintada => ({ clave: flag, label: FLAG_LABEL[flag], tone: FLAG_TONE[flag] }));
 

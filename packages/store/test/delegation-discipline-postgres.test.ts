@@ -7,12 +7,12 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Disciplina de delegación (migración 019).
+ * Delegation discipline (migration 019).
  *
- * Las tres cosas que el dueño pidió, en el mismo orden:
- *   1. que la cadena que cicla se CORTE, no que se le acabe el presupuesto;
- *   2. que la tarea que espera a una persona deje de ser una entrega imposible;
- *   3. que el rechazo se pueda LEER, para corregir en vez de reintentar.
+ * The three things the owner asked for, in the same order:
+ *   1. the cycling chain must be CUT, not run out of budget;
+ *   2. the task that waits for a person must stop being an impossible delivery;
+ *   3. the rejection must be READABLE, so it can be fixed instead of retried.
  */
 
 let database: TestDatabase;
@@ -162,9 +162,9 @@ async function deliveriesFor(alias: string): Promise<Array<{ id: string; body_ty
 }
 
 /**
- * Un round-trip completo de delegación: el coordinador delega, el destino responde, y el
- * coordinador vuelve a recibir el turno como continuación `agent.response`. Es el ciclo que
- * produce el 61% del tráfico medido en prod.
+ * A complete delegation round-trip: the coordinator delegates, the target answers, and the
+ * coordinator receives the turn again as an `agent.response` continuation. This is the cycle
+ * that accounts for 61% of the traffic measured in prod.
  */
 async function delegateAndReturn(
   coordinator: Consumer,
@@ -239,10 +239,10 @@ describe('receipt durable de materialización', () => {
       (item) => item.child_delivery_id
     )).size).toBe(2);
 
-    // Simula caída después del COMMIT del ACK y antes de que el adaptador procese ack_result:
-    // la conexión vieja desaparece, el mismo instance adquiere época N+1 y recién entonces el
-    // evento vuelve por el outbox local. El store debe reconstruir bytes equivalentes sin exigir
-    // que la lease N siga viva.
+    // Simulates a crash after the ACK COMMIT and before the adapter processes ack_result: the
+    // old connection disappears, the same instance acquires epoch N+1, and only then the event
+    // returns through the local outbox. The store must reconstruct equivalent bytes without
+    // requiring lease N to still be alive.
     expect(await repository.releaseLease(
       argos.tenant, argos.alias, argos.instanceId, argos.epoch,
     )).toBe(true);
@@ -271,9 +271,9 @@ describe('receipt durable de materialización', () => {
       [root.delivery_id]
     )).rowCount).toBe(2);
 
-    // Sólo la correlación completa reconstruye feedback. Cada diferencia, incluido un event_id
-    // nuevo sobre la misma fila terminal, devuelve ownership_lost sin agregar ACKs ni tocar las
-    // tres materializaciones del commit original.
+    // Only the full correlation rebuilds feedback. Every difference, including a new event_id
+    // on the same terminal row, returns ownership_lost without adding ACKs or touching the
+    // three materializations of the original commit.
     await repository.publish(command());
     const epochTwoArgos: Consumer = { ...argos, epoch: epochTwoLease.epoch! };
     const otherDelivery = await nextDelivery(epochTwoArgos);
@@ -454,17 +454,17 @@ describe('receipt durable de materialización', () => {
 
 describe('cadena que cicla -> se corta', () => {
   it('corta la rotación por continuación, que NINGUN guarda anterior veía', async () => {
-    // Este es el modo de fallo dominante medido en prod, y el que ningún guarda previo tocaba:
+    // This is the dominant failure mode measured in prod, and the one no previous guard touched:
     //
-    //   * 61% de las delegaciones nacen sobre un turno de continuación `agent.response`. Ahí el
-    //     destino nunca fue ANTEPASADO del emisor, así que `visited_path` no lo ve.
-    //   * el guarda de `actor_alias` ya impedía la repetición INMEDIATA, y por eso sólo 129 de
-    //     1411 delegaciones de la raíz grande repitieron el destino anterior. El paseo esquiva
-    //     ese guarda ROTANDO: argos le mandó el mismo trabajo a kant 148 veces, a iza 137, a
-    //     kratos 126, a seneca 123... alternando entre 12 pares en una sola cadena.
+    //   * 61% of delegations are born on an `agent.response` continuation turn. There the target
+    //     was never an ANCESTOR of the sender, so `visited_path` does not see it.
+    //   * the `actor_alias` guard already blocked the IMMEDIATE repeat, which is why only 129
+    //     out of 1411 delegations from the big root repeated the previous target. The walk dodges
+    //     that guard by ROTATING: argos sent the same task to kant 148 times, to iza 137, to
+    //     kratos 126, to seneca 123... alternating across 12 pairs in a single chain.
     //
-    // Contar la arista (raíz, emisor, destino) sí lo ve. Acá se reproduce la rotación con dos
-    // pares y un tope de 1.
+    // Counting the (root, sender, target) edge does see it. Here the rotation is reproduced
+    // with two pairs and a cap of 1.
     await setCaps({ delegation_caps_enabled: true, max_edge_repeats_per_root: 1 });
     const argos = await consumer('Steven', 'argos');
     const socrates = await consumer('Steven', 'socrates');
@@ -473,17 +473,17 @@ describe('cadena que cicla -> se corta', () => {
 
     const root = await nextDelivery(argos);
     const afterSocrates = await delegateAndReturn(argos, socrates, root, 'vuelta 1');
-    // Rotar a otro par esquiva el guarda de repetición inmediata: esto hoy sale, y está bien.
+    // Rotating to another pair sidesteps the immediate-repeat guard: this still goes through, and is fine.
     const afterJarvis = await delegateAndReturn(argos, jarvis, afterSocrates, 'vuelta 2');
 
-    // Volver a socrates es la segunda vez sobre la MISMA arista dentro de la MISMA raíz.
+    // Returning to socrates is the second time over the SAME edge within the SAME root.
     const third = await ackWith(argos, afterJarvis, [{ to: 'socrates', body: 'vuelta 3' }]);
     const rows = await materializations();
     expect(rows.filter((row) => row.rejection_code === 'edge_repeat_exceeded')).toHaveLength(1);
     expect(rows.filter((row) => row.status === 'materialized')).toHaveLength(2);
     expect(third.delegation_rejections?.[0]?.code).toBe('edge_repeat_exceeded');
-    // El contador NO avanzó con el rechazo: la reserva ES el UPDATE condicional, así que un
-    // rechazo no consume presupuesto y un reintento no lo va drenando.
+    // The counter did NOT advance with the rejection: the reservation IS the conditional UPDATE,
+    // so a rejection does not consume budget and a retry will not drain it.
     expect((await pool.query<{ uses: number }>(
       `SELECT uses FROM agent_chain_edge_uses WHERE source_node='Steven/argos'
          AND target_node='Steven/socrates'`
@@ -491,8 +491,8 @@ describe('cadena que cicla -> se corta', () => {
   }, 180_000);
 
   it('corta el ciclo por camino de antepasados (A -> B -> C -> A)', async () => {
-    // El guarda de `actor_alias` sólo tapa el retorno al padre INMEDIATO. A dos saltos de
-    // distancia el ciclo era invisible hasta que `visited_path` dejó de reiniciarse.
+    // The `actor_alias` guard only blocks the return to the IMMEDIATE parent. Two hops away the
+    // cycle was invisible until `visited_path` stopped resetting itself.
     await setCaps({ cycle_cut_enabled: true });
     const argos = await consumer('Steven', 'argos');
     const socrates = await consumer('Steven', 'socrates');
@@ -515,15 +515,15 @@ describe('cadena que cicla -> se corta', () => {
   }, 180_000);
 
   it('acota el abanico del turno INTERNO sin tocar el turno raíz', async () => {
-    // El tope de abanico existe para que la profundidad acotada no se compense a lo ancho.
-    // El turno raíz queda exento: en prod los abanicos de 11-14 destinos son siempre `@all`
-    // en hop_count=1, y romperlos mataría trabajo que hoy funciona.
+    // The fanout cap exists so the bounded depth is not compensated for in width. The root turn
+    // is exempt: in prod, fanouts of 11-14 targets are always `@all` at hop_count=1, and breaking
+    // them would kill work that runs today.
     await setCaps({ delegation_caps_enabled: true, max_fanout_per_turn: 1 });
     const argos = await consumer('Steven', 'argos');
     const socrates = await consumer('Steven', 'socrates');
     await repository.publish(command());
 
-    // Turno raíz (hop_count=1): dos destinos, los dos salen.
+    // Root turn (hop_count=1): two targets, both go through.
     await ackWith(argos, await nextDelivery(argos), [
       { to: 'socrates', body: 'rama 1' },
       { to: 'jarvis', body: 'rama 2' }
@@ -601,18 +601,18 @@ describe('tarea de espera humana -> gate, no entrega', () => {
     expect(gates[0]?.asked_by_alias).toBe('argos');
     expect(result.chain_gate?.gate_id).toBe(gates[0]?.id);
 
-    // No nació NINGUNA entrega nueva: es lo contrario de la entrega imposible de completar que
-    // terminaba en dead_letters. La única delivery del sistema sigue siendo la raíz.
+    // NO new delivery was born: it is the opposite of the impossible-to-complete delivery that
+    // ended up in dead_letters. The system's only delivery is still the root.
     expect((await pool.query('SELECT 1 FROM deliveries')).rowCount).toBe(1);
     const rows = await materializations();
     expect(rows.map((row) => row.rejection_code)).toEqual(['human_gate_opened']);
 
-    // La rama quedó SUSPENDIDA, no terminada: no se devolvió respuesta hacia arriba.
+    // The branch was SUSPENDED, not terminated: no response was returned upward.
     expect((await pool.query(
       `SELECT 1 FROM audit_events WHERE action='agent_output.response'`
     )).rowCount).toBe(0);
 
-    // La pregunta salió UNA vez, al canal humano.
+    // The question went out ONCE, to the human channel.
     const relays = (await pool.query<{ reply: string; gate_id: string }>(
       `SELECT payload#>>'{result,output,reply}' AS reply,payload->>'gate_id' AS gate_id
        FROM adapter_outbox WHERE kind='origin_relay' AND payload->>'gate_id' IS NOT NULL`
@@ -660,7 +660,7 @@ describe('gate resuelto -> reanuda', () => {
       'SELECT id FROM agent_chain_gates'
     )).rows[0]!.id;
 
-    // La lista visible es la contrapartida del gate: sin ella la espera sólo cambia de escondite.
+    // The visible list is the counterpart of the gate: without it the wait just changes hiding place.
     const open = await repository.listChainGates('Steven', 'kant');
     expect((open.items as Array<Record<string, unknown>>).map((item) => item.id)).toEqual([gateId]);
 
@@ -674,14 +674,14 @@ describe('gate resuelto -> reanuda', () => {
     expect(String(resume.body.text)).toContain('Sí, aprobado');
     expect(String(resume.body.text)).toContain('¿aprobás?');
 
-    // La cadena vuelve a admitir delegaciones, con su raíz y su presupuesto intactos.
+    // The chain accepts delegations again, with its root and budget intact.
     const afterResume = await ackWith(argos, resume, [{ to: 'socrates', body: 'seguimos' }]);
     expect(afterResume.delegation_rejections).toBeUndefined();
     const materialized = (await materializations()).filter((row) => row.status === 'materialized');
     expect(materialized).toHaveLength(1);
     expect(materialized[0]?.target_alias).toBe('socrates');
-    // La reanudación NO consumió un salto: el hijo de la rama reanudada nace al mismo hop que
-    // habría nacido sin gate.
+    // The resume did NOT consume a hop: the child of the resumed branch is born at the same hop
+    // it would have been born at without a gate.
     expect(materialized[0]?.hop_count).toBe(1);
 
     const closed = await repository.listChainGates('Steven', 'kant', { status: 'all' });

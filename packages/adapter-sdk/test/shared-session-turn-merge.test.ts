@@ -479,7 +479,7 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
   // The turn went through the terminal: it didn't fall back to the usual path and wasn't run twice.
   assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
-  // Y se DICE que fue un turno fundido: la respuesta puede estar contestando dos pedidos a la vez.
+  // And it IS REPORTED as a merged turn: the reply may be answering two requests at once.
   assert.ok((output.reply ?? "").includes(MERGED_MARK), output.reply ?? "(null)");
 });
 
@@ -770,7 +770,7 @@ test("el sobre se localiza sin ascendencia, y un mensaje intermedio no cuenta", 
   assert.equal(found?.text, envelopeText("el entregable", correlationId));
   assert.equal(found?.sessionId, sessionId);
 
-  // Un subagente escribe en el mismo fichero y no puede contar como el sobre del turno.
+  // A subagent writes to the same file and cannot count as the turn's envelope.
   const sidechain = [{
     ...JSON.parse(assistantEntry(randomUUID(), duenio, envelopeText("de un subagente"), sessionId)),
     isSidechain: true,

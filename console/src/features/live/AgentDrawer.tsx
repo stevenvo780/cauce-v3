@@ -13,32 +13,32 @@ import { PerfilTab } from './PerfilTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
- * El cajón lateral: diagnosticar sin cambiar de vista.
+ * The side drawer: diagnose without leaving the current view.
  *
- * Es el motivo por el que "Fleet" y "Tenants & ACL" pueden desaparecer del menú sin perder un solo
- * dato. Todo lo que antes obligaba a saltar a otra ruta —y con ello a perder el filtro, el scroll
- * y el hilo— ocurre acá, encima de la misma página: el mapa sigue visible y sigue refrescándose
- * detrás. Esa continuidad es la mitad del valor; la otra mitad es que ya no hay que elegir entre
- * "ver la flota" y "ver a uno".
+ * This is why "Fleet" and "Tenants & ACL" can disappear from the menu without losing a single
+ * data point. Everything that used to force a jump to another route —and with it, losing the
+ * filter, the scroll, and the thread— happens here, on top of the same page: the map stays
+ * visible and keeps refreshing behind it. That continuity is half of the value; the other half is
+ * that there is no longer a choice between "see the fleet" and "see one".
  *
- * Lo que NO tiene, y no es un olvido: **ninguna acción destructiva**. La propuesta original traía
- * botones de reintento y cancelación acá dentro. Una vista que se auto-refresca cada cuatro
- * segundos y se reordena sola por urgencia es el peor sitio posible para poner un botón que
- * destruye: entre que se lee la fila y se hace clic, la fila pudo haberse movido. Cada entrega
- * lleva en cambio un enlace a Queues con la entrega ya señalada, donde ese botón vive rodeado de
- * su propia confirmación.
+ * What it does NOT have, and that is not an oversight: **no destructive action**. The original
+ * proposal put retry and cancel buttons in here. A view that auto-refreshes every four seconds
+ * and reorders itself by urgency is the worst possible place for a destructive button: between
+ * reading the row and clicking it, the row may have moved. Each delivery instead carries a link
+ * to Queues with the delivery already highlighted, where that button lives surrounded by its own
+ * confirmation.
  */
 
 export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'rol' | 'perfil' | 'ficheros';
 
 /**
- * «Directiva» va acá y no en una vista propia: es el sitio donde el operador YA mira al bot, y el
- * texto que gobierna a ese bot es el que explica lo que hace en las otras cuatro pestañas.
+ * "Directiva" lives here and not in a dedicated view: it is the place where the operator ALREADY
+ * looks at the bot, and the text governing it explains what it does on the other four tabs.
  *
- * Se llamaba «Rol» mientras enseñaba una sola capa. Ahora enseña las tres —rol declarado, manual
- * del sitio y memoria—, y seguir llamándola «Rol» sería nombrar la pestaña por la única capa que
- * ya se veía. El identificador de la pestaña sigue siendo `rol` a propósito: es lo que va en el
- * enlace profundo `?tab=rol` y romperlo invalidaría los enlaces que ya se pegaron por ahí.
+ * It was called "Rol" while showing one layer. Now it shows three —declared role, site manual,
+ * and memory— and keeping the name "Rol" would name the tab after the only layer that used to
+ * show. The tab id stays `rol` on purpose: it is what goes into `?tab=rol` deep links, and
+ * breaking it would invalidate the links already pasted elsewhere.
  */
 const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'ahora', label: 'Ahora' },
@@ -46,10 +46,10 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'entregas', label: 'Entregas' },
   { id: 'rol', label: 'Directiva' },
   /*
-   * «Perfil» va ENTRE «Directiva» y «Ficheros» porque ése es el orden real del dato: la directiva
-   * es lo que el alias tiene hoy, el perfil es lo que se escribe, y los ficheros son donde acaba.
-   * Es la única pestaña del cajón desde la que se puede cambiar lo que el agente lee al arrancar
-   * — hasta ahora eso sólo se podía tocando la base a mano.
+   * "Perfil" goes BETWEEN "Directiva" and "Ficheros" because that is the real order of the data:
+   * the directiva is what the alias has today, the perfil is what gets written, and the ficheros
+   * are where it ends up. It is the only drawer tab from which what the agent reads at startup
+   * can be changed — until now that could only be done by editing the database by hand.
    */
   { id: 'perfil', label: 'Perfil' },
   { id: 'ficheros', label: 'Ficheros' },
@@ -58,7 +58,7 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
 export interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
-  /** El único borrador editable es el perfil canónico; la proyección `role_brief` sólo se lee. */
+  /** The only editable draft is the canonical profile; the `role_brief` projection is read-only. */
   borradorPerfil?: Partial<AgentPerfilCampos>;
   onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
   onTab: (tab: DrawerTab) => void;
@@ -69,8 +69,8 @@ export function AgentDrawer({
   view, tab, borradorPerfil, onBorradorPerfil,
   onTab, onClose,
 }: AgentDrawerProps) {
-  // Esc cierra desde donde sea. Un panel que sólo se cierra con la crucecita obliga a buscarla con
-  // el ratón cada vez, y este cajón se abre y se cierra muchas veces seguidas al triar.
+  // Esc closes from anywhere. A panel that can only be closed with the little X forces you to hunt
+  // for it with the mouse each time, and this drawer is opened and closed many times in a row when triaging.
   useEffect(() => {
     const alPulsar = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     document.addEventListener('keydown', alPulsar);
@@ -127,8 +127,8 @@ export function AgentDrawer({
             onEditarEnPerfil={() => { onTab('perfil'); }}
             onEditarEnFicheros={() => { onTab('ficheros'); }}
             onRestaurarEnPerfil={(texto) => {
-              // Sólo cambia `role_summary`: una restauración nunca pisa los otros seis campos que
-              // el operador ya tuviera en borrador para este alias.
+              // Only `role_summary` changes: a restore never overwrites the other six fields the operator
+              // may already have as draft for this alias.
               onBorradorPerfil({ ...borradorPerfil, role_summary: texto });
               onTab('perfil');
             }}
@@ -159,7 +159,7 @@ export function AgentDrawer({
   );
 }
 
-/** El detalle que ya existía en la página, movido tal cual: se mueve el sitio, no el contenido. */
+/** The detail that already existed on the page, moved as is: the site moves, not the content. */
 function TabAhora({ view }: { view: LiveAgentView }) {
   const meta = LIVE_STATE_META[view.state];
   return (
@@ -197,17 +197,17 @@ function TabAhora({ view }: { view: LiveAgentView }) {
 }
 
 /**
- * Lo que era la ruta "Fleet" entera, en una pestaña.
+ * What used to be the whole "Fleet" route, in a single tab.
  *
- * Cuatro de sus cinco columnas exclusivas —epoch, instance_id, heartbeat y lease— ya venían en
- * `activity.agents[].presence`, así que absorberlas no cuesta un solo fetch nuevo. La quinta,
- * `capabilities`, es la única que necesita `/v3/status`, y por eso ese fetch vive DENTRO de esta
- * pestaña: sólo se paga al abrirla. Una ruta de menú entera para cinco columnas, cuatro de las
- * cuales ya estaban sobre la mesa, era el ejemplo más claro de "demasiadas vistas".
+ * Four of its five exclusive columns —epoch, instance_id, heartbeat, and lease— already came in
+ * `activity.agents[].presence`, so absorbing them costs no new fetch. The fifth, `capabilities`,
+ * is the only one that needs `/v3/status`, which is why that fetch lives INSIDE this tab: it is
+ * only paid when it is opened. A whole menu route for five columns, four of which were already
+ * on the table, was the clearest example of "too many views".
  */
 function TabConexion({ view }: { view: LiveAgentView }) {
   const api = useApi();
-  // Perezoso por construcción: este componente sólo se monta cuando la pestaña está abierta.
+  // Lazy by construction: this component only mounts when the tab is open.
   const status = useResource(`drawer-status-${view.key}`, () => api.getStatus());
   const presence = view.agent.presence;
 
@@ -307,13 +307,13 @@ function DeliveryCard({ item, origen }: {
 }
 
 /**
- * El remitente de UNA entrega.
+ * The sender of ONE delivery.
  *
- * Antes se decidía acá con `item.origin_adapter !== 'bus'`, y esa lectura mentía por construcción:
- * `origin` se copia entero en cada salto, así que una delegación de `zeus` a `kant` nacida hace
- * cinco saltos en Telegram se leía como «una persona, por telegram». Ahora la clasificación es la
- * misma que gobierna las flechas del mapa (`origenDeItem`), calculada una sola vez con la lista de
- * alias de la flota delante.
+ * It used to be decided here with `item.origin_adapter !== 'bus'`, and that read lied by
+ * construction: `origin` is copied whole at every hop, so a delegation from `zeus` to `kant`
+ * born five hops back in Telegram read as "a person, via telegram". Now the classification is
+ * the same one that drives the map arrows (`origenDeItem`), computed once with the fleet's alias
+ * list in front.
  */
 function textoOrigen(origen: OrigenEncargo | undefined): string {
   if (!origen || origen.tipo === 'desconocido') return UNKNOWN;

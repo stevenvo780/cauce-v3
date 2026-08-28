@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
-import { AdapterInspector } from './AdapterInspector';
+import { ControlPlanePanel } from './AdapterInspector';
 import { FleetSidebar } from './FleetSidebar';
 import { GridContainer } from './GridContainer';
 import { PlazasColgadas, type MotivoReconciliacionPlaza } from './PlazasColgadas';
@@ -339,6 +339,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
       <div className="ultimate-terminal-shell">
+      <ControlPlanePanel adapters={adapters} access={access} capability={terminalCapability} />
       <FleetSidebar
         agents={agents}
         adapters={adapters}
@@ -371,12 +372,6 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
           void revisarPlazas();
         }}
       />
-      <aside className="terminal-control-inspector" aria-label="Estado del control plane">
-        <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />
-      </aside>
-      </div>
-      <div className="terminal-adapter-mobile" aria-label="Estado del control plane">
-        <AdapterInspector adapters={adapters} access={access} capability={terminalCapability} />
       </div>
     </>
   );

@@ -25,34 +25,30 @@
 .ultimate-terminal-page .terminal-overview strong { overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 
 /*
- * El inspector de la derecha quedaba RECORTADO a 1280 px, y el corte era invisible.**
+ * EL RAÍL DERECHO YA NO EXISTE. Steven, mirando /terminal: «esa vista lateral de autorización no
+ * aporta mucho, debería ir como en un modal de información, pero roba espacio cuando uno sí quiere
+ * ver una TUI».
  *
- * `.ultimate-terminal-shell` es una rejilla de `272px minmax(460px, 1fr) 286px`, o sea que pide
- * 1.018 px como mínimo, y a 1280 el contenedor mide 941 (barra lateral 248 + relleno). Con
- * `overflow: hidden` en la rejilla, el exceso no produce barra de desplazamiento: simplemente
- * desaparece por el borde. Medido: las insignias de permisos terminaban en «ALLO…».
+ * Tenía razón por partida doble. Lo que ese carril decía —permisos efectivos, inventario de
+ * adaptadores, canal PTY— se lee ANTES de abrir una sesión y no cambia ni una vez mientras mirás
+ * una terminal; y sus dos cifras de reojo (tu permiso, cuántos adaptadores) ya están arriba, en la
+ * tira de contadores de la página. A cambio se llevaba 288 px medidos a 1440 y 344 a 2560, que en
+ * un espejo de TUI no son margen: son 36 y 43 COLUMNAS de texto que no se renderizan (celda
+ * medida: 8 px a cuerpo 13). Ahora vive en un diálogo modal que abre el control rotulado «Plano de
+ * control», y el ancho es del terminal.
  *
- * `styles.css` ya baja a dos columnas, pero a `max-width: 1100px` — un umbral que mira el ANCHO
- * DE LA VENTANA y no el del contenedor, así que entre 1100 y 1342 la rejilla no cabe y nadie la
- * baja. Se corrige acá, al ancho en el que deja de caber de verdad, y no en `styles.css`, que
- * tiene dueño en otro carril. El inspector no se pierde: `.terminal-adapter-mobile` lo vuelve a
- * montar dentro de la columna central, que es lo que ese bloque ya hacía por debajo de 1100.
- */
-@media (max-width: 1342px) {
-  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: 250px minmax(0, 1fr); }
-  .ultimate-terminal-page .terminal-control-inspector { display: none; }
-  .ultimate-terminal-page .terminal-adapter-mobile { display: block; }
-}
-
-/*
- * Above that fallback the shell keeps two fixed rails around the terminal. They hold monospaced
- * identifiers that wrap anywhere (`ultimate-terminal.connec` / `t` on the permission rows), so a
- * rail that stays 264px wide while the window grows breaks words with the spare width unused.
- * Each rail keeps its current width as a floor — it cannot rise, the centre column is already
- * under 80 columns at the low end of this range — and takes a share of what is left over.
+ * Con esto se van también los dos cortes que existían SÓLO por ese tercer carril: el `max-width:
+ * 1342px` que lo escondía cuando la rejilla de tres pistas dejaba de caber (medido: las insignias
+ * terminaban en «ALLO…» sin barra que lo avisara, porque el shell es `overflow: hidden`), y el
+ * doble montaje `.terminal-adapter-mobile` que lo volvía a poner debajo del terminal. Una sola
+ * fuente, alcanzable igual a 360 que a 2560.
+ *
+ * Lo que sobrevive del bloque viejo es el reparto del carril IZQUIERDO: la lista de la flota lleva
+ * alias que envuelven, así que por encima de 1343 px toma una parte del ancho de sobra en vez de
+ * quedarse clavada en 236.
  */
 @media (min-width: 1343px) {
-  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: minmax(0, clamp(236px, 12vw, 300px)) minmax(0, 1fr) minmax(0, clamp(264px, 20vw, 344px)); }
+  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: minmax(0, clamp(236px, 12vw, 300px)) minmax(0, 1fr); }
 }
 
 /*
@@ -166,13 +162,56 @@
   .pty-dialog-backdrop { background: rgb(23 35 51 / 45%); }
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * EL PLANO DE CONTROL, BAJO DEMANDA: el control y su diálogo.
+ *
+ * El control va FLOTANDO en la esquina superior derecha del shell, no en una fila propia: una
+ * franja nueva encima de la rejilla costaría ~40 px de alto, y el alto de esta vista está tan
+ * peleado como el ancho (ver el reparto medido más abajo). Flotando cuesta cero: se apoya sobre el
+ * hueco que la tira de pestañas deja a su derecha —que por eso le reserva sitio— y sobre la
+ * esquina del cartel «Ningún agente seleccionado» cuando todavía no hay ninguna sesión.
+ *
+ * `position: relative` en el shell lo da `views.css`; sin él este `absolute` se iría a la ventana.
+ * ------------------------------------------------------------------------------------------ */
+.terminal-inspector-launcher { position: absolute; z-index: var(--layer-raised); top: var(--space-2); right: var(--space-2); }
+.terminal-inspector-boton { display: inline-flex; min-height: 30px; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-3); border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: var(--tipo-rotulo); font-weight: 700; cursor: pointer; }
+.terminal-inspector-boton:hover { border-color: #4c6b91; color: var(--text); }
+.terminal-inspector-boton:focus-visible { border-color: var(--blue); outline: 2px solid var(--blue); outline-offset: 2px; }
+.terminal-inspector-boton svg { color: var(--blue); }
+/* El sitio que el control ocupa sobre la tira de pestañas. Medido con el rótulo actual: 168 px de
+   píldora más su separación del borde; si el rótulo cambia, este número cambia con él. */
+.ultimate-terminal-page .terminal-session-tabs { padding-right: 176px; }
+
 /*
- * La copia del inspector, que ahora cuelga del propio shell y no de la rejilla de sesiones: antes
- * vivía dentro de `GridContainer`, que corta antes cuando no hay ninguna sesión abierta, así que
- * en un portátil recién entrado a la vista el estado del control plane no existía en ninguna
- * parte de la página. `display` lo sigue gobernando `styles.css`.
+ * A 760 px el shell deja de ser rejilla y se apila (`responsive.css`): sin ninguna sesión abierta
+ * lo primero que se ve es la cabecera de la flota, con su insignia «N en línea» pegada a la
+ * derecha —justo debajo del control—. Ahí, y sólo ahí, el control vuelve a la fila. En modo
+ * observación no hace falta: el terminal sube al principio del shell y la esquina vuelve a ser la
+ * tira de pestañas.
  */
-.terminal-adapter-mobile { margin-top: 12px; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); }
+@media (max-width: 760px) {
+  .ultimate-terminal-page:not([data-tui="abierta"]) .terminal-inspector-launcher { position: static; display: flex; justify-content: flex-end; padding: var(--space-2); border-bottom: 1px solid var(--border); }
+}
+
+.terminal-inspector-fondo { position: fixed; z-index: var(--layer-dialog); inset: 0; display: grid; place-items: center; padding: var(--space-5); background: rgb(3 6 12 / 72%); }
+.terminal-inspector-modal { display: flex; width: min(560px, 100%); max-height: 86vh; flex-direction: column; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.terminal-inspector-modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-4) var(--space-3); border-bottom: 1px solid var(--border); }
+.terminal-inspector-modal-head h2 { margin: 0; font-size: var(--tipo-panel); }
+.terminal-inspector-modal-head .eyebrow { margin-bottom: var(--space-1); }
+.terminal-inspector-modal-cuerpo { min-height: 0; overflow-y: auto; }
+.terminal-inspector-modal-cuerpo .terminal-inspector-section:last-child { border-bottom: 0; }
+/*
+ * Y dentro del diálogo el ancho deja de ser escaso, así que la insignia de cada adaptador vuelve a
+ * su renglón en vez de bajar a una segunda línea: ese apilado de `views.css` existe para un carril
+ * de 264 px, no para una caja de 560.
+ */
+.terminal-inspector-modal-cuerpo .terminal-adapter-list article { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
+.terminal-inspector-modal-cuerpo .terminal-adapter-list article > .badge { grid-column: auto; margin-top: 0; }
+
+@media (prefers-color-scheme: light) {
+  .terminal-inspector-boton, .terminal-inspector-modal { background: #f8fafc; }
+  .terminal-inspector-fondo { background: rgb(23 35 51 / 45%); }
+}
 
 /*
  * The open sessions: a tab strip plus the stage of the visible one.
@@ -478,16 +517,6 @@
  * alineación. Los tres datos que sobran serían contenedor, usuario y modo, y ésos son el único
  * sitio de la pantalla que dice dónde está abierta la shell.
  */
-
-/*
- * La copia móvil del inspector de adaptadores mide 900 px y vive DEBAJO del terminal. Existe por
- * una razón buena —por debajo de 1.342 px la columna de la derecha no cabe, y sin ella el estado
- * del control plane no estaba en ninguna parte— pero mientras mirás una TUI es lo que hace que la
- * página siga midiendo 1.875 px con una ventana de 900. Se repliega SÓLO en modo observación:
- * cerrar la sesión la devuelve entera, y sus dos datos (tu permiso y los adaptadores) siguen a la
- * vista arriba, en la tira de contadores.
- */
-.ultimate-terminal-page[data-tui="abierta"] .terminal-adapter-mobile { display: none; }
 
 /*
  * ---------------------------------------------------------------------------------------------

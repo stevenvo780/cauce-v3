@@ -125,7 +125,7 @@ export function LiveHypergraph({
 }: LiveHypergraphProps) {
   const byKey = useMemo(() => new Map(views.map((view) => [view.key, view])), [views]);
 
-  // The layout depends ONLY on topology. That is what keeps the doughboys from jumping in place on every refresh: if it depended on activity it would be impossible to follow anyone with the eye, and a map that reorders itself every four seconds is not a map.
+  // Layout depends ONLY on topology: that keeps the doughboys from jumping on every refresh.
   const model: HyperGraphModel = useMemo(
     () => {
       const canvas = canvasFor(countAliases(topology));

@@ -7,16 +7,16 @@ import { renderWithApi } from '../../test/render';
 import { MARCA_INERTE } from './campos-inertes';
 
 /**
- * **Que la pantalla no mienta sobre lo que hace.**
+ * **That the screen does not lie about what it does.**
  *
- * El catálogo sólo marca las columnas que no tienen lector runtime: `harness_id`,
- * `home_directory`, `state_directory` y `harness_definitions.command`.
+ * The catalog only flags columns with no runtime reader: `harness_id`, `home_directory`,
+ * `state_directory`, and `harness_definitions.command`.
  *
- * No se esconden: el servidor las publica y esconder un dato que hay es otra forma de mentir. Se
- * MARCAN, con el motivo a la vista y la cita de dónde sale el valor que sí manda.
+ * They are not hidden: the server publishes them — hiding a value that exists is another lie. They
+ * are FLAGGED, with the reason visible and a citation of where the value that actually rules comes from.
  *
- * Cada aserto de acá viene con su control negativo: una marca que se pinta en todas las columnas no
- * distingue nada, y sería tan inútil como no tenerla.
+ * Every assertion here comes with its negative control: a flag painted on every column does not
+ * distinguish anything, and would be as useless as not having one.
  */
 
 const AGENTES = /agentes y cuentas/i;
@@ -29,7 +29,7 @@ async function irA(user: Usuario, pestana: RegExp) {
   await user.click(await screen.findByRole('tab', { name: pestana }));
 }
 
-/** El panel de una colección, por su título. */
+/** The panel of a collection, by its title. */
 function panelDe(titulo: RegExp): HTMLElement {
   const encabezado = screen.getByRole('heading', { name: titulo });
   const panel = encabezado.closest('section') ?? encabezado.closest('div');
@@ -38,9 +38,9 @@ function panelDe(titulo: RegExp): HTMLElement {
 }
 
 /**
- * El snapshot del mock trae `harness_definitions` con la forma del endpoint de adaptadores, que no
- * tiene `command`. Para poder comprobar la marca sobre esa columna hace falta la forma REAL de la
- * tabla, la que devuelve `packages/store/src/configuration.ts:170`.
+ * The mock snapshot brings `harness_definitions` in the shape of the adapters endpoint, which has
+ * no `command`. To be able to check the flag on that column, the REAL shape of the table is
+ * needed —the one returned by `packages/store/src/configuration.ts:170`.
  */
 function conHarnessReal() {
   server.use(http.get('http://localhost/v3/console/config', () => HttpResponse.json({
@@ -49,9 +49,9 @@ function conHarnessReal() {
     tenants: [{ id: 'Steven', display_name: 'Steven', is_hub: true, enabled: true, created_at: '2026-07-01T10:00:00.000Z' }],
     rooms: [{ tenant_id: 'Steven', id: 'grp.steven', display_name: 'Sala', enabled: true, created_at: '2026-07-01T10:00:00.000Z' }],
     memberships: [{ tenant_id: 'Steven', room_id: 'grp.steven', alias: 'argos', role: 'operator', enabled: true, created_at: '2026-07-01T10:00:00.000Z' }],
-    // Las aristas y las políticas de rol NO van vacías a propósito: sin filas no hay columnas, y
-    // un control negativo que recorre cero cabeceras aprueba cualquier cosa. Ver el aserto de
-    // `cabeceras.length` más abajo, que es lo que impide ese verde falso.
+    // Edges and role policies are NOT empty on purpose: without rows there are no columns, and a
+    // negative control that iterates zero headers approves anything. See the `cabeceras.length`
+    // assertion below, which is what blocks that false green.
     acl_edges: [{
       from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true, allow_route: true,
       allow_read: true, allow_control: false, created_at: '2026-07-01T10:00:00.000Z',
@@ -80,9 +80,9 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     renderWithApi(<ConfigPage />);
     await irA(user, AGENTES);
 
-    // El nombre accesible de la cabecera arranca por el rótulo y sigue con el motivo entero (va en
-    // `sr-only` a propósito). Se ancla al principio: sin el `^`, «Contenedor» casa también con la
-    // columna «Carpeta personal», cuyo motivo dice «medido dentro del contenedor».
+    // The column's accessible name starts with the label and continues with the entire reason (it
+    // goes in `sr-only` on purpose). It is anchored to the start: without `^`, "Contenedor" also
+    // matches the "Carpeta personal" column, whose reason says "medido dentro del contenedor".
     const registro = panelDe(/agent registry/i);
     for (const rotulo of ['Harness', 'Carpeta personal', 'state_directory']) {
       const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });
@@ -91,8 +91,8 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
   });
 
   /**
-   * CONTROL NEGATIVO. Si la marca saliera en todas las columnas no distinguiría nada. `Alias` y
-   * `Rol declarado` tienen lector probado —`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215— y NO pueden llevarla.
+   * NEGATIVE CONTROL. If the flag came out on every column it would distinguish nothing. `Alias`
+   * and `Rol declarado` have a proven reader —`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215— and CANNOT carry it.
    */
   it('NO marca las columnas del registro que sí tienen lector', async () => {
     conHarnessReal();
@@ -116,19 +116,19 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     const harneses = panelDe(/harness definitions/i);
     const cabecera = within(harneses).getByRole('columnheader', { name: /comando/i });
     expect(cabecera).toHaveTextContent(MARCA_INERTE);
-    // El motivo viaja en el árbol accesible, no sólo en un globo que hay que provocar con el ratón.
+    // The reason travels in the accessibility tree, not only in a tooltip that needs the mouse to bring it up.
     expect(cabecera).toHaveTextContent(/listAdapters/);
   });
 
   /**
-   * CONTROL NEGATIVO de la pestaña entera: en «Permisos» no hay una sola columna marcada.
+   * NEGATIVE CONTROL of the entire tab: in "Permisos" not a single column is flagged.
    *
-   * El `toBeGreaterThanOrEqual` NO es decoración. La primera versión de este aserto recorría
-   * `getAllByRole('columnheader')` sobre un snapshot con `acl_edges: []` y `role_policies` de una
-   * fila: sin filas no hay columnas, así que el bucle daba cero vueltas y APROBABA. Se comprobó
-   * metiendo una entrada falsa en el catálogo —`acl_edges.created_at`— y viendo que esta prueba
-   * seguía verde mientras las del módulo puro se ponían rojas. Contar las cabeceras que de verdad
-   * se inspeccionaron es lo que convierte el bucle en una prueba.
+   * The `toBeGreaterThanOrEqual` is NOT decoration. The first version of this assertion iterated
+   * `getAllByRole('columnheader')` over a snapshot with `acl_edges: []` and `role_policies` of
+   * one row: without rows there are no columns, so the loop ran zero times and PASSED. It was
+   * verified by injecting a fake entry into the catalog —`acl_edges.created_at`— and seeing
+   * that this test stayed green while the pure-module ones went red. Counting the headers that
+   * were actually inspected is what turns the loop into a test.
    */
   it('NO marca ninguna columna en «Permisos»', async () => {
     conHarnessReal();
@@ -137,7 +137,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     await irA(user, PERMISOS);
 
     const cabeceras = screen.getAllByRole('columnheader');
-    // Arista (fundida) + los tres permisos + habilitado + alta, y las cinco de `role_policies`.
+    // Edge (merged) + the three permissions + enabled + creation, and the five of `role_policies`.
     expect(cabeceras.length, 'sin cabeceras el bucle de abajo no comprueba nada').toBeGreaterThanOrEqual(10);
     for (const cabecera of cabeceras) {
       expect(cabecera, `${cabecera.textContent} no debería estar marcada`)
@@ -145,7 +145,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     }
   });
 
-  /** Y el mismo control en «Espacios y miembros», que es la pestaña por defecto. */
+  /** And the same control in "Espacios y miembros", which is the default tab. */
   it('NO marca ninguna columna en «Espacios y miembros»', async () => {
     conHarnessReal();
     const user = userEvent.setup();
@@ -171,7 +171,7 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
     expect(within(panel).getByText(/CLAUDE\.md/)).toBeInTheDocument();
     expect(within(panel).getByText(/AGENTS\.md/)).toBeInTheDocument();
     expect(within(panel).getByText(/openclaw\.json/)).toBeInTheDocument();
-    // Hermes no lee ninguno, y eso se DICE: una fila muda se leería como «no lo sabemos».
+    // Hermes reads none, and that is SAID: a silent row would read as "we don't know".
     expect(within(panel).getByText(/no lee ningún documento/i)).toBeInTheDocument();
   });
 
@@ -185,7 +185,7 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
     expect(within(panel).getByText(/role_brief/)).toBeInTheDocument();
   });
 
-  /** CONTROL NEGATIVO: el panel es de esa pestaña, no un cartel pegado a toda la página. */
+  /** NEGATIVE CONTROL: the panel belongs to that tab, not a banner glued to the whole page. */
   it('NO sale en «Permisos»', async () => {
     conHarnessReal();
     const user = userEvent.setup();
@@ -197,12 +197,12 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
 });
 
 /**
- * **El aviso de la tabla aparece con lo que HAY, no con lo que el catálogo conoce.**
+ * **The table notice appears with what IS, not with what the catalog knows.**
  *
- * Se vio MIRANDO la pantalla en Chrome, no en una prueba: el gateway de los mocks publica
- * `harness_definitions` con la forma del endpoint de adaptadores —sin `command`— y el aviso salía
- * igual encima de una tabla donde no había ni una columna marcada. Un cartel que anuncia algo que
- * no está es el mismo defecto que este cambio persigue, cometido por el arreglo.
+ * It was spotted LOOKING at the screen in Chrome, not in a test: the mocks gateway publishes
+ * `harness_definitions` in the adapters endpoint shape —without `command`— and the notice came
+ * out anyway above a table with no flagged columns. A banner announcing what is not there is
+ * the same defect this change chases, committed by the fix.
  */
 describe('el aviso de columnas sin efecto', () => {
   const AVISO = /no las lee ningún camino de ejecución|no la lee ningún camino de ejecución/i;
@@ -217,15 +217,15 @@ describe('el aviso de columnas sin efecto', () => {
   });
 
   /**
-   * CONTROL NEGATIVO, y es el caso que se vio roto: MISMA colección `harness_definitions`, pero un
-   * gateway que no publica `command`. Sin marcar nada, no hay nada que anunciar.
+   * NEGATIVE CONTROL — the broken case: SAME `harness_definitions` collection, but a
+   * gateway that does not publish `command`. Without flagging anything, there is nothing to announce.
    */
   it('NO sale sobre una tabla cuyo gateway no publica ninguna columna inerte', async () => {
     server.use(http.get('http://localhost/v3/console/config', () => HttpResponse.json({
       revision: 1,
       observed_at: new Date().toISOString(),
       tenants: [], rooms: [], memberships: [], acl_edges: [],
-      // La forma que devuelve `GET /v3/console/adapters`: sin `command`, como en producción hoy.
+      // The shape returned by `GET /v3/console/adapters`: without `command`, as in production today.
       harness_definitions: [{ id: 'claude', label: 'Claude Code', capabilities: ['messages.receive'], state: 'available' }],
       role_policies: [], chain_policies: [], egress_destinations: [],
       agents: [], provider_accounts: [], alias_routing_ceiling: [], agent_account_bindings: [],
@@ -236,9 +236,9 @@ describe('el aviso de columnas sin efecto', () => {
     await irA(user, AGENTES);
 
     const harneses = panelDe(/harness definitions/i);
-    // La tabla está poblada —si estuviera vacía esto aprobaría sin comprobar nada—…
+    // The table is populated —if it were empty this would pass without checking anything—…
     expect(within(harneses).getAllByRole('columnheader').length).toBeGreaterThanOrEqual(3);
-    // …y aun así no hay ni marca ni aviso.
+    // …and yet there is neither a flag nor a notice.
     expect(within(harneses).queryByText(AVISO)).not.toBeInTheDocument();
     for (const cabecera of within(harneses).getAllByRole('columnheader')) {
       expect(cabecera).not.toHaveTextContent(MARCA_INERTE);
