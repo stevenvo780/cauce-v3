@@ -24,8 +24,8 @@ const RELAY_INSTANCE_ID = 'a'.repeat(64);
 const RELAY_BOOT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 let database: TestDatabase;
 let pool: DatabasePool;
-let app: FastifyInstance;
-let directory: string;
+let app!: FastifyInstance;
+let directory!: string;
 
 const requireFromGateway = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
 const Fastify = requireFromGateway('fastify') as (options: { logger: false }) => FastifyInstance;
@@ -206,19 +206,17 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (app) await app.close();
-  if (directory) await rm(directory, { recursive: true, force: true });
+  await app.close();
+  await rm(directory, { recursive: true, force: true });
   await pool.query('DROP TRIGGER IF EXISTS cauce_test_terminal_insert_delay ON terminal_sessions');
   await pool.query('DROP TRIGGER IF EXISTS cauce_test_terminal_audit_fail ON audit_events');
   await pool.query('DROP FUNCTION IF EXISTS cauce_test_terminal_audit_fail()');
 });
 
 afterAll(async () => {
-  if (pool) {
-    await pool.query('DROP FUNCTION IF EXISTS cauce_test_terminal_insert_delay()');
-    await pool.end();
-  }
-  if (database?.container) await database.container.stop();
+  await pool.query('DROP FUNCTION IF EXISTS cauce_test_terminal_insert_delay()');
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('atomic PTY admission', () => {
@@ -358,7 +356,7 @@ describe('atomic PTY admission', () => {
 
     const live = await list();
     expect(live.statusCode).toBe(200);
-    expect(live.json<{ items: Array<{ session_id: string; state: string }> }>().items).toEqual([
+    expect(live.json<{ items: { session_id: string; state: string }[] }>().items).toEqual([
       expect.objectContaining({ session_id: sessionId, state: 'issued' }),
     ]);
 
@@ -367,7 +365,7 @@ describe('atomic PTY admission', () => {
       [sessionId],
     );
     const expired = await list();
-    expect(expired.json<{ items: Array<{ session_id: string; state: string }> }>().items).toEqual([
+    expect(expired.json<{ items: { session_id: string; state: string }[] }>().items).toEqual([
       expect.objectContaining({ session_id: sessionId, state: 'closed' }),
     ]);
   });
@@ -383,14 +381,15 @@ describe('atomic PTY admission', () => {
     );
     const row = stored.rows[0];
     expect(row).toBeDefined();
-    expect(row!.expires_at.getTime() - row!.issued_at.getTime()).toBe(30_000);
-    expect(issued.expires_at).toBe(row!.expires_at.toISOString());
+    if (!row) throw new Error('Expected terminal session row');
+    expect(row.expires_at.getTime() - row.issued_at.getTime()).toBe(30_000);
+    expect(issued.expires_at).toBe(row.expires_at.toISOString());
     expect(verifyTicketSignature(
       issued.ticket,
       deriveAliasKey(TICKET_KEY, 'Steven', 'jarvis'),
     )).toMatchObject({
-      iat: Math.floor(row!.issued_at.getTime() / 1_000),
-      exp: Math.floor(row!.expires_at.getTime() / 1_000),
+      iat: Math.floor(row.issued_at.getTime() / 1_000),
+      exp: Math.floor(row.expires_at.getTime() / 1_000),
     });
 
     const consumed = await app.inject({
@@ -489,8 +488,9 @@ describe('atomic PTY admission', () => {
       consume(issued.session_id, issued.ticket, CLAIM_B),
     ]);
     expect(attempts.map((response) => response.statusCode).sort()).toEqual([200, 409]);
-    const granted = attempts.find((response) => response.statusCode === 200)!;
-    const conflict = attempts.find((response) => response.statusCode === 409)!;
+    const granted = attempts.find((response) => response.statusCode === 200);
+    const conflict = attempts.find((response) => response.statusCode === 409);
+    if (!granted || !conflict) throw new Error('Expected granted and conflict responses');
     expect(conflict.json()).toMatchObject({ ok: false, reason: 'claim_conflict' });
     expect(conflict.json<{ retry_after_ms: number }>().retry_after_ms).toBeGreaterThan(0);
     const first = granted.json<{ claim_token: string; claim_epoch: string }>();

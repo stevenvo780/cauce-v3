@@ -27,8 +27,8 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 beforeEach(async () => {
@@ -191,7 +191,7 @@ describe('selector de cuenta', () => {
       `SELECT paused_until,paused_reason FROM provider_accounts WHERE id='claude-a'`
     );
     expect(persisted.rows[0]?.paused_reason).toBe(`${AUTOMATIC_PAUSE_PREFIX}claude/default/session`);
-    expect(persisted.rows[0]?.paused_until?.toISOString()).toBe(IN_AN_HOUR.toISOString());
+    expect(persisted.rows[0]?.paused_until.toISOString()).toBe(IN_AN_HOUR.toISOString());
   });
 
   it('trata como agotamiento el status rate-limited aunque remaining no sea 0', async () => {

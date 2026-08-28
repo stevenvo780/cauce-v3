@@ -33,8 +33,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('atomic configuration CRUD and rollback', () => {
@@ -48,30 +48,36 @@ describe('atomic configuration CRUD and rollback', () => {
         ('Steven','kant','{}'::jsonb,'{}'::jsonb,'hub revision'),
         ('Pablo','midas','{}'::jsonb,'{}'::jsonb,'tenant revision');
     `);
-    const before = (await pool.query<{
-      revisions: string; audits: string; tenants: string; memberships: string;
-    }>(`
+    interface TableCounts {
+      revisions: string;
+      audits: string;
+      tenants: string;
+      memberships: string;
+    }
+    const beforeResult = await pool.query<TableCounts>(`
       SELECT
         (SELECT count(*)::text FROM config_revisions) AS revisions,
         (SELECT count(*)::text FROM audit_events) AS audits,
         (SELECT count(*)::text FROM tenants) AS tenants,
         (SELECT count(*)::text FROM memberships) AS memberships
-    `)).rows[0]!;
+    `);
+    const before = beforeResult.rows[0];
+    if (!before) throw new Error('Expected counts row');
 
     const snapshot = await repository.getConfiguration('Pablo', 'midas');
-    expect((snapshot.tenants as Array<{ id: string }>).map((row) => row.id)).toEqual(['Pablo']);
-    expect((snapshot.rooms as Array<{ tenant_id: string }>).every((row) => row.tenant_id === 'Pablo')).toBe(true);
-    expect((snapshot.memberships as Array<{ tenant_id: string }>).every(
+    expect((snapshot.tenants as { id: string }[]).map((row) => row.id)).toEqual(['Pablo']);
+    expect((snapshot.rooms as { tenant_id: string }[]).every((row) => row.tenant_id === 'Pablo')).toBe(true);
+    expect((snapshot.memberships as { tenant_id: string }[]).every(
       (row) => row.tenant_id === 'Pablo'
     )).toBe(true);
-    expect((snapshot.agents as Array<{ tenant_id: string }>).every((row) => row.tenant_id === 'Pablo')).toBe(true);
-    expect((snapshot.agent_profiles as Array<{ tenant_id: string }>).every(
+    expect((snapshot.agents as { tenant_id: string }[]).every((row) => row.tenant_id === 'Pablo')).toBe(true);
+    expect((snapshot.agent_profiles as { tenant_id: string }[]).every(
       (row) => row.tenant_id === 'Pablo'
     )).toBe(true);
     expect(snapshot.revisions).toEqual([
       expect.objectContaining({ actor_tenant: 'Pablo', actor_alias: 'midas' }),
     ]);
-    expect((snapshot.acl_edges as Array<{ from_tenant: string; to_tenant: string }>).every(
+    expect((snapshot.acl_edges as { from_tenant: string; to_tenant: string }[]).every(
       (edge) => edge.from_tenant === 'Pablo' || edge.to_tenant === 'Pablo'
     )).toBe(true);
 
@@ -84,13 +90,15 @@ describe('atomic configuration CRUD and rollback', () => {
     await expect(repository.rollbackConfiguration('Pablo', 'midas', 2, false, 2))
       .rejects.toMatchObject({ code: 'forbidden' });
 
-    const after = (await pool.query<typeof before>(`
+    const afterResult = await pool.query<TableCounts>(`
       SELECT
         (SELECT count(*)::text FROM config_revisions) AS revisions,
         (SELECT count(*)::text FROM audit_events) AS audits,
         (SELECT count(*)::text FROM tenants) AS tenants,
         (SELECT count(*)::text FROM memberships) AS memberships
-    `)).rows[0]!;
+    `);
+    const after = afterResult.rows[0];
+    if (!after) throw new Error('Expected counts row');
     expect(after).toEqual(before);
     expect((await pool.query(`
       SELECT 1 FROM rooms WHERE tenant_id='Pablo' AND id='reader-must-not-write'
@@ -299,7 +307,7 @@ describe('atomic configuration CRUD and rollback', () => {
       SELECT 'Steven','kant','{}'::jsonb,'{}'::jsonb,'relleno ' || g FROM generate_series(1,121) g
     `);
     const snapshot = await repository.getConfiguration('Steven', 'kant');
-    const revisions = snapshot.revisions as Array<{ id: string }>;
+    const revisions = snapshot.revisions as { id: string }[];
     const ids = revisions.map((revision) => Number(revision.id));
 
     expect(ids).toHaveLength(100);

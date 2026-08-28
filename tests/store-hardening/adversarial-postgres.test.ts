@@ -38,7 +38,7 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_00
     if (await Promise.resolve().then(check).catch(() => false)) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
+  throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
 
 beforeAll(async () => {
@@ -65,8 +65,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('adversarial PostgreSQL store hardening', () => {
@@ -82,13 +82,15 @@ describe('adversarial PostgreSQL store hardening', () => {
 
   it('serializes 20 initial lease racers and rejects reuse of the live instance id', async () => {
     const racers = Array.from({ length: 20 }, (_, index) =>
-      repository.acquireLease('Isa', 'salva', `racer-${index}`, [], 10_000)
+      repository.acquireLease('Isa', 'salva', `racer-${String(index)}`, [], 10_000)
     );
     const results = await Promise.all(racers);
     const winners = results.map((result, index) => ({ result, index }))
       .filter(({ result }) => result.acquired);
     expect(winners).toHaveLength(1);
-    const winner = `racer-${winners[0]!.index}`;
+    const firstWinner = winners[0];
+    if (!firstWinner) throw new Error('Expected a winning racer');
+    const winner = `racer-${String(firstWinner.index)}`;
     expect(await repository.acquireLease('Isa', 'salva', winner, [], 10_000))
       .toMatchObject({ acquired: false, active_instance_id: winner });
 
@@ -156,38 +158,48 @@ describe('adversarial PostgreSQL store hardening', () => {
     );
     expect(outsideWindow).toMatchObject({
       acquired: true,
-      epoch: initial.epoch! + 1
+      epoch: (initial.epoch ?? 1) + 1
     });
   });
 
   it('renews only a live, exactly fenced started claim with a new ACK event', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'delivery-worker', [], 10_000);
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
     const published = await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      'Isa', 'salva', 'delivery-worker', lease.epoch!, 1, 5_000
+      'Isa', 'salva', 'delivery-worker', leaseEpoch, 1, 5_000
     );
+    if (!delivery) throw new Error('delivery not claimed');
+    const deliveryId = delivery.delivery_id;
+    const attempt = delivery.attempt;
+    const claimToken = delivery.claim_token;
+
     expect(delivery).toMatchObject({
       delivery_id: published.delivery_ids[0], attempt: 1
     });
 
-    const stale = await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'done', instance_id: 'delivery-worker', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: randomUUID(), attempt: delivery!.attempt, retryable: false
+    const stale = await repository.ackDelivery(deliveryId, 'Isa', 'salva', {
+      version: '3.0', status: 'done', instance_id: 'delivery-worker', epoch: leaseEpoch,
+      event_id: randomUUID(), claim_token: randomUUID(), attempt, retryable: false
     });
     expect(stale).toMatchObject({ applied: false, status: 'leased' });
 
     const before = await pool.query<{ ack_deadline_at: Date }>(
-      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [deliveryId]
     );
-    await repository.heartbeat('Isa', 'salva', 'delivery-worker', lease.epoch!, 60_000);
+    await repository.heartbeat('Isa', 'salva', 'delivery-worker', leaseEpoch, 60_000);
     const after = await pool.query<{ ack_deadline_at: Date }>(
-      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [deliveryId]
     );
-    expect(after.rows[0]!.ack_deadline_at.getTime()).toBe(before.rows[0]!.ack_deadline_at.getTime());
+    const beforeRow = before.rows[0];
+    const afterRow = after.rows[0];
+    if (!beforeRow || !afterRow) throw new Error('Expected delivery rows');
+    expect(afterRow.ack_deadline_at.getTime()).toBe(beforeRow.ack_deadline_at.getTime());
 
-    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+    await expect(repository.ackDelivery(deliveryId, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: leaseEpoch,
+      event_id: randomUUID(), claim_token: claimToken, attempt,
       retryable: false, result: { progress: 'initial' }
     }, 5_000)).resolves.toMatchObject({ applied: true, status: 'started' });
 
@@ -196,12 +208,12 @@ describe('adversarial PostgreSQL store hardening', () => {
        SET ack_deadline_at=now()+interval '1 second',
            claim_expires_at=now()+interval '1 second'
        WHERE id=$1`,
-      [delivery!.delivery_id]
+      [deliveryId]
     );
     const renewalEventId = randomUUID();
-    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
-      event_id: renewalEventId, claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+    await expect(repository.ackDelivery(deliveryId, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: leaseEpoch,
+      event_id: renewalEventId, claim_token: claimToken, attempt,
       retryable: false, result: { progress: 'heartbeat-only' }
     }, 5_000)).resolves.toMatchObject({ applied: true, status: 'started' });
     const renewed = await pool.query<{
@@ -212,21 +224,23 @@ describe('adversarial PostgreSQL store hardening', () => {
     }>(
       `SELECT ack_deadline_at,claim_expires_at,last_ack_rank,result
        FROM deliveries WHERE id=$1`,
-      [delivery!.delivery_id]
+      [deliveryId]
     );
-    expect(renewed.rows[0]).toMatchObject({
+    const renewedRow = renewed.rows[0];
+    if (!renewedRow) throw new Error('Expected renewed delivery row');
+    expect(renewedRow).toMatchObject({
       last_ack_rank: 2,
       result: { progress: 'initial' }
     });
-    expect(renewed.rows[0]!.ack_deadline_at.getTime() - Date.now()).toBeGreaterThan(4_000);
+    expect(renewedRow.ack_deadline_at.getTime() - Date.now()).toBeGreaterThan(4_000);
     expect(Math.abs(
-      renewed.rows[0]!.ack_deadline_at.getTime()
-      - renewed.rows[0]!.claim_expires_at.getTime()
+      renewedRow.ack_deadline_at.getTime()
+      - renewedRow.claim_expires_at.getTime()
     )).toBeLessThanOrEqual(5);
 
-    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
-      event_id: renewalEventId, claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+    await expect(repository.ackDelivery(deliveryId, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: leaseEpoch,
+      event_id: renewalEventId, claim_token: claimToken, attempt,
       retryable: false
     }, 60_000)).resolves.toMatchObject({
       applied: true,
@@ -234,44 +248,48 @@ describe('adversarial PostgreSQL store hardening', () => {
       receipt: 'duplicate'
     });
     const afterDuplicate = await pool.query<{ ack_deadline_at: Date }>(
-      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [deliveryId]
     );
-    expect(afterDuplicate.rows[0]!.ack_deadline_at.getTime())
-      .toBeGreaterThan(renewed.rows[0]!.ack_deadline_at.getTime());
+    const afterDuplicateRow = afterDuplicate.rows[0];
+    if (!afterDuplicateRow) throw new Error('Expected afterDuplicate delivery row');
+    expect(afterDuplicateRow.ack_deadline_at.getTime())
+      .toBeGreaterThan(renewedRow.ack_deadline_at.getTime());
 
-    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'started', instance_id: 'other-worker', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+    await expect(repository.ackDelivery(deliveryId, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'other-worker', epoch: leaseEpoch,
+      event_id: randomUUID(), claim_token: claimToken, attempt,
       retryable: false
     }, 60_000)).rejects.toMatchObject({ code: 'fenced' });
     const afterFenced = await pool.query<{ ack_deadline_at: Date }>(
-      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [deliveryId]
     );
-    expect(afterFenced.rows[0]!.ack_deadline_at.getTime())
-      .toBe(afterDuplicate.rows[0]!.ack_deadline_at.getTime());
+    const afterFencedRow = afterFenced.rows[0];
+    if (!afterFencedRow) throw new Error('Expected afterFenced delivery row');
+    expect(afterFencedRow.ack_deadline_at.getTime())
+      .toBe(afterDuplicateRow.ack_deadline_at.getTime());
 
     await pool.query(
       `UPDATE deliveries
        SET ack_deadline_at=now()-interval '1 millisecond',
            claim_expires_at=now()-interval '1 millisecond'
        WHERE id=$1`,
-      [
-      delivery!.delivery_id
-      ]
+      [deliveryId]
     );
-    const late = await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt,
+    const late = await repository.ackDelivery(deliveryId, 'Isa', 'salva', {
+      version: '3.0', status: 'started', instance_id: 'delivery-worker', epoch: leaseEpoch,
+      event_id: randomUUID(), claim_token: claimToken, attempt,
       retryable: false
     }, 60_000);
     expect(late).toMatchObject({ applied: false, status: 'started' });
     const expired = await pool.query<{ ack_deadline_at: Date; claim_expires_at: Date }>(
-      'SELECT ack_deadline_at,claim_expires_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT ack_deadline_at,claim_expires_at FROM deliveries WHERE id=$1', [deliveryId]
     );
-    expect(expired.rows[0]!.ack_deadline_at.getTime()).toBeLessThan(Date.now());
-    expect(expired.rows[0]!.claim_expires_at.getTime()).toBeLessThan(Date.now());
+    const expiredRow = expired.rows[0];
+    if (!expiredRow) throw new Error('Expected expired delivery row');
+    expect(expiredRow.ack_deadline_at.getTime()).toBeLessThan(Date.now());
+    expect(expiredRow.claim_expires_at.getTime()).toBeLessThan(Date.now());
     expect((await pool.query('SELECT 1 FROM delivery_acks WHERE delivery_id=$1 AND NOT applied', [
-      delivery!.delivery_id
+      deliveryId
     ])).rowCount).toBe(2);
   });
 
@@ -287,9 +305,11 @@ describe('adversarial PostgreSQL store hardening', () => {
       'Isa', 'salva', 'renewal-replay-worker', [], 60_000,
       { requireDeclaredCapacity: true },
     );
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      'Isa', 'salva', 'renewal-replay-worker', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'renewal-replay-worker', leaseEpoch, 1, 30_000
     );
     if (!delivery) throw new Error('expected a renewal replay delivery');
 
@@ -297,7 +317,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       version: '3.0',
       status: 'started',
       instance_id: 'renewal-replay-worker',
-      epoch: lease.epoch!,
+      epoch: leaseEpoch,
       event_id: randomUUID(),
       claim_token: delivery.claim_token,
       attempt: delivery.attempt,
@@ -308,7 +328,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       version: '3.0',
       status: 'started',
       instance_id: 'renewal-replay-worker',
-      epoch: lease.epoch!,
+      epoch: leaseEpoch,
       event_id: randomUUID(),
       claim_token: delivery.claim_token,
       attempt: delivery.attempt,
@@ -323,7 +343,7 @@ describe('adversarial PostgreSQL store hardening', () => {
 
     await repository.publish(command());
     const [otherDelivery] = await repository.claimDeliveries(
-      'Isa', 'salva', 'renewal-replay-worker', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'renewal-replay-worker', leaseEpoch, 1, 30_000
     );
     if (!otherDelivery) throw new Error('expected a collision test delivery');
     await expect(repository.ackDelivery(otherDelivery.delivery_id, 'Isa', 'salva', {
@@ -346,7 +366,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       version: '3.0',
       status: 'started',
       instance_id: 'renewal-replay-worker',
-      epoch: lease.epoch!,
+      epoch: leaseEpoch,
       event_id: randomUUID(),
       claim_token: delivery.claim_token,
       attempt: delivery.attempt,
@@ -362,9 +382,11 @@ describe('adversarial PostgreSQL store hardening', () => {
 
   it('never retries an allowlisted ambiguity even when a direct store caller marks it retryable', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'ambiguous-worker', [], 10_000);
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
     const published = await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 5_000
+      'Isa', 'salva', 'ambiguous-worker', leaseEpoch, 1, 5_000
     );
     if (!delivery) throw new Error('expected an ambiguity test delivery');
     const eventId = randomUUID();
@@ -379,7 +401,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       version: '3.0',
       status: 'started',
       instance_id: 'ambiguous-worker',
-      epoch: lease.epoch!,
+      epoch: leaseEpoch,
       event_id: randomUUID(),
       claim_token: delivery.claim_token,
       attempt: delivery.attempt,
@@ -391,7 +413,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       version: '3.0',
       status: 'failed',
       instance_id: 'ambiguous-worker',
-      epoch: lease.epoch!,
+      epoch: leaseEpoch,
       event_id: eventId,
       claim_token: delivery.claim_token,
       attempt: delivery.attempt,
@@ -444,38 +466,44 @@ describe('adversarial PostgreSQL store hardening', () => {
 
   it('cuts an open runtime lease when route permission is revoked', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'revoked-worker', [], 10_000);
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      'Isa', 'salva', 'revoked-worker', lease.epoch!, 1, 5_000
+      'Isa', 'salva', 'revoked-worker', leaseEpoch, 1, 5_000
     );
+    if (!delivery) throw new Error('delivery not claimed');
     await pool.query(`UPDATE role_policies SET allow_route=false WHERE role='agent'`);
 
-    await expect(repository.heartbeat('Isa', 'salva', 'revoked-worker', lease.epoch!, 10_000))
+    await expect(repository.heartbeat('Isa', 'salva', 'revoked-worker', leaseEpoch, 10_000))
       .rejects.toMatchObject({ code: 'forbidden' });
-    await expect(repository.claimDeliveries('Isa', 'salva', 'revoked-worker', lease.epoch!, 1))
+    await expect(repository.claimDeliveries('Isa', 'salva', 'revoked-worker', leaseEpoch, 1))
       .rejects.toMatchObject({ code: 'forbidden' });
-    await expect(repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'done', instance_id: 'revoked-worker', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
+    await expect(repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'done', instance_id: 'revoked-worker', epoch: leaseEpoch,
+      event_id: randomUUID(), claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false
     })).rejects.toMatchObject({ code: 'forbidden' });
     await expect(repository.acquireLease('Isa', 'salva', 'revoked-reconnect', [], 10_000))
       .rejects.toMatchObject({ code: 'forbidden' });
-    expect((await pool.query('SELECT 1 FROM delivery_acks WHERE delivery_id=$1', [delivery!.delivery_id])).rowCount)
+    expect((await pool.query('SELECT 1 FROM delivery_acks WHERE delivery_id=$1', [delivery.delivery_id])).rowCount)
       .toBe(0);
   });
 
   it('makes event_id idempotent before applying a second lifecycle transition', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'event-worker', [], 10_000);
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
     await repository.publish(command());
-    const [delivery] = await repository.claimDeliveries('Isa', 'salva', 'event-worker', lease.epoch!, 1, 5_000);
+    const [delivery] = await repository.claimDeliveries('Isa', 'salva', 'event-worker', leaseEpoch, 1, 5_000);
+    if (!delivery) throw new Error('delivery not claimed');
     const eventId = randomUUID();
-    const accepted = await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', event_id: eventId, status: 'accepted', instance_id: 'event-worker', epoch: lease.epoch!,
-      claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
+    const accepted = await repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0', event_id: eventId, status: 'accepted', instance_id: 'event-worker', epoch: leaseEpoch,
+      claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false
     });
-    const replayedAsDone = await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', event_id: eventId, status: 'done', instance_id: 'event-worker', epoch: lease.epoch!,
-      claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
+    const replayedAsDone = await repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0', event_id: eventId, status: 'done', instance_id: 'event-worker', epoch: leaseEpoch,
+      claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false
     });
     expect(accepted).toMatchObject({ status: 'accepted', applied: true });
     expect(replayedAsDone).toMatchObject({ status: 'accepted', applied: false });
@@ -496,17 +524,21 @@ describe('adversarial PostgreSQL store hardening', () => {
     });
 
     const lease = await repository.acquireLease('Isa', 'salva', 'origin-consumer', [], 10_000);
-    const [delivery] = await repository.claimDeliveries('Isa', 'salva', 'origin-consumer', lease.epoch!, 1);
-    await repository.ackDelivery(delivery!.delivery_id, 'Isa', 'salva', {
-      version: '3.0', status: 'done', instance_id: 'origin-consumer', epoch: lease.epoch!,
-      event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
+    const [delivery] = await repository.claimDeliveries('Isa', 'salva', 'origin-consumer', leaseEpoch, 1);
+    if (!delivery) throw new Error('delivery not claimed');
+    await repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
+      version: '3.0', status: 'done', instance_id: 'origin-consumer', epoch: leaseEpoch,
+      event_id: randomUUID(), claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false
     });
     const [relay] = await repository.claimOutbox('origin_relay', 'origin-relay-worker', 1, 5_000, 'telegram');
+    if (!relay) throw new Error('relay not claimed');
     expect(relay).toMatchObject({
-      kind: 'origin_relay', adapter: 'telegram', claimed_by: 'origin-relay-worker', delivery_id: delivery!.delivery_id
+      kind: 'origin_relay', adapter: 'telegram', claimed_by: 'origin-relay-worker', delivery_id: delivery.delivery_id
     });
     await pool.query(`UPDATE adapter_outbox SET claim_expires_at=now()-interval '1 millisecond' WHERE id=$1`, [
-      relay!.id
+      relay.id
     ]);
     expect(await repository.status(undefined, undefined, 0)).toMatchObject({
       outbox_stuck_wake: 1,
@@ -517,6 +549,7 @@ describe('adversarial PostgreSQL store hardening', () => {
   it('reaps an outbox crash and grants exactly one replacement claim', async () => {
     await repository.publish(command());
     const [first] = await repository.claimOutbox('wake', 'outbox-a', 1, 20);
+    if (!first) throw new Error('first outbox not claimed');
     expect(first).toMatchObject({ attempts: 1, claimed_by: 'outbox-a' });
     await pool.query('SELECT pg_sleep(0.04)');
     expect(await repository.status(undefined, undefined, 0)).toMatchObject({
@@ -525,20 +558,22 @@ describe('adversarial PostgreSQL store hardening', () => {
     });
 
     const raced = await Promise.all(Array.from({ length: 12 }, (_, index) =>
-      repository.claimOutbox('wake', `outbox-${index + 2}`, 1, 5_000)
+      repository.claimOutbox('wake', `outbox-${String(index + 2)}`, 1, 5_000)
     ));
     const replacement = raced.flat();
     expect(replacement).toHaveLength(1);
-    expect(replacement[0]).toMatchObject({ event_id: first!.id, attempts: 2 });
-    expect(replacement[0]!.claim_token).not.toBe(first!.claim_token);
+    const rep0 = replacement[0];
+    if (!rep0) throw new Error('replacement outbox not claimed');
+    expect(rep0).toMatchObject({ event_id: first.id, attempts: 2 });
+    expect(rep0.claim_token).not.toBe(first.claim_token);
 
     expect(await repository.ackOutbox({
-      event_id: first!.id, attempt: first!.attempts, claim_token: first!.claim_token, status: 'sent'
+      event_id: first.id, attempt: first.attempts, claim_token: first.claim_token, status: 'sent'
     })).toEqual({ status: 'failed', applied: false });
     expect(await repository.ackOutbox({
-      event_id: replacement[0]!.event_id,
-      attempt: replacement[0]!.attempts,
-      claim_token: replacement[0]!.claim_token,
+      event_id: rep0.event_id,
+      attempt: rep0.attempts,
+      claim_token: rep0.claim_token,
       status: 'sent'
     })).toEqual({ status: 'sent', applied: true });
     expect((await pool.query(`SELECT 1 FROM adapter_outbox WHERE status='sent'`)).rowCount).toBe(1);
@@ -546,15 +581,16 @@ describe('adversarial PostgreSQL store hardening', () => {
     await repository.publish(command({ body: { text: 'exhaust outbox' } }));
     await pool.query(`UPDATE adapter_outbox SET max_attempts=1 WHERE status='pending'`);
     const [exhausted] = await repository.claimOutbox('wake', 'outbox-dlq', 1, 5_000);
+    if (!exhausted) throw new Error('exhausted outbox not claimed');
     expect(await repository.ackOutbox({
-      event_id: exhausted!.event_id,
-      attempt: exhausted!.attempt,
-      claim_token: exhausted!.claim_token,
+      event_id: exhausted.event_id,
+      attempt: exhausted.attempt,
+      claim_token: exhausted.claim_token,
       status: 'retry',
       error: 'permanent adapter failure'
     })).toEqual({ status: 'dead', applied: true });
     expect((await pool.query('SELECT 1 FROM outbox_dead_letters WHERE outbox_id=$1', [
-      exhausted!.id
+      exhausted.id
     ])).rowCount).toBe(1);
   });
 
@@ -567,6 +603,8 @@ describe('adversarial PostgreSQL store hardening', () => {
       `SELECT id FROM adapter_outbox WHERE kind='wake' AND tenant_id='Isa' ORDER BY created_at LIMIT 1`
     );
     expect(source.rows).toHaveLength(1);
+    const sourceRow = source.rows[0];
+    if (!sourceRow) throw new Error('Expected source row');
     await pool.query(
       `INSERT INTO adapter_outbox(
          tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,
@@ -577,7 +615,7 @@ describe('adversarial PostgreSQL store hardening', () => {
               jsonb_set(payload,'{recipient_alias}',to_jsonb('salva'::text)),available_at,
               created_at + interval '1 millisecond'
        FROM adapter_outbox WHERE id=$1`,
-      [source.rows[0]!.id]
+      [sourceRow.id]
     );
 
     // Empty and invalid fail closed: no row changes state or consumes an attempt.
@@ -596,8 +634,10 @@ describe('adversarial PostgreSQL store hardening', () => {
       { tenant_id: 'Pablo', alias: 'salva' }
     ], 10, 5_000);
     expect(pablo).toHaveLength(1);
-    expect(pablo[0]).toMatchObject({ tenant_id: 'Pablo', attempt: 1 });
-    expect(pablo[0]!.payload).toMatchObject({ recipient_alias: 'salva' });
+    const pablo0 = pablo[0];
+    if (!pablo0) throw new Error('Expected pablo[0]');
+    expect(pablo0).toMatchObject({ tenant_id: 'Pablo', attempt: 1 });
+    expect(pablo0.payload).toMatchObject({ recipient_alias: 'salva' });
     expect((await pool.query<{ tenant_id: string; status: string; attempts: number }>(
       `SELECT tenant_id,status,attempts FROM adapter_outbox WHERE kind='wake' ORDER BY tenant_id`
     )).rows).toEqual([
@@ -608,7 +648,7 @@ describe('adversarial PostgreSQL store hardening', () => {
     // The locks stay those of the original queue: even with several gateways competing for the
     // same exact pair, a row gets only one claim.
     const raced = await Promise.all(Array.from({ length: 8 }, (_, index) =>
-      repository.claimWakeOutbox(`gateway-isa-${index}`, [{ tenant_id: 'Isa', alias: 'salva' }], 1, 5_000)
+      repository.claimWakeOutbox(`gateway-isa-${String(index)}`, [{ tenant_id: 'Isa', alias: 'salva' }], 1, 5_000)
     ));
     expect(raced.flat()).toHaveLength(1);
     expect(raced.flat()[0]).toMatchObject({ tenant_id: 'Isa', attempt: 1 });
@@ -618,15 +658,17 @@ describe('adversarial PostgreSQL store hardening', () => {
     const telegram = new PostgresTelegramBridgeRepository(pool);
     await telegram.initializeCursor('900001', 'Steven', 'kant');
     const first = await telegram.acquirePollLease('900001', 'poller-a', 10_000);
+    if (!first) throw new Error('Expected first poll lease');
     expect(first).toMatchObject({ owner_id: 'poller-a', epoch: 1 });
     await expect(telegram.acquirePollLease('900001', 'poller-b', 10_000)).resolves.toBeUndefined();
-    await telegram.advanceCursor(first!, 7);
+    await telegram.advanceCursor(first, 7);
     await pool.query(`UPDATE channel_bridge_leases SET lease_until=now()-interval '1 millisecond'
       WHERE bot_id='900001'`);
     const replacement = await telegram.acquirePollLease('900001', 'poller-b', 10_000);
+    if (!replacement) throw new Error('Expected replacement poll lease');
     expect(replacement).toMatchObject({ owner_id: 'poller-b', epoch: 2 });
-    await expect(telegram.cursor(first!)).rejects.toThrow(/fenced/);
-    await expect(telegram.cursor(replacement!)).resolves.toBe(7);
+    await expect(telegram.cursor(first)).rejects.toThrow(/fenced/);
+    await expect(telegram.cursor(replacement)).resolves.toBe(7);
   });
 
   it('bounds pool readiness waits and survives ten backend-loss cycles without unhandled rejection', async () => {
@@ -658,7 +700,9 @@ describe('adversarial PostgreSQL store hardening', () => {
         });
         const transaction = withTransaction(pool, async (client) => {
           const selected = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-          reportPid(selected.rows[0]!.pid);
+          const pidRow = selected.rows[0];
+          if (!pidRow) throw new Error('Expected pid row');
+          reportPid(pidRow.pid);
           await client.query('SELECT pg_sleep(30)');
         }).then(
           () => ({ resolved: true, error: undefined }),
@@ -692,19 +736,21 @@ describe('adversarial PostgreSQL store hardening', () => {
   it('rejects stale job tokens after expiry and reclaims with a new token', async () => {
     const id = await repository.enqueueJob('Steven', 'batch', 0, 'token-test', { value: 1 });
     const [first] = await repository.claimJobs('batch', 'job-worker', 1, 20);
+    if (!first) throw new Error('Expected first job');
     await pool.query('SELECT pg_sleep(0.04)');
-    expect(await repository.completeJob(id, 'job-worker', first!.claim_token)).toBe(false);
+    expect(await repository.completeJob(id, 'job-worker', first.claim_token)).toBe(false);
     expect(await repository.retryExpiredJobs()).toBe(1);
     await pool.query('UPDATE jobs SET available_at=now() WHERE id=$1', [id]);
     const [second] = await repository.claimJobs('batch', 'job-worker', 1, 5_000);
-    expect(second!.claim_token).not.toBe(first!.claim_token);
-    expect(await repository.completeJob(id, 'job-worker', first!.claim_token)).toBe(false);
-    expect(await repository.completeJob(id, 'job-worker', second!.claim_token)).toBe(true);
+    if (!second) throw new Error('Expected second job');
+    expect(second.claim_token).not.toBe(first.claim_token);
+    expect(await repository.completeJob(id, 'job-worker', first.claim_token)).toBe(false);
+    expect(await repository.completeJob(id, 'job-worker', second.claim_token)).toBe(true);
   });
 
   it('reconnects the LISTEN supervisor after PostgreSQL terminates its backend', async () => {
     let connected = 0;
-    const notices: Array<{ tenant_id: string; alias: string }> = [];
+    const notices: { tenant_id: string; alias: string }[] = [];
     const stop = await subscribeDeliveryWakes(pool, (notice) => notices.push(notice), {
       minBackoffMs: 10,
       maxBackoffMs: 50,
@@ -719,8 +765,10 @@ describe('adversarial PostgreSQL store hardening', () => {
            AND query='LISTEN cauce_delivery_wake'
          ORDER BY backend_start DESC LIMIT 1`
       );
-      expect(listener.rows[0]?.pid).toBeTypeOf('number');
-      await pool.query('SELECT pg_terminate_backend($1)', [listener.rows[0]!.pid]);
+      const listenerRow = listener.rows[0];
+      if (!listenerRow) throw new Error('Expected listener row');
+      expect(listenerRow.pid).toBeTypeOf('number');
+      await pool.query('SELECT pg_terminate_backend($1)', [listenerRow.pid]);
       await waitFor(() => connected >= 2);
       await pool.query('SELECT pg_notify($1,$2)', [
         'cauce_delivery_wake', JSON.stringify({ tenant_id: 'Isa', alias: 'salva' })
@@ -738,12 +786,15 @@ describe('adversarial PostgreSQL store hardening', () => {
     for (let index = 0; index < 6; index += 1) {
       await repository.enqueueJob('Steven', 'interactive', 100, 'interactive', { index });
       const [job] = await repository.claimFairJobs('fair-worker', 1, 5_000, 2, 'test-jobs');
-      jobOrder.push(job!.id);
-      await repository.completeJob(job!.id, 'fair-worker', job!.claim_token);
+      if (!job) throw new Error('Expected fair job');
+      jobOrder.push(job.id);
+      await repository.completeJob(job.id, 'fair-worker', job.claim_token);
     }
     expect(jobOrder.slice(0, 3)).toContain(batchJob);
 
     const lease = await repository.acquireLease('Pablo', 'midas', 'fair-delivery', [], 10_000);
+    if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
+    const leaseEpoch = lease.epoch;
     // `agent.message` is an internal materialization and is correctly rejected by publish().
     // Seed that already-authorized hop at the persistence boundary, as the agent-output path
     // would do. Delivery fairness is classified by provenance, not by the inherited lane.
@@ -754,10 +805,12 @@ describe('adversarial PostgreSQL store hardening', () => {
         type: 'agent.message', text: 'background agent work', from_alias: 'kant'
       })]
     );
+    const batchMessageRow = batchMessage.rows[0];
+    if (!batchMessageRow) throw new Error('Expected batch message row');
     await pool.query(
       `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
        VALUES($1,'Pablo','midas')`,
-      [batchMessage.rows[0]!.id]
+      [batchMessageRow.id]
     );
     const deliveryOrder: string[] = [];
     for (let index = 0; index < 6; index += 1) {
@@ -769,15 +822,16 @@ describe('adversarial PostgreSQL store hardening', () => {
         lane: 'interactive', priority: HUMAN_CHAT_PRIORITY, body: { index }
       }));
       const [delivery] = await repository.claimDeliveries(
-        'Pablo', 'midas', 'fair-delivery', lease.epoch!, 1, 5_000, 2
+        'Pablo', 'midas', 'fair-delivery', leaseEpoch, 1, 5_000, 2
       );
-      deliveryOrder.push(delivery!.message_id);
-      await repository.ackDelivery(delivery!.delivery_id, 'Pablo', 'midas', {
-        version: '3.0', status: 'done', instance_id: 'fair-delivery', epoch: lease.epoch!,
-        event_id: randomUUID(), claim_token: delivery!.claim_token, attempt: delivery!.attempt, retryable: false
+      if (!delivery) throw new Error('Expected fair delivery');
+      deliveryOrder.push(delivery.message_id);
+      await repository.ackDelivery(delivery.delivery_id, 'Pablo', 'midas', {
+        version: '3.0', status: 'done', instance_id: 'fair-delivery', epoch: leaseEpoch,
+        event_id: randomUUID(), claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false
       });
     }
-    expect(deliveryOrder.slice(0, 3)).toContain(batchMessage.rows[0]!.id);
+    expect(deliveryOrder.slice(0, 3)).toContain(batchMessageRow.id);
   });
 
   it('enforces the data-driven hub-star in ACLs and delivery inserts even for operators', async () => {

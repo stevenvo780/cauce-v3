@@ -28,8 +28,8 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 beforeEach(async () => {

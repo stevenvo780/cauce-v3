@@ -19,7 +19,7 @@ let pool: DatabasePool;
 let temporary: string;
 let inventory: string;
 
-type CollectorResult = { status: number | null; stdout: string; stderr: string; output: string };
+interface CollectorResult { status: number | null; stdout: string; stderr: string; output: string }
 type CollectorChild = ChildProcessByStdio<null, Readable, Readable>;
 
 function startCollector(
@@ -43,10 +43,10 @@ function startCollector(
   });
   let stdout = '';
   let stderr = '';
-  child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
-  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
   const done = new Promise<CollectorResult>((resolveResult) => {
-    child.once('close', (status) => resolveResult({ status, stdout, stderr, output }));
+    child.once('close', (status) => { resolveResult({ status, stdout, stderr, output }); });
   });
   return { child, done };
 }
@@ -88,6 +88,8 @@ async function seedTerminalDelivery({ applied = true, ackAgeSeconds = 0 } = {}) 
      ) RETURNING id`,
     [`gate-${randomUUID()}`, JSON.stringify({ type: 'system.gate.probe', nonce, timeout_ms: 5_000 })],
   );
+  const messageId = message.rows[0]?.id;
+  if (!messageId) throw new Error('Expected message row');
   const delivery = await pool.query<{ id: string }>(
     `INSERT INTO deliveries(
        message_id,recipient_tenant,recipient_alias,status,attempt,consumer_instance_id,consumer_epoch,
@@ -97,17 +99,19 @@ async function seedTerminalDelivery({ applied = true, ackAgeSeconds = 0 } = {}) 
        gen_random_uuid(),now()+interval '1 minute',3,
        '{"output":{"status":"done","retryable":false}}'::jsonb,now()
      ) RETURNING id`,
-    [message.rows[0]!.id],
+    [messageId],
   );
+  const deliveryId = delivery.rows[0]?.id;
+  if (!deliveryId) throw new Error('Expected delivery row');
   await pool.query(
     `INSERT INTO delivery_acks(
        delivery_id,status,instance_id,epoch,applied,payload,claim_token,attempt,event_id,created_at
      ) SELECT id,'done','systemd-container-kant',1,$2,'{}'::jsonb,claim_token,1,gen_random_uuid(),
               now()-$3::int*interval '1 second'
          FROM deliveries WHERE id=$1`,
-    [delivery.rows[0]!.id, applied, ackAgeSeconds],
+    [deliveryId, applied, ackAgeSeconds],
   );
-  return { deliveryId: delivery.rows[0]!.id, nonce, startedAt };
+  return { deliveryId, nonce, startedAt };
 }
 
 async function evidenceFile(value: Awaited<ReturnType<typeof seedTerminalDelivery>>) {
@@ -156,8 +160,8 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await rm(temporary, { recursive: true, force: true });
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('gate collector against PostgreSQL', () => {

@@ -44,8 +44,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 async function deliveryEnvelope(): Promise<Record<string, unknown>> {
@@ -58,8 +58,9 @@ async function deliveryEnvelope(): Promise<Record<string, unknown>> {
   const lease = await repository.acquireLease(
     'Isa', 'salva', 'salva-profile-test', ['agent_identity_v1', 'agent_profile_v1'], 30_000,
   );
+  if (!lease.acquired || lease.epoch === undefined) throw new Error('lease not acquired');
   const claimed = await repository.claimDeliveries(
-    'Isa', 'salva', 'salva-profile-test', lease.epoch!, 5,
+    'Isa', 'salva', 'salva-profile-test', lease.epoch, 5,
   );
   expect(claimed).toHaveLength(1);
   return claimed[0] as unknown as Record<string, unknown>;
@@ -79,6 +80,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     const before = await pool.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM config_revisions',
     );
+    const beforeCount = before.rows[0]?.count ?? 0;
     const directRole = {
       resource: 'agent', action: 'update', tenant_id: 'Isa', alias: 'salva',
       value: { role_brief: 'duplicado' },
@@ -89,13 +91,13 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     } as unknown as ConfigMutation;
     for (const mutation of [directRole, directProfile]) {
       await expect(repository.applyConfigurationChange(
-        'Steven', 'kant', mutation, false, before.rows[0]!.count,
+        'Steven', 'kant', mutation, false, beforeCount,
       )).rejects.toMatchObject({ code: 'invalid_input' });
     }
     const after = await pool.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM config_revisions',
     );
-    expect(after.rows).toEqual([{ count: before.rows[0]!.count }]);
+    expect(after.rows).toEqual([{ count: beforeCount }]);
   });
 
   it('la escritura canónica proyecta el rol y el mismo valor llega al sobre', async () => {
@@ -109,8 +111,10 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     const state = await pool.query<{ role_brief: string }>(
       `SELECT role_brief FROM agents WHERE tenant_id='Isa' AND alias='salva'`,
     );
-    expect(countCodePoints(state.rows[0]!.role_brief)).toBe(ROLE_BRIEF_MAX_CODE_POINTS);
-    expect(state.rows[0]?.role_brief).toBe(edgeRole);
+    const stateRow = state.rows[0];
+    if (!stateRow) throw new Error('Expected agent row');
+    expect(countCodePoints(stateRow.role_brief)).toBe(ROLE_BRIEF_MAX_CODE_POINTS);
+    expect(stateRow.role_brief).toBe(edgeRole);
 
     const envelope = await deliveryEnvelope();
     expect(envelope.self_role).toBe(edgeRole);

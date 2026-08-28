@@ -32,8 +32,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 /** Steven pays for it; shared_with_pool decides whether anybody else may be routed to it. */
@@ -116,7 +116,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
         id: 'codex-acme', provider: 'openai', payer_tenant_id: 'Acme', shared_with_pool: false
       })
     ]));
-    for (const account of snapshot.provider_accounts as Array<Record<string, unknown>>) {
+    for (const account of snapshot.provider_accounts as Record<string, unknown>[]) {
       expect(account).not.toHaveProperty('credential_ref');
     }
     expect(snapshot.alias_routing_ceiling).toEqual(expect.arrayContaining([
@@ -329,7 +329,7 @@ describe('cross-tenant subscription pool', () => {
     ]);
 
     const snapshot = await repository.getConfiguration('Isa', 'salva');
-    const accounts = snapshot.provider_accounts as Array<Record<string, unknown>>;
+    const accounts = snapshot.provider_accounts as Record<string, unknown>[];
     expect(accounts.find((account) => account.id === 'anthropic-max')).toMatchObject({
       provider: 'anthropic', payer_tenant_id: 'Steven', shared_with_pool: true,
       external_account_id: null, credential_ref_kind: null
@@ -391,7 +391,7 @@ describe('agent fleet read endpoints', () => {
         method: 'GET', url: '/v3/console/role-assignments/Steven/zeus/history',
       });
       expect(history.statusCode).toBe(200);
-      const entries = history.json<{ entries: Array<{ id: string }> }>().entries;
+      const entries = history.json<{ entries: { id: string }[] }>().entries;
       expect(entries).toHaveLength(100);
       const ids = entries.map((entry) => Number(entry.id));
       expect(ids).toEqual([...ids].sort((left, right) => right - left));
@@ -463,16 +463,16 @@ describe('agent fleet read endpoints', () => {
       }
     ]);
 
-    const hubAliases = ((await repository.listAgents('Steven', 'kant')).items as Array<{
+    const hubAliases = ((await repository.listAgents('Steven', 'kant')).items as {
       tenant_id: string; alias: string;
-    }>).map((row) => `${row.tenant_id}/${row.alias}`);
+    }[]).map((row) => `${row.tenant_id}/${row.alias}`);
     expect(hubAliases).toEqual(expect.arrayContaining(['Isa/salva', 'Pablo/midas']));
 
     // Isa has no acl_edge into Pablo (the default seed only wires everyone to/from the hub),
     // so Isa/salva must never see Pablo's agent even though it can see its own tenant's.
-    const isaAliases = ((await repository.listAgents('Isa', 'salva')).items as Array<{
+    const isaAliases = ((await repository.listAgents('Isa', 'salva')).items as {
       tenant_id: string; alias: string;
-    }>).map((row) => `${row.tenant_id}/${row.alias}`);
+    }[]).map((row) => `${row.tenant_id}/${row.alias}`);
     expect(isaAliases).toContain('Isa/salva');
     expect(isaAliases).not.toContain('Pablo/midas');
 
@@ -523,7 +523,7 @@ describe('agent fleet read endpoints', () => {
       }
     ]);
 
-    const listed = (await repository.listAgents('Steven', 'kant')).items as Array<Record<string, unknown>>;
+    const listed = (await repository.listAgents('Steven', 'kant')).items as Record<string, unknown>[];
     expect(listed.find((row) => row.alias === 'salva')).toMatchObject({
       fallback_account_count: 2, borrowed_account_count: 1
     });
