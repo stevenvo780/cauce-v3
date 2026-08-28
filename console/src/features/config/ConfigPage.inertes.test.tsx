@@ -92,7 +92,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
 
   /**
    * CONTROL NEGATIVO. Si la marca saliera en todas las columnas no distinguiría nada. `Alias` y
-   * `Rol declarado` tienen lector probado —`selfRoleBrief`, repository.ts:1821— y NO pueden llevarla.
+   * `Rol declarado` tienen lector probado —`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215— y NO pueden llevarla.
    */
   it('NO marca las columnas del registro que sí tienen lector', async () => {
     conHarnessReal();
@@ -117,7 +117,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     const cabecera = within(harneses).getByRole('columnheader', { name: /comando/i });
     expect(cabecera).toHaveTextContent(MARCA_INERTE);
     // El motivo viaja en el árbol accesible, no sólo en un globo que hay que provocar con el ratón.
-    expect(cabecera).toHaveTextContent(/repository\.ts:5109/);
+    expect(cabecera).toHaveTextContent(/listAdapters/);
   });
 
   /**

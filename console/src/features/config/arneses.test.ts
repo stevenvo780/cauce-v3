@@ -12,7 +12,7 @@ import {
  * arnés, y la respuesta es distinta en los cuatro.
  *
  * El juego es CERRADO y sale de `resolveAgentDocuments()`
- * (services/gateway/src/console/agent-documents.ts:127): claude, codex y openclaw tienen documento
+ * (services/gateway/src/console/agent-documents/catalog.ts:317): claude, codex y openclaw tienen documento
  * resuelto; todo lo demás —hermes incluido— cae al `default` y devuelve lista vacía. Si el gateway
  * aprende un arnés nuevo, esta prueba se pone roja y obliga a decidir qué se enseña, en vez de
  * dejar una fila muda.
@@ -54,7 +54,7 @@ describe('la tabla de arneses reales', () => {
 
   it('la frase de lo que esta pantalla SÍ gobierna cita la cadena entera del rol declarado', () => {
     expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/role_brief/);
-    expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/repository\.ts:1821/);
+    expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/selfRoleFromProfile/);
     expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/self_role/);
   });
 });

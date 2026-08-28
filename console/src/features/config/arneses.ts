@@ -3,7 +3,7 @@
  */
 
 export interface ArnesReal {
-  /** El mismo identificador que `HarnessKind` en agent-documents.ts:33, más `hermes`. */
+  /** El mismo identificador que `HarnessKind` en services/gateway/src/console/agent-documents/catalog.ts:4, más `hermes`. */
   id: string;
   label: string;
   /** Dónde lee su directiva, con la ruta exacta. Cadena vacía = no lee ninguna. */
@@ -61,7 +61,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     label: 'Hermes',
     directiva: '',
     detalle: 'El gateway no le resuelve ninguno: cae al `default` de `resolveAgentDocuments` y '
-      + 'devuelve lista vacía (agent-documents.ts:218). Lo único que le llega delante de su contrato '
+      + 'devuelve lista vacía (services/gateway/src/console/agent-documents/catalog.ts:317). Lo único que le llega delante de su contrato '
       + 'es el rol declarado que sale de acá.',
     editableDesdeAjustes: false,
     dondeSeToca: 'No hay documento que tocar. Su identidad se le da con el rol declarado, en la '
@@ -76,6 +76,6 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
 export const LO_QUE_AJUSTES_GOBIERNA =
   'El rol declarado (`agents.role_brief`) es lo único de esta lista que se escribe desde acá, y '
   + 'funciona con los cuatro arneses por igual porque no sale de ningún fichero del bot: lo lee el '
-  + 'servidor al entregar (`selfRoleBrief`, packages/store/src/repository.ts:1821), viaja en el '
+  + 'servidor al entregar (`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215), viaja en el '
   + 'sobre como `self_role` y el adaptador lo antepone al contrato. Por eso un bot sin directiva '
   + 'propia —hermes— igual recibe identidad.';

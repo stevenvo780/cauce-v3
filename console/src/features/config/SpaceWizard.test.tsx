@@ -177,7 +177,7 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
  * **El paso de harness dejó de ofrecer «Command».**
  *
  * `harness_definitions.command` no lo lee nadie: `listAdapters` ni siquiera lo selecciona
- * (packages/store/src/repository.ts:5109) y el adaptador toma su orden de su propia tabla compilada
+ * (packages/store/src/repository/agents.ts:278) y el adaptador toma su orden de su propia tabla compilada
  * (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su fichero local
  * (packages/adapter-sdk/src/bin/config.ts:179). Un campo de formulario que escribe una columna que
  * nadie obedece es la promesa exacta que este trabajo vino a retirar.
@@ -214,7 +214,7 @@ it('la mutación del harness no lleva la clave `command`', async () => {
   const value = (harness as { value?: Record<string, unknown> }).value ?? {};
   expect(Object.hasOwn(value, 'command'), 'la clave inerte volvió a viajar').toBe(false);
   // CONTROL NEGATIVO: las claves que SÍ tienen lector siguen viajando. `capabilities` y `enabled`
-  // los lee `listAdapters` (packages/store/src/repository.ts:5109) para decidir el estado del
+  // los lee `listAdapters` (packages/store/src/repository/agents.ts:278) para decidir el estado del
   // arnés; borrarlos de paso habría sido perder capacidad real.
   expect(Object.hasOwn(value, 'display_name')).toBe(true);
   expect(Object.hasOwn(value, 'capabilities')).toBe(true);

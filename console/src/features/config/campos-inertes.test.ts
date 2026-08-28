@@ -20,12 +20,12 @@ describe('el catálogo de campos inertes', () => {
   it('marca `harness_definitions.command`, que no tiene ningún lector', () => {
     const motivo = motivoInerte('harness_definitions', 'command');
     expect(motivo).toBeDefined();
-    expect(motivo).toMatch(/repository\.ts:5109/);
+    expect(motivo).toMatch(/listAdapters/);
   });
 
   it('marca las tres columnas de emplazamiento de `agents` sin lector runtime', () => {
     const esperados: Record<string, RegExp> = {
-      harness_id: /agent-documents\.ts/,
+      harness_id: /harnessFromCommand/,
       home_directory: /RuntimeFacts/,
       state_directory: /CAUCE_STATE_DIR/,
     };
@@ -38,9 +38,9 @@ describe('el catálogo de campos inertes', () => {
 
   /**
    * CONTROL NEGATIVO del aserto de arriba: los campos de `agents` que SÍ tienen lector no pueden
-   * estar en el catálogo. `role_brief` lo lee `selfRoleBrief()` (packages/store/src/repository.ts:1826)
+   * estar en el catálogo. `role_brief` lo lee `selfRoleFromProfile()` (packages/store/src/repository/agents.ts:215)
    * y de ahí sale la línea «Tu rol:» del sobre; `display_name` y `enabled` los lee `listAgents`
-   * (:7605) y `agentDeploymentStatus` (:1272). Marcarlos inertes borraría capacidad real de la
+   * (packages/store/src/repository/agents.ts:321) y `agentDeploymentStatus` (packages/store/src/repository/observability/helpers.ts:7). Marcarlos inertes borraría capacidad real de la
    * pantalla, que es el defecto opuesto y igual de caro.
    */
   it('NO marca los campos de `agents` que sí tienen lector', () => {
@@ -51,7 +51,7 @@ describe('el catálogo de campos inertes', () => {
     expect(motivoInerte('agents', 'runtime_user')).toBeUndefined();
   });
 
-  /** CONTROL NEGATIVO: `capabilities` y `enabled` de un harness los lee `listAdapters` (:5109). */
+  /** CONTROL NEGATIVO: `capabilities` y `enabled` de un harness los lee `listAdapters` (packages/store/src/repository/agents.ts:278). */
   it('NO marca los campos de `harness_definitions` que sí tienen lector', () => {
     expect(motivoInerte('harness_definitions', 'capabilities')).toBeUndefined();
     expect(motivoInerte('harness_definitions', 'enabled')).toBeUndefined();
