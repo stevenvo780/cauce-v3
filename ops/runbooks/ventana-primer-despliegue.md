@@ -31,8 +31,11 @@ sudo /usr/local/sbin/cauce-v3-host-backup
 ```
 Verificar que el archivo `.dump` se generó y es legible:
 ```bash
-LATEST_BACKUP=$(ls -t /var/backups/cauce-v3/*.dump | head -n 1)
-pg_restore --list "$LATEST_BACKUP" > /dev/null
+# el script deja el dump en /opt/_archive/cauce-v3-db-backups (NO en /var/backups); pg_restore no existe en el host
+LATEST_BACKUP=$(ls -t /opt/_archive/cauce-v3-db-backups/*.dump | head -n 1)
+(cd "$(dirname "$LATEST_BACKUP")" && sha256sum -c "$(basename "$LATEST_BACKUP").sha256")
+docker run --rm -v "$(dirname "$LATEST_BACKUP"):/b:ro" "$(docker inspect cauce-v3-prod-postgres-1 --format '{{.Config.Image}}')" \
+  pg_restore --list "/b/$(basename "$LATEST_BACKUP")" | grep -c "TABLE DATA"   # debe listar ~60 tablas
 echo "Backup verificado: $LATEST_BACKUP"
 ```
 
@@ -70,17 +73,19 @@ La migración 034 exige que no existan sesiones de terminal abiertas sin anclar.
    ```bash
    sudo cp -a /etc/cauce-v3/prod.env /etc/cauce-v3/prod.env.bak-ventana
    ```
-2. Calcular el `CAUCE_TERMINAL_RELAY_INSTANCE_ID` exacto (SHA256 del DER del certificado leaf del relay):
+2. Calcular el `CAUCE_TERMINAL_RELAY_INSTANCE_ID`: es el sha256 del DER del certificado que el relay presenta **al gateway** (`CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH`, hoy `/etc/cauce-v3/secrets/terminal-gateway-client.crt`, CN=console-client). El relay lo valida al arrancar (`services/terminal-relay/src/config.ts`): con otro valor **no arranca**. Y ese mismo digest es la identidad mTLS del relay en `mtls_identities.json`.
    ```bash
-   openssl x509 -in /etc/cauce-v3/pki/terminal-relay.crt -outform DER | sha256sum | awk '{print $1}'
+   CERT=$(sed -n 's/^CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH=//p' /etc/cauce-v3/prod.env)
+   test -r "$CERT" || { echo "PARAR: no existe $CERT"; exit 1; }   # sin este guardia, sha256sum de la nada da e3b0c442… y pasa todos los filtros
+   ID=$(openssl x509 -in "$CERT" -outform DER | sha256sum | awk '{print $1}'); echo "$ID"
    ```
-   *(Valor de referencia esperado: `749f8af81ce316c6e28c3c7ac200640ea1b918ac12b653193864f5d61f4c520b`)*.
-3. Asegurar que `prod.env` contiene la variable:
+   *(Valor verificado el 28-08: `749f8af81ce316c6e28c3c7ac200640ea1b918ac12b653193864f5d61f4c520b`; si da otra cosa, PARAR.)*
+3. Escribirlo en `prod.env` (`deploy.sh` vuelve a verificar que iguala al DER del cert):
    ```bash
-   sudo sed -i '/^CAUCE_TERMINAL_RELAY_INSTANCE_ID=/d' /etc/cauce-v3/prod.env
-   echo "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$(openssl x509 -in /etc/cauce-v3/pki/terminal-relay.crt -outform DER | sha256sum | awk '{print $1}')" | sudo tee -a /etc/cauce-v3/prod.env
+   sed -i '/^CAUCE_TERMINAL_RELAY_INSTANCE_ID=/d' /etc/cauce-v3/prod.env
+   printf 'CAUCE_TERMINAL_RELAY_INSTANCE_ID=%s\n' "$ID" >> /etc/cauce-v3/prod.env
    ```
-4. Limpiar rutas de PKI y asegurar que los secretos apuntan a ficheros reales, no `/dev/null`.
+4. Enmascarar durante la ventana los timers que escriben en la BD por el gateway (la 034/037 toman locks exclusivos): `systemctl mask --now cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer` — y **desenmascararlos al cerrar** (`systemctl unmask` + `start`).
 5. Validar renderizado canónico de Docker Compose:
    ```bash
    docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config > /dev/null
@@ -94,9 +99,11 @@ La migración 034 exige que no existan sesiones de terminal abiertas sin anclar.
 
 Con la presencia del dueño, exportar la variable requerida y lanzar el despliegue canónico:
 ```bash
-export CAUCE_FASE3_CON_DUENO=si
-sudo -E ./deploy/deploy.sh
+export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si   # ya como root; cero interactividad
+./deploy/deploy.sh
 ```
+
+Realidades medidas en la pre-flight (28-08): el `up` **recrea los 10 contenedores, postgres incluido** (el volumen `cauce_pgdata` se reutiliza por nombre; compose avisa que no lo creó él: esperado). Las imágenes se construyen con `--target` explícito (runtime y console salen de `deploy/Dockerfile`; la consola hornea el instance id). Con `df -h /` < 60 GB libres, `docker builder prune -f` antes. El árbol `/datos/workspaces/zeus/cauce-v3` pasa a ser **material de producción** (prometheus/otel/postgres montan ficheros de ahí): no rebasear ni cambiar de rama con prod arriba.
 
 El script ejecuta automáticamente:
 1. Verificación de `main` y estado git limpio.
@@ -168,26 +175,25 @@ Si se produce un fallo crítico tras el despliegue o la prueba de humo resulta i
 - No se requiere restaurar dump.
 
 ### Caso B: Fallo en arranque de servicios nuevos o smoke rojo
-1. Detener contenedores desplegados:
+El orden importa: **nunca `down`** (pararía postgres antes de restaurar) y la vuelta es con el compose VIEJO de `/opt` + sus 4 overrides (el canónico con imágenes legacy sería un tercer estado jamás probado).
+1. Parar todo menos postgres:
    ```bash
-   docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml down
+   docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml --project-directory deploy \
+     stop gateway dispatcher telegram-bridge terminal-relay console outbox-metrics prometheus otel-collector
    ```
-2. Restaurar `prod.env` previo:
+2. Restaurar `prod.env` previo: `cp -a /etc/cauce-v3/prod.env.bak-ventana /etc/cauce-v3/prod.env`.
+3. Solo si el esquema 037 quedó confirmado y hay que volver a 024 (verificar sha256 antes; terminar backends antes de `dropdb`):
    ```bash
-   sudo cp -a /etc/cauce-v3/prod.env.bak-ventana /etc/cauce-v3/prod.env
+   D=$(ls -t /opt/_archive/cauce-v3-db-backups/*.dump | head -n 1); (cd "$(dirname "$D")" && sha256sum -c "$(basename "$D").sha256")
+   docker exec cauce-v3-prod-postgres-1 psql -U cauce -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cauce' AND pid<>pg_backend_pid()"
+   docker exec cauce-v3-prod-postgres-1 dropdb -U cauce cauce && docker exec cauce-v3-prod-postgres-1 createdb -U cauce cauce
+   docker exec -i cauce-v3-prod-postgres-1 pg_restore -U cauce -d cauce --no-owner --no-acl < "$D"
    ```
-3. Si el esquema 037 ya fue confirmado y se requiere revertir la BD al estado exacto previo:
+4. Levantar la versión previa **con el compose viejo y sus overrides** (los que corrían antes de la ventana):
    ```bash
-   RESTORE_DUMP=$(ls -t /var/backups/cauce-v3/*.dump | head -n 1)
-   docker exec -i cauce-v3-prod-postgres-1 dropdb -U cauce cauce
-   docker exec -i cauce-v3-prod-postgres-1 createdb -U cauce cauce
-   docker exec -i cauce-v3-prod-postgres-1 pg_restore -U cauce -d cauce --no-owner --no-acl < "$RESTORE_DUMP"
+   docker compose --env-file /etc/cauce-v3/prod.env -f /opt/cauce-v3/deploy/compose.yaml -f /opt/cauce-v3/deploy/compose.postgres.yaml \
+     -f /etc/cauce-v3/compose-overrides/telegram-bridge.active.yaml -f /etc/cauce-v3/compose-overrides/store-fanin.yaml \
+     -f /etc/cauce-v3/compose-overrides/terminal-minrows.yaml -f /etc/cauce-v3/compose-overrides/directiva-20260825.yaml \
+     --project-directory /opt/cauce-v3/deploy up -d --wait --wait-timeout 300
    ```
-4. Levantar la versión previa de los servicios:
-   ```bash
-   docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml up -d --wait
-   ```
-5. Comprobar que los contenedores vuelven a estar operativos:
-   ```bash
-   ./deploy/smoke.sh
-   ```
+5. Comprobar: `./deploy/smoke.sh` (la sonda del esquema dirá 024 — esperado en rollback) y `systemctl unmask cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer && systemctl start` de ambos.

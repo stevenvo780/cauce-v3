@@ -38,7 +38,12 @@ fi
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the
 # target is explicit; the console stage bakes the relay instance id into its nginx route at build.
 INSTANCE_ID="$(sed -n 's/^CAUCE_TERMINAL_RELAY_INSTANCE_ID=//p' "$ENV_FILE" | tail -1)"
-[[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID ausente o invalido en $ENV_FILE (dossier B2: sha256 del DER del leaf del relay)"
+[[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID ausente o invalido en $ENV_FILE (dossier B2)"
+# The relay refuses to start unless the pin equals the DER digest of the client cert it presents to the gateway.
+CLIENT_CERT="$(sed -n 's/^CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH=//p' "$ENV_FILE" | tail -1)"
+[ -r "$CLIENT_CERT" ] || die "no puedo leer CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH ($CLIENT_CERT)"
+[ "$(openssl x509 -in "$CLIENT_CERT" -outform DER | sha256sum | awk '{print $1}')" = "$INSTANCE_ID" ] \
+  || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID no es el sha256 del DER de $CLIENT_CERT"
 docker build -f deploy/Dockerfile --target runtime --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
 docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
   --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
@@ -58,8 +63,13 @@ sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FI
 
 confirmar "¿Migrar (026..037, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
 
+# B1 re-checked at the last instant: any terminal ticket issued meanwhile would abort schema 034.
+PG_CONTAINER="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ENV_FILE" | tail -1)-postgres-1"
+PG_USER="$(sed -n 's/^POSTGRES_USER=//p' "$ENV_FILE" | tail -1)"; PG_DB="$(sed -n 's/^POSTGRES_DB=//p' "$ENV_FILE" | tail -1)"
+fantasmas="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL")"
+[ "$fantasmas" = "0" ] || die "hay $fantasmas sesiones de terminal sin anclar: la 034 abortaria (dossier B1: repite el UPDATE y reintenta)"
 "${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico); NO se desplego nada"
-"${COMPOSE[@]}" up -d --wait --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
+"${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
 "$REPO/deploy/smoke.sh" || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en 037."
 
 echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK |" >> "$REPO/deploy/HISTORIAL.md"

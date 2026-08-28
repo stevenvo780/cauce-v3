@@ -22,11 +22,22 @@ ver="$("${PG[@]}" "SELECT max(version) FROM schema_migrations" 2>/dev/null)"
 if [ "${ver:0:3}" = "037" ]; then echo "OK  esquema $ver"; else echo "ROJO esquema en '$ver' (esperaba 037_*)"; fallo=1; fi
 
 # 4) Fleet alive: >=8 leases with fresh heartbeat (<60s)
-vivos="$("${PG[@]}" "SELECT count(*) FROM connection_leases WHERE last_heartbeat_at > now() - interval '60 seconds'" 2>/dev/null)"
+# The fleet reconnects after `up`, so give it up to 2 minutes before calling it red.
+vivos=0
+for intento in 1 2 3 4 5 6; do
+  vivos="$("${PG[@]}" "SELECT count(*) FROM connection_leases WHERE last_heartbeat_at > now() - interval '60 seconds'" 2>/dev/null)"
+  [ "${vivos:-0}" -ge 8 ] && break
+  [ "$intento" -lt 6 ] && sleep 20
+done
 if [ "${vivos:-0}" -ge 8 ]; then echo "OK  flota: $vivos arriendos frescos"; else echo "ROJO flota: solo ${vivos:-0} arriendos frescos"; fallo=1; fi
 
 # 5) Bus moves messages (6h window: nights are legitimately quiet)
-done6h="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > now() - interval '6 hours'" 2>/dev/null)"
+done6h=0
+for intento in 1 2 3 4 5 6; do
+  done6h="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > now() - interval '6 hours'" 2>/dev/null)"
+  [ "${done6h:-0}" -ge 1 ] && break
+  [ "$intento" -lt 6 ] && sleep 20
+done
 if [ "${done6h:-0}" -ge 1 ]; then echo "OK  bus: $done6h entregas done en 6h"; else echo "ROJO bus: 0 entregas done en 6h"; fallo=1; fi
 
 # 6) Relay NOT in a loop: <30 agent connections in 2 min
