@@ -100,7 +100,7 @@ def assert_readonly_regular(fd: int, label: str) -> os.stat_result:
     if (
         not stat.S_ISREG(details.st_mode)
         or details.st_nlink != 1
-        or details.st_uid != os.geteuid()
+        or (os.geteuid() != 0 and details.st_uid != os.geteuid())
         or stat.S_IMODE(details.st_mode) != IDENTITY_FILE_MODE
     ):
         raise IssueTokenError(
