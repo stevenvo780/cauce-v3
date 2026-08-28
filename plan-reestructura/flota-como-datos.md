@@ -129,7 +129,7 @@ Alias de prueba `probeta` (tenant Steven, room `grp.steven`, harness codex, cont
 
 ## ANEXO A — Desviaciones BD↔físico medidas HOY (el libro de reconciliación, §7-K1)
 
-Las 5 filas que el dueño resuelve EN LA BD (o confirmando la realidad física) antes del commit del snapshot real:
+**RESPONDIDO por el dueño (28-08)**: (1) argos = **OPENCLAW** (¡ambos lados estaban mal: BD decía hermes, físico decía claude!); (2) iza = **openclaw@claw-miguel** (BD tenía razón); (3) kant = rama host en la torre, confirmado (es el encargado de su infraestructura); (4) gaia/heraclito/tales **corren HOY en la VPS** — hay que darles representación física (alias+manifest+unit) en la ronda, no deshabilitarlos. Tabla original de evidencia:
 
 | # | Alias | La BD dice | El físico (json/manifest/units) dice | Pregunta al dueño |
 |---|---|---|---|---|

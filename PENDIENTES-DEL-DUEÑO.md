@@ -1,60 +1,40 @@
-# PENDIENTES DEL DUEÑO — la única página que necesitas leer
+# PENDIENTES DEL DUEÑO — entender el proyecto de verdad
 
-Tus respuestas del 27-08 están TODAS procesadas y ejecutadas o planificadas — el mapa completo está en `plan-reestructura/plan-de-cierre.md` (léelo: 2 minutos). Resumen de lo ya hecho con tus decisiones: migraciones-ficción 029/036 borradas con toda su maquinaria (la flota queda 14/14 activos, Pablo fuera, nadie más se toca) · purga DLQ + herramientas de otras máquinas · carpeta de credenciales git-ignorada con regla dura · compose desde el repo (D3) · alertmanager y Zeus guardián planificados · poda de historiales lista para la ventana · vistas de consola razonadas (se retiran 2, se parten 2, se conservan 4 — el editor de directivas intacto).
-
-Quedan SOLO estas micro-preguntas. Mismo formato: escribe tu decisión en **Respuesta:**.
+Todas tus respuestas anteriores están preservadas en git (historial de este fichero) y ejecutadas o en ronda. Me dijiste que sigo perdido con la estructura REAL del proyecto — tienes razón: mis preguntas de reconciliación fueron el síntoma. Este doc son las dudas de fondo. Responde con matices en cada **Respuesta:**, y el **ANEXO final es tuyo** para explayarte con quiénes participan y los escenarios esenciales.
 
 ---
 
-### [ ] (a) La ventana de despliegue (~2-3h contigo)
-¿Qué día y a qué hora?
+### [ ] (1) Las máquinas — mi mapa está confundido
+Yo manejo: **esta VPS** ("server", donde corren los `cauce-v3-prod-*` y el bus) · **kratos** (remoto por tailscale, con tu CLI y varios contenedores de agentes) · **"la torre"** (¿es kratos, el 9950X3D? ¿u OTRA máquina distinta? — el vocabulario del repo a veces llama "torre" a la VPS y eso me cruza los cables) · **agora-storage** (aparece en el envoltorio y en hegel-ventas — ¿qué es y qué corre ahí?) · **el NAS** (backups) · **tu portátil**. Dame el inventario real: máquina → qué es físicamente → qué papel DEBE tener → qué agentes/contenedores corren ahí.
 
-**Respuesta: en cuanto se termite todo el refactor, llevamos 6 dias de atrazado en el despliegue asi que es prioridad**
+**Respuesta:**
 
-### [ ] (b) Alertmanager — 3 datos
-(1) ¿Qué alias de telegram-bridge es el canal de alertas? Candidatos ya desplegados: argos, jarvis, kant, socrates, zeus (recomiendo uno que NO sea zeus: que zeus reciba por el bus, no por telegram). (2) Escríbele a ese bot por Telegram <24h antes de la ventana (el aprovisionador deriva el chat_id de ahí). (3) ¿Me das un digest pinneado de `prom/alertmanager` o lo elijo yo del Docker Hub oficial?
+### [ ] (2) Los humanos del proyecto
+Steven (tú, dueño/operador), Miguel, Jhon, Isa — ¿quién es cada uno en la vida real del proyecto, qué hace su grupo de agentes POR él, y por qué canal usa el sistema (Telegram / consola / TUI / no lo usa aún)? ¿Pablo era una persona real que se retiró o fue siempre un experimento?
 
-**Respuesta: creo que entendiste mal, las alertas son un mecanismo de notificación para cualquier agente que yoquiera que levante un mensaje en sun canal de forma recurrente como un croj**
+**Respuesta:**
 
-### [ ] (c) Copias a "la torre"
-¿kratos (100.64.0.1, ssh probado hoy) ES tu torre? Ya existe respaldo nocturno VPS→NAS funcionando (con restore probado) y señal de que el NAS reenvía a Drive. ¿Te basta esa ruta, o quieres además VPS→kratos directo / VPS→Drive directo (esto último requiere instalar rclone aquí + credenciales)?
+### [ ] (3) La flota agente por agente — vi `grupos.json` en la raíz con los roles vacíos: ¿es tu borrador de esto?
+Para cada uno de los 14: su MISIÓN en una línea (qué se supone que hace y para quién). Si prefieres, completa los `"rol"` de `grupos.json` y yo lo integro (y puede convertirse en semilla de los perfiles de la migración 026). Los que más me intrigan: argos, socrates, kant (¿"encargado de tu infraestructura" = qué hace en el día a día?), hegel (¿ventas de qué?), gaia/heraclito/tales (¿qué hacen para Jhon y Miguel?).
 
-**Respuesta: la torre es un 9950x3d o el nass tambien preferiblemetne la torre y el drive**
+**Respuesta:**
 
-### [ ] (d) console-legibilidad (6 ficheros)
-NO era basura: son sondas reales contra Chrome que miden contraste/tipografía/CSP de la consola — útiles justo para el mega-refactor que pediste. ¿Se quedan o fuera?
+### [ ] (4) Los escenarios esenciales — qué DEBE funcionar para que el primer despliegue sea un éxito
+Dame los 3-5 flujos de un día normal, de punta a punta. Ejemplos de lo que imagino (corrígeme): "Miguel le escribe a atlas por Telegram y atlas trabaja en ws-humanizar y responde"; "tú editas la directiva de zeus desde /live y el cambio llega a su CLAUDE.md"; "zeus delega en socrates y ves la cadena". ¿Cuáles son los REALES y en qué orden importan?
 
-**Respuesta: creo que tener codigo para eso encucia el codigo, deberian ser agentes con uso de chrome no codigo quemado es menos fiable que un agente que siempre revise**
+**Respuesta:**
 
-### [ ] (e) Registry de producción — garbage collect
-20 tags basura confirmados; el espacio solo se libera con GC dentro del registry del stack vivo → lo corro en la ventana contigo. Y el tag `rc-20260722` tiene informes contradictorios: ¿lo podo también?
+### [ ] (5) Comentarios: tu sensación de contaminación persiste — calibra mi puntería
+Ya cayeron ~3.000 líneas y el trinquete solo baja, pero lo sigues sintiendo sucio. ¿El estándar que quieres es (a) "casi cero: solo invariantes que el código no puede expresar" (bajo los techos progresivamente hasta ahí), o (b) hay zonas concretas que TÚ lees y te ensucian (dime cuáles y las barremos primero)? ¿Los comentarios de tus propias herramientas rescatadas (médico: 709 líneas de comentario) entran en la purga o son tu diario de trabajo?
 
-**Respuesta: si poda, entre menos basura mejor**
+**Respuesta:**
 
-### [ ] (f) SEGURIDAD — la más urgente
-Los contenedores de testcontainers publican Postgres 5432 en `0.0.0.0` con ufw INACTIVO: alcanzables desde internet. ¿Activo ufw (allow ssh/8444/443 + lo que digas) o fuerzo bind a loopback en el helper de tests? (Puedo hacer las dos.)
+### [ ] (6) Idioma: dijiste "homogenizar" — ¿hacia dónde?
+(a) Identificadores exportados en INGLÉS, comentarios/docs en español (el estándar de facto de las zonas limpias hoy); (b) TODO español; (c) TODO inglés. El coste vive sobre todo en el hub de protocol (`ArnesDelAlias` etc., 9 consumidores) y un helper de tests con 62 consumidores.
 
-**Respuesta: hay bases de datos que necesito publicas dejalas asi ña seguriodad no es la prioridad ya lo habia establecido antes**
+**Respuesta:**
 
-### [ ] (g) TU CLI REAL vive solo en tu home — rescatarlo al repo
-Hallazgo de hoy (evidencia: `ordenes/reportes/claude-duplex-cli.md`): `/home/stev/.local/bin/cauce` tiene 1.138 líneas y 21 funciones que NO están en git — incluido `cauce <alias> login` completo, el embrión literal del CLI integral que pediste. Está byte-idéntico en torre y kratos (lo sincronizas a mano), sobre un RAID 0 sin redundancia. Escaneado: LIMPIO de secretos. ¿Lo subo al repo como nueva fuente de `ops/cli/cauce` (y desde ahí tu home se escribe SOLO con el instalador)?
+---
 
-**Respuesta: como dij el CLI hay que evolucionarlo para instalarlo facil en cualquier ordenador que deje de depdner de mi torre, no impiar secretos dejar una carpta con todos secretos ignroada de git pero no se borran ya dije eso siempre provoca que los agentes pierdan autonomia al isntante**
-
-### [ ] (h) ops/guardias/cauce-kratos.sh — la copia de rescate
-No era un duplicado divergido: es el manifiesto de restauración del RAID. Si apruebas (g), la copia queda obsoleta dos veces (el rescate real sería el binario nuevo). ¿La actualizo al binario real junto con (g), o la retiro y el README de guardias apunta a `ops/cli/cauce` como única fuente de restauración?
-
-**Respuesta: si actualiza a los vinarios reales porfavor veo que sigues hablandod e ops y eso ya ahbias dicho que son duplicados hay que evitarlos **
-
-### [ ] (i) El zoológico de kratos
-Por ssh verificado: ~30 variantes `cauce-*` + ~25 .bak en tu `~/.local/bin` de kratos, y **6 guardianes systemd activos sin fichero en el repo** (attach-guard, panel-guard, ai-live, quien-consume, cred-guard-kratos, medico-monitor) + un `cred-guard.py` divergido. Es el patrón "versiones paralelas" vivo HOY en producción. ¿Autorizo una ronda de rescate+censo sobre kratos (leer, versionar lo vivo, retirar lo muerto — sin tocar nada que corra hasta tener el mapa)?
-
-**Respuesta: autorizado, menos duplicados y eso levanta a alerta de se antipatron de cosas duplicadas**
-
-anexo: COmo adjunto entonces veo que mucyhos antipatrones se siguen repitiendo por todo el sistema, hay que tirar un workflow gigante para revisar que no se repitan funcionaldaides inecxistentes o inconexas, codigo ma lescrito, codigo que se repite en varias partes, archivos demaciado grandes, falta de linerts, duplcaidos de dist o duplicados  de estos, mal ordenamiento de los archivos, sobre comentarios que ensucian los contextos de las IA, entre otros elementos y anti patrones que ya habia mencioando y que ya habiamos tratados estas preguntan levnata mi alarma de, realmente no se a terminado de ahcer un buen trabajo en la refactrorizacion, ordenamiento documentacion, para desaaparecer los anti patrones y que se pueda tener un sistema mas limpio, ordenado, documentado y funcional, por lo que se requiere una nueva ronda de refactorizacion y limpieza de todo el sistema para poder tener un sistema mas funcional y limpio.
-
-
-### [ ] (j) Libro de reconciliación BD↔físico — 4 respuestas y la ronda flota-como-datos arranca
-El diseño está en `plan-reestructura/flota-como-datos.md` (Anexo A con la evidencia). La regla de la ronda: el drift se corrige SIEMPRE en la BD, jamás parcheando ficheros. Necesito: (1) argos: ¿claude o hermes?; (2) iza: ¿openclaw@claw-miguel o hermes@ws-humanizar?; (3) kant: confirmar la rama host (BD parece la buena); (4) gaia/heraclito/tales: ¿en qué host corren físicamente, o se deshabilitan en BD hasta tener placement?
-
-**Respuesta: 1: Argos ya es OpenClaw y debe seguir asi, 2: openclaw@claw-miguel, 3: Kant va en la torre por que es el encargado de mi infraestructura, gagia, heraclito y tales corren en la VPS de hecho ya lo hacen ahorita viven en la VPS como debe ser**
+## ANEXO DEL DUEÑO — participantes y escenarios esenciales
+(Este espacio es tuyo: explaya aquí quiénes son partícipes del proyecto y los escenarios esenciales que el sistema debe cumplir. Lo leo, actualizo mi memoria y los docs canónicos, y de aquí salen los perfiles reales de los agentes.)
