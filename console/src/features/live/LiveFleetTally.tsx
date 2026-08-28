@@ -24,7 +24,8 @@ export function LiveFleetTally({
   deriva,
 }: LiveFleetTallyProps) {
   return (
-    <div className="live-tally">
+    <div className="live-tally" role="group" aria-label="Filtrar la flota por estado">
+      <span className="live-tally-rotulo" aria-hidden="true">Filtrar por estado</span>
       {TALLY_ORDER.map((state) => {
         const meta = LIVE_STATE_META[state];
         return (

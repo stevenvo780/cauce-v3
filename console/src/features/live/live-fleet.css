@@ -34,7 +34,18 @@
 
 /* ------------------------------------------------------------------------------- resumen */
 
-.live-tally { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-tally { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* The row reads as a legend until something says otherwise: every chip is a filter, and a chip that
+   looks passive is a control nobody finds. */
+.live-tally-rotulo {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: var(--tipo-apunte);
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
 .live-tally-chip {
   display: inline-flex;
   align-items: center;

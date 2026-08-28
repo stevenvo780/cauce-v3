@@ -106,7 +106,7 @@ it('mantiene las señales del gateway medidas en un mismo instante', async () =>
   relays([relay]);
   renderWithApi(<ObservabilityPage />);
 
-  expect(await screen.findByText('Online')).toBeInTheDocument();
+  expect(await screen.findByText('En línea')).toBeInTheDocument();
   expect(screen.getByText('16')).toBeInTheDocument();
   expect(screen.getByText(/observado:/i)).toBeInTheDocument();
 });
@@ -117,7 +117,7 @@ it('si fallan los relays, las señales siguen en pantalla y la falla se declara'
   renderWithApi(<ObservabilityPage />);
 
   expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudieron leer los origin relays/i);
-  expect(screen.getByText('Online')).toBeInTheDocument();
+  expect(screen.getByText('En línea')).toBeInTheDocument();
 });
 
 /** Eventos de auditoría cruzables contra el relay de arriba por su `trace_id`. */
@@ -148,9 +148,9 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   // The four metrics from the same `observed_at` stay outside the tabs: they show no matter
   // which one you look at. That is the only instant comparison in the console and hiding it
   // would break it.
-  await screen.findByText('Online');
+  await screen.findByText('En línea');
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
-  expect(screen.getByText('Online')).toBeInTheDocument();
+  expect(screen.getByText('En línea')).toBeInTheDocument();
 
   const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
   if (!eventos) throw new Error('section not found');
@@ -215,7 +215,7 @@ it('no pide el audit log hasta que se abre su pestaña', async () => {
   const user = userEvent.setup();
   renderWithApi(<ObservabilityPage />);
 
-  await screen.findByText('Online');
+  await screen.findByText('En línea');
   expect(pedidos).toBe(0);
 
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));

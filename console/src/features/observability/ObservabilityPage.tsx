@@ -54,25 +54,24 @@ export function ObservabilityPage() {
 
   return <>
     <PageHeader
-      eyebrow="Signals"
+      eyebrow="Señales del gateway"
       title="Señales y auditoría"
       description="Snapshot real del gateway/store, el estado durable del egress al origen y el registro inmutable de decisiones, en una sola vista: qué pasó y quién lo autorizó. Una métrica que no llegó se dice «sin dato»; no se sintetizan señales en el browser. SENT exige sent_at; FAILED nunca se presenta como entregado."
       actions={<RefreshButton onClick={reloadAll} loading={resource.loading || relays.loading} />}
     />
     <div className="observation-line"><Activity size={16} />Observado: <Time value={data?.observed_at} /></div>
     <div className="metrics-grid">
-      <Metric label="Online" value={status.online} tone="positive" detail="leases vigentes" />
-      <Metric label="Queued" value={status.queued} tone="warning" detail="deliveries no terminales" />
-      <Metric label="DLQ" value={status.dead_letters} tone="danger" detail="dead letters abiertas" />
-      <Metric label="Outbox" value={status.outbox_pending} detail="wake + origin relay" />
+      <Metric label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
+      <Metric label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
+      <Metric label="DLQ" value={status.dead_letters} tone="danger" detail="entregas muertas abiertas" />
+      <Metric label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
     </div>
 
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Señales y auditoría" />
 
     {tab === 'senales' ? <ViewTabPanel id="senales">
       <div className="trust-grid">
-        <article><Gauge /><div><strong>Queues</strong><p>{queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas. El detalle por delivery, con replay y cancel, está en <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Queues &amp; DLQ</a>.</p></div></article>
-        <article><RadioTower /><div><strong>Egress al origen</strong><p>{relayItems.length} relays hacia el canal de origen, con su estado durable en la tabla de abajo.</p></div></article>
+        <article><Gauge /><div><strong>Colas</strong><p>{queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas. El detalle por entrega, con reinyectar y cancelar, está en <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Queues &amp; DLQ</a>.</p></div></article>
       </div>
       <Panel title="Relays al canal de origen" subtitle="La consola observa; no ejecuta egress ni reintenta relays. Sólo los relays en los que este actor participa: GET /v3/console/origin-relays aplica la fachada de visibilidad que el snapshot de observabilidad no aplica.">
         {relays.error && !relays.data
