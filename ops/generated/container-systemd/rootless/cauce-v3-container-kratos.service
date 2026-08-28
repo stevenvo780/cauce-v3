@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter kratos (ws-humanizar/codex)
+Description=Cauce V3 rootless container adapter kratos (ws-humanizar/claude)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/kratos.env

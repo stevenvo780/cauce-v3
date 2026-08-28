@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter salva (ws-isa/codex)
+Description=Cauce V3 rootless container adapter salva (ws-isa/claude)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/salva.env

@@ -43,7 +43,7 @@
     "heraclito": {
       "container": "agv2-jhon-heraclito-oc",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "claude",
       "home": "/home/claw",
       "room": "grp.jhon",
       "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
@@ -93,7 +93,7 @@
     "kratos": {
       "container": "ws-humanizar",
       "enabled": true,
-      "harness": "codex",
+      "harness": "claude",
       "home": "/home/dev",
       "room": "grp.miguel",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
@@ -103,7 +103,7 @@
     "salva": {
       "container": "ws-isa",
       "enabled": true,
-      "harness": "codex",
+      "harness": "claude",
       "home": "/home/dev",
       "room": "grp.isa",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
@@ -123,7 +123,7 @@
     "tales": {
       "container": "agv2-jhon-tales-oc",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "codex",
       "home": "/home/claw",
       "room": "grp.jhon",
       "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",

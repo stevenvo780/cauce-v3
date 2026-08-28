@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter heraclito (agv2-jhon-heraclito-oc/openclaw)
+Description=Cauce V3 rootless container adapter heraclito (agv2-jhon-heraclito-oc/claude)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/heraclito.env

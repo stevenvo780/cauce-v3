@@ -6,8 +6,8 @@ spec:
   tenant: Jhon
   room: grp.jhon
   alias: tales
-  harness: openclaw
-  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
+  harness: codex
+  profile: {seedOnConnect: true, configScope: alias}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_TALES_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

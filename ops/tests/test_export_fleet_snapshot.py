@@ -218,14 +218,18 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
                 )
                 self.assertEqual(document["fleet"][alias]["runtimeStateDirectory"], literal)
 
-    def test_rejects_runtime_state_directory_drift(self) -> None:
+    def test_warns_on_runtime_state_directory_drift(self) -> None:
+        # DB is the truth: drift is reported to stderr, never rejected (historical state dirs exist).
         drifting = agent("kant")
         drifting["state_directory"] = "/var/lib/cauce-v3/aliases/kant"
-        with self.assertRaisesRegex(MODULE.SnapshotError, "state_directory drifts"):
-            MODULE.snapshot_document(
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+                MODULE.snapshot_document(
                 source(agents=[drifting]),
                 allowed_tenants=frozenset({"Steven"}),
             )
+        self.assertIn("state_directory drifts", stderr.getvalue())
+
 
     def test_retired_agent_does_not_require_a_membership(self) -> None:
         document = MODULE.snapshot_document(

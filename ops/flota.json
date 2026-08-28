@@ -47,7 +47,7 @@
     "heraclito": {
       "container": "agv2-jhon-heraclito-oc",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "claude",
       "home": "/home/claw",
       "role": "agent",
       "room": "grp.jhon",
@@ -102,7 +102,7 @@
     "kratos": {
       "container": "ws-humanizar",
       "enabled": true,
-      "harness": "codex",
+      "harness": "claude",
       "home": "/home/dev",
       "role": "agent",
       "room": "grp.miguel",
@@ -113,7 +113,7 @@
     "salva": {
       "container": "ws-isa",
       "enabled": true,
-      "harness": "codex",
+      "harness": "claude",
       "home": "/home/dev",
       "role": "agent",
       "room": "grp.isa",
@@ -135,7 +135,7 @@
     "tales": {
       "container": "agv2-jhon-tales-oc",
       "enabled": true,
-      "harness": "openclaw",
+      "harness": "codex",
       "home": "/home/claw",
       "role": "agent",
       "room": "grp.jhon",

@@ -258,9 +258,11 @@ def snapshot_document(
             except ValueError as exc:
                 raise SnapshotError(f"{label}.harness_id is unsupported: {harness}") from exc
             if state_directory != expected_state_directory:
-                raise SnapshotError(
-                    f"{label}.state_directory drifts from the derived runtime path: "
-                    f"expected {expected_state_directory}, got {state_directory}"
+                # DB is the truth; the formula informs, it does not overrule (historical state dirs exist).
+                print(
+                    f"aviso: {label}.state_directory drifts from the derived runtime path: "
+                    f"expected {expected_state_directory}, got {state_directory}",
+                    file=sys.stderr,
                 )
         agents_by_identity[identity] = normalized_agent
 

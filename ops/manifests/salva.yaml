@@ -6,7 +6,7 @@ spec:
   tenant: Isa
   room: grp.isa
   alias: salva
-  harness: codex
+  harness: claude
   profile: {seedOnConnect: true, configScope: alias}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_SALVA_RELAY_URL, requiredScheme: wss}
@@ -15,5 +15,6 @@ spec:
     clientCertificate: CAUCE_SALVA_CERT_PATH
     clientKey: CAUCE_SALVA_KEY_PATH
     certificateAuthority: CAUCE_SALVA_CA_PATH
-  process: {executablePathEnv: CAUCE_SALVA_EXEC_PATH}
+  process:
+    executablePathEnv: CAUCE_SALVA_EXEC_PATH
   stateDirectory: /var/lib/cauce-v3/aliases/salva

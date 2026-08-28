@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter tales (agv2-jhon-tales-oc/openclaw)
+Description=Cauce V3 rootless container adapter tales (agv2-jhon-tales-oc/codex)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/tales.env

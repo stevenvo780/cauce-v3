@@ -63,9 +63,8 @@
       "systemdUser": "stev",
       "user": "claw",
       "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
       "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
-      "harness": "openclaw",
+      "harness": "claude",
       "membershipRole": "agent"
     },
     "iza": {
@@ -124,7 +123,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
-      "harness": "codex",
+      "harness": "claude",
       "membershipRole": "agent"
     },
     "salva": {
@@ -136,7 +135,7 @@
       "user": "dev",
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
-      "harness": "codex",
+      "harness": "claude",
       "membershipRole": "agent"
     },
     "socrates": {
@@ -157,9 +156,8 @@
       "systemdUser": "stev",
       "user": "claw",
       "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
       "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",
-      "harness": "openclaw",
+      "harness": "codex",
       "membershipRole": "agent"
     },
     "zeus": {

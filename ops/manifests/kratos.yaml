@@ -6,7 +6,7 @@ spec:
   tenant: Miguel
   room: grp.miguel
   alias: kratos
-  harness: codex
+  harness: claude
   profile: {seedOnConnect: true, configScope: alias}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_KRATOS_RELAY_URL, requiredScheme: wss}
@@ -15,5 +15,6 @@ spec:
     clientCertificate: CAUCE_KRATOS_CERT_PATH
     clientKey: CAUCE_KRATOS_KEY_PATH
     certificateAuthority: CAUCE_KRATOS_CA_PATH
-  process: {executablePathEnv: CAUCE_KRATOS_EXEC_PATH}
+  process:
+    executablePathEnv: CAUCE_KRATOS_EXEC_PATH
   stateDirectory: /var/lib/cauce-v3/aliases/kratos

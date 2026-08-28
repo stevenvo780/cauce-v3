@@ -6,8 +6,8 @@ spec:
   tenant: Jhon
   room: grp.jhon
   alias: heraclito
-  harness: openclaw
-  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
+  harness: claude
+  profile: {seedOnConnect: true, configScope: alias}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_HERACLITO_RELAY_URL, requiredScheme: wss}
   secretPathEnv:
@@ -15,5 +15,6 @@ spec:
     clientCertificate: CAUCE_HERACLITO_CERT_PATH
     clientKey: CAUCE_HERACLITO_KEY_PATH
     certificateAuthority: CAUCE_HERACLITO_CA_PATH
-  process: {executablePathEnv: CAUCE_HERACLITO_EXEC_PATH}
+  process:
+    executablePathEnv: CAUCE_HERACLITO_EXEC_PATH
   stateDirectory: /var/lib/cauce-v3/aliases/heraclito

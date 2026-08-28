@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 alias consumer salva (Isa/codex)
+Description=Cauce V3 alias consumer salva (Isa/claude)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
 ConditionPathExists=/etc/cauce-v3/aliases/salva.env
@@ -14,7 +14,7 @@ UMask=0077
 Environment=CAUCE_ALIAS=salva
 Environment=CAUCE_TENANT=Isa
 Environment=CAUCE_ROOM=grp.isa
-Environment=CAUCE_HARNESS=codex
+Environment=CAUCE_HARNESS=claude
 Environment=CAUCE_SEMBRAR_PERFIL=1
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
