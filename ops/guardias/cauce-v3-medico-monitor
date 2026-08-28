@@ -95,6 +95,9 @@ RE_PUENTE_NATIVO = re.compile(
     r"/packages/adapter-sdk/dist/bridge/(openclaw-stdin-bridge\.mjs|hermes-stdin-bridge\.py)"
 )
 RE_ADAPTADOR = re.compile(r"cauce-container-runtime\.py\s+run\s+--alias\s+(?P<alias>\S+)")
+# Host-side `docker exec` client: identity is its OWN argv[0..1], anchored -- a bridge path
+# it passes as DATA to the daemon must not count as ITS identity (see es_supervisor_no_puente).
+RE_CLIENTE_DOCKER_EXEC = re.compile(r"^(?:\S*/)?docker\s+exec\b")
 RE_BUNDLE = re.compile(r"--bundle\s+(?P<bundle>\S+)")
 RE_DIGEST = re.compile(r"--bundle-digest\s+(?P<digest>\S+)")
 RE_CTR = re.compile(r"--container-id\s+(?P<ctr>\S+)")
@@ -603,13 +606,9 @@ def sonda_credenciales(adaptadores):
                 continue
             h = d.get("huella")
             if h is None:
-                # setup-token: has no refreshToken BY DESIGN and lasts ~364 days. Not a
-                # fault; that's the correct pattern. It is only a problem if the access is
-                # already expired or about to expire, because then it goes mute with
-                # nothing to renew with. An absent or 0 "exp" is NOT an expired token, just
-                # an unreadable expiry: treating it as epoch 1970 produces
-                "expires in -496233 h" (56 years) and a broken-credential alert on a healthy
-                alias. A failed measurement is not a negative result.
+                # setup-token: no refreshToken BY DESIGN (~364d), fine unless access is
+                # already expired. Absent/0 "exp" is an unreadable expiry, NOT epoch 1970 --
+                # treating it as such would false-alert a healthy alias.
                 exp_ms = int(d.get("exp") or 0)
                 if exp_ms <= 0:
                     continue
@@ -793,14 +792,38 @@ def captura_en_vuelo(alias):
 
 # --------------------------------------------------------------------------- reparaciones
 
-def matar_por_pid(host, pid, args_esperados):
-    """Kill ONE process by PID, reconfirming its identity just before. Never by name."""
+def es_supervisor_no_puente(cmdline):
+    """True if a cmdline that otherwise matches RE_PUENTE/RE_PUENTE_NATIVO is actually the
+    adapter's OWN host-side wrapper -- a `docker exec` client, or anything else carrying its
+    `cauce-container-runtime.py run --alias` signature -- and NOT the turn bridge itself.
+
+    A wrapper's cmdline can legitimately embed a bridge path as one of its OWN arguments
+    (it is what tells `docker exec` which program to run inside the container); that alone
+    is not proof it IS the bridge. This is what RE_PUENTE's unanchored `.search()` cannot
+    tell apart on its own.
+    """
+    return bool(RE_CLIENTE_DOCKER_EXEC.search(cmdline) or RE_ADAPTADOR.search(cmdline))
+
+
+def matar_por_pid(host, pid, args_esperados, contenedor=None, alias=None):
+    """Kill ONE process by PID, reconfirming its identity just before. Never by name.
+
+    Refuses ANY host PID that is the adapter's own wrapper (see `es_supervisor_no_puente`):
+    that is the whole adapter connection, never the stuck turn. When the alias's container
+    is known, the search and the kill both move INSIDE it (`docker exec <c> ...`), by a PID
+    read from the container's own process table -- never the host's -- and scoped to `alias`.
+    """
     rc, out, _ = sh(host, "tr '\\0' ' ' < /proc/%d/cmdline 2>/dev/null" % pid, timeout=30)
     if rc != 0 or not out.strip():
         return False, "el proceso ya no existe"
     if not RE_PUENTE.search(out) and not RE_PUENTE_NATIVO.search(out):
         # Identity change: the PID was reused. Do not touch.
         return False, "el PID cambio de identidad, no se toca"
+    if es_supervisor_no_puente(out):
+        if contenedor and alias:
+            return matar_puente_dentro_del_contenedor(host, contenedor, alias)
+        return False, ("el pid %d es el supervisor/cliente docker exec del adaptador, no la "
+                       "puente: no se toca en el host" % pid)
     sh(host, "kill -TERM %d" % pid, timeout=30)
     sh(host, "sleep 10", timeout=40)
     rc, _, _ = sh(host, "test -d /proc/%d" % pid, timeout=30)
@@ -809,6 +832,44 @@ def matar_por_pid(host, pid, args_esperados):
         sh(host, "sleep 5", timeout=30)
         rc, _, _ = sh(host, "test -d /proc/%d" % pid, timeout=30)
     return (rc != 0), ("el proceso desaparecio" if rc != 0 else "SIGUE VIVO tras SIGKILL")
+
+
+def matar_puente_dentro_del_contenedor(host, contenedor, alias):
+    """Same repair, but resolved and applied entirely INSIDE the container: the process
+    table is read via `docker exec <c> ps`, never the host's, so a host-side wrapper can
+    never be a candidate; the kill is `docker exec <c> kill`, by that container-internal
+    PID, never a host PID. A container can host more than one alias's bridge (e.g.
+    ws-humanizar hosts both atlas and kratos), so the path match alone is not enough --
+    RE_PUENTE's own `alias` group must equal the caller's `alias` too."""
+    rc, out, _ = sh(host, "docker exec %s ps -eo pid,args --no-headers 2>/dev/null" % contenedor,
+                    timeout=30)
+    if rc != 0 or not out.strip():
+        return False, "no pude listar procesos dentro del contenedor %s" % contenedor
+    objetivo = None
+    for linea in out.split("\n"):
+        partes = linea.strip().split(None, 1)
+        if len(partes) != 2 or not partes[0].isdigit():
+            continue
+        cpid, cargs = partes
+        if es_supervisor_no_puente(cargs):
+            continue
+        m = RE_PUENTE.search(cargs)
+        if m and m.group("alias") == alias:
+            objetivo = int(cpid)
+            break
+    if objetivo is None:
+        return False, "no encontre la puente del alias %s DENTRO del contenedor %s" % (
+            alias, contenedor)
+    sh(host, "docker exec %s kill -TERM %d" % (contenedor, objetivo), timeout=30)
+    sh(host, "sleep 10", timeout=40)
+    rc, _, _ = sh(host, "docker exec %s test -d /proc/%d" % (contenedor, objetivo), timeout=30)
+    if rc == 0:
+        sh(host, "docker exec %s kill -KILL %d" % (contenedor, objetivo), timeout=30)
+        sh(host, "sleep 5", timeout=30)
+        rc, _, _ = sh(host, "docker exec %s test -d /proc/%d" % (contenedor, objetivo), timeout=30)
+    return (rc != 0), (("el proceso desaparecio dentro del contenedor (pid interno %d)"
+                        % objetivo) if rc != 0 else
+                       "SIGUE VIVO dentro del contenedor tras SIGKILL")
 
 
 def reiniciar_puente_telegram():
@@ -1600,7 +1661,8 @@ def main():
         if args.solo_detectar:
             continue
         antes = [e for e in entregas_trabadas() if e["alias"] == alias]
-        ok, det = matar_por_pid(p["host"], p["pid"], p["args"])
+        contenedor = adaptadores.get(alias, {}).get("contenedor")
+        ok, det = matar_por_pid(p["host"], p["pid"], p["args"], contenedor=contenedor, alias=alias)
         efecto = "no verificado"
         if ok:
             sh("kratos", "sleep 20", timeout=50)
@@ -1612,7 +1674,8 @@ def main():
                       % len(cerradas)) if cerradas else \
                      "NO VERIFICADO: las entregas siguen en el mismo estado"
         acciones.append({"accion": "matar_turno_colgado", "alias": alias, "pid": p["pid"],
-                         "host": p["host"], "ok": ok, "detalle": det, "verificado": efecto})
+                         "host": p["host"], "cmdline": p["args"][:500], "ok": ok,
+                         "detalle": det, "verificado": efecto})
 
     # --- 3) entregas tomadas y nunca terminadas ----------------------------------------
     # UN TURNO LARGO NO ES UN TURNO TRABADO. Antes bastaba con la edad, y por eso el guardia
