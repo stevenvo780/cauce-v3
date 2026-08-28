@@ -23,23 +23,11 @@ import { LiveFleetPage } from './LiveFleetPage';
  * Las capas se presentan en un diálogo (`role="dialog"`). Pruebas de foco, Escape, roles ARIA y contenido.
  */
 
+import { configConBrief } from './agent-state-fixtures';
+
 beforeEach(() => {
   window.history.replaceState({}, '', '/live');
 });
-
-/** El mismo registro que publica la proyección legacy, para que el brief de kant sea estable. */
-function configConBrief(roleBrief: string) {
-  server.use(http.get('*/v3/console/config', () => HttpResponse.json({
-    revision: 1,
-    observed_at: new Date().toISOString(),
-    agents: [
-      { tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', enabled: true, role_brief: roleBrief },
-    ],
-    tenants: [], rooms: [], memberships: [], acl_edges: [], harness_definitions: [],
-    role_policies: [], chain_policies: [], egress_destinations: [], provider_accounts: [],
-    alias_routing_ceiling: [], agent_account_bindings: [], revisions: [],
-  })));
-}
 
 async function abrirPestanaDeKant() {
   const user = userEvent.setup();

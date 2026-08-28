@@ -7,49 +7,16 @@ import { renderWithApi } from '../../test/render';
 import {
   CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
 } from '../../navigation';
-
-interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
-type Usuario = ReturnType<typeof userEvent.setup>;
-
-async function irA(user: Usuario, pestana: RegExp) {
-  await user.click(await screen.findByRole('tab', { name: pestana }));
-}
+import {
+  irA, recordChanges, snapshotDeConfig, servirConfig,
+  type ChangeRequest,
+} from './ConfigPage.test-helpers';
 
 const ESPACIOS = /espacios y miembros/i;
 const PERMISOS = /^permisos$/i;
 const ROLES = /roles de agente/i;
 const AVISOS = /avisos y cadena/i;
 const HISTORIAL = /historial y json/i;
-
-function recordChanges(sink: ChangeRequest[]) {
-  server.use(http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
-    const input = await request.json() as ChangeRequest;
-    sink.push(input);
-    return HttpResponse.json({
-      applied: input.dry_run !== true, dry_run: input.dry_run === true,
-      revision: input.dry_run ? 1 : 2, mutation: input.mutation,
-      inverse_mutation: input.mutation, rolled_back_revision_id: null,
-      summary: 'mock configuration validation',
-    }, { status: input.dry_run ? 200 : 201 });
-  }));
-}
-
-function snapshotDeConfig(revision: number) {
-  return {
-    revision,
-    observed_at: new Date().toISOString(),
-    tenants: [{ id: 'Miguel', display_name: 'Miguel', is_hub: false, enabled: true }],
-    rooms: [{ id: 'grp.miguel', tenant_id: 'Miguel', display_name: 'grp.miguel', enabled: true }],
-    memberships: [{ tenant_id: 'Miguel', room_id: 'grp.miguel', alias: 'janus', role: 'agent', enabled: true }],
-    acl_edges: [],
-    role_policies: [{ role: 'agent' }, { role: 'operator' }],
-    revisions: [],
-  };
-}
-
-function servirConfig(snapshot: () => Record<string, unknown>) {
-  server.use(http.get('*/v3/console/config', () => HttpResponse.json(snapshot())));
-}
 
 function snapshotConAgentes() {
   return {

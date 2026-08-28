@@ -56,11 +56,28 @@ export declare class TicketError extends Error {
   readonly reason: string;
 }
 
+export interface TicketOverrides {
+  sid?: string;
+  op?: string;
+  sub?: string;
+  mode?: string;
+  tenant?: string;
+  alias?: string;
+  container?: string;
+  generation?: string;
+  image?: string;
+  uid?: number;
+  user?: string;
+  iat?: number;
+  exp?: number;
+}
+
 export declare function b64urlEncode(bytes: Uint8Array | Buffer): string;
 export declare function b64urlDecode(text: string): Buffer;
 export declare function deriveAliasKey(master: Buffer | string, tenant: string, alias: string): Buffer;
 export declare function canonicalTicketPayload(payload: Partial<TicketPayload>): string;
 export declare function mintTicket(aliasKey: Buffer, payload: Partial<TicketPayload>): string;
+export declare function ticketPayload(overrides?: TicketOverrides): TicketPayload;
 export declare function verifyTicket(aliasKey: Buffer, ticket: unknown, options?: TicketVerifyOptions): TicketVerifyResult;
 export declare function closeCodeForTicketReason(reason: string): number;
 export declare function encodeFrame(tag: number, payload?: Buffer | Uint8Array): Buffer;

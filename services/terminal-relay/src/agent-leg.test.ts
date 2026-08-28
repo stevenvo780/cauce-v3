@@ -4,18 +4,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   AgentConnection, FEATURE_SESSION_OUTPUT_FLOW_CONTROL, FEATURE_WRITE_GOVERNANCE,
   MAX_AGENT_CRITICAL_QUEUE_BYTES, MAX_AGENT_WRITE_QUEUE_BYTES,
-  type AgentHello
 } from './agent-leg.js';
 import {
   decodeDataFrame, decodeJsonFrame, encodeJsonFrame, FrameDecoder, FRAME_TAGS, MAX_DATA_BYTES,
 } from './framing.js';
+import { agentHello } from './relay-test-fixtures.js';
 
 const SESSION = '11111111-2222-3333-4444-555555555555';
-const HELLO: AgentHello = {
-  tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 'a'.repeat(32),
-  image_id: 'sha256:beef', runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw',
-  agent_version: '2', modes: ['shell', 'harness'], features: [FEATURE_SESSION_OUTPUT_FLOW_CONTROL]
-};
+const HELLO = agentHello({ features: [FEATURE_SESSION_OUTPUT_FLOW_CONTROL] });
 
 class BackpressuredSocket extends EventEmitter {
   destroyed = false;

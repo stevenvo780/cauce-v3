@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { TelegramActivityIndicator } from '../src/activity.js';
 import { TelegramEgressWorker } from '../src/egress.js';
 import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
-import type { TelegramApi } from '../src/types.js';
 import {
   config, FailingActivityTelegram, FakeTelegram, GROUP_CHAT_ID, groupRelay,
   legacyGroupConfig, MemoryEgressRepository, proactiveRelay, RejectingSendTelegram, relay
@@ -354,20 +353,15 @@ describe('Telegram fenced egress', () => {
   });
 
   it('keeps a multi-chunk partial send dead unless every chunk is confirmed sent', async () => {
-    let calls = 0;
-    const api: TelegramApi = {
-      getIdentity: async () => ({ id: '900001' }),
-      getUpdates: async () => [],
-      getFile: async () => { throw new Error('no file fixture'); },
-      downloadFile: async () => { throw new Error('no file fixture'); },
-      setMessageReaction: async () => undefined,
-      sendChatAction: async () => undefined,
-      sendText: async () => {
-        calls += 1;
-        if (calls === 2) throw new TelegramApiError('network outcome unknown', false, undefined, false);
-        return { message_id: String(calls) };
+    class FlakyChunkTelegram extends FakeTelegram {
+      calls = 0;
+      override async sendText() {
+        this.calls += 1;
+        if (this.calls === 2) throw new TelegramApiError('network outcome unknown', false, undefined, false);
+        return { message_id: String(this.calls) };
       }
-    };
+    }
+    const api = new FlakyChunkTelegram();
     const repository = new MemoryEgressRepository(relay({
       payload: { result: { text: `${'a'.repeat(4_096)}b` } }
     }));
@@ -381,7 +375,7 @@ describe('Telegram fenced egress', () => {
     await new TelegramEgressWorker({
       repository, aliases: [config()], apis: new Map([['kant', api]])
     }).runOnce();
-    expect(calls).toBe(2);
+    expect(api.calls).toBe(2);
   });
 
   it('ACKs a multi-chunk event sent only after every chunk is durably sent', async () => {

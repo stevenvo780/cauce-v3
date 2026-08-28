@@ -1,0 +1,80 @@
+{
+  "grupos": [
+    {
+      "nombre": "isa",
+      "agentes": [
+        {
+          "nombre": "salva",
+          "rol": ""
+        }
+      ]
+    },
+    {
+      "nombre": "steven",
+      "agentes": [
+        {
+          "nombre": "jarvis",
+          "rol": ""
+        },
+        {
+          "nombre": "zeus",
+          "rol": ""
+        },
+        {
+          "nombre": "argos",
+          "rol": ""
+        },
+        {
+          "nombre": "socrates",
+          "rol": ""
+        },
+        {
+          "nombre": "kant",
+          "rol": ""
+        }
+      ]
+    },
+    {
+      "nombre": "jhon",
+      "agentes": [
+        {
+          "nombre": "tales",
+          "rol": ""
+        },
+        {
+          "nombre": "heraclito",
+          "rol": ""
+        },
+        {
+          "nombre": "hegel",
+          "rol": ""
+        }
+      ]
+    },
+    {
+      "nombre": "miguel",
+      "agentes": [
+        {
+          "nombre": "atlas",
+          "rol": ""
+        },
+        {
+          "nombre": "kratos",
+          "rol": ""
+        },
+        {
+          "nombre": "iza",
+          "rol": ""
+        },
+        {
+          "nombre": "janus",
+          "rol": ""
+        },
+        {
+          "nombre": "gaia",
+          "rol": ""
+        }
+      ]
+    }
+  ]
+}

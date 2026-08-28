@@ -16,7 +16,7 @@ Que detecta, en orden de gravedad:
 La huella es sha256(refreshToken)[:10]: identifica la cuenta sin exponer el secreto.
 Salida: una linea por credencial + codigo de salida 1 si hay algo MUERTO o URGENTE.
 """
-import json, subprocess, hashlib, datetime, sys
+import json, subprocess, datetime, sys
 
 # (contenedor, ruta dentro del contenedor, etiqueta)
 OBJETIVOS = [

@@ -3,7 +3,6 @@
 // Run: pnpm vitest run tests/terminal-pty/relay-contract-agent.test.ts
 
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { createServer, type TLSSocket, type Server as TlsServer } from 'node:tls';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +13,8 @@ import { startFakeAgent, type FakeAgentHandle } from './fake-pty-agent.mjs';
 import {
   FrameDecoder, TAG, TAG_NAME, decodeDataPayload, decodeJsonPayload,
   deriveAliasKey, encodeDataFrame, encodeFrame, encodeJsonFrame, mintTicket,
-  type DecodedFrame, type TicketPayload,
+  ticketPayload as protocolTicketPayload,
+  type DecodedFrame, type TicketOverrides, type TicketPayload,
 } from './protocol.mjs';
 
 const MASTER_KEY_B64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
@@ -29,42 +29,15 @@ const otherAliasKey = deriveAliasKey(MASTER_KEY_B64, TENANT, 'kant');
 
 let tls: SelfSignedCert;
 
-interface TicketOverrides {
-  sid?: string;
-  op?: string;
-  sub?: string;
-  mode?: string;
-  tenant?: string;
-  alias?: string;
-  container?: string;
-  generation?: string;
-  uid?: number;
-  user?: string;
-  iat?: number;
-  exp?: number;
-}
-
-function ticketPayload(overrides: TicketOverrides = {}): TicketPayload {
-  const now = Math.floor(Date.now() / 1000);
-  return {
-    v: 1,
-    sid: overrides.sid ?? randomUUID(),
-    op: overrides.op ?? 'unattributed:console-basic-auth',
-    sub: overrides.sub ?? 'Steven:kant',
-    tgt: {
-      tenant: overrides.tenant ?? TENANT,
-      alias: overrides.alias ?? ALIAS,
-      container: overrides.container ?? CONTAINER,
-      generation: overrides.generation ?? GENERATION,
-      image: IMAGE,
-      uid: overrides.uid ?? 1000,
-      user: overrides.user ?? 'claw',
-    },
-    mode: overrides.mode ?? 'shell',
-    iat: overrides.iat ?? now - 1,
-    exp: overrides.exp ?? now + 30,
-  };
-}
+const ticketPayload = (overrides: TicketOverrides = {}): TicketPayload =>
+  protocolTicketPayload({
+    tenant: TENANT,
+    alias: ALIAS,
+    container: CONTAINER,
+    generation: GENERATION,
+    image: IMAGE,
+    ...overrides,
+  });
 
 /**
  * Stands in for the relay's agent-facing TLS listener while we exercise the fake agent on

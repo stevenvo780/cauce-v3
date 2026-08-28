@@ -23,7 +23,6 @@ gastado. `verificar` es exactamente el chequeo de eso.
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 

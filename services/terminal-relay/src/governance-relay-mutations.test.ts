@@ -9,7 +9,7 @@ import type { TLSSocket } from 'node:tls';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   AgentConnection, FEATURE_WRITE_GOVERNANCE,
-  FEATURE_WRITE_GOVERNANCE_BATCH, type AgentHello,
+  FEATURE_WRITE_GOVERNANCE_BATCH,
 } from './agent-leg.js';
 import {
   FRAME_TAGS, FrameDecoder, decodeDataFrame, decodeJsonFrame, encodeJsonFrame, type Frame,
@@ -18,23 +18,19 @@ import {
   GOVERNANCE_WRITE_BATCH_PATH, GOVERNANCE_WRITE_PATH,
   parseWriteBatchRequest, parseWriteRequest, setupGovernanceRelay,
 } from './governance-relay.js';
+import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 const TOKEN = 'token-compartido-con-el-gateway-0123456789';
 
-const HELLO: AgentHello = {
-  tenant_id: 'Steven',
+const HELLO = agentHello({
   alias: 'zeus',
   container_id: 'claw-zeus',
-  generation: 'a'.repeat(32),
-  image_id: 'sha256:beef',
   runtime_user: 'dev',
-  runtime_uid: 1000,
   home: '/home/dev',
   harness: 'claude',
   agent_version: '0.4.0',
-  modes: ['shell', 'harness'],
-  features: ['read_governance']
-};
+  features: ['read_governance'],
+});
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
 const TIEMPO_LIMITE_MS = 300;

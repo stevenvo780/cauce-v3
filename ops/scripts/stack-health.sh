@@ -66,6 +66,7 @@ gateway_port=$(env_value GATEWAY_PORT 8080)
 console_port=$(env_value CONSOLE_PORT 8081)
 node "$ROOT/scripts/healthcheck.mjs" "http://127.0.0.1:$gateway_port/health/ready" ready
 node -e "fetch('http://127.0.0.1:$console_port/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+# shellcheck disable=SC2016
 CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" dev exec -T postgres \
   sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null && test "$(psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT 1")" = 1'
 CAUCE_ENV_FILE="$env_file" "$ROOT/scripts/compose.sh" dev exec -T dispatcher \

@@ -3,13 +3,14 @@ import type { TLSSocket } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AgentConnection, FEATURE_READ_GOVERNANCE_DONE,
-  type AgentHello, parseAgentHello,
+  parseAgentHello,
 } from './agent-leg.js';
 import {
   FRAME_TAGS, FrameDecoder, SESSION_ID_BYTES, encodeFrame, encodeJsonFrame,
   type Frame
 } from './framing.js';
 import { requestFileRead } from './gateway-client.js';
+import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 /**
  * Lectura de ficheros de gobierno por el cable del pty-agent.
@@ -18,20 +19,15 @@ import { requestFileRead } from './gateway-client.js';
  * justamente el decodificado de tramas y el reensamblado, que es donde un doble mentiría.
  */
 
-const HELLO: AgentHello = {
-  tenant_id: 'Steven',
+const HELLO = agentHello({
   alias: 'zeus',
   container_id: 'claw-zeus',
-  generation: 'a'.repeat(32),
-  image_id: 'sha256:beef',
   runtime_user: 'dev',
-  runtime_uid: 1000,
   home: '/home/dev',
   harness: 'claude',
   agent_version: '0.4.0',
-  modes: ['shell', 'harness'],
-  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE]
-};
+  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE],
+});
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
 

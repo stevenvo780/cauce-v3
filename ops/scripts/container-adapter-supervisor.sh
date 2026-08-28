@@ -675,6 +675,7 @@ ensure_claude_binary() {
   # This does NOT install; installation must be pre-built into the container.
   # Fail loudly if version is wrong to prevent silent misconfiguration.
   if [[ $harness == claude ]]; then
+    # shellcheck disable=SC2016
     docker_id_exec --user "$container_user" bash -c '
       set -euo pipefail
       home_dir="'"$container_home"'"
@@ -720,6 +721,7 @@ ensure_hermes_runtime() {
     --uv-archive-url "$hermes_uv_archive_url" --uv-archive-sha256 "$hermes_uv_archive_sha" \
     < "$HERMES_RUNTIME_VERIFIER" >/dev/null 2>&1 \
     || die "Hermes runtime verification failed for $alias_name (immutable release differs)" 78
+  # shellcheck disable=SC2016
   docker_id_exec --user "$container_user" sh -c \
     'set -eu; cd "$1"; HERMES_HOME="$2" PYTHONDONTWRITEBYTECODE=1 "$3" -c '\''import hermes_cli.oneshot'\''' \
     sh "$hermes_source_dir" "${CONFIG[HERMES_HOME]}" "${CONFIG[HERMES_PYTHON]}" \

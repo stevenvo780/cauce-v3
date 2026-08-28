@@ -2,20 +2,19 @@ import { createHash } from 'node:crypto';
 import type { TLSSocket } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AgentConnection, FEATURE_WRITE_GOVERNANCE_BATCH, type AgentHello,
+  AgentConnection, FEATURE_WRITE_GOVERNANCE_BATCH,
 } from './agent-leg.js';
 import {
   decodeDataFrame, decodeJsonFrame, encodeJsonFrame, FrameDecoder, FRAME_TAGS, type Frame,
 } from './framing.js';
 import { requestFileWriteBatch } from './gateway-client.js';
+import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 const ROOT = '/home/claw/.openclaw/workspace';
-const HELLO: AgentHello = {
-  tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: 'a'.repeat(32),
-  image_id: 'sha256:beef', runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw',
-  openclaw_workspace: ROOT, agent_version: '0.6.0', modes: ['shell', 'harness'],
+const HELLO = agentHello({
+  openclaw_workspace: ROOT, agent_version: '0.6.0',
   features: [FEATURE_WRITE_GOVERNANCE_BATCH],
-};
+});
 
 function sha(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex');

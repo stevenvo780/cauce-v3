@@ -15,7 +15,8 @@ import { createSelfSignedCert, type SelfSignedCert } from './certs.mjs';
 import { startFakeGateway, type FakeGatewayHandle } from './fake-gateway.mjs';
 import { startFakeAgent, type FakeAgentHandle } from './fake-pty-agent.mjs';
 import {
-  CLOSE_CODE, deriveAliasKey, mintTicket, type TicketPayload,
+  CLOSE_CODE, deriveAliasKey, mintTicket, ticketPayload as protocolTicketPayload,
+  type TicketOverrides, type TicketPayload,
 } from './protocol.mjs';
 
 const MASTER_KEY_B64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
@@ -33,42 +34,15 @@ const repoRoot = new URL('../../', import.meta.url);
 let tls: SelfSignedCert;
 let relayInstanceId = '';
 
-interface TicketOverrides {
-  sid?: string;
-  op?: string;
-  sub?: string;
-  mode?: string;
-  tenant?: string;
-  alias?: string;
-  container?: string;
-  generation?: string;
-  uid?: number;
-  user?: string;
-  iat?: number;
-  exp?: number;
-}
-
-function ticketPayload(overrides: TicketOverrides = {}): TicketPayload {
-  const now = Math.floor(Date.now() / 1000);
-  return {
-    v: 1,
-    sid: overrides.sid ?? randomUUID(),
-    op: overrides.op ?? 'unattributed:console-basic-auth',
-    sub: overrides.sub ?? 'Steven:kant',
-    tgt: {
-      tenant: overrides.tenant ?? TENANT,
-      alias: overrides.alias ?? ALIAS,
-      container: overrides.container ?? CONTAINER,
-      generation: overrides.generation ?? GENERATION,
-      image: IMAGE,
-      uid: overrides.uid ?? 1000,
-      user: overrides.user ?? 'claw',
-    },
-    mode: overrides.mode ?? 'shell',
-    iat: overrides.iat ?? now - 1,
-    exp: overrides.exp ?? now + 30,
-  };
-}
+const ticketPayload = (overrides: TicketOverrides = {}): TicketPayload =>
+  protocolTicketPayload({
+    tenant: TENANT,
+    alias: ALIAS,
+    container: CONTAINER,
+    generation: GENERATION,
+    image: IMAGE,
+    ...overrides,
+  });
 
 interface RelayLocation {
   entry: string;

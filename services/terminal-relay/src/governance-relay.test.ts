@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  AgentConnection, FEATURE_READ_GOVERNANCE_DONE, type AgentHello,
+  AgentConnection, FEATURE_READ_GOVERNANCE_DONE,
 } from './agent-leg.js';
 import {
   FRAME_TAGS, FrameDecoder, decodeJsonFrame, encodeFrame, encodeJsonFrame, type Frame,
@@ -18,6 +18,7 @@ import {
   GOVERNANCE_LIST_PATH, GOVERNANCE_READ_PATH,
   parseDirectoryRequest, setupGovernanceRelay,
 } from './governance-relay.js';
+import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 /**
  * `POST /v3/terminal/relay/read` sobre un servidor HTTPS de verdad y una `AgentConnection` de
@@ -32,20 +33,15 @@ import {
 
 const TOKEN = 'token-compartido-con-el-gateway-0123456789';
 
-const HELLO: AgentHello = {
-  tenant_id: 'Steven',
+const HELLO = agentHello({
   alias: 'zeus',
   container_id: 'claw-zeus',
-  generation: 'a'.repeat(32),
-  image_id: 'sha256:beef',
   runtime_user: 'dev',
-  runtime_uid: 1000,
   home: '/home/dev',
   harness: 'claude',
   agent_version: '0.4.0',
-  modes: ['shell', 'harness'],
-  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE]
-};
+  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE],
+});
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
 const MEMORY_ROOT = '/home/dev/.claude/projects';

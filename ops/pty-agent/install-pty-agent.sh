@@ -70,6 +70,7 @@ check_owner_mode() {
 
 # 1. Alias mapping (read-only use of the ops/scripts fleet mapping).
 mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
+# shellcheck disable=SC2034  # campos posicionales del mapping; no todos se usan aqui
 IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness extra <<<"$mapping_line"
 [[ -n $container_name && -n $container_user && -z ${extra:-} ]] || die 'container alias mapping returned invalid fields'
 note "alias=$alias_name tenant=$tenant container=$container_name user=$container_user harness=$harness"

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { TelegramActivityIndicator } from '../src/activity.js';
 import { EgressCrash, TelegramEgressWorker } from '../src/egress.js';
 import { TelegramPoller } from '../src/poller.js';
-import type { TelegramApi } from '../src/types.js';
 import {
   config, DeduplicatingIngress, FailingActivityTelegram, FakeTelegram, MemoryCursorRepository,
   MemoryEgressRepository, relay, TENANT, update
@@ -158,19 +157,14 @@ describe('Telegram egress crash recovery and replay', () => {
   });
 
   it('leaves a crash during send ambiguous and never resends it automatically after restart', async () => {
-    let calls = 0;
-    const api: TelegramApi = {
-      getIdentity: async () => ({ id: '900001' }),
-      getUpdates: async () => [],
-      getFile: async () => { throw new Error('no file fixture'); },
-      downloadFile: async () => { throw new Error('no file fixture'); },
-      setMessageReaction: async () => undefined,
-      sendChatAction: async () => undefined,
-      sendText: async () => {
-        calls += 1;
+    class CrashingSendTelegram extends FakeTelegram {
+      calls = 0;
+      override async sendText(): Promise<never> {
+        this.calls += 1;
         throw new EgressCrash('during_send');
       }
-    };
+    }
+    const api = new CrashingSendTelegram();
     const repository = new MemoryEgressRepository(relay());
     await expect(new TelegramEgressWorker({
       repository, aliases: [config()], apis: new Map([['kant', api]])
@@ -180,7 +174,7 @@ describe('Telegram egress crash recovery and replay', () => {
       repository, aliases: [config()], apis: new Map([['kant', api]])
     }).runOnce();
 
-    expect(calls).toBe(1);
+    expect(api.calls).toBe(1);
     expect([...repository.effects.values()][0]?.state).toBe('ambiguous');
     expect(repository.acknowledgements.at(-1)?.status).toBe('dead');
   });

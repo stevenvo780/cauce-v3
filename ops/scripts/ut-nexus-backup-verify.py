@@ -10,11 +10,9 @@ Uso:
 
 import argparse
 import datetime as dt
-import json
 import os
 import sqlite3
 import sys
-from pathlib import Path
 
 ARCHIVE_ROOT = "/opt/_archive/ultimate-terminal"
 

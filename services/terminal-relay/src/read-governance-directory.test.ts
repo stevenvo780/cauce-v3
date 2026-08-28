@@ -3,28 +3,23 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   AgentConnection, FEATURE_READ_GOVERNANCE_DONE, MAX_AGENT_READS_IN_FLIGHT,
   MAX_TERMINAL_READ_TOMBSTONES,
-  type AgentHello,
 } from './agent-leg.js';
 import {
   FRAME_TAGS, FrameDecoder, MAX_DATA_BYTES, encodeFrame, encodeJsonFrame,
   type Frame
 } from './framing.js';
 import { requestDirectoryRead, requestFileRead } from './gateway-client.js';
+import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
-const HELLO: AgentHello = {
-  tenant_id: 'Steven',
+const HELLO = agentHello({
   alias: 'zeus',
   container_id: 'claw-zeus',
-  generation: 'a'.repeat(32),
-  image_id: 'sha256:beef',
   runtime_user: 'dev',
-  runtime_uid: 1000,
   home: '/home/dev',
   harness: 'claude',
   agent_version: '0.4.0',
-  modes: ['shell', 'harness'],
-  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE]
-};
+  features: ['read_governance', FEATURE_READ_GOVERNANCE_DONE],
+});
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
 const MEMORY_ROOT = '/home/dev/.claude/projects';

@@ -5,8 +5,6 @@ import hashlib
 import json
 import os
 import pathlib
-import shutil
-import stat
 import subprocess
 import sys
 import tempfile

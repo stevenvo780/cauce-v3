@@ -1,0 +1,8 @@
+[Unit]
+Description=Cauce V3: CI local nocturno — el gate completo + validate sobre main (GitHub Actions prohibido por el dueño)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/datos/workspaces/zeus/cauce-v3
+ExecStart=/usr/bin/su stev -c 'umask 022 && git pull --rebase --autostash origin main && pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:pty && ops/scripts/validate.sh'
+TimeoutStartSec=3600

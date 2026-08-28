@@ -1,9 +1,10 @@
 import { BookOpen, Brain, IdCard, X } from 'lucide-react';
-import { useEffect, useRef, type KeyboardEvent, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
 import { ubicacionDeclarada } from './capas-pendientes';
 import { avisosDeCapas } from './directiva';
@@ -62,17 +63,7 @@ export function DirectivaModal({
     return () => document.removeEventListener('keydown', alPulsar, true);
   }, [onCerrar]);
 
-  const teclado = (evento: KeyboardEvent<HTMLDivElement>) => {
-    if (evento.key !== 'Tab') return;
-    const focos = dialogo.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    if (!focos || focos.length === 0) return;
-    const primero = focos[0];
-    const ultimo = focos[focos.length - 1];
-    if (!evento.shiftKey && document.activeElement === ultimo) { evento.preventDefault(); primero.focus(); }
-    if (evento.shiftKey && document.activeElement === primero) { evento.preventDefault(); ultimo.focus(); }
-  };
+  const teclado = useFocusTrap(dialogo);
 
   const avisos = avisosDeCapas(
     briefGuardado(configuration.data, tenantId, alias),

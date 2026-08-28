@@ -2,12 +2,8 @@
 from __future__ import annotations
 
 import ast
-import json
 import pathlib
-import shutil
-import subprocess
 import sys
-import tempfile
 import unittest
 
 from jsonschema import Draft202012Validator

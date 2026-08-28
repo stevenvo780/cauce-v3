@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 
 def count_zombie_processes() -> int:
@@ -62,7 +61,7 @@ def test_zombie_creation_without_reap():
 
 
 def test_reap_children_function():
-    parent_pid = os.getpid()
+    _parent_pid = os.getpid()
     zombie_pids = []
 
     for i in range(2):
@@ -97,7 +96,7 @@ def test_pidfd_persists_after_waitpid():
         pidfd = os.pidfd_open(child_pid)
     except OSError as e:
         if "not supported" in str(e).lower() or e.errno == 38:
-            print(f"⊘ test_pidfd_persists_after_waitpid: pidfd_open not available, skipping")
+            print("⊘ test_pidfd_persists_after_waitpid: pidfd_open not available, skipping")
             child_proc.wait()
             return
         raise
@@ -105,10 +104,10 @@ def test_pidfd_persists_after_waitpid():
     child_proc.wait()
 
     try:
-        fd_info = os.fstat(pidfd)
+        _fd_info = os.fstat(pidfd)
         print(f"✓ test_pidfd_persists_after_waitpid: pidfd {pidfd} remains valid after waitpid of child {child_pid}")
     except OSError:
-        print(f"⊘ test_pidfd_persists_after_waitpid: pidfd became invalid (this may be system-dependent)")
+        print("⊘ test_pidfd_persists_after_waitpid: pidfd became invalid (this may be system-dependent)")
     finally:
         os.close(pidfd)
 
@@ -120,12 +119,12 @@ def test_can_reap_true_safety():
         stderr=subprocess.DEVNULL,
     )
 
-    child_pid = proc.pid
+    _child_pid = proc.pid
     time.sleep(0.2)
 
     try:
         reap_children()
-        print(f"✓ test_can_reap_true_safety: reap_children() executed safely")
+        print("✓ test_can_reap_true_safety: reap_children() executed safely")
     except Exception as e:
         raise AssertionError(f"reap_children() raised exception: {e}")
 
@@ -135,7 +134,7 @@ def test_can_reap_true_safety():
         status = proc.wait(timeout=0.1)
         print(f"  → process.wait() returned {status} after reap_children()")
     except subprocess.TimeoutExpired:
-        print(f"  → process.wait() timed out (process already reaped, this is OK)")
+        print("  → process.wait() timed out (process already reaped, this is OK)")
 
 
 def main():

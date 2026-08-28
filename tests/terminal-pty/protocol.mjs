@@ -11,7 +11,7 @@
 // DATA payloads (STDIN/STDOUT) are 36 ASCII bytes of session_id followed by raw bytes.
 // Every other payload is either empty (PING/PONG) or UTF-8 JSON.
 
-import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
 export const WIRE_VERSION = 1;
@@ -136,6 +136,28 @@ export function mintTicket(aliasKey, payload) {
   const signingInput = `${TICKET_PREFIX}.${b64urlEncode(Buffer.from(payloadJson, 'utf8'))}`;
   const mac = createHmac('sha256', aliasKey).update(Buffer.from(signingInput, 'ascii')).digest();
   return `${signingInput}.${b64urlEncode(mac)}`;
+}
+
+export function ticketPayload(overrides = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    v: 1,
+    sid: overrides.sid ?? randomUUID(),
+    op: overrides.op ?? 'unattributed:console-basic-auth',
+    sub: overrides.sub ?? 'Steven:kant',
+    tgt: {
+      tenant: overrides.tenant ?? 'Steven',
+      alias: overrides.alias ?? 'kant',
+      container: overrides.container ?? 'claw-kant',
+      generation: overrides.generation ?? 'a'.repeat(32),
+      image: overrides.image ?? 'sha256:beef',
+      uid: overrides.uid ?? 1000,
+      user: overrides.user ?? 'claw',
+    },
+    mode: overrides.mode ?? 'shell',
+    iat: overrides.iat ?? now - 1,
+    exp: overrides.exp ?? now + 30,
+  };
 }
 
 /**

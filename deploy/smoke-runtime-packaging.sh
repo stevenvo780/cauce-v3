@@ -62,6 +62,7 @@ for _ in $(seq 1 60); do
 done
 docker exec "$postgres" pg_isready -U cauce_smoke -d cauce_smoke >/dev/null
 
+# shellcheck disable=SC2054
 runtime_flags=(
   --rm
   --network "$network"

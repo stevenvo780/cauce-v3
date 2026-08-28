@@ -2,43 +2,11 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { SessionCloseReport, TerminalGatewayClient, TerminalSessionGrant } from './gateway-client.js';
+import type { SessionCloseReport, TerminalGatewayClient } from './gateway-client.js';
 import { SessionManager, type SessionLimits } from './sessions.js';
+import { grant, CLAIM_TOKEN, waitFor } from './relay-test-fixtures.js';
 
 const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
-
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('condition was never met');
-    await wait(5);
-  }
-}
-
-function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSessionGrant {
-  return {
-    tenant_id: 'Steven',
-    alias: 'jarvis',
-    mode: 'shell',
-    cols: 80,
-    rows: 24,
-    operator_id: 'steven',
-    container: 'claw',
-    runtime_user: 'claw',
-    session_expires_at: new Date(Date.now() + 60_000).toISOString(),
-    resume_token: 'r'.repeat(100),
-    claim_token: CLAIM_TOKEN,
-    claim_epoch: '1',
-    claim_lease_ms: 150_000,
-    claim_lease_ttl_ms: 150_000,
-    relay_instance_id: 'a'.repeat(64),
-    relay_boot_id: '11111111-1111-4111-8111-111111111111',
-    ...overrides,
-  };
-}
 
 class FakeGateway implements TerminalGatewayClient {
   closeFailures = 0;

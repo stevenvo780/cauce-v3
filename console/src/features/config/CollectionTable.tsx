@@ -2,6 +2,7 @@ import { Braces } from 'lucide-react';
 import { Fragment, useEffect, useRef, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { Badge, EmptyState, Panel, Unknown } from '../../components/ui';
 import type { ConfigCollection } from './collections';
 import {
@@ -266,18 +267,11 @@ function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
     };
   }, []);
 
+  const atraparFoco = useFocusTrap(dialogo);
   // ESC cancela, y el tabulador da la vuelta dentro del diálogo en vez de irse al fondo.
   const teclado = (evento: KeyboardEvent<HTMLDivElement>) => {
     if (evento.key === 'Escape') { evento.stopPropagation(); onCancelar(); return; }
-    if (evento.key !== 'Tab') return;
-    const focos = dialogo.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    if (!focos || focos.length === 0) return;
-    const primero = focos[0];
-    const ultimo = focos[focos.length - 1];
-    if (!evento.shiftKey && document.activeElement === ultimo) { evento.preventDefault(); primero.focus(); }
-    if (evento.shiftKey && document.activeElement === primero) { evento.preventDefault(); ultimo.focus(); }
+    atraparFoco(evento);
   };
 
   return createPortal(

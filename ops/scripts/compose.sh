@@ -62,7 +62,7 @@ if [[ -n $env_file ]]; then
     fi
     if [[ $target == prod || $ambient_set == 0 ]]; then
       printf -v "$control" '%s' "$value"
-      export "$control"
+      export "${control?}"
     fi
   done
   if [[ $target == prod && $selector_preview == 1 ]]; then

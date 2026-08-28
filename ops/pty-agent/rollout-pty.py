@@ -13,20 +13,19 @@ from __future__ import annotations
 import argparse
 import base64
 import dataclasses
-import os
+import os  # noqa: F401  (la suite mockea rollout.os)
 import pathlib
-import re
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Final
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 _agent_dir = str(pathlib.Path(__file__).resolve().parent)
 if _agent_dir not in sys.path:
     sys.path.insert(0, _agent_dir)
 
-from rollout_pty_lib import (
+from rollout_pty_lib import (  # noqa: F401  (superficie de re-export: la suite usa rollout.<nombre>)
     EXECUTABLE_FILES,
     MANAGERS,
     MODE_RE,

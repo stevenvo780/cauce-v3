@@ -1,4 +1,4 @@
-import type { Origin, Tenant } from '@cauce/protocol';
+import type { Origin, OutboxAckWithEffectCount, Tenant } from '@cauce/protocol';
 
 export interface TelegramFile {
   file_id: string;
@@ -271,16 +271,7 @@ export interface TelegramOriginRelay {
   payload: Record<string, unknown>;
 }
 
-export interface TelegramOriginRelayAck {
-  event_id: string;
-  attempt: number;
-  claim_token: string;
-  status: 'sent' | 'retry' | 'dead';
-  error?: string;
-  retry_after_ms?: number;
-  /** Required for sent ACKs. The repository verifies every durable chunk before ACKing. */
-  effect_count?: number;
-}
+export type TelegramOriginRelayAck = OutboxAckWithEffectCount;
 
 export type EffectState = 'prepared' | 'sending' | 'sent' | 'ambiguous' | 'dead';
 

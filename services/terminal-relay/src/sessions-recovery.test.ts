@@ -11,10 +11,10 @@ import {
   claimLeaseContractSatisfied,
   type SessionLimits,
 } from './sessions.js';
+import { grant, CLAIM_TOKEN } from './relay-test-fixtures.js';
 
 const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const OTHER_SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff';
-const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
 
 type Listener = (...args: readonly never[]) => void;
 
@@ -186,27 +186,6 @@ class FakeGateway implements TerminalGatewayClient {
   }
 }
 
-function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSessionGrant {
-  return {
-    tenant_id: 'Steven',
-    alias: 'jarvis',
-    mode: 'shell',
-    cols: 80,
-    rows: 24,
-    operator_id: 'steven',
-    container: 'claw',
-    runtime_user: 'claw',
-    session_expires_at: new Date(Date.now() + 60_000).toISOString(),
-    resume_token: 'r'.repeat(100),
-    claim_token: CLAIM_TOKEN,
-    claim_epoch: '1',
-    claim_lease_ms: 150_000,
-    claim_lease_ttl_ms: 150_000,
-    relay_instance_id: 'a'.repeat(64),
-    relay_boot_id: '11111111-1111-4111-8111-111111111111',
-    ...overrides
-  };
-}
 
 function limits(overrides: Partial<SessionLimits> = {}): SessionLimits {
   return {

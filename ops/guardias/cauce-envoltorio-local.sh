@@ -35,6 +35,7 @@ if [ "${1:-}" = probar ]; then
   [ -n "$TEN" ] || { echo "alias desconocido: $A" >&2; exit 2; }
   MARCA="PROBAR-$(tr -dc a-f0-9 </dev/urandom | head -c 8)"
   echo "  publicando entrega real a $A (tenant $TEN) con marca $MARCA"
+  # shellcheck disable=SC2087
   RESP=$(ssh -o BatchMode=yes agora-storage "cat > /tmp/cauce-probar.json && curl -sS -k \
       --cert /etc/cauce-v3/pki/console-client.crt --key /etc/cauce-v3/pki/console-client.key \
       -H 'content-type: application/json' -H 'x-cauce-operator: steven' \
@@ -58,7 +59,7 @@ except Exception: pass' 2>/dev/null)
   echo -n "  esperando"
   EST=; REPLY_TXT=; VISTO=; PANEL=; RC_PANEL=0
   [[ $ID =~ ^[0-9a-f-]{36}$ ]] || { echo "id de entrega invalido: $ID" >&2; exit 3; }
-  for i in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     R=$(ssh -o BatchMode=yes agora-storage "docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -At -F'|' -c \"select status, coalesce(regexp_replace(result#>>'{output,reply}','\\s+',' ','g'),'-') from deliveries where id='$ID';\"" 2>/dev/null)
     EST=${R%%|*}; REPLY_TXT=${R#*|}
     if [ -z "$VISTO" ] && [ "$RC_PANEL" != 3 ]; then
@@ -97,7 +98,7 @@ except Exception: pass' 2>/dev/null)
     printf '  panel: \033[31mla marca NO aparece en la TUI\033[0m — el turno no paso por el arnes\n'
     printf '%s\n' "$PANEL" | tail -6 | sed 's/^/         /'
   fi
-  [ "$EST" = done ] || exit 1
+  [ "$EST" = "done" ] || exit 1
   exit 0
 fi
 

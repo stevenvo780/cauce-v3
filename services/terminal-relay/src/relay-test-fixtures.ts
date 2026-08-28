@@ -13,6 +13,8 @@ import {
 import type {
   AgentPresence, AuthzOutcome, ConsumeOutcome, ResumeOutcome, SessionCloseReport, TerminalGatewayClient, TerminalSessionGrant
 } from './gateway-client.js';
+import type { AgentHello } from './agent-hello.js';
+export type { AgentHello };
 import { CLOSE_CODES, SessionManager, type SessionLimits } from './sessions.js';
 
 export const TEST_CA_CERTIFICATE = `-----BEGIN CERTIFICATE-----
@@ -277,6 +279,23 @@ export function grant(overrides: Partial<TerminalSessionGrant> = {}): TerminalSe
     relay_instance_id: RELAY_INSTANCE_ID,
     relay_boot_id: RELAY_BOOT_ID,
     ...overrides
+  };
+}
+
+export function agentHello(overrides: Partial<AgentHello> = {}): AgentHello {
+  return {
+    tenant_id: 'Steven',
+    alias: 'jarvis',
+    container_id: 'claw',
+    generation: 'a'.repeat(32),
+    image_id: 'sha256:beef',
+    runtime_user: 'claw',
+    runtime_uid: 1000,
+    harness: 'openclaw',
+    agent_version: '2',
+    modes: ['shell', 'harness'],
+    features: [],
+    ...overrides,
   };
 }
 

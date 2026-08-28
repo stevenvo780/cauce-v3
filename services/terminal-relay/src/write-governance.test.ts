@@ -2,19 +2,19 @@ import { createHash } from 'node:crypto';
 import type { TLSSocket } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AgentConnection, FEATURE_WRITE_GOVERNANCE, type AgentHello,
+  AgentConnection, FEATURE_WRITE_GOVERNANCE,
 } from './agent-leg.js';
 import {
   decodeDataFrame, decodeJsonFrame, encodeJsonFrame, FrameDecoder, FRAME_TAGS, type Frame,
 } from './framing.js';
 import { MAX_GOVERNANCE_BYTES, requestFileWrite } from './gateway-client.js';
+import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
-const HELLO: AgentHello = {
-  tenant_id: 'Steven', alias: 'zeus', container_id: 'claw-zeus', generation: 'a'.repeat(32),
-  image_id: 'sha256:beef', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
-  agent_version: '0.5.0', modes: ['shell', 'harness'], features: [FEATURE_WRITE_GOVERNANCE],
-};
+const HELLO = agentHello({
+  alias: 'zeus', container_id: 'claw-zeus', runtime_user: 'dev', harness: 'claude',
+  agent_version: '0.5.0', features: [FEATURE_WRITE_GOVERNANCE],
+});
 
 function sha(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex');

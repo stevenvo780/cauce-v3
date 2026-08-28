@@ -638,6 +638,7 @@ publish_bundle() {
   if [[ -z $harness_command ]]; then
     TMUX_PATH_FOUND=''
     TMUX_SESSION_FOUND=''
+    # shellcheck disable=SC2034  # contrato: la suite PTY verifica esta variable
     TMUX_TARGET_FOUND=''
     if [[ $harness == codex || $harness == claude ]]; then
       if derive_harness_command; then

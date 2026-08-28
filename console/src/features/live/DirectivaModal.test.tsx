@@ -23,22 +23,11 @@ import { LiveFleetPage } from './LiveFleetPage';
  *  · el fondo sigue vivo → se puede desplazar y pulsar lo de detrás del velo.
  */
 
+import { configConBrief } from './agent-state-fixtures';
+
 beforeEach(() => {
   window.history.replaceState({}, '', '/live');
 });
-
-function configConBrief(roleBrief: string) {
-  server.use(http.get('*/v3/console/config', () => HttpResponse.json({
-    revision: 1,
-    observed_at: new Date().toISOString(),
-    agents: [
-      { tenant_id: 'Steven', alias: 'kant', harness_id: 'claude-code', enabled: true, role_brief: roleBrief },
-    ],
-    tenants: [], rooms: [], memberships: [], acl_edges: [], harness_definitions: [],
-    role_policies: [], chain_policies: [], egress_destinations: [], provider_accounts: [],
-    alias_routing_ceiling: [], agent_account_bindings: [], revisions: [],
-  })));
-}
 
 async function abrir() {
   const user = userEvent.setup();

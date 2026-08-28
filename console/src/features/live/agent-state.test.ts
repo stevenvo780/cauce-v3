@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FleetActivityAgent, FleetActivitySnapshot } from '../../api/types';
+import type { FleetActivityAgent } from '../../api/types';
 import {
   BURST_MS,
   LIVE_STATE_META,
@@ -11,30 +11,9 @@ import {
   rememberFleet,
   stateTally,
 } from './agent-state';
+import { agent, snapshot } from './agent-state-fixtures';
 
 const NOW = 1_700_000_000_000;
-
-function agent(overrides: Partial<FleetActivityAgent> = {}): FleetActivityAgent {
-  return {
-    tenant_id: 'Steven',
-    alias: 'zeus',
-    registered: true,
-    agent_enabled: true,
-    presence: { online: true, lease_until: '2026-08-06T03:00:00.000Z' },
-    work_state: 'idle',
-    flags: [],
-    in_flight: 0,
-    started: 0,
-    claimed_not_started: 0,
-    queued: 0,
-    in_flight_items: [],
-    ...overrides,
-  };
-}
-
-function snapshot(agents: FleetActivityAgent[]): FleetActivitySnapshot {
-  return { observed_at: '2026-08-06T02:54:49.452Z', thresholds: { saturation_in_flight: 8, stall_after_seconds: 300 }, agents };
-}
 
 describe('liveState', () => {
   it('un lease vivo con trabajo tomado hace mucho es BLOQUEADO, no trabajando', () => {
