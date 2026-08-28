@@ -91,6 +91,23 @@ it('rechaza segmentos extra en /fleet/:tenant/:alias en vez de abrir otro agente
   expect(window.location.pathname).toBe('/fleet/Steven/kant/sesion-vieja');
 });
 
+it('abre /messages/:tenant/:alias en la conversación, que es adonde navega el roster', async () => {
+  window.history.pushState({}, '', '/messages/Miguel/kratos');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Mensajes' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeNull();
+  expect(window.location.pathname).toBe('/messages/Miguel/kratos');
+});
+
+it('CONTROL NEGATIVO — /messages con una aridad distinta sigue siendo 404', async () => {
+  window.history.pushState({}, '', '/messages/Miguel');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(window.location.pathname).toBe('/messages/Miguel');
+});
+
 it.each([
   '/terminal/unused/segment',
   '/config/sobrante',

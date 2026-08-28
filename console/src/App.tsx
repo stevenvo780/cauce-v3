@@ -97,6 +97,11 @@ const routes: Route[] = [
 const MENU = routes.filter((route) => route.label !== '');
 
 /** Redirecciones de rutas obsoletas o consolidadas hacia sus vistas canónicas. */
+/* Rutas que aceptan segmentos detrás del id, con su aridad exacta. Una vista que navega a una
+   subruta no declarada aquí acaba en «Ruta no encontrada», y ningún test lo ve: los suyos afirman
+   sobre `pathname`, que cambia igual cuando el destino no existe. */
+const SUBDETALLES: Record<string, number> = { fleet: 2, messages: 2 };
+
 const ROUTE_ALIASES: Record<string, string> = {
   licenses: 'accounts',
   quotas: 'accounts',
@@ -162,14 +167,13 @@ function decodeSegment(segment: string): string {
 function matchRoute(path: string): RouteMatch {
   const segments = path.split('/').filter(Boolean).map(decodeSegment);
   const requested = segments[0] ?? '';
-  // `/fleet/:tenant/:alias` apunta al detalle del agente; `/fleet` general redirige según alias.
-  const alias = segments.length > 1 && requested === 'fleet' ? undefined : ROUTE_ALIASES[requested];
+  const aridad = SUBDETALLES[requested];
+  const alias = segments.length > 1 && aridad !== undefined ? undefined : ROUTE_ALIASES[requested];
   const id = alias ?? requested;
   const params = segments.slice(1);
-  // `/fleet/:tenant/:alias` es el único subdetalle declarado.
-  const detalleFleet = requested === 'fleet' && alias === undefined && params.length === 2;
-  const existe = detalleFleet || routes.some((route) => route.id === id);
-  const aridadInvalida = params.length > 0 && !detalleFleet;
+  const subdetalle = aridad !== undefined && alias === undefined && params.length === aridad;
+  const existe = subdetalle || routes.some((route) => route.id === id);
+  const aridadInvalida = params.length > 0 && !subdetalle;
   return existe && !aridadInvalida
     ? { id, params, aliasedFrom: alias !== undefined ? requested : undefined }
     : { id: requested, params, notFoundPath: `/${path}` };
