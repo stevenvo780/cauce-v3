@@ -73,8 +73,11 @@ function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number
 
 function sinClave<T>(mapa: Record<string, T>, clave: string): Record<string, T> {
   if (!Object.hasOwn(mapa, clave)) return mapa;
-  const { [clave]: _eliminada, ...resto } = mapa;
-  return resto;
+  const next: Record<string, T> = {};
+  for (const [k, v] of Object.entries(mapa)) {
+    if (k !== clave) next[k] = v;
+  }
+  return next;
 }
 
 export function useInterruptores(

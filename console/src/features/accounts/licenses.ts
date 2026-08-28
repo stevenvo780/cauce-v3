@@ -78,9 +78,9 @@ export interface Freshness {
 export function freshness(
   collector: (Collector | QuotaCollector) | null | undefined,
   thresholds: QuotaThresholds | null | undefined,
-   
-  _now?: number,
+  now?: number,
 ): Freshness {
+  void now;
   if (!collector) {
     return {
       state: 'absent',

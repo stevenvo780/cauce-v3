@@ -90,7 +90,7 @@ export function LiveFleetPage() {
       for (const [key, list] of Object.entries(fresh)) merged[key] = [...(merged[key] ?? []), ...list];
       return merged;
     });
-  }, [observedAt]);
+  }, [snapshot]);
 
   useEffect(() => {
     const timer = window.setInterval(() => { setNow(Date.now()); }, 1000);
@@ -401,7 +401,10 @@ export function LiveFleetPage() {
           borradorPerfil={borradoresPerfil[drawer.key]}
           onBorradorPerfil={(campos) => { setBorradoresPerfil((actuales) => {
             if (campos === undefined) {
-              const { [drawer.key]: _omitted, ...resto } = actuales;
+              const resto: Record<string, Partial<AgentPerfilCampos>> = {};
+              for (const [k, v] of Object.entries(actuales)) {
+                if (k !== drawer.key) resto[k] = v;
+              }
               return resto;
             }
             return { ...actuales, [drawer.key]: campos };

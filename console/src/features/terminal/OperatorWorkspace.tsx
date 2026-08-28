@@ -83,6 +83,14 @@ function terminalCapabilityUuid(): string {
   throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
 }
 
+function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [k, v] of Object.entries(map)) {
+    if (k !== keyToOmit) result[k] = v;
+  }
+  return result;
+}
+
 export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
   // La sesión que tiene el token CSRF en memoria: sin ella toda escritura del plano PTY vuelve 403.
   const api = useApi();
@@ -170,10 +178,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     } catch {
       await revisarPlazas();
     } finally {
-      setCerrandoPlaza((current) => {
-        const { [id]: _, ...next } = current;
-        return next;
-      });
+      setCerrandoPlaza((current) => omitKey(current, id));
     }
   }
 
@@ -270,8 +275,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       setMotivoReconciliacionPlaza(undefined);
       setClosedChannels((channels) => {
         if (!(id in channels)) return channels;
-        const { [id]: _, ...open } = channels;
-        return open;
+        return omitKey(channels, id);
       });
       setSessions((currentSessions) => currentSessions.map((session) => session.id === id
         ? { ...session, mode: 'pty', channelMode: input.mode, liveTuiAttempted: true }
@@ -292,7 +296,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     const grant = grantsRef.current[id] as TerminalSessionGrant | undefined;
     if (!grant) return;
     terminalIntentsRef.current.delete(id);
-    const { [id]: _, ...remaining } = grantsRef.current;
+    const remaining = omitKey(grantsRef.current, id);
     grantsRef.current = remaining;
     setGrants(remaining);
     closePtySession(grant.session_id);
@@ -301,10 +305,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     } catch {
       // The socket still has to go: a client-side failure must not leave a shell attached here.
     } finally {
-      setClosedChannels((current) => {
-        const { [id]: _, ...next } = current;
-        return next;
-      });
+      setClosedChannels((current) => omitKey(current, id));
     }
   }
 

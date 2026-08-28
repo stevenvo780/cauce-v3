@@ -185,6 +185,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
     if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
     void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveTui.enabled]);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
