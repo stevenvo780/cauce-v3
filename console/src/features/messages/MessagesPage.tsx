@@ -137,12 +137,12 @@ export function MessagesPage() {
   }
 
   function sincronizar() {
-    status.reload();
-    topology.reload();
-    access.reload();
-    messages.reload();
-    activity.reload();
-    queues.reload();
+    void status.reload();
+    void topology.reload();
+    void access.reload();
+    void messages.reload();
+    void activity.reload();
+    void queues.reload();
   }
 
   return (

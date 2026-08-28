@@ -75,12 +75,12 @@ export function TerminalPage() {
   ].filter((value): value is string => Boolean(value));
 
   function refreshAll() {
-    status.reload();
-    topology.reload();
-    adapters.reload();
-    access.reload();
-    capability.reload();
-    targets.reload();
+    void status.reload();
+    void topology.reload();
+    void adapters.reload();
+    void access.reload();
+    void capability.reload();
+    void targets.reload();
   }
 
   /*

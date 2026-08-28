@@ -259,8 +259,8 @@ export function LiveFleetPage() {
 
   const { reload: recargarTopologia } = topology;
   const refrescarTodo = useCallback(() => {
-    reload();
-    recargarTopologia();
+    void reload();
+    void recargarTopologia();
   }, [reload, recargarTopologia]);
 
   const enfocarCulpable = useCallback((key: string) => {

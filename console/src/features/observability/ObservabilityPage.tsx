@@ -35,8 +35,8 @@ export function ObservabilityPage() {
   const [auditQuery, setAuditQuery] = useState('');
 
   function reloadAll() {
-    resource.reload();
-    relays.reload();
+    void resource.reload();
+    void relays.reload();
   }
 
   function investigate(traceId: string) {

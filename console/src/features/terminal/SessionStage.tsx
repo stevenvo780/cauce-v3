@@ -219,7 +219,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
               ? 'Confirmación incierta; intención pendiente y cercada'
               : 'Confirmación rechazada; intención cercada contra duplicados'}; esperando ACK por polling.`,
       });
-      messages.reload();
+      void messages.reload();
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'No se pudo publicar la instrucción.' });
     } finally {
@@ -236,19 +236,19 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   async function replay(deliveryId: string) {
     const result = await api.replayDelivery(deliveryId);
     if (!exactReplayReceipt(result, deliveryId)) {
-      messages.reload();
+      void messages.reload();
       throw new Error('El gateway no devolvió un recibo durable exacto del replay.');
     }
-    messages.reload();
+    void messages.reload();
   }
 
   async function cancel(deliveryId: string) {
     const result = await api.cancelDelivery(deliveryId);
     if (!exactCancelReceipt(result, deliveryId)) {
-      messages.reload();
+      void messages.reload();
       throw new Error('El gateway no devolvió un recibo durable exacto de la cancelación.');
     }
-    messages.reload();
+    void messages.reload();
   }
 
   async function requestChannel(reason: string, mode: string) {

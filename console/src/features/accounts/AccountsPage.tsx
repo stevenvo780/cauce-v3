@@ -33,15 +33,15 @@ export function AccountsPage() {
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = window.setInterval(() => {
-      reloadQuotas();
-      reloadConfig();
+      void reloadQuotas();
+      void reloadConfig();
     }, REFRESH_MS);
     return () => window.clearInterval(interval);
   }, [autoRefresh, reloadQuotas, reloadConfig]);
 
   function reloadAll() {
-    reloadQuotas();
-    reloadConfig();
+    void reloadQuotas();
+    void reloadConfig();
   }
 
   if (quotas.loading && !quotas.data && config.loading && !config.data) {
