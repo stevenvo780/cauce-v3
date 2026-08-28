@@ -2,6 +2,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from '../live/role-brief';
 import { catalogoDeRoles, claveDeAlias, resumenDeRol, type RolCatalogado } from './roles';
+import { plural } from '../../lib';
 
 /**
  * Catálogo de roles de agente y asignación entre alias.
@@ -56,12 +57,12 @@ export function RolesPanel({ snapshot }: RolesPanelProps) {
     <>
       <Panel
         title="Roles en uso"
-        subtitle={`${String(catalogo.roles.length)} texto(s) de rol repartidos entre ${String(catalogo.todos.length)} bot(s) registrados`}
+        subtitle={plural(catalogo.roles.length, 'texto de rol', 'textos de rol')
+          + ' repartidos entre ' + plural(catalogo.todos.length, 'bot registrado', 'bots registrados')}
       >
         <p className="muted">
-          Esta lista agrupa la proyección corta <code>agents.role_brief</code>. Es de sólo lectura:
-          la fuente canónica es <code>agent_profiles.role_summary</code> y sólo se edita desde Perfil,
-          donde CAS, escritura gobernada y ACK del runtime forman una sola confirmación observable.
+          Agrupa el rol tal como lo recibe cada bot. Es de sólo lectura: el rol se escribe en la
+          pestaña «Perfil» del bot, que es donde el cambio se confirma contra el runtime.
         </p>
         {!catalogo.roles.length ? (
           <EmptyState>Ningún bot del registro tiene rol declarado todavía.</EmptyState>
@@ -73,7 +74,7 @@ export function RolesPanel({ snapshot }: RolesPanelProps) {
                 <li key={rol.texto} className="rol-card">
                   <header>
                     <h3>{resumenDeRol(rol.texto)}</h3>
-                    <Badge tone={rol.pasado ? 'danger' : 'info'}>{rol.portadores.length} bot(s)</Badge>
+                    <Badge tone={rol.pasado ? 'danger' : 'info'}>{plural(rol.portadores.length, 'bot', 'bots')}</Badge>
                   </header>
                   <p className="muted rol-resumen-nota">
                     Ese título es un resumen de la primera línea del texto, no un nombre guardado: no

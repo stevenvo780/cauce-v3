@@ -141,3 +141,7 @@ export function safeAuditDecision(value: unknown): 'allow' | 'deny' | 'info' | u
 function oneOf<const T extends readonly string[]>(value: unknown, allowed: T): T[number] | undefined {
   return typeof value === 'string' && allowed.includes(value) ? value : undefined;
 }
+
+export function plural(count: number, one: string, many: string): string {
+  return `${String(count)} ${count === 1 ? one : many}`;
+}
