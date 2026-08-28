@@ -34,11 +34,11 @@ export class AgentConnection {
   readonly connectedAt: Date;
   private readonly socket: TLSSocket;
   private readonly sessions = new Map<string, AgentSessionHandlers>();
-  /** Lecturas de gobierno en vuelo, por `request_id`. Vacío casi siempre. */
+  /** Governance reads in flight, by `request_id`. Almost always empty. */
   private readonly reads = new Map<string, AgentReadHandlers>();
-  /** Operaciones cerradas correctamente/por READ_ERR; nunca crece sin límite. */
+  /** Operations closed correctly / by READ_ERR; never grows without bound. */
   private readonly terminalReads = new Set<string>();
-  /** Escrituras gobernadas en vuelo. Separadas de PTY y de lectura por negociación de capacidad. */
+  /** Governed writes in flight. Separated from PTY and from reads by capacity negotiation. */
   private readonly writes = new Map<string, AgentWriteHandlers>();
   private readonly ping: NodeJS.Timeout;
   private lastPongAt: number;
@@ -87,8 +87,8 @@ export class AgentConnection {
       harness: this.hello.harness,
       ...(this.hello.runtime_facts_observed === undefined
         ? {} : { runtime_facts_observed: this.hello.runtime_facts_observed }),
-      // Se propaga sólo si vino. El gateway lo necesita para componer la ruta del fichero de
-      // gobierno; sin él contesta «contenedor sin identificar» en vez de adivinar una ruta.
+      // Propagated only if it arrived. The gateway needs it to compose the governance file path;
+      // without it it answers "unidentified container" instead of guessing a path.
       ...(this.hello.home === undefined ? {} : { home: this.hello.home }),
       ...(this.hello.codex_home === undefined ? {} : { codex_home: this.hello.codex_home }),
       ...(this.hello.claude_config_dir === undefined
@@ -122,7 +122,7 @@ export class AgentConnection {
     return this.sessions.has(sessionId);
   }
 
-  /** Falso para todo agente que no lo anuncie, incluido cualquiera anterior a esta versión. */
+  /** False for any agent that does not advertise it, including any build older than this one. */
   get supportsGovernanceRead(): boolean {
     return this.hello.features.includes(FEATURE_READ_GOVERNANCE);
   }
@@ -155,8 +155,8 @@ export class AgentConnection {
     if (!terminal) return;
     this.terminalReads.delete(requestId);
     if (this.terminalReads.size >= MAX_TERMINAL_READ_TOMBSTONES) {
-      // Evictar el más viejo permitiría tirar en silencio un DATA tardío de ese id. Se cierra el
-      // transporte y el agente reconecta limpio; así el límite de memoria no debilita el orden.
+      // Evicting the oldest would let a late DATA for that id be silently dropped. The transport
+      // is closed and the agent reconnects clean; so the memory cap does not weaken ordering.
       this.destroy('read_tombstone_capacity');
       return;
     }
@@ -172,17 +172,17 @@ export class AgentConnection {
   }
 
   /**
-   * Pide un fichero de gobierno. El `requestId` viaja también como prefijo de 36 bytes de los
-   * READ_DATA, así que tiene que ser un UUID en minúsculas con guiones o el agente no podrá
-   * codificar la respuesta.
+   * Requests a governance file. The `requestId` also travels as the 36-byte prefix of each
+   * READ_DATA, so it has to be a lowercase hyphenated UUID or the agent will not be able to
+   * encode the response.
    */
   sendRead(requestId: string, kind: 'file' | 'dir', path: string): void {
     void this.write(encodeJsonFrame(FRAME_TAGS.READ, { request_id: requestId, kind, path }));
   }
 
   /**
-   * Envía una transacción completa. La precondición vive en WRITE y el contenido binario en
-   * WRITE_DATA; no se interpola en argv, JSON de shell ni ningún comando.
+   * Sends a complete transaction. The precondition lives in WRITE and the binary content in
+   * WRITE_DATA; nothing is interpolated into argv, shell JSON or any command.
    */
   sendWrite(
     requestId: string,

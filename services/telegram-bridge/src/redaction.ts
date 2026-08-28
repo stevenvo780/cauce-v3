@@ -1,5 +1,5 @@
 /**
- * Redacción de secretos en la ingesta antes de persistir.
+ * Secret redaction on ingestion before persisting.
  */
 
 export type RedactionKind =
@@ -13,12 +13,12 @@ export type RedactionKind =
 
 export interface RedactionResult {
   readonly value: string;
-  /** Familias encontradas, ordenadas y sin repetir. Vacío = no se tocó nada. */
+  /** Families found, sorted, and deduplicated. Empty = nothing was touched. */
   readonly kinds: readonly RedactionKind[];
   readonly count: number;
 }
 
-/** La marca que ve el agente y el humano. Deliberadamente autoexplicativa y en castellano. */
+/** The mark both the agent and the human see. Deliberately self-explanatory and in Spanish. */
 const MARK = '[secreto-redactado]';
 const URI_MARK = '[credencial-redactada]';
 
@@ -26,42 +26,42 @@ interface Rule {
   readonly kind: RedactionKind;
   readonly pattern: RegExp;
   /**
-   * Devuelve el reemplazo, o `undefined` para dejar el texto intacto (guarda anti falso positivo).
+   * Returns the replacement, or `undefined` to leave the text intact (anti-false-positive guard).
    *
-   * Los grupos llegan como lista CON los huecos: un grupo opcional que no participó vale
-   * `undefined` y ocupa su posición. Filtrarlos correría los índices y haría que un patrón leyera
-   * el grupo equivocado — que es exactamente cómo un redactor termina tapando lo que no debe.
+   * Groups arrive as a list WITH the gaps: an optional group that did not match is
+   * `undefined` and keeps its position. Filtering them would shift indices and make a pattern read
+   * the wrong group — which is exactly how a redactor ends up masking what it should not.
    */
   replace(match: string, groups: readonly (string | undefined)[]): string | undefined;
 }
 
-/** Un token de verdad mezcla letras y dígitos; una palabra de un idioma humano no. */
+/** A real token mixes letters and digits; a human-language word does not. */
 function looksRandom(value: string): boolean {
   return /[A-Za-z]/u.test(value) && /[0-9]/u.test(value);
 }
 
-/** Base64/base64url o con separadores: lo que nunca es una palabra suelta. */
+/** Base64/base64url or with separators: never a standalone word. */
 function looksLikeToken(value: string): boolean {
   return value.length >= 16 && /^[A-Za-z0-9._~+/=-]+$/u.test(value) && /[0-9._~+/=-]/u.test(value);
 }
 
 const RULES: readonly Rule[] = [
-  // Bloque PEM completo. Si alguien pega una llave privada, no hay ambigüedad posible.
+  // Full PEM block. If someone pastes a private key, there is no ambiguity.
   {
     kind: 'private_key',
     pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]{0,20000}?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/gu,
     replace: () => `${MARK} (llave privada)`
   },
   /**
-   * URI con credenciales embebidas: el caso medido.
+   * URI with embedded credentials: the case we measured.
    *
-   * Se conserva el esquema y el host a propósito. El agente casi siempre necesita saber CONTRA QUÉ
-   * se estaba conectando el humano para poder ayudarlo; lo que no puede quedar escrito es el par
-   * usuario/contraseña. Redactar la URI entera convertiría un mensaje útil en un jeroglífico.
+   * The scheme and host are kept on purpose. The agent almost always needs to know WHAT the
+   * human was connecting to in order to help them; what cannot remain on disk is the user/password
+   * pair. Redacting the whole URI would turn a useful message into a hieroglyph.
    *
-   * `[^\s/@:]` en el usuario y `[^\s/@]` en la clave son lo que impide que una URL normal matchee:
-   * en `https://github.com/a/b` el primer grupo no puede cruzar la `/`, así que no hay `:` que
-   * cerrar y el patrón muere antes de tocar nada.
+   * `[^\s/@:]` in the user and `[^\s/@]` in the password are what stop a normal URL from matching:
+   * in `https://github.com/a/b` the first group cannot cross the `/`, so there is no `:` to close
+   * and the pattern dies before touching anything.
    */
   {
     kind: 'uri_credentials',
@@ -69,12 +69,12 @@ const RULES: readonly Rule[] = [
     replace: (_match, groups) => `${groups[0] ?? ''}://${URI_MARK}@`
   },
   /**
-   * Cabecera Authorization en cualquiera de sus formas de escritura (`:` de HTTP, `=` de .env).
+   * Authorization header in either of its written forms (`:` from HTTP, `=` from .env).
    *
-   * Con un esquema declarado (`Bearer`, `Basic`, …) no hay ambigüedad y alcanza con 8 caracteres:
-   * `Authorization: Basic dXNlcjpwYXNz` son 12 y es una credencial completa. Sin esquema hace falta
-   * la guarda de forma, o "Authorization: responsabilidades" —una palabra española de 17 letras—
-   * terminaría redactada.
+   * With a declared scheme (`Bearer`, `Basic`, …) there is no ambiguity and 8 chars suffice:
+   * `Authorization: Basic dXNlcjpwYXNz` is 12 and a complete credential. Without a scheme the
+   * shape guard is needed, or "Authorization: responsabilidades" —a 17-letter Spanish word—
+   * would end up redacted.
    */
   {
     kind: 'authorization',
@@ -85,7 +85,7 @@ const RULES: readonly Rule[] = [
       return `${name ?? ''}${separator ?? ''}${quote ?? ''}${scheme === undefined ? '' : `${scheme} `}${MARK}`;
     }
   },
-  // `Bearer <token>` suelto, sin la cabecera delante: es como se pega un token en un chat.
+  // Standalone `Bearer <token>`, with no header in front: how a token gets pasted into a chat.
   {
     kind: 'bearer_token',
     pattern: /\b(bearer)[ \t]+([A-Za-z0-9._~+/=-]{16,4096})/giu,
@@ -93,8 +93,8 @@ const RULES: readonly Rule[] = [
       (looksLikeToken(groups[1] ?? '') ? `${groups[0] ?? ''} ${MARK}` : undefined)
   },
   /**
-   * Token de bot de Telegram. Es el secreto que más caro sale acá: con él, cualquiera lee y escribe
-   * como el alias en TODOS sus chats. El formato es `<id numérico>:<35 caracteres base64url>`.
+   * Telegram bot token. This is the secret that costs the most here: with it, anyone reads and
+   * writes as the alias in ALL its chats. The format is `<numeric id>:<35 base64url characters>`.
    */
   {
     kind: 'telegram_bot_token',
@@ -104,14 +104,14 @@ const RULES: readonly Rule[] = [
       return looksRandom(secret) ? MARK : undefined;
     }
   },
-  // JWT: las tres partes separadas por punto, empezando por el `eyJ` del `{"` en base64.
+  // JWT: the three dot-separated parts, starting with the `eyJ` of the base64 `{"`.
   {
     kind: 'jwt',
     pattern: /\beyJ[A-Za-z0-9_-]{8,4096}\.[A-Za-z0-9_-]{8,4096}\.[A-Za-z0-9_-]{8,4096}\b/gu,
     replace: () => MARK
   },
   /**
-   * Credenciales con prefijo propietario.
+   * Proprietary-prefix credentials.
    */
   {
     kind: 'api_key',
@@ -131,11 +131,11 @@ const RULES: readonly Rule[] = [
   }
 ];
 
-/** Cota de trabajo por valor: un texto absurdo no puede colgar la ingesta. */
+/** Per-value work cap: an absurd text must not hang the ingestion. */
 const MAX_SCANNED_CHARACTERS = 256 * 1024;
 
 /**
- * Interruptor de la redacción en la ingesta. Por defecto no redacta.
+ * Switch for redaction on ingestion. Off by default.
  */
 function redactionEnabled(): boolean {
   return process.env.CAUCE_TELEGRAM_REDACT_INGRESS === '1';
@@ -149,11 +149,11 @@ export function redactSecrets(value: string): RedactionResult {
   let count = 0;
   let text = value;
   for (const rule of RULES) {
-    // `replace` con función: cada guarda decide caso por caso, así que un patrón que dispara sobre
-    // algo inocente devuelve el texto original en vez de romperlo.
+    // `replace` with a function: each guard decides case by case, so a pattern that triggers on
+    // something innocent returns the original text instead of mangling it.
     text = text.replace(rule.pattern, (match: string, ...rest: unknown[]) => {
-      // `String.replace` pasa, después de los grupos, el offset (number) y la cadena completa
-      // (string). Se cortan por tipo: los grupos son `string | undefined` y conservan su posición.
+      // `String.replace` passes, after the groups, the offset (number) and the full string
+      // (string). They are cut by type: the groups are `string | undefined` and keep their position.
       const end = rest.findIndex((entry) => typeof entry === 'number');
       const groups = (end === -1 ? rest : rest.slice(0, end)) as readonly (string | undefined)[];
       const replacement = rule.replace(match, groups);
@@ -167,11 +167,11 @@ export function redactSecrets(value: string): RedactionResult {
 }
 
 /**
- * Claves cuyo valor NO se escanea.
+ * Keys whose value is NOT scanned.
  *
- * `content_base64` son los bytes de un adjunto ya validado por magic: pueden ser megas, no son
- * texto, y ninguna de las reglas de acá puede encontrar nada útil ahí dentro. Escanearlo sólo
- * gastaría CPU en cada foto que mande alguien.
+ * `content_base64` are the bytes of an attachment already magic-validated: they can be megabytes,
+ * they are not text, and none of the rules here can find anything useful inside. Scanning them
+ * would only burn CPU on every photo someone sends.
  */
 const OPAQUE_KEYS = new Set(['content_base64']);
 const MAX_DEPTH = 8;
@@ -183,7 +183,7 @@ export interface DeepRedactionResult<T> {
 }
 
 /**
- * Recorre recursivamente un objeto o estructura para redactar secretos en todas las cadenas.
+ * Recursively walks an object or structure to redact secrets in every string.
  */
 export function redactSecretsDeep<T>(value: T): DeepRedactionResult<T> {
   const kinds = new Set<RedactionKind>();

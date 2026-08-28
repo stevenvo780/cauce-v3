@@ -62,7 +62,7 @@ function hasVisibleText(value: unknown): value is string {
 }
 
 /**
- * Desenvoltura de sobres estructurados para extraer el texto de respuesta.
+ * Unwrapping of structured envelopes to extract the reply text.
  */
 const ENVELOPE_KEYS = ['status', 'messages', 'artifacts', 'retryable'];
 
@@ -90,14 +90,14 @@ function balancedObjectAt(text: string, start: number): string | undefined {
 }
 
 export function unwrapStructuredEnvelope(value: string): string | undefined {
-  // Se quita la valla de código antes de buscar: es la envoltura más común alrededor del objeto.
+  // Strip the code fence before searching: it is the most common wrapper around the object.
   const bare = value.trim().replace(/^```[A-Za-z0-9_-]*\r?\n/u, '').replace(/\r?\n?```$/u, '').trim();
   const opening = bare.indexOf('{');
   if (opening === -1) return value;
 
   const candidateObject = balancedObjectAt(bare, opening);
   if (candidateObject === undefined) return value;
-  // El objeto tiene que cerrar el mensaje: si después queda contenido real, esto no es un sobre.
+  // The object must close the message: if real content remains after, this is not an envelope.
   if (bare.slice(opening + candidateObject.length).trim().length > 0) return value;
 
   let decoded: unknown;
@@ -110,12 +110,12 @@ export function unwrapStructuredEnvelope(value: string): string | undefined {
   if (envelope === undefined || !('reply' in envelope)) return value;
   if (!ENVELOPE_KEYS.some((key) => key in envelope)) return value;
 
-  // `reply` es lo que el agente quiso decir. Cuando viene vacío —pasa cuando el modelo escribió su
-  // mensaje como prosa y dejó el campo en null— vale la prosa que quedó delante del objeto.
+  // `reply` is what the agent meant to say. When it is empty —happens when the model wrote its
+  // message as prose and left the field null— the prose that ended up before the object counts.
   if (hasVisibleText(envelope.reply)) return envelope.reply;
   const prose = bare.slice(0, opening).trim();
-  // Sobre confirmado, sin `reply` y sin prosa: no hay nada humano que publicar. Devolver `value`
-  // acá volvería a soltar el JSON crudo en el chat.
+  // Confirmed envelope, no `reply`, no prose: there is nothing human to publish. Returning
+  // `value` here would re-emit the raw JSON into the chat.
   return hasVisibleText(prose) ? prose : undefined;
 }
 
@@ -128,9 +128,9 @@ function candidate(payload: Record<string, unknown>): string | undefined {
     payload.text, payload.content, payload.message,
     typeof payload.error === 'string' ? `Error: ${payload.error}` : undefined
   ];
-  // Se recorren en orden de preferencia y no con un `find`: si el candidato preferido resulta ser
-  // un sobre vacío, desarmarlo no deja texto, y quedarse con él publicaría un mensaje en blanco
-  // habiendo un candidato peor pero legible más abajo (típicamente `result.text`).
+  // Walked in preference order rather than with a `find`: if the preferred candidate turns out
+  // to be an empty envelope, unwrapping it leaves no text, and keeping it would publish a blank
+  // message while a worse but legible candidate sits below (typically `result.text`).
   for (const value of values) {
     if (!hasVisibleText(value)) continue;
     const unwrapped = unwrapStructuredEnvelope(value);
@@ -140,19 +140,19 @@ function candidate(payload: Record<string, unknown>): string | undefined {
 }
 
 /**
- * El texto que se publica, ya troceado a la medida de Telegram.
+ * The text that gets published, already chunked to Telegram's size.
  *
- * `footer` es el bloque de adjuntos que arma `planArtifacts`. Va PEGADO al texto y no como mensaje
- * aparte por dos razones: viaja con la misma fila durable que la respuesta —así no puede llegar la
- * lista sin la respuesta ni al revés— y no gasta una notificación más en el teléfono de nadie.
+ * `footer` is the attachments block `planArtifacts` builds, ATTACHED to the text and not sent
+ * as a separate message for two reasons: it rides in the same durable row as the reply —so the
+ * list cannot arrive without the reply or vice versa— and burns no extra notification.
  *
- * Cuando no hay respuesta pero sí adjuntos, el pie ES el mensaje: publicar lo que el agente produjo
- * vale mucho más que el silencio que había hasta ahora.
+ * When there is no reply but there are attachments, the footer IS the message: publishing what
+ * the agent produced is worth much more than the silence we had until now.
  */
 export function telegramTextChunks(payload: Record<string, unknown>, footer = ''): string[] {
-  // MISSING_FINAL_REPLY es una etiqueta de control, no contenido. Ningún campo del payload ni el
-  // footer se interpreta en esa rama: pueden contener diagnóstico interno, un sobre roto o
-  // artifacts controlados por el arnés. La salida es exactamente una constante conocida.
+  // MISSING_FINAL_REPLY is a control tag, not content. No payload field nor the footer is
+  // interpreted on that branch: they may contain internal diagnostics, a broken envelope, or
+  // artifacts controlled by the harness. The output is exactly one known constant.
   if (isMissingFinalReply(payload)) return [MISSING_FINAL_REPLY_NOTICE];
   const original = candidate(payload);
   const value = original === undefined
@@ -243,19 +243,19 @@ function blockedDiagnostic(effect: TelegramEffect): string {
 }
 
 /**
- * Una pieza de la respuesta: un trozo de texto o un archivo.
+ * One piece of the reply: a chunk of text or a file.
  *
- * Las dos comparten la misma secuencia de `telegram_egress_effects` (índices 0..n-1) porque el ACK
- * del repositorio verifica que existan TODOS los índices y que todos estén `sent`. Numerar los
- * adjuntos aparte rompería esa verificación y dejaría la entrega colgada.
+ * Both share the same `telegram_egress_effects` sequence (indices 0..n-1) because the repository
+ * ACK verifies that ALL indices exist and that all are `sent`. Numbering attachments separately
+ * would break that verification and leave the delivery hanging.
  */
 type EgressPiece =
   | { readonly kind: 'text'; readonly text: string }
   | { readonly kind: 'upload'; readonly upload: PlannedUpload };
 
 /**
- * Identidad durable de la pieza: texto sin prefijo (`sha256(texto)`) para idempotencia histórica,
- * o descriptor con prefijo `artifact:` para adjuntos.
+ * Durable identity of the piece: text without prefix (`sha256(text)`) for historical idempotence,
+ * or a descriptor prefixed with `artifact:` for attachments.
  */
 function pieceHash(piece: EgressPiece): string {
   const material = piece.kind === 'text'
@@ -331,7 +331,7 @@ export class TelegramEgressWorker {
   }
 
   /**
-   * Envía el texto formateado como HTML y degrada a texto plano si Telegram rechaza el parseo.
+   * Sends the text formatted as HTML and falls back to plain text if Telegram rejects the parse.
    */
   private async sendFormatted(
     api: TelegramApi,
@@ -347,8 +347,8 @@ export class TelegramEgressWorker {
       return await api.sendText(chatId, html, conFormato);
     } catch (error) {
       if (error instanceof EgressCrash) throw error;
-      // Sólo se degrada ante un rechazo CONOCIDO del contenido: un fallo de red o un resultado
-      // ambiguo tiene que seguir su camino normal, o se duplicaría un mensaje ya entregado.
+      // Only falls back on a KNOWN rejection of the content: a network failure or an ambiguous
+      // result has to follow its normal path, or a delivered message would be duplicated.
       const rechazoDeFormato = error instanceof TelegramApiError
         && error.outcomeKnown && !error.retryable;
       if (!rechazoDeFormato) throw error;
@@ -361,9 +361,7 @@ export class TelegramEgressWorker {
     }
   }
 
-  /**
-   * Sube un adjunto con degradación secuencial (foto -> documento -> aviso de texto) ante rechazos de formato.
-   */
+  /** Uploads an attachment with sequential fallback (photo -> document -> text notice) on format rejections. */
   private async sendAttachment(
     api: TelegramApi,
     chatId: string,
@@ -445,11 +443,7 @@ export class TelegramEgressWorker {
     const chatId = event.origin.conversation_id;
     const interimAcknowledgement = isInterimAcknowledgement(event.payload);
     const threadId = originThreadId(event);
-    // A proactive relay does not answer an inbound message. If one ever claimed
-    // to, finishActivity would place a reaction on an arbitrary message id of
-    // that chat. allowed_chat_ids remains the independent second key: a
-    // destination approved in the database still cannot reach a chat this bridge
-    // was not configured for.
+    // Proactive relay does not answer an inbound message. allowed_chat_ids remains the second key.
     const forgedProactiveReply = event.payload.relay_kind === 'notify'
       && event.origin.external_message_id !== undefined;
     if (!bridgeAlias || !config || !api || config.tenant_id !== event.tenant_id || event.origin.channel !== 'telegram' ||
@@ -463,15 +457,15 @@ export class TelegramEgressWorker {
     }
 
     try {
-      // En MISSING_FINAL_REPLY no se inspecciona NI se planifica el payload: incluso un artifact
-      // data:/http:/file: es entrada no confiable y la respuesta debe ser una sola pieza fija.
+      // On MISSING_FINAL_REPLY the payload is NOT inspected NOR planned: even a data:/http:/file:
+      // artifact is untrusted input and the response must be a single fixed piece.
       const missingFinalReply = isMissingFinalReply(event.payload);
       let pieces: EgressPiece[];
       if (missingFinalReply) {
         pieces = [{ kind: 'text', text: MISSING_FINAL_REPLY_NOTICE }];
       } else {
-        // Los adjuntos se planifican ANTES de trocear: el pie que resume lo que no viajó forma
-        // parte del texto, y los bytes que sí viajan son piezas más de la misma secuencia durable.
+        // Attachments are planned BEFORE chunking: the footer that summarises what did not
+        // travel is part of the text, and the bytes that travel are more pieces of the same row.
         const plan = planArtifacts(event.payload);
         const chunks = telegramTextChunks(event.payload, plan.footer);
         pieces = [

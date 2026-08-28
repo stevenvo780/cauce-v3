@@ -14,7 +14,7 @@ import type {
 } from './types.js';
 import { safeText } from './untrusted.js';
 
-/** Punto de inyección para las pruebas; en producción siempre es el cliente HTTP real. */
+/** Injection point for tests; in production it is always the real HTTP client. */
 export type Transcriber = typeof transcribeAudio;
 
 /** Same shape the dispatcher uses: one JSON object per line on stderr. */
@@ -22,14 +22,7 @@ export function logJsonLine(record: Record<string, unknown>): void {
   console.error(JSON.stringify(record));
 }
 
-/**
- * Telegram chat/user id as a string.
- *
- * Positive-only, matching `positiveId` in the addressing resolver: real Telegram user ids are
- * always positive, and having two validators of the same field disagree is how a message ends up
- * accepted by one layer and denied by the next. Chat ids go through `chatId()` because groups are
- * legitimately negative.
- */
+/** Positive-only Telegram user ID matching `positiveId` in the addressing resolver. */
 export function id(value: unknown): string | undefined {
   return Number.isSafeInteger(value) && Number(value) > 0 ? String(value) : undefined;
 }
@@ -76,8 +69,8 @@ function media(message: TelegramMessage): Record<string, unknown>[] {
  * The harness prints `origin` inside a block labelled TRUSTED ORIGIN CONTEXT, so none of these
  * values may go there.
  *
- * `scope: 'private'` representa un DM: no incluye metadatos de grupo (`thread_id`, `addressed_by`),
- * únicamente la identidad del remitente.
+ * `scope: 'private'` represents a DM: it carries no group metadata (`thread_id`, `addressed_by`),
+ * only the sender's identity.
  */
 export type BodyContext =
   | {
@@ -89,16 +82,16 @@ export type BodyContext =
     }
   | {
       readonly scope: 'private';
-      /** Nunca `undefined`: sin identidad que contar, el DM no lleva contexto y el body no cambia. */
+      /** Never `undefined`: with no identity to report, the DM carries no context and the body does not change. */
       readonly untrusted: Record<string, unknown>;
     };
 
 /**
- * Contexto de un DM, o nada.
+ * DM context, or nothing.
  *
- * Sin identidad utilizable —Telegram puede no mandar ni nombre ni username— no hay contexto: el
- * cuerpo del privado sale exactamente como salía antes de P8, sin una clave `prompt` que duplique
- * el `text` sin agregar información.
+ * With no usable identity —Telegram may send neither name nor username— there is no context: the
+ * private chat body comes out exactly as it did before P8, without a `prompt` key duplicating the
+ * `text` with no information added.
  */
 export function privateContext(untrusted: Record<string, unknown> | undefined): BodyContext | undefined {
   return untrusted === undefined ? undefined : { scope: 'private', untrusted };
@@ -128,18 +121,18 @@ export function untrustedPrompt(text: string, untrusted: Record<string, unknown>
   ].join('\n');
 }
 
-/** Lo que devuelve `prepareTelegramAttachments`, para poder tamizarlo antes de publicar. */
+/** What `prepareTelegramAttachments` returns, so it can be sifted before publishing. */
 export type PreparedAttachments = Awaited<ReturnType<typeof prepareTelegramAttachments>>;
 
-/** Quién sufre el descarte, para poder encontrarlo en el log del contenedor. */
+/** Who suffers the drop, so it can be found in the container log. */
 export interface AttachmentScreenMeta {
   readonly alias: string;
   readonly tenant_id: string;
 }
 
 /**
- * Valida adjuntos contra el esquema de publicación antes de enviar.
- * Los adjuntos no válidos se descartan para no bloquear el procesamiento del mensaje.
+ * Validates attachments against the publish schema before sending.
+ * Invalid attachments are dropped so they do not block message processing.
  */
 export function screenAttachments(
   prepared: PreparedAttachments,
@@ -154,9 +147,9 @@ export function screenAttachments(
     if (AttachmentContentSchema.safeParse(attachment).success) kept.push(attachment);
     else dropped.push(attachment);
   }
-  // Los controles de ARRAY (mínimo, máximo y tamaño agregado) no son por adjunto: si el conjunto
-  // que sobrevivió sigue sin pasar, se cae el conjunto entero. Perder los adjuntos es aceptable;
-  // perder el mensaje no.
+  // ARRAY-level checks (min, max and aggregate size) are not per-attachment: if the surviving set
+  // still fails, the whole set is dropped. Losing the attachments is acceptable; losing the
+  // message is not.
   if (kept.length > 0 && !AttachmentsV1Schema.safeParse(kept).success) {
     dropped.push(...kept.splice(0, kept.length));
   }
@@ -180,7 +173,7 @@ export function screenAttachments(
         dropped: dropped.length
       });
     } catch {
-      // El rastro es best effort; jamás puede trabar el update que vino a salvar.
+      // The trace is best-effort; it must never stall the update that came to be saved.
     }
   }
   return { ...prepared, media: kept, errors: [...prepared.errors, ...errors] };
@@ -205,11 +198,11 @@ export async function normalizedBody(
   const caption = safeText(message.caption, 1_024);
   const typed = text ?? caption;
   /**
-   * La transcripción va etiquetada.
+   * The transcription is labeled.
    *
-   * El agente tiene que saber que eso no se tecleó: salió de un reconocedor de voz y puede traer
-   * nombres propios mal oídos. Sin la etiqueta, un error de la GPU se lee como si el humano lo
-   * hubiera escrito así, y el agente lo cita de vuelta con una seguridad que el texto no tiene.
+   * The agent must know it was not typed: it came out of a speech recognizer and may carry
+   * misheard proper nouns. Without the label, a GPU error reads as if the human had typed it
+   * that way, and the agent quotes it back with a confidence the text does not have.
    */
   const spoken = voice.transcript === undefined
     ? undefined
@@ -230,19 +223,20 @@ export async function normalizedBody(
       ? attachmentError
       : `${request}\n\n${attachmentError}`;
   /**
-   * El sobre de grupo. El DM no lo lleva: en un privado no hay tema ni forma de ser interpelado.
+   * The group envelope. The DM does not carry it: in a private chat there is no thread nor
+   * any way to be addressed.
    */
   const envelope = context === undefined || context.scope === 'private' ? {} : {
     ...(context.threadId === '0' ? {} : { thread_id: context.threadId }),
     addressed_by: context.bucket
   };
   /**
-   * Qué lee el agente, y cuándo aparece `prompt` en el cuerpo.
+   * What the agent reads, and when `prompt` appears in the body.
    *
-   * Con identidad que contar → el texto va envuelto en el bloque untrusted. Sin identidad, `prompt`
-   * sólo aparece donde ya aparecía antes de P8: en un grupo (donde el harness necesita el sobre) y
-   * en el DM que trae un error de adjunto o una transcripción. Un DM común y corriente sin
-   * identidad utilizable sale igual que siempre, sin la clave.
+   * With an identity to report → the text is wrapped in the untrusted block. Without identity,
+   * `prompt` only appears where it already appeared before P8: in a group (where the harness
+   * needs the envelope) and in a DM carrying an attachment error or a transcription. A plain DM
+   * with no usable identity is emitted as always, without the key.
    */
   const untrusted = context?.untrusted;
   const prompt = effectiveRequest === undefined
@@ -264,15 +258,15 @@ export async function normalizedBody(
     ...(prepared.media.length === 0 ? {} : { attachments_v1: prepared.media }),
     ...(legacyAttachments.length === 0 ? {} : { media: legacyAttachments }),
     ...(prepared.errors.length === 0 ? {} : { attachment_errors: prepared.errors }),
-    // Registro fiel de lo que pasó con el audio, para el operador en la consola: el prompt de
-    // arriba es lo que leyó el agente, esto es de dónde salió.
+    // Faithful record of what happened with the audio, for the operator in the console: the
+    // prompt above is what the agent read, this is where it came from.
     ...(voice.kind === undefined ? {} : { voice_v1: voice })
   };
   /**
-   * Redacta secretos en el cuerpo del mensaje antes de persistir en `messages.body`.
+   * Redacts secrets in the message body before persisting it in `messages.body`.
    *
-   * Se redacta el cuerpo entero de forma recursiva para proteger cadenas de conexión,
-   * tokens y contraseñas. La marca `redacted_v1` se añade para auditoría en consola.
+   * The whole body is redacted recursively to protect connection strings, tokens and
+   * passwords. The `redacted_v1` flag is added for console auditing.
    */
   const redacted = redactSecretsDeep(body);
   if (redacted.count === 0) return body;

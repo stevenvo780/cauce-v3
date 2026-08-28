@@ -9,11 +9,11 @@ import type {
 export const MAX_TELEGRAM_ATTACHMENT_BYTES = 10_000_000;
 
 /**
- * El audio tiene su propio techo, más alto que el de los adjuntos inline.
+ * Audio has its own cap, higher than the inline attachments one.
  *
- * Puede permitírselo porque no viaja al bus: se descarga, se transcribe y se tira. Lo que se
- * guarda son los caracteres del texto. Una nota de voz de 20 minutos entra acá y sale como
- * un párrafo.
+ * It can afford it because it does not travel on the bus: it is downloaded, transcribed and
+ * discarded. What is kept are the characters of the text. A 20-minute voice note lands here and
+ * comes out as a paragraph.
  */
 export const MAX_TELEGRAM_AUDIO_BYTES = 25_000_000;
 
@@ -34,11 +34,11 @@ const TYPES: readonly AttachmentType[] = [
   { mime: 'image/webp', extension: '.webp', matches: (value) => value.length >= 12 && value.toString('ascii', 0, 4) === 'RIFF' && value.toString('ascii', 8, 12) === 'WEBP' },
   { mime: 'application/pdf', extension: '.pdf', matches: (value) => value.subarray(0, 5).toString('ascii') === '%PDF-' },
   { mime: 'text/plain', extension: '.txt', matches: validUtf8Text },
-  // La flota trabaja sobre .md y Telegram no manda un mime estable para ellos: según el cliente
-  // llega `text/markdown`, `text/x-markdown` o directamente `text/plain`. Se declaran los tres
-  // pares porque el match exige (mime, extensión) y basta que uno no coincida para rechazarlo.
-  // El control de seguridad no lo da la extensión sino `validUtf8Text`: el contenido tiene que ser
-  // UTF-8 real sin bytes nulos, así que un binario renombrado a .md sigue sin entrar.
+  // The fleet works on .md and Telegram does not send a stable mime for them: depending on the
+  // client they arrive as `text/markdown`, `text/x-markdown` or directly `text/plain`. The three
+  // pairs are declared because the match requires (mime, extension) and any mismatch rejects it.
+  // The safety check is not given by the extension but by `validUtf8Text`: the content must be
+  // real UTF-8 without null bytes, so a binary renamed to .md still does not get in.
   { mime: 'text/markdown', extension: '.md', matches: validUtf8Text },
   { mime: 'text/x-markdown', extension: '.md', matches: validUtf8Text },
   { mime: 'text/plain', extension: '.md', matches: validUtf8Text },
@@ -80,12 +80,12 @@ function safeRemotePath(value: string): boolean {
 }
 
 /**
- * Criterio de code points hostiles: controles C0/C1, bidi, invisibles y las anotaciones.
+ * Hostile code point criterion: C0/C1 controls, bidi, invisibles and the annotations.
  *
- * Se exporta para que `test/untrusted.test.ts` pueda comprobar que el saneo de los NOMBRES no deja
- * pasar nada de lo que acá se rechaza. Los dos criterios nacieron separados —uno para nombres de
- * archivo, otro para texto libre— y dos validadores del mismo campo que se van desincronizando es
- * exactamente cómo un valor termina aceptado por una capa y rechazado por la de al lado.
+ * It is exported so `test/untrusted.test.ts` can check that the NAME sanitiser does not let
+ * through anything rejected here. The two criteria were born separate —one for file names,
+ * another for free text— and two validators of the same field drifting apart is exactly how a
+ * value ends up accepted by one layer and rejected by the next.
  */
 export function hasUnsafeAttachmentCodePoint(value: string): boolean {
   for (const character of value) {
@@ -182,13 +182,13 @@ export async function prepareTelegramAttachments(
 }
 
 /* ------------------------------------------------------------------------- *
- * Voz
+ * Voice
  *
- * Camino aparte del de arriba, a propósito. Los adjuntos inline pasan por una lista blanca
- * estricta de mime + extensión + magic porque sus bytes terminan en el cuerpo del mensaje y de
- * ahí al modelo. El audio no: de una nota de voz sólo sobrevive el texto que devuelve la GPU.
- * Lo que hay que verificar acá no es "esto es seguro de reenviar" sino "esto es realmente audio",
- * así que el tipo se deduce de los bytes y el nombre que declaró el usuario se descarta entero.
+ * Deliberately a separate path from the one above. Inline attachments go through a strict
+ * whitelist of mime + extension + magic because their bytes end up in the message body and from
+ * there to the model. Audio does not: from a voice note only the text returned by the GPU
+ * survives. What has to be verified here is not "this is safe to forward" but "this is really
+ * audio", so the type is inferred from the bytes and the user-declared name is discarded whole.
  * ------------------------------------------------------------------------- */
 
 type AudioKind = 'voice' | 'audio' | 'video_note' | 'video';
@@ -200,20 +200,20 @@ interface AudioType {
 }
 
 const AUDIO_TYPES: readonly AudioType[] = [
-  // Lo que manda Telegram para una nota de voz: Ogg/Opus.
+  // What Telegram sends for a voice note: Ogg/Opus.
   { mime: 'audio/ogg', extension: '.ogg', matches: (value) => value.toString('ascii', 0, 4) === 'OggS' },
   { mime: 'audio/wav', extension: '.wav', matches: (value) => value.length >= 12 && value.toString('ascii', 0, 4) === 'RIFF' && value.toString('ascii', 8, 12) === 'WAVE' },
   { mime: 'audio/flac', extension: '.flac', matches: (value) => value.toString('ascii', 0, 4) === 'fLaC' },
   { mime: 'audio/mpeg', extension: '.mp3', matches: (value) => value.toString('ascii', 0, 3) === 'ID3' || (value.length >= 2 && value[0] === 0xff && ((value[1] ?? 0) & 0xe0) === 0xe0) },
-  // ISO-BMFF: m4a, mp4 y los video_note. `ftyp` empieza en el byte 4.
+  // ISO-BMFF: m4a, mp4 and the video_note. `ftyp` starts at byte 4.
   { mime: 'audio/mp4', extension: '.m4a', matches: (value) => value.length >= 12 && value.toString('ascii', 4, 8) === 'ftyp' },
   { mime: 'audio/webm', extension: '.webm', matches: (value) => value.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) }
 ];
 
 export interface PreparedTelegramVoice {
-  /** Lo que dijo el humano. Ausente si algo falló. */
+  /** What the human said. Absent if something failed. */
   readonly transcript?: string;
-  /** Explicación en castellano, pensada para que el agente se la lea al usuario. */
+  /** Explanation in Spanish, intended for the agent to read aloud to the user. */
   readonly error?: string;
   readonly kind?: AudioKind;
   readonly duration?: number;
@@ -232,10 +232,10 @@ function audioError(kind: AudioKind, detail: string): string {
 }
 
 /**
- * Descarga el audio de un mensaje de Telegram y devuelve su transcripción.
+ * Downloads the audio from a Telegram message and returns its transcription.
  *
- * Falla abierta en todos los caminos salvo los errores reintentables de Telegram, que se propagan
- * para que el poller reintente el update completo igual que con los adjuntos.
+ * It fails open on every path except for retryable Telegram errors, which propagate so the
+ * poller retries the whole update just like with attachments.
  */
 export async function prepareTelegramVoice(
   message: TelegramMessage,
@@ -273,7 +273,7 @@ export async function prepareTelegramVoice(
     if (payload.length > MAX_TELEGRAM_AUDIO_BYTES) {
       return { ...base, error: audioError(item.kind, 'pesa más de 25 MB') };
     }
-    // El nombre que llega de Telegram no se usa: el formato sale de los bytes.
+    // The name coming from Telegram is not used: the format is inferred from the bytes.
     const type = AUDIO_TYPES.find((entry) => entry.matches(payload));
     if (type === undefined) {
       return { ...base, error: audioError(item.kind, 'el archivo no parece audio en un formato conocido') };

@@ -2,42 +2,42 @@ import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
 
 /**
- * Planificación y preparación de adjuntos de egreso (`output.artifacts`).
+ * Planning and preparation of egress attachments (`output.artifacts`).
  */
 
-/** Simétrico con el techo de ingesta (`MAX_TELEGRAM_ATTACHMENT_BYTES`). */
+/** Symmetric to the ingest cap (`MAX_TELEGRAM_ATTACHMENT_BYTES`). */
 export const MAX_EGRESS_ATTACHMENT_BYTES = 10_000_000;
 
 /**
- * Cuántos archivos se suben por respuesta.
+ * How many files are uploaded per response.
  *
- * Cada subida es un mensaje de Telegram más, con su fila durable y su cuota de rate limit. Un
- * agente que devuelva veinte artifacts no puede convertir una respuesta en veinte notificaciones
- * en el teléfono de alguien.
+ * Each upload is one more Telegram message, with its durable row and its rate-limit budget. An
+ * agent returning twenty artifacts cannot turn a response into twenty notifications on someone's
+ * phone.
  */
 export const MAX_UPLOADS_PER_RELAY = 4;
 const MAX_ARTIFACTS_CONSIDERED = 16;
 const MAX_LISTED_LINES = 8;
-/** Cota del string base64 antes de decodificar, para no materializar un buffer absurdo. */
+/** Cap on the base64 string before decoding, to avoid materializing an absurd buffer. */
 const MAX_DATA_URI_CHARACTERS = Math.ceil(MAX_EGRESS_ATTACHMENT_BYTES / 3) * 4 + 64;
 
 export interface PlannedUpload {
-  /** `photo` se renderiza dentro del chat; `document` se descarga. */
+  /** `photo` is rendered inline in the chat; `document` is downloaded. */
   readonly kind: 'photo' | 'document';
   readonly name: string;
   readonly mime_type: string;
   readonly bytes: Buffer;
-  /** Identidad estable del contenido: entra en el hash durable del efecto. */
+  /** Stable identity of the content: it feeds the durable effect hash. */
   readonly sha256: string;
 }
 
 export interface ArtifactPlan {
   readonly uploads: readonly PlannedUpload[];
-  /** Bloque a pegar al final del texto. Cadena vacía cuando no hay nada que contar. */
+  /** Block to append at the end of the text. Empty string when there is nothing to say. */
   readonly footer: string;
-  /** Artifacts que sólo se pudieron nombrar: enlace, o ruta que vive en el agente. */
+  /** Artifacts that could only be named: a link, or a path that lives in the agent. */
   readonly listed: number;
-  /** Artifacts que no se pudieron subir ni listar (contador para la métrica). */
+  /** Artifacts that could not be uploaded nor listed (counter for the metric). */
   readonly discarded: number;
 }
 
@@ -73,7 +73,7 @@ function artifactList(payload: Record<string, unknown>): readonly RawArtifact[] 
 }
 
 /* --------------------------------------------------------------------------- *
- * Nombres
+ * Names
  * --------------------------------------------------------------------------- */
 
 function hasUnsafeCodePoint(value: string): boolean {
@@ -92,10 +92,10 @@ function hasUnsafeCodePoint(value: string): boolean {
 }
 
 /**
- * Nombre de archivo apto para el `filename` de un multipart.
+ * File name suitable for the `filename` of a multipart.
  *
- * Comillas, saltos de línea y separadores de ruta se van: el valor viaja dentro de una cabecera
- * `Content-Disposition` y no puede llevar nada capaz de cerrarla.
+ * Quotes, line breaks and path separators are stripped: the value travels inside a
+ * `Content-Disposition` header and must carry nothing that could close it.
  */
 function safeFileName(value: string): boolean {
   return value.length >= 1 && value.length <= 200 && basename(value) === value &&
@@ -126,7 +126,7 @@ function uploadName(declared: string, mime: string): string {
  * Bytes
  * --------------------------------------------------------------------------- */
 
-/** Firmas que Telegram sabe renderizar como foto dentro del chat. */
+/** Magic numbers Telegram knows how to render as an inline photo in the chat. */
 function sniffImage(bytes: Buffer): string | undefined {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
   if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
@@ -139,15 +139,15 @@ function sniffImage(bytes: Buffer): string | undefined {
 interface DecodedData {
   readonly bytes?: Buffer;
   readonly mime?: string;
-  /** Motivo en castellano, listo para que lo lea el humano. Presente sólo si falló. */
+  /** Reason in Spanish, ready for a human to read. Present only if it failed. */
   readonly error?: string;
 }
 
 /**
- * `data:[<mime>][;charset=…][;base64],<datos>`.
+ * `data:[<mime>][;charset=…][;base64],<data>`.
  *
- * Sólo se acepta la variante base64: un `data:` percent-encoded sirve para textos diminutos y
- * aceptarlo agregaría un decodificador más por un caso que nadie usa.
+ * Only the base64 variant is accepted: a percent-encoded `data:` is fine for tiny texts, and
+ * accepting it would add one more decoder for a case nobody uses.
  */
 function decodeDataUri(uri: string): DecodedData {
   const comma = uri.indexOf(',');
@@ -159,8 +159,8 @@ function decodeDataUri(uri: string): DecodedData {
   const raw = uri.slice(comma + 1).replace(/\s+/gu, '');
   if (raw.length === 0) return { error: 'el data: URI vino vacío' };
   if (raw.length > MAX_DATA_URI_CHARACTERS) return { error: 'supera los 10 MB' };
-  // Buffer.from ignora en silencio lo que no es base64: sin esta comprobación, un adjunto corrupto
-  // se subiría truncado y el humano abriría un archivo roto sin saber por qué.
+  // Buffer.from silently ignores non-base64 content: without this check, a corrupt attachment
+  // would upload truncated and the human would open a broken file without knowing why.
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(raw) || raw.length % 4 !== 0) {
     return { error: 'el base64 del adjunto está mal formado' };
   }
@@ -171,13 +171,13 @@ function decodeDataUri(uri: string): DecodedData {
 }
 
 /* --------------------------------------------------------------------------- *
- * Listado
+ * Listing
  * --------------------------------------------------------------------------- */
 
 /**
- * El texto del pie pasa después por `markdownToTelegramHtml`. Se le quitan los caracteres que ese
- * conversor interpreta como marcado para que un nombre con `*` o `_` no deje el mensaje a medio
- * poner en cursiva.
+ * The footer text later goes through `markdownToTelegramHtml`. Characters that converter
+ * interprets as markup are stripped so a name containing `*` or `_` does not leave the message
+ * half in italics.
  */
 function plainInline(value: string, limit: number): string {
   const cleaned = value
@@ -199,9 +199,9 @@ function label(artifact: RawArtifact, fallback: string): string {
 }
 
 /**
- * Arma el plan de una respuesta: qué se sube, qué se lista y qué se descarta.
+ * Builds the plan for a response: what gets uploaded, what gets listed and what gets dropped.
  *
- * No tira nunca. Cualquier forma inesperada termina en `discarded` o en una línea del pie.
+ * It never throws. Any unexpected shape ends up in `discarded` or in a footer line.
  */
 export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
   const artifacts = artifactList(payload);
@@ -230,8 +230,8 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
       const sniffed = sniffImage(decoded.bytes);
       const mime = sniffed ?? (decoded.mime ?? 'application/octet-stream');
       uploads.push({
-        // La foto se decide por los BYTES, no por lo que declara el agente: un `image/png` mentido
-        // hace que Telegram rechace el sendPhoto entero, y ese rechazo es evitable.
+        // The photo decision is made from the BYTES, not from what the agent declares: a lied
+        // `image/png` makes Telegram reject the whole sendPhoto, and that rejection is avoidable.
         kind: sniffed === undefined ? 'document' : 'photo',
         name: uploadName(artifact.name, mime),
         mime_type: mime,
@@ -245,7 +245,7 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
       lines.push(`• ${label(artifact, 'enlace')}: ${link}`);
       continue;
     }
-    // Ruta del contenedor del agente no accesible localmente.
+    // Path inside the agent container that is not reachable locally.
     lines.push(`• ${label(artifact, 'archivo')}: quedó en el espacio de trabajo del agente y no viajó al chat`);
   }
 

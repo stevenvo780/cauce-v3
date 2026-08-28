@@ -24,69 +24,69 @@ export interface AgentHello {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
-  /** True sólo cuando el launcher observó al proceso real; ausente/false no acredita rutas. */
+    /** True only when the launcher observed the real process; absent/false does not certify paths. */
   readonly runtime_facts_observed?: boolean;
-  /** `HOME` del proceso del arnés dentro del contenedor. Opcional para retrocompatibilidad. */
+    /** Harness process `HOME` inside the container. Optional for backward compatibility. */
   readonly home?: string;
   /** Alias-scoped harness roots measured from the live adapter process, never inferred by relay. */
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
-  /** Contexto efectivo medido; opcional para agentes anteriores durante rollout. */
+    /** Effective measured context; optional for older agents during rollout. */
   readonly cwd?: string;
   readonly workspace_root?: string;
   readonly project_root?: string;
-  /** Proyección cerrada de config.toml; ambos campos viajan juntos y sólo para Codex. */
+    /** Closed projection of config.toml; both fields travel together and only for Codex. */
   readonly project_doc_max_bytes?: number;
   readonly project_doc_fallback_filenames?: readonly string[];
   readonly agent_version: string;
   readonly modes: readonly TerminalMode[];
-  /**
-   * Capacidades OPCIONALES que el agente declara. Un agente anterior a la lectura de gobierno no
-   * manda el campo, y entonces esto es `[]`: nadie le manda nunca un READ. No es cosmética —
-   * `_dispatch` del pty-agent trata un tag desconocido como violación de protocolo y se tira la
-   * conexión encima, con TODAS sus terminales abiertas. Desplegar el relay antes que el agente
-   * sin esta comprobación dejaría la flota sin terminales.
-   */
+    /**
+     * OPTIONAL capabilities the agent declares. An agent older than governance read does not
+     * send the field, and then this is `[]`: nobody ever sends it a READ. This is not cosmetic —
+     * the pty-agent's `_dispatch` treats an unknown tag as a protocol violation and drops the
+     * connection on top, with ALL its open terminals. Deploying the relay before the agent
+     * without this check would leave the fleet without terminals.
+     */
   readonly features: readonly string[];
 }
 
-/** El agente declara esto cuando sabe contestar TAG_READ. Sin la marca, no se le pregunta. */
+/** The agent declares this when it knows how to answer TAG_READ. Without the flag, it is not asked. */
 export const FEATURE_READ_GOVERNANCE = 'read_governance';
-/** READ_OK/READ_DATA terminan únicamente cuando llega READ_DONE. Obligatorio para índices. */
+/** READ_OK/READ_DATA only end when READ_DONE arrives. Required for indexes. */
 export const FEATURE_READ_GOVERNANCE_DONE = 'read_governance_done_v1';
-/** Escritura atómica/CAS. El sufijo versiona explícitamente el protocolo y sus precondiciones. */
+/** Atomic/CAS write. The suffix explicitly versions the protocol and its preconditions. */
 export const FEATURE_WRITE_GOVERNANCE = 'write_governance_v1';
-/** Perfil completo: preflight de todos los ficheros y rollback total dentro del pty-agent. */
+/** Full profile: preflight of every file and total rollback inside the pty-agent. */
 export const FEATURE_WRITE_GOVERNANCE_BATCH = 'write_governance_batch_v1';
-/** Permite frenar una sola PTY sin congelar PONG, lecturas ni las otras sesiones multiplexadas. */
+/** Lets a single PTY be paused without freezing PONG, reads, or other multiplexed sessions. */
 export const FEATURE_SESSION_OUTPUT_FLOW_CONTROL = 'session_output_flow_control';
-/** Memoria propia máxima encima del writable buffer de Node mientras el TLS espera `drain`. */
+/** Maximum own memory above the Node writable buffer while TLS waits for `drain`. */
 export const MAX_AGENT_WRITE_QUEUE_BYTES = 512 * 1024;
 /** Reserved above the data quota for CLOSE frames. Exhausting it drops TLS so the agent kills all children. */
 export const MAX_AGENT_CRITICAL_QUEUE_BYTES = 64 * 1024;
-/** Una conexión corresponde a un alias: este tope es, por construcción, por alias. */
+/** One connection maps to one alias: by construction this cap is per alias. */
 export const MAX_AGENT_READS_IN_FLIGHT = 4;
-/** Al llenarse se rota la conexión: nunca se olvida un terminal id mientras el socket siga vivo. */
+/** When full, the connection is rotated: a terminal id is never forgotten while the socket is alive. */
 export const MAX_TERMINAL_READ_TOMBSTONES = 1_024;
 
-/**
- * Una lectura en vuelo. Es una transacción suelta, no una sesión: el agente contesta un READ_OK
- * con los metadatos (incluido cuántos READ_DATA vienen detrás), luego los datos, y ahí acaba.
- */
+  /**
+   * A read in flight. It is a loose transaction, not a session: the agent answers READ_OK with
+   * the metadata (including how many READ_DATA frames follow), then the data, and that is it.
+   */
 export interface AgentReadHandlers {
   onReadOk(metadata: Record<string, unknown>): void;
   onReadData(chunk: Buffer): void;
   onReadDone(metadata: Record<string, unknown>): void;
   onReadErr(failure: { readonly code: string; readonly reason: string }): void;
-  /** La conexión murió con la lectura a medias; no va a llegar ni OK ni ERR. */
+    /** The connection died with the read half-done; neither OK nor ERR will arrive. */
   onAgentGone(reason: string): void;
 }
 
 export interface AgentWriteHandlers {
   onWriteOk(ack: Record<string, unknown>): void;
   onWriteErr(failure: { readonly code: string; readonly reason: string }): void;
-  /** La conexión murió antes del ACK; el llamador conserva la precondición para reintentar. */
+    /** The connection died before the ACK; the caller keeps the precondition for retry. */
   onAgentGone(reason: string): void;
 }
 
@@ -147,11 +147,11 @@ function modesField(source: Record<string, unknown>): readonly TerminalMode[] | 
   return modes;
 }
 
-/**
- * A diferencia de `modesField`, esto NO invalida el hello: un agente viejo no manda `features` y
- * tiene que seguir entrando. Ausente o mal formado se lee como «ninguna capacidad», que es el
- * lado seguro — a ese agente no se le manda un READ jamás.
- */
+  /**
+   * Unlike `modesField`, this does NOT invalidate the hello: an older agent does not send
+   * `features` and must still be admitted. Absent or malformed is read as "no capabilities",
+   * which is the safe side — such an agent is never sent a READ.
+   */
 function featuresField(source: Record<string, unknown>): readonly string[] {
   const value: unknown = source.features;
   if (!Array.isArray(value)) return [];
@@ -302,8 +302,8 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     runtime_uid: runtimeUid,
     harness,
     runtime_facts_observed: runtimeFactsObserved,
-    // Un marker sin su raíz efectiva no acredita un hecho parcial. El alias conserva terminales,
-    // pero toda la familia contextual queda fuera del hello normalizado y de la presencia.
+    // A marker without its effective root does not certify a partial fact. The alias keeps its
+    // terminals, but the whole contextual family stays out of the normalized hello and presence.
     ...(runtimeFactsObserved ? {
       home,
       ...(harness === 'codex' && codexHome !== undefined ? { codex_home: codexHome } : {}),
@@ -320,11 +320,11 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
   };
 }
 
-/**
- * `home` del saludo. Devuelve `undefined` tanto si no viene como si viene mal: no invalida el
- * saludo entero, porque un agente sin `home` sigue sirviendo terminales — sólo se queda sin
- * lectura de directiva, y el gateway lo dice con esas palabras.
- */
+  /**
+   * The `home` from the hello. Returns `undefined` both when missing and when malformed: it does
+   * not invalidate the whole hello, because an agent without `home` still serves terminals —
+   * it only loses directive reading, and the gateway says so in those words.
+   */
 function rutaMedida(source: Record<string, unknown>, campo: string): string | undefined {
   const valor = source[campo];
   if (typeof valor !== 'string') return undefined;
