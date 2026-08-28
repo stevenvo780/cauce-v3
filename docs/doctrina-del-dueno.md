@@ -1,6 +1,6 @@
 # Doctrina del dueño
 
-La voz del dueño sobre cómo debe ser y funcionar Cauce V3, rescatada de sus respuestas en `PENDIENTES-DEL-DUEÑO.md`, de las decisiones de `plan-reestructura/`, de `ordenes/00-PROTOCOLO.md` y de `AGENTS.md`. No repite lo que el código ya expresa: es el criterio detrás de las reglas. **Estado a 28-08-2026**: ya hubo primer despliegue real a producción (esquema 024→037, D3 en efecto — producción corre desde este repo, sin binds a `/opt`).
+La voz del dueño sobre cómo debe ser y funcionar Cauce V3, rescatada de sus respuestas y decisiones escritas (hoy en el historial de git: `git log --diff-filter=D -- 'PENDIENTES*' plan-reestructura`), de `ordenes/00-PROTOCOLO.md` y de `AGENTS.md`. No repite lo que el código ya expresa: es el criterio detrás de las reglas. **Estado a 28-08-2026**: ya hubo primer despliegue real a producción (esquema 024→037, D3 en efecto — producción corre desde este repo, sin binds a `/opt`).
 
 ## 1. Principios de estructura
 
