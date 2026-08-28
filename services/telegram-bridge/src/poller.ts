@@ -162,7 +162,7 @@ export class TelegramPoller {
   } | undefined {
     const message = update.message;
     if (!message || !Number.isSafeInteger(message.message_id)) return undefined;
-    const chatId = conversationId(message.chat?.id);
+    const chatId = conversationId(message.chat.id);
     const userId = id(message.from?.id);
     if (!chatId || !userId) return undefined;
     if (!this.config.allowed_chat_ids.includes(chatId) || !this.config.allowed_user_ids.includes(userId)) return undefined;
@@ -175,7 +175,7 @@ export class TelegramPoller {
   private reportSilentDrop(update: TelegramUpdate): void {
     const message = update.message;
     if (!message || !Number.isSafeInteger(message.message_id)) return;
-    const chatId = conversationId(message.chat?.id);
+    const chatId = conversationId(message.chat.id);
     if (chatId === undefined || isPrivateChatId(chatId)) return;
     // El orden importa: un mensaje anónimo TAMBIÉN falla el allowlist de usuario (Telegram lo firma
     // como GroupAnonymousBot), así que si se preguntara primero por el usuario el motivo real
@@ -350,7 +350,7 @@ export class TelegramPoller {
       context,
       this.transcription,
       undefined,
-      () => this.onMetric('ingress_secret_redacted'),
+      () => { this.onMetric('ingress_secret_redacted'); },
       { alias: this.config.alias, tenant_id: this.config.tenant_id }
     );
     // Attachment and voice preparation may await remote reads. Shutdown before the durable
@@ -403,23 +403,25 @@ export class TelegramPoller {
   ): Promise<PollLease | undefined> {
     const stop = new AbortController();
     const intervalMs = Math.max(1_000, Math.floor(this.config.poll_lease_ms / 3));
-    let active = current;
-    let fenced = false;
+    const leaseState = { active: current, fenced: false };
     const heartbeat = (async (): Promise<void> => {
       while (!stop.signal.aborted) {
-        await sleep(intervalMs, stop.signal);
-        if (stop.signal.aborted) return;
+        try {
+          await sleep(intervalMs, stop.signal);
+        } catch {
+          return;
+        }
         let renewed: PollLease | undefined;
         try {
-          renewed = await this.repository.renewPollLease(active, this.config.poll_lease_ms);
+          renewed = await this.repository.renewPollLease(leaseState.active, this.config.poll_lease_ms);
         } catch {
           renewed = undefined;
         }
         if (!renewed) {
-          fenced = true;
+          leaseState.fenced = true;
           return;
         }
-        active = renewed;
+        leaseState.active = renewed;
         this.currentLease = renewed;
       }
     })();
@@ -428,15 +430,15 @@ export class TelegramPoller {
     } finally {
       stop.abort();
       await heartbeat;
-      if (fenced) {
+      if (leaseState.fenced) {
         this.currentLease = undefined;
         this.markPollFenced();
       }
     }
-    if (fenced) {
+    if (leaseState.fenced) {
       return undefined;
     }
-    return active;
+    return leaseState.active;
   }
 
   async runOnce(signal?: AbortSignal): Promise<number> {
@@ -486,7 +488,7 @@ export class TelegramPoller {
       } catch (error) {
         // An operator-requested shutdown is not a failed poll. The cursor remains at the last
         // completely handled update, so the first unhandled update is replayed after restart.
-        if (signal.aborted) break;
+        if ((signal as unknown as { aborted: boolean }).aborted) break;
         this.observer?.pollCycleFailed(this.config.alias);
         this.onMetric('poll_error');
         failures += 1;
@@ -499,12 +501,12 @@ export class TelegramPoller {
           failures,
           error_name: error instanceof Error ? error.name : undefined,
           error_message: String(error instanceof Error ? error.message : error).slice(0, 400),
-          stack: String(error instanceof Error ? error.stack ?? '' : '').split('\n').slice(1, 4).join(' | ')
+          stack: (error instanceof Error ? error.stack ?? '' : '').split('\n').slice(1, 4).join(' | ')
         });
         const exponential = Math.min(60_000, 1_000 * 2 ** Math.min(6, failures - 1));
         const delay = error instanceof TelegramApiError && error.retryAfterMs !== undefined
           ? Math.max(exponential, error.retryAfterMs) : exponential;
-        if (!signal.aborted) await sleep(delay, signal);
+        await sleep(delay, signal);
       }
     }
   }

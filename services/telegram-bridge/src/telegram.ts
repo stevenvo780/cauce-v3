@@ -90,7 +90,7 @@ export class TelegramHttpClient implements TelegramApi {
     if (!/^[0-9]{6,20}:[A-Za-z0-9_-]{20,200}$/.test(options.token)) throw new Error('invalid Telegram token');
     this.fetcher = options.fetcher ?? fetch;
     const base = options.apiBase ?? 'https://api.telegram.org';
-    if (!/^https:\/\//.test(base) && process.env.NODE_ENV !== 'test') throw new Error('Telegram API base must use HTTPS');
+    if (!base.startsWith("https://") && process.env.NODE_ENV !== 'test') throw new Error('Telegram API base must use HTTPS');
     this.endpoint = `${base.replace(/\/$/, '')}/bot${options.token}`;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 65_000;
   }
@@ -158,7 +158,7 @@ export class TelegramHttpClient implements TelegramApi {
       : undefined;
     const code = decoded.error_code ?? response.status;
     const retryable = code === 429 || code >= 500;
-    throw new TelegramApiError(`Telegram API returned ${code}`, retryable, retryAfterMs, true);
+    throw new TelegramApiError(`Telegram API returned ${String(code)}`, retryable, retryAfterMs, true);
   }
 
   async getIdentity(): Promise<TelegramIdentity> {
@@ -230,7 +230,7 @@ export class TelegramHttpClient implements TelegramApi {
     }
     if (!response.ok) {
       throw new TelegramApiError(
-        `Telegram file download returned ${response.status}`,
+        `Telegram file download returned ${String(response.status)}`,
         response.status === 429 || response.status >= 500
       );
     }
@@ -243,7 +243,7 @@ export class TelegramHttpClient implements TelegramApi {
     let total = 0;
     const reader = response.body.getReader();
     try {
-      while (true) {
+      for (;;) {
         const chunk = await reader.read();
         if (chunk.done) break;
         total += chunk.value.byteLength;
@@ -262,7 +262,7 @@ export class TelegramHttpClient implements TelegramApi {
 
   async sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult> {
     if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram destination', false);
-    if (text.length === 0 || [...text].length > 4_096) throw new TelegramApiError('Telegram text exceeds safe limit', false);
+    if (text.length === 0 || Array.from(text).length > 4_096) throw new TelegramApiError('Telegram text exceeds safe limit', false);
     // `external_message_id` is a free string of up to 256 chars read back from durable outbox
     // rows, so it can be old or foreign. A malformed id must never turn a perfectly sendable
     // reply into a 400 (and therefore a dead effect): drop the hint and send the message loose.
@@ -273,11 +273,10 @@ export class TelegramHttpClient implements TelegramApi {
       text,
       disable_web_page_preview: true,
       ...(options?.parse_mode === 'html' ? { parse_mode: 'HTML' } : {}),
-      ...(threadId !== undefined && validTelegramMessageId(threadId)
-        ? { message_thread_id: Number(threadId) } : {}),
+      ...(threadId !== undefined && validTelegramMessageId(threadId) ? { message_thread_id: threadId } : {}),
       ...(replyTo !== undefined && validTelegramMessageId(replyTo)
-        // allow_sending_without_reply keeps a deleted original from making the chunk dead forever.
-        ? { reply_parameters: { message_id: Number(replyTo), allow_sending_without_reply: true } } : {})
+        ? { reply_parameters: { message_id: Number(replyTo), allow_sending_without_reply: true } }
+        : {})
     });
     return sentMessageId(raw, 'sendMessage');
   }
@@ -302,7 +301,7 @@ export class TelegramHttpClient implements TelegramApi {
     const contenido = new Uint8Array(upload.bytes);
     form.append(field, new Blob([contenido], { type: upload.mime_type }), upload.name);
     if (upload.caption !== undefined && upload.caption.length > 0) {
-      form.append('caption', [...upload.caption].slice(0, 1_024).join(''));
+      form.append('caption', Array.from(upload.caption).slice(0, 1_024).join(''));
     }
     const threadId = options?.message_thread_id;
     const replyTo = options?.reply_to_message_id;
@@ -367,7 +366,7 @@ export class TelegramHttpClient implements TelegramApi {
     signal?: AbortSignal
   ): Promise<void> {
     if (!validTelegramChatId(chatId)) throw new TelegramApiError('invalid Telegram chat action destination', false);
-    if (action !== 'typing') throw new TelegramApiError('invalid Telegram chat action', false);
+    if ((action as string) !== 'typing') throw new TelegramApiError('invalid Telegram chat action', false);
     const result = await this.call<unknown>('sendChatAction', {
       chat_id: chatId,
       action

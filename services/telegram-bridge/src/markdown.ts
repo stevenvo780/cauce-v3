@@ -2,7 +2,7 @@
  * Conversión de Markdown a subconjunto HTML compatible con Telegram.
  */
 
-const ESCAPES: ReadonlyArray<readonly [RegExp, string]> = [
+const ESCAPES: readonly (readonly [RegExp, string])[] = [
   [/&/gu, '&amp;'],
   [/</gu, '&lt;'],
   [/>/gu, '&gt;']
@@ -17,7 +17,7 @@ const RESERVADO = '\u0000';
 
 function protegido(piezas: string[], html: string): string {
   piezas.push(html);
-  return `${RESERVADO}${piezas.length - 1}${RESERVADO}`;
+  return `${RESERVADO}${String(piezas.length - 1)}${RESERVADO}`;
 }
 
 function restaurar(texto: string, piezas: string[]): string {
@@ -59,7 +59,7 @@ export function markdownToTelegramHtml(source: string): string {
 
   // 1. Bloques de código cercados. Van primero: adentro no se interpreta nada más.
   texto = texto.replace(/```[A-Za-z0-9_+-]*\r?\n([\s\S]*?)```/gu, (_, cuerpo: string) =>
-    protegido(piezas, `<pre>${escapeHtml(String(cuerpo).replace(/\n$/u, ''))}</pre>`));
+    protegido(piezas, `<pre>${escapeHtml(cuerpo.replace(/\n$/u, ''))}</pre>`));
 
   // 2. Tablas completas, antes de tocar las líneas sueltas.
   texto = texto.replace(/(?:^\|.*\|[ \t]*\r?\n?){2,}/gmu, (bloque: string) => {
@@ -110,7 +110,7 @@ export function markdownToTelegramHtml(source: string): string {
  */
 export function markdownToPlainText(source: string): string {
   return source
-    .replace(/```[A-Za-z0-9_+-]*\r?\n([\s\S]*?)```/gu, (_, cuerpo: string) => String(cuerpo).replace(/\n$/u, ''))
+    .replace(/```[A-Za-z0-9_+-]*\r?\n([\s\S]*?)```/gu, (_, cuerpo: string) => cuerpo.replace(/\n$/u, ''))
     .replace(/`([^`\n]+)`/gu, '$1')
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gu, '$1: $2')
     .replace(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*$/gmu, '$1')

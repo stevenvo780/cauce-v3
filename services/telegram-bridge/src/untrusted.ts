@@ -32,7 +32,7 @@ const SKELETON_NOISE = /[\p{M}\p{Cf}]/gu;
 const SKELETON_SEPARATORS = /[^\p{L}\p{N}]+/gu;
 
 /** [prototipo latino, confundibles que colapsan en él]. Ver el comentario de cabecera. */
-const CONFUSABLE_TABLE: ReadonlyArray<readonly [string, string]> = [
+const CONFUSABLE_TABLE: readonly (readonly [string, string])[] = [
   // CYRILLIC A / GREEK ALPHA / LATIN ALPHA / SMALL CAPITAL A
   ['a', '\u0430\u03b1\u0251\u1d00'],
   // CYRILLIC VE / CYRILLIC SOFT SIGN / GREEK BETA / SMALL CAPITAL B
@@ -90,7 +90,7 @@ const CONFUSABLE_TABLE: ReadonlyArray<readonly [string, string]> = [
 ];
 
 const CONFUSABLES: ReadonlyMap<string, string> = new Map(
-  CONFUSABLE_TABLE.flatMap(([prototype, sources]) => [...sources].map((source) => [source, prototype] as const))
+  CONFUSABLE_TABLE.flatMap(([prototype, sources]) => Array.from(sources).map((source) => [source, prototype] as const))
 );
 
 /**
@@ -107,7 +107,7 @@ export const MAX_USERNAME_LENGTH = 32;
 
 export function safeText(value: unknown, limit: number): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const characters = [...value.split('\u0000').join('')];
+  const characters = Array.from(value.split('\u0000').join(''));
   if (characters.length === 0) return undefined;
   return characters.slice(0, limit).join('');
 }
@@ -130,7 +130,7 @@ export function safeInline(value: unknown, limit: number): string | undefined {
     .replace(/\s+/gu, ' ')
     .trim();
   if (collapsed.length === 0) return undefined;
-  return [...collapsed].slice(0, limit).join('');
+  return Array.from(collapsed).slice(0, limit).join('');
 }
 
 /**

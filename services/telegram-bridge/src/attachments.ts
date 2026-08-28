@@ -88,12 +88,18 @@ function safeRemotePath(value: string): boolean {
  * exactamente cómo un valor termina aceptado por una capa y rechazado por la de al lado.
  */
 export function hasUnsafeAttachmentCodePoint(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.codePointAt(0)!;
-    return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code === undefined) continue;
+    if (
+      code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
       (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb);
-  });
+      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function safeName(value: string): boolean {
@@ -198,7 +204,7 @@ const AUDIO_TYPES: readonly AudioType[] = [
   { mime: 'audio/ogg', extension: '.ogg', matches: (value) => value.toString('ascii', 0, 4) === 'OggS' },
   { mime: 'audio/wav', extension: '.wav', matches: (value) => value.length >= 12 && value.toString('ascii', 0, 4) === 'RIFF' && value.toString('ascii', 8, 12) === 'WAVE' },
   { mime: 'audio/flac', extension: '.flac', matches: (value) => value.toString('ascii', 0, 4) === 'fLaC' },
-  { mime: 'audio/mpeg', extension: '.mp3', matches: (value) => value.toString('ascii', 0, 3) === 'ID3' || (value.length >= 2 && value[0] === 0xff && (value[1]! & 0xe0) === 0xe0) },
+  { mime: 'audio/mpeg', extension: '.mp3', matches: (value) => value.toString('ascii', 0, 3) === 'ID3' || (value.length >= 2 && value[0] === 0xff && ((value[1] ?? 0) & 0xe0) === 0xe0) },
   // ISO-BMFF: m4a, mp4 y los video_note. `ftyp` empieza en el byte 4.
   { mime: 'audio/mp4', extension: '.m4a', matches: (value) => value.length >= 12 && value.toString('ascii', 4, 8) === 'ftyp' },
   { mime: 'audio/webm', extension: '.webm', matches: (value) => value.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) }

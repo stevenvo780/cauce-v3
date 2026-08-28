@@ -48,12 +48,15 @@ export function transcriptionConfig(
     throw new Error('CAUCE_TELEGRAM_TRANSCRIPTION_TIMEOUT_SECONDS must be between 1 and 900');
   }
 
+  const rawLanguage = environment.CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE?.trim();
+  const rawApiKey = environment.CAUCE_TELEGRAM_TRANSCRIPTION_API_KEY?.trim();
+
   return {
     baseUrl: baseUrl.replace(/\/+$/u, ''),
     model,
-    language: environment.CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE?.trim() || 'es',
+    language: rawLanguage && rawLanguage.length > 0 ? rawLanguage : 'es',
     timeoutMs: seconds * 1_000,
-    apiKey: environment.CAUCE_TELEGRAM_TRANSCRIPTION_API_KEY?.trim() || 'sk-local'
+    apiKey: rawApiKey && rawApiKey.length > 0 ? rawApiKey : 'sk-local'
   };
 }
 
@@ -97,7 +100,7 @@ export async function transcribeAudio(
   formulario.append('response_format', 'json');
 
   const control = new AbortController();
-  const reloj = setTimeout(() => control.abort(), config.timeoutMs);
+  const reloj = setTimeout(() => { control.abort(); }, config.timeoutMs);
   try {
     const respuesta = await fetcher(`${config.baseUrl}/audio/transcriptions`, {
       method: 'POST',
@@ -106,7 +109,7 @@ export async function transcribeAudio(
       signal: control.signal
     });
     if (!respuesta.ok) {
-      return { error: `el servicio de transcripción respondió ${respuesta.status}` };
+      return { error: `el servicio de transcripción respondió ${String(respuesta.status)}` };
     }
     const cuerpo: unknown = await respuesta.json();
     const texto = sanitize((cuerpo as { text?: unknown } | null)?.text);
@@ -115,7 +118,7 @@ export async function transcribeAudio(
       : { transcript: texto };
   } catch (error) {
     const causa = error instanceof Error && error.name === 'AbortError'
-      ? `no respondió en ${Math.round(config.timeoutMs / 1_000)} s`
+      ? `no respondió en ${String(Math.round(config.timeoutMs / 1_000))} s`
       : 'no está accesible';
     return { error: `el servicio de transcripción ${causa}` };
   } finally {

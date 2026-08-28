@@ -105,7 +105,7 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
         `SELECT tenant_id,alias FROM channel_bridge_cursors WHERE bot_id=$1 FOR UPDATE`, [botId]
       );
       const row = existing.rows[0];
-      if (!row || row.tenant_id !== tenantId || row.alias !== alias) {
+      if (row?.tenant_id !== tenantId || row.alias !== alias) {
         throw new Error('Telegram bot is already bound to another tenant or alias');
       }
     });
@@ -184,7 +184,7 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
   async renew(event: TelegramOriginRelay, leaseMs: number): Promise<boolean> {
     if (!Number.isInteger(leaseMs) || leaseMs < 1_000) throw new Error('Telegram egress lease is invalid');
     const claim = this.claims.get(event.event_id);
-    if (!claim || claim.attempt !== event.attempt || claim.claimToken !== event.claim_token) return false;
+    if (claim?.attempt !== event.attempt || claim.claimToken !== event.claim_token) return false;
     const renewed = await this.pool.query(
       `UPDATE adapter_outbox SET claim_expires_at=now()+$4*interval '1 millisecond'
        WHERE id=$1 AND status='processing' AND attempts=$2 AND claim_token=$3
@@ -198,7 +198,7 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
 
   async ack(acknowledgement: TelegramOriginRelayAck): Promise<void> {
     const claim = this.claims.get(acknowledgement.event_id);
-    if (!claim || claim.attempt !== acknowledgement.attempt || claim.claimToken !== acknowledgement.claim_token) {
+    if (claim?.attempt !== acknowledgement.attempt || claim.claimToken !== acknowledgement.claim_token) {
       throw new Error('Telegram origin relay ACK is not locally owned');
     }
     if (acknowledgement.status === 'sent') {
@@ -261,7 +261,7 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
          FROM telegram_egress_effects WHERE effect_id=$1 FOR UPDATE`, [input.effect_id]
       );
       const row = selected.rows[0];
-      if (!row || row.outbox_id !== input.outbox_id || row.tenant_id !== input.tenant_id ||
+      if (row?.outbox_id !== input.outbox_id || row.tenant_id !== input.tenant_id ||
            row.bridge_alias !== input.bridge_alias || row.chunk_index !== input.chunk_index ||
            row.chunk_count !== input.chunk_count || row.payload_hash !== input.payload_hash) {
         throw new Error('Telegram effect idempotency conflict');

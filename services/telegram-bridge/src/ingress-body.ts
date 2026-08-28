@@ -58,7 +58,7 @@ function safeFile(file: TelegramFile | undefined, kind: string): Record<string, 
 }
 
 function media(message: TelegramMessage): Record<string, unknown>[] {
-  const result: Array<Record<string, unknown> | undefined> = [];
+  const result: (Record<string, unknown> | undefined)[] = [];
   if (Array.isArray(message.photo) && message.photo.length > 0) result.push(safeFile(message.photo.at(-1), 'photo'));
   result.push(safeFile(message.document, 'document'));
   result.push(safeFile(message.audio, 'audio'));

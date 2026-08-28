@@ -71,7 +71,8 @@ function balancedObjectAt(text: string, start: number): string | undefined {
   let inString = false;
   let escaped = false;
   for (let index = start; index < text.length; index += 1) {
-    const character = text[index]!;
+    const character = text[index];
+    if (character === undefined) break;
     if (inString) {
       if (escaped) escaped = false;
       else if (character === '\\') escaped = true;
@@ -159,7 +160,7 @@ export function telegramTextChunks(payload: Record<string, unknown>, footer = ''
     : `${original}${footer}`;
   if (value === undefined) return [];
   const source = value.split('\u0000').join('').trim();
-  const characters = [...source].slice(0, 65_536);
+  const characters = Array.from(source).slice(0, 65_536);
   const chunks: string[] = [];
   for (let index = 0; index < characters.length; index += 4_096) {
     chunks.push(characters.slice(index, index + 4_096).join(''));
@@ -489,7 +490,7 @@ export class TelegramEgressWorker {
       let blocked: string | undefined;
       for (const [index, piece] of pieces.entries()) {
         const payloadHash = pieceHash(piece);
-        const effectId = `${event.event_id}:${index}`;
+        const effectId = `${event.event_id}:${String(index)}`;
         let effect = await this.repository.prepareEffect({
           effect_id: effectId,
           outbox_id: event.event_id,
@@ -624,7 +625,7 @@ export class TelegramEgressWorker {
         this.observer?.egressCycleFailed();
         this.onMetric('egress_loop_error');
         if (error instanceof EgressCrash) throw error;
-        if (!signal.aborted) await sleep(1_000, signal);
+        await sleep(1_000, signal);
       }
     }
   }

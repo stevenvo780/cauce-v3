@@ -77,12 +77,18 @@ function artifactList(payload: Record<string, unknown>): readonly RawArtifact[] 
  * --------------------------------------------------------------------------- */
 
 function hasUnsafeCodePoint(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.codePointAt(0)!;
-    return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code === undefined) continue;
+    if (
+      code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
       (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb);
-  });
+      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -148,7 +154,8 @@ function decodeDataUri(uri: string): DecodedData {
   if (comma === -1) return { error: 'el data: URI no tiene datos' };
   const header = uri.slice(5, comma).toLowerCase();
   if (!header.split(';').includes('base64')) return { error: 'el data: URI no viene en base64' };
-  const mime = header.split(';')[0] || 'application/octet-stream';
+  const rawMime = header.split(';')[0];
+  const mime = rawMime && rawMime.length > 0 ? rawMime : 'application/octet-stream';
   const raw = uri.slice(comma + 1).replace(/\s+/gu, '');
   if (raw.length === 0) return { error: 'el data: URI vino vacío' };
   if (raw.length > MAX_DATA_URI_CHARACTERS) return { error: 'supera los 10 MB' };
@@ -178,7 +185,7 @@ function plainInline(value: string, limit: number): string {
     .replace(/[*_`~[\]]/gu, '')
     .replace(/\s+/gu, ' ')
     .trim();
-  return [...cleaned].slice(0, limit).join('');
+  return Array.from(cleaned).slice(0, limit).join('');
 }
 
 function safeLink(uri: string): string | undefined {
@@ -212,7 +219,7 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
     }
     if (/^data:/iu.test(uri)) {
       if (uploads.length >= MAX_UPLOADS_PER_RELAY) {
-        lines.push(`• ${label(artifact, 'adjunto')}: no lo mandé, ya iban ${MAX_UPLOADS_PER_RELAY} archivos en esta respuesta`);
+        lines.push(`• ${label(artifact, 'adjunto')}: no lo mandé, ya iban ${String(MAX_UPLOADS_PER_RELAY)} archivos en esta respuesta`);
         continue;
       }
       const decoded = decodeDataUri(uri);
@@ -243,7 +250,7 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
   }
 
   const shown = lines.slice(0, MAX_LISTED_LINES);
-  if (lines.length > shown.length) shown.push(`• …y ${lines.length - shown.length} más`);
+  if (lines.length > shown.length) shown.push(`• …y ${String(lines.length - shown.length)} más`);
   const footer = shown.length === 0 ? '' : `\n\n📎 Adjuntos\n${shown.join('\n')}`;
   return { uploads, footer, listed: lines.length, discarded };
 }

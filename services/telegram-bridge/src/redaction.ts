@@ -66,7 +66,7 @@ const RULES: readonly Rule[] = [
   {
     kind: 'uri_credentials',
     pattern: /\b([a-z][a-z0-9+.-]{1,31}):\/\/([^\s/@:]{1,128}):([^\s/@]{1,256})@/giu,
-    replace: (_match, groups) => `${groups[0]}://${URI_MARK}@`
+    replace: (_match, groups) => `${groups[0] ?? ''}://${URI_MARK}@`
   },
   /**
    * Cabecera Authorization en cualquiera de sus formas de escritura (`:` de HTTP, `=` de .env).
@@ -82,7 +82,7 @@ const RULES: readonly Rule[] = [
     replace: (_match, groups) => {
       const [name, separator, quote, scheme, secret] = groups;
       if (scheme === undefined && !looksLikeToken(secret ?? '')) return undefined;
-      return `${name}${separator}${quote ?? ''}${scheme === undefined ? '' : `${scheme} `}${MARK}`;
+      return `${name ?? ''}${separator ?? ''}${quote ?? ''}${scheme === undefined ? '' : `${scheme} `}${MARK}`;
     }
   },
   // `Bearer <token>` suelto, sin la cabecera delante: es como se pega un token en un chat.
@@ -90,7 +90,7 @@ const RULES: readonly Rule[] = [
     kind: 'bearer_token',
     pattern: /\b(bearer)[ \t]+([A-Za-z0-9._~+/=-]{16,4096})/giu,
     replace: (_match, groups) =>
-      (looksLikeToken(groups[1] ?? '') ? `${groups[0]} ${MARK}` : undefined)
+      (looksLikeToken(groups[1] ?? '') ? `${groups[0] ?? ''} ${MARK}` : undefined)
   },
   /**
    * Token de bot de Telegram. Es el secreto que más caro sale acá: con él, cualquiera lee y escribe

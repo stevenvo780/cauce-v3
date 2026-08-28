@@ -158,8 +158,8 @@ function scanEntities(
   // El contenido sigue siendo dato de red no confiable y cada campo se valida abajo igual.
   for (const entity of entities as readonly TelegramEntity[]) {
     if (scan.scanned >= MAX_SCANNED_ENTITIES || scan.inspected >= MAX_INSPECTED_ENTITIES) return;
-    scan.inspected += 1;
-    if (entity === null || typeof entity !== 'object' || typeof entity.type !== 'string') continue;
+    const rawEntity = entity as unknown;
+    if (rawEntity === null || typeof rawEntity !== 'object' || typeof (rawEntity as Partial<TelegramEntity>).type !== 'string') continue;
     // Decorative entities are skipped before the budget is charged: a bold run or a custom emoji
     // must never be able to hide a mention that appears after it.
     if (!ADDRESSING_ENTITY_TYPES.has(entity.type)) continue;
@@ -233,7 +233,7 @@ function aliasesFor(
  * on CAUCE_TELEGRAM_ALIASES and therefore on the deployment, not on the update.
  */
 export function isFleetBot(user: TelegramUser | undefined, fleet: FleetDirectory): boolean {
-  if (user === undefined || user.is_bot !== true) return false;
+  if (user?.is_bot !== true) return false;
   const username = typeof user.username === 'string' ? user.username.toLowerCase() : undefined;
   return username !== undefined && fleet.byUsername.has(username);
 }
@@ -252,9 +252,9 @@ export function addressingBucket(reason: AddressingReason): AddressingBucket {
  * must not become deniable because of a field the bridge does not control.
  */
 function isPrivateChat(message: TelegramMessage): boolean {
-  const type = message.chat?.type;
+  const type = message.chat.type;
   if (type === 'private') return true;
-  return typeof type !== 'string' && Number.isSafeInteger(message.chat?.id) && Number(message.chat?.id) > 0;
+  return typeof type !== 'string' && Number.isSafeInteger(message.chat.id) && message.chat.id > 0;
 }
 
 /**

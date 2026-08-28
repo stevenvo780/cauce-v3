@@ -128,36 +128,46 @@ try {
   health = startTelegramHealthServer(positivePort(process.env.PORT), pool, metrics, progress);
   // Built from the COMPLETE file so suppression stays correct even during an incremental start.
   const fleet = fleetDirectory(config, identities);
-  const pollers = running.map((alias) => new TelegramPoller({
-    config: alias,
-    botId: identities.get(alias.alias) ?? '',
-    api: apis.get(alias.alias) as TelegramApi,
-    repository,
-    ingress,
-    activity,
-    fleet,
-    participants: (chatId, threadId) => chatParticipants(config, chatId, threadId),
-    ...(usernames.has(alias.alias) ? { botUsername: usernames.get(alias.alias) as string } : {}),
-    ...(transcription === undefined ? {} : { transcription }),
-    onMetric: (metric) => metrics.increment(metric),
-    observer: progress
-  }));
+  const pollers = running.map((alias) => {
+    const api = apis.get(alias.alias);
+    if (api === undefined) {
+      throw new Error(`Missing Telegram API instance for alias ${alias.alias}`);
+    }
+    const username = usernames.get(alias.alias);
+    return new TelegramPoller({
+      config: alias,
+      botId: identities.get(alias.alias) ?? '',
+      api,
+      repository,
+      ingress,
+      activity,
+      fleet,
+      participants: (chatId, threadId) => chatParticipants(config, chatId, threadId),
+      ...(username !== undefined ? { botUsername: username } : {}),
+      ...(transcription === undefined ? {} : { transcription }),
+      onMetric: (metric) => { metrics.increment(metric); },
+      observer: progress
+    });
+  });
   const egress = new TelegramEgressWorker({
     repository,
     aliases: running,
     apis,
     activity,
     leaseMs: egressLeaseMs,
-    onMetric: (metric) => metrics.increment(metric),
+    onMetric: (metric) => { metrics.increment(metric); },
     observer: progress
   });
-  const stop = (): void => controller.abort();
+  const stop = (): void => { controller.abort(); };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   await Promise.all([...pollers.map((poller) => poller.run(controller.signal)), egress.run(controller.signal)]);
 } finally {
   controller.abort();
   activity.stop();
-  if (health !== undefined) await new Promise<void>((resolve) => health!.close(() => resolve()));
+  if (health !== undefined) {
+    const healthServer = health;
+    await new Promise<void>((resolve) => { healthServer.close(() => { resolve(); }); });
+  }
   await pool.end();
 }

@@ -38,7 +38,7 @@ export class TelegramBridgeMetrics {
       '# TYPE cauce_telegram_bridge_events_total counter'
     ];
     for (const metric of METRICS) {
-      lines.push(`cauce_telegram_bridge_events_total{result="${metric}"} ${this.counters.get(metric) ?? 0}`);
+      lines.push(`cauce_telegram_bridge_events_total{result="${metric}"} ${String(this.counters.get(metric) ?? 0)}`);
     }
     return `${lines.join('\n')}\n`;
   }
