@@ -10,6 +10,7 @@ el digest esperado bajo el lock, respaldan los bytes anteriores con modo 0600 y 
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import hashlib
 import hmac
@@ -18,6 +19,7 @@ import os
 import pathlib
 import re
 import secrets
+import stat
 import sys
 import time
 from dataclasses import replace
@@ -54,6 +56,7 @@ from update_alias_lib import (
     parse_sets,
     read_all,
     render_update,
+    validate_absolute,
     validate_restore_policy,
     write_all,
 )
@@ -449,6 +452,181 @@ def validate_pending_consumption(
         raise ConfigUpdateError("el journal de consumo no conserva una reversa autenticada")
 
 
+def require_enabled_fleet_alias(flota_json: pathlib.Path, alias: str) -> None:
+    """Same allowlist provision-agent-identity.sh / issue-alias-token.py enforce: fleet[alias].enabled."""
+    try:
+        fd = os.open(flota_json, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        raise ConfigUpdateError("no se pudo leer el snapshot de flota (ops/flota.json)") from None
+    try:
+        details = os.fstat(fd)
+        if not stat.S_ISREG(details.st_mode) or details.st_mode & 0o022:
+            raise ConfigUpdateError(
+                "el snapshot de flota debe ser regular y no escribible por grupo u otros"
+            )
+        body = read_all(fd, "snapshot de flota")
+    finally:
+        os.close(fd)
+    try:
+        document = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ConfigUpdateError("el snapshot de flota no es JSON valido") from None
+    fleet = document.get("fleet") if isinstance(document, dict) else None
+    entry = fleet.get(alias) if isinstance(fleet, dict) else None
+    if not isinstance(entry, dict) or entry.get("enabled") is not True:
+        raise ConfigUpdateError("el alias no esta habilitado en el snapshot de flota (ops/flota.json)")
+
+
+def read_source_file(root: pathlib.Path, name: str, missing_message: str) -> bytes:
+    """Read a small non-secret source file (cert/example) with the same no-follow discipline
+    as the rest of this tool, collapsing every way it can be absent into one clear message."""
+    try:
+        root_fd = open_absolute_directory(root, "raiz de origen")
+    except OSError:
+        raise ConfigUpdateError(missing_message) from None
+    try:
+        try:
+            fd = open_regular_at(root_fd, name, os.O_RDONLY)
+        except OSError:
+            raise ConfigUpdateError(missing_message) from None
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ConfigUpdateError(missing_message)
+            return read_all(fd, name)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(root_fd)
+
+
+def ensure_root_directory(path: pathlib.Path, label: str) -> None:
+    validate_absolute(path, label)
+    if path.is_symlink():
+        raise ConfigUpdateError(f"{label} no puede ser un symlink")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def publish_created_file(directory_fd: int, name: str, body: bytes, mode: int) -> None:
+    """Create-only publish: never overwrites, rolls itself back on any failed write."""
+    try:
+        fd = open_regular_at(directory_fd, name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode=mode)
+    except FileExistsError:
+        raise ConfigUpdateError(f"{name} ya existe; nada fue sobrescrito") from None
+    published = False
+    try:
+        os.fchmod(fd, mode)
+        write_all(fd, body)
+        os.fsync(fd)
+        published = True
+    finally:
+        os.close(fd)
+        if not published:
+            try:
+                os.unlink(name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+
+
+def init_alias(
+    config_root: pathlib.Path,
+    pki_root: pathlib.Path,
+    agent_pki_root: pathlib.Path,
+    flota_json: pathlib.Path,
+    examples_root: pathlib.Path,
+    alias: str,
+    *,
+    dry_run: bool,
+) -> dict[str, object]:
+    """Create a brand-new alias's container-pki/<alias>/{ca.crt,client.crt,client.key} and
+    <alias>.env. Every file is create-only (never overwrites). The pki trio is all-or-nothing
+    within itself (a failed file rolls back the whole trio), and so is the env file, but the two
+    pieces are independent: a finished piece is never undone by the other piece failing, so a
+    retry after a genuine mid-way fault only has to finish the piece that did not land."""
+    require_enabled_fleet_alias(flota_json, alias)
+
+    example_body = read_source_file(
+        examples_root,
+        f"{alias}.env.example",
+        f"falta el ejemplo generado para {alias}; corre generate-container-units.py primero",
+    )
+    identity_missing = f"falta la identidad mTLS de {alias}: corre provision-agent-identity primero"
+    ca_body = read_source_file(
+        agent_pki_root, "ca.crt", "falta la CA de la flota; aprovisiona la CA antes de continuar",
+    )
+    leaf_cert_body = read_source_file(agent_pki_root, f"agent-{alias}.crt", identity_missing)
+    leaf_key_body = read_source_file(agent_pki_root, f"agent-{alias}.key", identity_missing)
+
+    pki_target = pki_root / alias
+    env_target = config_root / f"{alias}.env"
+
+    if dry_run:
+        return {
+            "status": "dry-run",
+            "alias": alias,
+            "pkiDir": str(pki_target),
+            "configFile": str(env_target),
+            "pkiDirConflict": pki_target.is_symlink() or pki_target.exists(),
+            "configFileConflict": env_target.is_symlink() or env_target.exists(),
+        }
+
+    ensure_root_directory(pki_root, "raiz de container-pki")
+    ensure_root_directory(config_root, "raiz de configuracion")
+
+    pki_root_fd = open_absolute_directory(pki_root, "raiz de container-pki")
+    created_pki_dir = False
+    try:
+        assert_secure_directory(pki_root_fd, "raiz de container-pki")
+        try:
+            os.mkdir(alias, 0o700, dir_fd=pki_root_fd)
+        except FileExistsError:
+            raise ConfigUpdateError(f"container-pki/{alias} ya existe; nada fue sobrescrito") from None
+        created_pki_dir = True
+
+        alias_pki_fd = os.open(
+            alias, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pki_root_fd,
+        )
+        try:
+            assert_secure_directory(alias_pki_fd, f"container-pki/{alias}", 0o700)
+            for name, body in (
+                ("ca.crt", ca_body), ("client.crt", leaf_cert_body), ("client.key", leaf_key_body),
+            ):
+                publish_created_file(alias_pki_fd, name, body, 0o600)
+            os.fsync(alias_pki_fd)
+        finally:
+            os.close(alias_pki_fd)
+        os.fsync(pki_root_fd)
+    except BaseException:
+        if created_pki_dir:
+            for name in ("ca.crt", "client.crt", "client.key"):
+                try:
+                    os.unlink(f"{alias}/{name}", dir_fd=pki_root_fd)
+                except FileNotFoundError:
+                    pass
+            try:
+                os.rmdir(alias, dir_fd=pki_root_fd)
+            except OSError:
+                pass
+        os.close(pki_root_fd)
+        raise
+    os.close(pki_root_fd)
+
+    config_root_fd = open_absolute_directory(config_root, "raiz de configuracion")
+    try:
+        assert_secure_directory(config_root_fd, "raiz de configuracion")
+        publish_created_file(config_root_fd, f"{alias}.env", example_body, 0o600)
+        os.fsync(config_root_fd)
+    finally:
+        os.close(config_root_fd)
+
+    return {
+        "status": "created",
+        "alias": alias,
+        "pkiDir": str(pki_target),
+        "configFile": str(env_target),
+    }
+
+
 def inspect(config_root: pathlib.Path, alias: str) -> dict[str, object]:
     root_fd = open_absolute_directory(config_root, "raiz de configuracion")
     try:
@@ -602,22 +780,30 @@ def mutate(
         os.close(root_fd)
 
 
-def defaults() -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]:
+def defaults() -> tuple[
+    pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path,
+]:
     ops_root = pathlib.Path(__file__).resolve().parents[1]
     inventory = ops_root / "container-aliases.json"
     hermes_runtime = ops_root / "hermes-runtime.json"
+    flota = ops_root / "flota.json"
+    generated_root = ops_root / "generated" / "container-systemd"
     if os.geteuid() == 0:
         config_root = pathlib.Path("/etc/cauce-v3/container-aliases")
         pki_root = pathlib.Path("/etc/cauce-v3/container-pki")
+        agent_pki_root = pathlib.Path("/etc/cauce-v3/pki")
+        examples_root = generated_root / "configs"
     else:
         config_home = pathlib.Path(os.environ.get("XDG_CONFIG_HOME", pathlib.Path.home() / ".config"))
         config_root = config_home / "cauce-v3/container-aliases"
         pki_root = config_home / "cauce-v3/container-pki"
-    return inventory, hermes_runtime, config_root, pki_root
+        agent_pki_root = config_home / "cauce-v3/pki"
+        examples_root = generated_root / "rootless" / "configs"
+    return inventory, hermes_runtime, flota, config_root, pki_root, agent_pki_root, examples_root
 
 
 def parser() -> SafeArgumentParser:
-    inventory, hermes_runtime, config_root, pki_root = defaults()
+    inventory, hermes_runtime, flota, config_root, pki_root, agent_pki_root, examples_root = defaults()
     root = SafeArgumentParser(description="Actualizacion CAS de configs Cauce por alias")
     root.add_argument("--inventory", type=pathlib.Path, default=inventory)
     root.add_argument("--hermes-runtime", type=pathlib.Path, default=hermes_runtime)
@@ -626,16 +812,24 @@ def parser() -> SafeArgumentParser:
     actions = root.add_subparsers(
         dest="action", required=True, parser_class=SafeArgumentParser
     )
-    for action in ("inspect", "apply", "restore"):
+    for action in ("inspect", "apply", "restore", "init"):
         command = actions.add_parser(action)
         command.add_argument("--alias", required=True)
-        if action != "inspect":
+        if action not in ("inspect", "init"):
             command.add_argument("--expected-old-digest", required=True)
         if action == "apply":
             command.add_argument("--set", action="append", default=[])
             command.add_argument("--unset", action="append", default=[])
         if action == "restore":
             command.add_argument("--backup", required=True)
+        if action == "init":
+            # --config-root also exists on the root parser; SUPPRESS here means an operator who
+            # omits it keeps that inherited default instead of this subparser silently blanking it.
+            command.add_argument("--config-root", type=pathlib.Path, default=argparse.SUPPRESS)
+            command.add_argument("--flota-json", type=pathlib.Path, default=flota)
+            command.add_argument("--agent-pki-root", type=pathlib.Path, default=agent_pki_root)
+            command.add_argument("--examples-root", type=pathlib.Path, default=examples_root)
+            command.add_argument("--dry-run", action="store_true")
     return root
 
 
@@ -644,6 +838,18 @@ def main(argv: list[str] | None = None) -> int:
     alias = arguments.alias
     if ALIAS_RE.fullmatch(alias) is None:
         raise ConfigUpdateError("el alias tiene formato invalido")
+    if arguments.action == "init":
+        result = init_alias(
+            arguments.config_root,
+            arguments.pki_root,
+            arguments.agent_pki_root,
+            arguments.flota_json,
+            arguments.examples_root,
+            alias,
+            dry_run=arguments.dry_run,
+        )
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return 0
     policy = load_inventory(arguments.inventory, alias, arguments.hermes_runtime)
     if arguments.action == "inspect":
         result = inspect(arguments.config_root, alias)

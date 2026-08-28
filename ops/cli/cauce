@@ -1229,6 +1229,25 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
+  # 1b: registra el fingerprint del cert emitido en 1 dentro de mtls_identities.json.
+  # register-agent-identity.py trae su PROPIO --dry-run (de solo lectura), igual que 1.
+  local register_script="$OPS/scripts/register-agent-identity.py"
+  if [ ! -f "$register_script" ]; then
+    printf "  [1b] ${c_err}no encuentro %s${c_reset}\n" "$register_script"
+    [ "$dry" = 1 ] || return 1
+  else
+    local -a register_args=(--alias "$a" --cert-dir "$PKI_ROOT_AGENTE" --identities-dir "$IDENTIDADES_DIR")
+    [ "$dry" = 1 ] && register_args+=(--dry-run)
+    local salida1b
+    if salida1b=$(python3 "$register_script" "${register_args[@]}" 2>&1); then
+      printf "  [1b] %s\n" "$salida1b"
+      [ "$dry" = 1 ] || printf "      %s -> %s\n" "$IDENTIDADES_DIR/mtls_identities.json" "$(estampa_modo "$IDENTIDADES_DIR/mtls_identities.json")"
+    else
+      printf "  [1b] ${c_err}%s${c_reset}\n" "$salida1b"
+      return 1
+    fi
+  fi
+
   # 2: bearer token + hash. issue-alias-token.py trae su PROPIO --dry-run (de solo lectura),
   # asi que aca se usa tal cual en vez de simularlo.
   local issue_script="$OPS/scripts/issue-alias-token.py"
@@ -1281,21 +1300,22 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   fi
 
   # 4: container-pki/<alias>/ + <alias>.env, via el modo --init de update-alias-config.py.
-  # Hoy ese modo NO existe (solo inspect|apply|restore): se comprueba en la fuente, no se inventa.
-  if grep -qE '^\s*for action in \([^)]*"init"' "$OPS/scripts/update-alias-config.py" 2>/dev/null; then
-    if [ "$dry" = 1 ]; then
-      printf "  [4] haria: update-alias-config.py init --alias %s\n" "$a"
-    elif python3 "$OPS/scripts/update-alias-config.py" init --alias "$a"; then
-      printf "  [4] container-pki/%s/ y %s.env inicializados\n" "$a" "$a"
-    else
-      printf "  [4] ${c_err}update-alias-config.py init fallo${c_reset}\n"
-      return 1
-    fi
+  # update-alias-config.py se niega a sobreescribir (igual que provision-agent-identity.sh en
+  # [1]), asi que aca tambien se comprueba antes para poder re-correr aprovisionar sin fallar.
+  local cp_dir="/etc/cauce-v3/container-pki/$a" cp_env="/etc/cauce-v3/container-aliases/$a.env"
+  if [ -e "$cp_dir/ca.crt" ] && [ -e "$cp_dir/client.crt" ] && [ -e "$cp_dir/client.key" ] && [ -e "$cp_env" ]; then
+    printf "  [4] container-pki/%s/ y %s.env ya estan inicializados (se salta):\n" "$a" "$a"
+    printf "      %s -> %s\n" "$cp_dir" "$(estampa_modo "$cp_dir")"
+    printf "      %s -> %s\n" "$cp_env" "$(estampa_modo "$cp_env")"
+  elif [ "$dry" = 1 ]; then
+    printf "  [4] haria: update-alias-config.py init --alias %s\n" "$a"
+  elif python3 "$OPS/scripts/update-alias-config.py" init --alias "$a"; then
+    printf "  [4] container-pki/%s/ y %s.env inicializados:\n" "$a" "$a"
+    printf "      %s -> %s\n" "$cp_dir" "$(estampa_modo "$cp_dir")"
+    printf "      %s -> %s\n" "$cp_env" "$(estampa_modo "$cp_env")"
   else
-    printf "  [4] ${c_warn}update-alias-config.py todavia no tiene modo --init${c_reset} (hoy solo: inspect|apply|restore)\n"
-    printf "      container-pki/%s/ y %s.env no se crean por esta via todavia\n" "$a" "$a"
-    printf "      (plan-reestructura/flota-como-datos.md §5, pieza 4 — falta implementarlo)\n"
-    [ "$dry" = 1 ] || return 1
+    printf "  [4] ${c_err}update-alias-config.py init fallo${c_reset}\n"
+    return 1
   fi
 
   # 5: token de Telegram — la unica pieza que no se puede generar, entra por stdin.

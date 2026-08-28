@@ -8,8 +8,13 @@ in place, matching the CAS pattern in update_alias_lib.py / update-alias-config.
 
 ``mtls_identities.json`` lives in the same --identities-dir but its records are keyed by
 ``certificate_sha256``, the fingerprint of an X.509 leaf this script never sees (that material
-belongs to provision-agent-identity.sh, piece 1, and this script has no argument carrying a
-certificate path). This script therefore only ever touches token_hashes.json.
+belongs to provision-agent-identity.sh and register-agent-identity.py). This script therefore
+only ever touches token_hashes.json and ``<alias>.token``.
+
+``--revoke`` reverses the above for one alias: it removes every token_hashes.json record whose
+principal alias matches (fail-closed — the gateway trusts whatever hashes remain in the file, so
+an unrecognized "revoked" flag would keep granting access) and deletes ``<alias>.token``. Both
+sides are idempotent: nothing to remove is success, not an error.
 """
 
 from __future__ import annotations
@@ -206,6 +211,92 @@ def publish_token_file(tokens_fd: int, alias: str, token_hex: str) -> None:
                 pass
 
 
+def remove_token_file(tokens_dir: pathlib.Path, alias: str) -> bool:
+    """Atomically unlinks <alias>.token if present. Returns whether it existed."""
+    try:
+        tokens_fd = open_absolute_directory(tokens_dir, "directorio de tokens")
+    except FileNotFoundError:
+        return False
+    try:
+        os.unlink(f"{alias}.token", dir_fd=tokens_fd)
+        return True
+    except FileNotFoundError:
+        return False
+    finally:
+        os.close(tokens_fd)
+
+
+def revoke(alias: str, tokens_dir: pathlib.Path, identities_dir: pathlib.Path) -> dict[str, object]:
+    if ALIAS_RE.fullmatch(alias) is None:
+        raise IssueTokenError("el alias tiene formato invalido")
+    validate_absolute(tokens_dir, "directorio de tokens")
+    validate_absolute(identities_dir, "directorio de identidades")
+
+    identities_removed = 0
+    identities_fd = open_absolute_directory(identities_dir, "directorio de identidades")
+    try:
+        assert_secure_directory(identities_fd, "directorio de identidades")
+        lock_fd = open_regular_at(
+            identities_fd, f".{TOKEN_HASHES_FILE}.lock", os.O_RDWR | os.O_CREAT, mode=0o600,
+        )
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            document, original = read_identity_document(identities_fd)
+            kept: list[object] = []
+            for record in document["identities"]:  # type: ignore[union-attr]
+                principal = record.get("principal") if isinstance(record, dict) else None
+                if isinstance(principal, dict) and principal.get("alias") == alias:
+                    identities_removed += 1
+                    continue
+                kept.append(record)
+            # Only publish (and take the CAS/fsync cost) when something actually changed.
+            if identities_removed:
+                document["identities"] = kept  # type: ignore[index]
+                publish_identity_document(identities_fd, document, original)
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(identities_fd)
+
+    # Hash removal above is what the gateway actually enforces; the raw token file is deleted
+    # afterwards so a crash between the two steps still leaves the credential unusable.
+    token_removed = remove_token_file(tokens_dir, alias)
+
+    return {
+        "alias": alias,
+        "identities_removed": identities_removed,
+        "identities_file": str(identities_dir / TOKEN_HASHES_FILE),
+        "token_file": str(tokens_dir / f"{alias}.token"),
+        "token_removed": token_removed,
+    }
+
+
+def describe_revoke_dry_run(alias: str, tokens_dir: pathlib.Path, identities_dir: pathlib.Path) -> str:
+    if ALIAS_RE.fullmatch(alias) is None:
+        raise IssueTokenError("el alias tiene formato invalido")
+    validate_absolute(tokens_dir, "directorio de tokens")
+    validate_absolute(identities_dir, "directorio de identidades")
+    identities_fd = open_absolute_directory(identities_dir, "directorio de identidades")
+    try:
+        assert_secure_directory(identities_fd, "directorio de identidades")
+        document, _ = read_identity_document(identities_fd)
+    finally:
+        os.close(identities_fd)
+    matching = sum(
+        1
+        for record in document["identities"]  # type: ignore[union-attr]
+        if isinstance(record, dict)
+        and isinstance(record.get("principal"), dict)
+        and record["principal"].get("alias") == alias  # type: ignore[union-attr]
+    )
+    token_path = tokens_dir / f"{alias}.token"
+    return (
+        f"dry-run --revoke: alias={alias} identities_a_eliminar={matching} "
+        f"identities_file={identities_dir / TOKEN_HASHES_FILE} "
+        f"token_file={token_path} ({'se borraria' if token_path.exists() else 'ya no existe'})"
+    )
+
+
 def ensure_tokens_directory(path: pathlib.Path) -> None:
     validate_absolute(path, "directorio de tokens")
     if path.is_symlink():
@@ -314,11 +405,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--flota-json", type=pathlib.Path, default=default_flota)
     parser.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS)
+    parser.add_argument(
+        "--revoke", action="store_true",
+        help="elimina el hash de token y <alias>.token en vez de emitir uno nuevo",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    if arguments.revoke:
+        if arguments.dry_run:
+            print(describe_revoke_dry_run(arguments.alias, arguments.tokens_dir, arguments.identities_dir))
+            return 0
+        result = revoke(arguments.alias, arguments.tokens_dir, arguments.identities_dir)
+        print(
+            "alias token revoked: {alias} -> identities_removed={identities_removed} "
+            "token_removed={token_removed}; {identities_file}".format(**result)
+        )
+        return 0
     if arguments.dry_run:
         print(
             describe_dry_run(

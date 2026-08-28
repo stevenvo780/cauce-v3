@@ -230,6 +230,106 @@ class IssueAliasTokenTest(unittest.TestCase):
         document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
         self.assertEqual(len(document["identities"]), 2)  # jarvis (seed) + argos, not tripled
 
+    def test_revoke_removes_hash_and_token_file(self) -> None:
+        self._issue()
+        token_path = self.tokens_dir / "argos.token"
+        self.assertTrue(token_path.exists())
+        before = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual(len(before["identities"]), 2)  # jarvis (seed) + argos
+
+        result = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
+
+        self.assertEqual(result["identities_removed"], 1)
+        self.assertTrue(result["token_removed"])
+        self.assertFalse(token_path.exists())
+        after = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual(len(after["identities"]), 1)
+        self.assertEqual(after["identities"][0]["principal"]["alias"], "jarvis")
+        self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
+
+    def test_revoke_is_idempotent(self) -> None:
+        self._issue()
+        first = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
+        self.assertEqual(first["identities_removed"], 1)
+        after_first = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+
+        second = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
+
+        self.assertEqual(second["identities_removed"], 0)
+        self.assertFalse(second["token_removed"])
+        after_second = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual(after_second, after_first)
+
+    def test_revoke_of_never_issued_alias_is_a_noop(self) -> None:
+        result = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
+        self.assertEqual(result["identities_removed"], 0)
+        self.assertFalse(result["token_removed"])
+        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual(len(document["identities"]), 1)  # jarvis, untouched
+
+    def test_revoke_does_not_touch_other_alias_records(self) -> None:
+        self._issue()
+        MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
+        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual([r["principal"]["alias"] for r in document["identities"]], ["jarvis"])
+
+    def test_revoke_never_touches_mtls_identities_file(self) -> None:
+        self._issue()
+        before = self.mtls_identities.read_bytes()
+        MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
+        self.assertEqual(self.mtls_identities.read_bytes(), before)
+
+    def test_revoke_rejects_invalid_alias(self) -> None:
+        with self.assertRaises(MODULE.IssueTokenError):
+            MODULE.revoke("Not-Valid", self.tokens_dir, self.identities_dir)
+
+    def test_cli_revoke_dry_run_reports_and_leaves_everything_untouched(self) -> None:
+        self._issue()
+        completed = subprocess.run(
+            [
+                sys.executable, str(SCRIPT),
+                "--revoke", "--dry-run",
+                "--alias", "argos",
+                "--tokens-dir", str(self.tokens_dir),
+                "--identities-dir", str(self.identities_dir),
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("dry-run --revoke", completed.stdout)
+        self.assertTrue((self.tokens_dir / "argos.token").exists())
+        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual(len(document["identities"]), 2)
+
+    def test_cli_revoke_removes_hash_and_token_then_succeeds_again(self) -> None:
+        self._issue()
+        first = subprocess.run(
+            [
+                sys.executable, str(SCRIPT),
+                "--revoke",
+                "--alias", "argos",
+                "--tokens-dir", str(self.tokens_dir),
+                "--identities-dir", str(self.identities_dir),
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertFalse((self.tokens_dir / "argos.token").exists())
+        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
+        self.assertEqual(len(document["identities"]), 1)
+
+        second = subprocess.run(
+            [
+                sys.executable, str(SCRIPT),
+                "--revoke",
+                "--alias", "argos",
+                "--tokens-dir", str(self.tokens_dir),
+                "--identities-dir", str(self.identities_dir),
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+
     def test_cli_rejects_unknown_alias_without_leaking_internals(self) -> None:
         completed = subprocess.run(
             [
