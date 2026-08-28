@@ -5,8 +5,8 @@ Fuente de roles por agente: `grupos.json` (raíz). Este doc es el contexto que t
 ## Máquinas
 | Máquina | Qué es | Papel | Agentes |
 |---|---|---|---|
-| **VPS cauce** (Ryzen 9700X) | este servidor | centro de mando SIEMPRE: repo, bus, prod | todos menos kant |
-| **Torre** (9950X3D, hostname `kratos`, tailscale .1) | máquina principal de desarrollo del dueño | CLI del dueño, contenedores de prueba, respaldo+`gdrive:` | kant |
+| **VPS cauce** (Ryzen 9700X) | este servidor | centro de mando SIEMPRE: repo, bus, prod | todos menos kant y salva |
+| **Torre** (9950X3D, hostname `kratos`, tailscale .1) | máquina principal de desarrollo del dueño | CLI del dueño, contenedores de prueba, respaldo+`gdrive:` | kant, salva |
 | **NAS i5** | almacenamiento | backups nocturnos | — |
 | **agora-storage** | Hostinger | proyecto "agora" + auxiliares (hegel-ventas-checkin) | — |
 | ils-server / servidores caseros | apagados | disponibles bajo demanda (luz inestable) | — |

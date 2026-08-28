@@ -1,6 +1,6 @@
 # Protocolo de trabajo — 4 instancias, cero colisiones
 
-Vigente desde 2026-08-27. Lo lee TODA instancia antes de tocar nada. El plan de fondo está en `plan-reestructura/`.
+Lo lee TODA instancia antes de tocar nada. Qué falta y por qué: `docs/roadmap.md`. Procedimientos operativos: `docs/operacion.md` y `ops/runbooks/*.md` (incluye `ops/runbooks/ventana-primer-despliegue.md` para la próxima ventana de despliegue).
 
 ## Una sola verdad: `main`, sin ramas
 
@@ -29,13 +29,13 @@ Todas las instancias comparten el checkout `/datos/workspaces/zeus/cauce-v3`. La
 | `packages/protocol/**`, `packages/mcp-fleet-monitor/**`, `ops/scripts/**` (utilidades vivas), `ops/tests/**`, `ops/harness/**` | Codex | Claude |
 | `packages/adapter-sdk/**`, `ops/schemas/**` | Codex | Claude |
 | `services/dispatcher/**`, `ops/runbooks/**` | Gemini | Claude |
-| `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,patches,private}/**` | Claude (+dueño donde toque flota) | dueño |
-| `plan-reestructura/`, `ordenes/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, FASE 3 (deploy, flota, BD) | Claude + dueño | dueño |
-| `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, base de datos | NADIE hasta FASE 3 | — |
+| `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,patches,private,telegram-runtime}/**` | Claude (+dueño donde toque flota) | dueño |
+| `ordenes/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, despliegue/flota/BD | Claude + dueño | dueño |
+| `packages/store/migrations/**`, `deploy/**`, `/etc/cauce-v3`, `/opt`, contenedores, systemd, base de datos | NADIE sin el dueño presente | — |
 
 ## Reglas de todo commit (sin excepción)
 
-1. Gate antes de commit: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde — test:unit es GLOBAL desde el 27-08 (consola 107/107). Los tests se corren como usuario normal, NUNCA como root (runtime-package-smoke valida ownership de ficheros y da falsos rojos bajo root).
+1. Gate antes de commit: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde — test:unit es GLOBAL (consola incluida). Los tests se corren como usuario normal, NUNCA como root (runtime-package-smoke valida ownership de ficheros y da falsos rojos bajo root). Esta es la ÚNICA excepción a que la flota corre como root: no cablear guardias anti-root ni chownear el árbol "para corregirlo" fuera de esta regla de los tests.
 2. `git mv` en commits separados de ediciones de contenido. Commits ≤20 ficheros salvo mv mecánico.
 3. Prohibido: comentarios narrativos, fechas o "incidentes" en el código; planes nuevos >100 líneas; declarar "hecho" sin pegar la salida del gate.
 4. Mensajes de commit: qué y por qué en ≤5 líneas, sin épica.

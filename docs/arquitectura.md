@@ -1,104 +1,88 @@
-# Cómo leer Cauce V3 (guía para humanos)
+# Arquitectura de Cauce V3
 
-Este repo lo escribieron IAs y se está reestructurando. Esta guía existe para que una persona pueda navegarlo sin perderse: te dice **en qué orden leer los archivos** de cada flujo, qué ignorar, y dónde vive lo operativo. Si solo lees un documento, que sea este.
+## 1. Qué es
 
-## El sistema en 30 segundos
+Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants, con consola web de operador y puente Telegram (`AGENTS.md:3`). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull*: el adapter de cada agente reclama sus entregas por WebSocket con fencing (`claim_token`+`epoch`) (`AGENTS.md:3`). El `dispatcher` no reparte nada — es el segador de reintentos (`services/dispatcher/README.md:3`). "Entregar" significa pegar el texto en la sesión tmux viva del CLI del agente (`packages/adapter-sdk/README.md:5`). Estado a 28-08-2026: primer despliegue real completado, commit `caa8789a`, esquema 024→037, 10 contenedores `cauce-v3-prod-*` sanos (`deploy/HISTORIAL.md:7`).
 
-```
-  Telegram ──▶ telegram-bridge ──┐
-  Consola web (React) ───────────┼──▶ GATEWAY (HTTP/WS) ◀──▶ PostgreSQL (única verdad)
-                                  │        ▲
-  adapter de cada agente ────────┘        │ pull por WebSocket (el agente RECLAMA sus entregas)
-       │
-       └──▶ pega el mensaje en la sesión tmux del CLI (claude / codex / openclaw)
+## 2. Mapa de piezas
 
-  Terminal en vivo (aparte del bus):
-  navegador ──▶ nginx de la consola ──▶ terminal-relay ◀── pty-agent (Python, DENTRO del
-                                        (TLS mutuo)         contenedor de cada agente)
-```
+### 2.1 Servicios (`deploy/compose.yaml`, stack `cauce-v3-prod`)
 
-Tres ideas que lo explican casi todo:
-1. **Nada existe hasta que está en PostgreSQL.** Los WebSockets solo aceleran.
-2. **Nadie empuja mensajes a los agentes.** Cada adapter reclama sus entregas (claim con token+epoch) y confirma con la escalera `accepted → started → done|failed`. El `dispatcher`, pese al nombre, no reparte: es el segador de reintentos.
-3. **"Entregar" = pegar texto en la tmux del CLI** y esperar el turno del modelo. Ahí está la fragilidad real (timeouts), no en el bus.
+| Servicio | Función | Puerto publicado | Puertos internos |
+|---|---|---|---|
+| `gateway` | único punto de entrada HTTP+WS; identidad, ACLs, ACK, fachadas de consola, plano de control de terminal | `8443` (TLS) (`deploy/compose.yaml:196-197`) | health `8081` (`deploy/compose.yaml:73`) |
+| `dispatcher` | segador: reintenta entregas rancias, poda observabilidad; único handler de negocio es `system.database.probe` (`services/dispatcher/README.md:3`) | — | `8082` (`deploy/compose.yaml:325`) |
+| `terminal-relay` | puente TLS-mutuo navegador↔pty-agent; pierna agente `8445`, pierna navegador `8446` interna, health `8085`; perfil `terminal`, réplica única (`deploy/compose.yaml:209-230`) | `8445` (`deploy/compose.yaml:301-305`) | `8446`, `8085` |
+| `telegram-bridge` | polling/egress de Telegram, cursor y lease cercados; perfil `telegram` (`deploy/compose.yaml:385-387`) | — | `8086` (`deploy/compose.yaml:394`) |
+| `console` | SPA React servida por nginx-unprivileged, TLS propio, mTLS hacia el gateway | `8444` (`deploy/compose.yaml:445-446`) | `8444` |
+| `migrator` | corre `deploy/migrate.mjs` una vez, `restart: "no"` (`deploy/compose.yaml:31-34`) | — | — |
+| `outbox-metrics` | expone métricas del outbox y del estado de release para Prometheus (`deploy/compose.yaml:345-347`) | — | `8084` |
+| `postgres` | única fuente durable (`deploy/compose.postgres.yaml`, compuesto aparte por `deploy.sh:10`) | — | `5432` |
+| `prometheus` | scrape de gateway/dispatcher/outbox-metrics; perfil `observability` (`deploy/compose.yaml:509-534`) | — | `9090` |
+| `otel-collector` | recolector OTel; perfil `observability` (`deploy/compose.yaml:489-507`) | — | `4317-4318` |
 
-El gateway ya no es un monolito: `services/gateway/src/app.ts` (~400 líneas) solo compone cinco `routes/*` y un plugin de terminal; las rutas viven en `services/gateway/src/routes/{console,core,health,console-publish,chain-gates-legado}.ts` y los helpers específicos de consola en `services/gateway/src/console/*.ts`.
+Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`, target `runtime` del Dockerfile) y arrancan por `deploy/runtime-entrypoint.sh` con `user 1000:1000`, `read_only: true`, `cap_drop: ALL` (`deploy/compose.yaml:1-16`).
 
-## Flujo 1 — Un mensaje de A a B (orden de lectura)
+### 2.2 Paquetes
 
-| # | Archivo | Qué buscar |
+| Paquete | Exporta | Fuente |
 |---|---|---|
-| 1 | `packages/protocol/src/schemas.ts` | `PublishMessage`, la escalera de ACK, por qué el payload público NO lleva identidad |
-| 2 | `services/gateway/src/app.ts` (~400) | el único `buildGateway()`: instala hooks (`console-security`, oidc/password) y monta `routes/{health,console,core,console-publish,chain-gates-legado}` + `terminal/plugin` |
-| 3 | `services/gateway/src/routes/core.ts` (628) + `routes/core/{contracts,helpers,http,outbox,publish}.ts` (94+131+153+349+151 = 878) | `app.post('/v3/messages'` y `app.post('/v3/publish'` (publican), `app.post('/v3/connections/hello'`, `/v3/heartbeat`, `/v3/ack`, `/v3/deliveries/:id/ack` (sesión del adapter), `app.post('/v3/deliveries/query'` y `/v3/query` (consulta), `app.get('/v3/ws'` (el socket de los adapters) |
-| 4 | `packages/store/src/repository.ts` (fachada, 43) + `repository/{messages,outbox,jobs,config,observability,quotas,deliveries,agents,agents/{fanin,chain-control,notifications}}.ts` (~14K líneas repartidas en 37 ficheros) | `publish`, el claim de deliveries con fencing, los ACK. La fachada hereda de los módulos y `new CauceRepository()` resuelve los métodos del original; SQL intacto en la mudanza (verificada en `el historial de git reportes/claude-revision-46-commits.md` §store-1/store-2) |
-| 5 | `packages/adapter-sdk/src/sdk/engine.ts` (780) | el bucle del consumidor durable: claim → ACK → pegar texto |
-| 6 | `packages/adapter-sdk/src/shared-session/paste-runner.ts` (8 barrel) + `paste-runner/{base,runner,persistence,runtime,harvest,contracts}.ts` (689+414+178+112+457+87 = 1.937) + `shared-session/tmux.ts` (57 barrel) + `tmux/{mutation,operations,identity}.ts` (642+569+327 = 1.538) | cómo se le pega el texto al CLI de verdad (tmux + marcadores de bloque) |
-| 7 | `services/dispatcher/src/{index,handlers,config,metrics,main}.ts` (160+69+145+274+143 = 791) | el segador entero son 791 líneas (config + metrics + index + handlers + main); `handlers.ts` declara explícitamente "Agent/model execution is intentionally absent" |
+| `packages/protocol` | schemas Zod del wire `3.0`: `PublishMessage` estricto sin identidad, escalera de ACK `accepted→started→done|failed`, prioridad, perfiles de agente | `packages/protocol/src/index.ts`, `schemas.ts`, `agent-profile.ts`, `publish-receipt.ts` (`packages/protocol/README.md:3-6`) |
+| `packages/store` | `CauceRepository`: mensajes, entregas con fencing claim/epoch, outbox, DLQ, jobs, config versionada, agentes, auditoría; migrator transaccional 001→037 con huecos deliberados (022/025/029/036) | `packages/store/src/repository.ts` (fachada, 43 líneas) + `repository/{messages,outbox,jobs,config,observability,quotas,deliveries,agents}/**`; `migrations/` (`packages/store/README.md:5`) |
+| `packages/adapter-sdk` | motor del consumidor durable (WS de larga vida, ACK correlacionado por `event_id`+`delivery_id`+`attempt`+`claim_token`) y ejecución sobre el harness (pegar en tmux) | `src/sdk/engine.ts`, `src/shared-session/{paste-runner,tmux}.ts`, ejecutables reales `src/bin/{claude,codex,openclaw}.ts` (`packages/adapter-sdk/README.md:3-9`) |
+| `packages/mcp-fleet-monitor` | servidor MCP de solo lectura: `estado_flota`, `entregas`, `cadena`, `dead_letters`, `salud` — escrito y probado, sin registrar en ningún alias hoy | `packages/mcp-fleet-monitor/README.md:3-5` |
 
-## Flujo 2 — La TUI del agente en el navegador
+### 2.3 El adaptador dentro del contenedor: supervisor → runtime → harness
 
-| # | Archivo | Qué buscar |
+- **Supervisor**: `ops/scripts/container-adapter-supervisor.sh`, invocado por la unit systemd del alias; resuelve config/bundle/PKI por root o rootless, valida el bind del contenedor y ejecuta con lock (`ops/scripts/container-adapter-supervisor.sh:1-33`).
+- **Runtime**: `ops/container-runtime/cauce-container-runtime.py`, corre dentro del contenedor; gestiona generación/PID de metadatos y falla cerrado si el PID de la generación vigente no existe (`ops/container-runtime/cauce-container-runtime.py:1086`).
+- **Harness**: `packages/adapter-sdk/src/bin/{claude,codex,openclaw}.ts` → `runCli()` monta `DurableStore` + `HarnessAdapter` sobre el runner correspondiente (spawn o API de OpenClaw) (`packages/adapter-sdk/src/bin/shared.ts:173-203`).
+
+### 2.4 El plano PTY: launcher → agente → relay
+
+- **Launcher**: `ops/pty-agent/cauce-pty-launcher.sh` hace `docker cp` del agente Python al contenedor y lo ejecuta con `docker exec`, supervisado por unidades user `cauce-v3-pty@<alias>` (`ops/pty-agent/README.md:9`).
+- **Agente**: `ops/pty-agent/cauce_pty_agent.py`, un solo fichero Python stdlib, corre dentro del contenedor de cada alias y marca SALIENTE por TLS mutuo hacia el relay — nunca escucha puerto; abre PTYs (`shell`/`harness`) y sirve lectura/escritura de ficheros de gobierno (tags 0x50-0x5E, CAS+rollback) (`ops/pty-agent/README.md:3-7`).
+- **Relay**: `services/terminal-relay` — pierna agente (`8445`, TLS mutuo por fingerprint, un HELLO nuevo expulsa al anterior) y pierna navegador (`8446`, interna) (`services/terminal-relay/README.md:3-5`).
+
+## 3. Flujo de un mensaje
+
+**Ingreso** — Telegram (`telegram-bridge`, canal más usado en producción: ~12.000 entrantes por Telegram frente a 1 de consola, `services/telegram-bridge/README.md:3`), consola web, o CLI de operador → todos publican contra el gateway.
+
+**Gateway** — `services/gateway/src/app.ts` compone `routes/{health,console,core,console-publish,chain-gates-legado}` y el plugin de terminal. `routes/core.ts` (628) + `routes/core/{contracts,helpers,http,outbox,publish}.ts` implementan `POST /v3/messages|/v3/publish` (publicar, identidad derivada del principal autenticado — el payload público es `strict`), `POST /v3/connections/hello`, `/v3/heartbeat`, `/v3/ack`, y `GET /v3/ws` (`services/gateway/src/routes/core.ts:207`) — el socket de larga vida de cada adapter.
+
+**Deliveries → claim por adaptador** — `packages/store/src/repository/deliveries/claims.ts:22` (`acquireLease`) concede el lease con `claim_token`+`epoch`; el adapter lo confirma con `packages/store/src/repository/deliveries/acks.ts:36` (`DeliveryAcksRepository`).
+
+**Harness** — `packages/adapter-sdk/src/sdk/engine.ts` corre el bucle claim→ACK→pegar texto; `shared-session/paste-runner.ts` + `tmux.ts` hacen el pegado real con marcadores de bloque.
+
+**ACK** — escalera monotónica `accepted → started → done|failed`; un `event_id` repetido nunca reaplica una transición (`packages/protocol/README.md:5`).
+
+**Fan-in** — `packages/store/src/repository/agents/fanin.ts:14` (`AgentFaninRepository`) materializa las respuestas de una delegación A→B→C antes de devolverlas al origen.
+
+**Fencing** — tres mecanismos independientes: (a) `epoch` creciente por `(tenant, alias)` en las entregas normales (un consumer viejo pierde su claim); (b) `claim_token` de terminal, migraciones `032_terminal_session_claim_fencing.sql`, `033_terminal_browser_owner_fencing.sql`; (c) `034_terminal_relay_instance_fencing.sql` — el relay solo arranca si `CAUCE_TERMINAL_RELAY_INSTANCE_ID` coincide con el sha256 del DER de su propio certificado cliente hacia el gateway (`deploy/compose.yaml:95`, `deploy/deploy.sh:40-46`).
+
+## 4. La flota como datos
+
+La BD (`agents` + `memberships`) es la única verdad; todo lo demás se deriva (`ops/runbooks/alta-y-baja-de-agente.md`). Cadena de generación: `ops/scripts/export-fleet-snapshot.py` lee `agents`/`memberships` con `fleet-query.sql` y escribe canónico `ops/flota.json` (`schemaVersion: 1`, sin timestamps ni comentarios) → `ops/scripts/generate-container-aliases.py`, `generate-manifests.py`, `generate-runtime-fleet.py`, `generate-units.py`, `generate-container-units.py`, `generate-telegram-config.py`, encadenados por `ops/scripts/regenerate-fleet.sh:11-43`, producen `ops/container-aliases.json`, `ops/manifests/*.yaml`, las units systemd y `ops/telegram-runtime/config.json`. Las fórmulas puras (`env_name`, reglas por harness) viven en una sola casa, `ops/scripts/fleet_derive.py`.
+
+`ops/flota.json` (14 entradas hoy) define por alias: `tenant`, `room`, `role`, `harness`, `enabled`, `container`, `user`, `home`, `runtimeStateDirectory` (`ops/flota.json:2-157`). `enabled` tiene una sola fuente (`agents.enabled`): deshabilitado va a `retired`, no a bookkeeping manual (`ops/flota.json:167`). El único fichero editado a mano es el overlay físico `ops/flota-fisica.json`, que el exportador funde en `placement` — hoy `kant` (health en `ctrl-infra`, registro en `host:kratos`) y `salva` (`dockerHost: kratos`) (`ops/flota-fisica.json:2-9`).
+
+**Gates G-SNAP**: `ops/scripts/validate.sh` regenera `container-aliases.json` y `manifests/` desde `ops/flota.json` en un tmpdir y exige identidad byte a byte con lo commiteado — es el gate contra edición manual de generados (`ops/scripts/validate.sh:5-33`).
+
+**Alta/baja**: `ops/cli/cauce <alias> aprovisionar` y `... retirar`, subcomandos del dispatcher principal del CLI (`ops/cli/cauce:1433-1442`). `aprovisionar` no escribe en la BD — imprime el SQL para que lo corra el dueño — y encadena las 6 piezas de credenciales: (0) ubicación de `ca.key` documentada a mano; (1) `agent-<alias>.{crt,key}` vía `provision-agent-identity.sh`; (2) bearer token + hash publicados con CAS; (3) `alias-key.hex` de PTY vía `publish-alias-key.sh`; (4) `container-pki/<alias>/` + `<alias>.env`; (5) config de Telegram con el token de BotFather pegado a mano y verificado (`ops/runbooks/alta-y-baja-de-agente.md`). `retirar` primero deshabilita en BD (el gateway deja de autorizar en vivo) y después revoca credenciales.
+
+## 5. Despliegue
+
+Fuente única: el compose del propio repo, sin overrides externos — `deploy/deploy.sh` compone `deploy/compose.yaml` + `deploy/compose.postgres.yaml` desde `$REPO/deploy` (`deploy/deploy.sh:10`). Exige HEAD limpio e idéntico a `origin/main`, root, y `CAUCE_FASE3_CON_DUENO=si` (`deploy/deploy.sh:19-24`). Secuencia: build de las dos imágenes del `deploy/Dockerfile` (targets `runtime` — gateway/dispatcher/terminal-relay/telegram-bridge/migrator/outbox-metrics comparten una imagen — y `console`, con el instance-id del relay horneado en el nginx de consola) → push al registry local `127.0.0.1:5000` → pin por digest en `prod.env` → verificación de que no hay sesiones de terminal fantasma → `migrator` en transacción única → `up -d --wait` → `deploy/smoke.sh` → fila en `deploy/HISTORIAL.md` (`deploy/deploy.sh:47-76`). Las migraciones llevan guard: la imagen aplana `deploy/runtime/migrate.mjs` a `deploy/migrate.mjs` (`deploy/Dockerfile:93`) y el migrator rechaza correr fuera de ese camino. Un fallo de migración hace rollback total automático; un smoke rojo dice restaurar el `.pre-deploy-<stamp>` de `prod.env` y repetir `up`.
+
+## 6. Gates de calidad
+
+`pnpm typecheck` (core+adapter+mcp+console) y `pnpm lint` (ESLint por zona, `lint:estricto:zonas` con reglas más duras sobre console/terminal-relay/telegram-bridge/dispatcher/tests, `ruff check` sobre Python, `scripts/calidad.mjs` con trinquete de líneas por fichero y de fechas en comentarios) son gate de todo commit (`package.json:17-28`, `AGENTS.md`). `pnpm test:unit` corre los paquetes con test propio más `tests/unit` y `packages/protocol/test`; `pnpm test` (`scripts/test-all.mjs`) es el gate completo. `ops/scripts/validate.sh` valida sintaxis de todos los `.sh`/`.mjs` de `ops`+`deploy`, `shellcheck` si está disponible, YAML/JSON Schema de manifiestos, y la identidad byte a byte de generados (§4).
+
+## 7. Máquinas
+
+| Máquina | Papel | Qué corre |
 |---|---|---|
-| 1 | `console/src/features/terminal/pty-connection.ts` (orquestador: `pty-session.ts`, 308) | el cliente WS (xterm.js, reconexión, frames de control): `new WebSocket`, `openSocket`, `startViewerHeartbeat`, `stopHandshake/Reconnect` viven en `pty-connection.ts`; `pty-session.ts` los compone con `pty-input.ts`/`pty-output.ts`/`pty-theme.ts`/`pty-types.ts` |
-| 2 | `console/nginx.conf` | el proxy `/v3/console/terminal/ws` → relay :8446 con mTLS |
-| 3 | `services/gateway/src/terminal/plugin.ts` (326) + `services/gateway/src/terminal/session-control.ts` (785) + `services/gateway/src/terminal/relay-proxy.ts` (23 barrel + `relay-proxy/{close,consume,context,presence,resume}.ts` = 22) | el plano de control PTY: `registerTerminalControlPlane()` registra `/v3/console/terminal/{targets,sessions,sessions/:sid/owner,sessions/:sid}` (navegador) y `/v3/terminal/relay/{agents,sessions/:sid/{consume,resume,authz,close}}` (relay). El gateway DECIDE y AUDITA — no carga bytes de PTY |
-| 4 | `services/terminal-relay/src/browser-leg.ts` + `agent-leg.ts` (206) | pierna navegador vs pierna agente: la primera canjea el ticket contra el gateway, la segunda abre TLS mutuo :8445 con identidad por fingerprint y aplica el `superseded` que expulsa conexiones duplicadas |
-| 5 | `services/terminal-relay/src/sessions.ts` (248) + `gateway-client.ts` (498) | ciclo de vida de sesión + canje de tickets/authz/HTTP contra el gateway |
-| 6 | `ops/pty-agent/cauce_pty_agent.py` (2661) | tabla de tags al inicio; `_serve` (HELLO), `_resolve_command` (tmux/openclaw TUI), `_spawn` (pty.fork); `TAG_READ` / `TAG_WRITE` (escritura con CAS y rollback). El módulo se complementa con `rollout_pty_lib.py` (736) |
+| VPS (esta, Ryzen 9700X) | centro de mando: repo, bus, producción | los 10 contenedores `cauce-v3-prod-*`; todos los alias de la flota menos `kant` y `salva`, uno por contenedor de tenant (`docs/flota-y-participantes.md:8`) |
+| Torre `kratos` (9950X3D) | desarrollo del dueño | los alias `kant` y `salva` (`ops/flota-fisica.json:2-9`); contenedores de prueba y respaldo |
 
-## Flujo 3 — Editar CLAUDE.md / AGENTS.md / SOUL.md desde la web
-
-| # | Archivo | Qué buscar |
-|---|---|---|
-| 1 | `console/src/features/live/FicherosTab.tsx` (+ `DirectivaModal.tsx`) | el editor: lee inventario, lee contenido, guarda con `expected_sha` |
-| 2 | `console/src/api/client.ts` (840) | `GET|PUT …/documents/:kind/content` |
-| 3 | `services/gateway/src/console/agent-documents.routes.ts` (610) + `services/gateway/src/console/agent-documents.ts` (40 barrel) + `agent-documents/{catalog,path-policy,relay-probe}.ts` (submódulos) | las 6 rutas (`/v3/console/{tenants/:tenantId/agents/:alias,agents/:alias}/documents[/:kind/content]`); `TerminalRelayFactsProbe` (read/write/list contra el relay). El módulo se importa en `routes/console.ts:7` y se monta dentro del phase 4 de `createConsoleRoutes` |
-| 4 | `services/gateway/src/terminal/plugin.ts` → `governance-probes.ts` → `services/gateway/src/console/agent-directive.routes.ts` | el `GET /v3/console/agents/:tenant/:alias/directive` (DIRECTIVA de un alias) y los tags binarios 0x50–0x5E viajan por aquí; la sonda se instala en el hueco `app.sondaDeDocumentos` que `app.ts` dejó |
-| 5 | `services/terminal-relay/src/governance-relay.ts` (598) + `framing.ts` (158) | las operaciones read/write y los tags binarios 0x50–0x5E |
-| 6 | `ops/pty-agent/cauce_pty_agent.py` | los handlers `TAG_READ` / `TAG_WRITE` (escritura con CAS y rollback) |
-
-**Estado:** la cadena está completa en el repo; en producción solo hay lectura parcial desplegada. Se estrena entera en FASE 3 (`plan-reestructura/31`).
-
-## Qué IGNORAR al leer
-
-- Los tests (≈45% del código) — léelos solo cuando toques esa pieza.
-- `ops/` casi entero, salvo lo de la tabla siguiente.
-
-## El mapa de `ops/` (la jungla, ordenada)
-
-| Subdirectorio | Qué es | ¿Te importa? |
-|---|---|---|
-| `pty-agent/` | el agente de terminal (flujos 2 y 3) + su launcher y rollout | **Sí** |
-| `systemd/` + `generated/` | plantillas de unidades y su salida generada (`pnpm ops:manifests`) | Cuando toques la flota |
-| `manifests/` | un YAML de configuración por alias de agente | Cuando toques la flota |
-| `guardias/` | espejos de los guardianes del host (los reales corren desde `/usr/local/sbin`) | FASE 3 (fichero 32) |
-| `scripts/` | mitad utilidades vivas, mitad dudosos pendientes del dueño (`quota-collector`, `generate-telegram-config`, `update-alias-config`) | Poco |
-| `harness/`, `tests/`, `schemas/` | QA con dobles de protocolo y sus contratos; las dos subcarpetas de tests (`tests/`, raíz del monorepo) cubren piezas vivas y cuarentena | Poco |
-| `observability/`, `config/` | Prometheus/otel y configs | Cuando toques alertas |
-| el resto (`cli/`, `patches/`, `security/`, `openclaw-gateway/`, `container-runtime/`, `console-login/`, `ai-live/`, `private/`) | piezas puntuales, autoexplicativas por su README o candidatas a limpieza | Rara vez |
-
-## Dónde vive lo operativo (fuera del repo)
-
-- **Contenedores**: `docker ps` → `cauce-v3-prod-{gateway,dispatcher,terminal-relay,telegram-bridge,console,postgres,prometheus,otel-collector,outbox-metrics}`. Hoy corren imágenes del 23–25 ago (anteriores a lo último de main).
-- **Base de datos**: `docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce`. Aplicada hasta la migración 024; la 026–037 se aplican en FASE 3.
-- **systemd**: timers `cauce-*` (backups, guardianes, revividor) y unidades de usuario `cauce-v3-pty@<alias>`.
-- **Deploy actual (legacy, se reemplaza en FASE 3)**: `/opt/cauce-v3` + overrides en `/etc/cauce-v3/`.
-- **Archivo de la purga de ramas** (27-08): `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`.
-
-## Tamaños honestos (para calibrar antes de bucear)
-
-| Área | Fuente (no test) | Tests |
-|---|---|---|
-| gateway (`services/gateway/src`) | ~15K no-test (`app.ts` ~400 + `routes/*` ~1,6K + `console/*` ~7,4K + `terminal/*` ~4,4K + llanos ~10K) | ~10K en `services/gateway/src/*.test.ts` + ~5,5K en `tests/gateway-hardening/` |
-| store (`packages/store/src`) | ~14,3K no-test (`repository.ts` 43 fachada + `repository/*` ~13K + 6 llanos) | ~19,5K en `packages/store/test/` |
-| adapter-sdk (`packages/adapter-sdk/src`) | ~16,7K | ~19,9K en `packages/adapter-sdk/test/` |
-| consola (`console/src`) | ~49K TS/TSX + ~5,6K CSS | ~21,6K en `console/src/**/*.test.ts(x)` |
-| terminal-relay (`services/terminal-relay/src`) | ~10,4K | ~4,9K |
-| telegram-bridge (`services/telegram-bridge/src`) | ~5,5K | ~5K en `services/telegram-bridge/test/` |
-| dispatcher (`services/dispatcher/src`) | ~0,79K | ~0,32K en `services/dispatcher/test/` |
-| pty-agent (Python) | ~8,5K (`cauce_pty_agent.py` 2,7K + `rollout_pty_lib.py` 0,7K + el resto de helpers y tests) | ~4,5K en `ops/pty-agent/tests/` |
-| protocol (`packages/protocol/src`) | ~1,9K | ~1,1K en `packages/protocol/test/` |
-| `tests/` raíz (gateway-hardening, terminal-pty, store-hardening, unit) | — | 17,3K |
-
-La desproporción test/fuente y el tamaño del gateway/store son herencia de cómo se construyó; la carpintería ya rompió los gigantes de store (`repository.ts` de 11K → 42 fachada) y de gateway (`app.ts` 408 líneas); los >800 que quedan son piezas con cohesión interna real o trabajo pendiente de su sector (`ordenes/reportes/minimax-foto-final.md`).
+Cada alias vive en su propio contenedor (`agv2-<tenant>-<alias>-oc`, `ws-<alias>`, `claw`, `claw-<tenant>`…), listados uno a uno en `ops/flota.json:2-157`; varios alias de un mismo tenant pueden compartir contenedor (p. ej. `atlas` y `kratos` en `ws-humanizar`).

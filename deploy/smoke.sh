@@ -42,7 +42,7 @@ if [ "${done6h:-0}" -ge 1 ]; then echo "OK  bus: $done6h entregas done en 6h"; e
 
 # 6) Relay NOT in a loop: <30 agent connections in 2 min
 conn="$(docker logs cauce-v3-prod-terminal-relay-1 --since 2m 2>/dev/null | grep -c 'terminal_relay_agent_connected"')"
-if [ "${conn:-0}" -lt 30 ]; then echo "OK  relay: $conn conexiones/2min (sin bucle)"; else echo "ROJO relay: $conn conexiones/2min (supersede loop: plan-reestructura/fase3/pty-huerfanos.md)"; fallo=1; fi
+if [ "${conn:-0}" -lt 30 ]; then echo "OK  relay: $conn conexiones/2min (sin bucle)"; else echo "ROJO relay: $conn conexiones/2min (supersede loop: docs/operacion.md, plano PTY)"; fallo=1; fi
 
 # 7) Governance routes deployed via console nginx (401/403 = exists; 404 = NOT deployed)
 code="$(curl -sk --max-time 10 -o /dev/null -w '%{http_code}' "$CONSOLE/v3/console/agents/zeus/documents" || echo 000)"

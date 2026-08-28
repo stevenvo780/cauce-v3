@@ -1,6 +1,6 @@
 # Codex-1 — ORDEN ACTIVA (ronda 2 de contextos nativos): la revisión adversarial RECHAZÓ activar — arregla los bloqueantes
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`ordenes/reportes/claude-revision-contextos-nativos.md` COMPLETO** (veredicto Opus con evidencia; es tu especificación) → esta orden. Tu ronda fue de gran calidad (7 commits, medición, diseño, implementación flagged) y por eso la revisión pudo ser precisa. El código está en main con el flag OFF. Commit+push POR ARREGLO. Zona: `packages/adapter-sdk/src/**`, `packages/protocol/src/**`, `ops/scripts/container-adapter-supervisor.sh` (SOLO la allowlist), `ops/pty-agent/cauce-pty-launcher.sh` (SOLO la generación), y tu reporte.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **la revisión adversarial COMPLETA: `git show 67beb65c:ordenes/reportes/claude-revision-contextos-nativos.md`** (veredicto Opus con evidencia; es tu especificación — los reportes viven en git, no en el árbol) → esta orden. Tu ronda fue de gran calidad (7 commits, medición, diseño, implementación flagged) y por eso la revisión pudo ser precisa. El código está en main con el flag OFF. Commit+push POR ARREGLO. Zona: `packages/adapter-sdk/src/**`, `packages/protocol/src/**`, `ops/scripts/container-adapter-supervisor.sh` (SOLO la allowlist), `ops/pty-agent/cauce-pty-launcher.sh` (SOLO la generación), y tu reporte.
 
 ## Bloqueantes (sin esto, el primer canario OpenClaw se rompe)
 1. **Topes de OpenClaw por alias, no cableados**: `TOPES_OPENCLAW = {porFichero: 60_000, total: 150_000}` solo vale para `claw` (jarvis). Léelos del alias (`agents.defaults.bootstrapMaxChars`/`bootstrapTotalMaxChars` del openclaw real del contenedor, default 20.000/60.000) y propágalos a la proyección; test con dos contenedores de topes distintos.
@@ -13,7 +13,7 @@ ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`ordenes/reportes/claud
 6. Lado Claude sin usuarios elegibles (zeus corre TUI longeva y `NativeProfileContext` la rechaza): dilo en el reporte y define qué haría falta (headless) — no lo implementes.
 7. Test "byte a byte": compara contra un SHA fijado del prompt legacy para un contexto canónico, no tres ejecuciones del mismo build entre sí.
 
-## BLOQUEANTE NUEVO (hallazgo de seguridad de la demo probeta, `ordenes/reportes/claude-demo-probeta.md` §C) — PRIMERO
+## BLOQUEANTE NUEVO (hallazgo de seguridad de la demo probeta: `git show eeac106a:ordenes/reportes/claude-demo-probeta.md`, §C) — PRIMERO
 El hello de `/v3/ws` (services/gateway/src/routes/core.ts ~:207-422) acepta a un agente con `agents.enabled=false` — solo valida el cert mTLS. Haz que el hello/lease consulte `agents.enabled` (y membership/room/tenant enabled, como ya hace `authority.ts:220`) y rechace con un frame de error claro; test: agente deshabilitado en BD → hello rechazado; habilitado → hello_ack. Es tu zona (gateway). Sin esto, "la baja es 1 UPDATE" es mentira hasta revocar el cert.
 
 ## Fuera de tu zona pero bloqueante de ventana (avísalo en tu reporte, NO lo toques): 5 tests de `shared-session` de adapter-sdk rojos por aserciones de texto en castellano tras la traducción — es de minimax-1.

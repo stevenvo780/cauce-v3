@@ -1,38 +1,57 @@
 # Contexto del repositorio para agentes
 
-Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants, con consola web de operador y puente Telegram (el canal más usado). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* por WebSocket desde el adapter de cada agente (el "dispatcher" NO reparte: es el segador de reintentos).
+Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants (Steven, Miguel, Jhon, Isa), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
 
-**HAY PRODUCCIÓN VIVA en esta máquina** (contenedores `cauce-v3-prod-*`, timers systemd `cauce-*`). No la toques: ni reiniciar, ni escribir en su base, ni desplegar. El despliegue es exclusivamente FASE 3 con el dueño (`plan-reestructura/31`).
+**El árbol de este repo ES material de producción.** Prometheus, OTel y postgres montan ficheros directamente desde aquí; `main` está desplegado. No es un entorno de desarrollo aislado.
 
-## Mapa del árbol
+## Dónde está cada cosa
 
-- `packages/protocol` — schemas Zod del wire 3.0; se compila primero (`pnpm prepare:runtime`)
-- `packages/store` — SQL, migraciones 001–037 y repositorio PostgreSQL (prod está en la 024)
-- `packages/adapter-sdk` — conecta un CLI real a Cauce (sesión tmux + ACK durable)
-- `packages/mcp-fleet-monitor` — MCP de observación de flota (escrito; sin registrar en ningún alias)
-- `services/gateway | dispatcher | terminal-relay | telegram-bridge` — los 4 servicios vivos
-- `console` — SPA React del operador
+| Doc | Qué responde |
+|---|---|
+| `docs/doctrina-del-dueno.md` | el criterio detrás de las reglas: qué exige el dueño y por qué |
+| `docs/arquitectura.md` | cómo está construido el sistema hoy — si solo lees un documento, que sea este |
+| `docs/operacion.md` | cómo desplegar, dar de alta/baja un agente, diagnosticar, hacer backup |
+| `docs/roadmap.md` | qué falta, priorizado |
+| `docs/flota-y-participantes.md` | máquinas, humanos, los 14 agentes, los 5 escenarios esenciales |
+| `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `main` sin pisarse — LÉELO antes de tocar nada |
 
-**Quiénes somos y para qué**: `docs/flota-y-participantes.md` (máquinas, humanos, agentes con `grupos.json`, los 5 escenarios esenciales) — LÉELO antes de tocar nada que afecte a la flota.
-- `ops/` — systemd, pty-agent (terminal dentro de cada contenedor), scripts operativos
-- `plan-reestructura/` y `ordenes/` — el plan vigente y tu orden de trabajo
+Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`).
 
-## Reglas (las completas: `ordenes/00-PROTOCOLO.md`)
+## Regla 0
 
-0. **Código muerto se BORRA con `git rm` + evidencia en el mensaje del commit — git es el archivo.** No existen carpetas de cuarentena. TODO lo histórico vive en git (`git log`/`git show`; `--diff-filter=AD` para lo borrado) y en el bundle `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`. No existen carpetas de archivo: ni cuarentenas ni bitácoras.
+**El código muerto se BORRA con `git rm`, nunca se archiva.** Git es el archivo: todo lo histórico vive en `git log` / `git show` (`--diff-filter=AD` para lo borrado). No existen carpetas de cuarentena ni bitácoras de lo retirado.
 
-1. Trabaja SOLO en tu sector (tabla del protocolo), DIRECTO en `main` — **prohibido crear ramas** (decisión del dueño: aquí las ramas fueron el cementerio). `git add` solo por rutas propias; nunca `git add -A`, `git add .` ni `commit -a`.
-2. Gate por commit: `pnpm typecheck && pnpm lint && pnpm test:unit` en verde (como usuario normal, no root) (hoy lo están; deben seguir).
-3. `git mv` en commits separados de cualquier edición de contenido. Commits ≤20 ficheros.
-4. Comentarios: solo restricciones que el código no puede expresar. Prohibido narrar historia, fechar, citar incidentes o personas — los comentarios-ensayo de este repo llegaron a MENTIR y envenenaron a los modelos que los leían.
-5. Nada está "hecho" sin pegar la salida del gate. Un despliegue no está hecho sin mostrar el efecto real.
-6. Planes nuevos: máximo 100 líneas. Reportes: máximo 5 líneas de prosa.
-7. Subagentes: úsalos para lo paralelizable, con ficheros DISJUNTOS por subagente, tope 4, profundidad 1, y solo el proceso principal commitea (sección "Subagentes" del protocolo).
+## Reglas duras del dueño (detalle y porqué: `docs/doctrina-del-dueno.md`)
+
+- **Efecto demostrado.** Nada está "hecho" sin pegar la salida del gate; un despliegue no está hecho sin mostrar el efecto real contra el sistema vivo.
+- **Revisor ≠ autor.** Todo sector tiene un dueño de escritura y un revisor distinto (tabla abajo); ninguna instancia se autoaprueba.
+- **Todo en `main`, sin ramas.** Prohibido crear ramas. Convivencia por sector + `git add` solo de rutas propias + commit siempre con pathspec, nunca `-a` ni `add -A`.
+- **La flota corre como root.** Es el entorno real de esta VPS: no se cablean guardias anti-root ni se chownea para "corregirlo"; el gate y el CI nocturno también corren como root. Única excepción: `pnpm qa:runtime-packaging` valida ownership y exige usuario normal.
+- **GitHub Actions prohibido.** El gate completo corre en el propio host (`cauce-v3-ci-local.timer`), no en un servicio pagado.
+- **Idioma: `.md` en español, código en inglés.** Identificadores y comentarios exportados en inglés; toda la documentación de proyecto en español.
+- **Comentarios sin narrativa, sin fechas, sin nombres.** Solo restricciones que el código no puede expresar por sí solo. Lo que se poda: funciones sin propósito claro, sin nombre que describa qué hacen, repetidas en vez de reutilizadas, sin patrón de organización consistente, sobre-ingeniería innecesaria.
+- **Migraciones que contaminan se borran enteras**, con su `down` y su suite — no se parchean.
+- **Credenciales jamás se tocan fuera del dueño.** `ops/private/credentials/` está ignorada por git a propósito; ninguna instancia ni subagente borra, mueve o reescribe nada ahí dentro.
+
+## Sectores (tabla completa, con revisor y reglas de convivencia: `ordenes/00-PROTOCOLO.md`)
+
+Cada directorio tiene UN dueño de escritura por ronda; tocar algo fuera del sector propio se pide al integrador, nunca "de paso". Zonas y quién escribe hoy: `console/**` y `services/{terminal-relay,telegram-bridge}/**`; `packages/store/src/**` + `services/gateway/src/**` + release de `ops/scripts/`; `docs/`, higiene de disco, verificaciones mecánicas; `ops/pty-agent/**` + `tests/**`; `packages/{protocol,mcp-fleet-monitor}/**` + utilidades vivas de `ops/scripts|tests|harness`; `packages/adapter-sdk/**` + `ops/schemas/**`; `services/dispatcher/**` + `ops/runbooks/**`; `scripts/**` + el resto de `ops/` (systemd, generated, manifests, observability, config, guardias, container-runtime, cli, patches, private); `ordenes/`, documentación raíz, integración de merges y despliegue/flota/BD (con el dueño). Claude revisa todos los sectores.
+
+## Gates
+
+Gate de todo commit que toque código: `pnpm typecheck && pnpm lint && pnpm test:unit`, en verde. `pnpm test` (`scripts/test-all.mjs`) es el gate completo. `ops/scripts/validate.sh` valida sintaxis de `ops`+`deploy`, `shellcheck`, YAML/JSON Schema de manifiestos, y la identidad byte a byte de lo generado desde `ops/flota.json` — obligatorio tras tocar cualquier cosa de la flota. `scripts/calidad.mjs` aplica el trinquete de líneas por fichero, fechas y comentarios (solo puede bajar).
 
 ## NO TOCAR (sin excepción)
 
-`packages/store/migrations/**` · cualquier `*.patch` · `deploy/**` · `/etc/cauce-v3` · `/opt` · la base de datos productiva · contenedores y unidades systemd · secretos y credenciales.
+`packages/store/migrations/**` (se borran enteras, no se editan) · cualquier `*.patch` · ejecutar `deploy/deploy.sh` o `docker compose` contra producción sin el dueño · `/etc/cauce-v3` · `/opt` · la base de datos productiva · contenedores y unidades systemd · `ops/private/credentials/` y cualquier secreto o credencial.
 
-## Historia mínima que necesitas saber
+## Cómo se trabaja
 
-Este repo quemó ~120B tokens en agosto-2026 porque los agentes escribían features completas y las declaraban hechas sin desplegarlas ni probarlas contra el sistema real, y porque el fan-out sin dueño por fichero produjo hasta 10 versiones paralelas del mismo archivo. El 27-08 se purgó todo a `main` único (archivo de rescate: `/datos/workspaces/zeus/cauce-v3-archivo-completo-20260827.bundle`). No repitas el patrón: sector propio, gate, efecto demostrado.
+1. `git pull` antes de empezar; el árbol es compartido en tiempo real por varias instancias.
+2. Trabaja SOLO en tu sector. `git add` fichero a fichero o por directorio propio — nunca `git add -A` ni `git add .`.
+3. Gate en verde antes de cada commit que toque código (commits solo-`.md` no lo requieren).
+4. `git mv` en commits separados de cualquier edición de contenido. Commits ≤20 ficheros, uno por tarea, e inmediatos: nada de acumular horas sin commitear en el árbol compartido.
+5. Commitea SIEMPRE con pathspec — `git commit <tus rutas> -m "..."` — nunca `git commit -a` ni `-m` a secas: se lleva el índice completo, incluido trabajo ajeno staged.
+6. Nada está "hecho" sin la evidencia pegada: salida real del gate, o el efecto verificado contra el sistema vivo.
+7. Subagentes: úsalos para lo paralelizable, ficheros DISJUNTOS por subagente, tope 4, profundidad 1; solo el proceso principal commitea. Detalle: sección "Subagentes" de `ordenes/00-PROTOCOLO.md`.
+8. Al terminar: `git push origin main`, y reporta en ≤5 líneas (commits, gate, qué quedó fuera).

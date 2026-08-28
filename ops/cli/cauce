@@ -172,7 +172,7 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce <alias> on|off${c_reset}     encender / apagar su adaptador
   ${c_b}cauce <alias> login${c_reset}      renovar su credencial (elige solo claude o codex)
   ${c_b}cauce <alias> login --ver${c_reset} solo mirar que credencial tiene, sin tocar nada
-  ${c_b}cauce <alias> aprovisionar${c_reset} [--dry-run]  alta de credenciales (plan-reestructura/flota-como-datos.md §5)
+  ${c_b}cauce <alias> aprovisionar${c_reset} [--dry-run]  alta de credenciales (docs/operacion.md (alta y baja))
   ${c_b}cauce <alias> retirar${c_reset}    baja: para la unit y revoca lo que se pueda
   ${c_b}cauce ver [alias...]${c_reset}     mirar varios a la vez
 
@@ -1115,7 +1115,7 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
 }
 
 # ---------- aprovisionar / retirar: alta y baja de credenciales de un alias ----------
-# plan-reestructura/flota-como-datos.md §5. Six pieces run IN ORDER; the first real failure
+# docs/operacion.md (alta y baja). Six pieces run IN ORDER; the first real failure
 # stops the chain — a half-issued identity is worse than none, because it looks whole.
 FLOTA_JSON=$OPS/flota.json
 PKI_ROOT_AGENTE=/etc/cauce-v3/pki
@@ -1205,7 +1205,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   done
   if [ "$ca_ok" != 1 ]; then
     printf "      la CA no esta en esta maquina: pedila al dueno, o exporta CAUCE_CLIENT_CA_CERT/CAUCE_CLIENT_CA_KEY\n"
-    printf "      si vive en otra ruta (plan-reestructura/flota-como-datos.md §5, pieza 0)\n"
+    printf "      si vive en otra ruta (docs/operacion.md (alta y baja), pieza 0)\n"
     return 1
   fi
 
@@ -1252,7 +1252,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   # asi que aca se usa tal cual en vez de simularlo.
   local issue_script="$OPS/scripts/issue-alias-token.py"
   if [ ! -f "$issue_script" ]; then
-    printf "  [2] ${c_err}no encuentro %s${c_reset} (plan-reestructura/flota-como-datos.md §5, pieza 2)\n" "$issue_script"
+    printf "  [2] ${c_err}no encuentro %s${c_reset} (docs/operacion.md (alta y baja), pieza 2)\n" "$issue_script"
     [ "$dry" = 1 ] || return 1
   else
     local -a issue_args=(--alias "$a" --tokens-dir "$TOKENS_DIR_ALIAS" --identities-dir "$IDENTIDADES_DIR")

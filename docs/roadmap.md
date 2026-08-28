@@ -1,0 +1,63 @@
+# Roadmap — qué falta
+
+Cauce V3 corre en producción desde el primer despliegue real (estado a 28-08-2026: commit `caa8789a`, esquema 024→037, 10 contenedores desde el compose canónico del repo). Este documento no describe cómo funciona el sistema (eso es `arquitectura.md`, `flota-y-participantes.md`, `grafo.md`) sino lo que falta, priorizado.
+
+## 1. Inmediato post-deploy
+
+Lo que sigue sin cerrar de la propia ventana de despliegue, antes de dar la fase por terminada.
+
+- **Rollout del launcher PTY con siega**: la instalación vigente del launcher (release `20260825`) no lleva la siega de procesos huérfanos. Se detectaron y limpiaron a mano 12 agentes PTY huérfanos en contenedores (argos ×4, atlas ×4, …) causando ~540 ciclos/min de flapping en `terminal-relay`; el fix manual bajó a 0 ciclos/min pero no sobrevive a un reinicio. Falta desplegar el launcher que sí siega (commit `0a08de4d`) a todos los alias.
+- **Gateway acepta agentes `enabled=false`** (seguridad, asignado a codex-1 en `ordenes/codex.md`): el hello mTLS de `/v3/ws` autoriza solo por certificado; `authority.ts:220` filtra `agent.enabled` para enrutar, pero el hello/lease no lo consulta. Verificado en la demo probeta: tras `UPDATE agents SET enabled=false` el gateway siguió respondiendo `hello_ack`. Rompe la promesa de "la baja es 1 UPDATE en BD" hasta que se revoca el cert a mano. Fichero: `services/gateway/src/routes/core.ts` (handler del hello, ~líneas 207-422).
+- **Contextos nativos por harness — revisión adversarial RECHAZÓ activar** (flag permanece OFF en main). Cuatro bloqueantes reales, en orden activa de codex-1 (`ordenes/codex.md`):
+  1. Topes de truncado de OpenClaw cableados a una constante (`60.000/150.000`) que solo vale para el contenedor `claw`; el resto usa defaults reales distintos (20.000/60.000 o 24.000/90.000) leídos del `openclaw.json` de cada alias, no propagados. `packages/protocol/src/ficheros-del-arnes.ts:141`.
+  2. Precipicio de expectativa vencida: la primera entrega con el flag ON converge el bloque A y cambia el SHA del fichero canónico; la segunda entrega falla `NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED` contra la misma expectativa y muere en dead-letter. `packages/adapter-sdk/src/context/native-profile-context.ts:99-141,331-359`.
+  3. La allowlist del supervisor no conoce `CAUCE_NATIVE_PROFILE_CONTEXT`: activarlo hoy mata el alias (`die "config key is not allowlisted"`). `ops/scripts/container-adapter-supervisor.sh:176-196`.
+  4. Las fórmulas de "generación" del supervisor y del launcher no coinciden (una produce 64 hex, la otra 32), así que el filtro de procesos del launcher no encontraría nada. `ops/scripts/container-adapter-supervisor.sh:483-485` vs `ops/pty-agent/cauce-pty-launcher.sh:149-155`.
+  Además: 5 tests de `shared-session` rojos en `adapter-sdk` por aserciones en castellano que la traducción a inglés dejó desfasadas (zona de minimax-1); lado Claude sin alias elegible en producción (único agente Claude, `zeus`, corre TUI compartida y `NativeProfileContext` rechaza `sharedSession`).
+- **Revivir o decidir jarvis**: sin proceso adaptador, bus offline desde antes del deploy (mismo `last_heartbeat_at`, 08:48:58Z), 1 mensaje pending sin reclamar. Es el cuello de botella histórico (ver §2). El deploy ni lo rompió ni lo arregló.
+- **El cuello de botella OpenClaw**: jarvis migró a WhatsApp porque las colas de Cauce se atascan para OpenClaw. Sin diagnosticar la causa raíz; candidato de primera misión para el Zeus guardián (§2) apoyado en logs de comportamiento (§2).
+- **Poda de historiales de BD** y **GC del registry de contenedores** (`cauce-v3-*-legacy`, tags viejos): aprobados en principio por el dueño, backup fresco ya hecho; falta decidir con él qué tablas/antigüedad y ejecutar.
+- **Limpiar `prod.env`**: 9 claves sin consumidor (`SHADOW_*`, `CAUCE_RELAY_*`, `CAUCE_COMPOSE_OVERRIDE_MANIFEST`).
+- **Archivar `/opt/cauce-v3` y `/etc/cauce-v3/compose-overrides/`**: quedan muertos pero intactos como ruta de rollback documentada; archivar tras un periodo de reposo sin incidentes.
+- **Montaje rw de `ws-zeus` sobre el árbol de producción**: `/datos/workspaces/zeus → /workspace` está montado `rw` en el contenedor del propio agente zeus, y ese árbol es desde el despliegue material de producción (prometheus/otel/postgres montan ficheros de ahí). Decisión pendiente del dueño: montar `ro` o sacar del árbol lo que producción monta.
+- **`cauce <alias> on` sin `XDG_RUNTIME_DIR` bajo `su stev`**: `systemctl --user start` falla en silencio tras `|| true`, sin diagnóstico. `ops/cli/cauce:549`.
+- **Las 2 entregas atascadas de hegel**: `a35c0d83` (12 días) y `aefdee3a`, `status='failed'`, `attempt=1/3`, no agotadas ni promovidas a `dead`. El segador de fase 3 (migraciones 025-037) no las alcanzó; siguen como deuda del escenario 3.
+
+## 2. Producto — los 7 puntos de la visión
+
+Estado de cada punto de `docs/flota-y-participantes.md` §La visión:
+
+| Punto | Estado |
+|---|---|
+| Flota como datos (alta/baja de agentes trivial) | **Hecho** — demo probeta superada: alta y baja tocando solo BD+CLI, todo lo demás derivado (manifests, units, telegram, aprovisionamiento mTLS). Persiste el hallazgo de seguridad del gateway (§1) y `register-agent-identity.py` sin modo de baja propio (`cauce retirar` debería encadenarlo). |
+| Contextos nativos por harness | **Pendiente** — 4 bloqueantes descritos en §1, flag OFF |
+| Rotación de credenciales fácil / cuotas inteligentes | **Pendiente** — `quota-collector` se queda como referencia hasta que el CLI integral (abajo) lo absorba; no se rehace todavía |
+| Permisos dinámicos | **Pendiente** — sin ronda dedicada |
+| Terminal/TUI web desde cualquier dispositivo | **En curso** — el CLI ya opera TUIs vía `cauce-attach`; falta el acceso web (parte del CLI integral) |
+| UI clara multi-socio | **En curso** — consola operativa (`/live`, `/observability`, `/messages`); pendiente el mega-refactor (§3) |
+| Logs de auditoría de comportamiento | **Pendiente** — no existen hoy; objetivo es detectar contaminación de contextos entre instancias |
+
+**CLI instalable**: hoy es una única fuente rescatada (`ops/cli/cauce`, ~1.446 líneas) que corre solo desde esta VPS. Falta: empaquetarlo como app instalable en cualquier ordenador sin depender de la torre, con autenticación hacia TUIs/máquinas remotas y consumo de cuotas en tiempo real integrado (reemplaza a `quota-collector`). Centro de mando sigue siendo siempre esta VPS; multi-servidor ya tiene precedente (kant).
+
+**Notificaciones recurrentes por agente**: sustituye a la idea descartada de Alertmanager. Cualquier agente puede tener mensajes tipo cron encolados a su canal por el bus; generaliza el patrón ya probado del revividor-de-colas (con su salvaguarda de idempotencia). El primer uso previsto es el Zeus guardián: un timer que lee alertas de Prometheus y publica al bus (~100 líneas, patrón ya existente) — alternativas evaluadas: receptor webhook de Alertmanager, o registrar `mcp-fleet-monitor` en el harness de zeus para que investigue con tools.
+
+**Aislamiento por tenant**: cada tenant en su propio docker con carpetas separadas. El checkout de git hoy lo comparten los 4 tenants; el aislamiento real exige credenciales por-tenant dentro del contenedor de cada uno (patrón `/opt/cauce-v3-secrets/<alias>` ya existe, falta generalizarlo).
+
+## 3. Calidad continua
+
+- **Molienda estricta por zonas, pendiente de promoción al gate** (`lint:estricto:zonas` en `package.json` hoy solo cubre `console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `tests`). Zonas medidas en rojo y con orden activa (`ordenes/codex-2.md`): `packages/protocol/src` (20 problemas), `packages/mcp-fleet-monitor/src` (15), `packages/store/src` (136), `services/gateway/src` (346). Cada zona se promueve al gate solo cuando cierra en `0 problems`.
+- **Traducción de comentarios a inglés**: en curso por zonas (`ordenes/opencode-minimax.md`, `opencode-minimax-2.md`). Cerradas: `adapter-sdk/src`, `dispatcher`, `deploy`, `scripts`, `pty-agent`, las 18 herramientas de `ops/guardias/`. Pendientes: barrido de restos (~51 comentarios en español medidos en la última ronda) en las zonas ya tocadas; tests de consola/relay/bridge; `packages/adapter-sdk/test/**` (zona exclusiva de minimax-1, en curso con la partición del punto siguiente).
+- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 21 ficheros en `lineas`, 24 en `fechas`, 810 entradas acotadas en `comentarios`. `shared-session.test.ts` (5.444 líneas, el mayor del repo) tiene plan de partición escrito y ronda activa (`ordenes/opencode-minimax.md`). Quedan además, fuera de la lista congelada o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.730), `ops/pty_agent/cauce_pty_agent.py` (2.659), `services/gateway/src/terminal.plugin.test.ts` (2.020), `ops/tests/container-supervisor.test.mjs` (1.712), `ops/container-runtime/cauce-container-runtime.py` (1.652), y varios más entre 800-1.400 líneas.
+- **Cirugía de dominios** (planificada, sin ronda asignada): mover `flota/` a su propio dominio, subir consola a la raíz del repo, repartir `ops/` — con checklists derivados de `docs/grafo.md` para no romper consumidores.
+- **Mega-refactor de consola**: deudas acumuladas de la revisión de vistas — deep-link en `/terminal` que desbloquearía borrar ~180 LOC más y los casos especiales del router; regenerar `docs/grafo.md`; resolver los 74 asserts-sobre-texto de los tests de consola. Incluye adoptar el patrón "un agente con Chrome revisa legibilidad" en vez de sondas CDP quemadas en código (las 6 sondas de contraste/tipografía/CSP se conservan para ese uso).
+
+## 4. Deuda anotada
+
+- `ops/scripts/generate-container-units.py` no purgaba units huérfanas al dar de baja un alias (`generate-units.py` sí) — **corregido** durante la demo probeta, verificar que la paridad entre ambos generadores se mantenga en cambios futuros.
+- `ops/scripts/register-agent-identity.py`: sin modo de baja; la revocación de identidad mTLS hoy es manual. `cauce retirar` debería encadenarlo.
+- `packages/store/migrations/**`: fila NADIE del residuo físico BD↔realidad; para el drift físico está el overlay (`ops/flota.json` / snapshot), no nuevas migraciones.
+- `container-aliases.json` y `manifests/` siguen sin fusionarse dentro del snapshot único (round 2, sin ronda asignada); mientras tanto son 3 parsers duplicados pineados por G-SNAP-4.
+- `/opt/.../fleet_source.py` y su watchdog no están versionados en git; falta añadir el chequeo de paridad BD↔físico al watchdog de 10 minutos (hoy es manual).
+- `cauce alta` haciendo el INSERT en BD tras confirmación del operador (hoy el alta es un INSERT manual, documentado pero no asistido por el CLI).
+- 7 tests de `ops/` que un censo anterior llamó "huérfanos" no lo son (cubren `alias-lock-exec`, `verify-hermes-runtime`, el reaper del container-runtime, en 3 casos como única cobertura); el único candidato real a limpieza futura es `gate-collector.test.mjs` (tiene gemelo ya wireado).
+- `services/gateway`: 1 línea `AuthError 401` observada tras el deploy por petición sin sesión de consola — comportamiento correcto, no defecto, pero sin test que lo fije como contrato.
