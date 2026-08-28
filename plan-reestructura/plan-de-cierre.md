@@ -34,7 +34,7 @@ El reporte anterior medía **alias de redirección**, no vistas (4 de 8 veredict
 - **Se conservan**: `audit` y `relays` (son pestañas VIVAS de /observability), `fleet/:tenant/:alias` (único deep-link al TUI, lo usa el botón "Abrir TUI" de /messages), y `role-brief-tab` (**es la capa 1 del editor de directivas** — tu feature — y el único camino de rollback del rol).
 - Ahorro real inmediato: ~572 LOC. Deudas para el mega-refactor anotadas (deep-link en /terminal desbloquea borrar 180 LOC más + todos los casos especiales del router; regenerar docs/grafo.md).
 
-## 4. PLAN MAESTRO AL DESPLIEGUE (consolidado 28-08 — "abarcamos todas mis solicitudes y desplegamos")
+## 4. PLAN MAESTRO AL DESPLIEGUE — **EJECUTADO el 28-08 a las 14:52Z** (`caa8789a`, 024→037, smoke 7/7; crónica en `ordenes/reportes/claude-ventana-primer-despliegue.md`)
 
 ### Los 6 carriles en paralelo, DISJUNTOS por fichero (cero colisiones)
 
