@@ -142,15 +142,15 @@ export function agentProfileUnits(profile: AgentProfile): number {
 /** Valida y normaliza la entrada de un perfil de agente. */
 export function normalizeAgentProfile(input: Record<string, unknown>): AgentProfile {
   const profile: AgentProfile = {
-    tenant_id: requireIdentifier(input['tenant_id'], 'tenant_id'),
-    alias: requireIdentifier(input['alias'], 'alias'),
-    purpose: normalizeText(input['purpose'], 'purpose'),
-    role_summary: normalizeText(input['role_summary'], 'role_summary'),
-    human_brief: normalizeText(input['human_brief'], 'human_brief'),
-    responsibilities: normalizeList(input['responsibilities'], 'responsibilities'),
-    restrictions: normalizeList(input['restrictions'], 'restrictions'),
-    tools: normalizeList(input['tools'], 'tools'),
-    operating_rules: normalizeList(input['operating_rules'], 'operating_rules')
+    tenant_id: requireIdentifier(input.tenant_id, 'tenant_id'),
+    alias: requireIdentifier(input.alias, 'alias'),
+    purpose: normalizeText(input.purpose, 'purpose'),
+    role_summary: normalizeText(input.role_summary, 'role_summary'),
+    human_brief: normalizeText(input.human_brief, 'human_brief'),
+    responsibilities: normalizeList(input.responsibilities, 'responsibilities'),
+    restrictions: normalizeList(input.restrictions, 'restrictions'),
+    tools: normalizeList(input.tools, 'tools'),
+    operating_rules: normalizeList(input.operating_rules, 'operating_rules')
   };
   const units = agentProfileUnits(profile);
   if (units > AGENT_PROFILE_LIMITS.total) {

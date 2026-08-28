@@ -48,7 +48,7 @@ export const AttachmentContentSchema = z.object({
     .regex(/^[A-Za-z0-9+/]*={0,2}$/u)
     .refine((value) => value.length % 4 === 0, 'attachment content is not valid base64')
 }).strict().superRefine((attachment, context) => {
-  const extension = attachment.name.toLowerCase().match(/\.[^.]+$/u)?.[0];
+  const extension = (/\.[^.]+$/u.exec(attachment.name.toLowerCase()))?.[0];
   // Mapeo de tipo MIME a extensiones admitidas y categoría (image | document).
   const expected = new Map<string, readonly [readonly string[], 'image' | 'document']>([
     ['image/jpeg', [['.jpg'], 'image']], ['image/png', [['.png'], 'image']],

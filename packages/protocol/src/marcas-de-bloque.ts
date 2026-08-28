@@ -28,7 +28,7 @@ function parDeMarcas(
     busca !== -1;
     busca = texto.indexOf(marcaInicio, busca + 1)
   ) {
-    if (texto.indexOf(marcaFin, busca + marcaInicio.length) !== -1) inicio = busca;
+    if (texto.includes(marcaFin, busca + marcaInicio.length)) inicio = busca;
   }
   if (inicio === -1) return undefined;
   const desde = inicio + marcaInicio.length;
