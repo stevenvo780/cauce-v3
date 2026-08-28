@@ -30,8 +30,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(
-    `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
-     VALUES('Steven','argos',false,100)`,
+    `INSERT INTO agents(
+       tenant_id,alias,harness_id,enabled,max_concurrent_deliveries,
+       container_name,runtime_user,home_directory,state_directory
+     ) VALUES('Steven','argos','claude',true,100,'ws-argos','dev','/home/dev','/home/dev/.cauce')`,
   );
 });
 

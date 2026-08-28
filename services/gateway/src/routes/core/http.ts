@@ -43,7 +43,7 @@ export function registerCoreRuntimeHttpRoutes(
       }
       const lease = await repository.acquireLease(
         hello.tenant_id, hello.alias, hello.instance_id, hello.capabilities, leaseTtlMs,
-        { requireDeclaredCapacity: true },
+        { requireDeclaredCapacity: true, requireEnabledAgent: true },
       );
       if (!lease.acquired) return reply.code(409).send(lease);
       if (!lease.epoch) throw new StoreError('conflict', 'lease acquisition returned no epoch');

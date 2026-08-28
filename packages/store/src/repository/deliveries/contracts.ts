@@ -107,6 +107,7 @@ export interface LeaseAcquireOptions {
   resumeWindowMs?: number;
   /** Refuse the lease atomically unless the consumer has a valid durable capacity row. */
   requireDeclaredCapacity?: boolean;
+  requireEnabledAgent?: boolean;
 }
 export function ackRank(status: Ack['status']): number {
   if (status === 'accepted') return 1;

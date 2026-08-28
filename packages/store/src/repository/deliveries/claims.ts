@@ -36,17 +36,27 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         && typeof options.requireDeclaredCapacity !== 'boolean') {
       throw new StoreError('conflict', 'lease capacity requirement must be boolean');
     }
+    if (options.requireEnabledAgent !== undefined
+        && typeof options.requireEnabledAgent !== 'boolean') {
+      throw new StoreError('conflict', 'lease agent-enabled requirement must be boolean');
+    }
+    if (options.requireEnabledAgent === true && options.requireDeclaredCapacity !== true) {
+      throw new StoreError('conflict', 'requireEnabledAgent requires requireDeclaredCapacity');
+    }
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
       if (options.requireDeclaredCapacity === true) {
-        const capacity = await client.query<{ cap: number | null }>(
-          `SELECT max_concurrent_deliveries AS cap
+        const capacity = await client.query<{ cap: number | null; enabled: boolean }>(
+          `SELECT max_concurrent_deliveries AS cap, enabled
              FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE`,
           [tenantId, alias],
         );
         const row = capacity.rows[0];
         if (row === undefined) {
           throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity');
+        }
+        if (options.requireEnabledAgent === true && !row.enabled) {
+          throw new StoreError('forbidden', 'delivery consumer is disabled');
         }
         if (row.cap !== null
             && (!Number.isSafeInteger(row.cap) || row.cap < 1 || row.cap > 100)) {

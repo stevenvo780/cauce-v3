@@ -641,7 +641,7 @@ describe('gateway delivery admission control', () => {
     });
     expect(repository.acquireLease).toHaveBeenCalledWith(
       'Pablo', 'midas', 'undeclared-http-consumer', ['acks.v3'], 30_000,
-      { requireDeclaredCapacity: true },
+      { requireDeclaredCapacity: true, requireEnabledAgent: true },
     );
     expect(repository.releaseLease).not.toHaveBeenCalled();
     expect(response.body).not.toContain('connection_token');

@@ -237,8 +237,9 @@ export function createCoreRoutePhases(
                         resume: true,
                         resumeWindowMs: ackDeadlineMs,
                         requireDeclaredCapacity: true,
+                        requireEnabledAgent: true,
                       }
-                    : { requireDeclaredCapacity: true }
+                    : { requireDeclaredCapacity: true, requireEnabledAgent: true }
                 );
               } catch (error) {
                 if (error instanceof StoreError && error.code === 'conflict'
@@ -249,6 +250,15 @@ export function createCoreRoutePhases(
                     message: 'consumer has no valid durable delivery capacity declaration',
                   });
                   socket.close(4403, 'consumer not declared');
+                  return;
+                }
+                if (error instanceof StoreError && error.code === 'forbidden'
+                    && error.message === 'delivery consumer is disabled') {
+                  send(socket, {
+                    type: 'error', code: 'consumer_disabled',
+                    message: 'consumer agent is disabled and cannot establish a delivery lease',
+                  });
+                  socket.close(4403, 'consumer disabled');
                   return;
                 }
                 throw error;

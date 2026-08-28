@@ -156,8 +156,12 @@ beforeEach(async () => {
   // exercises the bus, not the fleet migration, so it explicitly models one capability for every
   // canonical membership that could open a harness during the cases.
   await pool.query(
-    `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
-     SELECT tenant_id,alias,false,100 FROM memberships
+    `INSERT INTO agents(
+       tenant_id,alias,harness_id,enabled,max_concurrent_deliveries,
+       container_name,runtime_user,home_directory,state_directory
+     )
+     SELECT tenant_id,alias,'claude',true,100,'ws-'||alias,'dev','/home/dev','/home/dev/.cauce'
+     FROM memberships
      ON CONFLICT(tenant_id,alias) DO NOTHING`,
   );
 });

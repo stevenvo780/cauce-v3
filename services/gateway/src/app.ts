@@ -186,7 +186,10 @@ export interface GatewayRepository {
     instanceId: string,
     capabilities: string[],
     ttlMs: number,
-    options?: { resume?: boolean; resumeWindowMs?: number; requireDeclaredCapacity?: boolean },
+    options?: {
+      resume?: boolean; resumeWindowMs?: number;
+      requireDeclaredCapacity?: boolean; requireEnabledAgent?: boolean;
+    },
   ): Promise<LeaseResult>;
   heartbeat(
     tenantId: Tenant, alias: string, instanceId: string, epoch: number, ttlMs: number,

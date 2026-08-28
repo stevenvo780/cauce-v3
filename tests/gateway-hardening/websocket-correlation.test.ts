@@ -87,7 +87,7 @@ describe('gateway WebSocket ACK correlation', () => {
       'serial-consumer',
       ['acks.v3', 'renewable_delivery_claims_v1'],
       30_000,
-      { resume: true, resumeWindowMs: 600_000, requireDeclaredCapacity: true }
+      { resume: true, resumeWindowMs: 600_000, requireDeclaredCapacity: true, requireEnabledAgent: true }
     );
     const delivered = [await nextFrame(), await nextFrame()];
     expect(delivered.map((item) => item.delivery_id)).toEqual([ids.delivery, ids.deliveryTwo]);

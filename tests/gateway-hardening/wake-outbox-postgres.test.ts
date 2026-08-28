@@ -33,8 +33,10 @@ afterAll(async () => {
 beforeEach(async () => {
   await resetTestDatabase(observer);
   await observer.query(
-    `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
-     VALUES('Isa','salva',false,100)`,
+    `INSERT INTO agents(
+       tenant_id,alias,harness_id,enabled,max_concurrent_deliveries,
+       container_name,runtime_user,home_directory,state_directory
+     ) VALUES('Isa','salva','claude',true,100,'ws-salva','dev','/home/dev','/home/dev/.cauce')`,
   );
 });
 
