@@ -1,70 +1,69 @@
 import { FICHEROS_OPENCLAW } from '@cauce/protocol';
 
-/** Arnés en ejecución deducido del entorno medido. */
+/** Running harness inferred from the measured environment. */
 export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'unknown';
 
 export type DocumentKind =
   | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
   | 'memory' | 'heartbeat' | 'configuration';
 
-/** Categoría funcional del documento de gobierno. */
+/** Functional category of the governance document. */
 export type DocumentCategory = 'manual' | 'profile' | 'configuration' | 'memory';
 
 export type DocumentFormat = 'markdown' | 'json' | 'toml' | 'json-fragment';
 
 /**
- * Hechos del entorno de ejecución observados dentro del contenedor del agente,
- * necesarios para resolver rutas canónicas de gobierno.
+ * Facts of the execution environment observed inside the agent container,
+ * needed to resolve canonical governance paths.
  */
 export interface RuntimeFacts {
-  /** Deducido del binario en ejecución: `bin/claude.js` -> 'claude', etc. */
+  /** Inferred from the running binary: `bin/claude.js` -> 'claude', etc. */
   readonly harness: HarnessKind;
-  /** `HOME` del proceso del arnés. */
+  /** `HOME` of the harness process. */
   readonly home: string;
-  /** `CLAUDE_CONFIG_DIR` si está puesto. */
+  /** `CLAUDE_CONFIG_DIR` if set. */
   readonly claudeConfigDir?: string;
-  /** `CODEX_HOME` si está puesto. */
+  /** `CODEX_HOME` if set. */
   readonly codexHome?: string;
-  /** `cwd` del proceso: de ahí salen los CLAUDE.md/AGENTS.md de nivel proyecto. */
+  /** `cwd` of the process: CLAUDE.md/AGENTS.md at project level come from here. */
   readonly cwd?: string;
-  /** Raíz explícita del workspace compartido; nunca se descubre caminando hacia `/`. */
+  /** Explicit root of the shared workspace; never discovered by walking up to `/`. */
   readonly workspaceRoot?: string;
-  /** Raíz de proyecto acreditada por un marcador real dentro del workspace (p. ej. `.git`). */
+  /** Project root vouched for by an actual marker inside the workspace (e.g. `.git`). */
   readonly projectRoot?: string;
-  /** Proyección no sensible de config.toml; sólo válida para Codex. */
+  /** Non-sensitive projection of config.toml; only valid for Codex. */
   readonly projectDocMaxBytes?: number;
-  /** Basenames de fallback medidos, nunca rutas ni el resto de config.toml. */
+  /** Measured fallback basenames, never paths or the rest of config.toml. */
   readonly projectDocFallbackFilenames?: readonly string[];
-  /** Workspace efectivo de OpenClaw; no se deduce de HOME ni de openclaw.json. */
+  /** Effective OpenClaw workspace; not inferred from HOME or openclaw.json. */
   readonly openclawWorkspace?: string;
-  /** Generación opaca del contenedor que midió estos hechos. Obligatoria para acreditar escritura. */
+  /** Opaque generation of the container that measured these facts. Required to vouch for writes. */
   readonly generation?: string;
-  /** Contenedor que publicó la medición; evidencia, nunca se deriva del registro SQL. */
+  /** Container that published the measurement; evidence, never derived from the SQL registry. */
   readonly containerId?: string;
-  /** Capacidades de terminal publicadas por ese mismo proceso. */
+  /** Terminal capabilities published by that same process. */
   readonly modes?: readonly string[];
 }
 export interface AgentDocument {
   readonly kind: DocumentKind;
   readonly category: DocumentCategory;
-  /** Rótulo descriptivo del documento para la interfaz de consola. */
+  /** Descriptive label of the document for the console UI. */
   readonly label: string;
-  /** Ruta absoluta dentro del contenedor del agente. */
+  /** Absolute path inside the agent container. */
   readonly path: string;
   readonly format: DocumentFormat;
-  /** `true` sólo si esta vía puede escribirlo con seguridad. */
+  /** `true` only if this channel can write it safely. */
   readonly editable: boolean;
-  /** Motivo por el cual no se puede editar el documento. */
+  /** Reason why the document cannot be edited. */
   readonly reason?: string;
-  /** Advertencia a mostrar antes de confirmar la escritura. */
+  /** Warning to show before confirming the write. */
   readonly warning?: string;
 }
 
 /**
- * Nombres de fichero que no se leen ni se escriben JAMÁS por esta vía, esté donde esté el fichero.
- * Se comprueba por nombre base y además por ruta ya resuelta (`realpath`), porque en `ctrl-infra`
- * el `.credentials.json` es un bind-mount de UN SOLO FICHERO metido dentro de un `.claude` que por
- * lo demás es propio: mirar sólo el directorio no lo salvaría.
+ * Filenames that are NEVER read or written by this channel, wherever the file lives. Checked by basename and
+ * also by already-resolved path (`realpath`), because in `ctrl-infra` `.credentials.json` is a SINGLE-FILE
+ * bind-mount placed inside an otherwise own `.claude`: looking only at the directory would not save it.
  */
 export const NEVER_SERVE_BASENAMES: readonly string[] = [
   '.credentials.json',
@@ -93,7 +92,7 @@ function codexDir(facts: RuntimeFacts): string {
   return facts.codexHome?.trim() || join(facts.home, '.codex');
 }
 
-/** Raíz de memoria para cada arnés, derivada de los overrides medidos dentro del proceso. */
+/** Memory root for each harness, derived from overrides measured inside the process. */
 export function memoryRootForHarness(facts: RuntimeFacts): string | null {
   const home = facts.home.replace(/\/+$/, '');
   switch (facts.harness) {
@@ -110,7 +109,7 @@ export function memoryRootForHarness(facts: RuntimeFacts): string | null {
   }
 }
 
-/** Juego cerrado de ficheros de PERFIL, separado del inventario de configuración sensible. */
+/** Closed set of PROFILE files, separate from the sensitive configuration inventory. */
 export function profileDocumentPaths(facts: RuntimeFacts): readonly string[] {
   if (!facts.home.startsWith('/')) return [];
   if (facts.harness === 'claude') return [join(claudeDir(facts), 'CLAUDE.md')];
@@ -127,14 +126,14 @@ export function profileDocumentPaths(facts: RuntimeFacts): readonly string[] {
 export interface EffectiveManualPath {
   readonly path: string;
   readonly scope: 'user' | 'workspace';
-  /** Menor primero. En Claude describe carga; en Codex los posteriores tienen mayor precedencia. */
+  /** Lower first. In Claude it describes load order; in Codex later ones take precedence. */
   readonly precedence: number;
-  /** Candidatos del mismo grupo se prueban en orden y sólo carga el primero que existe. */
+  /** Candidates of the same group are tried in order and only the first that exists is loaded. */
   readonly selection: 'all' | 'first_existing';
   readonly group: string;
 }
 
-/** Valor que Codex aplica cuando config.toml no lo cambia. */
+/** Value Codex applies when config.toml does not override it. */
 export const DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
 
 function validCodexFallbackBasename(value: string): boolean {
@@ -155,10 +154,9 @@ export interface CodexProjectDocumentConfig {
 }
 
 /**
- * Los dos knobs forman una sola proyección acreditada. Un agente viejo no manda ninguno y uno
- * parcialmente actualizado podría mandar sólo uno: en ambos casos se usan los defaults, nunca
- * una mezcla que Codex no aplicó. La validación se repite en relay y gateway porque la presencia
- * es autenticada pero no confiable a ciegas.
+ * The two knobs form a single vouched projection. An old agent sends neither and a partially updated one
+ * could send only one: in both cases the defaults are used, never a mix that Codex did not apply. Validation
+ * is repeated in relay and gateway because presence is authenticated but not blindly trusted.
  */
 export function measuredCodexProjectDocumentConfig(
   facts: RuntimeFacts,
@@ -196,12 +194,12 @@ function canonicalContextDirectory(value: string): boolean {
 }
 
 /**
- * Juego cerrado y ordenado de manuales que el proceso realmente aplica.
+ * Closed and ordered set of manuals the process actually applies.
  *
- * La capa global va primero. Con `projectRoot` acreditado se añaden todos los niveles desde esa
- * raíz hasta cwd; sin raíz sólo se añade el fichero exacto de cwd, que sí fue medido, y nunca se
- * sube buscando `.git` ni otro marcador plausible. OpenClaw conserva exclusivamente el AGENTS.md
- * de su workspace medido. Una misma ruta se devuelve una vez, en su primera posición efectiva.
+ * The global layer goes first. With a vouched `projectRoot`, all levels from that root up to cwd are added;
+ * without a root only the exact file from cwd is added, which was indeed measured, and the code never walks
+ * up looking for `.git` or another plausible marker. OpenClaw keeps exclusively the AGENTS.md of its measured
+ * workspace. The same path is returned once, at its first effective position.
  */
 export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveManualPath[] {
   if (!facts.home.startsWith('/')) return [];
@@ -233,13 +231,14 @@ export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveMan
 
   if (facts.harness === 'claude' || facts.harness === 'codex') {
     const cwd = facts.cwd;
-    // El contrato auditado parte de la raíz de proyecto real para ambos arneses. El mount puede
-    // contener varios repositorios y su CLAUDE.md no gobierna necesariamente el proceso actual.
+      // The audited contract starts from the real project root for both harnesses. The mount may
+      // contain several repositories and its CLAUDE.md does not necessarily govern the current
+      // process.
     const root = facts.projectRoot;
     if (cwd !== undefined && canonicalContextDirectory(cwd)) {
       let directories: string[] = [];
       if (root === undefined) {
-        // Sin raíz acreditada, un único nivel exacto. No se inventa jerarquía.
+        // Without a vouched root, a single exact level. Hierarchy is not invented.
         directories = [cwd];
       } else if (canonicalContextDirectory(root)
           && (cwd === root || cwd.startsWith(`${root}/`))) {
@@ -295,8 +294,8 @@ export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveMan
 }
 
 /**
- * `settings.json` de Claude puede contener `hooks`: órdenes que el arnés ejecuta automáticamente.
- * Se emite una advertencia al operador antes de guardar cambios en este documento.
+ * Claude's `settings.json` may contain `hooks`: orders the harness runs automatically.
+ * A warning is emitted to the operator before saving changes to this document.
  */
 const AVISO_HOOKS =
   'Este fichero puede contener `hooks`: órdenes que el arnés ejecuta solo. ' +
@@ -311,8 +310,8 @@ const RAZON_OPENCLAW =
   'mismo documento que `auth` y `secrets`. No se sirve entero: hay que proyectar campo a campo.';
 
 /**
- * Resuelve el juego CERRADO de documentos de un alias. Cerrado a propósito: la ruta nunca viene
- * del navegador, se deriva aquí de hechos medidos. El navegador manda un `kind`, no un `path`.
+ * Resolves the CLOSED set of documents for an alias. Closed on purpose: the path never comes from the browser;
+ * it is derived here from measured facts. The browser sends a `kind`, not a `path`.
  */
 export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
   if (!facts.home.startsWith('/')) return [];
@@ -486,7 +485,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
   }
 }
 
-/** Documento del juego cerrado que corresponde a un `kind`, o `undefined`. */
+/** Document from the closed set that matches a `kind`, or `undefined`. */
 export function documentForKind(facts: RuntimeFacts, kind: DocumentKind): AgentDocument | undefined {
   return resolveAgentDocuments(facts).find((doc) => doc.kind === kind);
 }
@@ -497,7 +496,7 @@ export function harnessFromCommand(cmdline: string): HarnessKind {
 }
 
 /**
- * Determina el tipo de arnés a partir de las capacidades reportadas en la presencia del adaptador
+ * Determines the harness type from the capabilities reported on the adapter presence
  * (`GET /v3/status` -> `presence[].capabilities`).
  */
 export function harnessFromCapabilities(capabilities: readonly string[]): HarnessKind {

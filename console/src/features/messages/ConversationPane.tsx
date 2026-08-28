@@ -17,12 +17,11 @@ import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health'
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
 /**
- * El nombre de la variable CSS que reserva, al pie del hilo, el hueco del compositor fijo.
+ * The name of the CSS variable that reserves, at the foot of the thread, the slot for the fixed composer.
  *
- * Se exporta para que la prueba pueda exigir que la hoja y el componente digan LA MISMA cadena.
- * Un `style.setProperty` con un nombre que ningún `var()` lee no es un error para nadie —ni para
- * el typecheck, ni para el lint, ni para las pruebas de DOM— y el síntoma sería el final del hilo
- * viviendo debajo del compositor, en el teléfono, sin una línea en ninguna consola.
+ * It is exported so the test can require the stylesheet and the component to say THE SAME string. A `style.setProperty`
+ * with a name no `var()` reads is not an error for anyone —neither for typecheck, nor lint, nor DOM tests— and the
+ * symptom would be the end of the thread living under the composer, on the phone, without a line in any console.
  */
 export const VAR_ALTO_COMPOSITOR = '--messenger-composer-alto';
 
@@ -38,19 +37,19 @@ interface ConversationPaneProps {
   onReload: () => void;
 }
 
-/** Ruta del detalle del bot, que es donde vive su terminal (feed durable + PTY cuando existe). */
+/** Bot detail route, where its terminal lives (durable feed + PTY when it exists). */
 function rutaDeTui(agent: AgenteDeMensajeria): string {
   return `/fleet/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
 }
 
-/** Lo que la consola sabe del cuerpo entero de un mensaje: nada, pidiéndolo, el texto, o el fallo. */
+/** What the console knows about the full body of a message: nothing, requesting it, the text, or a failure. */
 type CuerpoEntero =
   | { estado: 'pidiendo' }
   | { estado: 'listo'; texto: string }
   | { estado: 'fallo'; motivo: string };
 
 /**
- * Panel de conversación con un agente: historial, estado de entrega y compositor de mensajes.
+ * Conversation panel with an agent: history, delivery state and message composer.
  */
 export function ConversationPane({
   agent, page, loading, error, route, canPublish, publisherSubject, salud, onReload,
@@ -62,7 +61,7 @@ export function ConversationPane({
   const [aviso, setAviso] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [mensajeElegido, setMensajeElegido] = useState<string>();
   const [cuerpos, setCuerpos] = useState<Record<string, CuerpoEntero>>({});
-  /** El detalle nace cerrado y lo abre el operador o al hacer clic en una burbuja. */
+  /** The detail is born closed and is opened by the operator or by clicking a bubble. */
   const [detalleAbierto, setDetalleAbierto] = useState(false);
   const [lane, setLane] = useState<JobLane>('interactive');
 
@@ -75,29 +74,26 @@ export function ConversationPane({
     ? roomElegido
     : route.sourceRoomIds[0] ?? '';
   const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen);
-  // Se selecciona el ITEM, no la entrega suelta: el detalle tiene que poder decir el room, el
-  // lane, el actor y el trace del MENSAJE, y esos campos no viven en la entrega.
+  // The ITEM is selected, not the loose delivery: the detail has to be able to say the room, the lane, the actor and the trace of the MESSAGE, and those fields do not live in the delivery.
   const elegidoPorElOperador = hilo.find((item) => (
     mensajeElegido != null && item.message.message_id === mensajeElegido
   ));
   const itemSeleccionado = elegidoPorElOperador ?? hilo.at(-1);
   const seleccionada = itemSeleccionado?.delivery;
   const mensajeSeleccionado = itemSeleccionado?.message;
-  // Las entregas HERMANAS del mismo publish: el fan-out completo. La lista plana anterior las
-  // mostraba todas y el hilo por par las había dejado fuera, así que desde acá no se podía saber
-  // a quién más había ido el mismo mensaje ni cómo le fue.
+  // SIBLING deliveries of the same publish: the complete fan-out. The previous flat list showed all of them and the
+  // thread-by-pair had left them out, so from here it was impossible to know who else the same message went to or how it went.
   const hermanas = (mensajeSeleccionado?.deliveries ?? []).filter((entrega) => (
     fleetAgentId(entrega.recipient_tenant ?? '', entrega.recipient_alias ?? '') !== agent.id
   ));
   const totalVisible = (page?.items ?? []).length;
 
   /*
-   * En pantalla estrecha el compositor es `position: fixed` y por tanto SALE DEL FLUJO: sin
-   * reservar su alto al pie del hilo, la última burbuja y el detalle del mensaje quedan debajo de
-   * la barra para siempre. El alto no se puede escribir a mano en la hoja porque es variable —el
-   * selector de room aparece sólo con más de un room, y los avisos de permiso, de ruta y de
-   * publicación suman filas—, así que se MIDE. En escritorio la variable existe igual y no la lee
-   * nadie: el `var()` sólo está dentro del corte de 760 px.
+   * On a narrow screen the composer is `position: fixed` and therefore LEAVES THE FLOW: without reserving its height
+   * at the foot of the thread, the last bubble and the message detail stay under the bar forever. The height cannot
+   * be written by hand in the stylesheet because it varies —the room selector only appears with more than one room,
+   * and the permission, route and publish notices add rows—, so it is MEASURED. On desktop the variable exists as well
+   * and nobody reads it: the `var()` only lives inside the 760 px breakpoint.
    */
   const hiloRef = useRef<HTMLElement | null>(null);
   const compositorRef = useRef<HTMLFormElement | null>(null);
@@ -109,8 +105,7 @@ export function ConversationPane({
       hilo.style.setProperty(VAR_ALTO_COMPOSITOR, `${String(Math.ceil(compositor.getBoundingClientRect().height))}px`);
     };
     anotar();
-    // jsdom no trae `ResizeObserver`, y tampoco lo traen navegadores viejos. Sin observador queda
-    // la medida inicial, que es mejor que nada y nunca peor que el valor por defecto de la hoja.
+    // jsdom does not bundle `ResizeObserver`, nor do old browsers. Without an observer we are left with the initial measurement, which is better than nothing and never worse than the stylesheet's default value.
     if (typeof ResizeObserver !== 'function') return;
     const observador = new ResizeObserver(anotar);
     observador.observe(compositor);
@@ -118,16 +113,15 @@ export function ConversationPane({
   }, []);
 
   /*
-   * ------------------------------------------------------------------ EL HILO EMPIEZA POR EL FINAL
+   * --------------------------------------------------- THE THREAD STARTS AT THE END
    *
-   * Un mensajero abre por lo último dicho. Este abría por lo primero: ver `desplazamiento.ts`,
-   * donde está la medida. Hay UNA sola caja con scroll —`.messenger-thread-scroll`, que envuelve
-   * la transcripción y nada más— justamente para que «ir al final» tenga un único destino: antes
-   * la transcripción tenía su propio `max-height` con scroll DENTRO del scroll de la página, y
-   * ninguno de los dos empezaba donde hacía falta.
+   * A messenger opens at the last thing said. This one used to open at the first: see `desplazamiento.ts`, where
+   * the measurement lives. There is ONE single scrolling box —`.messenger-thread-scroll`, which wraps the transcript
+   * and nothing else— precisely so "go to the end" has a single destination: before, the transcript had its own
+   * `max-height` with scroll INSIDE the page's scroll, and neither of them started where it was needed.
    *
-   * El detalle del mensaje queda FUERA de la caja a propósito: si estuviera dentro, «ir al
-   * último» aterrizaría al pie del detalle y no en la última burbuja.
+   * The message detail stays OUTSIDE the box on purpose: if it were inside, "go to the end" would land at the foot of
+   * the detail and not at the last bubble.
    */
   const cajaRef = useRef<HTMLDivElement | null>(null);
   const pegadoRef = useRef(true);
@@ -145,9 +139,8 @@ export function ConversationPane({
 
   const ultimoId = hilo.at(-1)?.message.message_id;
   useEffect(() => {
-    // Al montar (o al cambiar de agente, que remonta por la `key`) y cada vez que llega un mensaje
-    // nuevo, PERO sólo si el operador estaba mirando el final: arrastrarlo desde donde está
-    // leyendo sería el defecto contrario.
+    // On mount (or when changing agent, which remounts by the `key`) and every time a new message arrives, BUT only if
+    // the operator was watching the end: dragging them from where they were reading would be the opposite bug.
     if (!pegadoRef.current) return;
     const caja = cajaRef.current;
     if (!caja) return;
@@ -166,7 +159,7 @@ export function ConversationPane({
 
   const nuevosSinVer = Math.max(0, hilo.length - vistosHastaAqui);
 
-  /** Pide el cuerpo entero de un mensaje. El recorte a 240 lo hace el servidor, no la vista. */
+  /** Requests the full body of a message. The 240-char trimming is done by the server, not the view. */
   const pedirCuerpo = useCallback(async (messageId: string) => {
     setCuerpos((previo) => ({ ...previo, [messageId]: { estado: 'pidiendo' } }));
     try {
@@ -180,9 +173,9 @@ export function ConversationPane({
       }));
     } catch (causa) {
       /*
-       * Un 404 acá no significa «no existe el mensaje»: significa que el gateway desplegado
-       * todavía no publica esta ruta. Se dice con esas palabras en vez de acusar al dato, que es
-       * el error que esta consola comete cuando algo no está: culpar a lo que se ve.
+       * A 404 here does not mean "the message does not exist": it means that the deployed gateway does not yet
+       * publish this route. It is said with those words instead of blaming the data, which is the mistake this
+       * console makes when something is missing: blaming what is visible.
        */
       const motivo = causa instanceof ApiError && (causa.status === 404 || causa.status === 501)
         ? 'El gateway desplegado no publica todavía GET /v3/console/messages/:id, así que el cuerpo entero no se puede pedir desde acá.'
@@ -203,8 +196,7 @@ export function ConversationPane({
         recipients: [{ tenant_id: agent.tenantId, alias: agent.alias }],
         body: { text: texto },
         lane,
-        // La MISMA prioridad por carril que publicaba el formulario anterior: interactivo 10,
-        // batch 0. No es una constante nueva, es la que ya estaba y se perdió con el rediseño.
+        // The SAME priority per lane the previous form published: interactive 10, batch 0. It is not a new constant —it was the one that was already there and got lost in the redesign.
         priority: lane === 'interactive' ? 10 : 0,
       } satisfies Omit<Parameters<typeof api.publishMessage>[0], 'idempotency_key'>;
       const { receipt: resultado, reconciled, journalStatus } = await publishDurably({
@@ -225,7 +217,7 @@ export function ConversationPane({
               ? 'Confirmación incierta; intención pendiente y cercada'
               : 'Confirmación rechazada; intención cercada contra duplicados'}; el ACK llega por polling.`,
       });
-      // Lo que uno acaba de escribir se mira: publicar vuelve a pegar el hilo al final.
+      // What one just wrote is watched: publishing sticks the thread back to the end.
       pegadoRef.current = true;
       setPegado(true);
       onReload();
@@ -245,7 +237,7 @@ export function ConversationPane({
   function elegir(item: TranscriptItem) {
     if (!item.message.message_id) return;
     setMensajeElegido(item.message.message_id);
-    // Clicar una burbuja ES pedir su detalle: abrirlo acá no es «abrirse solo».
+    // Clicking a bubble IS asking for its detail: opening it here is not "auto-opening".
     setDetalleAbierto(true);
   }
 
@@ -293,7 +285,7 @@ export function ConversationPane({
         </div>
       </dl>
 
-      {/* Hilo filtrado sobre la ventana de mensajes del servidor. */}
+      {/* Thread filtered over the server's message window. */}
       <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
         <p className="messenger-window-note" data-truncated={totalVisible >= LIMITE_MENSAJES || undefined}>
           {totalVisible >= LIMITE_MENSAJES
@@ -315,8 +307,8 @@ export function ConversationPane({
       </div>
 
       {/*
-        «Ir al último», con el conteo de lo que llegó mientras el operador leía más arriba. Sólo
-        aparece cuando hace falta: si ya está abajo, un botón que no lleva a ningún sitio.
+        "Go to the end", with the count of what arrived while the operator was reading above. It only appears when
+        needed: if they are already at the bottom, a button that goes nowhere.
       */}
       {!pegado && hilo.length > 0 ? (
         <div className="messenger-al-final">
@@ -378,7 +370,7 @@ export function ConversationPane({
             <div><dt>Actor verificado</dt><dd><Unknown value={mensajeSeleccionado.actor_alias} /></dd></div>
             <div><dt>Tenant de origen</dt><dd><Unknown value={mensajeSeleccionado.tenant_id} /></dd></div>
             <div><dt>Publicado</dt><dd><Time value={mensajeSeleccionado.created_at} /></dd></div>
-            {/* Enteros y seleccionables: un trace recortado no sirve para buscar la cadena. */}
+            {/* Integers and selectable: a trimmed trace is no use for searching the chain. */}
             <div><dt>Trace</dt><dd className="mono">{mensajeSeleccionado.trace_id ?? 'UNKNOWN'}</dd></div>
             <div><dt>Message id</dt><dd className="mono">{mensajeSeleccionado.message_id ?? 'UNKNOWN'}</dd></div>
             {seleccionada ? (

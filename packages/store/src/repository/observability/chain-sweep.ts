@@ -38,7 +38,7 @@ interface ChainSilenceCandidate {
   idle_seconds: number;
 }
 
-/** «6 h 12 min», «18 min», «45 s». Sin librerías y sin ambigüedad para el que lo lee. */
+/** "6 h 12 min", "18 min", "45 s". No libraries and no ambiguity for whoever reads it. */
 function humanDuration(seconds: number): string {
   const total = Math.max(0, Math.trunc(seconds));
   if (total < 60) return `${total} s`;
@@ -51,10 +51,9 @@ function humanDuration(seconds: number): string {
 }
 
 /**
- * El aviso agregado. UNA línea con el conteo por desenlace y la causa dominante; nunca la
- * enumeración de las ramas. Deliberadamente NO incluye el texto de ninguna rama: pegar salida
- * de agente sin la síntesis del coordinador convierte el aviso en ruido largo y mete texto no
- * confiable en el chat del dueño. El id de la raíz alcanza para pedir el detalle después.
+ * The aggregated notice: ONE line with the count by outcome and the dominant cause; never the enumeration of branches.
+ * Deliberately it does NOT include the text of any branch: pasting agent output without the coordinator's synthesis
+ * turns the notice into long noise, pushes untrusted text into the owner's chat; the root's id is the only handle left.
  */
 function chainSilenceNoticeText(
   candidate: ChainSilenceCandidate,
@@ -85,9 +84,8 @@ function chainSilenceNoticeText(
 }
 
 /**
- * Texto ajeno (el `last_error` que escribió un agente) que va a salir hacia un chat humano.
- * Se le quitan los controles y se lo acota igual que en `agentResponseText`: es un dato, no
- * una instrucción y no un formato.
+ * Third-party text (the `last_error` an agent wrote) going to a human chat: control chars stripped,
+ * bounded like `agentResponseText`; data, not instruction and not format.
  */
 function sanitizedDiagnostic(value: string): string {
   return value.replace(/[\p{Cf}\p{Cc}]/gu, ' ').replace(/\s+/gu, ' ').trim();
@@ -101,8 +99,8 @@ function originBridgeAlias(origin: Origin): string {
 export abstract class ObservabilityChainSweepRepository extends ObservabilityMaintenanceRepository {
 
   /**
-   * Barrido periódico de cadenas inactivas o mudas para asegurar que toda tarea
-   * complete su fan-in o emita una respuesta consolidada de cierre hacia el origen.
+   * Periodic sweep of idle or silent chains to ensure every task completes its fan-in or
+   * emits a consolidated closing reply toward the origin.
    */
   async sweepSilentChains(options: ChainSilenceSweepOptions = {}): Promise<ChainSilenceSweepResult> {
     const idleMs = Math.max(1_000, Math.trunc(options.idleMs ?? chainSilenceIdleMs));
@@ -202,7 +200,7 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
     result.scanned = candidates.rows.length;
     for (const candidate of candidates.rows) {
       try {
-        // Una transacción por raíz impide que un candidato inválido cancele todo el barrido.
+        // One transaction per root prevents an invalid candidate from canceling the whole sweep.
         const outcome = await withTransaction(this.pool, (client) => this.closeSilentChain(client, candidate));
         if (outcome === 'fanin') result.faninRecovered += 1;
         else if (outcome === 'notified') result.notified += 1;
@@ -219,22 +217,22 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
     return result;
   }
 
-  /** Un candidato del vigía, bajo candado y en su propia transacción. */
+  /** A watcher candidate, under lock and in its own transaction. */
   private async closeSilentChain(
     client: DatabaseClient,
     candidate: ChainSilenceCandidate
   ): Promise<'fanin' | 'notified' | 'skipped'> {
-    // El mismo candado que toma `materializeAgentFanin`, así que un ACK en vuelo de esta
-    // cadena y el vigía nunca se pisan. Es `try` y no bloqueante: si otro proceso la tiene,
-    // la raíz se salta y vuelve en el barrido siguiente en vez de retener una conexión.
+    // The same lock `materializeAgentFanin` takes, so the ACK in flight and the watcher never
+    // step on each other. `try` and non-blocking: another process holding it means the root is
+    // skipped and returns next sweep, no connection held.
     const lock = await client.query<{ acquired: boolean }>(
       `SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired`,
       [`agent-fanin:${candidate.root_message_id}`]
     );
     if (lock.rows[0]?.acquired !== true) return 'skipped';
 
-    // Relectura bajo candado: entre la consulta de candidatos y esta transacción la cadena
-    // pudo cerrarse sola, y ese cierre real siempre gana sobre el aviso del vigía.
+    // Re-read under lock: between the candidate query and this transaction the chain could have
+    // closed on its own, and that real closure always wins over the watcher's notice.
     const state = await client.query<{ closed: boolean; relayed: boolean }>(
       `SELECT EXISTS(
                 SELECT 1 FROM agent_chain_closures closure WHERE closure.root_message_id=$1::uuid
@@ -252,15 +250,15 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
     );
     if (state.rows[0]?.closed === true || state.rows[0]?.relayed === true) return 'skipped';
 
-    // 1. Destrabe real. Un fan-in que ahora sí puede agendarse le devuelve al humano la
-    //    síntesis del coordinador en vez de un diagnóstico de fallo.
+    // 1. Real unblock. A fan-in that can now be scheduled gives the human the coordinator's
+    //    synthesis instead of a failure diagnostic.
     if (candidate.branches > 0 && !candidate.fanin_present) {
       await client.query('SAVEPOINT chain_silence_fanin');
       try {
-        // Una rama que llegó a estado terminal SIN pasar por el ACK no tiene su fila de
-        // `agent_output.response` y por eso es INCONTABLE para el fan-in: ver
-        // `recordTerminalBranchesWithoutResponse`. Rellenarla sólo acá y sólo con la cadena
-        // ya declarada muda y sin trabajo abierto.
+        // A branch that reached a terminal state WITHOUT going through the ACK does not have its
+        // `agent_output.response` row and is therefore UNCOUNTABLE for the fan-in: see
+        // `recordTerminalBranchesWithoutResponse`. It is filled only here and only with the
+        // chain already declared silent and with no open work.
         if (candidate.open_work === 0) {
           await this.recordTerminalBranchesWithoutResponse(client, candidate.root_message_id);
         }
@@ -270,13 +268,14 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
           await this.recordChainSweepAudit(client, candidate, 'fanin_recovered', undefined, undefined);
           return 'fanin';
         }
-        // No se destrabó: se descartan las filas sintéticas. Si quedaran, `chainSilenceDetail`
-        // las contaría como ramas que devolvieron resultado y el aviso al humano diría que N
-        // ramas contestaron cuando ninguna contestó. O destraba, o no deja rastro.
+        // It was not unblocked: the synthetic rows are discarded. If they remained,
+        // `chainSilenceDetail` would count them as branches that returned a result and the
+        // notice to the human would say that N branches answered when none did. Either it
+        // unblocks or it leaves no trace.
         await client.query('ROLLBACK TO SAVEPOINT chain_silence_fanin');
       } catch (error) {
-        // Un fallo SQL acá envenena la transacción; el punto de guardado la devuelve intacta
-        // para que la raíz igual termine avisada en vez de quedar muda una vez más.
+        // An SQL failure here poisons the transaction; the savepoint returns it intact so the
+        // root still ends up with a notice instead of being silent once more.
         await client.query('ROLLBACK TO SAVEPOINT chain_silence_fanin');
         console.error(JSON.stringify({
           event: 'chain_silence_fanin_failed',
@@ -286,7 +285,7 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
       }
     }
 
-    // 2. Cierre con aviso agregado.
+    // 2. Closure with aggregated notice.
     const detail = await this.chainSilenceDetail(client, candidate.root_message_id);
     const reason: ChainSilenceClosureReason = candidate.open_work === 0
       ? 'settled_without_fanin'
@@ -338,8 +337,8 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
         })
       ]
     );
-    // El ancla durable de «un aviso por raíz, para siempre». Sobrevive a la purga del outbox
-    // y es lo que saca a la raíz del conjunto de candidatos en el barrido siguiente.
+    // The durable anchor of "one notice per root, forever". It survives the outbox purge and
+    // is what removes the root from the candidate set in the next sweep.
     const closure = await client.query(
       `INSERT INTO agent_chain_closures(
          root_message_id,tenant_id,adapter,reason,branches,branches_answered,branches_dead,
@@ -363,15 +362,15 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
     );
     if (!closure.rowCount) return 'skipped';
     await this.recordChainSweepAudit(client, candidate, 'closed', reason, detail);
-    // Sin `pg_notify`: el canal `cauce_delivery_wake` despierta consumidores de entregas por
-    // alias de agente, y esto no crea ninguna entrega. El puente toma el relay por
-    // `claimOutbox`, que es el camino durable de siempre.
+    // Without `pg_notify`: the `cauce_delivery_wake` channel wakes up delivery consumers by
+    // agent alias, and this does not create any delivery. The bridge picks up the relay
+    // through `claimOutbox`, which is the usual durable path.
     return 'notified';
   }
 
   /**
-   * Registra eventos de auditoría para ramas en estado terminal que carecen de respuesta grabada,
-   * permitiendo desbloquear el conteo de fan-in en cadenas inactivas.
+   * Records audit events for branches in a terminal state that lack a recorded reply,
+   * allowing the fan-in count in idle chains to be unblocked.
    */
   private async recordTerminalBranchesWithoutResponse(
     client: DatabaseClient,
@@ -435,10 +434,10 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
   }
 
   /**
-   * Detalle que sólo se calcula para una raíz que efectivamente se va a avisar (raro), nunca
-   * en la consulta de candidatos: la causa dominante y el recuento de ramas que sí
-   * devolvieron. La búsqueda por `metadata->>'child_delivery_id'` no tiene índice y es la
-   * misma que ya paga el fan-in, así que no puede correr por cada candidato de cada barrido.
+   * Detail only computed for a root that will actually be noticed (rare), never in the candidate query:
+   * the dominant cause and the count of branches that did reply.
+   * The search by `metadata->>'child_delivery_id'` has no index and is what the fan-in already pays,
+   * so it cannot run for every candidate in every sweep.
    */
   private async chainSilenceDetail(
     client: DatabaseClient,

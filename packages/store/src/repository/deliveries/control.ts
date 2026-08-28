@@ -9,16 +9,16 @@ import type { DeliveryRow } from '../observability.js';
 import { visibleText } from '../outbox.js';
 
 
-/** Prefijo estable del motivo de una cancelación: es lo que permite contarlas sin heurística. */
+/** Stable prefix of a cancellation reason: what allows counting them without heuristics. */
 const cancellationReasonPrefix = 'Cancelled by operator';
 const maxCancellationReasonBytes = 500;
 /**
- * Motivo con el que queda marcada una entrega cancelada.
+ * Reason a cancelled delivery is marked with.
  *
- * El prefijo es fijo y la nota del operador va después, recortada. Dos razones: `last_error` y
- * `dead_letters.reason` los lee un humano en la consola, y un texto libre sin techo puede venir
- * de un cliente. El NUL se saca porque PostgreSQL no lo acepta en `text` y el `INSERT`
- * abortaría la transacción entera de la cancelación.
+ * The prefix is fixed and the operator's note follows, trimmed. Two reasons: a human reads
+ * `last_error` and `dead_letters.reason` in the console, and free-form text without a ceiling
+ * can come from a client. NUL is removed because PostgreSQL does not accept it in `text` and
+ * the `INSERT` would abort the entire cancellation transaction.
  */
 function cancellationReason(actorTenant: Tenant, actorAlias: string, reason?: string): string {
   const header = `${cancellationReasonPrefix} ${actorTenant}:${actorAlias}`;
@@ -32,21 +32,18 @@ function cancellationReason(actorTenant: Tenant, actorAlias: string, reason?: st
 
 export abstract class DeliveryControlRepository extends AgentNotificationsRepository {
   /**
-   * CANCELACIÓN de una entrega en vuelo. Operación del operador, hermana de
-   * `replayDelivery` y con exactamente su misma autorización.
+   * CANCELLATION of an in-flight delivery. An operator operation, sibling of `replayDelivery` with
+   * exactly its same authorization.
    *
-   * NO INVENTA UN ESTADO NUEVO. Termina en 'dead', por el mismo motivo por el que lo hace el
-   * reaper (ver su comentario): toda la maquinaria de revisión manual ya apunta ahí, y un
-   * 'cancelled' obligaría a ampliar el CHECK de `deliveries.status`, `DeliveryStateSchema`, las
-   * series del dispatcher y cinco vistas de consola para terminar reimplementando el mismo botón
-   * de replay. Lo que sí es propio es el rastro: motivo con prefijo estable y un `audit_events`
-   * con acción `delivery.cancel`, para poder contar cancelaciones sin confundirlas con timeouts.
+   * IT DOES NOT INVENT A NEW STATE. It ends in 'dead', same as the reaper (see its comment): all the
+   * manual-review machinery already points there, and adding 'cancelled' would force widening every check
+   * just to reimplement the same replay button. What IS its own is the trail: a reason with a stable prefix
+   * and an `audit_events` entry with action `delivery.cancel`, so cancellations can be counted without confusion.
    *
-   * NO MANDA NINGÚN FRAME AL ADAPTADOR, a propósito. El lado servidor queda consistente en una
-   * sola transacción; el harness que siga corriendo morirá por su propio camino (techo de vida)
-   * y su ACK tardío rebotará como `ownership_lost`, porque `ackDelivery` corta antes con
-   * `terminal(row.status)`. Es la degradación correcta: no depende de que el adaptador esté vivo,
-   * que es justamente la situación en la que hace falta cancelar.
+   * IT SENDS NO FRAME TO THE ADAPTER, on purpose. The server side stays consistent in a single transaction;
+   * any harness still running will die on its own path (lifetime ceiling) and its late ACK will bounce as
+   * `ownership_lost`, because `ackDelivery` cuts first with `terminal(row.status)`. This is the correct
+   * degradation: it does not depend on the adapter being alive, exactly the situation that requires cancellation.
    */
   async cancelDelivery(
     deliveryId: string,
@@ -57,10 +54,10 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
     await this.assertPermission(actorTenant, actorAlias, 'control');
     const cancelReason = cancellationReason(actorTenant, actorAlias, reason);
     return withTransaction(this.pool, async (client) => {
-      // Se traen las MISMAS columnas que arma el reaper porque abajo se llaman los mismos tres
-      // helpers (`materializeAgentResponse`, `materializeAgentFanin`, `insertOriginRelay`) y
-      // todos esperan un `DeliveryRow` completo. `FOR UPDATE OF d` sin función de ventana: ver
-      // `sql-locking-clauses.test.ts`, PostgreSQL rechaza esa combinación al parsear.
+      // The SAME columns the reaper builds are pulled because the same three helpers
+      // (`materializeAgentResponse`, `materializeAgentFanin`, `insertOriginRelay`) are called below,
+      // and all of them expect a full `DeliveryRow`. `FOR UPDATE OF d` without a window function:
+      // PostgreSQL rejects that combination at parse time (see `sql-locking-clauses.test.ts`).
       const selected = await client.query<DeliveryRow>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,
                 d.max_attempts,d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,
@@ -75,16 +72,17 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
       const row = selected.rows[0];
       if (!row) throw new StoreError('not_found', 'delivery not found or not visible');
       await this.assertReplayAuthorization(client, actorTenant, actorAlias, row);
-      // Una entrega ya terminal no se cancela: se replaya o se deja. Devolver `conflict` en vez
-      // de "ok" es lo honesto, porque un segundo cancel que dijera que sí haría creer al operador
-      // que interrumpió algo que en realidad ya había terminado (y quizá terminado BIEN).
+      // A delivery already in a terminal state is not cancelled: it is replayed or left alone.
+      // Returning `conflict` instead of "ok" is the honest move, because a second cancel that
+      // said yes would make the operator believe they interrupted something that had actually
+      // already finished (and maybe finished WELL).
       if (terminal(row.status)) {
         throw new StoreError('conflict', `delivery is already terminal (${row.status})`);
       }
 
-      // Se limpian los campos de vallado además del estado. No es cosmético: mientras
-      // `claim_token`/`consumer_epoch` sigan puestos, un adaptador con la garra en la mano puede
-      // seguir renovándola, y el objetivo de cancelar es soltar el cupo del alias ya.
+      // Fence fields are cleared in addition to the status. Not cosmetic: as long as
+      // `claim_token`/`consumer_epoch` remain set, an adapter still holding the claw can keep
+      // renewing it, and the point of cancelling is to release the alias's slot right away.
       const cancelled = await client.query(
         `UPDATE deliveries
            SET status='dead',terminal_at=now(),last_error=$2,last_ack_rank=3,
@@ -98,8 +96,9 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
         throw new StoreError('conflict', 'delivery became terminal while being cancelled');
       }
 
-      // (1) Rastro replayable. El `ON CONFLICT` cubre la entrega que ya tenía dead letter de una
-      // vida anterior; el `resolved_at` lo pone `replayDelivery` cuando alguien la rescate.
+      // (1) Replayable trail. The `ON CONFLICT` covers the delivery that already had a dead
+      // letter from a previous life; `resolved_at` is set by `replayDelivery` when someone
+      // rescues it.
       await client.query(
         `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
          VALUES($1,$2,$5,$3::jsonb,$4)
@@ -107,12 +106,12 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
         [row.id, row.recipient_tenant, JSON.stringify(row.body), row.attempt, cancelReason]
       );
 
-      // (2) y (3): el padre y el humano, por los mismos dos caminos que usa el reaper. A
-      // diferencia del reaper, acá NO se atrapa el error de materialización: el reaper procesa un
-      // lote y no puede dejar que una fila mate el tick entero, pero esto es un comando
-      // interactivo de una sola entrega. Si el aviso al padre no se puede escribir, la
-      // transacción entera se deshace y el operador ve el motivo, en vez de quedarse con una
-      // cancelación a medias —que es exactamente el estado que produce el UPDATE manual—.
+      // (2) and (3): the parent and the human, through the same two paths the reaper uses.
+      // Unlike the reaper, the materialization error is NOT caught here: the reaper processes a
+      // batch and cannot let a single row kill the whole tick, but this is an interactive
+      // command on a single delivery. If the parent notice cannot be written, the entire
+      // transaction is rolled back and the operator sees the reason, instead of being left with
+      // a half-finished cancellation — which is exactly the state the manual UPDATE produces.
       const chainPolicy = await this.loadChainPolicy(client);
       const responseDisposition = await this.materializeAgentResponse(
         client, row, row.attempt, 'dead', chainPolicy, undefined, cancelReason, 'DELIVERY_CANCELLED'
@@ -149,26 +148,26 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
         reason: cancelReason,
         parent_notice: responseDisposition,
         origin_relayed: relayed,
-        // El operador tiene que saber que esto NO es irreversible: la fila de `dead_letters` que
-        // se acaba de escribir es la que habilita el botón de replay.
+        // The operator needs to know this is NOT irreversible: the `dead_letters` row that
+        // was just written is what enables the replay button.
         replayable: true
       };
     });
   }
 
   /**
-   * `renewal` separa el latido de la transición de estado, y esa distinción es la que hace
-   * posible la retención por tipo: un ACK que sólo dice "sigo vivo" no tiene valor forense
-   * pasadas unas horas, y es ~90% del volumen de la tabla. Uno que dice "pasé de accepted a
-   * started" o "terminé" sí lo tiene y se conserva mucho más. Se marca acá, en el único lugar
-   * que sabe con certeza cuál es cuál (la rama de renovación de `ackDelivery`), en vez de
-   * inferirlo después con una función de ventana sobre la tabla entera.
+   * `renewal` separates the heartbeat from the state transition, and that distinction is what makes
+   * type-based retention possible: an ACK that only says "I'm still alive" has no forensic value after a
+   * few hours, and accounts for ~90% of the table's volume. One that says "I moved from accepted to started"
+   * or "I'm done" does have it and is kept much longer. It is flagged here, in the only place that knows for
+   * sure which is which (the renewal branch of `ackDelivery`), instead of being inferred afterwards with a
+   * window function over the whole table.
    *
-   * `DO UPDATE ... WHERE` en vez de `DO NOTHING`: el mismo evento puede ser rechazado primero y
-   * aceptado después (un ACK terminal reenviado que la segunda vez cae en el rescate tardío, o
-   * uno que falló por lease y se reintenta con el lease ya renovado). La fila tiene que quedar
-   * diciendo la verdad. La cláusula sólo deja subir de `false` a `true`, nunca al revés, y
-   * cuando el ACK se rechaza otra vez el UPDATE no se ejecuta: idéntico al `DO NOTHING` viejo.
+   * `DO UPDATE ... WHERE` instead of `DO NOTHING`: the same event may be rejected first and accepted later
+   * (a terminal ACK resent that lands in the late rescue the second time around, or one that failed by lease
+   * and is retried with the lease already renewed). The row must remain honest. The clause only allows
+   * going from `false` to `true`, never the other way, and when the ACK is rejected again the UPDATE is
+   * not executed: identical to the old `DO NOTHING`.
    */
   protected override async insertAck(
     client: DatabaseClient,

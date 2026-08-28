@@ -1,24 +1,21 @@
-/**
- * Tipos para las tres capas de directiva de un agente:
- * Capa 1: agents.role_brief (base de datos)
- * Capa 2: CLAUDE.md / AGENTS.md (fichero en contenedor)
- * Capa 3: Memoria persistida (~/.claude/projects, ~/.openclaw/memory)
- */
+/** Types for the three directive layers of an agent: Layer 1 is `agents.role_brief` (database), Layer 2 is the
+ * `CLAUDE.md` / `AGENTS.md` file inside the container, Layer 3 is persisted memory (`~/.claude/projects`,
+ * `~/.openclaw/memory`). */
 
-/** Un `CLAUDE.md` / `AGENTS.md` concreto dentro del contenedor de un alias. */
+/** A specific `CLAUDE.md` / `AGENTS.md` inside an alias' container. */
 export interface AgentDirectiveFile {
   path?: string | null;
-  /** `user` = `~/.claude/CLAUDE.md`; `workspace` = `~/CLAUDE.md` o `/workspace/CLAUDE.md`. */
+  /** `user` = `~/.claude/CLAUDE.md`; `workspace` = `~/CLAUDE.md` or `/workspace/CLAUDE.md`. */
   scope?: 'user' | 'workspace' | (string & {}) | null;
-  /** Orden medido: Codex aplica precedencia; Claude lo expone sólo como orden de carga. */
+  /** Measured order: Codex applies precedence; Claude only exposes it as load order. */
   precedence?: number | null;
-  /** Huella real para detectar manuales duplicados aunque el texto visible esté truncado. */
+  /** Actual fingerprint to detect duplicate manuals even when the visible text is truncated. */
   sha?: string | null;
   bytes?: number | null;
   modified_at?: string | null;
-  /** El texto del fichero, si el servidor lo publica. Sin él sólo se puede listar, no cotejar. */
+  /** The file text, if the server publishes it. Without it you can only list, not compare. */
   text?: string | null;
-  /** true si el servidor recortó el texto: lo que se ve NO es el fichero entero. */
+  /** true if the server truncated the text: what you see is NOT the whole file. */
   truncated?: boolean | null;
   error?:
     | 'permission_denied' | 'invalid_path' | 'symlink_detected' | 'too_large'
@@ -26,12 +23,12 @@ export interface AgentDirectiveFile {
   reason?: string | null;
 }
 
-/** El índice de la memoria de un agente (metadatos de ficheros sin contenido). */
+/** An agent's memory index (file metadata, no content). */
 export interface AgentMemoryIndexAvailable {
   root?: string | null;
-  /** Total exacto; null significa que sólo se conoce `observed_at_least`. */
+  /** Exact total; null means only `observed_at_least` is known. */
   total?: number | null;
-  /** Límite inferior observado cuando el barrido alcanzó su cap. */
+  /** Lower bound observed when the scan hit its cap. */
   observed_at_least?: number | null;
   truncated?: boolean | null;
   entries?: {
@@ -55,12 +52,10 @@ export interface AgentMemoryIndexUnavailable {
   reason: string;
 }
 
-/** `error` discrimina una medición fallida; los gateways nuevos no la esconden como `null`. */
+/** `error` discriminates a failed measurement; newer gateways do not hide it as `null`. */
 export type AgentMemoryIndex = AgentMemoryIndexAvailable | AgentMemoryIndexUnavailable;
 
-/**
- * Ficheros de gobierno de un agente: inventario y contenido de documentos.
- */
+/** An agent's governance files: document inventory and content. */
 
 export type AgentDocumentKind =
   | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
@@ -73,9 +68,9 @@ export interface AgentDocumentItem {
   path: string;
   format: string;
   /**
-   * true = el servidor admite GET de contenido para esta fila. Es independiente de `editable`:
-   * un manual de proyecto o un fichero de perfil puede abrirse en visor sin admitir PUT.
-   * Ausente se trata como false para fallar cerrado durante un despliegue escalonado.
+   * true = the server allows GET of content for this row. It is independent from `editable`: a project manual or a
+   * profile file may be opened in a viewer without allowing PUT. Absent is treated as false to fail closed during a
+   * staged rollout.
    */
   readable?: boolean;
   editable: boolean;
@@ -85,7 +80,7 @@ export interface AgentDocumentItem {
 }
 
 export interface AgentDocumentsMap {
-  /** false = este gateway no publica la ruta. NO es «este agente no tiene ficheros». */
+  /** false = this gateway does not publish the route. It is NOT "this agent has no files". */
   publicado: boolean;
   motivo?: string;
   tenant_id?: string;
@@ -93,7 +88,7 @@ export interface AgentDocumentsMap {
   facts_source?: 'measured' | 'registry' | 'database';
   harness?: string;
   home?: string | null;
-  /** Aviso de arriba del todo cuando la fuente no es una medición. */
+  /** Top-of-list notice when the source is not a measurement. */
   caveat?: string;
   items?: AgentDocumentItem[];
 }
@@ -104,26 +99,26 @@ export interface AgentDocumentContent {
   kind: AgentDocumentKind;
   path: string;
   format: string;
-  /** false = el fichero todavía no existe. Se puede crear; NO es lo mismo que estar vacío. */
+  /** false = the file does not yet exist. It can be created; it is NOT the same as being empty. */
   exists: boolean;
   content: string;
-  /** Huella de lo servido. Se devuelve al guardar para que dos personas no se pisen en silencio. */
+  /** Fingerprint of what was served. It is returned on save so two people do not silently overwrite each other. */
   sha: string | null;
   bytes: number;
   editable: boolean;
-  /** Un prefijo recortado se puede inspeccionar, pero nunca editar ni reemplazar. */
+  /** A truncated prefix can be inspected, but never edited nor replaced. */
   truncated: boolean;
   modified_at?: string;
-  /** true = lo que se ve es una PROYECCIÓN, no el fichero entero. */
+  /** true = what you see is a PROJECTION, not the whole file. */
   projected: boolean;
   warning?: string;
 }
 
 export interface AgentDocumentGuardado {
   /*
-   * Todos son opcionales a propósito: `request<T>` sólo tipa TypeScript, no valida el JSON de un
-   * gateway anterior durante un despliegue escalonado. La UI usa un type guard y sólo limpia el
-   * borrador cuando TODOS acreditan aplicación.
+   * They are all optional on purpose: `request<T>` only types TypeScript, it does not validate the JSON from an older
+   * gateway during a staged rollout. The UI uses a type guard and only clears the draft when ALL of them accredit
+   * application.
    */
   ok?: boolean;
   state?: string;
@@ -135,15 +130,13 @@ export interface AgentDocumentGuardado {
 
 export interface AgentDirective {
   /**
-   * false = este gateway no publica el endpoint. NO significa «el agente no tiene ficheros»:
-   * significa que no se miró. La pantalla tiene que decir una cosa y no la otra.
+   * false = this gateway does not publish the endpoint. It does NOT mean "the agent has no files": it means nobody
+   * looked. The screen has to say one thing and not the other.
    */
   publicado: boolean;
-  /**
-   * Indica si el servidor obtuvo hechos medidos del contenedor en vez de rutas inferidas.
-   */
+  /** Indicates whether the server obtained measured facts from the container instead of inferred paths. */
   medido?: boolean;
-  /** Por qué no se pudo leer, cuando `publicado` es false. */
+  /** Why it could not be read, when `publicado` is false. */
   motivo?: string;
   observed_at?: string | null;
   container_id?: string | null;
@@ -155,19 +148,19 @@ export interface AgentDirective {
 }
 
 // ------------------------------------------------------------------------------------------
-// Historial de cambios del rol declarado
+// Change history of the declared role
 // ------------------------------------------------------------------------------------------
 
-/** Una entrada del diario: un cambio concreto del rol declarado de un alias. */
+/** A log entry: a concrete change to an alias' declared role. */
 export interface RoleBriefHistoryEntry {
   id?: string | null;
   tenant_id?: string | null;
   alias?: string | null;
-  /** `update`, `insert`, `delete`… lo que declare el trigger. No se asume el juego de valores. */
+  /** `update`, `insert`, `delete`… whatever the trigger declares. The value set is not assumed. */
   operation?: string | null;
-  /** El texto que había ANTES. `null` = no había rol (alta), que no es lo mismo que cadena vacía. */
+  /** The text that existed BEFORE. `null` = there was no role (creation), which is not the same as an empty string. */
   previous_brief?: string | null;
-  /** El texto que quedó DESPUÉS. `null` = se borró el rol. */
+  /** The text that remained AFTER. `null` = the role was deleted. */
   new_brief?: string | null;
   previous_template_slug?: string | null;
   new_template_slug?: string | null;
@@ -178,30 +171,28 @@ export interface RoleBriefHistoryEntry {
 
 export interface RoleBriefHistory {
   /**
-   * false = este gateway no publica el diario. NO significa «este alias nunca cambió de rol».
-   * Mismo criterio que `AgentDirective.publicado`, y por la misma razón: un negativo que nadie
-   * midió no es un hecho del sistema.
+   * false = this gateway does not publish the log. It does NOT mean "this alias never changed role". Same criterion
+   * as `AgentDirective.publicado`, and for the same reason: a negative that nobody measured is not a fact about the
+   * system.
    */
   publicado: boolean;
-  /** Por qué no se pudo leer, cuando `publicado` es false. */
+  /** Why it could not be read, when `publicado` is false. */
   motivo?: string;
   observed_at?: string | null;
   /**
-   * Las entradas tal como las mandó el servidor, SIN ordenar acá. El orden se decide en
-   * `historial-rol.ts`, que es donde se puede probar: ver `entradasMasNuevasPrimero`.
+   * The entries as sent by the server, WITHOUT ordering them here. The order is decided in `historial-rol.ts`, where
+   * it can be tested: see `entradasMasNuevasPrimero`.
    */
   entries?: RoleBriefHistoryEntry[] | null;
 }
 
 /**
- * EL PERFIL Y SU VISTA PREVIA
- * (`GET /v3/console/tenants/:tenantId/agents/:alias/perfil`).
+ * THE PROFILE AND ITS PREVIEW (`GET /v3/console/tenants/:tenantId/agents/:alias/perfil`).
  *
- * `ficheros` es EL TEXTO EXACTO que va a quedar en cada fichero que el arnés de ese alias lee,
- * compuesto por la MISMA función que usa el adaptador para escribirlo dentro del contenedor. Que
- * salgan de la misma función es lo que impide que la vista previa mienta: dos implementaciones del
- * mismo texto divergen a la primera corrección y el operador aprobaría un bloque distinto del que
- * acaba en el disco, sin que nada diera error.
+ * `ficheros` is the EXACT TEXT that will remain in each file read by that alias' harness, composed by the SAME
+ * function the adapter uses to write it inside the container. Having both come from the same function is what
+ * prevents the preview from lying: two implementations of the same text diverge at the first correction and the
+ * operator would approve a different block from the one that ends up on disk, without anything erroring.
  */
 export interface AgentPerfilCampos {
   purpose: string;
@@ -213,7 +204,7 @@ export interface AgentPerfilCampos {
   operating_rules: string[];
 }
 
-/** Forma canónica que persiste el gateway; un texto vacío se representa como `null`. */
+/** Canonical form persisted by the gateway; an empty text is represented as `null`. */
 export interface AgentPerfilValor {
   purpose: string | null;
   role_summary: string | null;
@@ -226,7 +217,7 @@ export interface AgentPerfilValor {
 
 export interface AgentPerfilFichero {
   nombre: string;
-  /** `solo-si-falta` = es del agente (MEMORY.md, HEARTBEAT.md): si existe NO se toca. */
+  /** `solo-si-falta` = it belongs to the agent (MEMORY.md, HEARTBEAT.md): if it exists it is NOT touched. */
   politica: 'bloque-gestionado' | 'solo-si-falta';
   texto: string;
   unidades: number;
@@ -234,27 +225,27 @@ export interface AgentPerfilFichero {
 
 export interface AgentPerfil {
   /**
-   * false = este gateway no publica la ruta. NO significa «este alias no tiene perfil»: significa
-   * que no se miró. Mismo criterio que `AgentDirective.publicado`, y por la misma razón — un
-   * negativo que nadie midió no es un hecho del sistema.
+   * false = this gateway does not publish the route. It does NOT mean "this alias has no profile": it means nobody
+   * looked. Same criterion as `AgentDirective.publicado`, and for the same reason — a negative that nobody measured
+   * is not a fact about the system.
    */
   publicado: boolean;
   motivo?: string;
   tenant_id?: string;
   alias?: string;
-  /** Estado durable del alias. Ausente se trata como apagado, nunca como habilitado implícito. */
+  /** Durable state of the alias. Absent is treated as off, never as implicitly enabled. */
   agent_enabled?: boolean;
-  /** Presencia REAL de `agent_profiles`; un perfil persistido vacío sigue siendo `true`. */
+  /** ACTUAL presence of `agent_profiles`; a persisted empty profile is still `true`. */
   exists?: boolean;
-  /** Revisión desired propia del perfil; `null` cuando todavía no existe una fila. */
+  /** Profile's own desired revision; `null` when there is still no row. */
   revision?: number | null;
-  /** Última revisión cuyo lote completo fue acreditado por el runtime. */
+  /** Latest revision whose full batch was accredited by the runtime. */
   applied_revision?: number | null;
-  /** Estado desired/applied calculado por el gateway, no inferido por el navegador. */
+  /** Desired/applied state computed by the gateway, not inferred by the browser. */
   runtime_state?:
     | 'absent' | 'pending' | 'pending_session_refresh' | 'applied' | 'disabled'
     | 'drifted' | 'runtime_unverified';
-  /** Evidencia viva de ruta+SHA+generación; sin ella la UI nunca afirma aplicación. */
+  /** Live evidence of path+SHA+generation; without it the UI never claims application. */
   runtime_verification?: {
     state: 'current' | 'drifted' | 'unverified';
     generation: string | null;
@@ -279,7 +270,7 @@ export interface AgentPerfil {
     documents: { name: string; path: string; sha: string }[];
   } | null;
   runtime_reason?: string;
-  /** El arnés declarado en los hechos. `null` cuando el registro no dice ninguno. */
+  /** Harness declared by the facts. `null` when the registry declares none. */
   harness?: string | null;
   perfil: AgentPerfilValor;
   hechos?: {
@@ -297,13 +288,13 @@ export interface AgentPerfil {
   };
   medida?: { unidades: number; tope: number };
   /**
-   * De qué se compuso la vista previa. `fichero-vacio` significa que el servidor NO leyó el disco
-   * del contenedor: lo que una persona haya escrito a mano sigue ahí y no se toca —la fusión
-   * conserva lo de fuera byte a byte—, pero esta respuesta no lo ha visto y no puede enseñarlo.
+   * What the preview was composed from. `fichero-vacio` means the server did NOT read the container's disk: whatever
+   * a person wrote by hand is still there and is not touched —the merge preserves the outside byte for byte—,
+   * but this response has not seen it and cannot show it.
    */
   base?: 'fichero-vacio' | 'runtime-medido';
   ficheros?: AgentPerfilFichero[];
-  /** Por qué no hay ficheros, cuando no los hay. Un array vacío sin explicación se lee mal. */
+  /** Why there are no files, when there are none. An empty array without explanation reads poorly. */
   aviso?: string;
 }
 
@@ -317,7 +308,7 @@ export interface AgentPerfilRuntimeAck {
   container_id: string | null;
 }
 
-/** Respuesta que permite afirmar que desired y runtime convergieron en la misma revisión. */
+/** Response that allows claiming desired and runtime converged on the same revision. */
 export interface AgentPerfilAplicado {
   ok: true;
   state: 'applied';

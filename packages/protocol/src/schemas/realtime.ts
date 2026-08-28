@@ -29,20 +29,18 @@ export const BaseAckSchema = z.object({
   epoch: z.number().int().positive(),
   retryable: z.boolean().default(false),
   /**
-   * El adaptador comprometió durablemente invocar el harness, no sólo admitió la entrega.
+   * The adapter durably committed to invoking the harness, not only admitted the delivery.
    *
-   * Hace falta porque el ACK `started` NO prueba ejecución: el SDK lo emite en
-   * `handleDelivery` antes de llamar al harness, y entre medio la entrega puede quedarse
-   * minutos esperando el candado de sesión sin gastar un centavo. El reaper usaba esa señal
-   * para decidir si una garra vencida podía haber tenido efectos; con `started` a secas mandaba a
-   * `dead` trabajo que nunca corrió — trabajo del usuario perdido para siempre.
+   * It is needed because the `started` ACK does NOT prove execution: the SDK emits it inside
+   * `handleDelivery` before calling the harness, and in between the delivery can sit for minutes waiting
+   * on the session lock without spending a cent. The reaper used that signal to decide whether an expired
+   * claim could have had effects; plain `started` sent to `dead` work that never ran — work lost forever.
    *
-   * El SDK nuevo la fsynca después de tomar la reserva y espera el receipt exacto del store antes
-   * de invocar. Un crash posterior puede haber ejecutado, por eso ya no admite retry automático.
+   * The new SDK fsyncs it after taking the reservation and waits for the exact receipt before invoking. A
+   * later crash may have executed, which is why automatic retry is no longer admitted.
    *
-   * OPCIONAL a propósito. Un adaptador viejo nunca la manda y el sistema tiene que seguir
-   * funcionando: sin la marca, el reaper vuelve al reintento de siempre. El error cae del lado
-   * caro (pagar dos veces) y nunca del lado que pierde trabajo.
+   * OPTIONAL on purpose. An older adapter never sends it; without the flag, the reaper falls back to the
+   * usual retry. The error falls on the expensive side (paying twice), never on the side that loses work.
    */
   execution_started: z.boolean().optional(),
   error: z.string().max(2_000).optional(),
@@ -160,23 +158,19 @@ export const DeliveryEnvelopeSchema = z.object({
   origin: OriginSchema.optional(),
   authenticated_context: AuthenticatedContextSchema.optional(),
   routing_targets: z.array(RoutingTargetSchema).max(100).optional(),
-  // Rol declarado del destinatario (agents.role_brief). El adaptador lo antepone al contrato como
-  // preámbulo de identidad. Opcional y detrás de la capability `agent_identity_v1` por el mismo
-  // motivo que routing_targets: este esquema es .strict(), así que un adaptador de una imagen
-  // anterior RECHAZARÍA el sobre entero si el store le mandara un campo que no conoce, y se
-  // quedaría sin poder consumir ninguna entrega. El tope espeja el CHECK de la migración 020 a
-  // través de `ROLE_BRIEF_MAX_CODE_POINTS`.
+  // Recipient's declared role (agents.role_brief). The adapter prepends it to the contract as an identity
+  // preamble. Optional and behind the `agent_identity_v1` capability for the same reason as routing_targets:
+  // this schema is .strict(), so an adapter from an earlier image would REJECT the entire envelope if the
+  // store sent it a field it does not know, and would be unable to consume any delivery. The cap mirrors
+  // the CHECK from migration 020 via `ROLE_BRIEF_MAX_CODE_POINTS`.
   //
-  // NO USAR `.max(ROLE_BRIEF_MAX_CODE_POINTS)`: el `.max()` de zod cuenta unidades UTF-16 y la
-  // columna de Postgres cuenta puntos de código. Un brief de 1200 puntos con emoji mide 1300 en
-  // UTF-16: el store lo acepta, el CHECK lo acepta, la pantalla dice «guardado»… y en la entrega
-  // siguiente `WsOutboundSchema.parse()` rechaza el sobre ENTERO por este campo. El alias deja de
-  // recibir y nadie ve un error. Por eso se cuenta con `countCodePoints`, y por eso el mensaje
-  // dice cuántos puntos de código se mandaron: si algún día vuelve a fallar, el número del error
-  // tiene que ser el mismo que el que cuenta la base, no el de UTF-16.
-  //
-  // `.min(1)` sí puede quedarse: en el borde del vacío las dos unidades coinciden (una cadena con
-  // 0 unidades UTF-16 tiene 0 puntos de código y viceversa).
+  // DO NOT USE `.max(ROLE_BRIEF_MAX_CODE_POINTS)`: zod's `.max()` counts UTF-16 units and the Postgres
+  // column counts code points. A brief of 1200 code points with emoji measures 1300 in UTF-16: the store
+  // accepts it, the CHECK accepts it, the screen says "saved"... and on the next delivery
+  // `WsOutboundSchema.parse()` rejects the ENTIRE envelope because of this field. The alias stops receiving
+  // and nobody sees an error. That is why we count with `countCodePoints`, and that is why the message
+  // says how many code points were sent: if it ever fails again, the error number must be the one the
+  // database counts, not UTF-16's. `.min(1)` can stay: at the empty boundary the two units agree.
   self_role: z.string().min(1).superRefine((text, ctx) => {
     const codePoints = countCodePoints(text);
     if (codePoints <= ROLE_BRIEF_MAX_CODE_POINTS) return;
@@ -193,12 +187,13 @@ export const DeliveryEnvelopeSchema = z.object({
 }).strict();
 
 /**
- * Vocabulario durable de por qué una salida `messages` NO se convirtió en delegación.
+ * Durable vocabulary for why a `messages` output did NOT become a delegation.
  *
- * Vive acá y no en el store que lo produce porque viaja en el frame `ack_result`: el adaptador
- * tiene que poder validarlo sin depender de `@cauce/store`. `DelegationRejectionCode` del store
- * se DERIVA de esta lista, así que agregar un código allá sin agregarlo acá no compila — que es
- * exactamente la deriva que dejó el frame fuera del esquema la primera vez.
+ * It lives here and not in the store that produces it because it travels in the `ack_result`
+ * frame: the adapter must be able to validate it without depending on `@cauce/store`. The store's
+ * `DelegationRejectionCode` is DERIVED from this list, so adding a code there without adding it
+ * here does not compile — which is exactly the drift that left the frame outside the schema the
+ * first time.
  */
 export const DELEGATION_REJECTION_CODES = [
   'invalid_output',
@@ -214,17 +209,18 @@ export const DELEGATION_REJECTION_CODES = [
 ] as const;
 
 /**
- * El destino rechazado es texto del AGENTE, no un alias validado: `unroutable_alias` existe
- * justamente para el `to` que no rutea, y `agentOutputEntries` lo copia tal cual. Por eso NO es
- * `AliasSchema` y por eso el store lo recorta a este largo antes de ponerlo en el frame: un tope
- * más chico que lo que el productor puede emitir volvería a tirar la conexión entera.
+ * The rejected destination is text from the AGENT, not a validated alias: `unroutable_alias`
+ * exists precisely for the `to` that does not route, and `agentOutputEntries` copies it as-is.
+ * That is why it is NOT `AliasSchema` and why the store trims it to this length before putting
+ * it in the frame: a cap smaller than what the producer can emit would tear down the whole
+ * connection again.
  */
 export const MAX_DELEGATION_REJECTION_TARGET_CHARS = 256;
 
 /**
- * `reason` de `chain_gated` incrusta la pregunta del gate, que la base acota a 8 KiB. El tope
- * tiene que quedar por ENCIMA de eso con aire, o el rechazo más largo que el store sabe generar
- * no pasaría su propio esquema.
+ * `reason` of `chain_gated` embeds the gate's question, which the database caps at 8 KiB. The
+ * cap must stay ABOVE that with room to spare, or the longest rejection the store knows how to
+ * generate would not pass its own schema.
  */
 export const MAX_DELEGATION_REJECTION_REASON_CHARS = 12_000;
 
@@ -239,9 +235,9 @@ export const DelegationRejectionSchema = z.object({
   reason: z.string().min(1).max(MAX_DELEGATION_REJECTION_REASON_CHARS),
   guidance: z.string().min(1).max(2_000),
   /**
-   * Índice de la salida rechazada. La expansión de `@all` lo desplaza a propósito
-   * (`maxAgentOutputMessages + index*100 + targetIndex`), así que acá no hay techo: sólo tiene
-   * que ser un entero no negativo.
+   * Index of the rejected output. The `@all` expansion deliberately shifts it
+   * (`maxAgentOutputMessages + index*100 + targetIndex`), so there is no ceiling here: it only
+   * has to be a non-negative integer.
    */
   output_index: z.number().int().min(0),
   target: z.string().min(1).max(MAX_DELEGATION_REJECTION_TARGET_CHARS).optional()
@@ -288,20 +284,20 @@ export const DelegationMaterializationsSchema = z.array(DelegationMaterializatio
 
 export const ChainGateSchema = z.object({
   gate_id: z.string().min(1).max(128),
-  /** Mismo techo que el CHECK de `agent_chain_gates.question`. */
+  /** Same cap as the CHECK on `agent_chain_gates.question`. */
   question: z.string().min(1).max(8_192)
 }).strict();
 
 /**
- * EL PERFIL Y LOS HECHOS TAL Y COMO VIAJAN POR EL CABLE.
+ * THE PROFILE AND FACTS AS THEY TRAVEL ON THE WIRE.
  *
- * Son los mismos campos que `AgentProfile` y `HechosDelAlias` de `agent-profile.ts`, escritos como
- * esquema porque el que llega por el socket es dato AJENO y hay que validarlo antes de escribirlo
- * en el disco de un contenedor. Los tipos de TS no comprueban nada en tiempo de ejecución, y lo
- * que se hace con esto es escribir ficheros que un modelo va a leer como autoritativos.
+ * They are the same fields as `AgentProfile` and `HechosDelAlias` from `agent-profile.ts`, written
+ * as a schema because what arrives over the socket is FOREIGN data and must be validated before
+ * writing it to a container's disk. TS types check nothing at runtime, and what we do with this
+ * is write files that a model will read as authoritative.
  *
- * `.strict()` en los dos: un campo de más es una señal de que las dos puntas no hablan la misma
- * versión, y ante eso vale más fallar el saludo que sembrar medio perfil.
+ * `.strict()` on both: an extra field is a sign the two ends do not speak the same version, and
+ * in that case it is better to fail the hello than to seed half a profile.
  */
 export const AgentProfileWireSchema = z.object({
   tenant_id: TenantSchema,
@@ -337,13 +333,13 @@ export const WsOutboundSchema = z.discriminatedUnion('type', [
     type: z.literal('hello_ack'), version: z.literal(PROTOCOL_VERSION),
     epoch: z.number().int().positive(), lease_expires_at: z.iso.datetime({ offset: true }),
     /*
-     * EL PERFIL DEL ALIAS, UNA VEZ POR CONEXIÓN Y NO POR ENTREGA.
+     * THE ALIAS PROFILE, ONCE PER CONNECTION AND NOT PER DELIVERY.
      *
-     * La configuración fija reside en el fichero del arnés. Viaja en el saludo inicial
-     * y no en cada sobre de entrega para minimizar la sobrecarga de transporte.
+     * The fixed configuration lives in the harness's file. It travels in the initial hello and
+     * not in each delivery envelope to minimize transport overhead.
      *
-     * Opcional en el esquema y gateado tras la capability `agent_profile_v1`
-     * para asegurar compatibilidad hacia atrás con adaptadores anteriores.
+     * Optional in the schema and gated behind the `agent_profile_v1` capability to ensure
+     * backward compatibility with earlier adapters.
      */
     agent_profile: z.object({
       perfil: AgentProfileWireSchema,
@@ -363,11 +359,11 @@ export const WsOutboundSchema = z.discriminatedUnion('type', [
     status: DeliveryStateSchema, applied: z.boolean(),
     receipt: z.enum(['applied', 'duplicate', 'superseded', 'ownership_lost']).optional(),
     /**
-     * Los dos campos de disciplina de delegación. Opcionales en el esquema y ADEMÁS gateados en
-     * el gateway detrás de `delegation_feedback_v1`: el esquema los hace válidos para quien los
-     * entiende, la capability evita mandárselos a quien no los pidió. Hacen falta las dos cosas
-     * porque un adaptador viejo valida con `.strict()` y, al fallar, mata la cola entera de la
-     * conexión — no descarta el frame.
+     * The two delegation discipline fields. Optional in the schema and ALSO gated in the gateway
+     * behind `delegation_feedback_v1`: the schema makes them valid for those who understand them,
+     * the capability prevents sending them to those who did not ask for them. Both are needed
+     * because an old adapter validates with `.strict()` and, on failure, kills the entire
+     * connection queue — it does not discard the frame.
      */
     delegation_rejections: z.array(DelegationRejectionSchema)
       .max(MAX_DELEGATION_FEEDBACK_ITEMS).optional(),

@@ -68,10 +68,10 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
       policy.leaseCapGraceMs, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, 'lease cap grace'
     );
     return withTransaction(this.pool, async (client) => {
-      // Proyección escalar sin window functions para compatibilidad con FOR UPDATE OF d.
-      // El techo se evalúa DOS veces (en la proyección y en el WHERE) con la misma expresión
-      // literal a propósito: son escalares sobre la fila que el SELECT ya trae bajo lock, no
-      // subconsultas y mucho menos funciones de ventana, así que conviven con `FOR UPDATE OF d`.
+      // Scalar projection without window functions, for compatibility with FOR UPDATE OF d. The ceiling
+      // is evaluated TWICE (in the projection and in the WHERE) with the same literal expression on
+      // purpose: they are scalars over the row the SELECT already brings under lock, not subqueries and
+      // certainly not window functions, so they coexist with `FOR UPDATE OF d`.
       const leaseCapExceeded = `${leaseCapInstantSql(`(${leaseCapMsSql('$3', '$4')})`)} <= now()`;
       const rows = await client.query<DeliveryRow & {
         execution_started: boolean;
@@ -96,10 +96,10 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
         [staleMs, limit, defaultCapMs, graceMs]
       );
       const chainPolicy = await this.loadChainPolicy(client);
-      // Quién tiene adaptador conectado AHORA. Va en una consulta aparte y no como subconsulta
-      // del SELECT de arriba a propósito: ese SELECT lleva `FOR UPDATE OF d` y es el camino
-      // caliente del reaper; la tabla de presencia tiene una fila por alias de la flota, así
-      // que traerla entera cuesta menos que correlacionarla por fila.
+      // Who has an adapter connected NOW. It is in a separate query and not as a subquery of the SELECT
+      // above, on purpose: that SELECT carries `FOR UPDATE OF d` and is the hot path of the reaper; the
+      // presence table has one row per fleet alias, so pulling it whole is cheaper than correlating it
+      // row by row.
       const consumidorVivo = new Set<string>();
       if (rows.rows.length > 0) {
         const presentes = await client.query<{ tenant_id: string; alias: string }>(
@@ -111,26 +111,26 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
       let dead = 0;
       let parked = 0;
       for (const row of rows.rows) {
-        // El adaptador confirmó que el harness ARRANCÓ: obtuvo la reserva de sesión y estaba a
-        // punto de invocarlo. Sólo con esa marca se retiene; "admitida y esperando el candado"
-        // no cuenta y se reintenta como siempre.
+        // The adapter confirmed the harness STARTED: it got the session reservation and was about to
+        // invoke it. Only with that flag is it retained; "admitted and waiting for the lock" does not
+        // count and is retried as usual.
         const heldForReview = row.execution_started && !retryStartedDeliveries;
         const attemptsExhausted = row.attempt >= row.max_attempts;
         const sinConsumidor = !consumidorVivo.has(
           `${row.recipient_tenant}\u0000${row.recipient_alias}`
         );
-        // El techo manda sobre las otras dos condiciones y sobre la palanca de emergencia: una
-        // entrega que estuvo horas renovando no se reintenta nunca, tenga o no la marca de
-        // ejecución y esté o no prendido `retryStartedDeliveries`.
+        // The ceiling overrides the other two conditions and the emergency lever: a delivery that kept
+        // renewing for hours is never retried, whether or not it has the execution flag and whether or
+        // not `retryStartedDeliveries` is on.
         const leaseCapExhausted = row.lease_cap_exceeded === true;
-        // R3. Gastar los tres intentos contra un alias sin adaptador conectado no es reintentar:
-        // no hubo ejecución. Se aparca y se le devuelve el intento. Las tres guardas son necesarias:
-        //  - `!heldForReview`: si consta que arrancó, manda la retención; no se toca.
-        //  - `!leaseCapExhausted`: el techo manda sobre todo lo demás.
-        //  - `sinConsumidor`: con un adaptador vivo del otro lado el fallo SÍ es del destino y
-        //    los intentos cuentan como siempre.
-        // El horizonte de edad evita la entrega inmortal: pasado ese tiempo muere, y ahora deja
-        // rastro en `audit_events`.
+        // R3. Spending all three attempts against an alias with no adapter connected is not retrying: no
+        // execution happened. It is parked and the attempt is refunded. All three guards are necessary:
+        //  - `!heldForReview`: if it is recorded that it started, retention wins; it is not touched.
+        //  - `!leaseCapExhausted`: the ceiling overrides everything else.
+        //  - `sinConsumidor`: with a live adapter on the other side the failure IS the destination's,
+        //    and the attempts count as usual.
+        // The age horizon prevents an immortal delivery: past that time it dies, and now it leaves a
+        // trail in `audit_events`.
         const sinConsumidorAparcable = parkWithoutConsumer
           && attemptsExhausted
           && !heldForReview
@@ -175,11 +175,11 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
           continue;
         }
         if (attemptsExhausted || heldForReview || leaseCapExhausted) {
-          // Cuando arrancó, ese es el motivo que le sirve al operador: le dice que la corrida
-          // pudo haber terminado y que reencolar cuesta plata. El de intentos agotados es
-          // secundario. El del techo va PRIMERO y con texto propio: "dejó de responder" y "no
-          // deja de responder" son diagnósticos opuestos y confundirlos manda al operador a
-          // buscar un adaptador caído que está perfectamente vivo.
+          // When it started, that is the reason that helps the operator: it tells them the run may have
+          // finished and re-enqueuing is expensive. Exhausted-attempts is secondary. The ceiling one goes
+          // FIRST and with its own wording: "stopped responding" and "won't stop responding" are opposite
+          // diagnoses and confusing them sends the operator looking for an adapter that is down while it is
+          // actually perfectly alive.
           const reason = leaseCapExhausted
             ? `Lease cap exhausted: delivery renewed its claim past the ${row.lease_cap_ms} ms`
               + ' total execution ceiling; held for manual replay'
@@ -208,10 +208,9 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
               reason
             );
           } catch (error) {
-            // Delivery already transitioned to dead above.
-            // If materialization fails (e.g., recipient membership issue in cross-tenant case),
-            // log and continue. This prevents a single bad delivery from crashing the entire
-            // reaper tick, which would block cleanup of all other alias deliveries.
+            // Delivery already transitioned to dead above. If materialization fails (e.g., recipient membership
+            // issue in cross-tenant case), log and continue. This prevents a single bad delivery from
+            // crashing the entire reaper tick, which would block cleanup of all other alias deliveries.
             console.error(JSON.stringify({
               event: 'materialization_failed_in_reaper',
               delivery_id: row.id,
@@ -225,8 +224,8 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
             && (row.body.type === 'agent.fanin' || !fanin.hasFanout)) {
             await this.insertOriginRelay(client, row, 'dead', { error: reason });
           }
-          // Todo final terminal se audita; la acción distingue techo de lease y timeout.
-          // Esa distinción conserva ambos conteos operativos.
+          // Every terminal ending is audited; the action distinguishes lease ceiling from
+          // timeout. That distinction keeps both operational counts.
           const action = leaseCapExhausted ? 'delivery.lease_cap' : 'delivery.ack_timeout';
           await client.query(
             `INSERT INTO audit_events(
@@ -241,25 +240,26 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
                 max_attempts: row.max_attempts,
                 attempts_exhausted: attemptsExhausted,
                 held_for_manual_replay: heldForReview || leaseCapExhausted,
-                // Iba sólo en la rama del techo y sirve en las tres: la única pregunta que
-                // importa al revisar una entrega muerta es si el harness llegó a correr.
+                // It used to live only in the ceiling branch and is useful in all three: the
+                // only question that matters when reviewing a dead delivery is whether the
+                // harness got to run.
                 execution_started: row.execution_started,
-                // Sin adaptador conectado y aun así muerta = superó el horizonte de aparcado.
-                // Es la señal de que el destino lleva demasiado tiempo ausente.
+                // No adapter connected and still dead = it exceeded the parking horizon. It is
+                // the signal that the destination has been away for too long.
                 no_consumer: sinConsumidor,
                 ...(leaseCapExhausted ? { lease_cap_ms: Number(row.lease_cap_ms) } : {})
               }), action]
           );
-          // Morir también libera un cupo de agents.max_concurrent_deliveries: la entrega sale de
-          // ('leased','accepted','started') igual que si hubiera terminado bien. La rama de retry
-          // de acá abajo ya despertaba al destinatario; ésta no, y sin techo daba lo mismo porque
-          // el reclamo previo se había llevado la cola entera de todas formas.
+          // Dying also frees a slot in agents.max_concurrent_deliveries: the delivery leaves
+          // ('leased','accepted','started') just as if it had finished normally. The retry
+          // branch below already wakes the recipient; this one does not, and without a ceiling
+          // it didn't matter because the previous claim had taken the whole queue anyway.
           //
-          // Con techo sí importa: si las entregas en vuelo de un alias mueren todas por timeout,
-          // el cupo queda libre, no va a llegar ningún ACK (por eso vencieron) y la cola pendiente
-          // se quedaría quieta hasta que alguien publique un mensaje nuevo. El wake cuesta una fila
-          // de outbox por entrega MUERTA — un evento raro, no uno por tick — y deja el invariante
-          // parejo: toda salida del conjunto en vuelo despierta al destinatario.
+          // With a ceiling it does matter: if every in-flight delivery of an alias dies by
+          // timeout, the slot is free, no ACK will arrive (which is why they expired) and the
+          // pending queue would sit still until someone publishes a new message. The wake costs
+          // one outbox row per DEAD delivery — a rare event, not one per tick — and keeps the
+          // invariant even: every exit from the in-flight set wakes the recipient.
           await client.query(
             `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
              VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)
@@ -270,8 +270,8 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
           );
           dead += 1;
         } else {
-          // Sólo se reintenta lo que nunca arrancó; el backoff evita solapar el proceso anterior.
-          // La marca execution_started_at pertenece al intento vencido y se limpia antes del siguiente.
+          // Only what never started is retried; the backoff avoids overlapping the previous process.
+          // The execution_started_at flag belongs to the expired attempt and is cleared before the next one.
           const backoffSeconds = timeoutRetryBackoffSeconds(row.attempt);
           await client.query(
             `UPDATE deliveries SET status='retry',last_ack_rank=0,claimed_at=NULL,claim_expires_at=NULL,
@@ -297,8 +297,8 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
   }
 
   /**
-   * Cuatro DELETE independientes conservan ventanas y locks separados.
-   * Cada DELETE usa `id IN (SELECT ... LIMIT n)` para acotar el lote sobre una base viva.
+   * Four independent DELETEs keep their windows and locks separate.
+   * Each DELETE uses `id IN (SELECT ... LIMIT n)` to bound the batch over a live base.
    */
   async pruneObservability(
     policy: ObservabilityRetentionPolicy = {}
@@ -313,9 +313,9 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
     const auditMs = positiveMs(policy.auditMs, DEFAULT_RETENTION_AUDIT_MS, 'audit retention');
     const batch = positiveMs(policy.batch, DEFAULT_RETENTION_BATCH, 'retention batch');
     const disposable = [...(policy.disposableAuditActions ?? DISPOSABLE_AUDIT_ACTIONS)];
-    // Una ventana de renovaciones MÁS LARGA que la general no borraría nada de más, pero sí
-    // volvería el barrido incomprensible al leer los números: la regla general ya se habría
-    // llevado las renovaciones antes. Falla acá, que es donde se configura.
+    // A renewal window LONGER than the general one would not delete more than necessary, but
+    // it would make the sweep incomprehensible when reading the numbers: the general rule would
+    // have already taken the renewals first. Fail here, where it is configured.
     if (ackRenewalMs > ackMs || auditRenewalMs > auditMs) {
       throw new StoreError(
         'conflict', 'renewal retention window cannot exceed the general retention window'
@@ -336,8 +336,8 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
             WHERE created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
         [ackMs, batch]
       ),
-      // Sólo las acciones de la lista blanca permiten podar renovaciones de audit.
-      // lease_renewed identifica el backlog histórico sin columna ni backfill.
+      // Only allowlisted actions may prune audit renewals. lease_renewed identifies the
+      // historical backlog without a column or backfill.
       audit_renewals: disposable.length === 0 ? 0 : await prune(
         `DELETE FROM audit_events WHERE id IN (
            SELECT id FROM audit_events
@@ -345,9 +345,9 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
               AND created_at < now()-$1*interval '1 millisecond' LIMIT $2)`,
         [auditRenewalMs, batch, disposable]
       ),
-      // Lista BLANCA de acciones. Ver `DISPOSABLE_AUDIT_ACTIONS`: borrar `audit_events` por edad
-      // a secas rompe el candado de idempotencia del replay y la marca de confianza de la
-      // cadena agente-a-agente, en silencio y con semanas de retraso.
+      // ALLOWLIST of actions. See `DISPOSABLE_AUDIT_ACTIONS`: deleting `audit_events` simply
+      // by age breaks the replay idempotency lock and the trust mark of the agent-to-agent
+      // chain, silently and with weeks of delay.
       audit_events: disposable.length === 0 ? 0 : await prune(
         `DELETE FROM audit_events WHERE id IN (
            SELECT id FROM audit_events

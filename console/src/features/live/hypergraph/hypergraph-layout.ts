@@ -1,17 +1,16 @@
 /**
- * Modelo y disposición del hipergrafo de topología.
+ * Topology hypergraph model and layout.
  *
- * Por qué un hipergrafo y no un grafo normal: en Cauce una *room* no relaciona pares de agentes,
- * relaciona a **todos sus miembros a la vez**. Dibujar eso con aristas de dos extremos obliga a
- * inventar N·(N-1)/2 líneas que no existen en el modelo — con 15 alias eso es una maraña ilegible
- * que además afirma vínculos que el backend nunca informó. Una hiperarista se dibuja como una sola
- * envolvente que contiene a sus miembros: una room, una forma. Un alias que pertenece a dos rooms
- * se dibuja **una sola vez** y las dos envolventes se solapan sobre él; ese solapamiento *es* el
- * dato interesante (quién es puente entre salas) y aparece solo, sin calcularlo aparte.
+ * Why a hypergraph and not a regular graph: in Cauce a *room* does not relate pairs of agents, it relates **all of
+ * its members at once**. Drawing that with two-ended edges forces inventing N·(N-1)/2 lines that do not exist in the
+ * model —with 15 aliases that is an unreadable tangle that also claims links the backend never reported. A hyperedge
+ * is drawn as a single envelope containing its members: one room, one shape. An alias that belongs to two rooms is
+ * drawn **only once** and the two envelopes overlap on it; that overlap *is* the interesting data (who bridges rooms)
+ * and appears on its own, without computing it separately.
  *
- * Todo acá es determinista a propósito: **no se usa `Math.random`**. Un layout que se reacomoda en
- * cada refresco obliga al operador a reorientarse cada 10 segundos y hace imposible comparar dos
- * capturas. Ante la misma entrada, esta función devuelve exactamente la misma salida.
+ * Everything here is deterministic on purpose: **`Math.random` is not used**. A layout that reshuffles on every
+ * refresh forces the operator to reorient themselves every 10 seconds and makes it impossible to compare two
+ * captures. Given the same input, this function returns exactly the same output.
  */
 
 import type { AclEdge, TopologySnapshot } from '../../../api/types';
@@ -72,56 +71,55 @@ export {
   type RawNode,
 } from './layout-nodes';
 
-/** Un alias. Existe una sola vez aunque pertenezca a varias rooms o tenants. */
+/** An alias. Exists only once even if it belongs to several rooms or tenants. */
 export interface HyperNode {
   alias: string;
-  /** Etiqueta a mostrar. `null` cuando el backend no informó alias (se muestra como UNKNOWN). */
+  /** Label to display. `null` when the backend did not report an alias (shown as UNKNOWN). */
   label: string | null;
-  /** `null` = el backend no lo informó. No se asume habilitado. */
+  /** `null` = the backend did not report it. It is not assumed enabled. */
   enabled: boolean | null;
-  /** Ids de tenant en los que aparece. Más de uno = el alias cruza tenants. */
+  /** Tenant ids where it appears. More than one = the alias crosses tenants. */
   tenants: string[];
-  /** Claves de las hiperaristas (rooms) que lo contienen. */
+  /** Keys of the hyperedges (rooms) that contain it. */
   edges: string[];
   x: number;
   y: number;
 }
 
-/** Una room: la hiperarista propiamente dicha. */
+/** A room: the hyperedge itself. */
 export interface HyperEdge {
   key: string;
   tenantId: string;
   tenantLabel: string | null;
   roomLabel: string | null;
-  /** Aliases miembros, en el orden estable en que se resolvieron. */
+  /** Member aliases, in the stable order they were resolved. */
   members: string[];
-  /** Miembros que el backend informó sin alias. Se cuentan, no se inventan. */
+  /** Members the backend reported without an alias. They are counted, not invented. */
   unknownMembers: number;
-  /** Contorno cerrado ya suavizado y con padding, listo para un `<path d>`. */
+  /** Closed outline already smoothed and padded, ready for a `<path d>`. */
   outline: string;
   /**
-   * Dónde colgar `#nombre-de-sala`.
+   * Where to hang `#room-name`.
    *
-   * **No es el centroide**, y esa es toda la diferencia entre un dibujo legible y uno ilegible: el
-   * centroide de una región es exactamente el sitio donde están los muñecos, así que la etiqueta
-   * caía siempre encima de alguno (`#ops.infra` sobre `zeus`, `#grp.isa` sobre `salva`). Acá se
-   * ancla sobre el **borde superior** de la región y después se separa de cualquier nodo y de
-   * cualquier otra etiqueta (`placeLabels`), así que el solapamiento no es "poco probable": no
-   * ocurre, y hay un test que lo afirma.
+   * **It is not the centroid**, and that is the whole difference between a legible drawing and an illegible one:
+   * the centroid of a region is exactly where the figures are, so the label always fell on top of one (`#ops.infra`
+   * over `zeus`, `#grp.isa` over `salva`). Here it is anchored to the **top edge** of the region and then separated
+   * from any node and any other label (`placeLabels`), so the overlap is not "unlikely": it does not happen, and
+   * there is a test that asserts it.
    */
   labelAnchor: Point;
   /**
-   * Los vértices del contorno antes de suavizar. Se exponen para poder afirmar en los tests que la
-   * región **realmente contiene a sus miembros**: una envolvente que deja un nodo afuera dibuja una
-   * pertenencia falsa, y eso es un error de datos disfrazado de detalle estético.
+   * The outline vertices before smoothing. They are exposed so tests can assert that the region **actually contains
+   * its members**: an envelope that leaves a node outside draws a false membership, and that is a data error disguised
+   * as an aesthetic detail.
    */
   hull: Point[];
   centroid: Point;
-  /** Índice estable 0..5 para elegir color sin depender del orden de render. */
+  /** Stable index 0..5 to pick a color without depending on render order. */
   hue: number;
 }
 
-/** Una arista ACL entre tenants: esa sí es binaria y dirigida. */
+/** An ACL edge between tenants: this one IS binary and directed. */
 export interface AclArc {
   key: string;
   fromTenant: string;
@@ -130,19 +128,19 @@ export interface AclArc {
   allowRoute: boolean | null;
   allowRead: boolean | null;
   allowControl: boolean | null;
-  /** Curva dirigida entre los centroides de los dos tenants. */
+  /** Directed curve between the centroids of the two tenants. */
   path: string;
-  /** Punto donde colgar la punta de flecha: el medio real de la Bézier. */
+  /** Point where to hang the arrow tip: the actual middle of the Bézier. */
   midpoint: Point;
   /**
-   * Dónde escribir `route · read · control`.
+   * Where to write `route · read · control`.
    *
-   * Sale del mismo reparto que las etiquetas de sala y de tenant. Antes se dibujaba en
-   * `midpoint.y - 9` a secas, y con seis aristas ACL cruzándose por el centro del dibujo el
-   * resultado eran tres textos apilados sobre `argos` y sobre el nombre de un tenant.
+   * It comes from the same layout pass as the room and tenant labels. Before it was drawn at `midpoint.y - 9`
+   * plainly, and with six ACL edges crossing through the center of the drawing the result was three stacked texts over
+   * `argos` and over a tenant name.
    */
   labelAnchor: Point;
-  /** Ángulo (grados) de la flecha en `midpoint`. */
+  /** Angle (degrees) of the arrow at `midpoint`. */
   angle: number;
 }
 
@@ -150,7 +148,7 @@ export interface TenantBlob {
   id: string;
   label: string | null;
   centroid: Point;
-  /** Igual que en `HyperEdge`: sobre el borde de arriba, ya separado de nodos y etiquetas. */
+  /** Same as in `HyperEdge`: on the top edge, already separated from nodes and labels. */
   labelAnchor: Point;
   roomCount: number;
   memberCount: number;
@@ -164,28 +162,28 @@ export interface HyperGraphModel {
   tenants: TenantBlob[];
   width: number;
   height: number;
-  /** Rooms sin ningún miembro informado: se listan aparte porque no se pueden dibujar como área. */
+  /** Rooms with no reported members: listed separately because they cannot be drawn as an area. */
   emptyEdges: string[];
 }
 
 export interface LayoutOptions {
   width?: number;
   height?: number;
-  /** Cuánto se infla la envolvente alrededor de sus nodos. */
+  /** How much the envelope is inflated around its nodes. */
   padding?: number;
-  /** Distancia mínima deseada entre dos nodos durante la relajación. */
+  /** Desired minimum distance between two nodes during relaxation. */
   nodeSpacing?: number;
   iterations?: number;
-  /** Caja real que ocupa cada nodo. La separación final la garantiza contra esto, no contra un radio. */
+  /** Actual box occupied by each node. The final separation is guaranteed against this, not against a radius. */
   footprint?: NodeFootprint;
-  /** Altura reservada arriba de todo para que quepan las etiquetas de sala. */
+  /** Height reserved at the very top so that room labels fit. */
   labelBand?: number;
 }
 
 /**
- * Construye el hipergrafo completo a partir del snapshot del control plane.
+ * Builds the full hypergraph from the control plane snapshot.
  *
- * Determinista: la misma entrada produce la misma salida, siempre.
+ * Deterministic: the same input produces the same output, always.
  */
 export function layoutHypergraph(
   snapshot: TopologySnapshot | undefined | null,
@@ -219,9 +217,7 @@ export function layoutHypergraph(
   const nodeList = [...rawNodes.values()];
   const positions = relax(nodeList, rawEdges, anchors, settings);
 
-  // La relajación deja *tendencia* a no encimarse; esto lo garantiza. Se hace antes de calcular las
-  // envolventes para que las regiones se dibujen sobre las posiciones definitivas y sigan
-  // conteniendo a sus miembros.
+  // Relaxation leaves a *tendency* to not overlap; this guarantees it. It runs before computing the envelopes so regions are drawn on the final positions and still contain their members.
   const box = settings.footprint;
   separate(
     nodeList.map((node) => node.alias),
@@ -261,8 +257,7 @@ export function layoutHypergraph(
 
     if (memberPoints.length === 0) emptyEdges.push(edge.key);
 
-    // Una room sin miembros dibujables se ancla en su órbita: se ve que existe y que está vacía,
-    // en vez de desaparecer del dibujo como si no estuviera configurada.
+    // A room with no drawable members is anchored in its orbit: you can see it exists and is empty, instead of disappearing from the drawing as if it were not configured.
     const basis = memberPoints.length > 0
       ? memberPoints
       : [anchors.get(edge.key) ?? { x: settings.width / 2, y: settings.height / 2 }];
@@ -282,8 +277,8 @@ export function layoutHypergraph(
       outline: closedSmoothPath(hull),
       hull,
       centroid: { x: round(centroid.x), y: round(centroid.y) },
-      // Ancla provisional: encima del borde superior de la región, horizontalmente centrada pero
-      // sin salirse de ella. `placeLabels` la corrige después si aun así pisara algo.
+      // Provisional anchor: above the top edge of the region, horizontally centered but without going outside it.
+      // `placeLabels` corrects it afterwards if it still overlaps something.
       labelAnchor: {
         x: round(Math.min(maxX - 8, Math.max(minX + 8, centroid.x))),
         y: round(topY - 8),
@@ -319,18 +314,17 @@ export function layoutHypergraph(
       if (from === null || to === null) return null;
       const a = tenantCentroid.get(from);
       const b = tenantCentroid.get(to);
-      // Una arista ACL hacia un tenant que la topología no describe no se dibuja: no hay dónde
-      // ponerla sin inventar un nodo. Sigue apareciendo en la tabla de aristas de abajo.
+      // An ACL edge towards a tenant that the topology does not describe is not drawn: there is nowhere to put it without inventing a node. It still appears in the edges table below.
       if (!a || !b) return null;
       if (from === to) return null;
 
       const pairKey = [from, to].sort().map(encodeURIComponent).join(SEP);
       const seen = seenPairs.get(pairKey) ?? 0;
       seenPairs.set(pairKey, seen + 1);
-      // La normal de la curva ya se invierte con el sentido de recorrido, así que la ida y la
-      // vuelta caen solas a lados opuestos: **no** hay que volver a invertir por orden lexicográfico
-      // (hacerlo cancela el efecto y las deja casi superpuestas). `seen` es lo único que hace falta,
-      // y sirve además para separar dos aristas repetidas del mismo par y mismo sentido.
+      // The curve's normal is already inverted by travel direction, so the outbound and the return fall on opposite
+      // sides on their own: there is **no** need to invert again by lexicographic order (doing so cancels the effect and
+      // leaves them almost on top of each other). `seen` is all that's needed, and it also serves to separate two
+      // repeated edges of the same pair and same direction.
       const bend = 46 + seen * 26;
 
       const geometry = arcBetween(a, b, bend);
@@ -350,19 +344,17 @@ export function layoutHypergraph(
     })
     .filter((arc): arc is AclArc => arc !== null);
 
-  // Reubicación de TODAS las etiquetas en una sola pasada, ya con los arcos ACL construidos.
+  // Relocation of ALL labels in a single pass, with the ACL arcs already built.
   //
-  // Salas, tenants y capacidades ACL compiten por el mismo espacio libre: resolver cada familia
-  // por su cuenta deja una encima de la otra, que es exactamente lo que pasaba (`#marcas.pablo`
-  // sobre `PABLO` sobre `DENEGADO`). Se colocan de arriba hacia abajo y cada etiqueta ya ubicada
-  // pasa a ser obstáculo de las siguientes, igual que los nodos.
+  // Rooms, tenants and ACL capabilities compete for the same free space: resolving each family on its own leaves
+  // one on top of another, which is exactly what was happening (`#marcas.pablo` over `PABLO` over `DENEGADO`). They
+  // are placed top to bottom and each already-placed label becomes an obstacle for the next ones, just like the nodes.
   const nodePoints = nodes.map((node) => ({ x: node.x, y: node.y }));
   const anchored = placeLabels(
     [
-      // `charWidth`/`lineHeight` son estimaciones del ancho del texto, no medidas: el layout corre
-      // antes de que exista un DOM donde medir. Se eligen por ARRIBA a propósito — sobrestimar
-      // separa de más (feo pero legible), subestimar deja una etiqueta encima de un muñeco, que es
-      // el defecto que esto vino a arreglar.
+// `charWidth`/`lineHeight` are estimates of text width, not measurements: the layout runs before any DOM exists to
+      // measure in. They are chosen generously on purpose —overestimating separates too much (ugly but legible),
+      // underestimating leaves a line on top of a figure, which is the defect this came to fix.
       ...tenants.map((tenant) => ({
         key: `tenant:${tenant.id}`,
         text: tenant.label ?? tenant.id,

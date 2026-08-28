@@ -6,20 +6,20 @@ import {
 } from '@cauce/protocol';
 
 /**
- * Vista previa y gestión del perfil del agente: genera y proyecta el contenido exacto
- * de los ficheros de gobierno (`CLAUDE.md`, `AGENTS.md`, espacios de trabajo de OpenClaw)
- * correspondientes a cada arnés a partir de `ficherosDelArnes()`.
+ * Preview and management of the agent profile: generates and projects the exact content of
+ * the governance files (`CLAUDE.md`, `AGENTS.md`, OpenClaw workspaces) for each harness
+ * from `ficherosDelArnes()`.
  */
 
-/** De dónde salen el perfil y los hechos. Inyectable para poder probar la ruta sin base. */
+/** Where the profile and facts come from. Injectable to test the route without a database. */
 export interface AgentProfileDeps {
-  /** Autentica al principal y exige el permiso de rol de la operación. */
+  /** Authenticates the principal and enforces the operation's role permission. */
   authorize(
     request: unknown, permission: 'read' | 'control'
   ): Promise<{ tenant_id: string; alias: string }>;
   /**
-   * Autoriza el par actor→destino usando la identidad CANÓNICA del destino. `undefined` no revela
-   * si el alias no existe o si la ACL lo oculta.
+   * Authorizes the actor→target pair using the CANONICAL identity of the target. `undefined`
+   * does not reveal whether the alias does not exist or the ACL hides it.
    */
   authorizeTarget(
     actor: { tenant_id: string; alias: string },
@@ -28,14 +28,14 @@ export interface AgentProfileDeps {
     permission: 'read' | 'control',
     legacySameTenant: boolean,
   ): Promise<{ tenant_id: string; alias: string; enabled?: boolean } | undefined>;
-  /** El perfil autorado más los hechos derivados y la presencia real de su fila. */
+  /** The authored profile plus derived facts and the actual presence of its row. */
   readContext(tenantId: string, alias: string): Promise<{
     contexto: ContextoDeAlias;
     exists: boolean;
     revision: number | null;
     applied_revision: number | null;
   }>;
-  /** CAS durable: NULL exige ausencia; número exige esa revisión exacta. */
+  /** Durable CAS: NULL requires absence; a number requires that exact revision. */
   replaceProfile?(
     profile: AgentProfile,
     expectedRevision: number | null,
@@ -51,8 +51,8 @@ export interface AgentProfileDeps {
     tenantId: string, alias: string, contexto: ContextoDeAlias,
   ): Promise<ProfileRuntimePreflight>;
   /**
-   * Persiste la expectativa exacta que viajará en entregas capability-aware. Sigue siendo
-   * evidencia de disco; sólo un ACK posterior del adaptador puede convertirla en adopción.
+   * Persists the exact expectation that will travel in capability-aware deliveries. It
+   * remains on-disk evidence; only a later ACK from the adapter can convert it into adoption.
    */
   recordRuntimeExpectation?(
     tenantId: string,
@@ -61,8 +61,8 @@ export interface AgentProfileDeps {
     verification: ProfileRuntimeVerification,
   ): Promise<void>;
   /**
-   * ACK emitido por el adaptador DESPUÉS de entregar el perfil a la TUI compartida. Un ACK de
-   * escritura del fichero no sustituye esta evidencia: el proceso pudo cargarlo horas antes.
+   * ACK emitted by the adapter AFTER delivering the profile to the shared TUI. A file-write
+   * ACK does not replace this evidence: the process could have loaded it hours earlier.
    */
   readRuntimeAdoption?(
     tenantId: string,
@@ -70,7 +70,7 @@ export interface AgentProfileDeps {
     revision: number,
     verification: ProfileRuntimeVerification,
   ): Promise<ProfileRuntimeAdoptionAck | undefined>;
-  /** Registra applied sólo después del ACK conductual del adaptador. */
+  /** Records applied only after the adapter's behavioral ACK. */
   markProfileApplied?(
     tenantId: string,
     alias: string,
@@ -90,9 +90,9 @@ export interface ProfileRuntimeAck {
   readonly state: 'written' | 'already_current' | 'preserved';
   readonly sha: string;
   readonly bytes: number;
-  /** Generación del runtime revalidada DESPUÉS del lote. */
+  /** Runtime generation revalidated AFTER the batch. */
   readonly generation: string;
-  /** Contenedor de esa misma presencia medida, cuando lo publicó. */
+  /** Container of that same measured presence, when it published it. */
   readonly container_id: string | null;
 }
 
@@ -130,13 +130,13 @@ export interface ProfileRuntimeAdoptionAck {
 export interface PreparedProfileRuntime {
   /** Durable profile revision rendered into the native file. */
   readonly revision: number;
-  /** Nombres exactos que el lote debe acreditar; no se aceptan ACK parciales ni extras. */
+  /** Exact names the batch must attest; partial or extra ACKs are not accepted. */
   readonly documents: readonly string[];
-  /** Arnés medido, que puede diferir de la columna declarada en la base. */
+  /** Measured harness, which may differ from the column declared in the database. */
   readonly harness: string;
-  /** Vista previa compuesta contra los bytes vivos, no contra un fichero imaginariamente vacío. */
+  /** Preview composed against live bytes, not against an imagined empty file. */
   readonly preview: readonly FicheroDeLaVistaPrevia[];
-  /** Evidencia viva ANTES del lote; `current` es requisito para un GET `applied`. */
+  /** Live evidence BEFORE the batch; `current` is required for a GET `applied`. */
   readonly verification: ProfileRuntimeVerification;
   apply(): Promise<readonly ProfileRuntimeAck[]>;
 }
@@ -146,7 +146,7 @@ export interface ProfileRuntimePreflight {
   materialize(revision: number): PreparedProfileRuntime;
 }
 
-/** De qué está compuesta la vista previa: nunca de una medición que no se hizo. */
+/** What the preview is composed of: never an unmeasured measurement. */
 export type BaseDeLaVistaPrevia = 'fichero-vacio' | 'runtime-medido';
 
 export interface FicheroDeLaVistaPrevia {
@@ -154,8 +154,8 @@ export interface FicheroDeLaVistaPrevia {
   readonly politica: FicheroGenerado['politica'];
   readonly texto: string;
   /**
-   * Unidades del texto, en la misma cuenta que usan el CHECK de Postgres y los topes de openclaw.
-   * Va medido desde el servidor para garantizar coherencia con la base.
+   * Units of the text, in the same count used by the Postgres CHECK and the openclaw
+   * ceilings. It is measured on the server to guarantee consistency with the database.
    */
   readonly unidades: number;
 }
@@ -163,37 +163,37 @@ export interface FicheroDeLaVistaPrevia {
 export interface RespuestaDelPerfil {
   readonly tenant_id: string;
   readonly alias: string;
-  /** Estado durable del registro de agente; editar/controlar uno apagado falla cerrado. */
+  /** Durable state of the agent record; editing/controlling a disabled one fails closed. */
   readonly agent_enabled: boolean;
-  /** Sale de la presencia de la fila, nunca de si los campos tienen contenido. */
+  /** Derives from the presence of the row, never from whether the fields have content. */
   readonly exists: boolean;
-  /** Revisión propia del perfil; NULL si la fila no existe. */
+  /** The profile's own revision; NULL if the row does not exist. */
   readonly revision: number | null;
-  /** Última revisión acreditada por el runtime. */
+  /** Latest revision attested by the runtime. */
   readonly applied_revision: number | null;
   readonly runtime_state:
     | 'absent' | 'pending' | 'pending_session_refresh' | 'applied' | 'disabled'
     | 'drifted' | 'runtime_unverified';
-  /** Evidencia viva; la igualdad de revisiones sin esto nunca produce `applied`. */
+  /** Live evidence; revision equality without this never produces `applied`. */
   readonly runtime_verification: ProfileRuntimeVerification | null;
-  /** Evidencia de adopción por la sesión, distinta del ACK de disco. */
+  /** Session adoption evidence, distinct from the on-disk ACK. */
   readonly runtime_adoption: ProfileRuntimeAdoptionAck | null;
   readonly runtime_reason?: string;
-  /** Proyección exacta que una entrega capability-aware recibe como `self_role`. */
+  /** Exact projection that a capability-aware delivery receives as `self_role`. */
   readonly self_role: string | null;
-  /** El arnés declarado en los hechos de base. `null` cuando el registro no dice ninguno. */
+  /** The harness declared in the base facts. `null` when the record declares none. */
   readonly harness: string | null;
   readonly perfil: AgentProfile;
   readonly hechos: ContextoDeAlias['hechos'];
   readonly limites: typeof AGENT_PROFILE_LIMITS;
-  /** Lo que mide el perfil entero contra su techo. El navegador pinta la barra con esto. */
+  /** What the whole profile measures against its ceiling. The browser draws the bar with this. */
   readonly medida: { readonly unidades: number; readonly tope: number };
   readonly base: BaseDeLaVistaPrevia;
   readonly ficheros: readonly FicheroDeLaVistaPrevia[];
   /**
-   * Por qué no hay ficheros, cuando no los hay. Un array vacío sin explicación se lee como «este
-   * alias no tiene contexto», y lo que pasa de verdad es que su arnés no es de los que Cauce sabe
-   * escribir — que es una cosa muy distinta y se arregla en otro sitio.
+   * Why there are no files, when there aren't any. An empty array without explanation reads as
+   * "this alias has no context", when what really happens is that its harness is not one
+   * Cauce knows how to write — which is a very different thing and is fixed elsewhere.
    */
   readonly aviso?: string;
 }
@@ -206,17 +206,17 @@ export interface PerfilAplicado {
   readonly revision: number;
   readonly applied_revision: number;
   readonly acknowledgements: readonly ProfileRuntimeAck[];
-  /** ACK conductual exacto que permitió avanzar `applied_revision`. */
+  /** Exact behavioral ACK that allowed advancing `applied_revision`. */
   readonly runtime_adoption: ProfileRuntimeAdoptionAck;
 }
 
 /**
- * Un tope superado NO es un 500: es una respuesta con el fichero y los dos números.
+ * A breached ceiling is NOT a 500: it is a response with the file and the two numbers.
  *
- * `ficherosDelArnes` lanza `ErrorDeTopeDelArnes` antes de devolver nada cuando un fichero de
- * openclaw —o la suma de los siete— se pasa de lo que ese arnés declara. Lanzar está bien: escribir
- * una persona a medias es peor que no escribirla. Pero el operador necesita saber CUÁL recortar, y
- * un 500 con «internal error» no se lo dice.
+ * `ficherosDelArnes` throws `ErrorDeTopeDelArnes` before returning anything when an openclaw
+ * file —or the sum of the seven— exceeds what that harness declares. Throwing is fine:
+ * writing a person halfway is worse than not writing them. But the operator needs to know
+ * WHICH one to trim, and a 500 with "internal error" does not tell them.
  */
 export interface TopeSuperado {
   readonly error: 'tope_del_arnes';
@@ -231,7 +231,7 @@ function esTopeSuperado(error: unknown): error is Error & { fichero: string; med
     && 'fichero' in error && 'medido' in error && 'tope' in error;
 }
 
-/** La misma cuenta que el CHECK de Postgres y que `String.length`. Ver `measureStrictestUnits`. */
+/** The same count as the Postgres CHECK and `String.length`. See `measureStrictestUnits`. */
 function unidades(texto: string): number {
   return Math.max([...texto].length, texto.length);
 }
@@ -397,9 +397,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
 
       try {
         /*
-         * `existentes` va VACÍO a propósito: el gateway no lee el disco del contenedor. Ver el
-         * encabezado — la respuesta lo declara en `base` para que la pantalla no pueda enseñar
-         * esto como «el fichero entero».
+         * `existentes` is intentionally EMPTY: the gateway does not read the container's
+         * disk. See the header — the response declares it in `base` so the screen cannot
+         * show this as "the whole file".
          */
         const generados = prepared?.preview
           ?? ficherosDelArnes(
@@ -726,7 +726,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     responderPut,
   );
 
-  // Compatibilidad acotada: sin tenant en la URL sólo puede significar el tenant del actor.
+  // Scoped backward compatibility: no tenant in the URL can only mean the actor's tenant.
   app.get<{ Params: LegacyParams }>(
     '/v3/console/agents/:alias/perfil',
     (request, reply) => responder(request, reply, true),

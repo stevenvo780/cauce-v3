@@ -7,10 +7,8 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Barrido de silencio en cadenas de delegación:
- *
- * Garantiza que una tarea iniciada por un humano reciba respuesta incluso si
- * ocurren fallos en ramas delegadas intermedias o si se requiere agregación de fan-in.
+ * Silence sweep in delegation chains: ensures a task started by a human receives a reply even when intermediate
+ * delegated branches fail or when fan-in aggregation is required.
  */
 
 let database: TestDatabase;
@@ -100,9 +98,9 @@ async function ackWith(
 }
 
 /**
- * El padre está muerto: su harness no vuelve, así que la continuación que le tocaba consumir
- * la termina matando el reaper. Es exactamente el estado en el que quedaron las 39 raíces
- * trabadas de producción, y el que hace que NADA vuelva a evaluar la cadena.
+ * The parent is dead: its harness does not return, so the continuation it was supposed to consume is finished off by
+ * the reaper. This is exactly the state the 39 stuck roots from production were left in, and what makes NOTHING
+ * re-evaluate the chain.
  */
 async function killOpenDeliveries(
   alias: string,
@@ -115,7 +113,7 @@ async function killOpenDeliveries(
   );
 }
 
-/** Corre el reloj hacia atrás para que el barrido vea la cadena con la edad que tendría. */
+/** Runs the clock backwards so the sweep sees the chain with the age it would have. */
 async function ageChain(interval: string): Promise<void> {
   await pool.query(`UPDATE messages SET created_at=created_at-$1::interval`, [interval]);
   await pool.query(
@@ -158,7 +156,7 @@ async function closureNotices(): Promise<ClosureNotice[]> {
   )).rows;
 }
 
-/** Respuestas finales que el humano llega a ver, de cualquier origen. */
+/** Final replies the human gets to see, from any origin. */
 async function finalRelays(): Promise<number> {
   return (await pool.query(
     `SELECT 1 FROM adapter_outbox
@@ -193,10 +191,9 @@ afterAll(async () => {
 });
 
 /**
- * argos delega en socrates; socrates VUELVE A DELEGAR (disposición `deferred`: nunca escribe
- * `agent_output.response`) y el nieto falla. `responsesRecorded` queda en 1 de 2 para siempre,
- * el fan-in no puede agendarse jamás y no queda ninguna entrega viva capaz de volver a
- * disparar la evaluación. Sin vigía, el humano no se entera nunca.
+ * argos delegates to socrates; socrates DELEGATES AGAIN (disposition `deferred`: never writes `agent_output.response`)
+ * and the grandchild fails. `responsesRecorded` stays at 1 of 2 forever, the fan-in can never be scheduled, and no
+ * live delivery remains that could re-trigger the evaluation. Without a watchdog, the human never finds out.
  */
 async function stuckRoot(conversation: string): Promise<string> {
   const argos = await consumer('Steven', 'argos');
@@ -206,7 +203,7 @@ async function stuckRoot(conversation: string): Promise<string> {
   await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'analizá esto' }]);
   await ackWith(socrates, await nextDelivery(socrates), [{ to: 'jarvis', body: 'hacelo vos' }]);
   await ackWith(jarvis, await nextDelivery(jarvis), [], 'no pude', 'failed');
-  // argos y socrates están muertos: sus continuaciones nunca se consumen.
+  // argos and socrates are dead: their continuations are never consumed.
   await killOpenDeliveries('socrates');
   await killOpenDeliveries('argos');
   return published.message_id;
@@ -216,9 +213,9 @@ describe('raíz trabada por el agujero de `deferred`', () => {
   it('vence, avisa al humano una sola vez y no puede volver a avisar', async () => {
     const root = await stuckRoot('chat-trabada');
 
-    // El silencio medido: la cadena entera terminó y el humano no recibió ni una respuesta.
+    // The measured silence: the whole chain ended and the human received not a single reply.
     expect(await finalRelays()).toBe(0);
-    // Y no hay nada que pueda cambiarlo: ninguna entrega viva, ningún fan-in agendado.
+    // And nothing can change that: no live delivery, no scheduled fan-in.
     expect(await faninMessages()).toBe(0);
 
     await ageChain('30 minutes');
@@ -236,13 +233,13 @@ describe('raíz trabada por el agujero de `deferred`', () => {
       reason: 'settled_without_fanin',
       conversation_id: 'chat-trabada',
       root_message_id: root,
-      // No es un ACK interino: el puente lo manda como relay final y cierra la reacción.
+      // Not an interim ACK: the bridge sends it as the final relay and closes the reaction.
       relay_kind: null
     });
     expect(notices[0]?.reply).toContain('quedó sin respuesta');
     expect(notices[0]?.reply).toContain('2 ramas delegadas');
 
-    // Idempotencia: el barrido corre cada minuto y la raíz sale del conjunto para siempre.
+    // Idempotency: the sweep runs every minute, and the root leaves the set forever.
     const second = await repository.sweepSilentChains();
     expect(second).toMatchObject({ scanned: 0, notified: 0 });
     const third = await repository.sweepSilentChains();
@@ -277,13 +274,13 @@ describe('raíz trabada por el agujero de `deferred`', () => {
   it('no toca una raíz que todavía no agotó su gracia', async () => {
     await stuckRoot('chat-fresca');
 
-    // Sin envejecer: la gracia de 15 min con la cadena quieta no se cumplió.
+    // Without aging: the 15-minute grace with the chain quiet was not met.
     expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
     await ageChain('14 minutes');
     expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
     expect(await closureNotices()).toHaveLength(0);
 
-    // Un minuto más y sí.
+    // One more minute and yes.
     await ageChain('2 minutes');
     expect(await repository.sweepSilentChains()).toMatchObject({ notified: 1 });
   });
@@ -310,8 +307,8 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
       `SELECT 1 FROM agent_output_materializations WHERE status='materialized'`
     )).rowCount).toBe(100);
 
-    // Las cien mueren. En producción esto pasa de a poco durante horas; el estado final es el
-    // mismo y es el que importa: cien muertes, ninguna respuesta, cero avisos.
+    // The hundred die. In production this happens slowly over hours; the final state is the
+    // same and is what matters: a hundred deaths, no reply, zero notices.
     await pool.query(
       `UPDATE deliveries SET status='dead',terminal_at=now(),updated_at=now(),
          last_error=CASE WHEN id IN (
@@ -332,7 +329,7 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
     expect(reply).toContain('100 murieron');
     expect(reply).toContain('ACK timeout: max attempts exhausted');
     expect(reply).toContain('(60)');
-    // Un aviso agregado tiene que caber en un mensaje, no en cien.
+    // An aggregated notice must fit in a single message, not a hundred.
     expect(Buffer.byteLength(reply, 'utf8')).toBeLessThanOrEqual(1_024);
     expect(await finalRelays()).toBe(1);
 
@@ -391,7 +388,7 @@ describe('la muerte profunda llega al humano sin depender de los padres', () => 
       [deepest.delivery_id]
     )).rows[0]?.hop_count).toBe(4);
 
-    // El salto 4 muere y NINGÚN padre sigue vivo para propagar la noticia hacia arriba.
+    // Hop 4 dies and NO parent remains alive to propagate the news upward.
     await killOpenDeliveries('vulcano', 'bwrap: No permissions to create a new namespace');
     for (const alias of ['seneca', 'jarvis', 'socrates', 'argos']) await killOpenDeliveries(alias);
     expect(await finalRelays()).toBe(0);
@@ -422,8 +419,8 @@ describe('destrabar es mejor que avisar', () => {
     ]);
     await ackWith(socrates, await nextDelivery(socrates), [], 'resultado de socrates');
     await ackWith(jarvis, await nextDelivery(jarvis), [], 'resultado de jarvis');
-    // Las dos ramas devolvieron, pero argos está muerto: sus continuaciones se mueren sin
-    // consumirse y con eso desaparece el último disparador posible del fan-in.
+    // Both branches returned, but argos is dead: its continuations die without being consumed
+    // and with them the last possible trigger of the fan-in disappears.
     expect(await faninMessages()).toBe(0);
     await killOpenDeliveries('argos');
     await ageChain('30 minutes');
@@ -442,10 +439,10 @@ describe('destrabar es mejor que avisar', () => {
 });
 
 /**
- * Recuperación de ramas que alcanzaron estado terminal sin pasar por el flujo de ACK estándar.
+ * Recovery of branches that reached a terminal state without going through the standard ACK flow.
  */
 describe('la rama incontable: terminal por fuera del ACK', () => {
-  /** El UPDATE directo: estado terminal sin ACK, sin auditoría, sin nada. */
+  /** The direct UPDATE: terminal state without ACK, without audit, without anything. */
   async function terminateOutsideAck(
     alias: string,
     status: 'done' | 'dead',
@@ -471,7 +468,7 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
     )).rows;
   }
 
-  /** Lo que el coordinador va a leer de cada rama en el fan-in. */
+  /** What the coordinator will read from each branch in the fan-in. */
   async function faninBranchTexts(): Promise<Record<string, string>> {
     const rows = (await pool.query<{ alias: string; text: string }>(
       `SELECT branch->>'alias' AS alias,branch->>'untrusted_text' AS text
@@ -482,7 +479,7 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
     return Object.fromEntries(rows.map((row) => [row.alias, row.text]));
   }
 
-  /** Una rama contestó de verdad; la otra la terminó a mano un operador. */
+  /** One branch actually replied; the other was terminated by hand by an operator. */
   async function chainWithForcedBranch(
     conversation: string,
     status: 'done' | 'dead',
@@ -497,15 +494,15 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
     ]);
     await ackWith(socrates, await nextDelivery(socrates), [], 'resultado de socrates');
     await terminateOutsideAck('jarvis', status, error);
-    // El coordinador dejó de consumir: sin esto la cadena tiene trabajo abierto y el vigía ni
-    // la mira. Es el estado en el que se descubrió el fallo.
+    // The coordinator stopped consuming: without this the chain has open work and the watchdog
+    // does not even look at it. This is the state in which the bug was discovered.
     await killOpenDeliveries('argos');
   }
 
   it('cuenta la rama terminada a mano y AGENDA el fan-in en vez de avisarle al humano', async () => {
     await chainWithForcedBranch('chat-incontable', 'done');
 
-    // El estado medido: el gate es insatisfacible y no queda nadie que pueda reevaluarlo.
+    // The measured state: the gate is unsatisfiable and no one remains who can re-evaluate it.
     expect(await faninMessages()).toBe(0);
     expect(await finalRelays()).toBe(0);
     await ageChain('30 minutes');
@@ -514,18 +511,20 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
 
     expect(swept).toMatchObject({ scanned: 1, faninRecovered: 1, notified: 0, skipped: 0 });
     expect(await faninMessages()).toBe(1);
-    // Al humano NO se le manda ningún aviso de fallo: la respuesta se la va a dar su agente.
+    // NO failure notice is sent to the human: their agent is the one that will give them the
+    // reply.
     expect(await closureNotices()).toHaveLength(0);
     expect(await syntheticResponses()).toEqual([{ outcome: 'done', alias: 'jarvis' }]);
 
-    // El coordinador recibe las dos ramas: la real con su texto, y la forzada con su desenlace
-    // —no con un «Agent response denied» de una respuesta que nadie denegó.
+    // The coordinator receives both branches: the real one with its text, and the forced one
+    // with its outcome — not with an "Agent response denied" from a reply no one denied.
     expect(await faninBranchTexts()).toEqual({
       socrates: 'resultado de socrates',
       jarvis: 'jarvis completed the delegated request without a textual reply.'
     });
 
-    // Idempotencia: la raíz ya tiene fan-in, el vigía no vuelve a tocarla ni duplica la fila.
+    // Idempotency: the root already has fan-in, the watchdog does not touch it again or
+    // duplicate the row.
     expect(await repository.sweepSilentChains()).toMatchObject({ faninRecovered: 0, notified: 0 });
     expect(await faninMessages()).toBe(1);
     expect(await syntheticResponses()).toHaveLength(1);
@@ -542,9 +541,9 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
   });
 
   /**
-   * El caso sano que NO se toca: mientras haya trabajo abierto de verdad, nadie inventa
-   * respuestas. Ni cuando la cadena todavía puede avanzar, ni cuando vence por inactividad: el
-   * aviso al humano tiene que seguir diciendo cuántas ramas contestaron DE VERDAD.
+   * The healthy case that is NOT touched: while there is real open work, nobody invents replies. Not when
+   * the chain can still advance, not when it expires from inactivity: the notice to the human must keep
+   * reporting how many branches actually replied.
    */
   it('no rellena nada mientras la cadena tenga trabajo abierto', async () => {
     const argos = await consumer('Steven', 'argos');
@@ -556,14 +555,14 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
     ]);
     await ackWith(socrates, await nextDelivery(socrates), [], 'resultado de socrates');
 
-    // jarvis sigue con su entrega abierta: manda el plazo largo, no la gracia de 15 min.
+    // jarvis still has its delivery open: the long deadline applies, not the 15-minute grace.
     await ageChain('5 hours');
     expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
     expect(await syntheticResponses()).toHaveLength(0);
     expect(await faninMessages()).toBe(0);
 
-    // A las 7 h sin avance se cierra por inactividad, y sigue sin rellenar: el humano lee que
-    // contestó UNA rama, que es la verdad.
+    // At 7 h with no progress it closes for inactivity, and still without filling anything: the
+    // human reads that ONE branch replied, which is the truth.
     await ageChain('2 hours');
     expect(await repository.sweepSilentChains()).toMatchObject({ faninRecovered: 0, notified: 1 });
     expect(await syntheticResponses()).toHaveLength(0);
@@ -577,8 +576,9 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
   });
 
   /**
-   * Y el otro caso sano: si NADA volvió, no hay nada que sintetizar. Rellenar acá cambiaría el
-   * aviso agregado con la causa dominante (la garantía P0-4) por un fan-in de ramas vacías.
+   * And the other healthy case: if NOTHING came back, there is nothing to synthesize. Filling
+   * in here would swap the aggregated notice with the dominant cause (the P0-4 guarantee) for
+   * a fan-in of empty branches.
    */
   it('no rellena una raíz donde ninguna rama devolvió nada', async () => {
     const argos = await consumer('Steven', 'argos');
@@ -615,14 +615,14 @@ describe('lo que el vigía NO debe tocar', () => {
     const argos = await consumer('Steven', 'argos');
     await repository.publish(telegramCommand('chat-viva'));
     await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'todavía trabajando' }]);
-    // La rama sigue abierta: manda el plazo de 6 h, no la gracia de 15 min. Un abanico lento
-    // no se cierra por impaciencia; el p99 medido de huecos sanos es 4,25 h.
+    // The branch is still open: the 6-hour deadline applies, not the 15-minute grace. A slow
+    // fan-out is not closed out of impatience; the measured p99 of healthy gaps is 4.25 h.
     await ageChain('5 hours');
 
     expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
     expect(await closureNotices()).toHaveLength(0);
 
-    // A las 7 h sin ningún avance sí se cierra, y el motivo lo dice.
+    // At 7 h with no progress at all it does close, and the reason says so.
     await ageChain('2 hours');
     expect(await repository.sweepSilentChains()).toMatchObject({ notified: 1 });
     expect((await closureNotices())[0]).toMatchObject({ reason: 'idle_timeout' });
@@ -637,7 +637,7 @@ describe('lo que el vigía NO debe tocar', () => {
 });
 
 describe('cómo se lee el aviso', () => {
-  /** Texto fijado a propósito: es lo único que el dueño llega a ver de una tarea muerta. */
+  /** Text fixed on purpose: it is the only thing the owner ever sees of a dead task. */
   it('es una línea con los conteos, la causa dominante y la raíz para pedir el detalle', async () => {
     const argos = await consumer('Steven', 'argos');
     const published = await repository.publish(telegramCommand('chat-muestra'));
@@ -662,10 +662,10 @@ describe('cómo se lee el aviso', () => {
     );
   });
 
-  /**
-   * Un `last_error` lo escribe un agente: es texto ajeno que termina en el chat del dueño.
-   * Se le quitan los controles y se lo acota, igual que a cualquier salida no confiable.
-   */
+/**
+ * A `last_error` is written by an agent: it is foreign text that ends up in the owner's chat. Controls are
+ * stripped and it is bounded, just like any untrusted output.
+ */
   it('sanea y acota el diagnóstico que escribió un agente', async () => {
     const argos = await consumer('Steven', 'argos');
     await repository.publish(telegramCommand('chat-sucio'));

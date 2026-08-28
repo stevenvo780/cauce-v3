@@ -276,3 +276,84 @@ it('ACK de disco sin adopción de TUI queda pendiente y no dice aplicado', async
   expect(await screen.findByText(/sesión compartida.*no acreditó recibir/i)).toBeInTheDocument();
   expect(screen.queryByText(/^Aplicado:/)).not.toBeInTheDocument();
 });
+
+/**
+ * EL DESTINO DE CADA CAMPO.
+ *
+ * El defecto que arreglan: la etiqueta decía «SOUL.md en openclaw» a un alias cuyo arnés es
+ * `claude` y cuyo único fichero es `CLAUDE.md`. Un rótulo que nombra un fichero que nadie va a
+ * escribir es peor que no poner rótulo: el operador cree saber dónde acaba lo que escribe.
+ */
+function rotuloDe(titulo: RegExp): string {
+  const caja = screen.getByLabelText(titulo);
+  return caja.closest('label')?.textContent ?? '';
+}
+
+async function abrirCon(overrides: Partial<AgentPerfil>) {
+  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, overrides))));
+  renderWithApi(<Vista />);
+  await screen.findByLabelText(/Identidad y propósito/i);
+}
+
+const FICHEROS_OPENCLAW_MOCK = [
+  'SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'HEARTBEAT.md', 'AGENTS.md', 'TOOLS.md',
+].map((nombre) => ({
+  nombre,
+  politica: nombre === 'MEMORY.md' || nombre === 'HEARTBEAT.md'
+    ? 'solo-si-falta' as const
+    : 'bloque-gestionado' as const,
+  texto: '', unidades: 0,
+}));
+
+it('un alias claude ve CLAUDE.md en los siete campos y NINGÚN fichero de openclaw', async () => {
+  await abrirCon({
+    harness: 'claude',
+    ficheros: [{ nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: '', unidades: 0 }],
+  });
+  for (const titulo of [
+    /Identidad y propósito/i, /Rol declarado/i, /Tu humano y cómo tratarlo/i,
+    /Responsabilidades/i, /Restricciones/i, /Herramientas/i,
+    /Instrucciones fijas de funcionamiento/i,
+  ]) {
+    expect(rotuloDe(titulo)).toContain('→ CLAUDE.md');
+  }
+  const editor = screen.getByText(/Perfil de kant/i).closest('section');
+  for (const ajeno of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'TOOLS.md', 'openclaw']) {
+    expect(editor?.textContent ?? '').not.toContain(ajeno);
+  }
+});
+
+it('un alias openclaw reparte los campos entre sus cinco ficheros gobernados', async () => {
+  await abrirCon({ harness: 'openclaw', ficheros: FICHEROS_OPENCLAW_MOCK });
+  expect(rotuloDe(/Identidad y propósito/i)).toContain('→ SOUL.md');
+  expect(rotuloDe(/Rol declarado/i)).toContain('→ IDENTITY.md');
+  expect(rotuloDe(/Tu humano y cómo tratarlo/i)).toContain('→ USER.md');
+  expect(rotuloDe(/Responsabilidades/i)).toContain('→ AGENTS.md');
+  expect(rotuloDe(/Restricciones/i)).toContain('→ AGENTS.md');
+  expect(rotuloDe(/^Herramientas/i)).toContain('→ TOOLS.md');
+  expect(rotuloDe(/Instrucciones fijas de funcionamiento/i)).toContain('→ AGENTS.md');
+});
+
+it('un alias codex junta los siete campos en AGENTS.md, sin nombrar ficheros ajenos', async () => {
+  await abrirCon({ harness: 'codex' });
+  expect(rotuloDe(/Identidad y propósito/i)).toContain('→ AGENTS.md');
+  expect(rotuloDe(/^Herramientas/i)).toContain('→ AGENTS.md');
+  expect(screen.getByText(/Perfil de kant/i).closest('section')?.textContent ?? '')
+    .not.toContain('TOOLS.md');
+});
+
+it('sin arnés declarado dice «sin dato» y lo explica una vez, en vez de adivinar openclaw', async () => {
+  await abrirCon({ harness: null, ficheros: [] });
+  expect(rotuloDe(/Identidad y propósito/i)).toContain('sin dato');
+  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent ?? '')
+    .toContain('no dice qué arnés');
+  expect(screen.getByText(/Perfil de kant/i).closest('section')?.textContent ?? '')
+    .not.toContain('SOUL.md');
+});
+
+it('un arnés que Cauce no sabe componer se marca «no aplica» y se nombra en la explicación', async () => {
+  await abrirCon({ harness: 'hermes', ficheros: [] });
+  expect(screen.getAllByLabelText('no aplica').length).toBe(7);
+  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent ?? '')
+    .toContain('hermes');
+});

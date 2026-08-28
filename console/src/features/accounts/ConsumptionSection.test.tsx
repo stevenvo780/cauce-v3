@@ -7,19 +7,18 @@ import { renderWithApi } from '../../test/render';
 import type { QuotaSnapshot } from '../../api/types';
 
 /**
- * "Cuentas y cuotas" es UNA vista con dos fuentes: `/v3/console/quotas` (consumo) y
- * `/v3/console/config` (inventario y ruteo). Estas pruebas existen sobre todo para que no vuelva a
- * partirse en dos: cada mitad tiene acá una afirmación que falla si alguien la muda a otra ruta o
- * la borra "porque ya estaba en la otra pantalla".
+ * "Accounts and quotas" is ONE view with two sources: `/v3/console/quotas` (consumption) and `/v3/console/config`
+ * (inventory and routing). These tests exist above all so it does not get split in two again: each half has an
+ * assertion here that fails if someone moves it to another route or deletes it "because it was already on the other
+ * screen".
  *
- * Se montan contra `AccountsPage` —el contenedor real, con sus pestañas— y NO contra
- * `ConsumptionSection` a solas: lo que  y una prueba que renderice
- * la sección suelta seguiría pasando el día que alguien la sacara de la página.
+ * They are mounted against `AccountsPage` —the real container, with its tabs— and NOT against `ConsumptionSection`
+ * alone: a test that renders the section on its own would keep passing the day someone took it out of the page.
  */
 
 const ACCOUNTS_HEADING = 'Cuentas y cuotas';
 
-/** Abre una pestaña por su rótulo y espera a que su panel esté montado. */
+/** Opens a tab by its label and waits for its panel to be mounted. */
 async function openTab(user: ReturnType<typeof userEvent.setup>, label: string) {
   await user.click(screen.getByRole('tab', { name: label }));
 }
@@ -86,7 +85,7 @@ const BASE: QuotaSnapshot = {
   ],
 };
 
-/** Inventario que engancha con BASE: dos cuentas que el recolector conoce y una que no. */
+/** Inventory that plugs into BASE: two accounts the collector knows and one it does not. */
 const CONFIG = {
   revision: 42,
   observed_at: '2026-08-06T02:55:00.000Z',
@@ -122,11 +121,11 @@ function panel(name: string): HTMLElement {
 }
 
 /**
- * Las etiquetas de métrica repiten títulos de panel ("Proveedores"): hay que acotar la búsqueda.
+ * Metric labels repeat panel titles ("Proveedores"): the search must be scoped.
  *
- * Y desde que la vista tiene pestañas hay DOS tiras de métricas montadas a la vez —la de consumo y
- * la de inventario—, con la inactiva en `hidden`. Buscar la primera del documento leería siempre la
- * misma: se busca dentro del panel abierto.
+ * And since the view has tabs, TWO strips of metrics are mounted at once —consumption and inventory— with the
+ * inactive one in `hidden`. Searching for the first one in the document would always read the same one: the search
+ * runs inside the open panel.
  */
 function metrics(): HTMLElement {
   const visible = Array.from(document.querySelectorAll('.view-tab-panel'))
@@ -143,12 +142,11 @@ it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones',
 
   await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
 
-  // Un solo encabezado de página: si alguien vuelve a partir esto en rutas separadas, la mitad que
-  // se vaya se lleva su panel y alguna de estas búsquedas deja de encontrarlo.
+  // A single page heading: if someone splits this back into separate routes, the half that leaves takes its panel with it and some of these searches stop finding it.
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   expect(panel('Proveedores')).toBeInTheDocument();
 
-  // Las ocho métricas de las vistas de cuota conviven: ninguna se perdió en la fusión.
+  // All eight metrics from the quota views coexist: none got lost in the merge.
   for (const label of [
     'Cuentas registradas', 'Con datos de cuota', 'Agentes', 'Recolectores conectados',
     'Proveedores', 'Peor remanente', 'Suscripciones pausadas', 'Grupos sin cuenta atada',
@@ -158,7 +156,7 @@ it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones',
 
   await openTab(user, 'Inventario');
   expect(panel('Inventario de cuentas')).toBeInTheDocument();
-  // Y las cuatro que sólo traía "Cuentas de IA".
+  // And the four that only "AI accounts" used to bring.
   for (const label of [
     'Cuentas visibles', 'Publicadas al pool', 'Habilitadas', 'Pagadas por otro tenant',
   ]) {
@@ -181,15 +179,14 @@ it('conserva entero el inventario de licencias: identidad, pagador, asignaciones
 
   expect(text).toContain('codex-pro-steven');
   expect(text).toContain('bengalfox@openai');
-  // Una cuenta que paga otro tenant no expone su id externo, y eso se dice con todas las letras.
+  // An account paid by another tenant does not expose its external id, and that is stated in full.
   expect(text).toMatch(/No visible: la paga Miguel/i);
   expect(within(inventory).getAllByText('PUBLICADA').length).toBeGreaterThan(0);
-  // El plan sale de la muestra de cuota, del lado del consumo: la fusión es lo que lo hace posible
-  // que se lea en la MISMA fila que la cuenta que lo tiene.
+  // The plan comes from the quota sample, on the consumption side: the merge is what makes it possible to read it in the SAME row as the account that has it.
   expect(within(inventory).getByRole('row', { name: /codex-pro-steven/ })).toHaveTextContent('pro');
 
-  // Quién usa la cuenta y con qué prioridad, y el techo: no existen en ninguna otra parte de la
-  // consola junto al saldo, y son la razón de ser de la fusión. Viven en el detalle de la fila.
+    // Who uses the account and with what priority, and the routing ceiling: they do not exist anywhere else in the
+    // console together with the balance, and they are the reason for the merge. They live in the row detail.
   await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
   const detail = panel('Inventario de cuentas').querySelector('.account-detail-row');
   expect(detail).not.toBeNull();
@@ -212,15 +209,15 @@ it('conserva entero el consumo: peor primero, una fila por grupo y el histórico
   expect(providers).not.toBeNull();
   if (providers) {
     const cards = within(providers).getAllByRole('heading', { level: 3 });
-    // codex está exhausted y opencode ok: el exhausted tiene que aparecer primero.
+    // codex is exhausted and opencode ok: the exhausted one must come first.
     expect(cards[0]).toHaveTextContent(/codex/i);
 
     const codexRow = within(providers).getByRole('row', { name: /codex pro/i });
     expect(within(codexRow).getByText('AGOTADO')).toBeInTheDocument();
     expect(within(codexRow).getByText('PAUSADA')).toBeInTheDocument();
     expect(codexRow.className).toContain('row-critical');
-    // 'codex' (agotado) y 'codex_bengalfox' (libre, sin cuenta) son filas separadas: un solo número
-    // por proveedor haría creer que hay saldo en la cuenta que justo no lo tiene.
+    // 'codex' (exhausted) and 'codex_bengalfox' (free, without account) are separate rows: a single number per provider
+    // would make it look like the account that does not have a balance has one.
     expect(within(providers).getByRole('row', { name: /sin cuenta/i })).toBeInTheDocument();
 
     const healthy = within(providers).getByRole('row', { name: /minimax/i });
@@ -237,8 +234,8 @@ it('la única representación gráfica es el sparkline: las barras duplicadas de
   renderWithApi(<AccountsPage />);
   await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
 
-  // Las tarjetas de cuenta dibujaban su propia barra de porcentaje con menos datos que la tabla de
-  // Proveedores: dos dibujos del mismo número en la misma página.
+    // The account cards used to draw their own percentage bar with less data than the Proveedores table: two drawings
+    // of the same number on the same page.
   expect(document.querySelectorAll('.windows-grid, .bar-container, .bar-fill')).toHaveLength(0);
   expect(document.querySelectorAll('.sparkline svg').length).toBeGreaterThan(0);
 });
@@ -252,12 +249,12 @@ it('junta las tres direcciones de huérfano en un solo panel de hallazgos', asyn
   expect(findings).not.toBeNull();
   if (findings) {
     const text = findings.textContent;
-    // 1) cuenta registrada que el recolector no conoce, 2) grupo observado sin cuenta atada —con su
-    // window_count, que es lo que la lista pobre de la otra vista no traía—, 3) agente sin binding.
+    // 1) registered account the collector does not know, 2) observed group with no bound account —with its window_count,
+    // which the leaner list from the other view did not bring—, 3) agent with no binding.
     expect(text).toContain('claude-max-saldantia');
     const unboundRow = within(findings).getByRole('row', { name: /codex_bengalfox/i });
     expect(unboundRow).toHaveTextContent('Sin account_id');
-    // window_count: la lista pobre de la vista de licencias no lo traía y la tabla de cuotas sí.
+    // window_count: the leaner list from the licenses view did not bring it and the quotas table did.
     expect(within(unboundRow).getAllByRole('cell')[3]).toHaveTextContent('1');
     expect(text).toContain('kant');
   }
@@ -268,8 +265,8 @@ it('marca desactualizado a un recolector viejo aunque el servidor lo declare fre
     ...BASE,
     collectors: [
       ...(BASE.collectors ?? []),
-      // stale:false pero 5.400 s de edad contra un umbral de 900: la vista de licencias aplicaba
-      // esta regla y la de cuotas no. Gana la estricta.
+      // stale:false but 5,400 s old against a 900 s threshold: the licenses view applied this rule and the quotas view
+      // did not. The stricter one wins.
       { host: 'ws-midas', collector_tenant: 'Pablo', collector_alias: 'quota-collector', captured_at: '2026-07-27T13:00:00.000Z', received_at: '2026-07-27T13:00:01.000Z', age_seconds: 5_400, stale: false, schema_version: 2, app_version: '0.11.4', provider_count: 1, window_count: 1 },
     ],
   });
@@ -282,13 +279,13 @@ it('marca desactualizado a un recolector viejo aunque el servidor lo declare fre
     expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
     expect(within(within(collectors).getByRole('row', { name: /ws-midas/i })).getByText('DESACTUALIZADO')).toBeInTheDocument();
   }
-  // Y se dice arriba, una sola vez, de qué muestra son los números de abajo.
+  // And it is said above, once, which sample the numbers below come from.
   expect(screen.getByText(/Muestra vieja\./)).toBeInTheDocument();
 });
 
 it('sin recolector NO inventa porcentajes: muestra el inventario y declara que no hay consumo', async () => {
-  // Éste es el estado REAL de producción: /v3/console/quotas devuelve todo vacío porque el
-  // recolector de kratos nunca se apuntó a POST /v3/quotas/samples.
+  // This is the REAL production state: /v3/console/quotas returns everything empty because the kratos collector never
+  // signed up for POST /v3/quotas/samples.
   mockBoth({
     observed_at: '2026-08-06T02:55:00.107Z',
     thresholds: { stale_after_seconds: 900 },
@@ -301,11 +298,11 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
 
   await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
 
-  // UNA sola vez. La causa es la misma para las tres cuentas, así que repetirla en cada tarjeta
-  // —que es lo que hacía el `reason` de alcance global— sólo consigue que se lea menos.
+  // ONCE. The cause is the same for all three accounts, so repeating it on each card —which is what the global-scope
+  // `reason` used to do— only makes it read less.
   expect(screen.getAllByText(/Ningún recolector reportó/)).toHaveLength(1);
 
-  // El inventario sigue siendo útil: la cuenta y a quién está asignada se ven igual.
+  // Inventory is still useful: the account and who it is assigned to show the same.
   const user = userEvent.setup();
   await openTab(user, 'Inventario');
   const inventory = panel('Inventario de cuentas');
@@ -313,9 +310,9 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
   expect(inventory.textContent).not.toContain('Ningún recolector reportó');
   await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
   expect(panel('Inventario de cuentas')).toHaveTextContent('claw-zeus');
-  // El motivo GLOBAL no se repite en el detalle: ya se declaró arriba una sola vez.
+  // The GLOBAL reason is not repeated in the detail: it was already declared once above.
   expect(document.querySelectorAll('.account-notice')).toHaveLength(0);
-  // Y el consumo está declarado como ausente, no como cero.
+  // And consumption is declared as absent, not as zero.
   expect(panel('Inventario de cuentas').textContent).not.toMatch(/\d+\s*%/);
 });
 
@@ -340,15 +337,15 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
 
   await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
   expect(screen.getByText(/Sonda caída\./)).toBeInTheDocument();
-  // El motivo aparece en el cartel agregado, en la tarjeta del proveedor y en la cuenta afectada:
-  // las tres son lecturas distintas del mismo `ok:false`, ninguna sobra.
+  // The reason shows up in the aggregated banner, in the provider card, and in the affected account: all three are
+  // different reads of the same `ok:false`, none is redundant.
   expect(screen.getAllByText(/dejó de responder/).length).toBeGreaterThan(0);
 
   expect(panel('Proveedores').textContent).not.toMatch(/\d+\s*%\s*libre/);
 
-  // El motivo por cuenta SÍ se queda cuando dice algo que el cartel de arriba no dice: que a esta
-  // cuenta la dejó sin número la sonda de SU proveedor, y que a esas otras el recolector ni las
-  // trajo. Vive en el detalle de cada fila del inventario, que es donde explica el hueco.
+  // The per-account reason DOES stay when it says something the banner above does not: that THIS account was left
+  // numberless by the probe of ITS provider, and that the others the collector did not even bring. It lives in the
+  // inventory row detail, where it explains the gap.
   const user = userEvent.setup();
   await openTab(user, 'Inventario');
   for (const id of ['codex-pro-steven', 'minimax-pool', 'claude-max-saldantia']) {
@@ -358,7 +355,7 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   expect(notices.filter((text) => text.includes('Sonda caída:'))).toHaveLength(1);
   expect(notices.filter((text) => text.includes('El recolector no reportó esta cuenta'))).toHaveLength(2);
 
-  // La garantía dura: ningún porcentaje inventado para una cuenta cuya sonda murió.
+  // The hard guarantee: no invented percentage for an account whose probe died.
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
   expect(inventory.textContent).not.toMatch(/\d+\s*%/);
@@ -374,10 +371,11 @@ it('si se cae el consumo, el inventario sigue en pantalla y hay un botón para r
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/cuotas caídas/i);
   expect(within(alert).getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
-  // Y no se afirma "ningún recolector reportó" cuando lo que pasó es que la respuesta no llegó.
+  // And it does not assert "ningún recolector reportó" when what happened is that the response never arrived.
   expect(screen.queryByText(/Ningún recolector reportó/)).not.toBeInTheDocument();
 
-  // Media consola caída no puede apagar la otra media: el inventario no depende de ese endpoint.
+  // Half the console down cannot take down the other half: the inventory does not depend on
+  // that endpoint.
   const user = userEvent.setup();
   await openTab(user, 'Inventario');
   expect(panel('Inventario de cuentas')).toHaveTextContent('codex-pro-steven');
@@ -396,6 +394,7 @@ it('si se cae el inventario, el consumo sigue en pantalla y lo dice sin listar c
 
   const user = userEvent.setup();
   await openTab(user, 'Inventario');
-  // Sin snapshot no hay inventario que listar, y se dice en vez de mostrar una tabla vacía.
+  // Without a snapshot there is no inventory to list, and that is said instead of showing an
+  // empty table.
   expect(panel('Inventario de cuentas')).toHaveTextContent(/No disponible/i);
 });

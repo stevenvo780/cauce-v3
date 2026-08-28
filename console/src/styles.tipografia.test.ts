@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { leerCss as leer } from './test/leer-css';
 import { sinComentarios } from './test/css-parser';
 
-/**
- * Validación de la escala tipográfica sobre las hojas de estilo:
- * asegura que los tokens estén disponibles en `:root` y que ninguna regla descienda del umbral mínimo.
- */
+/** Validation of the typography scale over the stylesheets: ensures tokens are available in `:root` and no rule falls below the minimum threshold. */
 
 const HOJAS = [
   'styles.css',
@@ -29,7 +26,7 @@ function tamanosDeLetra(css: string): { selector: string; valor: string }[] {
   return salida;
 }
 
-/** Las variables declaradas en el PRIMER bloque `:root` de una hoja: el bloque base. */
+/** The variables declared in the FIRST `:root` block of a stylesheet: the base block. */
 function tokensDeRoot(css: string): Map<string, string> {
   const limpio = sinComentarios(css);
   const inicio = limpio.search(/(^|})\s*:root\s*\{/);
@@ -56,29 +53,28 @@ function enPixeles(valor: string, escala: Map<string, string>, saltos = 0): numb
   const rem = /^(\d*\.?\d+)rem$/.exec(bruto);
   if (rem) return Number(rem[1]) * 16;
   /*
-   * `clamp(min, preferido, max)` se juzga por su MÍNIMO, que es el peor caso para la legibilidad:
-   * si el mínimo llega al suelo, no hay ancho de ventana en el que ese texto baje de ahí. Juzgarlo
-   * por el valor preferido sería medir contra un ancho que nadie garantiza.
+   * `clamp(min, preferred, max)` is judged by its MINIMUM, the worst case for readability: if the minimum bottoms out,
+   * there is no viewport width at which that text goes lower. Judging it by the preferred value would be measuring
+   * against a width nobody guarantees.
    */
   const clamp = /^clamp\(\s*([^,]+),/.exec(bruto);
   if (clamp) return enPixeles(clamp[1], escala, saltos + 1);
   return undefined;
 }
 
-/** El suelo. Es el valor configurado y la que ya rige en `/config`. */
+/** The floor. It is the configured value and what already rules in `/config`. */
 const SUELO = 12.5;
 
 /**
- * LA EXCEPCIÓN ESCRITA A MANO, y la única.
+ * THE HAND-WRITTEN EXCEPTION, and the only one.
  *
- * `.sidebar nav a` a `.6875rem` (11 px) dentro de `@media (max-width: 760px)` es la barra de
- * navegación de móvil. NO sale de la escala y no se toca: está medida contra el ancho real de las
- * ocho entradas a 360 px —cuatro columnas de reja, dos renglones por rótulo— y subirla vuelve a
- * pisar los rótulos entre sí, que es el defecto que ese bloque existe para haber arreglado.
+ * `.sidebar nav a` at `.6875rem` (11 px) inside `@media (max-width: 760px)` is the mobile navigation bar. It does NOT
+ * fall below the scale and is not touched: it was measured against the actual width of the eight entries at 360 px
+ * —four grid columns, two rows per label— and raising it makes the labels collide again, which is the bug that block
+ * was written to have fixed.
  *
- * Se anota como par (selector, valor) EXACTO y no como «perdonale todo a `.sidebar nav a`»: el
- * mismo selector tiene otra declaración en el bloque base (`.9rem`), y un perdón por selector la
- * dejaría entrar por la ventana.
+ * It is recorded as an EXACT (selector, value) pair and not as "forgive everything under `.sidebar nav a`": the same
+ * selector has another declaration in the base block (`.9rem`), and a per-selector forgiveness would let that one sneak in.
  */
 const EXCEPCIONES: readonly { selector: string; valor: string }[] = [
   { selector: '.sidebar nav a', valor: '.6875rem' },
@@ -88,18 +84,17 @@ const esExcepcion = (selector: string, valor: string) =>
   EXCEPCIONES.some((e) => e.selector === selector && e.valor === valor);
 
 /**
- * Toda la letra por debajo del suelo de un juego de hojas.
+ * Every letter below the floor of a set of stylesheets.
  *
- * Se le pasan las hojas como TEXTO —no las lee de disco— justamente para poder darle de comer una
- * hoja mutada y exigir que la repruebe. Un guardia que sólo sabe mirar el fichero de verdad no se
- * puede probar a sí mismo.
+ * The stylesheets are passed as TEXT —not read from disk— precisely so a mutated stylesheet can be fed in and forced to
+ * fail again. A guard that only knows how to look at the real file cannot test itself.
  */
 function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
   const escala = tokensDeRoot(hojas.join('\n'));
   const fallos: string[] = [];
   for (const hoja of hojas) {
     for (const { selector, valor } of tamanosDeLetra(hoja)) {
-      // `inherit`/`0` no declaran un tamaño propio: no hay nada que juzgar.
+      // `inherit`/`0` do not declare a font-size of their own: there is nothing to judge.
       if (/^(inherit|initial|unset|revert)$/.test(valor)) continue;
       if (esExcepcion(selector, valor)) continue;
       const px = enPixeles(valor, escala);
@@ -116,10 +111,9 @@ function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
 }
 
 /**
- * Esto NO es decoración. Es la razón por la que en este fichero no hay ninguna prueba de desborde,
- * y va escrito como aserto ejecutable para que sea un HECHO COMPROBADO en cada corrida y no una
- * creencia heredada de un comentario. Si algún día jsdom (o el entorno de vitest) empieza a hacer
- * layout, esta prueba se pone roja y nos dice que ya se puede escribir la prueba de desborde acá.
+ * This is NOT decoration. It is the reason this file has no overflow test, and it is written as an executable
+ * assertion so it is a PROVEN FACT on every run, not a belief inherited from a comment. If someday jsdom (or the vitest
+ * environment) starts doing layout, this test turns red and tells us the overflow test can finally be written here.
  */
 describe('la premisa: por qué la prueba de desborde NO vive en jsdom', () => {
   it('jsdom NO calcula layout: una caja forzada a desbordar 50 veces informa 0 y 0', () => {
@@ -132,11 +126,11 @@ describe('la premisa: por qué la prueba de desborde NO vive en jsdom', () => {
     caja.appendChild(hijo);
     document.body.appendChild(caja);
 
-    // `scrollWidth > clientWidth` es la comprobación de desborde de manual. Acá es `0 > 0`.
+    // `scrollWidth > clientWidth` is the textbook overflow check. Here it is `0 > 0`.
     expect(caja.scrollWidth, 'jsdom empezó a calcular scrollWidth').toBe(0);
     expect(caja.clientWidth, 'jsdom empezó a calcular clientWidth').toBe(0);
     expect(caja.scrollWidth > caja.clientWidth, 'el desborde MÁS grosero posible da falso').toBe(false);
-    // Y sin layout tampoco hay tamaño calculado que medir: `getComputedStyle` devuelve vacío.
+    // And without layout there is no computed size to measure either: `getComputedStyle` returns empty.
     expect(getComputedStyle(hijo).fontSize, 'jsdom empezó a resolver font-size').toBe('');
 
     caja.remove();
@@ -144,11 +138,11 @@ describe('la premisa: por qué la prueba de desborde NO vive en jsdom', () => {
 });
 
 /**
- * Estaba declarada en `.config-pagina`, o sea que sólo existía dentro de /config. Eso no es un
- * detalle de estilo: `features/config/toggles.css` YA citaba `var(--tipo-rotulo)` y
- * `var(--tipo-apunte)` en cinco reglas, y esas reglas se aplican también a componentes que se usan
- * fuera de /config, donde la variable no existía y el `font-size` entero se descartaba sin un solo
- * aviso. Una variable no declarada no hereda: la declaración se cae y manda la cascada de al lado.
+ * It used to be declared in `.config-pagina`, meaning it only existed inside /config. That is not a styling detail:
+ * `features/config/toggles.css` already cited `var(--tipo-rotulo)` and `var(--tipo-apunte)` in five rules, and those
+ * rules also apply to components used outside /config, where the variable did not exist and the whole `font-size` was
+ * dropped without a single warning. An undeclared variable does not inherit: the declaration falls through and the
+ * cascade next door wins.
  */
 const ESCALA = ['--tipo-titulo', '--tipo-panel', '--tipo-cuerpo', '--tipo-rotulo', '--tipo-apunte'];
 
@@ -192,10 +186,9 @@ describe('la escala tipográfica es GLOBAL', () => {
   });
 
   /**
-   * CONTROL NEGATIVO. La regresión más probable no es borrar los tokens: es volver a encerrarlos en
-   * un selector de página «porque ahí estaban». Se muta `:root` a `.config-pagina` y se exige que el
-   * lector deje de encontrarlos — que es exactamente lo que le pasaba al navegador en las otras
-   * siete vistas.
+   * NEGATIVE CONTROL. The most likely regression is not deleting the tokens: it is putting them back inside a page
+   * selector "because that's where they were". We mutate `:root` to `.config-pagina` and require the reader to stop
+   * finding them — which is exactly what happened to the browser in the other seven views.
    */
   it('CONTROL NEGATIVO — encerrar la escala en `.config-pagina` la vuelve invisible para el resto', () => {
     const roto = global.replace(/(^|\n):root \{/, '$1.config-pagina {');
@@ -203,7 +196,7 @@ describe('la escala tipográfica es GLOBAL', () => {
     expect(tokensDeRoot(roto).get('--tipo-cuerpo')).toBeUndefined();
   });
 
-  /** CONTROL NEGATIVO — una escala aplanada (cuerpo y rótulo iguales) no es una escala. */
+  /** NEGATIVE CONTROL — a flattened scale (body and label equal) is not a scale. */
   it('CONTROL NEGATIVO — marca una escala aplanada', () => {
     const plana = tokensDeRoot(global.replace('--tipo-rotulo: 13px', '--tipo-rotulo: 14px'));
     expect(plana.get('--tipo-rotulo')).toBe('14px');
@@ -222,24 +215,24 @@ describe('ninguna hoja de la consola declara letra por debajo del suelo', () => 
   });
 
   /**
-   * CONTROL NEGATIVO POR MUTACIÓN, con los valores EXACTOS que estaban desplegados y medidos:
-   * `.53rem` = 8,48 px en las insignias del adaptador, `.58rem` = 9,28 px en la barra de conexión,
-   * `.68rem` = 10,88 px en las cabeceras de tabla. Sin esto, `letraPorDebajoDelSuelo()` podría estar
-   * devolviendo `[]` porque no encuentra NINGUNA regla, y aprobaría cualquier hoja.
+   * NEGATIVE CONTROL BY MUTATION, with the EXACT values that were deployed and measured: `.53rem` = 8.48 px on the
+   * adapter badges, `.58rem` = 9.28 px on the connection bar, `.68rem` = 10.88 px on the table headers. Without this,
+   * `letraPorDebajoDelSuelo()` could be returning `[]` because it does NOT find ANY rule, and it would pass any
+   * stylesheet.
    */
   it('CONTROL NEGATIVO — marca los tamaños que estaban desplegados', () => {
     expect(letraPorDebajoDelSuelo(['.x { font-size: .53rem; }'])).toHaveLength(1);
     expect(letraPorDebajoDelSuelo(['.x { font-size: .58rem; }'])).toHaveLength(1);
     expect(letraPorDebajoDelSuelo(['.x { font-size: .68rem; }'])).toHaveLength(1);
-    // Y que el suelo sea el que se dijo: 12px NO alcanza, 12,5 sí.
+    // And that the floor is what was stated: 12px does NOT pass, 12.5 does.
     expect(letraPorDebajoDelSuelo(['.x { font-size: 12px; }'])).toHaveLength(1);
     expect(letraPorDebajoDelSuelo(['.x { font-size: 12.5px; }'])).toEqual([]);
   });
 
   /**
-   * CONTROL NEGATIVO del lector, no de la hoja: si `tamanosDeLetra()` dejara de ver las reglas de
-   * dentro de un `@media`, el guardia daría verde sobre una hoja rota. Ahí vive justamente la
-   * excepción de móvil, así que es el sitio donde más caro sale no mirar.
+   * NEGATIVE CONTROL of the reader, not the stylesheet: if `tamanosDeLetra()` stopped seeing the rules inside an
+   * `@media`, the guard would go green on a broken stylesheet. The mobile exception lives there, so this is where it
+   * costs the most to stop looking.
    */
   it('CONTROL NEGATIVO — el lector SÍ entra en los bloques `@media`', () => {
     expect(letraPorDebajoDelSuelo(['@media (max-width: 760px) { .x { font-size: .58rem; } }']))
@@ -247,9 +240,8 @@ describe('ninguna hoja de la consola declara letra por debajo del suelo', () => 
   });
 
   /**
-   * CONTROL NEGATIVO de la resolución de tokens: si `var(--tipo-apunte)` dejara de resolverse, el
-   * guardia lo reportaría como «no se sabe resolver» en vez de tragárselo en silencio. Un valor que
-   * no se entiende NO puede contar como aprobado.
+   * NEGATIVE CONTROL of token resolution: if `var(--tipo-apunte)` stopped resolving, the guard would report it as
+   * "cannot be resolved" instead of swallowing it silently. A value that is not understood cannot count as approved.
    */
   it('CONTROL NEGATIVO — un `var()` que no existe se denuncia, no se aprueba', () => {
     expect(letraPorDebajoDelSuelo(['.x { font-size: var(--tipo-inventado); }']))
@@ -296,9 +288,9 @@ describe('la barra de navegación de móvil conserva su excepción medida', () =
   });
 
   /**
-   * El comentario NO es adorno: es el único sitio donde consta por qué ese número no sube con el
-   * resto. Sin él, el próximo barrido de tipografía lo «arregla» y vuelven a pisarse los ocho
-   * rótulos a 360 px. Se guarda el texto medido, no la palabra suelta.
+   * The comment is NOT decoration: it is the only place that records why that number does not go up with the rest.
+   * Without it, the next typography sweep will "fix" it and the eight labels will collide again at 360 px. The measured
+   * text is kept, not the lone word.
    */
   it('el comentario que explica por qué NO se toca sigue en la hoja', () => {
     expect(global).toContain('360');

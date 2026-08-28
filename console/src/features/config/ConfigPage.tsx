@@ -31,10 +31,10 @@ const templates: Record<ConfigResource, ConfigMutation> = {
   room: { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
   membership: { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
   acl_edge: { resource: 'acl_edge', action: 'create', from_tenant: 'Acme', to_tenant: 'Steven', value: { enabled: true, allow_route: false, allow_read: false, allow_control: false } },
-  // Sin `command`, igual que el paso de harness del wizard: la columna se guarda y no la lee ningún
-  // camino de ejecución (ver `campos-inertes.ts`). El esquema la sigue aceptando —quien la necesite
-  // la escribe a mano acá mismo, que para eso es la válvula de escape—, pero la plantilla ya no la
-  // ofrece rellena: una plantilla es una sugerencia, y no se sugiere lo que no hace nada.
+  // No `command`, same as the harness step of the wizard: the column is stored and no execution path reads it (see
+  // `campos-inertes.ts`). The schema still accepts it—whoever needs it writes it by hand right here, that is what
+  // the escape hatch is for—, but the template no longer offers it pre-filled: a template is a suggestion, and we
+  // don't suggest what does nothing.
   harness: { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
   role_policy: { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_route: false, allow_read: false, allow_control: false } },
   chain_policy: { resource: 'chain_policy', action: 'update', id: 'default', value: { progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true } },
@@ -49,10 +49,10 @@ const templates: Record<ConfigResource, ConfigMutation> = {
   },
 };
 
-/**
- * `chain_policy` es un singleton: `ChainPolicyConfigMutationSchema` sólo acepta `update` sobre el id
- * `default`. Ofrecer create/delete sería mandar al operador a un 400 seguro.
- */
+  /**
+   * `chain_policy` is a singleton: `ChainPolicyConfigMutationSchema` only accepts `update` on the `default` id.
+   * Offering create/delete would be sending the operator straight into a sure 400.
+   */
 const actionsByResource: Partial<Record<ConfigResource, readonly ConfigAction[]>> = {
   chain_policy: ['update'],
 };
@@ -62,12 +62,11 @@ function actionsFor(resource: ConfigResource): readonly ConfigAction[] {
   return actionsByResource[resource] ?? allActions;
 }
 
-/**
- * Todo lo que `ConfigMutationSchema` acepta en el servidor, incluidos los recursos del registro que
- * tienen su propia pantalla. La consola no debe ser un segundo allowlist que se queda atrás del
- * protocolo: acá sólo se descarta lo que el servidor rechazaría igual, y la autoridad sigue siendo
- * el zod del gateway más el RBAC de `authorizeMutation`.
- */
+  /**
+   * Everything `ConfigMutationSchema` accepts on the server, including registry resources that have their own screen.
+   * The console must not be a second allowlist that lags behind the protocol: here we only discard what the server
+   * would reject anyway, and the authority is still the gateway's zod plus the RBAC of `authorizeMutation`.
+   */
 const RESOURCES: readonly AnyConfigResource[] = [
   'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy',
   'chain_policy', 'egress_destination',
@@ -92,31 +91,30 @@ function parseMutation(text: string): ConfigMutation {
   return mutation as ConfigMutation;
 }
 
-/**
- * Aviso de una acción de tabla, atado a la colección donde el operador hizo clic Y a la revisión
- * del snapshot bajo la que es verdad. Sin la revisión el cartel sobrevivía a lo que lo desmiente:
- * seguía afirmando «las tablas están en la revisión 2» después de que otra escritura —el alta, el
- * wizard, el editor crudo, un rollback— las movió a la 3.
- */
+  /**
+   * Notice for a table action, bound to the collection where the operator clicked AND to the snapshot revision under
+   * which it is true. Without the revision, the notice outlived what disproved it: it kept asserting "the tables are at
+   * revision 2" after another write—the onboarding, the wizard, the raw editor, a rollback—moved them to 3.
+   */
 interface AvisoDeAccion extends AvisoDeColeccion {
   coleccion: string;
   revision: number | undefined;
 }
 
-/**
- * La acción que espera confirmación MÁS la revisión sobre la que se pidió. Una confirmación
- * pendiente describe la fila TAL COMO ESTABA: si el snapshot se movió debajo (otro operador, o el
- * propio botón «Actualizar»), lo que el operador leyó en el `<pre>` ya no es lo que hay, y mandarlo
- * igual con la revisión nueva aplica una mutación que nadie firmó.
- */
+  /**
+   * The action awaiting confirmation PLUS the revision on which it was requested. A pending confirmation describes the
+   * row AS IT STOOD: if the snapshot moved underneath (another operator, or the "Refresh" button itself), what the
+   * operator read in the `<pre>` is no longer what is there, and sending it anyway with the new revision applies an
+   * unsigned mutation.
+   */
 interface AccionPendienteVigente extends AccionPendiente {
   revision: number | undefined;
 }
 
-/**
- * La revisión que el snapshot tiene DESPUÉS de una escritura. Si la relectura llegó, la revisión
- * que trajo es la que la pantalla está pintando; si no llegó, el snapshot se quedó donde estaba.
- */
+  /**
+   * The revision the snapshot has AFTER a write. If the reread arrived, the revision it brought is what the screen is
+   * painting; if it did not, the snapshot stayed where it was.
+   */
 function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number | undefined): number | undefined {
   if (recarga?.releido) return recarga.revision;
   return actual;
@@ -135,21 +133,20 @@ export function ConfigPage() {
   const [chainedRevision, setChainedRevision] = useState<number>();
   const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
   const [avisoDeAccion, setAvisoDeAccion] = useState<AvisoDeAccion>();
-  // El audit trail tiene sus PROPIOS avisos y su propio preview. Antes `rollback()` escribía en
-  // `notice`/`preview`, que se pintan dentro del `<details>` del editor crudo —cerrado por
-  // defecto—: el POST viajaba, el servidor contestaba 201, y la pantalla no decía absolutamente
-  // nada. Un rollback que falla se veía EXACTAMENTE igual que uno que funciona. El desenlace de
-  // una escritura se pinta junto al control que la disparó y sin abrir nada.
+  // The audit trail has its OWN notices and its own preview. Previously `rollback()` wrote to `notice`/`preview`, which
+  // render inside the raw editor's `<details>`—closed by default—: the POST went out, the server answered 201, and
+  // the screen said absolutely nothing. A failing rollback looked EXACTLY like a working one. The outcome of a write
+  // is painted next to the control that fired it, without opening anything.
   const [avisoDeRollback, setAvisoDeRollback] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   const [previewDeRollback, setPreviewDeRollback] = useState<string>();
-  // La pestaña abierta. `/config` era UN scroll con dieciséis paneles seguidos —el alta, el wizard,
-  // el editor crudo, doce tablas y el audit trail— y para tocar una arista de ACL había que pasar
-  // por delante del pool de suscripciones de IA. Lo que cambia es el ORDEN, no el alcance: no se
-  // esconde ninguna colección, cada una tiene su pestaña y las desconocidas caen en «Otros».
+  // The open tab. `/config` used to be A single scroll with sixteen panels in a row—the onboarding, the wizard, the
+  // raw editor, twelve tables, and the audit trail—and touching an ACL edge required scrolling past the AI
+  // subscription pool. What changes is the ORDER, not the scope: no collection is hidden, each one gets its own tab,
+  // and unknown ones fall under "Others".
   const [area, setArea] = useState<ConfigAreaId>(AREA_POR_DEFECTO);
-  // Navegar y leer siguen disponibles con RBAC `unknown`, pero escribir falla cerrado. Un error de
-  // recarga invalida también un ALLOW anterior: conservarlo habilitaría mutaciones justo cuando ya
-  // no se puede acreditar que `config.write` siga vigente.
+  // Navigating and reading remain available under RBAC `unknown`, but writing fails closed. A reload error also
+  // invalidates a previous ALLOW: keeping it would enable mutations precisely when we can no longer attest that
+  // `config.write` is still in force.
   const estadoPermisoDeEscritura = access.error
     ? 'unknown'
     : permissionState(access.data, 'config.write');
@@ -160,27 +157,24 @@ export function ConfigPage() {
       : undefined;
   const soloLectura = motivoDeSoloLectura !== undefined;
   const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
-  // El wizard encadena mutaciones y la recarga del snapshot es asíncrona: hasta que ésta alcanza
-  // la revisión que devolvió el último apply, esa revisión es la única esperada verdadera.
+  // The wizard chains mutations and the snapshot reload is asynchronous: until it catches up to the revision the last apply returned, that revision is the only one expected to be true.
   const expectedRevision = chainedRevision !== undefined
     && (snapshotRevision === undefined || snapshotRevision < chainedRevision)
     ? chainedRevision
     : snapshotRevision;
   const groups = useMemo(() => configCollections(config.data), [config.data]);
   const areas = useMemo(() => agruparPorArea(groups), [groups]);
-  // Una pestaña que el snapshot dejó de justificar («Otros», al desaparecer la colección
-  // desconocida) no debe dejar la pantalla en blanco: se cae a la de por defecto.
+  // A tab the snapshot no longer justifies ("Others", once the unknown collection disappears) must not leave the screen blank: it falls back to the default one.
   const areaVisible = areas.some((entrada) => entrada.area.id === area) ? area : AREA_POR_DEFECTO;
   const activa = areas.find((entrada) => entrada.area.id === areaVisible);
   const politicasDeRol = config.data?.role_policies ?? undefined;
   /**
-   * Los interruptores de las tablas. Escriben por el MISMO `change()` que el editor crudo, el
-   * wizard y el alta —o sea, `POST /v3/console/config/changes` con `expected_revision`—, así que no
-   * hay un segundo camino de escritura que pueda quedarse atrás del primero. Lo que el hook agrega
-   * es el comportamiento optimista y, sobre todo, la REVERSIÓN cuando el servidor rechaza.
+   * The switches in the tables. They write through the SAME `change()` as the raw editor, the wizard, and the
+   * onboarding—that is, `POST /v3/console/config/changes` with `expected_revision`—so there is no second write path
+   * that can lag behind the first. What the hook adds is optimistic behavior and, above all, REVERSION when the
+   * server rejects.
    *
-   * `camino: 'directo'`: un interruptor no previsualiza nada, así que un 409 no puede mandar a
-   * «volver a previsualizar».
+   * `camino: 'directo'`: a switch does not preview anything, so a 409 cannot redirect to "back to preview".
    */
   const interruptores = useInterruptores(
     (mutation) => change(mutation, false, 'directo'),
@@ -188,12 +182,11 @@ export function ConfigPage() {
   );
 
   /**
-   * Cambiar de pestaña anula la confirmación pendiente y borra los carteles de desenlace.
+   * Switching tabs cancels the pending confirmation and clears outcome notices.
    *
-   * Una confirmación describe UNA fila de UNA tabla y se pinta junto a ella; si el operador se va a
-   * otra pestaña, el `<pre>` que estaba leyendo deja de estar a la vista y volver más tarde le
-   * mostraría un «Confirmar» cuyo contenido ya no recuerda. Lo mismo con los verdes: valen para la
-   * pantalla que los produjo.
+   * A confirmation describes ONE row in ONE table and is painted next to it; if the operator moves to another tab, the
+   * `<pre>` they were reading is no longer in view, and returning later would show them a "Confirm" whose content
+   * they no longer remember. Same with the green ones: they are valid only for the screen that produced them.
    */
   function irAArea(siguiente: ConfigAreaId) {
     setArea(siguiente);
@@ -203,20 +196,19 @@ export function ConfigPage() {
   }
 
   function selectTemplate(nextResource: ConfigResource, nextAction: ConfigAction) {
-    // Cambiar de recurso puede dejar la acción fuera de lo que ese recurso admite (chain_policy
-    // sólo acepta update): se cae a la primera acción válida en vez de armar una mutación imposible.
+    // Switching resource can leave the action outside what that resource supports (chain_policy only accepts update):
+    // it falls back to the first valid action instead of building an impossible mutation.
     const actions = actionsFor(nextResource);
     const validAction = actions.includes(nextAction) ? nextAction : actions[0];
     setResource(nextResource);
     setAction(validAction);
     setEditor(mutationText(nextResource, validAction));
-    // El preview y el aviso valían para la mutación ANTERIOR. Dejar el verde de «aplicado» debajo
-    // de un JSON distinto lo convierte en una afirmación sobre algo que el servidor nunca vio.
+    // The preview and notice were for the PREVIOUS mutation. Leaving the "applied" green under a different JSON turns it into an assertion about something the server never saw.
     setPreview(undefined);
     setNotice(undefined);
   }
 
-  /** Tocar el JSON invalida lo que se dijo del JSON anterior: mismo motivo que `selectTemplate`. */
+  /** Editing the JSON invalidates what was said about the previous JSON: same reason as `selectTemplate`. */
   function editarMutacion(texto: string) {
     setEditor(texto);
     setPreview(undefined);
@@ -224,10 +216,9 @@ export function ConfigPage() {
   }
 
   /**
-   * Relee el snapshot y ESPERA el dato. Se llama después de toda escritura y después de todo
-   * conflicto de revisión: sin esperarla, la pantalla afirmaría «se recargó» sin haberlo
-   * comprobado, y en el caso del 409 seguiría mandando la revisión vencida en cada reintento —un
-   * bucle del que el operador no puede salir.
+   * Rereads the snapshot and WAITS for the data. It is called after every write and every revision conflict: without
+   * waiting, the screen would assert "reloaded" without having verified it, and on a 409 it would keep sending the
+   * stale revision on every retry—a loop the operator cannot escape.
    */
   async function releer(): Promise<EstadoRecarga> {
     const resultado = await config.reload();
@@ -236,7 +227,7 @@ export function ConfigPage() {
     return { releido: true, ...(revision === undefined ? {} : { revision }) };
   }
 
-  /** Único camino de escritura: lo comparten el editor crudo, el wizard, el alta y las tablas. */
+  /** The only write path: shared by the raw editor, the wizard, the onboarding, and the tables. */
   async function change(
     mutation: ConfigMutation, dryRun: boolean, camino: CaminoDeCambio = 'previsualizado',
   ): Promise<ConfigChangeOutcome> {
@@ -261,7 +252,7 @@ export function ConfigPage() {
           ...(recarga === undefined ? {} : { recarga }),
         };
       }
-      // Un dry-run no escribe nada, así que no hay snapshot que releer ni relectura que contar.
+      // A dry-run does not write anything, so there is no snapshot to reread nor a reread to count.
       if (dryRun) return { ok: true, result };
       if (typeof result.revision === 'number') setChainedRevision(result.revision);
       return { ok: true, result, recarga: await releer() };
@@ -304,25 +295,22 @@ export function ConfigPage() {
   }
 
   /**
-   * Aplica la acción de tabla que el operador acaba de confirmar. El verde sale con la respuesta
-   * del servidor —nunca antes de mandar— y dice además si la relectura llegó: sin eso, la fila
-   * podría quedar mostrando el valor viejo con cara de recién guardado.
+   * Applies the table action the operator just confirmed. The green appears with the server's response—never before
+   * sending—and also states whether the reread arrived: without that, the row could end up showing the old value with
+   * a freshly-saved look.
    */
   async function confirmarAccion() {
     if (!pendiente) return;
     const { coleccion, accion } = pendiente;
-    // Cinturón además del tirante: la confirmación ni siquiera se pinta cuando el snapshot se movió
-    // debajo, pero si llegara acá igual NO se manda. Lo que el operador leyó describía otra fila.
+    // Belt and suspenders: the confirmation isn't even painted when the snapshot moved underneath, but if it ever gets here it's still NOT sent. What the operator read described a different row.
     if (pendiente.revision !== snapshotRevision) {
       setPendiente(undefined);
       return;
     }
     setAvisoDeAccion(undefined);
-    // `directo`: estos botones no previsualizan nada, así que el 409 no puede mandar a «volver a
-    // previsualizar».
+    // `directo`: these buttons don't preview anything, so a 409 cannot redirect to "back to preview".
     const outcome = await change(accion.mutation, false, 'directo');
-    // La mutación confirmada ya viajó (o fue rechazada): en cualquier caso deja de estar pendiente.
-    // Reintentarla tal cual después de un 409 volvería a chocar contra la revisión vencida.
+    // The confirmed mutation has already traveled (or been rejected): either way, it is no longer pending. Retrying it as-is after a 409 would collide again with the stale revision.
     setPendiente(undefined);
     if (!outcome.ok) {
       setAvisoDeAccion({
@@ -343,10 +331,9 @@ export function ConfigPage() {
   }
 
   /**
-   * Deshacer una revisión desde el audit trail. Todo lo que dice se escribe en `avisoDeRollback` y
-   * `previewDeRollback`, que se pintan DENTRO del propio panel del audit trail, junto a los botones
-   * que lo dispararon: `notice`/`preview` viven dentro del `<details>` del editor crudo y ahí un
-   * desenlace no lo lee nadie.
+   * Revert a revision from the audit trail. Everything it says is written to `avisoDeRollback` and `previewDeRollback`,
+   * which are painted INSIDE the audit trail panel itself, next to the buttons that fired it: `notice`/`preview` live
+   * inside the raw editor's `<details>`, and there an outcome goes unread.
    */
   async function rollback(revisionId: string, dryRun: boolean) {
     if (motivoDeSoloLectura) {
@@ -377,8 +364,7 @@ export function ConfigPage() {
       }
       if (dryRun) {
         setPreviewDeRollback(JSON.stringify(result, null, 2));
-        // Un dry-run que no dice nada no se distingue de un botón que no hizo nada: el `<pre>` sale
-        // debajo, pero la frase es lo que se lee primero.
+        // A dry-run that says nothing is indistinguishable from a button that did nothing: the `<pre>` appears below, but the phrase is what gets read first.
         setAvisoDeRollback({
           tone: 'success',
           text: `Preview del rollback de la revisión ${revisionId} aceptado por el servidor: `
@@ -395,8 +381,7 @@ export function ConfigPage() {
           + `${String(result.revision ?? 'UNKNOWN')}.${textoRecarga(recarga)}`,
       });
     } catch (error) {
-      // `rollback`: este camino no previsualiza para aplicar, así que el 409 no puede mandar a
-      // «volver a previsualizar» — manda a volver a elegir la revisión sobre el estado nuevo.
+      // `rollback`: this path does not preview before applying, so a 409 cannot redirect to "back to preview"—it redirects to picking the revision again over the new state.
       const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN', 'rollback');
       if (!described.conflict) {
         setAvisoDeRollback({ text: described.message, tone: 'error' });
@@ -412,8 +397,7 @@ export function ConfigPage() {
   }
 
   if (config.loading && !config.data) return <LoadingState label="Leyendo configuración versionada…" />;
-  // Un 403 NO es una caída: es el mismo permiso que la barra lateral ya explica. Ver
-  // `esNegativaDeControl` y `SinPermisoDeControl`.
+  // A 403 is NOT a crash: it is the same permission the sidebar already explains. See `esNegativaDeControl` and `SinPermisoDeControl`.
   if (config.error && !config.data) {
     return esNegativaDeControl(config.error)
       ? <SinPermisoDeControl detalle={config.error.message} />
@@ -431,25 +415,22 @@ export function ConfigPage() {
       <RefreshButton onClick={config.reload} loading={config.loading} />
     </header>
 
-    {/* Sin permiso NO se esconde nada: las tablas se ven igual y los botones quedan inertes con el
-        motivo escrito. Un panel ausente no distingue «no tengo permiso» de «esto no existe».
-        El motivo va DENTRO de la línea del permiso y no en un cartel aparte debajo: eran dos
-        avisos apilados diciendo lo mismo con distintas palabras, y dos carteles seguidos que dicen
-        lo mismo enseñan a saltarse los dos. */}
+    {/* Without permission, NOTHING is hidden: the tables look the same and the buttons stay inert with the reason
+        written out. An absent panel does not distinguish "I don't have permission" from "this does not exist". The
+        reason goes INSIDE the permission line, not on a separate notice below: those were two stacked notices saying
+        the same thing in different words, and two notices in a row that say the same thing train people to skip both. */}
     <PermisoDeEscritura access={access.data} estado={estadoPermisoDeEscritura} />
 
-    {/* `useResource` conserva el último dato bueno cuando una relectura falla: sin este cartel, un
-        GET caído no se notaba en ningún sitio y la pantalla seguía mostrando datos viejos con cara
-        de actuales. */}
+    {/* `useResource` keeps the last good data when a reread fails: without this notice, a failing GET went unnoticed anywhere, and the screen kept showing stale data with a fresh look. */}
     {config.error ? <p className="notice error" role="alert">
       La última relectura de la configuración falló ({config.error.message}): lo que ves es la
       ÚLTIMA lectura buena, no lo que el servidor tiene ahora.
     </p> : null}
 
-    {/* Las pestañas son botones de verdad con `role="tab"`, no anclas ni `<details>`: el teclado y
-        el lector de pantalla tienen que poder decir cuál está abierta. La lista sale de `areas.ts`,
-        que la deriva del snapshot — una colección nueva del servidor cae en «Otros» y se ve igual,
-        en vez de quedar invisible detrás de un allowlist de la consola. */}
+    {/* The tabs are real buttons with `role="tab"`, not anchors or `<details>`: the keyboard and the screen reader must
+        be able to tell which one is open. The list comes from `areas.ts`, which derives it from the snapshot—a new
+        collection from the server falls under "Others" and shows the same way, instead of staying invisible behind a
+        console allowlist. */}
     <div className="config-tabs" role="tablist" aria-label="Áreas de configuración">
       {areas.map(({ area: entrada }) => <button
         key={entrada.id}
@@ -461,14 +442,12 @@ export function ConfigPage() {
       >{entrada.label}</button>)}
     </div>
 
-    {/* La descripción del área va abierta, no en un tooltip: es lo primero que hay que leer al
-        entrar, y esconder detrás de un signo de interrogación justo lo que orienta sería repetir el
-        defecto que este cambio corrige.
+    {/* The area description goes open, not in a tooltip: it is the first thing to read upon entering, and hiding
+        behind a question mark exactly what orients you would repeat the defect this change is meant to fix.
 
-        Abierta va UNA frase. El resto —lo que explica por qué la pestaña importa— va plegado: el
-        operador que entra veinte veces al día ya lo sabe y pagaba el scroll veinte veces. Es un
-        `<details>` y no un tooltip a propósito: lo plegado se puede leer con el teclado, se puede
-        copiar y no depende del ratón. */}
+        Open goes ONE sentence. The rest—what explains why the tab matters—goes folded: the operator who enters
+        twenty times a day already knows it and was paying for the scroll twenty times. It is a `<details>` on purpose,
+        not a tooltip: the folded content can be read with the keyboard, can be copied, and does not depend on the mouse. */}
     {activa ? <>
       <p className="config-area-descripcion">{activa.area.descripcion}</p>
       <details className="config-detalle">
@@ -482,10 +461,9 @@ export function ConfigPage() {
         ? <AltaDeEspacios soloLectura={soloLectura} busy={busy} onChange={change} />
         : null}
 
-      {/* Antes del registro de bots, y no debajo: la tabla es justo lo que induce el error que este
-          panel corrige —una columna «Harness» con un valor escrito parece elegir el programa que
-          corre el bot, y no lo elige—. Puesto después, se leería como una nota al pie de algo que
-          el operador ya interpretó mal. */}
+      {/* Before the bot registry, and not below it: the table is precisely what induces the error this panel
+          corrects—a "Harness" column with a value written in appears to pick the program the bot runs, and does not
+          pick it—. Placed after, it would read as a footnote to something the operator has already misinterpreted. */}
       {areaVisible === 'agentes' ? <ArnesesPanel /> : null}
 
       {areaVisible === 'roles' ? <>
@@ -496,14 +474,12 @@ export function ConfigPage() {
 
       {(activa?.colecciones ?? []).map((coleccion) => {
         const pedido = pendiente?.coleccion === coleccion.key ? pendiente : undefined;
-        // Una confirmación pendiente vale para la revisión sobre la que se pidió. Si el snapshot se
-        // movió debajo —«Actualizar», u otra escritura— la fila que el operador leyó en el `<pre>`
-        // ya no es la que hay: la confirmación se anula y se dice, en vez de mandarla igual contra
-        // la revisión nueva.
+        // A pending confirmation is valid for the revision on which it was requested. If the snapshot moved
+        // underneath—"Refresh", or another write—the row the operator read in the `<pre>` is no longer the one there:
+        // the confirmation is canceled and announced, instead of being sent anyway against the new revision.
         const vigente = pedido !== undefined && pedido.revision === snapshotRevision;
         const vencida = pedido !== undefined && !vigente;
-        // Mismo criterio para el cartel del desenlace: vale para el estado que lo produjo, y en
-        // cuanto ese estado cambia deja de mostrarse en vez de seguir afirmándolo.
+        // Same criterion for the outcome notice: it is valid for the state that produced it, and as soon as that state changes, it stops being shown instead of continuing to assert it.
         const propio = avisoDeAccion?.coleccion === coleccion.key
           && avisoDeAccion.revision === snapshotRevision
           ? { text: avisoDeAccion.text, tone: avisoDeAccion.tone }
@@ -537,18 +513,17 @@ export function ConfigPage() {
 
       {areaVisible === 'historial' ? <>
     <Panel title="Audit trail de configuración" subtitle="Rollback crea una nueva revisión; el historial nunca se reescribe.">
-      {/* El `oldValue` que el store guarda como inversa es la FILA ENTERA que había antes, no el
-          campo que se tocó, aunque la mutación que se mandó fuera parcial. El operador no puede
-          deducir eso de un botón que dice «Rollback», y la diferencia le puede costar el cambio de
-          un compañero. */}
+      {/* The `oldValue` the store keeps as the inverse is the WHOLE ROW that was there before, not the field that was
+          touched, even if the mutation that was sent was partial. The operator cannot deduce that from a button labeled
+          "Rollback", and the difference could cost them a teammate's change. */}
       <p className="notice" role="note">
         Deshacer restituye la FILA COMPLETA que había antes de esa revisión, no sólo el campo que se
         tocó: si otro operador cambió otro campo de la misma fila después, ese cambio también se
         revierte.
       </p>
 
-      {/* El desenlace del rollback se pinta ACÁ, encima de la tabla y a la vista sin abrir nada:
-          es el único sitio donde el operador está mirando cuando aprieta uno de estos botones. */}
+      {/* The rollback outcome is painted HERE, above the table and in plain sight without opening anything: it is the
+          only spot the operator is looking at when they press one of these buttons. */}
       {avisoDeRollback ? <p
         className={avisoDeRollback.tone === 'error' ? 'notice error' : avisoDeRollback.tone === 'parcial' ? 'notice parcial' : 'notice success'}
         role={avisoDeRollback.tone === 'success' ? 'status' : 'alert'}
@@ -560,9 +535,8 @@ export function ConfigPage() {
       </tbody></table></div>}
     </Panel>
 
-    {/* La válvula de escape: sigue viva y entera para todo lo que no tiene formulario (harness,
-        role_policy, chain_policy, egress y los cuatro recursos del registro), pero ya no es lo
-        primero que ve el operador. */}
+    {/* The escape hatch: still alive and whole for everything that has no form (harness, role_policy, chain_policy,
+        egress, and the four registry resources), but no longer the first thing the operator sees. */}
     <details className="config-editor">
       <summary><Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario</summary>
       <Panel title="Mutation editor" subtitle={`Revisión esperada: ${String(expectedRevision ?? 'UNKNOWN')}`}>
@@ -584,21 +558,20 @@ export function ConfigPage() {
   </div>;
 }
 
-/**
- * El permiso de escritura, dicho en castellano.
- *
- * Lo primero que se leía en `/config` era `RBAC config.write ALLOW Roles: operator`: cuatro jergas
- * seguidas, a 11,52 px, encima de todo lo demás. Eso no le contesta al operador la única pregunta
- * que tiene al entrar —«¿puedo tocar esto?»— y encima ocupa el sitio de la respuesta.
- *
- * El identificador crudo NO se tira: es lo que hay que citar para pedir el permiso a quien
- * administra, y esconderlo dejaría a quien lo necesita sin nada que llevar. Va detrás de la frase
- * y en un escalón secundario.
- *
- * `unknown` —no se pudo acreditar el RBAC— conserva lectura y navegación, pero deja cada mutación
- * inerte. El backend sigue siendo la autoridad; la UI no debe usarlo como sustituto de una decisión
- * de permiso que ella no pudo obtener.
- */
+  /**
+   * The write permission, stated in plain language.
+   *
+   * The first thing you used to read in `/config` was `RBAC config.write ALLOW Roles: operator`: four jargons in a
+   * row, at 11.52px, above everything else. That does not answer the operator's only question on entry—"can I touch
+   * this?"—and on top of that takes the place of the answer.
+   *
+   * The raw identifier is NOT discarded: it is what you need to cite to request the permission from whoever
+   * administers it, and hiding it would leave the person who needs it with nothing to take to them. It goes after the
+   * sentence and on a secondary tier.
+   *
+   * `unknown`—the RBAC could not be attested—preserves reading and navigation, but leaves each mutation inert. The
+   * backend remains the authority; the UI must not use it as a substitute for a permission decision it could not obtain.
+   */
 function PermisoDeEscritura({
   access, estado,
 }: {
@@ -608,8 +581,7 @@ function PermisoDeEscritura({
   const texto = estado === 'allowed'
     ? 'Podés cambiar la configuración; todo cambio se deshace desde «Historial y JSON».'
     : estado === 'denied'
-      // La frase EXACTA de la barra lateral (`CONFIG_SIN_CONTROL_REASON`): dos redacciones
-      // distintas para la misma negativa le harían creer al operador que son dos problemas.
+      // The EXACT wording from the sidebar (`CONFIG_SIN_CONTROL_REASON`): two different wordings for the same denial would lead the operator to believe they are two different problems.
       ? `Solo lectura: ${CONFIG_SIN_CONTROL_REASON} Los datos se muestran igual; lo que está `
         + 'apagado es todo lo que escribe.'
       : `Solo lectura: ${CONFIG_WRITE_NO_ACREDITADO_REASON}`;
@@ -620,17 +592,17 @@ function PermisoDeEscritura({
   </p>;
 }
 
-/**
- * Lo que ve quien llega a `/config` por un marcador sin permiso `control`.
- *
- * Dice **exactamente** `CONFIG_SIN_CONTROL_REASON`, la misma frase que la barra lateral pone en la
- * entrada inerte: dos redacciones distintas para la misma negativa le harían creer al operador que
- * son dos problemas. No hay botón «Reintentar» —repetir la petición no puede conceder un permiso, y
- * ofrecerlo es prometer una salida que no existe— y sí hay una salida real hacia la portada.
- *
- * El mensaje crudo del servidor se muestra igual, en segundo plano: es lo que hay que citar para
- * pedir el permiso, y esconderlo dejaría al operador sin nada que llevarle a quien administra.
- */
+  /**
+   * What someone arriving at `/config` via a bookmark without `control` permission sees.
+   *
+   * It says **exactly** `CONFIG_SIN_CONTROL_REASON`, the same wording the sidebar puts on the inert entry: two
+   * different wordings for the same denial would lead the operator to believe they are two different problems. There
+   * is no "Retry" button—repeating the request cannot grant a permission, and offering it is promising an exit that
+   * does not exist—but there is a real exit to the homepage.
+   *
+   * The raw server message is shown the same, in the background: it is what you need to cite to request the
+   * permission, and hiding it would leave the operator with nothing to take to whoever administers it.
+   */
 function SinPermisoDeControl({ detalle }: { detalle: string }) {
   return (
     <div className="state-card" role="note">

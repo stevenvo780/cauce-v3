@@ -40,8 +40,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
   protected abstract insertAck(client: DatabaseClient, row: DeliveryRow, ack: Ack, applied: boolean, persistedResult: Record<string, unknown> | undefined, renewal?: boolean): Promise<void>;
   protected abstract materializeAgentNotifications(client: DatabaseClient, row: DeliveryRow, ack: Ack, entries: AgentNotifyEntry[], ambiguousExecution: boolean): Promise<{ allowed: number; denied: number; errors: number }>;
   /**
-   * Procesa el ACK de una entrega validando fences de exclusividad, límites de arrendamiento
-   * y delegando a `lateTerminalSalvage` si el resultado es terminal pero la exclusividad venció.
+   * Processes the ACK of a delivery, validating exclusivity fences, lease limits, and
+   * delegating to `lateTerminalSalvage` if the result is terminal but exclusivity has expired.
    */
   async ackDelivery(
     deliveryId: string,
@@ -109,8 +109,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
             receipt: 'ownership_lost',
           };
         }
-        // Replays terminales/accepted exactos terminan aquí; `started` sigue sólo con claim y lease vivos.
-        // Ese receipt puede servir al cliente como prueba fresca de propiedad.
+        // Exact terminal/accepted replays end here; `started` continues only with live claim
+        // and lease. That receipt can serve the client as fresh proof of ownership.
         if (repeatedAck.applied && ack.status !== 'started') {
           const feedback = terminal(ack.status)
             ? await this.delegationFeedbackForAck(client, deliveryId, ack.attempt)
@@ -123,12 +123,13 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
             ...feedback,
           };
         }
-        // Un evento exacto antes rechazado se reevalúa: un reenvío aún puede rescatar el resultado.
-        // Si sigue inválido conserva el mismo receipt; `insertAck` sólo eleva `applied` de false a true.
-        // Así el primer rechazo no se vuelve irrevocable sin volver a mirar el contenido.
+        // An exact event previously rejected is re-evaluated: a resend may still salvage the
+        // result. If it is still invalid it keeps the same receipt; `insertAck` only raises
+        // `applied` from false to true. That way the first rejection does not become
+        // irrevocable without looking at the content again.
       }
-      // Una fila terminal sólo admite el replay exacto aplicado resuelto arriba.
-      // Un event_id nuevo no muta ni amplía el historial terminal, ni reconstruye feedback.
+      // A terminal row only admits the exact applied replay resolved above.
+      // A new event_id does not mutate or extend the terminal history, nor reconstruct feedback.
       if (row.status === 'done' || row.status === 'failed') {
         return {
           delivery_id: deliveryId,
@@ -137,9 +138,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           receipt: 'ownership_lost',
         };
       }
-      // A live claim's foreign identity falls through to the lease/identity check below, which
-      // already answers a correlated ownership_lost instead of fencing; only a dead claim fences.
-      if (row.claim_token === ack.claim_token && row.attempt === ack.attempt && !row.claim_live &&
+      if (row.claim_token === ack.claim_token && row.attempt === ack.attempt &&
           (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
         throw new StoreError('fenced', 'ACK identity does not own this delivery claim');
       }
@@ -148,7 +147,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         && row.claim_live
         && ['leased', 'accepted', 'started'].includes(row.status);
       if (!exactClaim) {
-        // La garra se perdió. El RESULTADO puede seguir valiendo: ver `lateTerminalSalvage`.
+        // The lease was lost. The RESULT may still be valid: see `lateTerminalSalvage`.
         const salvaged = await this.lateTerminalSalvage(
           client, tenantId, alias, row, ack, persistedResult, outputs, notifications
         );
@@ -177,12 +176,12 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         };
       }
       const rank = ackRank(ack.status);
-      // Punto durable de no retorno: el SDK espera este receipt antes de invocar.
-      // Un crash posterior es ambiguo; COALESCE conserva el primer compromiso del intento.
+      // Durable point of no return: the SDK waits for this receipt before invoking.
+      // A later crash is ambiguous; COALESCE preserves the first commitment of the attempt.
       const executionStarted = ack.status === 'started' && ack.execution_started === true;
       const leaseCapMs = deliveryLeaseCapMs(row.body, leaseCap);
-      // Latido de una entrega en cola ('accepted'): extiende el plazo respetando el leaseCap
-      // sin alterar el estado ni registrar inicio de ejecución.
+      // Heartbeat of a queued delivery ('accepted'): extends the deadline respecting the
+      // leaseCap without altering the state or recording execution start.
       if (ack.status === 'accepted' && row.status === 'accepted') {
         await client.query(
           `UPDATE deliveries
@@ -220,9 +219,9 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         };
       }
       if (ack.status === 'started' && row.status === 'started') {
-        // El ancla usa el valor posterior al UPDATE porque PostgreSQL evalúa SET sobre la fila vieja.
-        // Debe coincidir con el instante que mira el reaper para no degradar el motivo a ACK timeout.
-        // `LEAST` ignora NULL: una fila sin ancla no tiene techo.
+        // The anchor uses the post-UPDATE value because PostgreSQL evaluates SET on the old
+        // row. It must match the instant the reaper looks at, so the reason does not degrade
+        // to ACK timeout. `LEAST` ignores NULL: a row without an anchor has no ceiling.
         await client.query(
           `UPDATE deliveries
            SET ack_deadline_at=LEAST(
@@ -241,8 +240,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
            WHERE id=$1`,
           [deliveryId, ackDeadlineMs, executionStarted, leaseCapMs]
         );
-        // Si un evento rechazado ahora se aplica, `insertAck` eleva false a true.
-        // Para un duplicado ya aplicado sigue siendo un no-op exacto.
+        // If a previously rejected event is now applied, `insertAck` raises false to true.
+        // For an already-applied duplicate it remains an exact no-op.
         await this.insertAck(client, row, ack, true, persistedResult, true);
         await client.query(
           `INSERT INTO audit_events(
@@ -281,8 +280,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       let terminalAt = rank === 3 ? 'now()' : 'NULL';
       let terminalError = postgresTextSafe(ack.error);
       let terminalErrorCode = postgresTextSafe(ack.error_code);
-      // Si el fallo es ambiguo pero nunca comenzó la ejecución (execution_started_at es null),
-      // se permite reintento si quedan intentos disponibles; de lo contrario pasa a dead.
+      // If the failure is ambiguous but execution never started (execution_started_at is null),
+      // a retry is allowed if attempts remain; otherwise it goes to dead.
       const ambiguousFailure = ack.status === 'failed'
         && isAmbiguousAckErrorCode(ack.error_code);
       const ambiguousExecution = ambiguousFailure && row.execution_started;
@@ -311,11 +310,11 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         }
       }
       const backoffSeconds = Math.min(60, 2 ** Math.max(0, row.attempt - 1));
-      // El PRIMER 'started' ahora también corre el plazo, igual que las renovaciones. Antes no
-      // lo movía y la base seguía contando desde el reclamo mientras el gateway, que sí lo
-      // corre al ver el ACK aplicado, creía el cupo vivo más tiempo del real: las dos vistas de
-      // la misma garra se iban separando por lo que hubiera tardado el arranque. Ahora el
-      // instante de referencia es el mismo hecho (el ACK aplicado) en los dos lados.
+      // The FIRST 'started' now also runs the deadline, just like renewals. Previously it did
+      // not move it, and the database kept counting from the claim while the gateway, which
+      // does run it upon seeing the ACK applied, thought the slot was alive longer than it
+      // really was: the two views of the same lease drifted apart by however long startup took.
+      // Now the reference instant is the same fact (the applied ACK) on both sides.
       await client.query(
          `UPDATE deliveries SET status=$2,last_ack_rank=$3,last_error=$4,result=$5::jsonb,
             available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,
@@ -360,21 +359,20 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
             JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
         );
       }
-      // Todo error final deja rastro replayable en dead_letters, no sólo 'dead'.
-      // Mantener registro en dead_letters permite que `replayDelivery` funcione tanto
-      // para entregas en estado 'failed' como 'dead'.
-      // La corrección NO es fusionar 'failed' con 'dead'. Los dos estados los consumen hoy, con
-      // significados distintos, `terminal()`, el conteo de fan-in (`status IN ('done','failed',
-      // 'dead')`), el CHECK de `deliveries.status`, `DeliveryStateSchema` del protocolo, la serie
-      // `cauce_dispatcher_delivery_*` del dispatcher y cuatro vistas de la consola. Fusionarlos
-      // borraría la única distinción útil que queda —"el agente declaró un error definitivo" vs
-      // "el sistema se dio por vencido"— y dejaría una serie de métrica en cero para siempre, a
-      // cambio de nada: lo que hace recuperable a una entrega no es su estado, es tener fila en
-      // `dead_letters`. Así que se emite la fila para AMBOS finales de error y se relaja el
-      // filtro de `replayDelivery`; el resto del sistema no se entera.
+      // Every terminal error leaves a replayable trail in dead_letters, not only 'dead'.
       //
-      // `retryable` conserva su único trabajo legítimo: decidir si el bus REINTENTA solo. Deja de
-      // decidir si un humano puede rescatar la entrega.
+      // Keeping a record in dead_letters lets `replayDelivery` work both for deliveries in state 'failed'
+      // and 'dead'. The fix is NOT merging 'failed' with 'dead': both states are consumed today, with
+      // distinct meanings, by `terminal()`, the fan-in count (`status IN ('done','failed','dead')`), the
+      // CHECK on `deliveries.status`, `DeliveryStateSchema`, the dispatcher's `cauce_dispatcher_delivery_*`
+      // series, and four console views. Merging them would erase the only useful distinction left—"the
+      // agent declared a definitive error" vs "the system gave up"—and leave a metric series at zero for
+      // nothing: what makes a delivery recoverable is having a row in `dead_letters`, not its state. So
+      // the row is emitted for BOTH terminal errors and `replayDelivery`'s filter is relaxed; the rest
+      // of the system does not notice.
+      //
+      // `retryable` keeps its only legitimate job: deciding whether the bus RETRIES on its own. It stops
+      // deciding whether a human can salvage the delivery.
       if (nextStatus === 'dead' || nextStatus === 'failed') {
         await client.query(
           `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
@@ -395,9 +393,10 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       let chainGate: OpenChainGate | undefined;
       if (terminal(nextStatus)) {
         const policy = await this.loadChainPolicy(client);
-        // El egress proactivo es efecto lateral terminal y no cuenta como delegación.
-        // `ambiguousFailure` veta avisos cuando el resultado es incierto incluso sin marca de ejecución;
-        // `ambiguousExecution` relajaría el veto al agotar intentos y podría afirmar efectos no probados.
+        // Proactive egress is a terminal side effect and does not count as delegation.
+        // `ambiguousFailure` vetoes notifications when the result is uncertain even without an
+        // execution mark; `ambiguousExecution` would relax the veto once attempts are exhausted
+        // and could assert unproven effects.
         notified = await this.materializeAgentNotifications(
           client, row, ack, notifications, ambiguousFailure
         );
@@ -413,9 +412,9 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           .sort((left, right) => left.output_index - right.output_index);
         chainGate = outputOutcome.gate;
         const materializedOutputs = outputOutcome.materialized;
-        // Delegar o suspender no termina la rama desde la perspectiva del padre.
-        // Sólo la continuación agent.response autenticada puede devolver el terminal al padre.
-        // Un gate humano abierto mantiene la cadena pendiente y no puede cerrarse con este ACK.
+        // Delegating or suspending does not end the branch from the parent's perspective.
+        // Only the authenticated agent.response continuation can return the terminal to the
+        // parent. An open human gate keeps the chain pending and cannot be closed with this ACK.
         const responseDisposition: AgentResponseDisposition = materializedOutputs > 0
           || outputOutcome.suspended
           ? 'deferred'
@@ -451,7 +450,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
              attempt: ack.attempt,
              ...(terminalErrorCode === undefined ? {} : { error_code: terminalErrorCode }),
              ...(ambiguousExecution ? { ambiguous_execution: true } : {}),
-             // Distingue en auditoría el ambiguo ejecutado del reintentable que no llegó a correr.
+              // In audit, distinguishes the ambiguous-executed from the retryable that did not run.
              ...(ambiguousFailure && !row.execution_started
                ? { ambiguous_without_execution: true }
                : {}),
@@ -469,8 +468,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         status: nextStatus,
         applied: true,
         receipt: 'applied',
-        // Ausentes cuando no hay nada que decir: agregar claves vacías cambiaría los bytes que
-        // el gateway devuelve a TODO ACK, y hay adaptadores viejos comparando la respuesta.
+        // Absent when there is nothing to say: adding empty keys would change the bytes the
+        // gateway returns to EVERY ACK, and there are older adapters comparing the response.
         ...(delegationRejections.length === 0
           ? {}
           : { delegation_rejections: delegationRejections }),
@@ -486,8 +485,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
 
 
   /**
-   * Rescata un resultado terminal ('done' o 'failed' con texto) que llega tras expirar la exclusividad,
-   * siempre que la entrega no tenga un resultado previo ni haya sido cancelada manualmente.
+   * Salvages a terminal result ('done' or 'failed' with text) that arrives after exclusivity
+   * has expired, provided the delivery has no prior result and has not been manually canceled.
    */
   private async lateTerminalSalvage(
     client: DatabaseClient,
@@ -499,29 +498,29 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
     outputs: AgentOutputEntry[],
     notifications: AgentNotifyEntry[]
   ): Promise<AckResult | undefined> {
-    // S1: sólo un terminal con respuesta visible.
+    // S1: only a terminal with a visible reply.
     if (ack.status !== 'done' && ack.status !== 'failed') return undefined;
     const reply = textualReply(persistedResult);
     if (!reply) return undefined;
-    // S2: un rescate tardío no puede materializar delegaciones.
+    // S2: a late salvage cannot materialize delegations.
     if (outputs.length > 0) return undefined;
-    // S5: un único terminal; nunca reemplaza un resultado previo.
+    // S5: a single terminal; never replaces a prior result.
     if (row.status === 'done' || row.status === 'failed') return undefined;
     if (row.late_result_at !== null) return undefined;
-    // Entregas canceladas por un operador no se rescatan para no duplicar respuestas hacia el padre.
+    // Deliveries canceled by an operator are not salvaged, to avoid duplicate replies to the parent.
     if (row.cancelled_at !== null) return undefined;
-    // S6: `failed` sólo corrige una muerte ya declarada.
+    // S6: `failed` only corrects an already-declared death.
     if (ack.status === 'failed' && row.status !== 'dead') return undefined;
-    // Un ACK que dice pertenecer a un intento que la entrega todavía no alcanzó no es tardío:
-    // es imposible. Se rechaza sin mirar nada más.
+    // An ACK claiming to belong to an attempt the delivery has not yet reached is not late:
+    // it is impossible. It is rejected without looking further.
     if (ack.attempt > row.attempt) return undefined;
-    // S4: la instancia autenticada conserva un lease vivo.
+    // S4: the authenticated instance keeps a live lease.
     const lease = await client.query(
       `SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3
        AND epoch=$4 AND lease_until>now()`, [tenantId, alias, ack.instance_id, ack.epoch]
     );
     if (lease.rowCount !== 1) return undefined;
-    // S3: la garra debe constar en la fila o en `delivery_acks`.
+    // S3: the lease must be recorded in the row or in `delivery_acks`.
     const provenance = await this.lateClaimProvenance(client, row, ack);
     if (provenance === 'none') return undefined;
 
@@ -530,10 +529,10 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
     const terminalErrorCode = postgresTextSafe(ack.error_code);
     const previousStatus = row.status;
 
-    // `last_ack_rank=3` deja la fila en rango terminal, así que un ACK de rango menor que
-    // llegue después se lleva 'superseded' y no vuelve a entrar acá. Los plazos se anulan
-    // porque ya no hay garra viva que puedan describir; `claim_token` y el consumidor se
-    // CONSERVAN, que es la única traza de quién la tuvo al final.
+    // `last_ack_rank=3` leaves the row in terminal range, so a lower-rank ACK arriving later
+    // gets 'superseded' and does not come back in here. The deadlines are cleared because
+    // there is no longer a live lease for them to describe; `claim_token` and the consumer are
+    // KEPT, which is the only trace of who had it at the end.
     await client.query(
       `UPDATE deliveries
        SET status=$2,last_ack_rank=3,last_error=$3,result=$4::jsonb,
@@ -565,7 +564,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           delivery_attempt: row.attempt,
           claim_provenance: provenance,
           reply_characters: reply.length,
-          // Audita efectos omitidos por S2 para medir sus falsos rechazos.
+          // Audits effects omitted by S2 to measure its false rejections.
           skipped_delegations: outputs.length,
           skipped_notifications: notifications.length,
           origin_relay: relayDisposition,
@@ -576,18 +575,19 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       delivery_id: row.id,
       status: salvagedStatus,
       applied: true,
-      // Conserva el receipt del contrato `.strict()`; el rescate se distingue en auditoría
-      // y columnas de deliveries, no en un valor que adaptadores anteriores rechazarían.
+      // Keeps the `.strict()` contract receipt; salvage is distinguished in audit and
+      // deliveries columns, not in a value older adapters would reject.
       receipt: 'applied',
     };
   }
 
 
   /**
-   * Prueba que la garra existió: el token sólo vale si quedó registrado.
-   * `current` coincide con deliveries; `applied` fue validado bajo propiedad viva.
-   * `observed` quedó en delivery_acks y sólo vale con destinatario autenticado más lease S4 vivo.
-   * La auditoría conserva la calidad de la prueba para poder endurecerla a `applied`.
+   * Proves the lease existed: the token is only valid if it was recorded.
+   * `current` matches deliveries; `applied` was validated under live ownership.
+   * `observed` lives in delivery_acks and is only valid with authenticated recipient plus a
+   * live S4 lease. The audit preserves the quality of the proof so it can be hardened to
+   * `applied`.
    */
   private async lateClaimProvenance(
     client: DatabaseClient,
@@ -613,14 +613,13 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
 
 
   /**
-   * Reconcilia los tres efectos de una muerte: entrega, dead-letter y aviso.
+   * Reconciles the three effects of a death: delivery, dead-letter, and notice.
    *
-   * `done` resuelve la dead-letter; `failed` conserva la fila con el error real.
-   * El padre recibe una respuesta correctiva nueva porque el aviso anterior pudo ser leído.
-   * Un relay humano pendiente se reescribe para emitir un único mensaje correcto.
-   * Si ya salió, se crea `relay-late` con `LATE_RESULT_HUMAN_NOTICE`.
-   * `FOR UPDATE` sobre el relay serializa la decisión contra el dispatcher.
-   * Así nunca se ofrece replay de un done ni se manda una corrección humana sin contexto.
+   * `done` resolves the dead-letter; `failed` keeps the row with the actual error. The parent receives
+   * a fresh corrective response because the previous notice may have been read. A pending human relay
+   * is rewritten to emit a single correct message; if it already went out, `relay-late` is created with
+   * `LATE_RESULT_HUMAN_NOTICE`. `FOR UPDATE` on the relay serializes the decision against the dispatcher,
+   * so a replay of a done is never offered, nor a human correction sent without context.
    */
   private async undoDeathNotice(
     client: DatabaseClient,

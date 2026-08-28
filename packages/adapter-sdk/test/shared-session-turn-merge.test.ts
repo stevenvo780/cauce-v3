@@ -1,22 +1,20 @@
 /**
- * El pegado que se FUNDE con un turno en curso, y por qué mataba entregas ya terminadas.
+ * The paste that MERGES into an in-flight turn, and why it killed already-finished deliveries.
  *
- * Cuando el panel está ocupado generando, claude no abre un turno propio para lo que se le pega: lo
- * ENCOLA y lo funde en el turno que ya está corriendo (`queue-operation enqueue` y, unos segundos
- * después, `remove`). Entonces NO existe ninguna entrada de usuario con el texto que pegamos, y la
- * correlación por ascendencia —localizar esa entrada y exigir que la respuesta descienda de ella— no
- * puede enganchar jamás, por mucho presupuesto que se le dé.
+ * When the panel is busy generating, claude does not open its own turn for what is pasted: it QUEUES
+ * it and merges it into the turn that is already running (`queue-operation enqueue` and, a few seconds
+ * later, `remove`). Then there is NO user entry with the text we pasted, and the ascendancy correlation
+ * —locating that entry and requiring the reply to descend from it— can never hook up, no matter the budget.
  *
- * Lo que costaba, medido en la entrega `6c7cb0c4` (janus -> kratos): ejecución 04:14:27.49, muerta
- * 04:19:28.89 = 301 s exactos, «Harness exceeded its execution deadline», sin reintento. Y el
- * trabajo ESTABA HECHO: kratos escribió el entregable completo a las 04:17 y emitió su sobre a las
- * 04:17:52, noventa y seis segundos antes de que la declararan muerta. El bug no perdía tiempo:
- * descartaba trabajo terminado y hacía que alguien lo mandara a rehacer.
+ * What it cost, measured on delivery `6c7cb0c4` (janus -> kratos): execution 04:14:27.49,
+ * killed 04:19:28.89 = 301 s exact, "Harness exceeded its execution deadline", no retry. And the work
+ * WAS DONE: kratos wrote the full deliverable at 04:17 and emitted its envelope at 04:17:52, ninety-six
+ * seconds before it was declared dead. The bug did not lose time: it discarded finished work and made
+ * someone send it to be redone.
  *
- * De ahí la regla que fijan estas pruebas: la ascendencia es un DESEMPATE, el sobre es la PRUEBA. Si
- * el sobre apareció después del pegado, la entrega no muere. Las tres primeras fallan contra el
- * código anterior; la cuarta es la guarda que impide que el arreglo se coma la red de los 5 min y
- * devuelva el lock retenido 24 h.
+ * Hence the rule these tests fix: ascendancy is a TIEBREAKER, the envelope is the PROOF. If the envelope
+ * appeared after the paste, the delivery does not die. The first three fail against the previous code; the
+ * fourth is the guard preventing the fix from eating the 5 min net budget and returning a lock held 24 h.
  */
 import assert from "node:assert/strict";
 import { appendFile, mkdir, rm } from "node:fs/promises";
@@ -437,7 +435,7 @@ function execute(adapter: HarnessAdapter, timeoutMs = 10_000): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// (a) El pegado se FUNDE con el turno en curso: no hay turno propio del que descender.
+// (a) The paste MERGES with the in-flight turn: there is no own turn to descend from.
 // ---------------------------------------------------------------------------
 
 test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del sobre", async () => {
@@ -446,18 +444,18 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
   const sessionId = randomUUID();
   const file = join(directory, `${sessionId}.jsonl`);
 
-  // El dueño tecleó en el panel un momento antes (04:14:01 en la entrega real) y ese turno está en
-  // marcha: por eso la caja está libre —claude la vacía mientras genera— y el pegado se encola.
+  // The owner typed in the panel a moment earlier (04:14:01 in the real delivery) and that turn is in
+  // progress, which is why the box is free — claude empties it while generating — and the paste is queued.
   const duenio = randomUUID();
   await appendFile(file, `${userEntry(duenio, null, "seguí con el informe", sessionId)}\n`);
 
   const tmux = new FakeTmux();
-  // La línea de estado de una TUI que está GENERANDO. La caja está vacía y el arbitraje la ve libre.
+  // The status line of a TUI that is GENERATING. The box is empty and the arbiter sees it as free.
   tmux.paneContent = "✻ Herding… (esc to interrupt · ctrl+t to hide todos)\n❯ ";
   const fallback = new RecordingFallback();
   tmux.onSubmit = async (text) => {
-    // La fusión, tal cual: NO se escribe ninguna entrada de usuario con el texto que pegamos. El
-    // turno del dueño sigue y termina contestando las dos cosas a la vez, con su sobre.
+    // The merge, exactly as is: NO user entry is written with the text we pasted. The owner's
+    // turn keeps going and ends up replying to both things at once, with its own envelope.
     await appendFile(
       file,
       `${assistantEntry(
@@ -473,12 +471,12 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
   const adapter = await adapterFor(runner, state, "kratos");
   const output = await execute(adapter);
 
-  // Contra el código anterior esto no llegaba nunca: la correlación no enganchaba, y a los 300 s
-  // salía «Harness exceeded its execution deadline».
+  // Against the previous code this never arrived: the correlation did not hook up, and at
+  // 300 s "Harness exceeded its execution deadline" came out.
   assert.equal(output.status, "done");
   assert.ok((output.reply ?? "").includes("el entregable"), output.reply ?? "(null)");
   assert.equal("cauce_correlation_id" in output, false, "el nonce no sale como StructuredOutput");
-  // El turno pasó por la terminal: no se cayó al camino de siempre y no se ejecutó dos veces.
+  // The turn went through the terminal: it didn't fall back to the usual path and wasn't run twice.
   assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   // Y se DICE que fue un turno fundido: la respuesta puede estar contestando dos pedidos a la vez.
@@ -486,7 +484,7 @@ test("una entrega cuyo pegado se fundió con el turno en curso se cosecha del so
 });
 
 // ---------------------------------------------------------------------------
-// (b) El sobre llega DESPUÉS del plazo de correlación. La terminal no estuvo callada ni un momento.
+// (b) The envelope arrives AFTER the correlation deadline. The terminal was not silent for a second.
 // ---------------------------------------------------------------------------
 
 test("el sobre que llega pasado el plazo de correlación cierra la entrega igual", async () => {
@@ -507,8 +505,8 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
     workspace,
     tmux,
     fallback,
-    // El plazo de correlación vence enseguida —como los 300 s de la entrega real frente a un turno
-    // que tardó más— pero la terminal SIGUE escribiendo, así que no hay nada que dar por perdido.
+    // The correlation deadline expires immediately — like the 300 s of the real delivery facing a
+    // turn that took longer — but the terminal KEEPS writing, so there is nothing to give up on.
     correlationTimeoutMs: 50,
     quietTimeoutMs: 1_000,
     turnTimeoutMs: 20_000,
@@ -518,8 +516,8 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
 
   tmux.onSubmit = (text) => {
     const correlationId = correlationIdFromPrompt(text);
-    // El turno del dueño sigue trabajando: herramientas, pasos intermedios. Nada de esto es un
-    // sobre, y ninguna de estas entradas es la nuestra.
+// The owner's turn keeps working: tools, intermediate steps. None of this is an envelope,
+      // and none of these entries is ours.
     void (async () => {
       for (let paso = 0; paso < 10; paso += 1) {
         await delay(20);
@@ -528,7 +526,7 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
           `${assistantEntry(randomUUID(), duenio, `paso ${paso}`, sessionId, "tool_use")}\n`,
         );
       }
-      // Y recién ahora, muy pasado el plazo de correlación, el sobre.
+      // And only now, well past the correlation deadline, the envelope.
       await appendFile(
         file,
         `${assistantEntry(
@@ -549,7 +547,7 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
 });
 
 // ---------------------------------------------------------------------------
-// (c) El caso sano: correlación por ascendencia, y NINGÚN aviso de turno fundido.
+// (c) The healthy case: ascendancy correlation, and NO merged-turn notice.
 // ---------------------------------------------------------------------------
 
 test("el turno que sí abre turno propio se cosecha por ascendencia y sin aviso", async () => {
@@ -583,7 +581,7 @@ test("el turno que sí abre turno propio se cosecha por ascendencia y sin aviso"
   assert.equal(output.status, "done");
   assert.equal(output.reply, "desde la TUI");
   assert.equal(fallback.calls, 0);
-  // Nada de avisos: la correlación funcionó como siempre.
+  // No notices: the correlation worked as usual.
   assert.ok(!(output.reply ?? "").includes(MERGED_MARK));
 });
 
@@ -605,8 +603,8 @@ test("claude ignora el sobre headless de otro fichero y rescata sólo su nonce",
   tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
   const fallback = new RecordingFallback();
   tmux.onSubmit = async (text) => {
-    // Un `claude --print` concurrente termina primero con un sobre perfectamente válido, pero no
-    // conoce el nonce de esta inyección. Antes se cosechaba por haber crecido otro `.jsonl`.
+    // A concurrent `claude --print` finishes first with a perfectly valid envelope, but does not know
+    // the nonce of this injection. Before, it was harvested just for having grown another `.jsonl`.
     await appendFile(
       headlessFile,
       `${assistantEntry(
@@ -638,7 +636,7 @@ test("claude ignora el sobre headless de otro fichero y rescata sólo su nonce",
 });
 
 // ---------------------------------------------------------------------------
-// (d) Guarda: el pegado PERDIDO de verdad sigue soltando la sesión rápido.
+// (d) Guard: the truly LOST paste still releases the session quickly.
 // ---------------------------------------------------------------------------
 
 test("el pegado perdido sin ninguna actividad sigue soltando la sesión como ambiguo", async () => {
@@ -650,7 +648,7 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
 
   const tmux = new FakeTmux();
   const fallback = new RecordingFallback();
-  // El pegado se perdió: la TUI no escribe absolutamente nada.
+  // The paste was lost: the TUI does not write anything at all.
   tmux.onSubmit = () => undefined;
 
   const runner = claudeRunner({
@@ -661,7 +659,7 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
     fallback,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 20,
-    // Presupuesto larguísimo a propósito: lo que tiene que soltar la sesión es la red, no el plazo.
+    // Very long budget on purpose: what has to release the session is the network, not the deadline.
     turnTimeoutMs: 600_000,
     sleep: delay,
   });
@@ -672,13 +670,13 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
     execute(adapter, 600_000),
     (error: Error) => /execution deadline/iu.test(error.message),
   );
-  // Y rápido: la red no se puede haber quedado esperando el presupuesto entero.
+  // And fast: the network cannot have stayed waiting the entire budget.
   assert.ok(Date.now() - empezo < 30_000, `tardó ${Date.now() - empezo} ms`);
   assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
-// (e) Guarda: la espera por un turno fundido tiene un final escrito aunque la terminal no calle.
+// (e) Guard: the wait for a merged turn has a written end even if the terminal does not go quiet.
 // ---------------------------------------------------------------------------
 
 test("la espera por un turno fundido termina en su techo, no en el presupuesto", async () => {
@@ -693,8 +691,9 @@ test("la espera por un turno fundido termina en su techo, no en el presupuesto",
   const fallback = new RecordingFallback();
   let escribiendo = true;
   tmux.onSubmit = () => {
-    // La terminal no se calla NUNCA, y nunca emite un sobre: el pegado se perdió de verdad y lo que
-    // se ve es al dueño trabajando en su panel. Sin techo, esto esperaría toda su jornada.
+    // The terminal NEVER goes quiet, and never emits an envelope: the paste was really lost and
+    // what you see is the owner working in their panel. Without a ceiling, this would wait all
+    // day.
     void (async () => {
       while (escribiendo) {
         await delay(5);
@@ -733,7 +732,7 @@ test("la espera por un turno fundido termina en su techo, no en el presupuesto",
 });
 
 // ---------------------------------------------------------------------------
-// Las piezas, por separado.
+// The parts, separately.
 // ---------------------------------------------------------------------------
 
 test("un sobre se reconoce por su forma, y una respuesta en prosa no", () => {
@@ -802,8 +801,8 @@ test("la línea de estado de una TUI generando se distingue del texto de la conv
   assert.equal(turnInFlight("› \nEsc to interrupt\n"), true);
   assert.equal(turnInFlight("❯ "), false);
   assert.equal(turnInFlight("✻ Herding… (esc to interrupt)\n❯ \n\n\n"), true);
-  // La frase LEJOS de la caja es conversación, no estado: si contara, un agente hablando de este
-  // mismo mecanismo dejaría el panel marcado como ocupado para siempre.
+  // A sentence FAR from the box is conversation, not status: if it counted, an agent talking
+  // about this same mechanism would leave the panel marked as busy forever.
   const relleno: string[] = new Array<string>(20).fill("blah");
   const conversacion = ["el truco es mirar 'esc to interrupt'", ...relleno, "❯ "];
   assert.equal(turnInFlight(conversacion.join("\n")), false);

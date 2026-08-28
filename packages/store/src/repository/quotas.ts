@@ -5,8 +5,8 @@ import { DeliveryControlRepository } from './deliveries/control.js';
 import { StoreError } from './errors.js';
 
 // ============================================================================================
-// Cuotas de suscripciones de IA (GET /v3/console/quotas, POST /v3/quotas/samples). Ver
-// packages/store/migrations/013_quota_observation.sql para el porqué de las cuatro tablas.
+// AI subscription quotas (GET /v3/console/quotas, POST /v3/quotas/samples). See
+// packages/store/migrations/013_quota_observation.sql for the why behind the four tables.
 // ============================================================================================
 
 export interface QuotaThresholds {
@@ -64,8 +64,9 @@ export interface QuotaSampleIngestResult {
 
 export type QuotaSeverity = 'unknown' | 'ok' | 'warn' | 'critical' | 'exhausted';
 
-/** Pura y testeable sin Postgres, mismo motivo que agentWorkState(): decide si el operador ve
- *  "todo bien" o "se está por agotar", así que es la parte que necesita un test de verdad. */
+/** Pure and testable without Postgres, same reason as agentWorkState(): it decides whether
+ *  the operator sees "all good" or "about to run out", so it is the part that needs a real
+ *  test. */
 export function windowSeverity(
   remainingPercent: number | null,
   status: string | null,
@@ -82,8 +83,8 @@ const QUOTA_SEVERITY_RANK: Readonly<Record<QuotaSeverity, number>> = {
   unknown: 0, ok: 1, warn: 2, critical: 3, exhausted: 4
 };
 
-/** Severidad de un grupo/proveedor = la peor entre sus partes: un sólo grupo agotado no puede
- *  quedar escondido detrás de otros grupos sanos del mismo proveedor. */
+/** Severity of a group/provider = the worst among its parts: a single exhausted group cannot
+ *  stay hidden behind other healthy groups of the same provider. */
 export function worstQuotaSeverity(severities: readonly QuotaSeverity[]): QuotaSeverity {
   return severities.reduce<QuotaSeverity>(
     (worst, severity) => (QUOTA_SEVERITY_RANK[severity] > QUOTA_SEVERITY_RANK[worst] ? severity : worst),
@@ -91,12 +92,12 @@ export function worstQuotaSeverity(severities: readonly QuotaSeverity[]): QuotaS
   );
 }
 
-/** Marcador estable para poder reconstruir, en la LECTURA (quotaSnapshot), si una ventana quedó
- *  sin atar porque el recolector no mandó account_id o porque mandó uno que no existe en
- *  provider_accounts -- la tabla sólo guarda account_id NULL en los dos casos, así que el
- *  binding_note es la única señal que sobrevive. Se antepone SIEMPRE, incluso si el recolector
- *  ya traía su propia nota, para que una nota custom nunca pueda esconder el diagnóstico
- *  "cuenta desconocida" detrás de un texto arbitrario. */
+/** Stable marker so the READING (quotaSnapshot) can reconstruct whether a window was left
+ *  unbound because the collector did not send account_id or because it sent one that does not
+ *  exist in provider_accounts -- the table only stores account_id NULL in both cases, so the
+ *  binding_note is the only signal that survives. It is ALWAYS prepended, even if the
+ *  collector already brought its own note, so a custom note can never hide the
+ *  "unknown account" diagnosis behind arbitrary text. */
 const UNKNOWN_ACCOUNT_BINDING_PREFIX = 'cuenta desconocida: ';
 
 function unknownAccountBindingNote(accountId: string, collectorNote: string | null | undefined): string {
@@ -212,19 +213,18 @@ interface MutableQuotaSnapshotGroup {
 
 export abstract class QuotasRepository extends DeliveryControlRepository {
   /**
-   * Último estado de cuota por (host, proveedor, grupo/cuenta, ventana) más su sparkline de 24h.
-   * Self-contained como topology(): valida el permiso acá mismo.
+   * Latest quota state per (host, provider, group/account, window) plus its 24h sparkline. Self-contained
+   * like topology(): validates the permission right here.
    *
-   * Alcance cross-tenant: las tablas de cuota no tienen tenant_id propio -- lo que existe es
-   * `quota_collections.collector_tenant` (la identidad mTLS que publicó, ej.
-   * 'Steven:quota-collector'). Se resuelve igual que topology()/fleetActivity() (tenant propio +
-   * acl_edges allow_read) para decidir qué TENANTS puede ver el actor, y de ahí se deriva qué
-   * HOSTS son visibles (todo host cuya última corrida fue publicada por un tenant visible);
-   * `quota_provider_reports`/`quota_window_samples`/`quota_window_state` no tienen
-   * collector_tenant propio, así que se filtran por host, que es la clave natural compartida.
+   * Cross-tenant scope: the quota tables do not have a tenant_id of their own -- what exists is
+   * `quota_collections.collector_tenant` (the mTLS identity that published, e.g. 'Steven:quota-collector').
+   * It is resolved the same way as topology()/fleetActivity() (own tenant + acl_edges allow_read) to decide
+   * which TENANTS the actor can see, and from there which HOSTS are visible (every host whose latest run
+   * was published by a visible tenant); `quota_provider_reports`/`quota_window_samples`/`quota_window_state`
+   * do not have their own collector_tenant, so they are filtered by host, which is the shared natural key.
    *
-   * NUNCA selecciona external_account_id/credential_ref/credential_ref_kind de
-   * provider_accounts: no están en el shape de salida en ningún lado de este método.
+   * NEVER selects external_account_id/credential_ref/credential_ref_kind from provider_accounts: they are
+   * not in the output shape anywhere in this method.
    */
   async quotaSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
@@ -237,10 +237,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
        ) ORDER BY t.id`,
       [actorTenant]
     );
-    // El aislamiento es por TENANT, nunca por el nombre de host: `host` es una cadena que declara
-    // el propio recolector, asi que dos tenants que usen el mismo nombre compartirian panel. Se
-    // conserva `visibleHosts` para las lecturas de tablas que aun no llevan el tenant (el historico
-    // se acota ademas por su collection), pero el filtro que MANDA es el de tenant.
+    // Isolation is by TENANT, never by host name: `host` is a string declared by the
+    // collector itself, so two tenants using the same name would share the panel. `visibleHosts`
+    // is kept for reads of tables that do not yet carry the tenant (history is also bounded
+    // by its collection), but the filter that COUNTS is the tenant one.
     const visibleTenantIds = visibleTenants.rows.map((row) => row.id);
     const visibleHostsResult = await this.pool.query<{ host: string }>(
       `SELECT DISTINCT host FROM quota_collections
@@ -251,8 +251,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     const visibleHosts = visibleHostsResult.rows.map((row) => row.host);
 
     const [collectorRows, providerRows, stateRows, historyRows, pausedRows] = await Promise.all([
-      // El último quota_collections de cada host visible: es el que responde "¿el recolector
-      // sigue vivo?" (collectors[].stale se calcula contra received_at, reloj del servidor).
+      // The latest quota_collections of each visible host: it is what answers "is the
+      // collector still alive?" (collectors[].stale is computed against received_at, server
+      // clock).
       this.pool.query<QuotaCollectorRow>(
         `SELECT DISTINCT ON (host)
            host,collector_tenant,collector_alias,captured_at,received_at,
@@ -262,8 +263,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
          ORDER BY host,received_at DESC`,
         [visibleHosts]
       ),
-      // El último reporte de proveedor por (host,provider), entre las collections visibles de
-      // ese host -- ok=false con cero ventanas es información y tiene que sobrevivir acá.
+      // The latest provider report per (host,provider), among the visible collections of
+      // that host -- ok=false with zero windows is information and must survive here.
       this.pool.query<QuotaProviderRow>(
         `SELECT DISTINCT ON (qc.host,pr.provider)
            qc.host,pr.provider,pr.ok,pr.available,pr.kind,pr.source,pr.plan,
@@ -275,8 +276,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
          ORDER BY qc.host,pr.provider,qc.received_at DESC`,
         [visibleHosts]
       ),
-      // El estado ACTUAL materializado de cada ventana -- la tabla que existe justamente para
-      // que este endpoint no tenga que escanear el histórico en cada lectura.
+      // The CURRENT materialized state of each window -- the table that exists precisely so
+      // this endpoint does not have to scan history on every read.
       this.pool.query<QuotaWindowStateRow>(
         `SELECT s.host,s.provider,s.group_key,s.window_key,s.label,
                 s.used_percent,s.remaining_percent,s.used_units,s.limit_units,
@@ -290,10 +291,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
          ORDER BY s.host,s.provider,s.group_key,s.window_key`,
         [visibleTenantIds]
       ),
-      // Sparkline: 24h en cubetas de 30min, último valor observado por cubeta. DISTINCT ON no es
-      // una función de ventana -- no hay ningún FOR SHARE/FOR UPDATE en este método de cualquier
-      // forma (es de sólo lectura), pero queda documentado porque es la misma familia de
-      // consulta que fleetActivity().
+      // Sparkline: 24h in 30-minute buckets, last observed value per bucket. DISTINCT ON is
+      // not a window function -- there is no FOR SHARE/FOR UPDATE in this method in any case
+      // (it is read-only), but it is documented because it is the same query family as
+      // fleetActivity().
       this.pool.query<QuotaHistoryRow>(
         `WITH bucketed AS (
            SELECT host,provider,group_key,window_key,
@@ -313,9 +314,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
           ORDER BY host,provider,group_key,window_key,bucket`,
         [visibleTenantIds, DEFAULT_QUOTA_THRESHOLDS.history_bucket_seconds, observedAt, DEFAULT_QUOTA_THRESHOLDS.history_window_seconds]
       ),
-      // Suscripciones actualmente pausadas cuyo estado de cuota vive en un host visible. No hay
-      // redacción de tenant acá: label/provider/payer_tenant_id no son el secreto, el secreto es
-      // external_account_id/credential_ref, que este método nunca toca.
+      // Subscriptions currently paused whose quota state lives on a visible host. There is
+      // no tenant redaction here: label/provider/payer_tenant_id are not the secret; the
+      // secret is external_account_id/credential_ref, which this method never touches.
       this.pool.query<QuotaPausedAccountRow>(
         `SELECT p.id AS account_id,p.provider,p.label,p.payer_tenant_id,p.paused_until,p.paused_reason
            FROM provider_accounts p
@@ -378,8 +379,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         limit_units: row.limit_units === null ? null : Number(row.limit_units),
         window_minutes: row.window_minutes === null ? null : Number(row.window_minutes),
         reset_at: row.reset_at?.toISOString() ?? null,
-        // Math.max(0, ...): un reset_at que ya pasó (el recolector todavía no volvió a
-        // muestrear esa ventana) no puede mostrar una cuenta regresiva negativa.
+        // Math.max(0, ...): a reset_at that has already passed (the collector has not yet
+        // resampled that window) cannot show a negative countdown.
         reset_in_seconds: row.reset_at === null ? null : Math.max(0, Math.round((row.reset_at.getTime() - observedAt.getTime()) / 1_000)),
         status: row.status, family: row.family, model: row.model,
         severity,
@@ -392,9 +393,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
 
       if (row.account_id === null) {
         const unboundKey = JSON.stringify([row.host, row.provider, row.group_key]);
-        // La tabla sólo guarda account_id NULL para los dos motivos ("nunca lo mandaron" y
-        // "mandaron uno que no existe"); el binding_note con el marcador estable es la única
-        // señal que sobrevive para distinguirlos en la lectura (ver unknownAccountBindingNote).
+        // The table only stores account_id NULL for the two reasons ("never sent" and "sent
+        // one that does not exist"); the binding_note with the stable marker is the only
+        // signal that survives to distinguish them on read (see unknownAccountBindingNote).
         const reason: QuotaSampleUnboundGroup['reason'] =
           row.binding_note?.startsWith(UNKNOWN_ACCOUNT_BINDING_PREFIX) === true ? 'unknown_account_id' : 'no_account_id_supplied';
         const existing = unboundGroups.get(unboundKey);
@@ -451,19 +452,18 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
   }
 
   /**
-   * Ingesta de una corrida del recolector de cuotas (POST /v3/quotas/samples). NO autochequea
-   * permiso -- lo hace la ruta antes de llamar acá, mismo patrón que enqueueJob(). actorTenant/
-   * actorAlias son la identidad mTLS AUTENTICADA (nunca el cuerpo) y se graban como
-   * collector_tenant/collector_alias: estas filas pueden pausar suscripciones pagas, así que
-   * tiene que quedar registrado quién publicó la muestra que cortó el despacho.
+   * Ingestion of one quota collector run (POST /v3/quotas/samples). It does NOT self-check permission --
+   * the route does so before calling here, same pattern as enqueueJob(). actorTenant/actorAlias are the
+   * AUTHENTICATED mTLS identity (never the body) and are stored as collector_tenant/collector_alias: these
+   * rows can pause paid subscriptions, so it must be recorded who published the sample that cut off dispatch.
    *
-   * Todo en UNA transacción: colisión de (host,captured_at) => 202 duplicate=true sin escribir
-   * nada más: el recolector puede reintentar sin miedo a duplicar la serie.
+   * All in ONE transaction: (host,captured_at) collision => 202 duplicate=true without writing anything else:
+   * the collector can retry without fear of duplicating the series.
    */
   async recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult> {
-    // Chequeo síncrono ANTES de tocar la base: un schema_version que esta versión del gateway no
-    // entiende no se mapea a ciegas -- eso es exactamente cómo una muestra mal leída dispara la
-    // auto-pausa de una suscripción sana.
+    // Synchronous check BEFORE touching the database: a schema_version this gateway version
+    // does not understand is not blindly mapped -- that is exactly how a misread sample
+    // triggers the auto-pause of a healthy subscription.
     if (!(SUPPORTED_QUOTA_SCHEMA_VERSIONS as readonly number[]).includes(sample.schema_version)) {
       throw new StoreError('invalid_input', `unsupported quota schema_version: ${sample.schema_version}`);
     }
@@ -481,9 +481,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       );
       const collectionId = insertedCollection.rows[0]?.id;
       if (!collectionId) {
-        // Colisión con UNIQUE(collector_tenant,host,captured_at): un reintento de red del mismo
-        // recolector. Se recupera el id existente para que la respuesta siga siendo útil, y no se
-        // escribe nada.
+        // Collision with UNIQUE(collector_tenant,host,captured_at): a network retry from the
+        // same collector. The existing id is recovered so the response stays useful, and
+        // nothing is written.
         //
         const existingCollection = await client.query<{ id: string }>(
           `SELECT id FROM quota_collections WHERE collector_tenant=$1 AND host=$2 AND captured_at=$3`,
@@ -498,22 +498,22 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         };
       }
 
-      // account_id lo manda el RECOLECTOR, nunca lo adivina el gateway (ver migración 013). Se
-      // pre-valida contra provider_accounts ACÁ, antes de insertar nada, porque insertar contra
-      // un account_id inexistente rompería la FK y abortaría TODA la transacción -- justo lo que
-      // "un account_id desconocido no tira el POST" prohíbe.
+      // account_id is sent by the COLLECTOR, never guessed by the gateway (see migration 013).
+      // It is pre-validated against provider_accounts HERE, before inserting anything, because
+      // inserting against a non-existent account_id would break the FK and abort the ENTIRE
+      // transaction -- exactly what "an unknown account_id does not fail the POST" forbids.
       const suppliedAccountIds = new Set<string>();
       for (const provider of sample.providers) {
         for (const window of provider.windows) {
           if (window.account_id !== null && window.account_id !== undefined) suppliedAccountIds.add(window.account_id);
         }
       }
-      // …y se exige ADEMAS que la cuenta la pague EL TENANT QUE PUBLICA. Sin este filtro, un
-      // operador de otro tenant podia declarar el account_id ajeno y, via la auto-pausa por cuota
-      // agotada, dejar sin despacho a los agentes de un tenant que no es el suyo: un POST bien
-      // formado apagaba la flota de otro. La cuenta desconocida YA no rompe el POST (se guarda sin
-      // vincular), asi que la ajena toma exactamente ese mismo camino: se guarda la muestra, no se
-      // vincula, y el motivo queda escrito en unbound_groups.
+      // ...and it is ALSO required that the account be paid for by THE PUBLISHING TENANT. Without this
+      // filter, an operator from another tenant could declare someone else's account_id and, via the
+      // quota-exhausted auto-pause, leave the agents of a tenant that is not theirs without dispatch:
+      // a well-formed POST could shut down another tenant's fleet. The unknown account no longer
+      // breaks the POST (it is stored unbound), so a foreign account takes exactly that same path:
+      // the sample is stored, not bound, and the reason is written into unbound_groups.
       const knownAccountRows = await client.query<{ id: string }>(
         `SELECT id FROM provider_accounts WHERE id = ANY($1::text[]) AND payer_tenant_id = $2`,
         [[...suppliedAccountIds], actorTenant]
@@ -547,9 +547,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
             unboundReason = 'no_account_id_supplied';
           } else if (!knownAccountIds.has(window.account_id)) {
             finalAccountId = null;
-            // Marcador estable ANTEPUESTO siempre, aunque el recolector haya mandado su propia
-            // nota: si no fuera así, una nota custom podría esconder "cuenta desconocida" detrás
-            // de texto arbitrario y quotaSnapshot() ya no podría reconstruir el motivo real.
+            // Stable marker ALWAYS PREPENDED, even if the collector sent its own note: if it
+            // were not so, a custom note could hide "unknown account" behind arbitrary text,
+            // and quotaSnapshot() would no longer be able to reconstruct the real reason.
             finalBindingNote = unknownAccountBindingNote(window.account_id, window.binding_note);
             unboundReason = 'unknown_account_id';
           } else {
@@ -583,8 +583,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
             ]
           );
 
-          // Guarda anti-retroceso en el WHERE: una corrida vieja que llega tarde (reintento de
-          // red, cola atascada) no puede pisar un estado más nuevo que ya se leyó.
+          // Anti-regression guard in the WHERE: a stale run arriving late (network retry,
+          // stuck queue) cannot overwrite a newer state that has already been read.
           await client.query(
             `INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,collection_id,captured_at,label,used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
@@ -606,9 +606,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         }
       }
 
-      // Auto-pausa: sólo cuentas ATADAS (account_id NOT NULL vía el JOIN) y sólo hasta el reset
-      // informado -- nunca indefinida. Acotada a esta collection_id: una corrida vieja rechazada
-      // por la guarda anti-retroceso de arriba no puede disparar una pausa basada en datos viejos.
+      // Auto-pause: only BOUND accounts (account_id NOT NULL via the JOIN) and only up to
+      // the reported reset -- never indefinite. Bounded to this collection_id: a stale run
+      // rejected by the anti-regression guard above cannot trigger a pause based on stale data.
       const pausedAccountRows = await client.query<{ account_id: string; provider: string; group_key: string; window_key: string; paused_until: Date }>(
         `UPDATE provider_accounts p
             SET paused_until = GREATEST(COALESCE(p.paused_until, now()), s.reset_at),
@@ -626,10 +626,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         window_key: row.window_key, paused_until: row.paused_until.toISOString()
       }));
 
-      // Auto-reanudación GLOBAL (no acotada a esta collection_id) a propósito: si otro proveedor
-      // de la misma corrida, o una corrida anterior, ya dejó una cuenta sana, tiene que levantarse
-      // apenas se detecte, no recién cuando ESA cuenta puntual vuelva a aparecer en un POST. El
-      // WHERE paused_reason LIKE 'quota_exhausted:%' es lo que impide pisar una pausa manual.
+      // GLOBAL auto-resume (not bounded to this collection_id) on purpose: if another provider of the same run,
+      // or a previous run, already left an account healthy, it must be lifted as soon as it is detected, not
+      // only when THAT specific account shows up again in a POST. The WHERE paused_reason LIKE 'quota_exhausted:%'
+      // clause is what prevents overwriting a manual pause.
       const resumedAccountRows = await client.query<{ account_id: string; provider: string }>(
         `UPDATE provider_accounts p
             SET paused_until = NULL, paused_reason = NULL, updated_at = now()
@@ -644,7 +644,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         account_id: row.account_id, provider: row.provider
       }));
 
-      // Retención acotada (LIMIT 500) para que un solo POST nunca dispare un DELETE ilimitado.
+      // Bounded retention (LIMIT 500) so a single POST never triggers an unbounded DELETE.
       const prunedCollections = await client.query(
         `DELETE FROM quota_collections WHERE ctid IN (
            SELECT ctid FROM quota_collections

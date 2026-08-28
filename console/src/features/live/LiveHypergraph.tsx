@@ -21,44 +21,40 @@ import type { FleetDelegationEdge } from '../../api/types';
 import { FlowArrow } from './hypergraph/FlowArrow';
 
 /**
- * El mapa: los muñecos de la flota colocados en su sala, con lo que se están pasando entre manos.
+ * The map: the fleet doughboys placed in their rooms, with what they are passing between hands.
  *
- * Es el centro de la vista y responde una sola pregunta —*quién le está pasando trabajo a quién,
- * ahora*—, pero admite conmutar a una segunda capa, *quién tiene PERMISO de hablarle a quién*.
- * Nunca las dos a la vez: las flechas no significan lo mismo (una es una entrega real en vuelo, la
- * otra es una arista ACL) y superponerlas obliga a que la lectura de una de las dos empeore. Con
- * el conmutador, las salas y las posiciones no se mueven: cambia sólo lo que las une, así que la
- * comparación entre "puede" y "está" se hace con los ojos, sin volver a buscar a nadie.
+ * It is the center of the view and answers a single question — *who is passing work to whom, right now* — but it
+ * can switch to a second layer, *who has PERMISSION to talk to whom*. Never both at once: the arrows do not mean
+ * the same thing (one is a real in-flight delivery, the other is an ACL edge) and overlaying them forces one of the
+ * two readings to worsen. With the switcher, the rooms and positions do not move: only what joins them changes, so
+ * the comparison between "can" and "is" is done with the eyes, without having to find anyone again.
  *
- * Honestidad, que acá pesa más que el dibujo:
- *  - una flecha existe sólo si hay una entrega en vuelo de verdad (`delegationEdges` las deriva de
- *    `in_flight_items`; no se inventa ninguna);
- *  - un alias que la topología declara y la actividad no reporta se dibuja **sin reportar**, con
- *    su anillo punteado y la palabra escrita;
- *  - si el servidor no informa el trabajo cerrado en 24 h, TODOS los muñecos miden lo mismo y la
- *    leyenda lo dice, en vez de dibujar un cero que nadie midió.
+ * Honesty, which weighs more here than the drawing: an arrow exists only if there is a real in-flight delivery
+ * (`delegationEdges` derives them from `in_flight_items`; none is invented); an alias that topology declares but
+ * activity does not report is drawn **unreported**, with its dashed ring and the written word; if the server does
+ * not report the work closed in 24 h, ALL doughboys measure the same and the legend says so, instead of drawing a
+ * zero that nobody measured.
  */
 
 /**
- * Lo que ocupa un muñeco de verdad, medido desde su centro, con el radio MÁXIMO.
+ * What a real doughboy occupies, measured from its center, with the MAXIMUM radius.
  *
- * Se calcula con 34 y no con el radio de cada nodo a propósito: el layout se resuelve una vez, con
- * la topología, y no puede depender de un tamaño que cambia con la actividad — si dependiera, los
- * muñecos saltarían de sitio cada vez que alguien cierra un encargo. Reservar siempre el hueco del
- * más grande cuesta un poco de aire y garantiza que ningún par se pise nunca.
+ * Computed with 34 and not with each node's radius on purpose: the layout is solved once, with the topology, and
+ * cannot depend on a size that changes with activity — if it did, the doughboys would jump in place every time someone
+ * closes a task. Always reserving the largest one's space costs a bit of air and guarantees that no pair ever overlaps.
  */
 const FOOTPRINT = { halfWidth: 44, top: -40, bottom: 62 } as const;
 
-/** Ancho del pasillo de la izquierda donde viven los nodos «persona», fuera de toda sala. */
+/** Width of the left corridor where the "person" nodes live, outside of any room. */
 const GUTTER = 132;
 
-/** Separación mínima entre dos nodos persona, para que sus nombres no se pisen. */
+/** Minimum separation between two person nodes, so their names do not overlap. */
 const GUTTER_GAP = 62;
 
-/** Estado de RENDER, no del sistema. `unknown` no es un octavo estado: es la ausencia de los siete. */
+/** RENDER state, not system state. `unknown` is not an eighth state: it is the absence of the seven. */
 type NodeState = LiveState | 'unknown';
 
-/** La palabra que va SIEMPRE debajo del alias. El color solo no alcanza para distinguir libre de muerto. */
+/** The word that ALWAYS goes below the alias. Color alone is not enough to distinguish free from dead. */
 const WORD: Record<NodeState, string> = {
   down: 'caído',
   blocked: 'trabado',
@@ -91,26 +87,26 @@ export interface LiveHypergraphProps {
   topology: TopologySnapshot | undefined;
   views: readonly LiveAgentView[];
   edges: readonly DelegationEdge[];
-  /** Agregado por par que informa el servidor. Ausente hasta que la fase de backend se despliegue. */
+  /** Aggregated by pair as reported by the server. Absent until the backend phase ships. */
   serverEdges?: readonly FleetDelegationEdge[] | null;
-  /** Umbrales del SERVIDOR. El ámbar de una flecha sale de acá, nunca de un 300 escrito a mano. */
+  /** SERVER thresholds. An arrow's amber comes from here, never from a hand-written 300. */
   thresholds?: FleetActivityThresholds | null;
-  /** Encargos que entraron por un puente humano, para dibujar el nodo persona fuera de las salas. */
+  /** Tasks that came in through a human bridge, used to draw the person node outside the rooms. */
   origins?: readonly HumanOrigin[];
   layer?: HypergraphLayer;
   focusKey?: string | null;
   spotlight?: Set<string> | null;
   loadingTopology?: boolean;
   /**
-   * La lectura de la topología FALLÓ. Es distinto de "no hay salas", y hasta ahora se veían igual:
-   * el mismo cartel de «el control plane todavía no informó ninguna sala» cubría los dos casos, así
-   * que un `GET /v3/console/topology` caído se leía como una flota sin configurar.
+   * The topology read FAILED. It is different from "there are no rooms", and until now they
+   * looked the same: the same banner of "the control plane has not reported any rooms yet"
+   * covered both cases, so a downed `GET /v3/console/topology` was read as an unconfigured fleet.
    */
   topologyError?: Error | null;
   onRetryTopology?: () => void;
   onFocus?: (key: string | null) => void;
   onOpen?: (view: LiveAgentView) => void;
-  /** Rectángulo del nodo en coordenadas de viewport, para colgarle el globo desde la página. */
+  /** Bounding rectangle of the node in viewport coordinates, used to hang the balloon from the page. */
   onHover?: (key: string | null, anchor: DOMRect | null, view: LiveAgentView | null, alias: string) => void;
 }
 
@@ -129,9 +125,7 @@ export function LiveHypergraph({
 }: LiveHypergraphProps) {
   const byKey = useMemo(() => new Map(views.map((view) => [view.key, view])), [views]);
 
-  // El layout depende SOLO de la topología. Es lo que hace que los muñecos no salten de sitio en
-  // cada refresco: si dependiera de la actividad sería imposible seguir a nadie con la vista, y un
-  // mapa que se reordena solo cada cuatro segundos no es un mapa.
+  // The layout depends ONLY on topology. That is what keeps the doughboys from jumping in place on every refresh: if it depended on activity it would be impossible to follow anyone with the eye, and a map that reorders itself every four seconds is not a map.
   const model: HyperGraphModel = useMemo(
     () => {
       const canvas = canvasFor(countAliases(topology));
@@ -146,7 +140,7 @@ export function LiveHypergraph({
     [topology],
   );
 
-  // `null` = ningún agente trae el campo. Distinto de `0` = todos cerraron cero.
+  // `null` = no agent brings the field. Different from `0` = all closed zero.
   const maxClosed = useMemo(() => {
     let max: number | null = null;
     for (const view of views) {
@@ -177,12 +171,12 @@ export function LiveHypergraph({
   const agregadas = useMemo(() => aggregateEdges(edges, serverEdges), [edges, serverEdges]);
 
   /**
-   * Los nodos persona, en el pasillo de la izquierda.
+   * The person nodes, in the left corridor.
    *
-   * Se colocan a la altura de su agente y después se separan en una pasada secuencial, así que la
-   * posición es determinista: dos refrescos con los mismos datos dan el mismo dibujo. Van FUERA de
-   * las regiones porque una persona no es miembro de ninguna sala, y meterla dentro sería el mismo
-   * tipo de mentira que dibujar una flecha que nadie mandó.
+   * They are placed at the height of their agent and then separated in a sequential pass, so the position is
+   * deterministic: two refreshes with the same data yield the same drawing. They are OUTSIDE the regions because a
+   * person is not a member of any room, and putting one inside would be the same kind of lie as drawing an arrow no
+   * one sent.
    */
   const personas = useMemo(() => {
     const lista = (origins ?? [])
@@ -203,12 +197,12 @@ export function LiveHypergraph({
     : `0 0 ${String(model.width)} ${String(model.height)}`;
 
   /**
-   * SMIL no lo apaga el CSS.
+   * CSS does not turn SMIL off.
    *
-   * `prefers-reduced-motion` frena animaciones CSS, y `<animateMotion>` no es una: hay que
-   * preguntarlo desde JS o esta vista incumple lo que el resto de la consola ya respeta. Con el
-   * ajuste puesto, el punto se queda quieto a mitad de la curva en vez de desaparecer: una flecha
-   * viva tiene que seguir distinguiéndose de una muerta sin depender del movimiento.
+   * `prefers-reduced-motion` stops CSS animations, and `<animateMotion>` is not one: it has to be queried from JS or
+   * this view fails to honor what the rest of the console already respects. With the setting on, the dot stays still
+   * halfway through the curve instead of disappearing: a live arrow must keep being distinguishable from a dead one
+   * without relying on motion.
    */
   const animar = useMemo(() => {
     try {
@@ -248,9 +242,7 @@ export function LiveHypergraph({
   const maxTotal = vivas.reduce((max, edge) => Math.max(max, edge.total), 1);
   const stallAfter = thresholds?.stall_after_seconds ?? 300;
 
-  /**
-   * El foco suma al filtro activo en vez de reemplazarlo.
-   */
+  /** Focus adds to the active filter instead of replacing it. */
   const activos = new Set<string>(spotlight ?? []);
   if (focusKey) {
     const vecindario = new Set<string>([focusKey]);
@@ -261,7 +253,8 @@ export function LiveHypergraph({
     if (!spotlight) activos.clear();
     for (const key of vecindario) activos.add(key);
   }
-  // Un `Set` vacío es truthy: hay filtro puesto aunque no case con nadie, y ahí TODO va atenuado.
+  // An empty `Set` is truthy: a filter is set even if it matches nobody, and then EVERYTHING
+  // is dimmed.
   const atenuando = Boolean(spotlight) || Boolean(focusKey);
 
   const trabajando = placed.filter((item) => item.view && item.view.state !== 'idle' && item.view.state !== 'down').length;
@@ -287,7 +280,7 @@ export function LiveHypergraph({
           </marker>
         </defs>
 
-        {/* Capa 1 — las salas. Al fondo: los muñecos se leen siempre por encima. */}
+        {/* Layer 1 — the rooms. In the background: the doughboys always read above them. */}
         <g className="lhg-rooms">
           {model.edges.map((room) => (
             <g className={`lhg-room lhg-hue-${String(room.hue)}`} key={room.key}>
@@ -301,7 +294,7 @@ export function LiveHypergraph({
           ))}
         </g>
 
-        {/* Capa 2 — o las delegaciones vivas, o los permisos. Nunca las dos. */}
+        {/* Layer 2 — either the live delegations, or the permissions. Never both. */}
         {layer === 'permisos' ? (
           <g className="lhg-flows lhg-flows-acl">
             {model.arcs.map((arc) => (
@@ -339,7 +332,7 @@ export function LiveHypergraph({
           </g>
         )}
 
-        {/* Capa 3 — las personas, en el pasillo, con hilo punteado a su agente. */}
+        {/* Layer 3 — the people, in the corridor, with a dashed line to their agent. */}
         {layer === 'ahora' ? (
           <g className="lhg-humans">
             {personas.map((persona) => {
@@ -364,7 +357,7 @@ export function LiveHypergraph({
           </g>
         ) : null}
 
-        {/* Capa 4 — los muñecos. */}
+        {/* Layer 4 — the doughboys. */}
         <g className="lhg-bots">
           {placed.map((item) => {
             const view = item.view;
@@ -380,7 +373,7 @@ export function LiveHypergraph({
                 key={item.key}
                 className={`lhg-bot${dim ? ' is-dim' : ''}${focusKey === item.key ? ' is-active' : ''}${view ? '' : ' is-unknown'}`}
                 data-state={estado}
-                // El veredicto usa esta clave para traer al muñeco culpable a la vista.
+                // The verdict uses this key to bring the guilty doughboy into view.
                 data-agent-key={item.key}
                 transform={`translate(${String(item.point.x)} ${String(item.point.y)})`}
                 tabIndex={0}
@@ -404,8 +397,8 @@ export function LiveHypergraph({
                   }
                 }}
               >
-                {/* El `title` nativo SE CONSERVA: es el respaldo del lector de pantalla. El globo
-                    se suma, no lo reemplaza. */}
+                {/* The native `title` IS KEPT: it is the screen reader's fallback. The balloon
+                    is added, not a replacement. */}
                 <title>{detalle}</title>
                 <circle className="lhg-bot-hit" r={r + 8} />
                 {view ? null : <circle className="lhg-bot-unknown-ring" r={r + 3} />}
@@ -419,9 +412,9 @@ export function LiveHypergraph({
                   </div>
                 </foreignObject>
                 <text className="lhg-bot-name" y={r + 16} textAnchor="middle">{item.alias}</text>
-                {/* La PALABRA, siempre. El color solo no distingue libre de muerto, y el estado
-                    normal medido de esta flota son quince alias sin trabajo: si eso se lee como
-                    flota muerta, la vista falla justo el día que todo está bien. */}
+                {/* The WORD, always. Color alone does not distinguish free from dead, and the
+                    measured normal state of this fleet is fifteen aliases with no work: if that
+                    reads as a dead fleet, the view fails on exactly the day everything is fine. */}
                 <text className="lhg-bot-word" y={r + 30} textAnchor="middle">{WORD[estado]}</text>
                 {view && view.queued > 0 ? (
                   <g className="lhg-bot-queue" transform={`translate(${String(r - 4)} ${String(-r + 4)})`}>

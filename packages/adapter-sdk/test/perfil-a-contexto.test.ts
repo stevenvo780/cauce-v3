@@ -13,13 +13,13 @@ import {
 } from "../src/context/perfil-a-contexto.js";
 
 /**
- * EL COMPILADOR DE CONTEXTO: perfil + hechos del arnés -> el texto del fichero.
+ * THE CONTEXT COMPILER: profile + harness facts -> the file text.
  *
- * Lo que NO hace, y es el punto: no inventa la redacción del contrato. La prosa fija
- * —DEBER PRIMARIO, invariantes de protocolo, mecánicas de delegación— ya existe y está probada en
- * `contexto-fijo.ts` / `textoFijoDelSobre()`. Este módulo compone LO DEL ALIAS, que es lo que
- * alimenta la línea `Tu rol:` del preámbulo de identidad. Si embelleciera una coma de lo fijo, el
- * sello dejaría de coincidir, el sobre seguiría yendo entero y el ahorro sería cero.
+ * What it does NOT do, and that is the point: it does not invent the wording of the contract.
+ * The fixed prose —PRIMARY DUTY, protocol invariants, delegation mechanics— is tested in
+ * `contexto-fijo.ts` / `textoFijoDelSobre()`; this module composes THE ALIAS'S PART, which feeds
+ * the `Tu rol:` line of the identity preamble. If it prettified a single comma, the seal would stop
+ * matching, the envelope would still travel whole, and the savings would be zero.
  */
 
 function perfil(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -50,7 +50,7 @@ function hechos(overrides: Partial<HechosDelAlias> = {}): HechosDelAlias {
   };
 }
 
-// ── Determinismo ─────────────────────────────────────────────────────────────────────────────
+// ── Determinism ────────────────────────────────────────────────────────────────────────────────
 
 test("mismo perfil y mismos hechos producen EXACTAMENTE los mismos bytes", () => {
   const uno = componerBloqueDePerfil(perfil(), hechos());
@@ -67,9 +67,9 @@ test("no mete fechas ni relojes: dos composiciones separadas en el tiempo son ig
 });
 
 /**
- * CONTROL NEGATIVO del determinismo: si el orden de las claves del objeto de entrada cambiara el
- * resultado, este test se pondría rojo. Se construyen los MISMOS hechos con las claves insertadas
- * al revés, que es lo que devolvería un `JSON.parse` de otra fuente.
+ * NEGATIVE CONTROL of determinism: if the order of the keys of the input object changed the
+ * result, this test would turn red. The SAME facts are built with the keys inserted backwards,
+ * which is what a `JSON.parse` from another source would return.
  */
 test("control negativo: el orden de inserción de las claves NO cambia el resultado", () => {
   const derecho = hechos();
@@ -92,7 +92,7 @@ test("control negativo: cambiar UNA coma cambia el sello", () => {
   assert.notEqual(resumirContextoFijo(base), resumirContextoFijo(tocado));
 });
 
-// ── Las siete caras ──────────────────────────────────────────────────────────────────────────
+// ── The seven faces ────────────────────────────────────────────────────────────────────────────
 
 test("concentra las siete secciones cuando hay material para todas", () => {
   const texto = componerBloqueDePerfil(perfil(), hechos());
@@ -110,9 +110,9 @@ test("concentra las siete secciones cuando hay material para todas", () => {
 });
 
 /**
- * Un encabezado sin nada debajo le enseña al agente que el sistema no sabe la respuesta, que es
- * peor que no preguntar. Es la misma regla por la que el adaptador omite `Tu rol:` cuando el brief
- * es NULL, y la lección del SOUL.md de fábrica de `iza`.
+ * A header with nothing under it tells the agent the system does not know the answer, which is
+ * worse than not asking. It is the same rule by which the adapter omits `Tu rol:` when the brief
+ * is NULL, and the lesson from the factory SOUL.md of `iza`.
  */
 test("omite las secciones vacías en vez de emitir un encabezado hueco", () => {
   const texto = componerBloqueDePerfil(
@@ -145,7 +145,7 @@ test("los permisos se dicen por su EFECTO, y los denegados también se nombran",
   assert.doesNotMatch(texto, /undefined|\[object Object\]/);
 });
 
-// ── El bloque gestionado: lo de fuera se conserva byte a byte ────────────────────────────────
+// ── The managed block: outside content is preserved byte for byte ──────────────────────────────
 
 const HUMANO_ANTES = "# CLAUDE.md de zeus\n\nEsto lo escribí yo a mano y no se toca.\n\n";
 const HUMANO_DESPUES = "\n\n## Mis notas\n\nNi esto tampoco.\n";
@@ -181,7 +181,7 @@ test("cambiar el perfil cambia SOLO el bloque; lo humano sigue igual byte a byte
   assert.notEqual(bloqueGestionado(antes), bloqueGestionado(despues));
 });
 
-/** CONTROL NEGATIVO: sin este cuidado, sembrar sobre un fichero humano lo borraría. */
+/** NEGATIVE CONTROL: without this care, seeding over a human file would wipe it. */
 test("control negativo: sembrar sobre un fichero SIN marcas conserva todo lo que había", () => {
   const original = `${HUMANO_ANTES}texto suelto que nadie debe perder\n`;
   const sembrado = conBloqueGestionado(original, componerBloqueDePerfil(perfil(), hechos()));
@@ -189,7 +189,7 @@ test("control negativo: sembrar sobre un fichero SIN marcas conserva todo lo que
   assert.ok(sembrado.length > original.length);
 });
 
-// ── openclaw: proyección campo a campo, NUNCA el fichero entero ──────────────────────────────
+// ── openclaw: field-by-field projection, NEVER the whole file ─────────────────────────────────
 
 test("la proyección de openclaw es sólo el subárbol del alias bajo agents", () => {
   const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
@@ -200,10 +200,10 @@ test("la proyección de openclaw es sólo el subárbol del alias bajo agents", (
 });
 
 /**
- * CONTROL NEGATIVO, y el que de verdad importa: `openclaw.json` guarda `auth` y `secrets` junto a
- * la directiva. Si la proyección alguna vez pasara a emitir el documento entero, esto se pone
- * rojo. No se comprueba «no aparece la palabra auth» —eso lo pasaría un fichero entero que no la
- * use— sino que las ÚNICAS claves emitidas son las declaradas.
+ * NEGATIVE CONTROL, and the one that truly matters: `openclaw.json` stores `auth` and `secrets`
+ * alongside the directive. If the projection ever started emitting the whole document, this
+ * turns red. We do not check "the word auth does not appear" —a whole file that does not use it
+ * would pass that— but that the ONLY keys emitted are the declared ones.
  */
 test("control negativo: la proyección NUNCA emite auth ni secrets, vengan de donde vengan", () => {
   const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
@@ -228,7 +228,7 @@ test("la proyección lleva el sello dentro, para poder comprobarla sin releer el
   assert.equal(fragmento.agents["zeus"]?.cauce.sha256, resumirContextoFijo(bloque));
 });
 
-/** CONTROL NEGATIVO del serializador estable: `JSON.stringify` SÍ depende del orden. */
+/** NEGATIVE CONTROL of the stable serializer: `JSON.stringify` DOES depend on order. */
 test("control negativo: serializarEstable ignora el orden de claves y JSON.stringify no", () => {
   const derecho = { b: 1, a: 2 };
   const alReves = { a: 2, b: 1 };
@@ -236,22 +236,22 @@ test("control negativo: serializarEstable ignora el orden de claves y JSON.strin
   assert.equal(serializarEstable(derecho), serializarEstable(alReves));
 });
 
-// ── El acoplamiento con el sobre, medido ─────────────────────────────────────────────────────
+// ── The coupling with the envelope, measured ───────────────────────────────────────────────────
 
 /**
- * LA RESTRICCIÓN DE INTEGRACIÓN, clavada en una prueba que puede dar rojo.
+ * THE INTEGRATION CONSTRAINT, nailed down in a test that can turn red.
  *
- * El sello es el sha256 del texto fijo, y ese texto incluye la línea `Tu rol:` que sale de
- * `context.self_role`. Para que el sello del fichero coincida con el que calcula el adaptador, el
- * MISMO texto tiene que estar en los dos lados. Pero `self_role` del sobre está topado en
- * `ROLE_BRIEF_MAX_CODE_POINTS` (1.200 puntos de código) y el perfil admite 24.000 unidades: un
- * perfil rico NO CABE en el sobre, y si el fichero se compone con el perfil entero mientras el
- * sobre manda el `role_brief` corto, los dos sha NO COINCIDEN NUNCA y el recorte no se activa
- * jamás — el trabajo entero no ahorraría un solo carácter, y sin un solo error visible.
+ * The seal is the sha256 of the fixed text, and that text includes the `Tu rol:` line that comes
+ * from `context.self_role`. For the file's seal to match the one the adapter computes, the SAME
+ * text has to be on both sides. But the envelope's `self_role` is capped at
+ * `ROLE_BRIEF_MAX_CODE_POINTS` (1,200 code points) and the profile allows 24,000 units: a rich
+ * profile DOES NOT FIT in the envelope, and if the file is composed with the whole profile while
+ * the envelope sends the short `role_brief`, the two sha NEVER MATCH and the trimming never kicks
+ * in — the whole payload would not save a single character, and without a single visible error.
  *
- * Por eso el compilador declara el tope y esta prueba lo mide. Cuando la fase siguiente cablee el
- * perfil al sobre, o sube el tope de `self_role`, o el compilador recorta: lo que no puede es
- * descubrirse en producción.
+ * That is why the compiler declares the cap and this test measures it. When the next phase wires
+ * the profile into the envelope, either the cap of `self_role` is raised, or the compiler trims:
+ * what it cannot do is be discovered in production.
  */
 test("el rol compuesto declara si cabe en self_role, y lo dice midiendo", () => {
   const corto = componerBloqueDePerfil(perfil(), hechos());
@@ -272,24 +272,23 @@ test("control negativo: un perfil que llena el presupuesto NO cabe en self_role"
   assert.ok(countCodePoints(enorme) <= AGENT_PROFILE_LIMITS.total + 4_000);
 });
 
-// ── DOS BLOQUES: A sellado (contrato) y B sin sellar (perfil) ────────────────────────────────
+// ── TWO BLOCKS: A sealed (contract) and B unsealed (profile) ──────────────────────────────────
 
 /**
- * LA RESOLUCIÓN DEL CHOQUE QUE ENCONTRÓ LA PRUEBA ANTERIOR.
+ * THE RESOLUTION OF THE CLASH THAT THE PREVIOUS TEST FOUND.
  *
- * El sello cubre `textoFijoDelSobre()`, que incluye `Tu rol: <role_brief>` con el brief de
- * siempre (<=1.200 puntos de código). El perfil rico admite 24.000 unidades y NO cabe ahí. Meterlo
- * dentro del bloque sellado haría que los dos sha no coincidieran nunca y el recorte no se
- * activaría jamás, sin un solo error visible.
+ * The seal covers `textoFijoDelSobre()`, which includes `Tu rol: <role_brief>` with the always
+ * short brief (<=1,200 code points). The rich profile allows 24,000 units and DOES NOT fit there.
+ * Putting it inside the sealed block would make the two sha never match and the trimming never
+ * kick in, without a single visible error.
  *
- * Por eso son DOS bloques en el mismo fichero:
- *   A (sellado)   -> el contrato, entre MARCA_INICIO/MARCA_FIN. Es lo único que el sello resume y
- *                    lo único que el sobre deja de mandar.
- *   B (sin sellar)-> el perfil rico, entre MARCA_PERFIL_INICIO/MARCA_PERFIL_FIN. El arnés carga el
- *                    fichero ENTERO, así que el agente lo lee igual, y no cuesta nada por turno.
+ * That is why they are TWO blocks in the same file: A (sealed) is the contract between
+ * MARCA_INICIO/MARCA_FIN, the only thing the seal summarizes and the only thing the envelope stops
+ * sending; B (unsealed) is the rich profile between MARCA_PERFIL_INICIO/MARCA_PERFIL_FIN. The
+ * harness loads the WHOLE file, so the agent reads it the same, and it costs nothing per turn.
  *
- * Lo que estas pruebas fijan es que los dos bloques son INDEPENDIENTES: escribir uno no puede
- * tocar al otro, y —lo que de verdad importa— cambiar el perfil NO puede cambiar el sello de A.
+ * What these tests nail down is that the two blocks are INDEPENDENT: writing one must not touch
+ * the other, and —what truly matters— changing the profile MUST NOT change A's seal.
  */
 
 test("A y B conviven en el mismo fichero sin pisarse", () => {
@@ -305,9 +304,9 @@ test("A y B conviven en el mismo fichero sin pisarse", () => {
 });
 
 /**
- * EL TEST QUE JUSTIFICA TODO EL DISEÑO. Si esto se pone rojo, el recorte del sobre deja de
- * funcionar en silencio: el sello del fichero dejaría de coincidir con el que calcula el
- * adaptador y se volvería a mandar el sobre entero en cada entrega, sin que nadie se entere.
+ * THE TEST THAT JUSTIFIES THE WHOLE DESIGN. If this turns red, the envelope trimming silently
+ * stops working: the file's seal would stop matching the one the adapter computes and the whole
+ * envelope would be sent again on every delivery, without anyone noticing.
  */
 test("cambiar el PERFIL no cambia el sello del bloque sellado", () => {
   const contrato = "CONTRATO: el texto fijo del sobre, tal cual.";
@@ -323,7 +322,7 @@ test("cambiar el PERFIL no cambia el sello del bloque sellado", () => {
   assert.equal(resumirContextoFijo(bloqueGestionado(otroB) ?? ""), selloAntes);
 });
 
-/** CONTROL NEGATIVO simétrico: reescribir A no puede llevarse por delante el perfil. */
+/** Symmetric NEGATIVE CONTROL: rewriting A must not take the profile down with it. */
 test("control negativo: resembrar el bloque A conserva el bloque B entero", () => {
   const bloqueB = componerBloqueDePerfil(perfil(), hechos());
   const partida = conBloqueDePerfil(conBloqueGestionado(HUMANO_ANTES, "CONTRATO v1"), bloqueB);
@@ -349,12 +348,12 @@ test("escribir el bloque B es idempotente", () => {
   assert.equal(una.split(MARCA_PERFIL_INICIO).length - 1, 1);
 });
 
-// ── El role_brief corto se DERIVA del perfil ─────────────────────────────────────────────────
+// ── The short role_brief is DERIVED from the profile ──────────────────────────────────────────
 
 /**
- * El perfil sigue siendo la única fuente de verdad: el `role_brief` que viaja en el sobre —y que
- * entra en el bloque sellado— se deriva de él y no se escribe aparte. Si se escribieran los dos a
- * mano, se desincronizarían, que es el problema que esta tabla vino a resolver.
+ * The profile remains the single source of truth: the `role_brief` that travels in the envelope
+ * —and that enters the sealed block— is derived from it and is not written separately. If both
+ * were written by hand, they would desync, which is the problem this table came to solve.
  */
 test("rolBreveDelPerfil sale del role_summary y NUNCA pasa el tope del sobre", () => {
   assert.equal(rolBreveDelPerfil(perfil()), perfil().role_summary);
@@ -375,9 +374,9 @@ test("la proyección recorta espacios igual que la migración y el claim del sto
 });
 
 /**
- * CONTROL NEGATIVO del recorte: `slice(0,1200)` indexa unidades UTF-16 y partiría un emoji por la
- * mitad, dejando un surrogate suelto que viaja como U+FFFD — el agente recibiría su propio rol
- * terminado en un carácter roto. Se recorta por puntos de código.
+ * NEGATIVE CONTROL of the trimming: `slice(0,1200)` indexes UTF-16 units and would split an
+ * emoji in half, leaving a lone surrogate that travels as U+FFFD — the agent would receive its
+ * own role ending in a broken character. Trimming is done by code points.
  */
 test("control negativo: recortar no parte nunca un par suplente", () => {
   const conEmojis = perfil({ role_summary: "\u{1F389}".repeat(ROLE_BRIEF_MAX_CODE_POINTS) });

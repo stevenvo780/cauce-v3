@@ -7,25 +7,26 @@ import {
 } from './agent-documents.js';
 
 /**
- * `GET /v3/console/tenants/:tenantId/agents/:alias/documents` — inventario de ficheros de gobierno
- * asociados al alias dentro del tenant especificado.
+ * `GET /v3/console/tenants/:tenantId/agents/:alias/documents` — inventory of governance files
+ * associated with the alias inside the specified tenant.
  *
- * Cada entrada incluye `facts_source` ('measured', 'registry', 'database') indicando el origen
- * de la información de entorno. Los documentos solo se marcan como editables cuando su origen es 'measured'.
+ * Each entry includes `facts_source` ('measured', 'registry', 'database') indicating the source
+ * of the environment information. Documents are only marked editable when their source is
+ * 'measured'.
  */
 
 export type FactsSource = 'measured' | 'registry' | 'database';
 
 export interface GovernanceDocumentContent {
-  /** El contenido del fichero (puede estar truncado a MAX_DOCUMENT_BYTES). */
+  /** The file's content (may be truncated to MAX_DOCUMENT_BYTES). */
   readonly text: string;
-  /** Tamaño real del fichero (aunque text esté truncado). */
+  /** Actual file size (even if text is truncated). */
   readonly bytes: number;
-  /** true si `text` fue recortado. */
+  /** true if `text` was truncated. */
   readonly truncated: boolean;
-  /** Timestamp ISO de la última modificación. */
+  /** ISO timestamp of the last modification. */
   readonly modified_at: string;
-  /** Huella SHA-256 de los bytes reales, no del prefijo visible si viene truncado. */
+  /** SHA-256 fingerprint of the actual bytes, not of the visible prefix if it comes truncated. */
   readonly sha: string;
 }
 
@@ -41,7 +42,7 @@ export type GovernanceBatchWrite =
       readonly precondition: GovernanceWritePrecondition;
     }
   | {
-      /** Acredita presencia/ausencia sin abrir para escritura ni modificar mtime. */
+      /** Accredits presence/absence without opening for write nor changing mtime. */
       readonly mode: 'verify';
       readonly path: string;
       readonly precondition: GovernanceWritePrecondition;
@@ -55,15 +56,15 @@ export interface GovernanceBatchWriteAck {
 }
 
 export interface MemoryDirectoryListing {
-  /** Raíz del directorio de memoria (~/.claude/projects, etc.) */
+  /** Root of the memory directory (~/.claude/projects, etc.) */
   readonly root: string;
-  /** Total exacto sólo cuando el barrido terminó; null si el cap dejó un límite inferior. */
+  /** Exact total only when the scan finished; null if the cap left a lower bound. */
   readonly total: number | null;
-  /** Entradas realmente observadas, incluso si el total exacto no se conoce. */
+  /** Entries actually observed, even if the exact total is unknown. */
   readonly observed_at_least: number;
-  /** true si la lista fue recortada. */
+  /** true if the list was truncated. */
   readonly truncated: boolean;
-  /** Entrada de fichero: ruta relativa a root. */
+  /** File entry: path relative to root. */
   readonly entries: Array<{
     readonly path: string;
     readonly bytes: number;
@@ -72,37 +73,37 @@ export interface MemoryDirectoryListing {
 }
 
 /**
- * Fallos en lectura de fichero de gobierno (no son HTTP 404, son lecturas que erraron).
- * Estos se devuelven al probe, que decide cómo responder al HTTP.
+ * Governance file read failures (these are NOT HTTP 404, they are reads that failed).
+ * These are returned to the probe, which decides how to answer over HTTP.
  */
 export interface GovernanceReadError {
   readonly error:
     | 'not_found' | 'permission_denied' | 'invalid_path' | 'symlink_detected'
     | 'too_large' | 'timeout' | 'cancelled' | 'busy'
-    /** No hay por dónde preguntar: sin pty-agent conectado, o el que hay no sabe leer. */
+    /** Nowhere to ask: no pty-agent connected, or the one present does not know how to read. */
     | 'unavailable'
     | 'unknown';
   readonly reason: string;
 }
 
 export interface AgentFactsProbe {
-  /** Hechos del alias, o `undefined` si nadie los ha medido todavía. */
+  /** Facts about the alias, or `undefined` if nobody has measured them yet. */
   factsFor(tenantId: string, alias: string): Promise<
     { facts: RuntimeFacts; source: FactsSource } | undefined
   >;
 
   /**
-   * Leer un fichero de gobierno del alias (CLAUDE.md, AGENTS.md, memoria, etc.).
-   * La ruta DEBE estar en el juego cerrado de resolveAgentDocuments().
+   * Read a governance file of the alias (CLAUDE.md, AGENTS.md, memory, etc.).
+   * The path MUST belong to the closed set from resolveAgentDocuments().
    *
-   * Seguridad crítica:
-   * - NUNCA leer fuera de {resolveAgentDocuments(facts)}.paths
-   * - NUNCA seguir symlinks (verificar realpath)
-   * - NUNCA leer NEVER_SERVE_BASENAMES ni archivos que terminen en NEVER_SERVE_SUFFIXES
-   * - Limitar a MAX_DOCUMENT_BYTES (256 KB) — truncar si es mayor
-   * - Timeout de lectura (~5 segundos)
+   * Critical security:
+   * - NEVER read outside {resolveAgentDocuments(facts)}.paths
+   * - NEVER follow symlinks (verify realpath)
+   * - NEVER read NEVER_SERVE_BASENAMES nor files ending in NEVER_SERVE_SUFFIXES
+   * - Limit to MAX_DOCUMENT_BYTES (256 KB) — truncate if larger
+   * - Read timeout (~5 seconds)
    *
-   * Devuelve GovernanceDocumentContent o error si no se pudo leer.
+   * Returns GovernanceDocumentContent or an error if it could not be read.
    */
   readGovernanceDocument(
     path: string,
@@ -113,10 +114,10 @@ export interface AgentFactsProbe {
   ): Promise<GovernanceDocumentContent | GovernanceReadError>;
 
   /**
-   * Listar el directorio de memoria del alias (SIN leer contenido, sólo metadata).
-   * La raíz debe ser válida para este arnés (ej: ~/.claude/projects).
+   * List the alias's memory directory (WITHOUT reading content, metadata only). The root must be valid for
+   * this harness (e.g.: ~/.claude/projects).
    *
-   * Seguridad: NUNCA listar fuera de la raíz de memoria permitida.
+   * Security: NEVER list outside the allowed memory root.
    */
   listMemoryDirectory(
     memoryRoot: string,
@@ -127,16 +128,15 @@ export interface AgentFactsProbe {
   ): Promise<MemoryDirectoryListing | GovernanceReadError>;
 
   /**
-   * Escribir un documento de gobierno del alias. OPCIONAL: una sonda que sólo sabe leer no lo trae,
-   * y el PUT contesta 503 en vez de fingir que guardó.
+   * Write a governance document of the alias. OPTIONAL: a probe that can only read does not bring this, and
+   * PUT answers 503 instead of pretending it saved.
    *
-   * `expectedSha` es la huella de lo que se abrió: si el fichero cambió mientras se editaba, se
-   * devuelve conflicto y NO se escribe. Lo que se pierde en un «gana el último» es prosa que no
-   * está en ningún otro sitio.
+   * `expectedSha` is the fingerprint of what was opened: if the file changed while being edited, a conflict
+   * is returned and it is NOT written. What is lost in a "last writer wins" is prose that exists nowhere else.
    *
-   * Las mismas guardas que la lectura, y una más: `verifyWritablePath` sobre la ruta pedida Y la
-   * resuelta. Un `CLAUDE.md` que sea un enlace a `~/.claude/.credentials.json` pasa cualquier
-   * comprobación hecha sólo sobre el nombre.
+   * The same safeguards as read, and one more: `verifyWritablePath` on both the requested and the resolved
+   * path. A `CLAUDE.md` that is a link to `~/.claude/.credentials.json` passes any check made on the name
+   * alone.
    */
   writeGovernanceDocument?(
     path: string,
@@ -147,7 +147,7 @@ export interface AgentFactsProbe {
     alias: string,
   ): Promise<{ sha: string; bytes: number } | GovernanceReadError | { error: 'conflict'; reason: string }>;
 
-  /** Lote indivisible para los perfiles de varios ficheros (OpenClaw). */
+  /** Indivisible batch for multi-file profiles (OpenClaw). */
   writeGovernanceBatch?(
     writes: readonly GovernanceBatchWrite[],
     facts: RuntimeFacts,
@@ -157,11 +157,11 @@ export interface AgentFactsProbe {
 }
 
 export interface AgentDocumentsDeps {
-  /** Autentica al principal y exige el permiso de rol de la operación. */
+  /** Authenticates the principal and requires the role permission for the operation. */
   authorize(
     request: unknown, permission: 'read' | 'control'
   ): Promise<{ tenant_id: string; alias: string }>;
-  /** Lookup y autorización exactos; nunca resuelve sólo por alias. */
+  /** Exact lookup and authorization; never resolves by alias alone. */
   authorizeTarget(
     actor: { tenant_id: string; alias: string },
     targetTenantId: string,
@@ -179,9 +179,9 @@ export interface AgentDocumentsDeps {
 }
 
 export interface DocumentRow extends AgentDocument {
-  /** El contenido se puede pedir por `:kind/content`; no implica que se pueda escribir. */
+  /** The content can be requested via `:kind/content`; it does not imply it can be written. */
   readonly readable: boolean;
-  /** Nunca `true` si los hechos no están medidos: lo dice el propio campo, no un comentario. */
+  /** Never `true` if the facts are not measured: this is stated by the field itself, not by a comment. */
   readonly editable: boolean;
 }
 
@@ -191,7 +191,7 @@ export interface DocumentsResponse {
   readonly facts_source: FactsSource;
   readonly harness: HarnessKind;
   readonly home: string | null;
-  /** Aviso en castellano cuando la fuente no es una medición. Se enseña arriba del todo. */
+  /** Notice written in Spanish when the source is not a measurement. It is displayed at the very top. */
   readonly caveat?: string;
   readonly items: readonly DocumentRow[];
 }
@@ -244,7 +244,7 @@ export function buildDocumentsResponse(
 }
 
 export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDocumentsDeps): void {
-  // Rutas de lectura y escritura de contenido gobernado (:kind/content).
+  // Read and write routes for governed content (:kind/content).
   const KINDS: readonly DocumentKind[] = [
     'directive', 'tools', 'prompts', 'mcp', 'identity', 'human',
     'memory', 'heartbeat', 'configuration',
@@ -254,7 +254,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     return (KINDS as readonly string[]).includes(valor);
   }
 
-  /** El error de lectura traducido al código HTTP que lo describe, no a un 500 genérico. */
+  /** The read error translated into the HTTP code that describes it, not a generic 500. */
   function codigoDe(error: GovernanceReadError['error']): number {
     if (error === 'not_found') return 404;
     if (error === 'permission_denied' || error === 'symlink_detected') return 403;
@@ -349,9 +349,9 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       if (medido?.source !== 'measured') {
         /*
-         * 409 y no 404. Que `factsFor` devuelva una fila no prueba medición: `registry` y
-         * `database` siguen siendo configuración no acreditada. Sólo `measured` permite resolver
-         * y abrir un path; de otro modo podríamos servir el fichero de OTRO arnés.
+         * 409 and not 404. `factsFor` returning a row does not prove measurement: `registry` and
+         * `database` are still unaccredited configuration. Only `measured` allows resolving and
+         * opening a path; otherwise we could serve ANOTHER harness's file.
          */
         return reply.code(409).send({
           error: 'no_medido',
@@ -365,8 +365,8 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(404).send({ error: 'not_found', message: 'ese alias no tiene ese documento' });
       }
 
-      // El inventario y el endpoint comparten esta puerta. Una fila de configuración sensible o
-      // un directorio no se convierte en lectura sólo porque alguien construya la URL a mano.
+      // The inventory and the endpoint share this gate. A sensitive configuration row or a
+      // directory does not become readable just because someone hand-builds the URL.
       const readable = verifyReadableDocument(medido.facts, doc);
       if (!readable.allowed) {
         return reply.code(403).send({
@@ -379,9 +379,9 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         doc.path, medido.facts, target.tenant_id, target.alias,
       );
       if (esError(leido)) {
-        // La ausencia es un estado editable con precondición explícita, no un error de transporte.
-        // Así la creación nunca se confunde con un reemplazo cuyo fichero desapareció a mitad del
-        // guardado: GET observa `sha: null`; PUT exige `create_if_absent: true`.
+        // Absence is an editable state with explicit precondition, not a transport error. This
+        // way creation is never confused with a replacement whose file disappeared mid-save: GET
+        // observes `sha: null`; PUT requires `create_if_absent: true`.
         if (leido.error === 'not_found') {
           return {
             tenant_id: target.tenant_id,
@@ -419,8 +419,8 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         content: leido.text,
         sha: leido.sha,
         bytes: leido.bytes,
-        // Un prefijo no es un documento. Aunque la ruta sea escribible, el navegador no puede
-        // transformar un recorte en un reemplazo sin borrar silenciosamente el resto.
+        // A prefix is not a document. Even if the path is writable, the browser cannot turn a
+        // snippet into a replacement without silently deleting the rest.
         editable: doc.editable && !leido.truncated,
         projected: false,
         ...(doc.warning === undefined ? {} : { warning: doc.warning }),
@@ -490,8 +490,9 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         });
       }
 
-      // La puerta de escritura, ANTES de mirar si hay canal: una ruta prohibida se rechaza igual
-      // aunque el canal exista, y aunque no exista queremos que el motivo sea el de verdad.
+      // The write gate, BEFORE checking whether there is a channel: a forbidden path is rejected
+      // regardless of whether the channel exists, and even if it does not we want the reason to
+      // be the real one.
       const doc = documentForKind(medido.facts, kind);
       if (!doc) {
         return reply.code(404).send({ error: 'not_found', message: 'ese alias no tiene ese documento' });
@@ -510,15 +511,13 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       }
 
       /*
-       * PREFLIGHT FRESCO. El SHA del navegador por sí solo no dice si el contenido que vio era un
-       * prefijo truncado. Volver a leer antes de escribir sirve para dos garantías distintas:
+       * FRESH PREFLIGHT. The browser's SHA alone does not tell whether the content it saw was a truncated
+       * prefix. Re-reading before writing serves two distinct guarantees: create demands that the file is
+       * still absent, and replace demands a FULL read whose fingerprint is exactly the one edited.
        *
-       *  - create exige que el fichero siga ausente;
-       *  - replace exige una lectura ENTERA cuya huella sea exactamente la que se editó.
-       *
-       * El pty-agent vuelve a hacer CAS al abrir el descriptor; esta lectura no lo reemplaza. Es la
-       * puerta que evita que un cliente que recibió 256 KiB de un fichero mayor use su SHA real para
-       * reemplazar el fichero completo con ese prefijo.
+       * The pty-agent CASes again when opening the descriptor; this read does not replace it. It is the gate
+       * that prevents a client that received 256 KiB of a larger file from using its real SHA to replace the
+       * whole file with that prefix.
        */
       const actual = await deps.probe.readGovernanceDocument(
         doc.path, medido.facts, target.tenant_id, target.alias,
@@ -594,7 +593,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     (request, reply) => escribir(request, reply, false),
   );
 
-  // Compatibilidad de transición: estas rutas nunca salen del tenant autenticado y se marcan.
+  // Transition compatibility: these routes never leave the authenticated tenant and are marked.
   app.get<{ Params: { alias: string } }>(
     '/v3/console/agents/:alias/documents',
     (request, reply) => mapa(request, reply, true),

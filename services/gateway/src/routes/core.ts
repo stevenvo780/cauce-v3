@@ -29,9 +29,8 @@ export function createCoreRoutePhases(
   } = resolved;
 
   const sessions = new Map<string, Session>();
-  // A successful lease acquisition starts one local hello admission. Rehydration contains I/O,
-  // so an older hello can finish after a newer resume rotated the durable connection token. The
-  // opaque marker lets only the most recently acquired hello install/replace the local session.
+  // A successful lease acquisition starts one local hello admission. Rehydration contains I/O, so an older hello can finish after a
+  // newer resume rotated the durable connection token. The opaque marker lets only the most recently acquired hello install/replace the local session.
   const helloAdmissions = new Map<string, object>();
   const pendingDrains = new Set<Promise<boolean>>();
   const pendingSessionTasks = new Set<Promise<unknown>>();
@@ -43,17 +42,16 @@ export function createCoreRoutePhases(
   }
 
   /**
-   * Reconstruye el cupo ocupado de un alias desde la base, al conectar.
+   * Rebuilds the occupied capacity of an alias from the database on connect.
    *
-   * Sin esto el control de admisión vivía sólo en la RAM del socket y una reconexión lo
-   * multiplicaba: `hello` creaba `claims: new Map()` y el adaptador volvía a tener el
-   * presupuesto entero. Con `renewable_delivery_claims_v1` es peor todavía, porque esa
-   * capacidad existe justamente para CONSERVAR el lease y la época entre reconexiones: las
-   * garras viejas siguen vivas en la base y el gateway las olvidaba.
+   * Without this the admission control lived only in the socket's RAM and a reconnection multiplied it:
+   * `hello` created `claims: new Map()` and the adapter had its full budget again. With `renewable_delivery_claims_v1`
+   * it is even worse, because that capability exists precisely to PRESERVE the lease and the epoch across
+   * reconnections: the old claims are still alive in the database and the gateway forgot them.
    *
-   * Falla cerrado. La consulta es parte del fence de reconexión: inventar un mapa vacío ante un
-   * error permite multiplicar claims y pierde correlación de ACK. El llamador libera el lease que
-   * acaba de adquirir antes de rechazar el hello, para que el siguiente intento no quede bloqueado.
+   * Fails closed. The query is part of the reconnect fence: inventing an empty map on error allows multiplying
+   * claims and loses ACK correlation. The caller releases the lease just acquired before rejecting the hello,
+   * so the next attempt is not blocked.
    */
   async function rehydrateClaims(tenantId: Tenant, alias: string): Promise<Map<string, SessionClaim>> {
     const claims = new Map<string, SessionClaim>();
@@ -73,8 +71,8 @@ export function createCoreRoutePhases(
   }
 
   /**
-   * Drena entregas pendientes hacia la sesión respetando los límites de admisión configurados.
-   * Gestiona el redrenaje ante nuevos wakes, liberaciones de cuota por ACK y expiración de plazos.
+   * Drains pending deliveries to the session respecting the configured admission limits.
+   * Handles re-draining on new wakes, capacity releases from ACKs and deadline expirations.
    */
   function drain(session: Session): Promise<boolean> {
     if (session.abort.signal.aborted || session.socket.readyState !== WebSocket.OPEN) {
@@ -84,8 +82,8 @@ export function createCoreRoutePhases(
       session.drainAgain = true;
       return session.drainPromise;
     }
-    // El salto de microtarea garantiza que `drainPromise` quede publicado antes de que una rama
-    // sin I/O (por ejemplo cupo cero) llegue al `finally` y permita otro drenaje concurrente.
+    // The microtask hop guarantees that `drainPromise` is published before an I/O-free branch
+    // (e.g. zero capacity) reaches `finally` and lets another concurrent drain through.
     const operation = Promise.resolve()
       .then(async () => drainExclusively(session))
       .finally(() => {
@@ -102,16 +100,16 @@ export function createCoreRoutePhases(
 
   async function drainExclusively(session: Session): Promise<boolean> {
     try {
-      // El tope existe sólo contra las vueltas IMPRODUCTIVAS: las productivas ya están
-      // acotadas por el cupo, que baja con cada garra tomada. Sin tope, dos gateways contra la
-      // misma cola podrían pasarse wakes de entregas que el otro ya se llevó y girar en vacío.
+      // The cap only exists against UNPRODUCTIVE rounds: productive ones are already bounded by
+      // capacity, which drops with each claim taken. Without a cap, two gateways against the same
+      // queue could pass each other wakes of deliveries the other already took and spin in the void.
       for (let round = 0; round < MAX_DRAIN_ROUNDS; round += 1) {
         if (session.abort.signal.aborted) return false;
         session.drainAgain = false;
         pruneExpiredClaims(session, Date.now());
-        // `deliveryClaimLimit` es sólo el techo explícito de lote. Las capacidades durables
-        // viajan separadas y PostgreSQL descuenta los claims vivos de todo el alias; la RAM de
-        // esta sesión ya no decide cuánto se puede reclamar.
+        // `deliveryClaimLimit` is only the explicit batch ceiling. Durable capabilities travel
+        // separately and PostgreSQL subtracts live claims for the whole alias; this session's RAM
+        // no longer decides how much can be claimed.
         const requested = Math.min(deliveryClaimLimit, maxQueryLimit);
         const deliveries = (await repository.claimDeliveries(
           session.tenantId, session.alias, session.instanceId, session.epoch,
@@ -135,9 +133,9 @@ export function createCoreRoutePhases(
           session.claims.set(delivery.delivery_id, claim);
           allFramesQueued = send(session.socket, delivery) && allFramesQueued;
         }
-        // El store ya otorgó estas garras. Si el socket cayó mientras esperaba el claim, el wake
-        // no puede declararse entregado: la reconexión lo volverá a reclamar selectivamente y el
-        // lease de la entrega seguirá su recuperación normal.
+        // The store already granted these claims. If the socket dropped while waiting for the
+        // claim, the wake cannot be declared delivered: reconnection will reclaim it selectively
+        // and the delivery's lease will follow its normal recovery.
         if (!allFramesQueued) return false;
         if (!session.drainAgain) return true;
       }
@@ -169,10 +167,10 @@ export function createCoreRoutePhases(
   }
 
   /**
-   * Vuelve a drenar cuando venza la primera garra viva. Es la red de seguridad del punto 3 de
-   * `drain()`: sin esto, una garra que se libera por vencimiento —y no por ACK ni por wake—
-   * deja al adaptador conectado, con cupo y sin trabajo, que es indistinguible de un adaptador
-   * roto. Uno solo por sesión, se reprograma en cada drenaje y se cancela al cerrar el socket.
+   * Drains again when the first live claim expires. It is the safety net of point 3 of `drain()`:
+   * without it, a claim released by expiration —and not by ACK nor by wake— leaves the adapter
+   * connected, with capacity and no work, which is indistinguishable from a broken adapter. One
+   * per session, rescheduled on every drain and cancelled on socket close.
    */
   function scheduleExpiryDrain(session: Session): void {
     if (session.expiryTimer !== undefined) clearTimeout(session.expiryTimer);
@@ -184,7 +182,7 @@ export function createCoreRoutePhases(
       earliest = Math.min(earliest, claim.admissionExpiresAtMs);
     }
     if (!Number.isFinite(earliest)) return;
-    // El piso de 1 s evita que un reloj corrido convierta esto en un bucle de drenajes.
+    // The 1 s floor prevents a drifted clock from turning this into a drain loop.
     const delayMs = Math.max(1_000, earliest - Date.now() + 1_000);
     const timer = setTimeout(() => {
       session.expiryTimer = undefined;
@@ -350,17 +348,17 @@ export function createCoreRoutePhases(
               }
               if (await rejectInactiveHello()) return;
               /*
-               * EL PERFIL VIAJA EN EL SALUDO, UNA VEZ.
+               * THE PROFILE TRAVELS IN THE HELLO, ONCE.
                *
-               * La configuración fija reside en el fichero del arnés. Viaja en el saludo inicial
-               * para permitir que el adaptador mantenga su contexto sin sobrecargar cada entrega.
+               * The fixed configuration lives in the harness's file. It travels in the initial hello
+               * to let the adapter keep its context without overloading each delivery.
                *
-               * Gateado tras la capability `agent_profile_v1` para compatibilidad hacia atrás.
+               * Gated behind the `agent_profile_v1` capability for backward compatibility.
                *
-               * Un fallo leyendo el perfil NO tumba el saludo. El alias queda conectado y recibiendo
-               * entregas con el sobre completo, que es el comportamiento de siempre; lo que se pierde
-               * es el recorte. Al revés —negar la conexión porque no se pudo componer un fichero—
-               * dejaría a un alias sordo por un problema de presentación.
+               * A failure reading the profile does NOT take down the hello. The alias stays connected
+               * and receiving deliveries with the full envelope, which is the usual behavior; what
+               * is lost is the trimming. The opposite —denying the connection because a file could
+               * not be composed— would leave an alias deaf because of a presentation problem.
                */
               let agentProfile: { perfil: unknown; hechos: unknown } | undefined;
               if (hello.capabilities.includes('agent_profile_v1')) {
@@ -417,7 +415,7 @@ export function createCoreRoutePhases(
                 drainPromise: undefined,
                 renewableDeliveryClaims,
                 delegationFeedback,
-                // El cupo NO arranca vacío: se reconstruye desde la base. Ver `rehydrateClaims`.
+                // Capacity does NOT start empty: it is rebuilt from the database. See `rehydrateClaims`.
                 claims: recoveredClaims,
                 recentClaims: new Map(),
                 expiryTimer: undefined
@@ -435,8 +433,8 @@ export function createCoreRoutePhases(
               });
               const initialDrainReady = await drain(current);
               if (!initialDrainReady || socket.readyState !== WebSocket.OPEN) return;
-              // El hello es también la señal durable de que este destinatario volvió. No hace falta
-              // esperar al siguiente tick para recoger los wakes que permanecieron intactos offline.
+              // The hello is also the durable signal that this recipient returned. There is no
+              // need to wait for the next tick to pick up the wakes that stayed intact offline.
               void pumpOutbox().catch((error: unknown) => app.log.error(error));
               return;
             }
@@ -485,24 +483,25 @@ export function createCoreRoutePhases(
             if (incoming.epoch > current.epoch) {
               throw new StoreError('fenced', 'ACK identity does not match socket lease');
             }
-            // El orden importa. `claims` tiene la garra VIVA; `recentClaims`, la anterior. Cuando
-            // el reaper reintentó una entrega y el mismo adaptador se la volvió a llevar, la viva
-            // es la del intento nuevo — y el ACK terminal del intento viejo, que llega tarde con
-            // la respuesta adentro, no coincide con ella. `assertAckClaim` lo convertía en un
-            // 'fenced' con cierre de socket 4401: el resultado no llegaba siquiera a la base, que
-            // es quien sabe decidir si sirve (ver `lateTerminalSalvage`). Si el ACK correlaciona
-            // EXACTO con una garra que este mismo socket recuerda haber entregado, se usa ésa y se
-            // deja que decida el store. Cuando no correlaciona con ninguna, no cambia nada.
+            // Order matters. `claims` holds the LIVE claim; `recentClaims`, the previous one.
+            // When the reaper retried a delivery and the same adapter took it again, the live one
+            // is from the new attempt — and the terminal ACK from the old attempt, which arrives
+            // late with the response inside, does not match it. `assertAckClaim` used to turn that
+            // into a 'fenced' with socket close 4401: the result never even reached the database,
+            // which is the one that knows whether it is useful (see `lateTerminalSalvage`). If the
+            // ACK correlates EXACTLY with a claim this same socket remembers delivering, that one
+            // is used and the store is left to decide. When it does not correlate with any,
+            // nothing changes.
             const liveClaim = current.claims.get(deliveryId);
             const recentClaim = current.recentClaims.get(deliveryId);
             const matchesRecent = recentClaim !== undefined
               && recentClaim.attempt === incoming.attempt
               && recentClaim.claim_token === incoming.claim_token;
             const sessionClaim = matchesRecent ? recentClaim : (liveClaim ?? recentClaim);
-            // Una garra rehidratada cuenta para el cupo pero NO fencea: la reconstruimos de la
-            // base sin saber si el adaptador la conoce con ese mismo intento, así que exigirle
-            // que coincida convertiría un ACK viejo en un cierre de socket 4401 donde antes había
-            // un `ownership_lost` recuperable.
+            // A rehydrated claim counts towards capacity but does NOT fence: we rebuilt it from
+            // the database without knowing whether the adapter knows it under that same attempt,
+            // so requiring it to match would turn an old ACK into a socket close 4401 where there
+            // used to be a recoverable `ownership_lost`.
             if (!staleTerminalReplay && sessionClaim !== undefined && sessionClaim.rehydrated !== true) {
               assertAckClaim(incoming, sessionClaim);
             } else if (!staleTerminalReplay && sessionClaim === undefined && !current.renewableDeliveryClaims) {
@@ -519,9 +518,9 @@ export function createCoreRoutePhases(
                 deliveryLeaseCap
               );
             } catch (error) {
-              // El evento terminal viejo sí llegó a la autoridad durable. Si no era un duplicado
-              // exacto, el store puede fencearlo contra la garra nueva: para este frame eso es una
-              // prueba concluyente de ownership_lost, no razón para cerrar el socket de época N+1.
+              // The old terminal event did reach the durable authority. If it was not an exact
+              // duplicate, the store may fence it against the new claim: for this frame that is
+              // conclusive evidence of ownership_lost, not a reason to close the epoch N+1 socket.
               if (!staleTerminalReplay || !(error instanceof StoreError) || error.code !== 'fenced') throw error;
               result = {
                 delivery_id: deliveryId,
@@ -530,8 +529,8 @@ export function createCoreRoutePhases(
                 receipt: 'ownership_lost',
               };
             }
-            // `legacyResult` sólo contiene campos que cualquier adaptador entiende.
-            // Cada campo nuevo se reintroduce únicamente tras su capability.
+            // `legacyResult` only contains fields any adapter understands.
+            // Each new field is reintroduced only after its capability.
             const {
               receipt,
               delegation_rejections: delegationRejections,
@@ -555,8 +554,8 @@ export function createCoreRoutePhases(
                 : {}),
               ...(feedback && chainGate !== undefined ? { chain_gate: chainGate } : {})
             });
-            // Un `started` aplicado renueva el plazo local como en la base.
-            // `Math.max` impide que un ACK tardío acorte la garra.
+            // An applied `started` renews the local deadline as in the database.
+            // `Math.max` prevents a late ACK from shortening the claim.
             if (result.applied && incoming.status === 'started') {
               const renewed = current.claims.get(deliveryId);
               if (renewed !== undefined) {
@@ -565,9 +564,9 @@ export function createCoreRoutePhases(
                 );
               }
             }
-            // Los estados terminales y `retry` liberan el cupo porque ya no conservan una garra durable.
-            // `leased`, `accepted` y `started` no lo liberan; hacerlo admitiría trabajo todavía en curso.
-            // El vencimiento retira cualquier garra que haya dejado de pertenecernos.
+            // Terminal states and `retry` release capacity because they no longer hold a durable
+            // claim. `leased`, `accepted` and `started` do not release it; doing so would admit work
+            // still in progress. Expiration retires any claim that stopped belonging to us.
             let releasedSlot = false;
             if (['done', 'failed', 'dead', 'retry'].includes(result.status)) {
               const completedClaim = current.claims.get(deliveryId);
@@ -575,15 +574,16 @@ export function createCoreRoutePhases(
                 && completedClaim.attempt === incoming.attempt
                 && completedClaim.claim_token === incoming.claim_token;
               releasedSlot = closesCurrentClaim && current.claims.delete(deliveryId);
-              // No se borra: se mueve a `recentClaims`. Un ACK tardío de esta misma entrega tiene
-              // que seguir correlacionando, o un cliente viejo se come un 'fenced' con cierre de
-              // socket donde hoy recibe un `ownership_lost` y sigue vivo.
+              // Not deleted: moved to `recentClaims`. A late ACK for this same delivery must keep
+              // correlating, or an old client would eat a 'fenced' with socket close where today
+              // it receives an `ownership_lost` and stays alive.
               if (releasedSlot && completedClaim !== undefined) {
                 rememberRecentClaim(current, deliveryId, completedClaim);
               }
             }
-            // Cada cupo liberado redrena de inmediato: una entrega ya encolada no genera otro wake.
-            // `retry` también fuerza el drenaje aunque no cierre la garra local correlacionada.
+            // Every released capacity re-drains immediately: an already-queued delivery does not
+            // generate another wake. `retry` also forces draining even if it does not close the
+            // correlated local claim.
             if (releasedSlot || result.status === 'retry') await drain(current);
           } catch (error) {
             const code = error instanceof StoreError ? error.code : 'invalid_frame';

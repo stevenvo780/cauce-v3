@@ -49,10 +49,10 @@ test("two authenticated conversations never share a session, whatever the untrus
 });
 
 /**
- * La consola y las herramientas de ops publican SIN `origin`: hasta ahora eso significaba que no
- * había clave y cada entrega corría sin continuidad (243 publicaciones de consola en prod al
- * 2026-07-29, 0 con origen). La conversación es el actor autenticado, y el tenant es parte de
- * ella: dos tenants distintos por la misma superficie no se tocan.
+ * The console and ops tools publish WITHOUT `origin`: until now that meant there was no key
+ * and every delivery ran without continuity (243 console publications in prod at
+ * 2026-07-29, 0 with origin). The conversation is the authenticated actor, and the tenant is
+ * part of it: two different tenants on the same surface do not touch each other.
  */
 test("originless publishes are isolated per authenticated tenant", async () => {
   const context = await setup("engine-console-tenant");
@@ -67,9 +67,9 @@ test("originless publishes are isolated per authenticated tenant", async () => {
 });
 
 /**
- * Punto 4: la consola tiene que converger en UNA conversación por operador. El `session_id` de
- * un principal OIDC es el `sid` del login y cambia en cada re-login; si entrara en la clave, la
- * consola estrenaría sesión cada vez que Steven vuelve a entrar.
+ * Point 4: the console has to converge on ONE conversation per operator. The `session_id` of
+ * an OIDC principal is the login's `sid` and changes on every re-login; if it entered the
+ * key, the console would start a new session every time Steven logs in again.
  */
 test("console keeps one session per operator across re-login", async () => {
   const context = await setup("engine-console-relogin");
@@ -79,9 +79,9 @@ test("console keeps one session per operator across re-login", async () => {
 });
 
 /**
- * El store fabrica `delivery:<id>:attempt:<n>` cuando el mensaje raíz no traía sesión
- * autenticada. Ese identificador es por ENTREGA: si entrara en la clave daría una sesión nativa
- * por entrega, que es exactamente el defecto que este cambio arregla.
+ * The store fabricates `delivery:<id>:attempt:<n>` when the root message arrived without an
+ * authenticated session. That identifier is per DELIVERY: if it entered the key it would
+ * yield one native session per delivery, which is exactly the bug this change fixes.
  */
 test("per-delivery synthetic session ids never fragment the conversation", async () => {
   const context = await setup("engine-ephemeral-session-id");
@@ -95,8 +95,8 @@ test("per-delivery synthetic session ids never fragment the conversation", async
 });
 
 /**
- * El tenant que separa es el del RECEPTOR, que sale de la configuración local del adaptador y no
- * viaja en la entrega. Nadie del otro lado del bus puede moverlo.
+ * The tenant that separates is the RECIPIENT's, taken from the adapter's local configuration
+ * and not traveling in the delivery. Nobody on the other side of the bus can move it.
  */
 test("recipient tenant scopes the session and is taken from local configuration", async () => {
   const steven = await setup("engine-recipient-tenant-steven", new ControlledRunner(), {
@@ -112,9 +112,9 @@ test("recipient tenant scopes the session and is taken from local configuration"
 });
 
 /**
- * La reparación medida: en prod hay 6 conversaciones de Telegram cuyas filas viejas no traen
- * `bridge_tenant` y las nuevas sí. Mismo chat, mismo bot, mismo alias, dos sesiones nativas.
- * El tenant del PUENTE no identifica ninguna conversación y no puede partirla.
+ * The measured repair: in prod there are 6 Telegram conversations whose old rows do not
+ * bring `bridge_tenant` and the new ones do. Same chat, same bot, same alias, two native
+ * sessions. The BRIDGE's tenant does not identify any conversation and cannot split it.
  */
 test("bridge tenant no longer splits one conversation in two", async () => {
   const context = await setup("engine-bridge-tenant-merge");
@@ -135,22 +135,21 @@ test("bridge tenant no longer splits one conversation in two", async () => {
 });
 
 /**
- * Antes esto exigía que una `agent.response`
- * cross-tenant cayera en la MISMA sesión nativa que el pedido del humano. Esa igualdad era
- * exactamente el bloqueo: el candado de sesión es FIFO estricta, así que la respuesta de la
- * delegación se quedaba con la sesión de la conversación durante toda su corrida y el dueño
- * esperaba detrás (114 min de mediana en midas). Ahora el tráfico agente-a-agente vive en un
- * carril propio y los dos pueden correr a la vez.
+ * Before, this required that a cross-tenant `agent.response` fell into the SAME native
+ * session as the human's request. That equality was exactly the blocker: the session lock
+ * is strict FIFO, so the delegation's reply kept the conversation's session for its entire
+ * run and the owner waited behind it (114 min median on midas). Now agent-to-agent traffic
+ * lives in its own lane and the two can run at the same time.
  *
- * Lo que este test SIGUE protegiendo, que es la razón por la que existe: el alcance de la
- * sesión lo gobierna la CONVERSACIÓN y no el tenant de la entrega. Dos respuestas que llegan de
- * tenants distintos sobre la misma conversación tienen que compartir sesión; lo único que cambió
- * es cuál.
+ * What this test STILL protects, which is the reason it exists: the session scope is
+ * governed by the CONVERSATION, not the delivery's tenant. Two replies arriving from
+ * different tenants on the same conversation must share a session; the only thing that
+ * changed is which one.
  *
- * 2026-07-29: antes ese alcance salía de `origin.metadata.bridge_tenant`, con caída a
- * `delivery.tenant_id` cuando faltaba — o sea que el mismo chat se partía en dos según quién
- * publicara. Ahora ni uno ni otro entran en la clave y la igualdad de abajo vale por
- * construcción, no por coincidencia.
+ * 2026-07-29: before, that scope came from `origin.metadata.bridge_tenant`, falling back to
+ * `delivery.tenant_id` when missing — meaning the same chat was split in two depending on
+ * who published. Now neither enters the key, and the equality below holds by construction,
+ * not by coincidence.
  */
 test("the conversation, not the delivery tenant, keeps cross-tenant agent responses in one shared agent-lane session", async () => {
   const context = await setup("engine-agent-response-session");
@@ -196,11 +195,11 @@ test("the conversation, not the delivery tenant, keeps cross-tenant agent respon
   const agentSession = context.runner.requests[1]?.args.at(-1);
   const otherTenantSession = context.runner.requests[2]?.args.at(-1);
   assert.ok(humanSession && agentSession && otherTenantSession);
-  // El carril de agentes NO es la sesión del humano: eso es lo que le devuelve disponibilidad
-  // al dueño sin cancelar la tarea larga.
+  // The agent lane is NOT the human's session: that is what gives availability back to the
+  // owner without canceling the long-running task.
   assert.notEqual(agentSession, humanSession);
-  // Pero sigue siendo UNA sola sesión por conversación, derivada del bridge_tenant de
-  // confianza: el tenant de la entrega no la parte en dos.
+  // But it is still ONE session per conversation, derived from the trusted bridge_tenant:
+  // the delivery's tenant does not split it in two.
   assert.equal(otherTenantSession, agentSession);
   assert.match(context.runner.requests[1]?.stdin ?? "", /"message_type":"agent.response"/u);
   assert.match(context.runner.requests[1]?.stdin ?? "", /"sender_alias":"seneca"/u);
@@ -235,17 +234,17 @@ test("stale claim token neither executes nor acknowledges the current event", as
 });
 
 /**
- * Este test exigía lo contrario desde 44521b6:
- * "attempts 1 and 2 must have different session IDs". 
- * pasaba a 1499 de 5312 entregas (28,2 %): el reintento le contestaba a la persona desde una
- * sesión sin memoria — el síntoma "se duplican las instancias" — y peor, esa sesión acumulaba un
- * intercambio real que la sesión principal nunca vería.
+ * This test demanded the opposite since 44521b6:
+ * "attempts 1 and 2 must have different session IDs".
+ * happened in 1499 of 5312 deliveries (28.2%): the retry replied to the person from a session
+ * with no memory — the symptom "instances duplicate" — and worse, that session accumulated a
+ * real exchange that the main session would never see.
  *
- * Lo que 44521b6 quería frenar (el transcript creciendo en cada reintento, socrates ~300K →
- * 1,8MB en 4 intentos) es el caso "el intento anterior murió a mitad de ejecución", y ese lo
- * fenced `DurableStore.accept` desde e5c909e: un intento mayor sólo se acepta si el anterior
- * terminó en `failed` con `retryable: true` — ver el test "crash recovery marks started work
- * ambiguous and blocks automatic redelivery", que comprueba que ni siquiera se ejecuta.
+ * What 44521b6 wanted to curb (the transcript growing on every retry, socrates ~300K →
+ * 1.8MB in 4 attempts) is the case "the previous attempt died mid-execution", and that one is
+ * fenced by `DurableStore.accept` since e5c909e: a higher attempt is only accepted if the
+ * previous one ended in `failed` with `retryable: true` — see the test "crash recovery marks
+ * started work ambiguous and blocks automatic redelivery", which checks it does not even run.
  */
 test("a retry of the same conversation keeps the same session", async () => {
   const runner = new ControlledRunner();
@@ -275,9 +274,10 @@ test("a retry of the same conversation keeps the same session", async () => {
 });
 
 /**
- * El mensaje SIGUIENTE de la misma persona, en el mismo chat, también cae en esa sesión — que es
- * lo que el dueño percibe como "es el mismo, se acuerda". Antes no: el reintento se iba a una
- * sesión propia y el mensaje siguiente volvía a la de attempt 1, así que las dos divergían.
+ * The NEXT message from the same person, in the same chat, also lands in that session — which
+ * is what the owner perceives as "it's the same one, it remembers". Before it didn't: the
+ * retry went to a session of its own and the next message went back to attempt 1's session,
+ * so the two diverged.
  */
 test("the next message of the same conversation lands in the session the retry used", async () => {
   const runner = new ControlledRunner();

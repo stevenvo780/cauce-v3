@@ -1,59 +1,59 @@
 #!/usr/bin/env node
 /**
- * Planificador de separación de configuración por alias.
+ * Per-alias configuration separation planner.
  *
- * EL PROBLEMA, MEDIDO
- * ===================
+ * THE PROBLEM, MEASURED
+ * =====================
  *
- * Para poder mover la información fija de cada alias al fichero de su arnés hace falta que cada
- * alias TENGA su fichero. Hoy no lo tiene:
+ * To move each alias's fixed information to its harness's file, each alias needs to HAVE
+ * its own file. Today it doesn't:
  *
- *   * `kratos` y `atlas` comparten el contenedor `ws-humanizar`, el usuario `dev` y el HOME
- *     `/home/dev`. Su `~/.codex/AGENTS.md` es EL MISMO INODO — 12.942 bytes en los dos.
- *   * `zeus` y `argos` comparten `CLAUDE.md` byte a byte por lo mismo.
+ *   * `kratos` and `atlas` share the `ws-humanizar` container, the `dev` user and the HOME
+ *     `/home/dev`. Their `~/.codex/AGENTS.md` is THE SAME INODE — 12,942 bytes in both.
+ *   * `zeus` and `argos` share `CLAUDE.md` byte-by-byte for the same reason.
  *
- * Mientras eso siga así, escribir el contexto por fichero le daría a `atlas` la identidad de
- * `kratos`. Ese es exactamente el motivo por el que el rol acabó en la base de datos
+ * As long as that holds, writing context per file would give `atlas` `kratos`'s identity.
+ * That is exactly why the role ended up in the database
  * (`packages/store/migrations/020_agent_role_brief.sql`).
  *
- * LA VÍA
- * ======
+ * THE PATH
+ * ========
  *
- * `CLAUDE_CONFIG_DIR` y `CODEX_HOME` ya gobiernan dónde busca cada CLI, y el supervisor ya
- * construye el entorno del adaptador por alias. Se apunta cada alias a
- * `<home>/.local/share/cauce-v3/config/<alias>/`, dentro del árbol persistente de la flota. Sólo
- * se COPIA el fichero de identidad; configuración, MCP y credencial se referencian mediante
- * enlaces al origen único. Historiales y sesiones no se copian ni comparten. El original queda
- * INTACTO como reversa.
+ * `CLAUDE_CONFIG_DIR` and `CODEX_HOME` already govern where each CLI looks, and the
+ * supervisor already builds the adapter's environment per alias. Each alias is pointed at
+ * `<home>/.local/share/cauce-v3/config/<alias>/`, inside the fleet's persistent tree. Only
+ * the identity file is COPIED; configuration, MCP and credentials are referenced through
+ * links to the single source. Histories and sessions are neither copied nor shared. The
+ * original is left INTACT as a rollback.
  *
- * LA TRAMPA, QUE YA SE PAGÓ UNA VEZ
- * =================================
+ * THE TRAP, ALREADY PAID ONCE
+ * ===========================
  *
- * `CLAUDE_CONFIG_DIR` mueve TAMBIÉN el `.claude.json`, y con él todos los servidores MCP del
- * alias. Mover el directorio sin llevarse ese fichero deja al alias sin ninguna herramienta y
- * **sin un solo error**: no falla, no avisa, arranca igual y se queda mudo de capacidades. Por eso
- * el `.claude.json` no es una copia más — es una copia `obligatorio: true` que el ejecutor tiene
- * que comprobar POR EFECTO antes de declarar éxito.
+ * `CLAUDE_CONFIG_DIR` ALSO moves `.claude.json`, and with it all of the alias's MCP
+ * servers. Moving the directory without that file leaves the alias without any tools and
+ * **without a single error**: it doesn't fail, doesn't warn, starts just the same and stays
+ * mute on capabilities. That is why `.claude.json` is not just another copy — it is a copy
+ * `obligatorio: true` that the executor must verify BY EFFECT before declaring success.
  *
- * LO QUE ESTE GUION NO HACE
- * =========================
+ * WHAT THIS SCRIPT DOES NOT DO
+ * =============================
  *
- * No toca el disco. Devuelve un plan. Aplicarlo es trabajo de `aplicar-separacion-config.sh`, que
- * es quien comprueba por efecto. Separar el plan de la aplicación es lo que permite revisar qué se
- * va a hacer antes de hacerlo, y probar el criterio sin ningún contenedor.
+ * It doesn't touch the disk. It returns a plan. Applying it is the job of
+ * `aplicar-separacion-config.sh`, which is the one that checks by effect. Separating the
+ * plan from the application is what allows reviewing what will be done before doing it, and
+ * testing the criteria without any container.
  */
 
 import { parseArgs } from "node:util";
 
-/** Falla cerrado: un plan a medias es peor que ningún plan. */
+/** Fail closed: a half-baked plan is worse than no plan. */
 export class ErrorDePlan extends Error {}
 
 /**
- * Los dos únicos arneses con un directorio de configuración gobernado por una variable.
- *
- * `hermes` sólo lee stdin y no monta ningún fichero de instrucciones; los `openclaw` no leen
- * `~/.codex` ni `~/.claude`. Planificarles una separación sería mover un directorio que nadie
- * lee y creer que se arregló algo.
+ * The only two harnesses with a config directory governed by an environment variable. `hermes`
+ * only reads stdin and does not mount any instruction file; the `openclaw` ones do not read
+ * `~/.codex` nor `~/.claude`. Planning a separation for them would mean moving a directory
+ * nobody reads and believing something got fixed.
  */
 const ARNESES = {
   codex: { variable: "CODEX_HOME", directorio: ".codex", testigo: "AGENTS.md" },
@@ -77,12 +77,11 @@ function rutaAbsolutaCanonica(valor, etiqueta) {
 }
 
 /**
- * Dónde va a vivir la configuración de un alias. DERIVADA, nunca escrita a mano.
- *
- * Que la ruta se derive y no se configure es deliberado: es el mismo cálculo que hace el
- * supervisor al exportar la variable. Si fuera un valor libre en dos sitios, un día uno copiaría a
- * un directorio y el otro leería de otro, y el alias arrancaría con la configuración de fábrica
- * sin que nada fallara.
+ * Where an alias's configuration will live, DERIVED and never written by hand. The path being
+ * derived and not configured is deliberate: it is the same calculation the supervisor makes
+ * when exporting the variable. If it were a free value in two places, one would copy to a directory
+ * and the other would read from another, and the alias would boot with the factory configuration
+ * without anything failing.
  */
 export function directorioDeAlias(home, alias, arnes) {
   const perfil = ARNESES[arnes];
@@ -93,12 +92,10 @@ export function directorioDeAlias(home, alias, arnes) {
 }
 
 /**
- * De dónde sale HOY la configuración del alias.
- *
- * Replica exactamente lo que resuelve el CLI (y `harnessConfigDirectory` en
- * `packages/adapter-sdk/src/shared-session/config.ts`): si la variable está puesta manda ella; si
- * no, el defecto es `<home>/<.codex|.claude>`. Adivinar el defecto cuando la variable ya está
- * puesta copiaría el directorio equivocado.
+ * Where the alias's configuration comes from TODAY. It replicates exactly what the CLI resolves
+ * (and `harnessConfigDirectory` in `packages/adapter-sdk/src/shared-session/config.ts`): if the
+ * variable is set it rules; otherwise the default is `<home>/<.codex|.claude>`. Guessing the default
+ * when the variable is already set would copy the wrong directory.
  */
 function origenActual(home, arnes, entornoActual) {
   const { variable, directorio } = ARNESES[arnes];
@@ -123,8 +120,8 @@ export function planificarSeparacion(entrada) {
   const directorioDestino = directorioDeAlias(home, alias, arnes);
   const directorioOrigen = origenActual(home, arnes, entornoActual);
 
-  // Un origen que ya está bajo el destino (o al revés) no es una separación: es copiar un
-  // directorio dentro de sí mismo.
+  // A source already under the destination (or vice versa) is not a separation: it is copying
+  // a directory inside itself.
   if (
     directorioOrigen === directorioDestino
     || directorioDestino.startsWith(`${directorioOrigen}/`)
@@ -149,9 +146,10 @@ export function planificarSeparacion(entrada) {
   const advertencias = [];
 
   if (arnes === "claude") {
-    // LA TRAMPA. Cuando CLAUDE_CONFIG_DIR está puesto, el CLI lee `$CLAUDE_CONFIG_DIR/.claude.json`
-    // y NO `~/.claude.json` (ops/runbooks/encender-un-alias.md). Así que el ORIGEN del fichero
-    // depende de si la variable ya estaba puesta; el destino, siempre dentro del directorio nuevo.
+    // THE TRAP. When CLAUDE_CONFIG_DIR is set, the CLI reads `$CLAUDE_CONFIG_DIR/.claude.json`
+    // and NOT `~/.claude.json` (ops/runbooks/encender-un-alias.md). So the file's SOURCE
+    // depends on whether the variable was already set; the destination is always inside the
+    // new directory.
     const yaTeniaVariable = Boolean(entornoActual?.CLAUDE_CONFIG_DIR);
     copias.push({
       origen: yaTeniaVariable ? `${directorioOrigen}/.claude.json` : `${home}/.claude.json`,
@@ -218,8 +216,9 @@ export function planificarSeparacion(entrada) {
     directorioDestino,
     copias,
     entorno: { [perfil.variable]: directorioDestino },
-    // VACÍA, siempre. El origen ES la reversa: mientras siga ahí, revertir es quitar una variable
-    // de entorno. Si el plan lo borrara, revertir sería restaurar de un respaldo que nadie tomó.
+    // EMPTY, always. The source IS the rollback: as long as it stays there, reversing is just
+    // removing an environment variable. If the plan deleted it, reversing would mean
+    // restoring from a backup nobody took.
     borrados: [],
     advertencias,
     reversa:
@@ -259,7 +258,7 @@ function main(argv) {
       arnes: opciones.arnes,
       entornoActual,
     });
-    // Nada por stdout hasta que el plan está entero: medio plan por la tubería es peor que ninguno.
+    // Nothing on stdout until the plan is whole: a half plan through the pipe is worse than none.
     process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
     return 0;
   } catch (error) {

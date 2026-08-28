@@ -2,16 +2,15 @@ import type { RoleBriefHistory, RoleBriefHistoryEntry } from '../../api/types';
 import { contarRoleBrief } from './role-brief';
 
 /**
- * LAS REGLAS DEL DIARIO DEL ROL DECLARADO, fuera del componente.
+ * THE RULES OF THE DECLARED-ROLE LOG, outside the component.
  *
- * Viven acá por lo mismo que `role-brief.ts` y `directiva.ts`: exportar funciones desde un fichero
- * de componentes rompe el fast refresh de Vite y el lint de esta consola corre con
- * `--max-warnings 0`. Y porque «qué cambió en esta entrada» y «en qué orden van» son decisiones
- * que tienen que poder probarse sin montar un cajón.
+ * They live here for the same reason `role-brief.ts` and `directiva.ts` do: exporting functions from a component file
+ * breaks Vite's fast refresh and this console's lint runs with `--max-warnings 0`. And because "what changed in this
+ * entry" and "in what order they go" are decisions that must be testable without mounting a panel.
  *
- * El diario lo escribe un trigger de la proyección legacy. Conserva los cambios históricos,
- * incluidos los `UPDATE` crudos previos al perfil canónico. No sustituye el audit del perfil ni
- * autoriza una escritura directa: una restauración sólo prepara un borrador de `role_summary`.
+ * The log is written by a trigger of the legacy projection. It keeps historical changes, including raw `UPDATE`s
+ * predating the canonical profile. It does not replace the profile audit nor does it authorize a direct write: a
+ * restore only prepares a `role_summary` draft.
  */
 
 export const AVISO_DE_PROFUNDIDAD =
@@ -20,16 +19,15 @@ export const AVISO_DE_PROFUNDIDAD =
   + 'cambios no significa que este rol se haya tocado poco.';
 
 /**
- * De más nuevo a más viejo, y sin fiarse del orden en que llegó.
+ * From newest to oldest, and without trusting the order they arrived in.
  *
- * Ordenar acá —y no confiar en el `ORDER BY` del servidor— tiene un motivo medido: en este mismo
- * repositorio había una consulta que ordenaba por `id` cuando `id` es TEXTO, y eso pone la
- * revisión 9 por encima de la 10. El `id` de este diario llega como cadena ('1'), así que el
- * riesgo es exactamente el mismo. Se ordena por `changed_at`, que es lo que el operador cree que
- * está viendo, y el `id` sólo desempata —comparado como NÚMERO cuando los dos lo son—.
+ * Sorting here —and not trusting the server's `ORDER BY`— has a measured reason: in this very repository there was a
+ * query that sorted by `id` when `id` is TEXT, and that places revision 9 above revision 10. The `id` of this log
+ * arrives as a string ('1'), so the risk is exactly the same. We sort by `changed_at`, which is what the operator
+ * thinks they see, and `id` is only the tiebreaker —compared as a NUMBER when both of them are—.
  *
- * Las entradas sin fecha se van al final en vez de descartarse: una entrada sin `changed_at` es
- * un dato raro del servidor, no una razón para ocultarle al operador que ese cambio existió.
+ * Entries without a date go to the end instead of being discarded: an entry without `changed_at` is odd server data,
+ * not a reason to hide from the operator that this change existed.
  */
 export function entradasMasNuevasPrimero(entradas: RoleBriefHistoryEntry[]): RoleBriefHistoryEntry[] {
   return [...entradas].sort((a, b) => {
@@ -43,7 +41,7 @@ export function entradasMasNuevasPrimero(entradas: RoleBriefHistoryEntry[]): Rol
   });
 }
 
-/** `'10'` va por encima de `'9'`: el `id` viaja como cadena y compararlo como texto los invierte. */
+/** `'10'` goes above `'9'`: `id` travels as a string and comparing them as text inverts them. */
 function comparaIds(a: string | null | undefined, b: string | null | undefined): number {
   const numA = Number(a);
   const numB = Number(b);
@@ -56,25 +54,24 @@ export type ClaseDeCambio = 'alta' | 'reescritura' | 'borrado' | 'sin-texto';
 export interface CambioResumido {
   clase: ClaseDeCambio;
   titulo: string;
-  /** El detalle que se puede afirmar mirando SÓLO esta entrada. */
+  /** The detail that can be asserted by looking at THIS entry alone. */
   detalle: string;
-  /** Diferencia de longitud en puntos de código. `undefined` cuando no aplica. */
+  /** Length difference in code points. `undefined` when it does not apply. */
   delta?: number;
-  /** Si esta entrada dejó al alias sin rol declarado. Es el cambio que más caro sale. */
+  /** If this entry left the alias without a declared role. This is the most costly change. */
   dejaSinRol: boolean;
 }
 
 /**
- * Qué pasó en una entrada, dicho en castellano y sin adornar.
+ * What happened in an entry, told plainly.
  *
- * Las cuatro clases salen de cruzar `previous_brief` y `new_brief`, y `null` NO es lo mismo que
- * cadena vacía en ninguna de las dos: el store convierte '' en NULL antes de guardar porque el
- * CHECK de la base exige longitud >= 1, así que `null` significa «este alias no tenía rol», que es
- * un estado real del sistema y no un hueco del dato.
+ * The four classes come from crossing `previous_brief` and `new_brief`, and `null` is NOT the same as the empty string
+ * in either of them: the store converts '' to NULL before storing because the database CHECK requires length >= 1, so
+ * `null` means "this alias had no role", which is a real state of the system and not a hole in the data.
  *
- * `sin-texto` existe porque el disparador se dispara con CUALQUIER `UPDATE` de la fila, incluido
- * uno que sólo movió la plantilla. Decir «se reescribió el rol» ahí sería inventar un cambio que
- * no ocurrió, y es justo el tipo de afirmación que hace que nadie se fíe del registro.
+ * `sin-texto` exists because the trigger fires on ANY `UPDATE` of the row, including one that only moved the
+ * template. Saying "the role was rewritten" there would be inventing a change that did not happen, and that is exactly
+ * the kind of statement that makes nobody trust the log.
  */
 export function resumirCambio(entrada: RoleBriefHistoryEntry): CambioResumido {
   const antes = entrada.previous_brief ?? null;
@@ -121,12 +118,11 @@ export function resumirCambio(entrada: RoleBriefHistoryEntry): CambioResumido {
 }
 
 /**
- * Cómo cambió el vínculo con una plantilla de rol, si es que cambió.
+ * How the link to a role template changed, if it did.
  *
- * Importa porque editar el texto a mano DESVINCULA la plantilla: un disparador pone
- * `role_template_slug` a NULL. O sea que alguien que tocó una letra del texto puede haber roto,
- * sin enterarse, la relación «este alias lleva el rol de orquestador». Si no se dice acá, no se
- * dice en ningún sitio.
+ * It matters because editing the text by hand UNLINKS the template: a trigger sets `role_template_slug` to NULL. So
+ * someone who touched a single letter of the text may have broken —unknowingly— the relationship "this alias wears
+ * the orchestrator role". If it is not said here, it is not said anywhere.
  */
 export function cambioDePlantilla(entrada: RoleBriefHistoryEntry): string | undefined {
   const antes = entrada.previous_template_slug ?? null;
@@ -141,8 +137,8 @@ export function cambioDePlantilla(entrada: RoleBriefHistoryEntry): string | unde
 }
 
 /**
- * Quién hizo el cambio. Las filas antiguas suelen traer ambas columnas en NULL; las escrituras
- * gobernadas más nuevas sí pueden declarar actor. Nunca se rellena con el operador que mira.
+ * Who made the change. Old rows usually have both columns as NULL; the newer governed
+ * writes can declare the actor. It is never filled with the operator who is watching.
  */
 export function actorDeEntrada(entrada: RoleBriefHistoryEntry): string | undefined {
   const tenant = entrada.actor_tenant?.trim();
@@ -152,10 +148,10 @@ export function actorDeEntrada(entrada: RoleBriefHistoryEntry): string | undefin
 }
 
 /**
- * Qué se copia al borrador canónico al recuperar una entrada: el texto ANTERIOR al cambio.
+ * What is copied to the canonical draft when restoring an entry: the text BEFORE the change.
  *
- * `clase: 'borra'` significa que ese valor era NULL. La UI lo rotula como vaciado de
- * `role_summary`; no afirma que borre el perfil completo ni escribe hasta que el operador guarda.
+ * `clase: 'borra'` means that value was NULL. The UI labels it as emptying `role_summary`; it does not claim to delete
+ * the full profile nor does it write anything until the operator saves.
  */
 export type Restauracion =
   | { clase: 'texto'; texto: string }
@@ -167,12 +163,12 @@ export function restauracionDe(entrada: RoleBriefHistoryEntry): Restauracion {
 }
 
 /**
- * Las entradas listas para pintar, o el motivo por el que no hay ninguna.
+ * The entries ready to render, or the reason there are none.
  *
- * Distingue TRES desenlaces que se parecen y no lo son, que es el defecto que esta consola paga
- * más caro: «no se pudo mirar» (el gateway no publica el diario), «se miró y no cambió nunca»
- * (`entries: []`, medido) y «hay cambios». Los dos primeros se pintaban igual —una lista vacía— y
- * eso convierte un fallo de lectura en la afirmación tranquilizadora de que no pasó nada.
+ * It distinguishes THREE outcomes that look alike and are not, which is the bug this console pays most dearly for:
+ * "could not look" (the gateway does not publish the log), "looked and never changed" (`entries: []`, measured), and
+ * "there are changes". The first two rendered the same —an empty list— and that turns a read failure into the
+ * reassuring claim that nothing happened.
  */
 export type EstadoDelDiario =
   | { clase: 'no-publicado'; motivo: string }
