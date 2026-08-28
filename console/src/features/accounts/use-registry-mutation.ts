@@ -85,7 +85,7 @@ export function useRegistryMutation(options: {
           ? ''
           : recarga.error
             ? ` La relectura tampoco llegó (${recarga.error.message}).`
-            : ` Se releyó la revisión ${recarga.data.revision ?? 'no informada'}; verificá allí el efecto.`;
+            : ` Se releyó la revisión ${String(recarga.data.revision ?? 'no informada')}; verificá allí el efecto.`;
         setNotice({
           tone: 'error',
           text: dryRun
@@ -105,10 +105,10 @@ export function useRegistryMutation(options: {
       if (typeof result.revision === 'number') setChainedRevision(result.revision);
       const recarga = await options.config.reload();
       setNotice({
-        text: `Aplicado en revisión ${result.revision}: ${result.summary}.`
+        text: `Aplicado en revisión ${String(result.revision ?? '')}: ${result.summary ?? ''}.`
           + (recarga.error
             ? ` PERO la relectura del inventario no llegó (${recarga.error.message}); lo visible puede estar vencido.`
-            : ` Inventario releído en revisión ${recarga.data.revision ?? 'no informada'}.`),
+            : ` Inventario releído en revisión ${String(recarga.data.revision ?? 'no informada')}.`),
         tone: recarga.error ? 'parcial' : 'success',
       });
       return true;

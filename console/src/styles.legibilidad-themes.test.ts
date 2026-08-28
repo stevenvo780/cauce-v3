@@ -65,8 +65,9 @@ function resolver(expresion: string, tabla: Record<string, string>, saltos = 0):
   if (saltos > 8) return undefined;
   const ref = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\)$/.exec(expresion.trim());
   if (ref) {
-    const destino = tabla[ref[1]] ?? ref[2];
-    return destino === undefined ? undefined : resolver(destino, tabla, saltos + 1);
+    const key = ref[1];
+    const destino = (key in tabla ? tabla[key] : undefined) ?? ref[2];
+    return destino ? resolver(destino, tabla, saltos + 1) : undefined;
   }
   return leerColor(expresion);
 }
@@ -125,7 +126,7 @@ function tintesDelFondo(cuerpoBody: string, tabla: Record<string, string>): Rgb[
   const capas = fondo
     ? [...fondo.matchAll(/rgba?\([^)]*\)/g)]
       .map((m) => leerColor(m[0]))
-      .filter((c): c is Rgb => Boolean(c) && (c as Rgb).a > 0 && (c as Rgb).a < 1)
+      .filter((c): c is Rgb => c !== undefined && c.a > 0 && c.a < 1)
     : [];
   return [base, ...capas.map((capa) => sobre(capa, base))];
 }
@@ -203,7 +204,7 @@ export function parejasBajoAA(css: string): string[] {
         if (ratio + 0.005 < minimo) {
           fallos.push(
             `[${tema.nombre}] ${pareja.texto} sobre ${nombreFondo} = ${ratio.toFixed(2)}:1, `
-            + `hace falta ${minimo} — ${pareja.porque}`,
+            + `hace falta ${String(minimo)} — ${pareja.porque}`,
           );
         }
       }
@@ -246,9 +247,12 @@ describe('contraste de los tokens de color (WCAG 2.1 AA)', () => {
   it('el degradado decorativo del body ENTRA en la cuenta: es un fondo real de la página', () => {
     const [oscuro, claro] = temas(GLOBAL);
     for (const tema of [oscuro, claro]) {
-      const base = resolver('var(--bg)', tema.tokens) as Rgb;
-      expect(tema.tintes.length).toBeGreaterThan(1);
-      expect(tema.tintes.slice(1).some((t) => Math.abs(luminancia(t) - luminancia(base)) > 0.005)).toBe(true);
+      const base = resolver('var(--bg)', tema.tokens);
+      expect(base).toBeDefined();
+      if (base) {
+        expect(tema.tintes.length).toBeGreaterThan(1);
+        expect(tema.tintes.slice(1).some((t) => Math.abs(luminancia(t) - luminancia(base)) > 0.005)).toBe(true);
+      }
     }
   });
 });

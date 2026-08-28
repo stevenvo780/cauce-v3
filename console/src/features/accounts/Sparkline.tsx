@@ -25,8 +25,8 @@ export function Sparkline({ history, width = 108, height = 26 }: { history?: Quo
   const last = points[points.length - 1].used_percent;
 
   return (
-    <span className="sparkline" title={`Consumo de ${first}% a ${last}% en la ventana observada`}>
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Uso: de ${first}% a ${last}% de consumo`}>
+    <span className="sparkline" title={`Consumo de ${String(first)}% a ${String(last)}% en la ventana observada`}>
+      <svg width={width} height={height} viewBox={`0 0 ${String(width)} ${String(height)}`} role="img" aria-label={`Uso: de ${String(first)}% a ${String(last)}% de consumo`}>
         <polyline points={coords.join(' ')} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
       </svg>
     </span>

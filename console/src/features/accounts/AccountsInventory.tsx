@@ -204,16 +204,16 @@ export function AccountsInventory({ config, access, quotas }: {
                   <td><PayerScoped account={account}><span className="mono"><Unknown value={account.credentialRefKind} /></span></PayerScoped></td>
                   <td><Time value={account.updatedAt} /></td>
                   <td><span className="config-actions">
-                    <button className="button small" type="button" aria-expanded={detailOpen} onClick={() => toggleDetail(account.id)} aria-label={`Detalle de ruteo de ${account.id}`}>
+                    <button className="button small" type="button" aria-expanded={detailOpen} onClick={() => { toggleDetail(account.id); }} aria-label={`Detalle de ruteo de ${account.id}`}>
                       {detailOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}Detalle
                     </button>
-                    <button className="button small" type="button" onClick={() => editAccount(account)}>
+                    <button className="button small" type="button" onClick={() => { editAccount(account); }}>
                       <PencilLine size={14} aria-hidden="true" />Editar
                     </button>
-                    <button className="button small" type="button" onClick={() => editAccount(account, { enabled: account.enabled !== true })}>
+                    <button className="button small" type="button" onClick={() => { editAccount(account, { enabled: account.enabled !== true }); }}>
                       {account.enabled === true ? 'Deshabilitar' : 'Habilitar'}
                     </button>
-                    <button className="button small" type="button" onClick={() => editAccount(account, { sharedWithPool: account.sharedWithPool !== true })}>
+                    <button className="button small" type="button" onClick={() => { editAccount(account, { sharedWithPool: account.sharedWithPool !== true }); }}>
                       <Share2 size={14} aria-hidden="true" />{account.sharedWithPool === true ? 'Despublicar' : 'Publicar'}
                     </button>
                   </span></td>
@@ -237,30 +237,30 @@ export function AccountsInventory({ config, access, quotas }: {
     {form.kind === 'create' ? <Panel title="Alta de cuenta" subtitle="Un alta declara quién paga la suscripción y dónde está su credencial. Todo pasa por dry-run antes de aplicarse.">
       <div className="config-form">
         <label>Id de cuenta <span className="label-hint">global, inmutable, referenciado por los techos</span>
-          <input value={form.draft.id} onChange={(event) => editDraft({ id: event.target.value })} />
+          <input value={form.draft.id} onChange={(event) => { editDraft({ id: event.target.value }); }} />
         </label>
         <label>Proveedor <span className="label-hint">codex, gemini, minimax…</span>
-          <input value={form.draft.provider} onChange={(event) => editDraft({ provider: event.target.value })} />
+          <input value={form.draft.provider} onChange={(event) => { editDraft({ provider: event.target.value }); }} />
         </label>
         <label>Id externo de la suscripción <span className="label-hint">uuid, mail u org id. NUNCA el secreto</span>
-          <input value={form.draft.externalAccountId} onChange={(event) => editDraft({ externalAccountId: event.target.value })} />
+          <input value={form.draft.externalAccountId} onChange={(event) => { editDraft({ externalAccountId: event.target.value }); }} />
         </label>
         <label>Tenant pagador <span className="label-hint">quién paga; inmutable después del alta</span>
-          <input value={form.draft.payerTenant} onChange={(event) => editDraft({ payerTenant: event.target.value })} />
+          <input value={form.draft.payerTenant} onChange={(event) => { editDraft({ payerTenant: event.target.value }); }} />
         </label>
         <label>Etiqueta <span className="label-hint">opcional</span>
-          <input value={form.draft.label} onChange={(event) => editDraft({ label: event.target.value })} />
+          <input value={form.draft.label} onChange={(event) => { editDraft({ label: event.target.value }); }} />
         </label>
         <label>Tipo de locator
-          <select value={form.draft.credentialRefKind} onChange={(event) => editDraft({ credentialRefKind: event.target.value as CredentialRefKind })}>
+          <select value={form.draft.credentialRefKind} onChange={(event) => { editDraft({ credentialRefKind: event.target.value as CredentialRefKind }); }}>
             {CREDENTIAL_REF_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
           </select>
         </label>
         <label className="config-json">Locator de la credencial <span className="label-hint">{CREDENTIAL_REF_HINTS[form.draft.credentialRefKind]}</span>
-          <input value={form.draft.credentialRef} onChange={(event) => editDraft({ credentialRef: event.target.value })} />
+          <input value={form.draft.credentialRef} onChange={(event) => { editDraft({ credentialRef: event.target.value }); }} />
         </label>
-        <label><input type="checkbox" checked={form.draft.sharedWithPool} onChange={(event) => editDraft({ sharedWithPool: event.target.checked })} /> Publicar al pool <span className="label-hint">habilita que otros tenants la pidan prestada</span></label>
-        <label><input type="checkbox" checked={form.draft.enabled} onChange={(event) => editDraft({ enabled: event.target.checked })} /> Habilitada</label>
+        <label><input type="checkbox" checked={form.draft.sharedWithPool} onChange={(event) => { editDraft({ sharedWithPool: event.target.checked }); }} /> Publicar al pool <span className="label-hint">habilita que otros tenants la pidan prestada</span></label>
+        <label><input type="checkbox" checked={form.draft.enabled} onChange={(event) => { editDraft({ enabled: event.target.checked }); }} /> Habilitada</label>
       </div>
       <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" />
     </Panel> : null}
@@ -268,10 +268,10 @@ export function AccountsInventory({ config, access, quotas }: {
     {form.kind === 'edit' ? <Panel title={`Edición de «${form.edit.id}»`} subtitle="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo, pagador y locator son inmutables porque los techos ya referencian este id.">
       <div className="config-form">
         <label className="config-json">Etiqueta <span className="label-hint">vacío guarda null</span>
-          <input value={form.edit.label} onChange={(event) => patchEdit({ label: event.target.value })} />
+          <input value={form.edit.label} onChange={(event) => { patchEdit({ label: event.target.value }); }} />
         </label>
-        <label><input type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => patchEdit({ sharedWithPool: event.target.checked })} /> Publicada al pool</label>
-        <label><input type="checkbox" checked={form.edit.enabled} onChange={(event) => patchEdit({ enabled: event.target.checked })} /> Habilitada</label>
+        <label><input type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => { patchEdit({ sharedWithPool: event.target.checked }); }} /> Publicada al pool</label>
+        <label><input type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
       </div>
       <p className="notice">
         Despublicar del pool falla mientras otro tenant tenga la cuenta en el techo de alguno de sus alias: Postgres lo impide con <code>alias_routing_ceiling_borrow_requires_pool</code>. Hay que revocar antes ese techo, que a su vez cascadea su binding.

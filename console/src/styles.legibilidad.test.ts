@@ -91,8 +91,8 @@ export function rejasQueNoCaben(hojas: { hoja: string; css: string }[], viewport
   for (const [selector, { regla, minimo }] of rejasEfectivas(hojas, viewport)) {
     if (minimo > tope) {
       fallos.push(
-        `a ${viewport}px, ${selector} exige ${minimo}px y el hueco es ${tope}px `
-        + `(${regla.hoja}${regla.media ? ` · ${regla.media}` : ''}): ${valor(regla.cuerpo, 'grid-template-columns')}`,
+        `a ${String(viewport)}px, ${selector} exige ${String(minimo)}px y el hueco es ${String(tope)}px `
+        + `(${regla.hoja}${regla.media ? ` · ${regla.media}` : ''}): ${valor(regla.cuerpo, 'grid-template-columns') ?? ''}`,
       );
     }
   }
@@ -176,7 +176,7 @@ export function defectosDelMenuMovil(global: string): string[] {
   const repeticion = columnas ? /repeat\(\s*(\d+)\s*,/.exec(columnas) : null;
   const cuantas = repeticion ? Number(repeticion[1]) : (columnas ? partirEnPistas(columnas).length : 0);
   if (cuantas < 3) {
-    defectos.push(`el menú de móvil declara ${cuantas} columnas: con ocho entradas no caben sin pisarse`);
+    defectos.push(`el menú de móvil declara ${String(cuantas)} columnas: con ocho entradas no caben sin pisarse`);
   }
   const rotulo = declaraciones(estrecho, '.sidebar nav a span');
   if (valor(rotulo, 'white-space') !== 'normal') {

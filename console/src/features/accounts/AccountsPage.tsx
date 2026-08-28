@@ -36,7 +36,7 @@ export function AccountsPage() {
       void reloadQuotas();
       void reloadConfig();
     }, REFRESH_MS);
-    return () => window.clearInterval(interval);
+    return () => { window.clearInterval(interval); };
   }, [autoRefresh, reloadQuotas, reloadConfig]);
 
   function reloadAll() {
@@ -63,7 +63,7 @@ export function AccountsPage() {
     />
 
     <label className="auto-refresh-toggle">
-      <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+      <input type="checkbox" checked={autoRefresh} onChange={(event) => { setAutoRefresh(event.target.checked); }} />
       Auto-refrescar cada {REFRESH_MS / 1000}s
     </label>
 

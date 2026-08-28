@@ -85,10 +85,10 @@ it('marca el techo sin binding habilitado como alcanzable pero nunca elegido', (
     agent_account_bindings: [{ tenant_id: 'Steven', agent_alias: 'kant', account_id: 'codex-steven', priority: 10, enabled: false }],
   });
   const kant = buildAssignmentMatrix(context.agents, context.accounts, context.ceiling, context.bindings)[0];
-
-  expect(kant?.cells.map((cell) => cell.state)).toEqual(['bound-disabled', 'ceiling-only']);
-  expect(kant?.fallback).toEqual([]);
-  expect(kant?.idleCeiling).toEqual(['codex-steven', 'minimax-pablo']);
+  expect(kant).toBeDefined();
+  expect(kant.cells.map((cell) => cell.state)).toEqual(['bound-disabled', 'ceiling-only']);
+  expect(kant.fallback).toEqual([]);
+  expect(kant.idleCeiling).toEqual(['codex-steven', 'minimax-pablo']);
 });
 
 it('valida el locator con las mismas formas que el CHECK de la migración', () => {

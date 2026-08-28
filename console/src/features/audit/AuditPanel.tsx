@@ -130,15 +130,15 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
   return (
     <>
       <Panel>
-        <label className="search-field"><Search size={17} aria-hidden="true" /><span className="sr-only">Filtrar auditoría</span><input type="search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Filtrar por actor, action, trace…" /></label>
+        <label className="search-field"><Search size={17} aria-hidden="true" /><span className="sr-only">Filtrar auditoría</span><input type="search" value={query} onChange={(event) => { onQuery(event.target.value); }} placeholder="Filtrar por actor, action, trace…" /></label>
         {needle ? (
           <p className="notice" role="status">
             Filtrando por <span className="mono">{query.trim()}</span>.{' '}
-            <button className="button small" type="button" onClick={() => onQuery('')}>Quitar el filtro</button>
+            <button className="button small" type="button" onClick={() => { onQuery(''); }}>Quitar el filtro</button>
           </p>
         ) : null}
       </Panel>
-      <Panel title="Eventos" subtitle={`${filtered.length} visibles de ${events.length}`}>
+      <Panel title="Eventos" subtitle={`${String(filtered.length)} visibles de ${String(events.length)}`}>
         {filtered.length === 0 ? <EmptyState>No hay eventos que coincidan.</EmptyState> : (
           <div className="audit-list">
             {filtered.map((event, index) => {

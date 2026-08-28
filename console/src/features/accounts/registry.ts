@@ -499,8 +499,8 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
     if (!agent) {
       causes.push(`el alias ${tenantId}/${alias} no está registrado en \`agents\`, y alias_routing_ceiling_agent_fk lo exige`);
     }
-    if (borrowed && account?.sharedWithPool === false) {
-      causes.push(`la cuenta «${accountId}» la paga ${account.payerTenant} y NO está publicada al pool: prestar una suscripción lo decide su pagador con shared_with_pool, y alias_routing_ceiling_borrow_requires_pool lo verifica en Postgres`);
+    if (borrowed && account.sharedWithPool === false) {
+      causes.push(`la cuenta «${accountId}» la paga ${account.payerTenant ?? 'UNKNOWN'} y NO está publicada al pool: prestar una suscripción lo decide su pagador con shared_with_pool, y alias_routing_ceiling_borrow_requires_pool lo verifica en Postgres`);
     }
     if (causes.length) {
       return `No se pudo otorgar el techo porque ${causes.join('; y ')}.`;
@@ -519,7 +519,7 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
         && entry.accountId !== accountId && entry.enabled === true && entry.priority === priority)
       : undefined;
     if (clash) {
-      return `La prioridad ${priority} ya la usa la cuenta «${clash.accountId}» habilitada para ${tenantId}/${alias}. El índice único agent_account_bindings_order_idx existe para que el orden de fallback de un alias sea total: elegí otra prioridad o deshabilitá la otra cuenta.`;
+      return `La prioridad ${String(priority)} ya la usa la cuenta «${clash.accountId}» habilitada para ${tenantId}/${alias}. El índice único agent_account_bindings_order_idx existe para que el orden de fallback de un alias sea total: elegí otra prioridad o deshabilitá la otra cuenta.`;
     }
     return `${prefix} Un binding sólo puede violar dos: el índice único agent_account_bindings_order_idx (dos cuentas habilitadas con la misma prioridad para el mismo alias) o agent_account_bindings_ceiling_fk (la cuenta no está en el techo del alias, y el binding referencia al techo, no a provider_accounts). Otorgá primero el techo o cambiá la prioridad.`;
   }

@@ -78,7 +78,7 @@ export interface Freshness {
 export function freshness(
   collector: (Collector | QuotaCollector) | null | undefined,
   thresholds: QuotaThresholds | null | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _now?: number,
 ): Freshness {
   if (!collector) {
@@ -338,13 +338,13 @@ export function accountAssignments(
 
 export interface Orphans {
   accountsWithoutQuotas: ProviderAccount[];
-  unboundGroups: Array<{
+  unboundGroups: {
     host: string | null;
     provider: string | null;
     group_key: string | null;
     reason: string | null;
     detail: string | null;
-  }>;
+  }[];
   agentsWithoutBindings: Agent[];
 }
 

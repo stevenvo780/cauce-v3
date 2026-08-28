@@ -27,7 +27,7 @@ describe('AuditPanel keyset pagination', () => {
     const committedFrames: string[] = [];
 
     renderWithApi(
-      <Profiler id="audit-first-page" onRender={() => committedFrames.push(document.body.textContent ?? '')}>
+      <Profiler id="audit-first-page" onRender={() => committedFrames.push(document.body.textContent)}>
         <AuditPanel query="" onQuery={() => undefined} />
       </Profiler>,
     );
@@ -50,9 +50,12 @@ describe('AuditPanel keyset pagination', () => {
     const user = userEvent.setup();
     renderWithApi(<AuditPanel query="" onQuery={() => undefined} />);
 
-    const info = (await screen.findByText('fleet.reconcile')).closest('article')!;
-    expect(within(info).getByText('info')).toBeInTheDocument();
-    expect(info.querySelector('.audit-icon.info')).not.toBeNull();
+    const info = (await screen.findByText('fleet.reconcile')).closest('article');
+    expect(info).not.toBeNull();
+    if (info) {
+      expect(within(info).getByText('info')).toBeInTheDocument();
+      expect(info.querySelector('.audit-icon.info')).not.toBeNull();
+    }
     expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Cargar anteriores' }));
@@ -99,7 +102,7 @@ describe('AuditPanel keyset pagination', () => {
     expect(screen.getByText('fleet.reconcile')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Reintentar' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
     expect(await screen.findByText('audit.event.4')).toBeInTheDocument();
     expect(olderAttempts).toBe(2);
   });

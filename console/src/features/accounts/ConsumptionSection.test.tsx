@@ -116,7 +116,9 @@ function mockBoth(snapshot: QuotaSnapshot = BASE, config: Record<string, unknown
 }
 
 function panel(name: string): HTMLElement {
-  return screen.getByRole('heading', { level: 2, name }).closest('section')!;
+  const el = screen.getByRole('heading', { level: 2, name }).closest('section');
+  if (!el) throw new Error(`Panel ${name} not found`);
+  return el;
 }
 
 /**
@@ -127,9 +129,11 @@ function panel(name: string): HTMLElement {
  * misma: se busca dentro del panel abierto.
  */
 function metrics(): HTMLElement {
-  const visible = [...document.querySelectorAll('.view-tab-panel')]
-    .find((panel) => !panel.hasAttribute('hidden'));
-  return (visible ?? document).querySelector('.metrics-grid') as HTMLElement;
+  const visible = Array.from(document.querySelectorAll('.view-tab-panel'))
+    .find((p) => !p.hasAttribute('hidden'));
+  const el = (visible ?? document).querySelector('.metrics-grid');
+  if (!el) throw new Error('metrics-grid not found');
+  return el as HTMLElement;
 }
 
 it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones', async () => {
@@ -173,7 +177,7 @@ it('conserva entero el inventario de licencias: identidad, pagador, asignaciones
   await screen.findByRole('heading', { level: 1, name: ACCOUNTS_HEADING });
   await openTab(user, 'Inventario');
   const inventory = panel('Inventario de cuentas');
-  const text = inventory.textContent ?? '';
+  const text = inventory.textContent;
 
   expect(text).toContain('codex-pro-steven');
   expect(text).toContain('bengalfox@openai');
@@ -187,36 +191,43 @@ it('conserva entero el inventario de licencias: identidad, pagador, asignaciones
   // Quién usa la cuenta y con qué prioridad, y el techo: no existen en ninguna otra parte de la
   // consola junto al saldo, y son la razón de ser de la fusión. Viven en el detalle de la fila.
   await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
-  const detail = panel('Inventario de cuentas').querySelector('.account-detail-row') as HTMLElement;
-  const detailText = detail.textContent ?? '';
-  expect(detailText).toContain('zeus');
-  expect(detailText).toContain('claw-zeus');
-  expect(within(detail).getAllByText('PRIMARIA').length).toBeGreaterThan(0);
-  expect(detailText).toMatch(/Techo de ruteo/);
-  expect(detailText).toMatch(/está limitado a esta cuenta/);
+  const detail = panel('Inventario de cuentas').querySelector('.account-detail-row');
+  expect(detail).not.toBeNull();
+  if (detail instanceof HTMLElement) {
+    const detailText = detail.textContent;
+    expect(detailText).toContain('zeus');
+    expect(detailText).toContain('claw-zeus');
+    expect(within(detail).getAllByText('PRIMARIA').length).toBeGreaterThan(0);
+    expect(detailText).toMatch(/Techo de ruteo/);
+    expect(detailText).toMatch(/está limitado a esta cuenta/);
+  }
 });
 
 it('conserva entero el consumo: peor primero, una fila por grupo y el histórico de 24 h', async () => {
   mockBoth();
   renderWithApi(<AccountsPage />);
 
-  const providers = await screen.findByRole('heading', { level: 2, name: 'Proveedores' }).then((h) => h.closest('section')!);
-  const cards = within(providers).getAllByRole('heading', { level: 3 });
-  // codex está exhausted y opencode ok: el exhausted tiene que aparecer primero.
-  expect(cards[0]).toHaveTextContent(/codex/i);
+  const heading = await screen.findByRole('heading', { level: 2, name: 'Proveedores' });
+  const providers = heading.closest('section');
+  expect(providers).not.toBeNull();
+  if (providers) {
+    const cards = within(providers).getAllByRole('heading', { level: 3 });
+    // codex está exhausted y opencode ok: el exhausted tiene que aparecer primero.
+    expect(cards[0]).toHaveTextContent(/codex/i);
 
-  const codexRow = within(providers).getByRole('row', { name: /codex pro/i });
-  expect(within(codexRow).getByText('AGOTADO')).toBeInTheDocument();
-  expect(within(codexRow).getByText('PAUSADA')).toBeInTheDocument();
-  expect(codexRow.className).toContain('row-critical');
-  // 'codex' (agotado) y 'codex_bengalfox' (libre, sin cuenta) son filas separadas: un solo número
-  // por proveedor haría creer que hay saldo en la cuenta que justo no lo tiene.
-  expect(within(providers).getByRole('row', { name: /sin cuenta/i })).toBeInTheDocument();
+    const codexRow = within(providers).getByRole('row', { name: /codex pro/i });
+    expect(within(codexRow).getByText('AGOTADO')).toBeInTheDocument();
+    expect(within(codexRow).getByText('PAUSADA')).toBeInTheDocument();
+    expect(codexRow.className).toContain('row-critical');
+    // 'codex' (agotado) y 'codex_bengalfox' (libre, sin cuenta) son filas separadas: un solo número
+    // por proveedor haría creer que hay saldo en la cuenta que justo no lo tiene.
+    expect(within(providers).getByRole('row', { name: /sin cuenta/i })).toBeInTheDocument();
 
-  const healthy = within(providers).getByRole('row', { name: /minimax/i });
-  expect(healthy.className).not.toContain('row-critical');
-  expect(healthy).toHaveTextContent('0 / 12');
-  expect(within(providers).getAllByRole('img', { name: /consumo/i }).length).toBeGreaterThan(0);
+    const healthy = within(providers).getByRole('row', { name: /minimax/i });
+    expect(healthy.className).not.toContain('row-critical');
+    expect(healthy).toHaveTextContent('0 / 12');
+    expect(within(providers).getAllByRole('img', { name: /consumo/i }).length).toBeGreaterThan(0);
+  }
 
   expect(panel('Suscripciones pausadas')).toHaveTextContent('Codex Pro (principal)');
 });
@@ -236,23 +247,27 @@ it('junta las tres direcciones de huérfano en un solo panel de hallazgos', asyn
   mockBoth();
   renderWithApi(<AccountsPage />);
 
-  const findings = await screen.findByRole('heading', { level: 2, name: 'Hallazgos' }).then((h) => h.closest('section')!);
-  const text = findings.textContent ?? '';
-  // 1) cuenta registrada que el recolector no conoce, 2) grupo observado sin cuenta atada —con su
-  // window_count, que es lo que la lista pobre de la otra vista no traía—, 3) agente sin binding.
-  expect(text).toContain('claude-max-saldantia');
-  const unboundRow = within(findings).getByRole('row', { name: /codex_bengalfox/i });
-  expect(unboundRow).toHaveTextContent('Sin account_id');
-  // window_count: la lista pobre de la vista de licencias no lo traía y la tabla de cuotas sí.
-  expect(within(unboundRow).getAllByRole('cell')[3]).toHaveTextContent('1');
-  expect(text).toContain('kant');
+  const heading = await screen.findByRole('heading', { level: 2, name: 'Hallazgos' });
+  const findings = heading.closest('section');
+  expect(findings).not.toBeNull();
+  if (findings) {
+    const text = findings.textContent;
+    // 1) cuenta registrada que el recolector no conoce, 2) grupo observado sin cuenta atada —con su
+    // window_count, que es lo que la lista pobre de la otra vista no traía—, 3) agente sin binding.
+    expect(text).toContain('claude-max-saldantia');
+    const unboundRow = within(findings).getByRole('row', { name: /codex_bengalfox/i });
+    expect(unboundRow).toHaveTextContent('Sin account_id');
+    // window_count: la lista pobre de la vista de licencias no lo traía y la tabla de cuotas sí.
+    expect(within(unboundRow).getAllByRole('cell')[3]).toHaveTextContent('1');
+    expect(text).toContain('kant');
+  }
 });
 
 it('marca desactualizado a un recolector viejo aunque el servidor lo declare fresco', async () => {
   mockBoth({
     ...BASE,
     collectors: [
-      ...BASE.collectors!,
+      ...(BASE.collectors ?? []),
       // stale:false pero 5.400 s de edad contra un umbral de 900: la vista de licencias aplicaba
       // esta regla y la de cuotas no. Gana la estricta.
       { host: 'ws-midas', collector_tenant: 'Pablo', collector_alias: 'quota-collector', captured_at: '2026-07-27T13:00:00.000Z', received_at: '2026-07-27T13:00:01.000Z', age_seconds: 5_400, stale: false, schema_version: 2, app_version: '0.11.4', provider_count: 1, window_count: 1 },
@@ -260,9 +275,13 @@ it('marca desactualizado a un recolector viejo aunque el servidor lo declare fre
   });
   renderWithApi(<AccountsPage />);
 
-  const collectors = await screen.findByRole('heading', { level: 2, name: 'Recolectores' }).then((h) => h.closest('section')!);
-  expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
-  expect(within(within(collectors).getByRole('row', { name: /ws-midas/i })).getByText('DESACTUALIZADO')).toBeInTheDocument();
+  const heading = await screen.findByRole('heading', { level: 2, name: 'Recolectores' });
+  const collectors = heading.closest('section');
+  expect(collectors).not.toBeNull();
+  if (collectors) {
+    expect(within(within(collectors).getByRole('row', { name: /kratos/i })).getByText('FRESCO')).toBeInTheDocument();
+    expect(within(within(collectors).getByRole('row', { name: /ws-midas/i })).getByText('DESACTUALIZADO')).toBeInTheDocument();
+  }
   // Y se dice arriba, una sola vez, de qué muestra son los números de abajo.
   expect(screen.getByText(/Muestra vieja\./)).toBeInTheDocument();
 });
@@ -291,13 +310,13 @@ it('sin recolector NO inventa porcentajes: muestra el inventario y declara que n
   await openTab(user, 'Inventario');
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
-  expect(inventory.textContent ?? '').not.toContain('Ningún recolector reportó');
+  expect(inventory.textContent).not.toContain('Ningún recolector reportó');
   await user.click(within(inventory).getByRole('button', { name: /Detalle de ruteo de codex-pro-steven/ }));
   expect(panel('Inventario de cuentas')).toHaveTextContent('claw-zeus');
   // El motivo GLOBAL no se repite en el detalle: ya se declaró arriba una sola vez.
   expect(document.querySelectorAll('.account-notice')).toHaveLength(0);
   // Y el consumo está declarado como ausente, no como cero.
-  expect(panel('Inventario de cuentas').textContent ?? '').not.toMatch(/\d+\s*%/);
+  expect(panel('Inventario de cuentas').textContent).not.toMatch(/\d+\s*%/);
 });
 
 it('una sonda caída no reaparece como un número: la cuenta queda en interrogante', async () => {
@@ -325,7 +344,7 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   // las tres son lecturas distintas del mismo `ok:false`, ninguna sobra.
   expect(screen.getAllByText(/dejó de responder/).length).toBeGreaterThan(0);
 
-  expect(panel('Proveedores').textContent ?? '').not.toMatch(/\d+\s*%\s*libre/);
+  expect(panel('Proveedores').textContent).not.toMatch(/\d+\s*%\s*libre/);
 
   // El motivo por cuenta SÍ se queda cuando dice algo que el cartel de arriba no dice: que a esta
   // cuenta la dejó sin número la sonda de SU proveedor, y que a esas otras el recolector ni las
@@ -335,14 +354,14 @@ it('una sonda caída no reaparece como un número: la cuenta queda en interrogan
   for (const id of ['codex-pro-steven', 'minimax-pool', 'claude-max-saldantia']) {
     await user.click(screen.getByRole('button', { name: `Detalle de ruteo de ${id}` }));
   }
-  const notices = [...document.querySelectorAll('.account-notice')].map((n) => n.textContent ?? '');
+  const notices = Array.from(document.querySelectorAll('.account-notice')).map((n) => n.textContent);
   expect(notices.filter((text) => text.includes('Sonda caída:'))).toHaveLength(1);
   expect(notices.filter((text) => text.includes('El recolector no reportó esta cuenta'))).toHaveLength(2);
 
   // La garantía dura: ningún porcentaje inventado para una cuenta cuya sonda murió.
   const inventory = panel('Inventario de cuentas');
   expect(inventory).toHaveTextContent('codex-pro-steven');
-  expect(inventory.textContent ?? '').not.toMatch(/\d+\s*%/);
+  expect(inventory.textContent).not.toMatch(/\d+\s*%/);
 });
 
 it('si se cae el consumo, el inventario sigue en pantalla y hay un botón para reintentar', async () => {

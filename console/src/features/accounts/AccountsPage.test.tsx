@@ -55,7 +55,9 @@ function accountActions() {
 async function openInventory(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
-  return within(document.getElementById('view-panel-inventario') as HTMLElement);
+  const el = document.getElementById('view-panel-inventario');
+  expect(el).not.toBeNull();
+  return within(el ?? document.body);
 }
 
 it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async () => {
@@ -76,7 +78,7 @@ it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe 
 
   // La vista correcta se elige en el match, no después de un rebote: la matriz está en pantalla.
   expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
-  await waitFor(() => expect(window.location.pathname).toBe('/accounts'));
+  await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
 });
 
 it('lista el inventario con pagador, publicación al pool y estado', async () => {
@@ -85,13 +87,16 @@ it('lista el inventario con pagador, publicación al pool y estado', async () =>
   renderWithApi(<AccountsPage />);
 
   const inventario = await openInventory(user);
-  const row = (await inventario.findByText('codex-steven')).closest('tr');
+  const cell = await inventario.findByText('codex-steven');
+  const row = cell.closest('tr');
   expect(row).not.toBeNull();
-  expect(within(row!).getByText('Steven')).toBeInTheDocument();
-  expect(within(row!).getByText('PUBLICADA')).toBeInTheDocument();
-  expect(within(row!).getByText('HABILITADA')).toBeInTheDocument();
-  expect(within(row!).getByText('org-9f21')).toBeInTheDocument();
-  expect(within(row!).getByText('env_path')).toBeInTheDocument();
+  if (row) {
+    expect(within(row).getByText('Steven')).toBeInTheDocument();
+    expect(within(row).getByText('PUBLICADA')).toBeInTheDocument();
+    expect(within(row).getByText('HABILITADA')).toBeInTheDocument();
+    expect(within(row).getByText('org-9f21')).toBeInTheDocument();
+    expect(within(row).getByText('env_path')).toBeInTheDocument();
+  }
 });
 
 it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos', async () => {
@@ -100,9 +105,13 @@ it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos
   renderWithApi(<AccountsPage />);
 
   const inventario = await openInventory(user);
-  const row = (await inventario.findByText('minimax-pablo')).closest('tr');
-  expect(within(row!).getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
-  expect(within(row!).queryByText('UNKNOWN')).not.toBeInTheDocument();
+  const cell = await inventario.findByText('minimax-pablo');
+  const row = cell.closest('tr');
+  expect(row).not.toBeNull();
+  if (row) {
+    expect(within(row).getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
+    expect(within(row).queryByText('UNKNOWN')).not.toBeInTheDocument();
+  }
 });
 
 it('declara no disponible el inventario cuando el gateway no publica provider_accounts', async () => {
@@ -280,12 +289,16 @@ it('🔴 CONTROL NEGATIVO: con el recolector caído el saldo dice «?», nunca u
   renderWithApi(<AccountsPage />);
 
   const inventario = await openInventory(user);
-  const fila = (await inventario.findByText('codex-steven')).closest('tr')!;
-  // Plan y Consumo: los dos en interrogante. Un `0%` acá se leería como «esta cuenta está agotada»,
-  // que es una afirmación sobre un dato que no llegó.
-  expect(within(fila).getAllByText('?').length).toBeGreaterThanOrEqual(2);
-  expect(fila.textContent ?? '').not.toMatch(/\d+%/);
-  expect(fila.textContent ?? '').not.toMatch(/libre/);
+  const cell = await inventario.findByText('codex-steven');
+  const fila = cell.closest('tr');
+  expect(fila).not.toBeNull();
+  if (fila) {
+    // Plan y Consumo: los dos en interrogante. Un `0%` acá se leería como «esta cuenta está agotada»,
+    // que es una afirmación sobre un dato que no llegó.
+    expect(within(fila).getAllByText('?').length).toBeGreaterThanOrEqual(2);
+    expect(fila.textContent).not.toMatch(/\d+%/);
+    expect(fila.textContent).not.toMatch(/libre/);
+  }
 });
 
 it('con el recolector VIVO la misma columna sí trae el número: el «?» no es un cartel fijo', async () => {
@@ -310,7 +323,11 @@ it('con el recolector VIVO la misma columna sí trae el número: el «?» no es 
   renderWithApi(<AccountsPage />);
 
   const inventario = await openInventory(user);
-  const fila = (await inventario.findByText('codex-steven')).closest('tr')!;
-  expect(within(fila).getByText('pro')).toBeInTheDocument();
-  expect(within(fila).getByText('42% libre')).toBeInTheDocument();
+  const cell = await inventario.findByText('codex-steven');
+  const fila = cell.closest('tr');
+  expect(fila).not.toBeNull();
+  if (fila) {
+    expect(within(fila).getByText('pro')).toBeInTheDocument();
+    expect(within(fila).getByText('42% libre')).toBeInTheDocument();
+  }
 });

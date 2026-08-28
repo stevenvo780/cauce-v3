@@ -19,8 +19,8 @@ const HOJAS = [
   'features/config/toggles.css',
 ] as const;
 
-function tamanosDeLetra(css: string): Array<{ selector: string; valor: string }> {
-  const salida: Array<{ selector: string; valor: string }> = [];
+function tamanosDeLetra(css: string): { selector: string; valor: string }[] {
+  const salida: { selector: string; valor: string }[] = [];
   for (const regla of sinComentarios(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     for (const declaracion of regla[2].matchAll(/(?:^|;)\s*font-size\s*:\s*([^;]+)/g)) {
       salida.push({ selector: regla[1].trim().replace(/\s+/g, ' '), valor: declaracion[1].trim() });
@@ -80,7 +80,7 @@ const SUELO = 12.5;
  * mismo selector tiene otra declaración en el bloque base (`.9rem`), y un perdón por selector la
  * dejaría entrar por la ventana.
  */
-const EXCEPCIONES: ReadonlyArray<{ selector: string; valor: string }> = [
+const EXCEPCIONES: readonly { selector: string; valor: string }[] = [
   { selector: '.sidebar nav a', valor: '.6875rem' },
 ];
 
@@ -108,7 +108,7 @@ function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
         continue;
       }
       if (px + 0.001 < suelo) {
-        fallos.push(`${selector} { font-size: ${valor} } = ${px}px, el suelo es ${suelo}px`);
+        fallos.push(`${selector} { font-size: ${valor} } = ${String(px)}px, el suelo es ${String(suelo)}px`);
       }
     }
   }
@@ -158,26 +158,37 @@ describe('la escala tipográfica es GLOBAL', () => {
 
   it('los seis escalones están declarados en el `:root` de la hoja global', () => {
     for (const nombre of [...ESCALA, '--tipo-mono']) {
-      expect(typeof tokens.get(nombre), `${nombre} no está en el :root de styles.css`).toBe('string');
-      expect(enPixeles(tokens.get(nombre)!, tokens), `${nombre} no resuelve a píxeles`).toBeGreaterThan(0);
+      const val = tokens.get(nombre);
+      expect(typeof val, `${nombre} no está en el :root de styles.css`).toBe('string');
+      if (val) {
+        expect(enPixeles(val, tokens) ?? 0, `${nombre} no resuelve a píxeles`).toBeGreaterThan(0);
+      }
     }
   });
 
   it('van de mayor a menor, sin dos escalones iguales', () => {
-    const px = ESCALA.map((n) => enPixeles(tokens.get(n)!, tokens)!);
+    const px = ESCALA.map((n) => {
+      const val = tokens.get(n);
+      return val ? enPixeles(val, tokens) : undefined;
+    });
     for (let i = 1; i < px.length; i += 1) {
-      expect(px[i], `${ESCALA[i]} (${px[i]}px) no baja de ${ESCALA[i - 1]} (${px[i - 1]}px)`)
-        .toBeLessThan(px[i - 1]);
+      expect(px[i], `${ESCALA[i]} (${String(px[i] ?? '')}px) no baja de ${ESCALA[i - 1]} (${String(px[i - 1] ?? '')}px)`)
+        .toBeLessThan(px[i - 1] ?? 0);
     }
   });
 
   it('el suelo de la escala es 12,5px y el monoespaciado no se sale', () => {
-    expect(enPixeles(tokens.get('--tipo-apunte')!, tokens)).toBeGreaterThanOrEqual(SUELO);
-    expect(enPixeles(tokens.get('--tipo-cuerpo')!, tokens)).toBeGreaterThanOrEqual(13);
-    expect(enPixeles(tokens.get('--tipo-rotulo')!, tokens)).toBeGreaterThanOrEqual(13);
-    const mono = enPixeles(tokens.get('--tipo-mono')!, tokens)!;
+    const apunte = tokens.get('--tipo-apunte');
+    const cuerpo = tokens.get('--tipo-cuerpo');
+    const rotulo = tokens.get('--tipo-rotulo');
+    const monoToken = tokens.get('--tipo-mono');
+    expect(apunte ? (enPixeles(apunte, tokens) ?? 0) : 0).toBeGreaterThanOrEqual(SUELO);
+    expect(cuerpo ? (enPixeles(cuerpo, tokens) ?? 0) : 0).toBeGreaterThanOrEqual(13);
+    expect(rotulo ? (enPixeles(rotulo, tokens) ?? 0) : 0).toBeGreaterThanOrEqual(13);
+    const mono = monoToken ? (enPixeles(monoToken, tokens) ?? 0) : 0;
+    const cuerpoPx = cuerpo ? (enPixeles(cuerpo, tokens) ?? 0) : 0;
     expect(mono).toBeGreaterThanOrEqual(SUELO);
-    expect(mono).toBeLessThanOrEqual(enPixeles(tokens.get('--tipo-cuerpo')!, tokens)!);
+    expect(mono).toBeLessThanOrEqual(cuerpoPx);
   });
 
   /**
@@ -196,15 +207,17 @@ describe('la escala tipográfica es GLOBAL', () => {
   it('CONTROL NEGATIVO — marca una escala aplanada', () => {
     const plana = tokensDeRoot(global.replace('--tipo-rotulo: 13px', '--tipo-rotulo: 14px'));
     expect(plana.get('--tipo-rotulo')).toBe('14px');
-    expect(enPixeles(plana.get('--tipo-rotulo')!, plana))
-      .not.toBeLessThan(enPixeles(plana.get('--tipo-cuerpo')!, plana)!);
+    const rotuloVal = plana.get('--tipo-rotulo');
+    const cuerpoVal = plana.get('--tipo-cuerpo');
+    expect(rotuloVal ? (enPixeles(rotuloVal, plana) ?? 0) : 0)
+      .not.toBeLessThan(cuerpoVal ? (enPixeles(cuerpoVal, plana) ?? 0) : 0);
   });
 });
 
 describe('ninguna hoja de la consola declara letra por debajo del suelo', () => {
   const hojas = HOJAS.map(leer);
 
-  it(`las ${HOJAS.length} hojas del reparto están por encima de ${SUELO}px`, () => {
+  it(`las ${String(HOJAS.length)} hojas del reparto están por encima de ${String(SUELO)}px`, () => {
     expect(letraPorDebajoDelSuelo(hojas)).toEqual([]);
   });
 
@@ -252,16 +265,22 @@ describe('los elementos que el NAVEGADOR encoge por su cuenta tienen suelo propi
   it('`small` tiene un `font-size` explícito en la hoja global', () => {
     const regla = /(^|[},])\s*small\s*\{([^{}]*)\}/.exec(global);
     expect(regla, 'no hay una regla `small { … }` en styles.css: vuelve a mandar el UA').not.toBeNull();
-    const valor = /(?:^|;)\s*font-size\s*:\s*([^;]+)/.exec(regla![2])?.[1]?.trim();
-    expect(valor, '`small` no declara font-size: el navegador le pone `smaller`').toBeDefined();
-    expect(enPixeles(valor!, tokensDeRoot(leer('styles.css')))).toBeGreaterThanOrEqual(SUELO);
+    if (regla) {
+      const valor = /(?:^|;)\s*font-size\s*:\s*([^;]+)/.exec(regla[2])?.[1]?.trim();
+      expect(valor, '`small` no declara font-size: el navegador le pone `smaller`').toBeDefined();
+      if (valor) {
+        expect(enPixeles(valor, tokensDeRoot(leer('styles.css')))).toBeGreaterThanOrEqual(SUELO);
+      }
+    }
   });
 
   it('`.subline` declara su propio tamaño y no lo hereda del UA', () => {
     const regla = /(^|[},])\s*\.subline\s*\{([^{}]*)\}/.exec(global);
     expect(regla, 'no hay regla `.subline`').not.toBeNull();
-    expect(/(?:^|;)\s*font-size\s*:/.test(regla![2]), '`.subline` sin font-size = 10,67px del UA')
-      .toBe(true);
+    if (regla) {
+      expect(/(?:^|;)\s*font-size\s*:/.test(regla[2]), '`.subline` sin font-size = 10,67px del UA')
+        .toBe(true);
+    }
   });
 });
 

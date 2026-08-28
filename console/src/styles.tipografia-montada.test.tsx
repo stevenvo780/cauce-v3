@@ -57,9 +57,9 @@ function tamanoEnPx(el: Element, profundidad = 0): { px?: number; problema?: str
   }
   const variable = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\)$/.exec(bruto);
   if (variable) {
-    const valor = TOKENS.get(variable[1]) ?? variable[2];
-    if (valor === undefined) return { problema: `${variable[1]} no está declarada en :root`, bruto };
-    return { px: resolverLongitud(valor.trim(), el, profundidad), bruto };
+    const rawVal = TOKENS.get(variable[1]) ?? variable[2];
+    if (typeof rawVal !== 'string') return { problema: `${variable[1]} no está declarada en :root`, bruto };
+    return { px: resolverLongitud(rawVal.trim(), el, profundidad), bruto };
   }
   const px = resolverLongitud(bruto, el, profundidad);
   return px === undefined ? { problema: `no se sabe resolver \`${bruto}\``, bruto } : { px, bruto };
@@ -109,14 +109,14 @@ export function textoPorDebajoDelSuelo(raiz: Element, suelo = SUELO): string[] {
       fallos.push(`${nombre(el)} «${texto.slice(0, 30)}» → ${problema}`);
       continue;
     }
-    if (px! + 0.001 < suelo) {
-      fallos.push(`${nombre(el)} «${texto.slice(0, 30)}» → ${px}px (${bruto}), el suelo es ${suelo}px`);
+    if (px !== undefined && px + 0.001 < suelo) {
+      fallos.push(`${nombre(el)} «${texto.slice(0, 30)}» → ${String(px)}px (${bruto ?? ''}), el suelo es ${String(suelo)}px`);
     }
   }
   return fallos;
 }
 
-const VISTAS: ReadonlyArray<{ ruta: string; titulo: RegExp; minimo: number }> = [
+const VISTAS: readonly { ruta: string; titulo: RegExp; minimo: number }[] = [
   { ruta: '/', titulo: /Cauce en una pantalla/i, minimo: 200 },
   { ruta: '/live', titulo: /La flota ahora/i, minimo: 1200 },
   { ruta: '/accounts', titulo: /Cuentas y cuotas/i, minimo: 700 },
@@ -128,7 +128,7 @@ const VISTAS: ReadonlyArray<{ ruta: string; titulo: RegExp; minimo: number }> = 
 
 describe('ningún texto de las páginas montadas baja del suelo tipográfico', () => {
   for (const { ruta, titulo, minimo } of VISTAS) {
-    it(`${ruta} — todo el texto llega a ${SUELO}px`, async () => {
+    it(`${ruta} — todo el texto llega a ${String(SUELO)}px`, async () => {
       window.history.pushState({}, '', ruta);
       renderWithApi(<App />);
 
@@ -136,12 +136,13 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
       await screen.findByRole('navigation', { name: /principal/i });
       const main = screen.getByRole('main');
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1 }).textContent ?? '').toMatch(titulo);
-      });
-      await waitFor(() => expect(main.querySelectorAll('*').length).toBeGreaterThanOrEqual(minimo));
+        const h1 = screen.queryByRole('heading', { level: 1 });
+        expect(h1?.textContent).toMatch(titulo);
+      }, { timeout: 10_000 });
+      await waitFor(() => { expect(main.querySelectorAll('*').length).toBeGreaterThanOrEqual(minimo); }, { timeout: 10_000 });
 
       const fallos = textoPorDebajoDelSuelo(main);
-      expect(fallos, `${fallos.length} textos por debajo de ${SUELO}px en ${ruta}:\n  ${fallos.slice(0, 25).join('\n  ')}`)
+      expect(fallos, `${String(fallos.length)} textos por debajo de ${String(SUELO)}px en ${ruta}:\n  ${fallos.slice(0, 25).join('\n  ')}`)
         .toEqual([]);
     }, 30_000);
   }
@@ -174,8 +175,9 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
      * a partir de ahí el guardia aprueba sin que nadie se entere. Éste prueba el MEDIDOR: que sepa
      * denunciar un tamaño decidido por el navegador, venga de donde venga.
      */
-    const ua = caja.querySelector('#d')!;
-    ua.setAttribute('style', 'font-size: smaller');
+    const ua = caja.querySelector('#d');
+    expect(ua).not.toBeNull();
+    ua?.setAttribute('style', 'font-size: smaller');
 
     const fallos = textoPorDebajoDelSuelo(caja);
     expect(fallos).toHaveLength(4);

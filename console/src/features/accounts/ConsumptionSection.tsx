@@ -96,7 +96,7 @@ export function ConsumptionSection({ quotas, config }: {
       {quotasDown ? (
         <FailureBanner
           title="No se pudo leer el consumo."
-          error={quotas.error!}
+          error={quotas.error ?? new Error('Error de lectura de cuotas')}
           detail="La lectura del consumo falló y no hay ninguna anterior en memoria: abajo no falta consumo, falta la respuesta."
           onRetry={reloadQuotas}
         />
@@ -109,7 +109,7 @@ export function ConsumptionSection({ quotas, config }: {
       {configDown ? (
         <FailureBanner
           title="No se pudo leer el inventario."
-          error={config.error!}
+          error={config.error ?? new Error('Error de lectura de configuración')}
           detail="La lectura de la configuración falló: no se sabe qué cuentas ni qué agentes hay registrados, así que no se listan."
           onRetry={reloadConfig}
         />
@@ -134,7 +134,7 @@ export function ConsumptionSection({ quotas, config }: {
         <div className="banner banner-warning">
           <AlertCircle size={18} aria-hidden="true" />
           <span>
-            <strong>Muestra vieja.</strong> {staleCollectors.length === 1 ? 'Un recolector está' : `${staleCollectors.length} recolectores están`}{' '}
+            <strong>Muestra vieja.</strong> {staleCollectors.length === 1 ? 'Un recolector está' : `${String(staleCollectors.length)} recolectores están`}{' '}
             fuera de plazo ({staleCollectors.map((collector) => `${collector.host ?? UNKNOWN}: ${freshness(collector, thresholds).label}`).join(' · ')}).
             Los porcentajes de abajo son de esa corrida, no del momento actual.
           </span>
@@ -152,7 +152,7 @@ export function ConsumptionSection({ quotas, config }: {
             : isCollectorAbsent
               ? 'sin recolector activo'
               : failedProbes.length > 0
-                ? `${failedProbes.length} ${failedProbes.length === 1 ? 'sonda caída' : 'sondas caídas'}: sus cuentas van en ?`
+                ? `${String(failedProbes.length)} ${failedProbes.length === 1 ? 'sonda caída' : 'sondas caídas'}: sus cuentas van en ?`
                 : 'el recolector las conoce'}
         />
         <Metric label="Agentes" value={configDown ? null : totalAgents} detail="total de alias registrados" />
@@ -169,7 +169,7 @@ export function ConsumptionSection({ quotas, config }: {
         <Metric label="Proveedores" value={quotasDown ? null : providers.length} detail="claude, codex, antigravity, opencode…" />
         <Metric
           label="Peor remanente"
-          value={worstRemaining === null ? null : `${worstRemaining}%`}
+          value={worstRemaining === null ? null : `${String(worstRemaining)}%`}
           tone={worstRemaining !== null && worstRemaining <= (thresholds?.critical_remaining_percent ?? 10) ? 'danger' : 'neutral'}
           detail="el proveedor con menos saldo"
         />
@@ -203,7 +203,7 @@ export function ConsumptionSection({ quotas, config }: {
             <span>
               <strong>Sonda caída.</strong> El recolector llegó, pero {failedProbes.length === 1 ? 'este proveedor no respondió' : 'estos proveedores no respondieron'}:{' '}
               {failedProbes.map((provider) => (
-                <code key={`${provider.host}/${provider.provider}`}>
+                <code key={`${provider.host ?? 'unknown'}/${provider.provider ?? 'unknown'}`}>
                   {provider.provider ?? '?'}@{provider.host ?? '?'}{provider.note ? ` — ${provider.note}` : ''}
                 </code>
               ))}
@@ -218,7 +218,7 @@ export function ConsumptionSection({ quotas, config }: {
           <EmptyState>Sin datos de cuota: el recolector nunca corrió, o la última corrida no trajo ningún proveedor.</EmptyState>
         ) : providers.map((provider) => (
           <ProviderCard
-            key={`${provider.host}:${provider.provider}`}
+            key={`${provider.host ?? 'unknown'}:${provider.provider ?? 'unknown'}`}
             provider={provider}
             expanded={expanded}
             onToggle={toggle}
@@ -250,7 +250,7 @@ export function ConsumptionSection({ quotas, config }: {
               <ul className="finding-list">
                 {accountsWithoutQuotas.map((account) => (
                   <li key={account.id}>
-                    <span className="mono">{account.id}</span> ({account.provider}) — {account.label || 'sin etiqueta'}
+                    <span className="mono">{account.id}</span> ({account.provider}) — {account.label ?? 'sin etiqueta'}
                   </li>
                 ))}
               </ul>
@@ -266,7 +266,7 @@ export function ConsumptionSection({ quotas, config }: {
                   <caption className="sr-only">Grupos de cuota sin cuenta registrada</caption>
                   <thead><tr><th>Host</th><th>Proveedor</th><th>Grupo</th><th>Ventanas</th><th>Motivo</th></tr></thead>
                   <tbody>
-                    {unbound.map((entry, index) => <UnboundRow key={`${entry.host}:${entry.provider}:${entry.group_key}:${index}`} entry={entry} />)}
+                    {unbound.map((entry, index) => <UnboundRow key={`${entry.host ?? 'unknown'}:${entry.provider ?? 'unknown'}:${entry.group_key ?? 'unknown'}:${String(index)}`} entry={entry} />)}
                   </tbody>
                 </table>
               </div>
@@ -280,7 +280,7 @@ export function ConsumptionSection({ quotas, config }: {
               <ul className="finding-list">
                 {orphanedItems.agentsWithoutBindings.map((agent) => (
                   <li key={agent.alias}>
-                    <span className="mono">{agent.alias}</span> — {agent.display_name || '—'} en {agent.container_name || '?'}
+                    <span className="mono">{agent.alias}</span> — {agent.display_name ?? '—'} en {agent.container_name ?? '?'}
                   </li>
                 ))}
               </ul>
@@ -390,7 +390,7 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
   const conflicto = porcentajesEnConflicto(provider);
   const efectivo = provider.effective_remaining_percent;
   const efectivoTitulo = typeof efectivo === 'number'
-    ? `El servidor publica effective_remaining_percent = ${efectivo}%, que es lo que el enrutador usa para elegir cuenta. `
+    ? `El servidor publica effective_remaining_percent = ${String(efectivo)}%, que es lo que el enrutador usa para elegir cuenta. `
       + 'Acá se muestra el peor porcentaje de las ventanas, que es el que va con la severidad de al lado.'
     : 'El peor porcentaje de las ventanas de este proveedor.';
   return (
@@ -446,8 +446,8 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
             <tbody>
               {rows.map((row) => (
                 <QuotaRow
-                  key={`${provider.host}:${provider.provider}:${row.group.group_key}:${row.family.key}`}
-                  rowKey={`${provider.host}:${provider.provider}:${row.group.group_key}:${row.family.key}`}
+                  key={`${provider.host ?? 'unknown'}:${provider.provider ?? 'unknown'}:${row.group.group_key ?? 'unknown'}:${row.family.key}`}
+                  rowKey={`${provider.host ?? 'unknown'}:${provider.provider ?? 'unknown'}:${row.group.group_key ?? 'unknown'}:${row.family.key}`}
                   row={row}
                   expanded={expanded}
                   onToggle={onToggle}
@@ -477,7 +477,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
       <tr data-severity={severity} className={severity === 'exhausted' || severity === 'critical' ? 'row-critical' : severity === 'warn' ? 'row-warning' : undefined}>
         <td>
           {family.collapsible ? (
-            <button type="button" className="row-toggle" onClick={() => onToggle(rowKey)} aria-expanded={isOpen} aria-label={`Ventanas de ${family.label}`}>
+            <button type="button" className="row-toggle" onClick={() => { onToggle(rowKey); }} aria-expanded={isOpen} aria-label={`Ventanas de ${family.label}`}>
               {isOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
             </button>
           ) : null}
@@ -502,7 +502,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
         <td><Badge tone={SEVERITY_TONE[severity]}>{SEVERITY_LABEL[severity]}</Badge></td>
         <td>
           <strong className="mono">
-            {typeof worst.remaining_percent === 'number' ? `${worst.remaining_percent}% libre` : <span className="unknown">sin dato</span>}
+            {typeof worst.remaining_percent === 'number' ? `${String(worst.remaining_percent)}% libre` : <span className="unknown">sin dato</span>}
           </strong>
           {units ? <small className="subline">{units}</small> : null}
         </td>
@@ -525,7 +525,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
                     <tr key={window.window_key}>
                       <td><Unknown value={window.label ?? window.window_key} /></td>
                       <td><Badge tone={SEVERITY_TONE[window.severity ?? 'unknown']}>{SEVERITY_LABEL[window.severity ?? 'unknown']}</Badge></td>
-                      <td>{typeof window.remaining_percent === 'number' ? `${window.remaining_percent}% libre` : <span className="unknown">sin dato</span>}</td>
+                      <td>{typeof window.remaining_percent === 'number' ? `${String(window.remaining_percent)}% libre` : <span className="unknown">sin dato</span>}</td>
                       <td><Unknown value={window.model} /></td>
                       <td>{formatResetIn(window.reset_in_seconds)}</td>
                       <td><Sparkline history={window.history} /></td>

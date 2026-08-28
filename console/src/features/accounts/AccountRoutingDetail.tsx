@@ -32,11 +32,11 @@ export function AccountRoutingDetail({ accountId, quotas, config }: {
           : <span className="unknown">desconocido</span>}
       </div>
 
-      {consumption.available === false && consumption.scope === 'account' && (
+      {!consumption.available && consumption.scope === 'account' && (
         <div className="account-section">
           <div className="account-notice">
             <AlertCircle size={14} aria-hidden="true" />
-            {consumption.reason || 'No disponible'}
+            {consumption.reason ?? 'No disponible'}
           </div>
         </div>
       )}
@@ -47,15 +47,15 @@ export function AccountRoutingDetail({ accountId, quotas, config }: {
           ? <span className="unknown">Ningún alias la tiene asignada.</span>
           : <ul className="assignments-list">
             {assignments.map((assignment, index) => (
-              <li key={index} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
+              <li key={`${assignment.alias ?? 'unknown'}-${String(index)}`} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
                 <div className="assignment-header">
-                  <span className="agent-alias mono">{assignment.alias || '?'}</span>
-                  <span className="agent-display">{assignment.display_name || '—'}</span>
+                  <span className="agent-alias mono">{assignment.alias ?? '?'}</span>
+                  <span className="agent-display">{assignment.display_name ?? '—'}</span>
                   {assignment.isPrimary && <Badge tone="online">PRIMARIA</Badge>}
                   {!assignment.enabled && <Badge tone="offline">INACTIVO</Badge>}
                 </div>
                 <div className="assignment-container">
-                  Contenedor: <span className="mono">{assignment.container_name || '?'}</span>
+                  Contenedor: <span className="mono">{assignment.container_name ?? '?'}</span>
                 </div>
               </li>
             ))}

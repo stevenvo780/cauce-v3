@@ -71,15 +71,17 @@ export function groupWindowsByFamily(windows: readonly QuotaWindow[]): WindowFam
   const order: string[] = [];
   const buckets = new Map<string, QuotaWindow[]>();
   windows.forEach((window, index) => {
-    const key = window.family ?? `__solo:${window.window_key ?? index}`;
-    if (!buckets.has(key)) {
-      buckets.set(key, []);
+    const key = window.family ?? `__solo:${String(window.window_key ?? index)}`;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
       order.push(key);
     }
-    buckets.get(key)!.push(window);
+    bucket.push(window);
   });
   return order.map((key) => {
-    const group = buckets.get(key)!;
+    const group = buckets.get(key) ?? [];
     const worst = worstWindow(group);
     return {
       key,
@@ -121,9 +123,9 @@ function humanDuration(totalSeconds: number): string {
   const days = Math.floor(abs / 86_400);
   const hours = Math.floor((abs % 86_400) / 3600);
   const minutes = Math.floor((abs % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+  if (days > 0) return `${String(days)}d ${String(hours)}h`;
+  if (hours > 0) return `${String(hours)}h ${String(minutes)}m`;
+  return `${String(minutes)}m`;
 }
 
 /** Ausencia de umbral o de edad deja el resultado UNKNOWN en vez de asumir frescura. */
@@ -137,7 +139,7 @@ export function isAgeStale(ageSeconds: number | null | undefined, staleAfterSeco
  *  denominador para providers que sólo hablan en porcentaje. */
 export function formatUnits(used: number | null | undefined, limit: number | null | undefined): string | undefined {
   if (limit === null || limit === undefined) return undefined;
-  return `${used ?? '?'} / ${limit}`;
+  return `${String(used ?? '?')} / ${String(limit)}`;
 }
 
 /* ============================================================================================ *
