@@ -255,6 +255,13 @@ for alias, entry in aliases.items():
     atomic_write(config_path, example(alias, entry))
     generated.extend((unit_path, config_path))
 
+for stale in sorted(args.output.glob("cauce-v3-container-*.service")):
+    stale_alias = stale.name[len("cauce-v3-container-"):-len(".service")]
+    if stale_alias not in aliases:
+        stale.unlink()
+        (config_output / f"{stale_alias}.env.example").unlink(missing_ok=True)
+        print(f"retired {stale}")
+
 operations_path = args.output / "OPERATIONS.sha256"
 atomic_write(operations_path, f"{operational_digest(root, args.output.resolve(), rootless=args.rootless)}\n")
 generated.append(operations_path)

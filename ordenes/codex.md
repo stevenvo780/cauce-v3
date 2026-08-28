@@ -13,6 +13,9 @@ ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`ordenes/reportes/claud
 6. Lado Claude sin usuarios elegibles (zeus corre TUI longeva y `NativeProfileContext` la rechaza): dilo en el reporte y define qué haría falta (headless) — no lo implementes.
 7. Test "byte a byte": compara contra un SHA fijado del prompt legacy para un contexto canónico, no tres ejecuciones del mismo build entre sí.
 
+## BLOQUEANTE NUEVO (hallazgo de seguridad de la demo probeta, `ordenes/reportes/claude-demo-probeta.md` §C) — PRIMERO
+El hello de `/v3/ws` (services/gateway/src/routes/core.ts ~:207-422) acepta a un agente con `agents.enabled=false` — solo valida el cert mTLS. Haz que el hello/lease consulte `agents.enabled` (y membership/room/tenant enabled, como ya hace `authority.ts:220`) y rechace con un frame de error claro; test: agente deshabilitado en BD → hello rechazado; habilitado → hello_ack. Es tu zona (gateway). Sin esto, "la baja es 1 UPDATE" es mentira hasta revocar el cert.
+
 ## Fuera de tu zona pero bloqueante de ventana (avísalo en tu reporte, NO lo toques): 5 tests de `shared-session` de adapter-sdk rojos por aserciones de texto en castellano tras la traducción — es de minimax-1.
 
 ## Cierre: los 4 bloqueantes verdes con test, reporte corregido, y una lista NUEVA de "activar en ventana" que el integrador vuelva a revisar.
