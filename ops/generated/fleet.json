@@ -4,11 +4,11 @@
       "container": "ctrl-infra",
       "enabled": true,
       "harness": "openclaw",
-      "home": "/home/claw",
+      "home": "/home/dev",
       "room": "grp.steven",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/argos",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
       "tenant": "Steven",
-      "user": "claw"
+      "user": "dev"
     },
     "atlas": {
       "container": "ws-humanizar",

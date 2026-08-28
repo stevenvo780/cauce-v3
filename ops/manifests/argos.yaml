@@ -7,7 +7,7 @@ spec:
   room: grp.steven
   alias: argos
   harness: openclaw
-  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/dev/clawd}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_ARGOS_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

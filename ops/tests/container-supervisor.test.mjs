@@ -50,11 +50,11 @@ const secondGenerationStartedAt = "2026-07-22T10:01:00.000000000Z";
 const labelKey = "com.example.runtime";
 const labelValue = "approved-runtime";
 // kant is the host-branch operator alias (stev/ctrl-infra); atlas/kratos are the codex
-// pair co-located on ws-humanizar; argos/iza/jarvis are openclaw agents under /home/claw;
+// pair co-located on ws-humanizar; iza/jarvis are openclaw agents under /home/claw; argos moved to /home/dev (ctrl-infra);
 // zeus is the fleet's only claude-harness alias.
 const aliasState = {
   kant: "/var/lib/cauce-v3/aliases/kant",
-  argos: "/home/claw/.openclaw/cauce-v3/argos",
+  argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas",
   iza: "/home/claw/.openclaw/cauce-v3/iza",
   jarvis: "/home/claw/.openclaw/cauce-v3/jarvis",
@@ -65,7 +65,7 @@ const aliasState = {
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
   kant: "/var/lib/cauce-v3/aliases",
-  argos: "/home/claw/.openclaw",
+  argos: "/home/dev/.local",
   atlas: "/home/dev/.local",
   iza: "/home/claw/.openclaw",
   jarvis: "/home/claw/.openclaw",
@@ -105,8 +105,9 @@ async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
     MOUNT_RW: "true",
     CAUCE_SEMBRAR_PERFIL: "1",
     ...(alias === "kant" || alias === "atlas" || alias === "kratos" ? { CONFIG_POR_ALIAS: "1" } : {}),
-    ...(alias === "zeus" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
-    ...(alias === "argos" || alias === "iza" || alias === "jarvis" ? { OPENCLAW_WORKSPACE: "/home/claw/clawd" } : {}),
+    ...(alias === "zeus" || alias === "kratos" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
+    ...(alias === "argos" ? { OPENCLAW_WORKSPACE: "/home/dev/clawd" } : {}),
+    ...(alias === "iza" || alias === "jarvis" ? { OPENCLAW_WORKSPACE: "/home/claw/clawd" } : {}),
     ...overrides,
   };
   for (const key of omit) delete values[key];
@@ -188,7 +189,13 @@ async function dockerState(alias, overrides = {}) {
         Destination: "/home/dev/.claude.json",
         RW: true,
       }] : []),
-      ...(alias === "argos" || alias === "iza" || alias === "jarvis" ? [{
+      ...(alias === "argos" ? [{
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-workspace`,
+        Destination: "/home/dev/clawd",
+        RW: true,
+      }] : []),
+      ...(alias === "iza" || alias === "jarvis" ? [{
         Type: "bind",
         Source: `${mountSourceRoot}/${alias}-workspace`,
         Destination: "/home/claw/clawd",
@@ -663,7 +670,7 @@ try {
   result = runSupervisor("start", "argos", await dockerState("argos"));
   assert.equal(result.status, 0, result.stderr);
   const argosFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=argos"));
-  assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_WORKSPACE=/home/claw/clawd"));
+  assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_WORKSPACE=/home/dev/clawd"));
   assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_TRANSPORT=cli"));
   process.stdout.write("argos openclaw defaults: workspace-only persistence starts under cli transport\n");
 
@@ -1015,11 +1022,15 @@ try {
   const sharedBind = [
     { Type: "bind", Source: sharedSource, Destination: "/home/dev/.local", RW: true },
     { Type: "bind", Source: `${mountSourceRoot}/ws-humanizar-codex`, Destination: "/home/dev/.codex", RW: true },
+    { Type: "bind", Source: `${mountSourceRoot}/ws-humanizar-claude`, Destination: "/home/dev/.claude", RW: true },
+    { Type: "bind", Source: `${mountSourceRoot}/ws-humanizar-claude-json`, Destination: "/home/dev/.claude.json", RW: true },
   ];
   await writeConfig("atlas", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.atlas });
   await writeConfig("kratos", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.kratos });
-  assert.equal(runSupervisor("start", "atlas", await dockerState("atlas", { mounts: sharedBind })).status, 0);
-  assert.equal(runSupervisor("start", "kratos", await dockerState("kratos", { mounts: sharedBind })).status, 0);
+  let arranqueCompartido = runSupervisor("start", "atlas", await dockerState("atlas", { mounts: sharedBind }));
+  assert.equal(arranqueCompartido.status, 0, `atlas compartiendo .local: ${arranqueCompartido.stderr}`);
+  arranqueCompartido = runSupervisor("start", "kratos", await dockerState("kratos", { mounts: sharedBind }));
+  assert.equal(arranqueCompartido.status, 0, `kratos compartiendo .local: ${arranqueCompartido.stderr}`);
   calls = await records();
   assert(calls.some(({ argv }) => argv.some((value) => value.includes("/opt/cauce-v3-adapter/atlas/"))));
   assert(calls.some(({ argv }) => argv.some((value) => value.includes("/opt/cauce-v3-adapter/kratos/"))));
