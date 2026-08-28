@@ -8,6 +8,7 @@ import {
   exactConfirmedPublishIntent, exactPreparedPublishIntent, exactPublishReceipt,
 } from './publish-receipt';
 import type { ExactPreparePublishIntentResult } from './publish-receipt';
+import { randomUuid } from '../../random-id';
 
 type DurablePublishApi = Pick<
   CauceApi,
@@ -76,7 +77,7 @@ export async function publishDurably({
   expectedDeliveries: number;
   reconcile: () => void;
 }): Promise<DurablePublishOutcome> {
-  const intentNonce = globalThis.crypto.randomUUID();
+  const intentNonce = randomUuid();
   const prepareInput = { ...input, intent_nonce: intentNonce };
   const prepareExact = async (): Promise<ExactPreparePublishIntentResult> => {
     const candidate = await api.preparePublishIntent(prepareInput);

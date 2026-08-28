@@ -17,6 +17,7 @@ import type {
   JobLane,
   OriginRelayState,
 } from './api/types';
+import { randomUuid } from './random-id';
 
 export function display(value: unknown): string {
   if (value === null || value === undefined || value === '') return UNKNOWN;
@@ -107,8 +108,7 @@ export function compactId(value: unknown): string {
 }
 
 export function createId(prefix: string): string {
-  const id = globalThis.crypto.randomUUID();
-  return `${prefix}-${id}`;
+  return `${prefix}-${randomUuid()}`;
 }
 
 export type PermissionState = 'allowed' | 'denied' | 'unknown';
