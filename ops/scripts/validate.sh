@@ -105,7 +105,12 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container_ops_digest.py" --rootless --check
 node "$ROOT/tests/container-supervisor.test.mjs"
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_container_runtime_reaping.py"
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
+# The provisioner rejects root-owned tokens, so this suite runs as an unprivileged identity under root.
+if [ "$(id -u)" = 0 ]; then
+  setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
+else
+  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
+fi
 node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
