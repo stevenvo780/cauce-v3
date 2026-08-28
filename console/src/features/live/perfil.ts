@@ -5,15 +5,11 @@ import type {
 /**
  * LA LÓGICA DEL EDITOR DE PERFIL, aparte de la pintura para poder probarla sola.
  *
- * ── Qué se está editando ─────────────────────────────────────────────────────────────────────
- *
- * Los SIETE campos autorados del alias (`agent_profiles`, migración 026). Lo que se escribe acá
- * termina, palabra por palabra, dentro del fichero que el arnés de ese alias LEE al arrancar:
- * `CLAUDE.md` para Claude Code, `AGENTS.md` para codex, y los siete Markdown del espacio de
- * trabajo para openclaw —`SOUL.md`, `IDENTITY.md`, `USER.md`, `AGENTS.md`, `TOOLS.md`, más
- * `MEMORY.md` y `HEARTBEAT.md` que son del agente y no se tocan—.
- *
- * ── Lo que NO se edita acá, y por qué ────────────────────────────────────────────────────────
+ * Los SIETE campos autorados del alias (`agent_profiles`, migración 026) terminan, palabra por
+ * palabra, dentro de los ficheros que LEE el arnés de ese alias. Qué fichero recibe cada campo NO
+ * es fijo: lo decide `ficherosDelArnes` de `@cauce/protocol` según el arnés, y `destinosDelArnes`
+ * reproduce acá ese reparto para poder rotularlo. `perfil.test.ts` ata la tabla contra la función
+ * real de composición, que es lo que impide que se separen.
  *
  * Permisos, cuotas, arnés y alias alcanzables NO son campos: son HECHOS que se leen frescos de
  * `memberships`, `role_policies`, `provider_accounts` y `agents`. Aparecen en la vista previa
@@ -21,11 +17,8 @@ import type {
  * fuente de verdad que se desincroniza en silencio: se revoca un permiso y el fichero del
  * contenedor sigue diciendo que lo tiene.
  *
- * ── La cuenta de unidades ────────────────────────────────────────────────────────────────────
- *
- * Se mide con `max(puntos de código, unidades UTF-16)`, que es lo mismo que miden el CHECK de
- * Postgres y el compilador, garantizando que el límite mostrado en el navegador coincida exactamente
- * con la validación del servidor.
+ * La cuenta de unidades se mide con `max(puntos de código, unidades UTF-16)`, que es lo mismo que
+ * miden el CHECK de Postgres y el compilador.
  */
 
 /** Los campos de texto suelto, en el orden en que se pintan. */
@@ -36,6 +29,11 @@ export const CAMPOS_DE_LISTA = ['responsibilities', 'restrictions', 'tools', 'op
 
 export type CampoDeTexto = (typeof CAMPOS_DE_TEXTO)[number];
 export type CampoDeLista = (typeof CAMPOS_DE_LISTA)[number];
+export type CampoDelPerfil = CampoDeTexto | CampoDeLista;
+
+export const CAMPOS_DEL_PERFIL: readonly CampoDelPerfil[] = [
+  ...CAMPOS_DE_TEXTO, ...CAMPOS_DE_LISTA,
+];
 
 /**
  * Cómo se llama cada campo en pantalla, y qué se espera que ponga el operador ahí.
@@ -45,51 +43,127 @@ export type CampoDeLista = (typeof CAMPOS_DE_LISTA)[number];
  * que debería ir en `role_summary` y el `SOUL.md` de openclaw acaba hablando de tareas — que es
  * exactamente cómo se le enseña a un modelo que su identidad son sus tareas.
  */
-export const ETIQUETAS: Record<CampoDeTexto | CampoDeLista, { titulo: string; ayuda: string; destino: string }> = {
+export const ETIQUETAS: Record<CampoDelPerfil, { titulo: string; ayuda: string }> = {
   purpose: {
     titulo: 'Identidad y propósito',
     ayuda: 'Quién es este alias y para qué existe. No sus tareas: su razón de ser.',
-    destino: 'SOUL.md en openclaw',
   },
   role_summary: {
     titulo: 'Rol declarado',
     ayuda: 'Qué papel ocupa en la flota. Sucede al viejo role_brief, con sitio para el detalle que allá no cabía.',
-    destino: 'IDENTITY.md en openclaw',
   },
   human_brief: {
     titulo: 'Tu humano y cómo tratarlo',
     ayuda: 'Quién es la persona con la que trata y cómo quiere que le hablen.',
-    destino: 'USER.md en openclaw',
   },
   responsibilities: {
     titulo: 'Responsabilidades',
     ayuda: 'Qué le toca hacer. Una por línea.',
-    destino: 'AGENTS.md en openclaw',
   },
   restrictions: {
     titulo: 'Restricciones',
     ayuda: 'Qué NO puede hacer, aunque pudiera. Una por línea.',
-    destino: 'AGENTS.md en openclaw',
   },
   tools: {
     titulo: 'Herramientas',
     ayuda: 'Con qué cuenta, más allá de las capacidades del arnés. Una por línea.',
-    destino: 'TOOLS.md en openclaw',
   },
   operating_rules: {
     titulo: 'Instrucciones fijas de funcionamiento',
     ayuda: 'Cómo se trabaja acá. Lo que hoy se reinyecta en cada mensaje y debería estar escrito una sola vez.',
-    destino: 'AGENTS.md en openclaw',
   },
 };
 
+/** Dónde acaba un campo: un fichero con nombre, o una ausencia con la palabra que le toca. */
+export type DestinoDelCampo =
+  | { readonly tipo: 'fichero'; readonly nombre: string }
+  | { readonly tipo: 'ausente'; readonly ausente: 'sin-dato' | 'no-aplica'; readonly motivo: string };
+
+/** El único arnés que reparte los campos en varios ficheros; claude y codex los juntan en uno. */
+const REPARTO_OPENCLAW: Record<CampoDelPerfil, string> = {
+  purpose: 'SOUL.md',
+  role_summary: 'IDENTITY.md',
+  human_brief: 'USER.md',
+  responsibilities: 'AGENTS.md',
+  restrictions: 'AGENTS.md',
+  tools: 'TOOLS.md',
+  operating_rules: 'AGENTS.md',
+};
+
+function ficheroDelCampo(harness: string, campo: CampoDelPerfil): string | undefined {
+  if (harness === 'claude') return 'CLAUDE.md';
+  if (harness === 'codex') return 'AGENTS.md';
+  if (harness === 'openclaw') return REPARTO_OPENCLAW[campo];
+  return undefined;
+}
+
 /**
- * La cuenta que MANDA: la más estricta de las dos unidades.
+ * A qué fichero va cada campo EN ESTE alias, con el arnés que el servidor declara.
  *
- * Es la misma aritmética que `measureStrictestUnits` de `@cauce/protocol`. Se reimplementa acá y no
- * se importa porque la consola es un bundle de navegador y `@cauce/protocol` arrastra `zod` entero;
- * `perfil.test.ts` comprueba que las dos dan el MISMO número sobre los casos que separan una
- * unidad de la otra (acentos y emojis fuera del BMP), que es lo que impide que se separen.
+ * Sólo se afirma un destino si el arnés es de los que Cauce sabe componer Y el gateway publica ese
+ * fichero entre los suyos: rotular `SOUL.md` sobre una respuesta que no lo trae sería prometer una
+ * escritura que nadie va a acreditar. Un arnés que no sea claude, codex u openclaw no recibe
+ * NINGÚN fichero —`nombresDelArnes` devuelve vacío—, y eso se dice, no se sustituye por openclaw.
+ */
+export function destinosDelArnes(
+  harness: string | null | undefined,
+  ficheros: readonly { nombre: string }[] | undefined,
+): Record<CampoDelPerfil, DestinoDelCampo> {
+  const arnes = typeof harness === 'string' ? harness.trim() : '';
+  const publicados = new Set((ficheros ?? []).map((fichero) => fichero.nombre));
+  const destinos = {} as Record<CampoDelPerfil, DestinoDelCampo>;
+  for (const campo of CAMPOS_DEL_PERFIL) {
+    const nombre = arnes.length === 0 ? undefined : ficheroDelCampo(arnes, campo);
+    destinos[campo] = nombre !== undefined && publicados.has(nombre)
+      ? { tipo: 'fichero', nombre }
+      : { tipo: 'ausente', ...ausenciaDeDestino(arnes, nombre) };
+  }
+  return destinos;
+}
+
+function ausenciaDeDestino(
+  arnes: string,
+  nombre: string | undefined,
+): { ausente: 'sin-dato' | 'no-aplica'; motivo: string } {
+  if (arnes.length === 0) {
+    return {
+      ausente: 'sin-dato',
+      motivo: 'El registro no dice qué arnés corre este alias, así que no se puede saber qué '
+        + 'fichero lee.',
+    };
+  }
+  if (nombre === undefined) {
+    return {
+      ausente: 'no-aplica',
+      motivo: `Cauce no sabe qué fichero de contexto lee el arnés «${arnes}». Los que sabe `
+        + 'escribir son claude, codex y openclaw.',
+    };
+  }
+  return {
+    ausente: 'sin-dato',
+    motivo: `El arnés «${arnes}» escribiría ${nombre}, pero este gateway no lo publica entre sus `
+      + 'ficheros gobernados, así que no se promete esa escritura.',
+  };
+}
+
+/** El motivo común cuando NINGÚN campo tiene destino; `undefined` en cuanto uno lo tenga. */
+export function motivoSinDestino(
+  destinos: Record<CampoDelPerfil, DestinoDelCampo>,
+): string | undefined {
+  const motivos = new Set<string>();
+  for (const campo of CAMPOS_DEL_PERFIL) {
+    const destino = destinos[campo];
+    if (destino.tipo === 'fichero') return undefined;
+    motivos.add(destino.motivo);
+  }
+  return [...motivos].join(' ');
+}
+
+/**
+ * La cuenta que MANDA: la más estricta de las dos unidades. Misma aritmética que
+ * `measureStrictestUnits` de `@cauce/protocol`, reimplementada porque la consola es un bundle de
+ * navegador y `@cauce/protocol` arrastra `zod` entero; `perfil.test.ts` comprueba que las dos dan
+ * el MISMO número sobre los casos que separan una unidad de la otra (acentos y emojis del BMP).
  */
 export function contarUnidades(texto: string): number {
   return Math.max(Array.from(texto).length, texto.length);
@@ -141,11 +215,9 @@ export function hayCambios(
 }
 
 /**
- * Lo que mide el perfil entero, con el mismo criterio que el techo de la migración 026.
- *
- * Suma los textos y TODAS las entradas de todas las listas. Un campo dentro de su tope no dice
- * nada del total: cuatro listas llenas dan 256.000 unidades con cada campo «dentro del suyo», y el
- * que se queda fuera es el fichero del agente.
+ * Lo que mide el perfil entero, con el mismo criterio que el techo de la migración 026: suma los
+ * textos y TODAS las entradas de todas las listas. Un campo dentro de su tope no dice nada del
+ * total: cuatro listas llenas dan 256.000 unidades con cada campo «dentro del suyo».
  */
 export function unidadesDelPerfil(campos: AgentPerfilCampos): number {
   let total = 0;

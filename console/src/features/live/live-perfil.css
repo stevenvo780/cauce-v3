@@ -38,6 +38,10 @@
   line-height: 1.45;
   resize: vertical;
 }
+/* El destino sale del arnés del alias, así que puede ser un nombre de fichero o una ausencia. */
+.perfil-destino { white-space: nowrap; }
+.perfil-destino .unknown, .perfil-destino .muted { font-style: normal; }
+
 .perfil-cuenta { justify-self: end; font-size: var(--tipo-apunte); color: var(--muted); }
 .perfil-cuenta-fuera { color: var(--danger, #d64545); font-weight: 600; }
 

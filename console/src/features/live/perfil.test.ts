@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { measureStrictestUnits } from '@cauce/protocol';
+import { ficherosDelArnes, measureStrictestUnits, nombresDelArnes } from '@cauce/protocol';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import {
-  CAMPOS_DE_LISTA, camposQueNoEntran, camposVigentes, contarUnidades, hayCambios,
-  esPerfilAplicado, lineasALista, listaALineas, perfilParaGuardar,
-  unidadesDelPerfil,
+  CAMPOS_DE_LISTA, CAMPOS_DEL_PERFIL, camposQueNoEntran, camposVigentes, contarUnidades,
+  destinosDelArnes, hayCambios, esPerfilAplicado, lineasALista, listaALineas, motivoSinDestino,
+  perfilParaGuardar, unidadesDelPerfil, type CampoDelPerfil,
 } from './perfil';
 
 /**
@@ -256,5 +256,102 @@ describe('las listas se editan por líneas', () => {
 
   it('CONTROL NEGATIVO: una entrada con espacios internos NO se parte', () => {
     expect(lineasALista('reparar Cauce de punta a punta')).toEqual(['reparar Cauce de punta a punta']);
+  });
+});
+
+describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado', () => {
+  const CENTINELA = (campo: CampoDelPerfil) => `CENTINELA-${campo}`;
+
+  function contextoDeSonda() {
+    const perfil = {
+      tenant_id: 'Steven', alias: 'jarvis',
+      purpose: CENTINELA('purpose'),
+      role_summary: CENTINELA('role_summary'),
+      human_brief: CENTINELA('human_brief'),
+      responsibilities: [CENTINELA('responsibilities')],
+      restrictions: [CENTINELA('restrictions')],
+      tools: [CENTINELA('tools')],
+      operating_rules: [CENTINELA('operating_rules')],
+    };
+    return {
+      perfil,
+      hechos: {
+        permisos: { ruta: true, lectura: true, control: false, notificacion: true },
+        cuotas: [], destinos: [],
+        arnes: { harness: 'sonda', home: '/home/dev', capacidades: [] },
+      },
+    };
+  }
+
+  function repartoReal(harness: string): Record<string, string[]> {
+    const generados = ficherosDelArnes(harness, contextoDeSonda(), new Map(), { revision: 1 });
+    const reparto: Record<string, string[]> = {};
+    for (const campo of CAMPOS_DEL_PERFIL) {
+      reparto[campo] = generados
+        .filter((fichero) => fichero.texto.includes(CENTINELA(campo)))
+        .map((fichero) => fichero.nombre);
+    }
+    return reparto;
+  }
+
+  for (const harness of ['claude', 'codex', 'openclaw'] as const) {
+    it(`en ${harness}, la etiqueta nombra el MISMO fichero que compone ficherosDelArnes`, () => {
+      const reparto = repartoReal(harness);
+      const nombres = nombresDelArnes(harness).map((nombre) => ({ nombre }));
+      const destinos = destinosDelArnes(harness, nombres);
+      for (const campo of CAMPOS_DEL_PERFIL) {
+        expect(reparto[campo], `${harness}/${campo} no cayó en un único fichero`).toHaveLength(1);
+        expect(destinos[campo]).toEqual({ tipo: 'fichero', nombre: reparto[campo]?.[0] });
+      }
+    });
+  }
+
+  it('CONTROL NEGATIVO: los SIETE campos se consumen en los tres arneses, sólo cambia el reparto', () => {
+    for (const harness of ['claude', 'codex', 'openclaw'] as const) {
+      const reparto = repartoReal(harness);
+      for (const campo of CAMPOS_DEL_PERFIL) expect(reparto[campo]).not.toEqual([]);
+    }
+    const claude = destinosDelArnes('claude', [{ nombre: 'CLAUDE.md' }]);
+    expect(new Set(Object.values(claude).map((d) => (d.tipo === 'fichero' ? d.nombre : '')))).toEqual(new Set(['CLAUDE.md']));
+    const openclaw = destinosDelArnes('openclaw', nombresDelArnes('openclaw').map((nombre) => ({ nombre })));
+    expect(openclaw.purpose).toEqual({ tipo: 'fichero', nombre: 'SOUL.md' });
+    expect(openclaw.tools).toEqual({ tipo: 'fichero', nombre: 'TOOLS.md' });
+  });
+
+  it('un alias claude NO ve ni un solo fichero de openclaw', () => {
+    const destinos = destinosDelArnes('claude', [{ nombre: 'CLAUDE.md' }]);
+    const rotulos = JSON.stringify(destinos);
+    for (const ajeno of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'TOOLS.md', 'openclaw']) {
+      expect(rotulos).not.toContain(ajeno);
+    }
+  });
+
+  it('un arnés que Cauce no sabe componer dice «no aplica», nunca openclaw', () => {
+    for (const harness of ['hermes', 'unknown', 'algo-nuevo']) {
+      expect(nombresDelArnes(harness)).toEqual([]);
+      const destinos = destinosDelArnes(harness, []);
+      for (const campo of CAMPOS_DEL_PERFIL) {
+        expect(destinos[campo].tipo).toBe('ausente');
+        expect(destinos[campo]).toMatchObject({ ausente: 'no-aplica' });
+      }
+      expect(motivoSinDestino(destinos)).toContain(harness);
+    }
+  });
+
+  it('sin arnés declarado se dice «sin dato», no se adivina', () => {
+    for (const harness of [null, undefined, '', '   ']) {
+      const destinos = destinosDelArnes(harness, []);
+      for (const campo of CAMPOS_DEL_PERFIL) {
+        expect(destinos[campo]).toMatchObject({ tipo: 'ausente', ausente: 'sin-dato' });
+      }
+      expect(motivoSinDestino(destinos)).toContain('no dice qué arnés');
+    }
+  });
+
+  it('un fichero que el gateway NO publica no se promete, aunque el arnés lo escribiría', () => {
+    const destinos = destinosDelArnes('openclaw', [{ nombre: 'SOUL.md' }]);
+    expect(destinos.purpose).toEqual({ tipo: 'fichero', nombre: 'SOUL.md' });
+    expect(destinos.tools).toMatchObject({ tipo: 'ausente', ausente: 'sin-dato' });
+    expect(motivoSinDestino(destinos)).toBeUndefined();
   });
 });

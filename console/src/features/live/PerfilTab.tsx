@@ -4,11 +4,13 @@ import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
-import { EmptyState } from '../../components/ui';
+import { EmptyState, Unknown } from '../../components/ui';
 import { permissionState } from '../../lib';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, ETIQUETAS, camposQueNoEntran, camposVigentes, contarUnidades,
-  esPerfilAplicado, hayCambios, lineasALista, listaALineas, perfilParaGuardar, unidadesDelPerfil,
+  destinosDelArnes, esPerfilAplicado, hayCambios, lineasALista, listaALineas, motivoSinDestino,
+  perfilParaGuardar, unidadesDelPerfil,
+  type CampoDelPerfil, type DestinoDelCampo,
 } from './perfil';
 
 /**
@@ -16,6 +18,20 @@ import {
  */
 
 type TonoAviso = 'error' | 'parcial' | 'success';
+
+function AyudaDelCampo({ campo, destino }: { campo: CampoDelPerfil; destino: DestinoDelCampo }) {
+  return (
+    <span className="muted perfil-campo-ayuda">
+      {ETIQUETAS[campo].ayuda}{' '}
+      <em className="perfil-destino">
+        →{' '}
+        {destino.tipo === 'fichero'
+          ? destino.nombre
+          : <Unknown value={null} ausente={destino.ausente} motivo={destino.motivo} />}
+      </em>
+    </span>
+  );
+}
 
 export interface PerfilTabProps {
   tenantId: string;
@@ -71,6 +87,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const runtimeNoVerificado = perfil.data?.runtime_state === 'runtime_unverified';
   const ficheros = perfil.data?.ficheros ?? [];
   const aplicable = ficheros.length > 0;
+  const destinos = destinosDelArnes(perfil.data?.harness, ficheros);
+  const sinDestino = motivoSinDestino(destinos);
 
   // El estado de persistencia habla del texto anterior. En cuanto se vuelve a editar, ya no
   // describe el borrador visible y se retira. El rojo se conserva: el rechazo sigue siendo cierto.
@@ -241,6 +259,12 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           </p>
         </header>
 
+        {sinDestino === undefined ? null : (
+          <p className="perfil-aviso perfil-aviso-parcial perfil-sin-destino" role="status">
+            Ningún campo tiene un fichero de destino que se pueda nombrar. {sinDestino}
+          </p>
+        )}
+
         {CAMPOS_DE_TEXTO.map((campo) => {
           const valor = campos[campo];
           const tope = campo === 'role_summary'
@@ -250,9 +274,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           return (
             <label key={campo} className="perfil-campo">
               <span className="perfil-campo-titulo">{ETIQUETAS[campo].titulo}</span>
-              <span className="muted perfil-campo-ayuda">
-                {ETIQUETAS[campo].ayuda} <em>→ {ETIQUETAS[campo].destino}</em>
-              </span>
+              <AyudaDelCampo campo={campo} destino={destinos[campo]} />
               <textarea
                 value={valor}
                 rows={campo === 'purpose' ? 4 : 3}
@@ -272,9 +294,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           return (
             <label key={campo} className="perfil-campo">
               <span className="perfil-campo-titulo">{ETIQUETAS[campo].titulo}</span>
-              <span className="muted perfil-campo-ayuda">
-                {ETIQUETAS[campo].ayuda} <em>→ {ETIQUETAS[campo].destino}</em>
-              </span>
+              <AyudaDelCampo campo={campo} destino={destinos[campo]} />
               <textarea
                 value={listaALineas(items)}
                 rows={4}
