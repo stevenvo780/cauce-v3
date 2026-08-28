@@ -23,6 +23,8 @@
     "lint:ops": "eslint ops/harness ops/patches ops/scripts ops/tests --max-warnings 0",
     "lint:tooling": "eslint scripts deploy --max-warnings 0",
     "lint:py": "ruff check --select E9,F ops scripts deploy",
+    "lint:estricto": "eslint -c eslint.estricto.config.js packages services console tests",
+    "lint:py:estricto": "ruff check ops scripts deploy",
     "grafo": "node scripts/grafo.mjs",
     "typecheck:core": "tsc --noEmit -p tsconfig.json",
     "typecheck:adapter": "pnpm --filter @cauce/adapter-sdk typecheck",
