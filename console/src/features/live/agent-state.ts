@@ -212,7 +212,7 @@ function decidirEstado(
     return {
       state: 'thinking',
       reason: overloaded
-        ? `${plural(inFlight, 'entrega', 'entregas')} en vuelo: por encima del umbral de saturación (${saturation}).`
+        ? `${plural(inFlight, 'entrega', 'entregas')} en vuelo: por encima del umbral de saturación (${String(saturation)}).`
         : `${plural(inFlight, 'entrega', 'entregas')} en vuelo.`,
       overloaded,
     };
@@ -315,7 +315,7 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
   }
 
   const problemas = views.filter((view) => ownerBucket(view.state) === 'problema');
-  const countPlural = (cuantos: number, uno: string, varios: string) => `${cuantos} ${cuantos === 1 ? uno : varios}`;
+  const countPlural = (cuantos: number, uno: string, varios: string) => `${String(cuantos)} ${cuantos === 1 ? uno : varios}`;
   const ocupados = views.filter((view) => ownerBucket(view.state) === 'ocupado').length;
   const libres = views.filter((view) => ownerBucket(view.state) === 'libre').length;
   const conectados = views.filter((view) => view.state !== 'down').length;
@@ -325,8 +325,8 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
       tone: 'alerta',
       frase: problemas.length === 1
         ? '1 agente necesita atención.'
-        : `${problemas.length} agentes necesitan atención.`,
-      apoyo: `${countPlural(conectados, 'conectado', 'conectados')} · ${ocupados} ${ROTULO_OCUPADOS} · ${countPlural(libres, 'libre', 'libres')}.`,
+        : `${String(problemas.length)} agentes necesitan atención.`,
+      apoyo: `${countPlural(conectados, 'conectado', 'conectados')} · ${String(ocupados)} ${ROTULO_OCUPADOS} · ${countPlural(libres, 'libre', 'libres')}.`,
       culpables: problemas.map((view) => ({ key: view.key, alias: view.alias, motivo: motivoDe(view) })),
     };
   }
@@ -334,7 +334,7 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
   return {
     tone: 'ok',
     frase: 'Todo en orden.',
-    apoyo: `${countPlural(conectados, 'conectado', 'conectados')} · ${ocupados} ${ROTULO_OCUPADOS} · ${countPlural(libres, 'libre', 'libres')} · ninguno trabado.`,
+    apoyo: `${countPlural(conectados, 'conectado', 'conectados')} · ${String(ocupados)} ${ROTULO_OCUPADOS} · ${countPlural(libres, 'libre', 'libres')} · ninguno trabado.`,
     culpables: [],
   };
 }

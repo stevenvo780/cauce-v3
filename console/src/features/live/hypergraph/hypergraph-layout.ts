@@ -297,7 +297,7 @@ export function layoutHypergraph(
     const members = new Set<string>();
     for (const edge of own) for (const alias of edge.members) members.add(alias);
     const centroid = centroidOf(own.map((edge) => edge.centroid));
-    const source = tenantNodes.find((tenant, tenantIndex) => (tenant.id ?? `tenant#${tenantIndex}`) === tenantId);
+    const source = tenantNodes.find((tenant, tenantIndex) => (tenant.id ?? `tenant#${String(tenantIndex)}`) === tenantId);
     const topY = Math.min(...own.flatMap((edge) => edge.hull.map((point) => point.y)));
     return {
       id: tenantId,
@@ -335,7 +335,7 @@ export function layoutHypergraph(
 
       const geometry = arcBetween(a, b, bend);
       return {
-        key: `${encodeURIComponent(from)}${SEP}${encodeURIComponent(to)}${SEP}${index}`,
+        key: `${encodeURIComponent(from)}${SEP}${encodeURIComponent(to)}${SEP}${String(index)}`,
         fromTenant: from,
         toTenant: to,
         enabled: edge.enabled ?? null,

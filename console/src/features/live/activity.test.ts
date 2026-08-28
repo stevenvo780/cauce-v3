@@ -210,10 +210,10 @@ describe('resumirSenales — el control negativo de las insignias apiladas', () 
         const flags = banderas.filter((_, indice) => mascara & (1 << indice));
         const resumen = resumirSenales(estado, flags);
         const pintadas = [resumen.estado.label, ...resumen.senales.map((s) => s.label)];
-        expect(new Set(pintadas).size, `duplicado con ${estado}/${flags.join('+')}: ${pintadas.join(', ')}`)
+        expect(new Set(pintadas).size, `duplicado con ${String(estado)}/${flags.join('+')}: ${pintadas.join(', ')}`)
           .toBe(pintadas.length);
         expect(pintadas.length + (resumen.ocultas > 0 ? 1 : 0),
-          `demasiadas insignias con ${estado}/${flags.join('+')}`).toBeLessThanOrEqual(4);
+          `demasiadas insignias con ${String(estado)}/${flags.join('+')}`).toBeLessThanOrEqual(4);
         // Y NUNCA se pierde una señal medida: el detalle las nombra todas.
         for (const flag of flags) expect(resumen.detalle).toContain(FLAG_LABEL[flag]);
       }

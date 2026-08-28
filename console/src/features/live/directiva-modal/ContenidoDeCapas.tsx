@@ -4,7 +4,7 @@ import type { AgentDirective } from '../../../api/types';
 import { Time } from '../../../components/ui';
 import { medicionDeCapa, totalDeMemoria } from '../directiva';
 
-export type RecursoDirectiva = { data?: AgentDirective; error?: Error; loading: boolean };
+export interface RecursoDirectiva { data?: AgentDirective; error?: Error; loading: boolean }
 
 function SinMedir({ children }: { children: ReactNode }) {
   return (
@@ -89,7 +89,7 @@ export function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
               <span className="chip">{fichero.scope === 'user' ? 'nivel usuario' : fichero.scope === 'workspace' ? 'espacio de trabajo' : 'nivel sin informar'}</span>
               {typeof fichero.precedence === 'number' ? <span className="chip">orden {fichero.precedence + 1}</span> : null}
               <span className="directiva-fichero-meta">
-                {typeof fichero.bytes === 'number' ? `${fichero.bytes} bytes` : 'tamaño sin informar'}
+                {typeof fichero.bytes === 'number' ? `${String(fichero.bytes)} bytes` : 'tamaño sin informar'}
                 {' · '}<Time value={fichero.modified_at} />
               </span>
             </div>
@@ -156,11 +156,11 @@ export function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
   return (
     <div className="directiva-memoria">
       <p className="directiva-memoria-resumen">
-        <strong>{limiteInferior ? `≥ ${total}` : total}</strong> entrada(s) en{' '}
+        <strong>{limiteInferior ? `≥ ${String(total)}` : total}</strong> entrada(s) en{' '}
         <code>{memoria.root ?? 'raíz sin informar'}</code>
         {limiteInferior
-          ? ` · el barrido alcanzó su límite; se observaron como mínimo ${total}`
-          : memoria.truncated ? ` · se listan las ${entradas.length} primeras` : ''}
+          ? ` · el barrido alcanzó su límite; se observaron como mínimo ${String(total)}`
+          : memoria.truncated ? ` · se listan las ${String(entradas.length)} primeras` : ''}
       </p>
       {entradas.length === 0 ? (
         medicion === 'miro-y-no-hay' ? (
@@ -174,7 +174,7 @@ export function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
             <li key={entrada.path ?? indice}>
               <code>{entrada.path ?? 'ruta sin informar'}</code>
               <span className="directiva-fichero-meta">
-                {typeof entrada.bytes === 'number' ? `${entrada.bytes} bytes` : 'tamaño sin informar'}
+                {typeof entrada.bytes === 'number' ? `${String(entrada.bytes)} bytes` : 'tamaño sin informar'}
                 {' · '}<Time value={entrada.modified_at} />
               </span>
             </li>

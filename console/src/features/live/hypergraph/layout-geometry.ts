@@ -55,7 +55,7 @@ export function hashString(value: string): number {
 
 /** Pseudo-aleatorio determinista en [0, 1) derivado de una cadena y un canal. */
 export function jitter(seed: string, channel: number): number {
-  return (hashString(`${seed}::${channel}`) % 10_000) / 10_000;
+  return (hashString(`${seed}::${String(channel)}`) % 10_000) / 10_000;
 }
 
 /** Envolvente convexa (monotone chain de Andrew). Devuelve los vértices en sentido horario. */
@@ -150,9 +150,9 @@ export function inflateHull(hull: Point[], padding: number): Point[] {
 export function closedSmoothPath(points: Point[]): string {
   const count = points.length;
   if (count === 0) return '';
-  if (count === 1) return `M ${round(points[0].x)} ${round(points[0].y)}`;
+  if (count === 1) return `M ${String(round(points[0].x))} ${String(round(points[0].y))}`;
 
-  const segments: string[] = [`M ${round(points[0].x)} ${round(points[0].y)}`];
+  const segments: string[] = [`M ${String(round(points[0].x))} ${String(round(points[0].y))}`];
   for (let index = 0; index < count; index += 1) {
     const p0 = points[(index - 1 + count) % count];
     const p1 = points[index];
@@ -160,7 +160,7 @@ export function closedSmoothPath(points: Point[]): string {
     const p3 = points[(index + 2) % count];
     const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
     const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
-    segments.push(`C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(p2.x)} ${round(p2.y)}`);
+    segments.push(`C ${String(round(c1.x))} ${String(round(c1.y))}, ${String(round(c2.x))} ${String(round(c2.y))}, ${String(round(p2.x))} ${String(round(p2.y))}`);
   }
   segments.push('Z');
   return segments.join(' ');

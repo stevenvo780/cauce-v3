@@ -14,7 +14,7 @@ export function AclEdgeList({ edges }: { edges: readonly AclEdge[] }) {
   return (
     <ul className="edge-list" aria-label="Aristas de control de acceso">
       {edges.map((edge, index) => (
-        <li key={`${edge.from_tenant ?? index}:${edge.to_tenant ?? index}`}>
+        <li key={`${edge.from_tenant ?? String(index)}:${edge.to_tenant ?? String(index)}`}>
           <strong><Unknown value={edge.from_tenant} /></strong>
           <ArrowRight size={17} aria-hidden="true" />
           <strong><Unknown value={edge.to_tenant} /></strong>

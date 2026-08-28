@@ -21,15 +21,15 @@ export function aliasDe(key: string): string {
 }
 
 export function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
+  return `${String(count)} ${count === 1 ? one : many}`;
 }
 
 export function humanSeconds(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)} s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+  if (seconds < 60) return `${String(Math.round(seconds))} s`;
+  if (seconds < 3600) return `${String(Math.floor(seconds / 60))} min`;
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  return minutes === 0 ? `${hours} h` : `${hours} h ${minutes} min`;
+  return minutes === 0 ? `${String(hours)} h` : `${String(hours)} h ${String(minutes)} min`;
 }
 
 /** Arista de delegación viva: `from` le pasó una entrega a `to`, y `to` la tiene en vuelo AHORA. */
@@ -94,7 +94,7 @@ export interface AgentMemory {
   observedAtMs: number;
 }
 
-export type FleetMemory = Record<string, AgentMemory>;
+export type FleetMemory = Record<string, AgentMemory | undefined>;
 
 function itemMemories(items: readonly FleetActivityItem[] | null | undefined): ItemMemory[] {
   const salida: ItemMemory[] = [];

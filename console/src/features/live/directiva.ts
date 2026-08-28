@@ -27,7 +27,7 @@ function normalizar(texto: string): string {
  * Giros para detectar declaraciones de autonomía y permisos.
  * Se buscan giros y no palabras sueltas para evitar falsos positivos.
  */
-const GIROS_DE_AUTONOMIA: Array<{ patron: RegExp; etiqueta: string }> = [
+const GIROS_DE_AUTONOMIA: { patron: RegExp; etiqueta: string }[] = [
   { patron: /\bautonomia\b/, etiqueta: 'autonomía' },
   { patron: /ped(i|ir|is|ile)\s+permiso/, etiqueta: 'pedir permiso' },
   { patron: /sin\s+ped(ir|i)\s+permiso/, etiqueta: 'sin pedir permiso' },
@@ -154,7 +154,7 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
     avisos.push({
       id: 'dos-manuales',
       tono: 'nota',
-      titulo: `Este alias carga ${existentes.length} manuales`,
+      titulo: `Este alias carga ${String(existentes.length)} manuales`,
       detalle,
       evidencia: existentes.map(rotuloDeFichero),
     });

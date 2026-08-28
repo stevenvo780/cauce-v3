@@ -48,7 +48,7 @@ function comparaIds(a: string | null | undefined, b: string | null | undefined):
   const numA = Number(a);
   const numB = Number(b);
   if (Number.isFinite(numA) && Number.isFinite(numB) && numA !== numB) return numB - numA;
-  return String(b ?? '').localeCompare(String(a ?? ''));
+  return (b ?? '').localeCompare(a ?? '');
 }
 
 export type ClaseDeCambio = 'alta' | 'reescritura' | 'borrado' | 'sin-texto';
@@ -84,7 +84,7 @@ export function resumirCambio(entrada: RoleBriefHistoryEntry): CambioResumido {
     return {
       clase: 'alta',
       titulo: 'Se le puso rol por primera vez',
-      detalle: `Antes no tenía rol declarado; quedó con ${contarRoleBrief(despues)} caracteres.`,
+      detalle: `Antes no tenía rol declarado; quedó con ${String(contarRoleBrief(despues))} caracteres.`,
       dejaSinRol: false,
     };
   }
@@ -93,7 +93,7 @@ export function resumirCambio(entrada: RoleBriefHistoryEntry): CambioResumido {
     return {
       clase: 'borrado',
       titulo: 'Se le quitó el rol',
-      detalle: `Tenía ${contarRoleBrief(antes)} caracteres y la proyección quedó sin rol declarado.`,
+      detalle: `Tenía ${String(contarRoleBrief(antes))} caracteres y la proyección quedó sin rol declarado.`,
       dejaSinRol: true,
     };
   }
@@ -114,7 +114,7 @@ export function resumirCambio(entrada: RoleBriefHistoryEntry): CambioResumido {
   return {
     clase: 'reescritura',
     titulo: 'Se reescribió el rol',
-    detalle: `Pasó de ${largoAntes} a ${largoDespues} caracteres.`,
+    detalle: `Pasó de ${String(largoAntes)} a ${String(largoDespues)} caracteres.`,
     delta,
     dejaSinRol: false,
   };
@@ -136,7 +136,8 @@ export function cambioDePlantilla(entrada: RoleBriefHistoryEntry): string | unde
     return `Quedó desvinculado de la plantilla «${antes}»: editar el texto a mano rompe el vínculo.`;
   }
   if (antes === null && despues !== null) return `Pasó a llevar la plantilla «${despues}».`;
-  return `Cambió de la plantilla «${antes}» a «${despues}».`;
+  if (antes !== null && despues !== null) return `Cambió de la plantilla «${antes}» a «${despues}».`;
+  return undefined;
 }
 
 /**
@@ -147,7 +148,7 @@ export function actorDeEntrada(entrada: RoleBriefHistoryEntry): string | undefin
   const tenant = entrada.actor_tenant?.trim();
   const alias = entrada.actor_alias?.trim();
   if (alias && tenant) return `${tenant}/${alias}`;
-  return alias || tenant || undefined;
+  return alias ?? tenant ?? undefined;
 }
 
 /**

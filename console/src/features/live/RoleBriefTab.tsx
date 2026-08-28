@@ -9,7 +9,7 @@ import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
 /** La fila legacy del registro para este alias, o `undefined` si no está publicada. */
 function filaDelAgente(
-  agents: Array<Record<string, unknown>> | null | undefined,
+  agents: Record<string, unknown>[] | null | undefined,
   tenantId: string,
   alias: string,
 ): Record<string, unknown> | undefined {

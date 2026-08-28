@@ -142,7 +142,7 @@ export function hayCambios(original: string, borrador: string): boolean {
  */
 export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
   if (esAckAplicado(resultado)) {
-    return `Aplicado en ${resultado.path}: la sonda confirmó el ACK de escritura (${resultado.bytes} bytes).`;
+    return `Aplicado en ${resultado.path}: la sonda confirmó el ACK de escritura (${String(resultado.bytes)} bytes).`;
   }
   return `El gateway respondió 2xx, pero la aplicación no quedó confirmada por un ACK completo.`;
 }

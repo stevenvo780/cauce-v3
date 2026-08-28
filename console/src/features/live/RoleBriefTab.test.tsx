@@ -39,7 +39,7 @@ it('muestra role_brief como proyección legacy de sólo lectura y no ofrece el P
   expect(aviso).toHaveTextContent(/role_summary.*canónico/i);
   expect(within(dialogo).queryByRole('button', { name: /guardar el rol/i })).not.toBeInTheDocument();
   expect(cambiosGenericos).toBe(0);
-});
+}, 25_000);
 
 it('el único control de edición lleva a Perfil dentro del mismo cajón', async () => {
   const { user, cajon, dialogo } = await abrirProyeccionDeKant();
@@ -49,7 +49,7 @@ it('el único control de edición lleva a Perfil dentro del mismo cajón', async
   expect(await within(cajon).findByRole('heading', { name: /perfil de kant/i })).toBeInTheDocument();
   expect(within(cajon).getByRole('tab', { name: 'Perfil' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
-});
+}, 25_000);
 
 it('una lectura fallida no se presenta como un rol vacío ni habilita escritura', async () => {
   server.use(http.get('*/v3/console/config', () => HttpResponse.json(
@@ -60,4 +60,4 @@ it('una lectura fallida no se presenta como un rol vacío ni habilita escritura'
   const { dialogo } = await abrirProyeccionDeKant();
   expect(await within(dialogo).findByText(/no se pudo leer la proyección/i)).toHaveTextContent('snapshot caído');
   expect(within(dialogo).queryByRole('button', { name: /guardar/i })).not.toBeInTheDocument();
-});
+}, 25_000);

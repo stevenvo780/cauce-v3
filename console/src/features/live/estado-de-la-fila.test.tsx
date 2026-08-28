@@ -32,13 +32,13 @@ function conActividad(snapshot: FleetActivitySnapshot): void {
 }
 
 /** Cada fila de datos con su alias y el rótulo de su celda «Estado». */
-function filasPintadas(): Array<{ alias: string; estado: string }> {
+function filasPintadas(): { alias: string; estado: string }[] {
   return screen.getAllByRole('row')
     .filter((fila) => within(fila).queryAllByRole('cell').length > 3)
     .map((fila) => {
       const celdas = within(fila).getAllByRole('cell');
       return {
-        alias: celdas[1].textContent ?? '',
+        alias: celdas[1].textContent,
         // La celda lleva el estado y, debajo, los chips de señal. El estado es el primero.
         estado: within(celdas[2]).getAllByText(/.+/)[0]?.textContent ?? '',
       };
@@ -114,7 +114,7 @@ describe('la columna «Estado» de la tabla de /live', () => {
     await screen.findByLabelText('Veredicto de la flota');
 
     const ordenDeLaCinta = [...document.querySelectorAll('.live-tally-chip:not(.is-unreported)')]
-      .map((chip) => chip.textContent?.replace(/\d+$/, '').trim() ?? '');
+      .map((chip) => chip.textContent.replace(/\d+$/, '').trim());
     const rangos = filasPintadas().map((fila) => ordenDeLaCinta.indexOf(fila.estado));
 
     expect(rangos).not.toContain(-1);

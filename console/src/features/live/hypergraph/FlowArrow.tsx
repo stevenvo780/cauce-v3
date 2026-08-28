@@ -20,9 +20,9 @@ export function FlowArrow({ edge, index, from, to, fromRadius, toRadius, width, 
     <g className={`lhg-flow${dim ? ' is-dim' : ''}${lento ? ' is-slow' : ''}`}>
       <title>
         {`${aliasDe(edge.from)} → ${aliasDe(edge.to)}`}
-        {` · ${edge.inFlight} en vuelo`}
-        {edge.totalFromServer ? ` · ${edge.total} en la ventana` : ''}
-        {edge.oldestSeconds != null ? ` · la más vieja lleva ${Math.round(edge.oldestSeconds)} s` : ''}
+        {` · ${String(edge.inFlight)} en vuelo`}
+        {edge.totalFromServer ? ` · ${String(edge.total)} en la ventana` : ''}
+        {edge.oldestSeconds != null ? ` · la más vieja lleva ${String(Math.round(edge.oldestSeconds))} s` : ''}
         {lento ? ' · pasó el umbral del servidor' : ''}
       </title>
       <path className="lhg-flow-line" d={geo.path} markerEnd="url(#lhg-arrow)" style={{ strokeWidth: width }} />
@@ -45,7 +45,7 @@ function curva(a: Point, b: Point, index: number, radioA: number, radioB: number
   const control = { x: (desde.x + hasta.x) / 2 - uy * comba, y: (desde.y + hasta.y) / 2 + ux * comba };
   const r = (n: number) => Math.round(n * 100) / 100;
   return {
-    path: `M ${r(desde.x)} ${r(desde.y)} Q ${r(control.x)} ${r(control.y)} ${r(hasta.x)} ${r(hasta.y)}`,
+    path: `M ${String(r(desde.x))} ${String(r(desde.y))} Q ${String(r(control.x))} ${String(r(control.y))} ${String(r(hasta.x))} ${String(r(hasta.y))}`,
     medio: { x: r((desde.x + 2 * control.x + hasta.x) / 4), y: r((desde.y + 2 * control.y + hasta.y) / 4) },
   };
 }

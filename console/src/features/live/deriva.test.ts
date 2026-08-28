@@ -38,13 +38,13 @@ function vista(overrides: Partial<LiveAgentView> & { tenantId: string; alias: st
     tenantId,
     alias,
     agent,
-  } as LiveAgentView;
+  };
 }
 
 function topologia(
-  miembros: Array<{ tenant: string; alias: string; enabled?: boolean }>,
+  miembros: { tenant: string; alias: string; enabled?: boolean }[],
 ): TopologySnapshot {
-  const porTenant = new Map<string, Array<{ alias: string; enabled?: boolean }>>();
+  const porTenant = new Map<string, { alias: string; enabled?: boolean }[]>();
   for (const miembro of miembros) {
     porTenant.set(miembro.tenant, [
       ...(porTenant.get(miembro.tenant) ?? []),
@@ -56,7 +56,7 @@ function topologia(
       id,
       rooms: [{ id: `grp.${id}`, members }],
     })),
-  } as TopologySnapshot;
+  };
 }
 
 describe('membresía habilitada sin fila en el registro — el caso quota-collector', () => {
