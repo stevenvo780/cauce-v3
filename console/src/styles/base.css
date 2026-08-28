@@ -113,6 +113,11 @@ a { color: inherit; }
 }
 .skip-link:focus { transform: none; }
 
+/* A route change moves focus here so the new view is announced, and Chrome treats that
+   programmatic focus as :focus-visible — which framed the whole viewport on every navigation.
+   The announcement is the feedback; the ring belongs to elements the keyboard traverses. */
+main:focus, main:focus-visible { outline: none; }
+
 .app-shell { display: grid; min-height: 100vh; grid-template-columns: 248px minmax(0, 1fr); }
 
 .sidebar {

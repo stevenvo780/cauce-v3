@@ -33,11 +33,8 @@ const ROUTES = ['/', '/live', '/accounts', '/messages', '/queues', '/observabili
  */
 const VIEWPORTS = [360, 760, 1100, 1440, 1920, 2560];
 
-/**
- * Below this the recorded worst case is noise from a resize, not a layout decision. Scroll depth is
- * a ratio, not a pixel count: a pixel tolerance applied to it would wave through a view that grew
- * from one screen to three.
- */
+/** Noise floor per budget. Scroll depth is a ratio, so a pixel tolerance there would wave through
+    a view that grew from one screen to three. */
 const TOLERANCIA = { huecoMaximo: 2, desbordeMaximo: 0, enlacesSinNombre: 0, solapesDeRotulo: 0, pantallasMaximas: 0.1 };
 
 const escribirBaseline = process.argv.includes('--update');
