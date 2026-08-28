@@ -6,45 +6,45 @@ import { fileURLToPath } from "node:url";
 import type { OutputArtifact, StructuredOutput } from "./types.js";
 
 /**
- * Convierte los adjuntos locales declarados en `output.artifacts` a URIs en formato `data:` base64
- * antes de publicar la respuesta al bus, permitiendo su entrega segura al usuario final.
+ * Converts local attachments declared in `output.artifacts` to `data:` base64 URIs before
+ * publishing the response to the bus, enabling safe delivery to the end user.
  */
 
 /**
- * Tope por adjunto. Simétrico con `MAX_EGRESS_ATTACHMENT_BYTES` del puente y con
- * `MAX_ATTACHMENT_BYTES` del protocolo (ingesta). Pasarse no es un error: el adjunto se deja como
- * estaba.
+ * Per-attachment cap. Mirrors `MAX_EGRESS_ATTACHMENT_BYTES` on the bridge and
+ * `MAX_ATTACHMENT_BYTES` on the protocol (ingest). Exceeding it is not an error: the attachment
+ * is left as is.
  */
 export const MAX_INLINED_ARTIFACT_BYTES = 10_000_000;
 
-/** Simétrico con `MAX_UPLOADS_PER_RELAY` del puente y `MAX_ATTACHMENTS_PER_MESSAGE` del protocolo. */
+/** Mirrors `MAX_UPLOADS_PER_RELAY` on the bridge and `MAX_ATTACHMENTS_PER_MESSAGE` on the protocol. */
 export const MAX_INLINED_ARTIFACTS_PER_RESPONSE = 4;
 
 /**
- * Tope agregado por respuesta, alineado con `MAX_ATTACHMENTS_TOTAL_BYTES` de la ingesta.
+ * Aggregate cap per response, aligned with `MAX_ATTACHMENTS_TOTAL_BYTES` from ingest.
  */
 export const MAX_INLINED_TOTAL_BYTES = 10_000_000;
 
 /**
- * Cuántas rutas se intentan abrir como mucho. El parser no acota el largo de `artifacts`, y un
- * turno no puede convertirse en cientos de syscalls por una lista inventada.
+ * Maximum paths attempted to open. The parser doesn't cap the length of `artifacts`, and a turn
+ * can't become hundreds of syscalls for an invented list.
  */
 const MAX_LOOKUPS = 16;
 
-/** Cota del base64 resultante: el mismo cálculo que hace el puente antes de decodificar. */
+/** Cap on the resulting base64: the same calculation the bridge does before decoding. */
 const MAX_BASE64_CHARACTERS = Math.ceil(MAX_INLINED_ARTIFACT_BYTES / 3) * 4 + 64;
 
 /**
- * Nada de `/proc`, `/sys` ni `/dev`. Son ficheros «regulares» que no son ficheros: `/proc/self/…`
- * declara tamaño 0 y devuelve el estado del propio adaptador, y un dispositivo puede no terminar
- * nunca. El agente nunca quiere adjuntar eso.
+ * No `/proc`, `/sys`, or `/dev`. These are "regular" files that aren't files: `/proc/self/…`
+ * reports size 0 and returns the adapter's own state, and a device may never finish reading.
+ * The agent never wants to attach those.
  */
 const FORBIDDEN_ROOTS: readonly string[] = ["/proc/", "/sys/", "/dev/"];
 
 /**
- * Deducción de tipo por extensión: lista corta y explícita, espejo de la tabla del puente. Ante la
- * duda, `application/octet-stream`; NUNCA se adivina leyendo el contenido, eso lo hace el puente
- * con firmas reales para decidir foto vs documento.
+ * Type deduction by extension: short explicit list, mirroring the bridge's table. In doubt,
+ * `application/octet-stream`; NEVER guessed by reading the content — that's the bridge's job
+ * with real signatures to decide photo vs document.
  */
 const MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
   [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"],
@@ -59,19 +59,19 @@ const MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
   [".mp4", "video/mp4"], [".mp3", "audio/mpeg"], [".ogg", "audio/ogg"],
 ]);
 
-/** `tipo/subtipo` con los caracteres que RFC 2045 permite en un token. Nada de `,`, `;` ni espacios. */
+/** `type/subtype` using characters RFC 2045 allows in a token. No `,`, `;`, or spaces. */
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$/iu;
 
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
 
-/** Cualquier esquema: `data:`, `https:`, `git:`, `s3:`… Sólo `file:` se dereferencia. */
+/** Any scheme: `data:`, `https:`, `git:`, `s3:`… Only `file:` is dereferenced. */
 const HAS_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/u;
 
 /**
- * Ruta local aceptable, ya decodificada.
+ * Acceptable local path, already decoded.
  *
- * Sólo absolutas y sin ningún segmento `..`: una ruta relativa depende del cwd del adaptador (que
- * no es el del agente) y un `..` convierte una ruta que parece acotada en cualquier otra.
+ * Only absolute paths and no `..` segment: a relative path depends on the adapter's cwd (which
+ * isn't the agent's), and a `..` turns a path that looks bounded into any other.
  */
 function acceptablePath(path: string): string | undefined {
   if (path.length === 0 || path.length > 4096) return undefined;
@@ -81,31 +81,31 @@ function acceptablePath(path: string): string | undefined {
   return path;
 }
 
-/** ¿Algún segmento del URI crudo es `..`, con o sin percent-encoding (`%2e%2e`, `.%2E`)? */
+/** Is any segment of the raw URI `..`, with or without percent-encoding (`%2e%2e`, `.%2E`)? */
 function traverses(uri: string): boolean {
   return uri.split(/[/?#]/u).some((segment) => segment.replace(/%2e/giu, ".") === "..");
 }
 
 /**
- * Traduce el `uri` de un artifact a una ruta local, o `undefined` si no hay que tocarlo.
+ * Translates an artifact's `uri` to a local path, or `undefined` if it shouldn't be touched.
  *
- * `file://host/...` con host ajeno se rechaza: sería un recurso de otra máquina, no del agente.
+ * `file://host/...` with a foreign host is rejected: a resource from another machine, not the agent's.
  */
 export function localArtifactPath(uri: string): string | undefined {
   const trimmed = uri.trim();
   if (trimmed.length === 0) return undefined;
   if (/^file:/iu.test(trimmed)) {
-    // El `..` se busca en el URI CRUDO además de en la ruta final. `new URL()` normaliza los
-    // segmentos y hace desaparecer el recorrido —`file:///w/%2e%2e/%2e%2e/etc/passwd` sale como
-    // `/etc/passwd`—, así que mirar sólo el resultado daría por buena una ruta que intentó
-    // escaparse. Un URI que intenta recorrer no se lee, punto.
+    // `..` is searched in the RAW URI in addition to the final path. `new URL()` normalizes
+    // segments and makes the traversal disappear —`file:///w/%2e%2e/%2e%2e/etc/passwd` becomes
+    // `/etc/passwd`—, so checking only the result would accept a path that tried to escape. A
+    // URI that attempts traversal is not read, period.
     if (traverses(trimmed)) return undefined;
     try {
       const url = new URL(trimmed);
       const host = url.hostname.toLowerCase();
       if (host !== "" && host !== "localhost") return undefined;
-      // `fileURLToPath` decodifica el percent-encoding; por eso el chequeo de `..` sobre la ruta
-      // final se hace igual, después (un `%2e%2e` es un `..` con otro traje).
+// `fileURLToPath` decodes percent-encoding; that's why the `..` check on the final path is
+    // still done afterward (a `%2e%2e` is a `..` in another suit).
       return acceptablePath(fileURLToPath(url));
     } catch {
       return undefined;
@@ -116,15 +116,15 @@ export function localArtifactPath(uri: string): string | undefined {
 }
 
 /**
- * Lee un fichero REGULAR sin seguir el enlace simbólico final y sin quedarse colgado.
+ * Reads a REGULAR file without following the final symlink and without hanging.
  *
- * - `O_NOFOLLOW`: un `artifacts[].uri` que apunte a un symlink a `/etc/passwd` falla acá. La
- *   validación va contra el descriptor ya abierto (`fstat`), no contra una ruta comprobada antes,
- *   para que no haya ventana entre el chequeo y el uso.
- * - `O_NONBLOCK`: abrir un FIFO en modo lectura bloquea hasta que aparezca un escritor. Sin esto,
- *   un adjunto podría colgar el turno entero, que es peor que no mandarlo.
- * - El tamaño se mira dos veces: en el `fstat` para no materializar un buffer absurdo, y sobre los
- *   bytes REALMENTE leídos, que son los que se van a codificar.
+ * - `O_NOFOLLOW`: an `artifacts[].uri` pointing to a symlink to `/etc/passwd` fails here.
+ *   Validation is against the already-opened descriptor (`fstat`), not a pre-checked path, so
+ *   there's no window between check and use.
+ * - `O_NONBLOCK`: opening a FIFO in read mode blocks until a writer appears. Without this, an
+ *   attachment could hang the entire turn, which is worse than not sending it.
+ * - Size is checked twice: in `fstat` to avoid materializing an absurd buffer, and on the bytes
+ *   ACTUALLY read, which are the ones to be encoded.
  */
 async function readRegularFile(path: string): Promise<Buffer | undefined> {
   const noFollow = "O_NOFOLLOW" in fsConstants ? fsConstants.O_NOFOLLOW : 0;
@@ -145,7 +145,7 @@ async function readRegularFile(path: string): Promise<Buffer | undefined> {
   }
 }
 
-/** El tipo que declaró el agente manda; si no declaró (o declaró basura), se deduce de la extensión. */
+/** The type declared by the agent wins; if not declared (or declared garbage), inferred from the extension. */
 function mediaTypeFor(artifact: OutputArtifact, path: string): string {
   const declared = artifact.media_type?.trim() ?? "";
   if (MEDIA_TYPE.test(declared)) return declared;
@@ -153,8 +153,8 @@ function mediaTypeFor(artifact: OutputArtifact, path: string): string {
 }
 
 /**
- * Convierte UN artifact. Devuelve `undefined` cuando hay que dejarlo como estaba, que es siempre la
- * respuesta segura.
+ * Converts ONE artifact. Returns `undefined` when it should be left as is, which is always the
+ * safe answer.
  */
 async function inlineArtifact(
   artifact: OutputArtifact,
@@ -165,17 +165,17 @@ async function inlineArtifact(
 
   const digest = createHash("sha256").update(bytes).digest("hex");
   const declared = artifact.sha256?.trim().toLowerCase() ?? "";
-  // Un sha declarado que no coincide con lo leído significa que el fichero cambió, o que el agente
-  // se equivocó de fichero. Mandarlo igual sería decir que enviamos una cosa y enviar otra.
+  // A declared sha that doesn't match what was read means the file changed, or the agent pointed
+  // to the wrong file. Sending it anyway would be saying we sent one thing and sending another.
   if (declared !== "" && (!HEX_SHA256.test(declared) || declared !== digest)) return undefined;
 
   const base64 = bytes.toString("base64");
-  // El límite se comprueba sobre el RESULTADO, no sobre el original: base64 crece ~33 %, y es el
-  // resultado el que el puente vuelve a medir antes de subirlo.
+  // The limit is checked on the RESULT, not on the original: base64 grows ~33%, and it's the
+  // result the bridge measures again before uploading.
   if (base64.length > MAX_BASE64_CHARACTERS) return undefined;
 
   const mediaType = mediaTypeFor(artifact, path);
-  // Usa el nombre declarado o deduce el nombre del archivo a partir de su ruta.
+  // Use the declared name or derive the filename from its path.
   const name = artifact.name.trim().length > 0 ? artifact.name : basename(path);
   return {
     artifact: {
@@ -189,12 +189,12 @@ async function inlineArtifact(
 }
 
 /**
- * Reemplaza por `data:` los artifacts locales que se puedan leer con seguridad, y deja intacto todo
- * lo demás: los `data:` que ya venían hechos, los `http(s)://` (que el puente lista como enlace a
- * propósito, para no volverse un SSRF contra producción), lo que exceda los topes y lo que no se
- * pueda leer.
+ * Replaces local artifacts that can be read safely with `data:`, and leaves everything else
+ * untouched: `data:` URIs that already came done, `http(s)://` (which the bridge lists as a link
+ * on purpose, so it doesn't become an SSRF against production), what exceeds the caps, and what
+ * can't be read.
  *
- * Nunca tira. Devuelve el mismo objeto cuando no hubo nada que cambiar.
+ * Never throws. Returns the same object when there was nothing to change.
  */
 export async function inlineLocalArtifacts(output: StructuredOutput): Promise<StructuredOutput> {
   try {
@@ -207,8 +207,8 @@ export async function inlineLocalArtifacts(output: StructuredOutput): Promise<St
     let changed = false;
 
     for (const artifact of output.artifacts) {
-      // Un `data:` que ya venía hecho no se toca, pero SÍ gasta cupo: el puente cuenta subidas, no
-      // conversiones, y convertir un quinto adjunto que el puente va a descartar es trabajo tirado.
+      // A `data:` that already came done is not touched, but DOES count against it: the bridge
+      // counts uploads, not conversions, so converting a fifth attachment it will discard is wasted.
       if (/^data:/iu.test(artifact.uri.trim())) {
         remaining -= 1;
         artifacts.push(artifact);
@@ -221,13 +221,13 @@ export async function inlineLocalArtifacts(output: StructuredOutput): Promise<St
       }
       lookups += 1;
       const inlined = await inlineArtifact(artifact, path);
-      // No se pudo (no existe, es un symlink, es un FIFO, no coincide el sha, pesa de más): queda
-      // como estaba y el humano lee la línea del puente. El turno sale igual.
+      // Couldn't (doesn't exist, is a symlink, is a FIFO, sha doesn't match, too big): stays as is
+      // and the human reads the bridge's line. The turn still ships.
       if (inlined === undefined) {
         artifacts.push(artifact);
         continue;
       }
-      // El techo agregado se mide en bytes del fichero, igual que `MAX_ATTACHMENTS_TOTAL_BYTES`.
+      // The aggregate cap is measured in file bytes, same as `MAX_ATTACHMENTS_TOTAL_BYTES`.
       if (inlined.bytes > remainingBytes) {
         artifacts.push(artifact);
         continue;
@@ -240,7 +240,7 @@ export async function inlineLocalArtifacts(output: StructuredOutput): Promise<St
 
     return changed ? { ...output, artifacts } : output;
   } catch {
-    // Defensa en profundidad: la invariante es que un adjunto NUNCA cueste un turno.
+    // Defense in depth: the invariant is that an attachment NEVER costs a turn.
     return output;
   }
 }

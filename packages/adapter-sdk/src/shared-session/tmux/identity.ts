@@ -8,18 +8,18 @@ export interface TmuxResult {
 }
 
 export interface TmuxRunControl {
-  /** Cancela y reapea el cliente tmux; nunca significa que el servidor no alcanzó a mutar. */
+  /** Cancels and reaps the tmux client; never means the server didn't get to mutate. */
   readonly signal?: AbortSignal;
-  /** Techo del proceso cliente. Al vencer se envía TERM, luego KILL, y se espera `close`. */
+  /** Client process ceiling. On expiry TERM is sent, then KILL, and `close` is awaited. */
   readonly timeoutMs?: number;
 }
 
 /**
- * La superficie tmux que usa la sesión compartida, como interfaz para poder sustituirla.
+ * The tmux surface used by the shared session, as an interface so it can be substituted.
  *
- * Existe separada del runner porque es la ÚNICA parte que necesita un tmux de verdad: con esto
- * detrás de una interfaz, la cosecha del transcript, el arbitraje de la caja de entrada y la
- * degradación se prueban con ficheros reales y sin terminal.
+ * It exists separately from the runner because it is the ONLY part that needs a real tmux: with
+ * this behind an interface, transcript harvesting, input-box arbitration, and degradation are
+ * tested with real files and without a terminal.
  */
 export interface TmuxController {
   run(args: readonly string[], stdin?: string, control?: TmuxRunControl): Promise<TmuxResult>;
@@ -37,11 +37,11 @@ export function withoutLifecycleIdentity(environment: NodeJS.ProcessEnv): NodeJS
 }
 
 /**
- * tmux de verdad, sin shell.
+ * Real tmux, no shell.
  *
- * `shell: false` no es decoración: el prompt de protocolo entra por `load-buffer` desde stdin y
- * nunca por argv, igual que hace `SpawnCommandRunner`. Nada de lo que viene de una entrega se
- * interpola en una línea de comandos.
+ * `shell: false` is not decoration: the protocol prompt enters via `load-buffer` from stdin, and
+ * never via argv, like `SpawnCommandRunner` does. Nothing from a delivery is interpolated into a
+ * command line.
  */
 export class CliTmux implements TmuxController {
   constructor(
@@ -84,8 +84,8 @@ export class CliTmux implements TmuxController {
         stopClient("aborted");
       };
       control.signal?.addEventListener("abort", aborted, { once: true });
-      // El signal puede abortar entre la comprobacion previa al spawn y el registro del listener.
-      // Releerlo despues de registrar cierra esa ventana sin dejar un cliente huérfano.
+      // The signal can abort between the pre-spawn check and the listener registration. Re-reading
+      // it after registering closes that window without leaving an orphan client.
       if (control.signal?.aborted === true) aborted();
       const timeout = setTimeout(() => {
         stopClient("timed_out");
@@ -136,29 +136,29 @@ export const PANE_ID_PATTERN = /^%[0-9]+$/u;
 export const SAFE_TMUX_NAME_PATTERN = /^[A-Za-z0-9_.:-]+$/u;
 
 /**
- * Identidad completa de una generación de panel.
+ * Full identity of one pane generation.
  *
- * Ni el nombre de sesión, ni `$N`, ni `%N` bastan por separado: tmux conserva el pane id tras
- * `respawn-pane`, y vuelve a numerar sesiones/paneles desde cero después de reiniciar el servidor.
- * La tupla completa permite apuntar por `%pane_id` y, a la vez, detectar que ese target ahora
- * pertenece a otra conversación o a otro proceso.
+ * Neither the session name, nor `$N`, nor `%N` is enough on its own: tmux keeps the pane id
+ * across `respawn-pane`, and renumbers sessions/panes from zero after the server restarts. The
+ * full tuple lets us target by `%pane_id` and, at the same time, detect that the target now
+ * belongs to another conversation or another process.
  */
 export interface PaneIdentity {
   readonly sessionId: string;
   readonly sessionName: string;
-  /** Id estable de ventana; el nombre es metadato mutable y no cerca un respawn/rename. */
+  /** Stable window id; the name is mutable metadata and doesn't fence respawn/rename. */
   readonly windowId: string;
   readonly windowName: string;
   readonly paneId: string;
   readonly panePid: string;
 }
 
-/** Identidad de proceso junto con el comando ORIGINAL observado para esa misma generación. */
+/** Process identity together with the ORIGINAL command observed for that same generation. */
 export interface PaneHarnessIdentity extends PaneIdentity {
   readonly paneStartCommand: string;
 }
 
-/** Identidad intransferible de una sesión creada por UN intento de `ensure`. */
+/** Non-transferable identity of a session created by ONE `ensure` attempt. */
 export interface CreatedSessionOwnership extends PaneHarnessIdentity {
   readonly creationNonce: string;
 }
@@ -181,14 +181,14 @@ export function signalIsAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
-/** Un id `$N` de tmux es exacto; a diferencia del nombre, nunca admite coincidencia por prefijo. */
+/** A tmux `$N` id is exact; unlike a name, it never allows prefix-matching. */
 export async function hasSessionId(tmux: TmuxController, sessionId: string): Promise<boolean> {
   if (!SESSION_ID_PATTERN.test(sessionId)) return false;
   const result = await tmux.run(["has-session", "-t", sessionId]);
   return result.exitCode === 0;
 }
 
-/** Resuelve un nombre por igualdad exacta al id estable de tmux (`$0`, `$1`, ...). */
+/** Resolves a name by exact equality to tmux's stable id (`$0`, `$1`, ...). */
 export async function exactSessionTarget(
   tmux: TmuxController,
   session: string,
@@ -205,10 +205,10 @@ export async function exactSessionTarget(
 }
 
 /**
- * Acredita a la vez vida e identidad: el nombre sigue resolviendo al MISMO `$N`.
+ * Credits both life and identity at once: the name still resolves to the SAME `$N`.
  *
- * `has-session -t =nombre` sólo prueba que hay algo con ese nombre. Si la TUI murió y otra sesión
- * tomó el nombre entre dos awaits, operar por nombre pegaría el turno en la conversación nueva.
+ * `has-session -t =name` only proves something with that name exists. If the TUI died and
+ * another session took the name between two awaits, operating by name pastes into the new one.
  */
 export async function sessionIdStillNamed(
   tmux: TmuxController,
@@ -219,7 +219,7 @@ export async function sessionIdStillNamed(
     && await exactSessionTarget(tmux, session) === sessionId;
 }
 
-/** Lee una sola vez toda la identidad que tmux atribuye al target exacto. */
+/** Reads once all the identity tmux attributes to the exact target. */
 export async function paneIdentity(
   tmux: TmuxController,
   target: string,
@@ -254,10 +254,10 @@ export type ExactPaneInspection =
   | { readonly state: "unreadable" };
 
 /**
- * Distingue una desaparición acreditada de un fallo de lectura.
+ * Distinguishes a credited disappearance from a read failure.
  *
- * `display-message` usa el target exacto `%N`; si falla, `list-panes -a` prueba si el servidor aún
- * puede enumerar paneles. Sólo esa enumeración exitosa y sin `%N` permite afirmar `absent`.
+ * `display-message` uses the exact `%N` target; on failure, `list-panes -a` checks whether the
+ * server can still enumerate panes. Only that enumeration succeeding WITHOUT `%N` asserts `absent`.
  */
 export async function inspectExactPane(
   tmux: TmuxController,
@@ -289,7 +289,7 @@ export async function inspectExactPane(
   }
 }
 
-/** Compara también PID: `respawn-pane` conserva `%N` pero ya no conserva la conversación. */
+/** Also compares PID: `respawn-pane` keeps `%N` but no longer keeps the conversation. */
 export function samePaneIdentity(left: PaneIdentity, right: PaneIdentity): boolean {
   return left.sessionId === right.sessionId
     && left.sessionName === right.sessionName
@@ -299,7 +299,7 @@ export function samePaneIdentity(left: PaneIdentity, right: PaneIdentity): boole
     && left.panePid === right.panePid;
 }
 
-/** Mismo proceso/pane aunque un humano haya renombrado la sesión o la ventana. */
+/** Same process/pane even if a human renamed the session or the window. */
 export function samePaneProcess(left: PaneIdentity, right: PaneIdentity): boolean {
   return left.sessionId === right.sessionId
     && left.windowId === right.windowId
@@ -307,7 +307,7 @@ export function samePaneProcess(left: PaneIdentity, right: PaneIdentity): boolea
     && left.panePid === right.panePid;
 }
 
-/** Revalida la generación usando `%pane_id`, que no admite fallback por nombre/prefijo. */
+/** Revalidates using `%pane_id`, which admits no name/prefix fallback. */
 export async function paneIdentityStillCurrent(
   tmux: TmuxController,
   expected: PaneIdentity,
@@ -321,7 +321,7 @@ export function paneGeneration(identity: PaneIdentity): string {
   return `${identity.sessionId}:${identity.windowId}:${identity.paneId}:${identity.panePid}`;
 }
 
-/** Clave no sensible y estable con la que disco y tmux identifican la misma generación. */
+/** Non-sensitive stable key used by both disk and tmux to identify the same generation. */
 export function paneGenerationKey(identity: PaneIdentity): string {
   return paneGeneration(identity);
 }

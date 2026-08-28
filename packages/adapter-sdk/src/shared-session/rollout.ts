@@ -11,28 +11,28 @@ import type {
 } from "./types.js";
 
 /**
- * Lector y analizador de transcripts tipo rollout generados por Codex.
+ * Reader and analyzer for rollout-style transcripts produced by Codex.
  */
 
-/** Una línea del rollout, ya decodificada. */
+/** One line of the rollout, already decoded. */
 export interface RolloutLine {
   readonly timestamp?: unknown;
   readonly type?: unknown;
   readonly payload?: unknown;
 }
 
-/** Directorio raíz donde Codex almacena los rollouts de sesiones. */
+/** Root directory where Codex stores session rollouts. */
 export function rolloutDirectory(codexHome: string): string {
   return join(codexHome.replace(/\/+$/u, ""), "sessions");
 }
 
-/** Extrae el ID de sesión del nombre del archivo de rollout. */
+/** Extracts the session ID from the rollout filename. */
 export function rolloutSessionId(file: string): string | undefined {
   const found = /-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\.jsonl$/u.exec(file);
   return found?.[1];
 }
 
-/** Los rollouts del árbol, recursivo. Un árbol ausente es una lista vacía, no un fallo. */
+/** Rollouts in the tree, recursive. A missing tree is an empty list, not a failure. */
 export async function rolloutFiles(directory: string): Promise<readonly string[]> {
   try {
     const names = await readdir(directory, { recursive: true });
@@ -44,7 +44,7 @@ export async function rolloutFiles(directory: string): Promise<readonly string[]
   }
 }
 
-/** Lee entradas JSON del rollout a partir del offset indicado. */
+/** Reads JSON entries from the rollout starting at the given offset. */
 export async function readRolloutSince(
   file: string,
   offset: number,
@@ -59,8 +59,8 @@ export async function readRolloutSince(
     return { entries: [], appended: [] };
   }
   const lines = raw.split("\n");
-  // Si el fichero termina en salto, el último trozo es "" y no se pierde nada; si no, es una línea
-  // a medio escribir. En los dos casos se descarta.
+  // If the file ends with a newline, the last chunk is "" and nothing is lost; otherwise it's a
+  // half-written line. In both cases it is discarded.
   lines.pop();
   const entries: RolloutLine[] = [];
   for (const line of lines) {
@@ -72,8 +72,8 @@ export async function readRolloutSince(
         entries.push(value);
       }
     } catch {
-      // Un corte a mitad de un carácter multibyte en el primer byte leído, o una línea a medio
-      // escribir: en el siguiente sondeo se lee otra vez desde el mismo sitio.
+// A cut mid-multibyte-character on the first byte read, or a half-written line: on the next
+        // poll it is read again from the same place.
     }
   }
   return { entries, appended: entries };
@@ -85,12 +85,12 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** El payload de un `event_msg`, que es donde codex cuenta lo que le pasa al turno. */
+/** Payload of an `event_msg`, where codex records what happens in the turn. */
 function eventPayload(line: RolloutLine | undefined): Record<string, unknown> | undefined {
   return line?.type === "event_msg" ? asObject(line.payload) : undefined;
 }
 
-/** El payload de un mensaje de un rol concreto dentro de un `response_item`. */
+/** Payload of a message with a specific role inside a `response_item`. */
 function messagePayload(
   line: RolloutLine | undefined,
   role: string,
@@ -102,10 +102,10 @@ function messagePayload(
 }
 
 /**
- * El texto de un mensaje, tal como quedó escrito.
+ * The text of a message, as written.
  *
- * Se juntan los trozos de texto y se ignora todo lo demás (imágenes, referencias). El pedido del
- * bus es texto y sólo texto, así que la igualdad exacta contra lo que se pegó sigue siendo sólida.
+ * Text pieces are joined and everything else (images, references) is ignored. The bus's prompt
+ * is text and only text, so exact equality against what was pasted stays solid.
  */
 function messageText(payload: Record<string, unknown>): string | undefined {
   const content = payload.content;
@@ -119,7 +119,7 @@ function messageText(payload: Record<string, unknown>): string | undefined {
   return joined.length > 0 ? joined : undefined;
 }
 
-/** El `turn_id` que cuelga de los metadatos de un mensaje. */
+/** The `turn_id` hanging off a message's metadata. */
 function messageTurnId(payload: Record<string, unknown>): string | undefined {
   const metadata = asObject(payload.internal_chat_message_metadata_passthrough);
   const turnId = metadata?.turn_id;
@@ -131,14 +131,14 @@ function asText(value: unknown): string | undefined {
 }
 
 /**
- * Normaliza el texto recortando espacios o saltos de línea finales para comparaciones exactas.
+ * Normalizes text by trimming trailing whitespace or newlines for exact comparisons.
  */
 function submitted(text: string | undefined): string | undefined {
   return text?.replace(/\s+$/u, "");
 }
 
 /**
- * La entrada de usuario que creó este turno del bus, y el `turn_id` con el que seguirlo.
+ * The user entry that created this bus turn, and the `turn_id` to track it with.
  */
 function findInjectedRolloutTurn(
   file: string,
@@ -158,7 +158,7 @@ function findInjectedRolloutTurn(
 }
 
 /**
- * Identifica el desenlace del turno en el rollout a partir de su turn_id.
+ * Identifies the turn's outcome in the rollout from its turn_id.
  */
 function findRolloutOutcome(
   entries: readonly RolloutLine[],
@@ -185,7 +185,7 @@ function findRolloutOutcome(
 }
 
 /**
- * Busca un sobre estructurado correlacionado en los eventos task_complete del rollout.
+ * Searches the rollout's task_complete events for a correlated structured envelope.
  */
 function findRolloutEnvelope(
   entries: readonly RolloutLine[],
@@ -203,7 +203,7 @@ function findRolloutEnvelope(
   return undefined;
 }
 
-/** El último mensaje final del asistente de ese turno. Respaldo por si el cierre viene sin texto. */
+/** The assistant's last final message for that turn. Backup if the close comes without text. */
 function finalAnswerOf(entries: readonly RolloutLine[], key: string): string | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const payload = messagePayload(entries[index], "assistant");
@@ -216,7 +216,7 @@ function finalAnswerOf(entries: readonly RolloutLine[], key: string): string | u
 }
 
 /**
- * Las compactaciones ocurridas en lo nuevo.
+ * Compactions that occurred in the new entries.
  */
 function rolloutCompactions(appended: readonly RolloutLine[]): readonly CompactionNotice[] {
   const events: CompactionNotice[] = [];
@@ -232,7 +232,7 @@ function rolloutCompactions(appended: readonly RolloutLine[]): readonly Compacti
 }
 
 /**
- * Crea un `TranscriptReader` para procesar rollouts de Codex.
+ * Creates a `TranscriptReader` for processing Codex rollouts.
  */
 export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine> {
   const directory = rolloutDirectory(codexHome);
@@ -243,8 +243,8 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     findAnswer: findRolloutOutcome,
     findEnvelope: (entries, correlationId) => findRolloutEnvelope(entries, correlationId),
     compactions: rolloutCompactions,
-    // `task_started` es la primera línea de cualquier turno, venga del bus o del dueño. Que no haya
-    // ninguna nueva prueba que la inyección no llegó a la caja y que NADA corrió.
+    // `task_started` is the first line of any turn, whether it comes from the bus or the owner.
+    // None new proves the injection never reached the box and NOTHING ran.
     startedTurn: (appended) => appended.some((line) => eventPayload(line)?.type === "task_started"),
     stdout: (text, sessionId) => [
       ...(sessionId === undefined

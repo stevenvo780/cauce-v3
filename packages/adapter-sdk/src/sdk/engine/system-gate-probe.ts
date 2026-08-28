@@ -13,9 +13,9 @@ interface SystemGateProbeContext {
 }
 
 /**
- * Sonda reservada de transporte. Termina el claim real sin sesión, prompt, harness, modelo,
- * reply, delegación ni egress. La request desaparece del inbox durable en la transición
- * terminal (`retainRequest=false`); sólo queda el resultado mínimo necesario para el ACK.
+ * Reserved transport probe. Closes the real claim without session, prompt, harness, model,
+ * reply, delegation, or egress. The request disappears from the durable inbox on the terminal
+ * transition (`retainRequest=false`); only the minimum result needed for the ACK remains.
  */
 export async function runSystemGateProbe(
   delivery: Delivery,

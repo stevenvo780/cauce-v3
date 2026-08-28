@@ -1,27 +1,27 @@
 /**
- * Detección del estado de la caja de entrada y actividad en pantalla para paneles tmux de TUI.
+ * Detection of input box state and on-screen activity for tmux TUI panes.
  */
 
-/** Marcas que la TUI de claude deja cuando la caja tiene un pegado sin enviar. */
+/** Marks that the claude TUI leaves when the box holds an unsent paste. */
 const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 
-/** Caracteres de cursor de prompt soportados en las distintas TUIs (Claude, Codex). */
+/** Prompt cursor characters supported across TUIs (Claude, Codex). */
 const PROMPT_MARKS = ["❯", "›", "»", ">"];
 
-/** Clasificación del estado de disponibilidad de la caja de entrada. */
+/** Input box availability classification. */
 export type InputBoxKind = "free" | "busy" | "modal";
 
 export interface InputBoxState {
   readonly occupied: boolean;
   readonly kind: InputBoxKind;
-  /** Qué se vio, para el detalle del aviso. Ya recortado. */
+  /** What was seen, for the notice detail. Already trimmed. */
   readonly evidence: string;
 }
 
-/** Reconocimiento de opciones numeradas en diálogos modales de la TUI. */
+/** Recognition of numbered options in TUI modal dialogs. */
 const MODAL_OPTION = /^\d+\.\s/u;
 
-/** Determina si la caja de entrada está libre, ocupada con texto o bloqueada por un diálogo modal. */
+/** Determines whether the input box is free, busy with text, or blocked by a modal dialog. */
 export function inputBoxState(pane: string | undefined): InputBoxState {
   if (pane === undefined) {
     return { occupied: true, kind: "busy", evidence: "no se pudo capturar el panel" };
@@ -60,10 +60,10 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
   };
 }
 
-/** Patrón indicador de generación activa en la TUI. */
+/** Pattern that indicates the TUI is actively generating. */
 const IN_FLIGHT_MARK = /\besc(?:ape)?\s+to\s+interrupt\b/iu;
 
-/** Determina si la TUI se encuentra actualmente generando una respuesta. */
+/** Determines whether the TUI is currently generating a reply. */
 export function turnInFlight(pane: string | undefined): boolean {
   if (pane === undefined) return false;
   const lines = pane.split(/\r?\n/u).map(stripSgr);
@@ -73,22 +73,22 @@ export function turnInFlight(pane: string | undefined): boolean {
     .some((line) => IN_FLIGHT_MARK.test(line));
 }
 
-/** Cuántas líneas alrededor de la caja de entrada cuentan como "franja de estado". */
+/** How many lines around the input box count as the "status band". */
 const IN_FLIGHT_WINDOW = 6;
 
 /**
- * El contenido de la última línea de prompt, ya sin el cursor ni los bordes del recuadro.
+ * The contents of the last prompt line, with the cursor and box borders removed.
  */
 function lastPromptLine(lines: readonly string[]): string | undefined {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const raw = lines[index];
     if (raw === undefined) continue;
-    // El recuadro de la caja puede envolver la línea en bordes verticales.
+    // The input box can wrap the line in vertical borders.
     const line = stripSgr(raw).replace(/^\s*│/u, "").replace(/│\s*$/u, "").trim();
     for (const mark of PROMPT_MARKS) {
       if (!line.startsWith(mark)) continue;
       const content = line.slice(mark.length).trim();
-      // Descarta texto de sugerencia atenuado (placeholder) cuando la caja está vacía.
+      // Discards dim suggestion text (placeholder) when the box is empty.
       if (content !== "" && isEntirelyDim(raw, mark)) return "";
       return content;
     }
@@ -96,14 +96,14 @@ function lastPromptLine(lines: readonly string[]): string | undefined {
   return undefined;
 }
 
-/** Quita los códigos SGR para poder comparar el texto. */
+/** Strips SGR codes so the text can be compared. */
 function stripSgr(value: string): string {
   // eslint-disable-next-line no-control-regex
   return value.replace(/\u001b\[[0-9;]*m/gu, "");
 }
 
 /**
- * Verifica si el texto posterior al cursor contiene únicamente estilos atenuados (dim/placeholder).
+ * Checks whether the text after the cursor contains only dim (placeholder) styles.
  */
 function isEntirelyDim(raw: string, mark: string): boolean {
   const at = raw.indexOf(mark);

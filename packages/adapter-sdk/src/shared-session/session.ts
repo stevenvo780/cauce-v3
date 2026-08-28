@@ -38,33 +38,33 @@ export type { SharedSessionSpec } from "./session/identity.js";
 
 export interface EnsureOptions {
   readonly sleep: (ms: number) => Promise<void>;
-  /** Cancela el preflight antes de que una entrega toque la caja de entrada. */
+  /** Cancels the preflight before a delivery touches the input box. */
   readonly signal?: AbortSignal;
-  /** Cuánto se espera a que la TUI esté lista tras crearla. */
+  /** How long to wait for the TUI to be ready after creating it. */
   readonly readyTimeoutMs?: number;
-  /** Ancho/alto con que nace la sesión sin clientes enganchados. */
+  /** Width/height with which the session is born without attached clients. */
   readonly width?: number;
   readonly height?: number;
-  /** Función de registro para eventos de reanudación o incidencias. */
+  /** Logging function for resume events or incidents. */
   readonly log?: (detail: string) => void;
 }
 
 export interface EnsureResult {
   readonly ready: boolean;
-  /** True si esta llamada tuvo que crear la sesión (no existía). */
+  /** True if this call had to create the session (it did not exist). */
   readonly created: boolean;
-  /** PID del proceso del panel de la TUI, cuando se pudo leer. */
+  /** PID of the TUI pane's process, when it could be read. */
   readonly pid?: string;
-  /** Id exacto `$N` acreditado. Todo uso posterior de la TUI se dirige a él, nunca al nombre. */
+  /** Exact credited `$N` id. All later TUI use goes through it, never through the name. */
   readonly sessionId?: string;
-  /** Generación exacta acreditada (session/pane/PID) y comando observado para esa misma foto. */
+  /** Exact credited generation (session/pane/PID) and the command observed in that same snapshot. */
   readonly pane?: PaneHarnessIdentity;
   readonly detail: string;
-  /** El preflight fue interrumpido; no es una degradación ni autoriza a ejecutar el fallback. */
+  /** The preflight was interrupted; not a degradation and does not authorize running the fallback. */
   readonly cancelled?: boolean;
-  /** Causa del fallo durante el proceso de ensure. */
+  /** Cause of failure during the ensure process. */
   readonly failure?: EnsureFailure;
-  /** Indica si la sesión fue creada reanudando una conversación previa. */
+  /** Whether the session was created by resuming a prior conversation. */
   readonly resumed?: boolean;
 }
 
@@ -78,23 +78,23 @@ export function tuiTarget(sessionId: string): string {
 }
 
 /**
- * El directorio donde `claude` guarda los transcripts de un workspace.
+ * The directory where `claude` stores transcripts for a workspace.
  *
- * La regla la fija claude: sustituye cada `/` del cwd por `-`, así que `/workspace` da
- * `-workspace`. Se replica acá porque el adaptador tiene que leer ESE directorio y no hay ninguna
- * bandera que lo revele.
+ * The rule is fixed by claude: it replaces each `/` in the cwd with `-`, so `/workspace` becomes
+ * `-workspace`. Replicated here because the adapter has to read THAT directory and there is no
+ * flag that reveals it.
  */
 export function transcriptDirectory(home: string, workspace: string): string {
   return transcriptDirectoryIn(`${home}/.claude`, workspace);
 }
 
 /**
- * Igual, pero a partir del directorio de configuración EXACTO con el que va a correr la TUI.
+ * Same, but starting from the EXACT config directory the TUI will run with.
  *
- * Existe porque el sitio donde `claude` escribe los transcripts y el sitio donde el adaptador los
- * lee TIENEN que ser el mismo por construcción. Si alguien exporta `CLAUDE_CONFIG_DIR`, el panel lo
- * respeta (se lo pasamos en su argv) y la cosecha tiene que mirar allí, no en `~/.claude`. Derivar
- * los dos del mismo valor hace imposible que se separen.
+ * Exists because where `claude` writes transcripts and where the adapter reads them MUST be the
+ * same by construction. If someone exports `CLAUDE_CONFIG_DIR`, the pane honors it (we pass it
+ * on its argv) and the harvest must look there, not in `~/.claude`. Deriving both from the same
+ * value makes it impossible to drift them apart.
  */
 export function transcriptDirectoryIn(configDirectory: string, workspace: string): string {
   const slug = workspace.replace(/\/+$/u, "").replace(/\//gu, "-");
@@ -103,7 +103,7 @@ export function transcriptDirectoryIn(configDirectory: string, workspace: string
 }
 
 /**
- * Garantiza que la sesión compartida esté creada y lista para recibir comandos.
+ * Ensures the shared session is created and ready to receive commands.
  */
 export async function ensureSharedSession(
   tmux: TmuxController,
@@ -195,8 +195,8 @@ async function inspectExistingSession(
     && await repairLegacyDegradedWindow(tmux, sessionId, TUI_WINDOW, LEGACY_DEGRADED_WINDOW)) {
     const legacyPane = pane;
     if (signalAborted(options.signal)) return cancelledEnsure(false, sessionId);
-    // La sesión estaba enclavada por el renombrado de una versión anterior: la ventana existía
-    // pero con otro nombre, así que el adaptador la daba por muerta en cada entrega, para siempre.
+    // The session was locked in by the rename from a previous version: the window existed but with
+    // another name, so the adapter called it dead on every delivery, forever.
     identity = await verifyExistingSessionIdentity(tmux, spec, session, sessionId, options.signal);
     if ("cancelled" in identity) return cancelledEnsure(false, sessionId);
     if (!identity.ok) {
@@ -260,7 +260,7 @@ async function inspectExistingSession(
 }
 
 /**
- * Comprueba si existe una conversación previa reanudable.
+ * Checks whether a resumable prior conversation exists.
  */
 async function hasResumableConversation(
   spec: SharedSessionSpec,
@@ -280,10 +280,10 @@ async function hasResumableConversation(
 }
 
 /**
- * Un intento de arranque, con lo que hace falta para decidir si se puede reintentar.
+ * One startup attempt, with what is needed to decide whether it can be retried.
  *
- * `paneGone` es la pregunta que separa "esto se puede rehacer" de "esto hay que dejarlo quieto":
- * sólo se vuelve a intentar sobre un panel que YA no existe, nunca sobre uno vivo.
+ * `paneGone` is the question that separates "this can be redone" from "this must be left alone":
+ * retry only over a pane that is ALREADY gone, never over a live one.
  */
 type StartAttempt =
   | {
@@ -368,9 +368,9 @@ async function startTui(
         result: cancelledEnsure(created.created, created.sessionId),
       };
     }
-    // Ausencia total es el proceso de la TUI que salió al arrancar: se puede intentar el fallback.
-    // Un `$M` distinto con el mismo nombre (o nuestro `$N` renombrado aún vivo) es reemplazo: no se
-    // adopta, no se mata y no se vuelve a crear nada en esta llamada.
+    // Total absence is the TUI process that exited while starting: the fallback can be tried. A
+    // different `$M` with the same name (or our `$N` still alive under a new name) is a
+    // replacement: don't adopt, don't kill, don't recreate anything in this call.
     if (currentId === undefined && !ownIdStillAlive) {
       return {
         ready: false,
@@ -410,8 +410,8 @@ async function startTui(
     };
   }
   if (inspection.state !== "present") {
-    // Que la ventana `agente` no esté NO significa que la sesión murió: pudo ser renombrada o
-    // reemplazada por un proceso humano. Sólo la ausencia del `$N` entero habilita otro intento.
+    // The `agente` window not being there does NOT mean the session died: it may have been renamed
+    // or replaced by a human process. Only the absence of the whole `$N` enables another try.
     const paneGone = !await hasSessionId(tmux, created.sessionId);
     return {
       ready: false,
@@ -450,7 +450,7 @@ async function startTui(
       },
     };
   }
-  // Sin PID o si no llegó a estar lista, se reporta como no lista.
+  // Without a PID or if it didn't become ready, report as not ready.
   if (waited !== "ready") {
     return {
       ready: false, created: created.created, paneGone: false,
@@ -476,7 +476,7 @@ async function startTui(
 }
 
 /**
- * El prefijo `env K=V …` que fija el entorno del panel, ya escapado para `bash -lc`.
+ * The `env K=V …` prefix that sets the pane's environment, already escaped for `bash -lc`.
  */
 export function paneEnvironmentPrefix(
   environment: Readonly<Record<string, string>> | undefined,
@@ -493,13 +493,13 @@ export function paneEnvironmentPrefix(
   return { ok: true, prefix: `env ${parts.join(" ")} ` };
 }
 
-/** Comillas simples, que en POSIX no interpretan NADA. El valor nunca toca el parser del shell. */
+/** Single quotes, which on POSIX interpret NOTHING. The value never touches the shell parser. */
 function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, "'\\''")}'`;
 }
 
 /**
- * Los argumentos de reanudación, ya listos para pegarlos detrás del binario.
+ * Resume arguments, ready to be appended after the binary.
  */
 export function resumeArgumentSuffix(
   args: readonly string[] | undefined,
@@ -562,7 +562,7 @@ async function createSession(
     return { ok: false, created: false, failure: "session_absent", detail: resume.detail };
   }
 
-  // Lanza el binario del harness en la ventana principal.
+  // Launches the harness binary in the main window.
   const result = await tmux.run([
     "new-session", "-d", "-P", "-F", "#{session_id}", "-s", session, "-n", TUI_WINDOW,
     "-c", spec.workspace, "-x", width, "-y", height,
@@ -706,7 +706,7 @@ function tmuxError(stderr: string): string {
 }
 
 /**
- * Espera a que la TUI esté completamente inicializada y la caja de entrada disponible.
+ * Waits until the TUI is fully initialized and the input box is available.
  */
 async function waitForTui(
   tmux: TmuxController,
@@ -719,8 +719,8 @@ async function waitForTui(
     const pane = await capturePane(tmux, target, { styled: true });
     if (signalAborted(options.signal)) return "cancelled";
     if (!inputBoxState(pane).occupied) return "ready";
-    // Se pregunta por el panel sólo cuando la caja NO estaba libre: si estaba libre hay TUI viva y
-    // preguntar sobraría. Así el sondeo caro se paga únicamente mientras la TUI arranca.
+    // The pane is only asked when the box was NOT free: if it was free there is a live TUI and
+    // asking would be redundant. The expensive poll is paid only while the TUI is starting up.
     if (await panePid(tmux, target) === undefined) return "gone";
     if (signalAborted(options.signal)) return "cancelled";
     if (Date.now() >= deadline) return "timeout";

@@ -41,11 +41,11 @@ export interface AdapterCapabilities {
   readonly stable_alias_sessions?: true;
   readonly api_cancellation?: 'abort_signal';
   readonly renewable_delivery_claims_v1?: true;
-  /** Declara soporte para `ack_result.delegation_rejections` y `ack_result.chain_gate`. */
+  /** Declares support for `ack_result.delegation_rejections` and `ack_result.chain_gate`. */
   readonly delegation_feedback_v1?: true;
-  /** Acepta `self_role` en el sobre y lo emite como preámbulo de identidad. */
+  /** Accepts `self_role` in the envelope and emits it as the identity preamble. */
   readonly agent_identity_v1?: true;
-  /** Declara que el adaptador recibe `hello_ack.agent_profile` y lo sincroniza en los ficheros del arnés. */
+  /** Declares the adapter receives `hello_ack.agent_profile` and syncs it into the harness files. */
   readonly agent_profile_v1?: true;
   /** Accepts per-delivery runtime profile contract and emits consumption evidence upon completion. */
   readonly agent_profile_adoption_v1?: true;
@@ -124,11 +124,11 @@ export interface AckResultFrame {
   readonly status: DeliveryState;
   readonly applied: boolean;
   readonly receipt?: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
-  /** Salidas `messages` que NO se convirtieron en entrega. Sólo con `delegation_feedback_v1`. */
+  /** `messages` outputs that did NOT become a delivery. Only with `delegation_feedback_v1`. */
   readonly delegation_rejections?: readonly DelegationRejectionNotice[];
-  /** Identidad exacta de cada salida que sí produjo una entrega. Sólo con la misma capability. */
+  /** Exact identity of each output that DID produce a delivery. Only with the same capability. */
   readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
-  /** La rama quedó suspendida esperando a una persona. Sólo con `delegation_feedback_v1`. */
+  /** Branch suspended waiting for a person. Only with `delegation_feedback_v1`. */
   readonly chain_gate?: ChainGateNotice;
 }
 
@@ -179,8 +179,8 @@ export interface DeliveryEvent {
   /** Local-only marker; the transport maps it to a normal `started` ACK. */
   readonly claim_renewal?: true;
   /**
-   * Marca de intención de ejecución emitida tras la reserva de sesión y antes de invocar el harness.
-   * Viaja en el frame de ACK `started` para confirmar el inicio efectivo de ejecución.
+   * Execution intent mark emitted after session reservation and before invoking the harness.
+   * Travels in the `started` ACK frame to confirm execution effectively began.
    */
   readonly execution_started?: true;
   readonly output?: StructuredOutput;
@@ -229,15 +229,15 @@ export interface CommandInvocation {
 }
 
 /**
- * Marca emitida en stderr por los puentes antes de invocar la ejecución del modelo.
- * Permite atestiguar que el harness comenzó a ejecutar sin contaminar stdout.
+ * Mark emitted on stderr by bridges before invoking model execution.
+ * Lets us witness the harness began running without contaminating stdout.
  */
 export const HARNESS_START_MARKER = '<<cauce:harness-started>>';
 
 /**
- * Estrategia para determinar si el proceso del harness inició la ejecución:
- *  - `stdout-first-byte`: el CLI emite eventos durante el turno; cero bytes en stdout indica que no arrancó.
- *  - `stderr-marker`: el puente escribe `HARNESS_START_MARKER` en stderr antes de invocar la ejecución.
+ * Strategy for determining whether the harness process started execution:
+ *  - `stdout-first-byte`: the CLI emits events during the turn; zero bytes on stdout means it didn't start.
+ *  - `stderr-marker`: the bridge writes `HARNESS_START_MARKER` on stderr before invoking execution.
  */
 export type HarnessStartWitness =
   | { readonly kind: 'stdout-first-byte' }
@@ -249,11 +249,11 @@ export interface CommandRunRequest extends CommandInvocation {
   readonly signal: AbortSignal;
   /** Internal native session id; never logged or sent as a credential. */
   readonly sessionId?: string;
-  /** Testigo declarado por el harness. Ausente = el transporte no atestigua nada. */
+  /** Witness declared by the harness. Absent = the transport attests nothing. */
   readonly startWitness?: HarnessStartWitness;
   /**
-   * Observador opcional invocado una sola vez al cumplirse el testigo. No es una barrera de
-   * durabilidad: el engine fsynca su intención antes de invocar el harness.
+   * Optional observer invoked once when the witness fires. Not a durability barrier: the engine
+   * fsyncs its intent before invoking the harness.
    */
   readonly onHarnessStart?: () => void;
 }
@@ -266,10 +266,10 @@ export interface CommandRunResult {
   readonly timedOut: boolean;
   readonly cancelled: boolean;
   /**
-   * Veredicto del testigo de arranque. `true` se cumplió, `false` NO se cumplió (prueba positiva
-   * de que el turno no empezó), `undefined` este transporte no atestigua —el runner de sesión
-   * compartida y el cliente HTTP de OpenClaw no ven bytes del proceso—. `undefined` se trata
-   * siempre como ambiguo.
+   * Start-witness verdict. `true` it fired, `false` it did NOT (positive proof the turn did not
+   * start), `undefined` this transport attests nothing —the shared-session runner and the
+   * OpenClaw HTTP client don't see the process's bytes—. `undefined` is always treated as
+   * ambiguous.
    */
   readonly harnessStarted?: boolean;
 }
@@ -284,13 +284,13 @@ export interface HarnessAttachment {
 }
 
 export interface CommandRunner {
-  /** Indica si este transporte puede observar el flujo de bytes para verificar `startWitness`. */
+  /** Whether this transport can observe the byte stream to verify `startWitness`. */
   readonly witnessesHarnessStart?: boolean;
   run(request: CommandRunRequest): Promise<CommandRunResult>;
 }
 
 export interface SafeRunnerLog {
-  /** Evento operacional del runner de procesos. */
+  /** Operational event from the process runner. */
   readonly event: 'spawn' | 'exit' | 'terminate' | 'orphaned_pipes';
   readonly harness: HarnessId;
   readonly exitCode?: number | null;
@@ -334,21 +334,21 @@ export interface AdapterLog {
     | 'claim_renewal_end'
     | 'connection_error'
     | 'outbound_frame_invalid'
-    /** Frame entrante del gateway rechazado por esquema y descartado. */
+    /** Inbound gateway frame rejected by schema and dropped. */
     | 'inbound_frame_invalid'
-    /** Turno ejecutado por vía degradada o con sesión compartida no disponible. */
+    /** Turn ran on the fallback path or with the shared session unavailable. */
     | 'shared_session_degraded'
-    /** Resultado de la sincronización del perfil en los ficheros del arnés al conectar. */
+    /** Result of syncing the profile into the harness files on connect. */
     | 'profile_seed'
-    /** Fallo o anomalía al restaurar la conversación en el panel de sesión compartida. */
+    /** Failure or anomaly while restoring the conversation in the shared-session pane. */
     | 'shared_session_resume'
-    /** Testigo de arranque desactivado debido a ausencia de la marca en el puente configurado. */
+    /** Start witness disabled because the configured bridge does not emit the mark. */
     | 'harness_start_witness_disabled';
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;
   alias?: string;
-  /** Qué harness ejecuta este adaptador. No es secreto y nunca lleva argumentos ni prompt. */
+  /** Which harness runs this adapter. Not secret and never carries args or prompt. */
   harness?: HarnessId;
   attempt?: number;
   error_code?: string;
@@ -386,7 +386,7 @@ export interface HarnessDefinition {
   readonly baseArgs: readonly string[];
   readonly capabilities: AdapterCapabilities;
   readonly sessionStrategy: SessionStrategy;
-  /** Testigo para atestiguar el inicio de ejecución del proceso. */
+  /** Witness for attesting that the process has started execution. */
   readonly startWitness?: HarnessStartWitness;
   sessionArgs(context: HarnessExecutionContext): readonly string[];
   parse(stdout: string): ParsedHarnessOutput;

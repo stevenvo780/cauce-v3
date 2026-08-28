@@ -73,8 +73,8 @@ class WebSocketConsumerConnection implements ConsumerConnection {
     private readonly diagnostics: OutboundDiagnostics = SILENT_DIAGNOSTICS,
   ) {
     /**
-     * Descarta frames que no cumplan el esquema de entrada registrando el diagnóstico correspondiente,
-     * sin interrumpir la conexión ni las demás entregas en curso.
+     * Discards frames that fail the inbound schema, recording the corresponding diagnostic
+     * without interrupting the connection or the other in-flight deliveries.
      */
     socket.on('message', (data, isBinary) => {
       if (isBinary) {
@@ -156,8 +156,8 @@ class WebSocketConsumerConnection implements ConsumerConnection {
   }
 
   /**
-   * Un frame de servidor descartado. Mismo cuidado que en la salida: se nombran los campos que
-   * el esquema rechazó, nunca el cuerpo del frame — el `body` de una entrega es el mensaje.
+   * A dropped server frame. Same care as on the way out: name the fields the schema rejected,
+   * never the frame body — a delivery's `body` is the message.
    */
   private reportInvalidInboundFrame(frame: unknown, error: unknown): void {
     const issues = frameValidationIssues(error);

@@ -11,17 +11,17 @@ const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
 
 /**
- * Lo que el engine le pasa al harness para ubicar la sesión: la clave derivada del origen y el
- * carril. Se lleva tal cual al request de ejecución, así que las dos cosas que deciden qué
- * candado y qué sesión nativa se usan viajan siempre juntas y no se pueden desincronizar.
+ * What the engine passes to the harness to locate the session: the origin-derived key and the
+ * lane. It travels as-is into the execution request, so the two things that decide which lock
+ * and which native session to use always travel together and cannot drift.
  */
 export type HarnessSessionRequestScope = {
   sessionKey?: string;
   sessionLane?: SessionLane;
   /**
-   * La MISMA conversación que la clave hashea, pero en claro. Viaja hasta `HarnessAdapter` para
-   * que quede escrita junto al `native_id` en `sessions.json`: el hash es irreversible y sin
-   * esto nadie puede volver a decir de qué canal salió cada sesión.
+   * The SAME conversation that the key hashes, but in clear text. Travels to `HarnessAdapter`
+   * so it's written alongside the `native_id` in `sessions.json`: the hash is irreversible and
+   * without this nobody can later say which channel each session came from.
    */
   sessionOrigin?: SessionOrigin;
 };
@@ -82,19 +82,19 @@ function originalDelegatedPrompt(delivery: Delivery, store: DurableStore): strin
 }
 
 /**
- * Techo por rama del bloque `branch_progress`. Las respuestas que se citan son propias de este
- * adaptador, así que su tamaño lo decide el propio agente: sin techo, un abanico de seis ramas
- * verbosas multiplicaría por seis el prompt de cada continuación siguiente. 2 KiB alcanzan de
- * sobra para la línea de conclusión que hay que consolidar, que es para lo único que están.
+ * Cap per branch of the `branch_progress` block. The replies quoted here are this adapter's
+ * own, so their size is the agent's call: without a cap, six verbose branches would multiply
+ * the prompt of each following continuation by six. 2 KiB is plenty for the conclusion line
+ * that has to be consolidated, which is the only thing they're for.
  */
 const MAX_BRANCH_PROGRESS_REPLY_BYTES = 2048;
 
 /**
- * Recorta por punto de código —nunca parte un carácter multibyte— y conserva PRINCIPIO Y FINAL.
+ * Truncates by code point —never splits a multibyte character— and preserves BOTH ENDS.
  *
- * Recortar sólo la cola sería el peor recorte posible acá: la conclusión de una respuesta suele
- * ser su última línea, que es justo el dato que hay que consolidar. Con las dos puntas, un
- * recorte se lleva el desarrollo y deja el encabezado y el cierre.
+ * Truncating only the tail would be the worst cut here: a reply's conclusion is usually its
+ * last line, which is exactly the data to consolidate. With both ends, a truncation drops the
+ * middle and keeps the banner and the closing.
  */
 function boundedReply(value: string, maxBytes = MAX_BRANCH_PROGRESS_REPLY_BYTES): string {
   if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
@@ -132,17 +132,17 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
   if (originalRequest === undefined) return delegatedResult;
   const outcome = typeof delivery.body.outcome === "string" ? delivery.body.outcome : "unknown";
   /**
-   * El dato que faltaba, y por el que fallaban los dos defectos a la vez.
+   * The data that was missing, and which both defects failed because of.
    *
-   * Un `agent.response` llegaba con el pedido original y UNA rama, sin ninguna noticia de las
-   * otras. Con eso el agente no podía consolidar (escribía FALTA para las hermanas, incluso
-   * cuando el agregado ya estaba delante) ni podía saber que no hacía falta re-pinguear a nadie
-   * (re-delegaba a los que creía ausentes). Las dos preguntas las contesta el inbox local, y
-   * `branchProgressForResponse` sólo mira lo que este mismo adaptador escribió.
+   * An `agent.response` arrived with the original request and ONE branch, with no news of the
+   * others. With that the agent could not consolidate (it wrote MISSING for the sisters even
+   * when the aggregate was already in front of it) nor could it know there was no need to
+   * re-ping anyone (it re-delegated to those it believed absent). Both questions are answered
+   * by the local inbox; `branchProgressForResponse` only looks at what this adapter wrote.
    *
-   * No sustituye a la sesión nativa, la respalda: un arnés sin memoria —`claude --print` sin
-   * `--resume`, o una sesión compartida degradada— recibe igual el agregado. Y no aparece en
-   * abanicos de una rama, que son la mayoría de las delegaciones.
+   * It does not replace the native session, it backs it up: a memoryless harness —`claude
+   * --print` without `--resume`, or a degraded shared session— still gets the aggregate. And
+   * it doesn't appear in single-branch fanouts, which are most delegations.
    */
   const branches = store.branchProgressForResponse(delivery);
   const responseCorrelation = typeof delivery.body.correlation === "object"
@@ -214,12 +214,12 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
 }
 
 /**
- * Identidad estable de la conversación basada en origen, canal, tenant receptor y ámbito.
+ * Stable conversation identity based on origin, channel, recipient tenant and scope.
  */
 const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
 
 /**
- * Identificadores de sesión efímeros que se descartan para no fragmentar sesiones nativas.
+ * Ephemeral session identifiers discarded to avoid fragmenting native sessions.
  */
 const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
 
@@ -227,7 +227,7 @@ interface ConversationScope {
   readonly adapter: string;
   readonly channel: string;
   readonly conversation_id: string;
-  /** Alcance dentro de la conversación (hilo/usuario) según lo declare el puente; nunca un login. */
+  /** Scope inside the conversation (thread/user) as declared by the bridge; never a login. */
   readonly scope: string | null;
 }
 
@@ -252,7 +252,7 @@ function conversationScope(delivery: Delivery): ConversationScope | undefined {
   }
 
   /**
-   * Alcance de sesión derivado del actor autenticado o tenant del par para tráfico de agentes.
+   * Session scope derived from the authenticated actor or peer tenant for agent traffic.
    */
   return {
     adapter: channel,
@@ -273,24 +273,24 @@ export function sessionFromDelivery(
   const scope = JSON.stringify({
     namespace: CONVERSATION_SESSION_NAMESPACE,
     recipient: {
-      // Identidad propia del adaptador (configuración local), nunca la del emisor.
+      // Adapter's own identity (local config), never the sender's.
       tenant_id: recipientTenantId ?? null,
       alias: delivery.recipient_alias,
     },
     conversation,
   });
   /**
-   * La descripción en claro de la conversación, para que el store la guarde al lado del
-   * `native_id`. Hasta hoy esto se calculaba, se hasheaba y se tiraba, y por eso `cauce
-   * <alias>` no podía distinguir el DM de Telegram de la publicación de consola.
+   * The clear-text description of the conversation, so the store keeps it next to the
+   * `native_id`. Until today this was computed, hashed and discarded, which is why `cauce
+   * <alias>` could not distinguish a Telegram DM from a console post.
    *
-   * NO va `conversation.scope` (el hilo/usuario que declara el puente): sigue entrando al hash
-   * —o sea que sigue separando sesiones— pero no se persiste, porque no aporta nada a "de qué
-   * canal vino" y `sessions.json` tiene tope de tamaño.
+   * `conversation.scope` (the thread/user declared by the bridge) does NOT go here: it still
+   * enters the hash —so it still separates sessions— but is not persisted, because it adds
+   * nothing to "which channel this came from" and `sessions.json` has a size cap.
    *
-   * `sanitizeSessionOrigin` puede devolver `undefined`, y entonces no se escribe nada: una
-   * conversación con forma inesperada se queda sin etiqueta, que es lo honesto, en vez de
-   * arriesgar el fichero entero.
+   * `sanitizeSessionOrigin` may return `undefined`, and then nothing is written: an oddly
+   * shaped conversation goes unlabeled, which is the honest thing, instead of risking the
+   * whole file.
    */
   const sessionOrigin = sanitizeSessionOrigin({
     adapter: conversation.adapter,
@@ -372,8 +372,8 @@ export function executionBudgetFor(
 }
 
 /**
- * Extrae y acota el rol declarado del alias (`agents.role_brief`) de la entrega.
- * Devuelve un objeto vacío si no está definido.
+ * Extracts and clamps the alias's declared role (`agents.role_brief`) from the delivery.
+ * Returns an empty object if not defined.
  */
 export function selfRoleFromDelivery(delivery: Delivery): { self_role?: string } {
   const forwardCompatible = delivery as Delivery & { readonly self_role?: unknown };

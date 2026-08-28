@@ -10,25 +10,25 @@ export function esInterrupcionDelDuenio(detalle: string | undefined): boolean {
 export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
   if (detalle === undefined || detalle === "") return false;
   return [
-    // Error en configuración inicial
+    // Error in initial config
     /error loading config\.toml/i,
     /unknown variant `/i,
-    // Error en resolución o reanudación de sesión
+    // Error in session resolution or resume
     /thread\/resume[^\n]*fail/i,
     /no rollout found/i,
     /session id[^\n]*already in use/i,
     /no conversation found with session id/i,
-    // Binario ausente o argumentos inválidos
+    // Missing binary or invalid arguments
     /\bcommand not found\b/i,
     /spawn[^\n]*\bENOENT\b/i,
     /\b(?:unexpected argument|unrecognized (?:option|argument))\b/i,
-    // Fallo de inicialización de puente stdin
+    // stdin bridge initialization failure
     /stdin bridge failed[^\n]*(?:modules|import|cannot find)/i,
   ].some((patron) => patron.test(detalle));
 }
 
 /**
- * Determina con certeza si el proceso del arnés falló antes de iniciar la ejecución del turno.
+ * Determines with certainty whether the harness process failed before starting the turn execution.
  */
 export function nuncaEmpezoElTurno(result: CommandRunResult, detalle: string | undefined): boolean {
   if (result.stdout.length > 0) return false;
@@ -38,18 +38,18 @@ export function nuncaEmpezoElTurno(result: CommandRunResult, detalle: string | u
 }
 
 /**
- * Verifica si el testigo del transporte confirma que la ejecución del arnés no llegó a iniciarse.
+ * Checks whether the transport's witness confirms that the harness's execution never started.
  */
 export function elTestigoDiceQueNoEmpezo(result: CommandRunResult): boolean {
   return result.stdout.length === 0 && result.harnessStarted === false;
 }
 
 /**
- * ¿Este aborto es el apagado del adaptador?
+ * Is this abort the adapter's shutdown?
  *
- * `AdapterEngine.stop()` aborta con `AdapterError("SHUTDOWN", …, true)`: el motivo viaja en el
- * `reason` del `AbortSignal` y ahí sigue estando cuando el transporte lo recoge. Reiniciar un
- * adaptador es un fallo de INFRAESTRUCTURA, no un veredicto sobre el trabajo.
+ * `AdapterEngine.stop()` aborts with `AdapterError("SHUTDOWN", …, true)`: the reason travels on
+ * the `AbortSignal`'s `reason` and is still there when the transport picks it up. Restarting an
+ * adapter is an INFRASTRUCTURE failure, not a verdict on the work.
  */
 export function abortadoPorApagado(signal: AbortSignal): boolean {
   const reason: unknown = signal.reason;
@@ -57,11 +57,11 @@ export function abortadoPorApagado(signal: AbortSignal): boolean {
 }
 
 /**
- * Quita la marca de arranque del stderr antes de que se convierta en causa visible.
+ * Removes the start mark from stderr before it becomes a visible cause.
  *
- * La marca es protocolo interno entre el puente y el runner; el operador que lee `last_error`
- * no tiene por qué verla, y peor: contaría como texto útil y desplazaría la causa real dentro
- * del presupuesto de caracteres.
+ * The mark is internal protocol between the bridge and the runner; the operator reading
+ * `last_error` has no need to see it, and worse: it would count as useful text and push the real
+ * cause out of the character budget.
  */
 export function sinMarcaDeArranque(stderr: string): string {
   if (!stderr.includes(HARNESS_START_MARKER)) return stderr;
@@ -84,7 +84,7 @@ export function abortReason(signal: AbortSignal): Error {
 }
 
 /**
- * Describe el motivo por el cual la ejecución fue abortada, para su inclusión en logs y diagnóstico.
+ * Describes the reason execution was aborted, for inclusion in logs and diagnostics.
  */
 function describeAbortReason(signal: AbortSignal): string {
   if (!signal.aborted) return "";
@@ -113,59 +113,59 @@ export function executionError(error: unknown): AdapterError {
 }
 
 /**
- * Presupuesto de bytes de stderr a conservar para el detalle de error del arnés.
+ * Stderr byte budget kept for the harness error detail.
  */
 const STDERR_DETAIL_BUDGET = 1_200;
 
-/** Los motivos de aborto los redacta el SDK y son de una línea; no necesitan el presupuesto grande. */
+/** Abort reasons are written by the SDK and are one line; they don't need the large budget. */
 const ABORT_REASON_DETAIL_BUDGET = 300;
 
 /**
- * Qué fracción del presupuesto se gasta en el principio del texto. El resto va al final.
+ * What fraction of the budget is spent on the head of the text. The rest goes to the tail.
  *
- * No es simetría por gusto: en un stderr largo el principio trae el encabezado del error y el
- * FINAL trae la causa raíz —la última línea de un stack, el "caused by", el hint del parser—.
- * Recortar sólo por la cabeza tira sistemáticamente la mitad que sirve.
+ * Not symmetry for its own sake: in a long stderr the head carries the error banner and the TAIL
+ * carries the root cause —last line of a stack, "caused by", the parser hint—. Truncating only
+ * from the head systematically drops the useful half.
  */
 const STDERR_HEAD_SHARE = 0.6;
 
 /**
  * Sanitize process output by removing secret-like patterns and truncating.
  *
- * La redacción corre ANTES del recorte. Eso NO es suficiente por sí solo: subir el presupuesto
- * de 100 a 1200 bytes y además emitir la COLA —donde caen los volcados de entorno y de config—
- * amplía mucho lo que puede escaparse, y `last_error` termina en la base, que leen los agentes.
- * Por eso los patrones de abajo cubren las cuatro formas que la versión anterior dejaba pasar:
+ * Redaction runs BEFORE truncation. That alone is NOT enough: raising the budget from 100 to 1200
+ * bytes AND emitting the TAIL —where env and config dumps land— greatly widens what can leak,
+ * and `last_error` ends up in the database, which the agents read. That's why the patterns
+ * below cover the four forms the previous version let through:
  *
- *   1. `ANTHROPIC_API_KEY=…`  — un `\b` delante de `api_key` no ancla, porque `_` es carácter
- *      de palabra y no hay frontera dentro de `ANTHROPIC_API_KEY`. Se admite prefijo de palabra.
- *   2. `Authorization: Bearer sk-…` — `[^\s]+` se comía `Bearer` y dejaba el token en claro.
- *      Se consume el esquema (Bearer/Basic/Token) antes del valor.
- *   3. `postgres://usuario:clave@host` — no había ningún patrón para credenciales en URL.
- *   4. `{"api_key":"…"}` — la comilla entre la clave y los dos puntos rompía el patrón.
+ *   1. `ANTHROPIC_API_KEY=…` — a `\b` before `api_key` does not anchor, because `_` is a word
+ *      character and there is no boundary inside `ANTHROPIC_API_KEY`. Word prefix is admitted.
+ *   2. `Authorization: Bearer sk-…` — `[^\s]+` used to swallow `Bearer` and leave the token in
+ *      the clear. The scheme (Bearer/Basic/Token) is consumed before the value.
+ *   3. `postgres://user:pass@host` — there was no pattern for URL credentials.
+ *   4. `{"api_key":"…"}` — the quote between the key and the colon broke the pattern.
  *
- * Y como red final, se redactan los prefijos de credencial conocidos aunque aparezcan sueltos,
- * sin clave que los nombre.
+ * As a final net, known credential prefixes are redacted even when they appear bare, without
+ * a key naming them.
  */
 export function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = STDERR_DETAIL_BUDGET): string {
   if (!stderr || stderr.trim().length === 0) return "";
 
   const KEYWORD = String.raw`(?:api[_-]?key|api[_-]?secret|client[_-]?secret|secret|password|passwd|pwd|token|bearer|authorization|x-api-key|aws_access_key_id|aws_secret_access_key|(?:oauth|refresh|access|id)[_-]?token)`;
-  // Prefijo de palabra opcional (ANTHROPIC_, GITHUB_, …) y comillas opcionales alrededor de la clave.
+  // Optional word prefix (ANTHROPIC_, GITHUB_, …) and optional quotes around the key.
   const KEY = String.raw`[\w.-]*${KEYWORD}["']?`;
-  // Esquema HTTP opcional delante del valor, para no perderlo dentro de `Bearer <token>`.
+  // Optional HTTP scheme before the value, so we don't lose it inside `Bearer <token>`.
   const SCHEME = String.raw`(?:\s*(?:Bearer|Basic|Token|Digest))?`;
 
   const sanitized = stderr
-    // clave = valor  ·  "clave": "valor"  ·  Authorization: Bearer <token>
+    // key = value  ·  "key": "value"  ·  Authorization: Bearer <token>
     .replace(new RegExp(String.raw`${KEY}\s*[:=]${SCHEME}\s*["']?[^\s"',;}\]]+`, "gi"), "[REDACTED]")
-    // credenciales embebidas en URL: esquema://usuario:clave@host
+    // credentials embedded in a URL: scheme://user:pass@host
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+):[^\s@]+@/gi, "$1:[REDACTED]@")
-    // prefijos de credencial conocidos, aunque no los nombre ninguna clave
+    // known credential prefixes, even when no key names them
     .replace(/\b(?:sk-ant-|sk-proj-|sk-|ghp_|gho_|ghs_|ghu_|github_pat_|napi_|xox[baprs]-|AIza|glpat-)[A-Za-z0-9_-]{16,}/g, "[REDACTED]")
-    // JWT suelto (tres segmentos base64url separados por puntos)
+    // bare JWT (three base64url segments separated by dots)
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[REDACTED]")
-    // clave privada PEM: se colapsa el cuerpo entero
+    // PEM private key: the whole body is collapsed
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED]")
     .trim();
 
@@ -173,11 +173,11 @@ export function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = S
 }
 
 /**
- * Recorte "primeros N … [k omitidos] … últimos M", que conserva las dos puntas del texto.
+ * "First N … [k omitted] … last M" truncation, which preserves both ends of the text.
  *
- * El marcador se dimensiona con `text.length` —cota superior de los dígitos que puede tener
- * el conteo real de omitidos—, así que el marcador definitivo nunca es más largo que el
- * provisional y el resultado jamás excede `maxLengthBytes`.
+ * The marker is sized with `text.length` —upper bound on the digits the actual omitted count
+ * can have—, so the final marker is never longer than the provisional one, and the result never
+ * exceeds `maxLengthBytes`.
  */
 function clampPreservingTail(text: string, maxLengthBytes: number): string {
   if (text.length <= maxLengthBytes) return text;

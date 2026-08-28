@@ -21,22 +21,22 @@ export interface HarnessRequestContext {
   readonly message_type: string;
   readonly routing_targets: readonly HarnessRoutingTarget[];
   /**
-   * Rol declarado del alias (`agents.role_brief`). Ausente = sin rol declarado.
+   * Alias's declared role (`agents.role_brief`). Absent = no role declared.
    */
   readonly self_role?: string;
   /**
-   * Resumen del texto fijo tal y como está escrito HOY en el fichero de instrucciones del arnés
-   * dentro del contenedor, medido por quien puede mirarlo. Cuando coincide con el texto que este
-   * adaptador emitiría, el bloque fijo NO se repite en el sobre.
+   * Summary of the fixed text as it is written TODAY in the harness's instructions file inside
+   * the container, measured by whoever can look at it. When it matches the text this adapter
+   * would emit, the fixed block is NOT repeated in the envelope.
    *
-   * Ausente = comportamiento de siempre, sobre entero. Ver `contexto-fijo.ts` para el porqué de
-   * que sea un resumen y no una bandera.
+   * Absent = the usual behavior, whole envelope. See `contexto-fijo.ts` for why this is a
+   * summary and not a flag.
    */
   readonly context_seal?: SelloDeContextoFijo;
   /**
-   * Perfil gestionado leído de los bytes vivos justo antes del turno. En sesiones compartidas la
-   * TUI pudo arrancar horas antes de la última edición; inyectarlo evita afirmar que adoptó un
-   * fichero que ese proceso nunca recargó.
+   * Managed profile read from live bytes just before the turn. In shared sessions the TUI may
+   * have launched hours before the latest edit; injecting it avoids claiming it adopted a file
+   * that process never reloaded.
    */
   readonly runtime_profile?: RuntimeProfileMeasurement;
 }
@@ -67,11 +67,11 @@ export interface HarnessAdapterOptions {
   /** Exact Kant/OpenCode-only opt-in for the canonical native-session pointer. */
   readonly canonicalOpenCodeSession?: boolean;
   /**
-   * Resuelve las variables de entorno de credenciales rotativas antes de cada ejecución.
+   * Resolves rotating credential environment variables before each execution.
    */
   readonly resolveCredentialEnv?: () => Promise<Readonly<Record<string, string>>>;
   /**
-   * Configuración de sesión compartida cuando está habilitada para el alias.
+   * Shared session configuration when enabled for the alias.
    */
   readonly sharedSession?: {
     readonly alias: string;
@@ -81,7 +81,7 @@ export interface HarnessAdapterOptions {
 }
 
 /**
- * Carriles de sesión para separar la atención a personas de la interacción entre agentes.
+ * Session lanes to separate attention to people from agent-to-agent interaction.
  */
 export type SessionLane = "human" | "agent";
 
@@ -90,12 +90,12 @@ export interface HarnessExecuteRequest {
   readonly attachments?: readonly HarnessAttachment[];
   readonly context?: HarnessRequestContext;
   readonly sessionKey?: string;
-  /** Carril de sesión. Ausente = `human`, que es el comportamiento de siempre. */
+  /** Session lane. Absent = `human`, the usual behavior. */
   readonly sessionLane?: SessionLane;
   /**
-   * Descripción en claro de la conversación que produjo `sessionKey`. Sólo se persiste; no
-   * cambia qué sesión se elige ni qué candado se toma. Ausente cuando el sobre no traía
-   * conversación (`fallbackSessionKey`), y entonces la entrada queda sin `origin`.
+   * Clear-text description of the conversation that produced `sessionKey`. Persisted only; does
+   * not change which session is chosen or which lock is taken. Absent when the envelope carried
+   * no conversation (`fallbackSessionKey`), and then the entry has no `origin`.
    */
   readonly sessionOrigin?: SessionOrigin;
   readonly sessionReservation?: HarnessSessionReservation;
@@ -103,8 +103,8 @@ export interface HarnessExecuteRequest {
   readonly signal: AbortSignal;
   readonly origin?: RelayOrigin;
   /**
-   * Observador opcional del testigo. Nunca gobierna la durabilidad ni el reintento: el engine
-   * cruza ese gate antes de llamar a `execute`.
+   * Optional witness observer. Never governs durability or retry: the engine crosses that gate
+   * before calling `execute`.
    */
   readonly onHarnessStart?: () => void;
   /**

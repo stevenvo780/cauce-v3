@@ -7,7 +7,7 @@ import type { TranscriptReader, TranscriptSlice } from "./types.js";
 export { stripJsonFence } from "./envelope.js";
 
 /**
- * Lector y analizador de transcripts JSONL generados por Claude.
+ * Reader and analyzer for JSONL transcripts produced by Claude.
  */
 
 export interface TranscriptEntry {
@@ -16,7 +16,7 @@ export interface TranscriptEntry {
   readonly uuid?: unknown;
   readonly parentUuid?: unknown;
   /**
-   * El padre real cuando `parentUuid` es `null` por una compactación.
+   * The real parent when `parentUuid` is `null` because of a compaction.
    */
   readonly logicalParentUuid?: unknown;
   readonly compactMetadata?: unknown;
@@ -25,7 +25,7 @@ export interface TranscriptEntry {
   readonly message?: unknown;
 }
 
-/** Cota de seguridad al subir la cadena de padres: un transcript corrupto no puede colgar el turno. */
+/** Safety cap when walking up the parent chain: a corrupt transcript must not hang the turn. */
 const MAX_ANCESTRY_DEPTH = 10_000;
 
 export async function transcriptFiles(directory: string): Promise<readonly string[]> {
@@ -38,7 +38,7 @@ export async function transcriptFiles(directory: string): Promise<readonly strin
   return names.filter((name) => name.endsWith(".jsonl")).map((name) => join(directory, name));
 }
 
-/** Lee el archivo de transcript JSONL separando las entradas nuevas posteriores al offset indicado. */
+/** Reads the JSONL transcript file, splitting out the new entries past the given offset. */
 export async function readTranscriptSince(
   file: string,
   offset: number,
@@ -65,7 +65,7 @@ export async function readTranscriptSince(
         if (start >= offset) appended.push(entry);
       }
     } catch {
-      // Línea a medio escribir: la TUI todavía la está volcando.
+      // Half-written line: the TUI is still flushing it.
     }
   }
   return { entries, appended };
@@ -75,7 +75,7 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** Extrae el texto de una entrada de usuario del transcript. */
+/** Extracts the text of a user entry from the transcript. */
 export function userText(entry: TranscriptEntry): string | undefined {
   const message = entry.message;
   if (typeof message !== "object" || message === null) return undefined;
@@ -93,7 +93,7 @@ export function userText(entry: TranscriptEntry): string | undefined {
   return undefined;
 }
 
-/** El texto visible de una entrada del asistente. */
+/** The visible text of an assistant entry. */
 export function assistantText(entry: TranscriptEntry): string | undefined {
   const message = entry.message;
   if (typeof message !== "object" || message === null) return undefined;
@@ -115,7 +115,7 @@ function stopReason(entry: TranscriptEntry): string | undefined {
   return asString((message as { stop_reason?: unknown }).stop_reason);
 }
 
-/** Localiza la entrada de usuario en el transcript cuyo texto coincide exactamente con el prompt. */
+/** Locates the user entry in the transcript whose text exactly matches the prompt. */
 export function findInjectedTurn(
   entries: readonly TranscriptEntry[],
   promptText: string,
@@ -133,7 +133,7 @@ export function findInjectedTurn(
   return undefined;
 }
 
-/** Comprueba si una entrada de asistente desciende genealógicamente del UUID del usuario. */
+/** Checks whether an assistant entry descends genealogically from the user's UUID. */
 export function descendsFrom(
   byUuid: ReadonlyMap<string, TranscriptEntry>,
   entry: TranscriptEntry,
@@ -141,8 +141,8 @@ export function descendsFrom(
   positions?: ReadonlyMap<string, number>,
 ): boolean {
   const seen = new Set<string>();
-  // Si la subida cruza una compactación, se recuerda DÓNDE: es el puente que permite decidir por
-  // posición cuando claude deja la cadena lógica rota. Ver `crossedCompaction` más abajo.
+// If the walk crosses a compaction, its position is remembered: it's the bridge that lets us
+    // decide by position when claude leaves the logical chain broken. See `crossedCompaction` below.
   let compactionAt: number | undefined;
   let current: string | undefined = parentOf(entry);
   for (let depth = 0; depth < MAX_ANCESTRY_DEPTH && current !== undefined; depth += 1) {
@@ -161,7 +161,7 @@ export function descendsFrom(
 }
 
 /**
- * Comprueba si el ancestro precede a una frontera de compactación en el transcript.
+ * Checks whether the ancestor precedes a compaction boundary in the transcript.
  */
 function crossedCompaction(
   positions: ReadonlyMap<string, number> | undefined,
@@ -174,7 +174,7 @@ function crossedCompaction(
 }
 
 /**
- * Posición de la primera aparición de cada uuid en el transcript.
+ * Position of the first occurrence of each uuid in the transcript.
  */
 export function positionByUuid(
   entries: readonly TranscriptEntry[],
@@ -188,7 +188,7 @@ export function positionByUuid(
 }
 
 /**
- * Obtiene el UUID padre de una entrada, usando logicalParentUuid si parentUuid es nulo.
+ * Gets the parent UUID of an entry, using logicalParentUuid if parentUuid is null.
  */
 function parentOf(entry: TranscriptEntry): string | undefined {
   return asString(entry.parentUuid) ?? asString(entry.logicalParentUuid);
@@ -196,14 +196,14 @@ function parentOf(entry: TranscriptEntry): string | undefined {
 
 export interface CompactionEvent {
   readonly uuid: string;
-  /** `auto` (automático) o `manual` (`/compact`). */
+  /** `auto` (automatic) or `manual` (`/compact`). */
   readonly trigger: string;
   readonly preTokens?: number;
   readonly postTokens?: number;
 }
 
 /**
- * Extrae eventos de compactación entre las entradas provistas.
+ * Extracts compaction events among the given entries.
  */
 export function compactBoundaries(
   entries: readonly TranscriptEntry[],
@@ -229,7 +229,7 @@ export function compactBoundaries(
 }
 
 /**
- * Índice por uuid quedándose con la primera aparición de cada uno.
+ * Index by uuid keeping only the first occurrence of each one.
  */
 export function indexByUuid(
   entries: readonly TranscriptEntry[],
@@ -243,7 +243,7 @@ export function indexByUuid(
 }
 
 /**
- * La respuesta final del turno que inyectamos.
+ * The final answer of the turn we injected.
  */
 export function findFinalAssistant(
   entries: readonly TranscriptEntry[],
@@ -266,7 +266,7 @@ export function findFinalAssistant(
 }
 
 /**
- * Busca un sobre estructurado correlacionado en las respuestas del asistente del transcript.
+ * Searches the assistant responses in the transcript for a correlated structured envelope.
  */
 export function findEnvelopeTurn(
   entries: readonly TranscriptEntry[],
@@ -289,7 +289,7 @@ export function findEnvelopeTurn(
 }
 
 /**
- * Crea un `TranscriptReader` para procesar transcripts JSONL de Claude.
+ * Creates a `TranscriptReader` for processing Claude JSONL transcripts.
  */
 export function claudeTranscript(
   configDirectory: string,

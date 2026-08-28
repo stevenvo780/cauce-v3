@@ -14,14 +14,14 @@ import {
 } from "./identity.js";
 
 /**
- * Ejecuta una mutación sólo si tmux evalúa la generación dentro de la MISMA orden de servidor.
+ * Runs a mutation only if tmux evaluates the generation within the SAME server command.
  *
- * Un `display-message` seguido de `send-keys` tiene TOCTOU: `respawn-pane` conserva `%N`. `if-shell
- * -F` evalúa PID/session/pane y encola la mutación como una sola orden del servidor. Cada rama
- * señala un canal `wait-for` criptográfico distinto: `wait-for` no escribe en la UI ni posee un
- * hook `after-*` en tmux 3.4. Esto importa porque tanto `run-shell` fallido como
- * `display-message -p` y `list-panes -F` pueden activar view/copy-mode, inyectar teclas o adulterar
- * stdout mediante sus hooks aun cuando el CAS rechazó la mutación.
+ * `display-message` followed by `send-keys` has TOCTOU: `respawn-pane` keeps `%N`. `if-shell -F`
+ * evaluates PID/session/pane and queues the mutation as a single server command. Each branch
+ * signals a distinct cryptographic `wait-for` channel: `wait-for` doesn't write to the UI nor
+ * has an `after-*` hook in tmux 3.4. Matters because failed `run-shell` and `display-message -p`
+ * /`list-panes -F` can trigger view/copy-mode, inject keys, or tamper with stdout via hooks
+ * even when the CAS rejected the mutation.
  */
 export type TmuxMutationState = "applied" | "not_applied" | "ambiguous";
 
@@ -57,9 +57,9 @@ interface CasObservation {
 }
 
 /**
- * Registra ambos waiters ANTES del CAS. La señal no depende de stdout y sobrevive hasta que su
- * waiter la consume; prearrancar los clientes cubre además `kill-pane`/`kill-session` del último
- * pane, donde el servidor puede desaparecer justo después de la mutación.
+ * Registers both waiters BEFORE the CAS. Signal doesn't depend on stdout and survives until its
+ * waiter consumes it; pre-starting the clients also covers `kill-pane`/`kill-session` of the
+ * last pane, where the server may disappear right after the mutation.
  */
 function observeCasWitness(tmux: TmuxController, witness: CasWitness): CasObservation {
   const acceptedAbort = new AbortController();
@@ -99,9 +99,9 @@ function observeCasWitness(tmux: TmuxController, witness: CasWitness): CasObserv
       if (timer !== undefined) clearTimeout(timer);
       acceptedAbort.abort();
       rejectedAbort.abort();
-      // CliTmux reapea inmediatamente al abort. Un wrapper defectuoso puede no reenviar `control`;
-      // no se permite que ese wrapper transforme un testigo ya acreditado en una espera de 10 s.
-      // Los promises conservan handler y su timeout propio, por lo que tampoco quedan rejections.
+      // CliTmux reaps immediately on abort. A faulty wrapper may not forward `control`; that
+      // wrapper must not turn an already-credited witness into a 10s wait. The promises keep
+      // their handler and own timeout, so they don't leave rejections either.
       let reapTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         Promise.allSettled([accepted, rejected]),
@@ -120,7 +120,7 @@ interface AtomicCasResult {
   readonly result?: TmuxResult;
 }
 
-/** Ejecuta el compare-and-mutate y acredita la rama sin ningún comando observable por el pane. */
+/** Runs compare-and-mutate and credits the branch with no pane-observable command. */
 export async function atomicCas(
   tmux: TmuxController,
   target: string,
@@ -145,7 +145,7 @@ export async function atomicCas(
   return branch === undefined ? { result } : { result, branch };
 }
 
-/** Evalúa un formato booleano sin `display-message`, `list-*`, salida ni hooks de lectura. */
+/** Evaluates a boolean format without `display-message`, `list-*`, stdout, or read hooks. */
 export async function probeTmuxFormat(
   tmux: TmuxController,
   target: string,
@@ -195,8 +195,8 @@ export async function mutateExactPane(
   const mutation = await atomicCas(tmux, identity.paneId, condition, command, control);
   if (mutation.branch === "accepted") return "applied";
   if (mutation.branch === "rejected") return "not_applied";
-  // `kill-pane` del último pane destruye el servidor antes del wait-for final. Sólo esa superficie
-  // acepta como evidencia alternativa exit 0 + desaparición exacta del session id.
+  // `kill-pane` on the last pane destroys the server before the final wait-for. Only that
+  // surface accepts as alternative evidence: exit 0 + exact disappearance of the session id.
   if (acceptsSessionDisappearance && mutation.result?.exitCode === 0
     && !await hasSessionId(tmux, identity.sessionId)) return "applied";
   return "ambiguous";
@@ -207,7 +207,7 @@ export const INPUT_BARRIER_TOKEN_PATTERN = /^[a-f0-9]{64}$/u;
 
 export interface PaneInputBarrier {
   readonly identity: PaneIdentity;
-  /** Token no sensible que impide que un finally ajeno desbloquee el pane. */
+  /** Non-sensitive token preventing a foreign `finally` from unlocking the pane. */
   readonly token: string;
 }
 
@@ -220,12 +220,12 @@ export function inputBarrierCondition(barrier: PaneInputBarrier): string | undef
 }
 
 /**
- * Ejecuta input técnico sin abrir una ventana intercalable a clientes humanos.
+ * Runs technical input without opening an interleavable window to human clients.
  *
- * El pane permanece `input_off` entre operaciones. Dentro de esta única cola se habilita, se
- * ejecuta exactamente una mutación y se vuelve a deshabilitar. Los hooks relevantes se rechazaron
- * antes de adquirir la barrera: sin un hook que espere, tmux procesa la cola completa antes de leer
- * input de otro cliente. Un probe `if-shell` hookless acredita después que no quedó habilitado.
+ * The pane stays `input_off` between operations. Inside this single queue: enable, run exactly
+ * one mutation, disable again. The relevant hooks were rejected before acquiring the barrier:
+ * without a hook waiting, tmux processes the whole queue before reading another client's input.
+ * A hookless `if-shell` probe then credits that nothing remained enabled.
  */
 export async function mutateUnderInputBarrier(
   tmux: TmuxController,
@@ -235,10 +235,10 @@ export async function mutateUnderInputBarrier(
   logicalIdentity: "process" | "full" = "process",
 ): Promise<TmuxMutationState> {
   const { identity } = barrier;
-  // Releer justo antes de cada mutación también cubre hooks añadidos durante el settle. tmux no
-  // ofrece un lock transaccional contra un administrador que ejecute `set-hook` en el mismo socket
-  // DESPUÉS de esta lectura y ANTES del if-shell; ese acceso privilegiado al control plane es el
-  // límite real del protocolo. Ante hooks ya observables se falla cerrado sin abrir input.
+  // Re-reading just before each mutation also covers hooks added during settle. tmux does not
+  // offer a transactional lock against an administrator running `set-hook` on the same socket
+  // AFTER this read and BEFORE the if-shell; that privileged control-plane access is the real
+  // protocol limit. On observable hooks, fail closed without opening input.
   if (!await inputBarrierHooksAreEmpty(tmux, identity.paneId, control)) return "not_applied";
   const paneCondition = exactPaneCondition(identity, logicalIdentity);
   const barrierCondition = inputBarrierCondition(barrier);
@@ -252,13 +252,13 @@ export async function mutateUnderInputBarrier(
       + ` ; select-pane -d -t ${identity.paneId}`,
     control,
   );
-  // El testigo accepted se encola DESPUÉS de volver a `input_off`; si paste/send/select falla, tmux
-  // corta la lista antes de señalarlo. La postcondición se acredita con otro formato atómico, no
-  // con una lectura que pueda disparar un hook.
+  // The `accepted` witness is queued AFTER returning to `input_off`; if paste/send/select fails,
+  // tmux cuts the list before signalling it. The postcondition is credited with another atomic
+  // format, not with a read that could trigger a hook.
   if (mutation.branch === "accepted") {
-    // Los nombres son metadato humano y pueden cambiar apenas termina el paste. La precondición
-    // `full` impidió pegar en otra conversación; la postcondición debe seguir el MISMO proceso,
-    // igual que release, para no declarar ambiguo un rename posterior a una mutación ya aplicada.
+    // Names are human metadata and can change as soon as the paste finishes. The `full`
+    // precondition blocked pasting into another conversation; the postcondition must follow the
+    // SAME process, like release, so a later rename isn't declared ambiguous after an applied mutation.
     const processCondition = exactPaneCondition(identity, "process");
     if (processCondition === undefined) return "ambiguous";
     const postcondition = `#{&&:${processCondition},${barrierCondition}}`;
@@ -280,17 +280,17 @@ export type PaneInputBarrierAcquireResult =
 const EMPTY_TMUX_HOOK_NAME_PATTERN = /^[a-z][a-z0-9-]*$/u;
 
 /**
- * Una cola de tmux sólo excluye a otros clientes si no existe NINGÚN hook efectivo que pueda
- * ejecutar comandos mientras vive la barrera. No basta con enumerar los comandos obvios:
- * `after-load-buffer` puede pegar y enviar el prompt antes de nuestro paste, `after-capture-pane`
- * puede mutar la caja durante su verificación y eventos asíncronos como `client-focus-in` pueden
- * dispararse sin que Cauce invoque el comando que les da nombre.
+ * A tmux queue only excludes other clients if there is NO effective hook that can run commands
+ * while the barrier lives. Enumerating the obvious commands is not enough: `after-load-buffer`
+ * can paste and send the prompt before our paste, `after-capture-pane` can mutate the box during
+ * its verification, and async events like `client-focus-in` can fire without Cauce invoking the
+ * command that names them.
  *
- * Por eso se inspecciona el catálogo completo que el propio tmux publica en los cuatro scopes. Una
- * línea desnuda es sólo el nombre de un hook vacío; cualquier índice/comando, continuación o forma
- * desconocida significa configuración ejecutable y falla cerrado. El catálogo se descubre en
- * runtime para que un hook agregado por una versión futura de tmux no quede fuera de una lista
- * estática otra vez. Cauce nunca desinstala ni restaura hooks: son estado ajeno del administrador.
+ * Therefore the full catalog that tmux itself publishes in the four scopes is inspected. A bare
+ * line is only the name of an empty hook; any index/command, continuation, or unknown form means
+ * executable configuration and fails closed. The catalog is discovered at runtime so a hook
+ * added by a future tmux version is not left out of a static list again. Cauce never uninstalls
+ * or restores hooks: they are the administrator's foreign state.
  */
 export async function inputBarrierHooksAreEmpty(
   tmux: TmuxController,
@@ -312,8 +312,8 @@ export async function inputBarrierHooksAreEmpty(
       );
       if (result.exitCode !== 0) return false;
       const lines = result.stdout.split(/\r?\n/u).filter((line) => line !== "");
-      // El scope global enumera el catálogo incorporado incluso cuando está vacío. Un 0 sin ese
-      // catálogo no acredita que la lectura haya sido completa.
+      // The global scope enumerates the built-in catalog even when empty. A 0 without that catalog
+      // does not credit that the read was complete.
       if (scope[0] === "-g" && lines.length === 0) return false;
       if (lines.some((line) => !EMPTY_TMUX_HOOK_NAME_PATTERN.test(line))) return false;
     }
@@ -323,7 +323,7 @@ export async function inputBarrierHooksAreEmpty(
   }
 }
 
-/** `show-hooks` no tiene hook `after-show-hooks`; es el preflight sin efectos del control plane. */
+/** `show-hooks` has no `after-show-hooks` hook; the side-effect-free preflight of the control plane. */
 async function tmuxHooksAreEmpty(
   tmux: TmuxController,
   paneId: string,
@@ -356,15 +356,14 @@ async function tmuxHooksAreEmpty(
 }
 
 /**
- * Excluye el teclado de TODOS los clientes humanos antes de la captura final.
+ * Excludes the keyboard of ALL human clients before the final capture.
  *
- * `select-pane -d` descarta tanto el teclado humano como `paste-buffer`/`send-keys`. Eso significa
- * que, si ambos llegan a la vez, Cauce gana la exclusión y el byte humano se descarta (no se guarda
- * para después); nunca se concatena ni produce una segunda ejecución. Por eso cada
- * mutación técnica habilita, muta y vuelve a deshabilitar dentro de UNA cola sin hooks. La
- * transición 0→1 y el token viven
- * en el mismo `if-shell` cercado por sesión/ventana/pane/PID; dos runners no pueden adquirirla a la
- * vez. Un pane que ya estaba `input_off` se trata como ocupado: nunca se adopta una barrera ajena.
+ * `select-pane -d` drops both human keyboard and `paste-buffer`/`send-keys`. If both arrive at
+ * once, Cauce wins the exclusion and the human byte is discarded (not queued for later); it is
+ * never concatenated nor produces a second execution. Hence every technical mutation enables,
+ * mutates, and disables again inside ONE hookless queue. The 0→1 transition and the token live
+ * in the same `if-shell` fenced by session/window/pane/PID; two runners cannot acquire it at
+ * once. A pane already `input_off` is treated as busy: a foreign barrier is never adopted.
  */
 export async function acquirePaneInputBarrier(
   tmux: TmuxController,
@@ -378,10 +377,10 @@ export async function acquirePaneInputBarrier(
     return { state: "ambiguous" };
   }
 
-  // Una barrera ajena/copy-mode es una negativa acreditable aun si el administrador tiene hooks.
-  // Clasificarla antes del inventario conserva la garantía R6: no se ejecuta ningún comando
-  // hookeable y tampoco se confunde un pane humano ocupado con una configuración insegura que
-  // Cauce sólo tendría que evaluar si realmente fuera candidato a adquirir.
+  // A foreign barrier / copy-mode is a credit-worthy denial even if the administrator has hooks.
+  // Classifying it before the inventory preserves guarantee R6: no hookable command is run, and
+  // a busy human pane is not confused with an unsafe configuration that Cauce would only need
+  // to evaluate if it were truly a candidate to acquire.
   const sameIdentity = await probeTmuxFormat(
     tmux,
     identity.paneId,
@@ -414,10 +413,10 @@ export async function acquirePaneInputBarrier(
       + ` ; select-pane -d -t ${identity.paneId}`,
     control,
   );
-  // `accepted` sólo puede señalarse después de que AMBAS mutaciones terminaron. Los hooks que
-  // podrían alterar esa postcondición se comprobaron vacíos justo antes del CAS. Aun si se perdió
-  // el exit status del cliente principal, el waiter independiente + este formato exacto acreditan
-  // ownership sin invocar `display-message`.
+  // `accepted` can only be signalled after BOTH mutations finished. The hooks that could alter
+  // that postcondition were checked empty just before the CAS. Even if the main client's exit
+  // status was lost, the independent waiter + this exact format credit ownership without
+  // invoking `display-message`.
   if (mutation.branch === "accepted") {
     const postcondition = `#{&&:${paneCondition},${inputBarrierCondition(barrier)}}`;
     return await probeTmuxFormat(tmux, identity.paneId, postcondition, control) === true
@@ -426,8 +425,8 @@ export async function acquirePaneInputBarrier(
   }
   if (mutation.branch !== "rejected") return { state: "ambiguous" };
 
-  // La rama rechazada no ejecutó ningún comando de pane. Clasificar el motivo también se hace con
-  // `if-shell`+`wait-for`: ni `display-message` ni `list-panes` pueden disparar hooks adversarios.
+  // The rejected branch did not run any pane command. Classifying the reason is also done with
+  // `if-shell`+`wait-for`: neither `display-message` nor `list-panes` can fire adversary hooks.
   const sameIdentityAfterRejection = await probeTmuxFormat(
     tmux,
     identity.paneId,
@@ -446,11 +445,11 @@ export async function acquirePaneInputBarrier(
 }
 
 /**
- * Restaura input únicamente si siguen vivos la generación Y el token que esta llamada adquirió.
+ * Restores input only if the generation AND the token acquired by this call are still alive.
  *
- * Un rename/respawn selecciona el testigo negativo; no se habilita ni se borra ninguna opción de
- * la generación nueva. El testigo positivo queda después de habilitar y retirar el token: acredita
- * la postcondición sin ejecutar un comando de lectura hookeable.
+ * A rename/respawn selects the negative witness; no option of the new generation is enabled or
+ * deleted. The positive witness comes after enabling and removing the token: credits the
+ * postcondition without running a hookable read command.
  */
 export async function releasePaneInputBarrier(
   tmux: TmuxController,
@@ -458,12 +457,12 @@ export async function releasePaneInputBarrier(
   control?: TmuxRunControl,
 ): Promise<TmuxMutationState> {
   const { identity, token } = barrier;
-  // Liberar también dispara `after-select-pane` y `after-set-option`. Si apareció cualquier hook
-  // desde la última mutación, no se lo ejecuta ni se lo desinstala: la barrera queda durable y el
-  // llamador entra a cuarentena/terminación exacta. Eso preserva tanto la TUI como el estado ajeno.
+  // Releasing also triggers `after-select-pane` and `after-set-option`. If any hook appeared
+  // since the last mutation, it is neither run nor uninstalled: the barrier stays durable and
+  // the caller enters exact quarantine/termination. That preserves both the TUI and foreign state.
   if (!await inputBarrierHooksAreEmpty(tmux, identity.paneId, control)) return "not_applied";
-  // Nombres de sesión/ventana son metadato mutable. Ids estables + PID + token acreditan que es la
-  // misma generación aunque un humano la haya renombrado mientras estuvo cercada.
+  // Session/window names are mutable metadata. Stable ids + PID + token credit that it is the
+  // same generation even if a human renamed it while fenced.
   const paneCondition = exactPaneCondition(identity, "process");
   if (paneCondition === undefined || !INPUT_BARRIER_TOKEN_PATTERN.test(token)) return "ambiguous";
   const condition = `#{&&:${paneCondition},#{==:#{${INPUT_BARRIER_OPTION}},${token}}}`;
@@ -487,10 +486,10 @@ export async function releasePaneInputBarrier(
 }
 
 /**
- * Impide reutilizar una TUI cuyo turno cancelado no alcanzó un límite terminal observable.
+ * Prevents reusing a TUI whose cancelled turn did not reach an observable terminal boundary.
  *
- * La marca vive en la sesión tmux y por eso sobrevive al reinicio del adaptador. No contiene texto
- * de la entrega. Al cambiar pane/PID queda obsoleta y el runner puede retirarla con seguridad.
+ * The mark lives in the tmux session and therefore survives adapter restarts. It contains no
+ * delivery text. When pane/PID changes it becomes stale and the runner can remove it safely.
  */
 export async function markPaneQuarantined(
   tmux: TmuxController,
@@ -508,7 +507,7 @@ export async function markPaneQuarantined(
 
 export type PaneQuarantineState = "current" | "stale" | "absent" | "unreadable";
 
-/** Distingue ausencia real de una lectura fallida: ante duda el runner no puede reutilizar el pane. */
+/** Distinguishes real absence from a failed read: in doubt the runner cannot reuse the pane. */
 export async function paneQuarantineState(
   tmux: TmuxController,
   identity: PaneIdentity,
@@ -525,16 +524,16 @@ export async function paneQuarantineState(
   return option.value === paneGeneration(identity) ? "current" : "stale";
 }
 
-/** Retira una marca vieja o una generación ya observada como terminal. */
+/** Removes an old mark or a generation already observed as terminal. */
 export async function clearPaneQuarantine(
   tmux: TmuxController,
   identity: PaneIdentity,
   control?: TmuxRunControl,
 ): Promise<boolean> {
   if (!SESSION_ID_PATTERN.test(identity.sessionId)) return false;
-  // Hace falta el valor exacto para que una marca stale NUEVA, escrita tras la lectura, no sea
-  // borrada como si fuera la observada. `after-show-options` se rechaza antes: el read ya no puede
-  // ser convertido por configuración existente en copy/view-mode, teclas u otra mutación.
+  // The exact value is needed so a NEW stale mark, written after the read, is not deleted as if
+  // it were the observed one. `after-show-options` is rejected beforehand: the read can no
+  // longer be converted by existing config into copy/view-mode, keys, or any other mutation.
   if (!await tmuxHooksAreEmpty(tmux, identity.paneId, ["after-show-options"], control)) return false;
   const option = await sessionOption(
     tmux,
@@ -562,7 +561,7 @@ export async function clearPaneQuarantine(
     ) === true;
   }
   if (mutation.branch !== "rejected") return false;
-  // Ausencia previa ya cumple la postcondición; una marca actual, inválida o cambiada se conserva.
+  // Prior absence already satisfies the postcondition; a current, invalid, or changed mark is kept.
   return await probeTmuxFormat(
     tmux,
     identity.sessionId,
@@ -571,7 +570,7 @@ export async function clearPaneQuarantine(
   ) === true;
 }
 
-/** Retira sólo la marca de ESTA generación después de un límite terminal correlacionado. */
+/** Removes only THIS generation's mark after a correlated terminal boundary. */
 export async function clearCurrentPaneQuarantine(
   tmux: TmuxController,
   identity: PaneIdentity,
@@ -588,8 +587,8 @@ export async function clearCurrentPaneQuarantine(
     control,
   );
   if (mutation.branch !== "accepted" && mutation.branch !== "rejected") return false;
-  // accepted exige que el unset haya terminado antes del testigo; rejected sólo es éxito si la
-  // marca ya estaba ausente. Una marca ajena se conserva y devuelve false.
+  // accepted demands the unset finished before the witness; rejected is only success if the
+  // mark was already absent. A foreign mark is kept and returns false.
   return await probeTmuxFormat(
     tmux,
     identity.sessionId,
@@ -599,12 +598,12 @@ export async function clearCurrentPaneQuarantine(
 }
 
 /**
- * Lee una opcion PRIVADA de la sesion, sin confundir "no estaba" con un valor vacio valido.
+ * Reads a PRIVATE session option without confusing "was not there" with a valid empty value.
  *
- * `-q` evita que tmux escriba el nombre de una opcion ausente. Los marcadores de identidad nunca
- * admiten el valor vacio, de modo que stdout vacio significa legacy/no marcado. Un error real
- * (socket caido, sesion desaparecida) se conserva separado: acreditar una identidad no puede
- * convertirse en "legacy" por un fallo de lectura.
+ * `-q` prevents tmux from writing the name of an absent option. Identity markers never accept
+ * the empty value, so empty stdout means legacy/unmarked. A real error (dead socket, vanished
+ * session) is kept separate: crediting an identity must not turn into "legacy" from a read
+ * failure.
  */
 export async function sessionOption(
   tmux: TmuxController,
@@ -612,9 +611,9 @@ export async function sessionOption(
   option: string,
   control?: TmuxRunControl,
 ): Promise<{ readonly ok: true; readonly value?: string } | { readonly ok: false }> {
-  // `show-options`/`set-option` NO aceptan el prefijo `=` que sí aceptan `has-session`,
-  // `list-windows` y `kill-session` (verificado contra tmux 3.4). El llamador pasa el id `$N`
-  // resuelto por `exactSessionTarget`, que es exacto y no admite colisiones por prefijo.
+  // `show-options`/`set-option` do NOT accept the `=` prefix that `has-session`, `list-windows`
+  // and `kill-session` do (verified against tmux 3.4). The caller passes the `$N` id resolved
+  // by `exactSessionTarget`, which is exact and does not admit prefix collisions.
   const result = await tmux.run(
     ["show-options", "-qv", "-t", sessionTarget, option],
     undefined,
@@ -625,7 +624,7 @@ export async function sessionOption(
   return value === "" ? { ok: true } : { ok: true, value };
 }
 
-/** Fija una opcion privada de sesion sin shell ni expansion de su valor. */
+/** Sets a private session option without shell or value expansion. */
 export async function setSessionOption(
   tmux: TmuxController,
   sessionTarget: string,

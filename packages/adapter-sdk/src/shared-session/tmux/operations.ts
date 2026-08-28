@@ -29,11 +29,11 @@ import {
 } from "./mutation.js";
 
 /**
- * Comando ORIGINAL con el que nacio el panel.
+ * ORIGINAL command that started the pane.
  *
- * Para una sesion legacy es una evidencia mas fuerte que `pane_current_command`: la TUI suele
- * lanzar procesos hijos y ese ultimo campo puede cambiar durante un turno. Antes se enumera la
- * ventana exacta porque `display-message` cae silenciosamente a otra cuando el nombre no existe.
+ * For a legacy session it is stronger evidence than `pane_current_command`: the TUI often spawns
+ * child processes and that last field can change during a turn. The exact window is listed first
+ * because `display-message` silently falls back to another when the name does not exist.
  */
 export async function paneStartCommand(
   tmux: TmuxController,
@@ -67,12 +67,12 @@ export type PaneHarnessInspection =
   | { readonly state: "unreadable" };
 
 /**
- * Observa el UNICO pane de una ventana sin usar `session:window` como target ambiguo.
+ * Observes the SOLE pane of a window without using `session:window` as an ambiguous target.
  *
- * `list-panes -s -t $N` enumera todos los panes del id exacto; se filtra el nombre de ventana en
- * memoria y se exige cardinalidad uno. La fila incluye PID y comando original en la misma foto y,
- * después, `%pane_id` se vuelve a leer: si hubo `respawn-pane` entre ambas lecturas, la generación
- * ya no coincide y falla cerrado.
+ * `list-panes -s -t $N` enumerates all panes of the exact id; the window name is filtered in
+ * memory and cardinality one is required. The row includes PID and original command in the same
+ * snapshot, then `%pane_id` is read again: if a `respawn-pane` happened between both reads, the
+ * generation no longer matches and it fails closed.
  */
 export async function inspectSolePaneHarness(
   tmux: TmuxController,
@@ -126,13 +126,14 @@ export async function inspectSolePaneHarness(
 }
 
 /**
- * Deshace sólo la sesión/pane exactos que esta llamada creó y marcó con su nonce.
+ * Undoes only the exact session/pane this call created and marked with its nonce.
  *
- * La tupla de ids/nombres/PID se cerca dentro del `if-shell` junto con el nonce criptográfico de
- * creación. Un `respawn-pane` cambia PID y un rename cambia la identidad lógica; ambos seleccionan
- * la rama rechazada sin ejecutar antes list/display/show ni otro comando con hooks. El comando
- * original sigue formando parte del ownership persistido, pero no hace falta interpolarlo (podría
- * contener cualquier sintaxis de shell) porque PID + nonce ya distinguen la generación creada.
+ * The tuple of ids/names/PID is fenced inside the `if-shell` together with the cryptographic
+ * creation nonce. A `respawn-pane` changes PID and a rename changes logical identity; both pick
+ * the rejected branch without first running list/display/show or any other hookable command. The
+ * original command still belongs to the persisted ownership, but it does not need to be
+ * interpolated (it could contain any shell syntax) because PID + nonce already distinguish the
+ * created generation.
  */
 export async function killSessionIdIfNamed(
   tmux: TmuxController,
@@ -144,9 +145,9 @@ export async function killSessionIdIfNamed(
   if (paneCondition === undefined) return false;
   const condition = `#{&&:${paneCondition},`
     + `#{==:#{${CREATION_NONCE_OPTION}},${ownership.creationNonce}}}`;
-  // Nonce criptográfico + ids/PID + nombres completos acreditan el intento de creación. Releer
-  // previamente list-panes/display/show-options no agregaba identidad: sólo abría tres hooks antes
-  // del CAS y permitía efectos sobre una sesión que luego se rechazaba.
+  // Cryptographic nonce + ids/PID + full names credit the creation attempt. Re-reading
+  // list-panes/display/show-options beforehand added no identity: it only opened three hooks
+  // before the CAS and allowed effects on a session that would then be rejected.
   const mutation = await atomicCas(
     tmux,
     ownership.paneId,
@@ -156,9 +157,8 @@ export async function killSessionIdIfNamed(
   );
   if (mutation.branch === "accepted") return true;
   if (mutation.branch === "rejected") return false;
-  // Si era la última sesión, el servidor puede desaparecer antes de ejecutar el wait-for final.
-  // Resultado 0 + ausencia del id estable es la postcondición exacta; cualquier otra combinación
-  // falla cerrada.
+  // If it was the last session, the server may disappear before the final wait-for. Result 0 +
+  // absence of the stable id is the exact postcondition; any other combination fails closed.
   return mutation.result?.exitCode === 0
     && !await hasSessionId(tmux, ownership.sessionId);
 }
@@ -168,7 +168,7 @@ export async function capturePane(
   target: string,
   options?: { readonly styled?: boolean; readonly control?: TmuxRunControl },
 ): Promise<string | undefined> {
-  // `-e` conserva los códigos SGR para distinguir atributos de estilo en el panel.
+  // `-e` keeps SGR codes to distinguish style attributes in the pane.
   const args = options?.styled === true
     ? ["capture-pane", "-e", "-p", "-t", target]
     : ["capture-pane", "-p", "-t", target];
@@ -201,17 +201,17 @@ export async function windowExists(
 }
 
 export interface PastePromptResult {
-  /** `ambiguous` sólo aparece si el transporte perdió el resultado de la mutación atómica. */
+  /** `ambiguous` only appears if the transport lost the atomic mutation result. */
   readonly state: "not_pasted" | "pasted" | "ambiguous";
   readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "mutation_rejected";
-  /** Postcondición comprobada: el buffer ya no existe o contiene únicamente el marcador inocuo. */
+  /** Postcondition verified: the buffer no longer exists or contains only the harmless marker. */
   readonly bufferScrubbed: boolean;
 }
 
 export interface PastePromptOptions extends TmuxRunControl {
-  /** Verifica dos veces la caja: antes de load-buffer y justo antes de la mutación del pane. */
+  /** Verifies the input box twice: before load-buffer and just before the pane mutation. */
   readonly verifyInputEmpty?: boolean;
-  /** Exclusión ya adquirida; es obligatoria cuando se verifica la caja. */
+  /** Already-acquired exclusion; mandatory when verifying the input box. */
   readonly inputBarrier?: PaneInputBarrier;
 }
 
@@ -238,10 +238,10 @@ async function namedBufferState(
 }
 
 /**
- * Borra el buffer global o, si tmux se niega a borrarlo, reemplaza su contenido por un marcador.
+ * Deletes the global buffer, or if tmux refuses, replaces its content with a marker.
  *
- * Nunca devuelve el contenido leído: el prompt puede contener datos privados. El `show-buffer`
- * sólo acredita localmente que el overwrite inocuo ocurrió y cualquier otro valor se descarta.
+ * Never returns the read content: the prompt can contain private data. The `show-buffer` only
+ * credits locally that the harmless overwrite happened; any other value is discarded.
  */
 async function scrubNamedBuffer(
   tmux: TmuxController,
@@ -262,7 +262,7 @@ async function scrubNamedBuffer(
     const verified = await tmux.run(["show-buffer", "-b", buffer], undefined, control);
     if (verified.exitCode !== 0 || verified.stdout !== SCRUBBED_BUFFER_CONTENT) return false;
 
-    // El marcador ya es seguro, pero se intenta además cumplir la postcondición más fuerte.
+    // The marker is already safe, but the stronger postcondition is also attempted.
     await tmux.run(["delete-buffer", "-b", buffer], undefined, control);
     const finalState = await namedBufferState(tmux, buffer, control);
     if (finalState === "absent") return true;
@@ -295,7 +295,7 @@ export async function pastePrompt(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
   };
-  // El cleanup ignora la cancelación de la entrega: debe borrar o neutralizar el buffer igualmente.
+  // Cleanup ignores the delivery's cancellation: it must still delete or neutralize the buffer.
   const cleanupControl: TmuxRunControl = options.timeoutMs === undefined
     ? {}
     : { timeoutMs: options.timeoutMs };
@@ -310,8 +310,8 @@ export async function pastePrompt(
         state = firstGuard === "unreadable" ? "ambiguous" : "not_pasted";
         reason = firstGuard === "unreadable" ? undefined : pasteGuardReason(firstGuard);
       } else {
-        // `capture-pane` de la guarda anterior tiene su propio hook. Se relee el catálogo después
-        // de capturar y justo antes de `load-buffer`, la superficie que originó R11.
+        // `capture-pane` from the previous guard has its own hook. The catalog is re-read after the
+        // capture and just before `load-buffer`, the surface that originated R11.
         const hooksSafeBeforeLoad = options.inputBarrier === undefined
           || await inputBarrierHooksAreEmpty(tmux, identity.paneId, mutationControl);
         const load = hooksSafeBeforeLoad
@@ -322,12 +322,12 @@ export async function pastePrompt(
           )
           : { exitCode: 78, stdout: "", stderr: "unsafe_hooks" };
         if (load.exitCode !== 0) {
-          // Sólo 78 es una negativa explícita. null, excepción y cualquier otro resultado podrían
-          // haber alcanzado al servidor y se tratan como ambiguos.
+          // Only 78 is an explicit denial. null, exception, and any other result may have reached the
+          // server and are treated as ambiguous.
           state = load.exitCode === 78 ? "not_pasted" : "ambiguous";
           reason = load.exitCode === 78 ? "mutation_rejected" : undefined;
         } else if (signalIsAborted(options.signal)) {
-          // load-buffer terminó, pero paste-buffer todavía no se invocó: no hubo input al pane.
+          // load-buffer finished, but paste-buffer has not yet been invoked: no input reached the pane.
           state = "not_pasted";
           reason = "cancelled";
         } else {
@@ -364,7 +364,7 @@ export async function pastePrompt(
   } catch {
     state = "ambiguous";
   }
-  // El scrub es parte del resultado, incluso con abort, target reemplazado o excepción.
+  // Scrub is part of the result, even with abort, replaced target, or exception.
   return {
     state,
     ...(reason === undefined ? {} : { reason }),
@@ -375,12 +375,12 @@ export async function pastePrompt(
 type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "unreadable";
 
 /**
- * Foto inmediatamente anterior al paste, ya bajo exclusión de teclado humano.
+ * Snapshot immediately before the paste, already under human-keyboard exclusion.
  *
- * `select-pane -d` ya impide que un cliente entregue keystrokes. Luego se comparan generación,
- * token, modo y flag antes de capturar; el propio `paste-buffer` vuelve a cercar esos valores y
- * habilita→pega→deshabilita dentro de su `if-shell`. Si alguien libera/reemplaza la barrera entre
- * captura y paste, el testigo negativo acredita el rechazo y no pega.
+ * `select-pane -d` already blocks a client from delivering keystrokes. Then generation, token,
+ * mode and flag are compared before capturing; `paste-buffer` itself re-fences those values and
+ * enables→pastes→disables inside its `if-shell`. If anyone releases/replaces the barrier between
+ * capture and paste, the negative witness credits the rejection and does not paste.
  */
 async function pastePrecondition(
   tmux: TmuxController,
@@ -389,8 +389,8 @@ async function pastePrecondition(
   control: TmuxRunControl,
 ): Promise<PastePrecondition> {
   if (barrier === undefined || !samePaneIdentity(barrier.identity, identity)) return "unreadable";
-  // `capture-pane` dispara `after-capture-pane`; toda configuración efectiva debe rechazarse antes
-  // de leer la caja, no sólo antes del paste final.
+  // `capture-pane` triggers `after-capture-pane`; all effective configuration must be rejected
+  // before reading the input box, not just before the final paste.
   if (!await inputBarrierHooksAreEmpty(tmux, identity.paneId, control)) return "unreadable";
   const paneCondition = exactPaneCondition(identity, "full");
   const barrierCondition = inputBarrierCondition(barrier);
@@ -402,8 +402,8 @@ async function pastePrecondition(
     control,
   );
   if (ready !== true) {
-    // La negativa exacta no usa display/list/show: distingue un replacement de una barrera que
-    // cambió sin ofrecerle a `after-display-message` una superficie para mutar la TUI.
+    // Exact denial doesn't use display/list/show: it distinguishes a replacement from a changed
+    // barrier without offering `after-display-message` a surface to mutate the TUI.
     if (ready === false
       && await probeTmuxFormat(tmux, identity.paneId, paneCondition, control) === false) {
       return "identity_changed";
@@ -444,7 +444,7 @@ export async function sendEnter(
     );
 }
 
-/** Interrumpe la TUI por su pane id exacto; nunca por nombre de sesión o ventana. */
+/** Interrupts the TUI by its exact pane id; never by session or window name. */
 export async function interruptPane(
   tmux: TmuxController,
   identity: PaneIdentity,
@@ -458,7 +458,7 @@ export async function interruptPane(
   );
 }
 
-/** Mata sólo la generación acreditada; se usa si ni tmux ni disco pueden persistir cuarentena. */
+/** Kills only the credited generation; used when neither tmux nor disk can persist quarantine. */
 export async function killPaneGeneration(
   tmux: TmuxController,
   identity: PaneIdentity,
@@ -476,7 +476,7 @@ export async function killPaneGeneration(
 }
 
 /**
- * Anuncia una degradación en la sesión tmux aplicando estilos visuales de advertencia.
+ * Announces a degradation in the tmux session by applying visual warning styles.
  */
 export async function announceDegradation(
   tmux: TmuxController,
@@ -498,12 +498,12 @@ export async function announceDegradation(
 }
 
 /**
- * Aviso EFÍMERO, sin rojo.
+ * EPHEMERAL notice, no red.
  *
- * Es para los sucesos que NO son una caída: el turno sí pasó por la terminal, pero su memoria
- * cambió (se vació con `/clear`, se compactó, o la sesión se acababa de crear). Teñir la barra de
- * rojo ahí sería mentir en la otra dirección — el mecanismo funciona— y dejaría el rojo pegado en
- * un panel sano.
+ * For events that are NOT a fallback: the turn did go through the terminal, but its memory
+ * changed (cleared with `/clear`, compacted, or the session had just been created). Tinting the
+ * bar red there would be lying the other way —the mechanism works— and would leave red stuck on
+ * a healthy pane.
  */
 export async function announceNotice(
   tmux: TmuxController,
@@ -521,7 +521,7 @@ export async function announceNotice(
     .catch(() => undefined);
 }
 
-/** Quita el rojo cuando un turno vuelve a pasar por la sesión compartida. */
+/** Removes the red when a turn returns to the shared session. */
 export async function clearDegradation(
   tmux: TmuxController,
   session: string,
@@ -542,14 +542,14 @@ export async function clearDegradation(
 }
 
 /**
- * Deshace el enclavamiento que dejó la versión anterior.
+ * Undoes the lock-in left by the previous version.
  *
- * Una sesión que ya degradó con el build viejo tiene su ventana renombrada a `⚠ CAUCE-DEGRADADO` y
- * está condenada: nunca más volverá a encontrar la TUI. Se repara devolviéndole el nombre, y sólo
- * en el caso exacto —la ventana buena ausente y la renombrada presente— para no tocar jamás una
- * ventana que el dueño haya bautizado él.
+ * A session that already degraded with the old build has its window renamed to
+ * `⚠ CAUCE-DEGRADADO` and is doomed: it will never find the TUI again. It is repaired by giving
+ * the name back, and only in the exact case —the good window absent and the renamed one
+ * present— so a window the owner has named themselves is never touched.
  *
- * Devuelve `true` si reparó algo, para poder decirlo en vez de arreglarlo en silencio.
+ * Returns `true` if anything was repaired, so it can be said instead of being silently fixed.
  */
 export async function repairLegacyDegradedWindow(
   tmux: TmuxController,

@@ -51,9 +51,7 @@ import {
 import { protocolPrompt, textoFijoDelSobre } from "./prompt.js";
 import { SessionReservation } from "./session-reservation.js";
 
-/**
- * Sufijo para diferenciar la clave de sesión del carril de agentes.
- */
+/** Suffix distinguishing the agent lane's session key. */
 const AGENT_LANE_SUFFIX = ".agent-lane";
 
 export class HarnessAdapter {
@@ -85,13 +83,13 @@ export class HarnessAdapter {
   }
 
   /**
-   * ¿Esta combinación de harness y transporte puede decir cuándo arrancó el turno?
+   * Can this harness+transport combination tell when the turn started?
    *
-   * Hacen falta LOS DOS: el harness tiene que declarar qué byte suyo significa «ya estoy
-   * ejecutando», y el transporte tiene que estar en condiciones de verlo. El mismo `codex` puede
-   * correr por un proceso —que atestigua— o por la sesión compartida —que cosecha un panel de
-   * tmux y no ve bytes—. Esta capacidad sólo permite probar fallos preflight; la barrera durable
-   * de ejecución es siempre previa a `execute` y no depende del testigo.
+   * BOTH are needed: the harness must declare which of its bytes means "already running", and the
+   * transport must be in a position to see it. The same `codex` can run via a process —which
+   * witnesses— or via the shared session —which harvests a tmux pane and sees no bytes—. This
+   * capability only lets us detect preflight failures; the durable execution barrier always sits
+   * before `execute` and does not depend on the witness.
    */
   get witnessesHarnessStart(): boolean {
     return this.definition.startWitness !== undefined
@@ -126,12 +124,12 @@ export class HarnessAdapter {
   }
 
   /**
-   * Toma turno en el candado de una sesión. `lane` decide EN QUÉ candado: el carril de agentes
-   * usa otra clave de sesión, así que corre en paralelo al de la persona en vez de esperarlo.
+   * Takes a turn on a session lock. `lane` decides WHICH lock: the agent lane uses another
+   * session key, so it runs in parallel with the person's lock instead of waiting for it.
    *
-   * El fallback también lleva carril. Sin eso, openclaw —que tiene
-   * `fallbackSessionKey: "alias-default"`— seguiría metiendo en un único candado global toda
-   * entrega sin origen utilizable, humana o no.
+   * Fallback also carries a lane. Otherwise, openclaw —which has `fallbackSessionKey:
+   * "alias-default"`— would keep stuffing every delivery without a usable origin into one
+   * global lock.
    */
   reserveSession(
     sessionKey: string | undefined,
@@ -169,49 +167,50 @@ export class HarnessAdapter {
   }
 
   /**
-   * Le añade al contexto el sello del fichero de instrucciones que hay AHORA en el disco.
+   * Adds the seal of the instructions file that is NOW on disk to the context.
    *
-   * Se hace acá, en el adaptador, porque el adaptador ya corre DENTRO del contenedor del alias:
-   * el fichero lo tiene delante. Que lo midiera el gateway exigiría la cadena
-   * gateway → relay → pty-agent —que hoy no existe en producción— y un viaje de red por entrega.
+   * Done here, in the adapter, because it already runs INSIDE the alias's container: the file
+   * is in front of it. Having the gateway measure it would require gateway → relay → pty-agent
+   * —not in production today— and a network trip per delivery.
    *
-   * La caché es por `mtime` y NO por tiempo: un fichero que no cambió no se vuelve a leer, y uno
-   * que cambió se nota en la entrega siguiente sin esperar a que expire nada. Sembrar el contexto
-   * tiene efecto en el turno siguiente, que es lo que se espera de una configuración.
+   * Cache is by `mtime`, NOT by time: a file that didn't change isn't reread, and one that
+   * changed is noticed on the next delivery without waiting for anything to expire. Seeding the
+   * context takes effect on the next turn, which is what is expected from a config.
    *
-   * Si algo falla —no hay `HOME`, el arnés no tiene fichero, el disco no deja leer— devuelve el
-   * contexto tal cual y el sobre va entero. Nunca lanza: un fallo de lectura no puede costar un
-   * turno.
+   * If anything fails —no `HOME`, the harness has no file, the disk won't read— returns the
+   * context unchanged and the envelope goes whole. Never throws: a read failure cannot cost a
+   * turn.
    */
   private conSelloDelArnes(context: HarnessRequestContext | undefined): HarnessRequestContext | undefined {
     if (!context) return context;
-    // Un sello externo sólo acredita el contrato fijo; la TUI compartida igualmente necesita el
-    // perfil vivo porque pudo cargar el fichero antes de esa medición.
+    // An external seal only credits the fixed contract; the shared TUI still needs the live
+    // profile because it could have loaded the file before that measurement.
     if (this.sharedSession) return this.conPerfilVivoDeSesionCompartida(context);
-    // Un sello que ya venga en el sobre manda sobre el nuestro: lo puso quien mide desde fuera.
+    // A seal already in the envelope overrides ours: it was placed by whoever measures outside.
     if (context.context_seal) return context;
     /*
-     * EN SESIÓN COMPARTIDA NO SE RECORTA, y esto no es prudencia: es corrección.
+     * IN SHARED SESSION THE TRIM DOES NOT HAPPEN — not out of caution: correctness.
      *
-     * El recorte se apoya en que el arnés cargue sus instrucciones del fichero. En el camino
-     * headless eso es cierto por construcción: el proceso arranca DESPUÉS de que escribimos, en
-     * este mismo turno. En sesión compartida no: la TUI se lanzó al crear el panel —horas o días
-     * antes— y leyó su `CLAUDE.md` entonces. Escribir el fichero ahora no se lo cuenta a nadie.
+     * Trimming relies on the harness loading its instructions from the file. On the headless
+     * path that is true by construction: the process starts AFTER we write, in this same turn.
+     * In shared session it is not: the TUI was launched when the pane was created —hours or days
+     * ago— and read its `CLAUDE.md` then. Writing the file now tells nobody.
      *
-     * Si recortáramos igual, el agente se quedaría sin contrato y NO daría error: contestaría mal
-     * y parecería que el modelo empeoró. Es exactamente el fallo que el sello venía a impedir.
+     * If we trimmed anyway, the agent would be left without a contract and would NOT error: it
+     * would answer wrongly and look like the model worsened. That is exactly the failure the seal
+     * came to prevent.
      *
-     * Lo que falta para levantar esta guarda es comparar la fecha del fichero con el arranque del
-     * proceso del panel (`/proc/<pid>/stat`). Mientras eso no esté medido, aquí se manda todo.
+     * What is missing to lift this guard is comparing the file's timestamp with the pane's
+     * process start (`/proc/<pid>/stat`). Until that is measured, everything is sent here.
      */
     const home = process.env.HOME;
     if (!home) return context;
     const ruta = rutaDelContextoFijo(this.definition.id, home);
     if (!ruta) return context;
     /*
-     * Que el fichero NO exista no es una salida: es justamente el caso de un alias recién creado,
-     * que es el que más necesita la siembra. Se sigue con marca -1, que nunca coincide con una
-     * caché previa y por tanto fuerza el intento.
+     * That the file does NOT exist is not an exit: it is exactly the case of a freshly created
+     * alias, which needs seeding most. Continue with marker -1, which never matches a prior
+     * cache and therefore forces the attempt.
      */
     let marca = -1;
     try {
@@ -223,12 +222,12 @@ export class HarnessAdapter {
       let sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
       if (!sello) {
         /*
-         * No hay bloque, o el que hay no es éste. Se intenta sembrar y se vuelve a leer. La
-         * siembra decide sola si le toca (ver `sembrarContextoFijo`): apagada, sin ruta, o con un
-         * bloque que es de otro alias, no escribe nada y esto queda igual que antes.
+         * There is no block, or the one there is not this one. Seeding is attempted and reread.
+         * Seeding decides for itself whether it should run (see `sembrarContextoFijo`): off, no
+         * path, or with a block from another alias, it writes nothing and this stays as before.
          *
-         * Va detrás de un interruptor porque escribir en el fichero de un alias es una acción con
-         * efecto fuera de este proceso, y encenderla es una decisión de despliegue, no del código.
+         * Behind a switch because writing an alias's file is an action with effect outside this
+         * process, and turning it on is a deployment decision, not a code one.
          */
         const motivo = sembrarContextoFijo(ruta, textoFijoDelSobre(context), {
           habilitado: process.env.CAUCE_SEMBRAR_CONTEXTO === "1",
@@ -244,11 +243,11 @@ export class HarnessAdapter {
   }
 
   /**
-   * Una TUI compartida no se reinicia para aplicar un perfil: destruiría la conversación del
-   * dueño. En su lugar se extrae únicamente el bloque gestionado (nunca el resto del manual) y se
-   * incorpora al sobre de CADA turno. La lectura ocurre después de tomar el candado de sesión y
-   * pegada al `run`, por lo que una escritura del gateway se vuelve conductual en el siguiente
-   * turno aunque el PID del panel sea el mismo.
+   * A shared TUI is not restarted to apply a profile: that would destroy the owner's conversation.
+   * Instead only the managed block is extracted (never the rest of the manual) and incorporated
+   * into EVERY turn's envelope. The read happens after taking the session lock and right next
+   * to the `run`, so a gateway write becomes behavioral on the next turn even if the pane PID
+   * stays the same.
    */
   private perfilVivoDelRuntime(context: HarnessRequestContext): RuntimeProfileMeasurement | undefined {
     const home = process.env.HOME;
@@ -262,7 +261,7 @@ export class HarnessAdapter {
       const workspace = process.env.CAUCE_OPENCLAW_WORKSPACE;
       if (workspace === undefined || !workspace.startsWith("/")) return undefined;
       for (const name of FICHEROS_OPENCLAW) {
-        // MEMORY/HEARTBEAT son del agente, no una cara autorada del perfil.
+        // MEMORY/HEARTBEAT belong to the agent, not an authored facet of the profile.
         if (name !== "MEMORY.md" && name !== "HEARTBEAT.md") paths.push(`${workspace}/${name}`);
       }
     } else {
@@ -279,7 +278,7 @@ export class HarnessAdapter {
         continue;
       }
       const block = bloqueDePerfil(file);
-      // Un HOME compartido nunca autoriza a inyectar el perfil del vecino.
+      // A shared HOME never authorizes injecting a neighbor's profile.
       if (block === undefined || !block.trimStart().startsWith(owner)) continue;
       documents.push({
         path,
@@ -315,14 +314,14 @@ export class HarnessAdapter {
     const sessionContext: HarnessExecutionContext = session.context;
     const attachmentPlan = planAttachments(this.definition.id, request.attachments ?? []);
     const invocation = this.invocation(sessionContext, attachmentPlan.args);
-    // La cuenta se resuelve DESPUÉS de tomar el candado de sesión y justo antes de gastar: entre
-    // que la entrega se admitió y que llega acá pueden pasar minutos, y en ese rato la cuenta
-    // preferida se puede haber agotado. Resolver antes daría la respuesta vieja.
+    // The account is resolved AFTER taking the session lock and just before spending: minutes may
+    // pass between the delivery being admitted and getting here, and in that time the preferred
+    // account may have run out. Resolving earlier would return the stale answer.
     //
-    // Un fallo del resolutor NO puede tumbar la ejecución: si el gateway no contesta, se sigue con
-    // `{}` — o sea el comportamiento de siempre, el CLI usa la credencial ya logueada. Quedarse
-    // sin despachar porque no se pudo consultar QUÉ cuenta usar sería cambiar un problema de
-    // costos por una caída.
+    // A resolver failure MUST NOT take down execution: if the gateway doesn't reply, continue
+    // with `{}` — the always-on behavior, the CLI uses the already-logged-in credential. Failing
+    // to dispatch because we couldn't ask WHICH account to use would trade a cost problem for
+    // an outage.
     const credentialEnv = this.resolveCredentialEnv === undefined
       ? {}
       : await this.resolveCredentialEnv().catch(() => ({}));
@@ -341,16 +340,16 @@ export class HarnessAdapter {
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
-      // El testigo de arranque y su aviso viajan juntos hasta el transporte: es el transporte el
-      // único que ve los bytes del harness, y por lo tanto el único que puede decir cuándo
-      // empezó de verdad. Un runner que no los entienda los ignora y todo sigue como antes.
+      // The start witness and its notice travel together to the transport: it is the only thing
+      // that sees the harness's bytes, and therefore the only one that can tell when it actually
+      // started. A runner that doesn't understand them ignores them and everything continues.
       ...(this.definition.startWitness === undefined
         ? {}
         : { startWitness: this.definition.startWitness }),
       ...(request.onHarnessStart === undefined ? {} : { onHarnessStart: request.onHarnessStart }),
     });
-    // Se consume PEGADO a la ejecución, no más tarde: si el turno falla y se lanza una excepción,
-    // el aviso no puede quedarse guardado y contaminar el turno siguiente, que quizá sí compartió.
+    // Consumed RIGHT NEXT to execution, not later: if the turn fails and an exception is thrown,
+    // the notice cannot stay stored and contaminate the next turn, which might have actually shared.
     const degradation = isSharedSessionRunner(this.runner)
       ? this.runner.takeDegradation()
       : undefined;
@@ -474,7 +473,7 @@ export class HarnessAdapter {
   }
 
   /**
-   * Registra y anota el aviso de degradación en el resultado estructurado de la sesión compartida.
+   * Records and annotates the degradation notice in the shared session's structured output.
    */
   private async announceSharedSession(
     output: StructuredOutput,

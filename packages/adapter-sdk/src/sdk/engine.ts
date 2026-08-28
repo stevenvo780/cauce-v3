@@ -151,7 +151,7 @@ export class AdapterEngine {
       return task;
     }
     const fanin = delivery.body.type === "agent.fanin";
-    // Sesión compartida: utiliza un único carril asociado al alias para sincronizar la TUI.
+    // Shared session: uses a single lane tied to the alias to synchronize the TUI.
     const compartida = process.env.CAUCE_SHARED_SESSION === "1";
     const lane: SessionLane = compartida
       ? "human"
@@ -216,7 +216,7 @@ export class AdapterEngine {
   }
 
   /**
-   * Registra un latido de cola no aplicado sin confirmar ni abortar el lease.
+   * Records a dropped queue heartbeat without confirming or aborting the lease.
    */
   logDroppedQueueRenewal(deliveryId: string, attempt: number): void {
     this.logger({
@@ -328,7 +328,7 @@ export class AdapterEngine {
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
 
-    // Espera a adquirir el candado de sesión antes de transicionar a estado 'started'.
+    // Waits to acquire the session lock before transitioning to 'started'.
     if (reservation !== undefined) {
       const acquired = await this.awaitSessionTurn(
         accepted.record,
@@ -402,12 +402,12 @@ export class AdapterEngine {
           return attachments === undefined ? base : `${base}\n\n${attachments.prompt}`;
         })();
         if (reservation !== undefined) await reservation.wait(controller.signal);
-        // Se emite como renovación de garra a propósito: reusa la confirmación de propiedad que
-        // ya existe, así que además funciona como último chequeo de "esto sigue siendo mío"
-        // justo antes de gastar plata. Si el gateway responde que no, `loseClaim` aborta.
+        // Emitted as a claim renewal on purpose: it reuses the ownership confirmation that
+        // already exists, so it doubles as a final "this is still mine" check just before
+        // spending money. If the gateway says no, `loseClaim` aborts.
         //
-        // La misma operación prueba propiedad y deja durable el punto de no retorno. Si falla el
-        // fsync, el harness todavía no fue invocado y el terminal es reintentable con seguridad.
+        // The same operation proves ownership and durably marks the point of no return. If the
+        // fsync fails, the harness has not yet been invoked and the terminal is safely retriable.
         try {
           await this.commitExecutionIntent(
             started.record,
@@ -476,14 +476,14 @@ export class AdapterEngine {
       return;
     }
 
-    // Los adjuntos locales se convierten a `data:` ACÁ, en el único punto donde el turno se
-    // convierte en ACK: el sobre ya está validado, es el que de verdad va a viajar y se pasa una
-    // sola vez por entrega. El parser NO es el sitio —es puro, síncrono y corre sobre candidatos
-    // que muchas veces se descartan—; el porqué completo está en `artifact-inliner.ts`.
+    // Local attachments are inlined to `data:` HERE, at the only point where the turn becomes
+    // an ACK: the envelope is already validated, this is what will actually travel, and it
+    // passes once per delivery. The parser is NOT the place —it's pure, synchronous, and runs
+    // over candidates that are often discarded—; the full reason is in `artifact-inliner.ts`.
     //
-    // Va antes de la bifurcación 'failed'/'done' a propósito: un turno fallido también persiste y
-    // publica su `output`, y el pantallazo que explica POR QUÉ falló es justo el que hay que poder
-    // ver. `inlineLocalArtifacts` no tira nunca y devuelve el sobre intacto si algo no se pudo.
+    // Placed before the 'failed'/'done' fork on purpose: a failed turn also persists and
+    // publishes its `output`, and the screenshot explaining WHY it failed is exactly what must
+    // be visible. `inlineLocalArtifacts` never throws and returns the envelope intact on failure.
     output = await inlineLocalArtifacts(output);
 
     if (output.status === "failed") {
@@ -510,9 +510,9 @@ export class AdapterEngine {
   }
 
   /**
-   * Espera el turno del candado de sesión manteniendo la renovación de la entrega en fase 'accepted'.
-   * Si la espera supera `queueWaitTimeoutMs`, falla con error retryable sin declarar inicio de ejecución.
-   * Devuelve `false` cuando la entrega fue cerrada por error o cancelación.
+   * Waits for the session lock's turn with the delivery renewal kept in 'accepted'.
+   * If the wait exceeds `queueWaitTimeoutMs`, fails with a retryable error without declaring
+   * execution start. Returns `false` when the delivery was closed by error or cancellation.
    */
   private async awaitSessionTurn(
     record: InboxRecord,
@@ -549,10 +549,10 @@ export class AdapterEngine {
     }
     if (failure === undefined) return true;
 
-    // Nada corrió todavía, así que nada puede ser ambiguo. Degradar un código ambiguo acá sería
-    // mentir en el otro sentido: mandaría a dead-letters "held for manual replay" una entrega que
-    // el harness jamás vio. La normalización a FENCED es la misma que aplica el camino de
-    // ejecución, y acá vale siempre porque nunca hay ejecución ambigua que preservar.
+    // Nothing has run yet, so nothing can be ambiguous. Degrading an ambiguous code here would be
+    // lying the other way: it would send to dead-letters "held for manual replay" a delivery
+    // the harness never saw. The normalization to FENCED is the same the execution path applies,
+    // and it always holds here since there is never an ambiguous execution to preserve.
     const queueError = asAdapterError(failure);
     const normalized = this.fenced.has(record.delivery_id)
       ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
@@ -572,13 +572,13 @@ export class AdapterEngine {
   }
 
   /**
-   * A delivery claim is a short renewable lease, not the agent's wall-clock
-   * execution deadline. Renewal events are durable locally before transport;
-   * an offline socket can therefore flush them after reconnect.
+   * A delivery claim is a short renewable lease, not the agent's wall-clock execution deadline.
+   * Renewal events are durable locally before transport; an offline socket can therefore flush
+   * them after reconnect.
    *
-   * `phase` distingue el latido de cola ('accepted') del de ejecución ('started'). El transporte
-   * lo mapea tal cual al `status` del ACK; ambos son valores que `AckStatusSchema` y el CHECK de
-   * `delivery_acks.status` ya aceptan, así que esto no pide ningún cambio de esquema.
+   * `phase` distinguishes the queue heartbeat ('accepted') from the execution one ('started').
+   * The transport maps it as-is to the ACK's `status`; both are values `AckStatusSchema` and the
+   * `delivery_acks.status` CHECK already accept, so this requires no schema change.
    */
   private startClaimRenewal(
     record: InboxRecord,
@@ -646,16 +646,16 @@ export class AdapterEngine {
   }
 
   /**
-   * A renewal deliberately carries no progress text. The chain progress an operator
-   * sees on the origin channel is composed store-side by `insertProgressRelay`, from
-   * the delivery row it is already holding under lock inside the ACK transaction, and
-   * `AckSchema` has no field an adapter could use to supply its own. Attaching a
-   * summary here would produce a value that is dropped in `AdapterClient.sendEvent`
-   * and never reaches the wire, so it is left out rather than declared and ignored.
+   * A renewal deliberately carries no progress text. The chain progress an operator sees on
+   * the origin channel is composed store-side by `insertProgressRelay`, from the delivery row
+   * it is already holding under lock inside the ACK transaction, and `AckSchema` has no field
+   * an adapter could use to supply its own. Attaching a summary here would produce a value
+   * that is dropped in `AdapterClient.sendEvent` and never reaches the wire, so it is left
+   * out rather than declared and ignored.
    */
   private async emitClaimRenewal(
     record: InboxRecord,
-    // `phase` indica la fase de la entrega ('accepted' o 'started'); `executionStarted` marca intención preinvoke.
+    // `phase` indicates the delivery phase ('accepted' or 'started'); `executionStarted` marks preinvoke intent.
     phase: "accepted" | "started" = "started",
     options: { readonly executionStarted?: boolean } = {},
   ): Promise<void> {

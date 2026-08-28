@@ -39,7 +39,7 @@ export const NOTIFY_KINDS: readonly NotifyKind[] = [
   "alert",
 ];
 export const MAX_OPENCLAW_UNWRAP_DEPTH = 8;
-// Patrones para detectar advertencias de herramienta de OpenClaw emitidas en lugar de respuestas reales.
+// Patterns to detect OpenClaw tool warnings emitted in place of real responses.
 const OPENCLAW_TOOL_WARNING = /^⚠️? \u{1F6E0}️? /u;
 const OPENCLAW_MESSAGE_WARNING = /^⚠️? ✉️? message failed(?::|$)/iu;
 const CANONICAL_MESSAGE_TARGET = /^(?:@all|[a-z][a-z0-9_-]{0,63})$/u;
@@ -64,7 +64,7 @@ export function parseJson(text: string, context: string): unknown {
 }
 
 export const REQUIRED_OUTPUT_KEYS = ["reply", "messages", "status", "retryable"] as const;
-/** Cota del rastreo de sobres embebidos; con dos ya alcanza para declarar ambigüedad. */
+/** Cap on the embedded envelope scan; two are enough to declare ambiguity. */
 export const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;
 
 function requiredKeys(value: JsonObject): void {
@@ -108,12 +108,12 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
 }
 
 /**
- * `notify` is deliberately absent from requiredKeys(): every live agent emits the
- * five mandatory keys and must keep validating unchanged. An output without it
- * normalizes to an empty list, which produces exactly zero rows downstream.
+ * `notify` is deliberately absent from requiredKeys(): every live agent emits the five
+ * mandatory keys and must keep validating unchanged. An output without it normalizes to an
+ * empty list, which produces exactly zero rows downstream.
  */
 function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; descartes: readonly string[] } {
-  // Directivas de notificación malformadas se descartan registrando el aviso, sin abortar el turno.
+  // Malformed notify directives are discarded while recording the notice, without aborting the turn.
   const descartes: string[] = [];
   if (!Array.isArray(value)) {
     return { directives: [], descartes: ["'notify' no era una lista; se descarto entera"] };
@@ -158,7 +158,7 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
 
 
 function parseArtifacts(value: unknown): readonly OutputArtifact[] {
-  // Si está ausente o es nulo, normaliza a lista vacía.
+  // If absent or null, normalize to an empty list.
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
     throw new MalformedOutputError("'artifacts' must be an array");
@@ -199,7 +199,7 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   const notificaciones = value.notify === undefined
     ? { directives: [] as readonly NotifyDirective[], descartes: [] as readonly string[] }
     : parseNotify(value.notify);
-  // El agente tiene que enterarse de lo que se descarto, o repetira el mismo error cada turno.
+  // The agent must learn what was discarded, or it will repeat the same error every turn.
   const aviso = notificaciones.descartes.length === 0
     ? ""
     : `\n\n[Cauce] ${notificaciones.descartes.join(". ")}.`;
@@ -219,21 +219,19 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   };
 }
 
-/** Corta en el limite de bytes sin partir un caracter multibyte por la mitad. */
+/** Truncates at the byte limit without splitting a multibyte character in half. */
 export function recortarABytes(texto: string, limite: number): string {
   if (Buffer.byteLength(texto, "utf8") <= limite) return texto;
   const marca = "\n[Cauce] (recortado por limite de tamano)";
   const disponible = Math.max(0, limite - Buffer.byteLength(marca, "utf8"));
   const cortado = new TextDecoder("utf-8", { fatal: false })
     .decode(Buffer.from(texto, "utf8").subarray(0, disponible))
-    // El decoder no fatal deja U+FFFD si el corte partio un caracter: se descarta esa cola.
+    // The non-fatal decoder leaves U+FFFD if the cut split a character: that tail is discarded.
     .replace(/\uFFFD+$/gu, "");
   return `${cortado}${marca}`;
 }
 
-/**
- * Descarta mensajes en `messages` dirigidos al remitente y los añade al aviso o reply para evitar rebotes cíclicos.
- */
+/** Discards `messages` addressed to the sender and adds them to the notice or reply to avoid cyclic bounces. */
 function descartarReboteAlRemitente(
   output: StructuredOutput,
   senderAlias: string | undefined,
@@ -274,7 +272,7 @@ export function validateDeliveryOutput(
   // `notify` is intentionally NOT covered by this rule: telling a human that a
   // long task failed is the single most valuable proactive message there is.
   if (output.status === "failed" && output.messages.length > 0) {
-    // Descarta mensajes delegados en turnos fallidos conservando el texto de la respuesta.
+    // Discards delegated messages on failed turns, keeping the answer text.
     const descartadas = output.messages.length;
     const aviso = `[Cauce] Se descartaron ${descartadas} delegacion(es): un turno que termina en "failed" no materializa mensajes. Si siguen haciendo falta, repetilas en un turno que cierre en "done", o usa "notify" para avisarle a una persona.`;
     output = {
@@ -303,7 +301,7 @@ export function validateDeliveryOutput(
 
   if (output.status !== "done") return output;
 
-  // Si la respuesta consiste únicamente en una advertencia de herramienta rota, se degrada a failed.
+  // If the answer is only a broken-tool warning, it is degraded to failed.
   if (output.messages.length === 0) {
     const volcado = openclawToolWarningOnly(output.reply);
     if (volcado !== undefined) {
@@ -316,7 +314,7 @@ export function validateDeliveryOutput(
     }
   }
 
-  // Si el turno terminó en 'done' sin reply ni delegaciones, se convierte en failed con mensaje explicativo.
+  // If the turn ended in 'done' without reply or delegations, it is converted to failed with an explanation.
   if (output.reply === null && output.messages.length === 0) {
     return {
       ...output,
@@ -330,12 +328,12 @@ export function validateDeliveryOutput(
 }
 
 /**
- * Detecta si el texto consiste exclusivamente en un aviso de error o advertencia de herramienta de OpenClaw.
+ * Detects whether the text is exclusively an OpenClaw tool error or warning notice.
  */
 export function openclawToolWarningOnly(reply: string | null): string | undefined {
   if (reply === null) return undefined;
   const texto = reply.trim();
-  // Un texto multilínea indica que hay contenido adicional además del aviso.
+  // A multiline text indicates there is additional content beyond the notice.
   if (texto.length === 0 || /[\n\r]/u.test(texto)) return undefined;
   if (OPENCLAW_TOOL_WARNING.test(texto)) return texto;
   if (OPENCLAW_MESSAGE_WARNING.test(texto)) return texto;

@@ -75,7 +75,7 @@ export interface SessionOrigin {
 export interface SessionRecord {
   readonly native_id: string;
   readonly initialized: boolean;
-  /** Origen de la conversación, opcional si la entrega no declaró conversación de origen. */
+  /** Conversation origin; optional when the delivery didn't declare an origin conversation. */
   readonly origin?: SessionOrigin;
 }
 
@@ -102,15 +102,15 @@ export interface DelegationBranchIdentity {
   readonly childDeliveryId?: string;
 }
 
-/** Ramas hermanas de un mismo abanico, tal como este adaptador las tiene registradas. */
+/** Sister branches of a single fan-out, as this adapter has them recorded. */
 export interface DelegationBranchProgress {
-  /** Destinos materializados, preserving duplicates and output order. */
+  /** Materialized destinations, preserving duplicates and output order. */
   readonly delegated: readonly string[];
   readonly branches: readonly DelegationBranchIdentity[];
   readonly rejected: readonly Pick<DelegationRejectionNotice, "output_index" | "target" | "code">[];
-  /** Ramas hermanas ya cerradas localmente, más nuevas primero. El texto es de este adaptador. */
+  /** Sister branches already closed locally, newest first. The text is from this adapter. */
   readonly returned: readonly ProcessedFaninReply[];
-  /** Destinos delegados sin respuesta terminal local todavía, sin la rama que llega ahora. */
+  /** Delegated destinations without a local terminal response yet, excluding the branch arriving now. */
   readonly pending: readonly string[];
   readonly pendingBranches: readonly DelegationBranchIdentity[];
 }
@@ -174,7 +174,7 @@ export interface EventCorrelation {
 export interface EventDeliveryFeedback {
   readonly delegation_rejections?: readonly DelegationRejectionNotice[];
   readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
-  /** Sólo receipts terminales concluyentes; `superseded`/ausencia conservan el evento para replay. */
+  /** Only conclusive terminal receipts; `superseded`/absence preserve the event for replay. */
   readonly terminal_receipt?: "applied" | "duplicate" | "ownership_lost";
   /** Applied/duplicate receipt for the exact `execution_started` barrier event. */
   readonly execution_intent_receipt?: "applied" | "duplicate";

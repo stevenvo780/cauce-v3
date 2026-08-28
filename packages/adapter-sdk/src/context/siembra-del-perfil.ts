@@ -10,37 +10,37 @@ import {
 } from "@cauce/protocol";
 
 /**
- * Escribe el perfil del alias en los ficheros que su arnés lee (CLAUDE.md, AGENTS.md, etc.).
+ * Writes the alias profile into the files its harness reads (CLAUDE.md, AGENTS.md, etc.).
  *
- * - Lo ejecuta el adaptador (no el gateway) porque corre dentro del contenedor con acceso a `$HOME`.
- * - Se invoca una vez por conexión (en el saludo), no por entrega.
- * - Nunca lanza: un fallo deja el fichero anterior intacto y devuelve un parte diagnóstico.
+ * - Executed by the adapter (not the gateway) because it runs inside the container with access to `$HOME`.
+ * - Invoked once per connection (in the hello), not per delivery.
+ * - Never throws: a failure leaves the previous file intact and returns a diagnostic report.
  */
 
-/** Qué pasó con cada fichero. Va al registro; el turno sigue igual pase lo que pase. */
+/** What happened with each file. Goes to the log; the turn continues regardless. */
 export type ResultadoDeFichero =
   | { readonly nombre: string; readonly estado: "escrito" }
   | { readonly nombre: string; readonly estado: "ya-estaba" }
-  /** El bloque que hay es de otro alias; no se sobrescribe. */
+  /** Existing block belongs to another alias; not overwritten. */
   | { readonly nombre: string; readonly estado: "ocupado-por-otro-alias" }
   | { readonly nombre: string; readonly estado: "no-se-pudo-escribir"; readonly motivo: string };
 
 export type ResultadoDeLaSiembra =
   | { readonly estado: "apagado" }
-  /** El arnés no es de los que Cauce sabe escribir. */
+  /** Harness is not one Cauce knows how to write. */
   | { readonly estado: "sin-ficheros"; readonly harness: string }
-  /** El arnés sí tiene ficheros, pero su home/workspace medido falta o no es una ruta absoluta. */
+  /** Harness has files, but its measured home/workspace is missing or not an absolute path. */
   | { readonly estado: "sin-directorio"; readonly harness: string }
-  /** Un fichero —o la suma— se pasa del tope del arnés. NO se escribe ninguno. */
+  /** A file —or the sum— exceeds the harness cap. NONE is written. */
   | { readonly estado: "no-entra"; readonly fichero: string; readonly medido: number; readonly tope: number }
   | { readonly estado: "hecho"; readonly ficheros: readonly ResultadoDeFichero[] };
 
-/** El disco, inyectable para poder probar la siembra sin tocar el sistema de ficheros. */
+/** Disk, injectable so seeding can be tested without touching the file system. */
 export interface DiscoDelArnes {
-  /** `undefined` si el fichero no está. Cualquier otro fallo se propaga. */
+  /** `undefined` if the file is not there. Any other failure propagates. */
   leer(ruta: string): string | undefined;
   escribir(ruta: string, contenido: string): void;
-  /** Prepara el lote entero y revierte lo ya aplicado antes de propagar cualquier fallo. */
+  /** Prepares the entire batch and reverts what was applied before propagating any failure. */
   escribirLote(escrituras: readonly EscrituraDelArnes[]): void;
 }
 
@@ -90,7 +90,7 @@ function rutaDelDescriptor(descriptor: number): string {
 function comprobarSoporteDeDirfd(descriptor: number): void {
   let comprobacion: number | undefined;
   try {
-    /* Aquí sí se sigue deliberadamente el magic-link al descriptor que acabamos de abrir. */
+    /* The magic-link to the descriptor we just opened IS deliberately followed here. */
     comprobacion = openSync(rutaDelDescriptor(descriptor), constants.O_RDONLY | constants.O_DIRECTORY);
   } catch (error) {
     throw new Error("no se puede anclar el directorio del perfil mediante /proc/self/fd", {
@@ -102,14 +102,13 @@ function comprobarSoporteDeDirfd(descriptor: number): void {
 }
 
 /**
- * Equivalente práctico a recorrer con `openat(O_NOFOLLOW)`, que Node no expone directamente.
- * Cada componente se abre relativo al descriptor del anterior mediante `/proc/self/fd`; por eso
- * sustituir un padre mientras avanzamos no puede redirigir el siguiente open. Si procfs no está
- * montado, falla cerrado. Los directorios bind-mounted siguen siendo directorios regulares y no se
- * rechazan; los symlinks sí. Residual: Node no puede impedir que otro proceso cambie el NOMBRE del
- * directorio después de que esta función termine; eso puede volver inaccesible el resultado, pero
- * no redirige ninguna E/S ya anclada. Evitar también eso requiere cooperación/lock externo u
- * `openat2`, que Node 22 no expone.
+ * Practical equivalent to walking with `openat(O_NOFOLLOW)`, which Node does not expose directly.
+ * Each component is opened relative to the previous descriptor via `/proc/self/fd`; that's why
+ * swapping a parent while walking cannot redirect the next open. If procfs is not mounted, it
+ * fails closed. Bind-mounted directories stay regular and are not rejected; symlinks are.
+ * Residual: Node cannot stop another process from RENAMING the directory after this function
+ * returns; that can make the result inaccessible, but does not redirect any already-anchored I/O.
+ * Avoiding that too requires external cooperation/lock or `openat2`, which Node 22 doesn't expose.
  */
 function abrirDirectorioAnclado(ruta: string, crear: boolean): DirectorioAnclado {
   const absoluta = resolve(ruta);
@@ -191,10 +190,10 @@ function prepararFichero(escritura: EscrituraDelArnes): FicheroPreparado {
       throw error;
     }
 
-    /*
-     * Un fichero nuevo se prepara completo fuera del nombre final y aparece con `link(2)`, que
-     * falla si alguien creó el destino en la carrera. No se hace `rename` sobre uno existente.
-    */
+/*
+     * A new file is prepared fully outside the final name and appears with `link(2)`, which fails
+     * if someone created the destination in the race. No `rename` is done over an existing one.
+     */
     const temporal = join(rutaDelDescriptor(directorio.descriptor), `.cauce-perfil-${randomUUID()}.tmp`);
     try {
       descriptor = openSync(
@@ -266,10 +265,11 @@ function retirarFicheroCreado(preparado: FicheroPreparado): void {
 }
 
 /**
- * Transacción local con preflight y rollback verificable. Los nombres nuevos aparecen de una vez;
- * los inodes existentes se conservan. Esto NO promete visibilidad atómica entre varios ficheros:
- * lograrla exigiría que el arnés leyera una versión/directorio conmutado, protocolo que hoy no
- * existe. Sí promete no devolver un fallo sin antes intentar restaurar cada destino tocado.
+ * Local transaction with verifiable preflight and rollback. New names appear at once; existing
+ * inodes are preserved. This does NOT promise atomic visibility across multiple files: achieving
+ * it would require the harness to read a switched version/directory, a protocol that does not
+ * exist today. It does promise not to return a failure without first trying to restore each
+ * touched destination.
  */
 function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
   const rutas = new Set(escrituras.map((escritura) => resolve(escritura.ruta)));
@@ -277,7 +277,7 @@ function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
 
   const preparados: FicheroPreparado[] = [];
   try {
-    /* PREFLIGHT COMPLETO: no se modifica un destino hasta que todos abrieron y validaron. */
+    /* FULL PREFLIGHT: no destination is modified until all have opened and validated. */
     for (const escritura of escrituras) preparados.push(prepararFichero(escritura));
     for (const preparado of preparados) comprobarDirectorioAnclado(preparado);
 
@@ -288,14 +288,14 @@ function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
         unlinkSync(preparado.temporal);
       } else {
         /*
-         * Los targets existentes pueden ser bind mounts. Se escribe por el descriptor ya
-         * validado para conservar su inode; un rename "atómico" rompería la vista montada.
+         * Existing targets may be bind mounts. Write via the already-validated descriptor to
+         * preserve their inode; an "atomic" rename would break the mounted view.
          */
         preparado.tocado = true;
         reemplazarContenido(preparado.descriptor, preparado.contenido);
       }
     }
-    /* Detecta un swap de padres ocurrido durante el commit; el catch restaura por los dirfds. */
+    /* Detect a parent swap that happened during commit; the catch restores via the dirfds. */
     for (const preparado of preparados) comprobarDirectorioAnclado(preparado);
   } catch (error) {
     const fallosDeRollback: string[] = [];
@@ -321,7 +321,7 @@ function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
       if (preparado.temporal !== undefined) {
         try { unlinkSync(preparado.temporal); } catch (error) {
           if (!esErrorConCodigo(error, "ENOENT")) {
-            /* El temporal no es visible al arnés; la próxima higiene puede retirarlo. */
+            /* The temp is not visible to the harness; next hygiene can remove it. */
           }
         }
       }
@@ -358,9 +358,9 @@ export const discoReal: DiscoDelArnes = {
 };
 
 /**
- * Resuelve el directorio del arnés: `$CLAUDE_CONFIG_DIR`/`$HOME/.claude` para claude,
- * `$CODEX_HOME`/`$HOME/.codex` para codex, workspace del agente para openclaw.
- * `CLAUDE_CONFIG_DIR` tiene prioridad sobre `$HOME` para aislar alias que comparten contenedor.
+ * Resolves the harness directory: `$CLAUDE_CONFIG_DIR`/`$HOME/.claude` for claude,
+ * `$CODEX_HOME`/`$HOME/.codex` for codex, the agent's workspace for openclaw.
+ * `CLAUDE_CONFIG_DIR` takes priority over `$HOME` to isolate aliases sharing a container.
  */
 export function directorioDelArnes(
   harness: string, entorno: NodeJS.ProcessEnv = process.env,
@@ -380,10 +380,10 @@ export function directorioDelArnes(
   }
   if (harness === "openclaw") {
     /*
-     * `CAUCE_OPENCLAW_WORKSPACE` primero porque el espacio de trabajo de un agente openclaw NO es
-     * su `$HOME`: es el directorio donde el arnés carga su familia de siete. Sin la variable no se
-     * adivina —`$HOME` sería casi siempre el sitio equivocado, y sembrar siete Markdown en el
-     * sitio equivocado es peor que no sembrar—, así que se devuelve `undefined` y no se toca nada.
+     * `CAUCE_OPENCLAW_WORKSPACE` first because an openclaw agent's workspace is NOT its `$HOME`:
+     * it's the directory where the harness loads its family of seven. Without the variable we
+     * don't guess —`$HOME` would almost always be the wrong place, and seeding seven Markdowns in
+     * the wrong place is worse than not seeding—, so `undefined` is returned and nothing is touched.
      */
     return absoluta(entorno.CAUCE_OPENCLAW_WORKSPACE);
   }
@@ -391,14 +391,14 @@ export function directorioDelArnes(
 }
 
 export interface OpcionesDeSiembra {
-  /** Sin esto no se escribe NADA. El cliente real lo deja activo salvo `CAUCE_SEMBRAR_PERFIL=0`. */
+  /** Without this NOTHING is written. The real client leaves it on unless `CAUCE_SEMBRAR_PERFIL=0`. */
   readonly habilitado: boolean;
   readonly disco?: DiscoDelArnes;
   readonly entorno?: NodeJS.ProcessEnv;
 }
 
 /**
- * Escribe el perfil en los ficheros del arnés. Nunca lanza excepciones.
+ * Writes the profile into the harness files. Never throws.
  */
 export function sembrarPerfilDelArnes(
   harness: string,
@@ -415,9 +415,9 @@ export function sembrarPerfilDelArnes(
 
   const disco = opciones.disco ?? discoReal;
 
-  // Lo que hay AHORA en el disco. Sólo ENOENT significa «no está». Si uno no se puede leer, no se
-  // genera ni escribe NINGUNO: completar seis de siete OpenClaw deja una persona contradictoria y
-  // tratar EACCES/ELOOP como ausencia puede sobrescribir justamente lo que no pudimos inspeccionar.
+  // What is on disk NOW. Only ENOENT means "not there". If one cannot be read, NONE is generated
+  // or written: completing six of seven OpenClaw leaves a contradictory persona, and treating
+  // EACCES/ELOOP as absence can overwrite exactly what we couldn't inspect.
   const existentes = new Map<string, string>();
   const erroresDeLectura = new Map<string, string>();
   for (const nombre of nombres) {
@@ -446,8 +446,8 @@ export function sembrarPerfilDelArnes(
     generados = ficherosDelArnes(harness, contexto, existentes);
   } catch (error) {
     if (error instanceof ErrorDeTopeDelArnes) {
-      // No se escribe NINGUNO. Una persona a medias —cuatro ficheros al día y tres no— se
-      // contradice a sí misma, y el modelo no tiene forma de saber cuál creer.
+// NONE is written. A half-persona —four files today, three not— contradicts itself, and the
+        // model has no way to know which one to believe.
       return { estado: "no-entra", fichero: error.fichero, medido: error.medido, tope: error.tope };
     }
     return { estado: "no-entra", fichero: "desconocido", medido: 0, tope: 0 };
@@ -458,11 +458,11 @@ export function sembrarPerfilDelArnes(
   for (const fichero of generados) {
     if (!fichero.escribir) {
       /*
-       * `escribir: false` sobre un fichero que YA existe y cuyo texto NO es el nuestro sólo puede
-       * ser la guarda de dueño: `ficherosDelArnes` devuelve el previo intacto cuando el bloque es
-       * de otro alias. Distinguirlo importa porque «ya estaba al día» y «no lo toco porque es de
-       * otro» son dos cosas muy distintas para quien lee el registro buscando por qué un alias no
-       * tiene su perfil.
+       * `escribir: false` over a file that ALREADY exists and whose text is NOT ours can only be
+       * the owner's guard: `ficherosDelArnes` returns the prior intact when the block belongs to
+       * another alias. Distinguishing matters because "already up to date" and "I won't touch it
+       * because it's someone else's" are two very different things for whoever reads the log
+       * looking for why an alias lacks its profile.
        */
       const previo = existentes.get(fichero.nombre);
       const ajeno = previo !== undefined && previo === fichero.texto
@@ -479,7 +479,7 @@ export function sembrarPerfilDelArnes(
 
   if (escrituras.length > 0) {
     try {
-      /* Un solo commit lógico: el disco preflighta TODO y revierte antes de lanzar. */
+      /* One logical commit: the disk preflights EVERYTHING and reverts before throwing. */
       disco.escribirLote(escrituras);
       for (const fichero of generados.filter((generado) => generado.escribir)) {
         porNombre.set(fichero.nombre, { nombre: fichero.nombre, estado: "escrito" });
@@ -509,7 +509,7 @@ export function sembrarPerfilDelArnes(
   };
 }
 
-/** Un renglón para el registro, legible por una persona. Nunca lleva el contenido del fichero. */
+/** One line for the log, readable by a person. Never carries the file content. */
 export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   if (resultado.estado === "apagado") return "siembra del perfil: apagada";
   if (resultado.estado === "sin-ficheros") {

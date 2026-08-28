@@ -13,8 +13,8 @@ export type ExecutionIntentPublisher = (
 export const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 export const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 /**
- * Techo absoluto de la espera en el candado de sesión, medido desde que la entrega se acepta.
- * Se acota además por el `timeout_ms` configurado en la entrega.
+ * Absolute ceiling for the session-lock wait, measured from when the delivery is accepted.
+ * Also bounded by the `timeout_ms` configured in the delivery.
  */
 export const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
 
@@ -31,8 +31,8 @@ interface AdapterEngineBaseOptions {
   /** Test/diagnostic override; production derives the fail-closed watchdog from the claim. */
   readonly claimWatchdogMs?: number;
   /**
-   * Techo absoluto de la espera en el candado de sesión. Sin override se usa
-   * `min(timeout pedido por el emisor, DEFAULT_QUEUE_WAIT_TIMEOUT_MS)`.
+   * Absolute ceiling for the session-lock wait. Without an override,
+   * `min(sender-requested timeout, DEFAULT_QUEUE_WAIT_TIMEOUT_MS)` is used.
    */
   readonly queueWaitTimeoutMs?: number;
   readonly clock?: Clock;

@@ -2,11 +2,11 @@ import type { InboxRecord } from "../durable-store.js";
 import { AdapterError } from "../errors.js";
 
 export function interruptedStartedError(record: InboxRecord): AdapterError {
-  // `preinvoke-v1` no libera el harness al persistir el marker local: espera primero que el
-  // gateway lo aplique y que SU receipt exacto quede fsyncado en este registro. Por eso marker
-  // sin receipt sigue demostrando preflight, incluso si el ACK se perdió o fue inconcluso. Un
-  // registro legado no ofrece esa prueba; un receipt sí abre la ventana ambigua entre liberar
-  // el waiter, invocar el proceso y persistir su terminal.
+  // `preinvoke-v1` does not free the harness when persisting the local marker: it first waits for
+  // the gateway to apply it and for ITS exact receipt to be fsynced in this record. That's why a
+  // marker without a receipt still proves preflight, even if the ACK was lost or inconclusive. A
+  // legacy record doesn't offer that proof; a receipt does open the ambiguous window between
+  // freeing the waiter, invoking the process, and persisting its terminal.
   const executionConfirmed = record.execution_intent_receipt_event_id !== undefined;
   return record.execution_intent_protocol === "preinvoke-v1" && !executionConfirmed
     ? new AdapterError(

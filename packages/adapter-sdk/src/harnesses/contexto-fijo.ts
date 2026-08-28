@@ -5,26 +5,26 @@ import {
 } from "@cauce/protocol";
 
 /**
- * Gestión del sello de contexto fijo para deduplicar las instrucciones invariantes
- * sembradas en los archivos de configuración del arnés.
+ * Management of the fixed-context seal to deduplicate the invariant instructions
+ * seeded into the harness's configuration files.
  */
 
 export interface SelloDeContextoFijo {
-  /** `VERSION_CONTEXTO_FIJO` con el que se escribió el fichero. */
+  /** `VERSION_CONTEXTO_FIJO` with which the file was written. */
   readonly version: string;
-  /** sha256 en hexadecimal del texto fijo, tal cual quedó escrito en el fichero del arnés. */
+  /** sha256 in hexadecimal of the fixed text, exactly as written in the harness file. */
   readonly sha256: string;
 }
 
 /**
- * Genera el hash sha256 del texto fijo para verificación de integridad.
+ * Generates the sha256 hash of the fixed text for integrity verification.
  */
 export function resumirContextoFijo(texto: string): string {
   return createHash("sha256").update(texto, "utf8").digest("hex");
 }
 
 /**
- * Comprueba si el sello coincide exactamente con la versión y contenido del texto fijo esperado.
+ * Checks whether the seal matches exactly the expected version and content of the fixed text.
  */
 export function elFicheroYaLoDice(
   sello: SelloDeContextoFijo | undefined,
@@ -42,7 +42,7 @@ export type MotivoDeReenvio =
   | "no-hace-falta";
 
 /**
- * Diagnóstico del motivo por el cual se reenvió el texto fijo.
+ * Diagnostic of why the fixed text was resent.
  */
 export function motivoDeReenvio(
   sello: SelloDeContextoFijo | undefined,
@@ -55,7 +55,7 @@ export function motivoDeReenvio(
 }
 
 /**
- * Mensaje sustitutivo cuando el contexto fijo ya se encuentra cargado en el arnés.
+ * Substitute message when the fixed context is already loaded in the harness.
  */
 export function renglonDeContextoFijo(): string {
   return (
@@ -68,7 +68,7 @@ export function renglonDeContextoFijo(): string {
 // ── Leer el sello del disco, desde dentro del contenedor ────────────────────────────────────
 
 /**
- * Resuelve la ruta al archivo de instrucciones del arnés según las variables de entorno locales.
+ * Resolves the path to the harness's instructions file from local environment variables.
  */
 export function rutaDelContextoFijo(
   harness: string,
@@ -87,13 +87,13 @@ export function rutaDelContextoFijo(
 }
 
 /*
- * Las marcas y la fusión se MUDARON a `@cauce/protocol/marcas-de-bloque.ts`.
+ * The markers and the merge MOVED to `@cauce/protocol/marcas-de-bloque.ts`.
  *
- * Motivo: la consola tiene que enseñar EXACTAMENTE el fichero que va a quedar en el disco —con lo
- * humano intacto alrededor— y el gateway no puede importar este paquete. Lo que queda acá es lo
- * que de verdad necesita el contenedor: el sello (`node:crypto`) y la siembra (el disco).
+ * Reason: the console must show EXACTLY the file that will end up on disk —with the human
+ * content intact around it— and the gateway cannot import this package. What remains here is
+ * what the container actually needs: the seal (`node:crypto`) and the seeding (the disk).
  *
- * Se re-exportan para que nada de lo que ya las importaba desde aquí tenga que cambiar de sitio.
+ * Re-exported so anything already importing them from here doesn't have to move.
  */
 export {
   bloqueEntreMarcas, bloqueGestionado, conBloqueEntreMarcas, conBloqueGestionado,
@@ -101,7 +101,7 @@ export {
 } from "@cauce/protocol";
 
 /**
- * Extrae el sello de un contenido que puede contener un bloque gestionado.
+ * Extracts the seal from content that may contain a managed block.
  */
 export function extraerSello(contenido: string): SelloDeContextoFijo | undefined {
   const bloque = leerBloqueGestionado(contenido);
@@ -110,8 +110,8 @@ export function extraerSello(contenido: string): SelloDeContextoFijo | undefined
 }
 
 /**
- * Lee el sello del fichero de instrucciones directamente desde el disco local.
- * Si el fichero está ausente o no se puede leer, devuelve `undefined`.
+ * Reads the instructions-file seal directly from the local disk.
+ * If the file is missing or cannot be read, returns `undefined`.
  */
 export function selloDesdeElDisco(
   ruta: string | undefined,
@@ -126,7 +126,7 @@ export function selloDesdeElDisco(
   }
 }
 
-/** Por qué NO se sembró el fichero. Va al registro; el turno sigue igual. */
+/** Why the file was NOT seeded. Goes to the log; the turn continues. */
 export type MotivoDeNoSembrar =
   | "sembrado"
   | "apagado"
@@ -136,8 +136,8 @@ export type MotivoDeNoSembrar =
   | "no-se-pudo-escribir";
 
 /**
- * Inserta o actualiza el bloque gestionado con el texto fijo en el fichero del arnés.
- * Si el bloque existente pertenece a otro alias que comparte directorio, devuelve `ocupado-por-otro-alias`.
+ * Inserts or updates the managed block with the fixed text in the harness file.
+ * If the existing block belongs to another alias that shares the directory, returns `ocupado-por-otro-alias`.
  */
 export function sembrarContextoFijo(
   ruta: string | undefined,
@@ -155,7 +155,7 @@ export function sembrarContextoFijo(
   try {
     original = io.leer(ruta);
   } catch {
-    // Que no exista es normal la primera vez: se siembra sobre un fichero vacío.
+    // Not existing is normal the first time: we seed over an empty file.
     original = "";
   }
 
@@ -163,11 +163,11 @@ export function sembrarContextoFijo(
   if (actual === textoFijo) return "ya-estaba";
   if (actual !== undefined && actual !== textoFijo) {
     /*
-     * Hay un bloque y dice otra cosa. Son dos casos y desde aquí no se distinguen: o el contrato
-     * cambió (y hay que reescribirlo), o el fichero es de otro alias que comparte `$HOME` (y
-     * reescribirlo sería empezar una guerra de escrituras). Ante la duda no se pisa, porque el
-     * daño de las dos opciones no es simétrico: reescribir de más deja a dos alias sin identidad
-     * estable; reescribir de menos sólo cuesta un sobre entero por turno, que es lo de hoy.
+     * There's a block and it says something else. Two cases we can't tell apart from here:
+     * either the contract changed (and must be rewritten), or the file belongs to another alias
+     * sharing `$HOME` (and rewriting would start a write war). In doubt we don't overwrite,
+     * because the harm isn't symmetric: overwriting leaves two aliases without stable identity;
+     * under-writing costs one full envelope per turn, which is already the status quo.
      */
     return "ocupado-por-otro-alias";
   }

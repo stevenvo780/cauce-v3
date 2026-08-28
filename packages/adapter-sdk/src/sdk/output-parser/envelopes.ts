@@ -13,7 +13,7 @@ import {
 } from "./contract.js";
 
 /**
- * Estados de error nativos reportados por los diferentes dialectos de arnés.
+ * Native failure statuses reported by the different harness dialects.
  */
 const NATIVE_FAILURE_STATUS: ReadonlySet<string> = new Set([
   "error",
@@ -61,9 +61,9 @@ function hasErrorPayload(value: unknown): boolean {
 }
 
 /**
- * Señal de fracaso en un objeto envoltorio nativo. El sobre del contrato queda EXPLÍCITAMENTE
- * fuera: su `status:"failed"` ya lo valida `validateStructuredOutput`, y confundirlo con un
- * `status` nativo lo haría pasar dos veces por el mismo molino.
+ * Failure signal in a native wrapper object. The contract envelope is EXPLICITLY left out: its
+ * `status:"failed"` is already validated by `validateStructuredOutput`, and confusing it with a
+ * native `status` would let it through the mill twice.
  */
 export function nativeFailureDetail(value: JsonObject): string | undefined {
   if (isEnvelopeShape(value)) return undefined;
@@ -110,7 +110,7 @@ function safeCandidate(candidate: unknown, context: string): StructuredOutput | 
   try {
     return parseCandidate(candidate, context);
   } catch {
-    // Un turno que el propio harness declaró fallido no debe además morir por el parser.
+    // A turn the harness itself declared failed must not also die on the parser.
     return undefined;
   }
 }
@@ -121,7 +121,7 @@ function boundedDetail(text: string): string {
 }
 
 /**
- * Convierte una señal nativa de fracaso en un resultado `failed` de verdad.
+ * Converts a native failure signal into a real `failed` result.
  */
 export function failedTurnOutput(candidate: unknown, context: string, detail: string): StructuredOutput {
   const parsed = safeCandidate(candidate, context);
@@ -169,7 +169,7 @@ function fallbackTextOutput(text: string, context: string): StructuredOutput {
 }
 
 /**
- * Recorta los objetos JSON de primer nivel embebidos en un texto.
+ * Trims top-level JSON objects embedded in text.
  */
 function embeddedObjects(text: string): readonly string[] {
   const found: string[] = [];
@@ -211,7 +211,7 @@ function isEnvelopeShape(value: unknown): boolean {
 }
 
 /**
- * Recupera un sobre de salida estructurada embebido en texto plano.
+ * Recovers a structured-output envelope embedded in plain text.
  */
 function recoverEmbeddedEnvelope(
   text: string,
@@ -252,7 +252,7 @@ function recoverOrFallback(text: string, context: string): StructuredOutput {
 }
 
 /**
- * Desenvuelve bloques de código markdown (```json ... ```) si contienen un objeto JSON.
+ * Unwraps markdown code blocks (```json ... ```) if they contain a JSON object.
  */
 const CODE_FENCE = /^```[A-Za-z0-9_-]*\r?\n([\s\S]*?)\r?\n?```$/u;
 const EMBEDDED_CODE_FENCE = /```[A-Za-z0-9_-]*[\t ]*\r?\n/gu;
@@ -264,7 +264,7 @@ function unwrapCodeFence(candidate: string): string {
   return inner.startsWith("{") || inner.startsWith("[") ? inner : candidate;
 }
 
-/** Localiza un candidato a objeto JSON que inicia tras una valla de código. */
+/** Locates a JSON object candidate that begins after a code fence. */
 function fencedObjectCandidate(text: string): string | undefined {
   EMBEDDED_CODE_FENCE.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -342,9 +342,9 @@ function escapeRawStringControls(text: string): { readonly changed: boolean; rea
 }
 
 /**
- * Repara solo dos corrupciones deterministas del serializador: controles crudos dentro de una
- * cadena y UN caracter no estructural puesto en lugar de `:` tras una clave. El rastreo conoce
- * cadenas y contenedores, por lo que nunca modifica texto citado dentro de un `reply`.
+ * Repairs only two deterministic serializer corruptions: raw control characters inside a string,
+ * and ONE non-structural character sitting in place of `:` after a key. The scan tracks strings
+ * and containers, so it never modifies quoted text inside a `reply`.
  */
 function repairJsonEnvelope(candidate: string): string | undefined {
   const escapedControls = escapeRawStringControls(candidate);
@@ -378,7 +378,7 @@ function repairJsonEnvelope(candidate: string): string | undefined {
     else if (character === "]" && stack.at(-1) === "array") stack.pop();
   }
 
-  // Dos separadores corruptos ya no son un remiendo inequívoco: se cae al rescate sin efectos.
+  // Two corrupt separators are no longer an unambiguous patch: fall back to rescue without effect.
   if (separatorIndexes.length > 1) return undefined;
   if (!escapedControls.changed && separatorIndexes.length === 0) return undefined;
   if (separatorIndexes.length === 0) return text;
@@ -400,13 +400,13 @@ function repairedEnvelope(candidate: string): StructuredOutput | undefined {
   try {
     return validateStructuredOutput(decoded);
   } catch {
-    // Un accesorio que no revalida no se materializa. El reply todavia puede rescatarse abajo.
+    // An accessory that doesn't revalidate is not materialized. The reply may still be rescued below.
     return undefined;
   }
 }
 
 /**
- * Rescata el campo `reply` de un sobre JSON truncado para preservar la respuesta generada.
+ * Rescues the `reply` field from a truncated JSON envelope to preserve the generated answer.
  */
 interface RecoveredReplyString {
   readonly end?: number;
@@ -459,7 +459,7 @@ function recoverReplyString(candidate: string, start: number): RecoveredReplyStr
       : character;
   }
 
-  // El transporte corto la cadena: se conserva unicamente el prefijo que puede desescaparse.
+  // The transport truncated the string: only the prefix that can be unescaped is preserved.
   const value = decodeRecoveredReply(encoded);
   return value === undefined ? undefined : { value };
 }
@@ -487,8 +487,8 @@ function rescataReply(candidate: string): string | undefined {
       const topLevelKey = stack.length === 1 && stack[0] === "object"
         && ["{", ","].includes(previousNonWhitespace(candidate, start - 1) ?? "");
       if (topLevelKey && candidate.slice(start + 1, end) === "reply") {
-        // Dos claves reply dentro del mismo sobre son ambiguas. JSON.parse elegiria la ultima,
-        // pero en un sobre ya roto no se materializa ninguna de las dos por intuicion.
+        // Two reply keys in the same envelope are ambiguous. JSON.parse would pick the last, but on an
+        // already-broken envelope none is materialized by intuition.
         if (recovered !== undefined) return undefined;
         const valueStart = replyValueStart(candidate, end);
         if (valueStart === undefined || candidate[valueStart] !== '"') return undefined;
@@ -527,8 +527,8 @@ function malformedObjectOutput(candidate: string, context: string): StructuredOu
 }
 
 function recoverMalformedObject(candidate: string, context: string): StructuredOutput {
-  // Si hay un unico sobre completo con prosa o basura despues, conserva todos sus campos. Dos
-  // sobres pegados son ambiguos para efectos: no se elige ninguna delegacion y se baja al reply.
+  // If there's a single complete envelope with prose or garbage after, all its fields are kept.
+  // Two glued envelopes are ambiguous: no delegation is chosen and the reply is fallen back to.
   const embedded = recoverEmbeddedEnvelope(candidate, context, false);
   if (embedded !== undefined) return embedded;
   const repaired = repairedEnvelope(candidate);

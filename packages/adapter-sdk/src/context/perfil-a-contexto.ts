@@ -6,83 +6,82 @@ import {
 import { resumirContextoFijo } from "../harnesses/contexto-fijo.js";
 
 /**
- * EL COMPILADOR DE CONTEXTO: perfil + hechos del arnés -> el texto que va al fichero.
+ * CONTEXT COMPILER: profile + harness facts -> the text that goes to the file.
  *
- * ── Qué NO hace, que es el punto ─────────────────────────────────────────────────────────────
+ * What this does NOT do — that's the point.
  *
- * No inventa la redacción del contrato. La prosa fija —identidad, DEBER PRIMARIO, invariantes de
- * protocolo, mecánicas de delegación— ya existe, está probada y la compone
- * `textoFijoDelSobre()` en `harnesses/shared.ts`. El sello del bloque gestionado es el sha256 de
- * ESE texto exacto: si este módulo lo reformateara —un título delante, una coma cambiada, las
- * secciones en otro orden— el sello no coincidiría nunca, el adaptador seguiría mandando el sobre
- * entero y el ahorro sería exactamente cero, sin un solo error visible.
+ * It does not invent the contract wording. The fixed prose —identity, PRIMARY DUTY, protocol
+ * invariants, delegation mechanics— already exists, is tested, and is composed by
+ * `textoFijoDelSobre()` in `harnesses/shared.ts`. The managed-block seal is the sha256 of THAT
+ * exact text: if this module reformatted it —a title in front, a comma changed, sections in a
+ * different order— the seal would never match, the adapter would keep sending the full envelope,
+ * and the savings would be exactly zero, with no visible error.
  *
- * Lo que este módulo compone es LO DEL ALIAS: las siete caras del perfil, en un texto que alimenta
- * la línea `Tu rol:` del preámbulo de identidad. Nada más.
+ * What this module composes is ALIAS content: the seven facets of the profile, in a text that
+ * feeds the `Tu rol:` line of the identity preamble. Nothing more.
  *
- * ── De dónde sale cada cara ──────────────────────────────────────────────────────────────────
+ * Where each facet comes from.
  *
- * Cuatro son AUTORADAS y viven en `agent_profiles`: identidad y propósito; rol,
- * responsabilidades y restricciones; herramientas declaradas; instrucciones fijas del alias.
+ * Four are AUTHORED and live in `agent_profiles`: identity and purpose; role, responsibilities and
+ * restrictions; declared tools; fixed alias instructions.
  *
- * Tres son HECHOS y NO se guardan: permisos (`memberships` + `role_policies`), cuotas
- * (`provider_accounts`) y configuración del arnés (`agents` + `harness_definitions`). Llegan como
- * `HechosDelAlias` y se unen acá. Guardarlas como texto autorado sería fabricar una segunda fuente
- * de verdad: el permiso se revoca en la base y el fichero del contenedor sigue diciendo que lo
- * tiene.
+ * Three are FACTS and are NOT stored: permissions (`memberships` + `role_policies`), quotas
+ * (`provider_accounts`) and harness configuration (`agents` + `harness_definitions`). They arrive
+ * as `HechosDelAlias` and are joined here. Storing them as authored text would manufacture a
+ * second source of truth: the permission is revoked in the database and the container file keeps
+ * saying it has it.
  *
- * ── Determinismo ─────────────────────────────────────────────────────────────────────────────
+ * Determinism.
  *
- * Mismo perfil y mismos hechos -> mismos bytes, siempre. Sin fechas, sin relojes, sin `Object.keys`
- * de orden incidental: las secciones se emiten en un orden FIJO declarado en el código, y el JSON
- * de la proyección de openclaw pasa por `serializarEstable`, que ordena las claves. Un compilador
- * no determinista haría que el sello cambiara solo, y cada cambio de sello cuesta una reescritura
- * del fichero en cada contenedor de la flota.
+ * Same profile and same facts -> same bytes, always. No dates, no clocks, no incidental
+ * `Object.keys` order: sections are emitted in a FIXED order declared in the code, and the
+ * openclaw projection JSON goes through `serializarEstable`, which sorts keys. A non-deterministic
+ * compiler would let the seal drift on its own, and every seal change costs a rewrite of the file
+ * in every container of the fleet.
  */
 
 /*
- * Los tipos de los hechos —`PermisosDelAlias`, `CuotaDelAlias`, `ArnesDelAlias`,
- * `HechosDelAlias`— viven en `@cauce/protocol` y NO acá. Los produce `@cauce/store` leyendo
- * `memberships`/`role_policies`, el camino del techo de ruteo y `agents`+`harness_definitions`, y
- * los consume este módulo: las dos capas no se pueden importar entre sí, y `@cauce/protocol` es la
- * única que las dos ven. Se reexportan para que quien compile no tenga que importar de dos sitios.
+ * The fact types —`PermisosDelAlias`, `CuotaDelAlias`, `ArnesDelAlias`, `HechosDelAlias`— live in
+ * `@cauce/protocol` and NOT here. `@cauce/store` produces them by reading `memberships`/
+ * `role_policies`, the routing-ceiling path, and `agents`+`harness_definitions`; this module
+ * consumes them: the two layers cannot import each other, and `@cauce/protocol` is the only one
+ * both see. Re-exported so compilers don't have to import from two places.
  */
 export type { ArnesDelAlias, ContextoDeAlias, CuotaDelAlias, HechosDelAlias, PermisosDelAlias };
 
 /**
- * Las claves de `openclaw.json` que la proyección no puede emitir JAMÁS.
+ * Keys of `openclaw.json` the projection must NEVER emit.
  *
- * `openclaw.json` guarda `auth` y `secrets` en el MISMO documento que la directiva; por eso está
- * en la lista de «nunca se sirve» del pty-agent y del gateway, y por eso la siembra de openclaw es
- * proyección campo a campo y nunca escritura del fichero entero. Se exporta para que la prueba
- * pueda comprobar la ausencia contra esta lista y no contra una copia suya que se desincronice.
+ * `openclaw.json` keeps `auth` and `secrets` in the SAME document as the directive; that is why
+ * it is on the "never served" list of the pty-agent and gateway, and why openclaw seeding is a
+ * field-by-field projection and never a full-file write. Exported so the test can verify absence
+ * against this list and not against a copy of its own that drifts.
  */
 export const CLAVES_PROHIBIDAS_OPENCLAW = [
   "auth", "secrets", "credentials", "tokens", "apiKey", "api_key",
 ] as const;
 
 /*
- * `componerBloqueDePerfil` y sus ayudantes se MUDARON a `@cauce/protocol/agent-profile.ts`.
+ * `componerBloqueDePerfil` and its helpers MOVED to `@cauce/protocol/agent-profile.ts`.
  *
- * Motivo: el gateway necesita la misma composicion para enseñar una VISTA PREVIA de lo que se va
- * a escribir, y no puede importar este paquete —`@cauce/adapter-sdk` es el runtime del agente:
- * arrastra el motor, el transporte de websocket, el lanzador de procesos y la resolucion de
- * credenciales, nada de lo cual tiene sitio dentro de un servidor—. `@cauce/protocol` es la unica
- * que las dos capas ven, que es exactamente el argumento por el que los tipos de los hechos ya
- * vivian alli.
+ * Reason: the gateway needs the same composition to show a PREVIEW of what will be written, and
+ * cannot import this package —`@cauce/adapter-sdk` is the agent runtime: it drags the engine, the
+ * websocket transport, the process launcher and the credential resolver, none of which has any
+ * place inside a server—. `@cauce/protocol` is the only one both layers see, which is exactly the
+ * argument for which the fact types already lived there.
  *
- * Que la vista previa y la siembra salgan de LA MISMA funcion es lo que impide que la
- * previsualizacion mienta: dos implementaciones del mismo texto divergen a la primera correccion,
- * y el operador aprobaria un bloque distinto del que acaba en el disco sin que nada diera error.
+ * Preview and seeding coming from THE SAME function is what prevents the preview from lying: two
+ * implementations of the same text diverge at the first fix, and the operator would approve a
+ * block different from what ends up on disk with nothing reporting an error.
  *
- * Se re-exporta para que nada de lo que ya la importaba desde aqui tenga que cambiar de sitio.
+ * Re-exported so nothing already importing from here has to change location.
  */
 export {
   componerBloqueDePerfil,
-  // Los ayudantes de composición viajan con ella: `ficheros-del-arnes.ts` reparte las mismas
-  // secciones entre los siete Markdown de openclaw, y si las recompusiera por su cuenta el
-  // fichero suelto y el bloque único dirían lo mismo con palabras distintas a la primera
-  // corrección. Una sola implementación, dos formas de repartirla.
+  // Composition helpers travel with it: `ficheros-del-arnes.ts` distributes the same sections
+  // across the seven openclaw Markdowns, and if it recomposed them on its own the standalone file
+  // and the single block would say the same thing in different words at the first fix. One
+  // implementation, two ways of distributing it.
   lineasDeArnes,
   lineasDeCuotas,
   lineasDePermisos,
@@ -91,12 +90,12 @@ export {
 } from "@cauce/protocol";
 
 /**
- * JSON determinista: las claves salen SIEMPRE en el mismo orden, lo insertaran como lo insertaran.
+ * Deterministic JSON: keys ALWAYS come out in the same order, however they were inserted.
  *
- * `JSON.stringify` respeta el orden de inserción, así que el mismo objeto construido desde dos
- * sitios distintos —o venido de un `JSON.parse` de otra fuente— produce bytes distintos y por lo
- * tanto un sello distinto. Ordenar las claves hace que el determinismo no dependa de cómo se armó
- * el objeto, que es la única forma de que sea una garantía y no una coincidencia.
+ * `JSON.stringify` respects insertion order, so the same object built from two different sites
+ * —or coming from a `JSON.parse` of another source— produces different bytes and therefore a
+ * different seal. Sorting keys makes determinism not depend on how the object was assembled,
+ * which is the only way it is a guarantee and not a coincidence.
  */
 export function serializarEstable(valor: unknown): string {
   return JSON.stringify(ordenar(valor), null, 2);
@@ -113,17 +112,17 @@ function ordenar(valor: unknown): unknown {
 }
 
 /**
- * La proyección de openclaw: SÓLO el subárbol `agents.<alias>`, nunca el fichero.
+ * The openclaw projection: ONLY the `agents.<alias>` subtree, never the file.
  *
- * `openclaw.json` guarda `auth` y `secrets` en el mismo documento que la directiva. Tratarlo como
- * un fichero de texto y reescribirlo entero es cómo se filtra o se pierde una credencial, y por eso
- * `rutaDelContextoFijo()` devuelve `undefined` para openclaw a propósito: ese arnés no tiene
- * camino de fichero, tiene camino de proyección, y es éste.
+ * `openclaw.json` keeps `auth` and `secrets` in the same document as the directive. Treating it
+ * as a text file and rewriting it whole is how a credential is leaked or lost, and that is why
+ * `rutaDelContextoFijo()` returns `undefined` for openclaw on purpose: that harness has no file
+ * path, it has a projection path, and this is it.
  *
- * Lo que se devuelve es un FRAGMENTO para fusionar campo a campo contra el documento vivo. Este
- * módulo no lee `openclaw.json`, no lo parsea y no lo escribe: no puede filtrar lo que nunca tuvo
- * delante. El sello viaja DENTRO del fragmento para que se pueda comprobar si el contenedor está
- * al día sin volver a leer el perfil ni el resto del documento.
+ * What is returned is a FRAGMENT to merge field-by-field against the live document. This module
+ * does not read `openclaw.json`, does not parse it, does not write it: it cannot leak what it
+ * never had in front of it. The seal travels INSIDE the fragment so the container's freshness can
+ * be checked without rereading the profile or the rest of the document.
  */
 export function proyeccionOpenclaw(alias: string, bloque: string): string {
   return serializarEstable({
@@ -136,32 +135,32 @@ export function proyeccionOpenclaw(alias: string, bloque: string): string {
   });
 }
 
-// ── EL BLOQUE B: el perfil, fuera del bloque sellado ─────────────────────────────────────────
+// ── BLOCK B: the profile, outside the sealed block ──────────────────────────────────────────
 
 /**
- * El fichero del arnés contiene dos bloques con marcas distintas y no solapadas:
- *   BLOQUE A (sellado) — contrato entre `MARCA_INICIO`/`MARCA_FIN`, resumido por el sello.
- *   BLOQUE B (sin sellar) — perfil rico entre `MARCA_PERFIL_INICIO`/`MARCA_PERFIL_FIN`.
- * Separarlos permite que el sobre omita el bloque A cuando el sello coincide,
- * sin sacrificar el perfil completo que el arnés lee del fichero entero.
+ * The harness file contains two blocks with distinct, non-overlapping markers:
+ *   BLOCK A (sealed) — contract between `MARCA_INICIO`/`MARCA_FIN`, summarized by the seal.
+ *   BLOCK B (unsealed) — rich profile between `MARCA_PERFIL_INICIO`/`MARCA_PERFIL_FIN`.
+ * Separating them lets the envelope omit block A when the seal matches, without sacrificing the
+ * full profile that the harness reads from the whole file.
  */
 export {
   bloqueDePerfil, conBloqueDePerfil, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, VERSION_PERFIL,
 } from "@cauce/protocol";
 
 /**
- * El `role_brief` corto que viaja en el sobre, DERIVADO del perfil.
+ * The short `role_brief` carried in the envelope, DERIVED from the profile.
  *
- * Que se derive y no se escriba aparte es lo que mantiene una sola fuente de verdad: dos textos
- * escritos a mano para lo mismo se desincronizan, y ese es exactamente el problema que la tabla
- * `agent_profiles` vino a resolver.
+ * Deriving it instead of writing it separately is what keeps a single source of truth: two
+ * hand-written texts for the same thing drift, which is exactly the problem the `agent_profiles`
+ * table came to solve.
  *
- * Se recorta con `clampToRoleBriefLimit`, que corta por PUNTOS DE CÓDIGO. `slice(0, 1200)` indexa
- * unidades UTF-16 y partiría un emoji por la mitad, dejando un surrogate suelto que al serializarse
- * viaja como U+FFFD: el agente recibiría su propio rol terminado en un carácter roto.
+ * Truncated with `clampToRoleBriefLimit`, which cuts by CODE POINTS. `slice(0, 1200)` indexes
+ * UTF-16 units and would split an emoji in half, leaving a stray surrogate that serializes as
+ * U+FFFD: the agent would receive its own role ending in a broken character.
  *
- * `null` cuando no hay rol declarado, para que el preámbulo omita la línea `Tu rol:` en vez de
- * inventar una — un rol equivocado es peor que ninguno.
+ * `null` when no role is declared, so the preamble omits the `Tu rol:` line instead of inventing
+ * one — a wrong role is worse than none.
  */
 export function rolBreveDelPerfil(perfil: AgentProfile): string | null {
   if (perfil.role_summary === null) return null;
@@ -169,9 +168,7 @@ export function rolBreveDelPerfil(perfil: AgentProfile): string | null {
   return normalized.length === 0 ? null : clampToRoleBriefLimit(normalized);
 }
 
-/**
- * Compila el bloque de perfil a partir del contexto del alias devuelto por el store.
- */
+/** Compiles the profile block from the alias context returned by the store. */
 export function compilarContexto(contexto: ContextoDeAlias): string {
   return componerBloqueDePerfil(contexto.perfil, contexto.hechos);
 }

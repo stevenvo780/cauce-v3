@@ -49,8 +49,7 @@ export function parseHermesOutput(stdout: string): ParsedHarnessOutput {
   const value = parseJson(stdout.trim(), "Hermes output");
   if (!isObject(value)) return { output: validateStructuredOutput(value) };
   const candidate = value.output ?? value.result ?? value;
-  // El sobre del puente y el objeto nativo que trae adentro: cualquiera de los dos puede declarar
-  // el fracaso, y ninguno de los dos se estaba mirando.
+// The bridge envelope and the native object inside it: either can declare failure, and neither was being looked at.
   const failure = nativeFailureDetail(value)
     ?? (isObject(candidate) ? nativeFailureDetail(candidate) : undefined);
   if (failure !== undefined) {
@@ -134,8 +133,8 @@ export function parseCodexOutput(stdout: string): ParsedHarnessOutput {
       failureIndex = index;
     }
   }
-  // El fracaso gana sólo si es lo ÚLTIMO que dijo el turno: un `error` seguido de un
-  // `agent_message` es un reintento interno que terminó bien, y ese sí completó.
+// Failure wins only if it is the LAST thing the turn said: an `error` followed by an
+    // `agent_message` is an internal retry that succeeded, and that one did complete.
   if (failure !== undefined && failureIndex > candidateIndex) {
     return sessionResult(failedTurnOutput(candidate, "Codex agent message", failure), sessionId);
   }
@@ -156,11 +155,11 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
     if (seen.has(current)) throw new MalformedOutputError("OpenClaw result contained a wrapper cycle");
     seen.add(current);
     sessionId ??= current.session_id ?? current.sessionId;
-    /** Ultimo aviso de openclaw cuando NINGUN payload traia una respuesta de verdad. */
+    /** Last openclaw notice when NO payload carried a real answer. */
     let avisoDeCola: string | undefined;
 
-    // ANTES de mirar payloads o texto visible: una corrida que el runtime nativo declaró fallida
-    // igual deja texto atrás, y ese texto se estaba tomando como resultado exitoso del turno.
+    // BEFORE looking at payloads or visible text: a run the native runtime declared failed still
+    // leaves text behind, and that text was being treated as the turn's successful result.
     const failure = nativeFailureDetail(current);
     if (failure !== undefined) {
       const spoken = Array.isArray(current.payloads)
@@ -175,7 +174,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
         .filter(isObject)
         .map((payload) => payload.text)
         .filter((text): text is string => typeof text === "string" && text.trim().length > 0);
-      // Descarta advertencias de herramienta de cola si existen respuestas reales previas.
+      // Discards trailing tool warnings when there are real prior answers.
       const reales = texts.filter((text) => openclawToolWarningOnly(text) === undefined);
       const payloadText = reales.at(-1);
       if (payloadText !== undefined) {
@@ -193,7 +192,7 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
       return sessionResult(parseCandidate(visibleText, "OpenClaw result"), sessionId);
     }
 
-    // Si sólo se emitió la advertencia, se retorna para su degradación en validateDeliveryOutput.
+    // If only the warning was emitted, return it for degradation in validateDeliveryOutput.
     if (avisoDeCola !== undefined) {
       return sessionResult(parseCandidate(avisoDeCola, "OpenClaw result"), sessionId);
     }

@@ -38,25 +38,25 @@ export function capabilities(
 }
 
 /**
- * Marcadores y cabeceras de los tres bloques del prompt. Exportados porque lo que este cambio
- * garantiza es el ORDEN entre ellos —identidad, deber, mecánica— y un test tiene que poder
- * afirmarlo sin copiar el texto completo de cada bloque.
+ * Markers and headers of the three prompt blocks. Exported because what this change guarantees
+ * is the ORDER between them —identity, duty, mechanics— and a test must be able to assert it
+ * without copying the full text of each block.
  */
 export const IDENTITY_BEGIN = "--- BEGIN IDENTITY ---";
 export const IDENTITY_END = "--- END IDENTITY ---";
 
 /**
- * El mandato vive acá y en ningún otro lado del prompt.
+ * The mandate lives here and nowhere else in the prompt.
  *
- * Esta cabecera es además el ancla LÉXICA que cita `DELEGATION_MECHANICS_HEADER`: la mecánica no
- * dice "el deber de más arriba" (que obliga a resolver una referencia semántica entre dos idiomas)
- * sino el nombre literal de este bloque.
+ * This header is also the LEXICAL anchor quoted by `DELEGATION_MECHANICS_HEADER`: the mechanics
+ * say "the duty above" via the literal name of this block, not via a cross-language semantic
+ * reference.
  */
 export const PRIMARY_DUTY_HEADER = "DEBER PRIMARIO — manda sobre toda la mecánica que viene después:";
 
 /**
- * Cabecera del bloque secundario. Todo lo que viene detrás es "cómo se delega", nunca "cuándo
- * conviene delegar": eso ya lo decidió el DEBER PRIMARIO.
+ * Secondary block header. Everything after is "how to delegate", never "when to delegate": the
+ * PRIMARY DUTY already decided that.
  */
 export const DELEGATION_MECHANICS_HEADER =
   "Delegation mechanics. These apply only if the DEBER PRIMARIO above already admits delegating:";
@@ -128,17 +128,17 @@ function agentResponseRules(context: HarnessRequestContext | undefined): readonl
 }
 
 /**
- * El texto FIJO del sobre: todo lo que no cambia entre un turno y el siguiente del mismo alias.
+ * The FIXED text of the envelope: everything that doesn't change between turns of the same alias.
  *
- * Existe como función propia por dos motivos, y el segundo es el que importa:
- *  1. Es exactamente lo que hay que escribir en el fichero de instrucciones del arnés.
- *  2. Es lo que se resume para el sello. Si el texto que se siembra y el que se compara salieran
- *     de dos sitios distintos, el sello acreditaría una cosa y el agente leería otra — y nadie se
- *     enteraría, porque el fallo no da error: da un agente que contesta raro.
+ * It exists as its own function for two reasons, and the second is the one that matters:
+ *  1. It is exactly what has to be written in the harness's instructions file.
+ *  2. It is what is summarized for the seal. If the text seeded and the text compared came from
+ *     two different places, the seal would credit one thing and the agent would read another —
+ *     and nobody would know, because the failure doesn't error: it produces an agent that answers oddly.
  *
- * Depende del `context` porque el bloque de identidad lo hace: alias, tenant, sala, rol, y las
- * dos bifurcaciones (umbral de gasto por tenant, centro de mando si sos argos). Por eso el sello
- * de un alias NO sirve para otro, aunque compartan el fichero por compartir `$HOME`.
+ * Depends on `context` because the identity block does: alias, tenant, room, role, and the two
+ * branches (spending threshold per tenant, command center if you're argos). That's why one
+ * alias's seal doesn't work for another, even when they share the file via `$HOME`.
  */
 export function textoFijoDelSobre(context: HarnessRequestContext | undefined): string {
   return bloquesFijos(context).join("\n");
@@ -176,9 +176,9 @@ export function protocolPrompt(
 ): string {
   const fijo = textoFijoDelSobre(context);
   /*
-   * El recorte es la EXCEPCIÓN y se pide con pruebas, no con confianza: sólo cuando el resumen
-   * del fichero del contenedor coincide con este mismo texto. Sin sello, con otro contenido o
-   * con otra versión del contrato, se manda todo — que es el comportamiento de siempre.
+   * Trimming is the EXCEPTION and is asked with proof, not trust: only when the container's file
+   * summary matches this same text. Without a seal, with other content, or with another version
+   * of the contract, everything is sent — which is the usual behavior.
    */
   const cabecera = elFicheroYaLoDice(context?.context_seal, fijo)
     ? [renglonDeContextoFijo()]

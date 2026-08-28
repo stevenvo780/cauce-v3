@@ -40,15 +40,15 @@ import {
 
 export abstract class PasteSessionRunnerBase<E> {
   protected pending: SharedSessionDegradation | undefined;
-  /** PID del panel en el turno anterior, para detectar que la TUI se reinició sola. */
+  /** Pane PID from the previous turn, to detect that the TUI restarted on its own. */
   protected lastPanePid: string | undefined;
-  /** Identificador de la sesión de conversación anterior para detectar reinicios o vaciados de contexto. */
+  /** Conversation session ID from the previous turn, to detect restarts or context clears. */
   protected lastSessionId: string | undefined;
-  /** Compactaciones ya avisadas, para no repetir el aviso en cada sondeo del mismo turno. */
+  /** Compaction events already announced, to avoid repeating the notice on every poll of the same turn. */
   protected readonly reportedBoundaries = new Set<string>();
-  /** `$N` acreditado para esta llamada; los avisos tampoco pueden caer en un reemplazo por nombre. */
+  /** `$N` proven for this call; notices also cannot be dropped by a name-based replacement. */
   protected exactSessionId: string | undefined;
-  /** Respaldo en memoria si tmux no pudo persistir la marca de cuarentena. */
+  /** In-memory fallback if tmux could not persist the quarantine mark. */
   protected locallyQuarantined: PaneIdentity | undefined;
 
   protected constructor(protected readonly options: PasteSessionOptions<E>) {}
@@ -89,12 +89,12 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Recupera el único crash seguro: el sobre terminal exacto ya quedó durable, pero el proceso murió
-   * antes de retirar `quarantine-pending`.
+   * Recovers the only safe crash: terminal envelope is durable, but the process died before
+   * removing `quarantine-pending`.
    *
-   * El nombre del sidecar porta el nonce de correlación y su contenido porta la generación. Sólo
-   * ambas coincidencias más un sobre contractual válido permiten limpiar. Un sobre de otro turno,
-   * un JSON con forma parecida, una lectura incompleta o un timeout conservan la cuarentena.
+   * Sidecar name carries the correlation nonce, content carries the generation. Only both
+   * matching plus a valid contract envelope allow cleanup. A foreign-turn envelope, similar-shape
+   * JSON, partial read, or timeout preserves the quarantine.
    */
   protected async reconcileTerminalPending(identity: PaneIdentity): Promise<void> {
     const quarantineFile = this.options.quarantineFile;
@@ -134,16 +134,16 @@ export abstract class PasteSessionRunnerBase<E> {
     }
     if (!clearedCurrent) return;
 
-    // Un sidecar actual, temporal o ilegible que siga presente significa que no todos los commits
-    // de esta generación tienen límite terminal. `inspect` agrega precisamente esas fuentes.
+    // A remaining current/temp/unreadable sidecar means not all commits of this generation have a
+    // terminal boundary. `inspect` aggregates exactly those sources.
     const afterPending = await beforeDeadline(
       this.quarantinePersistence().inspect(quarantineFile, identity),
       this.quarantineDeadline(),
     );
     if (!afterPending.completed || afterPending.value === "unreadable") return;
     if (afterPending.value === "current") {
-      // La marca canónica se promovió desde el pending que acabamos de correlacionar. Se retira y se
-      // vuelve a inspeccionar antes de tocar tmux; un sidecar concurrente impide continuar.
+      // Canonical mark was promoted from the pending we just correlated. Remove and re-inspect
+      // before touching tmux; a concurrent sidecar blocks.
       const canonical = await beforeDeadline(
         readQuarantineMarker(quarantineFile),
         this.quarantineDeadline(),
@@ -174,8 +174,8 @@ export abstract class PasteSessionRunnerBase<E> {
       this.quarantineDeadline(),
     );
     if (!filesRead.completed || filesRead.value === undefined) return false;
-    // Los transcript/rollout más recientes ordenan al final. Encontrar primero el activo evita
-    // releer años de historial durante una recuperación excepcional.
+    // Latest transcript/rollout files sort last. Finding the active one first avoids re-reading
+    // years of history during exceptional recovery.
     for (const file of [...filesRead.value].reverse()) {
       const sliceRead = await beforeDeadline(
         this.options.transcript.read(file, 0),
@@ -197,8 +197,8 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Arma la barrera durable ANTES del paste. Con fichero configurado, disco es obligatorio;
-   * sin fichero (tests/desarrollo), la opción de sesión tmux es la barrera persistente.
+   * Builds the durable barrier BEFORE paste. With a file configured, disk is mandatory; without
+   * one (tests/dev), the tmux session option is the persistent barrier.
    */
   protected async armPendingQuarantine(
     identity: PaneIdentity,
@@ -209,9 +209,9 @@ export abstract class PasteSessionRunnerBase<E> {
       : pendingQuarantinePath(this.options.quarantineFile, correlationId);
     if (file !== undefined) {
       const persistence = this.quarantinePersistence();
-      // La escritura potencialmente lenta nunca apunta al nombre activo. Sólo deja una preparación
-      // con token de intento; un timeout, crash o wrapper que ignore cancelación puede completarla
-      // tarde, pero esa fase no significa que el pane haya recibido input y no bloquea un restart.
+      // Potentially slow writes never target the active name. Only leaves a preparation with attempt
+      // token; a timeout, crash, or wrapper ignoring cancellation may complete it late, but that
+      // phase doesn't mean the pane received input and doesn't block a restart.
       const preparation = pendingQuarantinePreparationPath(
         file,
         randomBytes(32).toString("hex"),
@@ -224,16 +224,16 @@ export abstract class PasteSessionRunnerBase<E> {
         this.quarantineDeadline(),
       );
       if (!persisted.completed || persisted.value !== true) {
-        // El path lleva el token de ESTE intento. La compensación espera causalmente su operación:
-        // si termina tarde, borra sólo esa preparación y jamás un pending ajeno o ya comprometido.
+        // Path carries THIS attempt's token. Compensation causally awaits its operation: if it finishes
+        // late, it only clears that preparation and never a foreign or already-committed pending.
         void persistOperation.catch(() => false)
           .then(() => persistence.clear(preparation))
           .catch(() => false);
         return { ok: false };
       }
-      // Este link/rename lógico es el único commit pre-paste. No se envuelve en `beforeDeadline`:
-      // abandonar una publicación atómica vuelve a crear exactamente la carrera que se corrige.
-      // `commitPrepared` hace no-clobber; false conserva cualquier marcador de otro intento.
+      // This logical link/rename is the only pre-paste commit. Not wrapped in `beforeDeadline`:
+      // aborting an atomic publish recreates exactly the race being fixed. `commitPrepared` is
+      // no-clobber; false preserves any other attempt's marker.
       const committed = await Promise.resolve()
         .then(() => persistence.commitPrepared(preparation, file, identity))
         .catch(() => false);
@@ -244,7 +244,7 @@ export abstract class PasteSessionRunnerBase<E> {
         );
         return { ok: false };
       }
-      // Redundancia best-effort. El sidecar ya hace seguro un timeout de tmux.
+      // Best-effort redundancy. The sidecar already makes a tmux timeout safe.
       await markPaneQuarantined(this.options.tmux, identity, this.tmuxControl());
       return { ok: true, pending: { identity, file, correlationId } };
     }
@@ -254,7 +254,7 @@ export abstract class PasteSessionRunnerBase<E> {
       : { ok: false };
   }
 
-  /** Sólo se llama tras no-paste acreditado o un límite terminal correlacionado/de generación. */
+  /** Called only after proven no-paste or a correlated/generation-aware terminal boundary. */
   protected async disarmPendingQuarantine(pending: PendingQuarantine): Promise<void> {
     if (pending.file !== undefined) {
       await beforeDeadline(
@@ -274,9 +274,9 @@ export abstract class PasteSessionRunnerBase<E> {
   ): Promise<"current" | "stale" | "absent" | "unreadable"> {
     if (this.locallyQuarantined !== undefined
       && samePaneIdentity(this.locallyQuarantined, identity)) return "current";
-    // Las dos fuentes se observan con plazo. En particular, leer tmux primero convertía un socket
-    // colgado en un deadlock antes de alcanzar el quarantine-pending que ya estaba durable en
-    // disco. Un timeout es "unreadable", nunca ausencia.
+    // Both sources are deadline-observed. Specifically, reading tmux first used to turn a hung
+    // socket into a deadlock before reaching the already-durable on-disk quarantine-pending.
+    // A timeout is `unreadable`, never absence.
     const deadline = this.quarantineDeadline();
     const [tmuxState, fileObserved] = await Promise.all([
       paneQuarantineState(this.options.tmux, identity, this.tmuxControl())
@@ -309,8 +309,9 @@ export abstract class PasteSessionRunnerBase<E> {
     if (observed === "stale") {
       await clearPaneQuarantine(this.options.tmux, identity, this.tmuxControl());
     }
-    // La marca de disco obsoleta se conserva: no bloquea otra generación y la próxima cuarentena
-    // la reemplaza atómicamente. No borrarla evita una carrera compare/unlink entre dos procesos.
+    // Obsolete on-disk mark is preserved: it doesn't block another generation and the next
+    // quarantine replaces it atomically. Not deleting avoids a compare/unlink race between
+    // two processes.
   }
 
   protected async quarantine(
@@ -333,8 +334,8 @@ export abstract class PasteSessionRunnerBase<E> {
     if ((fileMarked || tmuxMarked) && !forceTerminate) {
       return "su generación quedó en cuarentena durable y no se reutilizará";
     }
-    // Si ninguna de las dos marcas pudo persistir, destruir ESTA generación exacta es el único
-    // estado que también sigue siendo seguro después de reiniciar el adaptador.
+    // If neither mark could persist, destroying THIS exact generation is the only state that
+    // remains safe after restarting the adapter.
     const killed = await killPaneGeneration(this.options.tmux, identity, this.tmuxControl());
     const generationGone = killed === "applied" || killed === "not_applied";
     return generationGone
@@ -349,9 +350,9 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Un prompt ya pudo quedar pegado o ejecutado: jamás cae al transporte alternativo.
-   * La generación se bloquea durablemente (o se termina exactamente) y el resultado conserva
-   * `harnessStarted: undefined`, que obliga al motor a tratarlo como ambiguo.
+   * A prompt may have been pasted or executed: never falls back to the alternative transport.
+   * The generation is durably blocked (or exactly terminated) and the result keeps
+   * `harnessStarted: undefined`, forcing the engine to treat it as ambiguous.
    */
   protected async ambiguousCommittedState(
     identity: PaneIdentity,
@@ -368,10 +369,10 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * La adquisicion incierta ocurre ANTES de paste: no existe todavia ningun turno que justificaría
-   * matar la TUI. El token propuesto tampoco acredita ownership, por lo que intentar `release`
-   * podria habilitar o alterar una barrera ajena. Se conserva el pending ya durable y no se hace
-   * ninguna mutacion compensatoria sobre el proceso humano.
+   * Uncertain acquisition occurs BEFORE paste: no turn yet exists that would justify killing the
+   * TUI. The proposed token also doesn't prove ownership, so attempting `release` could enable or
+   * alter a foreign barrier. The durable pending is preserved and no compensatory mutation is
+   * performed on the human process.
    */
   protected ambiguousBarrierAcquisitionState(
     identity: PaneIdentity,
@@ -388,7 +389,7 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
-  /** Detecta cambios en el PID del proceso de la TUI entre turnos. */
+  /** Detects changes in the TUI process PID between turns. */
   protected async notePaneIdentity(pid: string | undefined): Promise<void> {
     if (pid === undefined) return;
     if (this.lastPanePid !== undefined && this.lastPanePid !== pid) {
@@ -398,8 +399,8 @@ export abstract class PasteSessionRunnerBase<E> {
         occurredAt: new Date().toISOString(),
         fellBack: false,
       });
-      // La conversación de la TUI nueva no tiene nada que ver con la anterior: comparar su
-      // identidad con la de antes daría un vaciado que nadie hizo.
+      // The new TUI conversation has nothing to do with the previous one: comparing its identity to
+      // the prior one would yield a clear that nobody performed.
       this.lastSessionId = undefined;
     }
     this.lastPanePid = pid;
@@ -432,8 +433,8 @@ export abstract class PasteSessionRunnerBase<E> {
       }
       if (signal.aborted) return { ok: false, cancelled: true };
       const state = inputBoxState(pane);
-      // El panel con el que se decidió pegar es el que hay que mirar para saber si el turno se
-      // fundió: capturarlo otra vez después ya sería otro instante.
+      // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
+      // would be a different moment.
       if (!state.occupied) return { ok: true, pane };
       evidence = state.evidence;
       modal = state.kind === "modal";
@@ -447,7 +448,7 @@ export abstract class PasteSessionRunnerBase<E> {
     }
   }
 
-  /** Foto del registro ANTES de inyectar: lo único que acota qué pudo cambiar durante el turno. */
+  /** Transcript snapshot BEFORE injection: the only thing bounding what could change during the turn. */
   protected async baseline(signal: AbortSignal): Promise<ReadonlyMap<string, number> | undefined> {
     const sizes = new Map<string, number>();
     if (signal.aborted) return undefined;
@@ -462,14 +463,13 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * ¿El turno cayó en OTRA conversación que la del turno anterior? Eso es un vaciado.
+   * Turn landed in a DIFFERENT conversation than the previous turn = context clear.
    *
-   * Se comprueba después de inyectar, que es cuando se sabe con certeza dónde quedó el pedido
-   * —antes sólo se podría adivinar cuál es el registro "activo"—. No se degrada ni se bloquea:
-   * vaciar el contexto es una acción deliberada del dueño y el camino de siempre también arrancaría
-   * sin memoria, así que degradar perdería lo único que justifica este diseño (que el turno se vea
-   * en el panel) sin ganar nada. Lo que no puede pasar es que el remitente siga creyendo que habla
-   * con el mismo hilo.
+   * Checked after injection, when the request's landing is known with certainty (before, the
+   * "active" log is just a guess). Not degraded or blocked: clearing is the owner's deliberate
+   * action and the fallback would also start without memory, so degrading loses the only thing
+   * this design justifies (the turn being visible in the pane) for no gain. The sender must not
+   * keep believing they are on the same thread.
    */
   protected async noteTranscriptIdentity(sessionId: string | undefined): Promise<void> {
     if (sessionId === undefined) return;
@@ -487,10 +487,10 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Compactaciones ocurridas DESDE que se pegó el prompt: sólo lo escrito tras la foto previa.
+   * Compactions since the prompt was pasted: only what was written after the prior snapshot.
    *
-   * Acotarlo a lo nuevo es lo que hace que el aviso signifique algo: un registro de semanas
-   * contiene decenas de compactaciones viejas y avisar de ellas sería ruido en cada entrega.
+   * Restricting to the new is what makes the notice meaningful: a weeks-old log contains dozens
+   * of old compactions and notifying them would be noise every delivery.
    */
   protected async noteCompactions(appended: readonly E[]): Promise<void> {
     for (const event of this.options.transcript.compactions(appended)) {
@@ -506,7 +506,7 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Examina los archivos de transcript que crecieron o aparecieron tras el pegado.
+   * Inspects transcript files that grew or appeared after the paste.
    */
   protected async locateInjectedTurn(
     baseline: ReadonlyMap<string, number>,
@@ -515,9 +515,9 @@ export abstract class PasteSessionRunnerBase<E> {
   ): Promise<{
     injected?: { file: string; key: string; sessionId?: string };
     started: boolean;
-    /** ¿Creció algo desde el pegado? Ver `DEFAULT_QUIET_MS`. */
+    /** Anything grew since the paste? See `DEFAULT_QUIET_MS`. */
     activity: boolean;
-    /** El sobre escrito después del pegado, cuando no hay turno propio del que descender. */
+    /** Envelope written after the paste, when there is no own turn to descend from. */
     envelope?: TurnOutcome;
   }> {
     const port = this.options.transcript;
@@ -531,7 +531,7 @@ export abstract class PasteSessionRunnerBase<E> {
       activity = true;
       const slice = await port.read(file, Math.max(previous, 0));
       if (port.startedTurn?.(slice.appended) === true) started = true;
-      // Sólo `appended`: lo escrito ANTES del pegado no puede ser la respuesta a este turno.
+      // Only `appended`: what was written BEFORE the paste cannot be this turn's reply.
       envelope = port.findEnvelope?.(slice.appended, correlationId) ?? envelope;
       const found = port.findInjected(file, slice.entries, promptText);
       if (found === undefined) continue;
@@ -548,11 +548,11 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * El último barrido en busca del sobre, justo antes de dar la entrega por muerta.
+   * Final envelope sweep, just before declaring the delivery dead.
    *
-   * Existe para que el plazo sea un techo y no una guillotina: una entrega cuyo sobre YA está
-   * escrito no puede morir por vencimiento. Es la misma búsqueda que hace el bucle, repetida en el
-   * único punto donde el bucle ya no va a volver a mirar.
+   * Exists so the deadline is a ceiling, not a guillotine: a delivery whose envelope is already
+   * written cannot die by timeout. Same search as the loop, repeated at the only point where the
+   * loop will not look again.
    */
   protected async lastEnvelope(
     baseline: ReadonlyMap<string, number>,
@@ -576,12 +576,11 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Devuelve el sobre cosechado SIN ascendencia, diciendo por qué.
+   * Returns the harvested envelope WITHOUT ancestry, stating why.
    *
-   * El aviso no es decorativo: la respuesta de un turno fundido contesta a la vez lo que pidió el
-   * dueño y lo que pidió el bus, y el remitente tiene derecho a saberlo. `fellBack: false` porque el
-   * turno SÍ pasó por la terminal —se ejecutó entero en el panel del dueño— y por tanto no hay nada
-   * que reejecutar por el camino de siempre.
+   * The notice is not decorative: a merged turn's reply answers both the owner and the bus, and
+   * the sender has the right to know. `fellBack: false` because the turn DID go through the
+   * terminal —it ran fully in the owner's pane— so there is nothing to re-run via the fallback.
    */
   protected async harvested(
     outcome: TurnOutcome,
@@ -601,9 +600,9 @@ export abstract class PasteSessionRunnerBase<E> {
       occurredAt: new Date().toISOString(),
       fellBack: false,
     });
-    // NO se limpia la caja: el turno se ejecutó, así que la caja ya se vació sola, y un `C-u` a
-    // destiempo borraría lo que el dueño esté escribiendo ahora. Este runner nunca usa C-u: ante
-    // una duda preserva el input humano y la adquisición siguiente falla cerrado.
+    // DO NOT clear the input box: the turn ran, so the box already cleared itself, and a late
+    // `C-u` would delete what the owner is typing now. This runner never uses C-u: in doubt it
+    // preserves the human input and the next acquisition fails closed.
     return result({
       exitCode: 0,
       stdout: this.options.transcript.stdout(outcome.text, outcome.sessionId ?? sessionId),
@@ -611,12 +610,9 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Cae al camino de siempre DICIÉNDOLO, en tres superficies a la vez.
+   * Falls back SAYING SO, on three surfaces at once.
    *
-   * El intento anterior murió exactamente acá: su anfitrión registraba
-   * `bus_client_connected` -> `client_gone` sin turno, el adaptador respondía por su vía de
-   * siempre en 15-18 s, y nada en el resultado revelaba que la sesión compartida no había
-   * participado. La degradación silenciosa es indistinguible del éxito, así que no puede existir.
+   * Silent degradation is indistinguishable from success, so it cannot exist.
    */
   protected async degrade(
     reason: EnsureFailure
@@ -647,11 +643,11 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Acumula avisos dentro del mismo turno sin perder ninguno.
+   * Accumulates notices within the same turn without losing any.
    *
-   * Puede haber dos: la TUI se reinició (`context_reset`) y además el turno terminó cayendo al
-   * camino de siempre. Quedarse con el último tiraría el primero, así que se concatenan los
-   * detalles y manda el que degradó, que es el más grave.
+   * There can be two: TUI restarted (`context_reset`) and the turn also ended up on the fallback
+   * path. Keeping only the last would drop the first, so details are concatenated and the
+   * degrading one wins, being the more severe.
    */
   protected record(degradation: SharedSessionDegradation): void {
     const previous = this.pending;
@@ -667,11 +663,11 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Un aviso que NO es una caída: registra y además lo dice en el panel, sin teñirlo de rojo.
+   * A notice that is NOT a fallback: records and also says it in the pane, without red tint.
    *
-   * El dueño es el único que puede compensar una compactación —volviendo a pegar lo importante— y
-   * el único que sabe si el vaciado lo hizo él, así que el aviso tiene que llegarle a él y no sólo
-   * al remitente de Telegram.
+   * The owner is the only one who can compensate a compaction —re-pasting what matters— and the
+   * only one who knows if they did the clear, so the notice must reach them, not just the Telegram
+   * sender.
    */
   protected async note(
     degradation: SharedSessionDegradation,
