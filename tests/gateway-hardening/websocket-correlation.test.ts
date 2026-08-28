@@ -122,8 +122,8 @@ describe('gateway WebSocket ACK correlation', () => {
       .toEqual([ids.deliveryTwo, ids.delivery]);
     expect(vi.mocked(repository.ackDelivery).mock.calls.map((call) => call[4]))
       .toEqual([600_000, 600_000]);
-    // Ya no se llama con `undefined` en la posición de `limit` (que se comía el default 20 del
-    // store): el primer drain de la sesión pide exactamente el presupuesto vacío.
+    // No longer called with `undefined` in the `limit` position (which ate the store's default
+    // 20): the session's first drain asks for exactly the empty budget.
     expect(repository.claimDeliveries).toHaveBeenNthCalledWith(
       1, 'Pablo', 'midas', 'serial-consumer', 1, 4, 600_000, undefined,
       {
@@ -133,9 +133,9 @@ describe('gateway WebSocket ACK correlation', () => {
       expect.stringMatching(/^[0-9a-f-]{36}$/u),
       expect.any(AbortSignal),
     );
-    // Tres drains y no uno: el del hello, y uno por cada ACK terminal. Cada ACK terminal libera un
-    // cupo de agents.max_concurrent_deliveries y es el único instante en que el agente vuelve a
-    // tener lugar; si el gateway no reclamara ahí, la cola se quedaría quieta.
+    // Three drains, not one: the hello's, and one per terminal ACK. Each terminal ACK frees a
+    // slot of agents.max_concurrent_deliveries and is the only instant the agent gets room
+    // again; if the gateway did not reclaim there, the queue would sit still.
     expect(vi.mocked(repository.claimDeliveries).mock.calls).toHaveLength(3);
   });
 
@@ -392,8 +392,8 @@ describe('gateway WebSocket ACK correlation', () => {
         epoch: 1
       }),
       600_000,
-      // Una renovacion tras reconectar tiene que llevar el techo igual que la primera: es
-      // justo el camino por el que una entrega se volvia inmortal.
+      // A renewal after a reconnect must carry the cap just like the first one: this is exactly
+      // the path by which a delivery used to become immortal.
       { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 }
     );
     await disconnect(resumed.socket);

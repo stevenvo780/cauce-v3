@@ -31,26 +31,25 @@ async function waitForDatabase(pool: DatabasePool): Promise<void> {
 }
 
 /**
- * El nombre de base que un `CAUCE_TEST_DATABASE_URL` TIENE que llevar para ser aceptado.
+ * The database name prefix a `CAUCE_TEST_DATABASE_URL` MUST carry to be accepted.
  *
- * No es una convención: es lo único que separa «correr la suite» de «truncar producción». Estas
- * pruebas llaman a `resetTestDatabase()`, que hace `TRUNCATE ... CASCADE` sobre 30 tablas. Si
- * alguien exporta por error la URL de la base real, sin esta guarda la suite la vacía y el
- * mensaje de error llegaría DESPUÉS. Por eso la comprobación es sobre el nombre y falla cerrado.
+ * This is what separates "run the suite" from "truncate production". The suites call
+ * `resetTestDatabase()`, which TRUNCATEs 30 tables CASCADE. If the real database URL is exported
+ * by mistake, the suite would silently wipe it; the check is therefore on the name and fails closed.
  */
 const PREFIJO_BASE_DE_PRUEBAS = 'cauce_test';
 
-/** Extrae el nombre de la base de una URL de postgres, sin traer dependencias. */
+/** Extracts the database name from a Postgres URL without bringing in dependencies. */
 export function nombreDeBase(url: string): string {
   const ruta = new URL(url).pathname;
   return ruta.startsWith('/') ? ruta.slice(1) : ruta;
 }
 
 /**
- * ¿Esta URL apunta a una base de pruebas desechable?
+ * Whether this URL points to a disposable test database.
  *
- * Exportada a propósito para poder probar la guarda sola, con la URL de producción como control
- * negativo. Una guarda que nunca se prueba con el caso que viene a impedir no es una guarda.
+ * Exported on purpose so the guard can be tested in isolation, using the production URL as the
+ * negative control. A guard that is never tested against the case it is meant to prevent is not a guard.
  */
 export function esBaseDePruebas(url: string): boolean {
   try {
@@ -61,11 +60,10 @@ export function esBaseDePruebas(url: string): boolean {
 }
 
 /**
- * El contrato mínimo que las suites usan del contenedor, para la base externa.
+ * Minimum container contract suites use for the external database.
  *
- * Un objeto con sólo `stop` deja a quien llame a `restart` o `getHost` con un TypeError en vez
- * de con un no-op, y el fallo aparecería lejos de aquí. Viene de `main`; lo de arriba —la guarda
- * del nombre— es de esta rama. Las dos mitades hacen falta.
+ * An object that only implements `stop` leaves callers of `restart` or `getHost` with a TypeError
+ * instead of a no-op, so the failure surfaces close to the source.
  */
 function contenedorDesacoplado(): StartedTestContainer {
   const noop = async (): Promise<void> => undefined;
@@ -74,8 +72,8 @@ function contenedorDesacoplado(): StartedTestContainer {
 
 export async function startTestDatabase(): Promise<TestDatabase> {
   /*
-   * Soporte para base de datos externa vía CAUCE_TEST_DATABASE_URL para entornos
-   * donde el daemon de Docker no está disponible para testcontainers.
+   * External database support via CAUCE_TEST_DATABASE_URL for environments where the Docker
+   * daemon is unavailable for testcontainers.
    */
   const externa = process.env.CAUCE_TEST_DATABASE_URL;
   if (externa) {
@@ -139,8 +137,8 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 }
 
 /**
- * Las tablas de catálogo: restauradas desde el esquema semilla en cada `resetTestDatabase()`
- * para garantizar aislamiento e idempotencia entre suites de prueba.
+ * Catalog tables: restored from the seed schema on every `resetTestDatabase()` to guarantee
+ * isolation and idempotency between test suites.
  */
 const TABLAS_DE_CATALOGO = [
   'role_policies',
@@ -151,31 +149,30 @@ const TABLAS_DE_CATALOGO = [
 ] as const;
 
 const ESQUEMA_SEMILLA = 'cauce_semilla';
-/** Dónde vive la huella del juego de migraciones con el que se capturó la semilla. */
+/** Where the fingerprint of the migration set used to capture the seed lives. */
 const TABLA_HUELLA = 'huella_de_migraciones';
 
 /**
- * Guarda el catálogo tal y como lo dejaron las migraciones, para poder devolverlo después.
+ * Snapshots the catalog exactly as migrations left it, so it can be restored later.
  *
- * Se hace una vez, justo tras migrar y antes de que ninguna suite toque nada. Es idempotente: si
- * el esquema ya existe —base externa reutilizada— no se rehace, porque rehacerlo copiaría el
- * estado YA contaminado y consagraría el defecto en vez de arreglarlo.
+ * Runs once, right after migrating and before any suite touches anything. Idempotent: if the schema
+ * already exists (reused external database), it is NOT re-snapshotted — re-snapshotting would copy
+ * the already-contaminated state and enshrine the defect instead of fixing it.
  *
- * ── Y por eso lleva la huella de las migraciones ─────────────────────────────────────────────
+ * ── Why the migration fingerprint is stored alongside ──────────────────────────────────────────
  *
- * Esa misma idempotencia abría un agujero silencioso. Una base externa reutilizada guarda su
- * semilla la PRIMERA vez; si después llega una migración nueva que siembra catálogo —la 027 añade
- * el rol `agent_notify`, que existe en producción y no lo creaba ninguna migración—, `applyMigrations`
- * la aplica sobre `public` pero la semilla sigue siendo la vieja. Y como `restaurarCatalogo()`
- * corre en CADA `resetTestDatabase()`, el primer reset BORRA la fila que la migración acaba de
- * crear. El resultado es una suite que falla por algo que sí está en el código, con un mensaje que
- * no apunta a ninguna parte.
+ * That idempotency opened a silent hole. A reused external database stores its seed the FIRST time;
+ * if a later migration seeds new catalog (e.g. migration 027 adds the `agent_notify` role, which
+ * exists in production but was never seeded), `applyMigrations` applies it on `public` while the
+ * seed stays stale. Since `restaurarCatalogo()` runs on every `resetTestDatabase()`, the first reset
+ * DELETEs the row the migration just created. The suite then fails on something the code does have,
+ * with a message that points nowhere.
  *
- * Se guarda la huella del juego de migraciones aplicadas junto a la semilla. Si al arrancar no
- * coincide, se LANZA con la instrucción exacta en vez de recapturar: recapturar sobre una base que
- * ya usó una suite consagraría el estado contaminado, que es justamente el defecto que este
- * mecanismo vino a cerrar. Tirar el esquema es barato —es una base desechable— y es una decisión
- * que tiene que tomar una persona, no un `catch`.
+ * The fingerprint of the applied migration set is stored with the seed. If it does not match on
+ * startup, this throws with the exact drop-and-rerun instruction rather than re-snapshotting:
+ * re-snapshotting on a base a suite already used would enshrine the contaminated state, which is
+ * exactly the defect this mechanism exists to prevent. Dropping the schema is cheap (the database
+ * is disposable) and must be a human decision, not a `catch`.
  */
 export async function guardarSemillaDeCatalogo(pool: DatabasePool): Promise<void> {
   const huella = await huellaDeMigraciones(pool);
@@ -204,7 +201,7 @@ export async function guardarSemillaDeCatalogo(pool: DatabasePool): Promise<void
   await pool.query(`INSERT INTO ${ESQUEMA_SEMILLA}.${TABLA_HUELLA}(huella) VALUES ($1)`, [huella]);
 }
 
-/** La huella del juego de migraciones aplicadas: su número y la última, que basta para detectar altas. */
+/** Fingerprint of the applied migration set: count and latest version, enough to detect additions. */
 export async function huellaDeMigraciones(pool: DatabasePool): Promise<string> {
   const r = await pool.query<{ cuantas: string; ultima: string | null }>(
     `SELECT count(*)::text AS cuantas, max(version) AS ultima FROM schema_migrations`,
@@ -212,14 +209,14 @@ export async function huellaDeMigraciones(pool: DatabasePool): Promise<string> {
   return `${r.rows[0]?.cuantas ?? '0'}:${r.rows[0]?.ultima ?? '-'}`;
 }
 
-/** Devuelve el catálogo a como lo dejaron las migraciones. */
+/** Restores the catalog to the state migrations left it in. */
 async function restaurarCatalogo(client: DatabaseClient): Promise<void> {
   const existe = await client.query<{ hay: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS hay`,
     [ESQUEMA_SEMILLA],
   );
   if (!existe.rows[0]?.hay) return;
-  // En orden inverso al de las dependencias: primero lo que apunta, después lo apuntado.
+    // Reverse FK order: parents first, dependents after.
   const alReves = [...TABLAS_DE_CATALOGO].reverse();
   await client.query(`TRUNCATE TABLE ${alReves.join(',')} CASCADE`);
   for (const tabla of TABLAS_DE_CATALOGO) {
@@ -238,7 +235,7 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
       await restaurarCatalogo(client);
       // agent_chain_progress has no foreign key by design, so CASCADE cannot reach it.
       // agent_failure_notices and its event ledger are in the same situation (migration 014),
-      // y agent_chain_closures también (migración 016 del vigía de cadenas mudas).
+      // and agent_chain_closures too (migration 016, silent-chain watch).
       await client.query(`TRUNCATE TABLE
         dlq_operator_resolutions,telegram_manual_replays,dlq_reconciliation_runs,
         dlq_reconciliation_transitions,
@@ -256,10 +253,10 @@ export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
       // the pre-014 behaviour, so an unrelated test never fails because a sibling failure got
       // coalesced. The suites that exercise the coalescer turn it on themselves.
       //
-      // Los topes de 019 se fijan APAGADOS por el mismo motivo, y con más razón: nacen
-      // ENCENDIDOS en producción, así que sin este pin cualquier suite que delegue varias veces
-      // sobre la misma raíz empezaría a fallar por un tope que no está probando. La suite de
-      // disciplina de delegación los enciende ella misma con los valores que quiere medir.
+      // The 019 caps are pinned OFF for the same reason, and more so: they are ON by default in
+      // production, so without this pin any suite that delegates multiple times on the same root
+      // would start failing on a cap it is not exercising. The delegation-discipline suite turns
+      // them on itself with the values it wants to measure.
       await client.query(`UPDATE agent_chain_policies
         SET progress_relay_enabled=false,progress_relay_max_events=12,cycle_cut_enabled=false,
             failure_coalesce_enabled=false,failure_coalesce_window_seconds=900,

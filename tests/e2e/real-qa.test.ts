@@ -122,9 +122,9 @@ function testcontainersBindings() {
 
 describe('real external QA harness', () => {
   it('passes against Fastify WebSocket and PostgreSQL and emits evidence', async () => {
-    // `execFile` rechaza con "Command failed: <argv>" y deja el stdout/stderr reales colgando en
-    // propiedades del error que nadie imprime. Ese mensaje sin causa es lo que hizo que esta
-    // suite pareciera un misterio durante cuatro dias: el arnes SI decia qué chequeo cayo.
+    // `execFile` rejects with "Command failed: <argv>" and leaves the real stdout/stderr hanging
+    // on error properties that nobody prints. That causeless message is what made this suite
+    // look like a mystery for four days: the harness DID say which check fell over.
     const { stdout, stderr } = await execute(process.execPath, [
       'ops/harness/runner.mjs', '--live', '--artifact-dir', 'ops/artifacts/real',
     ], {
@@ -178,10 +178,10 @@ describe('real external QA harness', () => {
     const root = await mkdtemp(join(process.cwd(), '.adapter-e2e-'));
     const adapters: ChildProcess[] = [];
     const diagnostics: string[] = [];
-    // La sala es identidad PROPIA del agente, no la del remitente: estas son las que siembra
-    // 001_initial.sql para salva/hegel y las que declaran sus manifiestos de flota. Desde 547eda3
-    // el adaptador falla cerrado sin ella, asi que este arnes debe pasarla igual que la unit de
-    // systemd (generate-units.py) y el supervisor de contenedor.
+    // The room is the agent's OWN identity, not the sender's: these are the rooms seeded by
+    // 001_initial.sql for salva/hegel and the ones declared in their fleet manifests. Since
+    // 547eda3 the adapter fails closed without it, so this harness must pass it the same way
+    // the systemd unit (generate-units.py) and the container supervisor do.
     const identities = [
       { tenant: 'Isa', room: 'grp.isa', alias: 'salva', instance: 'e2e-fake-isa' },
       { tenant: 'Jhon', room: 'grp.jhon', alias: 'hegel', instance: 'e2e-fake-jhon' },
@@ -289,9 +289,9 @@ type DeliveryConsumerIdentity =
 /**
  * `resetTestDatabase()` deliberately truncates the mutable agent registry. Since lease admission
  * now fails closed when an agent has no durable concurrency declaration, every authentic consumer
- * used after a reset must be restored explicitly. The complete placement is intentionally local
- * to this disposable test database: production placement has its own manifest parity gates, and
- * copying it here would create a second source of truth. What this scenario proves is the durable
+ * used after a reset MUST be restored explicitly. The full placement is intentionally local to this
+ * disposable test database: production placement has its own manifest parity gates, and copying
+ * it here would create a second source of truth. What this scenario proves is the durable
  * declared-consumer contract instead of weakening gateway admission for a missing fixture row.
  */
 async function declareDeliveryConsumers(identities: readonly DeliveryConsumerIdentity[]): Promise<void> {

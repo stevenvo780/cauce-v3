@@ -1,23 +1,23 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 /**
  * ==============================================================================================
- * EL FRAME `ack_result`, MIRADO COMO LO MIRA EL ADAPTADOR
+ * THE `ack_result` FRAME, SEEN THE WAY THE ADAPTER SEES IT
  *
- * `AckResult` ganó `delegation_rejections` y `chain_gate`. El gateway hacía
- * `const { receipt, ...legacyResult } = result` y esparcía `legacyResult` al frame, así que los
- * dos campos nuevos salían al cable SIN gate — mientras el miembro `ack_result` de
- * `WsOutboundSchema` seguía `.strict()` y sin conocerlos.
+ * `AckResult` gained `delegation_rejections` and `chain_gate`. The gateway did
+ * `const { receipt, ...legacyResult } = result` and spread `legacyResult` into the frame, so
+ * the two new fields went on the wire UNGATED — while the `ack_result` member of
+ * `WsOutboundSchema` stayed `.strict()` and unaware of them.
  *
- * Del lado del adaptador eso no es un frame que se descarta: `WsOutboundSchema.parse()` tira, y
- * el transporte convertía ese throw en `queue.fail(...)`, que rechaza al iterador y a todos los
- * que esperan. Un solo frame de esa forma se lleva puesta la cola ENTERA de la conexión y todas
- * las entregas en vuelo con ella.
+ * On the adapter side that is not a frame that is dropped: `WsOutboundSchema.parse()` throws,
+ * and the transport turned that throw into `queue.fail(...)`, which rejects the iterator and
+ * everyone waiting on it. A single frame of that shape takes down the ENTIRE connection queue
+ * and every in-flight delivery with it.
  *
- * POR QUÉ ESTOS TESTS EXISTEN, Y POR QUÉ LOS QUE HABÍA NO ALCANZARON: los tests de disciplina de
- * delegación afirmaban sobre el valor de retorno de `ackDelivery` (`result.delegation_rejections
- * ?.[0]?.code`), y ese valor SIEMPRE estuvo bien. Nadie validaba el frame. Así que acá cada frame
- * que sale del gateway se pasa por el MISMO validador que corre el adaptador; si el frame se sale
- * del esquema, el test falla igual que fallaría la flota.
+ * WHY THESE TESTS EXIST, AND WHY THE PREVIOUS ONES FELL SHORT: the delegation-discipline tests
+ * asserted on `ackDelivery`'s return value (`result.delegation_rejections?.[0]?.code`), and that
+ * value was ALWAYS right. Nobody validated the frame. Here every frame the gateway emits goes
+ * through the SAME validator the adapter runs; if the frame drifts out of schema, the test
+ * fails the same way the fleet would.
  * ==============================================================================================
  */
 import type { AddressInfo } from 'node:net';
@@ -38,9 +38,9 @@ afterEach(async () => {
 });
 
 /**
- * El rechazo más grande que el store sabe emitir: `chain_gated` incrusta la pregunta del gate,
- * que la base acota a 8 KiB, y el destino es texto del agente recortado al tope del esquema.
- * Si el frame más grande posible no pasara su propio esquema, el gate no serviría de nada.
+ * The largest rejection the store can emit: `chain_gated` embeds the gate question, which the
+ * database caps at 8 KiB, and the target is agent text trimmed to the schema ceiling. If the
+ * largest possible frame did not pass its own schema, the gate would be useless.
  */
 const worstCaseGateQuestion = 'q'.repeat(8 * 1_024);
 const worstCaseTarget = 't'.repeat(MAX_DELEGATION_REJECTION_TARGET_CHARS);
@@ -57,7 +57,7 @@ const rejections = [
     code: 'chain_gated' as const,
     reason: `La cadena está suspendida esperando una respuesta humana: «${worstCaseGateQuestion}».`,
     guidance: 'No delegues ni reintentes mientras el gate esté abierto.',
-    // La expansión de `@all` desplaza el índice a propósito; no es un índice de array.
+    // `@all` expansion deliberately shifts the index; it is not an array index.
     output_index: 1_205,
     target: worstCaseTarget
   }
@@ -71,8 +71,8 @@ const materializations = [{
 }];
 
 /**
- * Levanta un gateway y un adaptador que declara EXACTAMENTE las capabilities que se le pasan.
- * Todo frame que llega se valida con el validador del adaptador antes de devolverse.
+ * Stands up a gateway and an adapter that declares EXACTLY the capabilities passed in. Every
+ * frame received is validated with the adapter's validator before being returned.
  */
 async function connectAdapter(capabilities: readonly string[]): Promise<{
   nextFrame: () => Promise<WsOutbound>;
@@ -108,8 +108,8 @@ async function connectAdapter(capabilities: readonly string[]): Promise<{
   const waiting: Array<(value: WsOutbound) => void> = [];
   const failures: unknown[] = [];
   socket.on('message', (data) => {
-    // ESTA es la línea que faltaba. `websocket-transport.ts` hace exactamente esto con cada
-    // frame del gateway, y un throw acá era la cola entera de la conexión.
+    // THIS is the line that was missing. `websocket-transport.ts` does exactly this with every
+    // frame from the gateway, and a throw here took down the whole connection queue.
     const parsed = WsOutboundSchema.safeParse(JSON.parse(text(data)));
     if (!parsed.success) {
       failures.push(parsed.error);
@@ -133,8 +133,8 @@ async function connectAdapter(capabilities: readonly string[]): Promise<{
     if (existing) return existing;
     return new Promise<WsOutbound>((resolve, reject) => {
       waiting.push(resolve);
-      // Sin esto un frame fuera del esquema sería un timeout de 120 s sin explicación, que es
-      // justo lo que hace difícil de leer este modo de falla en producción.
+      // Without this, an out-of-schema frame would be a 120 s unexplained timeout — exactly what
+      // makes this failure mode hard to read in production.
       const deadline = setTimeout(() => {
         reject(new Error(
           failures.length > 0
@@ -160,12 +160,12 @@ async function connectAdapter(capabilities: readonly string[]): Promise<{
 
 describe('ack_result delegation feedback is gated by a negotiated capability', () => {
   it('sends an OLD adapter a frame its own schema accepts, without the new fields', async () => {
-    // Un adaptador de la flota tal como está desplegada hoy: no conoce `delegation_feedback_v1`.
+    // An adapter from the fleet as it stands today: it does not know `delegation_feedback_v1`.
     const adapter = await connectAdapter(['acks.v3', 'renewable_delivery_claims_v1']);
     adapter.ack();
 
-    // Que este `await` resuelva ya es la mitad del test: si el frame se saliera del esquema, el
-    // validador del adaptador lo habría rechazado y esto fallaría con los campos culpables.
+    // That this `await` resolves is already half the test: if the frame drifted out of schema,
+    // the adapter validator would have rejected it and this would fail with the offending fields.
     const frame = await adapter.nextFrame();
 
     expect(frame).toMatchObject({
@@ -177,7 +177,7 @@ describe('ack_result delegation feedback is gated by a negotiated capability', (
       applied: true,
       receipt: 'applied'
     });
-    // Y no llegan por el spread: el gateway los saca a mano de `legacyResult`.
+    // And they do not arrive via spread: the gateway pulls them out of `legacyResult` by hand.
     expect(frame).not.toHaveProperty('delegation_rejections');
     expect(frame).not.toHaveProperty('delegation_materializations');
     expect(frame).not.toHaveProperty('chain_gate');
@@ -192,8 +192,8 @@ describe('ack_result delegation feedback is gated by a negotiated capability', (
     const frame = await adapter.nextFrame();
 
     expect(frame).toMatchObject({ type: 'ack_result', applied: true, receipt: 'applied' });
-    // El gate no puede degradar el contenido: el peor caso que el store sabe generar —una
-    // pregunta de 8 KiB y un destino en el tope— viaja completo y valida.
+    // The gate must not degrade content: the worst case the store can produce — an 8 KiB
+    // question and a target at the ceiling — travels whole and validates.
     expect(frame).toHaveProperty('delegation_rejections', rejections);
     expect(frame).toHaveProperty('delegation_materializations', materializations);
     expect(frame).toHaveProperty('chain_gate', chainGate);
@@ -208,7 +208,7 @@ describe('ack_result delegation feedback is gated by a negotiated capability', (
     expect(frame).not.toHaveProperty('delegation_rejections');
     expect(frame).not.toHaveProperty('delegation_materializations');
     expect(frame).not.toHaveProperty('chain_gate');
-    // `receipt` sigue con su propio gate: este test también protege ese precedente.
+    // `receipt` keeps its own gate: this test also guards that precedent.
     expect(frame).not.toHaveProperty('receipt');
   });
 });

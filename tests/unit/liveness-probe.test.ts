@@ -15,7 +15,7 @@ interface ProbeState { path: string; since: number; value: number }
 
 let stateDirectory: string;
 let server: Server | undefined;
-/** Lo que el /health/ready simulado devuelve en la próxima consulta. */
+/** What the simulated /health/ready returns on the next query. */
 let document: Record<string, unknown> = { status: 'ready', ticks: 0 };
 let statusCode = 200;
 
@@ -76,14 +76,14 @@ afterEach(async () => {
 describe('liveness probe: verdict is progress, not response', () => {
   it('fails once the counter has been frozen longer than the stall window', async () => {
     const url = await startHealthServer();
-    // El bucle "gira": el contador sube y la sonda pasa.
+    // The loop "turns": the counter goes up and the probe passes.
     document = { status: 'ready', ticks: 10 };
     expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
     document = { status: 'ready', ticks: 11 };
     expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
 
-    // El bucle MUERE. El proceso sigue contestando 200 y `status: ready` — igual que hoy
-    // contestan los nueve contenedores. La sonda de readiness diría "healthy" para siempre.
+    // The loop DIES. The process keeps answering 200 and `status: ready` — just as the nine
+    // containers do today. The readiness probe would say "healthy" forever.
     expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
     const fresh = await readProbeState();
     await writeFile(fresh.path, JSON.stringify({
@@ -122,7 +122,7 @@ describe('liveness probe: verdict is progress, not response', () => {
     const staleSince = Date.now() - TEST_STALL_WINDOW_MS - 1_000;
     await writeFile(beforeRestart.path, JSON.stringify({ value: beforeRestart.value, since: staleSince }));
     expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(1);
-    // El contenedor reinició: el contador vuelve a cero. Un bucle recién arrancado no está parado.
+    // The container restarted: the counter goes back to zero. A freshly started loop is not stuck.
     document = { status: 'ready', ticks: 0 };
     expect((await runProbe(url, 'ticks', TEST_STALL_WINDOW_MS)).code).toBe(0);
     const restarted = await readProbeState();

@@ -369,12 +369,12 @@ describe('adversarial PostgreSQL store hardening', () => {
     if (!delivery) throw new Error('expected an ambiguity test delivery');
     const eventId = randomUUID();
 
-    // La entrega tiene que HABER ARRANCADO para que su ambigüedad valga: `execution_started_at`
-    // es lo que dice que el harness fue invocado y la cuota comprometida. Sin esa marca un
-    // ambiguo ya no es terminal —murió antes de ejecutar, así que se reintenta— y este test
-    // pasaba por el motivo equivocado: mataba en el intento 1 una entrega que nunca corrió.
-    // Lo que sigue fijando, que es su intención original: con trabajo posiblemente pagado, ni
-    // `retryable: true` de un llamador directo del store consigue un reintento.
+    // The delivery MUST HAVE STARTED for its ambiguity to count: `execution_started_at` is what
+    // says the harness was invoked and the quota committed. Without that mark an ambiguous
+    // outcome is no longer terminal — it died before executing, so it retries — and this test
+    // was passing for the wrong reason: it killed on attempt 1 a delivery that never ran.
+    // What it now pins, which is its original intent: with work possibly paid for, not even
+    // `retryable: true` from a direct store caller gets a retry.
     await repository.ackDelivery(delivery.delivery_id, 'Isa', 'salva', {
       version: '3.0',
       status: 'started',
@@ -580,7 +580,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       [source.rows[0]!.id]
     );
 
-    // Vacío e inválido fallan cerrados: ninguna fila cambia de estado ni consume un intento.
+    // Empty and invalid fail closed: no row changes state or consumes an attempt.
     await expect(repository.claimWakeOutbox('gateway-empty', [], 10, 5_000)).resolves.toEqual([]);
     await expect(repository.claimWakeOutbox('gateway-invalid', [
       { tenant_id: 'Pablo', alias: 'INVALID' }
@@ -589,8 +589,8 @@ describe('adversarial PostgreSQL store hardening', () => {
       `SELECT attempts FROM adapter_outbox WHERE kind='wake' ORDER BY tenant_id`
     )).rows).toEqual([{ attempts: 0 }, { attempts: 0 }]);
 
-    // El alias es deliberadamente igual en ambos tenants. Duplicar el selector no duplica el
-    // resultado, y la fila del otro tenant permanece pendiente con attempts=0.
+    // The alias is deliberately the same across both tenants. Duplicating the selector does
+    // not duplicate the result, and the other tenant's row stays pending with attempts=0.
     const pablo = await repository.claimWakeOutbox('gateway-pablo', [
       { tenant_id: 'Pablo', alias: 'salva' },
       { tenant_id: 'Pablo', alias: 'salva' }
@@ -605,8 +605,8 @@ describe('adversarial PostgreSQL store hardening', () => {
       { tenant_id: 'Pablo', status: 'processing', attempts: 1 }
     ]);
 
-    // Los locks siguen siendo los de la cola original: aun con varios gateways compitiendo por
-    // el mismo par exacto, una fila sólo obtiene una garra.
+    // The locks stay those of the original queue: even with several gateways competing for the
+    // same exact pair, a row gets only one claim.
     const raced = await Promise.all(Array.from({ length: 8 }, (_, index) =>
       repository.claimWakeOutbox(`gateway-isa-${index}`, [{ tenant_id: 'Isa', alias: 'salva' }], 1, 5_000)
     ));

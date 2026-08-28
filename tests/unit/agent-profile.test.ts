@@ -5,13 +5,13 @@ import {
 } from '@cauce/protocol';
 
 /**
- * Validación de límites de perfil de agente en unidades UTF-16 y puntos de código.
+ * Validation of agent profile limits in UTF-16 units and code points.
  *
- * El límite evalúa la unidad más estricta para garantizar consistencia entre
- * las restricciones en TypeScript (Zod UTF-16) y PostgreSQL.
+ * The limit evaluates the strictest unit to guarantee consistency between the TypeScript
+ * (Zod UTF-16) and PostgreSQL constraints.
  */
 
-/** Un emoji fuera del BMP: 1 punto de código, 2 unidades UTF-16. El caso que rompió todo. */
+/** An emoji outside the BMP: 1 code point, 2 UTF-16 units. The case that broke everything. */
 const ASTRAL = '\u{1F389}';
 
 function perfilBase(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -45,9 +45,9 @@ describe('medición en las dos unidades', () => {
   });
 
   /**
-   * CONTROL NEGATIVO de la unidad. Este es exactamente el texto que la medida vieja —puntos de
-   * código— habría dejado pasar y la nueva rechaza. Si alguien vuelve a medir con `countCodePoints`,
-   * este test se pone rojo.
+   * NEGATIVE CONTROL of the unit. This is exactly the text that the old measure — code points —
+   * would have let through and the new one rejects. If anyone goes back to measuring with
+   * `countCodePoints`, this test goes red.
    */
   it('control negativo: un texto que PASA en puntos de código y FALLA en la medida estricta', () => {
     const texto = ASTRAL.repeat(AGENT_PROFILE_LIMITS.purpose);
@@ -105,7 +105,7 @@ describe('normalizeAgentProfile', () => {
     }
   });
 
-  /** CONTROL NEGATIVO del tope de `purpose`: justo en el tope pasa. */
+  /** NEGATIVE CONTROL of the `purpose` cap: at exactly the cap it passes. */
   it('control negativo: el propósito EXACTAMENTE en el tope se acepta', () => {
     const justo = 'a'.repeat(AGENT_PROFILE_LIMITS.purpose);
     expect(normalizeAgentProfile(perfilBase({ purpose: justo })).purpose).toBe(justo);
@@ -117,7 +117,7 @@ describe('normalizeAgentProfile', () => {
       .toThrow(/role_summary/);
   });
 
-  /** CONTROL NEGATIVO del tope de `role_summary`. */
+  /** NEGATIVE CONTROL of the `role_summary` cap. */
   it('control negativo: el rol EXACTAMENTE en el tope se acepta', () => {
     const justo = 'a'.repeat(AGENT_PROFILE_LIMITS.role_summary);
     expect(normalizeAgentProfile(perfilBase({ role_summary: justo })).role_summary).toBe(justo);
@@ -129,7 +129,7 @@ describe('normalizeAgentProfile', () => {
       .toThrow(/restrictions/);
   });
 
-  /** CONTROL NEGATIVO del tope por elemento. */
+  /** NEGATIVE CONTROL of the per-element cap. */
   it('control negativo: un elemento EXACTAMENTE en el tope se acepta', () => {
     const justo = 'a'.repeat(AGENT_PROFILE_LIMITS.item);
     expect(normalizeAgentProfile(perfilBase({ restrictions: [justo] })).restrictions)
@@ -141,7 +141,7 @@ describe('normalizeAgentProfile', () => {
     expect(() => normalizeAgentProfile(perfilBase({ tools: muchos }))).toThrow(/tools/);
   });
 
-  /** CONTROL NEGATIVO de la cardinalidad: el número exacto de elementos entra. */
+  /** NEGATIVE CONTROL of cardinality: the exact number of items goes through. */
   it('control negativo: EXACTAMENTE el número de elementos admitido se acepta', () => {
     const justos = Array.from({ length: AGENT_PROFILE_LIMITS.items }, (_, i) => `r${i}`);
     expect(normalizeAgentProfile(perfilBase({ tools: justos })).tools).toHaveLength(
@@ -150,7 +150,7 @@ describe('normalizeAgentProfile', () => {
   });
 
   it('rechaza el perfil que pasa el presupuesto TOTAL aunque cada campo entre solo', () => {
-    // Cada elemento entra en su tope y cada lista en su cardinalidad; sumados no entran.
+    // Each item fits its cap and each list fits its cardinality; together they do not fit.
     const relleno = Array.from({ length: AGENT_PROFILE_LIMITS.items }, () =>
       'a'.repeat(AGENT_PROFILE_LIMITS.item));
     expect(() => normalizeAgentProfile(perfilBase({
@@ -158,7 +158,7 @@ describe('normalizeAgentProfile', () => {
     }))).toThrow(/total/);
   });
 
-  /** CONTROL NEGATIVO del presupuesto total: EXACTAMENTE en el presupuesto entra. */
+  /** NEGATIVE CONTROL of the total budget: AT exactly the budget it goes through. */
   it('control negativo: un perfil que llena el presupuesto total sin pasarlo se acepta', () => {
     const item = 'a'.repeat(AGENT_PROFILE_LIMITS.item);
     const cuantos = AGENT_PROFILE_LIMITS.total / AGENT_PROFILE_LIMITS.item;
@@ -182,10 +182,10 @@ describe('normalizeAgentProfile', () => {
   });
 
   /**
-   * CONTROL NEGATIVO de la unidad EN EL PRESUPUESTO TOTAL, que es donde más barato sale
-   * equivocarse: un elemento de 500 emojis mide 500 puntos de código y 1.000 unidades UTF-16.
-   * Veinticinco de ellos son 12.500 puntos de código —la mitad del presupuesto— y 25.000
-   * unidades UTF-16, que se pasan. Un total contado en puntos de código lo aceptaría.
+   * NEGATIVE CONTROL of the unit IN THE TOTAL BUDGET, where it is cheapest to slip: one item
+   * of 500 emojis measures 500 code points and 1,000 UTF-16 units. Twenty-five of them are
+   * 12,500 code points — half the budget — and 25,000 UTF-16 units, which exceeds it. A total
+   * counted in code points would accept it.
    */
   it('el presupuesto total se mide en la unidad estricta, no en puntos de código', () => {
     const elemento = ASTRAL.repeat(AGENT_PROFILE_LIMITS.item / 2);
@@ -199,7 +199,7 @@ describe('normalizeAgentProfile', () => {
     }).responsibilities).toHaveLength(justos);
 
     const nocabe = Array.from({ length: justos + 1 }, () => elemento);
-    // En puntos de código esto está MUY por debajo del presupuesto: ahí está la trampa.
+    // In code points this is WELL below the budget: that is the trap.
     expect(nocabe.reduce((suma, texto) => suma + countCodePoints(texto), 0))
       .toBeLessThan(AGENT_PROFILE_LIMITS.total);
     expect(() => normalizeAgentProfile({

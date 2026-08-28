@@ -6,14 +6,14 @@ import {
 } from './helpers.js';
 
 /**
- * Las lecturas del panel de flota requieren `read`; la ingesta de muestras sigue siendo una
- * mutación de operador con `control`, verificada además por el store. Esta separación permite que
- * una cuenta `reader` navegue la consola sin adquirir autoridad para cambiar el estado operativo.
+ * Fleet panel reads require `read`; quota sample ingest remains an operator mutation with
+ * `control`, additionally verified by the store. This separation lets a `reader` account browse
+ * the console without acquiring authority to change operational state.
  *
- * Lo que este archivo NO prueba (requiere Postgres real, no disponible en esta máquina): que un
- * operator de un tenant no-hub sólo ve sus propias filas en fleetActivity()/quotaSnapshot(), y
- * que la auto-pausa/auto-reanudación de recordQuotaSample() se comporta como documenta la
- * migración 013. Eso queda para *-postgres.test.ts.
+ * What this file does NOT test (it needs a real Postgres, not available on this machine): a
+ * non-hub operator only sees their own rows in fleetActivity()/quotaSnapshot(), and the
+ * auto-pause/auto-resume of recordQuotaSample() behaves as migration 013 documents. That stays
+ * for the *-postgres.test.ts files.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
@@ -149,8 +149,8 @@ describe('POST /v3/quotas/samples', () => {
     const repository = fakeRepository();
     const principal = testPrincipal({ roles: roles('operator'), permissions: grants('control') });
     const app = await gateway(repository, principal);
-    // Sin header Origin, tal como lo manda un demonio con certificado de cliente mTLS -- si esta
-    // ruta viviera bajo /v3/console/, createConsoleSecurityHook la rechazaría con 403 acá mismo.
+    // Without an Origin header, as sent by a daemon with a client mTLS certificate — if this route
+    // lived under /v3/console/, createConsoleSecurityHook would reject it with 403 right here.
     const response = await app.inject({ method: 'POST', url: '/v3/quotas/samples', payload: validQuotaSample() });
     expect(response.statusCode).toBe(202);
   });

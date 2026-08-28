@@ -22,10 +22,10 @@ interface DockerNetworkInspection {
 }
 
 /**
- * `--network host` reaches the test listener only when Vitest itself runs on the Docker host.
- * In the production operator workspace it runs inside a container, where host networking points
- * at a different namespace. Prefer an actual shared network and the runner's address there, while
- * retaining host networking for native CI runners.
+ * `--network host` reaches the test listener only when Vitest itself runs on the Docker host; in
+ * the production operator workspace Vitest runs in a container whose `host` namespace differs.
+ * Prefer a real shared network with the runner's address there, falling back to `host` for native
+ * CI runners.
  */
 async function resolveDockerReachability(): Promise<DockerReachability> {
   const requestedNetwork = process.env.CAUCE_TEST_DOCKER_NETWORK;

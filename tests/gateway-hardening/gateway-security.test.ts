@@ -96,9 +96,9 @@ describe('gateway hardening facades and RBAC', () => {
       authProvider: new FixedAuthProvider(testPrincipal()),
       deliveryWakeSubscriber: noDeliveryWakes,
       ackDeadlineMs: 600_000,
-      // El techo de vida viaja por el mismo camino que el plazo: el gateway es quien congela
-      // `ack_deadline_at` cuando una renovacion se pasaria del techo, asi que si no llegara
-      // hasta el store, un harness colgado seguiria renovando entre tick y tick del reaper.
+      // The lease cap travels the same path as the deadline: the gateway is the one freezing
+      // `ack_deadline_at` when a renewal would exceed the cap, so if it did not reach the store a
+      // stuck harness would keep renewing between reaper ticks.
       deliveryLeaseCap: { leaseCapMs: 7_200_000, leaseCapGraceMs: 600_000 },
       outboxPollMs: 60_000
     });
@@ -114,9 +114,9 @@ describe('gateway hardening facades and RBAC', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    // El `limit: 4` del cliente ya no llega crudo al store: se reparte contra el presupuesto
-    // configurado (2 generales + 2 reservados para humanos). El POST era el otro lugar por el
-    // que se podía vaciar la cola de un agente sin techo.
+    // The client `limit: 4` no longer reaches the store raw: it is split against the configured
+    // budget (2 general + 2 reserved for humans). The POST was the other place an agent's queue
+    // could be drained without a cap.
     expect(repository.claimDeliveries).toHaveBeenCalledWith(
       'Pablo', 'midas', 'http-deadline-consumer', 7, 4, 600_000, undefined,
       {
@@ -188,8 +188,8 @@ describe('gateway hardening facades and RBAC', () => {
         url: `/v3/console/deliveries/${ids.delivery}/replay`,
         headers: { host: 'gateway.test', origin: 'http://gateway.test' }
       }),
-      // Cancelar mueve el estado terminal de una entrega ajena igual que replay, así que va con
-      // el mismo candado: `control` a secas no alcanza si el rol no es operator.
+      // Cancel moves someone else's terminal state the same way replay does, so it gets the same
+      // lock: plain `control` is not enough if the role is not operator.
       app.inject({
         method: 'POST',
         url: `/v3/console/deliveries/${ids.delivery}/cancel`,
@@ -224,8 +224,8 @@ describe('gateway hardening facades and RBAC', () => {
       ids.delivery, 'Pablo', 'midas', 'duplicado del árbol roto'
     );
 
-    // Un motivo que no es texto se ignora en vez de tumbar la cancelación: el campo es
-    // decorativo y la operación no puede fallar por él.
+    // A reason that is not text is ignored instead of breaking the cancel: the field is
+    // decorative and the operation cannot fail because of it.
     const forged = await app.inject({
       method: 'POST',
       url: `/v3/console/deliveries/${ids.delivery}/cancel`,

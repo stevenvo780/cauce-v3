@@ -9,8 +9,8 @@ import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { closeGatewaysAndSockets, fakeRepository, noDeliveryWakes, text } from './helpers.js';
 
 /**
- * Verifica la inclusión del perfil de agente en la trama `hello_ack`, validando compatibilidad
- * de esquema y el control mediante la capability `agent_profile_v1`.
+ * Verifies the inclusion of the agent profile in the `hello_ack` frame, validating schema
+ * compatibility and the gating through the `agent_profile_v1` capability.
  */
 
 describe('el esquema del saludo acepta el perfil sin romper a quien no lo espera', () => {
@@ -48,9 +48,9 @@ describe('el esquema del saludo acepta el perfil sin romper a quien no lo espera
 
   it('CONTROL NEGATIVO: un perfil a medias se RECHAZA, no se siembra medio', () => {
     /*
-     * Lo que llega por el socket es dato ajeno y con ello se escriben ficheros que un modelo va a
-     * leer como autoritativos. Un campo que falta significa que las dos puntas no hablan la misma
-     * versión, y ante eso vale más fallar el saludo que sembrar media persona.
+     * What arrives over the socket is foreign data, and with it are written files a model will
+     * read as authoritative. A missing field means the two ends are not on the same version, and
+     * under that condition failing the hello is better than seeding half a person.
      */
     const aMedias = {
       ...saludoBase,
@@ -66,7 +66,7 @@ describe('el esquema del saludo acepta el perfil sin romper a quien no lo espera
   });
 
   it('CONTROL NEGATIVO: un campo de MÁS también se rechaza', () => {
-    // `.strict()`: un campo desconocido es la señal de que la otra punta habla otra versión.
+    // `.strict()`: an unknown field is the signal that the other end speaks a different version.
     const conExtra = {
       ...saludoBase,
       agent_profile: {

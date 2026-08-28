@@ -7,15 +7,14 @@ import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 /**
  * The fleet monitor is the only MCP surface Cauce exposes to an agent, so it is the only
- * place a tool can honestly be declared. This suite exists because two commits once
- * declared a `get_agent_chain_status` tool — types, help text and a protocol prompt that
- * told every agent to call it — with nothing behind it, so an agent that believed the
- * prompt spent a turn and got an error back.
+ * place a tool can honestly be declared. Two commits once shipped a `get_agent_chain_status`
+ * tool (types, help text and a protocol prompt) with nothing behind it, so an agent that
+ * believed the prompt spent a turn and got an error back.
  *
- * The assertions therefore compare two lists that must not drift: what the server
- * advertises over `tools/list`, and what it can actually execute over `tools/call`.
- * Nothing here is stubbed; the server runs as a real process against a real database and
- * every advertised tool is invoked for real.
+ * The assertions compare two lists that MUST not drift: what the server advertises over
+ * `tools/list` and what it can actually execute over `tools/call`. Nothing is stubbed; the
+ * server runs as a real process against a real database and every advertised tool is invoked
+ * for real.
  */
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -26,10 +25,10 @@ const HARNESS_PROMPT_SOURCE = fileURLToPath(
   new URL('../../packages/adapter-sdk/src/harnesses/shared.ts', import.meta.url),
 );
 /**
- * A tenant id, not a room id. `CAUCE_TENANT_ID` is matched against
- * `connection_leases.tenant_id` and `deliveries.recipient_tenant`, whose values are the
- * tenants in migration 001. Pointing it at a room (`grp.steven`) makes every tool return
- * an empty fleet forever, which is what the package docs used to instruct.
+ * A tenant id, not a room id. `CAUCE_TENANT_ID` is matched against `connection_leases.tenant_id`
+ * and `deliveries.recipient_tenant`, whose values are the tenants seeded in migration 001.
+ * Pointing it at a room makes every tool return an empty fleet forever, which is what the
+ * package docs used to instruct.
  */
 const TENANT = 'Steven';
 
@@ -50,7 +49,7 @@ interface ToolCallResult {
   readonly isError?: boolean;
 }
 
-/** Minimal MCP stdio client. Deliberately hand-rolled so the test asserts the real wire. */
+/** Minimal MCP stdio client. Hand-rolled on purpose so the test asserts the real wire. */
 class StdioMcpClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<
@@ -176,9 +175,9 @@ describe('MCP fleet monitor tool surface', () => {
   });
 
   /**
-   * The point of the suite. Every advertised tool is executed against the live server;
-   * a name that reached `tools/list` without reaching the dispatcher falls into the
-   * server's default branch and comes back as `Unknown tool`, which fails here.
+   * Point of the suite. Every advertised tool is executed against the live server; a name that
+   * reached `tools/list` without reaching the dispatcher falls into the server's default branch
+   * and comes back as `Unknown tool`, which fails here.
    */
   it('executes every tool it advertises', async () => {
     const unimplemented: string[] = [];
@@ -190,8 +189,8 @@ describe('MCP fleet monitor tool surface', () => {
         continue;
       }
       // Answering is not the same as working. Each read model reports whether its query
-      // actually ran, which is what caught `estado_flota` and `salud` querying a table
-      // that does not exist while still returning a tidy empty payload.
+      // actually ran, which is what caught `estado_flota` and `salud` querying a table that
+      // does not exist while still returning a tidy empty payload.
       const payload = JSON.parse(text) as Record<string, unknown>;
       if (payload.available === false) {
         unimplemented.push(`${tool.name} -> responded but its read model could not query`);
@@ -205,8 +204,8 @@ describe('MCP fleet monitor tool surface', () => {
   }, 120_000);
 
   /**
-   * Proves the tools read live rows rather than returning a shape. A row is written
-   * straight into the fleet tables and has to surface, unprompted, through the MCP call.
+   * Proves the tools read live rows rather than returning a shape. A row is written straight
+   * into the fleet tables and has to surface, unprompted, through the MCP call.
    */
   it('returns rows that were really written to the database', async () => {
     const initial = JSON.parse(textOf(await client.callTool('estado_flota'))) as {
@@ -251,7 +250,7 @@ describe('MCP fleet monitor tool surface', () => {
 
   /**
    * An advertised input schema is part of the contract too. `entregas` used to offer
-   * estado values of claimed/acked/dead, and only `dead` is a real delivery status, so an
+   * `estado` values of `claimed/acked/dead`, and only `dead` is a real delivery status, so an
    * agent filtering by the documented values got an empty list and no explanation.
    */
   it('advertises delivery statuses the database actually allows', async () => {
@@ -293,11 +292,11 @@ describe('MCP fleet monitor tool surface', () => {
   });
 
   /**
-   * Closes the loop between the two surfaces. The adapter's protocol prompt is the other
-   * place an agent learns what it may call, and the adapter cannot execute a tool at all:
-   * it reaches the store only through the gateway socket. So the prompt must advertise
-   * nothing. If a tool affordance is ever reintroduced there, it has to be backed by a
-   * tool this server really implements, and this assertion is what forces that.
+   * Closes the loop between the two surfaces. The adapter's protocol prompt is the other place
+   * an agent learns what it may call, and the adapter cannot execute a tool at all: it reaches
+   * the store only through the gateway socket. So the prompt MUST advertise nothing. If a tool
+   * affordance is ever reintroduced there, it has to be backed by a tool this server really
+   * implements, and this assertion is what forces that.
    */
   it('is the only surface that advertises tools to agents', async () => {
     const promptSource = await readFile(HARNESS_PROMPT_SOURCE, 'utf8');

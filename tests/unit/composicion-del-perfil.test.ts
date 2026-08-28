@@ -7,13 +7,13 @@ import {
 } from '../../packages/adapter-sdk/src/context/perfil-a-contexto.js';
 
 /**
- * LA COMPOSICIÓN DEL PERFIL VIVE EN UN SOLO SITIO.
+ * PROFILE COMPOSITION LIVES IN ONE PLACE.
  *
- * El adaptador la usa para SEMBRAR el fichero del contenedor; el gateway la necesita para enseñar
- * una VISTA PREVIA de lo que se va a escribir antes de escribirlo. Si fueran dos implementaciones,
- * divergirían a la primera corrección y el operador aprobaría un bloque distinto del que acaba en
- * el disco — sin que nada diera error, porque cada una por su lado estaría bien. Ese es el fallo
- * que estas pruebas impiden, y por eso la primera compara por IDENTIDAD y no por comportamiento.
+ * The adapter uses it to SEED the container's file; the gateway needs it to show a PREVIEW of
+ * what will be written before writing it. If they were two implementations, they would diverge
+ * on the first fix and the operator would approve a block different from the one that ends up
+ * on disk — without any error, because each one on its own would be fine. That is the failure
+ * these tests prevent, which is why the first one compares by IDENTITY, not by behaviour.
  */
 
 const HECHOS: HechosDelAlias = {
@@ -29,10 +29,10 @@ function perfil(sobrescribe: Partial<AgentProfile> = {}): AgentProfile {
 
 describe('la composición del perfil', () => {
   /**
-   * La prueba que hace que las demás signifiquen algo: las dos vías son EL MISMO objeto.
+   * The test that makes the others meaningful: the two paths are THE SAME object.
    *
-   * Si el adaptador tuviera su propia copia esto daría rojo aunque las dos produjeran hoy el mismo
-   * texto, que es exactamente cuándo hay que enterarse — antes de que diverjan, no después.
+   * If the adapter had its own copy, this would go red even though both currently produce the
+   * same text — which is exactly when you have to find out, before they diverge, not after.
    */
   it('el adaptador re-exporta la del protocolo, no una copia suya', () => {
     expect(reexportadaPorElAdaptador).toBe(componerBloqueDePerfil);
@@ -58,36 +58,36 @@ describe('la composición del perfil', () => {
     expect(bloque).toContain('## Identidad y propósito');
     expect(bloque).toContain('Orquestar la flota y reparar Cauce.');
     expect(bloque).toContain('- no tocar credenciales');
-    // Los permisos DENEGADOS se nombran igual que los concedidos: un agente que no sabe si puede
-    // hacer algo lo intenta y gasta el turno. Decir «no» cierra la duda.
+    // DENIED permissions are named the same way as granted ones: an agent that does not know
+    // whether it can do something tries it and spends the turn. Saying "no" closes the doubt.
     expect(bloque).toContain('Cambiar configuración (control): no');
     expect(bloque).toContain('Rutear mensajes a otros alias: sí');
   });
 
   /**
-   * CONTROL NEGATIVO del diseño entero: un perfil sin nada autorado produce CADENA VACÍA.
+   * NEGATIVE CONTROL of the whole design: a profile with nothing authored produces an EMPTY STRING.
    *
-   * Y no un esqueleto de encabezados. Los permisos y el arnés son hechos que siempre existen, así
-   * que sin este corte un alias sin perfil escrito recibiría un fichero que sólo le dice en qué
-   * contenedor corre — ruido con forma de contrato. La cadena vacía es la señal de «no hay perfil».
+   * Not a skeleton of headings. Permissions and harness are facts that always exist, so without
+   * this cut an alias without a written profile would only get told which container it runs in
+   * — noise shaped like a contract. The empty string is the signal that there is no profile.
    */
   it('un perfil sin nada autorado no produce un esqueleto de encabezados', () => {
     expect(componerBloqueDePerfil(perfil(), HECHOS)).toBe('');
   });
 
   /**
-   * DETERMINISMO: el mismo perfil y los mismos hechos dan los MISMOS bytes.
+   * DETERMINISM: the same profile and the same facts produce the SAME bytes.
    *
-   * De esto cuelga el ahorro entero. El sello es el sha256 del bloque, así que una composición no
-   * determinista haría que el sello cambiara solo y cada cambio de sello cuesta una reescritura del
-   * fichero en cada contenedor de la flota — sin que nadie viera un error.
+   * The whole saving hinges on this. The seal is the sha256 of the block, so a non-deterministic
+   * composition would make the seal change on its own and every seal change costs a rewrite of
+   * the file in every container of the fleet — without anyone seeing an error.
    */
   it('es determinista: mismos datos, mismos bytes', () => {
     const datos = perfil({ purpose: 'Orquestar.', tools: ['a', 'b'] });
     expect(componerBloqueDePerfil(datos, HECHOS)).toBe(componerBloqueDePerfil(datos, HECHOS));
   });
 
-  /** Una sección sin cuerpo desaparece ENTERA, en vez de dejar un encabezado hueco. */
+  /** A section with no body disappears ENTIRELY, instead of leaving an empty heading. */
   it('omite las secciones que no tienen cuerpo', () => {
     const bloque = componerBloqueDePerfil(perfil({ purpose: 'Sólo esto.' }), HECHOS);
     expect(bloque).toContain('## Identidad y propósito');

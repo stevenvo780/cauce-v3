@@ -29,26 +29,26 @@ async function configurationSource(): Promise<string> {
 }
 
 /**
- * 🔴 **CINCO TOPES QUE GOBIERNAN LA FLOTA Y NO SE PODÍAN TOCAR DESDE NINGUNA PANTALLA.**
+ * 🔴 **FIVE CAPS THAT GOVERN THE FLEET AND COULD NOT BE TOUCHED FROM ANY SCREEN.**
  *
- * La migración 019 añadió a `agent_chain_policies` cinco columnas —`delegation_caps_enabled`,
+ * Migration 019 added five columns to `agent_chain_policies` — `delegation_caps_enabled`,
  * `max_fanout_per_turn`, `max_edge_repeats_per_root`, `max_delegations_per_root`,
- * `human_gate_enabled`— y el servidor las APLICA: `loadChainPolicy` en
- * `packages/store/src/repository.ts` las lee y con ellas corta delegaciones en caliente.
+ * `human_gate_enabled` — and the server APPLIES them: `loadChainPolicy` in
+ * `packages/store/src/repository.ts` reads them and with them cuts delegations on the fly.
  *
- * Y sin embargo no estaban ni en el `SELECT` del snapshot ni en el esquema de la mutación. O sea
- * que la única forma de cambiarlas era un `UPDATE` crudo contra la base —la propia 019 lo
- * documenta así, como el «apagado de emergencia»—: sin revisión, sin mutación inversa que alcance
- * el botón de deshacer, sin asiento en `audit_events` y sin quién lo hizo.
+ * And yet they were neither in the snapshot's `SELECT` nor in the mutation schema. So the only
+ * way to change them was a raw `UPDATE` against the database — which 019 itself documents as the
+ * "emergency kill switch" — with no revision, no inverse mutation that reaches the undo button,
+ * no entry in `audit_events`, and no record of who did it.
  *
- * `console/src/features/config/areas.ts` llevaba el defecto escrito en un comentario, con
- * las líneas exactas, y la frase «todavía no se pueda arreglar acá». Ya se puede.
+ * `console/src/features/config/areas.ts` had the defect written in a comment, with the exact
+ * lines and the phrase "it still cannot be fixed here". It can be now.
  *
- * ── Es el defecto ESPEJO del que persigue todo este trabajo ──────────────────────────────────
+ * ── This is the MIRROR defect of what all this work pursues ──────────────────────────────────
  *
- * El otro lado era enseñar ocho campos editables de los que sólo uno tenía lector real. Éste es
- * aplicar cinco topes que ninguna pantalla enseña. Callar un tope que gobierna la flota es la
- * misma mentira que enseñar un campo que no gobierna nada, con el signo cambiado.
+ * The other side was exposing eight editable fields of which only one had a real reader. This is
+ * applying five caps that no screen exposes. Silencing a cap that governs the fleet is the same
+ * lie as exposing a field that governs nothing, with the sign flipped.
  */
 
 function mutacion(value: Record<string, unknown>) {
@@ -74,9 +74,9 @@ describe('los cinco topes de la 019 entran por la mutación de configuración', 
 
   it('acepta los cinco a la vez, que es como se hace un apagado de emergencia', () => {
     /*
-     * El caso real: el `UPDATE` que la 019 documenta apaga `delegation_caps_enabled` y
-     * `human_gate_enabled` en el mismo momento. Si sólo se pudieran mandar de uno en uno, el
-     * apagado dejaría a la flota medio segundo con los topes en un estado que nadie eligió.
+     * The real case: the `UPDATE` documented in 019 turns off `delegation_caps_enabled` and
+     * `human_gate_enabled` at the same moment. If they could only be sent one at a time, the
+     * kill switch would leave the fleet half a second with the caps in a state nobody chose.
      */
     expect(mutacion({
       delegation_caps_enabled: false,
@@ -90,15 +90,15 @@ describe('los cinco topes de la 019 entran por la mutación de configuración', 
 
 describe('los rangos son EXACTAMENTE los del CHECK de Postgres', () => {
   /*
-   * Copiados uno a uno del `agent_chain_policies_delegation_caps_check`:
+   * Copied one by one from the `agent_chain_policies_delegation_caps_check`:
    *   max_fanout_per_turn        BETWEEN 1 AND 100
    *   max_edge_repeats_per_root  BETWEEN 1 AND 1000
    *   max_delegations_per_root   BETWEEN 1 AND 10000
    *
-   * Que coincidan no es simetría: es lo que hace que un valor fuera de rango se rechace con un
-   * mensaje que NOMBRA el campo, en vez de estallar como un error de restricción a mitad de la
-   * transacción con un texto que el operador no puede accionar. En un desacuerdo manda el SQL: la
-   * columna es la que no se puede mover sin migración.
+   * Their matching is not symmetry: it is what makes an out-of-range value be rejected with a
+   * message that NAMES the field, instead of blowing up as a constraint error mid-transaction with
+   * text the operator cannot act on. In a disagreement the SQL wins: the column is what cannot be
+   * moved without a migration.
    */
   const LIMITES = [
     ['max_fanout_per_turn', 1, 100],
@@ -121,15 +121,15 @@ describe('los rangos son EXACTAMENTE los del CHECK de Postgres', () => {
 
   it('CONTROL NEGATIVO: un campo inventado se rechaza — `.strict()` sigue puesto', () => {
     /*
-     * Sin esto, una errata en el nombre desde la consola pasaría el esquema, no encontraría columna
-     * y se guardaría un cambio que no cambia nada. El operador vería «guardado» y el tope seguiría
-     * donde estaba: exactamente el defecto que este trabajo persigue.
+     * Without this, a typo in the name from the console would pass the schema, find no column,
+     * and save a change that changes nothing. The operator would see "saved" and the cap would
+     * stay where it was: exactly the defect this work pursues.
      */
     expect(mutacion({ max_fanout_por_turno: 12 }).success).toBe(false);
   });
 
   it('CONTROL NEGATIVO: los campos que ya existían siguen aceptándose', () => {
-    // Añadir cinco campos no puede haber roto los cinco de antes.
+    // Adding five fields cannot have broken the five from before.
     expect(mutacion({
       progress_relay_enabled: true,
       progress_relay_max_events: 8,
@@ -143,8 +143,8 @@ describe('los rangos son EXACTAMENTE los del CHECK de Postgres', () => {
 describe('el snapshot y la inversa los llevan, o el botón de deshacer los borraría', () => {
   it('el SELECT del snapshot nombra las cinco columnas', async () => {
     /*
-     * La consola no puede editar lo que no ve: si el snapshot no las trae, la pantalla pinta cajas
-     * vacías y el primer guardado escribe esos vacíos encima de los topes que la flota tenía.
+     * The console cannot edit what it does not see: if the snapshot does not bring them, the
+     * screen paints empty boxes and the first save writes those empties on top of the caps the fleet had.
      */
     const fuente = await configurationSource();
     const snapshot = fuente.slice(fuente.indexOf('FROM agent_chain_policies ORDER BY id') - 600);
@@ -158,9 +158,9 @@ describe('el snapshot y la inversa los llevan, o el botón de deshacer los borra
 
   it('la inversa repone las cinco', async () => {
     /*
-     * `oldValue` es LITERALMENTE el cuerpo de la mutación inversa. Una columna que no viaje ahí
-     * vuelve como ausente al deshacer, y el `update` la deja en su valor por defecto: deshacer un
-     * cambio de umbral y que se muevan OTROS cuatro es peor que no tener el botón.
+     * `oldValue` is LITERALLY the body of the inverse mutation. A column that does not travel
+     * there comes back as absent on undo, and the `update` leaves it at its default: undoing a
+     * threshold change and seeing the OTHER four move is worse than not having the button.
      */
     const fuente = await configurationSource();
     const desde = fuente.indexOf("resource: 'chain_policy', action: 'update', id: mutation.id");
@@ -179,15 +179,15 @@ describe('el snapshot y la inversa los llevan, o el botón de deshacer los borra
 });
 
 /**
- * 🔴 **EL MISMO DEFECTO EN OTRA COLUMNA: `agents.max_concurrent_deliveries` (migración 015).**
+ * 🔴 **THE SAME DEFECT IN ANOTHER COLUMN: `agents.max_concurrent_deliveries` (migration 015).**
  *
- * Es el techo REAL de entregas en vuelo de un agente —`repository.ts` lo aplica al repartir cupo—
- * y tampoco estaba ni en el snapshot ni en la mutación. Su única vía de cambio era un `UPDATE` a
- * mano, y la propia 015 documenta ese `UPDATE ... = NULL` como la salida de emergencia para cuando
- * el techo estrangula a un agente que sí puede paralelizar.
+ * It is the REAL cap on in-flight deliveries of an agent — `repository.ts` applies it when
+ * splitting the budget — and it was neither in the snapshot nor in the mutation. Its only way
+ * to change was a hand-written `UPDATE`, and 015 itself documents that `UPDATE ... = NULL` as the
+ * emergency exit when the cap strangles an agent that can actually parallelize.
  *
- * Va en este mismo fichero y no en otro porque es EL MISMO defecto: un valor que gobierna la
- * producción y que ninguna pantalla enseña. Separarlos haría creer que son dos casos.
+ * It lives in this same file and not in another because it is THE SAME defect: a value that
+ * governs production and that no screen exposes. Splitting them would suggest they are two cases.
  */
 describe('el techo de entregas en vuelo de un agente se puede editar', () => {
   function agente(value: Record<string, unknown>) {
@@ -209,9 +209,9 @@ describe('el techo de entregas en vuelo de un agente se puede editar', () => {
 
   it('`null` se acepta y NO es lo mismo que no declararlo: significa SIN TECHO', () => {
     /*
-     * La distinción es la salida de emergencia entera. `null` declarado quita el techo; el campo
-     * ausente deja el que hubiera. Un esquema que sólo fuera `.optional()` no podría expresar
-     * «quítale el techo a este agente» y esa operación volvería a exigir SQL.
+     * The distinction is the whole emergency exit. Declared `null` removes the cap; an absent
+     * field leaves whatever was there. A schema that were only `.optional()` could not express
+     * "remove the cap from this agent" and that operation would need SQL again.
      */
     expect(agente({ max_concurrent_deliveries: null }).success).toBe(true);
     expect(agente({ display_name: 'Zeus' }).success).toBe(true);
@@ -226,9 +226,9 @@ describe('el techo de entregas en vuelo de un agente se puede editar', () => {
 
   it('el SELECT bajo lock lo trae, o el DESHACER le pondría techo a un agente destechado', async () => {
     /*
-     * `oldValue` es el cuerpo de la inversa. Aquí el `null` no es sólo un valor perdido: es una
-     * decisión deliberada del operador —«este agente no lleva techo»— que el deshacer revertiría
-     * sin que nadie lo pidiera.
+     * `oldValue` is the body of the inverse. Here `null` is not just a missing value: it is a
+     * deliberate decision from the operator — "this agent has no cap" — that the undo would
+     * revert without anyone asking for it.
      */
     const fuente = await configurationSource();
     const desde = fuente.indexOf('FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE');

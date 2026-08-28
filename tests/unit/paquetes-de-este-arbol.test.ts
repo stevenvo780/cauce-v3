@@ -3,8 +3,8 @@ import { countCodePoints } from '@cauce/protocol';
 import { countCodePoints as countCodePointsDeEsteArbol } from '../../packages/protocol/src/schemas.js';
 
 /**
- * Comprueba que la resolución de `@cauce/*` apunte a los módulos del árbol local
- * comparando la identidad de objeto importado por alias de paquete y por ruta relativa.
+ * Checks that the resolution of `@cauce/*` points to the modules of THIS tree by comparing the
+ * imported object identity via the package alias and via the relative path.
  */
 
 describe('resolución de los paquetes del monorepo', () => {
@@ -13,11 +13,11 @@ describe('resolución de los paquetes del monorepo', () => {
   });
 
   /**
-   * CONTROL NEGATIVO de la prueba de arriba: la comparación por identidad SÍ sabe decir que no.
+   * NEGATIVE CONTROL of the test above: the identity comparison CAN actually say no.
    *
-   * Sin esto, un `toBe` entre dos importaciones que el empaquetador hubiera fusionado siempre daría
-   * verde y la guarda no probaría nada. Acá se fabrica a mano el caso que tiene que rechazar —dos
-   * funciones con el mismo cuerpo y el mismo nombre— y se comprueba que el aserto lo distingue.
+   * Without this, a `toBe` between two imports that the bundler might have merged would always
+   * go green and the guard would prove nothing. Here the case to be rejected is fabricated
+   * (two functions with the same body and name) and the assertion is checked to tell them apart.
    */
   it('dos copias del mismo código NO son el mismo objeto (el aserto puede dar rojo)', () => {
     const unaCopia = (text: string): number => [...text].length;

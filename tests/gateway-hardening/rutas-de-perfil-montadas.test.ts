@@ -8,8 +8,8 @@ import type {
 import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
 /**
- * Verifica que las rutas de perfiles y documentos de agentes estén montadas
- * y registradas en el gateway, respondiendo desde sus propios manejadores.
+ * Verifies that the profile and agent-document routes are mounted and registered in the gateway,
+ * responding from their own handlers.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
@@ -198,7 +198,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
   return { app, state, batches, disco: () => disco };
 }
 
-/** Las rutas del perfil y de los documentos, nombradas a mano y sin extractor de por medio. */
+/** The profile and document routes, named by hand with no extractor in between. */
 const RUTAS = [
   { method: 'GET' as const, url: '/v3/console/agents/zeus/perfil' },
   { method: 'GET' as const, url: '/v3/console/agents/zeus/documents' },
@@ -216,9 +216,9 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
         ...(ruta.method === 'PUT' ? { payload: { content: 'hola' } } : {})
       });
       /*
-       * Se exige que el 404, si lo hay, provenga del manejador y no del enrutador Fastify.
-       * Fastify contesta a una ruta inexistente con `{"message":"Route ... not found"}`;
-       * el manejador devuelve `{"error":"not_found", ...}`.
+       * The 404, if any, must come from the handler and not from the Fastify router. Fastify
+       * answers a non-existent route with `{"message":"Route ... not found"}`; the handler
+       * returns `{"error":"not_found", ...}`.
        */
       const cuerpo: unknown = res.json();
       const message = cuerpo !== null && typeof cuerpo === 'object' && 'message' in cuerpo
@@ -233,8 +233,8 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
 
   it('CONTROL NEGATIVO: una ruta que NADIE registró sí contesta 404', async () => {
     /*
-     * Sin esto la prueba de arriba podría estar verde por un `setNotFoundHandler` que devuelve
-     * 500, o por un prefijo que traga todo. Se exige que el 404 siga siendo alcanzable.
+     * Without this the test above could be green because of a `setNotFoundHandler` that returns
+     * 500, or because of a prefix that swallows everything. The 404 must remain reachable.
      */
     const app = await gatewayDeOperador();
     const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/inventado-que-no-existe' });
@@ -243,12 +243,11 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
 
   it('sin plano de terminal, el contenido dice que NO HAY CANAL en vez de lanzar un 500', async () => {
     /*
-     * Este gateway se monta sin `registerTerminalControlPlane`, así que nadie instaló la sonda que
-     * lee el disco del contenedor. La degradada contesta «no hay canal hasta el disco» —503— en
-     * lugar de lanzar: un throw se vería como «internal error» y el operador no podría accionarlo.
-     *
-     * Como además no hay hechos medidos, el manejador corta antes con el 409. Lo que se afirma acá
-     * es que en NINGUNA de las dos ausencias sale un 500.
+     * This gateway is mounted without `registerTerminalControlPlane`, so nobody installed the
+     * probe that reads the container's disk. The degraded path answers "no channel to the disk"
+     * (503) instead of throwing: a throw would surface as "internal error" and the operator could
+     * not act on it. Since there are also no measured facts, the handler cuts earlier with a 409.
+     * What is asserted here is that under NEITHER absence does a 500 leak out.
      */
     const app = await gatewayDeOperador();
     const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/documents/directive/content' });
@@ -257,8 +256,8 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
 
   it('el contenido de un documento contesta «no medido» y NO 404, que dicen cosas distintas', async () => {
     /*
-     * Comprueba que la falta de hechos medidos devuelva 409 (no medido)
-     * en lugar de un 404 de ruta no encontrada.
+     * Checks that missing measured facts return 409 (not measured) instead of a 404 from a
+     * missing route.
      */
     const app = await gatewayDeOperador();
     const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/documents/directive/content' });
@@ -271,8 +270,8 @@ describe('las rutas del perfil y de los documentos están MONTADAS en el gateway
   });
 
   it('un `kind` inventado se rechaza por 400 y no por 404', async () => {
-    // 404 sobre un kind inválido sería indistinguible de «la ruta no existe», que es la confusión
-    // que esta suite entera viene a cerrar.
+    // 404 on an invalid kind would be indistinguishable from "the route does not exist" — that
+    // is exactly the confusion this entire suite exists to close.
     const app = await gatewayDeOperador();
     const res = await app.inject({ method: 'GET', url: '/v3/console/agents/zeus/documents/credenciales/content' });
     expect(res.statusCode).toBe(400);

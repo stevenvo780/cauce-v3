@@ -24,14 +24,14 @@ describe('body.timeout_ms como parte del contrato', () => {
       .toMatchObject({ timeout_ms: 300_000 });
     expect(PublishMessageSchema.parse(publish({ text: 'hola', timeout_ms: MAX_MESSAGE_TIMEOUT_MS }))
       .body).toMatchObject({ timeout_ms: MAX_MESSAGE_TIMEOUT_MS });
-    // Sin declarar sigue siendo válido: el techo cae al default configurado.
+    // Without declaring it, it is still valid: the cap falls back to the configured default.
     expect(PublishMessageSchema.parse(publish({ text: 'hola' })).body).toEqual({ text: 'hola' });
   });
 
   /**
-   * Antes de este parche el SDK rechazaba estos mismos valores, pero recién al EJECUTAR y con un
-   * error no reintentable: un dedazo del publicador se pagaba como una entrega muerta en vez de
-   * como un 400 en la puerta.
+   * Before this patch the SDK rejected these same values, but only at EXECUTION time and with a
+   * non-retryable error: a typo from the publisher was paid as a dead delivery instead of a 400
+   * at the door.
    */
   it.each([
     0,
@@ -53,8 +53,8 @@ describe('body.timeout_ms como parte del contrato', () => {
   it('lee el presupuesto de una fila ya persistida sin lanzar nunca', () => {
     expect(messageTimeoutMs({ timeout_ms: 60_000 })).toBe(60_000);
     expect(messageTimeoutMs({ text: 'sin declarar' })).toBeUndefined();
-    // "No sé" y "basura" tienen que dar lo mismo: el reaper corre sobre filas que se escribieron
-    // antes de que este esquema existiera y no puede romperse por una de ellas.
+    // "I don't know" and "garbage" must yield the same result: the reaper runs over rows that
+    // were written before this schema existed and cannot be broken by one of them.
     expect(messageTimeoutMs({ timeout_ms: 'pronto' })).toBeUndefined();
     expect(messageTimeoutMs({ timeout_ms: MAX_MESSAGE_TIMEOUT_MS + 1 })).toBeUndefined();
     expect(messageTimeoutMs(undefined)).toBeUndefined();

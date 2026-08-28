@@ -31,11 +31,11 @@ function document(records: Array<Record<string, unknown>>): string {
 }
 
 /**
- * Rotates exactly the way `ops/runbooks/authentication.md` prescribes: write a sibling temp file and
- * rename it over the registry. The rename publishes a NEW inode, which is precisely what a
- * single-file bind mount cannot see. The descriptor kept open on the pre-rotation inode models that
- * pinning: the old content stays reachable through the old inode, so a provider that cached a
- * descriptor or an inode instead of re-resolving the path would keep serving the stale registry.
+ * Rotates exactly the way `ops/runbooks/authentication.md` prescribes: write a sibling temp file
+ * and rename it over the registry. The rename publishes a NEW inode, which is precisely what a
+ * single-file bind mount cannot see. The descriptor kept open on the pre-rotation inode models
+ * that pinning: the old content stays reachable through the old inode, so a provider that cached
+ * a descriptor or an inode instead of re-resolving the path would keep serving the stale registry.
  */
 async function rotateByRename(path: string, contents: string): Promise<void> {
   const staging = `${path}.next`;
@@ -62,7 +62,7 @@ describe('identity registry rotation reaches the gateway', () => {
     try {
       await rotateByRename(path, document([{ certificate_sha256: rotatedIn }]));
 
-      // The alta must reach the gateway.
+      // The new registration must reach the gateway.
       await expect(provider.resolve(certificate(rotatedIn))).resolves.toMatchObject({ alias: 'kant' });
       // And the revocation must too: the removed fingerprint has to fail closed.
       await expect(provider.resolve(certificate(provisioned))).rejects.toThrow('not provisioned');
@@ -126,13 +126,13 @@ describe('deployed identity registries are mounted as a directory', () => {
 
     const binds = readOnlyDirectoryBinds(gateway);
     for (const { name, path } of registries) {
-      // A compose file secret is a single-file bind: it pins the inode, so the atomic rename that
-      // rotates or revokes an identity would never become visible inside the container.
+      // A compose file secret is a single-file bind: it pins the inode, so the atomic rename
+      // that rotates or revokes an identity would never become visible inside the container.
       expect(path.startsWith('/run/secrets/'), `${name} must not be a single-file secret mount`).toBe(false);
       const mount = binds.find((target) => path.startsWith(`${target}/`));
       expect(mount, `${name}=${path} must resolve inside a read-only directory bind`).toBeDefined();
-      // The registry must sit directly in the mounted directory, so the mount cannot be widened to
-      // an ancestor such as /run/secrets that would expose unrelated material to the gateway.
+      // The registry must sit directly in the mounted directory, so the mount cannot be widened
+      // to an ancestor such as /run/secrets that would expose unrelated material to the gateway.
       expect(posix.dirname(path)).toBe(mount);
     }
   });
@@ -141,8 +141,8 @@ describe('deployed identity registries are mounted as a directory', () => {
     const compose = await readFile(composePath, 'utf8');
     const gateway = serviceBlock(compose, 'gateway');
     expect(readOnlyDirectoryBinds(gateway)).not.toContain('/run/secrets');
-    // The mount source has to be its own variable; reusing a broader secret directory would hand the
-    // gateway every present and future secret in it.
+    // The mount source has to be its own variable; reusing a broader secret directory would
+    // hand the gateway every present and future secret in it.
     expect(gateway).toContain('${CAUCE_GATEWAY_IDENTITY_DIR:?');
     expect(compose).not.toContain('source: gateway_mtls_identities');
     expect(compose).not.toContain('source: gateway_token_hashes');

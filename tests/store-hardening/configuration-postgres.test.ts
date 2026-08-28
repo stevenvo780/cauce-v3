@@ -290,8 +290,8 @@ describe('atomic configuration CRUD and rollback', () => {
   });
 
   /**
-   * El listado de revisiones debe ordenarse numéricamente en orden descendente,
-   * garantizando que el límite capture las revisiones más recientes sin huecos.
+   * The revision list MUST be sorted numerically in descending order, ensuring the limit
+   * captures the most recent revisions with no gaps.
    */
   it('lista las revisiones por número y no por texto, para que se puedan deshacer las recientes', async () => {
     await pool.query(`
@@ -303,10 +303,10 @@ describe('atomic configuration CRUD and rollback', () => {
     const ids = revisions.map((revision) => Number(revision.id));
 
     expect(ids).toHaveLength(100);
-    // Descendente NUMÉRICO.
+    // Descending NUMERIC.
     expect(ids).toEqual([...ids].sort((a, b) => b - a));
     expect(ids[0]).toBe(121);
-    // Las 100 más recientes son exactamente 22..121: ningún hueco en el medio.
+    // The 100 most recent are exactly 22..121: no gap in the middle.
     expect(ids[ids.length - 1]).toBe(22);
     expect(new Set(ids).size).toBe(100);
   });

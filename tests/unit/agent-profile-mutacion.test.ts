@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { ConfigChangeRequestSchema, ConfigMutationSchema } from '@cauce/protocol';
 
 /**
- * El editor genérico sólo versiona configuración que queda efectiva en la base. Perfil e identidad
- * requieren además aplicar ficheros dentro del runtime; por eso su única escritura pública es el
- * PUT canónico de perfil, con revisión propia, preflight y ACK exacto por fichero.
+ * The generic editor only versions configuration that becomes effective in the database. Profile
+ * and identity additionally require applying files inside the runtime; that is why their only
+ * public write is the canonical profile PUT, with its own revision, preflight, and exact per-file ACK.
  */
 describe('el perfil no tiene una segunda vía de escritura', () => {
   it.each(['create', 'update', 'delete'] as const)(

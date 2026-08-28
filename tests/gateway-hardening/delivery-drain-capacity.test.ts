@@ -9,13 +9,13 @@ import {
 } from '../../services/gateway/src/config.js';
 import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes, text } from './helpers.js';
 
-// El riesgo que introduce el techo de concurrencia, aislado.
+// The risk the concurrency cap introduces, in isolation.
 //
-// Con techo, un drain puede volver vacío por estar el agente lleno. A partir de ahí el backlog
-// sólo avanza si el gateway vuelve a reclamar cuando se libera capacidad. El único instante en que
-// eso ocurre es un ACK que saca la entrega del conjunto no terminal. Antes de este cambio el
-// gateway sólo drenaba tras un ACK 'retry': con techo, eso deja una cola de 90 esperando a que
-// alguien publique la 91.
+// With a cap, a drain may come back empty because the agent is full. From there the backlog only
+// moves if the gateway reclaims when capacity is freed. The only instant that happens is an ACK
+// that takes the delivery out of the non-terminal set. Before this change the gateway only
+// drained after a 'retry' ACK: with a cap, that leaves a queue of 90 waiting for someone to
+// publish the 91st.
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
 const sockets: WebSocket[] = [];
@@ -83,7 +83,7 @@ async function connect(
 
 describe('drain keeps moving when capacity is what gates the claim', () => {
   it('claims again after a terminal ACK, not only after a retry', async () => {
-    // El atasco duro: el agente estaba lleno, termina su trabajo y nadie vuelve a preguntar.
+    // The hard jam: the agent was full, finishes its work, and nobody asks again.
     const repository = fakeRepository();
     vi.mocked(repository.claimDeliveries)
       .mockResolvedValueOnce([claim(ids.delivery, ids.claim)])   // drain del hello: llena el cupo
@@ -105,7 +105,7 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
 
     const ackResult = await next();
     expect(ackResult.type).toBe('ack_result');
-    // Sin el re-drain en estado terminal esto nunca llega y la prueba muere por timeout.
+    // Without the terminal-state re-drain this never arrives and the test dies by timeout.
     const second = await next();
     expect(second.type).toBe('delivery');
     expect(second.delivery_id).toBe(ids.deliveryTwo);
@@ -137,11 +137,11 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
   );
 
   it('coalesces a wake that lands while a drain is already in flight', async () => {
-    // El segundo agujero, y el único camino por el que dos drains se solapan de verdad: los frames
-    // del socket están serializados por frameQueue, pero el handler de pg_notify llama a drain()
-    // fuera de esa cola. La implementación vieja descartaba ese drain por el flag `draining`. Se
-    // toleraba porque el drain en curso reclamaba hasta 20 y vaciaba la cola igual; con techo, el
-    // drain descartado puede ser justo el que venía a buscar trabajo con el cupo recién liberado.
+    // The second hole, and the only way two drains actually overlap: socket frames are serialized
+    // by frameQueue, but the pg_notify handler calls drain() outside that queue. The old
+    // implementation discarded that drain via the `draining` flag. It was tolerable because the
+    // in-flight drain claimed up to 20 and emptied the queue anyway; with a cap, the discarded
+    // drain can be exactly the one looking for work with the freshly freed budget.
     const repository = fakeRepository();
     let wake: ((notice: { tenant_id: string; alias: string }) => void) | undefined;
     const subscriber: NonNullable<Parameters<typeof buildGateway>[0]['deliveryWakeSubscriber']> =
@@ -166,19 +166,19 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
 
     const { next } = await connect(repository, { deliveryWakeSubscriber: subscriber });
     await firstClaimStarted;
-    // Llega mientras el primer claim sigue en vuelo.
+    // Arrives while the first claim is still in flight.
     wake?.({ tenant_id: 'Pablo', alias: 'midas' });
 
     const frames: Record<string, unknown>[] = [];
     for (let index = 0; index < 2; index += 1) frames.push(await next());
-    // El frame 'wake' sale siempre; el 'delivery' sólo si el drain solapado no se perdió.
+    // The 'wake' frame always goes out; the 'delivery' only if the overlapping drain was not lost.
     expect(frames.map((frame) => frame.type)).toContain('delivery');
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  // El gateway pasa siempre un lote explícito y capacidades durables.
+  // The gateway always passes an explicit batch size and durable capacities.
   it('asks the store for an explicit batch size instead of leaving it undefined', async () => {
-    // Cupo holgado a propósito: así el que ata es el lote y se ve que el techo explícito manda.
+    // Generous budget on purpose: the binding constraint is the batch, so the explicit cap is visible.
     const repository = fakeRepository();
     await connect(repository, {
       deliveryClaimLimit: 4,
@@ -198,7 +198,7 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
     const repository = fakeRepository();
     await connect(repository);
     const [, , , , limit, , , admission] = vi.mocked(repository.claimDeliveries).mock.calls[0]!;
-    // Con los defaults el lote coincide con la capacidad total (2 general + 2 humana).
+    // With the defaults the batch equals the total capacity (2 general + 2 human).
     expect(limit).toBe(DEFAULT_MAX_INFLIGHT_DELIVERIES + DEFAULT_HUMAN_RESERVED_DELIVERIES);
     expect(admission).toEqual({
       generalCapacity: DEFAULT_MAX_INFLIGHT_DELIVERIES,

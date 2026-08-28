@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 /**
- * GET /v3/accounts/selection — la ruta por la que el adaptador le pregunta al selector qué
- * suscripción gastar.
+ * GET /v3/accounts/selection — the route the adapter uses to ask the selector which
+ * subscription to spend.
  *
- * Lo que se prueba acá es la mitad que NO necesita Postgres: que el sujeto de la consulta sale del
- * CERTIFICADO y no del cuerpo ni del query string. La semántica del selector (prioridad, pausa,
- * agotamiento, failover) vive en tests/store-hardening/account-selector-postgres.test.ts, contra
- * una base de verdad.
+ * What is tested here is the half that does NOT need Postgres: the subject of the query comes
+ * from the CERTIFICATE, not the body or the query string. Selector semantics (priority, pause,
+ * exhaustion, failover) live in tests/store-hardening/account-selector-postgres.test.ts, against
+ * a real database.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildGateway, type GatewayRepository } from '../../services/gateway/src/index.js';
@@ -44,9 +44,9 @@ describe('GET /v3/accounts/selection', () => {
   });
 
   it('el sujeto NO se puede suplantar por query string', async () => {
-    // Un alias resuelve lo suyo y nada más: la respuesta incluye el `credential_ref` de la cuenta
-    // y, aunque sea un locator y no un secreto, decirle a un agente dónde busca su credencial otro
-    // agente es exactamente el dato que no tiene por qué cruzar.
+    // An alias resolves its own and nothing else: the response includes the account's
+    // `credential_ref`, and even though it is a locator rather than a secret, telling an agent
+    // where another agent looks up its credential is exactly the data that does not need to cross.
     const repository = fakeRepository();
     const app = await gateway(repository);
 

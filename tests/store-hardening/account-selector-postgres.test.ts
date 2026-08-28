@@ -1,10 +1,10 @@
 /**
- * Cobertura del selector de cuenta (packages/store/src/accounts.ts).
+ * Coverage of the account selector (packages/store/src/accounts.ts).
  *
- * Corre contra Postgres de verdad —no un doble— porque lo que se está probando ES el SQL: el
- * orden de fallback sale de un ORDER BY, el agotamiento de un LATERAL contra `quota_window_state`,
- * y la defensa de la pausa manual vive ENTERA en el WHERE de un UPDATE. Un mock de `pg` habría
- * pasado con el `ON CONFLICT` roto que este mismo parche arregla.
+ * Runs against a real Postgres — not a double — because what is being tested IS the SQL: the
+ * fallback order comes from an ORDER BY, exhaustion from a LATERAL against `quota_window_state`,
+ * and the manual-pause defense lives ENTIRELY in the WHERE of an UPDATE. A mock of `pg` would have
+ * passed with the broken `ON CONFLICT` that this same patch fixes.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -15,8 +15,8 @@ import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 let database: TestDatabase;
 let pool: DatabasePool;
 
-/** Reloj fijo: la selección depende de `paused_until > now` y de `reset_at > now`, así que un
- *  `new Date()` real haría que el resultado dependiera de cuánto tardó el contenedor en arrancar. */
+/** Fixed clock: selection depends on `paused_until > now` and `reset_at > now`, so a real
+ *  `new Date()` would make the result depend on how long the container took to boot. */
 const NOW = new Date('2026-07-28T12:00:00.000Z');
 const IN_AN_HOUR = new Date('2026-07-28T13:00:00.000Z');
 const AN_HOUR_AGO = new Date('2026-07-28T11:00:00.000Z');
@@ -43,9 +43,9 @@ beforeEach(async () => {
   );
 });
 
-/** Alta de una suscripción + su techo + su binding, que es el trío mínimo que el selector lee.
- *  `alias_routing_ceiling` no es opcional: `agent_account_bindings` referencia al TECHO, no a
- *  `provider_accounts` (migración 010), así que sin la fila de techo el binding ni siquiera entra. */
+/** Adds a subscription + its ceiling + its binding, the minimum trio the selector reads.
+ *  `alias_routing_ceiling` is not optional: `agent_account_bindings` references the CEILING,
+ *  not `provider_accounts` (migration 010), so without a ceiling row the binding cannot even enter. */
 async function account(options: {
   id: string;
   priority: number;
@@ -78,8 +78,8 @@ async function account(options: {
   );
 }
 
-/** Una ventana de cuota atada a la cuenta. `remaining_percent<=0` o `status='rate-limited'` es
- *  agotamiento, misma condición que la auto-pausa de la migración 013 §(d). */
+/** A quota window attached to the account. `remaining_percent<=0` or `status='rate-limited'`
+ *  is exhaustion, the same condition that drives the auto-pause in migration 013 §(d). */
 async function quotaWindow(options: {
   accountId: string;
   remaining: number | null;
@@ -111,9 +111,9 @@ describe('selector de cuenta', () => {
 
     expect(selection.selected?.account_id).toBe('claude-a');
     expect(selection.failover).toBe(false);
-    // El orden de la traza es el orden real de fallback, no el de inserción.
+    // The trace order is the real fallback order, not the insertion order.
     expect(selection.candidates.map((c) => c.account_id)).toEqual(['claude-a', 'claude-b']);
-    // El locator viaja al adaptador (es una referencia, no el secreto: migración 010).
+    // The locator travels to the adapter (it is a reference, not the secret: migration 010).
     expect(selection.selected?.credential_ref).toBe('CAUCE_CLAUDE_A_PATH');
   });
 
@@ -186,7 +186,7 @@ describe('selector de cuenta', () => {
       paused_reason: `${AUTOMATIC_PAUSE_PREFIX}claude/default/session`
     }]);
 
-    // La pausa quedó PERSISTIDA: la próxima selección no tiene que volver a descubrirla.
+    // The pause PERSISTED: the next selection does not have to rediscover it.
     const persisted = await pool.query<{ paused_until: Date; paused_reason: string }>(
       `SELECT paused_until,paused_reason FROM provider_accounts WHERE id='claude-a'`
     );
@@ -206,8 +206,8 @@ describe('selector de cuenta', () => {
   });
 
   it('ignora una muestra agotada cuyo reset YA pasó', async () => {
-    // Sin esta guarda, un remaining=0 viejo que nadie volvió a muestrear dejaría al alias sin
-    // ninguna cuenta para siempre — y en prod NADIE muestreaba, porque la ingesta estaba rota.
+    // Without this guard, an old remaining=0 nobody resampled would leave the alias without
+    // any account forever — and in prod nobody resampled, because ingestion was broken.
     await account({ id: 'claude-a', priority: 10 });
     await quotaWindow({ accountId: 'claude-a', remaining: 0, resetAt: AN_HOUR_AGO });
 
@@ -234,9 +234,9 @@ describe('selector de cuenta', () => {
   });
 
   it('NUNCA pisa una pausa manual, ni siquiera con la cuota agotada', async () => {
-    // Éste es el bug del intento anterior: escribía paused_reason sin condición, así que el
-    // automatismo se comía el motivo escrito por el operador. La migración 013 §(e) documenta el
-    // LIKE 'quota_exhausted:%' justamente para esto.
+    // This is the previous-attempt bug: it wrote paused_reason without a condition, so the
+    // automation ate the reason written by the operator. Migration 013 §(e) documents the
+    // `LIKE 'quota_exhausted:%'` precisely for this.
     await account({
       id: 'claude-a', priority: 10,
       pausedUntil: AN_HOUR_AGO, pausedReason: 'suspendida a mano: Steven revisando la facturación'
@@ -279,7 +279,7 @@ describe('selector de cuenta', () => {
     expect(selection.selected).toBeNull();
     expect(selection.failover).toBe(false);
     expect(selection.candidates).toHaveLength(2);
-    // Sin cuenta pero CON traza: el operador tiene que poder ver por qué se quedó sin ninguna.
+    // No account but WITH trace: the operator must be able to see why they ended up with none.
     expect(selection.candidates.map((c) => c.skipped)).toEqual(['account_disabled', 'binding_disabled']);
   });
 
@@ -307,9 +307,9 @@ describe('selector de cuenta', () => {
     const first = await select();
     const second = await select();
 
-    // Dos bindings DESHABILITADOS pueden compartir prioridad (el índice único es parcial
-    // `WHERE enabled`), así que sin el desempate por account_id el orden sería el que devuelva
-    // el planificador.
+    // Two DISABLED bindings can share a priority (the unique index is partial `WHERE enabled`),
+    // so without the account_id tiebreak the order would be whatever the planner returned
+    // for that case.
     expect(first.candidates.map((c) => c.account_id)).toEqual(['claude-a', 'claude-b', 'claude-c']);
     expect(second.candidates.map((c) => c.account_id)).toEqual(first.candidates.map((c) => c.account_id));
     expect(second.selected?.account_id).toBe(first.selected?.account_id);

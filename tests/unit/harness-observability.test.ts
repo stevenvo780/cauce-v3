@@ -11,8 +11,8 @@ import type {
 } from '../../packages/adapter-sdk/src/sdk/types.js';
 
 /**
- * Observabilidad del harness: validación de la información diagnóstica
- * y preservación de errores en `last_error` tras fallos de ejecución o cancelaciones.
+ * Harness observability: validation of the diagnostic information and preservation of
+ * errors in `last_error` after execution failures or cancellations.
  */
 
 const temporaryDirectories: string[] = [];
@@ -42,7 +42,7 @@ async function adapterWith(runner: CommandRunner): Promise<HarnessAdapter> {
   return new HarnessAdapter({ definition: fakeDefinition, runner, store: await freshStore() });
 }
 
-/** Corre el adaptador exigiendo que falle, y devuelve el AdapterError tipado. */
+/** Runs the adapter requiring it to fail, and returns the typed AdapterError. */
 async function rejectionOf(adapter: HarnessAdapter, signal: AbortSignal): Promise<AdapterError> {
   try {
     await adapter.execute({ prompt: 'ejecutar una vez', timeoutMs: 2_000, signal });
@@ -53,7 +53,7 @@ async function rejectionOf(adapter: HarnessAdapter, signal: AbortSignal): Promis
   throw new Error('se esperaba que el harness fallara');
 }
 
-/** El harness falla y devuelve la causa por stderr; capturamos el AdapterError resultante. */
+/** The harness fails and returns the cause via stderr; we capture the resulting AdapterError. */
 async function failureFor(stderr: string, exitCode = 1): Promise<AdapterError> {
   const adapter = await adapterWith(runnerReturning({ stdout: 'no-structured-output', stderr, exitCode }));
   return rejectionOf(adapter, new AbortController().signal);
@@ -61,7 +61,7 @@ async function failureFor(stderr: string, exitCode = 1): Promise<AdapterError> {
 
 describe('causa real del fallo del harness en last_error', () => {
   /**
-   * Conserva el detalle completo de un mensaje de error multi-línea.
+   * Preserves the full detail of a multi-line error message.
    */
   it('conserva entera una causa de dos líneas', async () => {
     const stderr = [
@@ -77,7 +77,7 @@ describe('causa real del fallo del harness en last_error', () => {
   });
 
   /**
-   * Preserva el encabezado y el final del stderr cuando excede el presupuesto.
+   * Preserves the header and tail of stderr when it exceeds the budget.
    */
   it('conserva el final del stderr, no sólo el principio', async () => {
     const encabezado = 'FATAL: el proveedor abortó la sesión';
@@ -90,14 +90,14 @@ describe('causa real del fallo del harness en last_error', () => {
     expect(error.message).toContain(encabezado);
     expect(error.message).toContain(causaRaiz);
     expect(error.message).toContain('caracteres omitidos');
-    // El detalle sigue holgadamente por debajo del tope de 2000 de `BaseAckSchema.error`,
-    // que es lo que hacía que un mensaje largo tirara la conexión del adaptador.
+    // The detail still sits comfortably below the 2000 cap of `BaseAckSchema.error`, which
+    // is what used to make a long message tear down the adapter connection.
     expect(error.message.length).toBeLessThan(2_000);
   });
 
   /**
-   * Ampliar el presupuesto no amplía la superficie de fuga: la redacción corre ANTES del
-   * recorte, así que un secreto que caiga en la cola recién conservada ya viene tapado.
+   * Widening the budget does not widen the leak surface: redaction runs BEFORE the trim, so a
+   * secret that lands in the freshly kept tail is already masked.
    */
   it('redacta secretos que caen en la cola recién conservada', async () => {
     const secreto = 'sk-live-9f3ac1b7d2e84a06';
@@ -116,7 +116,7 @@ describe('causa real del fallo del harness en last_error', () => {
   });
 
   /**
-   * Formas comunes de credenciales y tokens que deben ser redactados en el mensaje.
+   * Common forms of credentials and tokens that MUST be redacted in the message.
    */
   it.each([
     ['prefijo de palabra rompe el \\b', 'ANTHROPIC_API_KEY=sk-ant-aaaaaaaaaaaaaaaaaaaaaaaa'],
@@ -130,7 +130,7 @@ describe('causa real del fallo del harness en last_error', () => {
     const error = await failureFor(`FATAL: el proveedor rechazó las credenciales\n${linea}`);
 
     expect(error.message).toContain('[REDACTED]');
-    // El cuerpo del secreto no sobrevive en ninguna forma.
+    // The secret body does not survive in any form.
     for (const fragmento of ['sk-ant-aaaa', 'sk-ant-bbbb', 'clavesecretaaaa', 'sk-proj-cccc',
                              'ghp_dddd', 'napi_eeee', 'dBjftJeZ']) {
       expect(error.message).not.toContain(fragmento);
@@ -138,7 +138,7 @@ describe('causa real del fallo del harness en last_error', () => {
   });
 
   /**
-   * Asegura que los mensajes de error sintáctico o configuración no se redacten erróneamente.
+   * Ensures syntactic or configuration error messages are not wrongly redacted.
    */
   it('no redacta la causa real: el mensaje de config.toml sobrevive entero', async () => {
     const causa = 'Error loading config.toml: unknown variant `writes`, expected one of '
@@ -161,13 +161,13 @@ describe('causa real del fallo del harness en last_error', () => {
 
 describe('motivo del aborto en last_error', () => {
   /**
-   * Propaga el motivo real de la cancelación cuando el runner lo reporta.
+   * Propagates the real cancellation reason when the runner reports it.
    */
   it('propaga el motivo cuando el runner reporta la cancelación', async () => {
     const controller = new AbortController();
-    // El aborto ocurre DURANTE la corrida: el proceso ya se despachó, así que el estado de
-    // completitud es genuinamente ambiguo. Abortar antes de `execute` es otro camino, y ahí sí
-    // se devuelve el motivo crudo porque no se gastó nada todavía.
+    // The abort happens DURING the run: the process was already dispatched, so the completion
+    // state is genuinely ambiguous. Aborting before `execute` is a different path, and there
+    // the raw reason is returned because nothing was spent yet.
     const adapter = await adapterWith({
       run: (): Promise<CommandRunResult> => {
         controller.abort(new AdapterError(
@@ -183,7 +183,7 @@ describe('motivo del aborto en last_error', () => {
 
     const error = await rejectionOf(adapter, controller.signal);
 
-    // El código de error permanece como ambiguo no reintentable.
+    // The error code remains as ambiguous and not retryable.
     expect(error.code).toBe('EXECUTION_CANCELLED_AMBIGUOUS');
     expect(error.retryable).toBe(false);
     expect(error.message).toContain('CLAIM_OWNERSHIP_LOST');
@@ -191,8 +191,8 @@ describe('motivo del aborto en last_error', () => {
   });
 
   /**
-   * El otro camino: el runner terminó normalmente pero la señal se abortó mientras corría.
-   * Distinguir esto de un apagado ordenado decide a quién se escala el incidente.
+   * The other path: the runner finished normally but the signal aborted while it was running.
+   * Distinguishing this from an orderly shutdown decides who gets the incident escalated to.
    */
   it('distingue una época vencida de un apagado ordenado', async () => {
     for (const [code, message] of [
@@ -218,7 +218,7 @@ describe('motivo del aborto en last_error', () => {
   });
 
   /**
-   * Describe motivos de aborto que no son instancias de AdapterError.
+   * Also describes abort reasons that are not instances of AdapterError.
    */
   it('describe también un motivo que no es AdapterError', async () => {
     const controller = new AbortController();

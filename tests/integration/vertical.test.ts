@@ -152,9 +152,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  // El runtime productivo rechaza consumidores ausentes del inventario durable. Este vertical
-  // prueba el bus, no la migración de flota, así que modela explícitamente una capacidad para
-  // cada membership canónica que pueda abrir un harness durante los casos.
+  // The productive runtime rejects consumers missing from the durable inventory. This vertical
+  // exercises the bus, not the fleet migration, so it explicitly models one capability for every
+  // canonical membership that could open a harness during the cases.
   await pool.query(
     `INSERT INTO agents(tenant_id,alias,enabled,max_concurrent_deliveries)
      SELECT tenant_id,alias,false,100 FROM memberships
@@ -238,8 +238,8 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       { status: 'accepted', applied: true }, { status: 'started', applied: true },
       { status: 'accepted', applied: false }, { status: 'done', applied: true }
     ]);
-    // Un evento nuevo contra una fila terminal se responde ownership_lost pero no puede inflar
-    // indefinidamente el historial forense durable.
+    // A new event against a terminal row is answered ownership_lost but must not indefinitely
+    // inflate the durable forensic history.
   });
 
   it('rejects a second live consumer and fences by epoch', async () => {
@@ -392,12 +392,12 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
            claim_expires_at=now()-interval '1 millisecond' WHERE id=$1`,
         [delivery.delivery_id]
       );
-      // Se reintenta, y tiene que ser así. Esta entrega ACKeó 'started' dos veces pero NINGUNO
-      // llevaba `execution_started`, o sea que no consta que el harness haya arrancado. Un
-      // 'started' a secas sólo dice "fue admitida": el SDK lo emite antes de pedir el turno de
-      // sesión, y una entrega puede quedarse ahí renovando minutos sin ejecutar nada. Tomarlo
-      // como prueba de ejecución era lo que mandaba a `dead` trabajo que jamás corrió.
-      // La retención para revisión manual se prueba, con la marca de verdad, en
+      // It is retried, and so it must be. This delivery ACKed 'started' twice but NEITHER carried
+      // `execution_started`, so the harness is not on record as having actually run. A bare
+      // 'started' only means "was admitted": the SDK emits it before requesting the session
+      // turn, and a delivery can sit there renewing for minutes without executing anything.
+      // Treating that as proof of execution is what sent to `dead` work that never ran.
+      // The manual-review hold is exercised, with the real flag, in
       // packages/store/test/delivery-admission-postgres.test.ts.
       expect(await repository.retryStaleDeliveries(120_000)).toEqual({ retried: 1, dead: 0, parked: 0 });
       expect((await pool.query<{ status: string; claim_token: string | null }>(
@@ -534,10 +534,10 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     const sent = await publish(message());
     expect(sent.response.status).toBe(202);
     const original = await consumer.nextDelivery();
-    // La ambigüedad sólo es terminal si HUBO ejecución, y eso lo dice `execution_started`, que el
-    // SDK manda tras tomar la reserva de sesión y antes de invocar al harness. Sin este ACK la
-    // entrega murió sin haber corrido nada y ahora se reintenta en vez de ir al DLQ, así que lo
-    // que este test vigila —dead-letter + exactamente un clon de replay manual— exige la marca.
+    // Ambiguity is only terminal if execution ACTUALLY happened, and `execution_started` is what
+    // says so: the SDK sends it after taking the session reservation and before invoking the
+    // harness. Without that ACK the delivery died without running anything and is now retried
+    // instead of going to the DLQ, so what this test guards requires the flag.
     await ackAndWait(consumer, original, 'started', { execution_started: true });
     const eventId = randomUUID();
     const detail = {

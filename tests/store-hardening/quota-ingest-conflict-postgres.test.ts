@@ -1,14 +1,14 @@
 /**
- * Regresión de la ingesta de cuotas (`recordQuotaSample`).
+ * Regression of quota ingest (`recordQuotaSample`).
  *
- * `quota_collections` declara `UNIQUE (collector_tenant, host, captured_at)` (migración 013) y el
- * INSERT decía `ON CONFLICT (host,captured_at)`. Postgres no acepta una especificación de
- * ON CONFLICT que no corresponda a un índice único: tira 42P10 y aborta la transacción. O sea que
- * TODO POST /v3/quotas/samples devolvía error, y por eso producción tenía `quota_window_state`
- * vacía y cero muestras en 72 h con el recolector corriendo.
+ * `quota_collections` declares `UNIQUE (collector_tenant, host, captured_at)` (migration 013) and
+ * the INSERT said `ON CONFLICT (host,captured_at)`. Postgres does not accept an ON CONFLICT
+ * specification that does not match a unique index: it throws 42P10 and aborts the transaction.
+ * That meant EVERY POST /v3/quotas/samples returned an error, which is why production had empty
+ * `quota_window_state` and zero samples in 72 h with the collector running.
  *
- * Importa para la rotación de cuentas: sin muestras no hay detección de agotamiento, y sin eso el
- * selector no tiene de dónde saber que una suscripción se quedó sin saldo.
+ * This matters for account rotation: without samples there is no exhaustion detection, and
+ * without that the selector has no way to know a subscription ran out.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { QuotaSampleRequest } from '@cauce/protocol';
@@ -65,7 +65,7 @@ describe('ingesta de cuotas', () => {
     expect(result.duplicate).toBe(false);
     expect(result.accepted_windows).toBe(1);
 
-    // El estado materializado quedó escrito: es lo que lee el selector para detectar agotamiento.
+    // The materialized state was written: it is what the selector reads to detect exhaustion.
     const state = await pool.query<{ collector_tenant: string }>(
       `SELECT collector_tenant FROM quota_window_state`
     );
@@ -85,9 +85,9 @@ describe('ingesta de cuotas', () => {
   });
 
   it('dos tenants con el MISMO nombre de host no comparten fila ni se ven el collection_id', async () => {
-    // La clave lleva collector_tenant justamente porque `host` es una cadena que declara el
-    // recolector: sin el tenant, el segundo POST sería un "duplicado" del primero y un tenant
-    // heredaría la corrida —y el vínculo con las cuentas— del otro.
+    // The key carries collector_tenant precisely because `host` is a string declared by the
+    // collector: without the tenant, the second POST would be a "duplicate" of the first and one
+    // tenant would inherit the run — and the link to the accounts — from the other.
     const steven = await repository.recordQuotaSample('Steven', 'zeus', sample());
     const miguel = await repository.recordQuotaSample('Miguel', 'kratos', sample());
 

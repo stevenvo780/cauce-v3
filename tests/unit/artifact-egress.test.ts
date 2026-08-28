@@ -17,8 +17,8 @@ import {
 } from '../../services/telegram-bridge/src/artifacts.js';
 
 /**
- * Prueba de integración unitaria del flujo de adjuntos: el adaptador convierte
- * la ruta local a URI de datos en el contenedor y el puente de Telegram procesa el egreso.
+ * Unit-level integration test of the attachment flow: the adapter converts the local path
+ * into a data URI in the container and the Telegram bridge handles the egress.
  */
 
 const PNG_BASE64 =
@@ -45,7 +45,7 @@ function envelope(uri: string, name: string): StructuredOutput {
   };
 }
 
-/** El sobre tal como viaja en el ACK: `{ result: { output } }`. */
+/** The envelope as it travels in the ACK: `{ result: { output } }`. */
 function ack(output: StructuredOutput): Record<string, unknown> {
   return { result: { output: JSON.parse(JSON.stringify(output)) as unknown } };
 }
@@ -56,8 +56,8 @@ afterAll(async () => {
 
 describe('adjuntos salientes: del disco del agente al chat', () => {
   it('los topes del adaptador son los mismos que los del puente', () => {
-    // Si alguien mueve uno solo, el adaptador convertiría adjuntos que el puente después descarta,
-    // y el humano volvería a recibir «quedó en el espacio de trabajo» sin explicación.
+    // If anyone moves just one, the adapter would convert attachments that the bridge later
+    // discards, and the human would receive "stayed in the agent's workspace" without explanation.
     expect(MAX_INLINED_ARTIFACT_BYTES).toBe(MAX_EGRESS_ATTACHMENT_BYTES);
     expect(MAX_INLINED_ARTIFACTS_PER_RESPONSE).toBe(MAX_UPLOADS_PER_RELAY);
   });
@@ -79,10 +79,10 @@ describe('adjuntos salientes: del disco del agente al chat', () => {
 
     expect(plan.uploads).toHaveLength(1);
     const upload = plan.uploads[0]!;
-    // El efecto: los bytes que Telegram recibiría son byte a byte los del fichero del agente.
+    // The effect: the bytes Telegram would receive are byte-for-byte those of the agent's file.
     expect(upload.bytes.equals(PNG_BYTES)).toBe(true);
     expect(upload.sha256).toBe(createHash('sha256').update(PNG_BYTES).digest('hex'));
-    // «Una imagen o un documento», no un fichero anónimo: se renderiza dentro del chat.
+    // "An image or a document", not an anonymous file: it renders inside the chat.
     expect(upload.kind).toBe('photo');
     expect(upload.mime_type).toBe('image/png');
     expect(upload.name).toBe('hoja_ruta_domiciliario.png');
@@ -90,7 +90,7 @@ describe('adjuntos salientes: del disco del agente al chat', () => {
   });
 
   it('la ruta absoluta suelta, sin file://, recorre el mismo camino', async () => {
-    // El caso literal del outbox: `/home/claw/clawd/_tmp_hoja_ruta/hoja_ruta_domiciliario.png`.
+    // The literal outbox case: `/home/claw/clawd/_tmp_hoja_ruta/hoja_ruta_domiciliario.png`.
     const path = await pngOnDisk('suelta.png');
     const antes = planArtifacts(ack(envelope(path, 'suelta.png')));
     expect(antes.uploads).toHaveLength(0);

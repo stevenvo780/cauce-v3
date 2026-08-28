@@ -8,12 +8,12 @@ import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, r
  * Contract guard for the console -> gateway API surface.
  *
  * Regression origin: the console shipped `getTopologyAccess()` against
- * `/v3/console/topology/access`, a route the gateway never registered. The MSW
- * development mock defined that route, so every console test passed while
- * production answered 404 and the Ultimate Terminal composer stayed disabled.
+ * `/v3/console/topology/access`, a route the gateway never registered. The MSW development
+ * mock defined that route, so every console test passed while production answered 404 and the
+ * Ultimate Terminal composer stayed disabled.
  *
- * These tests fail if the console (or its mock) ever again names a gateway
- * route that `buildGateway` does not serve.
+ * These tests fail if the console (or its mock) ever again names a gateway route that
+ * `buildGateway` does not serve.
  */
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
@@ -28,24 +28,24 @@ const CLIENT_PATH = fileURLToPath(new URL('../../console/src/api/client.ts', imp
 const HANDLERS_PATH = fileURLToPath(new URL('../../console/src/mocks/handlers.ts', import.meta.url));
 
 /**
- * Routes registered only when the gateway runs with an OIDC BFF auth provider.
- * The console tolerates their 404 on purpose (it flips `bffSessionSupported`
- * off and falls back to non-BFF auth), so they are the only legitimate
- * exemptions. The final test proves this exemption is real rather than a
- * rubber stamp.
+ * Routes registered only when the gateway runs with an OIDC BFF auth provider. The console
+ * tolerates their 404 on purpose (it flips `bffSessionSupported` off and falls back to non-BFF
+ * auth), so they are the only legitimate exemptions. The final test proves this exemption is
+ * real rather than a rubber stamp.
  */
 const OIDC_BFF_ONLY = new Set(['/v3/auth/session', '/v3/auth/logout']);
 
 /**
- * Rutas que sólo existen cuando el gateway arranca CON el plano de control del terminal.
+ * Routes that only exist when the gateway starts WITH the terminal control plane.
  *
- * `registerTerminalControlPlane` necesita su propia configuración (token de relé, URL de
- * gobernanza) y `operatorGateway()` no se la da, así que estas dos no están montadas en el
- * gateway de esta prueba — y no es un defecto: en producción sí lo están, colgadas de ese plugin.
+ * `registerTerminalControlPlane` needs its own configuration (relay token, governance URL) and
+ * `operatorGateway()` does not supply it, so these two are not mounted in this test's gateway —
+ * and that is not a defect: in production they ARE mounted, hung off that plugin.
  *
- * Se declaran EXPLÍCITAMENTE en vez de dejarlas en la lista de fallos porque una prueba que lleva
- * meses en rojo por motivos conocidos deja de leerse, y entonces el fallo NUEVO —el que sí importa—
- * entra sin que nadie lo vea. Que estén acá es la afirmación de que se miraron una por una.
+ * They are declared EXPLICITLY instead of being left in the failure list because a test that
+ * has been red for months for known reasons stops being read, and then the NEW failure (the one
+ * that matters) slips in unnoticed. Their presence here is the assertion that each one was
+ * looked at.
  */
 const SOLO_CON_PLANO_DE_TERMINAL = new Set([
   '/v3/console/agents/1/1/directive',
@@ -76,19 +76,19 @@ function concreteSegments(path: string): string {
 }
 
 /**
- * La ruta que un `const <nombre> = \`/v3/...\`` declara antes de la llamada, o `undefined`.
+ * The route a `const <name> = \`/v3/...\`` declares before the call, or `undefined`.
  *
- * 🔴 Sin esto el extractor era CIEGO justo para los métodos que arman la ruta en una variable:
+ * 🔴 Without this the extractor was BLIND precisely for the methods that assemble the route in
+ * a variable:
  *
  *     const ruta = \`/v3/console/agents/${'${alias}'}/documents\`;
  *     await this.request(ruta);
  *
- * `getAgentDocuments`, `getAgentDocumentContent` y `getAgentPerfil` están escritos así —lo hacen
- * para poder nombrar la ruta en el mensaje de error del 404—. El extractor no encontraba una
- * cadena literal como primer argumento y hacía `continue`, **en silencio**. O sea que la prueba
- * que existía para cazar rutas no servidas dejaba fuera de la comprobación exactamente los tres
- * métodos cuyas rutas el gateway no servía. Se buscan hacia atrás porque la declaración siempre
- * precede al uso.
+ * `getAgentDocuments`, `getAgentDocumentContent` and `getAgentPerfil` are written that way — they
+ * do it to name the route in the 404's error message. The extractor did not find a literal string
+ * as the first argument and did `continue`, **silently**. So the test that existed to catch
+ * unserved routes left the check exactly for the three methods whose routes the gateway did not
+ * serve. They are looked up backwards because the declaration always precedes the use.
  */
 function rutaDeclaradaAntes(source: string, hasta: number, nombre: string): string | undefined {
   const patron = new RegExp(`const\\s+${nombre}\\s*=\\s*[\`'"]([^\`'"]*)[\`'"]`, 'g');
@@ -101,9 +101,9 @@ function rutaDeclaradaAntes(source: string, hasta: number, nombre: string): stri
 function extractClientCalls(source: string): ApiCall[] {
   const calls: ApiCall[] = [];
   /*
-   * Las llamadas que no se pudieron resolver. NO se descartan en silencio: una ruta que el
-   * extractor no ve queda fuera de la comprobación, y este fichero existe precisamente porque una
-   * ruta fuera de la comprobación acabó en un 404 en producción.
+   * Calls that could not be resolved. They are NOT silently dropped: a route the extractor does
+   * not see is left out of the check, and this file exists precisely because a route left out of
+   * the check ended up as a 404 in production.
    */
   const sinResolver: string[] = [];
   const marker = 'this.request';
@@ -114,8 +114,8 @@ function extractClientCalls(source: string): ApiCall[] {
     const pathMatch = /^\s*[`'"]([^`'"]*)[`'"]/.exec(args);
     let ruta = pathMatch?.[1];
     if (ruta === undefined) {
-      // `callArguments` devuelve el interior SIN el paréntesis de cierre, así que el nombre
-      // puede terminar la cadena: sin el `$` la coincidencia fallaba y el aviso salía igual.
+      // `callArguments` returns the interior WITHOUT the closing parenthesis, so the name may
+      // end the string: without the `$` the match failed and the warning fired anyway.
       const identificador = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:,|\)|$)/.exec(args)?.[1];
       ruta = identificador === undefined ? undefined : rutaDeclaradaAntes(source, index, identificador);
       if (ruta === undefined) {
@@ -185,13 +185,13 @@ async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
       ...(call.method === 'GET' ? {} : { payload: {} })
     });
     /*
-     * Un 404 del ENRUTADOR es «esta ruta no está montada»; uno del MANEJADOR es «no encontré ese
-     * alias», que con un repositorio falso es la respuesta correcta y no un defecto de rutas.
-     * Fastify contesta lo primero con `{"message":"Route GET:/... not found"}` y sin campo
-     * `error`; los manejadores de esta casa contestan con `{"error":"not_found", ...}`.
+     * A 404 from the ROUTER means "this route is not mounted"; one from the HANDLER means "I did
+     * not find that alias", which with a fake repository is the correct answer, not a routing
+     * defect. Fastify answers the former with `{"message":"Route GET:/... not found"}` and no
+     * `error` field; this house's handlers answer with `{"error":"not_found", ...}`.
      *
-     * Sin esta distinción la prueba marcaba como «no servida» una ruta que sí lo estaba, y con
-     * ella dentro de la lista de fallos conocidos nadie iba a mirar la lista.
+     * Without this distinction the test flagged a route that WAS served as "unserved", and with
+     * that entry sitting inside the known-failure list, nobody was going to look at the list.
      */
     if (response.statusCode !== 404) continue;
     const cuerpo = response.json<{ error?: string; message?: string }>();

@@ -6,8 +6,8 @@ import {
 } from '@cauce/protocol';
 
 /**
- * Validación estática de sincronización entre límites de `AGENT_PROFILE_LIMITS`
- * en `@cauce/protocol` y las restricciones CHECK en la migración `026_agent_profile.sql`.
+ * Static validation of synchronization between `AGENT_PROFILE_LIMITS` in `@cauce/protocol`
+ * and the CHECK constraints in the `026_agent_profile.sql` migration.
  */
 
 const migracion = readFileSync(
@@ -15,7 +15,7 @@ const migracion = readFileSync(
   'utf8'
 );
 
-/** El cuerpo del CHECK del presupuesto total, que es donde se suman todos los campos. */
+/** The body of the total-budget CHECK, where every field is summed. */
 function presupuesto(): string {
   const desde = migracion.indexOf('CONSTRAINT agent_profiles_budget');
   expect(desde, 'la migración 026 no declara el CHECK del presupuesto total').toBeGreaterThan(-1);
@@ -49,8 +49,8 @@ describe('los topes del perfil están espejados en la migración 026', () => {
   });
 
   it('TODOS los campos entran en el presupuesto total, y ninguno se queda fuera', () => {
-    // Éste es el que atrapa el olvido caro: añadir un campo, ponerle su CHECK, y no sumarlo al
-    // presupuesto. Con un campo fuera, seis campos «dentro de su tope» dan un fichero que no entra.
+    // This one catches the costly omission: add a field, give it its CHECK, and forget to sum
+    // it into the budget — six fields "within their cap" then produce a file that does not fit.
     const cuerpo = presupuesto();
     for (const campo of AGENT_PROFILE_TEXT_FIELDS) {
       expect(cuerpo, `${campo} no se suma al presupuesto total de 026`)
@@ -80,13 +80,13 @@ describe('los topes del perfil están espejados en la migración 026', () => {
   });
 
   it('CONTROL NEGATIVO: el guardia mira el fichero de verdad, no una copia suya', () => {
-    // Sin esto, todo lo de arriba pasaría contra una cadena vacía si la ruta se rompiera: los
-    // `toMatch` sobre '' fallarían, pero un futuro refactor que leyera el fichero equivocado —o
-    // que lo encontrara vacío— tiene que dar rojo acá y no silenciosamente en verde.
+    // Without this, everything above would run against an empty string if the path broke: the
+    // `toMatch` calls on '' would fail, but a future refactor that read the wrong file — or
+    // found it empty — must go red here, not silently green.
     expect(migracion.length).toBeGreaterThan(1_000);
     expect(migracion).toContain('CREATE TABLE IF NOT EXISTS agent_profiles');
-    // Y un campo que NO está en el contrato no puede estar sumándose al presupuesto: si alguien
-    // borra un campo de TypeScript y se olvida del SQL, el presupuesto suma algo que ya no existe.
+    // And a field NOT in the contract cannot be summed into the budget: if someone removes a
+    // TypeScript field and forgets the SQL, the budget sums something that no longer exists.
     const sumandos = presupuesto().match(/cauce_utf16_units\(/g) ?? [];
     expect(
       sumandos.length,

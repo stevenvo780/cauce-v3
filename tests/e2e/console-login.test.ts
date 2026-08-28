@@ -13,20 +13,20 @@ import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 const execute = promisify(execFile);
 
 /**
- * Certifica el login humano de la consola (`services/gateway/src/password-auth.ts`) de punta a
- * punta: HTTP real, PostgreSQL real y la cuenta provista por el MISMO camino que produción usa
- * (`pnpm console:user` / `console-user-cli.ts`), nunca un doble en memoria.
+ * Certifies the console human login (`services/gateway/src/password-auth.ts`) end-to-end: real
+ * HTTP, real PostgreSQL, and the account provisioned through THE SAME path production uses
+ * (`pnpm console:user` / `console-user-cli.ts`), never an in-memory double.
  *
- * LA BASE ES "DEV AISLADA" POR CONSTRUCCIÓN: `startTestDatabase()` (`tests/helpers/postgres.ts`)
- * levanta un contenedor `postgres:16-alpine` PROPIO con `testcontainers` -- host, puerto, usuario
- * y contraseña generados al azar (`randomUUID()`) para ESTA corrida, migrado desde cero y
- * destruido en `afterAll`. No hay ningún `DATABASE_URL` de producción ni de ningún ambiente
- * persistente involucrado en este archivo: no existe forma de que esta suite le pegue a un dato
- * real, porque la base ni existe hasta que `beforeAll` la crea.
+ * THE BASE IS "DEV-ISOLATED" BY CONSTRUCTION: `startTestDatabase()` (`tests/helpers/postgres.ts`)
+ * spins up its OWN `postgres:16-alpine` container via testcontainers — host, port, user and
+ * password generated at random (`randomUUID()`) for THIS run, migrated from zero and destroyed in
+ * `afterAll`. No production `DATABASE_URL` or any persistent environment is involved in this
+ * file: there is no way for this suite to touch real data, because the database does not exist
+ * until `beforeAll` creates it.
  *
- * La cuenta que se prueba es de alcance MÍNIMO (`role: reader` -> `permissions: ['read']`, sin
- * `roles`). Certifica que todas las vistas generales son realmente navegables con ese alcance y,
- * en la misma sesión, que las mutaciones siguen cerradas antes de producir efectos durables.
+ * The account under test has MINIMUM scope (`role: reader` → `permissions: ['read']`, no
+ * `roles`). The suite certifies that every general view is genuinely navigable under that scope
+ * and, in the same session, that mutations stay closed before producing durable effects.
  */
 
 const CONSOLE_EMAIL = process.env.CAUCE_E2E_CONSOLE_EMAIL ?? 'qa-e2e-dev@cauce.test';
@@ -43,10 +43,10 @@ let provisionStdout = '';
 beforeAll(async () => {
   database = await startTestDatabase();
 
-  // Alta de la cuenta por el camino REAL de producción: el mismo `console-user-cli.ts` que
-  // `pnpm console:user` invoca, contra el DATABASE_URL de la base efímera. La contraseña viaja
-  // SÓLO por variable de entorno del subproceso -- nunca por argv (se ve en `ps`) y nunca se
-  // imprime: el CLI la lee de `CAUCE_CONSOLE_USER_PASSWORD` y no hace eco de nada sensible.
+  // Account creation goes through the REAL production path: the same `console-user-cli.ts` that
+  // `pnpm console:user` invokes, against the ephemeral database's DATABASE_URL. The password
+  // travels ONLY via subprocess env var — never via argv (visible in `ps`), and never printed:
+  // the CLI reads it from `CAUCE_CONSOLE_USER_PASSWORD` and echoes nothing sensitive.
   const cli = await execute(
     join(process.cwd(), 'node_modules/.bin/tsx'),
     [
@@ -71,8 +71,8 @@ beforeAll(async () => {
     users: new PostgresConsoleUserStore(database.pool),
     signingKey: randomBytes(32),
     sessionTtlMs: 60 * 60 * 1_000
-    // Sin `fallback` a propósito: esta suite certifica SOLO la puerta de contraseña, no el mTLS
-    // de los agentes (eso ya lo cubre `tests/e2e/real-qa.test.ts` con `DevOnlyAuthProvider`).
+    // No `fallback` on purpose: this suite certifies ONLY the password door, not the agent mTLS
+    // (already covered by `tests/e2e/real-qa.test.ts` with `DevOnlyAuthProvider`).
   });
   await provider.ready();
 
@@ -121,7 +121,7 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef�
       authenticated: true, login_mode: 'password', subject: CONSOLE_EMAIL,
       roles: [], permissions: ['read']
     });
-    // El token nunca viaja en el cuerpo: si apareciera acá, un XSS se lo llevaría.
+    // The token never travels in the body: if it appeared here, an XSS would steal it.
     expect(JSON.stringify(body)).not.toContain(cookieToken(cookie!).slice(0, 24));
   });
 
@@ -149,7 +149,7 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef�
       ['/v3/console/observability', 200],
       ['/v3/console/tenants/Steven/agents/kant/perfil', 200],
       ['/v3/console/tenants/Steven/agents/kant/documents', 200],
-      // Superficies operativas deliberadamente excluidas de reader.
+      // Operational surfaces deliberately excluded from reader.
       ['/v3/console/dlq', 403],
       ['/v3/console/terminal/capability', 403]
     ];
@@ -236,11 +236,11 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef�
     const [cleared] = logout.headers.getSetCookie();
     expect(cleared).toContain('Max-Age=0');
 
-    // El token es autocontenido (documentado en `password-auth.ts::logout`): el logout NO lo
-    // revoca en el servidor, sólo le dice al navegador que borre la cookie. Reenviar la cookie
-    // VIEJA a mano sigue autenticando hasta que venza sola, o hasta que la cuenta se desactive o
-    // le cambien la contraseña -- es la mitad documentada de la revocación, no un bug de esta
-    // suite. Se mide para que quede escrito, no asumido.
+    // The token is self-contained (documented in `password-auth.ts::logout`): logout does NOT
+    // revoke it on the server, only tells the browser to drop the cookie. Replaying the OLD
+    // cookie by hand keeps authenticating until it expires on its own, or until the account is
+    // deactivated or the password is rotated — that is the documented half of revocation, not a
+    // bug in this suite. Measured so it stays written, not assumed.
     const staleCookieStillWorks = await fetch(`${httpUrl}/v3/auth/session`, { headers: { cookie } });
     expect((await staleCookieStillWorks.json())).toMatchObject({ authenticated: true });
   });
@@ -300,11 +300,11 @@ async function seedVisibleChain(): Promise<void> {
 }
 
 /**
- * Deja constancia auditable de QUÉ cuenta se usó para certificar el login, sin depender de que
- * nadie recuerde mirar la salida de este archivo. Vive en `.test-state/` (gitignored, 700) y el
- * archivo queda en 600: sólo el dueño del proceso lo lee. La contraseña vale ÚNICAMENTE contra el
- * contenedor Postgres efímero de ESTA corrida -- se destruye en `afterAll`, así que reusar este
- * archivo después no abre nada; es evidencia de qué se certificó, no una credencial viva.
+ * Leaves an auditable record of WHICH account was used to certify login, so it does not depend
+ * on anyone remembering to look at this file's output. Lives in `.test-state/` (gitignored, 700)
+ * and the file ends up 600: only the process owner can read it. The password is valid ONLY
+ * against THIS run's ephemeral Postgres container — it is destroyed in `afterAll`, so reusing
+ * this file later opens nothing; it is evidence of what was certified, not a live credential.
  */
 async function persistDevOnlyCredentialRecord(): Promise<void> {
   const directory = join(process.cwd(), '.test-state', 'e2e-console-login');

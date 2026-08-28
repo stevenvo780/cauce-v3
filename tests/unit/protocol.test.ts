@@ -142,8 +142,8 @@ describe('versioned protocol schemas', () => {
 });
 
 /**
- * Clasificación de mensajes agente-a-agente frente a tráfico de personas o externo
- * mediante la discriminación explícita de `body.type`.
+ * Classification of agent-to-agent messages against human or external traffic via the
+ * explicit `body.type` discrimination.
  */
 describe('agent-to-agent message classification', () => {
   it.each(['agent.message', 'agent.response', 'agent.fanin'])(
@@ -154,8 +154,8 @@ describe('agent-to-agent message classification', () => {
   );
 
   it('treats anything else as human or external traffic', () => {
-    // Telegram, la consola (que publica `{ text }` sin `type` en absoluto) y un adapter que
-    // todavía no existe: todos caen del lado seguro.
+    // Telegram, the console (which publishes `{ text }` without `type` at all) and an adapter
+    // that does not exist yet — all of them fall on the safe side.
     expect(isAgentToAgentBody({ type: 'telegram.message', text: 'hola' })).toBe(false);
     expect(isAgentToAgentBody({ text: 'desde la consola' })).toBe(false);
     expect(isAgentToAgentBody({ type: 'whatsapp.message', text: 'adapter futuro' })).toBe(false);
@@ -163,22 +163,22 @@ describe('agent-to-agent message classification', () => {
   });
 
   it('never classifies a malformed body as agent-to-agent', () => {
-    // El fallback por defecto ante cuerpos inválidos es tráfico externo/humano.
+    // The default fallback for invalid bodies is external/human traffic.
     expect(isAgentToAgentBody(undefined)).toBe(false);
     expect(isAgentToAgentBody(null)).toBe(false);
     expect(isAgentToAgentBody('agent.message')).toBe(false);
     expect(isAgentToAgentBody(['agent.message'])).toBe(false);
     expect(isAgentToAgentBody({ type: 42 })).toBe(false);
-    // `agent.notify` está reservado, pero es egress hacia un handle externo: va a
-    // adapter_outbox y nunca a deliveries, así que no participa del reparto de cupo.
+    // `agent.notify` is reserved, but it is egress to an external handle: it goes to
+    // adapter_outbox and never to deliveries, so it does not participate in the budget split.
     expect(isAgentToAgentBody({ type: 'agent.notify' })).toBe(false);
   });
 
   /**
-   * Límite documentado: un agente autenticado con permiso 'route' que publique sin un `type`
-   * reservado clasifica como tráfico externo/humano.
+   * Documented limit: an authenticated agent with 'route' permission that publishes without a
+   * reserved `type` is classified as external/human traffic.
    *
-   * Ver services/gateway/CONFIGURATION.md, sección "Límite conocido de la clasificación".
+   * See services/gateway/CONFIGURATION.md, section "Known limit of the classification".
    */
   it('documents that an agent can publish an unmarked body and be read as human', () => {
     const forged = {
@@ -193,7 +193,7 @@ describe('agent-to-agent message classification', () => {
 });
 
 /**
- * Valida el marcador opcional `execution_started` en el esquema de ACK.
+ * Validates the optional `execution_started` marker in the ACK schema.
  */
 describe('optional execution-started ACK marker', () => {
   const base = {
@@ -213,8 +213,8 @@ describe('optional execution-started ACK marker', () => {
   });
 
   it('leaves the marker undefined when an old adapter omits it, never assumed true', () => {
-    // "No consta" y "sí arrancó" tienen que ser distinguibles: si el ausente valiera `true`,
-    // el reaper daría por ejecutado todo lo que mande un adaptador viejo y perdería trabajo.
+    // "Not recorded" and "did start" MUST be distinguishable: if the absence meant `true`, the
+    // reaper would treat as executed everything an old adapter sends and would lose work.
     const bare = AckSchema.safeParse(base);
     expect(bare.success).toBe(true);
     expect(bare.success && bare.data.execution_started).toBeUndefined();

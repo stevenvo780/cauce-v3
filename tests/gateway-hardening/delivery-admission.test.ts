@@ -9,8 +9,8 @@ import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, text } from './helpers.js';
 
 /**
- * Pruebas de control de admisión, límites de entregas en vuelo y reserva de cupo
- * interactivo para mensajes de operadores/usuarios.
+ * Tests for admission control, in-flight delivery caps, and interactive-budget reservation
+ * for operator/user messages.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
@@ -68,9 +68,9 @@ interface ActiveDeliveryClaim {
 }
 
 /**
- * Cola de mentira que respeta el MISMO contrato de cupos que `CauceRepository.claimDeliveries`:
- * el humano gana el turno, gasta primero el cupo reservado, y el trabajo agente-a-agente sólo
- * puede ocupar el cupo general. Sin esto el test probaría el doble, no el gateway.
+ * Fake queue that honors the SAME capacity contract as `CauceRepository.claimDeliveries`: the
+ * human wins the turn, spends the reserved budget first, and agent-to-agent work can only fill
+ * the general budget. Without this the test would exercise the double, not the gateway.
  */
 function queuedRepository(options: { beforeClaim?: (call: number) => Promise<void> } = {}): {
   repository: GatewayRepository;
@@ -242,7 +242,7 @@ describe('gateway delivery admission control', () => {
     expect(await session.next()).toMatchObject({ type: 'delivery', delivery_id: deliveryId(2) });
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Las otras ocho siguen en la cola: el cupo reservado NO se le presta al trabajo de agentes.
+    // The other eight stay queued: the reserved budget is NOT lent to agent work.
     expect(store.pending()).toHaveLength(8);
     expect(session.seen().filter((frame) => frame.type === 'delivery')).toHaveLength(2);
     expect(store.claimCalls()[0]).toEqual({
@@ -265,8 +265,8 @@ describe('gateway delivery admission control', () => {
         wake = listener;
         return async () => undefined;
       },
-      // Un solo hueco general: es el peor caso del reclamo del dueño, "el único slot está
-      // ocupado por una tarea de 40 minutos".
+      // A single general slot: the worst case of the owner's complaint — "the only slot is held
+      // by a 40-minute task".
       admission: { maxInflightDeliveries: 1, humanReservedDeliveries: 1 },
       ackDeadlineMs: 600_000,
       outboxPollMs: 60_000
@@ -280,15 +280,15 @@ describe('gateway delivery admission control', () => {
       type: 'delivery', delivery_id: deliveryId(1), body: { type: 'agent.message' }
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    // El cupo general quedó lleno y la tarea larga NO se ACKea: sigue corriendo, como debe ser.
+    // The general budget is full and the long task is NOT ACK'd: it keeps running, as it should.
     expect(session.seen().filter((frame) => frame.type === 'delivery')).toHaveLength(1);
 
     store.enqueue(humanDelivery(99, '¿cómo venís con eso?'));
     wake?.({ tenant_id: 'Pablo', alias: 'midas' });
 
     expect(await session.next()).toMatchObject({ type: 'wake' });
-    // Acá está todo el punto: entra por el cupo reservado, en el mismo tick, sin haber
-    // cancelado, interrumpido ni acortado la tarea de agente que sigue en vuelo.
+    // This is the whole point: it enters through the reserved budget, on the same tick, without
+    // having cancelled, interrupted, or shortened the agent task still in flight.
     expect(await session.next()).toMatchObject({
       type: 'delivery',
       delivery_id: deliveryId(99),
@@ -298,8 +298,8 @@ describe('gateway delivery admission control', () => {
       limit: 2, generalCapacity: 1, humanReservedCapacity: 1, maxClaims: 2,
       requireDeclaredCapacity: true,
     });
-    // Las cuatro tareas de agente restantes siguen esperando su turno: el humano no les robó
-    // el cupo, usó el suyo.
+    // The four remaining agent tasks keep waiting their turn: the human did not steal their
+    // budget, it used its own.
     expect(store.pending()).toHaveLength(4);
   });
 
@@ -325,8 +325,8 @@ describe('gateway delivery admission control', () => {
 
     const first = await session.next();
     const second = await session.next();
-    // El mensaje humano llegó último a la cola y sale primero. Antes salía quinto, detrás de
-    // toda la cadena de agentes: por eso midas esperaba 114 minutos de mediana.
+    // The human message arrived last in the queue and leaves first. Before, it left fifth,
+    // behind the whole agent chain — that is why midas had a 114-minute median wait.
     expect([first, second].map((frame) => frame.delivery_id)).toContain(deliveryId(99));
     expect(first.delivery_id).toBe(deliveryId(99));
   });
@@ -339,9 +339,9 @@ describe('gateway delivery admission control', () => {
       pool: fakePool(),
       repository: store.repository,
       authProvider: DevOnlyAuthProvider.forTests(),
-      // Sin wakes externos: si el gateway no vuelve a drenar solo al liberarse la garra, el
-      // agente se queda sin trabajo para siempre con la cola llena. Ese es el riesgo principal
-      // del parche y este test es el que lo cubre.
+      // No external wakes: if the gateway does not drain again on its own when the claim is
+      // released, the agent sits idle forever with a full queue. That is the patch's main risk
+      // and this test is what covers it.
       deliveryWakeSubscriber: noDeliveryWakes,
       admission: { maxInflightDeliveries: 1, humanReservedDeliveries: 0 },
       ackDeadlineMs: 600_000,
@@ -399,16 +399,16 @@ describe('gateway delivery admission control', () => {
     const session = await connect(port, 'racing-consumer');
 
     await vi.waitFor(() => expect(claimCount).toBe(1));
-    // El wake llega con el drenaje en curso. Antes se descartaba con `if (draining) return` y,
-    // con cupo, eso puede ser el único aviso de que había trabajo esperando.
+    // The wake arrives while a drain is in progress. It used to be discarded with
+    // `if (draining) return` — and with a budget, that can be the only signal that work was waiting.
     store.enqueue(humanDelivery(2, 'segundo'));
     wake?.({ tenant_id: 'Pablo', alias: 'midas' });
     await new Promise((resolve) => setTimeout(resolve, 20));
     releaseFirstClaim();
 
-    // Sin `drainAgain` la segunda entrega no sale nunca: no hay más wakes, no hay ACK que
-    // libere cupo y el outbox está en 60 s. Que llegue es la prueba de que el aviso perdido
-    // se recuperó al terminar el drenaje en curso.
+    // Without `drainAgain` the second delivery never leaves: no more wakes, no ACK to free
+    // budget, and the outbox is at 60 s. That it arrives is the proof that the lost wake was
+    // recovered when the in-progress drain finished.
     await vi.waitFor(() => {
       expect(new Set(session.seen()
         .filter((frame) => frame.type === 'delivery')
@@ -419,12 +419,12 @@ describe('gateway delivery admission control', () => {
   });
 
   /**
-   * El desenlace MÁS frecuente bajo saturación, y el que se colaba: un ACK que la base resuelve
-   * como 'retry'. Ahí la entrega deja de ser de nadie —claim_token, consumer y plazo van a
-   * NULL— pero el gateway se la quedaba en `session.claims` hasta que venciera su
-   * `admissionExpiresAtMs`. Con el cupo en 1, un solo fallo reintentable dejaba al agente en
-   * CUPO CERO durante media hora: exactamente el modo de falla que este parche existe para
-   * evitar.
+   * The MOST frequent outcome under saturation, and the one that slipped through: an ACK the
+   * database resolves as 'retry'. There the delivery belongs to no one — `claim_token`,
+   * consumer and deadline all go to NULL — but the gateway kept it in `session.claims` until
+   * its `admissionExpiresAtMs` elapsed. With the budget at 1, a single retryable failure left
+   * the agent at ZERO BUDGET for half an hour — exactly the failure mode this patch exists to
+   * prevent.
    */
   it('frees the in-flight slot when an ACK resolves to retry, not only on terminal states', async () => {
     const store = queuedRepository();
@@ -464,8 +464,8 @@ describe('gateway delivery admission control', () => {
       status: 'failed', retryable: true, instance_id: 'retrying-consumer', epoch: 1
     }));
     expect(await session.next()).toMatchObject({ type: 'ack_result', status: 'retry' });
-    // Con el cupo liberado, la siguiente entrega sale en el mismo drenaje. Sin el arreglo esto
-    // no llegaba nunca: `claimDeliveries` se llamaba con limit 0 y la cola quedaba parada.
+    // With the budget freed, the next delivery leaves in the same drain. Without the fix this
+    // never arrived: `claimDeliveries` was called with limit 0 and the queue stayed frozen.
     expect(await session.next()).toMatchObject({ type: 'delivery', delivery_id: deliveryId(2) });
     expect(store.claimCalls().at(-1)).toEqual({
       limit: 1, generalCapacity: 1, humanReservedCapacity: 0, maxClaims: 1,
@@ -474,10 +474,10 @@ describe('gateway delivery admission control', () => {
   });
 
   /**
-   * El cupo no puede vivir sólo en la RAM del socket. Con `renewable_delivery_claims_v1` el
-   * lease y la época SOBREVIVEN a la reconexión a propósito, así que las garras siguen vivas en
-   * la base; un `claims: new Map()` en cada hello le devolvía el presupuesto entero al
-   * adaptador y un consumidor con flapping se llevaba una entrega por reconexión.
+   * The budget cannot live only in the socket's RAM. With `renewable_delivery_claims_v1` the
+   * lease and epoch SURVIVE a reconnect on purpose, so claims remain alive in the database; a
+   * `claims: new Map()` on every hello handed the full budget back to the adapter and a flapping
+   * consumer took one delivery per reconnect.
    */
   it('rebuilds the in-flight budget from the store instead of handing it back on every reconnect', async () => {
     const store = queuedRepository();
@@ -486,8 +486,8 @@ describe('gateway delivery admission control', () => {
     }
     const repository = {
       ...store.repository,
-      // Espejo mínimo de `CauceRepository.liveDeliveryClaims`: lo que la base sigue teniendo
-      // con el plazo de ACK corriendo para este alias, sin importar qué socket lo reclamó.
+      // Minimal mirror of `CauceRepository.liveDeliveryClaims`: whatever the database still
+      // holds with the ACK deadline running for this alias, regardless of which socket claimed it.
       liveDeliveryClaims: vi.fn(async () => store.liveClaims())
     };
     const app = await buildGateway({
@@ -509,14 +509,14 @@ describe('gateway delivery admission control', () => {
     first.socket.close();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Reconecta con el MISMO instance_id, sin haber ACKeado nada: la garra de la primera
-    // entrega sigue viva del lado de la base.
+    // Reconnects with the SAME `instance_id`, having ACK'd nothing: the first delivery's
+    // claim stays alive on the database side.
     const second = await connect(port, 'flapping-consumer');
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(second.seen().filter((frame) => frame.type === 'delivery')).toHaveLength(0);
-    // El gateway vuelve a consultar, pero PostgreSQL descuenta durablemente la garra anterior y
-    // devuelve cero. El presupuesto ya no depende de la memoria de ningún socket o proceso.
+    // The gateway queries again, but PostgreSQL durably subtracts the previous claim and
+    // returns zero. The budget no longer depends on the memory of any socket or process.
     expect(store.claimCalls()).toEqual([
       {
         limit: 1, generalCapacity: 1, humanReservedCapacity: 0, maxClaims: 1,
@@ -528,7 +528,7 @@ describe('gateway delivery admission control', () => {
       },
     ]);
     expect(vi.mocked(repository.liveDeliveryClaims)).toHaveBeenCalledTimes(2);
-    // Dos de tres siguen encoladas: reconectar no multiplicó el cupo.
+    // Two of three stay queued: reconnecting did not multiply the budget.
     expect(store.pending()).toHaveLength(2);
   });
 
@@ -879,7 +879,7 @@ describe('gateway delivery admission control', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json<{ deliveries: DeliveryClaimRecord[] }>();
-    // Sin techo, un solo POST vaciaba 20 entregas de golpe: el mismo lote suicida que el drain.
+    // Without a cap, a single POST emptied 20 deliveries at once: the same suicidal batch the drain caused.
     expect(body.deliveries).toHaveLength(2);
     expect(store.claimCalls()[0]).toEqual({
       limit: 4, generalCapacity: 2, humanReservedCapacity: 2, maxClaims: 4,
