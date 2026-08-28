@@ -217,6 +217,8 @@ async function dockerState(alias, overrides = {}) {
 
 function environment(statePath) {
   return {
+    // systemd (CI) arranca sin HOME tras el drop a nobody; el supervisor deriva XDG de HOME.
+    HOME: temporary,
     ...process.env,
     PATH: `${binRoot}:${process.env.PATH ?? ""}`,
     CAUCE_CONTAINER_TEST_MODE: "1",
