@@ -34,13 +34,28 @@ El reporte anterior medía **alias de redirección**, no vistas (4 de 8 veredict
 - **Se conservan**: `audit` y `relays` (son pestañas VIVAS de /observability), `fleet/:tenant/:alias` (único deep-link al TUI, lo usa el botón "Abrir TUI" de /messages), y `role-brief-tab` (**es la capa 1 del editor de directivas** — tu feature — y el único camino de rollback del rol).
 - Ahorro real inmediato: ~572 LOC. Deudas para el mega-refactor anotadas (deep-link en /terminal desbloquea borrar 180 LOC más + todos los casos especiales del router; regenerar docs/grafo.md).
 
-## 4. CAMINO A LA VENTANA — **PRIORIDAD MÁXIMA del dueño**. ACTUALIZADO 28-08: quedan DOS puertas antes de desplegar — (1) la ronda de la mega-auditoría (corriendo) y (2) **la ronda FLOTA-COMO-DATOS** (dictado del dueño 28-08: «ya no solo lo anotes — en la siguiente ronda corrijamos eso, es muy importante antes del despliegue»). Diseño medido en `plan-reestructura/flota-como-datos.md`; luego LA VENTANA.
+## 4. PLAN MAESTRO AL DESPLIEGUE (consolidado 28-08 — "abarcamos todas mis solicitudes y desplegamos")
 
-1. Instancias cierran órdenes activas → revisión integradora + gate global verde.
-2. **Ajuste de rutas pre-despliegue** (Claude): `deploy/runtime/` (~11 refs), re-validando render + builds.
-3. **Re-ensayo de la tanda limpia** contra clon de prod (la 029 ya no existe: el ensayo anterior quedó obsoleto). Criterio: 10 migraciones en una transacción, flota intacta en 14/14 enabled, huella 024 verde.
-4. **Alertmanager: DESCARTADO por el dueño (27-08)** — «las alertas son un mecanismo de notificación para cualquier agente, que levante un mensaje en su canal de forma recurrente como un cron». El primer despliegue sale SIN alertmanager y SIN fusionar las reglas nuevas de prometheus (el alerts.yaml actual de prod se queda; nada se enciende). La feature real va al roadmap §5: **notificaciones recurrentes por agente** (cron→bus, generalizando el revividor-de-colas ya probado).
-5. **LA VENTANA** (~2-3h, contigo, `CAUCE_FASE3_CON_DUENO=si`): backup fresco → B1 (revocar las 3 sesiones fantasma: 2× kant, 1× vulcano) → prod.env (instance-id, rutas repo-como-fuente por D3, borrar líneas rancias) → build imágenes desde main → migrar la tanda de 10 → `up -d --wait` → smoke de efectos reales → **poda de historiales** (tablas y antigüedad decididas contigo en vivo, tras el backup) → GC del registry (§6e). Regla intacta: si algo falla dos veces, PARAR.
+### Los 6 carriles en paralelo, DISJUNTOS por fichero (cero colisiones)
+
+| Carril | Instancia | Zona exclusiva | Misión | ¿Bloquea la ventana? |
+|---|---|---|---|---|
+| C | **codex-1** | `ops/scripts` + `ops/tests` | flota-como-datos: fórmulas, exportador, generadores (Fase A byte-idéntica), gates G-SNAP | **SÍ** |
+| G | **gemini** | `ops/pty-agent`, `ops/runbooks`, `console`→relay→bridge | publish-alias-key + runbook nueva era + re-firma PTY (G1, espera señal K2) + molienda estricta de sus zonas | **G1 SÍ**; molienda NO |
+| K | **claude (yo)** | snapshot, BD-reconciliación, `ops/cli`, integración | K1 SQL de reconciliación (lo corres tú) → K2 conmutar snapshot real → K3 `aprovisionar`/`retirar` → K4 probe de deploy → supervisor determinista (en diagnóstico ya) → demo probeta | **SÍ** |
+| T | **minimax-1** | `packages/adapter-sdk/test` + censo | ronda de orden de tests (corriendo): plan maestro + partición de 3 gigantes | NO (deseable) |
+| E | **codex-2** | `packages/{protocol,store,mcp}/src` + `services/gateway/src` | lint MÁXIMO a cero por sub-zona + comentarios→inglés | NO (sigue post-deploy) |
+| I | **minimax-2** | `adapter-sdk/src`, `dispatcher`, `deploy`, `scripts`, `pty-agent`, `tests/*` | comentarios→inglés masivo + poda (solo líneas de comentario) | NO (sigue post-deploy) |
+
+Un segundo claude NO hace falta: la integración debe tener UNA sola cabeza (este session) — mi paralelismo real son los workflows.
+
+### Criterios de GO para la ventana (y NADA más — la molienda cosmética NO la bloquea)
+1. ✔ ya: tanda de 10 ensayada (2,96s) · deploy/smoke calibrados · imágenes verificadas · backups torre+Drive · decisiones del dueño integradas.
+2. Carril C cerrado: Fase A `cmp -s` byte-idéntica + gates G-SNAP en verde.
+3. Carril K: tu SQL de reconciliación corrido (argos→openclaw, placements de gaia/heraclito/tales) → K2 snapshot real conmutado → `validate.sh` verde → G1 re-firmado → **demo probeta completa** (alta y baja tocando solo BD+CLI).
+4. Supervisor determinista VERDE (diagnóstico opus corriendo).
+5. Gate global + `ops:validate` + `test:pty` verdes en el árbol final; CI local nocturno ya vigila.
+→ **VENTANA** (~2-3h contigo, guion ya ensayado): backup fresco → B1 (3 sesiones) → prod.env (B2 instance-id, B3 rutas-repo) → build desde main → migrar (2,9s) → up --wait → smoke → poda de historiales (contigo) → GC del registry (contigo) → los 5 escenarios esenciales de `docs/flota-y-participantes.md` como prueba de humo FINAL.
 
 ## 5. POST-PRIMER-DESPLIEGUE (el roadmap que dictaste)
 
