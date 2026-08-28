@@ -140,8 +140,8 @@ MAX_SESSION_STORE_BYTES = 1 << 20
 #   2. The native OpenClaw TUI (the only one openclaw aliases can emit, because their images
 #      have no `tmux`) has NO `-r` equivalent.
 # With shared session enabled there is a single input box per alias, so a second writer does not
-# open a conversation: it stomps the current turn (four `input_busy` in a row, measured
-# 2026-07-31). The tmux `-r` is kept as defence in depth.
+# open a conversation: it stomps the current turn (four `input_busy` in a row, measured).
+# The tmux `-r` is kept as defence in depth.
 READ_ONLY_MODES = frozenset({"harness"})
 
 # --- Reading governance files ----------------------------------------------------------------
@@ -1033,7 +1033,7 @@ class PtyAgent:
             # channel (read/edit an agent's CLAUDE.md from the console) answers "unmeasured"
             # forever: there is no way to know WHICH file is "the directive" for this alias without
             # knowing where its harness lives. Deducing it from the registry is not enough:
-            # 2026-08-23 the registry picked the wrong harness for 5 of the 14 aliases, so it would
+            # the registry once picked the wrong harness for 5 of 14 aliases, so it would
             # serve another harness's file.
             # The agent is the only piece that truly knows it: it reads it from the bundle it was
             # launched with, inside the container. It goes here, not in the gateway `.env`, for
