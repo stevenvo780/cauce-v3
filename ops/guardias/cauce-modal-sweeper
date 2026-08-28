@@ -1,30 +1,16 @@
 #!/usr/bin/env bash
-# Destraba los modales que dejan a un agente VIVO PERO MUDO.
-#
-# El caso que lo motivó (2026-08-08, salva/Isa): el CLI de codex muestra
-#   "✨ Update available! X -> Y" con tres opciones, y espera una tecla que nadie va a apretar.
-# Mientras tanto el agente sigue aceptando entregas y RENOVANDO LA RESERVA cada 60 s, así que
-# nunca vencen, nunca fallan y nunca avisan: la dueña ve un agente parado que en realidad está
-# produciendo. salva cerró un entregable entero sin que Isa viera nada.
-#
-# Por qué un barredor y no "actualizar y listo": la actualización sólo resetea el reloj. La
-# PRÓXIMA versión trae el mismo diálogo. Esto es la cura; aquello es la tregua.
-#
-# Elige SIEMPRE "3. Skip until next version": actualizar el toolchain de un alias ajeno es otra
-# decisión (el binario vendorizado de codex gatea qué modelos puede usar cada uno), y "2. Skip"
-# vuelve a preguntar enseguida.
-#
-# Sólo manda teclas cuando el modal está REALMENTE en pantalla. Nunca a ciegas.
+# Clears modals that leave an agent alive but mute.
+# Why a sweeper and not "just update": the update only resets the clock; the next release
+# brings the same dialog. This is the cure; the update is only a truce.
+# Always pick "3. Skip until next version": updating another alias's toolchain is a separate
+# decision (the vendored codex binary gates which models each may use), and "2. Skip" asks again
+# right away.
+# Only send keys when the modal is REALLY on screen. Never blindly.
 set -u
-# El match NO puede ser la frase suelta: en la prueba del 2026-08-08 el barredor detectó
-# "Update available" en el SCROLLBACK de mi propia terminal —era el comando que yo acababa de
-# escribir— y le mandó "3"+Enter a `cauce-zeus`, mi sesión viva. El "3" apareció tecleado en mi
-# panel. Mandar teclas a una sesión por lo que dice su historial es una forma de corromper el
-# trabajo de otro agente.
-# Tres guardas, y las tres tienen que pasar:
-#   1. el modal REAL trae también sus opciones numeradas;
-#   2. el cursor `›` marca que hay un menú esperando (no es texto histórico);
-#   3. la marca tiene que estar en las ÚLTIMAS líneas: un modal vivo está al pie, no en el medio.
+# Three guards, all three must pass:
+#   1. the REAL modal also brings its numbered options;
+#   2. the `›` cursor marks a pending menu (not historical text);
+#   3. the marker must be in the LAST lines: a live modal sits at the bottom, not in the middle.
 MARCA='Update available'
 OPCION='Skip until next version'
 COLA_LINEAS=12
@@ -62,7 +48,7 @@ barrer_host() {   # $1 = etiqueta, $2 = prefijo de ejecución ("" local, "ssh vp
       sleep 1
       "${ejec[@]}" docker exec -u dev "$c" tmux -L cauce send-keys -t "$s" Enter 2>/dev/null
       sleep 3
-      # VERIFICAR POR EFECTO: que el modal ya no esté. Mandar la tecla no es haberlo destrabado.
+      # VERIFY BY EFFECT: the modal must be gone. Sending the key is not having cleared it.
       pantalla=$("${ejec[@]}" docker exec -u dev "$c" tmux -L cauce capture-pane -p -t "$s" 2>/dev/null)
       if es_modal_vivo "$pantalla"; then
         di "  NO SE DESTRABO $host/$c/$s: el modal sigue en pantalla (revisar a mano)"

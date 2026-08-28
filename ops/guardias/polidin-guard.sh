@@ -1,13 +1,11 @@
 #!/bin/sh
-# Repone el tunel de Polidinamica si ws-zeus dejo de escuchar en 12222.
-#
-# Por que vive en kratos y no en ws-zeus: el tunel corre DENTRO de ws-zeus, pero ese contenedor
-# no tiene ni cron ni systemd, asi que no puede vigilarse a si mismo. kratos si tiene systemd de
-# usuario (Linger=yes) y llega al contenedor por docker exec.
-#
-# Cadena que repone:  <contenedor> -> ws-zeus:12222 -> ssh kratos -> 10.88.88.31:22
-# El script de dentro (/home/dev/polidin-fwd.sh) ya reconecta solo si se cae la sesion ssh;
-# esto cubre el otro caso: que MUERA EL PROCESO entero, que es lo que paso el 02-ago.
+# Restores the relay tunnel when the relay container stops listening on 12222.
+# Why it lives on the host and not on the relay container: the tunnel runs INSIDE the
+# container, but that container has neither cron nor systemd, so it cannot watch itself.
+# The host has user systemd (Linger=yes) and reaches the container via docker exec.
+# Chain it restores: <container> -> relay:12222 -> ssh host -> 10.88.88.31:22
+# The in-VM script already reconnects by itself if the ssh session drops; this covers
+# the OTHER case: the whole process dying.
 LOG=/home/stev/.local/state/polidin-guard.log
 mkdir -p /home/stev/.local/state
 if docker exec ws-zeus sh -c 'ss -lnt 2>/dev/null | grep -q ":12222 "' 2>/dev/null; then

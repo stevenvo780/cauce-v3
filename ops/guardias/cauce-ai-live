@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
-"""ai-live — cuota REAL por CUENTA de la flota, para usar directo en la torre.
+"""ai-live — REAL per-account quota for the fleet, used directly from the control host.
 
-  Uso, desde kratos:
-      cauce-ai-live            # tabla legible
-      cauce-ai-live --json     # crudo, para otro programa
-      cauce-ai-live --context  # además reescribe el fichero que leen los agentes
+  Usage:
+      cauce-ai-live            # readable table
+      cauce-ai-live --json     # raw, for other programs
+      cauce-ai-live --context  # additionally rewrites the file read by agents
 
-POR QUE ASI, Y NO ccusage:
-  ccusage estima contra un "límite asumido" y miente (dio 122% con la sesión viva). La cuota real
-  de Claude sólo la da el propio claude.ai, por cuenta, leyendo /api/organizations/{uuid}/usage
-  DENTRO de la sesión del navegador de esa cuenta (puertos CDP 9241/9242/9243, uno por cuenta).
-  Codex la da su propio RPC read-only (codex-probe.py) sin gastar turno. Medido y verificado por el
-  workflow ia-live del 2026-08-04.
+Each Claude browser account gets its own CDP port. Real quota only comes from claude.ai's own
+/api/organizations/{uuid}/usage endpoint, read inside that account's browser session. Codex
+quota comes from its own read-only RPC (codex-probe.py) without consuming a turn.
 
-  El nombre de pantalla de claude.ai MIENTE (dos cuentas distintas mostraban "Stev"): la identidad
-  se toma del email de /api/organizations, nunca del nombre visible.
+Account identity is taken from the email in /api/organizations, never from the on-screen name.
 
-  Sin dato NO es saldo: si una sesión se cayó, la cuenta sale `ok=false` con su motivo, nunca 0% ni
-  100% — un 0% falso pausaría una cuenta viva, un 100% falso dispararía trabajo contra una muerta.
+Missing data is not quota: a session that dropped reports `ok=false` with its reason — never
+0% or 100%. A false 0% would pause a live account; a false 100% would push work at a dead one.
 """
 
 from __future__ import annotations
@@ -33,16 +29,16 @@ import time
 
 BASE = "/home/stev/.local/share/cauce-ai-live"
 sys.path.insert(0, BASE)
-import cdp  # noqa: E402  (vendorizado al lado de este script)
+import cdp
 
-# Una cuenta de navegador por puerto CDP. La etiqueta es NEUTRA a propósito: el email real se
-# descubre en vivo y no se imprime en claro salvo en --json.
+# One browser account per CDP port. The label is neutral on purpose: the real email is
+# discovered live and only printed in --json.
 CUENTAS_PATH = os.environ.get(
     "CAUCE_AI_LIVE_CUENTAS",
     "/datos/agents/shared/.local/share/ai-usage-live/claude-cdp-accounts.json",
 )
-# Respaldo embebido: las cuentas conocidas al 2026-08-06. Solo se usa si el fichero comun no
-# esta o no parsea, y NUNCA se cae a una lista mas corta en silencio.
+# Embedded fallback: known Claude accounts. Used only if the shared file is missing or
+# fails to parse, and never silently falls back to a shorter list.
 CLAUDE_RESPALDO = [
     {"label": "claude#1", "port": 9241},
     {"label": "claude#2", "port": 9242},
@@ -52,14 +48,7 @@ CLAUDE_RESPALDO = [
 
 
 def carga_cuentas() -> list:
-    """Lee la lista de cuentas del fichero comun con la sonda del banner.
-
-    El bug que arregla (2026-08-06): esta lista estaba escrita a mano aca y se quedo en 3
-    cuentas. Cuando entro la cuarta (b2b@polidinamica.com, puerto 9247) se agrego a
-    claude-accounts-probe.mjs -- que alimenta el banner de los agentes -- pero no aca, que es
-    lo que ejecuta la TUI que Steven abre en la torre. Resultado: el banner decia "b2b 58%" y
-    la TUI no tenia ni la tarjeta. Ahora la lista vive en UN solo fichero.
-    """
+    """Read the account list from the shared file used by the banner probe."""
     try:
         with io.open(CUENTAS_PATH, encoding="utf-8") as fh:
             crudo = json.load(fh)
@@ -69,7 +58,7 @@ def carga_cuentas() -> list:
                             "port": int(c["port"])})
         if cuentas:
             return cuentas
-    except Exception as e:                                    # noqa: BLE001
+    except Exception as e:
         print("aviso: no pude leer %s (%s); uso el respaldo embebido"
               % (CUENTAS_PATH, type(e).__name__), file=sys.stderr)
     return list(CLAUDE_RESPALDO)
@@ -111,9 +100,6 @@ def sonda_claude(cuenta: dict) -> dict:
         datos = pg.evalua(USAGE_JS)
         pg.cierra()
         if isinstance(datos, dict) and datos.get("ok"):
-            # reset_*_iso: el instante EXACTO tal cual lo da claude.ai. reset_* (redondeado a la
-            # hora) es lo que se imprime en la tabla; el ISO es para quien necesita el countdown
-            # fino (el TUI de cuotas). Aditivo: nada de lo que ya existia cambia.
             r.update(ok=True, email=datos.get("email"), tier=datos.get("tier"),
                      libre_5h=100 - (datos.get("h5") or 0), reset_5h=_horas(datos.get("h5_reset")),
                      reset_5h_iso=datos.get("h5_reset"),
@@ -175,11 +161,7 @@ def tabla(datos: dict) -> str:
 
 
 def escribe_contexto(datos: dict) -> None:
-    """Reescribe el fichero que el hook inyecta en cada agente, CON su marca de tiempo.
-
-    El bug que arregla: el fichero viejo decía `capturado=16:03UTC` sin fecha, y mintió 6 días sin
-    que nadie lo notara. Acá va `generado=<ISO absoluto>` para que la vejez se pueda ver.
-    """
+    """Rewrite the file injected by the hook into each agent, WITH its absolute timestamp."""
     dst = "/home/stev/.local/share/ai-usage-live/quota-context.txt"
     lineas = ["<ai-quotas generado=%s fuente=cauce-ai-live>" % datos["generado"]]
     for c in datos["cuentas"]:

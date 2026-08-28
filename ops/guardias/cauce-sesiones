@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""cauce-sesiones <alias> — qué sesiones tiene un agente y de qué conversación viene cada una.
+"""cauce-sesiones <alias> — what sessions an agent has and which conversation each one came from.
 
-Un agente de Cauce V3 no tiene UNA sesión: tiene una por clave de sesión, y la clave se deriva
-del sobre de la entrega (packages/adapter-sdk/src/sdk/engine.ts, sessionFromDelivery):
+A Cauce V3 agent does NOT have ONE session: it has one per session key, and the key is derived
+from the delivery envelope (packages/adapter-sdk/src/sdk/engine.ts, sessionFromDelivery):
 
     sha256({namespace, tenant_id: bridge_tenant, recipient_alias, attempt,
             origin:{adapter, channel, session_id, conversation_id}})
 
-Como `attempt` y `bridge_tenant` entran al hash, la MISMA conversación con el MISMO humano
-puede caer en varias sesiones distintas —cada una con su propia memoria— si hubo un reintento
-o si el mensaje entró por otro puente. Eso es lo que se ve desde afuera como "se duplicaron
-las instancias del agente".
+Because `attempt` and `bridge_tenant` enter the hash, the SAME conversation with the SAME
+human can land in several distinct sessions — each with its own memory — if there was a retry
+or the message came in through a different bridge. This is what looks like "the agent's
+instances got duplicated" from the outside.
 
-Este módulo no recalcula el hash (haría falta el auth_session_id, que vive en Postgres y no es
-alcanzable desde kratos): lee el ORIGEN REAL del primer sobre de cada transcript, que el propio
-adaptador dejó escrito ahí. Es la fuente más barata y la más honesta: dice de qué conversación
-vino esa sesión, por qué puente entró y cuándo fue su último turno.
+This module does not recompute the hash (that needs auth_session_id, in Postgres and not
+reachable from the control host): it reads the REAL ORIGIN from the first envelope of each
+transcript. That is the cheapest and most honest source: which conversation, which bridge,
+when was the last turn.
 
-    cauce-sesiones <alias>            tabla legible
-    cauce-sesiones <alias> --json     lo mismo en JSON (lo consume cauce-attach y cauce-estado)
+    cauce-sesiones <alias>            readable table
+    cauce-sesiones <alias> --json     same in JSON (consumed by cauce-attach and cauce-estado)
 
-También es importable: `inventario(alias)` devuelve el dict crudo.
+Also importable: `inventario(alias)` returns the raw dict.
 """
 import json
 import os
@@ -32,15 +32,15 @@ OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
 MAP = os.path.join(OPS, 'container-aliases.json')
 PKI = os.path.expanduser('~/.config/cauce-v3/container-pki')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
-# kant no vive en un contenedor: su adaptador corre en el host, con otro nombre de unit.
+# kant does not live in a container: its adapter runs on the host, under a different unit name.
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
-# Sólo claude y codex dejan un transcript por sesión reanudable; el resto lista claves sin más.
+# Only claude and codex leave a transcript per resumable session; the rest list keys only.
 CON_TRANSCRIPT = {'claude', 'codex'}
 
 # --------------------------------------------------------------------------------------------
-# Sonda que corre DENTRO del contenedor del alias (o en el host para kant). Una sola llamada
-# resuelve las 20 sesiones: globs, stat, sobre de origen, conteo de turnos y terminales abiertas.
-# Hacerlo con un docker exec por sesión —como hasta ahora— cuesta 20 viajes y medio minuto.
+# Probe that runs INSIDE the alias's container (or on the host for kant). A single call
+# resolves all 20 sessions: globs, stat, origin envelope, turn count and open terminals.
+# One docker exec per session — as before — costs 20 round trips and half a minute.
 # --------------------------------------------------------------------------------------------
 SONDA = r'''
 import glob, json, os, re, subprocess, sys
@@ -52,7 +52,7 @@ TOPE_LECTURA = 256 * 1024 * 1024
 
 
 def bloque(texto, inicio, fin):
-    """El JSON que el adaptador incrusta entre dos marcas del sobre."""
+    """The JSON the adapter embeds between two envelope markers."""
     i = texto.find(inicio)
     if i < 0:
         return None
@@ -68,7 +68,7 @@ def bloque(texto, inicio, fin):
 
 
 def textos(valor, salida, profundidad=0):
-    """Todas las cadenas de un objeto ya decodificado, sin recursión infinita."""
+    """Every string in an already-decoded object, without infinite recursion."""
     if profundidad > 6:
         return
     if isinstance(valor, str):
@@ -82,8 +82,8 @@ def textos(valor, salida, profundidad=0):
 
 
 def sobre(linea):
-    """Sobre de una línea del transcript. Preferimos decodificar el JSONL (correcto siempre);
-    si la línea no es JSON válido caemos al desescapado a mano, que alcanza para el caso real."""
+    """Envelope of one transcript line. We prefer decoding the JSONL (always correct); if the
+    line is not valid JSON we fall back to manual unescaping, which is enough for the real case."""
     candidatos = []
     try:
         textos(json.loads(linea), candidatos)
@@ -100,8 +100,8 @@ def sobre(linea):
 
 
 def primer_sobre(path):
-    """La clave de sesión incluye conversation_id: una sesión pertenece a UNA conversación,
-    así que el primer sobre ya la identifica y no hace falta leer 20 MB."""
+    """The session key includes conversation_id: a session belongs to ONE conversation, so
+    the first envelope already identifies it and there's no need to read 20 MB."""
     origen = contexto = None
     try:
         with open(path, "r", errors="replace") as fh:
@@ -173,7 +173,7 @@ def transcripto(native):
 
 
 def terminales(natives):
-    """Procesos que ya tienen abierto uno de estos transcripts. tty '?' = el adaptador."""
+    """Processes that already have one of these transcripts open. tty '?' = the adapter."""
     try:
         salida = subprocess.run(["ps", "-eo", "pid,tty,etime,args", "--no-headers"],
                                 capture_output=True, text=True, timeout=25).stdout
@@ -210,9 +210,9 @@ for clave, valor in crudo.items():
         continue
     vistos.add(native)
     path = transcripto(native)
-    # El origen que el propio adaptador dejó escrito junto al native_id (SDK >= 20260731).
-    # Ausente en toda entrada anterior, y ausente cuando el sobre no traía conversación: en ese
-    # caso se sigue diciendo "sin origen", que es lo único cierto que se puede decir.
+    # Origin the adapter itself wrote next to native_id (SDK >= 20260731). Absent in any
+    # older entry and absent when the envelope carried no conversation: in that case we
+    # keep saying "no origin", which is the only honest thing to say.
     del_store = (valor or {}).get("origin")
     if not isinstance(del_store, dict):
         del_store = None
@@ -238,9 +238,9 @@ for clave, valor in crudo.items():
     if fila["origen"] is not None:
         fila["origen_fuente"] = "transcripto"
     elif del_store is not None:
-        # Sólo cuando el transcript no lo dio. El transcript es el sobre REAL de un turno que
-        # ocurrió; sessions.json es lo que el adaptador anotó al abrir la sesión. Se prefiere el
-        # primero cuando existe (claude, codex) y el segundo es el único que hay para openclaw.
+        # Only when the transcript didn't yield it. The transcript is the REAL envelope of a
+        # turn that happened; sessions.json is what the adapter noted when opening the
+        # session. Transcript is preferred; sessions.json is the only source for openclaw.
         fila["origen"] = del_store
         fila["origen_fuente"] = "sessions.json"
     sesiones.append(fila)
@@ -310,7 +310,7 @@ def _sonda(alias, info):
 
 
 # --------------------------------------------------------------------------------------------
-# Clasificación: de qué conversación viene cada sesión y cuál es la del DM del dueño.
+# Classification: which conversation each session came from, and which is the owner's DM.
 # --------------------------------------------------------------------------------------------
 def _meta(origen, clave):
     if not isinstance(origen, dict):
@@ -341,9 +341,9 @@ def clasificar(alias, fila):
     privado = tipo in ('private', '') and str(conversacion or '').lstrip('-').isdigit() \
         and not str(conversacion or '').startswith('-')
     if canal == 'telegram' and privado:
-        # `origin` de sessions.json guarda canal y conversación, NO por qué bot entró: eso vive
-        # en `metadata.bridge_alias`, que sólo trae el sobre del transcript. Sin ese dato no se
-        # puede decir "bot propio" — se dice que no consta, que es distinto de decir que sí.
+        # `origin` in sessions.json stores channel and conversation, NOT which bot entered:
+        # that lives in `metadata.bridge_alias`, which only the transcript envelope carries.
+        # Without that data we cannot say "own bot"; we say "not recorded".
         if fila.get('origen_fuente') == 'sessions.json' and puente is None:
             fila['clase'] = 'dm_sin_puente'
         else:
@@ -352,9 +352,9 @@ def clasificar(alias, fila):
     elif canal == 'telegram':
         fila['clase'] = 'grupo'
         fila['donde'] = 'Grupo Telegram %s' % conversacion
-    # Las dos conversaciones SINTÉTICAS que el SDK fabrica cuando la entrega no tiene ruta de
-    # retorno (engine.ts, conversationScope). No son canales: no hay chat que abrir del otro
-    # lado, y llamarlas "telegram" o dejarlas como "console operator:..." confunde igual.
+    # The two SYNTHETIC conversations the SDK fabricates when a delivery has no return route
+    # (engine.ts, conversationScope). They are not channels: there's no chat to open on the
+    # other side, and naming them as a channel confuses equally.
     elif str(conversacion or '').startswith('operator:'):
         fila['clase'] = 'consola'
         fila['donde'] = 'consola/publicacion (%s)' % conversacion.split(':', 1)[1]
@@ -368,7 +368,7 @@ def clasificar(alias, fila):
 
 
 def inventario(alias):
-    """Todo lo que se sabe de las sesiones de un alias, ya clasificado."""
+    """Everything known about an alias's sessions, already classified."""
     info = alias_info(alias)
     datos = _sonda(alias, info)
     datos['alias'] = alias
@@ -384,9 +384,9 @@ def inventario(alias):
 
 
 def abreviar(sesiones):
-    """Prefijo corto pero INEQUÍVOCO. Los ids de codex son UUIDv7: los primeros 8 caracteres
-    son el reloj, así que dos sesiones creadas el mismo día comparten prefijo y un `--sesion`
-    ambiguo abriría la sesión equivocada."""
+    """Short but UNAMBIGUOUS prefix. Codex ids are UUIDv7: the first 8 chars are the clock,
+    so two sessions created the same day share a prefix and an ambiguous `--sesion` would
+    open the wrong one."""
     natives = [f['native'] for f in sesiones]
     largo = 8
     while largo < 36 and len({n[:largo] for n in natives}) != len(set(natives)):
@@ -396,9 +396,9 @@ def abreviar(sesiones):
 
 
 def dm_del_dueno(sesiones):
-    """La sesión que usa el DM de Telegram del dueño: carril humano, chat privado y bot propio.
-    Si el agente nunca fue escrito por su propio bot, se admite el DM que entró por otro puente,
-    porque sigue siendo la conversación del dueño (y se avisa)."""
+    """The session used by the owner's Telegram DM: human lane, private chat and own bot.
+    If the agent was never written by its own bot, the DM that came in through another
+    bridge is accepted, because it is still the owner's conversation (and we flag that)."""
     for clase in ('dm_propio', 'dm_sin_puente', 'dm_ajeno'):
         candidatas = [f for f in sesiones if f.get('clase') == clase and f.get('carril') == 'humano']
         if candidatas:
@@ -407,12 +407,12 @@ def dm_del_dueno(sesiones):
 
 
 def clave_conversacion(fila):
-    """Identidad de una conversación para agrupar. Cadena, no tupla: esto sale por --json."""
+    """Identity of a conversation for grouping. String, not tuple: this goes out via --json."""
     return '%s|%s' % (fila.get('donde'), fila.get('carril'))
 
 
 def duplicadas(sesiones):
-    """Conversaciones con más de una sesión: el síntoma de 'se duplicaron las instancias'."""
+    """Conversations with more than one session: the 'duplicated instances' symptom."""
     grupos = {}
     for fila in sesiones:
         if not fila.get('conversacion'):
@@ -422,9 +422,9 @@ def duplicadas(sesiones):
 
 
 # --------------------------------------------------------------------------------------------
-# Gateway: desde kratos NO hay Postgres (no hay psql, el 5432 está cerrado y no hay ssh a
-# agora-storage). Lo único alcanzable es el gateway por mTLS con los certificados por alias de
-# ~/.config/cauce-v3/container-pki. Con eso alcanza para leer cola, presencia y línea de tiempo.
+# Gateway: there is no Postgres reachable from the control host (no psql, 5432 closed, no
+# ssh to the storage host). Only the gateway via mTLS with per-alias certs under
+# ~/.config/cauce-v3/container-pki; that covers queue, presence and timeline.
 # --------------------------------------------------------------------------------------------
 VIVAS = ('pending', 'started', 'retrying')
 
@@ -436,7 +436,7 @@ def pki_de(alias):
 
 
 def gateway(alias, ruta, cuerpo=None, timeout=20):
-    """(codigo_http, objeto) si hubo respuesta; (None, motivo) si no se pudo ni preguntar."""
+    """(http_code, object) on a response; (None, reason) if it couldn't even be asked."""
     creds = pki_de(alias)
     if creds is None:
         return None, 'no hay certificado mTLS para %s en %s/%s' % (alias, PKI, alias)
@@ -462,7 +462,7 @@ def gateway(alias, ruta, cuerpo=None, timeout=20):
 
 
 def estado_entrega(item):
-    """`failed` con reintentos disponibles no está muerta: va a volver."""
+    """`failed` with retries available is not dead: it will come back."""
     estado = item.get('state')
     if estado == 'failed':
         try:
@@ -474,7 +474,7 @@ def estado_entrega(item):
 
 
 def cola(alias):
-    """Entregas dirigidas a ESE alias, clasificadas. None si el gateway no contestó."""
+    """Deliveries aimed at THIS alias, classified. None if the gateway did not answer."""
     codigo, datos = gateway(alias, '/v3/console/queues')
     if codigo != 200 or not isinstance(datos, dict):
         return None
@@ -498,7 +498,7 @@ def linea_cola(resumen):
 
 
 # --------------------------------------------------------------------------------------------
-# Presentación
+# Presentation
 # --------------------------------------------------------------------------------------------
 def corto(fila):
     return fila.get('abrev') or fila['native'][:8]

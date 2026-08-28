@@ -18,7 +18,7 @@ Salida: una linea por credencial + codigo de salida 1 si hay algo MUERTO o URGEN
 """
 import json, subprocess, datetime, sys
 
-# (contenedor, ruta dentro del contenedor, etiqueta)
+# (container, path inside the container, label)
 OBJETIVOS = [
     ("claw",          "/home/claw/.claude/.credentials.json", "claude/jarvis"),
     ("claw-miguel",   "/home/claw/.claude/.credentials.json", "claude/janus"),
@@ -75,10 +75,9 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
         ts = exp/1000 if exp > 1e11 else exp
         horas = (datetime.datetime.fromtimestamp(ts, datetime.timezone.utc) - ahora).total_seconds()/3600
 
-    # Un access token vencido NO es un problema: mientras haya refreshToken, el CLI lo renueva
-    # solo. salva lleva 5 dias "vencido" y contesta entregas sin fallar una. Alarmar por eso seria
-    # un guardia que grita todos los dias, y a un guardia que grita nadie le hace caso.
-    # Lo unico que de verdad mata a un agente es quedarse SIN refreshToken.
+    # An expired access token is NOT a problem: as long as refreshToken is present, the CLI
+    # renews it on its own. The only thing that truly kills an agent is running OUT OF
+    # refreshToken.
     if huella is None:
         estado, problemas = "MUERTO", problemas + 1
         detalle = "sin refreshToken: no puede renovar, muere al vencer el access"

@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# cauce-tmux-panel <alias> — crea la sesión tmux compartida de un alias de contenedor.
-#
-# Por qué existe: arrancar el adaptador NO crea la TUI. Sin TUI, su preflight deja al alias en
-# `tui_absent` y todo lo que llegue por Telegram o por el bus cae en una conversación que el dueño
-# no ve. Hasta hoy la sesión sólo nacía cuando alguien entraba con `cauce <alias>`, así que tras un
-# reinicio de la torre los catorce alias de contenedor subían degradados y nadie se enteraba.
-#
-# Es idempotente: `ensure` no toca la sesión si ya existe.
+# cauce-tmux-panel <alias> — create the shared tmux session of a container alias.
+# Why it exists: starting the adapter does NOT create the TUI. Without the TUI, the adapter's
+# preflight leaves the alias in `tui_absent` and any traffic arriving over Telegram or the bus
+# falls into a conversation the owner cannot see.
+# Idempotent: `ensure` leaves the session alone when it already exists.
 set -uo pipefail
 A=${1:?uso: cauce-tmux-panel <alias>}
 OPS=$HOME/.local/share/cauce-v3/ops
@@ -24,8 +21,8 @@ RELEASE=$(sed -n 's/^BUNDLE_RELEASE=//p' "$CONFIG/$A.env" | head -1)
 HELPER="/opt/cauce-v3-adapter/$A/releases/$RELEASE/packages/adapter-sdk/dist/src/bin/shared-session.js"
 WS=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$A.env" | head -1)
 
-# El bundle lo copia el supervisor al arrancar. En un arranque en frío puede tardar: se espera,
-# porque fallar aquí deja al alias sin panel el resto del día.
+# The bundle is copied by the supervisor at startup. A cold start may take a moment: we wait,
+# because failing here would leave the alias without a panel for the rest of the day.
 for _ in $(seq 1 30); do
   docker exec --user "$CUSER" "$CTR" test -f "$HELPER" 2>/dev/null && break
   sleep 2

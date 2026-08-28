@@ -1,7 +1,7 @@
 #!/bin/sh
-# Envoltorio del chequeo de credenciales.
-# Va en un script y no dentro de ExecStart= porque systemd NO hace sustitucion de comandos:
-# un $(date) inline se expande mal y el log queda escribiendo basura (paso: "rc=/bin/fish").
+# Wrapper around the credentials check.
+# It lives in a script and not inside ExecStart= because systemd does NOT do command
+# substitution there: an inline $(date) expands wrong and the log ends up writing garbage.
 EST=/home/stev/.local/state
 mkdir -p "$EST"
 /usr/bin/python3 /home/stev/.local/bin/cred-guard.py > "$EST/cred-guard.txt" 2>&1

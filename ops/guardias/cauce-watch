@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""cauce-watch <alias> — stream en vivo de lo que está razonando un agente de la flota.
+"""cauce-watch <alias> — live tail of the latest transcript of an agent.
 
-Sigue el transcript más reciente del harness que use ese alias, sea claude, codex u openclaw,
-desde adentro de su contenedor. Solo lectura.
-
-El `tail` remoto lleva una marca única y se mata al salir: si el cliente muere (ssh cortado,
-timeout, Ctrl-C duro) el proceso de adentro del contenedor NO queda huérfano. Además se
-autolimita con `timeout` por si nadie llega a limpiarlo.
+Read-only. Bounded by MAX_SECONDS. The remote `tail` carries a unique marker so it can be
+killed by marker (not by pattern) when the local process dies.
 """
 import json, os, signal, subprocess, sys, time
 
 OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
 MAP = os.path.join(OPS, 'container-aliases.json')
-MAX_SECONDS = 14_400  # 4 h: techo duro del tail remoto, pase lo que pase
+MAX_SECONDS = 14_400
 
 TRANSCRIPTS = {
     'claude':   ['{home}/.claude/projects'],
@@ -96,7 +92,6 @@ def main():
     marker = f'cauce-watch-{alias}-{os.getpid()}-{int(time.time())}'
     print(f'cauce-watch: {alias} · {harness} · {container}\n             {path}\n', file=sys.stderr)
 
-    # CAUCE_WATCH_TAG viaja en el entorno del proceso remoto: es la marca por la que lo matamos.
     remote = f'CAUCE_WATCH_TAG={marker} exec timeout {MAX_SECONDS} tail -f -n 40 "{path}"'
     proc = subprocess.Popen(['docker', 'exec', '-e', f'CAUCE_WATCH_TAG={marker}', container,
                              'sh', '-lc', remote],
@@ -107,7 +102,6 @@ def main():
             proc.terminate()
         except Exception:
             pass
-        # matar el tail de adentro del contenedor por su marca, no por patrón genérico
         subprocess.run(['docker', 'exec', container, 'sh', '-lc',
                         f"for p in $(pgrep -f 'tail -f -n 40' 2>/dev/null); do "
                         f"grep -qa '{marker}' /proc/$p/environ 2>/dev/null && kill $p; done"],

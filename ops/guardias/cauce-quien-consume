@@ -28,10 +28,10 @@ HOST_REMOTO = "vps"
 COMPARTIDO = os.environ.get("CAUCE_QC_COMPARTIDO",
                "/datos/agents/shared/.local/share/ai-usage-live")
 CACHE = os.path.expanduser("~/.local/share/ai-usage-live/cuentas-por-contenedor.json")
-# Mas viejo que esto, el saldo no se publica: se publica "?". Un numero rancio parece cierto.
+# Older than this, the balance is not published: "?" is. A stale number looks true.
 FRESCURA_MAX_S = 45 * 60
 
-# --------------------------------------------------------------------------- sonda (va dentro)
+# In-container probe
 SONDA = r'''
 import json, os, sys, time, urllib.request, urllib.error
 out = {"cliDice": None, "apiDice": None, "estado": None, "plan": None, "org": None,
@@ -60,7 +60,7 @@ try:
         "Authorization": "Bearer %s" % tok, "anthropic-beta": "oauth-2025-04-20",
         "User-Agent": "cauce-quien-consume/1.0"})
     r = json.load(urllib.request.urlopen(req, timeout=25))
-    # account.email, NUNCA display_name (devuelve "Stev" para cuentas distintas).
+    # account.email, NEVER display_name (returns the same short string for different accounts).
     out["apiDice"] = (r.get("account") or {}).get("email")
     org = r.get("organization") or {}
     out["org"] = org.get("rate_limit_tier") or org.get("organization_type")
@@ -82,9 +82,8 @@ def barre_local(host):
     filas = []
     names = sh(["docker", "ps", "--format", "{{.Names}}"]).stdout.split()
     for c in sorted(names):
-        # El usuario NO se adivina: se le pregunta al contenedor cual es el HOME que tiene la
-        # credencial. Adivinando (dev/node/root) se caian los claw*, que corren como "claw", y
-        # esos contenedores desaparecian del mapa sin que nada avisara.
+        # The user is NOT guessed: we ask the container which HOME holds the credential.
+        # Guessing (dev/node/root) made the claw* containers, which run as "claw", drop off the map silently.
         d = sh(["docker", "exec", c, "sh", "-c",
                 'for h in /root /home/*; do [ -f "$h/.claude/.credentials.json" ] && echo "$h"; done'])
         homes = [h for h in d.stdout.split() if h]
@@ -106,13 +105,13 @@ def saldos():
     """Saldo por cuenta desde claude-accounts.json (la sonda CDP que ya corre cada 10 min)."""
     try:
         d = json.load(open(os.path.join(COMPARTIDO, "claude-accounts.json")))
-        # capturedAt viene en UTC con Z: timegm, no mktime (mktime interpreta hora local y en
-        # kratos, que va en -05, restaria 5 horas y el fichero pareceria fresco cuando no lo es).
+        # capturedAt comes in UTC with Z: timegm, not mktime (mktime interprets local time and
+        # on this host that would subtract hours, making stale files look fresh).
         cap = calendar.timegm(time.strptime(d["capturedAt"][:19], "%Y-%m-%dT%H:%M:%S"))
         edad = time.time() - cap
     except Exception:
         return {}, None
-    # Sin dato NO es saldo: si el fichero envejecio, se devuelve vacio y la columna sale "?".
+    # No data is NOT a balance: if the file aged out, return empty and the column shows "?".
     if edad > FRESCURA_MAX_S:
         return {}, d.get("capturedAt")
     out = {}
@@ -146,7 +145,7 @@ def main():
         print(json.dumps(barre_local(os.uname().nodename))); return 0
 
     filas = barre_local("kratos")
-    # El otro host: se le manda ESTE MISMO fichero por stdin, no hay copia que mantener.
+    # The other host: send THIS SAME file via stdin; no copy to keep in sync.
     try:
         yo = open(os.path.abspath(__file__), encoding="utf-8").read()
         r = sh(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", HOST_REMOTO,
@@ -170,11 +169,8 @@ def main():
                 f["verificadoEn"] = prev["verificadoEn"]
     guarda_cache(cache)
 
-    # Nota medida (2026-08-06): en ws-zeus la credencial se reescribio a las 10:37:48 mientras
-    # ~/.claude.json seguia intacto desde 10:27:54; en esa ventana `claude auth status` decia
-    # saldantia y el token era de juanotalora653. Por eso la unica verdad es el endpoint OAuth.
-    # Toda discrepancia medida se deja escrita: son ventanas cortas (duran hasta que el
-    # contenedor reescribe su cache) y si no se registran al verlas, se pierden.
+    # Every measured discrepancy (API != CLI) is logged: these windows are short (they last until
+    # the container rewrites its cache) and are lost if not captured when seen.
     disc = [f for f in filas if f.get("apiDice") and f.get("cliDice")
             and f["apiDice"].lower() != f["cliDice"].lower()
             and str(f.get("estado", "")).startswith("verificado")]
@@ -206,10 +202,9 @@ def main():
             real += "*"                                     # * = identidad de la ultima verificacion
         libre = "?" if f.get("libre") is None else "%d%% %s" % (f["libre"], (f.get("ventana") or "")[:4])
         cli = f.get("cliDice") or "?"
-        # Solo se marca la discrepancia MEDIDA (API != CLI). No se marca "credencial mas nueva
-        # que el nombre cacheado": un simple refresco de token reescribe la credencial sin
-        # cambiar de cuenta, asi que ese aviso se encendia en casi todos los contenedores y
-        # dejaba de significar nada.
+        # Only MEASURED discrepancy (API != CLI) is flagged. We do not flag "newer credential
+        # than cached name": a token refresh rewrites the credential without changing accounts,
+        # so that warning would light up on most containers and stop meaning anything.
         marca = ("  <-- NO COINCIDE: el CLI miente"
                  if (f.get("apiDice") and cli and f["apiDice"].lower() != cli.lower()) else "")
         print("   %-6s %-18s %-30s %-9s %-30s %s%s" % (

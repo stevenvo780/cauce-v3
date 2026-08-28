@@ -1,15 +1,8 @@
 #!/bin/bash
-# cauce-destrabar-telegram <alias> — saltea la actualizacion de Telegram que dejo sordo a un alias.
-#
-# POR QUE EXISTE (2026-08-20, zeus). Un adjunto que no se puede descargar hace que el sondeo del
-# puente falle y NUNCA consuma esa actualizacion: el cursor no avanza y el alias pierde TODA su
-# entrada de Telegram, no solo el fichero. Ese dia le paso a `zeus` y a `jarvis` a la vez y
-# estuvieron ~1 h sordos con el resto de la flota sana. El arreglo de codigo esta en el commit
-# 6cbd70e del repo; hasta que ese puente se despliegue, esto es el destrabador manual.
-#
-# Como se reconoce: el alias no recibe NADA por Telegram (ni texto), su fila en
-# `channel_bridge_cursors` tiene `updated_at` viejo, y el log del puente repite
-# `Telegram file download failed` para su bot.
+# cauce-destrabar-telegram <alias> — skip the Telegram update that left an alias deaf.
+# How to recognize the failure mode: the alias gets NOTHING over Telegram (not even text),
+# its row in `channel_bridge_cursors` has an old `updated_at`, and the bridge log repeats
+# `Telegram file download failed` for its bot.
 set -euo pipefail
 A=${1:-}
 [ -n "$A" ] || { echo "uso: $(basename "$0") <alias>"; exit 2; }

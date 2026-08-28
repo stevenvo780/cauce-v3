@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""cauce-credenciales — audita y renueva las credenciales de suscripción de toda la flota.
+"""cauce-credenciales — audit and renew the fleet's subscription credentials.
 
-    cauce-credenciales                 tabla: qué está vivo, qué vence, qué falta
-    cauce-credenciales --renovar       recorre TODO lo que necesita login, uno por uno
-    cauce-credenciales --renovar <espacio>[:<proveedor>]   sólo eso
+    cauce-credenciales                 table: what is live, what expires, what is missing
+    cauce-credenciales --renovar       iterate everything that needs a login, one at a time
+    cauce-credenciales --renovar <space>[:<provider>]   only that one
 
-Los espacios son contenedores (o el host para kant). Un mismo archivo puede servir a varios alias
-porque los homes están bind-montados: la tabla lo dice para que no lo renueves dos veces.
+Spaces are containers (or the host for kant). The same file can serve several aliases because
+their homes are bind-mounted; the table flags this so the same login isn't run twice.
 
-Nada de API keys: Claude y ChatGPT van SIEMPRE por suscripción (OAuth), que es la política de la casa.
+No API keys: Claude and ChatGPT are ALWAYS subscription-based (OAuth), per house policy.
 """
 import json
 import os
@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 MAPA = os.path.expanduser('~/.local/share/cauce-v3/ops/container-aliases.json')
 AHORA = datetime.now(timezone.utc)
 
-# espacio -> (contenedor|None si es el host, usuario, home, alias que sirve)
+# space -> (container|None for host, user, home, aliases served)
 EXTRA_HOST = ('host:kratos', None, os.environ.get('USER', 'stev'), '/home/stev/red-servidores', ['kant'])
 
 
@@ -38,7 +38,7 @@ def en_espacio(contenedor, usuario, guion, timeout=25):
 
 
 def espacios():
-    """Un espacio por (contenedor, usuario, home): los alias que lo comparten viajan juntos."""
+    """One space per (container, user, home); aliases that share it move together."""
     datos = json.load(open(MAPA))['aliases']
     agrupados = {}
     for alias, v in sorted(datos.items()):
@@ -104,7 +104,7 @@ def estado_gemini(contenedor, usuario, home):
 PROVEEDORES = {'claude': estado_claude, 'codex': estado_codex, 'gemini': estado_gemini}
 
 RENOVAR = {
-    # proveedor -> (argv dentro del espacio, qué tiene que hacer el humano)
+    # provider -> (argv within the space, what the human has to do)
     'claude': ('claude', 'escribí /login y seguí el enlace; al terminar, /exit'),
     'codex': ('codex login', 'seguí el enlace que imprime y volvé'),
     'gemini': ('gemini', 'escribí /auth y elegí la cuenta de Google; al terminar, /quit'),

@@ -1,31 +1,29 @@
 #!/usr/bin/env bash
-# cauce — envoltorio local: corre el `cauce` de verdad, que vive en kratos, sin tener que hacer
-# el ssh a mano.
-#
-# Por que existe: el CLI real es kratos:~/.local/bin/cauce y necesita estar en la torre (habla con
-# docker y con las sesiones tmux de los contenedores). Desde el portatil hacia falta acordarse del
-# `ssh kratos` y ademas del `bash -lc`, porque kratos usa FISH y el quoting se rompe.
-#
-# Uso:  cauce                      lista la flota
-#       cauce <alias>              entra a la sesion (interactivo, pide TTY)
-#       cauce <alias> ver          mira sin tocar
-#       cauce <alias> sesiones     que conversaciones tiene y cual comparte
-#       cauce <alias> on|off       enciende / apaga su adaptador, comprobando de verdad
-#       cauce probar <alias>       entrega REAL por el gateway + la marca en el panel
-#       cauce soltar <alias>       suelta el pestillo de la ventana tmux
+# cauce — local wrapper: run the real `cauce`, which lives on the tower, without typing
+# ssh by hand.
+# Why it exists: the real CLI is on the tower and needs to be there (talks to docker and
+# to the container tmux sessions). From the laptop you'd otherwise have to remember both
+# `ssh tower` AND `bash -lc`, and quoting breaks against fish on some hosts.
+# Usage: cauce                  list the fleet
+#        cauce <alias>          enter the session (interactive, needs TTY)
+#        cauce <alias> ver      peek without touching
+#        cauce <alias> sesiones which conversations it has and which it shares
+#        cauce <alias> on|off   start / stop its adapter, with real verification
+#        cauce probar <alias>   REAL delivery via the gateway + the marker on the panel
+#        cauce soltar <alias>   release the tmux pane latch
 set -uo pipefail
 
 HOST=${CAUCE_HOST:-kratos}
 REMOTO=${CAUCE_REMOTO:-\$HOME/.local/bin/cauce}
 
-# `probar` no puede vivir en la torre: publicar al bus necesita el certificado de consola, que esta
-# en agora-storage, y kratos NO tiene llave hacia alla. El portatil si llega a las dos maquinas, asi
-# que la prueba se orquesta desde aca.
-#
-# Que comprueba, y por que las tres cosas: publica una entrega REAL por el gateway (mTLS), espera a
-# que la fila quede en estado terminal, y ADEMAS mira el panel tmux. Las tres hacen falta: una
-# entrega `done` no prueba que el turno haya pasado por la TUI —el fan-in lo sintetiza el SDK en
-# local, sin tocar el arnes— y un panel con texto no prueba que el bus lo haya visto.
+# `probar` cannot live on the tower: publishing to the bus needs the console client
+# certificate, which sits on the orchestrator host, and the tower cannot reach it. The
+# laptop can reach both, so the probe is orchestrated from here.
+# What it checks, and why all three: publish a REAL delivery via the gateway (mTLS), wait
+# for the row to reach a terminal state, and ALSO look at the tmux panel. All three are
+# necessary: a `done` delivery does not prove the turn went through the TUI (fan-in
+# synthesizes it locally via the SDK, without touching the harness), and a panel with
+# text on it does not prove the bus saw the delivery.
 if [ "${1:-}" = probar ]; then
   shift
   [ $# -ge 1 ] || { echo "uso: cauce probar <alias>" >&2; exit 2; }
@@ -49,13 +47,13 @@ try: print(json.load(sys.stdin)["delivery_ids"][0])
 except Exception: pass' 2>/dev/null)
   [ -n "$ID" ] || { echo "  el gateway rechazo la publicacion:"; echo "  $RESP"; exit 1; }
 
-  # El deadline de ACK en produccion es de 30 MINUTOS: una entrega colgada no da error rapido, se
-  # ve como un agente mudo. Por eso se espera con techo y se dice cuanto se espero.
-  #
-  # Y el panel hay que mirarlo MIENTRAS corre el turno, no al final: la TUI de claude vive en
-  # pantalla alterna con history_size=0, asi que `capture-pane` solo ve la pantalla ACTUAL. Cuando
-  # el turno termina, la pantalla se redibuja y la marca desaparece — mirando solo al final se
-  # reporta "el turno no paso por el arnes" sobre un turno que paso perfectamente.
+  # The ACK deadline in production is 30 MINUTES: a stuck delivery does not fail fast — it
+  # looks like a mute agent. Hence the wait with a ceiling and a report of how long we
+  # waited.
+  # And the panel must be checked WHILE the turn runs, not after: the claude TUI keeps
+  # history_size=0 on an alt screen, so `capture-pane` only sees the CURRENT screen. When
+  # the turn ends, the screen redraws and the marker disappears — checking only at the end
+  # would report "turn never went through the harness" for a turn that did.
   echo -n "  esperando"
   EST=; REPLY_TXT=; VISTO=; PANEL=; RC_PANEL=0
   [[ $ID =~ ^[0-9a-f-]{36}$ ]] || { echo "id de entrega invalido: $ID" >&2; exit 3; }
@@ -70,7 +68,7 @@ except Exception: pass' 2>/dev/null)
     case "$EST" in done|failed|dead) break;; esac
     echo -n "."; sleep 4
   done
-  # Una ultima mirada: si el turno fue mas rapido que el sondeo, la marca puede seguir en pantalla.
+  # One last look: if the turn outran the polling, the marker may still be on screen.
   if [ -z "$VISTO" ] && [ "$RC_PANEL" != 3 ]; then
     PANEL=$(ssh -o BatchMode=yes "$HOST" "bash -lc $(printf '%q' "\$HOME/.local/bin/cauce-panel $(printf '%q' "$A")")" 2>/dev/null)
     RC_PANEL=$?
@@ -86,8 +84,9 @@ except Exception: pass' 2>/dev/null)
 
   [ -n "$VISTO" ] && PANEL="$MARCA"
   if [ "$RC_PANEL" = 3 ]; then
-    # openclaw no tiene panel tmux: su arnes es un servidor y la TUI del duenio es OTRO cliente de
-    # la misma conversacion. Reportarlo como fallo seria decir lo contrario de la verdad.
+    # openclaw has no tmux panel: its harness is a server and the owner's TUI is ANOTHER
+    # client of the same conversation. Reporting this as a failure would be the opposite of
+    # the truth.
     printf '  panel: \033[33mopenclaw no usa panel tmux\033[0m — su sesion compartida la da el gateway.\n'
     printf '         \033[2mcomprobalo con: cauce %s sesiones\033[0m\n' "$A"
   elif printf '%s' "$PANEL" | grep -qF "$MARCA"; then
@@ -102,22 +101,23 @@ except Exception: pass' 2>/dev/null)
   exit 0
 fi
 
-# `soltar` es un binario aparte en la torre, no un subcomando del CLI.
+# `soltar` is a separate binary on the tower, not a subcommand of the CLI.
 if [ "${1:-}" = soltar ]; then
   shift
   [ $# -ge 1 ] || { echo "uso: cauce soltar <alias>" >&2; exit 2; }
   exec ssh -t "$HOST" "bash -lc $(printf '%q' "\$HOME/.local/bin/cauce-soltar $(printf '%q ' "$@")")"
 fi
+# With no args or a read-only subcommand, no TTY is needed; entering does. Always
+# requesting it is simpler and harmless: ssh -t degrades by itself when there is no
+# terminal.
 
-# Sin argumentos o con subcomando de solo lectura no hace falta TTY; entrar SI lo necesita.
-# Pedirlo siempre es mas simple y no molesta: ssh -t degrada solo si no hay terminal.
 TTY=(-t)
-[ -t 0 ] || TTY=()   # sin terminal local (tuberia, cron) no forzamos: evita el aviso de ssh
+[ -t 0 ] || TTY=()   # no local terminal (pipe, cron): don't force it; avoids the ssh warning
 
 if [ $# -eq 0 ]; then
   exec ssh "${TTY[@]}" "$HOST" "bash -lc $(printf '%q' "$REMOTO")"
 fi
 
-# printf %q en cada argumento: kratos usa fish y sin esto los espacios y comillas se parten.
+# printf %q on every argument: spaces and quotes get split otherwise on fish-based hosts.
 ARGS=$(printf '%q ' "$@")
 exec ssh "${TTY[@]}" "$HOST" "bash -lc $(printf '%q' "$REMOTO $ARGS")"

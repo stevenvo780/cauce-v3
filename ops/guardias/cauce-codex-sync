@@ -1,7 +1,7 @@
 #!/bin/bash
-# Propaga /datos/agents/shared/.codex/auth.json a los codex-home de los agentes que NO
-# montan el directorio compartido. Solo auth.json: config.toml es por agente y no se toca.
-# Idempotente: si el destino ya es identico, no escribe (asi el path unit no se realimenta).
+# Propagates /datos/agents/shared/.codex/auth.json to the codex-homes of agents that do
+# NOT mount the shared directory. auth.json only; config.toml is per-agent. Idempotent:
+# skip the write when already identical so the path unit doesn't feed back.
 set -u
 SRC=/datos/agents/shared/.codex/auth.json
 LOG=/home/stev/.local/state/cauce-codex-sync.log

@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# cauce-directo — abrir un alias SIN los saltos de pty de kratos.
-#
-# Por qué existe (medido 2026-08-11): desde kratos, `cauce <alias>` encadena CUATRO pty
-# —ssh -t (87 ms de red pública) → sudo -u stev (use_pty) → docker exec -it → tmux/openclaw-tui—
-# y cuando el salto externo se corta a mitad de sesión el proceso interior queda huérfano
-# aferrado a la pty en vez de liberarla. Encontramos uno así vivo 25 h en el contenedor de
-# jarvis (PID 77476, PPID 0, /dev/pts/0).
-#
-# Esto usa UN solo salto: entra al VPS y corre allí el `cauce` nativo, que es el que funciona.
-# No reemplaza a `cauce`: los dos alias que viven en kratos (kant, salva) siguen siendo locales.
+# cauce-directo — open an alias WITHOUT the pty hops that the local cauce wrapper performs.
+# Why it exists: from this host, `cauce <alias>` chains FOUR ptys (ssh -t over public net ->
+# sudo -u -> docker exec -it -> tmux/openclaw-tui) and when the outer hop drops mid-session
+# the inner process stays orphaned clinging to the pty instead of releasing it.
+# This uses ONE hop: SSH to the VPS and run the native `cauce` there, which is what works.
+# Does not replace `cauce`: the two aliases that live locally stay local.
 set -uo pipefail
 
 VPS=${CAUCE_VPS:-vps}
@@ -27,6 +23,6 @@ for l in $LOCALES; do
   fi
 done
 
-# Las comillas de "$@" se pierden al cruzar ssh, así que se reescapan una vez.
+# The quotes around "$@" are lost crossing ssh, so re-quote once.
 args=$(printf '%q ' "$@")
 exec ssh -t "$VPS" "sudo -iu stev cauce $args"

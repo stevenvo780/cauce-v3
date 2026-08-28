@@ -1,33 +1,5 @@
 #!/usr/bin/env bash
-# cauce-panel-guard — que la sesión compartida no se quede muerta sin que nadie se entere.
-#
-# POR QUÉ EXISTE
-# El ADAPTADOR tiene guardia desde hace tiempo (`cauce-attach-guard`, cada 2 min). El PANEL no tenía
-# ninguna. El panel nace UNA sola vez: `cauce-v3-tmux@<alias>.service` es `Type=oneshot` con
-# `RemainAfterExit=yes`, así que tras su primer arranque bueno queda `active (exited)` para siempre y
-# no vuelve a crear nada nunca más. El otro creador es un humano escribiendo `cauce <alias> on`.
-#
-# Consecuencia medida: si el panel se muere solo, NADA lo repone y NADA lo dice. El alias sigue
-# contestando el bus, `cauce` lo pinta `aparte` en amarillo sólo si alguien mira, y en la siguiente
-# entrega el adaptador abre una conversación NUEVA. El dueño pierde el hilo entero sin haber hecho
-# nada y sin que nadie se lo avise en el momento.
-#
-# Caso real, vulcano (tenant Pablo), 2026-08-02: el panel (pid 73881) nació a las 16:01 UTC con el
-# adaptador, seguía vivo a las 16:22:12 y a las 16:54:23 ya había muerto. No hubo `off`, ni reinicio
-# del adaptador, ni entrega en vuelo. Quedó `aparte` —el único de los quince— hasta que un humano
-# fue a mirar. La entrega siguiente arrancó de cero.
-#
-# LO QUE ESTE GUARDIA NO HACE, A PROPÓSITO
-# No repone el panel de un alias cuyo adaptador está parado. `cauce <alias> off` mata el panel
-# ADREDE: un panel superviviente le deja al siguiente `on` la generación tomada y arranca
-# `78/CONFIG`. Resucitarlo ahí rompería todos los despliegues, uno por uno. Por eso sólo se toca a
-# los alias cuyo adaptador está vivo DE VERDAD (unit activa **y** proceso en el contenedor):
-# `systemctl is-active` por sí sola ya mintió —dijo `inactive` con el adaptador vivo 3 h 27 min—,
-# así que se cruza con un barrido de /proc, igual que hace `cauce`.
-#
-# Tampoco resucita el caso "la sesión existe pero la TUI de adentro está muerta" (`tui_absent`):
-# repararlo exige matar la sesión del dueño, y eso no lo decide un timer. Se registra en el log para
-# que deje de ser mudo, que es el punto de todo esto.
+# cauce-panel-guard — keep the shared session from staying dead without anyone noticing.
 set -uo pipefail
 
 CONFIG=$HOME/.config/cauce-v3/container-aliases
@@ -36,23 +8,24 @@ STATE=$HOME/.local/state/cauce-attach
 LOG=$STATE/guard.log
 PANEL=$HOME/.local/bin/cauce-tmux-panel
 
-# `--dry-run` dice qué haría con cada alias y no toca nada. Existe porque una corrida sana de este
-# guardia es MUDA, y "mudo porque todo está bien" y "mudo porque me salté los quince" se ven igual
-# desde afuera. Sin esto, la única forma de comprobar que mira a alguien es romper un panel.
+# `--dry-run` reports what it would do for each alias and touches nothing. A clean run of this
+# guard is SILENT, and "silent because all is well" is indistinguishable from "silent because
+# I skipped them all". Without this flag, the only way to confirm it watches someone is to
+# actually break a panel.
 DRYRUN=
 [ "${1:-}" = --dry-run ] && DRYRUN=1
 
 mkdir -p "$STATE"
 
-# Un solo guardia a la vez. Dos `ensure` simultáneos sobre el mismo alias se pisan: uno crea la
-# sesión y al otro tmux le contesta "duplicate session", que se reporta como fallo de una sesión
-# que en realidad está perfecta.
+# One guard at a time. Two `ensure` invocations on the same alias step on each other: one
+# creates the session and the other gets a "duplicate session" from tmux, which looks like a
+# failure for a session that is actually fine.
 exec 9>"$STATE/panel-guard.lock"
 flock -n 9 || exit 0
 
 log() { printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG"; }
 
-# El mismo barrido que usa `cauce`: un alias está vivo por su PROCESO, no por su nombre.
+# The same sweep `cauce` uses: an alias is alive by its PROCESS, not by its name.
 BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'
 
 [ -x "$PANEL" ] || { log "PANEL-GUARD: falta $PANEL, no puedo reponer nada"; exit 1; }
@@ -61,21 +34,22 @@ for env in "$CONFIG"/*.env; do
   [ -e "$env" ] || continue
   a=$(basename "$env" .env)
 
-  # Sin sesión compartida configurada no hay panel que vigilar.
+  # No shared session configured means there is no panel to watch.
   grep -qx 'SHARED_SESSION=1' "$env" || continue
 
-  # kant es host-native: su panel es otra unit (`cauce-v3-tmux-kant.service`) y `cauce-tmux-panel`
-  # sólo sabe de contenedores. Tocarlo desde acá sería inventarse una ruta que no existe.
+  # One host-native alias is special-cased: its panel is a different unit and
+  # `cauce-tmux-panel` only knows about containers. Touching it from here would invent a
+  # path that does not exist.
   systemctl --user cat "cauce-v3-host-$a.service" >/dev/null 2>&1 && continue
 
-  # Condición de seguridad, primera mitad: para systemd el adaptador tiene que estar encendido.
+  # Safety condition, first half: systemd must report the adapter as active.
   [ "$(systemctl --user is-active "cauce-v3-container-$a.service" 2>/dev/null)" = active ] || continue
 
   line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$a" 2>/dev/null) || continue
   IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$line"
   [ -n "$ctr" ] || continue
 
-  # Segunda mitad, la que no miente: que haya un proceso del adaptador dentro del contenedor.
+  # Second half, the one that doesn't lie: an adapter process must exist inside the container.
   [ -n "$(docker exec "$ctr" sh -c "${BARRIDO//@@A@@/$a}" 2>/dev/null)" ] || continue
 
   release=$(sed -n 's/^BUNDLE_RELEASE=//p' "$env" | head -1)
@@ -83,12 +57,12 @@ for env in "$CONFIG"/*.env; do
   helper="/opt/cauce-v3-adapter/$a/releases/$release/packages/adapter-sdk/dist/src/bin/shared-session.js"
   ws=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$env" | head -1)
 
-  # Se pregunta con el MISMO helper que usan el adaptador y el CLI, para que los tres coincidan
-  # siempre en qué quiere decir "la sesión está".
+  # Ask the SAME helper the adapter and CLI use, so the three agree on what "session is"
+  # means.
   estado=$(docker exec --user "$cuser" "$ctr" node "$helper" status \
              --alias "$a" --harness "$harness" --workspace "${ws:-/workspace}" 2>/dev/null)
 
-  # Con panel vivo no se escribe nada: el guardia tiene que ser mudo cuando todo está bien.
+  # With a live panel, write nothing: the guard must stay silent when all is well.
   case "$estado" in
     *'"pid"'*) [ -n "$DRYRUN" ] && echo "OK      $a ($ctr): panel vivo -> $estado"; continue ;;
     *'"present":true'*)

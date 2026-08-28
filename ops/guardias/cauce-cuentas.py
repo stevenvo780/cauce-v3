@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Alta, baja y reparto de las cuentas de proveedor de la flota.
+"""Add, disable and route the fleet's provider accounts.
 
-POR QUE EXISTE
-El registro ya estaba en la base desde la migración 010 —`provider_accounts`, el techo
-`alias_routing_ceiling` y `agent_account_bindings` con prioridad— pero sólo se podía tocar
-escribiendo SQL a mano contra producción. Eso hizo que nadie lo mantuviera: el 2026-08-04 el
-registro decía que seis alias usaban una cuenta cuyo archivo, en el disco, no era el que leían.
-Un registro que hay que editar a mano es un registro que miente.
+The registry lives in Postgres (provider_accounts, alias_routing_ceiling,
+agent_account_bindings with priority) since migration 010, but before this CLI the only way
+to maintain it was writing SQL against production by hand. A registry that has to be edited
+by hand is a registry that lies.
 
-QUE NO HACE, A PROPOSITO
-No toca credenciales. `credential_ref` es un LOCATOR (una ruta, un nombre de variable, un
-identificador de vault); el contenido del archivo no se lee, no se copia y no se imprime nunca.
-Añadir una cuenta es registrar dónde vive, no moverla.
+It does NOT touch credentials. `credential_ref` is a LOCATOR (a path, a variable name, a
+vault id); the file's contents are never read, copied or printed. Adding an account is
+recording where it lives, not moving it.
 
-LA REGLA QUE HAY QUE RESPETAR AL AÑADIR CUENTAS
-Dos contenedores JAMAS deben apuntar al mismo archivo. Compartir la CUENTA está bien —varios
-logins independientes de la misma cuenta conviven, está medido—; lo que mata es compartir el
-ARCHIVO, porque el refresh token es de un solo uso y el que rota primero deja al resto con uno
-gastado. `verificar` es exactamente el chequeo de eso.
+THE RULE WHEN ADDING ACCOUNTS
+Two containers must NEVER point to the same file. Sharing the ACCOUNT is fine — several
+independent logins of the same account coexist, measured —; what kills is sharing the FILE,
+because the refresh token is single-use and whoever rotates first leaves the rest with a
+spent one. `verificar` is exactly that check.
 """
 
 from __future__ import annotations
@@ -31,10 +28,10 @@ PSQL = "docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -At -F'~'
 
 
 def consulta(sql: str) -> list[list[str]]:
-    """Corre SQL en la base de producción y devuelve filas ya partidas.
+    """Run SQL on the production database and return already-split rows.
 
-    El SQL viaja por stdin y no por la línea de comandos: así no hay que pelearse con el quoting
-    de fish (kratos) ni queda la consulta en el historial de nadie.
+    SQL travels via stdin, not via the command line: no shell-quoting fights and no entry
+    left in anyone's history.
     """
     hecho = subprocess.run(SSH + [PSQL], input=sql, capture_output=True, text=True, timeout=120)
     if hecho.returncode != 0:
@@ -84,7 +81,7 @@ def listar(_args: argparse.Namespace) -> int:
 
 
 def verificar(_args: argparse.Namespace) -> int:
-    """Dos cuentas distintas que apunten al MISMO archivo son la bomba de relojería de siempre."""
+    """Two distinct accounts pointing to the SAME file is the perpetual ticking bomb."""
     choques = consulta(
         "select credential_ref, count(*), string_agg(id, ', ' order by id) "
         "from provider_accounts where enabled group by 1 having count(*) > 1;"
@@ -112,7 +109,7 @@ def alta(args: argparse.Namespace) -> int:
 
 
 def ligar(args: argparse.Namespace) -> int:
-    """Ata un alias a una cuenta. Primero el techo, porque el binding lo referencia."""
+    """Bind an alias to an account. The ceiling first, because the binding references it."""
     consulta(
         "insert into alias_routing_ceiling (tenant_id, alias, account_id, account_payer_tenant, created_by_tenant)"
         " select p.payer_tenant_id, %s, p.id, p.payer_tenant_id, p.payer_tenant_id from provider_accounts p"
@@ -141,7 +138,7 @@ def pausar(args: argparse.Namespace) -> int:
 
 
 def baja(args: argparse.Namespace) -> int:
-    """Baja = deshabilitar, nunca borrar: el historial de a quién se le cobró no se toca."""
+    """Disable = never delete: the billing history of who got charged is untouched."""
     consulta("update provider_accounts set enabled=false, updated_at=now() where id=%s;" % escapa(args.id))
     print("cuenta deshabilitada (no borrada):", args.id)
     return 0

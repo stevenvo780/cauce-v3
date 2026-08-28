@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
-# Expone el sshd de la VM polidinamica-temp (10.88.88.31:22) a la red de contenedores.
-# Cadena:  <contenedor> -> ws-zeus:12222 -> (ssh kratos) -> 10.88.88.31:22
-#
-# POR QUE ESTA CADENA:
-#  - kratos SI rutea a 10.88.88.0/24 (bridge virbr-agent, red libvirt "agent-secure").
-#  - Los contenedores NO: kratos responde ICMP port-unreachable al forward, y en
-#    kratos no hay sudo (sudo -n => "a password is required"), asi que no puedo
-#    tocar iptables/UFW alli.
-#  - Los puertos internos de la VM (3000/3001/3100/5432/8025) NO se reenvian porque
-#    el sshd de la VM tiene AllowTcpForwarding=no (endurecimiento deliberado; no lo
-#    toco porque contaminaria la revision). La verificacion live se hace ejecutando
-#    comandos DENTRO de la VM por ssh, no con tuneles.
-#  - UFW dentro de la VM solo acepta :22 desde 10.88.88.0/24; por eso el ultimo salto
-#    tiene que salir de kratos (10.88.88.1) y no de un contenedor.
-#
-# Supervisado: si la sesion ssh cae, reconecta sola.
+# Exposes the sshd of a temp VM (10.88.88.31:22) to the container network via a relay
+# container that listens on :12222 and forwards over ssh to the VM.
+# Why this chain:
+#  - The relay host DOES route to 10.88.88.0/24 (libvirt "agent-secure" net).
+#  - Containers do NOT: the relay host answers ICMP port-unreachable on the forward, and
+#    has no passwordless sudo, so iptables/UFW cannot be edited there.
+#  - The VM's internal ports (3000/3001/3100/5432/8025) are NOT forwarded because the
+#    VM's sshd has AllowTcpForwarding=no (deliberate hardening; live verification runs
+#    commands INSIDE the VM via ssh, no tunnels).
+#  - UFW inside the VM only accepts :22 from 10.88.88.0/24; therefore the final hop must
+#    originate from the relay host (10.88.88.1), not from a container.
+# Supervised: if the ssh session drops, reconnects on its own.
 while true; do
   ssh -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
       -o ExitOnForwardFailure=yes -o ConnectTimeout=10 \

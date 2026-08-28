@@ -48,7 +48,7 @@ CA_FILE = os.path.join(PKI_DIR, "ca.crt")
 CERT_FILE = os.path.join(PKI_DIR, "agent-hegel.crt")
 KEY_FILE = os.path.join(PKI_DIR, "agent-hegel.key")
 
-# EXACTO — es el prompt que hegel ejecuta. No editar sin intención.
+# EXACT prompt that the target agent runs. Do not edit without intent.
 MENSAJE = "Check-in de ventas con Jhon: leer ventas/CRM.md y ventas/JHON.md y enviar a Jhon por su canal directo ya autorizado un repaso corto y proactivo (saludo, en qué anda hoy, acciones urgentes del pipeline, 2-3 preguntas para llenar el CRM) y volcar la respuesta al CRM."
 
 
@@ -65,8 +65,8 @@ def main() -> int:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.load_verify_locations(CA_FILE)
     ctx.load_cert_chain(CERT_FILE, KEY_FILE)
-    # El cert del gateway trae SAN IP 100.64.0.6, así que conectando por IP la
-    # verificación de host pasa. check_hostname queda en su default (True).
+    # The gateway cert carries SAN IP 100.64.0.6, so connecting by IP passes host
+    # verification. check_hostname stays at its default (True).
 
     conn = http.client.HTTPSConnection(GATEWAY_HOST, GATEWAY_PORT, context=ctx, timeout=20)
     try:
@@ -84,7 +84,7 @@ def main() -> int:
     stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     print(f"[{stamp}] key=hegel-ventas-checkin-{today} POST /v3/messages -> HTTP {resp.status}")
     print(text)
-    # 202 = aceptado (nueva entrega o dedup del mismo día); ambos son éxito.
+    # 202 = accepted (new delivery or same-day dedup); both are success.
     return 0 if resp.status == 202 else 1
 
 

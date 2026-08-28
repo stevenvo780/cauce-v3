@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""cauce-esfuerzo — ver y cambiar el esfuerzo de cada agente de la flota, desde kratos.
+"""cauce-esfuerzo — view/change each agent's effort level, run from the control host.
 
-    cauce-esfuerzo                          estado de los 15 alias
-    cauce-esfuerzo <alias> <nivel>          cambia un alias
-    cauce-esfuerzo @codex   <nivel>         todos los alias de ese harness
-    cauce-esfuerzo all      <nivel>         toda la flota
-    cauce-esfuerzo <alias> --modelo <id>    además fija el modelo exacto
+    cauce-esfuerzo                          status of all 15 aliases
+    cauce-esfuerzo <alias> <level>          change one alias
+    cauce-esfuerzo @<harness> <level>       all aliases on that harness
+    cauce-esfuerzo all      <level>         entire fleet
+    cauce-esfuerzo <alias> --modelo <id>    additionally pin the exact model
 
-Niveles: low · medium · high · xhigh   (max = xhigh)
+Levels: low · medium · high · xhigh   (max = xhigh)
 
-Qué toca cada harness:
-    codex     model_reasoning_effort en su config.toml
-    claude    effortLevel en su settings.json (el modelo solo cambia con --modelo:
-              válidos verificados: sonnet · opus · opus[1m] · fable)
-    openclaw  agents.defaults.model.primary, validado contra los modelos declarados en el
-              archivo; si el espacio tiene settings.json de Claude, también su effortLevel
-    hermes    no tiene esfuerzo: muestra HERMES_INFERENCE_MODEL y no lo toca
+Per-harness:
+    codex     model_reasoning_effort in config.toml
+    claude    effortLevel in settings.json (model only changes via --modelo)
+    openclaw  agents.defaults.model.primary, validated against the models declared in
+              the file; if the space has a Claude settings.json, its effortLevel too
+    hermes    no effort knob: shows HERMES_INFERENCE_MODEL and does not touch it
 
-Toma efecto en la próxima entrega del alias; no reinicia nada. Cada escritura deja un .bak-<fecha>.
+Takes effect on the alias's next delivery; nothing is restarted. Each write leaves a .bak-<date>.
 """
 import json, os, re, shutil, sys, time
 
@@ -33,13 +32,13 @@ OC_HEGEL = '/datos/agent-v2/tenants/jhon/agents/hegel/oc/.openclaw/openclaw.json
 OC_MIDAS = '/datos/agent-v2/tenants/pablo/agents/marcas/oc/.openclaw/openclaw.json'
 OC_SENECA = '/datos/agent-v2/tenants/pablo/agents/personal/oc/.openclaw/openclaw.json'
 
-# settings.json de Claude que acompaña a un espacio openclaw (su runtime claude-cli los lee)
+# Claude settings.json that accompanies an openclaw space (read by its claude-cli runtime)
 OPENCLAW_CLAUDE = {
     OC: '/datos/claw-config/.claude/settings.json',
     OC_MIGUEL: '/datos/miguel-config/.claude/settings.json',
 }
 
-# alias -> (tenant, harness, archivo de configuración)
+# alias -> (tenant, harness, configuration file)
 FLEET = {
     'kant':     ('Steven', 'codex',    CODEX_HOST),
     'socrates': ('Steven', 'codex',    CODEX_SHARED),
@@ -121,7 +120,7 @@ def set_codex(path, level, model):
 
 
 def set_claude_settings(path, level, model):
-    """El esfuerzo real de Claude Code es effortLevel; el modelo solo cambia si se pide."""
+    """Claude Code's real effort knob is effortLevel; the model only changes if requested."""
     d = json.load(open(path)) if os.path.exists(path) else {}
     d['effortLevel'] = level
     if model:

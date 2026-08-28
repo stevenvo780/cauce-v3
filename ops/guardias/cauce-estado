@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""cauce-estado <alias> — ¿este agente está trabajando o está muerto?
+"""cauce-estado <alias> — is this agent working or dead?
 
-Una pantalla con lo único que contesta esa pregunta, cruzando las tres fuentes que hay:
+A single screen crossing the four sources that answer that question:
 
-  * systemd  : la unit del adaptador (activa, desde cuándo, cuántos reinicios)
-  * el contenedor : el proceso del adaptador y su TIEMPO DE CPU. Una unit activa no prueba
-                    nada: un agente inerte se delata porque acumula segundos de CPU en horas.
-  * el marcador de attach : si alguien está adentro por consola, el agente está mudo A PROPÓSITO.
-  * el gateway (mTLS) : presencia/latido, cola de entregas y línea de tiempo de ACKs. Desde
-                    kratos no hay Postgres (sin psql, 5432 cerrado, sin ssh a agora-storage):
-                    el gateway es la única ventana a la base, y alcanza.
+  * systemd: the adapter's unit (active, since when, restart count)
+  * the container: the adapter process and its CPU TIME. An active unit proves nothing; an
+                   inert agent is betrayed by accumulating CPU seconds over hours.
+  * the attach marker: if someone is on the console, the agent is INTENTIONALLY mute.
+  * the gateway (mTLS): presence/heartbeat, delivery queue and ACK timeline. From the control
+                   host there is no Postgres (no psql, 5432 closed, no ssh to the storage
+                   host); the gateway is the only window into the database and it is enough.
 
-    cauce-estado <alias>     una pantalla
-    cauce-estado             toda la flota, una línea por agente
-    cauce-estado --json      lo mismo en JSON
+    cauce-estado <alias>     one screen
+    cauce-estado             whole fleet, one line per agent
+    cauce-estado --json      same in JSON
 """
 import datetime
 import importlib.machinery
@@ -45,7 +45,6 @@ def sesiones_mod():
     ruta = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cauce-sesiones')
     if not os.path.exists(ruta):
         die('falta %s (se instala junto a cauce-estado)' % ruta)
-    # Sin esto el import deja un __pycache__ dentro de ~/.local/bin.
     sys.dont_write_bytecode = True
     cargador = importlib.machinery.SourceFileLoader('cauce_sesiones', ruta)
     modulo = importlib.util.module_from_spec(importlib.util.spec_from_loader('cauce_sesiones', cargador))
@@ -57,13 +56,11 @@ def unit_of(alias):
     return HOST_NATIVE.get(alias, 'cauce-v3-container-%s' % alias)
 
 
-# 2026-08-17 zeus: los 15 alias del VPS tienen su unit EN EL VPS, bajo el usuario `stev` de esa
-# maquina. Preguntando `systemctl --user` aqui, kratos contestaba `inactive` para todos ellos —que
-# es lo correcto para kratos— y este CLI lo publicaba como "CAIDO". Comprobado que era falso: argos,
-# dado por caido, contesto una entrega real y su unit alla estaba `active`.
-# kant y salva SI los supervisa kratos, asi que esos dos se siguen midiendo en local.
+# VPS aliases run their units on the VPS itself, under the VPS user; asking `systemctl --user`
+# locally would correctly report `inactive` for them and mis-publish that as "DOWN".
+# kant and salva ARE supervised by this host, so those two keep being measured locally.
 LOCALES = {'kant', 'salva'}
-VPS_SSH = "vps-tn"  # en kratos el alias es vps-tn, no vpstn (ese es el mio)
+VPS_SSH = "vps-tn"
 
 
 def alias_de_unit(unit):
@@ -80,7 +77,6 @@ def propiedades(unit, claves):
     if alias in LOCALES:
         crudo = sh(pedido)
     else:
-        # Misma formula que usa el `cauce` de kratos para reenviar al VPS.
         remoto = ('U=$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/$U '
                   + ' '.join(pedido))
         crudo = sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
@@ -94,7 +90,7 @@ def propiedades(unit, claves):
 
 
 def segundos_cpu(texto):
-    """'01:23' o '1-02:03:04' de ps → segundos."""
+    """'01:23' or '1-02:03:04' from ps → seconds."""
     if not texto:
         return None
     dias, _, resto = texto.partition('-')
@@ -115,13 +111,12 @@ _PS_CACHE = []
 
 
 def procesos_host():
-    """Una sola foto de la tabla de procesos de kratos. Los adaptadores de los alias en
-    contenedor corren ACÁ (`cauce-container-runtime.py run --alias X`, que hace docker exec
-    hacia adentro); el de kant corre directo como MainPID de su unit. Mirar el host evita un
-    docker exec por alias y sirve igual para los dos casos."""
-    # 2026-08-17 zeus: los adaptadores de los 15 alias en contenedor ya NO corren en kratos —
-    # migraron al VPS el 12-ago—, asi que se toman DOS fotos y se juntan: la local (kant, salva) y
-    # la del VPS. Con una sola, el CLI declaraba "SIN ADAPTADOR" a toda la flota.
+    """One snapshot of the control host's process table plus the VPS's, joined.
+
+    Container aliases' adapters migrated to the VPS, so a single local `ps` would declare
+    "NO ADAPTER" for the whole fleet. Joining both snapshots keeps local cases (kant, salva)
+    working and lets one SSH read the remote ones.
+    """
     if not _PS_CACHE:
         local = sh(['ps', '-eo', 'pid,etime,time,pcpu,args', '--no-headers'])
         remoto = sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
@@ -136,13 +131,14 @@ def procesos_host():
 
 
 def proceso_adaptador(alias, host_native, unidad):
-    """El proceso del adaptador de ESE alias y su CPU acumulada. La unit activa no prueba nada:
-    un agente inerte se delata porque no gasta CPU (segundos en horas).
+    """The adapter process for THIS alias and its accumulated CPU. An active unit proves nothing:
+    an inert agent is betrayed by not consuming CPU (seconds over hours).
 
-    Dos casos distintos y hay que respetarlos:
-      * alias en contenedor: la unit lanza un `docker exec` (MainPID, CPU 0 siempre) que a su vez
-        corre `cauce-container-runtime.py run --alias X`. El que trabaja es ESE, no el MainPID.
-      * kant (host-native): todo corre bajo la unit, así que CPUUsageNSec del cgroup es exacto.
+    Two distinct cases must be respected:
+      * container alias: the unit spawns a `docker exec` (MainPID, CPU always 0) that in turn
+        runs `cauce-container-runtime.py run --alias X`. The one doing the work is THAT, not
+        the MainPID.
+      * kant (host-native): everything runs under the unit, so the cgroup's CPUUsageNSec is exact.
     """
     if host_native:
         principal = str(unidad.get('MainPID') or '')
@@ -158,7 +154,6 @@ def proceso_adaptador(alias, host_native, unidad):
                 'cpu_s': cpu_s, 'edad_s': segundos_cpu(fila[1]) if fila else None,
                 'fuente': 'cgroup de la unit'}
     for pid, edad, cpu, pcpu, args in procesos_host():
-        # El cliente `docker exec` lleva los mismos argumentos y nunca gasta CPU: no es el que trabaja.
         if args.startswith('docker ') or 'cauce-container-runtime.py' not in args:
             continue
         if ('--alias %s ' % alias) not in args + ' ':
@@ -177,12 +172,11 @@ def reloj(segundos):
 
 
 def harness_vivo(info, alias):
-    """El proceso del harness dentro del contenedor (el que ejecuta dist/src/bin/<harness>.js).
-    Es lo único que pertenece a Cauce ahí adentro: en los mismos contenedores conviven procesos
-    de otras flotas que no hay que confundir con esto."""
+    """The harness process inside the container (the one running dist/src/bin/<harness>.js).
+    It is the only thing owned by Cauce inside; other fleets' processes share the containers
+    and must not be confused with it."""
     cmd = ("ps -eo args --no-headers 2>/dev/null | grep -F 'adapter-sdk/dist/src/bin/' "
            "| grep -F '/%s/' | grep -v grep | head -1" % alias)
-    # El contenedor tampoco esta en kratos: el `docker exec` va por el VPS.
     if info.get('alias') in LOCALES or info['container'] in ('ws-isa',):
         return bool(sh(['docker', 'exec', info['container'], 'sh', '-lc', cmd], timeout=30))
     return bool(sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
@@ -214,7 +208,7 @@ def presencia(mod, alias):
 
 
 def epoca(texto):
-    """ISO-8601 del gateway → epoch local. None si no se puede leer."""
+    """ISO-8601 from the gateway → local epoch. None if it can't be parsed."""
     if not isinstance(texto, str) or not texto:
         return None
     try:
@@ -224,7 +218,7 @@ def epoca(texto):
 
 
 def actividad(mod, alias):
-    """Último ACK y última entrega completada para ESE alias, desde la línea de tiempo."""
+    """Last ACK and last completed delivery for THIS alias, from the timeline."""
     codigo, datos = mod.gateway(alias, '/v3/console/messages')
     if codigo != 200 or not isinstance(datos, dict):
         return None
@@ -248,7 +242,7 @@ def actividad(mod, alias):
 
 
 def veredicto(datos):
-    """La conclusión, en una línea. El orden importa: primero lo que explica el silencio."""
+    """The conclusion, in one line. Order matters: first what explains the silence."""
     if datos['marcador'] and datos['marcador'].get('vivo'):
         return ('MUDO A PROPÓSITO', 'hay un attach abierto (pid %s, hace %s): el adaptador está '
                 'parado y las entregas se encolan.'
@@ -271,7 +265,6 @@ def veredicto(datos):
         return ('SIN LATIDO', 'el adaptador corre pero el gateway no lo ve online (último latido %s).'
                 % (presente.get('last_heartbeat_at') or '?'))
     cpu, edad = datos['proceso'].get('cpu_s'), datos['proceso'].get('edad_s')
-    # Menos de ~2 segundos de CPU por hora encendido es un agente que no ejecuta nada.
     if cpu is not None and edad and edad > 3600 and (cpu / edad) < 0.0005:
         return ('INERTE', 'lleva %s vivo y sólo %ss de CPU: está prendido pero no procesa nada.'
                 % (datos['proceso']['edad'], int(cpu)))
@@ -408,7 +401,6 @@ def resumen_flota(mod):
         aliases = sorted(json.load(open(mod.MAP))['aliases'])
     except (OSError, ValueError, KeyError):
         die('no puedo leer %s' % mod.MAP)
-    # Una sola lectura de presencia para toda la flota: /v3/status ya la trae completa.
     bus = None
     for alias in aliases:
         _codigo, respuesta = mod.gateway(alias, '/v3/status')

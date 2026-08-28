@@ -75,8 +75,8 @@ def sesiones_mod():
     ruta = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cauce-sesiones')
     if not os.path.exists(ruta):
         die(f'falta {ruta} (se instala junto a cauce-attach)')
-    # Sin extensión .py importlib no infiere cargador: hay que dárselo explícito.
-    # Sin esto el import deja un __pycache__ dentro de ~/.local/bin.
+    # importlib can't infer a loader without .py extension; provide it explicitly.
+    # Without this, the import leaves a __pycache__ inside ~/.local/bin.
     sys.dont_write_bytecode = True
     cargador = importlib.machinery.SourceFileLoader('cauce_sesiones', ruta)
     spec = importlib.util.spec_from_loader('cauce_sesiones', cargador)
@@ -115,17 +115,14 @@ def write_marker(alias, unit, native):
     return path
 
 
-# --------------------------------------------------------------------------------------------
-# Egreso: la única vía por la que un aviso puede salir de kratos hacia el chat del dueño.
-#
-# El gateway acepta mTLS con los certificados por alias de ~/.config/cauce-v3/container-pki.
-# `POST /v3/messages` publica AL BUS (llega a agentes, nunca a un chat: el esquema público no
-# puede expresar un destino de canal, y es deliberado). La única superficie que sí puede es
-# `POST /v3/egress/notifications`, y exige dos cosas que hoy zeus no tiene: el permiso `notify`
-# en su principal del registro mTLS y un destino declarado en egress_destinations. Mientras
-# falte cualquiera de las dos, el gateway responde 403 y acá se degrada a un aviso en pantalla
-# (nunca se bloquea el attach por esto). El README explica las dos filas que lo habilitan.
-# --------------------------------------------------------------------------------------------
+# Egress is the only path an alert can use to reach the owner's chat from outside the bus.
+# The gateway accepts mTLS with per-alias certs under ~/.config/cauce-v3/container-pki.
+# `POST /v3/messages` publishes to the bus (agents only — never a chat: the public schema
+# can't express a channel destination, by design). The only surface that can is
+# `POST /v3/egress/notifications`, and it requires two things the owner principal may not
+# have: the `notify` permission in its mTLS registration, and a declared destination in
+# egress_destinations. If either is missing, the gateway responds 403 and we degrade to
+# an on-screen notice (never block attach for this).
 def destino_de(alias):
     conf = {}
     try:
@@ -159,9 +156,7 @@ def avisar(mod, alias, texto, sufijo, prueba=False):
     return f'no pude avisar por Telegram: el gateway respondió {codigo}.'
 
 
-# --------------------------------------------------------------------------------------------
-# Elección de sesión
-# --------------------------------------------------------------------------------------------
+# Session selection
 def describir(mod, alias, fila):
     puente = fila.get('puente')
     via = 'su propio bot' if puente in (None, alias) else f'el bot de {puente}'
@@ -280,10 +275,10 @@ def main():
     native = elegida['native']
     transcript = elegida.get('transcripto') or '(sin transcript)'
 
-    # ---- garantía 2: un solo escritor
+    # guarantee 2: single writer
     abiertas = interactive_writers(info, native, host_native)
-    # Un proceso sin tty ('?') no es una terminal humana: es el adaptador ejecutando el harness
-    # para una entrega. Bloquear por eso confundiría; lo que hay que hacer es esperar unos segundos.
+    # A process without a tty ('?') is not a human terminal — it's the adapter running the
+    # harness for a delivery. Blocking on that would mislead; we just wait a few seconds.
     humanas = [row for row in abiertas if row[1] not in ('?', '-')]
     sin_tty = [row for row in abiertas if row[1] in ('?', '-')]
     if humanas and not forzar:
