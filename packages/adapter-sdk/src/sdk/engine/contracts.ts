@@ -1,4 +1,7 @@
-import type { ProfileRuntimeAdoptionEvidence } from "@cauce/protocol";
+import {
+  profileRuntimeAdoptionFor,
+  type ProfileRuntimeAdoptionEvidence,
+} from "@cauce/protocol";
 import type { HarnessAdapter, RuntimeProfileMeasurement } from "../../contracts/harness.js";
 import type { DurableStore } from "../durable-store.js";
 import type { AdapterLogger, Clock, Delivery, DeliveryEvent } from "../types.js";
@@ -55,20 +58,5 @@ export function profileAdoptionFor(
   delivery: Delivery,
   measured: RuntimeProfileMeasurement | undefined,
 ): ProfileRuntimeAdoptionEvidence | undefined {
-  const contract = delivery.profile_runtime_contract;
-  if (contract === undefined || measured === undefined
-    || contract.documents.length !== measured.documents.length) return undefined;
-  const observed = new Map(measured.documents.map((document) => [document.path, document.sha256]));
-  for (const document of contract.documents) {
-    if (document.path.slice(document.path.lastIndexOf("/") + 1) !== document.name
-      || observed.get(document.path) !== document.sha) return undefined;
-    observed.delete(document.path);
-  }
-  if (observed.size !== 0) return undefined;
-  return {
-    evidence: "adapter_delivery",
-    revision: contract.revision,
-    generation: contract.generation,
-    documents: contract.documents,
-  };
+  return profileRuntimeAdoptionFor(delivery.profile_runtime_contract, measured?.documents);
 }

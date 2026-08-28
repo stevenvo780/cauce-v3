@@ -4159,7 +4159,17 @@ test("CliTmux cancela y reapea cada operación sin permitir una mutación tardí
             await new Promise((resolveWait) => setTimeout(resolveWait, 5));
           }
         }
-        assert.notEqual(pidText, undefined, `el cliente ${stem} debe haber arrancado`);
+        if (pidText === undefined) {
+          assert.equal(
+            mode,
+            "timeout",
+            `el cliente ${stem} debe haber arrancado antes de una cancelación explícita`,
+          );
+          const outcome = await pending;
+          assert.equal(outcome.exitCode, null);
+          assert.match(outcome.stderr, /timed_out/u);
+          continue;
+        }
         const pid = Number(pidText);
         assert.ok(Number.isSafeInteger(pid) && pid > 1);
         if (mode === "abort") controller.abort();

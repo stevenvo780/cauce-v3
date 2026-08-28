@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { FICHEROS_OPENCLAW, bloqueDePerfil } from "@cauce/protocol";
+import {
+  NativeProfileContext,
+  nativeProfileContextEnabled,
+} from "../../context/native-profile-context.js";
 import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
 import {
   isCanonicalOpenCodeSessionId,
@@ -65,6 +69,7 @@ export class HarnessAdapter {
   private readonly canonicalOpenCodeSession: boolean;
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
   private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
+  private readonly nativeProfileContext: NativeProfileContext | undefined;
 
   constructor(options: HarnessAdapterOptions) {
     this.sharedSession = options.sharedSession;
@@ -76,10 +81,26 @@ export class HarnessAdapter {
     this.fallbackSessionKey = options.fallbackSessionKey;
     this.canonicalOpenCodeSession = options.canonicalOpenCodeSession === true;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
+    const environment = options.environment ?? process.env;
+    const nativeEnabled = nativeProfileContextEnabled(environment.CAUCE_NATIVE_PROFILE_CONTEXT);
+    this.nativeProfileContext = nativeEnabled
+      ? new NativeProfileContext(this.definition.id, this.sharedSession !== undefined, environment)
+      : undefined;
     if (this.canonicalOpenCodeSession
       && (this.definition.id !== "opencode" || this.sessionNamespace !== "kant")) {
       throw new Error("Canonical OpenCode session publication is restricted to alias 'kant'");
     }
+  }
+
+  prepareContext(context: HarnessRequestContext): HarnessRequestContext;
+  prepareContext(context: undefined): undefined;
+  prepareContext(
+    context: HarnessRequestContext | undefined,
+  ): HarnessRequestContext | undefined;
+  prepareContext(
+    context: HarnessRequestContext | undefined,
+  ): HarnessRequestContext | undefined {
+    return this.nativeProfileContext?.prepare(context) ?? context;
   }
 
   /**
@@ -183,6 +204,7 @@ export class HarnessAdapter {
    */
   private conSelloDelArnes(context: HarnessRequestContext | undefined): HarnessRequestContext | undefined {
     if (!context) return context;
+    if (context.native_profile_context === true) return context;
     // An external seal only credits the fixed contract; the shared TUI still needs the live
     // profile because it could have loaded the file before that measurement.
     if (this.sharedSession) return this.conPerfilVivoDeSesionCompartida(context);
@@ -328,15 +350,22 @@ export class HarnessAdapter {
     const effectivePrompt = attachmentPlan.prompt.length === 0
       ? request.prompt
       : `${request.prompt}\n\n${attachmentPlan.prompt}`;
-    const effectiveContext = this.conSelloDelArnes(request.context);
+    const preparedContext = this.prepareContext(request.context);
+    const effectiveContext = this.conSelloDelArnes(preparedContext);
+    await request.beforeHarnessInvoke?.();
+    // Re-read after the durable intent; a crash here can conservatively leave pre-provider intent.
+    const invocationContext = effectiveContext?.native_profile_context === true
+      ? this.prepareContext(effectiveContext)
+      : effectiveContext;
     // Shared TUIs receive this block explicitly. Headless harnesses load the same measured file at
     // process start; in both cases evidence is emitted only after the run returns valid output.
-    const measuredProfile = effectiveContext?.runtime_profile
+    const measuredProfileAtStart = invocationContext?.native_profile_measurement
+      ?? invocationContext?.runtime_profile
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
     const result = await this.runner.run({
       ...invocation,
       ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
-      stdin: protocolPrompt(effectivePrompt, request.origin, effectiveContext),
+      stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext),
       timeoutMs: request.timeoutMs,
       signal: request.signal,
       ...(session.context.sessionId === undefined ? {} : { sessionId: session.context.sessionId }),
@@ -468,7 +497,15 @@ export class HarnessAdapter {
     }
 
     const announced = await this.announceSharedSession(output, degradation);
-    if (measuredProfile !== undefined) request.onRuntimeProfileConsumed?.(measuredProfile);
+    let consumedProfile = measuredProfileAtStart;
+    if (invocationContext?.native_profile_context === true) {
+      try {
+        consumedProfile = this.nativeProfileContext?.revalidate(invocationContext);
+      } catch {
+        consumedProfile = undefined;
+      }
+    }
+    if (consumedProfile !== undefined) request.onRuntimeProfileConsumed?.(consumedProfile);
     return announced;
   }
 

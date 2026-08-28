@@ -2,6 +2,7 @@ import { PROTOCOL_VERSION } from '@cauce/protocol';
 import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
 } from '../context/siembra-del-perfil.js';
+import { nativeProfileContextEnabled } from '../context/native-profile-context.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
@@ -618,9 +619,10 @@ export function siembraAplicada(resultado: ResultadoDeLaSiembra): boolean {
   ));
 }
 
-/** Default-on: sólo el valor explícito `0` desactiva la convergencia en reconnect. */
+/** Legacy reconnect seeding is default-on but never races the native publisher. */
 export function siembraHabilitada(entorno: NodeJS.ProcessEnv): boolean {
-  return entorno.CAUCE_SEMBRAR_PERFIL !== '0';
+  return !nativeProfileContextEnabled(entorno.CAUCE_NATIVE_PROFILE_CONTEXT)
+    && entorno.CAUCE_SEMBRAR_PERFIL !== '0';
 }
 
 /**

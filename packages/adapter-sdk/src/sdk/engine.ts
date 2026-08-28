@@ -6,7 +6,8 @@ import type { InboxRecord } from "./durable-store.js";
 import { DurableStore } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type {
-  HarnessAdapter, HarnessSessionReservation, RuntimeProfileMeasurement, SessionLane,
+  HarnessAdapter, HarnessRequestContext, HarnessSessionReservation, RuntimeProfileMeasurement,
+  SessionLane,
 } from "../contracts/harness.js";
 import type {
   AdapterLogger,
@@ -339,6 +340,37 @@ export class AdapterEngine {
       if (!acquired) return;
     }
 
+    const messageType = typeof delivery.body.type === "string"
+      ? delivery.body.type
+      : "request";
+    const rawRequestContext: HarnessRequestContext = {
+      self_alias: delivery.recipient_alias,
+      sender_alias: delivery.actor_alias,
+      tenant_id: this.ownTenantId ?? delivery.tenant_id,
+      room_id: this.ownRoom ?? delivery.room_id,
+      channel: delivery.authenticated_context?.channel
+        ?? delivery.origin?.channel
+        ?? "cauce",
+      agent_message: messageType === "agent.message"
+        || messageType === "agent.response"
+        || messageType === "agent.fanin",
+      message_type: messageType,
+      routing_targets: routingTargetsFromDelivery(delivery),
+      ...selfRoleFromDelivery(delivery),
+      ...(delivery.profile_runtime_contract === undefined
+        ? {}
+        : { native_profile_contract: delivery.profile_runtime_contract }),
+    };
+    let requestContext = rawRequestContext;
+    if (messageType !== "agent.fanin") {
+      try {
+        requestContext = this.harness.prepareContext(rawRequestContext);
+      } catch (error) {
+        await this.finishError(accepted.record, asAdapterError(error));
+        return;
+      }
+    }
+
     const started = await this.store.transitionAndEnqueue(
       delivery.delivery_id,
       "started",
@@ -358,30 +390,12 @@ export class AdapterEngine {
       controller,
     );
 
-    const messageType = typeof delivery.body.type === "string"
-      ? delivery.body.type
-      : "request";
     let output: StructuredOutput | undefined;
     let consumedProfile: RuntimeProfileMeasurement | undefined;
     let executionFailure: unknown;
     let attachments: MaterializedAttachments | undefined;
     try {
       const trustedOrigin = delivery.authenticated_context?.origin ?? delivery.origin;
-      const requestContext = {
-        self_alias: delivery.recipient_alias,
-        sender_alias: delivery.actor_alias,
-        tenant_id: this.ownTenantId ?? delivery.tenant_id,
-        room_id: this.ownRoom ?? delivery.room_id,
-        channel: delivery.authenticated_context?.channel
-          ?? delivery.origin?.channel
-          ?? "cauce",
-        agent_message: messageType === "agent.message"
-          || messageType === "agent.response"
-          || messageType === "agent.fanin",
-        message_type: messageType,
-        routing_targets: routingTargetsFromDelivery(delivery),
-        ...selfRoleFromDelivery(delivery),
-      };
       const processedReplies = messageType === "agent.fanin"
         ? this.store.processedRepliesForFanin(delivery)
         : [];
@@ -402,30 +416,6 @@ export class AdapterEngine {
           return attachments === undefined ? base : `${base}\n\n${attachments.prompt}`;
         })();
         if (reservation !== undefined) await reservation.wait(controller.signal);
-        // Emitted as a claim renewal on purpose: it reuses the ownership confirmation that
-        // already exists, so it doubles as a final "this is still mine" check just before
-        // spending money. If the gateway says no, `loseClaim` aborts.
-        //
-        // The same operation proves ownership and durably marks the point of no return. If the
-        // fsync fails, the harness has not yet been invoked and the terminal is safely retriable.
-        try {
-          await this.commitExecutionIntent(
-            started.record,
-            controller.signal,
-            Math.max(100, Math.min(
-              30_000,
-              Math.floor((this.claimWatchdogMs ?? executionBudget.claimWatchdogMs) / 2),
-            )),
-          );
-        } catch (error) {
-          throw error instanceof AdapterError
-            ? error
-            : new AdapterError(
-                "EXECUTION_INTENT_CONFIRMATION_FAILED",
-                "Gateway did not confirm durable execution intent before harness invocation",
-                true,
-              );
-        }
         output = await this.harness.execute({
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
@@ -435,6 +425,28 @@ export class AdapterEngine {
           ...(trustedOrigin === undefined ? {} : { origin: trustedOrigin }),
           timeoutMs: executionBudget.harnessTimeoutMs,
           signal: controller.signal,
+          beforeHarnessInvoke: async () => {
+            // The adapter calls this after its last local preflight and immediately before its
+            // runner. The same operation proves ownership and durably marks the point of no return.
+            try {
+              await this.commitExecutionIntent(
+                started.record,
+                controller.signal,
+                Math.max(100, Math.min(
+                  30_000,
+                  Math.floor((this.claimWatchdogMs ?? executionBudget.claimWatchdogMs) / 2),
+                )),
+              );
+            } catch (error) {
+              throw error instanceof AdapterError
+                ? error
+                : new AdapterError(
+                    "EXECUTION_INTENT_CONFIRMATION_FAILED",
+                    "Gateway did not confirm durable execution intent before harness invocation",
+                    true,
+                  );
+            }
+          },
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
         });
       }
@@ -536,7 +548,6 @@ export class AdapterEngine {
         true,
       ));
     }, queueBudgetMs);
-    queueTimer.unref();
 
     let failure: unknown;
     try {

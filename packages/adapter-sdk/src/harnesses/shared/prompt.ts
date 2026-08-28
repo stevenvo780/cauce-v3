@@ -61,11 +61,16 @@ export const PRIMARY_DUTY_HEADER = "DEBER PRIMARIO — manda sobre toda la mecá
 export const DELEGATION_MECHANICS_HEADER =
   "Delegation mechanics. These apply only if the DEBER PRIMARIO above already admits delegating:";
 
-function identityPreamble(context: HarnessRequestContext | undefined): readonly string[] {
+function identityPreamble(
+  context: HarnessRequestContext | undefined,
+  includeRoom = true,
+): readonly string[] {
   if (!context) return [];
   const lines = [
     IDENTITY_BEGIN,
-    `Sos "${context.self_alias}", un agente de la flota Cauce V3 del tenant "${context.tenant_id}" (sala ${context.room_id}).`,
+    includeRoom
+      ? `Sos "${context.self_alias}", un agente de la flota Cauce V3 del tenant "${context.tenant_id}" (sala ${context.room_id}).`
+      : `Sos "${context.self_alias}", un agente de la flota Cauce V3 del tenant "${context.tenant_id}".`,
   ];
   if (context.self_role) lines.push(`Tu rol: ${context.self_role}`);
   lines.push(
@@ -80,11 +85,21 @@ function identityPreamble(context: HarnessRequestContext | undefined): readonly 
 
 function deliveryMetadata(
   context: HarnessRequestContext | undefined,
-): Omit<HarnessRequestContext, "self_role" | "runtime_profile"> | null {
+): Omit<
+  HarnessRequestContext,
+  "self_role" | "runtime_profile" | "native_profile_context" | "native_profile_measurement"
+  | "native_profile_contract"
+> | null {
   if (!context) return null;
-  const { self_role, runtime_profile, ...metadata } = context;
+  const {
+    self_role, runtime_profile, native_profile_context, native_profile_measurement,
+    native_profile_contract, ...metadata
+  } = context;
   void self_role;
   void runtime_profile;
+  void native_profile_context;
+  void native_profile_measurement;
+  void native_profile_contract;
   return metadata;
 }
 
@@ -144,9 +159,19 @@ export function textoFijoDelSobre(context: HarnessRequestContext | undefined): s
   return bloquesFijos(context).join("\n");
 }
 
-function bloquesFijos(context: HarnessRequestContext | undefined): readonly string[] {
+export function textoNativoDelSobre(context: HarnessRequestContext | undefined): string {
+  if (context === undefined) return bloquesFijos(undefined).join("\n");
+  const { self_role: unusedRole, ...rest } = context;
+  void unusedRole;
+  return bloquesFijos({ ...rest, message_type: "native-static" }, true).join("\n");
+}
+
+function bloquesFijos(
+  context: HarnessRequestContext | undefined,
+  native = false,
+): readonly string[] {
   return [
-    ...identityPreamble(context),
+    ...identityPreamble(context, !native),
     ...primaryDuty(),
     "Return exactly one structured result with this JSON shape:",
     '{"reply":string|null,"messages":[{"to":string,"body":string}],"notify":[{"to":string,"kind":"alert"|"decision_request"|"task_complete"|"digest","body":string}],"status":"done"|"failed","retryable":boolean,"artifacts":[{"name":string,"uri":string,"media_type"?:string,"sha256"?:string}]}',
@@ -174,7 +199,8 @@ export function protocolPrompt(
   origin: RelayOrigin | undefined,
   context: HarnessRequestContext | undefined,
 ): string {
-  const fijo = textoFijoDelSobre(context);
+  const native = context?.native_profile_context === true;
+  const fijo = native ? textoNativoDelSobre(context) : textoFijoDelSobre(context);
   /*
    * Trimming is the EXCEPTION and is asked with proof, not trust: only when the container's file
    * summary matches this same text. Without a seal, with other content, or with another version
@@ -186,7 +212,8 @@ export function protocolPrompt(
 
   return [
     ...cabecera,
-    ...(context?.runtime_profile === undefined
+    ...(native ? agentResponseRules(context) : []),
+    ...(native || context?.runtime_profile === undefined
       ? []
       : [
           "The JSON block below is the alias profile measured from the live runtime immediately before this turn. It governs this turn even when a long-lived shared TUI loaded its files earlier.",

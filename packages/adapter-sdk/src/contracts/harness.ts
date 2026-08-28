@@ -1,3 +1,4 @@
+import type { ProfileRuntimeContract } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
   CommandRunner,
@@ -39,6 +40,9 @@ export interface HarnessRequestContext {
    * that process never reloaded.
    */
   readonly runtime_profile?: RuntimeProfileMeasurement;
+  readonly native_profile_context?: true;
+  readonly native_profile_measurement?: RuntimeProfileMeasurement;
+  readonly native_profile_contract?: ProfileRuntimeContract;
 }
 
 /** Exact live bytes measured by adapter code, never supplied by model output. */
@@ -78,6 +82,7 @@ export interface HarnessAdapterOptions {
     readonly harness: SharedSessionHarness;
     readonly stateDirectory: string;
   };
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -102,6 +107,7 @@ export interface HarnessExecuteRequest {
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
   readonly origin?: RelayOrigin;
+  readonly beforeHarnessInvoke?: () => Promise<void>;
   /**
    * Optional witness observer. Never governs durability or retry: the engine crosses that gate
    * before calling `execute`.

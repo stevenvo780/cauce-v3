@@ -17,6 +17,7 @@ export {
   PRIMARY_DUTY_HEADER,
   protocolPrompt,
   textoFijoDelSobre,
+  textoNativoDelSobre,
 } from "./shared/prompt.js";
 export type {
   HarnessAdapterOptions,

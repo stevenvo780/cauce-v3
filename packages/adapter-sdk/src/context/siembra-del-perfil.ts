@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   closeSync, constants, fstatSync, ftruncateSync, fsyncSync, linkSync, lstatSync, mkdirSync,
-  openSync, readFileSync, unlinkSync, writeSync,
+  openSync, readSync, unlinkSync, writeSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import {
@@ -38,7 +38,7 @@ export type ResultadoDeLaSiembra =
 /** Disk, injectable so seeding can be tested without touching the file system. */
 export interface DiscoDelArnes {
   /** `undefined` if the file is not there. Any other failure propagates. */
-  leer(ruta: string): string | undefined;
+  leer(ruta: string, maximoDeBytes?: number): string | undefined;
   escribir(ruta: string, contenido: string): void;
   /** Prepares the entire batch and reverts what was applied before propagating any failure. */
   escribirLote(escrituras: readonly EscrituraDelArnes[]): void;
@@ -47,12 +47,14 @@ export interface DiscoDelArnes {
 export interface EscrituraDelArnes {
   readonly ruta: string;
   readonly contenido: string;
+  readonly contenidoPrevio?: string;
 }
 
 interface FicheroPreparado {
   readonly ruta: string;
   readonly rutaAnclada: string;
   readonly contenido: string;
+  readonly contenidoPrevio?: string;
   readonly descriptor: number;
   readonly descriptorDelDirectorio: number;
   readonly rutaDelDirectorio: string;
@@ -175,6 +177,31 @@ function reemplazarContenido(descriptor: number, contenido: string | Buffer): vo
   fsyncSync(descriptor);
 }
 
+function leerContenido(descriptor: number, maximoDeBytes?: number): Buffer {
+  const inicial = fstatSync(descriptor);
+  if (maximoDeBytes !== undefined && inicial.size > maximoDeBytes) {
+    throw new Error(`el fichero excede el tope seguro de ${String(maximoDeBytes)} bytes`);
+  }
+  const contenido = Buffer.alloc(inicial.size);
+  let leidos = 0;
+  while (leidos < contenido.length) {
+    const cantidad = readSync(
+      descriptor,
+      contenido,
+      leidos,
+      contenido.length - leidos,
+      leidos,
+    );
+    if (cantidad === 0) break;
+    leidos += cantidad;
+  }
+  const final = fstatSync(descriptor);
+  if (leidos !== contenido.length || final.size !== inicial.size) {
+    throw new Error("el destino cambió mientras se leían sus bytes acreditados");
+  }
+  return contenido;
+}
+
 function prepararFichero(escritura: EscrituraDelArnes): FicheroPreparado {
   const ruta = resolve(escritura.ruta);
   const directorio = abrirDirectorioAnclado(dirname(ruta), true);
@@ -188,6 +215,10 @@ function prepararFichero(escritura: EscrituraDelArnes): FicheroPreparado {
     if (!esErrorConCodigo(error, "ENOENT")) {
       closeSync(directorio.descriptor);
       throw error;
+    }
+    if (escritura.contenidoPrevio !== undefined) {
+      closeSync(directorio.descriptor);
+      throw new Error("el destino cambió desde la lectura acreditada");
     }
 
 /*
@@ -233,7 +264,14 @@ function prepararFichero(escritura: EscrituraDelArnes): FicheroPreparado {
 
   try {
     const identidad = exigirFicheroRegular(descriptor);
-    const previo = readFileSync(descriptor);
+    if (escritura.contenidoPrevio !== undefined && fstatSync(descriptor).nlink !== 1) {
+      throw new Error("el destino del perfil tiene enlaces duros inesperados");
+    }
+    const previo = leerContenido(descriptor);
+    if (escritura.contenidoPrevio !== undefined
+      && !previo.equals(Buffer.from(escritura.contenidoPrevio, "utf8"))) {
+      throw new Error("el destino cambió desde la lectura acreditada");
+    }
     return {
       ...escritura,
       ruta,
@@ -291,6 +329,12 @@ function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
          * Existing targets may be bind mounts. Write via the already-validated descriptor to
          * preserve their inode; an "atomic" rename would break the mounted view.
          */
+        if (preparado.contenidoPrevio !== undefined) {
+          const current = leerContenido(preparado.descriptor);
+          if (!current.equals(Buffer.from(preparado.contenidoPrevio, "utf8"))) {
+            throw new Error("el destino cambió antes de confirmar la escritura");
+          }
+        }
         preparado.tocado = true;
         reemplazarContenido(preparado.descriptor, preparado.contenido);
       }
@@ -331,7 +375,7 @@ function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
 }
 
 export const discoReal: DiscoDelArnes = {
-  leer(ruta) {
+  leer(ruta, maximoDeBytes) {
     let directorio: DirectorioAnclado | undefined;
     let descriptor: number | undefined;
     try {
@@ -342,7 +386,7 @@ export const discoReal: DiscoDelArnes = {
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
       exigirFicheroRegular(descriptor);
-      return readFileSync(descriptor, "utf8");
+      return leerContenido(descriptor, maximoDeBytes).toString("utf8");
     } catch (error) {
       if (esErrorConCodigo(error, "ENOENT")) return undefined;
       throw error;
@@ -356,6 +400,14 @@ export const discoReal: DiscoDelArnes = {
   },
   escribirLote: escribirLoteReal,
 };
+
+export function escribirEnDiscoRealSiCoincide(
+  ruta: string,
+  contenidoPrevio: string,
+  contenido: string,
+): void {
+  escribirLoteReal([{ ruta, contenido, contenidoPrevio }]);
+}
 
 /**
  * Resolves the harness directory: `$CLAUDE_CONFIG_DIR`/`$HOME/.claude` for claude,
