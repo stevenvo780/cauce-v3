@@ -4,6 +4,7 @@ import { withTransaction } from '../../db.js';
 import { uuidPattern } from './fanin.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
+import { insertDelivery, insertMessage } from '../messages/_insert.js';
 import { truncateUtf8 } from '../observability.js';
 import { objectRecord, visibleText } from '../outbox.js';
 import { AgentChainMaterializationRepository } from './chain-control/materialization.js';
@@ -134,32 +135,31 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
         gate_answered_by: `${actorTenant}/${actorAlias}`
       };
       const requestId = randomUUID();
-      const message = await client.query<{ id: string }>(
-        `INSERT INTO messages(
-           request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-           auth_session_id,auth_channel
-         ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'batch',$8,$9,$10) RETURNING id`,
-        [
-          requestId, row.trace_id, row.tenant_id, roomId, row.asked_by_alias,
-          JSON.stringify({
+      const message = await insertMessage(client, {
+        requestId,
+        traceId: row.trace_id,
+        tenantId: row.tenant_id,
+        roomId,
+        actorAlias: row.asked_by_alias,
+        body: {
             type: 'agent.message',
             text: `Respuesta humana a tu pregunta pendiente.\n\nPregunta: ${row.question}\n\n`
               + `Respuesta de ${actorAlias}: ${bounded}\n\n`
               + 'Retomá la tarea con esto. No vuelvas a preguntar lo mismo.',
             from_alias: actorAlias,
             correlation
-          }),
-          row.origin ? JSON.stringify(row.origin) : null,
-          7, `chain-gate:${row.id}`, 'chain-gate'
-        ]
-      );
+        },
+        origin: row.origin ?? null,
+        lane: 'batch',
+        priority: 7,
+        authSessionId: `chain-gate:${row.id}`,
+        authChannel: 'chain-gate',
+      });
       const resumeMessageId = message.rows[0]?.id;
       if (!resumeMessageId) throw new Error('gate resume message insert returned no id');
-      const delivery = await client.query<{ id: string }>(
-        `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
-         VALUES($1,$2,$3) RETURNING id`,
-        [resumeMessageId, row.tenant_id, row.asked_by_alias]
-      );
+      const delivery = await insertDelivery(client, {
+        messageId: resumeMessageId, recipientTenant: row.tenant_id, recipientAlias: row.asked_by_alias,
+      });
       const resumeDeliveryId = delivery.rows[0]?.id;
       if (!resumeDeliveryId) throw new Error('gate resume delivery insert returned no id');
       await client.query(

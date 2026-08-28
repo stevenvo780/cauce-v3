@@ -1,6 +1,7 @@
 import type { DeliveryState, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
 import { reservedInternalMessageTypes } from '../../config.js';
+import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
   truncateUtf8, type AgentFaninDisposition, type DeliveryRow
 } from '../../observability.js';
@@ -239,37 +240,28 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
     );
     const faninRoomId = faninMembership.rows[0]?.room_id;
     if (!faninRoomId) return { hasFanout: true, scheduled: false };
-    const message = await client.query<{ id: string }>(
-      `INSERT INTO messages(
-         request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-         auth_session_id,auth_channel
-       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11)
-       RETURNING id`,
-      [
-        requestId,
-        rootRow.trace_id,
-        rootRow.recipient_tenant,
-        faninRoomId,
-        rootRow.recipient_alias,
-        JSON.stringify(faninBodyPayload),
-        rootRow.origin ? JSON.stringify(rootRow.origin) : null,
-        'batch',
+    const message = await insertMessage(client, {
+      requestId,
+      traceId: rootRow.trace_id,
+      tenantId: rootRow.recipient_tenant,
+      roomId: faninRoomId,
+      actorAlias: rootRow.recipient_alias,
+      body: faninBodyPayload,
+      origin: rootRow.origin ?? null,
+      lane: 'batch',
         // Fan-in wakes the coordinator for the human's pending reply, so it inherits root priority.
         // This wake is part of the user's wait rather than inter-agent background traffic.
         // Idempotency permits one fan-in per root; nested roots are already agent-priority capped.
         // Only a first-level human request can retain human priority.
-        rootRow.priority,
-        rootRow.auth_session_id ?? `fanin:${rootMessageId}`,
-        rootRow.auth_channel ?? rootRow.origin?.channel ?? 'agent-fanin'
-      ]
-    );
+      priority: rootRow.priority,
+      authSessionId: rootRow.auth_session_id ?? `fanin:${rootMessageId}`,
+      authChannel: rootRow.auth_channel ?? rootRow.origin?.channel ?? 'agent-fanin',
+    });
     const messageId = message.rows[0]?.id;
     if (!messageId) throw new Error('fan-in message insert returned no id');
-    const delivery = await client.query<{ id: string }>(
-      `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
-       VALUES($1,$2,$3) RETURNING id`,
-      [messageId, rootRow.recipient_tenant, rootRow.recipient_alias]
-    );
+    const delivery = await insertDelivery(client, {
+      messageId, recipientTenant: rootRow.recipient_tenant, recipientAlias: rootRow.recipient_alias,
+    });
     const deliveryId = delivery.rows[0]?.id;
     if (!deliveryId) throw new Error('fan-in delivery insert returned no id');
     await client.query(

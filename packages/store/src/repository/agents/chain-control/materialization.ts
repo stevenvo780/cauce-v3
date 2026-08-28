@@ -13,6 +13,7 @@ import {
   type DelegationMaterialization, type DelegationRejection, type OpenChainGate
 } from '../../deliveries.js';
 import { StoreError } from '../../errors.js';
+import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
   aliasPattern, originRelayTenant, truncateUtf8, type ChainPolicy, type DeliveryRow
 } from '../../observability.js';
@@ -440,20 +441,19 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         }
       }
 
-      const message = await client.query<{ id: string }>(
-        `INSERT INTO messages(
-           request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-           auth_session_id,auth_channel
-         ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11) RETURNING id`,
-        [
-          requestId, row.trace_id, row.recipient_tenant, sourceRoomId, row.recipient_alias,
-          JSON.stringify({
+      const message = await insertMessage(client, {
+        requestId,
+        traceId: row.trace_id,
+        tenantId: row.recipient_tenant,
+        roomId: sourceRoomId,
+        actorAlias: row.recipient_alias,
+        body: {
             type: 'agent.message',
             text: body,
             from_alias: row.recipient_alias,
             correlation
-          }),
-          row.origin ? JSON.stringify(row.origin) : null,
+        },
+        origin: row.origin ?? null,
           // Agent-to-agent delegation always uses the batch lane. Lane selects the queue, while
           // inherited, clamped priority orders work within it; they are independent controls.
           //
@@ -461,18 +461,16 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
           // promoting the whole machine-to-machine subtree into the human traffic band.
           // Both values are fixed where the child message is created, and the server-controlled
           // cap cannot be bypassed by the agent.
-          'batch', clampAgentPriority(row.priority),
-          row.auth_session_id ?? `delivery:${row.id}:attempt:${ack.attempt}`,
-          row.auth_channel ?? row.origin?.channel ?? 'agent-output'
-        ]
-      );
+        lane: 'batch',
+        priority: clampAgentPriority(row.priority),
+        authSessionId: row.auth_session_id ?? `delivery:${row.id}:attempt:${ack.attempt}`,
+        authChannel: row.auth_channel ?? row.origin?.channel ?? 'agent-output',
+      });
       const messageId = message.rows[0]?.id;
       if (!messageId) throw new Error('agent output message insert returned no id');
-      const delivery = await client.query<{ id: string }>(
-        `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
-         VALUES($1,$2,$3) RETURNING id`,
-        [messageId, targetTenant, targetAlias]
-      );
+      const delivery = await insertDelivery(client, {
+        messageId, recipientTenant: targetTenant, recipientAlias: targetAlias,
+      });
       const producedDeliveryId = delivery.rows[0]?.id;
       if (!producedDeliveryId) throw new Error('agent output delivery insert returned no id');
       await client.query(

@@ -249,21 +249,18 @@ async function main() {
   }
 }
 
-// Handle graceful shutdown
-process.on('SIGINT', async () => {
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
   console.error('[mcp-fleet-monitor] Shutting down...');
-  if (pool) {
-    await pool.end();
+  try {
+    if (pool) await pool.end();
+    process.exit(0);
+  } catch (error) {
+    console.error(`[mcp-fleet-monitor] Failed to shut down after ${signal}:`, error);
+    process.exit(1);
   }
-  process.exit(0);
-});
+}
 
-process.on('SIGTERM', async () => {
-  console.error('[mcp-fleet-monitor] Shutting down...');
-  if (pool) {
-    await pool.end();
-  }
-  process.exit(0);
-});
+process.once('SIGINT', () => { void shutdown('SIGINT'); });
+process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
 
 main().catch(console.error);

@@ -1,6 +1,7 @@
 import { clampAgentPriority, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
 import { postgresTextSafe } from '../../deliveries.js';
+import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
   truncateUtf8, type AgentResponseDisposition, type ChainPolicy, type DeliveryRow
 } from '../../observability.js';
@@ -198,42 +199,35 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
       row.recipient_alias,
       late
     );
-    const message = await client.query<{ id: string }>(
-      `INSERT INTO messages(
-         request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-         auth_session_id,auth_channel
-       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11)
-       RETURNING id`,
-      [
-        requestId,
-        row.trace_id,
-        row.recipient_tenant,
-        childRoomId,
-        row.recipient_alias,
-        JSON.stringify({
+    const message = await insertMessage(client, {
+      requestId,
+      traceId: row.trace_id,
+      tenantId: row.recipient_tenant,
+      roomId: childRoomId,
+      actorAlias: row.recipient_alias,
+      body: {
           type: 'agent.response',
           text: aggregatedFailureText(baseText, row.recipient_alias, reservation),
           from_alias: row.recipient_alias,
           outcome,
           correlation
-        }),
-        row.origin ? JSON.stringify(row.origin) : null,
+      },
+      origin: row.origin ?? null,
         // Mismo criterio que materializeAgentOutputs: el retorno de una delegación es tráfico
         // entre agentes, no la conversación de la persona. Va al carril de fondo.
-        'batch',
+      lane: 'batch',
         // Cap agent-return priority so old machine traffic cannot compete with new human traffic.
-        clampAgentPriority(row.priority),
-        row.auth_session_id ?? `delivery:${row.id}:attempt:${attempt}`,
-        row.auth_channel ?? row.origin?.channel ?? 'agent-response'
-      ]
-    );
+      priority: clampAgentPriority(row.priority),
+      authSessionId: row.auth_session_id ?? `delivery:${row.id}:attempt:${attempt}`,
+      authChannel: row.auth_channel ?? row.origin?.channel ?? 'agent-response',
+    });
     const responseMessageId = message.rows[0]?.id;
     if (!responseMessageId) throw new Error('agent response message insert returned no id');
-    const delivery = await client.query<{ id: string }>(
-      `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
-       VALUES($1,$2,$3) RETURNING id`,
-      [responseMessageId, relationship.source_tenant, relationship.source_alias]
-    );
+    const delivery = await insertDelivery(client, {
+      messageId: responseMessageId,
+      recipientTenant: relationship.source_tenant,
+      recipientAlias: relationship.source_alias,
+    });
     const responseDeliveryId = delivery.rows[0]?.id;
     if (!responseDeliveryId) throw new Error('agent response delivery insert returned no id');
     if (reservation) {

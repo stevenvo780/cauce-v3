@@ -22,6 +22,7 @@ import {
   validConsoleOperatorScope,
 } from '../config.js';
 import { StoreError } from '../errors.js';
+import { insertDelivery, insertMessage } from './_insert.js';
 import {
   PublishIntentExpiredError,
   type PublishOptions,
@@ -214,23 +215,26 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
 
       const authenticated = input.authenticated_context;
       const persistedOrigin = authenticated?.origin ?? input.origin;
-      const message = await client.query<{ id: string }>(
-        `INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-                              auth_session_id,auth_channel)
-         VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11) RETURNING id`,
-        [input.request_id, input.trace_id, input.tenant_id, input.room_id, input.actor_alias,
-          JSON.stringify(input.body), persistedOrigin ? JSON.stringify(persistedOrigin) : null, input.lane, input.priority,
-          authenticated?.session_id ?? input.session_id ?? null,
-          authenticated?.channel ?? input.channel ?? null]
-      );
+      const message = await insertMessage(client, {
+        requestId: input.request_id,
+        traceId: input.trace_id,
+        tenantId: input.tenant_id,
+        roomId: input.room_id,
+        actorAlias: input.actor_alias,
+        body: input.body,
+        origin: persistedOrigin ?? null,
+        lane: input.lane,
+        priority: input.priority,
+        authSessionId: authenticated?.session_id ?? input.session_id ?? null,
+        authChannel: authenticated?.channel ?? input.channel ?? null,
+      });
       const messageId = message.rows[0]?.id;
       if (!messageId) throw new Error('message insert returned no id');
       const deliveryIds: string[] = [];
       for (const recipient of uniqueRecipients) {
-        const delivery = await client.query<{ id: string }>(
-          `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
-           VALUES($1,$2,$3) RETURNING id`, [messageId, recipient.tenant_id, recipient.alias]
-        );
+        const delivery = await insertDelivery(client, {
+          messageId, recipientTenant: recipient.tenant_id, recipientAlias: recipient.alias,
+        });
         const deliveryId = delivery.rows[0]?.id;
         if (!deliveryId) throw new Error('delivery insert returned no id');
         deliveryIds.push(deliveryId);

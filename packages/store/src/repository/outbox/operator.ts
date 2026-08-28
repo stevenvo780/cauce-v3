@@ -2,6 +2,7 @@ import type { Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import { StoreError } from '../errors.js';
+import { insertDelivery, MESSAGE_INSERT_COLUMNS } from '../messages/_insert.js';
 import { OutboxSettlementRepository } from './settlement.js';
 
 export abstract class OutboxOperatorRepository extends OutboxSettlementRepository {
@@ -224,10 +225,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       }
 
       const message = await client.query<{ id: string; request_id: string }>(
-        `INSERT INTO messages(
-           request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-           auth_session_id,auth_channel
-         )
+        `INSERT INTO messages(${MESSAGE_INSERT_COLUMNS.join(',')})
          SELECT gen_random_uuid(),trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
                 auth_session_id,auth_channel
          FROM messages WHERE id=$1
@@ -237,11 +235,12 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       const replayedMessage = message.rows[0];
       if (!replayedMessage) throw new Error('replay message insert returned no id');
 
-      const delivery = await client.query<{ id: string }>(
-        `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias,max_attempts)
-         VALUES($1,$2,$3,$4) RETURNING id`,
-        [replayedMessage.id, row.recipient_tenant, row.recipient_alias, row.max_attempts]
-      );
+      const delivery = await insertDelivery(client, {
+        messageId: replayedMessage.id,
+        recipientTenant: row.recipient_tenant,
+        recipientAlias: row.recipient_alias,
+        maxAttempts: row.max_attempts,
+      });
       const replayedDeliveryId = delivery.rows[0]?.id;
       if (!replayedDeliveryId) throw new Error('replay delivery insert returned no id');
 

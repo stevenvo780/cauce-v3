@@ -11,6 +11,7 @@ import {
   type AgentNotifyEntry, type NotifyDenialCode
 } from '../deliveries.js';
 import { StoreError } from '../errors.js';
+import { insertMessage } from '../messages/_insert.js';
 import type { DeliveryRow } from '../observability.js';
 import { visibleText } from '../outbox.js';
 
@@ -236,14 +237,13 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
       if (quiet) return deny('quiet_hours');
     }
 
-    const notificationMessage = await client.query<{ id: string }>(
-      `INSERT INTO messages(
-         request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
-         auth_session_id,auth_channel
-       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'interactive',0,$8,$9) RETURNING id`,
-      [
-        context.requestId, context.traceId, context.tenant, sourceRoomId, context.alias,
-        JSON.stringify({
+    const notificationMessage = await insertMessage(client, {
+      requestId: context.requestId,
+      traceId: context.traceId,
+      tenantId: context.tenant,
+      roomId: sourceRoomId,
+      actorAlias: context.alias,
+      body: {
           type: 'agent.notify',
           text: request.body,
           notify_kind: request.kind,
@@ -258,12 +258,13 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
               : { source_root_message_id: context.sourceRootMessageId }),
             trace_id: context.traceId
           }
-        }),
-        JSON.stringify(this.notificationOrigin(context, destination)),
-        `egress-notify:${context.tenant}:${context.alias}:${request.idempotencyKey}`,
-        destination.channel
-      ]
-    );
+      },
+      origin: this.notificationOrigin(context, destination),
+      lane: 'interactive',
+      priority: 0,
+      authSessionId: `egress-notify:${context.tenant}:${context.alias}:${request.idempotencyKey}`,
+      authChannel: destination.channel,
+    });
     const notificationMessageId = notificationMessage.rows[0]!.id;
 
     // The relay's own correlation root is the notification message itself, never
