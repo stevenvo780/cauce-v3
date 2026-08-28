@@ -38,11 +38,12 @@ function paletaDeXterm(): string[] {
   const trozo = fuente.slice(inicio, inicio + 900);
   const base = [...trozo.matchAll(/toColor\("(#[0-9a-f]{6})"\)/g)].map((m) => m[1]);
   expect(base, 'los 16 colores base de xterm ya no son 16 literales seguidos').toHaveLength(16);
-  const niveles = JSON.parse((trozo.match(/\[0,95,135,175,215,255\]/) ?? ['null'])[0]) as number[] | null;
+  const niveles = JSON.parse(((/\[0,95,135,175,215,255\]/.exec(trozo)) ?? ['null'])[0]) as number[] | null;
   expect(niveles, 'los niveles del cubo de 216 de xterm cambiaron').toEqual([0, 95, 135, 175, 215, 255]);
+  if (!niveles) throw new Error('los niveles del cubo de 216 de xterm cambiaron');
   const hex = (r: number, g: number, b: number) => `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
   const todos = base.slice();
-  for (let i = 0; i < 216; i += 1) todos.push(hex(niveles![((i / 36) | 0) % 6], niveles![((i / 6) | 0) % 6], niveles![i % 6]));
+  for (let i = 0; i < 216; i += 1) todos.push(hex(niveles[((i / 36) | 0) % 6], niveles[((i / 6) | 0) % 6], niveles[i % 6]));
   for (let t = 0; t < 24; t += 1) { const v = 8 + 10 * t; todos.push(hex(v, v, v)); }
   return todos;
 }
@@ -69,9 +70,9 @@ describe('la piel empaquetada del terminal', () => {
     expect(esperada).toHaveLength(256);
     const faltan: string[] = [];
     for (let i = 0; i < esperada.length; i += 1) {
-      if (!PIEL.includes(`.pty-host .xterm-fg-${i} { color: ${esperada[i]}; }`)) faltan.push(`fg-${i}`);
-      if (!PIEL.includes(`.pty-host .xterm-bg-${i} { background-color: ${esperada[i]}; }`)) faltan.push(`bg-${i}`);
-      if (!PIEL.includes(`.pty-host .xterm-fg-${i}.xterm-dim {`)) faltan.push(`dim-${i}`);
+      if (!PIEL.includes(`.pty-host .xterm-fg-${String(i)} { color: ${esperada[i]}; }`)) faltan.push(`fg-${String(i)}`);
+      if (!PIEL.includes(`.pty-host .xterm-bg-${String(i)} { background-color: ${esperada[i]}; }`)) faltan.push(`bg-${String(i)}`);
+      if (!PIEL.includes(`.pty-host .xterm-fg-${String(i)}.xterm-dim {`)) faltan.push(`dim-${String(i)}`);
     }
     expect(faltan, `reglas ANSI ausentes o con otro color: ${faltan.slice(0, 8).join(', ')}`).toEqual([]);
   });
@@ -96,9 +97,10 @@ describe('la piel empaquetada del terminal', () => {
 
   it('los valores por defecto de las `var()` son los mismos que las constantes de TypeScript', () => {
     const defecto = (nombre: string): string => {
-      const m = PIEL.match(new RegExp(`var\\(${nombre}, ([^)]+)\\)`));
+      const m = new RegExp(`var\\(${nombre}, ([^)]+)\\)`).exec(PIEL);
       expect(m, `\`${nombre}\` no aparece con valor por defecto en la piel`).not.toBeNull();
-      return m![1].trim();
+      if (!m) throw new Error(`\`${nombre}\` no aparece con valor por defecto en la piel`);
+      return m[1].trim();
     };
     expect(defecto('--pty-tinta')).toBe(TEMA_TERMINAL.foreground);
     expect(defecto('--pty-fondo')).toBe(TEMA_TERMINAL.background);

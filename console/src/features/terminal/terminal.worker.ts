@@ -24,7 +24,7 @@ scope.onmessage = (event: MessageEvent<Inbound>) => {
   }
   chunks.push(typeof event.data.data === 'string' ? event.data.data : decoder.decode(event.data.data, { stream: true }));
   if (chunks.reduce((size, chunk) => size + chunk.length, 0) >= 8192) flush();
-  else if (timer === undefined) timer = scope.setTimeout(flush, 16);
+  else timer ??= scope.setTimeout(flush, 16);
 };
 
 export {};

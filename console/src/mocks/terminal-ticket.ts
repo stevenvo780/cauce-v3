@@ -48,7 +48,7 @@ export function mockTerminalGrant(input: {
   receiptRecovered?: boolean;
   requestId?: string;
   ownerGeneration?: string;
-  sharesContainerWith?: Array<{ tenant_id: string; alias: string }>;
+  sharesContainerWith?: { tenant_id: string; alias: string }[];
 }): Record<string, unknown> {
   const container = input.container ?? 'test-container';
   const runtimeUser = input.runtimeUser ?? 'dev';

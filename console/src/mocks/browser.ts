@@ -47,7 +47,7 @@ worker.start = async (...argumentos: Parameters<typeof worker.start>) => {
  */
 export function keepMockingAlive(intervalMs = 10_000): () => void {
   const reactivate = (): void => {
-    navigator.serviceWorker?.controller?.postMessage('MOCK_ACTIVATE');
+    navigator.serviceWorker.controller?.postMessage('MOCK_ACTIVATE');
   };
   const timer = window.setInterval(reactivate, intervalMs);
   document.addEventListener('visibilitychange', reactivate);

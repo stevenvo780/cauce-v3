@@ -121,7 +121,7 @@ export function instalarPtyDeMentira(): void {
           claim_epoch: DEMO_CLAIM_EPOCH,
           claim_lease_ms: DEMO_CLAIM_LEASE_MS,
         }) })), 10);
-        setTimeout(() => this.escupir(), 40);
+        setTimeout(() => { this.escupir(); }, 40);
       }, 10);
     }
 
@@ -129,9 +129,9 @@ export function instalarPtyDeMentira(): void {
       const cols = PtyFalsa.ultimaGeometria?.cols ?? 80;
       const filas = PtyFalsa.ultimaGeometria?.rows ?? 24;
       const regla = Array.from({ length: cols }, (_, i) => String((i + 1) % 10)).join('');
-      const lineas = [`[32mbanco de pruebas[0m ${cols}x${filas}`, regla];
+      const lineas = [` \x1b[32mbanco de pruebas \x1b[0m ${String(cols)}x${String(filas)}`, regla];
       for (let i = lineas.length; i < filas; i += 1) lineas.push(`fila ${String(i + 1).padStart(3, '0')} ` + '·'.repeat(Math.max(0, cols - 12)));
-      const bytes = new TextEncoder().encode(`[2J[H${lineas.join('\r\n')}`);
+      const bytes = new TextEncoder().encode(` \x1b[2J \x1b[H${lineas.join('\r\n')}`);
       const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       this.onmessage?.(new MessageEvent('message', { data: buffer }));
     }
@@ -145,7 +145,7 @@ export function instalarPtyDeMentira(): void {
         }
         if (trama.type === 'resize') {
           PtyFalsa.tramasResize += 1;
-          setTimeout(() => this.escupir(), 5);
+          setTimeout(() => { this.escupir(); }, 5);
         }
       }
     }
@@ -162,7 +162,7 @@ export function instalarPtyDeMentira(): void {
    */
   const Fachada = new Proxy(Original, {
     construct(objetivo, argumentos: [string, ...unknown[]]): WebSocket {
-      const url = String(argumentos[0] ?? '');
+      const url = argumentos[0];
       if (!url.includes('/console/terminal/stream')) return Reflect.construct(objetivo, argumentos) as WebSocket;
       return new PtyFalsa(url) as unknown as WebSocket;
     },

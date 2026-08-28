@@ -228,7 +228,7 @@ export function mockActivity(): FleetActivitySnapshot {
         in_flight_items_truncated: false,
         in_flight_items: ['kant', 'kant', 'zeus', 'kant', 'argos', 'zeus', 'socrates', 'argos', 'socrates']
           .map((emisor, index) => enVuelo(
-            `9c9f9c9f-0000-4000-8000-00000000000${index}`,
+            `9c9f9c9f-0000-4000-8000-00000000000${String(index)}`,
             `Steven/${emisor}`,
             338 - index * 10,
             { lane: 'batch', ack_deadline_at: iso((15 + index * 10) * 1_000), last_ack_at: secondsAgo(20) },
