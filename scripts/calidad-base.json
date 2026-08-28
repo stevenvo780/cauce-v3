@@ -49,7 +49,6 @@
   "packages/adapter-sdk/test/bloque-gestionado.test.ts": 1,
   "packages/adapter-sdk/test/dialects.test.ts": 1,
   "packages/adapter-sdk/test/engine-session-queue.test.ts": 1,
-  "packages/adapter-sdk/test/engine.test.ts": 3,
   "packages/adapter-sdk/test/fence.test.ts": 1,
   "packages/adapter-sdk/test/harness-turn-failure.test.ts": 1,
   "packages/adapter-sdk/test/output-parser-contract.test.ts": 1,
@@ -62,7 +61,9 @@
   "ops/guardias/cauce-modal-sweeper": 2,
   "ops/guardias/cauce-panel-guard": 1,
   "ops/guardias/cauce-quien-consume": 1,
-  "ops/guardias/cauce-v3-medico-monitor": 57
+  "ops/guardias/cauce-v3-medico-monitor": 57,
+  "packages/adapter-sdk/test/engine-continuations-and-fanin.test.ts": 1,
+  "packages/adapter-sdk/test/engine-session-identity.test.ts": 2
  },
  "comentarios": {
   "console/src/App.invariantes.test.tsx": 47,
@@ -275,7 +276,6 @@
   "console/src/mocks/terminal-demo.ts": 41,
   "console/src/mocks/terminal-ticket.ts": 3,
   "console/src/nav.ts": 30,
-  "console/src/navigation.ts": 28,
   "console/src/styles.tipografia-montada.test.tsx": 70,
   "console/src/styles.tipografia.test.ts": 96,
   "console/src/test/setup.ts": 14,
@@ -471,13 +471,10 @@
   "packages/adapter-sdk/test/artifact-inliner.test.ts": 40,
   "packages/adapter-sdk/test/bloque-gestionado.test.ts": 28,
   "packages/adapter-sdk/test/bridges.test.ts": 7,
-  "packages/adapter-sdk/test/client.test.ts": 4,
   "packages/adapter-sdk/test/config.test.ts": 7,
   "packages/adapter-sdk/test/contexto-fijo-no-se-repite.test.ts": 14,
   "packages/adapter-sdk/test/dialects.test.ts": 6,
-  "packages/adapter-sdk/test/durable-store.test.ts": 7,
   "packages/adapter-sdk/test/engine-session-queue.test.ts": 16,
-  "packages/adapter-sdk/test/engine.test.ts": 213,
   "packages/adapter-sdk/test/fanin-synthesizer.test.ts": 11,
   "packages/adapter-sdk/test/fence.test.ts": 13,
   "packages/adapter-sdk/test/fixtures/fake-claude.mjs": 1,
@@ -830,6 +827,8 @@
   "ops/guardias/cauce-v3-medico-monitor": 709,
   "packages/protocol/src/schemas/configuration.ts": 52,
   "packages/protocol/src/schemas/quotas.ts": 27,
-  "packages/protocol/src/schemas/realtime.ts": 108
+  "packages/protocol/src/schemas/realtime.ts": 108,
+  "console/src/router.ts": 28,
+  "packages/adapter-sdk/test/engine-session-identity.test.ts": 65
  }
 }
