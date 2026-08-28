@@ -14,6 +14,13 @@ export default tseslint.config(
     },
   },
   {
+    // The layout gate serialises functions into the browser, so it is both Node and DOM.
+    files: ['qa/**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+  {
     files: ['src/**/*.{ts,tsx}'],
     extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
     languageOptions: {

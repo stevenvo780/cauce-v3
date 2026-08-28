@@ -1,9 +1,14 @@
 import {
   Activity,
   Boxes,
+  PanelLeftClose,
+  PanelLeftOpen,
   ShieldCheck,
 } from 'lucide-react';
-import { lazy, Suspense, useEffect, useSyncExternalStore, type ComponentType } from 'react';
+import {
+  lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore,
+  type ComponentType,
+} from 'react';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LandingPage } from './features/landing/LandingPage';
@@ -66,9 +71,6 @@ interface Route {
   component: ComponentType;
 }
 
-/**
- * Definición y mapeo de rutas principales de la consola.
- */
 const PAGES: Record<string, ComponentType> = {
   '': LandingPage,
   live: LiveFleetPage,
@@ -94,9 +96,7 @@ const routes: Route[] = [
 /** Entradas visibles en la barra lateral de navegación. */
 const MENU = routes.filter((route) => route.label !== '');
 
-/**
- * Redirecciones de rutas obsoletas o consolidadas hacia sus vistas canónicas.
- */
+/** Redirecciones de rutas obsoletas o consolidadas hacia sus vistas canónicas. */
 const ROUTE_ALIASES: Record<string, string> = {
   licenses: 'accounts',
   quotas: 'accounts',
@@ -109,9 +109,7 @@ const ROUTE_ALIASES: Record<string, string> = {
   help: 'ayuda',
 };
 
-/**
- * Tablas de rutas y alias exportadas para verificación de navegación e invariantes en tests.
- */
+/** Tablas de rutas y alias exportadas para verificación de navegación e invariantes en tests. */
 export const ROUTE_TABLE: readonly Readonly<Route>[] = routes;
 export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES;
 
@@ -123,7 +121,7 @@ function RouteNotFound({ path }: { path: string }) {
   return (
     <div className="state-card" role="alert">
       <div className="state-card-texto">
-        <h1>Ruta no encontrada</h1>
+        <h1>{NOT_FOUND_TITLE}</h1>
         <p>
           La consola no declara <code>{path}</code>. No se mostró otra vista en su lugar porque eso
           ocultaría un enlace roto.
@@ -182,6 +180,39 @@ function subscribe(callback: () => void): () => void {
   return () => { window.removeEventListener('popstate', callback); };
 }
 
+/** Riel (78px, sólo iconos) o barra completa (248px, con rótulos). */
+type SidebarState = 'rail' | 'expanded';
+
+const SIDEBAR_PREFERENCE_KEY = 'cauce.console.sidebar';
+const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
+const NAV_ID = 'nav-principal';
+/** Cortes de `responsive.css`: la ventana impone el riel, y por debajo la barra se va abajo. */
+const RAIL_VIEWPORT = '(max-width: 1100px)';
+const BOTTOM_BAR_VIEWPORT = '(max-width: 760px)';
+const CONSOLE_TITLE = 'Cauce V3 Console';
+const NOT_FOUND_TITLE = 'Ruta no encontrada';
+
+function readSidebarPreference(): SidebarState {
+  try {
+    return window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'rail' ? 'rail' : 'expanded';
+  } catch { return 'expanded'; }
+}
+
+function writeSidebarPreference(state: SidebarState): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, state);
+  } catch { /* almacenamiento denegado: la elección dura lo que la pestaña */ }
+}
+
+function useMediaQuery(query: string): boolean {
+  const subscribeToQuery = useCallback((onChange: () => void) => {
+    const list = window.matchMedia(query);
+    list.addEventListener('change', onChange);
+    return () => { list.removeEventListener('change', onChange); };
+  }, [query]);
+  return useSyncExternalStore(subscribeToQuery, () => window.matchMedia(query).matches, () => false);
+}
+
 export function App() {
   return <AuthGate>{(gate) => <ConsoleShell gate={gate} />}</AuthGate>;
 }
@@ -191,6 +222,36 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const navAvailability = useNavAvailability();
   const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(path);
   const route = routes.find((candidate) => candidate.id === routeId);
+  const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
+  const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
+  const [preference, setPreference] = useState<SidebarState>(readSidebarPreference);
+  const mainRef = useRef<HTMLElement>(null);
+  const routeMounted = useRef(false);
+  // Con la barra abajo no hay riel; entre 761 y 1100 lo impone la ventana y la elección no manda.
+  const rail = !bottomBar && (narrowViewport || preference === 'rail');
+  const collapsible = !narrowViewport;
+
+  const toggleSidebar = useCallback(() => {
+    const next: SidebarState = preference === 'rail' ? 'expanded' : 'rail';
+    setPreference(next);
+    writeSidebarPreference(next);
+  }, [preference]);
+
+  useEffect(() => {
+    if (!collapsible) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'KeyB' || !event.altKey || !event.shiftKey) return;
+      if (event.ctrlKey || event.metaKey) return;
+      // Quien está escribiendo —o el terminal, que entrega Alt+… al shell— se queda sus teclas.
+      const target = event.target;
+      if (target instanceof Element
+        && target.closest('input, textarea, select, [contenteditable="true"], .xterm')) return;
+      event.preventDefault();
+      toggleSidebar();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => { window.removeEventListener('keydown', onKeyDown); };
+  }, [collapsible, toggleSidebar]);
 
   useEffect(() => {
     if (!aliasedFrom) return;
@@ -203,16 +264,43 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const fleetAgentTarget = !notFoundPath && requestedSegment === 'fleet' && params.length === 2
     ? { tenantId: params[0], alias: params[1] }
     : undefined;
+  const fleetAgentAlias = fleetAgentTarget?.alias;
+  const viewTitle = notFoundPath ? NOT_FOUND_TITLE : fleetAgentAlias ?? route?.label;
+
+  useEffect(() => {
+    document.title = viewTitle ? `${viewTitle} · ${CONSOLE_TITLE}` : CONSOLE_TITLE;
+  }, [viewTitle]);
+
+  useEffect(() => {
+    // El primer pintado no roba el foco: sólo se anuncia el cambio de ruta.
+    if (!routeMounted.current) { routeMounted.current = true; return; }
+    mainRef.current?.focus();
+  }, [routeId, notFoundPath, fleetAgentAlias]);
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-sidebar={rail ? 'rail' : 'expanded'}>
       <a className="skip-link" href="#main-content">Saltar al contenido</a>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><Activity size={22} /></span>
           <div><strong>Cauce</strong><small>V3 Console</small></div>
         </div>
-        <nav aria-label="Navegación principal">
+        {collapsible ? (
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={toggleSidebar}
+            aria-expanded={!rail}
+            aria-controls={NAV_ID}
+            aria-keyshortcuts={SIDEBAR_SHORTCUT}
+            aria-label={rail ? 'Desplegar barra lateral' : 'Plegar barra lateral'}
+            title={`${rail ? 'Desplegar' : 'Plegar'} barra lateral (${SIDEBAR_SHORTCUT})`}
+          >
+            {rail ? <PanelLeftOpen size={18} aria-hidden={true} /> : <PanelLeftClose size={18} aria-hidden={true} />}
+            <span>{rail ? 'Desplegar barra lateral' : 'Plegar barra lateral'}</span>
+          </button>
+        ) : null}
+        <nav id={NAV_ID} aria-label="Navegación principal">
           <ul>
             {MENU.map((item) => {
               const Icon = item.icon;
@@ -226,7 +314,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
                     aria-current={!notFoundPath && route?.id === item.id ? 'page' : undefined}
                     aria-disabled={disponible.disabled ? true : undefined}
                     className={disponible.disabled ? 'nav-inerte' : undefined}
-                    title={disponible.reason}
+                    // En riel el CSS oculta el rótulo: sin `aria-label` el enlace se queda anónimo.
+                    aria-label={item.label}
+                    title={disponible.reason ?? (rail ? item.label : undefined)}
                   >
                     <Icon size={18} aria-hidden={true} />
                     <span>{item.label}</span>
@@ -249,7 +339,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             <SessionBadge state={gate.state} status={gate.status} busy={gate.busy} onLogout={() => void gate.logout()} />
           </div>
         </header>
-        <main id="main-content" tabIndex={-1}>
+        <main id="main-content" ref={mainRef} tabIndex={-1}>
           {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
           {notFoundPath
             ? <RouteNotFound path={notFoundPath} />

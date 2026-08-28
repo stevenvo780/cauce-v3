@@ -101,7 +101,7 @@
 .config-editor > summary { margin-bottom: 6px; }
 
 /* --- Adaptadores (features/landing o vistas de arnés) --- */
-.adapter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.adapter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
 .adapter-card { margin-bottom: 0; }
 .adapter-head { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; }
 .adapter-head h2 { margin: 0; font-size: var(--tipo-panel); }
@@ -130,7 +130,7 @@
 .landing-alerta small { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.5; }
 .landing-alerta > a { color: inherit; font-size: var(--tipo-rotulo); font-weight: 700; white-space: nowrap; }
 
-.landing-atajos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.landing-atajos { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .landing-atajos a {
   display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 11px;
   padding: 13px; border: 1px solid var(--border); border-radius: 11px; background: #0b1320;
@@ -153,7 +153,7 @@
 .harness-strip > summary span { display: flex; align-items: center; gap: 8px; }
 .harness-strip > summary small { color: var(--muted); font-weight: 500; }
 .harness-strip > *:not(summary) { margin: 0 18px 18px; }
-.harness-note { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
+.harness-note { max-width: var(--measure-prose); color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
 .harness-strip .adapter-card { padding: 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
 .harness-strip .adapter-head h3 { margin: 0; font-size: var(--tipo-panel); }
 
@@ -174,7 +174,7 @@
 .terminal-gate { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px; }
 .terminal-gate-icon { display: grid; width: 62px; height: 62px; place-items: center; border: 1px solid #315a81; border-radius: 16px; background: var(--blue-dim); color: var(--blue); }
 .terminal-gate h2 { margin: 0; font-size: var(--tipo-panel); }
-.terminal-gate p:not(.eyebrow) { margin: 8px 0; color: var(--muted); font-size: var(--tipo-rotulo); }
+.terminal-gate p:not(.eyebrow) { max-width: var(--measure-prose); margin: var(--space-2) 0; color: var(--muted); font-size: var(--tipo-rotulo); }
 .terminal-cap-meta { display: flex; gap: 24px; margin-top: 13px; }
 .pty-shell { overflow: hidden; border: 1px solid var(--border-strong); border-radius: 11px; background: #070b13; }
 .pty-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: #0e1725; color: var(--muted); font-size: var(--tipo-apunte); }
@@ -187,7 +187,7 @@
 /* Ultimate Terminal */
 .ultimate-terminal-page { --terminal-inset: #080e18; --terminal-raised: #101a2a; --terminal-soft: #bdcbe0; }
 .ultimate-terminal-page .page-header { margin-bottom: 20px; }
-.terminal-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 12px; }
+.terminal-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 9px; margin-bottom: var(--space-3); }
 .terminal-overview article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 12px; background: rgb(13 20 34 / 78%); }
 .terminal-overview article > div { display: grid; min-width: 0; gap: 2px; }
 .terminal-overview small { color: var(--faint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
@@ -358,7 +358,7 @@ kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-wi
 .quota-provider[data-severity="warn"] { border-color: #725622; }
 .quota-provider-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
 .quota-provider-head h3 { margin: 0; font-size: var(--tipo-panel); }
-.quota-provider-head p { margin: 4px 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
+.quota-provider-head p { max-width: var(--measure-prose); margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
 .quota-provider-head-right { display: flex; flex-direction: column; align-items: end; gap: 6px; }
 .quota-effective { color: var(--blue); font-size: var(--tipo-cuerpo); }
 .quota-groups-line { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; color: var(--muted); font-size: var(--tipo-rotulo); }

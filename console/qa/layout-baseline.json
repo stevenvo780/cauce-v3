@@ -1,0 +1,50 @@
+{
+  "360": {
+    "huecoMaximo": 0,
+    "huecoMaximoEn": "/",
+    "desbordeMaximo": 0,
+    "enlacesSinNombre": 0,
+    "solapesDeRotulo": 0,
+    "pantallasMaximas": 8.15
+  },
+  "760": {
+    "huecoMaximo": 0,
+    "huecoMaximoEn": "/",
+    "desbordeMaximo": 0,
+    "enlacesSinNombre": 0,
+    "solapesDeRotulo": 0,
+    "pantallasMaximas": 5.5
+  },
+  "1100": {
+    "huecoMaximo": 0,
+    "huecoMaximoEn": "/",
+    "desbordeMaximo": 0,
+    "enlacesSinNombre": 0,
+    "solapesDeRotulo": 0,
+    "pantallasMaximas": 4.37
+  },
+  "1440": {
+    "huecoMaximo": 0,
+    "huecoMaximoEn": "/",
+    "desbordeMaximo": 0,
+    "enlacesSinNombre": 0,
+    "solapesDeRotulo": 0,
+    "pantallasMaximas": 3.89
+  },
+  "1920": {
+    "huecoMaximo": 0,
+    "huecoMaximoEn": "/",
+    "desbordeMaximo": 0,
+    "enlacesSinNombre": 0,
+    "solapesDeRotulo": 0,
+    "pantallasMaximas": 3.78
+  },
+  "2560": {
+    "huecoMaximo": 272,
+    "huecoMaximoEn": "/",
+    "desbordeMaximo": 0,
+    "enlacesSinNombre": 0,
+    "solapesDeRotulo": 0,
+    "pantallasMaximas": 3.73
+  }
+}

@@ -259,8 +259,8 @@ describe('el compositor de /messages en ESCRITORIO', () => {
 
   it('CONTROL NEGATIVO — marca un alto con un número fijo en vez del tope medido', () => {
     const roto = MENSAJES_CSS.replace(
-      'height: clamp(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px), 980px);',
-      'height: clamp(430px, calc(100dvh - 330px), 980px);',
+      'height: max(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px));',
+      'height: max(430px, calc(100dvh - 330px));',
     );
     expect(roto).not.toBe(MENSAJES_CSS);
     expect(defectosDelCompositorEnEscritorio(roto)).toContainEqual(expect.stringContaining('número fijo'));
@@ -274,7 +274,7 @@ describe('el compositor de /messages en ESCRITORIO', () => {
    */
   it('CONTROL NEGATIVO — marca la hoja arreglada arriba y rota abajo, que es la que manda', () => {
     const roto = MENSAJES_CSS.replace(
-      'height: clamp(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px), 980px);',
+      'height: max(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px));',
       'height: 620px;',
     );
     expect(roto).not.toBe(MENSAJES_CSS);

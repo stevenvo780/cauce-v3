@@ -43,6 +43,29 @@
   /* Alto de barra de navegación inferior en viewport móvil. */
   --nav-inferior-alto: 130px;
 
+  /* Spacing scale for new rules. A gap that is not on this scale has to justify itself. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Content measure. A table and a paragraph do not read at the same width, so one cap cannot
+     serve both: prose keeps its measure while the shell grows with the monitor. */
+  --measure-prose: 760px;
+  --shell-max: 2040px;
+
+  /* Stacking order. Every new z-index comes from here; two raw values already tie. */
+  --layer-raised: 1;
+  --layer-sticky: 10;
+  --layer-nav: 20;
+  --layer-overlay: 60;
+  --layer-modal: 70;
+  --layer-dialog: 90;
+  --layer-skip: 100;
+
   /* Escala tipográfica unificada */
   --tipo-titulo: 26px;
   --tipo-panel: 17px;
@@ -105,6 +128,9 @@ a { color: inherit; }
   backdrop-filter: blur(18px);
 }
 
+.sidebar-toggle { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; text-align: left; cursor: pointer; transition: .18s ease; }
+.sidebar-toggle:hover { border-color: var(--border-strong); background: var(--surface-2); color: var(--text); }
+
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 9px 25px; }
 .brand-mark { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid #2f6b61; border-radius: 13px; background: linear-gradient(145deg, #163d37, #112338); color: var(--mint); box-shadow: 0 8px 25px rgb(31 168 130 / 14%); }
 .brand strong, .brand small { display: block; }
@@ -134,7 +160,7 @@ a { color: inherit; }
 .auth-state.auth-unknown { color: var(--amber); }
 .auth-action { text-decoration: none; }
 
-main { width: min(1500px, 100%); margin: 0 auto; padding: 42px 38px 70px; }
+main { width: min(var(--shell-max), 100%); margin: 0 auto; padding: 42px 38px 70px; }
 .page-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
 .eyebrow { margin: 0 0 7px; color: var(--mint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
 h1, h2, h3, p { overflow-wrap: anywhere; }

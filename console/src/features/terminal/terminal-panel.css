@@ -45,6 +45,17 @@
 }
 
 /*
+ * Above that fallback the shell keeps two fixed rails around the terminal. They hold monospaced
+ * identifiers that wrap anywhere (`ultimate-terminal.connec` / `t` on the permission rows), so a
+ * rail that stays 264px wide while the window grows breaks words with the spare width unused.
+ * Each rail keeps its current width as a floor — it cannot rise, the centre column is already
+ * under 80 columns at the low end of this range — and takes a share of what is left over.
+ */
+@media (min-width: 1343px) {
+  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: minmax(0, clamp(236px, 12vw, 300px)) minmax(0, 1fr) minmax(0, clamp(264px, 20vw, 344px)); }
+}
+
+/*
  * The PTY relay is opt-in per stack (see 0a1d0e3): its absence is expected topology, not an
  * incident, so it gets a calm, informational tone (`--blue`) instead of the amber "degraded"
  * treatment reserved for genuinely unexpected failures.
@@ -163,52 +174,42 @@
  */
 .terminal-adapter-mobile { margin-top: 12px; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); }
 
-/* Grid layout and panel styles for Phase 1 terminal consolidation */
+/*
+ * The open sessions: a tab strip plus the stage of the visible one.
+ *
+ * The container holds exactly ONE panel — the tab that is selected — so it is a plain box and
+ * not a tiled grid, and the panel is the whole surface rather than a card with its own frame.
+ * `min-height: 0` on every link of the chain (wrapper, container, panel, body) is not
+ * cosmetic: a flex child starts at `min-height: auto` and refuses to shrink below its content,
+ * and here the content is a terminal whose height its renderer sets in pixels.
+ */
 .terminal-grid-wrapper {
   display: flex;
-  flex-direction: column;
-  flex: 1;
   min-width: 0;
+  min-height: 0;
   height: 100%;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--terminal-inset);
 }
 
 .terminal-grid-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-  gap: 16px;
-  padding: 16px;
-  flex: 1;
-  overflow-y: auto;
   min-height: 0;
+  height: 100%;
+  flex: 1;
+  overflow: hidden;
 }
 
 .terminal-panel {
   display: flex;
+  /* Another sheet floors this at 420px for the tiled grid that no longer exists. */
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
   overflow: hidden;
-  height: 600px;
-  resize: horizontal;
-  min-width: 420px;
-  box-shadow: var(--shadow);
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.terminal-panel[data-active="true"] {
-  border-color: var(--mint);
-  box-shadow: 0 0 0 1px var(--mint), var(--shadow);
-}
-
-.terminal-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: #0d1624;
+  background: var(--surface);
 }
 
 .terminal-panel-title-btn {
@@ -226,10 +227,6 @@
 
 .terminal-panel-title-btn:hover {
   background: var(--surface-3);
-  color: var(--text);
-}
-
-.terminal-panel[data-active="true"] .terminal-panel-title-btn {
   color: var(--text);
 }
 
@@ -289,22 +286,20 @@
   max-height: none;
 }
 
-.terminal-panel-body .terminal-active-grid {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.terminal-panel-body .terminal-active-grid[data-show-inspector="true"] {
-  grid-template-columns: minmax(0, 1fr) 254px;
+/*
+ * The stage declares `display: flex` in an inline style, so the inspector is a flex item and a
+ * `grid-template-columns` track here would never apply: its width has to be a basis.
+ *
+ * It is a rail of monospaced identifiers, and a narrow fixed rail breaks them mid-token
+ * (`ultimate-terminal.connec` / `t`): the basis takes a share of the spare width and never
+ * drops below the width the layout was designed for.
+ */
+.terminal-panel-body .terminal-active-grid[data-show-inspector="true"] > .terminal-inspector {
+  flex: 0 1 clamp(254px, 16vw, 400px);
 }
 
 .terminal-panel-body .terminal-active-grid:not([data-show-inspector="true"]) .terminal-inspector {
   display: none;
-}
-
-@media (prefers-color-scheme: light) {
-  .terminal-panel-header {
-    background: #edf2f7;
-  }
 }
 
 
@@ -496,19 +491,18 @@
 
 /*
  * ---------------------------------------------------------------------------------------------
- * LA PÁGINA DEL TERMINAL SE CIÑE A LA VENTANA. NO ES UN TEXTO.
+ * THIS PAGE IS A CHARACTER GRID, NOT A DOCUMENT: IT TAKES THE WINDOW.
  * ---------------------------------------------------------------------------------------------
  *
- * `styles.css` le pone a `main` la anchura de LECTURA de la consola: `width: min(1500px, 100%)`
- * centrado. Está bien para una tabla o un formulario y está mal para un espejo de una TUI, que es
- * una rejilla de caracteres: cada píxel que no se le da es una columna que no se ve. MEDIDO en
- * Chrome a 1920x1080, con una sesión abierta y la vista real: `main` medía 1.500 px de los 1.920
- * de pantalla, `.ultimate-terminal-page` 1.424 y el hueco del terminal (`.pty-mount`) 804 x 614.
- * O sea **496 px —el 25,8 % del ancho— sin usar**, y la PTY resultante de 99 columnas.
+ * `main` is capped at the reading width the design system gives every view (`--shell-max`) and
+ * centred. On a mirror of a TUI that cap is not whitespace: each pixel it withholds is a column
+ * that is not rendered. The cap only bites past `--shell-max` plus the 248px nav — below that
+ * this rule changes nothing — and past it the gutter is whole columns: at a 2560px viewport the
+ * workspace is 2312px, the cap 2040px, so 272px go unused, about 34 columns at the terminal's
+ * 13px body (measured cell: 8px).
  *
- * `:has()` en vez de tocar `styles.css`: esa hoja tiene dueño en otro carril y la regla de `main`
- * la comparten todas las vistas. Con `:has()` el cambio queda acotado a esta página y viaja en el
- * fichero de esta página, que es donde alguien lo va a buscar.
+ * `:has()` and not the shared sheet: the `main` rule belongs to every view, this exception to
+ * this page.
  */
 main:has(> .ultimate-terminal-page) { width: 100%; }
 
@@ -565,18 +559,10 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
 }
 
 /*
- * Un solo panel a la vista, y la CADENA DE ALTOS entera.
- *
- * `min-height: 0` no es cosmético: un hijo de `flex`/`grid` arranca con `min-height: auto`, o sea
- * que se niega a encogerse por debajo de su contenido. Con la primera versión de este arreglo el
- * `.ultimate-terminal-shell` medía los 665 px que se le pidieron y `.terminal-grid-wrapper`, hijo
- * suyo, medía 2.078: se desbordaba y volvía a scrollear el documento entero. Medido, no supuesto.
- * Cada eslabón de aquí abajo tuvo que declararlo.
+ * The rest of the height chain. Same constraint as the wrapper above: without `min-height: 0`
+ * a flex child refuses to shrink below its content, and the shell would be overflowed by a
+ * terminal whose height is set in pixels by its renderer.
  */
-.terminal-grid-wrapper { min-height: 0; overflow: hidden; }
-.terminal-grid-container { display: block; min-height: 0; height: 100%; padding: 0; overflow: hidden; }
-.terminal-panel { height: 100%; min-height: 0; min-width: 0; resize: none; border: 0; border-radius: 0; box-shadow: none; }
-.terminal-panel[data-active="true"] { box-shadow: none; border: 0; }
 .terminal-panel-body { min-height: 0; }
 .terminal-panel-body .terminal-active-grid,
 .terminal-panel-body .terminal-console { min-height: 0; overflow: hidden; }

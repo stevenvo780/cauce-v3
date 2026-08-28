@@ -8,7 +8,7 @@
   display: grid;
   overflow: hidden;
   min-height: 0;
-  grid-template-columns: 310px minmax(0, 1fr);
+  grid-template-columns: clamp(310px, 20%, 420px) minmax(0, 1fr);
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
@@ -265,8 +265,12 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
 @media (min-width: 761px) {
   .messenger-shell {
     /* `vh` primero como red para un navegador sin `dvh`; el segundo gana donde existe. */
-    height: clamp(430px, calc(100vh - var(--messenger-tope, 330px) - 34px), 980px);
-    height: clamp(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px), 980px);
+    /* No ceiling. The panel is a scroll box whose foot has to stay above the fold, so the height the
+       window leaves IS the height; a fixed ceiling only binds on a screen tall enough to reach it,
+       and there it is empty space under the conversation. The floor stays: on a short window the
+       composer is worth one scroll. */
+    height: max(430px, calc(100vh - var(--messenger-tope, 330px) - 34px));
+    height: max(430px, calc(100dvh - var(--messenger-tope, 330px) - 34px));
   }
   .messenger-thread { overflow: hidden; }
   /* Sólo cuando está desplegado: cerrado es una línea y un techo del 34 % no viene al caso. */

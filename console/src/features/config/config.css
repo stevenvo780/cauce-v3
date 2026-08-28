@@ -1,5 +1,11 @@
+/* Cap of its own INSIDE the shell: a table may pass the prose measure (`--medida`), but not the
+   width where the two ends of a row stop reading as one line. The middle term is what the shell
+   gives; the floor is also the value the sheet test resolves as the width of this page, so it has
+   to stay the FIRST argument. */
 .config-pagina {
-  max-width: 1180px;
+  max-width: clamp(1180px, 100%, 1760px);
+  /* `main` centers itself; without this the page hangs on its left edge. */
+  margin-inline: auto;
   --medida: 74ch;
 }
 

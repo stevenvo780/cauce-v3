@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.8.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist','ops/artifacts'].map(path => fs.rm(path,{recursive:true,force:true}))))\"",
     "prepare": "pnpm prepare:runtime",
@@ -53,7 +55,9 @@
     "dev:dispatcher": "pnpm prepare:runtime && tsx services/dispatcher/src/main.ts",
     "dev:telegram-bridge": "pnpm prepare:runtime && tsx services/telegram-bridge/src/main.ts",
     "migrate:dev": "pnpm prepare:runtime && tsx packages/store/src/migrate-cli.ts",
-    "console:user": "pnpm prepare:runtime && tsx services/gateway/src/console-user-cli.ts"
+    "console:user": "pnpm prepare:runtime && tsx services/gateway/src/console-user-cli.ts",
+    "qa:layout": "node console/qa/layout-gate.mjs",
+    "qa:layout:update": "node console/qa/layout-gate.mjs --update"
   },
   "devDependencies": {
     "@cauce/adapter-sdk": "workspace:*",

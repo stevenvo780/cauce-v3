@@ -13,11 +13,13 @@
 .panel { margin-bottom: 18px; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgb(16 25 42 / 96%), rgb(11 18 31 / 96%)); box-shadow: var(--shadow); }
 .panel-header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 19px; }
 .panel-header h2 { flex: none; margin: 0; font-size: var(--tipo-panel); letter-spacing: -.015em; }
-.panel-header p { flex: 1 1 auto; min-width: 0; }
+.panel-header p { flex: 1 1 auto; min-width: 0; max-width: var(--measure-prose); }
 .panel-header p { margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.5; }
 
-.metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
-.metrics-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Card grids reflow instead of holding a column count. The track minimum has to stay at or below
+   300px: a 360px viewport has 330px for one column, and anything wider forces a sideways scroll. */
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.metrics-grid.three { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .metric { position: relative; min-height: 135px; overflow: hidden; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
 .metric::after { position: absolute; right: -24px; bottom: -34px; width: 90px; height: 90px; border-radius: 50%; background: rgb(122 184 255 / 8%); content: ""; }
 .metric p { margin: 0 0 16px; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
@@ -56,7 +58,7 @@ small { font-size: var(--tipo-apunte); }
 
 .chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .chip { padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; background: #121e30; color: var(--text-2); font-size: var(--tipo-apunte); }
-.empty-state { margin: 0; padding: 28px; border: 1px dashed var(--border-strong); border-radius: 11px; color: var(--muted); text-align: center; }
+.empty-state { max-width: var(--measure-prose); margin: 0 auto; padding: 28px; border: 1px dashed var(--border-strong); border-radius: 11px; color: var(--muted); text-align: center; }
 
 .state-card { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 12px; padding: 30px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
 .state-card p { margin: 0; }
@@ -68,8 +70,8 @@ small { font-size: var(--tipo-apunte); }
 .spinner { width: 22px; height: 22px; border: 2px solid var(--border-strong); border-top-color: var(--mint); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.explain-grid, .trust-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
-.trust-grid { grid-template-columns: repeat(2, 1fr); margin: 0 0 18px; }
+.explain-grid, .trust-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+.trust-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin: 0 0 18px; }
 .explain-grid article, .trust-grid article { display: flex; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: rgb(13 20 34 / 75%); color: var(--blue); }
 .explain-grid svg, .trust-grid svg { flex: none; width: 19px; }
 .explain-grid strong, .trust-grid strong { color: var(--text); font-size: var(--tipo-rotulo); }
