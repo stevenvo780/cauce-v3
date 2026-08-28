@@ -42,7 +42,7 @@ it('cierra con Esc sin tener que mover el ratón', async () => {
   await screen.findByRole('tooltip');
   await user.keyboard('{Escape}');
 
-  await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+  await waitFor(() => { expect(screen.queryByRole('tooltip')).not.toBeInTheDocument(); });
 });
 
 it('no toma foco propio cuando envuelve un control que ya es enfocable', async () => {

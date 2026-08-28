@@ -39,7 +39,7 @@ const FECHA_ISO_CRUDA = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 const IDENTIFICADOR_CRUDO = /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
 
 function textoVisible(): string {
-  return document.body.textContent ?? '';
+  return document.body.textContent;
 }
 
 describe.each(VISTAS)('%s dice la verdad en castellano', (nombre, Vista, titulo) => {
@@ -48,9 +48,9 @@ describe.each(VISTAS)('%s dice la verdad en castellano', (nombre, Vista, titulo)
     await screen.findByRole('heading', { level: 1, name: titulo }, { timeout: 5000 });
     // Las vistas piden varias fuentes; se espera a que la primera tabla o métrica aterrice para
     // no medir una pantalla de carga y creer que está limpia.
-    await waitFor(() => expect(textoVisible().length).toBeGreaterThan
-      ? expect(textoVisible().length).toBeGreaterThan(200)
-      : undefined, { timeout: 5000 });
+    await waitFor(() => {
+      expect(textoVisible().length).toBeGreaterThan(200);
+    }, { timeout: 5000 });
   }
 
   it('no imprime ningún componente JSX como texto', async () => {
@@ -68,7 +68,7 @@ describe.each(VISTAS)('%s dice la verdad en castellano', (nombre, Vista, titulo)
   it('no titula ninguna columna con el nombre de una columna de la base', async () => {
     await montar();
     const crudas = Array.from(document.querySelectorAll('th'))
-      .map((th) => (th.textContent ?? '').trim())
+      .map((th) => th.textContent.trim())
       .filter((texto) => IDENTIFICADOR_CRUDO.test(texto));
     expect(crudas, `${nombre} tiene cabeceras con el nombre de la columna de la base`).toEqual([]);
   });

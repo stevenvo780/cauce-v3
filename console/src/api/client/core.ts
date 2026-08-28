@@ -42,7 +42,7 @@ export class PublishIntentExpiredError extends ApiError {
 export class PublishIntentRateLimitedError extends ApiError {
   constructor(readonly rateLimit: PreparePublishIntentRateLimited) {
     super(
-      `Hay demasiadas reservas durables recientes. Reintentá en ${rateLimit.retry_after_seconds} s; `
+      `Hay demasiadas reservas durables recientes. Reintentá en ${String(rateLimit.retry_after_seconds)} s; `
       + 'el borrador sigue intacto.',
       429,
       'publish_intent_rate_limited',
@@ -53,11 +53,12 @@ export class PublishIntentRateLimitedError extends ApiError {
 
 export function safeBase(baseUrl: string): string {
   if (!baseUrl) return '';
-  const parsed = new URL(baseUrl, globalThis.location?.origin ?? 'http://localhost');
+  const locOrigin = typeof globalThis.location.origin === 'string' ? globalThis.location.origin : 'http://localhost';
+  const parsed = new URL(baseUrl, locOrigin);
   if (parsed.username || parsed.password) {
     throw new Error('VITE_CAUCE_API_BASE must not contain credentials');
   }
-  if (import.meta.env.PROD && globalThis.location?.origin && parsed.origin !== globalThis.location.origin) {
+  if (import.meta.env.PROD && typeof globalThis.location.origin === 'string' && parsed.origin !== globalThis.location.origin) {
     throw new Error('Production OIDC BFF API base must be same-origin');
   }
   return baseUrl.replace(/\/$/, '');
@@ -132,7 +133,7 @@ export interface RequestOptions {
 export const TIEMPO_MAXIMO_MS = 30_000;
 
 export function segundos(ms: number): string {
-  return `${Math.round(ms / 1000)} s`;
+  return `${String(Math.round(ms / 1000))} s`;
 }
 
 export function esperaVencida(method: string, path: string, tope: number): ApiError {
@@ -150,6 +151,6 @@ export function corteAlVencer(signal: AbortSignal, method: string, path: string,
       reject(esperaVencida(method, path, tope));
       return;
     }
-    signal.addEventListener('abort', () => reject(esperaVencida(method, path, tope)), { once: true });
+    signal.addEventListener('abort', () => { reject(esperaVencida(method, path, tope)); }, { once: true });
   });
 }

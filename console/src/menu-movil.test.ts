@@ -47,8 +47,8 @@ const CORTE_ESTRECHO = 760;
  */
 export function defectosDelMenuMovil(global: string): string[] {
   const defectos: string[] = [];
-  const estrecho = bloqueMedia(global, `@media (max-width: ${CORTE_ESTRECHO}px)`);
-  if (!estrecho) return [`no hay bloque @media (max-width: ${CORTE_ESTRECHO}px) en styles.css`];
+  const estrecho = bloqueMedia(global, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
+  if (!estrecho) return [`no hay bloque @media (max-width: ${String(CORTE_ESTRECHO)}px) en styles.css`];
 
   const lista = declaraciones(estrecho, '.sidebar nav ul');
   if (valor(lista, 'display') !== 'grid') {
@@ -64,7 +64,7 @@ export function defectosDelMenuMovil(global: string): string[] {
   // Con las ocho entradas de `NAV_ENTRIES` y dos filas, hacen falta cuatro columnas o más.
   if (cuantas < Math.ceil(NAV_ENTRIES.length / 2)) {
     defectos.push(
-      `el menú de móvil declara ${cuantas} columnas y hay ${NAV_ENTRIES.length} entradas: `
+      `el menú de móvil declara ${String(cuantas)} columnas y hay ${String(NAV_ENTRIES.length)} entradas: `
       + 'no caben en dos filas sin pisarse',
     );
   }
@@ -132,7 +132,7 @@ describe('el menú de móvil de la consola', () => {
      * «cuatro columnas» escrito de memoria envejece en cuanto alguien agregue la novena, y
      * envejece en silencio: no rompe el typecheck, ni el lint, ni ninguna prueba de DOM.
      */
-    const estrecho = bloqueMedia(GLOBAL, `@media (max-width: ${CORTE_ESTRECHO}px)`);
+    const estrecho = bloqueMedia(GLOBAL, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
     const columnas = valor(declaraciones(estrecho, '.sidebar nav ul'), 'grid-template-columns') ?? '';
     const cuantas = Number(/repeat\(\s*(\d+)\s*,/.exec(columnas)?.[1] ?? 0);
     expect(cuantas * 2).toBeGreaterThanOrEqual(NAV_ENTRIES.length);

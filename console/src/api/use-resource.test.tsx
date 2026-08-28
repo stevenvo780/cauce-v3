@@ -5,7 +5,7 @@ import { useResource } from './use-resource';
 it('runs at most one load concurrently and coalesces reloads into one pending load', async () => {
   let active = 0;
   let maximumActive = 0;
-  const resolveLoads: Array<() => void> = [];
+  const resolveLoads: (() => void)[] = [];
   const loader = vi.fn(() => new Promise<number>((resolve) => {
     active += 1;
     maximumActive = Math.max(maximumActive, active);
@@ -22,7 +22,7 @@ it('runs at most one load concurrently and coalesces reloads into one pending lo
   }
 
   render(<Probe />);
-  await waitFor(() => expect(loader).toHaveBeenCalledTimes(1));
+  await waitFor(() => { expect(loader).toHaveBeenCalledTimes(1); });
 
   fireEvent.click(screen.getByRole('button', { name: 'reload' }));
   fireEvent.click(screen.getByRole('button', { name: 'reload' }));
@@ -31,7 +31,7 @@ it('runs at most one load concurrently and coalesces reloads into one pending lo
   expect(maximumActive).toBe(1);
 
   await act(async () => resolveLoads.shift()?.());
-  await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+  await waitFor(() => { expect(loader).toHaveBeenCalledTimes(2); });
   expect(maximumActive).toBe(1);
 
   await act(async () => resolveLoads.shift()?.());
@@ -55,7 +55,7 @@ it('never exposes the previous key data while the next key is still loading', as
   }
 
   const view = render(<Probe resourceKey="A" />);
-  await waitFor(() => expect(loader).toHaveBeenCalledWith('A'));
+  await waitFor(() => { expect(loader).toHaveBeenCalledWith('A'); });
   await act(async () => resolveLoads.get('A')?.('data-A'));
   expect(await screen.findByText('data-A')).toBeInTheDocument();
 
@@ -63,7 +63,7 @@ it('never exposes the previous key data while the next key is still loading', as
   expect(screen.queryByText('data-A')).not.toBeInTheDocument();
   expect(screen.getByText('loading-B')).toBeInTheDocument();
 
-  await waitFor(() => expect(loader).toHaveBeenCalledWith('B'));
+  await waitFor(() => { expect(loader).toHaveBeenCalledWith('B'); });
   expect(screen.queryByText('data-A')).not.toBeInTheDocument();
   await act(async () => resolveLoads.get('B')?.('data-B'));
   expect(await screen.findByText('data-B')).toBeInTheDocument();

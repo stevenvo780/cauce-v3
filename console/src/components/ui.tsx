@@ -118,7 +118,7 @@ export function Time({ value, relativo = false }: { value: unknown; relativo?: b
     <time
       className={formatted === UNKNOWN ? 'unknown' : undefined}
       dateTime={typeof value === 'string' ? value : undefined}
-      title={formatted === UNKNOWN ? undefined : relativa ? `${exacto}` : exacto}
+      title={formatted === UNKNOWN ? undefined : relativa ? exacto : exacto}
     >
       {visible}
     </time>
@@ -147,8 +147,8 @@ export function LoadingState({ label = 'Cargando datos del servidor…', pacienc
   useEffect(() => {
     setTardando(false);
     if (!(paciencia > 0)) return undefined;
-    const reloj = setTimeout(() => setTardando(true), paciencia);
-    return () => clearTimeout(reloj);
+    const reloj = setTimeout(() => { setTardando(true); }, paciencia);
+    return () => { clearTimeout(reloj); };
   }, [paciencia]);
 
   return (
@@ -221,7 +221,7 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
  * Componente accesible de pestañas para alternar vistas dentro de una página.
  */
 export function ViewTabs<T extends string>({ tabs, active, onSelect, label }: {
-  tabs: ReadonlyArray<{ id: T; label: string; badge?: ReactNode }>;
+  tabs: readonly { id: T; label: string; badge?: ReactNode }[];
   active: T;
   onSelect: (id: T) => void;
   label: string;
@@ -237,7 +237,7 @@ export function ViewTabs<T extends string>({ tabs, active, onSelect, label }: {
           aria-selected={active === tab.id}
           aria-controls={`view-panel-${tab.id}`}
           className="view-tab"
-          onClick={() => onSelect(tab.id)}
+          onClick={() => { onSelect(tab.id); }}
         >
           {tab.label}
           {tab.badge == null ? null : <span className="view-tab-badge">{tab.badge}</span>}

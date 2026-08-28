@@ -82,15 +82,22 @@ export class CauceApi {
     const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
 
     const propio = init.signal || !(this.tiempoMaximoMs > 0) ? undefined : new AbortController();
-    const reloj = propio ? setTimeout(() => propio.abort(), this.tiempoMaximoMs) : undefined;
+    const reloj = propio ? setTimeout(() => { propio.abort(); }, this.tiempoMaximoMs) : undefined;
 
     let response: Response | undefined;
     let body: unknown;
     try {
       const peticionCompleta = async () => {
+        const customHeaders = init.headers instanceof Headers
+          ? Object.fromEntries(init.headers.entries())
+          : Array.isArray(init.headers)
+            ? Object.fromEntries(init.headers)
+            : (init.headers ?? {});
+
         response = await (this.fetcher ?? fetch)(`${this.baseUrl}${path}`, {
-          ...init,
           credentials: 'include',
+          ...init,
+          method,
           signal: init.signal ?? propio?.signal,
           headers: {
             Accept: 'application/json',
@@ -101,7 +108,7 @@ export class CauceApi {
               'X-Cauce-Alias': this.developmentIdentity.alias,
             } : {}),
             ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-            ...init.headers,
+            ...customHeaders,
           },
         });
 
@@ -136,13 +143,13 @@ export class CauceApi {
       const mapped = mapError?.(response.status, body);
       if (mapped !== undefined) throw mapped;
       const detail = errorBody(body);
-      throw new ApiError(detail.message ?? response.statusText ?? 'API request failed', response.status, detail.error);
+      throw new ApiError(detail.message ?? (response.statusText || 'API request failed'), response.status, detail.error);
     }
     return body as T;
   }
 
   async csrfForMutation(): Promise<string | undefined> {
-    if (this.developmentIdentity || this.bffSessionSupported === false) return undefined;
+    if (this.developmentIdentity !== undefined || this.bffSessionSupported === false) return undefined;
     if (this.csrfToken) return this.csrfToken;
     const state = await this.getAuthSession();
     if (state.authenticated === null) return undefined;

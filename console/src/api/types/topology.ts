@@ -20,11 +20,11 @@ export interface RoomMember {
 export interface TenantNode {
   id?: string | null;
   label?: string | null;
-  rooms?: Array<{
+  rooms?: {
     id?: string | null;
     label?: string | null;
     members?: RoomMember[] | null;
-  }> | null;
+  }[] | null;
 }
 
 export interface AclEdge {

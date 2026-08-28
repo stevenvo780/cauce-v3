@@ -52,7 +52,7 @@ export async function logout(
   request: RequestFn,
   callbacks: { setCsrfToken: (val?: string) => void },
 ): Promise<void> {
-  await request<void>('/v3/auth/logout', { method: 'POST' });
+  await request<undefined>('/v3/auth/logout', { method: 'POST' });
   callbacks.setCsrfToken(undefined);
 }
 

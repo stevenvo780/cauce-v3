@@ -7,7 +7,6 @@ export function ApiProvider({ api, children }: { api: CauceApi; children: ReactN
   return <ApiContext.Provider value={api}>{children}</ApiContext.Provider>;
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 export function useApi(): CauceApi {
   return useContext(ApiContext);
 }

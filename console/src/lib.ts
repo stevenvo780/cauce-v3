@@ -96,9 +96,9 @@ export function formatDurationSeconds(seconds: unknown): string {
   const hours = Math.floor(abs / 3600);
   const minutes = Math.floor((abs % 3600) / 60);
   const secs = abs % 60;
-  if (hours > 0) return `${sign}${hours}h ${minutes}m`;
-  if (minutes > 0) return `${sign}${minutes}m ${secs}s`;
-  return `${sign}${secs}s`;
+  if (hours > 0) return `${sign}${String(hours)}h ${String(minutes)}m`;
+  if (minutes > 0) return `${sign}${String(minutes)}m ${String(secs)}s`;
+  return `${sign}${String(secs)}s`;
 }
 
 export function compactId(value: unknown): string {
@@ -107,7 +107,7 @@ export function compactId(value: unknown): string {
 }
 
 export function createId(prefix: string): string {
-  const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id = globalThis.crypto.randomUUID();
   return `${prefix}-${id}`;
 }
 

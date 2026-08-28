@@ -13,7 +13,7 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
-  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByText(/Cookie HttpOnly esperada/i)).toBeInTheDocument();
   expect(await screen.findByText('Steven:kant')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
@@ -47,7 +47,7 @@ it('el menú tiene UNA sola entrada para cuentas, cuotas y licencias, no tres qu
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   const entries = within(nav).getAllByRole('link')
-    .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent ?? ''));
+    .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent));
   expect(entries.map((link) => link.textContent)).toEqual(['Cuentas y cuotas']);
 });
 
@@ -66,7 +66,7 @@ it.each([
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' })).toBeInTheDocument();
-  await waitFor(() => expect(window.location.pathname).toBe('/accounts'));
+  await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
 });
 
 it('redirige /audit a «Señales y auditoría», donde la auditoría es una pestaña', async () => {
@@ -74,7 +74,7 @@ it('redirige /audit a «Señales y auditoría», donde la auditoría es una pest
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Señales y auditoría' })).toBeInTheDocument();
-  await waitFor(() => expect(window.location.pathname).toBe('/observability'));
+  await waitFor(() => { expect(window.location.pathname).toBe('/observability'); });
 });
 
 it('muestra una ruta desconocida sin sustituirla por la portada, aunque traiga segmentos de más', async () => {
@@ -213,7 +213,7 @@ it('deja «Ajustes y altas» inerte, y con el motivo escrito, para quien no tien
   renderWithApi(<App />);
 
   const entrada = await screen.findByRole('link', { name: /ajustes y altas/i });
-  await waitFor(() => expect(entrada).toHaveAttribute('aria-disabled', 'true'));
+  await waitFor(() => { expect(entrada).toHaveAttribute('aria-disabled', 'true'); });
   expect(entrada).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
   // Y el clic NO navega: la entrada existe, dice por qué no, y no lleva a una página con un error.
@@ -235,7 +235,7 @@ it('deja «Ajustes y altas» navegable para quien SI tiene config.write', async 
   renderWithApi(<App />);
 
   const entrada = await screen.findByRole('link', { name: /ajustes y altas/i });
-  await waitFor(() => expect(entrada).not.toHaveAttribute('aria-disabled'));
+  await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
 });

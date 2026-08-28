@@ -31,16 +31,16 @@ export interface ConfigRevision {
 export interface ConfigurationSnapshot {
   revision?: number | null;
   observed_at?: string | null;
-  tenants?: Array<Record<string, unknown>> | null;
-  rooms?: Array<Record<string, unknown>> | null;
-  memberships?: Array<Record<string, unknown>> | null;
-  acl_edges?: Array<Record<string, unknown>> | null;
-  harness_definitions?: Array<Record<string, unknown>> | null;
-  role_policies?: Array<Record<string, unknown>> | null;
+  tenants?: Record<string, unknown>[] | null;
+  rooms?: Record<string, unknown>[] | null;
+  memberships?: Record<string, unknown>[] | null;
+  acl_edges?: Record<string, unknown>[] | null;
+  harness_definitions?: Record<string, unknown>[] | null;
+  role_policies?: Record<string, unknown>[] | null;
   /** Singleton `default` de la política de visibilidad de cadena (migración 008). */
-  chain_policies?: Array<Record<string, unknown>> | null;
+  chain_policies?: Record<string, unknown>[] | null;
   /** Allowlist de egress proactivo (migración 009). */
-  egress_destinations?: Array<Record<string, unknown>> | null;
+  egress_destinations?: Record<string, unknown>[] | null;
   /**
    * Registro de agentes y pool de cuentas. Las cuatro claves son opcionales a propósito: un
    * gateway anterior a la migración 010 no las publica, y eso NO es lo mismo que una lista vacía.
@@ -50,14 +50,14 @@ export interface ConfigurationSnapshot {
    * `agent_profiles.role_summary`. La consola nunca la escribe: el PUT canónico de Perfil hace
    * CAS, materializa el runtime y sólo después acredita `applied_revision`.
    */
-  agents?: Array<Record<string, unknown>> | null;
+  agents?: Record<string, unknown>[] | null;
   /** `credential_ref` nunca viaja acá; `external_account_id` y `credential_ref_kind` los anula el
    *  servidor para una cuenta que paga otro tenant. */
-  provider_accounts?: Array<Record<string, unknown>> | null;
-  alias_routing_ceiling?: Array<Record<string, unknown>> | null;
-  agent_account_bindings?: Array<Record<string, unknown>> | null;
+  provider_accounts?: Record<string, unknown>[] | null;
+  alias_routing_ceiling?: Record<string, unknown>[] | null;
+  agent_account_bindings?: Record<string, unknown>[] | null;
   /** Copia diagnóstica de sólo lectura; las escrituras usan la API canónica de Perfil. */
-  agent_profiles?: Array<Record<string, unknown>> | null;
+  agent_profiles?: Record<string, unknown>[] | null;
   revisions?: ConfigRevision[] | null;
 }
 

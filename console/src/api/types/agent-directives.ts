@@ -34,11 +34,11 @@ export interface AgentMemoryIndexAvailable {
   /** Límite inferior observado cuando el barrido alcanzó su cap. */
   observed_at_least?: number | null;
   truncated?: boolean | null;
-  entries?: Array<{
+  entries?: {
     path?: string | null;
     bytes?: number | null;
     modified_at?: string | null;
-  }> | null;
+  }[] | null;
   error?: never;
   reason?: never;
 }
@@ -261,7 +261,7 @@ export interface AgentPerfil {
     container_id: string | null;
     observed_at: string | null;
     reason?: string;
-    documents: Array<{
+    documents: {
       name: string;
       path: string;
       expected_sha: string;
@@ -269,14 +269,14 @@ export interface AgentPerfil {
       expected_bytes: number;
       observed_bytes: number | null;
       current: boolean;
-    }>;
+    }[];
   } | null;
   runtime_adoption?: {
     evidence: 'adapter_delivery';
     revision: number;
     generation: string;
     adopted_at: string;
-    documents: Array<{ name: string; path: string; sha: string }>;
+    documents: { name: string; path: string; sha: string }[];
   } | null;
   runtime_reason?: string;
   /** El arnés declarado en los hechos. `null` cuando el registro no dice ninguno. */
@@ -284,7 +284,7 @@ export interface AgentPerfil {
   perfil: AgentPerfilValor;
   hechos?: {
     permisos: { ruta: boolean; lectura: boolean; control: boolean; notificacion: boolean };
-    cuotas: Array<{ proveedor: string; cuenta: string; limite?: string }>;
+    cuotas: { proveedor: string; cuenta: string; limite?: string }[];
     arnes: { harness: string; home: string; contenedor?: string; capacidades: string[] };
     destinos: string[];
   };
@@ -331,6 +331,6 @@ export interface AgentPerfilAplicado {
     revision: number;
     generation: string;
     adopted_at: string;
-    documents: Array<{ name: string; path: string; sha: string }>;
+    documents: { name: string; path: string; sha: string }[];
   };
 }

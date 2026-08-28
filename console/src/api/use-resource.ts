@@ -39,9 +39,9 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
   const generationRef = useRef(0);
   const runRef = useRef<() => void>(() => undefined);
   // Quien pidió recarga y todavía no tiene un fetch que responda por él.
-  const esperandoRef = useRef<Array<(resultado: RecargaResultado<T>) => void>>([]);
+  const esperandoRef = useRef<((resultado: RecargaResultado<T>) => void)[]>([]);
   // Quien ya fue adoptado por el fetch en curso: se le contesta cuando ese fetch termine.
-  const adoptadosRef = useRef<Array<(resultado: RecargaResultado<T>) => void>>([]);
+  const adoptadosRef = useRef<((resultado: RecargaResultado<T>) => void)[]>([]);
   const claveRef = useRef(key);
 
   useEffect(() => {

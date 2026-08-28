@@ -68,7 +68,7 @@ export interface MessagePage {
 
 export interface PublishMessageInput {
   room_id: string;
-  recipients: Array<{ tenant_id: string; alias: string }>;
+  recipients: { tenant_id: string; alias: string }[];
   body: { text: string };
   lane: JobLane;
   priority: number;

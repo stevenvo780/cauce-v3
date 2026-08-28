@@ -10,7 +10,7 @@ import { useResource } from './use-resource';
  */
 
 function cargadorGobernado() {
-  const pendientes: Array<{ resolver: (v: string) => void; rechazar: (e: Error) => void }> = [];
+  const pendientes: { resolver: (v: string) => void; rechazar: (e: Error) => void }[] = [];
   const cargador = () => new Promise<string>((resolver, rechazar) => {
     pendientes.push({ resolver, rechazar });
   });
@@ -23,13 +23,13 @@ function cargadorGobernado() {
  * prueba mide otra cosa que la que cree medir.
  */
 async function enReposo(
-  pendientes: Array<{ resolver: (v: string) => void; rechazar: (e: Error) => void }>,
+  pendientes: { resolver: (v: string) => void; rechazar: (e: Error) => void }[],
   cargando: () => boolean,
   valor: string,
 ): Promise<void> {
   for (let vuelta = 0; vuelta < 10; vuelta += 1) {
     const sinContestar = pendientes.length;
-    await waitFor(() => expect(pendientes.length).toBeGreaterThanOrEqual(sinContestar));
+    await waitFor(() => { expect(pendientes.length).toBeGreaterThanOrEqual(sinContestar); });
     await act(async () => {
       for (const pendiente of pendientes.slice(0, sinContestar)) pendiente.resolver(valor);
       await Promise.resolve();
@@ -46,20 +46,20 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
 
-    await waitFor(() => expect(pendientes).toHaveLength(1));
+    await waitFor(() => { expect(pendientes).toHaveLength(1); });
     await act(async () => {
       pendientes[0].rechazar(new Error('el servidor no contestó en 30 s'));
       await Promise.resolve();
     });
 
-    await waitFor(() => expect(result.current.error?.message).toBe('el servidor no contestó en 30 s'));
+    await waitFor(() => { expect(result.current.error?.message).toBe('el servidor no contestó en 30 s'); });
   });
 
   it('el fallo SOBREVIVE al reintento que el refresco automático dispara en el acto', async () => {
     // Si el reintento automático arranca inmediatamente, el fallo previo no debe desaparecer hasta resolverse.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
-    await waitFor(() => expect(pendientes).toHaveLength(1));
+    await waitFor(() => { expect(pendientes).toHaveLength(1); });
 
     // El refresco pide otra lectura mientras la primera sigue en vuelo: queda encolada.
     act(() => { void result.current.reload(); });
@@ -70,7 +70,7 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
     });
 
     // El reintento ya arrancó...
-    await waitFor(() => expect(pendientes.length).toBeGreaterThan(1));
+    await waitFor(() => { expect(pendientes.length).toBeGreaterThan(1); });
     // ...y el fallo sigue en pie, porque no hay ni un dato que enseñar en su lugar.
     expect(result.current.error?.message).toBe('el servidor no contestó en 30 s');
     expect(result.current.data).toBeUndefined();
@@ -81,15 +81,15 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
     // en rojo permanente sobre un servidor ya recuperado.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
-    await waitFor(() => expect(pendientes).toHaveLength(1));
+    await waitFor(() => { expect(pendientes).toHaveLength(1); });
 
     await act(async () => { pendientes[0].rechazar(new Error('caído')); await Promise.resolve(); });
-    await waitFor(() => expect(result.current.error).toBeDefined());
+    await waitFor(() => { expect(result.current.error).toBeDefined(); });
 
-    await waitFor(() => expect(pendientes.length).toBeGreaterThan(1));
+    await waitFor(() => { expect(pendientes.length).toBeGreaterThan(1); });
     await act(async () => { pendientes[pendientes.length - 1].resolver('ya contesta'); await Promise.resolve(); });
 
-    await waitFor(() => expect(result.current.data).toBe('ya contesta'));
+    await waitFor(() => { expect(result.current.data).toBe('ya contesta'); });
     expect(result.current.error).toBeUndefined();
   });
 
@@ -106,16 +106,16 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
 
     const conDato = pendientes.length;
     act(() => { void result.current.reload(); });
-    await waitFor(() => expect(pendientes.length).toBe(conDato + 1));
+    await waitFor(() => { expect(pendientes.length).toBe(conDato + 1); });
     await act(async () => { pendientes[conDato].rechazar(new Error('se cayó')); await Promise.resolve(); });
-    await waitFor(() => expect(result.current.error?.message).toBe('se cayó'));
+    await waitFor(() => { expect(result.current.error?.message).toBe('se cayó'); });
 
     // El dato viejo sigue en pantalla: el fallo no lo borra.
     expect(result.current.data).toBe('primer dato');
 
     // Y el siguiente intento SÍ limpia el error, porque hay algo que enseñar mientras tanto.
     act(() => { void result.current.reload(); });
-    await waitFor(() => expect(result.current.error).toBeUndefined());
+    await waitFor(() => { expect(result.current.error).toBeUndefined(); });
     expect(result.current.data).toBe('primer dato');
   });
 
@@ -130,7 +130,7 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
       ({ clave }: { clave: string }) => useResource(clave, cargador),
       { wrapper: StrictMode, initialProps: { clave: 'primera' } },
     );
-    await waitFor(() => expect(pendientes).toHaveLength(1));
+    await waitFor(() => { expect(pendientes).toHaveLength(1); });
 
     rerender({ clave: 'segunda' });
 
@@ -139,9 +139,9 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
     expect(result.current.data).not.toBe('dato viejo');
 
     // La de la clave nueva sí pinta.
-    await waitFor(() => expect(pendientes.length).toBeGreaterThan(1));
+    await waitFor(() => { expect(pendientes.length).toBeGreaterThan(1); });
     await act(async () => { pendientes[pendientes.length - 1].resolver('dato nuevo'); await Promise.resolve(); });
-    await waitFor(() => expect(result.current.data).toBe('dato nuevo'));
+    await waitFor(() => { expect(result.current.data).toBe('dato nuevo'); });
   });
 });
 

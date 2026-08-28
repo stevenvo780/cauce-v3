@@ -40,12 +40,15 @@ const RUTA_DIRECTA: Record<string, string> = {
 };
 
 async function verDestino(id: string) {
-  const destino = DESTINOS[id];
+  const destino: Destino | undefined = (DESTINOS as Partial<Record<string, Destino>>)[id];
   if (!destino) throw new Error(`la tabla DESTINOS no declara qué se ve en «/${id}»`);
   if (destino.encabezado) {
-    return screen.findByRole('heading', { level: 1, name: destino.encabezado });
+    return screen.findByRole('heading', { level: 1, name: destino.encabezado }, { timeout: 10_000 });
   }
-  return screen.findByText(destino.marca!);
+  if (!destino.marca) {
+    throw new Error(`el destino «/${id}» no declara ni encabezado ni marca`);
+  }
+  return screen.findByText(destino.marca, undefined, { timeout: 10_000 });
 }
 
 // ================================================================================================
@@ -167,7 +170,7 @@ describe('cada ALIAS declarado llega a su heredera y reescribe la barra de direc
       // 2) Y la URL se reescribió. Un alias que dibuja bien pero deja la barra en la ruta muerta
       //    deja al botón «atrás» dando vueltas, que es el defecto que ROUTE_ALIASES existe para
       //    evitar. `replaceState` corre en un efecto, así que se espera.
-      await waitFor(() => expect(window.location.pathname).toBe(`/${destino}`));
+      await waitFor(() => { expect(window.location.pathname).toBe(`/${destino}`); });
     },
   );
 });

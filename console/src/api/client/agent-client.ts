@@ -31,7 +31,7 @@ export async function getAgentDirective(
       && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
       return {
         publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
       };
     }
     throw error;
@@ -52,7 +52,7 @@ export async function getRoleBriefHistory(
       && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
       return {
         publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
       };
     }
     throw error;
@@ -73,7 +73,7 @@ export async function getAgentDocuments(
       && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
       return {
         publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
       };
     }
     throw error;
@@ -121,7 +121,7 @@ export async function getAgentDocumentContent(
       || (exists && typeof sha !== 'string')
       || visibleBytes > Number(bytes)
       || (!truncated && visibleBytes !== Number(bytes))
-      || (truncated && row.editable === true)) return malformed();
+      || (truncated && row.editable)) return malformed();
   return value as AgentDocumentContent;
 }
 
@@ -159,7 +159,7 @@ export async function getAgentPerfil(
       && (error.status === 501 || (error.status === 404 && error.code !== 'not_found'))) {
       return {
         publicado: false,
-        motivo: `Este gateway no publica GET ${ruta} (respondió ${error.status}).`,
+        motivo: `Este gateway no publica GET ${ruta} (respondió ${String(error.status)}).`,
         perfil: {
           purpose: null, role_summary: null, human_brief: null,
           responsibilities: [], restrictions: [], tools: [], operating_rules: [],

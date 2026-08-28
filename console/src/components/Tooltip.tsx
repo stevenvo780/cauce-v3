@@ -48,8 +48,8 @@ export function FloatingTooltip({ anchor, open, children, id, placement = 'top' 
   const arriba = placement === 'top';
   const style = {
     position: 'fixed' as const,
-    left: `${Math.round(anchor.left + anchor.width / 2)}px`,
-    top: `${Math.round(arriba ? anchor.top - 10 : anchor.bottom + 10)}px`,
+    left: `${String(Math.round(anchor.left + anchor.width / 2))}px`,
+    top: `${String(Math.round(arriba ? anchor.top - 10 : anchor.bottom + 10))}px`,
     transform: arriba ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
   };
   return createPortal(
@@ -94,12 +94,12 @@ export function Tooltip({ label, children, placement = 'top', focusable = true, 
 
   const abrir = useCallback((retraso: number) => {
     window.clearTimeout(timer.current);
-    const medir = () => setAnchor(host.current?.getBoundingClientRect() ?? null);
+    const medir = () => { setAnchor(host.current?.getBoundingClientRect() ?? null); };
     if (retraso <= 0) medir();
     else timer.current = window.setTimeout(medir, retraso);
   }, []);
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => () => { window.clearTimeout(timer.current); }, []);
 
   // Esc cierra desde donde sea que esté el foco. Se engancha sólo mientras hay globo abierto:
   // un oyente global permanente por cada tooltip de la página es un coste que no hace falta pagar.
@@ -107,7 +107,7 @@ export function Tooltip({ label, children, placement = 'top', focusable = true, 
     if (!anchor) return undefined;
     const alPulsar = (event: KeyboardEvent) => { if (event.key === 'Escape') cerrar(); };
     document.addEventListener('keydown', alPulsar);
-    return () => document.removeEventListener('keydown', alPulsar);
+    return () => { document.removeEventListener('keydown', alPulsar); };
   }, [anchor, cerrar]);
 
   return (
@@ -116,10 +116,10 @@ export function Tooltip({ label, children, placement = 'top', focusable = true, 
       className={`tooltip-anchor${className ? ` ${className}` : ''}`}
       tabIndex={focusable ? 0 : undefined}
       aria-describedby={anchor ? id : undefined}
-      onMouseEnter={() => abrir(TOOLTIP_DELAY_MS)}
+      onMouseEnter={() => { abrir(TOOLTIP_DELAY_MS); }}
       onMouseLeave={cerrar}
       // El teclado no tiene "pasar por encima sin querer", así que no hay nada que amortiguar.
-      onFocus={() => abrir(0)}
+      onFocus={() => { abrir(0); }}
       onBlur={cerrar}
     >
       {children}
