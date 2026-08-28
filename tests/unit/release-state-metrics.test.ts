@@ -39,7 +39,12 @@ async function stateFile(value: Record<string, unknown>, content = canonical(val
 }
 
 afterEach(async () => {
-  while (directories.length > 0) await rm(directories.pop()!, { recursive: true, force: true });
+  while (directories.length > 0) {
+    const dir = directories.pop();
+    if (dir) {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
 });
 
 describe('durable release-state metrics', () => {

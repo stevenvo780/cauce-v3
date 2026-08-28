@@ -137,13 +137,13 @@ describe('normalizeAgentProfile', () => {
   });
 
   it('rechaza una lista con más elementos de los admitidos', () => {
-    const muchos = Array.from({ length: AGENT_PROFILE_LIMITS.items + 1 }, (_, i) => `r${i}`);
+    const muchos = Array.from({ length: AGENT_PROFILE_LIMITS.items + 1 }, (_, i) => `r${String(i)}`);
     expect(() => normalizeAgentProfile(perfilBase({ tools: muchos }))).toThrow(/tools/);
   });
 
   /** NEGATIVE CONTROL of cardinality: the exact number of items goes through. */
   it('control negativo: EXACTAMENTE el número de elementos admitido se acepta', () => {
-    const justos = Array.from({ length: AGENT_PROFILE_LIMITS.items }, (_, i) => `r${i}`);
+    const justos = Array.from({ length: AGENT_PROFILE_LIMITS.items }, (_, i) => `r${String(i)}`);
     expect(normalizeAgentProfile(perfilBase({ tools: justos })).tools).toHaveLength(
       AGENT_PROFILE_LIMITS.items
     );

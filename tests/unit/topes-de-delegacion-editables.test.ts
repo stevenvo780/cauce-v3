@@ -107,7 +107,7 @@ describe('los rangos son EXACTAMENTE los del CHECK de Postgres', () => {
   ] as const;
 
   for (const [campo, minimo, maximo] of LIMITES) {
-    it(`${campo}: acepta ${minimo} y ${maximo}, y rechaza lo de fuera`, () => {
+    it(`${campo}: acepta ${String(minimo)} y ${String(maximo)}, y rechaza lo de fuera`, () => {
       expect(mutacion({ [campo]: minimo }).success).toBe(true);
       expect(mutacion({ [campo]: maximo }).success).toBe(true);
       expect(mutacion({ [campo]: minimo - 1 }).success).toBe(false);

@@ -36,7 +36,7 @@ function baseSnapshot() {
   };
 }
 
-async function run(phase: string, mutate: (snapshot: ReturnType<typeof baseSnapshot>) => void = () => {}) {
+async function run(phase: string, mutate: (snapshot: ReturnType<typeof baseSnapshot>) => void = () => { /* no-op */ }) {
   const root = await mkdtemp(join(tmpdir(), 'cauce-migration-gate-'));
   scratch.push(root);
   const snapshot = baseSnapshot();

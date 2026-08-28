@@ -40,7 +40,7 @@ function validStatus() {
   };
 }
 
-type MonitorPaths = { dumpFile: string; evidenceFile: string; statusFile: string };
+interface MonitorPaths { dumpFile: string; evidenceFile: string; statusFile: string }
 
 async function runMonitor(
   status: unknown,

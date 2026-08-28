@@ -20,8 +20,8 @@ describe('resolución de los paquetes del monorepo', () => {
    * (two functions with the same body and name) and the assertion is checked to tell them apart.
    */
   it('dos copias del mismo código NO son el mismo objeto (el aserto puede dar rojo)', () => {
-    const unaCopia = (text: string): number => [...text].length;
-    const otraCopia = (text: string): number => [...text].length;
+    const unaCopia = (text: string): number => text.length;
+    const otraCopia = (text: string): number => text.length;
     expect(unaCopia('abc')).toBe(otraCopia('abc'));
     expect(unaCopia).not.toBe(otraCopia);
   });

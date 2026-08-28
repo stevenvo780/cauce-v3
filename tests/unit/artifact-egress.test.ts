@@ -78,7 +78,9 @@ describe('adjuntos salientes: del disco del agente al chat', () => {
     const plan = planArtifacts(ack(output));
 
     expect(plan.uploads).toHaveLength(1);
-    const upload = plan.uploads[0]!;
+    const upload = plan.uploads[0];
+    expect(upload).toBeDefined();
+    if (!upload) return;
     // The effect: the bytes Telegram would receive are byte-for-byte those of the agent's file.
     expect(upload.bytes.equals(PNG_BYTES)).toBe(true);
     expect(upload.sha256).toBe(createHash('sha256').update(PNG_BYTES).digest('hex'));
@@ -97,6 +99,10 @@ describe('adjuntos salientes: del disco del agente al chat', () => {
 
     const despues = planArtifacts(ack(await inlineLocalArtifacts(envelope(path, 'suelta.png'))));
     expect(despues.uploads).toHaveLength(1);
-    expect(despues.uploads[0]!.bytes.equals(PNG_BYTES)).toBe(true);
+    const firstUpload = despues.uploads[0];
+    expect(firstUpload).toBeDefined();
+    if (firstUpload) {
+      expect(firstUpload.bytes.equals(PNG_BYTES)).toBe(true);
+    }
   });
 });

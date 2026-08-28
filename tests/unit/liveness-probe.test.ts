@@ -20,14 +20,15 @@ let document: Record<string, unknown> = { status: 'ready', ticks: 0 };
 let statusCode = 200;
 
 async function startHealthServer(): Promise<string> {
-  server = createServer((_request, response) => {
+  const currentServer = createServer((_request, response) => {
     response.writeHead(statusCode, { 'content-type': 'application/json' });
     response.end(JSON.stringify(document));
   });
-  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
+  server = currentServer;
+  await new Promise<void>((resolve) => { currentServer.listen(0, '127.0.0.1', () => { resolve(); }); });
+  const address = currentServer.address();
   if (typeof address === 'string' || address === null) throw new Error('no port');
-  return `http://127.0.0.1:${address.port}/health/ready`;
+  return `http://127.0.0.1:${String(address.port)}/health/ready`;
 }
 
 function runProbe(url: string, field: string, stallMs: number): Promise<ProbeResult> {
@@ -46,7 +47,7 @@ function runProbe(url: string, field: string, stallMs: number): Promise<ProbeRes
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stderr }));
+    child.once('close', (code) => { resolve({ code, stderr }); });
   });
 }
 
@@ -68,7 +69,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+  if (server) {
+    const s = server;
+    await new Promise<void>((resolve) => { s.close(() => { resolve(); }); });
+  }
   server = undefined;
   await rm(stateDirectory, { recursive: true, force: true });
 });
@@ -153,7 +157,10 @@ describe('liveness probe: verdict is progress, not response', () => {
     document = { status: 'ready', ticks: 'many' };
     expect((await runProbe(url, 'ticks', 100)).code).toBe(1);
 
-    await new Promise<void>((resolve) => server!.close(() => resolve()));
+    if (server) {
+      const s = server;
+      await new Promise<void>((resolve) => { s.close(() => { resolve(); }); });
+    }
     server = undefined;
     expect((await runProbe(url, 'ticks', 100)).code).toBe(1);
   });
@@ -170,7 +177,7 @@ describe('liveness probe: verdict is progress, not response', () => {
       child.stderr.setEncoding('utf8');
       child.stderr.on('data', (chunk: string) => { stderr += chunk; });
       child.once('error', reject);
-      child.once('close', (code) => resolve({ code, stderr }));
+      child.once('close', (code) => { resolve({ code, stderr }); });
     });
     expect(noField.code).toBe(1);
     expect(noField.stderr).toContain('usage:');

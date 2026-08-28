@@ -52,7 +52,7 @@ function runProbe(healthUrl: string, environment: ProbeEnvironment): Promise<Pro
     child.stdout.on('data', (chunk: string) => { stdout += chunk; });
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.once('error', reject);
-    child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+    child.once('close', (code, signal) => { resolve({ code, signal, stdout, stderr }); });
   });
 }
 
@@ -79,7 +79,13 @@ function listen(server: HttpServer | NetServer): Promise<number> {
 
 function close(server: HttpServer | NetServer): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
   });
 }
 
@@ -219,7 +225,7 @@ describe('database-aware readiness probe', () => {
     });
     const port = await listen(server);
     try {
-      const result = await runProbe(`http://127.0.0.1:${port}/health/ready`, {
+      const result = await runProbe(`http://127.0.0.1:${String(port)}/health/ready`, {
         nodeEnv: 'test',
         databaseUrl: hiddenUrl
       });
@@ -334,11 +340,11 @@ describe('database-aware readiness probe', () => {
       response.end('{"status":"ready"}');
     });
     const healthPort = await listen(healthServer);
-    const hiddenUrl = `postgresql://probe:${randomUUID()}@localhost:${postgres.port}/probe`;
+    const hiddenUrl = `postgresql://probe:${randomUUID()}@localhost:${String(postgres.port)}/probe`;
     const databaseUrlFile = join(directory, 'database-url');
     await writeFile(databaseUrlFile, `${hiddenUrl}\n`, { mode: 0o600 });
     try {
-      const result = await runProbe(`http://127.0.0.1:${healthPort}/health/ready`, {
+      const result = await runProbe(`http://127.0.0.1:${String(healthPort)}/health/ready`, {
         databaseUrlFile,
         postgresCa: postgres.certificatePath,
         postgresSslMode: 'verify-full'

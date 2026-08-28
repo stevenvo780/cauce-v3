@@ -75,10 +75,10 @@ describe('create-only production override manifest', () => {
     const result = spawnSync('python3', args, { encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
     const expectedActive = active.map(
-      (name) => `active ${digest(bodies.get(name)!)} ${name}\n`,
+      (name) => `active ${digest(bodies.get(name) ?? '')} ${name}\n`,
     ).join('');
     const expectedInactive = ['old-a.yaml', 'old-b.yml', 'old-c.yaml'].map(
-      (name) => `inactive ${digest(bodies.get(name)!)} ${name}\n`,
+      (name) => `inactive ${digest(bodies.get(name) ?? '')} ${name}\n`,
     ).join('');
     expect(await readFile(output, 'utf8')).toBe(expectedActive + expectedInactive);
 

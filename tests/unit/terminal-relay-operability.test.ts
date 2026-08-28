@@ -25,7 +25,7 @@ async function runProbe(
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stderr }));
+    child.once('close', (code) => { resolve({ code, stderr }); });
   });
 }
 
@@ -82,7 +82,7 @@ describe('production terminal relay operability contract', () => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', resolve);
     });
-    const port = (server.address() as AddressInfo).port;
+    const port = String((server.address() as AddressInfo).port);
     try {
       await expect(runProbe(`http://127.0.0.1:${port}/health/ready`))
         .resolves.toEqual({ code: 0, stderr: '' });
@@ -107,7 +107,13 @@ describe('production terminal relay operability contract', () => {
         .resolves.toMatchObject({ code: 1 });
     } finally {
       await new Promise<void>((resolve, reject) => {
-        server.close((error) => error ? reject(error) : resolve());
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
       });
     }
   });

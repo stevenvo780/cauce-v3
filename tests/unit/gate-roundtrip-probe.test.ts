@@ -74,9 +74,9 @@ function run(arguments_: string[], env: Record<string, string>) {
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
-    child.once('close', (status) => resolveRun({ status, stdout, stderr }));
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+    child.once('close', (status) => { resolveRun({ status, stdout, stderr }); });
   });
 }
 
@@ -106,11 +106,11 @@ async function gateway(value: Awaited<ReturnType<typeof fixture>>, response = { 
   servers.push(server);
   await new Promise<void>((resolveListen, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolveListen());
+    server.listen(0, '127.0.0.1', () => { resolveListen(); });
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('test HTTPS server has no TCP address');
-  return { origin: `https://127.0.0.1:${address.port}`, received: () => received };
+  return { origin: `https://127.0.0.1:${String(address.port)}`, received: () => received };
 }
 
 function environment(value: Awaited<ReturnType<typeof fixture>>, origin: string) {
@@ -126,7 +126,7 @@ function environment(value: Awaited<ReturnType<typeof fixture>>, origin: string)
 }
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolveClose) => server.close(() => resolveClose()))));
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolveClose) => server.close(() => { resolveClose(); }))));
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -145,7 +145,7 @@ describe('authentic mTLS round-trip probe', () => {
     ]);
     expect((await lstat(value.output)).mode & 0o077).toBe(0);
     const published = endpoint.received() as {
-      recipients: Array<{ tenant_id: string; alias: string }>;
+      recipients: { tenant_id: string; alias: string }[];
       body: { type: string; nonce: string; timeout_ms: number };
       lane: string;
       priority: number;

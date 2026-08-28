@@ -28,11 +28,11 @@ describe('los topes del perfil están espejados en la migración 026', () => {
       const tope = AGENT_PROFILE_LIMITS[campo];
       const constraint = new RegExp(
         `CONSTRAINT agent_profiles_${campo}_len CHECK \\(\\s*${campo} IS NULL OR ` +
-        `cauce_utf16_units\\(${campo}\\) BETWEEN 1 AND ${tope}\\b`
+        `cauce_utf16_units\\(${campo}\\) BETWEEN 1 AND ${String(tope)}\\b`
       );
       expect(
         migracion,
-        `026 no declara el CHECK de ${campo} con el tope ${tope} que dice AGENT_PROFILE_LIMITS`
+        `026 no declara el CHECK de ${campo} con el tope ${String(tope)} que dice AGENT_PROFILE_LIMITS`
       ).toMatch(constraint);
     }
   });
@@ -40,10 +40,10 @@ describe('los topes del perfil están espejados en la migración 026', () => {
   it('cada LISTA del contrato tiene su tope de cardinalidad y el de elemento', () => {
     for (const campo of AGENT_PROFILE_LIST_FIELDS) {
       expect(migracion, `026 no limita cuántos elementos admite ${campo}`).toMatch(
-        new RegExp(`agent_profiles_${campo}_count CHECK \\(coalesce\\(array_length\\(${campo},1\\),0\\) <= ${AGENT_PROFILE_LIMITS.items}\\b`)
+        new RegExp(`agent_profiles_${campo}_count CHECK \\(coalesce\\(array_length\\(${campo},1\\),0\\) <= ${String(AGENT_PROFILE_LIMITS.items)}\\b`)
       );
       expect(migracion, `026 no limita el tamaño de un elemento de ${campo}`).toMatch(
-        new RegExp(`agent_profiles_${campo}_items CHECK \\(cauce_text_items_ok\\(${campo}, ${AGENT_PROFILE_LIMITS.item}\\)`)
+        new RegExp(`agent_profiles_${campo}_items CHECK \\(cauce_text_items_ok\\(${campo}, ${String(AGENT_PROFILE_LIMITS.item)}\\)`)
       );
     }
   });
@@ -61,7 +61,7 @@ describe('los topes del perfil están espejados en la migración 026', () => {
         .toContain(`cauce_utf16_units(array_to_string(${campo},''))`);
     }
     expect(cuerpo, 'el techo del presupuesto no es el de AGENT_PROFILE_LIMITS.total')
-      .toContain(`<= ${AGENT_PROFILE_LIMITS.total}`);
+      .toContain(`<= ${String(AGENT_PROFILE_LIMITS.total)}`);
   });
 
   it('la tabla declara una COLUMNA por cada campo del contrato', () => {

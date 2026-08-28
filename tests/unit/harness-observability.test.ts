@@ -82,7 +82,7 @@ describe('causa real del fallo del harness en last_error', () => {
   it('conserva el final del stderr, no sólo el principio', async () => {
     const encabezado = 'FATAL: el proveedor abortó la sesión';
     const causaRaiz = 'caused by: config key `mcp_servers.chrome-devtools.default_tools_approval_mode` is invalid';
-    const relleno = Array.from({ length: 400 }, (_unused, index) => `  at frame_${index} (/opt/harness/lib/runtime.js)`);
+    const relleno = Array.from({ length: 400 }, (_unused, index) => `  at frame_${String(index)} (/opt/harness/lib/runtime.js)`);
     const stderr = [encabezado, ...relleno, causaRaiz].join('\n');
 
     const error = await failureFor(stderr);
@@ -101,7 +101,7 @@ describe('causa real del fallo del harness en last_error', () => {
    */
   it('redacta secretos que caen en la cola recién conservada', async () => {
     const secreto = 'sk-live-9f3ac1b7d2e84a06';
-    const relleno = Array.from({ length: 400 }, (_unused, index) => `  at frame_${index} (/opt/harness/lib/runtime.js)`);
+    const relleno = Array.from({ length: 400 }, (_unused, index) => `  at frame_${String(index)} (/opt/harness/lib/runtime.js)`);
     const stderr = [
       'FATAL: el proveedor rechazó las credenciales',
       ...relleno,
