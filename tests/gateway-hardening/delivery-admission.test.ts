@@ -13,7 +13,7 @@ import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, tex
  * for operator/user messages.
  */
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const HTTP_CONNECTION_TOKEN = '90000000-0000-4000-8000-000000000009';
 const sockets: WebSocket[] = [];
 
@@ -27,7 +27,7 @@ function frameReader(socket: WebSocket): {
 } {
   const queued: Record<string, unknown>[] = [];
   const all: Record<string, unknown>[] = [];
-  const waiting: Array<(value: Record<string, unknown>) => void> = [];
+  const waiting: ((value: Record<string, unknown>) => void)[] = [];
   socket.on('message', (data) => {
     const decoded = JSON.parse(text(data)) as Record<string, unknown>;
     all.push(decoded);
@@ -201,7 +201,7 @@ async function connect(port: number, instanceId: string): Promise<{
   next: () => Promise<Record<string, unknown>>;
   seen: () => Record<string, unknown>[];
 }> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
   });
   sockets.push(socket);
@@ -222,7 +222,7 @@ describe('gateway delivery admission control', () => {
   it('claims at most the configured in-flight budget instead of the store default of 20', async () => {
     const store = queuedRepository();
     for (let index = 1; index <= 10; index += 1) {
-      store.enqueue(agentDelivery(index, `work ${index}`));
+      store.enqueue(agentDelivery(index, `work ${String(index)}`));
     }
     const app = await buildGateway({
       pool: fakePool(),
@@ -254,7 +254,7 @@ describe('gateway delivery admission control', () => {
   it('admits a human message while agent-to-agent work holds every general slot', async () => {
     const store = queuedRepository();
     for (let index = 1; index <= 5; index += 1) {
-      store.enqueue(agentDelivery(index, `long task ${index}`));
+      store.enqueue(agentDelivery(index, `long task ${String(index)}`));
     }
     let wake: ((notice: { tenant_id: string; alias: string }) => void) | undefined;
     const app = await buildGateway({
@@ -306,7 +306,7 @@ describe('gateway delivery admission control', () => {
   it('serves a human message before queued agent work when both are waiting', async () => {
     const store = queuedRepository();
     for (let index = 1; index <= 4; index += 1) {
-      store.enqueue(agentDelivery(index, `chain hop ${index}`));
+      store.enqueue(agentDelivery(index, `chain hop ${String(index)}`));
     }
     store.enqueue(humanDelivery(99, 'hola'));
     const app = await buildGateway({
@@ -398,7 +398,7 @@ describe('gateway delivery admission control', () => {
     const port = (app.server.address() as AddressInfo).port;
     const session = await connect(port, 'racing-consumer');
 
-    await vi.waitFor(() => expect(claimCount).toBe(1));
+    await vi.waitFor(() => { expect(claimCount).toBe(1); });
     // The wake arrives while a drain is in progress. It used to be discarded with
     // `if (draining) return` — and with a budget, that can be the only signal that work was waiting.
     store.enqueue(humanDelivery(2, 'segundo'));
@@ -482,7 +482,7 @@ describe('gateway delivery admission control', () => {
   it('rebuilds the in-flight budget from the store instead of handing it back on every reconnect', async () => {
     const store = queuedRepository();
     for (let index = 1; index <= 3; index += 1) {
-      store.enqueue(agentDelivery(index, `work ${index}`));
+      store.enqueue(agentDelivery(index, `work ${String(index)}`));
     }
     const repository = {
       ...store.repository,
@@ -534,7 +534,9 @@ describe('gateway delivery admission control', () => {
 
   it('fails recovery visibly without expiring renewable claims from the acquired epoch', async () => {
     const repository = fakeRepository();
-    vi.mocked(repository.liveDeliveryClaims!).mockRejectedValueOnce(new Error('database unavailable'));
+    const liveDeliveryClaims = repository.liveDeliveryClaims;
+    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
+    vi.mocked(liveDeliveryClaims).mockRejectedValueOnce(new Error('database unavailable'));
     const app = await buildGateway({
       pool: fakePool(),
       repository,
@@ -545,13 +547,13 @@ describe('gateway delivery admission control', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(socket);
     const reader = frameReader(socket);
     const closed = new Promise<number>((resolve) => {
-      socket.once('close', (code) => resolve(code));
+      socket.once('close', (code) => { resolve(code); });
     });
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);
@@ -585,13 +587,13 @@ describe('gateway delivery admission control', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(socket);
     const reader = frameReader(socket);
     const closed = new Promise<{ code: number; reason: string }>((resolve) => {
-      socket.once('close', (code, reason) => resolve({ code, reason: reason.toString('utf8') }));
+      socket.once('close', (code, reason) => { resolve({ code, reason: reason.toString('utf8') }); });
     });
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);
@@ -652,7 +654,9 @@ describe('gateway delivery admission control', () => {
     let firstRecoveryStarted!: () => void;
     const firstRecoveryObserved = new Promise<void>((resolve) => { firstRecoveryStarted = resolve; });
     let recoveryCalls = 0;
-    vi.mocked(repository.liveDeliveryClaims!).mockImplementation(async () => {
+    const liveDeliveryClaims = repository.liveDeliveryClaims;
+    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
+    vi.mocked(liveDeliveryClaims).mockImplementation(async () => {
       recoveryCalls += 1;
       if (recoveryCalls === 1) {
         firstRecoveryStarted();
@@ -670,13 +674,13 @@ describe('gateway delivery admission control', () => {
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
 
-    const firstSocket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const firstSocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(firstSocket);
     const firstReader = frameReader(firstSocket);
     const firstClosed = new Promise<number>((resolve) => {
-      firstSocket.once('close', (code) => resolve(code));
+      firstSocket.once('close', (code) => { resolve(code); });
     });
     await new Promise<void>((resolve, reject) => {
       firstSocket.once('open', resolve);
@@ -735,7 +739,9 @@ describe('gateway delivery admission control', () => {
     const currentRecoveryGate = new Promise<void>((resolve) => { releaseCurrentRecovery = resolve; });
     let currentRecoveryStarted!: () => void;
     const currentRecoveryObserved = new Promise<void>((resolve) => { currentRecoveryStarted = resolve; });
-    vi.mocked(repository.liveDeliveryClaims!).mockImplementationOnce(async () => {
+    const liveDeliveryClaims = repository.liveDeliveryClaims;
+    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
+    vi.mocked(liveDeliveryClaims).mockImplementationOnce(async () => {
       currentRecoveryStarted();
       await currentRecoveryGate;
       return [];
@@ -750,13 +756,13 @@ describe('gateway delivery admission control', () => {
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
 
-    const firstSocket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const firstSocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(firstSocket);
     const firstReader = frameReader(firstSocket);
     const firstClosed = new Promise<number>((resolve) => {
-      firstSocket.once('close', (code) => resolve(code));
+      firstSocket.once('close', (code) => { resolve(code); });
     });
     await new Promise<void>((resolve, reject) => {
       firstSocket.once('open', resolve);
@@ -769,7 +775,7 @@ describe('gateway delivery admission control', () => {
     }));
     await firstAcquireObserved;
 
-    const currentSocket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const currentSocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(currentSocket);
@@ -805,7 +811,9 @@ describe('gateway delivery admission control', () => {
     let recoveryStarted!: () => void;
     const recoveryObserved = new Promise<void>((resolve) => { recoveryStarted = resolve; });
     let calls = 0;
-    vi.mocked(repository.liveDeliveryClaims!).mockImplementation(async () => {
+    const liveDeliveryClaims = repository.liveDeliveryClaims;
+    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
+    vi.mocked(liveDeliveryClaims).mockImplementation(async () => {
       calls += 1;
       if (calls === 1) {
         recoveryStarted();
@@ -822,7 +830,7 @@ describe('gateway delivery admission control', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(socket);
@@ -836,7 +844,7 @@ describe('gateway delivery admission control', () => {
       capabilities: ['acks.v3', 'renewable_delivery_claims_v1'],
     }));
     await recoveryObserved;
-    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    const closed = new Promise<void>((resolve) => socket.once('close', () => { resolve(); }));
     socket.close();
     await closed;
     releaseRecovery();
@@ -854,7 +862,7 @@ describe('gateway delivery admission control', () => {
   it('caps a client-chosen HTTP claim limit at the configured budget', async () => {
     const store = queuedRepository();
     for (let index = 1; index <= 40; index += 1) {
-      store.enqueue(agentDelivery(index, `bulk ${index}`));
+      store.enqueue(agentDelivery(index, `bulk ${String(index)}`));
     }
     const app = await buildGateway({
       pool: fakePool(),
@@ -889,7 +897,7 @@ describe('gateway delivery admission control', () => {
 
   it('shares one durable budget across repeated stateless HTTP polls', async () => {
     const store = queuedRepository();
-    for (let index = 1; index <= 6; index += 1) store.enqueue(agentDelivery(index, `poll ${index}`));
+    for (let index = 1; index <= 6; index += 1) store.enqueue(agentDelivery(index, `poll ${String(index)}`));
     const app = await buildGateway({
       pool: fakePool(), repository: store.repository,
       authProvider: DevOnlyAuthProvider.forTests(), deliveryWakeSubscriber: noDeliveryWakes,

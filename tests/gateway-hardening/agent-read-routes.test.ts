@@ -6,7 +6,7 @@ import {
   FixedAuthProvider, fakeRepository, grants, noDeliveryWakes, testPrincipal,
 } from './helpers.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map(async (app) => app.close()));

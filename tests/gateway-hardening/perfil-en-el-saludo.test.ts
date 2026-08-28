@@ -86,7 +86,7 @@ describe('el esquema del saludo acepta el perfil sin romper a quien no lo espera
   });
 });
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
@@ -134,12 +134,12 @@ async function hello(
   requestedCapabilities: readonly string[],
 ): Promise<WsOutbound> {
   const port = (app.server.address() as AddressInfo).port;
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': alias },
   });
   sockets.push(socket);
   const frame = new Promise<WsOutbound>((resolve, reject) => {
-    const deadline = setTimeout(() => reject(new Error('hello_ack timed out')), 5_000);
+    const deadline = setTimeout(() => { reject(new Error('hello_ack timed out')); }, 5_000);
     deadline.unref();
     socket.once('message', (data) => {
       clearTimeout(deadline);

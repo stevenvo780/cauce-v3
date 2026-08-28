@@ -8,7 +8,7 @@ import {
   FixedAuthProvider, fakePool, fakeRepository, grants, ids, noDeliveryWakes, roles, testPrincipal
 } from './helpers.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map(async (app) => app.close()));
@@ -828,7 +828,7 @@ describe('proactive egress endpoint', () => {
     const repository = fakeRepository();
     repository.principalAccess = vi.fn(async () => ({
       roles: ['agent'],
-      permissions: ['route', 'read', 'notify'] as Array<'route' | 'read' | 'control' | 'notify'>
+      permissions: ['route', 'read', 'notify'] as ('route' | 'read' | 'control' | 'notify')[]
     }));
     repository.listNotifications = vi.fn(async () => ({
       items: [

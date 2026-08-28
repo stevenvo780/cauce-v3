@@ -26,7 +26,7 @@ async function registryDirectory(): Promise<string> {
   return directory;
 }
 
-function document(records: Array<Record<string, unknown>>): string {
+function document(records: Record<string, unknown>[]): string {
   return JSON.stringify({ version: 1, identities: records.map((record) => ({ ...record, principal })) });
 }
 
@@ -110,7 +110,7 @@ function readOnlyDirectoryBinds(block: string): string[] {
   const entries = block.split(/^ {6}- (?=type: bind$)/m).slice(1);
   for (const entry of entries) {
     const target = /^ {8}target: (\S+)$/m.exec(entry);
-    if (target && /^ {8}read_only: true$/m.test(entry)) targets.push(target[1]!);
+    if (target?.[1] && /^ {8}read_only: true$/m.test(entry)) targets.push(target[1]);
   }
   return targets;
 }
@@ -120,7 +120,7 @@ describe('deployed identity registries are mounted as a directory', () => {
     const compose = await readFile(composePath, 'utf8');
     const gateway = serviceBlock(compose, 'gateway');
     const registries = [...gateway.matchAll(/^ {6}(CAUCE_\w*(?:IDENTITY|HASH)\w*FILE): (\S+)$/gm)]
-      .map(([, name, path]) => ({ name: name!, path: path! }));
+      .flatMap(([, name, path]) => (name && path ? [{ name, path }] : []));
     expect(registries.map((entry) => entry.name).sort())
       .toEqual(['CAUCE_MTLS_IDENTITY_FILE', 'CAUCE_TOKEN_HASH_FILE']);
 

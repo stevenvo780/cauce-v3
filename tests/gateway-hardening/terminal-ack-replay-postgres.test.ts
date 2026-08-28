@@ -42,20 +42,20 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 async function connect(port: number): Promise<{
   socket: WebSocket;
   next: () => Promise<Record<string, unknown>>;
 }> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'argos' },
   });
   sockets.push(socket);
   const queued: Record<string, unknown>[] = [];
-  const waiting: Array<(frame: Record<string, unknown>) => void> = [];
+  const waiting: ((frame: Record<string, unknown>) => void)[] = [];
   socket.on('message', (data) => {
     const frame = JSON.parse(text(data)) as Record<string, unknown>;
     const resolve = waiting.shift();
@@ -173,7 +173,7 @@ it('replays a committed terminal ACK through epoch N+1 with identical feedback',
 
   // The DB commit is complete but the gateway cannot obtain the result yet. Terminating here
   // deterministically loses the ack_result frame instead of merely choosing not to assert it.
-  const firstClosed = new Promise<void>((resolveClose) => first.socket.once('close', () => resolveClose()));
+  const firstClosed = new Promise<void>((resolveClose) => first.socket.once('close', () => { resolveClose(); }));
   first.socket.terminate();
   await firstClosed;
   releaseFirstResult?.();

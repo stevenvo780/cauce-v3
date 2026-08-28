@@ -6,7 +6,7 @@ import { buildGateway, type DeliveryClaimRecord } from '../../services/gateway/s
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes, text } from './helpers.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
@@ -15,7 +15,7 @@ afterEach(async () => {
 
 function frameReader(socket: WebSocket): () => Promise<Record<string, unknown>> {
   const queued: Record<string, unknown>[] = [];
-  const waiting: Array<(value: Record<string, unknown>) => void> = [];
+  const waiting: ((value: Record<string, unknown>) => void)[] = [];
   socket.on('message', (data) => {
     const decoded = JSON.parse(text(data)) as Record<string, unknown>;
     const resolve = waiting.shift();
@@ -67,7 +67,7 @@ describe('gateway WebSocket ACK correlation', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
     });
     sockets.push(socket);
@@ -152,7 +152,7 @@ describe('gateway WebSocket ACK correlation', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
     });
     sockets.push(socket);
@@ -167,14 +167,14 @@ describe('gateway WebSocket ACK correlation', () => {
     }));
     expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
 
-    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    const closed = new Promise<void>((resolve) => socket.once('close', () => { resolve(); }));
     socket.close(1000, 'transient disconnect');
     await closed;
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(repository.releaseLease).not.toHaveBeenCalled();
 
-    const legacySocket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const legacySocket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
     });
     sockets.push(legacySocket);
@@ -188,7 +188,7 @@ describe('gateway WebSocket ACK correlation', () => {
       instance_id: 'legacy-consumer', capabilities: ['acks.v3']
     }));
     expect(await nextLegacyFrame()).toMatchObject({ type: 'hello_ack', epoch: 1 });
-    const legacyClosed = new Promise<void>((resolve) => legacySocket.once('close', () => resolve()));
+    const legacyClosed = new Promise<void>((resolve) => legacySocket.once('close', () => { resolve(); }));
     legacySocket.close(1000, 'legacy disconnect');
     await legacyClosed;
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -247,7 +247,7 @@ describe('gateway WebSocket ACK correlation', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
     });
     sockets.push(socket);
@@ -284,7 +284,7 @@ describe('gateway WebSocket ACK correlation', () => {
       epoch: 1
     }));
     await ackEntered;
-    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    const closed = new Promise<void>((resolve) => socket.once('close', () => { resolve(); }));
     socket.close(1000, 'legacy disconnect');
     await closed;
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -327,7 +327,7 @@ describe('gateway WebSocket ACK correlation', () => {
       socket: WebSocket;
       nextFrame: () => Promise<Record<string, unknown>>;
     }> => {
-      const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+      const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
         headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
       });
       sockets.push(socket);
@@ -348,7 +348,7 @@ describe('gateway WebSocket ACK correlation', () => {
       return { socket, nextFrame };
     };
     const disconnect = async (socket: WebSocket): Promise<void> => {
-      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      const closed = new Promise<void>((resolve) => socket.once('close', () => { resolve(); }));
       socket.close(1000, 'transient disconnect');
       await closed;
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -400,7 +400,7 @@ describe('gateway WebSocket ACK correlation', () => {
 
     const legacy = await connect(['acks.v3']);
     const legacyClosed = new Promise<{ code: number; reason: string }>((resolve) => {
-      legacy.socket.once('close', (code, reason) => resolve({ code, reason: reason.toString('utf8') }));
+      legacy.socket.once('close', (code, reason) => { resolve({ code, reason: reason.toString('utf8') }); });
     });
     legacy.socket.send(JSON.stringify({
       type: 'ack',
@@ -484,7 +484,7 @@ describe('gateway WebSocket ACK correlation', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
     });
     sockets.push(socket);
@@ -572,7 +572,7 @@ describe('gateway WebSocket ACK correlation', () => {
     apps.push(app);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const port = (app.server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
     });
     sockets.push(socket);
@@ -588,7 +588,7 @@ describe('gateway WebSocket ACK correlation', () => {
     expect(await nextFrame()).toMatchObject({ type: 'hello_ack', epoch: 2 });
     if (hasCurrentClaim) expect(await nextFrame()).toMatchObject({ type: 'delivery', delivery_id: ids.delivery });
     const closed = new Promise<{ code: number; reason: string }>((resolve) => {
-      socket.once('close', (code, reason) => resolve({ code, reason: reason.toString('utf8') }));
+      socket.once('close', (code, reason) => { resolve({ code, reason: reason.toString('utf8') }); });
     });
 
     socket.send(JSON.stringify({

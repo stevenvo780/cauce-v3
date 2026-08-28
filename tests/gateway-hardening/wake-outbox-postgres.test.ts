@@ -26,8 +26,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await observer?.end();
-  await database?.container.stop();
+  await observer.end();
+  await database.container.stop();
 });
 
 beforeEach(async () => {
@@ -48,7 +48,7 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_00
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
+  throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
 
 async function start(pool: DatabasePool, repository: CauceRepository): Promise<{
@@ -76,13 +76,13 @@ async function connect(port: number, tenant: Tenant, alias: string, instanceId: 
   received: Record<string, unknown>[];
   hello: Record<string, unknown>;
 }> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': tenant, 'x-cauce-alias': alias },
   });
   sockets.push(socket);
   const received: Record<string, unknown>[] = [];
   const queued: Record<string, unknown>[] = [];
-  const waiting: Array<(frame: Record<string, unknown>) => void> = [];
+  const waiting: ((frame: Record<string, unknown>) => void)[] = [];
   socket.on('message', (data) => {
     const frame = JSON.parse(text(data)) as Record<string, unknown>;
     received.push(frame);
@@ -192,12 +192,12 @@ describe('gateway wake fencing against real PostgreSQL', () => {
       const startedAt = Date.now();
       await expect(Promise.race([
         gateway.app.close().then(() => 'closed' as const),
-        new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 2_000)),
+        new Promise<'timed-out'>((resolve) => setTimeout(() => { resolve('timed-out'); }, 2_000)),
       ])).resolves.toBe('closed');
       apps.splice(apps.indexOf(gateway.app), 1);
       await expect(Promise.race([
         dedicated.end().then(() => 'ended' as const),
-        new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 2_000)),
+        new Promise<'timed-out'>((resolve) => setTimeout(() => { resolve('timed-out'); }, 2_000)),
       ])).resolves.toBe('ended');
       expect(Date.now() - startedAt).toBeLessThan(2_000);
       await waitFor(async () => (await observer.query<{ alive: boolean }>(

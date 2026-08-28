@@ -11,7 +11,7 @@ import {
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, text } from './helpers.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
 const pendingReleases = new Set<() => void>();
 let eventSequence = 0;
@@ -27,7 +27,7 @@ function frameReader(
   received: Record<string, unknown>[]
 ): () => Promise<Record<string, unknown>> {
   const queued: Record<string, unknown>[] = [];
-  const waiting: Array<(value: Record<string, unknown>) => void> = [];
+  const waiting: ((value: Record<string, unknown>) => void)[] = [];
   socket.on('message', (data) => {
     const decoded = JSON.parse(text(data)) as Record<string, unknown>;
     received.push(decoded);
@@ -48,7 +48,7 @@ async function waitFor(check: () => boolean, timeoutMs = 2_000): Promise<void> {
     if (check()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
+  throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
 
 function wakeEvent(
@@ -70,7 +70,7 @@ function wakeEvent(
     request_id: `30000000-0000-4000-8000-${suffix}`,
     message_id: `10000000-0000-4000-8000-${suffix}`,
     delivery_id: `20000000-0000-4000-8000-${suffix}`,
-    trace_id: `trace-selective-wake-${eventSequence}`,
+    trace_id: `trace-selective-wake-${String(eventSequence)}`,
     origin: null,
     payload: { recipient_alias: alias, reason: 'delivery_available' },
     attempts: attempt,
@@ -153,7 +153,7 @@ async function connect(
   next: () => Promise<Record<string, unknown>>;
   received: Record<string, unknown>[];
 }> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': tenantId, 'x-cauce-alias': alias }
   });
   sockets.push(socket);
@@ -319,7 +319,8 @@ describe('gateway selective durable wake routing', () => {
     repository.claimWakeOutbox = vi.fn<GatewayRepository['claimWakeOutbox']>(async (worker, recipients) => {
       if (!enabled || emitted) return [];
       emitted = true;
-      const recipient = recipients[0]!;
+      const recipient = recipients[0];
+      if (!recipient) return [];
       return [wakeEvent(worker, recipient.tenant_id, recipient.alias, 1, new Date(Date.now() - 1))];
     });
     repository.ackOutbox = vi.fn<NonNullable<GatewayRepository['ackOutbox']>>(
@@ -346,7 +347,8 @@ describe('gateway selective durable wake routing', () => {
     repository.claimWakeOutbox = vi.fn<GatewayRepository['claimWakeOutbox']>(async (worker, recipients) => {
       if (!enabled || emitted) return [];
       emitted = true;
-      const recipient = recipients[0]!;
+      const recipient = recipients[0];
+      if (!recipient) return [];
       return [wakeEvent(worker, recipient.tenant_id, recipient.alias)];
     });
     repository.ackOutbox = vi.fn<NonNullable<GatewayRepository['ackOutbox']>>(
@@ -358,7 +360,9 @@ describe('gateway selective durable wake routing', () => {
         return { status: 'sent', applied: false };
       }
     );
-    const complete = vi.mocked(repository.completeOutbox!);
+    const completeOutboxFn = repository.completeOutbox;
+    if (!completeOutboxFn) throw new Error('Expected completeOutbox on repository');
+    const complete = vi.mocked(completeOutboxFn);
     const { app, port } = await start(repository, { wakePumpTelemetry: telemetry });
     const error = vi.spyOn(app.log, 'error');
     connection = await connect(port, 'Steven', 'kant', 'fenced-ack');
@@ -387,7 +391,8 @@ describe('gateway selective durable wake routing', () => {
     let claimEntered = false;
     let releaseClaim: (() => void) | undefined;
     repository.claimWakeOutbox = vi.fn<GatewayRepository['claimWakeOutbox']>(async (worker, recipients) => {
-      const recipient = recipients[0]!;
+      const recipient = recipients[0];
+      if (!recipient) return [];
       if (!enabled || recipient.tenant_id !== 'Steven' || recipient.alias !== 'midas'
           || (status !== 'pending' && status !== 'failed')) return [];
       status = 'processing';
@@ -412,7 +417,7 @@ describe('gateway selective durable wake routing', () => {
     enabled = true;
     await waitFor(() => claimEntered);
 
-    const closed = new Promise<void>((resolve) => raced.socket.once('close', () => resolve()));
+    const closed = new Promise<void>((resolve) => raced.socket.once('close', () => { resolve(); }));
     raced.socket.close(1000, 'race after wake claim');
     await closed;
     releaseClaim?.();
@@ -445,11 +450,13 @@ describe('gateway selective durable wake routing', () => {
     repository.claimWakeOutbox = claim;
     const { port } = await start(repository, { outboxPollMs: 20 });
     await Promise.all(Array.from({ length: 15 }, async (_, index) =>
-      connect(port, 'Steven', `agent-${index}`, `instance-${index}`)));
+      connect(port, 'Steven', `agent-${String(index)}`, `instance-${String(index)}`)));
     claim.mockClear();
 
     await waitFor(() => claim.mock.calls.length > 0);
-    const firstCycle = claim.mock.calls[0]!;
+    const firstCycle = claim.mock.calls[0];
+    expect(firstCycle).toBeDefined();
+    if (!firstCycle) throw new Error('Expected claim to be called');
     expect(firstCycle[1]).toHaveLength(15);
     expect(firstCycle[2]).toBe(15);
     const identities = firstCycle[1].map((recipient) =>
@@ -467,13 +474,14 @@ describe('gateway selective durable wake routing', () => {
     ) => {
       if (!enabled) return [];
       claimEntered = true;
-      const recipient = recipients[0]!;
+      const recipient = recipients[0];
+      if (!recipient) return [];
       await new Promise<void>((resolve) => {
         if (signal?.aborted) {
           resolve();
           return;
         }
-        signal?.addEventListener('abort', () => resolve(), { once: true });
+        signal?.addEventListener('abort', () => { resolve(); }, { once: true });
       });
       if (signal?.aborted) return [];
       return [wakeEvent(worker, recipient.tenant_id, recipient.alias)];
@@ -496,7 +504,7 @@ describe('gateway selective durable wake routing', () => {
     const outcome = await Promise.race([
       app.close().then(() => 'closed' as const),
       new Promise<'timed-out'>((resolve) => {
-        closeGuard = setTimeout(() => resolve('timed-out'), 500);
+        closeGuard = setTimeout(() => { resolve('timed-out'); }, 500);
       })
     ]);
     if (closeGuard !== undefined) clearTimeout(closeGuard);

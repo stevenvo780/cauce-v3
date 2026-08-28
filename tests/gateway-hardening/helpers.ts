@@ -83,7 +83,7 @@ export function fakeRepository(): GatewayRepository {
     assertPrincipal: vi.fn(async () => undefined),
     assertPermission: vi.fn(async () => undefined),
     principalAccess: vi.fn(async () => ({
-      roles: ['operator'], permissions: ['route', 'read', 'control'] as Array<'route' | 'read' | 'control'>
+      roles: ['operator'], permissions: ['route', 'read', 'control'] as ('route' | 'read' | 'control')[]
     })),
     status: vi.fn(async () => ({ online: 0, queued: 0, dead_letters: 0, outbox_pending: 0 })),
     listPresence: vi.fn(async () => []),
@@ -198,7 +198,7 @@ export function fakeRepository(): GatewayRepository {
       return {
         applied: !dryRun, dry_run: dryRun, revision: revisionId,
         rolled_back_revision_id: revisionId,
-        summary: `rollback ${revisionId}`, mutation, inverse_mutation: mutation,
+        summary: `rollback ${String(revisionId)}`, mutation, inverse_mutation: mutation,
       };
     }),
     getMessage: vi.fn(async () => ({
@@ -250,8 +250,8 @@ export function text(data: import('ws').RawData): string {
 }
 
 export async function closeGatewaysAndSockets(
-  apps: Array<{ close(): Promise<unknown> }>,
-  sockets: Array<{ close(): void }>,
+  apps: { close(): Promise<unknown> }[],
+  sockets: { close(): void }[],
 ): Promise<void> {
   for (const socket of sockets.splice(0)) socket.close();
   await Promise.all(apps.splice(0).map(async (app) => app.close()));

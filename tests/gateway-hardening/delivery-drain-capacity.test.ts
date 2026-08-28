@@ -17,7 +17,7 @@ import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes
 // drained after a 'retry' ACK: with a cap, that leaves a queue of 90 waiting for someone to
 // publish the 91st.
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
@@ -26,7 +26,7 @@ afterEach(async () => {
 
 function frameReader(socket: WebSocket): () => Promise<Record<string, unknown>> {
   const queued: Record<string, unknown>[] = [];
-  const waiting: Array<(value: Record<string, unknown>) => void> = [];
+  const waiting: ((value: Record<string, unknown>) => void)[] = [];
   socket.on('message', (data) => {
     const decoded = JSON.parse(text(data)) as Record<string, unknown>;
     const resolve = waiting.shift();
@@ -66,7 +66,7 @@ async function connect(
   apps.push(app);
   await app.listen({ host: '127.0.0.1', port: 0 });
   const port = (app.server.address() as AddressInfo).port;
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
   });
   sockets.push(socket);
@@ -197,7 +197,10 @@ describe('drain keeps moving when capacity is what gates the claim', () => {
   it('defaults the batch size to a real number rather than undefined', async () => {
     const repository = fakeRepository();
     await connect(repository);
-    const [, , , , limit, , , admission] = vi.mocked(repository.claimDeliveries).mock.calls[0]!;
+    const firstCall = vi.mocked(repository.claimDeliveries).mock.calls[0];
+    expect(firstCall).toBeDefined();
+    if (!firstCall) throw new Error('Expected claimDeliveries to be called');
+    const [, , , , limit, , , admission] = firstCall;
     // With the defaults the batch equals the total capacity (2 general + 2 human).
     expect(limit).toBe(DEFAULT_MAX_INFLIGHT_DELIVERIES + DEFAULT_HUMAN_RESERVED_DELIVERIES);
     expect(admission).toEqual({

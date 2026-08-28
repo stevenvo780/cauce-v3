@@ -30,7 +30,7 @@ import { buildGateway } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes, text } from './helpers.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
 
 afterEach(async () => {
@@ -99,13 +99,13 @@ async function connectAdapter(capabilities: readonly string[]): Promise<{
   apps.push(app);
   await app.listen({ host: '127.0.0.1', port: 0 });
   const port = (app.server.address() as AddressInfo).port;
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/v3/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/v3/ws`, {
     headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
   });
   sockets.push(socket);
 
   const queued: WsOutbound[] = [];
-  const waiting: Array<(value: WsOutbound) => void> = [];
+  const waiting: ((value: WsOutbound) => void)[] = [];
   const failures: unknown[] = [];
   socket.on('message', (data) => {
     // THIS is the line that was missing. `websocket-transport.ts` does exactly this with every
@@ -138,7 +138,7 @@ async function connectAdapter(capabilities: readonly string[]): Promise<{
       const deadline = setTimeout(() => {
         reject(new Error(
           failures.length > 0
-            ? `el adaptador rechazó ${failures.length} frame(s) del gateway: ${String(failures[0])}`
+            ? `el adaptador rechazó ${String(failures.length)} frame(s) del gateway: ${String(failures[0])}`
             : 'el gateway no mandó ningún frame'
         ));
       }, 5_000);

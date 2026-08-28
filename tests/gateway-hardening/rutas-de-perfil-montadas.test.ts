@@ -12,7 +12,7 @@ import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, r
  * responding from their own handlers.
  */
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const ORIGIN = 'http://localhost';
 
 afterEach(async () => {
