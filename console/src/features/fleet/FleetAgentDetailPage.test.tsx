@@ -85,6 +85,6 @@ it('keeps the global refresh busy until the slowest resource, including targets,
 
   expect(await screen.findByRole('button', { name: /actualizando/i })).toBeDisabled();
   releaseTargets?.();
-  await waitFor(() => expect(screen.getByRole('button', { name: /^actualizar$/i })).toBeEnabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^actualizar$/i })).toBeEnabled(); });
   expect(targetReads).toBeGreaterThanOrEqual(2);
 });

@@ -38,7 +38,7 @@ export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; err
         <small>
           {error
             ? 'No se pudo leer el manifest'
-            : `${adapters.length} ${adapters.length === 1 ? 'tipo de arnés' : 'tipos de arnés'}`}
+            : `${String(adapters.length)} ${adapters.length === 1 ? 'tipo de arnés' : 'tipos de arnés'}`}
         </small>
       </summary>
       <p className="harness-note">

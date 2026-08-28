@@ -17,13 +17,13 @@ const HISTORIAL = /historial y json/i;
 const AGENTES = /agentes y cuentas/i;
 
 function rotulo(celda: HTMLElement): string {
-  return (celda.textContent ?? '').replace(/[?:].*/s, '').trim();
+  return celda.textContent.replace(/[?:].*/s, '').trim();
 }
 
 function panelDe(nombre: RegExp): HTMLElement {
   const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
   if (!seccion) throw new Error(`El panel ${String(nombre)} no tiene sección`);
-  return seccion as HTMLElement;
+  return seccion;
 }
 
 it('pinta cada colección como TABLA con columnas de verdad y deja el JSON crudo detrás del desplegable', async () => {
@@ -49,7 +49,7 @@ it('deshabilita una membership a un clic, manda la mutación exacta y recién de
 
   await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
   expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument();
-  await waitFor(() => expect(changes).toHaveLength(1));
+  await waitFor(() => { expect(changes).toHaveLength(1); });
   expect(changes[0]).toEqual({
     dry_run: false,
     expected_revision: 1,
@@ -298,8 +298,12 @@ it('FAMILIA 7: la confirmación es un diálogo de verdad — el foco entra, ESC 
   const dialogo = screen.getByRole('dialog');
   expect(dialogo).toHaveAttribute('aria-modal', 'true');
   expect(dialogo.contains(document.activeElement)).toBe(true);
-  expect(document.querySelector('.app-shell')).toHaveAttribute('inert');
-  expect(document.querySelector('.app-shell')!.contains(dialogo)).toBe(false);
+  const appShell = document.querySelector('.app-shell');
+  expect(appShell).not.toBeNull();
+  if (appShell) {
+    expect(appShell).toHaveAttribute('inert');
+    expect(appShell.contains(dialogo)).toBe(false);
+  }
 
   await user.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -318,10 +322,12 @@ it('FAMILIA 7: el JSON va detrás de un desplegable cerrado y los dos botones vi
 
   const detalle = dialogo.querySelector('details');
   expect(detalle, 'el JSON tiene que estar detrás de un desplegable').not.toBeNull();
-  expect(detalle!.open).toBe(false);
-  expect(detalle!.contains(screen.getByLabelText('Mutación a aplicar'))).toBe(true);
+  if (detalle) {
+    expect(detalle.open).toBe(false);
+    expect(detalle.contains(screen.getByLabelText('Mutación a aplicar'))).toBe(true);
 
-  for (const nombre of ['Confirmar', 'Cancelar']) {
-    expect(detalle!.contains(screen.getByRole('button', { name: nombre }))).toBe(false);
+    for (const nombre of ['Confirmar', 'Cancelar']) {
+      expect(detalle.contains(screen.getByRole('button', { name: nombre }))).toBe(false);
+    }
   }
 });

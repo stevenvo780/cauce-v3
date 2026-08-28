@@ -52,7 +52,7 @@ it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el mot
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
-  await waitFor(() => expect(lateral).toHaveAttribute('aria-disabled', 'true'));
+  await waitFor(() => { expect(lateral).toHaveAttribute('aria-disabled', 'true'); });
   expect(lateral).toHaveAttribute('title', expect.stringContaining('permiso de control'));
 
   await userEvent.click(lateral);
@@ -67,7 +67,7 @@ it('control negativo: con el permiso puesto, esa misma entrada sí navega', asyn
 
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   const lateral = within(nav).getByRole('link', { name: /ajustes y altas/i });
-  await waitFor(() => expect(lateral).not.toHaveAttribute('aria-disabled'));
+  await waitFor(() => { expect(lateral).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(lateral);
   expect(window.location.pathname).toBe('/config');
 });

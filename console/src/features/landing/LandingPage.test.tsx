@@ -35,9 +35,12 @@ it('resume la consola entera: flota, colas y cuotas, con los números PRIMERO', 
   // 1280×900, las ocho bandas de aviso ocupaban ~580 px y empujaban los cuatro números fuera del
   // borde inferior: el resumen de conjunto no se veía al entrar al resumen de conjunto.
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
-  const numeros = screen.getByText('99').closest('.metrics-grid')!;
-  // `compareDocumentPosition` con FOLLOWING = los números están antes que la banda.
-  expect(numeros.compareDocumentPosition(banda) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const numeros = screen.getByText('99').closest('.metrics-grid');
+  expect(numeros).not.toBeNull();
+  if (numeros) {
+    // `compareDocumentPosition` con FOLLOWING = los números están antes que la banda.
+    expect(numeros.compareDocumentPosition(banda) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
 });
 
 it('no imprime rutas de endpoint en la pantalla del operador: van al title=', async () => {

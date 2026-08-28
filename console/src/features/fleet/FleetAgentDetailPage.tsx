@@ -55,7 +55,7 @@ export function FleetAgentDetailPage({ tenantId, alias }: FleetAgentDetailPagePr
       <a
         className="button small secondary"
         href="/fleet"
-        onClick={(event) => onNavClick(event, '/fleet')}
+        onClick={(event) => { onNavClick(event, '/fleet'); }}
       ><ArrowLeft size={14} aria-hidden="true" /> Volver a Fleet</a>
       {fleetLoading ? <LoadingState label={`Cargando detalle de ${alias}…`} /> : fleetError && !agent ? (
         <ErrorState error={fleetError} onRetry={refreshAll} />

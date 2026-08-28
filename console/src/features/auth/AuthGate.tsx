@@ -1,5 +1,5 @@
 import { KeyRound, LogIn, LogOut, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type SyntheticEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import type { ConsoleAuthState } from '../../api/types';
 import { timestamp } from '../../lib';
@@ -53,7 +53,7 @@ function PasswordLoginForm({ login, busy, reason }: {
   const [password, setPassword] = useState('');
   const [failure, setFailure] = useState<string>();
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFailure(undefined);
     try {
@@ -77,12 +77,12 @@ function PasswordLoginForm({ login, busy, reason }: {
           <label htmlFor="auth-email">Correo</label>
           <input
             id="auth-email" name="email" type="email" autoComplete="username" required
-            value={email} onChange={(event) => setEmail(event.target.value)} disabled={busy}
+            value={email} onChange={(event) => { setEmail(event.target.value); }} disabled={busy}
           />
           <label htmlFor="auth-password">Contraseña</label>
           <input
             id="auth-password" name="password" type="password" autoComplete="current-password" required
-            value={password} onChange={(event) => setPassword(event.target.value)} disabled={busy}
+            value={password} onChange={(event) => { setPassword(event.target.value); }} disabled={busy}
           />
           {failure ? <p className="auth-failure" role="alert">{failure}</p> : null}
           <button className="button auth-primary" type="submit" disabled={busy}>
@@ -155,14 +155,14 @@ export function SessionBadge({ state, status, busy, onLogout }: {
       </span>
     );
   }
-  if (status !== 'in') return null;
+  if (status !== 'in' || !state) return null;
   return (
     <div className="auth-state authenticated">
       <ShieldCheck size={14} aria-hidden="true" />
       <span>
-        <strong>{state?.name || state?.subject || 'identidad verificada'}</strong>
-        {state?.name && state?.subject ? <small>{state.subject}</small> : null}
-        {state?.expires_at ? <small>vence {timestamp(state.expires_at)}</small> : null}
+        <strong>{state.name ?? state.subject ?? 'identidad verificada'}</strong>
+        {state.name && state.subject ? <small>{state.subject}</small> : null}
+        {state.expires_at ? <small>vence {timestamp(state.expires_at)}</small> : null}
       </span>
       <button className="button small secondary" type="button" disabled={busy} onClick={onLogout}>
         <LogOut size={14} aria-hidden="true" /> {busy ? 'Cerrando…' : 'Cerrar sesión'}
@@ -200,7 +200,7 @@ export function AuthGate({ children }: { children: (gate: AuthGateState) => Reac
     // Sin `login_mode` se asume redirección: así se comportaba la consola antes de que existiera
     // el login por contraseña, y un gateway viejo tiene que seguir entrando por su camino.
     return gate.state?.login_mode === 'password'
-      ? <PasswordLoginForm login={gate.login} busy={gate.busy} reason={gate.state?.reason} />
+      ? <PasswordLoginForm login={gate.login} busy={gate.busy} reason={gate.state.reason} />
       : <RedirectLoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;
   }
   return <>{children(gate)}</>;

@@ -15,7 +15,7 @@ const JANUS_APAGADA = /Quitar Habilitado en la membresía Miguel\/grp\.miguel\/j
 function panelDe(nombre: RegExp): HTMLElement {
   const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
   if (!seccion) throw new Error(`El panel ${String(nombre)} no tiene sección`);
-  return seccion as HTMLElement;
+  return seccion;
 }
 
 it('previews and applies a default-deny ACL mutation through the protected API', async () => {

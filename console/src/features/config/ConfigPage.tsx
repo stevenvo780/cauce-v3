@@ -118,7 +118,7 @@ interface AccionPendienteVigente extends AccionPendiente {
  * que trajo es la que la pantalla está pintando; si no llegó, el snapshot se quedó donde estaba.
  */
 function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number | undefined): number | undefined {
-  if (recarga && recarga.releido) return recarga.revision;
+  if (recarga?.releido) return recarga.revision;
   return actual;
 }
 
@@ -298,7 +298,7 @@ export function ConfigPage() {
     setPreview(undefined);
     setNotice({
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
-      text: `Cambio atómico aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}: `
+      text: `Cambio atómico aplicado en revisión ${String(outcome.result.revision ?? 'UNKNOWN')}: `
         + `${outcome.result.summary ?? 'UNKNOWN'}.${textoRecarga(outcome.recarga)}`,
     });
   }
@@ -337,7 +337,7 @@ export function ConfigPage() {
       coleccion,
       revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
-      text: `${accion.descripcion}: aplicado en la revisión ${outcome.result.revision ?? 'UNKNOWN'} `
+      text: `${accion.descripcion}: aplicado en la revisión ${String(outcome.result.revision ?? 'UNKNOWN')} `
         + `(${outcome.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(outcome.recarga)}`,
     });
   }
@@ -392,7 +392,7 @@ export function ConfigPage() {
       setAvisoDeRollback({
         tone: recarga.releido ? 'success' : 'parcial',
         text: `Rollback atómico de la revisión ${revisionId} aplicado: revisión `
-          + `${result.revision ?? 'UNKNOWN'}.${textoRecarga(recarga)}`,
+          + `${String(result.revision ?? 'UNKNOWN')}.${textoRecarga(recarga)}`,
       });
     } catch (error) {
       // `rollback`: este camino no previsualiza para aplicar, así que el 409 no puede mandar a
@@ -457,7 +457,7 @@ export function ConfigPage() {
         role="tab"
         aria-selected={entrada.id === areaVisible}
         className="config-tab"
-        onClick={() => irAArea(entrada.id)}
+        onClick={() => { irAArea(entrada.id); }}
       >{entrada.label}</button>)}
     </div>
 
@@ -508,11 +508,11 @@ export function ConfigPage() {
           && avisoDeAccion.revision === snapshotRevision
           ? { text: avisoDeAccion.text, tone: avisoDeAccion.tone }
           : undefined;
-        const aviso: AvisoDeColeccion | undefined = vencida && pedido
+        const aviso: AvisoDeColeccion | undefined = vencida
           ? {
             tone: 'error',
             text: `La confirmación de «${pedido.accion.descripcion}» se anuló sola: la configuración `
-              + `pasó a la revisión ${snapshotRevision ?? 'UNKNOWN'} mientras estaba pendiente, así `
+              + `pasó a la revisión ${String(snapshotRevision ?? 'UNKNOWN')} mientras estaba pendiente, así `
               + 'que lo que ibas a firmar ya no describe la fila que hay. Volvé a pedir el cambio '
               + 'sobre el dato de ahora.',
           }
@@ -524,14 +524,14 @@ export function ConfigPage() {
           soloLectura={soloLectura}
           busy={busy}
           control={interruptores}
-          {...(vigente && pedido ? { pendiente: pedido } : {})}
+          {...(vigente ? { pendiente: pedido } : {})}
           {...(aviso ? { aviso } : {})}
           onPedir={(siguiente) => {
             setAvisoDeAccion(undefined);
             setPendiente({ ...siguiente, revision: snapshotRevision });
           }}
           onConfirmar={() => void confirmarAccion()}
-          onCancelar={() => setPendiente(undefined)}
+          onCancelar={() => { setPendiente(undefined); }}
         />;
       })}
 
@@ -556,7 +556,7 @@ export function ConfigPage() {
       {previewDeRollback ? <pre className="config-preview" aria-label="Preview del rollback">{previewDeRollback}</pre> : null}
 
       {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <div className="table-wrap config-audit"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
-        {config.data.revisions.map((revision, index) => <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id ? <span className="config-actions"><button className="button small" disabled={soloLectura || busy} onClick={() => void rollback(revision.id!, true)}>Preview</button><button className="button small" disabled={soloLectura || busy} onClick={() => void rollback(revision.id!, false)}><RotateCcw size={14} />Rollback</button></span> : <Unknown value={null} />}</td></tr>)}
+        {config.data.revisions.map((revision, index) => <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id ? <span className="config-actions"><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, true); }}>Preview</button><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, false); }}><RotateCcw size={14} />Rollback</button></span> : <Unknown value={null} />}</td></tr>)}
       </tbody></table></div>}
     </Panel>
 
@@ -565,11 +565,11 @@ export function ConfigPage() {
         primero que ve el operador. */}
     <details className="config-editor">
       <summary><Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario</summary>
-      <Panel title="Mutation editor" subtitle={`Revisión esperada: ${expectedRevision ?? 'UNKNOWN'}`}>
+      <Panel title="Mutation editor" subtitle={`Revisión esperada: ${String(expectedRevision ?? 'UNKNOWN')}`}>
         <form className="config-form" onSubmit={(event) => void submit(event, false)}>
-          <label>Resource<select disabled={soloLectura || busy} value={resource} onChange={(event) => selectTemplate(event.target.value as ConfigResource, action)}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>Action<select disabled={soloLectura || busy} value={action} onChange={(event) => selectTemplate(resource, event.target.value as ConfigAction)}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" disabled={soloLectura || busy} rows={12} value={editor} onChange={(event) => editarMutacion(event.target.value)} spellCheck={false} /></label>
+          <label>Resource<select disabled={soloLectura || busy} value={resource} onChange={(event) => { selectTemplate(event.target.value as ConfigResource, action); }}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Action<select disabled={soloLectura || busy} value={action} onChange={(event) => { selectTemplate(resource, event.target.value as ConfigAction); }}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label className="config-json">Mutación JSON<textarea aria-label="Mutación JSON" disabled={soloLectura || busy} rows={12} value={editor} onChange={(event) => { editarMutacion(event.target.value); }} spellCheck={false} /></label>
           <div className="config-actions">
             <button className="button secondary" type="button" disabled={soloLectura || busy} onClick={(event) => void submit(event, true)}><SearchCheck size={16} />Preview / dry-run</button>
             <button className="button primary" type="submit" disabled={soloLectura || busy}><Save size={16} />Aplicar atómico</button>
@@ -643,7 +643,7 @@ function SinPermisoDeControl({ detalle }: { detalle: string }) {
           no cambia nada: falta el permiso, no se cayó Cauce.
         </p>
       </div>
-      <a className="button secondary" href="/" onClick={(event) => onNavClick(event, '/')}>Ir a la portada</a>
+      <a className="button secondary" href="/" onClick={(event) => { onNavClick(event, '/'); }}>Ir a la portada</a>
     </div>
   );
 }

@@ -70,7 +70,9 @@ describe('cada regla dispara sobre su propio campo', () => {
 
   it('un ACK vencido sale de totals.overdue_in_flight y manda a la vista viva', () => {
     const entrada = flotaSana();
-    entrada.activity!.totals!.overdue_in_flight = 2;
+    if (entrada.activity?.totals) {
+      entrada.activity.totals.overdue_in_flight = 2;
+    }
     const alerta = resumenPortada(entrada).alertas.find((item) => item.id === 'ack-vencido');
     expect(alerta?.titulo).toBe('2 entregas con el ACK vencido');
     expect(alerta?.ruta).toBe('/live');
@@ -78,8 +80,10 @@ describe('cada regla dispara sobre su propio campo', () => {
 
   it('un agente detenido y un alias con cola sin consumidor son DOS alertas distintas', () => {
     const entrada = flotaSana();
-    entrada.activity!.totals!.by_state = { stalled: 1 };
-    entrada.activity!.totals!.flagged = { queued_without_consumer: 3 };
+    if (entrada.activity?.totals) {
+      entrada.activity.totals.by_state = { stalled: 1 };
+      entrada.activity.totals.flagged = { queued_without_consumer: 3 };
+    }
     const ids = resumenPortada(entrada).alertas.map((alerta) => alerta.id);
     expect(ids).toContain('agentes-detenidos');
     expect(ids).toContain('cola-sin-consumidor');
@@ -87,11 +91,13 @@ describe('cada regla dispara sobre su propio campo', () => {
 
   it('un proveedor agotado es danger y uno en aviso es warning, y no se pisan', () => {
     const entrada = flotaSana();
-    entrada.quotas!.providers = [
-      { provider: 'codex', severity: 'exhausted' },
-      { provider: 'claude', severity: 'warn' },
-      { provider: 'gemini', severity: 'ok' },
-    ];
+    if (entrada.quotas) {
+      entrada.quotas.providers = [
+        { provider: 'codex', severity: 'exhausted' },
+        { provider: 'claude', severity: 'warn' },
+        { provider: 'gemini', severity: 'ok' },
+      ];
+    }
     const alertas = resumenPortada(entrada).alertas;
     const agotada = alertas.find((alerta) => alerta.id === 'cuota-agotada');
     const aviso = alertas.find((alerta) => alerta.id === 'cuota-en-aviso');
@@ -106,10 +112,12 @@ describe('cada regla dispara sobre su propio campo', () => {
 
   it('un recolector rancio se avisa aunque los porcentajes se vean bien: son viejos, no actuales', () => {
     const entrada = flotaSana();
-    entrada.quotas!.collectors = [
-      { host: 'kratos', stale: false },
-      { host: 'ws-midas', stale: true },
-    ];
+    if (entrada.quotas) {
+      entrada.quotas.collectors = [
+        { host: 'kratos', stale: false },
+        { host: 'ws-midas', stale: true },
+      ];
+    }
     const alerta = resumenPortada(entrada).alertas.find((item) => item.id === 'recolector-rancio');
     expect(alerta?.titulo).toBe('1 recolector de cuotas rancio');
     expect(alerta?.detalle).toContain('ws-midas');
@@ -118,7 +126,9 @@ describe('cada regla dispara sobre su propio campo', () => {
 
   it('una cuenta pausada se avisa porque el enrutado deja de elegirla', () => {
     const entrada = flotaSana();
-    entrada.quotas!.paused_accounts = [{ account_id: 'codex-pro', paused_reason: 'quota_exhausted' }];
+    if (entrada.quotas) {
+      entrada.quotas.paused_accounts = [{ account_id: 'codex-pro', paused_reason: 'quota_exhausted' }];
+    }
     expect(resumenPortada(entrada).alertas.map((alerta) => alerta.id)).toContain('cuentas-pausadas');
   });
 });

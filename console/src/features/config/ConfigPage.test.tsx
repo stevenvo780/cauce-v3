@@ -32,7 +32,7 @@ function snapshotConAgentes() {
 function panelDe(nombre: RegExp): HTMLElement {
   const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
   if (!seccion) throw new Error(`El panel ${String(nombre)} no tiene sección`);
-  return seccion as HTMLElement;
+  return seccion;
 }
 
 it('muestra las colecciones que el servidor publica más allá de las seis históricas', async () => {
@@ -295,7 +295,7 @@ it('FAMILIA 8: la orientación de cada pestaña es UNA frase, y lo que sobra que
 
   const frase = document.querySelector('.config-area-descripcion');
   expect(frase).toHaveTextContent('Los clientes, sus salas y quién está dentro de cada sala.');
-  expect(frase?.textContent?.length ?? 999).toBeLessThanOrEqual(90);
+  expect(frase?.textContent.length ?? 999).toBeLessThanOrEqual(90);
 
   const plegado = document.querySelector('.config-detalle');
   expect(plegado).not.toBeNull();
@@ -345,18 +345,25 @@ it('FAMILIA 8: las columnas de números se marcan para alinearse a la derecha, y
   await screen.findByRole('heading', { level: 1 });
   await irA(user, AVISOS);
 
-  const tabla = (await screen.findByRole('heading', { name: /chain visibility policy/i }))
-    .closest('.panel')!.querySelector('table')!;
-  const cabeceras = [...tabla.querySelectorAll('th')];
-  const numerica = cabeceras.find((th) => /progress_relay_max_events/i.test(th.textContent ?? ''));
-  const texto = cabeceras.find((th) => /^\s*id\s*$/i.test(th.textContent ?? ''));
+  const heading = await screen.findByRole('heading', { name: /chain visibility policy/i });
+  const panel = heading.closest('.panel');
+  expect(panel).not.toBeNull();
+  const tabla = panel?.querySelector('table');
+  expect(tabla).not.toBeNull();
+  if (tabla) {
+    const cabeceras = Array.from(tabla.querySelectorAll('th'));
+    const numerica = cabeceras.find((th) => /progress_relay_max_events/i.test(th.textContent));
+    const texto = cabeceras.find((th) => /^\s*id\s*$/i.test(th.textContent));
 
-  expect(numerica, 'no está la columna numérica del fixture').toBeDefined();
-  expect(numerica).toHaveAttribute('data-numero', 'true');
-  const celda = tabla.querySelectorAll('tbody tr td')[cabeceras.indexOf(numerica!)];
-  expect(celda).toHaveAttribute('data-numero', 'true');
-  expect(celda).toHaveTextContent('8');
+    expect(numerica, 'no está la columna numérica del fixture').toBeDefined();
+    expect(numerica).toHaveAttribute('data-numero', 'true');
+    if (numerica) {
+      const celda = tabla.querySelectorAll('tbody tr td')[cabeceras.indexOf(numerica)];
+      expect(celda).toHaveAttribute('data-numero', 'true');
+      expect(celda).toHaveTextContent('8');
+    }
 
-  expect(texto, 'no está la columna de texto del fixture').toBeDefined();
-  expect(texto).not.toHaveAttribute('data-numero');
+    expect(texto, 'no está la columna de texto del fixture').toBeDefined();
+    expect(texto).not.toHaveAttribute('data-numero');
+  }
 });

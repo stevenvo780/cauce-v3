@@ -3,7 +3,7 @@ const MAX_FIELDS = 8;
 const MAX_DEPTH = 2;
 
 function bounded(value: string, maximum: number): string {
-  const printable = [...value].map((character) => {
+  const printable = Array.from(value).map((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 31 || code === 127 ? ' ' : character;
   }).join('');
@@ -37,8 +37,8 @@ function collect(
       item === null || ['string', 'number', 'boolean'].includes(typeof item)
     ));
     const detail = primitives.length === value.length
-      ? `${primitives.slice(0, 3).map(scalar).join(', ')}${value.length > 3 ? ` (+${value.length - 3})` : ''}`
-      : `${value.length} elementos`;
+      ? `${primitives.slice(0, 3).map(scalar).join(', ')}${value.length > 3 ? ` (+${String(value.length - 3)})` : ''}`
+      : `${String(value.length)} elementos`;
     output.push(prefix ? `${prefix}: ${detail || 'sin elementos'}` : detail || 'sin elementos');
     return;
   }
@@ -52,7 +52,7 @@ function collect(
     return;
   }
   if (depth >= MAX_DEPTH) {
-    output.push(prefix ? `${prefix}: ${entries.length} campos` : `${entries.length} campos`);
+    output.push(prefix ? `${prefix}: ${String(entries.length)} campos` : `${String(entries.length)} campos`);
     return;
   }
   for (const [key, child] of entries) {

@@ -11,7 +11,7 @@ import './toggles.css';
 
 type ModoDeAlta = 'rapida' | 'guiada';
 
-const MODOS: ReadonlyArray<{ id: ModoDeAlta; label: string; nota: string }> = [
+const MODOS: readonly { id: ModoDeAlta; label: string; nota: string }[] = [
   {
     id: 'rapida',
     label: 'Un solo recurso',
@@ -39,7 +39,7 @@ export function AltaDeEspacios({ soloLectura, busy, onChange }: {
         type="button"
         aria-pressed={entrada.id === activo.id}
         className="alta-segmento-boton"
-        onClick={() => setModo(entrada.id)}
+        onClick={() => { setModo(entrada.id); }}
       >{entrada.label}</button>)}
     </div>
     <p className="alta-modo-nota">{activo.nota}</p>

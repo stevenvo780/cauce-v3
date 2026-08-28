@@ -39,7 +39,7 @@ export function CollectionTable({
 }: {
   coleccion: ConfigCollection;
   /** `role_policies` del snapshot: alimenta el selector de rol de las memberships. */
-  politicasDeRol: ReadonlyArray<Record<string, unknown>> | undefined;
+  politicasDeRol: readonly Record<string, unknown>[] | undefined;
   soloLectura: boolean;
   busy: boolean;
   control: ControlDeInterruptores;
@@ -83,7 +83,7 @@ export function CollectionTable({
               operador hasta acá. No se esconden las columnas: el servidor las publica, y esconder
               un dato que existe es la otra forma de mentir sobre lo que hay configurado. */}
           {inertesPresentes.length ? <p className="notice config-inertes" role="note">
-            {inertesPresentes.length === 1 ? 'Una columna de esta tabla se guarda' : `${inertesPresentes.length} columnas de esta tabla se guardan`},
+            {inertesPresentes.length === 1 ? 'Una columna de esta tabla se guarda' : `${String(inertesPresentes.length)} columnas de esta tabla se guardan`},
             {inertesPresentes.length === 1 ? ' se audita y se puede deshacer' : ' se auditan y se pueden deshacer'}, pero
             <strong> no {inertesPresentes.length === 1 ? 'la lee' : 'las lee'} ningún camino de ejecución</strong>:
             {inertesPresentes.length === 1 ? ' va marcada' : ' van marcadas'} «sin efecto» y cada una dice de dónde sale
@@ -169,7 +169,7 @@ function Celda({
   fila: Record<string, unknown>;
   filaId: string;
   indice: number;
-  politicasDeRol: ReadonlyArray<Record<string, unknown>> | undefined;
+  politicasDeRol: readonly Record<string, unknown>[] | undefined;
   soloLectura: boolean;
   busy: boolean;
   control: ControlDeInterruptores;

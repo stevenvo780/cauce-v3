@@ -78,7 +78,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'dlq',
       tono: 'danger',
-      titulo: `${muertas} ${muertas === 1 ? 'entrega muerta' : 'entregas muertas'} en la DLQ`,
+      titulo: `${String(muertas)} ${muertas === 1 ? 'entrega muerta' : 'entregas muertas'} en la DLQ`,
       detalle: 'Cada una es un encargo que nadie va a contestar hasta que alguien la reinyecte.',
       fuente: 'GET /v3/console/queues → dead',
       ruta: '/queues',
@@ -92,7 +92,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'ack-vencido',
       tono: 'danger',
-      titulo: `${vencidas} ${vencidas === 1 ? 'entrega' : 'entregas'} con el ACK vencido`,
+      titulo: `${String(vencidas)} ${vencidas === 1 ? 'entrega' : 'entregas'} con el ACK vencido`,
       detalle: 'El agente que las tomó dejó pasar el plazo para acusar recibo.',
       fuente: 'GET /v3/console/activity → totals.overdue_in_flight',
       ruta: '/live',
@@ -105,7 +105,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'agentes-detenidos',
       tono: 'danger',
-      titulo: `${detenidos} ${detenidos === 1 ? 'agente trabado' : 'agentes trabados'}`,
+      titulo: `${String(detenidos)} ${detenidos === 1 ? 'agente trabado' : 'agentes trabados'}`,
       detalle: 'Tomaron trabajo y dejaron de acusar recibo. En «La flota ahora» son los que salen como «Trabado».',
       fuente: 'GET /v3/console/activity → totals.by_state.stalled',
       ruta: '/live',
@@ -118,7 +118,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'cola-sin-consumidor',
       tono: 'danger',
-      titulo: `${sinConsumidor} ${sinConsumidor === 1 ? 'alias con cola y sin quien la consuma' : 'alias con cola y sin quien la consuma'}`,
+      titulo: `${String(sinConsumidor)} ${sinConsumidor === 1 ? 'alias con cola y sin quien la consuma' : 'alias con cola y sin quien la consuma'}`,
       detalle: 'Libre y sordo se ven igual desde afuera; esto los separa.',
       fuente: 'GET /v3/console/activity → totals.flagged.queued_without_consumer',
       ruta: '/live',
@@ -132,7 +132,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'cuota-agotada',
       tono: 'danger',
-      titulo: `${agotados.length} ${agotados.length === 1 ? 'proveedor sin saldo' : 'proveedores sin saldo'}`,
+      titulo: `${String(agotados.length)} ${agotados.length === 1 ? 'proveedor sin saldo' : 'proveedores sin saldo'}`,
       detalle: `Sin cuota: ${agotados.map((provider) => provider.provider ?? 'un proveedor sin nombre').join(', ')}.`,
       fuente: 'GET /v3/console/quotas → severity=exhausted',
       ruta: '/accounts',
@@ -145,7 +145,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'cuota-en-aviso',
       tono: 'warning',
-      titulo: `${enAviso.length} ${enAviso.length === 1 ? 'proveedor cerca del tope' : 'proveedores cerca del tope'}`,
+      titulo: `${String(enAviso.length)} ${enAviso.length === 1 ? 'proveedor cerca del tope' : 'proveedores cerca del tope'}`,
       detalle: `En aviso: ${enAviso.map((provider) => provider.provider ?? 'un proveedor sin nombre').join(', ')}.`,
       fuente: 'GET /v3/console/quotas → severity=warn',
       ruta: '/accounts',
@@ -162,7 +162,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'recolector-rancio',
       tono: 'warning',
-      titulo: `${rancios.length} ${rancios.length === 1 ? 'recolector de cuotas rancio' : 'recolectores de cuotas rancios'}`,
+      titulo: `${String(rancios.length)} ${rancios.length === 1 ? 'recolector de cuotas rancio' : 'recolectores de cuotas rancios'}`,
       detalle: `Sin datos frescos de: ${rancios.map((collector) => collector.host ?? 'un host sin nombre').join(', ')}. Los porcentajes de esos hosts son viejos, no actuales.`,
       fuente: 'GET /v3/console/quotas → collectors[].stale',
       ruta: '/accounts',
@@ -175,7 +175,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     alertas.push({
       id: 'cuentas-pausadas',
       tono: 'warning',
-      titulo: `${pausadas} ${pausadas === 1 ? 'cuenta pausada' : 'cuentas pausadas'}`,
+      titulo: `${String(pausadas)} ${pausadas === 1 ? 'cuenta pausada' : 'cuentas pausadas'}`,
       detalle: 'Mientras dure la pausa, el enrutado no las va a elegir.',
       fuente: 'GET /v3/console/quotas → paused_accounts',
       ruta: '/accounts',

@@ -34,7 +34,7 @@ function panelDe(titulo: RegExp): HTMLElement {
   const encabezado = screen.getByRole('heading', { name: titulo });
   const panel = encabezado.closest('section') ?? encabezado.closest('div');
   if (!panel) throw new Error(`no encontré el panel de ${String(titulo)}`);
-  return panel as HTMLElement;
+  return panel;
 }
 
 /**
@@ -140,7 +140,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     // Arista (fundida) + los tres permisos + habilitado + alta, y las cinco de `role_policies`.
     expect(cabeceras.length, 'sin cabeceras el bucle de abajo no comprueba nada').toBeGreaterThanOrEqual(10);
     for (const cabecera of cabeceras) {
-      expect(cabecera, `${cabecera.textContent ?? ''} no debería estar marcada`)
+      expect(cabecera, `${cabecera.textContent} no debería estar marcada`)
         .not.toHaveTextContent(MARCA_INERTE);
     }
   });

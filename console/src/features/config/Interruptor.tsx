@@ -107,7 +107,7 @@ export function FilaDeFallo({ fallo, columnas, control, busy }: {
       </p>
       <button
         type="button" className="button small" disabled={busy}
-        onClick={() => control.reintentar(fallo.interruptor.clave)}
+        onClick={() => { control.reintentar(fallo.interruptor.clave); }}
       ><RotateCcw size={13} aria-hidden="true" />Reintentar</button>
     </td>
   </tr>;

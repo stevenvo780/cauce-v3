@@ -82,7 +82,7 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
     const fallo = desenlace.recarga && !desenlace.recarga.releido;
     setAviso({
       tone: fallo ? 'parcial' : 'success',
-      text: `${TITULOS_ALTA[recurso]} creado en la revisión ${desenlace.result.revision ?? 'UNKNOWN'}`
+      text: `${TITULOS_ALTA[recurso]} creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
         + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`,
     });
     // El recurso YA existe: dejar los campos llenos rearma «Crear» sobre él y el segundo clic se
@@ -105,37 +105,37 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
         {...inerte}
         aria-label="Recurso a crear"
         value={recurso}
-        onChange={(event) => cambiarRecurso(event.target.value as RecursoAlta)}
+        onChange={(event) => { cambiarRecurso(event.target.value as RecursoAlta); }}
       >{RECURSOS_ALTA.map((item) => <option key={item} value={item}>{TITULOS_ALTA[item]}</option>)}</select></label>
 
       {recurso === 'tenant' || recurso === 'room' || recurso === 'membership'
-        ? <label>Tenant<input {...inerte} aria-label="Tenant" value={borrador.tenantId} onChange={(event) => editar({ tenantId: event.target.value })} /></label>
+        ? <label>Tenant<input {...inerte} aria-label="Tenant" value={borrador.tenantId} onChange={(event) => { editar({ tenantId: event.target.value }); }} /></label>
         : null}
       {recurso === 'room' || recurso === 'membership'
-        ? <label>Room<input {...inerte} aria-label="Room" value={borrador.roomId} onChange={(event) => editar({ roomId: event.target.value })} /></label>
+        ? <label>Room<input {...inerte} aria-label="Room" value={borrador.roomId} onChange={(event) => { editar({ roomId: event.target.value }); }} /></label>
         : null}
       {recurso === 'membership' ? <>
-        <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => editar({ alias: event.target.value })} /></label>
+        <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
         <label>Rol <span className="label-hint">route/read/control salen de role_policies</span>
-          <input {...inerte} aria-label="Rol" value={borrador.role} onChange={(event) => editar({ role: event.target.value })} /></label>
+          <input {...inerte} aria-label="Rol" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
       </> : null}
       {recurso === 'tenant' || recurso === 'room'
         ? <label>Nombre <span className="label-hint">opcional, null si queda vacío</span>
-          <input {...inerte} aria-label="Nombre" value={borrador.nombre} onChange={(event) => editar({ nombre: event.target.value })} /></label>
+          <input {...inerte} aria-label="Nombre" value={borrador.nombre} onChange={(event) => { editar({ nombre: event.target.value }); }} /></label>
         : null}
       {recurso === 'tenant'
-        ? <label className="casilla"><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => editar({ esHub: event.target.checked })} /> Es hub</label>
+        ? <label className="casilla"><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es hub</label>
         : null}
       {recurso === 'acl_edge' ? <>
-        <label>Desde el tenant<input {...inerte} aria-label="Desde el tenant" value={borrador.desde} onChange={(event) => editar({ desde: event.target.value })} /></label>
-        <label>Hacia el tenant<input {...inerte} aria-label="Hacia el tenant" value={borrador.hacia} onChange={(event) => editar({ hacia: event.target.value })} /></label>
+        <label>Desde el tenant<input {...inerte} aria-label="Desde el tenant" value={borrador.desde} onChange={(event) => { editar({ desde: event.target.value }); }} /></label>
+        <label>Hacia el tenant<input {...inerte} aria-label="Hacia el tenant" value={borrador.hacia} onChange={(event) => { editar({ hacia: event.target.value }); }} /></label>
         {/* Los tres permisos arrancan en NO: el default del backend es deny, y el formulario no
             debe abrir un cruce entre tenants por omisión. */}
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => editar({ allowRoute: event.target.checked })} /> Ruta <span className="label-hint">allow_route: dejar que le mande mensajes</span></label>
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => editar({ allowRead: event.target.checked })} /> Lectura <span className="label-hint">allow_read: dejar que lea su actividad</span></label>
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => editar({ allowControl: event.target.checked })} /> Control <span className="label-hint">allow_control: dejar que le escriba la configuración</span></label>
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => { editar({ allowRoute: event.target.checked }); }} /> Ruta <span className="label-hint">allow_route: dejar que le mande mensajes</span></label>
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Lectura <span className="label-hint">allow_read: dejar que lea su actividad</span></label>
+        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Control <span className="label-hint">allow_control: dejar que le escriba la configuración</span></label>
       </> : null}
-      <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => editar({ habilitado: event.target.checked })} /> Habilitado</label>
+      <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
     </div>
 
     {/* Lo que se va a enviar, a UN CLIC de la vista.

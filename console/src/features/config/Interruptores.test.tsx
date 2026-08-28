@@ -78,19 +78,23 @@ it('los permisos son INTERRUPTORES y la columna de botones ya no existe', async 
   renderWithApi(<ConfigPage />);
   await irA(user, PERMISOS);
 
-  const acl = screen.getByRole('heading', { name: /directed acl/i }).closest('section') as HTMLElement;
-  // Cuatro interruptores por arista: el maestro y los tres permisos.
-  expect(within(acl).getAllByRole('switch')).toHaveLength(4);
-  // Y CERO botones de texto: eran «Deshabilitar», «Quitar allow_route», «Quitar allow_read» y
-  // «Quitar allow_control», apilados en una columna «Acciones» que estiraba la fila a 147 px.
-  expect(within(acl).queryByRole('button', { name: /^deshabilitar/i })).not.toBeInTheDocument();
-  expect(within(acl).queryByRole('button', { name: /quitar allow_/i })).not.toBeInTheDocument();
-  expect(within(acl).queryByRole('button', { name: /conceder allow_/i })).not.toBeInTheDocument();
-  expect(within(acl).queryByRole('columnheader', { name: /acciones/i })).not.toBeInTheDocument();
+  const heading = screen.getByRole('heading', { name: /directed acl/i });
+  const acl = heading.closest('section');
+  expect(acl).not.toBeNull();
+  if (acl) {
+    // Cuatro interruptores por arista: el maestro y los tres permisos.
+    expect(within(acl).getAllByRole('switch')).toHaveLength(4);
+    // Y CERO botones de texto: eran «Deshabilitar», «Quitar allow_route», «Quitar allow_read» y
+    // «Quitar allow_control», apilados en una columna «Acciones» que estiraba la fila a 147 px.
+    expect(within(acl).queryByRole('button', { name: /^deshabilitar/i })).not.toBeInTheDocument();
+    expect(within(acl).queryByRole('button', { name: /quitar allow_/i })).not.toBeInTheDocument();
+    expect(within(acl).queryByRole('button', { name: /conceder allow_/i })).not.toBeInTheDocument();
+    expect(within(acl).queryByRole('columnheader', { name: /acciones/i })).not.toBeInTheDocument();
 
-  // Y el interruptor DICE el estado: no hace falta una píldora al lado repitiéndolo.
-  expect(within(acl).getByRole('switch', { name: RUTA })).toBeChecked();
-  expect(within(acl).getByRole('switch', { name: LECTURA })).not.toBeChecked();
+    // Y el interruptor DICE el estado: no hace falta una píldora al lado repitiéndolo.
+    expect(within(acl).getByRole('switch', { name: RUTA })).toBeChecked();
+    expect(within(acl).getByRole('switch', { name: LECTURA })).not.toBeChecked();
+  }
 });
 
 it('las cabeceras dejan de ser nombres de columna de Postgres y explican qué conceden', async () => {
@@ -99,12 +103,16 @@ it('las cabeceras dejan de ser nombres de columna de Postgres y explican qué co
   renderWithApi(<ConfigPage />);
   await irA(user, PERMISOS);
 
-  const acl = screen.getByRole('heading', { name: /directed acl/i }).closest('section') as HTMLElement;
-  expect(within(acl).getAllByRole('columnheader').map((celda) => celda.textContent?.replace(/[?:].*/s, '').trim()))
-    .toEqual(['Arista', 'Habilitado', 'Ruta', 'Lectura', 'Control', 'Alta']);
-  // La explicación viaja en el propio DOM —no sólo en un `title` que el teclado no alcanza—, así
-  // que se puede leer sin ratón.
-  expect(within(acl).getByText(/ESCRIBA sobre el de la derecha/)).toBeInTheDocument();
+  const heading = screen.getByRole('heading', { name: /directed acl/i });
+  const acl = heading.closest('section');
+  expect(acl).not.toBeNull();
+  if (acl) {
+    expect(within(acl).getAllByRole('columnheader').map((celda) => celda.textContent.replace(/[?:].*/s, '').trim()))
+      .toEqual(['Arista', 'Habilitado', 'Ruta', 'Lectura', 'Control', 'Alta']);
+    // La explicación viaja en el propio DOM —no sólo en un `title` que el teclado no alcanza—, así
+    // que se puede leer sin ratón.
+    expect(within(acl).getByText(/ESCRIBA sobre el de la derecha/)).toBeInTheDocument();
+  }
 });
 
 it('un permiso se aplica AL PULSARLO, sin ninguna confirmación en el medio', async () => {
@@ -118,7 +126,7 @@ it('un permiso se aplica AL PULSARLO, sin ninguna confirmación en el medio', as
   await user.click(await screen.findByRole('switch', { name: LECTURA }));
 
   // Nada de «¿seguro?»: la mutación viaja con el clic.
-  await waitFor(() => expect(cambios).toHaveLength(1));
+  await waitFor(() => { expect(cambios).toHaveLength(1); });
   expect(cambios[0]).toEqual({
     dry_run: false,
     expected_revision: 1,
@@ -147,7 +155,7 @@ it('CONTROL NEGATIVO: si el servidor RECHAZA, el interruptor vuelve SOLO a su va
   await user.click(lectura);
 
   // Lo único que no se puede negociar: el estado pintado vuelve a ser el que la base tiene.
-  await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked());
+  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked(); });
 
   // Y el motivo es EL DEL SERVIDOR, no un «no se pudo aplicar» inventado por la consola.
   const alerta = await screen.findByRole('alert');
@@ -204,7 +212,7 @@ it('«Reintentar» vuelve a mandar la MISMA mutación, no una distinta', async (
 
   fallar = false;
   await user.click(screen.getByRole('button', { name: /reintentar/i }));
-  await waitFor(() => expect(cambios).toHaveLength(2));
+  await waitFor(() => { expect(cambios).toHaveLength(2); });
   expect(cambios[1]?.mutation).toEqual(cambios[0]?.mutation);
 });
 
@@ -223,11 +231,11 @@ it('mientras la escritura vuela, el interruptor pinta lo pedido y lo declara con
   await user.click(await screen.findByRole('switch', { name: LECTURA }));
   // El estado nuevo se ve al instante —eso es lo optimista— PERO dice que todavía no está
   // confirmado: sin el `aria-busy` un valor sin comprobar se ve idéntico a uno guardado.
-  await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked());
+  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked(); });
   expect(screen.getByRole('switch', { name: LECTURA })).toHaveAttribute('aria-busy', 'true');
 
   soltar?.();
-  await waitFor(() => expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy'));
+  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy'); });
 });
 
 it('si el servidor guarda pero la RELECTURA falla, no se afirma que la tabla esté al día', async () => {
@@ -268,7 +276,7 @@ it('quitar Control SÍ confirma, y cancelar no manda nada ni mueve el interrupto
 
   await user.click(screen.getByRole('switch', { name: CONTROL }));
   await user.click(screen.getByRole('button', { name: /^quitar control$/i }));
-  await waitFor(() => expect(cambios).toHaveLength(1));
+  await waitFor(() => { expect(cambios).toHaveLength(1); });
   expect(cambios[0]?.mutation).toMatchObject({ value: { allow_control: false } });
 });
 
@@ -281,7 +289,7 @@ it('CONCEDER Control no confirma nada: se deshace con otro clic en el mismo inte
   await irA(user, PERMISOS);
 
   await user.click(await screen.findByRole('switch', { name: CONTROL }));
-  await waitFor(() => expect(cambios).toHaveLength(1));
+  await waitFor(() => { expect(cambios).toHaveLength(1); });
   expect(cambios[0]?.mutation).toMatchObject({ value: { allow_control: true } });
 });
 

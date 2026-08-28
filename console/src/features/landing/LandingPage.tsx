@@ -87,7 +87,7 @@ export function LandingPage() {
               <strong>
                 {grupo.alertas.length === 1
                   ? grupo.alertas[0].titulo
-                  : `${grupo.alertas.length} cosas que atender en ${grupo.rutaLabel}`}
+                  : `${String(grupo.alertas.length)} cosas que atender en ${grupo.rutaLabel}`}
               </strong>
               {grupo.alertas.length === 1 ? (
                 <small title={grupo.alertas[0].fuente}>{grupo.alertas[0].detalle}</small>
@@ -111,7 +111,7 @@ export function LandingPage() {
             <a
               href={grupo.ruta}
               aria-label={`Revisar ${grupo.alertas.length === 1 ? 'alerta' : 'alertas'} en ${grupo.rutaLabel}`}
-              onClick={(event) => onNavClick(event, grupo.ruta)}
+              onClick={(event) => { onNavClick(event, grupo.ruta); }}
             >Revisar</a>
           </p>
         )) : null}
@@ -120,7 +120,7 @@ export function LandingPage() {
           <p className="landing-alerta" data-tono="desconocido">
             <CircleHelp size={18} aria-hidden="true" />
             <span>
-              <strong>{resumen.fuentesAusentes.length === 1 ? 'Una fuente no contestó' : `${resumen.fuentesAusentes.length} fuentes no contestaron`}</strong>
+              <strong>{resumen.fuentesAusentes.length === 1 ? 'Una fuente no contestó' : `${String(resumen.fuentesAusentes.length)} fuentes no contestaron`}</strong>
               <small>
                 Sin leer: {resumen.fuentesAusentes.join(', ')}. Lo de arriba es lo que sí se pudo comprobar, no el estado completo.
               </small>
