@@ -45,14 +45,17 @@ afterEach(() => {
 function batchFrame(socket: FakeAgentSocket): Frame {
   const frame = socket.frames().find((candidate) => candidate.tag === FRAME_TAGS.WRITE_BATCH);
   expect(frame, 'relay did not send WRITE_BATCH').toBeDefined();
-  return frame!;
+  if (!frame) throw new Error('relay did not send WRITE_BATCH');
+  return frame;
 }
 
 function response(
   tag: typeof FRAME_TAGS.WRITE_BATCH_OK | typeof FRAME_TAGS.WRITE_BATCH_ERR,
   body: Record<string, unknown>
 ): Frame {
-  return new FrameDecoder().push(encodeJsonFrame(tag, body))[0]!;
+  const frame = new FrameDecoder().push(encodeJsonFrame(tag, body))[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 describe('requestFileWriteBatch', () => {
@@ -132,10 +135,10 @@ describe('requestFileWriteBatch', () => {
     expect(outcome).toMatchObject({ error: 'timeout' });
     const id = String(decodeJsonFrame(batchFrame(socket).payload).request_id);
     expect(socket.frames().map((frame) => frame.tag)).toContain(FRAME_TAGS.WRITE_BATCH_CANCEL);
-    expect(() => connection.handleFrame(response(FRAME_TAGS.WRITE_BATCH_OK, {
+    expect(() => { connection.handleFrame(response(FRAME_TAGS.WRITE_BATCH_OK, {
       request_id: id,
       files: [{ path: `${ROOT}/MEMORY.md`, operation: 'absent', sha: null, bytes: 0 }],
-    }), Date.now)).not.toThrow();
+    }), Date.now); }).not.toThrow();
     expect(connection.alive).toBe(true);
   });
 });

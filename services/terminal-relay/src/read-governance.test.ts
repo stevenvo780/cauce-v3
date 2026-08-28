@@ -41,8 +41,8 @@ class FakeAgentSocket {
     return true;
   }
 
-  pause(): void {}
-  resume(): void {}
+  pause(): void { /* noop */ }
+  resume(): void { /* noop */ }
 
   destroy(): void {
     this.destroyed = true;
@@ -81,7 +81,8 @@ afterEach(() => {
 function requestIdEnviado(socket: FakeAgentSocket): string {
   const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
   expect(read, 'el relay no mandó ninguna trama READ').toBeDefined();
-  const body = JSON.parse(read!.payload.toString('utf8')) as Record<string, unknown>;
+  if (!read) throw new Error('READ frame not found');
+  const body = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
   return body.request_id as string;
 }
 
@@ -96,19 +97,25 @@ function readOk(requestId: string, overrides: Record<string, unknown> = {}): Fra
     chunks: 1,
     ...overrides
   });
-  return new FrameDecoder().push(payload)[0]!;
+  const frame = new FrameDecoder().push(payload)[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 /** READ_DATA lleva el `request_id` como prefijo de 36 bytes ASCII, igual que STDOUT la sesión. */
 function readData(requestId: string, data: Buffer): Frame {
   const payload = Buffer.concat([Buffer.from(requestId, 'ascii'), data]);
-  return new FrameDecoder().push(encodeFrame(FRAME_TAGS.READ_DATA, payload))[0]!;
+  const frame = new FrameDecoder().push(encodeFrame(FRAME_TAGS.READ_DATA, payload))[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function readErr(requestId: string, error: string, reason = 'motivo'): Frame {
-  return new FrameDecoder().push(
+  const frame = new FrameDecoder().push(
     encodeJsonFrame(FRAME_TAGS.READ_ERR, { request_id: requestId, error, reason })
-  )[0]!;
+  )[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 describe('el hello declara qué sabe hacer el agente', () => {
@@ -260,7 +267,8 @@ describe('requestFileRead decodifica y acumula la respuesta', () => {
     const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
 
     const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
-    const body = JSON.parse(read!.payload.toString('utf8')) as Record<string, unknown>;
+    if (!read) throw new Error('READ frame not found');
+    const body = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
     expect(body.kind).toBe('file');
     expect(body.path).toBe(RUTA);
     // Tiene que ser un UUID en minúsculas con guiones: viaja como prefijo de 36 bytes de los

@@ -304,7 +304,7 @@ export class ScriptedGateway implements TerminalGatewayClient {
   consumeCalls = 0;
   readonly consumeClaimTokens: string[] = [];
   resumeCalls = 0;
-  readonly resumeClaims: Array<{ token: string; epoch: string | undefined }> = [];
+  readonly resumeClaims: { token: string; epoch: string | undefined }[] = [];
   resume: ResumeOutcome | undefined;
   consumeGate: Promise<void> | undefined;
   authz: AuthzOutcome = {
@@ -400,7 +400,7 @@ export class FakePtyAgent {
       servername: 'localhost'
     });
     await new Promise<void>((resolve, reject) => {
-      socket.once('secureConnect', () => resolve());
+      socket.once('secureConnect', () => { resolve(); });
       socket.once('error', reject);
     });
     const agent = new FakePtyAgent(socket);
@@ -513,8 +513,8 @@ export async function startHarness(overrides: Partial<SessionLimits> = {}): Prom
     attachTimeoutMs: 300, claimRecoveryWindowMs: 50,
   });
   await Promise.all([
-    new Promise<void>((resolve) => agentServer.listen(0, '127.0.0.1', () => resolve())),
-    new Promise<void>((resolve) => browserServer.listen(0, '127.0.0.1', () => resolve()))
+    new Promise<void>((resolve) => agentServer.listen(0, '127.0.0.1', () => { resolve(); })),
+    new Promise<void>((resolve) => browserServer.listen(0, '127.0.0.1', () => { resolve(); }))
   ]);
   const harness: Harness = {
     browserPort: (browserServer.address() as AddressInfo).port,
@@ -546,10 +546,10 @@ export interface BrowserClient {
 export async function connectConsole(
   port: number,
   material: { cert: string; key: string } = { cert: TEST_CONSOLE_CERTIFICATE, key: TEST_CONSOLE_PRIVATE_KEY },
-  origin = `https://localhost:${port}`
+  origin = `https://localhost:${String(port)}`
 ): Promise<BrowserClient> {
   // Dialled by name so SNI and hostname verification match the fixture SAN, as nginx would.
-  const socket = new WebSocket(`wss://localhost:${port}${browserWebSocketPath(RELAY_INSTANCE_ID)}`, {
+  const socket = new WebSocket(`wss://localhost:${String(port)}${browserWebSocketPath(RELAY_INSTANCE_ID)}`, {
     ca: TEST_CA_CERTIFICATE,
     cert: material.cert,
     key: material.key,
@@ -563,7 +563,7 @@ export async function connectConsole(
   socket.on('close', (code: number, reason: Buffer) => client.closes.push({ code, reason: reason.toString() }));
   socket.on('error', () => undefined);
   await new Promise<void>((resolve, reject) => {
-    socket.once('open', () => resolve());
+    socket.once('open', () => { resolve(); });
     socket.once('error', reject);
   });
   return client;

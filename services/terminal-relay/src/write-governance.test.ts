@@ -50,7 +50,8 @@ afterEach(() => {
 function writeFrame(socket: FakeAgentSocket): Frame {
   const frame = socket.frames().find((candidate) => candidate.tag === FRAME_TAGS.WRITE);
   expect(frame, 'el relay no mandó WRITE').toBeDefined();
-  return frame!;
+  if (!frame) throw new Error('el relay no mandó WRITE');
+  return frame;
 }
 
 function requestId(socket: FakeAgentSocket): string {
@@ -58,7 +59,9 @@ function requestId(socket: FakeAgentSocket): string {
 }
 
 function response(tag: typeof FRAME_TAGS.WRITE_OK | typeof FRAME_TAGS.WRITE_ERR, body: Record<string, unknown>): Frame {
-  return new FrameDecoder().push(encodeJsonFrame(tag, body))[0]!;
+  const frame = new FrameDecoder().push(encodeJsonFrame(tag, body))[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 describe('requestFileWrite negocia y encuadra', () => {
@@ -162,9 +165,9 @@ describe('requestFileWrite timeout, cancelación y desconexión', () => {
     expect(outcome).toMatchObject({ error: 'timeout' });
     expect(socket.frames().map((frame) => frame.tag)).toContain(FRAME_TAGS.WRITE_CANCEL);
     const id = requestId(socket);
-    expect(() => connection.handleFrame(response(FRAME_TAGS.WRITE_OK, {
+    expect(() => { connection.handleFrame(response(FRAME_TAGS.WRITE_OK, {
       request_id: id, path: RUTA, operation: 'create', sha: sha(Buffer.from('nuevo')), bytes: 5,
-    }), Date.now)).not.toThrow();
+    }), Date.now); }).not.toThrow();
     expect(connection.alive).toBe(true);
   });
 

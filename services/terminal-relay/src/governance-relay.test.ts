@@ -57,9 +57,9 @@ class FakeAgentSocket {
     return true;
   }
 
-  pause(): void {}
-  resume(): void {}
-  destroy(): void {}
+  pause(): void { /* noop */ }
+  resume(): void { /* noop */ }
+  destroy(): void { /* noop */ }
 
   asSocket(): TLSSocket {
     return this as unknown as TLSSocket;
@@ -124,7 +124,7 @@ async function pedir(opciones: {
   const autorizacion = opciones.autorizacion === undefined ? `Bearer ${TOKEN}` : opciones.autorizacion;
   return new Promise<Respuesta>((resolve, reject) => {
     const peticion = httpsRequest(
-      new URL(opciones.ruta ?? GOVERNANCE_READ_PATH, `https://127.0.0.1:${puerto}`),
+      new URL(opciones.ruta ?? GOVERNANCE_READ_PATH, `https://127.0.0.1:${String(puerto)}`),
       {
         method: opciones.metodo ?? 'POST',
         ca: tls.cert,
@@ -137,16 +137,13 @@ async function pedir(opciones: {
       (respuesta) => {
         const trozos: Buffer[] = [];
         respuesta.on('data', (trozo: Buffer) => trozos.push(trozo));
-        respuesta.on('end', () => resolve({
-          status: respuesta.statusCode ?? 0,
-          body: Buffer.concat(trozos).toString('utf8')
-        }));
-        respuesta.on('error', reject);
+        respuesta.on('end', () => {
+          resolve({ status: respuesta.statusCode ?? 500, body: Buffer.concat(trozos).toString('utf8') });
+        });
       }
     );
     peticion.on('error', reject);
-    peticion.write(payload);
-    peticion.end();
+    peticion.end(payload);
   });
 }
 
@@ -154,20 +151,21 @@ function cuerpo(respuesta: Respuesta): Record<string, unknown> {
   return JSON.parse(respuesta.body) as Record<string, unknown>;
 }
 
-/** Espera a que el relay ponga el READ en el cable y devuelve su `request_id`. */
 async function esperarRequestId(socket: FakeAgentSocket): Promise<string> {
-  for (let intento = 0; intento < 300; intento += 1) {
-    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
-    if (read) {
-      return (JSON.parse(read.payload.toString('utf8')) as { request_id: string }).request_id;
+  for (let intento = 0; intento < 50; intento += 1) {
+    for (const frame of socket.frames()) {
+      if (frame.tag === FRAME_TAGS.READ) {
+        const decoded = JSON.parse(frame.payload.toString('utf8')) as Record<string, unknown>;
+        return decoded.request_id as string;
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    await new Promise((resolve) => { setTimeout(resolve, 5); });
   }
   throw new Error('el relay no mandó ninguna trama READ');
 }
 
 function readOk(requestId: string, overrides: Record<string, unknown> = {}): Frame {
-  return new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
+  const frame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
     request_id: requestId,
     kind: 'file',
     path: RUTA,
@@ -176,11 +174,13 @@ function readOk(requestId: string, overrides: Record<string, unknown> = {}): Fra
     modified_at: '2026-08-24T10:00:00Z',
     chunks: 1,
     ...overrides
-  }))[0]!;
+  }))[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function directoryOk(requestId: string, overrides: Record<string, unknown> = {}): Frame {
-  return new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
+  const frame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
     request_id: requestId,
     kind: 'dir',
     path: MEMORY_ROOT,
@@ -191,26 +191,34 @@ function directoryOk(requestId: string, overrides: Record<string, unknown> = {})
       path: `${MEMORY_ROOT}/sesion.md`, bytes: 12, modified_at: '2026-08-24T10:00:00Z',
     }],
     ...overrides,
-  }))[0]!;
+  }))[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function readDone(requestId: string): Frame {
-  return new FrameDecoder().push(
+  const frame = new FrameDecoder().push(
     encodeJsonFrame(FRAME_TAGS.READ_DONE, { request_id: requestId }),
-  )[0]!;
+  )[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 /** READ_DATA lleva el `request_id` como prefijo de 36 bytes ASCII. */
 function readData(requestId: string, data: Buffer): Frame {
-  return new FrameDecoder().push(
+  const frame = new FrameDecoder().push(
     encodeFrame(FRAME_TAGS.READ_DATA, Buffer.concat([Buffer.from(requestId, 'ascii'), data]))
-  )[0]!;
+  )[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function readErr(requestId: string, error: string, reason: string): Frame {
-  return new FrameDecoder().push(
+  const frame = new FrameDecoder().push(
     encodeJsonFrame(FRAME_TAGS.READ_ERR, { request_id: requestId, error, reason })
-  )[0]!;
+  )[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function sha(content: Buffer): string {
@@ -241,7 +249,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => servidor.close(() => resolve()));
+  await new Promise<void>((resolve) => servidor.close(() => { resolve(); }));
   rmSync(tls.directory, { recursive: true, force: true });
 });
 
@@ -273,7 +281,8 @@ describe('la lectura llega al agente y vuelve', () => {
     });
 
     const id = await esperarRequestId(socket);
-    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ)!;
+    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
+    if (!read) throw new Error('READ frame not found');
     const enviado = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
     expect(enviado.path).toBe('/home/dev/AGENTS.md');
     expect(enviado.kind).toBe('file');
@@ -329,7 +338,7 @@ describe('la lectura falla explicando por qué', () => {
     expect(respuesta.status).toBe(200);
     expect(cuerpo(respuesta)).toEqual({
       error: 'timeout',
-      reason: `el pty-agent no contestó en ${TIEMPO_LIMITE_MS} ms`
+      reason: `el pty-agent no contestó en ${String(TIEMPO_LIMITE_MS)} ms`
     });
   });
 });
@@ -347,7 +356,8 @@ describe('el índice de memoria tiene un endpoint y contrato propios', () => {
     const { socket, connection } = conectar();
     const pending = pedirIndice();
     const id = await esperarRequestId(socket);
-    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ)!;
+    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
+    if (!read) throw new Error('READ frame not found');
     expect(decodeJsonFrame(read.payload)).toMatchObject({ kind: 'dir', path: MEMORY_ROOT });
     connection.handleFrame(directoryOk(id), Date.now);
     connection.handleFrame(readDone(id), Date.now);
@@ -370,7 +380,7 @@ describe('el índice de memoria tiene un endpoint y contrato propios', () => {
 
     conectar();
     expect(cuerpo(await pedirIndice())).toEqual({
-      error: 'timeout', reason: `el pty-agent no contestó en ${TIEMPO_LIMITE_MS} ms`,
+      error: 'timeout', reason: `el pty-agent no contestó en ${String(TIEMPO_LIMITE_MS)} ms`,
     });
   });
 
@@ -393,7 +403,7 @@ describe('el índice de memoria tiene un endpoint y contrato propios', () => {
       tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT,
     }), 'utf8');
     const request = httpsRequest(
-      new URL(GOVERNANCE_LIST_PATH, `https://127.0.0.1:${puerto}`),
+      new URL(GOVERNANCE_LIST_PATH, `https://127.0.0.1:${String(puerto)}`),
       {
         method: 'POST',
         ca: tls.cert,

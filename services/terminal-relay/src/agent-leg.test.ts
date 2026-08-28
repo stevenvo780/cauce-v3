@@ -64,7 +64,9 @@ describe('agent outbound write backpressure', () => {
     expect(socket.frames().map((frame) => frame.tag)).toEqual([
       FRAME_TAGS.STDIN, FRAME_TAGS.PAUSE_OUTPUT, FRAME_TAGS.RESUME_OUTPUT
     ]);
-    expect(decodeJsonFrame(socket.frames()[1]!.payload)).toEqual({ session_id: SESSION });
+    const frame1 = socket.frames()[1];
+    if (!frame1) throw new Error('Frame not found');
+    expect(decodeJsonFrame(frame1.payload)).toEqual({ session_id: SESSION });
   });
 
   it('rechaza crecimiento por encima de la cola acotada mientras espera drain', () => {
@@ -94,7 +96,9 @@ describe('agent outbound write backpressure', () => {
     socket.emit('drain');
     const tags = socket.frames().map((frame) => frame.tag);
     expect(tags.at(-1)).toBe(FRAME_TAGS.CLOSE);
-    expect(decodeJsonFrame(socket.frames().at(-1)!.payload)).toEqual({
+    const lastFrame = socket.frames().at(-1);
+    if (!lastFrame) throw new Error('Frame not found');
+    expect(decodeJsonFrame(lastFrame.payload)).toEqual({
       session_id: SESSION, reason: 'operator_closed',
     });
   });
@@ -115,7 +119,7 @@ describe('agent outbound write backpressure', () => {
     ) + 2;
     let refused = false;
     for (let index = 0; index < maxCriticalFrames; index += 1) {
-      if (!agent.sendClose(SESSION, `close_${index}`)) {
+      if (!agent.sendClose(SESSION, `close_${String(index)}`)) {
         refused = true;
         break;
       }
@@ -155,7 +159,9 @@ describe('governance write capability and correlation', () => {
     expect(frames.map((frame) => frame.tag)).toEqual([
       FRAME_TAGS.WRITE, FRAME_TAGS.WRITE_DATA, FRAME_TAGS.WRITE_DATA,
     ]);
-    expect(decodeJsonFrame(frames[0]!.payload)).toMatchObject({
+    const firstFrame = frames[0];
+    if (!firstFrame) throw new Error('Frame not found');
+    expect(decodeJsonFrame(firstFrame.payload)).toMatchObject({
       request_id: SESSION, operation: 'replace', expected_sha: 'b'.repeat(64),
       content_sha: 'c'.repeat(64), bytes: content.byteLength, chunks: 2,
     });
@@ -176,14 +182,18 @@ describe('governance write capability and correlation', () => {
       onWriteErr: (failure) => errors.push(failure.code),
       onAgentGone: (reason) => errors.push(reason),
     });
-    agent.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_OK, {
+    const okFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_OK, {
       request_id: SESSION, path: '/x', operation: 'create', sha: 'a'.repeat(64), bytes: 1,
-    }))[0]!, Date.now);
+    }))[0];
+    if (!okFrame) throw new Error('Frame not found');
+    agent.handleFrame(okFrame, Date.now);
     expect(ok).toHaveLength(1);
     agent.detachWrite(SESSION);
-    agent.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_ERR, {
+    const errFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_ERR, {
       request_id: SESSION, error: 'conflict', reason: 'late',
-    }))[0]!, Date.now);
+    }))[0];
+    if (!errFrame) throw new Error('Frame not found');
+    agent.handleFrame(errFrame, Date.now);
     expect(errors).toEqual([]);
   });
 

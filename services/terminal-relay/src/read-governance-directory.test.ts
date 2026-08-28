@@ -33,8 +33,8 @@ class FakeAgentSocket {
     return true;
   }
 
-  pause(): void {}
-  resume(): void {}
+  pause(): void { /* noop */ }
+  resume(): void { /* noop */ }
 
   destroy(): void {
     this.destroyed = true;
@@ -70,7 +70,8 @@ afterEach(() => {
 function requestIdEnviado(socket: FakeAgentSocket): string {
   const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
   expect(read, 'el relay no mandó ninguna trama READ').toBeDefined();
-  const body = JSON.parse(read!.payload.toString('utf8')) as Record<string, unknown>;
+  if (!read) throw new Error('READ frame not found');
+  const body = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
   return body.request_id as string;
 }
 
@@ -85,7 +86,9 @@ function readOk(requestId: string, overrides: Record<string, unknown> = {}): Fra
     chunks: 1,
     ...overrides
   });
-  return new FrameDecoder().push(payload)[0]!;
+  const frame = new FrameDecoder().push(payload)[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function directoryOk(requestId: string, overrides: Record<string, unknown> = {}): Frame {
@@ -101,24 +104,32 @@ function directoryOk(requestId: string, overrides: Record<string, unknown> = {})
     }],
     ...overrides,
   });
-  return new FrameDecoder().push(payload)[0]!;
+  const frame = new FrameDecoder().push(payload)[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function readDone(requestId: string, overrides: Record<string, unknown> = {}): Frame {
-  return new FrameDecoder().push(
+  const frame = new FrameDecoder().push(
     encodeJsonFrame(FRAME_TAGS.READ_DONE, { request_id: requestId, ...overrides })
-  )[0]!;
+  )[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function readData(requestId: string, data: Buffer): Frame {
   const payload = Buffer.concat([Buffer.from(requestId, 'ascii'), data]);
-  return new FrameDecoder().push(encodeFrame(FRAME_TAGS.READ_DATA, payload))[0]!;
+  const frame = new FrameDecoder().push(encodeFrame(FRAME_TAGS.READ_DATA, payload))[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 function readErr(requestId: string, error: string, reason = 'motivo'): Frame {
-  return new FrameDecoder().push(
+  const frame = new FrameDecoder().push(
     encodeJsonFrame(FRAME_TAGS.READ_ERR, { request_id: requestId, error, reason })
-  )[0]!;
+  )[0];
+  if (!frame) throw new Error('Frame not found');
+  return frame;
 }
 
 describe('requestFileRead falla cerrado', () => {
@@ -160,12 +171,11 @@ describe('requestFileRead falla cerrado', () => {
     const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
     const id = requestIdEnviado(socket);
 
-    connection.handleFrame(
-      new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
-        request_id: id, kind: 'file', path: RUTA
-      }))[0]!,
-      Date.now
-    );
+    const okFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
+      request_id: id, kind: 'file', path: RUTA
+    }))[0];
+    if (!okFrame) throw new Error('Frame not found');
+    connection.handleFrame(okFrame, Date.now);
 
     expect(await pendiente).toEqual({
       error: 'unknown',
@@ -229,20 +239,19 @@ describe('requestFileRead falla cerrado', () => {
     expect(outcome).toMatchObject({ error: 'timeout' });
     const id = requestIdEnviado(socket);
 
-    expect(() => connection.handleFrame(readOk(id, { chunks: 0 }), Date.now)).not.toThrow();
-    expect(() => connection.handleFrame(
+    expect(() => { connection.handleFrame(readOk(id, { chunks: 0 }), Date.now); }).not.toThrow();
+    expect(() => { connection.handleFrame(
       readData('ffffffff-ffff-4fff-8fff-ffffffffffff', Buffer.from('x')), Date.now
-    )).not.toThrow();
+    ); }).not.toThrow();
     expect(connection.alive).toBe(true);
   });
 
   it('trata como violación un READ_OK sin request_id', () => {
     const { connection } = conectar();
 
-    expect(() => connection.handleFrame(
-      new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, { kind: 'file' }))[0]!,
-      Date.now
-    )).toThrow(/request id/u);
+    const errFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, { kind: 'file' }))[0];
+    if (!errFrame) throw new Error('Frame not found');
+    expect(() => { connection.handleFrame(errFrame, Date.now); }).toThrow(/request id/u);
   });
 });
 
@@ -251,7 +260,8 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
     const { socket, connection } = conectar();
     const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
     const id = requestIdEnviado(socket);
-    const request = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ)!;
+    const request = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
+    if (!request) throw new Error('READ frame not found');
     expect(JSON.parse(request.payload.toString('utf8'))).toMatchObject({
       request_id: id, kind: 'dir', path: MEMORY_ROOT,
     });
@@ -318,7 +328,7 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
     connection.handleFrame(readDone(id), Date.now);
     await expect(pending).resolves.toMatchObject({ observed_at_least: 1 });
 
-    expect(() => connection.handleFrame(readData(id, Buffer.from('tardío')), Date.now))
+    expect(() => { connection.handleFrame(readData(id, Buffer.from('tardío')), Date.now); })
       .toThrow(/after terminal read/u);
     expect(connection.alive).toBe(false);
   });
@@ -326,7 +336,7 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
   it('rota el socket al llenar tombstones en vez de olvidar ids terminales', () => {
     const { connection } = conectar();
     for (let index = 0; index < MAX_TERMINAL_READ_TOMBSTONES; index += 1) {
-      connection.detachRead(`terminal-${index}`, true);
+      connection.detachRead(`terminal-${String(index)}`, true);
     }
     expect(connection.alive).toBe(true);
 
@@ -356,13 +366,13 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
   });
 
   it('aplica el límite de 200 y la coherencia entre total, truncated y entries', async () => {
-    const cases: Array<Record<string, unknown>> = [
+    const cases: Record<string, unknown>[] = [
       {
         total: 201,
         observed_at_least: 201,
         truncated: true,
         entries: Array.from({ length: 201 }, (_, index) => ({
-          path: `${MEMORY_ROOT}/${index}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
+          path: `${MEMORY_ROOT}/${String(index)}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
         })),
       },
       { total: 0, observed_at_least: 0 },
@@ -411,7 +421,7 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
 
   it('cancela al cerrar HTTP y libera el límite acotado por alias', async () => {
     const { socket, connection } = conectar();
-    const pending: Array<Promise<unknown>> = [];
+    const pending: Promise<unknown>[] = [];
     for (let index = 0; index < MAX_AGENT_READS_IN_FLIGHT; index += 1) {
       pending.push(requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000));
     }

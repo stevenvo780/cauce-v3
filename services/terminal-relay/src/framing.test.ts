@@ -56,7 +56,9 @@ describe('agent framing', () => {
       '11111111-2222-3333-4444-555555555555',
       Buffer.from('manual', 'utf8')
     );
-    expect(decodeDataFrame(new FrameDecoder().push(frame)[0]!.payload).data.toString()).toBe('manual');
+    const decoded = new FrameDecoder().push(frame)[0];
+    if (!decoded) throw new Error('Frame not found');
+    expect(decodeDataFrame(decoded.payload).data.toString()).toBe('manual');
   });
 
   it('reassembles a stream delivered one byte at a time', () => {

@@ -449,7 +449,7 @@ describe('terminal sessions', () => {
 
   it('usa ping como presencia sólo para viewer; no vuelve inmortal un shell abandonado', async () => {
     const viewer = await openSession({ idleTimeoutMs: 35 }, { mode: 'harness' });
-    const viewerPing = setInterval(() => viewer.socket.raw('{"type":"ping"}'), 10);
+    const viewerPing = setInterval(() => { viewer.socket.raw('{"type":"ping"}'); }, 10);
     try {
       await wait(100);
       expect(viewer.socket.closes).toHaveLength(0);
@@ -458,7 +458,7 @@ describe('terminal sessions', () => {
     }
 
     const shell = await openSession({ idleTimeoutMs: 35 });
-    const shellPing = setInterval(() => shell.socket.raw('{"type":"ping"}'), 10);
+    const shellPing = setInterval(() => { shell.socket.raw('{"type":"ping"}'); }, 10);
     try {
       await waitFor(() => shell.socket.closes.length > 0);
       expect(shell.socket.closes[0]?.code).toBe(CLOSE_CODES.idle_timeout);

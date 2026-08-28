@@ -114,7 +114,8 @@ describe('terminal relay circuit', () => {
       code: CLOSE_CODES.session_conflict, reason: 'resume_conflict',
     });
     expect(harness.gateway.resumeClaims).toHaveLength(1);
-    const attempted = harness.gateway.resumeClaims[0]!;
+    const attempted = harness.gateway.resumeClaims[0];
+    if (!attempted) throw new Error('Attempted claim not found');
     expect(attempted.token).not.toBe(CLAIM_TOKEN);
     expect(attempted.epoch).toBeUndefined();
     expect(harness.gateway.closeReports[0]).toMatchObject({
@@ -395,7 +396,7 @@ describe('terminal relay circuit', () => {
     attach(client);
     await waitFor(() => client.text.length > 0);
 
-    const flood = setInterval(() => agent.emit('A'.repeat(4_096)), 5);
+    const flood = setInterval(() => { agent.emit('A'.repeat(4_096)); }, 5);
     try {
       await waitFor(() => client.text.some((frame) => frame.type === 'notice' && frame.level === 'warn'));
       await waitFor(() => client.closes.length > 0);

@@ -43,9 +43,9 @@ class FakeAgentSocket {
     return true;
   }
 
-  pause(): void {}
-  resume(): void {}
-  destroy(): void {}
+  pause(): void { /* noop */ }
+  resume(): void { /* noop */ }
+  destroy(): void { /* noop */ }
 
   asSocket(): TLSSocket {
     return this as unknown as TLSSocket;
@@ -105,7 +105,7 @@ async function pedir(opciones: {
   const autorizacion = opciones.autorizacion === undefined ? `Bearer ${TOKEN}` : opciones.autorizacion;
   return new Promise<Respuesta>((resolve, reject) => {
     const peticion = httpsRequest(
-      new URL(opciones.ruta ?? GOVERNANCE_WRITE_PATH, `https://127.0.0.1:${puerto}`),
+      new URL(opciones.ruta ?? GOVERNANCE_WRITE_PATH, `https://127.0.0.1:${String(puerto)}`),
       {
         method: opciones.metodo ?? 'POST',
         ca: tls.cert,
@@ -118,10 +118,10 @@ async function pedir(opciones: {
       (respuesta) => {
         const trozos: Buffer[] = [];
         respuesta.on('data', (trozo: Buffer) => trozos.push(trozo));
-        respuesta.on('end', () => resolve({
+        respuesta.on('end', () => { resolve({
           status: respuesta.statusCode ?? 0,
           body: Buffer.concat(trozos).toString('utf8')
-        }));
+        }); });
         respuesta.on('error', reject);
       }
     );
@@ -180,7 +180,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => servidor.close(() => resolve()));
+  await new Promise<void>((resolve) => servidor.close(() => { resolve(); }));
   rmSync(tls.directory, { recursive: true, force: true });
 });
 
@@ -206,9 +206,11 @@ describe('la escritura llega al agente y sólo vuelve aplicada con su ACK', () =
     const chunks = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.WRITE_DATA);
     expect(Buffer.concat(chunks.map((frame) => decodeDataFrame(frame.payload).data))).toEqual(content);
 
-    connection.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_OK, {
+    const okFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_OK, {
       request_id: begin.request_id, path: RUTA, operation: 'replace', sha: sha(content), bytes: content.byteLength,
-    }))[0]!, Date.now);
+    }))[0];
+    if (!okFrame) throw new Error('Frame not found');
+    connection.handleFrame(okFrame, Date.now);
 
     expect(await pendiente).toMatchObject({ status: 200 });
     expect(cuerpo(await pendiente)).toEqual({
@@ -298,13 +300,15 @@ describe('el lote de perfil es una sola operación gobernada', () => {
     const data = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.WRITE_BATCH_DATA);
     expect(Buffer.concat(data.map((frame) => decodeDataFrame(frame.payload).data))).toEqual(Buffer.from('alma'));
 
-    connection.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_OK, {
+    const batchOkFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_OK, {
       request_id: begin.request_id,
       files: [
         { path: SOUL, operation: 'create', sha: sha(Buffer.from('alma')), bytes: 4 },
         { path: MEMORY, operation: 'unchanged', sha: 'd'.repeat(64), bytes: 123 },
       ],
-    }))[0]!, Date.now);
+    }))[0];
+    if (!batchOkFrame) throw new Error('Frame not found');
+    connection.handleFrame(batchOkFrame, Date.now);
 
     const response = await pending;
     expect(response.status).toBe(200);
@@ -318,16 +322,18 @@ describe('el lote de perfil es una sola operación gobernada', () => {
     const { socket, connection } = conectar({ features: [FEATURE_WRITE_GOVERNANCE_BATCH] });
     const pending = pedir({ ruta: GOVERNANCE_WRITE_BATCH_PATH, cuerpo: lote() });
     const begin = await esperarWriteBatch(socket);
-    connection.handleFrame(new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_OK, {
+    const partialBatchOkFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.WRITE_BATCH_OK, {
       request_id: begin.request_id,
       files: [{ path: SOUL, operation: 'create', sha: sha(Buffer.from('alma')), bytes: 4 }],
-    }))[0]!, Date.now);
+    }))[0];
+    if (!partialBatchOkFrame) throw new Error('Frame not found');
+    connection.handleFrame(partialBatchOkFrame, Date.now);
     expect(cuerpo(await pending)).toMatchObject({ error: 'unknown' });
   });
 
   it('rechaza modo implícito, verify con contenido y rutas repetidas antes del agente', async () => {
     const { socket } = conectar({ features: [FEATURE_WRITE_GOVERNANCE_BATCH] });
-    const base = JSON.parse(lote()) as { files: Array<Record<string, unknown>> };
+    const base = JSON.parse(lote()) as { files: Record<string, unknown>[] };
     const sinModo = { ...base, files: base.files.map((file) => ({ ...file })) };
     delete sinModo.files[0]?.mode;
     const verifyConContenido = {

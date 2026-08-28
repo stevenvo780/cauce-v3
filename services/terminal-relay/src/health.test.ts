@@ -8,7 +8,7 @@ import { HttpsTerminalGatewayClient } from './gateway-client.js';
 import { createRelayHealthServer, RelayHealthState } from './health.js';
 import { relayInstanceIdFromCertificate, type RelayProcessIdentity } from './relay-identity.js';
 
-const cleanup: Array<() => Promise<void>> = [];
+const cleanup: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
   while (cleanup.length > 0) await cleanup.pop()?.();
@@ -37,11 +37,11 @@ describe('terminal relay readiness', () => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', resolve);
     });
-    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => { resolve(); })));
     const address = server.address() as AddressInfo;
     expect(address.address).toBe('127.0.0.1');
     const request = async (path = '/health/ready'): Promise<Response> => fetch(
-      `http://127.0.0.1:${address.port}${path}`,
+      `http://127.0.0.1:${String(address.port)}${path}`,
     );
 
     expect(await (await request()).json()).toEqual({ status: 'not_ready', reason: 'listener_down' });
@@ -109,9 +109,9 @@ describe('gateway-accepted presence publication', () => {
       });
     });
     const port = await listen(server);
-    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => resolve())));
+    cleanup.push(async () => new Promise<void>((resolve) => server.close(() => { resolve(); })));
     const gateway = new HttpsTerminalGatewayClient({
-      gatewayUrl: `https://localhost:${port}`,
+      gatewayUrl: `https://localhost:${String(port)}`,
       tokenFile,
       ca: fixture.cert,
       clientCert: fixture.cert,
