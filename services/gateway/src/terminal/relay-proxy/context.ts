@@ -325,7 +325,22 @@ export function createRelayProxyContext(
     if (actor === undefined) return { allowed: false, reason: 'unknown_session' };
     const placements = await loadFleetPlacements(database ?? pool);
     const placement = fleetPlacement(placements, row.tenant_id, row.alias);
-    if (placement === undefined || placement.container !== row.container) {
+    if (placement === undefined) {
+      return { allowed: false, reason: 'target_placement_changed' };
+    }
+    // La sesión guarda el ID FÍSICO del contenedor (presence.container_id) porque el relay ata la
+    // sesión al agente por ese ID; agents.container_name guarda el NOMBRE lógico. Compararlos era
+    // comparar dominios distintos y vetaba TODO attach (incidente 28-08: cada consume moría con
+    // target_placement_changed). Lo que este check debe cazar —el contenedor del destino fue
+    // recreado entre emisión y consumo— se observa en la presencia viva del registry, la misma
+    // fuente con la que la emisión llenó row.container.
+    // Solo deniega cuando el registry SABE dónde vive el alias y NO es el contenedor emitido:
+    // 'ambiguous' (rotación de relay en curso) lo gobierna el fencing por lease de PostgreSQL (409)
+    // y 'unknown' (registry sin sembrar) lo corta el propio attach al no haber agente.
+    const vivo = registry.resolve(row.tenant_id, row.alias);
+    const observado = vivo.status === 'online' || vivo.status === 'offline'
+      ? vivo.observation : undefined;
+    if (observado !== undefined && observado.presence.container_id !== row.container) {
       return { allowed: false, reason: 'target_placement_changed' };
     }
     const cohort = containerCohort(placements, row.tenant_id, row.alias);

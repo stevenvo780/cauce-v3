@@ -97,3 +97,10 @@ Ordenados por prioridad; cada uno con su zona. Evidencia y reproducción en el h
 - **Decisión dueño · dovecot** — muerto desde el 13-08 (status 89), proyecto de correo ajeno a cauce: no lo toqué.
 - **Nota** — las descripciones de las units instaladas contradicen la BD en argos/iza/kratos (harness viejo); se corrige solo con el rollout de units generadas ya pendiente en P1.
 - **Verificado por Opus además**: bus sano de verdad (argos trabajando durante el incidente de redes), respaldo de BD del plano de control OK con restauración aislada verificada, árbol limpio y pusheado.
+
+## Incidente TUI de consola (28-08 noche) — resuelto
+
+- **Síntoma**: ninguna TUI abría en la vista de la consola desde el deploy de las 14:52 (última buena: 27-08 00:52). El relay rechazaba todo attach con `forbidden 4403`; auditoría: `terminal.session.consume → deny, reason=target_placement_changed, cohort=[]`.
+- **Causa raíz (contrato roto entre emisión y verificación)**: la emisión guarda `terminal_sessions.container` como ID FÍSICO del contenedor (presence.container_id del registro vivo — lo que el relay usa para atar sesión↔agente), pero `currentSessionPolicy` lo comparaba contra `agents.container_name` (NOMBRE lógico de la BD). Dominios distintos ⇒ desigualdad siempre ⇒ deny universal. Entró con el plano nuevo de consola (c7345da9) + la flota-como-datos (K1) en el mismo deploy.
+- **Arreglo**: la policy compara ahora contra la presencia viva del registry (misma fuente que la emisión); deniega solo cuando el registry SABE dónde vive el alias y no es el contenedor emitido — 'ambiguous' (rotación de relay) lo gobierna el fencing 409 y 'unknown' lo corta el attach. 91/91 del plano en verde; el test de rotación existente corrigió el primer intento del fix.
+- **Lección**: el check no tenía NINGÚN test que cruzara emisión↔policy con datos reales (los 5 inspectores del workflow tampoco lo vieron; lo destapó Steven usando la vista). Añadir un caso e2e emisión→consume con placement de BD real.
