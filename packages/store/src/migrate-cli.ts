@@ -8,12 +8,15 @@ import { applyMigrations, createPool } from './db.js';
 // before reading DATABASE_URL or opening a socket.
 // deploy/migrate.mjs is the image's canonical one-shot wrapper and performs the mandatory TLS
 // probe before importing this module.
-const canonicalProductionEntrypoint = fileURLToPath(
-  new URL('../../../deploy/runtime/migrate.mjs', import.meta.url),
+// deploy/Dockerfile flattens deploy/runtime/* into ./deploy/, so both wrapper paths are canonical.
+const canonicalProductionEntrypoints = new Set(
+  ['../../../deploy/runtime/migrate.mjs', '../../../deploy/migrate.mjs'].map((relative) =>
+    fileURLToPath(new URL(relative, import.meta.url)),
+  ),
 );
 const invokedEntrypoint = process.argv[1] === undefined ? '' : resolve(process.argv[1]);
 const directDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
-if (invokedEntrypoint !== canonicalProductionEntrypoint && !directDevelopment) {
+if (!canonicalProductionEntrypoints.has(invokedEntrypoint) && !directDevelopment) {
   throw new Error(
     'direct migration is disabled: use deploy/deploy.sh for the owner-attended ' +
       'build/pin/migrate/up/smoke workflow; disposable dev/test databases require an exact ' +

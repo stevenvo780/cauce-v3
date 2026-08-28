@@ -596,7 +596,7 @@
   "packages/store/src/delegation-guard.ts": 29,
   "packages/store/src/fleet-activity.test.ts": 12,
   "packages/store/src/fleet-activity.ts": 18,
-  "packages/store/src/migrate-cli.ts": 6,
+  "packages/store/src/migrate-cli.ts": 7,
   "packages/store/src/migration-integrity.ts": 6,
   "packages/store/src/repository.quota-schema-version.test.ts": 10,
   "packages/store/src/repository/agents.ts": 22,
