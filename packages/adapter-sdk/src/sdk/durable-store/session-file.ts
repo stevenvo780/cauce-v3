@@ -164,8 +164,8 @@ export function validateSessionsFile(value: unknown): SessionsFile {
       || valueRecord === null
       || Array.isArray(valueRecord)) invalidSessionsFile();
     const record = valueRecord as Record<string, unknown>;
-    // Las DOS formas admitidas, y sólo esas: la vieja (sin `origin`) sigue siendo válida tal
-    // cual, así que ninguna entrada escrita antes de este cambio se rompe.
+    // Both shapes are accepted, and only those: the old one (without `origin`) remains valid
+    // as-is, so any entry written before this change keeps working.
     if (!(exactKeys(record, ["native_id", "initialized"])
         || exactKeys(record, ["native_id", "initialized", "origin"]))
       || typeof record.native_id !== "string"

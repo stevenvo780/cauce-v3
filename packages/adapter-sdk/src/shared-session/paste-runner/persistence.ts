@@ -18,10 +18,10 @@ async function fileQuarantineState(
     const names = await readdir(dirname(path));
     const pendingNames = names.filter((name) => name.startsWith(`${base}.`)
       && name.endsWith(".pending"));
-    // Un temporal de una marca ACTIVA prueba que una escritura durable quedó a mitad. Las únicas
-    // excepciones son preparaciones `.arming` con correlation+token exactos: por protocolo el
-    // paste no puede empezar hasta que `commitPrepared` publique el nombre `.pending`, así que un
-    // crash o una finalización tardía en esa fase es recuperable y no puede bloquear otro turno.
+    // A `.tmp` for an ACTIVE marker proves a durable write was left half-finished. The only
+    // exceptions are `.arming` preparations with exact correlation+token: by protocol, the
+    // paste cannot start until `commitPrepared` publishes the `.pending` name, so a crash or
+    // late finalization at that phase is recoverable and cannot block another turn.
     if (names.some((name) => (name.startsWith(`${base}.`) || name.startsWith(`.${base}.`))
       && name.endsWith(".tmp")
       && !isPendingQuarantinePreparationArtifact(base, name))) states.push("unreadable");
@@ -132,13 +132,13 @@ async function commitPreparedQuarantineMarker(
     await directoryHandle.sync();
     await directoryHandle.close();
     directoryHandle = undefined;
-    // El pending ya es durable. Fallar al retirar el nombre arming no revierte el commit: esa fase
-    // se ignora por contrato y ambos nombres apuntan al mismo inode privado.
+    // The pending is already durable. Failure to remove the arming name does not revert the
+    // commit: that phase is contractually optional and both names point at the same private inode.
     await unlink(preparedPath).catch(() => undefined);
     return true;
   } catch {
-    // Sólo se compensa el destino si ESTE link lo creó. EEXIST u otro rechazo jamás borra la marca
-    // que ya estaba en `pendingPath`.
+    // Only compensate the destination if THIS link created it. EEXIST or other rejection
+    // never deletes a marker that was already at `pendingPath`.
     if (linked) await clearPendingQuarantineFile(pendingPath);
     return false;
   } finally {

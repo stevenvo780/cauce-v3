@@ -42,8 +42,8 @@ export type EnsureFailure =
 export const SESSION_ALIAS_OPTION = "@cauce_alias";
 export const SESSION_HARNESS_OPTION = "@cauce_harness";
 
-// Se lee mediante función para que TypeScript no trate `AbortSignal.aborted` como una constante
-// refinada a `false` a través de awaits: el valor cambia precisamente desde otro task.
+// Read via a function so TypeScript does not treat `AbortSignal.aborted` as a constant
+// narrowed to `false` across awaits: the value changes precisely from another task.
 export function signalAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
@@ -122,8 +122,8 @@ export async function verifyExistingSessionIdentity(
       detail: `el pane observado ya no pertenece a ${session}; se conserva intacto`,
     };
   }
-  // Los marcadores declaran qué DEBERÍA vivir en la sesión; el comando original acredita qué
-  // proceso vive realmente en ESTA generación. Se exige siempre, también a sesiones marcadas.
+  // Markers declare what SHOULD live in the session; the original command accredits what
+  // process actually lives in THIS generation. Always required, even for marked sessions.
   if (pane !== undefined && !paneCommandMatches(spec, pane.paneStartCommand)) {
     return {
       ok: false,

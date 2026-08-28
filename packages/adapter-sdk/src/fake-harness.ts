@@ -98,10 +98,10 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
       ...(detail.error ? { error: detail.error } : {}),
       ...(detail.error_code ? { error_code: detail.error_code } : {}),
       ...(detail.result ? { result: detail.result } : {}),
-      // La marca que distingue "el harness arrancó de verdad" de "la entrega hace cola".
-      // El SDK real la manda en el 'started' posterior a la reserva de sesión; sin poder
-      // emitirla acá, ninguna prueba de integración puede cubrir el camino de la ejecución
-      // ya pagada, que es justo el que no se debe reintentar.
+      // Marker distinguishing "harness really started" from "delivery is queued".
+      // The real SDK emits it in the 'started' after the session reservation; without
+      // emitting it here, no integration test can cover the path of already-paid execution,
+      // which is exactly the one that must not be retried.
       ...(detail.execution_started === true ? { execution_started: true } : {})
     }));
   }

@@ -12,12 +12,12 @@ export * from "./sdk/engine.js";
 export * from "./sdk/client.js";
 export * from "./sdk/websocket-transport.js";
 export * from "./context/perfil-a-contexto.js";
-// El sembrador es el ÚNICO que escribe el perfil en el disco del contenedor. Se exporta para que
-// las pruebas de integración puedan medirlo sin pasar por el socket.
+// The seeder is the ONLY writer of the profile on the container's disk. Exported so
+// integration tests can measure it without going through the socket.
 export * from "./context/siembra-del-perfil.js";
-// El reparto por arnés se MUDÓ a `@cauce/protocol`: la consola necesita previsualizar los mismos
-// siete ficheros de openclaw y el gateway no puede importar este paquete. Se re-exporta para que
-// el adaptador siga siendo el sitio natural desde donde el runtime del agente los pide.
+// The per-harness distribution MOVED to `@cauce/protocol`: the console needs to preview the
+// same seven openclaw files and the gateway cannot import this package. Re-exported so the
+// adapter remains the natural place from which the agent runtime requests them.
 export {
   ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, TOPES_OPENCLAW, ficherosDelArnes, nombresDelArnes,
   type FicheroGenerado, type PoliticaDeFichero,

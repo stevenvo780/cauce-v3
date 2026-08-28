@@ -64,7 +64,7 @@ export async function readDegradations(
         records.push(value as DegradationRecord);
       }
     } catch {
-      // Una línea truncada por un corte de disco no invalida las demás.
+      // A line truncated by a disk cut does not invalidate the rest.
     }
   }
   return records.slice(-tail);

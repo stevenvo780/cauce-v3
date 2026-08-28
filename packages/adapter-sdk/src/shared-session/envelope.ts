@@ -41,8 +41,8 @@ export function stripJsonFence(text: string): string {
   if (opening === null) return trimmed;
   if (!trimmed.endsWith("```")) return trimmed;
   const body = trimmed.slice(opening[0].length, trimmed.length - 3);
-  // Un segundo vallado dentro del cuerpo significa que había varios bloques y el primero no
-  // envolvía al texto entero.
+  // A second fence inside the body means there were several blocks and the first one did not
+  // wrap the entire text.
   if (body.includes("```")) return trimmed;
   return body.trim();
 }

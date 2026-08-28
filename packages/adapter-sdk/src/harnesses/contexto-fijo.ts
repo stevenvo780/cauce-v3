@@ -65,7 +65,7 @@ export function renglonDeContextoFijo(): string {
   );
 }
 
-// ── Leer el sello del disco, desde dentro del contenedor ────────────────────────────────────
+// ── Read the disk seal from inside the container ────────────────────────────────────────────
 
 /**
  * Resolves the path to the harness's instructions file from local environment variables.

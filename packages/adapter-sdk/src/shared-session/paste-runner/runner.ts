@@ -81,9 +81,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     }
     if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
 
-    // El pegado y el Enter tienen que ser una operación sola respecto del dueño: entre que se
-    // comprueba que la caja está libre y que se envía, no puede haber más esperas de las
-    // imprescindibles.
+    // Paste and Enter must be a single operation from the owner's perspective: between checking
+    // the input box is free and submitting it, no extra waits beyond what is strictly required.
     const acquired = await this.acquireInputBox(
       target,
       identity,
@@ -95,10 +94,10 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     if ("replaced" in acquired) return replacedBeforeSubmission();
     if (!acquired.ok) return this.degrade(acquired.reason, acquired.detail, request);
 
-    // Si la terminal estaba GENERANDO cuando pegamos, el pegado se encola y se funde con el turno
-    // en curso: no habrá turno propio del que descender. No cambia lo que se hace —pegar sigue
-    // siendo correcto, el turno acaba ejecutándose en la conversación compartida— cambia lo que se
-    // puede AFIRMAR después, y el aviso que lee el dueño. Ver `turnInFlight`.
+    // If the terminal was GENERATING when we pasted, the paste is queued and merges with the
+    // in-flight turn: there will be no dedicated turn to descend from. What is done does not change —
+    // pasting remains correct, the turn executes in the shared conversation — what changes is what
+    // we can CLAIM afterwards and the notice read by the owner. See `turnInFlight`.
     const generating = turnInFlight(acquired.pane);
     const baseline = await this.baseline(request.signal);
     if (baseline === undefined || request.signal.aborted) {
@@ -207,10 +206,10 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       return this.degrade("handshake_failed", "tmux no aceptó el pegado del prompt", request);
     }
 
-    // A partir de acá el turno PUEDE estar en marcha dentro de la TUI. Ninguna incertidumbre
-    // vuelve al transporte alternativo; ver `harvest`.
-    // Limpiar el aviso es observabilidad, no parte del commit. Si el aborto llega mientras tmux
-    // responde, se deja esa lectura en segundo plano y se entra YA al drenaje acotado.
+    // From here the turn MAY be in flight inside the TUI. No uncertainty falls back to the
+    // alternative transport; see `harvest`.
+    // Clearing the notice is observability, not part of the commit. If abort arrives while tmux
+    // responds, leave that read in the background and ENTER the bounded drain now.
     await clearDegradation(
       this.options.tmux,
       ready.sessionId,
@@ -273,7 +272,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       } else if (paste.state === "not_pasted") {
         outcome = { state: "not_pasted", paste };
       } else {
-        // Desde el paste exitoso la operación está comprometida incluso si llega cancelación.
+        // Once the paste succeeds, the operation is committed even if a cancellation arrives.
         const settled = await beforeDeadline(
           this.options.sleep(this.options.settleMs ?? SETTLE_MS),
           this.quarantineDeadline(),
@@ -281,11 +280,11 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         if (!settled.completed) {
           outcome = {
             state: "ambiguous",
-            detail: "la espera entre paste y Enter no alcanzó una postcondición",
+            detail: "wait between paste and Enter did not reach a postcondition",
             forceTerminate: true,
           };
         } else {
-          // La cancelación de entrega no cancela el commit; el cliente tiene deadline y reap real.
+          // Delivery cancellation does not cancel the commit; the client has deadline and real reap.
           const entered = await sendEnter(
             this.options.tmux,
             identity,
@@ -362,8 +361,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       };
     }
     this.exactSessionId = ensure.sessionId;
-    // `ensure` acredita pane/PID/comando como una sola generación. No se vuelve a resolver por
-    // `session:window`, porque una ventana con varios panes podría elegir el activo silenciosamente.
+    // `ensure` accredits pane/PID/command as a single generation. Do not re-resolve by
+    // `session:window`, because a window with several panes could pick the active one silently.
     const identity = ensure.pane;
     if (signal.aborted) return { ok: false, cancelled: true };
     if (identity === undefined
@@ -379,7 +378,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       };
     }
     if (ensure.created) {
-      // Notifica la creación o reanudación de la sesión compartida.
+      // Notifies the creation or resume of the shared session.
       await this.note({
         reason: "session_created",
         detail: ensure.resumed === true
@@ -389,7 +388,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         fellBack: false,
       }, ensure.sessionId);
       if (signal.aborted) return { ok: false, cancelled: true };
-      // Una TUI recién nacida no es "la misma que antes": el PID viejo ya no significa nada.
+      // A freshly born TUI is not "the same as before": the old PID means nothing now.
       this.lastPanePid = ensure.pid;
       this.lastSessionId = undefined;
       return { ok: true, sessionId: ensure.sessionId, identity };

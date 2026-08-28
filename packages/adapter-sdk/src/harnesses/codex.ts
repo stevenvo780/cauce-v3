@@ -8,8 +8,8 @@ export const codexDefinition: HarnessDefinition = {
   baseArgs: ["exec", "--skip-git-repo-check"],
   capabilities: capabilities("codex", true),
   sessionStrategy: { kind: "observed" },
-  // `--json` emite JSONL según avanza el turno. Cero bytes en stdout indica que el proceso
-  // no llegó a iniciar la ejecución.
+  // `--json` emits JSONL as the turn progresses. Zero bytes on stdout indicate the process
+  // did not reach execution start.
   startWitness: { kind: "stdout-first-byte" },
   sessionArgs: ({ sessionId, resume }) =>
     resume && sessionId !== undefined ? ["resume", "--json", sessionId, "-"] : ["--json", "-"],

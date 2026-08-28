@@ -99,8 +99,8 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
 
       const current = this.sessions.sessions[pointerKey];
       if (current?.initialized === true) {
-        // Los primeros writers copiaban también `origin`. Se corrige in-place sin cambiar la
-        // sesión seleccionada ni revelar el valor en errores o logs.
+        // Early writers also copied `origin`. Fixed in-place without changing the selected session
+        // or revealing the value in errors or logs.
         if (current.origin !== undefined) {
           const next = validateSessionsFile({
             version: 1,

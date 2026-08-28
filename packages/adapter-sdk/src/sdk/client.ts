@@ -334,7 +334,7 @@ export class AdapterClient {
             || frame.receipt === 'duplicate')
           ? (frame.receipt === 'applied' ? 'applied' as const : 'duplicate' as const)
           : undefined;
-        // Solo un recibo terminal concluyente permite descartar estados done/failed pendientes.
+        // Only a conclusive terminal receipt can clear pending done/failed states.
         if (terminalPending && terminalReceipt === undefined) return;
         const acknowledged = await this.store.acknowledgeResult(correlation, {
           ...(frame.delegation_rejections === undefined
@@ -369,7 +369,7 @@ export class AdapterClient {
           if (frame.applied === true || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
           } else if (pending.phase === 'accepted' && frame.receipt !== 'ownership_lost') {
-            // Renovación en fase accepted no confirmada; no se trata como pérdida de propiedad.
+            // Renewal in unconfirmed accepted phase; not treated as ownership loss.
             this.engine.logDroppedQueueRenewal(frame.delivery_id, frame.attempt);
           } else {
             this.engine.loseClaim(frame.delivery_id, frame.attempt, frame.claim_token);

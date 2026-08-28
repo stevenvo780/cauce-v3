@@ -328,10 +328,10 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
       if (feedback.execution_intent_receipt !== undefined && !executionIntentConfirmed) {
         throw new Error("Execution intent receipt does not match a current durable marker");
       }
-      // El store remoto rechazó este resultado terminal: conservar `done` local bloquearía para
-      // siempre el intento superior que el bus tiene derecho a entregar. Se degrada a un failed
-      // retryable, pero se conserva el id terminal ya confirmado para que una redelivery del MISMO
-      // intento no fabrique otro evento ni vuelva a ejecutar el trabajo ambiguo.
+      // The remote store rejected this terminal result: keeping `done` locally would forever block
+      // the upper attempt the bus is entitled to deliver. Degrade to a retryable failed, but
+      // keep the already-confirmed terminal id so a redelivery of the SAME attempt does not
+      // fabricate another event nor re-execute the ambiguous work.
       const ownershipReleasedRecord = terminalOwnershipLost && existing !== undefined
         ? (() => {
             const retained: { -readonly [Key in keyof InboxRecord]: InboxRecord[Key] } = {

@@ -291,17 +291,17 @@ services:
         gid: "1000"
         mode: 0444
     volumes:
-      # Mismo directorio que el gateway: acá vive `pty_agent_identities.json` y
-      # también se rota por rename atómico. Ver el comentario del bind en gateway.
+      # Same directory as the gateway: `pty_agent_identities.json` lives here and
+      # is also rotated by atomic rename. See the bind comment on gateway.
       - type: bind
         source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
         target: /run/cauce-terminal
         read_only: true
       - terminal_close_spool:/var/lib/cauce-terminal
     ports:
-      # Solo la pierna de agentes se publica al host: los agentes PTY viven en
-      # kratos y entran por el tailnet. La pierna del navegador (8446) queda
-      # interna y solo la alcanza el nginx de la consola por la red `edge`.
+      # Only the agent leg is published to the host: PTY agents live in kratos
+      # and enter through the tailnet. The browser leg (8446) stays internal
+      # and is reached only by the console's nginx over the `edge` network.
       - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${TERMINAL_RELAY_AGENT_PORT:-8445}:8445"
     depends_on:
       gateway:
@@ -326,7 +326,7 @@ services:
       DISPATCHER_POLL_MS: ${DISPATCHER_POLL_MS:-100}
       CAUCE_DISPATCHER_STALE_MS: ${CAUCE_DISPATCHER_STALE_MS:-5000}
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
-      # Mismo valor que en el gateway; config.ts exige >= CAUCE_ACK_DEADLINE_MS.
+      # Same value as in the gateway; config.ts requires >= CAUCE_ACK_DEADLINE_MS.
       CAUCE_DELIVERY_LEASE_CAP_MS: ${CAUCE_DELIVERY_LEASE_CAP_MS:-21600000}
       ACK_TIMEOUT_MS: ${ACK_TIMEOUT_MS:-600000}
       INTERACTIVE_BURST: ${INTERACTIVE_BURST:-3}
@@ -398,8 +398,8 @@ services:
       CAUCE_TELEGRAM_MEDIA_MAX_BYTES: ${CAUCE_MEDIA_MAX_BYTES:-20971520}
       CAUCE_TELEGRAM_MEDIA_TTL_SECONDS: ${CAUCE_MEDIA_TTL_SECONDS:-600}
       CAUCE_TELEGRAM_MEDIA_SWEEP_SECONDS: ${CAUCE_MEDIA_SWEEP_SECONDS:-60}
-      # Transcripcion de notas de voz (servicio GPU local via tailnet). Sin declararlas
-      # aqui, las variables de prod.env no llegan al contenedor y la transcripcion se apaga.
+      # Voice-note transcription (local GPU service via tailnet). Without declaring them
+      # here, prod.env variables do not reach the container and transcription turns off.
       CAUCE_TELEGRAM_TRANSCRIPTION_URL: ${CAUCE_TELEGRAM_TRANSCRIPTION_URL:-}
       CAUCE_TELEGRAM_TRANSCRIPTION_MODEL: ${CAUCE_TELEGRAM_TRANSCRIPTION_MODEL:-}
       CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE: ${CAUCE_TELEGRAM_TRANSCRIPTION_LANGUAGE:-}
@@ -553,9 +553,9 @@ secrets:
   # gateway service, never as single-file secret mounts.
   gateway_oidc_session_key:
     file: ${CAUCE_GATEWAY_OIDC_SESSION_KEY_PATH:-/dev/null}
-  # Clave HMAC del JWT de sesión de la consola. Opt-in como las de arriba: sin la variable
-  # apunta a /dev/null y el stack levanta igual, porque nadie la lee salvo con
-  # CAUCE_AUTH_PROVIDER=password. En producción vive en /etc/cauce-v3/secrets/console_jwt_key.
+  # HMAC key for the console session JWT. Opt-in like the ones above: without the variable
+  # it points to /dev/null and the stack still comes up, because nobody reads it unless
+  # CAUCE_AUTH_PROVIDER=password. In production it lives in /etc/cauce-v3/secrets/console_jwt_key.
   console_jwt_key:
     file: ${CAUCE_CONSOLE_JWT_KEY_PATH:-/dev/null}
   gateway_oidc_client_secret:
@@ -570,9 +570,9 @@ secrets:
     file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH}
   console_gateway_client_key:
     file: ${CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH:?set CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH}
-  # El canal PTY es opt-in: sin aprovisionar apuntan a /dev/null y el stack
-  # sigue levantando; el gateway queda con CAUCE_TERMINAL_ENABLED=0 y el relay
-  # falla cerrado sin certificado.
+  # The PTY channel is opt-in: without provisioning they point to /dev/null and the
+  # stack still comes up; the gateway runs with CAUCE_TERMINAL_ENABLED=0 and the
+  # relay fail-closes without a certificate.
   terminal_gateway_client_cert:
     file: ${CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH:-/dev/null}
   terminal_gateway_client_key:

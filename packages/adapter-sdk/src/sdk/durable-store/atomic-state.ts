@@ -247,9 +247,9 @@ export async function recoverAtomicArtifacts(
   const targetSet = new Set<string>(targets);
   const groups = new Map<AtomicStateFile, Map<string, Set<AtomicArtifactKind>>>();
   const entries = await readdir(directoryPath);
-  // Una lista manual omitió `delivery-transaction.json`: exactamente el WAL que hace atómica la
-  // pareja inbox/outbox. Derivar ambos parsers de la fuente única evita que el próximo fichero
-  // durable quede otra vez fuera del recovery aunque sí esté en `ATOMIC_STATE_FILES`.
+  // A manual list omitted `delivery-transaction.json` — exactly the WAL that makes the inbox/outbox
+  // pair atomic. Deriving both parsers from the single source prevents the next durable file
+  // from being outside recovery again even if it appears in `ATOMIC_STATE_FILES`.
   const escapedTargets = ATOMIC_STATE_FILES.map((target) => (
     target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
   ));

@@ -44,17 +44,15 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
       + (this.options.mergedGraceMs ?? DEFAULT_MERGED_GRACE_MS);
     let injected: { file: string; key: string; sessionId?: string } | undefined;
     let started = false;
-    // Última vez que el registro creció. Es lo que separa "el pegado se perdió" (nada escribe nunca)
-    // de "el pegado se fundió con el turno en curso" (la terminal escribe todo el tiempo). Ver
-    // `DEFAULT_QUIET_MS`.
+    // Last time the transcript grew; distinguishes "paste was lost" (nothing writes)
+    // from "paste merged with an in-flight turn" (terminal writes the whole time). See DEFAULT_QUIET_MS.
     let lastActivityAt = Date.now();
-    // El registro de una conversación larga pesa megabytes y un turno puede durar una hora.
-    // Releerlo entero en cada sondeo costaría más que el propio turno, así que sólo se lee cuando
-    // el fichero creció; y la sesión tmux se comprueba cada tantos sondeos, no en todos.
+    // Long-conversation transcripts weigh megabytes and a turn may run for an hour;
+    // re-reading the whole file every poll would cost more than the turn itself, so we only read on growth.
     let lastSize = -1;
     let probe = 0;
-    // El timestamp lo fija el EVENTO, no el siguiente sondeo. Así una lectura de transcript lenta
-    // no puede empezar a contar el plazo recién cuando termina.
+    // Timestamp is fixed by the EVENT, not by the next poll — a slow transcript read
+    // cannot start counting the deadline only when it finishes.
     let cancelObservedAt = request.signal.aborted ? Date.now() : undefined;
     const observeCancellation = (): void => {
       cancelObservedAt ??= Date.now();
@@ -103,8 +101,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
               terminalBoundary: true,
             };
           }
-          // Un rename no reemplaza la conversación ni el proceso. El siguiente preflight volverá a
-          // exigir los nombres canónicos antes de inyectar un turno nuevo.
+          // A rename does not replace the conversation nor the process; the next preflight will
+          // re-demand the canonical names before injecting a new turn.
           activeIdentity = observed.identity;
         }
         probe += 1;
@@ -126,7 +124,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             );
             if (noted.aborted) continue;
           }
-          // Si el pegado se fusionó con un turno en curso, recupera el sobre escrito con posterioridad al pegado.
+          // If the paste merged with an in-flight turn, recover the envelope written after the paste.
           if (injected === undefined && scan.envelope !== undefined) {
             const harvested = await beforeAbort(
               () => this.harvested(scan.envelope!, undefined, generating),
@@ -164,8 +162,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           const outcome = port.findAnswer(slice.entries, injected.key);
           if (request.signal.aborted) continue;
           if (outcome?.kind === "failed") {
-            // El turno SÍ entró en la terminal y terminó mal. No se reintenta por el camino de
-            // siempre: pudo haber corrido herramientas antes de romperse.
+            // The turn DID enter the terminal and ended badly. Do not retry on the default path:
+            // it may have run tools before failing.
             return {
               result: result({ exitCode: 1, stderr: outcome.detail }),
               terminalBoundary: true,
@@ -180,9 +178,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
               terminalBoundary: true,
             };
           }
-          // Turno propio localizado y ascendencia que no llega: el otro modo de retener el lock hasta
-          // el presupuesto entero esperando un sobre que ya está escrito. Se acota a partir de nuestra
-          // entrada, así que un sobre anterior al pegado no se puede colar.
+          // Localized turn but no ancestry arriving: the other way of holding the lock until the
+          // full budget waiting for an envelope already written. Scoped to our entry, so
+          // a pre-paste envelope cannot sneak in.
           const rescue = port.findEnvelope?.(slice.entries, correlationId, injected.key);
           if (request.signal.aborted) continue;
           if (rescue !== undefined) {
@@ -208,18 +206,15 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           };
         }
 
-        // Red de seguridad para los harness que no pueden declarar `startedTurn` (claude): el pegado
-        // nunca apareció en el registro. No se degrada —eso lo ejecutaría dos veces— la entrega
-        // termina AMBIGUA y la generación queda en cuarentena para que la cola sólo progrese por el
-        // transporte aislado o sobre una generación nueva.
-        //
-        // Se exige ADEMÁS silencio: mientras el registro siga creciendo, lo que hay delante no es un
-        // pegado perdido sino un turno en marcha que se lo tragó, y matarlo es tirar trabajo. Con el
-        // pegado de verdad perdido no crece nada y esto vence en los mismos 5 min de siempre.
+        // Safety net for harnesses that cannot declare `startedTurn` (claude): the paste never
+        // appeared in the transcript. No degrade — that would execute twice — the delivery
+        // ends AMBIGUOUS and the generation is quarantined so the queue only progresses via
+        // the isolated transport or on a new generation.
+        // Also requires SILENCE: while the transcript keeps growing, what is ahead is an
+        // in-flight turn that swallowed it; killing it is throwing work away.
         if (injected === undefined && !started && Date.now() >= correlationDeadline
           && (Date.now() - lastActivityAt >= quietMs || Date.now() >= mergedCeiling)) {
-          // Antes de soltarla, el sobre: puede haber aparecido en el mismo sondeo en que se agotó la
-          // espera. Si llegó, la entrega no muere.
+          // Last sweep before giving up on it: if the envelope arrived, the delivery does not die.
           const rescued = await beforeAbort(
             () => this.lastEnvelope(baseline, injected, correlationId),
             request.signal,
@@ -236,7 +231,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           return {
             result: await this.quarantineTimedOut(
               activeIdentity,
-              "el paste+Enter aceptado no alcanzó un límite correlacionado en el transcript",
+              "accepted paste+Enter never reached a correlated boundary in the transcript",
               pending,
             ),
             terminalBoundary: false,
@@ -244,8 +239,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
         }
 
         if (Date.now() >= deadline) {
-          // Último barrido antes de darla por muerta: si el sobre llegó, la entrega no muere. Esta es
-          // la red que faltaba, y es la que convierte el plazo en un techo y no en una guillotina.
+          // Final sweep before declaring it dead: if the envelope arrived, the delivery does not die.
           const rescued = await beforeAbort(
             () => this.lastEnvelope(baseline, injected, correlationId),
             request.signal,
@@ -259,12 +253,12 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             if (harvested.aborted) continue;
             return { result: harvested.value, terminalBoundary: true };
           }
-          // Ya se inyectó: el turno pudo haber corrido herramientas y causado efectos externos.
-          // `timedOut` hace que el adaptador lo trate como AMBIGUO y no lo reintente solo.
+          // Already injected: the turn may have run tools and caused external effects.
+          // `timedOut` makes the adapter treat it as AMBIGUOUS and not retry alone.
           return {
             result: await this.quarantineTimedOut(
               activeIdentity,
-              "el presupuesto terminó sin desenlace correlacionado del turno ya inyectado",
+              "budget ended with no correlated outcome for the already-injected turn",
               pending,
             ),
             terminalBoundary: false,

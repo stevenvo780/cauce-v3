@@ -65,7 +65,7 @@ export async function claudeHasPreviousConversation(
       const info = await stat(join(directory, name));
       if (info.isFile() && info.size > 0) return true;
     } catch {
-      // Un fichero que desaparece entre el listado y el `stat` no es una conversación reanudable.
+      // A file that disappears between listing and `stat` is not a resumable conversation.
     }
   }
   return false;

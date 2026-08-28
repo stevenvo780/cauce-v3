@@ -66,7 +66,7 @@ function signalProcessGroup(
     try {
       child.kill(signal);
     } catch {
-      // Un hijo que murió entre la comprobación y la señal no es un fallo del runner.
+      // A child that died between the check and the signal is not a runner failure.
     }
   }
 }
@@ -143,7 +143,7 @@ export class SpawnCommandRunner {
         try {
           request.onHarnessStart?.();
         } catch {
-          // Observador opcional; no altera la ejecución.
+          // Optional observer; does not alter execution.
         }
       };
       let timedOut = false;
@@ -205,7 +205,7 @@ export class SpawnCommandRunner {
           try {
             stream.destroy();
           } catch {
-            // No altera el desenlace si el descriptor ya estaba cerrado.
+            // Does not alter the outcome if the descriptor was already closed.
           }
         }
         settle();
@@ -241,7 +241,7 @@ export class SpawnCommandRunner {
       });
       child.stderr.on("data", (chunk: Buffer) => {
         stderr = collect(stderr, chunk);
-        // Busca el marcador sobre el acumulado de stderr por si llega fragmentado en múltiples lecturas.
+        // Search the marker over the accumulated stderr in case it arrives split across reads.
         if (witness?.kind === "stderr-marker" && stderr.includes(witness.marker)) noteHarnessStart();
       });
 
