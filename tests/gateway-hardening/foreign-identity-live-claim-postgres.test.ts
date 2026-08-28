@@ -166,7 +166,7 @@ it('answers a live claim with a foreign identity as a correlated ownership_lost,
   // antes de mandar el ACK ajeno.
   expect(second.socket.readyState).toBe(WebSocket.OPEN);
   const heartbeatAck = new Promise<Record<string, unknown>>((resolve) => {
-    second.socket.once('message', (data) => resolve(JSON.parse(text(data)) as Record<string, unknown>));
+    second.socket.once('message', (data) => { resolve(JSON.parse(text(data)) as Record<string, unknown>); });
   });
   second.socket.send(JSON.stringify({ type: 'heartbeat', instance_id: 'stable-argos-runtime', epoch: 2 }));
   await expect(heartbeatAck).resolves.toMatchObject({ type: 'heartbeat_ack' });
