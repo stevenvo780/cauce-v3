@@ -57,4 +57,4 @@ anexo: COmo adjunto entonces veo que mucyhos antipatrones se siguen repitiendo p
 ### [ ] (j) Libro de reconciliación BD↔físico — 4 respuestas y la ronda flota-como-datos arranca
 El diseño está en `plan-reestructura/flota-como-datos.md` (Anexo A con la evidencia). La regla de la ronda: el drift se corrige SIEMPRE en la BD, jamás parcheando ficheros. Necesito: (1) argos: ¿claude o hermes?; (2) iza: ¿openclaw@claw-miguel o hermes@ws-humanizar?; (3) kant: confirmar la rama host (BD parece la buena); (4) gaia/heraclito/tales: ¿en qué host corren físicamente, o se deshabilitan en BD hasta tener placement?
 
-**Respuesta:**
+**Respuesta: 1: Argos ya es OpenClaw y debe seguir asi, 2: openclaw@claw-miguel, 3: Kant va en la torre por que es el encargado de mi infraestructura, gagia, heraclito y tales corren en la VPS de hecho ya lo hacen ahorita viven en la VPS como debe ser**
