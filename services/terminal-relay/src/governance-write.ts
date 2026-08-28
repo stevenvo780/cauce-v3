@@ -95,15 +95,15 @@ export async function requestFileWrite(
       if (cancelAgent) connection.cancelWrite(requestId);
       resolve(outcome);
     };
-    const aborted = (): void => finish(
+    const aborted = (): void => { finish(
       { error: 'unavailable', reason: 'la petición de escritura fue cancelada' },
       true
-    );
+    ); };
     const timer = setTimeout(() => {
       logEvent('terminal_relay_write_timeout', { tenant_id: tenantId, alias, request_id: requestId });
-      finish({ error: 'timeout', reason: `el pty-agent no confirmó la escritura en ${timeoutMs} ms` }, true);
+      finish({ error: 'timeout', reason: `el pty-agent no confirmó la escritura en ${String(timeoutMs)} ms` }, true);
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
 
     connection.attachWrite(requestId, {
       onWriteOk(body) {
@@ -234,14 +234,14 @@ export async function requestFileWriteBatch(
       if (cancelAgent) connection.cancelGovernanceWriteBatch(requestId);
       resolve(outcome);
     };
-    const aborted = (): void => finish(
+    const aborted = (): void => { finish(
       { error: 'unavailable', reason: 'la petición de perfil fue cancelada' }, true
-    );
+    ); };
     const timer = setTimeout(() => {
       logEvent('terminal_relay_write_batch_timeout', { tenant_id: tenantId, alias, request_id: requestId });
-      finish({ error: 'timeout', reason: `el pty-agent no confirmó el perfil en ${timeoutMs} ms` }, true);
+      finish({ error: 'timeout', reason: `el pty-agent no confirmó el perfil en ${String(timeoutMs)} ms` }, true);
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
 
     connection.attachWrite(requestId, {
       onWriteOk(body) {

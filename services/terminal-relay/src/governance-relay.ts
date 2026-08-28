@@ -90,12 +90,12 @@ function digest(value: string): Buffer {
 
 function authorized(header: unknown, expected: string): boolean {
   const authorization = typeof header === 'string' ? header : undefined;
-  if (authorization === undefined || !authorization.startsWith('Bearer ')) return false;
+  if (!authorization?.startsWith('Bearer ')) return false;
   return timingSafeEqual(digest(authorization.slice(7)), digest(expected));
 }
 
 function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });
@@ -123,7 +123,7 @@ async function readBody(request: IncomingMessage): Promise<string | undefined> {
       }
       if (!overflowed) chunks.push(chunk);
     });
-    request.on('end', () => resolve(overflowed ? undefined : Buffer.concat(chunks).toString('utf8')));
+    request.on('end', () => { resolve(overflowed ? undefined : Buffer.concat(chunks).toString('utf8')); });
     request.on('error', reject);
   });
 }

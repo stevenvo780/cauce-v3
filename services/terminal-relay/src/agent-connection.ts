@@ -60,7 +60,7 @@ export class AgentConnection {
       }
       void this.write(encodeFrame(FRAME_TAGS.PING));
     }, AGENT_PING_INTERVAL_MS);
-    this.ping.unref?.();
+    this.ping.unref();
   }
 
   get key(): string {
@@ -346,7 +346,7 @@ export class AgentConnection {
     }
     if (frame.tag === FRAME_TAGS.STDOUT) {
       const data = decodeDataFrame(frame.payload);
-      this.dispatch(data.sessionId, (handlers) => handlers.onStdout(data.data));
+      this.dispatch(data.sessionId, (handlers) => { handlers.onStdout(data.data); });
       return;
     }
     if (frame.tag === FRAME_TAGS.OPEN_OK) {
@@ -354,14 +354,14 @@ export class AgentConnection {
       const sessionId = stringField(body, 'session_id');
       if (sessionId === undefined) throw new FramingError('OPEN_OK without a session id');
       const pid = integerField(body, 'pid') ?? 0;
-      this.dispatch(sessionId, (handlers) => handlers.onOpenOk(pid));
+      this.dispatch(sessionId, (handlers) => { handlers.onOpenOk(pid); });
       return;
     }
     if (frame.tag === FRAME_TAGS.OPEN_ERR) {
       const body = decodeJsonFrame(frame.payload);
       const sessionId = stringField(body, 'session_id');
       if (sessionId === undefined) throw new FramingError('OPEN_ERR without a session id');
-      this.dispatch(sessionId, (handlers) => handlers.onOpenErr(stringField(body, 'reason') ?? 'open_failed'));
+      this.dispatch(sessionId, (handlers) => { handlers.onOpenErr(stringField(body, 'reason') ?? 'open_failed'); });
       return;
     }
     if (frame.tag === FRAME_TAGS.CLOSED) {
@@ -369,75 +369,75 @@ export class AgentConnection {
       const sessionId = stringField(body, 'session_id');
       if (sessionId === undefined) throw new FramingError('CLOSED without a session id');
       const exitCode = integerField(body, 'exit_code');
-      this.dispatch(sessionId, (handlers) => handlers.onClosed({
-        exit_code: exitCode === undefined ? null : exitCode,
+      this.dispatch(sessionId, (handlers) => { handlers.onClosed({
+        exit_code: exitCode ?? null,
         signal: stringField(body, 'signal') ?? null,
         reason: stringField(body, 'reason') ?? 'agent_closed'
-      }));
+      }); });
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_OK) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('READ_OK without a request id');
-      this.dispatchRead(requestId, 'ok', (handlers) => handlers.onReadOk(body));
+      this.dispatchRead(requestId, 'ok', (handlers) => { handlers.onReadOk(body); });
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_ERR) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('READ_ERR without a request id');
-      this.dispatchRead(requestId, 'error', (handlers) => handlers.onReadErr({
+      this.dispatchRead(requestId, 'error', (handlers) => { handlers.onReadErr({
         code: stringField(body, 'error') ?? 'unknown',
         reason: stringField(body, 'reason') ?? 'read_failed'
-      }));
+      }); });
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_DATA) {
       // Mismo prefijo de 36 bytes que STDOUT, pero lo que lleva es el `request_id`.
       const data = decodeDataFrame(frame.payload);
-      this.dispatchRead(data.sessionId, 'data', (handlers) => handlers.onReadData(data.data));
+      this.dispatchRead(data.sessionId, 'data', (handlers) => { handlers.onReadData(data.data); });
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_DONE) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('READ_DONE without a request id');
-      this.dispatchRead(requestId, 'done', (handlers) => handlers.onReadDone(body));
+      this.dispatchRead(requestId, 'done', (handlers) => { handlers.onReadDone(body); });
       return;
     }
     if (frame.tag === FRAME_TAGS.WRITE_OK) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('WRITE_OK without a request id');
-      this.dispatchWrite(requestId, (handlers) => handlers.onWriteOk(body));
+      this.dispatchWrite(requestId, (handlers) => { handlers.onWriteOk(body); });
       return;
     }
     if (frame.tag === FRAME_TAGS.WRITE_ERR) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('WRITE_ERR without a request id');
-      this.dispatchWrite(requestId, (handlers) => handlers.onWriteErr({
+      this.dispatchWrite(requestId, (handlers) => { handlers.onWriteErr({
         code: stringField(body, 'error') ?? 'unknown',
         reason: stringField(body, 'reason') ?? 'write_failed'
-      }));
+      }); });
       return;
     }
     if (frame.tag === FRAME_TAGS.WRITE_BATCH_OK) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('WRITE_BATCH_OK without a request id');
-      this.dispatchWrite(requestId, (handlers) => handlers.onWriteOk(body));
+      this.dispatchWrite(requestId, (handlers) => { handlers.onWriteOk(body); });
       return;
     }
     if (frame.tag === FRAME_TAGS.WRITE_BATCH_ERR) {
       const body = decodeJsonFrame(frame.payload);
       const requestId = stringField(body, 'request_id');
       if (requestId === undefined) throw new FramingError('WRITE_BATCH_ERR without a request id');
-      this.dispatchWrite(requestId, (handlers) => handlers.onWriteErr({
+      this.dispatchWrite(requestId, (handlers) => { handlers.onWriteErr({
         code: stringField(body, 'error') ?? 'unknown',
         reason: stringField(body, 'reason') ?? 'write_batch_failed'
-      }));
+      }); });
       return;
     }
     // AGENT_HELLO after the handshake, or any frame only the relay may send, is a violation.
@@ -504,7 +504,7 @@ export class AgentConnection {
     }
     if (!this.socket.write(frame)) {
       this.waitingDrain = true;
-      this.socket.once('drain', () => this.flushWrites());
+      this.socket.once('drain', () => { this.flushWrites(); });
     }
     return true;
   }
@@ -525,7 +525,7 @@ export class AgentConnection {
     }
     if (!this.socket.write(frame)) {
       this.waitingDrain = true;
-      this.socket.once('drain', () => this.flushWrites());
+      this.socket.once('drain', () => { this.flushWrites(); });
     }
     return true;
   }
@@ -550,7 +550,7 @@ export class AgentConnection {
       this.queuedWriteBytes -= frame.byteLength;
       if (!this.socket.write(frame)) {
         this.waitingDrain = true;
-        this.socket.once('drain', () => this.flushWrites());
+        this.socket.once('drain', () => { this.flushWrites(); });
         return;
       }
     }

@@ -80,7 +80,7 @@ export class AgentLeg implements AgentLookup {
   async close(): Promise<void> {
     for (const connection of [...this.connections.values()]) connection.destroy('relay_shutdown');
     this.connections.clear();
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await new Promise<void>((resolve) => this.server.close(() => { resolve(); }));
   }
 
   private async accept(socket: TLSSocket): Promise<void> {
@@ -115,7 +115,7 @@ export class AgentLeg implements AgentLookup {
     const hello = setTimeout(() => {
       if (!connection) socket.destroy();
     }, HELLO_TIMEOUT_MS);
-    hello.unref?.();
+    hello.unref();
     const fail = (reason: string): void => {
       clearTimeout(hello);
       logEvent('terminal_relay_agent_rejected', { reason, alias: identity.alias, fingerprint: shortFingerprint(fingerprint) });

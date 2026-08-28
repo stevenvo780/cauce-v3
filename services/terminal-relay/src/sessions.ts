@@ -158,7 +158,7 @@ export class SessionManager implements SessionManagerDelegate {
       Promise.allSettled([...this.pendingReports.values()]),
       new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, timeoutMs);
-        timer.unref?.();
+        timer.unref();
       })
     ]);
   }
@@ -240,7 +240,7 @@ export class SessionManager implements SessionManagerDelegate {
       }
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, delay);
-        timer.unref?.();
+        timer.unref();
       });
       delay = Math.min(CLOSE_RETRY_MAX_MS, delay * 2);
     }

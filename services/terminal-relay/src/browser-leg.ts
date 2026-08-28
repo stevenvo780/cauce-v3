@@ -233,8 +233,8 @@ export class BrowserLeg {
 
   async close(): Promise<void> {
     for (const client of this.wss.clients) client.close(CLOSE_CODES.going_away, 'relay_shutdown');
-    await new Promise<void>((resolve) => this.wss.close(() => resolve()));
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await new Promise<void>((resolve) => { this.wss.close(() => { resolve(); }); });
+    await new Promise<void>((resolve) => this.server.close(() => { resolve(); }));
   }
 
   private onConnection(socket: WebSocket, commonName: string): void {
@@ -248,12 +248,12 @@ export class BrowserLeg {
         socket.close(CLOSE_CODES.protocol_error, 'attach_timeout');
       }
     }, this.attachTimeoutMs);
-    attachTimer.unref?.();
+    attachTimer.unref();
     socket.once('close', () => {
       gone = true;
       clearTimeout(attachTimer);
     });
-    socket.on('error', () => socket.terminate());
+    socket.on('error', () => { socket.terminate(); });
     const onMessage = (data: RawData, isBinary: boolean): void => {
       if (attached) {
         const bytes = rawDataByteLength(data);
@@ -379,10 +379,11 @@ export class BrowserLeg {
           afterBytes: attach.after_bytes,
           queued: [...queued]
         });
-        if (!resumed && socket.readyState === WS_OPEN) {
+        if (!resumed) {
           socket.close(CLOSE_CODES.session_conflict, 'resume_conflict');
+          reportAbandonedClaim('relay_state_lost');
+          return;
         }
-        if (!resumed) reportAbandonedClaim('relay_state_lost');
         return;
       }
       const agent = this.agents.lookup(grant.tenant_id, grant.alias);
@@ -490,7 +491,7 @@ export class BrowserLeg {
         return { status: outcome.status };
       }
       const retained = this.retainedClaims.get(attach.session_id);
-      if (retained !== undefined && retained.token === claimToken) {
+      if (retained?.token === claimToken) {
         retained.uncertainUntil = Math.max(
           retained.uncertainUntil,
           requestStartedAt + MAX_CLAIM_LEASE_MS + DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
@@ -500,7 +501,7 @@ export class BrowserLeg {
       if (now >= retryDeadline) return { status: 'unavailable' };
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, Math.min(delayMs, retryDeadline - now));
-        timer.unref?.();
+        timer.unref();
       });
       delayMs = Math.min(CLAIM_RETRY_MAX_MS, delayMs * 2);
     }

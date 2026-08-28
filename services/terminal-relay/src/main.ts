@@ -54,30 +54,30 @@ const sessions = new SessionManager({ gateway, limits: config, closeSpoolFile: c
 // Presence is republished as soon as the connected set changes, debounced so a fleet-wide
 // reconnect is one publish: the console must not show "no PTY agent" for an agent that is up.
 let presenceDebounce: NodeJS.Timeout | undefined;
-let presencePublishing = false;
-let presencePublishPending = false;
+const presenceState = { publishing: false, pending: false };
 const healthState = new RelayHealthState({
   listenersReady: () => agentServer.listening && browserServer.listening,
   presenceMaxStaleMs: config.presenceMaxStaleMs,
 });
+const hasPendingPresence = (): boolean => presenceState.pending;
 const publishPresence = async (): Promise<void> => {
-  if (presencePublishing) {
-    presencePublishPending = true;
+  if (presenceState.publishing) {
+    presenceState.pending = true;
     return;
   }
-  presencePublishing = true;
+  presenceState.publishing = true;
   try {
     do {
-      presencePublishPending = false;
+      presenceState.pending = false;
       try {
         await gateway.publishPresence(agents.presence());
         healthState.presenceAccepted();
       } catch {
         healthState.presenceFailed();
       }
-    } while (presencePublishPending);
+    } while (hasPendingPresence());
   } finally {
-    presencePublishing = false;
+    presenceState.publishing = false;
   }
 };
 const announcePresence = (): void => {
@@ -86,7 +86,7 @@ const announcePresence = (): void => {
     presenceDebounce = undefined;
     void publishPresence();
   }, 100);
-  presenceDebounce.unref?.();
+  presenceDebounce.unref();
 };
 
 const agentServer = createAgentTlsServer({ cert, key, ca: agentCa });
@@ -116,10 +116,10 @@ setupGovernanceRelay({
 });
 
 // A refused handshake is routine on a listener published to the tailnet: log it, never crash.
-agentServer.on('tlsClientError', () => logEvent('terminal_relay_agent_handshake_rejected'));
-agentServer.on('error', (error: unknown) => logEvent('terminal_relay_agent_server_error', { error: errorLabel(error) }));
-browserServer.on('tlsClientError', () => logEvent('terminal_relay_console_handshake_rejected'));
-browserServer.on('error', (error: unknown) => logEvent('terminal_relay_browser_server_error', { error: errorLabel(error) }));
+agentServer.on('tlsClientError', () => { logEvent('terminal_relay_agent_handshake_rejected'); });
+agentServer.on('error', (error: unknown) => { logEvent('terminal_relay_agent_server_error', { error: errorLabel(error) }); });
+browserServer.on('tlsClientError', () => { logEvent('terminal_relay_console_handshake_rejected'); });
+browserServer.on('error', (error: unknown) => { logEvent('terminal_relay_browser_server_error', { error: errorLabel(error) }); });
 
 agentServer.listen(config.agentPort, '0.0.0.0', () => {
   logEvent('terminal_relay_agent_listening', { port: config.agentPort });
@@ -154,13 +154,13 @@ const stop = (signal: string): void => {
     .then(() => Promise.all([
       browser.close(),
       agents.close(),
-      new Promise<void>((resolve) => healthServer.close(() => resolve())),
+      new Promise<void>((resolve) => healthServer.close(() => { resolve(); })),
     ]))
-    .catch((error: unknown) => logEvent('terminal_relay_shutdown_failed', { error: errorLabel(error) }))
+    .catch((error: unknown) => { logEvent('terminal_relay_shutdown_failed', { error: errorLabel(error) }); })
     .finally(() => process.exit(0));
 };
-process.once('SIGINT', () => stop('SIGINT'));
-process.once('SIGTERM', () => stop('SIGTERM'));
+process.once('SIGINT', () => { stop('SIGINT'); });
+process.once('SIGTERM', () => { stop('SIGTERM'); });
 
 // One broken session must never take the process — and every other live terminal — with it.
 process.on('uncaughtException', (error: unknown) => {

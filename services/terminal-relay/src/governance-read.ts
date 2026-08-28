@@ -96,7 +96,7 @@ function hasExactKeys(source: Record<string, unknown>, expected: readonly string
 }
 
 function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });
@@ -216,9 +216,9 @@ export async function requestFileRead(
 
     const timer = setTimeout(() => {
       logEvent('terminal_relay_read_timeout', { tenant_id: tenantId, alias, request_id: requestId });
-      finish({ error: 'timeout', reason: `el pty-agent no contestó en ${timeoutMs} ms` });
+      finish({ error: 'timeout', reason: `el pty-agent no contestó en ${String(timeoutMs)} ms` });
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
 
     const attached = connection.attachRead(requestId, {
       onReadOk(body) {
@@ -244,7 +244,7 @@ export async function requestFileRead(
           finish({ error: 'too_large', reason: 'el agente anuncia más tramas de las que cabe un documento' });
           return;
         }
-        const fallbackSha = declaredSha === undefined ? undefined : declaredSha;
+        const fallbackSha = declaredSha;
         if (fallbackSha !== undefined && !/^[0-9a-f]{64}$/.test(fallbackSha)) {
           finish({ error: 'unknown', reason: 'el agente contestó con una huella inválida' });
           return;
@@ -458,9 +458,9 @@ export async function requestDirectoryRead(
     }
     timer = setTimeout(() => {
       logEvent('terminal_relay_directory_timeout', { tenant_id: tenantId, alias, request_id: requestId });
-      finish({ error: 'timeout', reason: `el pty-agent no contestó en ${timeoutMs} ms` });
+      finish({ error: 'timeout', reason: `el pty-agent no contestó en ${String(timeoutMs)} ms` });
     }, timeoutMs);
-    timer.unref?.();
+    timer.unref();
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) {
       onAbort();

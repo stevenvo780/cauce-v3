@@ -169,7 +169,7 @@ const CODEX_NEVER_SERVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 function validCodexFallbackFilename(value: string): boolean {
   const normalized = value.toLowerCase();
   return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
-    && !value.includes('..') && ![...value].some((character) => {
+    && !value.includes('..') && !Array.from(value).some((character) => {
       const code = character.codePointAt(0) ?? 0;
       return code <= 0x1f || code === 0x7f;
     })
@@ -306,9 +306,9 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
     // pero toda la familia contextual queda fuera del hello normalizado y de la presencia.
     ...(runtimeFactsObserved ? {
       home,
-      ...(harness === 'codex' ? { codex_home: codexHome! } : {}),
-      ...(harness === 'claude' ? { claude_config_dir: claudeConfigDir! } : {}),
-      ...(harness === 'openclaw' ? { openclaw_workspace: openclawWorkspace! } : {}),
+      ...(harness === 'codex' && codexHome !== undefined ? { codex_home: codexHome } : {}),
+      ...(harness === 'claude' && claudeConfigDir !== undefined ? { claude_config_dir: claudeConfigDir } : {}),
+      ...(harness === 'openclaw' && openclawWorkspace !== undefined ? { openclaw_workspace: openclawWorkspace } : {}),
       ...(cwd === undefined ? {} : { cwd }),
       ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
       ...(projectRoot === undefined ? {} : { project_root: projectRoot }),

@@ -69,7 +69,9 @@ export class TerminalSession {
   private exitCode: number | null = null;
   private agentClosed = false;
   private resumeReady = false;
-  private closed = false;
+  private isClosed = false;
+  get closed(): boolean { return this.isClosed; }
+  private isSessionClosed(): boolean { return this.isClosed; }
   private stdin: Buffer[] = [];
   private stdinBytes = 0;
   private outputPaused = false;
@@ -168,7 +170,7 @@ export class TerminalSession {
     this.startTimers();
     ready = true;
     for (const message of early) {
-      if (this.closed) break;
+      if (this.isSessionClosed()) break;
       this.onClientMessage(message.data, message.isBinary);
     }
     logEvent('terminal_relay_session_started', {
@@ -215,7 +217,7 @@ export class TerminalSession {
     this.sendReady(true, input.afterBytes);
     this.replayScrollback(input.afterBytes);
     for (const message of input.queued ?? []) {
-      if (this.closed) break;
+      if (this.isSessionClosed()) break;
       this.onClientMessage(message.data, message.isBinary);
     }
     logEvent('terminal_relay_session_resumed', {
@@ -244,7 +246,7 @@ export class TerminalSession {
         this.reconnectTimer = undefined;
         this.terminate(CLOSE_CODES.going_away, 'reconnect_timeout');
       }, grace);
-      this.reconnectTimer.unref?.();
+      this.reconnectTimer.unref();
       logEvent('terminal_relay_browser_detached', {
         session_id: this.sessionId, code, reconnect_grace_ms: grace
       });
@@ -284,8 +286,8 @@ export class TerminalSession {
   }
 
   terminate(code: number, reason: string, exitCode: number | null = null): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (this.isClosed) return;
+    this.isClosed = true;
     if (exitCode !== null) this.exitCode = exitCode;
     this.clearTimers();
     this.stdin = [];
@@ -336,7 +338,7 @@ export class TerminalSession {
       };
       this.settleOpen = settle;
       this.agent.attachSession(this.sessionId, {
-        onOpenOk: () => settle(true),
+        onOpenOk: () => { settle(true); },
         onOpenErr: (reason) => {
           // The agent is the second gate on the ticket: it may refuse what the relay accepted.
           const code = reason === 'ticket_invalid'
@@ -345,7 +347,7 @@ export class TerminalSession {
           this.terminate(code, reason);
           settle(false);
         },
-        onStdout: (data) => this.onStdout(data),
+        onStdout: (data) => { this.onStdout(data); },
         onClosed: (exit) => {
           this.agentClosed = true;
           this.terminate(CLOSE_CODES.normal, exit.reason, exit.exit_code);
@@ -361,7 +363,7 @@ export class TerminalSession {
         this.terminate(CLOSE_CODES.internal_error, 'open_timeout');
         settle(false);
       }, this.limits.openTimeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS);
-      this.openTimer.unref?.();
+      this.openTimer.unref();
       try {
         this.agent.sendOpen(this.sessionId, this.ticket, this.grant.mode, this.cols, this.rows);
       } catch (error) {
@@ -421,8 +423,8 @@ export class TerminalSession {
       this.stdinBytes += bytes.byteLength;
       this.resetIdle();
       if (this.stdinTimer === undefined) {
-        this.stdinTimer = setTimeout(() => this.flushStdin(), STDIN_COALESCE_MS);
-        this.stdinTimer.unref?.();
+        this.stdinTimer = setTimeout(() => { this.flushStdin(); }, STDIN_COALESCE_MS);
+        this.stdinTimer.unref();
       }
     } catch (error) {
       logEvent('terminal_relay_client_message_failed', { session_id: this.sessionId, error: errorLabel(error) });
@@ -536,7 +538,7 @@ export class TerminalSession {
         }
       }
     }, BACKPRESSURE_POLL_MS);
-    this.drainTimer.unref?.();
+    this.drainTimer.unref();
   }
 
   private startTimers(): void {
@@ -546,18 +548,18 @@ export class TerminalSession {
       this.terminate(CLOSE_CODES.ttl_expired, 'ttl_expired');
       return;
     }
-    this.ttlTimer = setTimeout(() => this.terminate(CLOSE_CODES.ttl_expired, 'ttl_expired'), remaining);
-    this.ttlTimer.unref?.();
+    this.ttlTimer = setTimeout(() => { this.terminate(CLOSE_CODES.ttl_expired, 'ttl_expired'); }, remaining);
+    this.ttlTimer.unref();
     this.authzTimer = setInterval(() => void this.revalidate(), this.limits.authzIntervalMs);
-    this.authzTimer.unref?.();
-    this.windowTimer = setInterval(() => this.closeWindow(), this.limits.outputWindowMs ?? DEFAULT_OUTPUT_WINDOW_MS);
-    this.windowTimer.unref?.();
+    this.authzTimer.unref();
+    this.windowTimer = setInterval(() => { this.closeWindow(); }, this.limits.outputWindowMs ?? DEFAULT_OUTPUT_WINDOW_MS);
+    this.windowTimer.unref();
   }
 
   private resetIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => this.terminate(CLOSE_CODES.idle_timeout, 'idle_timeout'), this.limits.idleTimeoutMs);
-    this.idleTimer.unref?.();
+    this.idleTimer = setTimeout(() => { this.terminate(CLOSE_CODES.idle_timeout, 'idle_timeout'); }, this.limits.idleTimeoutMs);
+    this.idleTimer.unref();
   }
 
   /**
@@ -575,7 +577,7 @@ export class TerminalSession {
         this.claimToken,
         this.claimEpochValue,
       );
-      if (this.closed) return;
+      if (this.isSessionClosed()) return;
       if (outcome.status === 'allow') {
         if (outcome.claim_epoch !== this.claimEpochValue
             || !this.updateClaimLease(
@@ -598,7 +600,7 @@ export class TerminalSession {
       }
     } catch (error) {
       logEvent('terminal_relay_authz_failed', { session_id: this.sessionId, error: errorLabel(error) });
-      if (!this.closed && this.now() - this.lastAuthzOkAt > this.limits.authzGraceMs) {
+      if (!this.isSessionClosed() && this.now() - this.lastAuthzOkAt > this.limits.authzGraceMs) {
         this.terminate(CLOSE_CODES.revoked, 'authz_unreachable');
       }
     } finally {
@@ -677,7 +679,7 @@ export class TerminalSession {
       this.claimDeadlineTimer = undefined;
       this.terminate(CLOSE_CODES.revoked, 'claim_lease_expired');
     }, Math.max(0, deadlineAt - now));
-    this.claimDeadlineTimer.unref?.();
+    this.claimDeadlineTimer.unref();
     return true;
   }
 

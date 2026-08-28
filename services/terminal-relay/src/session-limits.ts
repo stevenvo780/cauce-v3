@@ -121,7 +121,7 @@ function acotar(valor: number, minimo: number, maximo: number): number {
 }
 
 function positiveDecimal(value: string): boolean {
-  if (value.length === 0 || value.length > 3 || value[0] === '0') return false;
+  if (value.length === 0 || value.length > 3 || value.startsWith('0')) return false;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code < 0x30 || code > 0x39) return false;

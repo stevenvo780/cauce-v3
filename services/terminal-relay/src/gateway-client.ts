@@ -395,7 +395,7 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
       this.identified({ ...report }),
     );
     if (result.status !== 200 || !this.isIdentityAck(result.body)) {
-      throw new Error(`gateway rejected terminal close report with HTTP ${result.status}`);
+      throw new Error(`gateway rejected terminal close report with HTTP ${String(result.status)}`);
     }
   }
 
@@ -419,7 +419,7 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
       }
       if (!accepted) {
         logEvent('terminal_relay_presence_rejected', { status: result.status, agents: agents.length });
-        throw new Error(`gateway did not accept terminal presence (HTTP ${result.status})`);
+        throw new Error(`gateway did not accept terminal presence (HTTP ${String(result.status)})`);
       }
     } catch (error) {
       logEvent('terminal_relay_presence_failed', { agents: agents.length, error: errorLabel(error) });
@@ -481,10 +481,10 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
           // Bound the response: the gateway answers with small JSON, never a stream.
           if (chunks.length < 64) chunks.push(chunk);
         });
-        response.on('end', () => resolve({
+        response.on('end', () => { resolve({
           status: response.statusCode ?? 0,
           body: Buffer.concat(chunks).toString('utf8')
-        }));
+        }); });
         response.on('error', reject);
       });
       request.setTimeout(this.timeoutMs, () => {
