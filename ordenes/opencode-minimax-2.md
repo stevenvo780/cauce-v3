@@ -1,14 +1,14 @@
-# OpenCode/MiniMax-2 — ORDEN ACTIVA (sesión nueva; 4 subagentes; TRADUCCIÓN MASIVA de comentarios a inglés)
+# OpenCode/MiniMax-2 — ORDEN ACTIVA (ronda 2; 4 subagentes): inglés hasta el último rincón + las zonas de test de consola/relay/bridge
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden. Eres la SEGUNDA instancia minimax: la primera está en la ronda de tests (NO toques `packages/adapter-sdk/test/**`). Regla de idioma del dueño (28-08): **.md en español; comentarios de CÓDIGO en inglés**. Tu fuerte: contexto gigante + mecánico masivo. 4 subagentes máximo, `umask 022`, commit+push por zona.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden. Tu ronda anterior fue LIMPIA: 4 zonas traducidas y commiteadas por zona (adapter-sdk/src, dispatcher, deploy+scripts, pty-agent) — exactamente como se pide. Muestreo de hoy: quedan ~51 comentarios en español en tu zona anterior. Mismas reglas duras (SOLO líneas 100% comentario; narrativo→borrar; invariantes→traducir; fechas/nombres fuera; `git diff` solo-comentarios o revertir).
 
-## La misión: SOLO LÍNEAS DE COMENTARIO — traducir a inglés conciso + podar contaminación
-Zonas TUYAS (disjuntas de todos): **`packages/adapter-sdk/src`** · **`services/dispatcher/src`** · **`deploy/**`** · **`scripts/*.mjs`** · **`ops/pty-agent/*.py`** · **`tests/{unit,integration,e2e,gateway-hardening,store-hardening,terminal-pty,helpers}/**`**.
-Reglas DURAS por fichero:
-1. SOLO tocas líneas que son 100% comentario (o el bloque JSDoc). JAMÁS una línea de código, un string, un sql-string.
-2. Traduce a inglés CONCISO. Si el comentario es narrativo/ceremonial/repite-la-firma → BÓRRALO en vez de traducirlo (dos pájaros). Invariantes y restricciones ("NO deducir del HOME…") se conservan traducidos con su fuerza.
-3. Fechas y nombres propios en comentarios: FUERA siempre.
-4. Gate global por commit; el conteo de comentarios solo puede BAJAR (el trinquete te vigila).
-5. Verificación por zona: `git diff --stat` solo debe mostrar líneas de comentario cambiadas — un cambio de código = revertir el fichero entero y rehacerlo.
+## Tarea 1 — Barrido de restos en tu zona anterior
+`grep -rnE "^\s*(//|#)\s+.*\b(el|la|los|las|que|para|con|una|este|esta|porque|cuando)\b" <zona>` sobre adapter-sdk/src, dispatcher/src, deploy/, scripts/, ops/pty-agent/*.py y tests/{unit,integration,e2e,gateway-hardening,store-hardening,terminal-pty,helpers}: cierra con el grep en CERO (excluye strings de test que sean datos).
 
-## PROHIBIDO: console/ y relay/bridge (gemini), packages/{protocol,store,mcp}/src y gateway (codex-2), ops/scripts+ops/tests (codex-1), ops/guardias/** (herramientas del dueño, decisión aparte), adapter-sdk/test (minimax-1), .md (quedan en español).
+## Tarea 2 — Zonas NUEVAS (asignación del integrador, disjuntas de todos): los TESTS de consola, relay y bridge
+`console/src/**/*.test.{ts,tsx}` · `services/terminal-relay/src/*.test.ts` · `services/telegram-bridge/test/**` — Gemini ya los molió a nivel estricto; TÚ traduces sus comentarios (mismas reglas). NO toques ficheros que no sean `*.test.*` en esas rutas (el src es de Gemini).
+
+## Tarea 3 — `ops/guardias/**` — DECISIÓN DEL DUEÑO YA TOMADA: son código del proyecto, se traducen
+Las 18 herramientas rescatadas (el médico de 3.208 líneas con 709 comentarios, ai-live, credenciales, esfuerzo, estado…) + cred-guard.py/polidin. Mismas reglas; aquí abunda la narrativa con fechas y nombres (`zeus`, `2026-08-13`…): FUERA. El trinquete tiene amnistías altas para ellos: al bajar, re-clava tú las claves en `scripts/calidad-base.json` (solo baja) en el mismo commit.
+
+Push por tarea + reporte ≤5 líneas con el grep final en cero por zona.

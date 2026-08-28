@@ -1,17 +1,15 @@
-# Codex — ORDEN ACTIVA: RONDA FLOTA-COMO-DATOS, carril C (la ruta crítica antes de la ventana)
+# Codex-1 — ORDEN ACTIVA (ronda 2 del carril C): las deudas de la revisión + comprometerte a COMMITEAR
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`plan-reestructura/flota-como-datos.md` COMPLETO** (es tu especificación: §1 snapshot, §3 fórmulas, §4 generadores, §6 gates, §9 riesgos y prohibiciones) → `docs/flota-y-participantes.md` (contexto). Reglas: pathspec, `umask 022`, commit+push POR TAREA. El supervisor (tu vieja tarea 1) YA NO ES TUYO — lo tomó el integrador.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → `plan-reestructura/flota-como-datos.md` → esta orden. Tu carril C fue **APROBADO por revisión adversarial: Fase A byte-idéntica** — excelente trabajo. Pero por SEGUNDA ronda dejaste TODO sin commitear (2.301 líneas untracked; el integrador las commiteó en `f517c9b`). Esta ronda: **commit+push por tarea, sin excepción**. Zona EXCLUSIVA: `ops/scripts/**` + `ops/tests/**`.
 
-## C1 — `ops/scripts/fleet_derive.py` (módulo puro, sin IO)
-HARNESS_RULES por arnés (rama stateDirectory contenedor/host, workspace de openclaw, operationalModelEnv de hermes), `env_name(alias, kind)`, `SYSTEMD_USER="stev"`, `alias_entry()`, `manifest_doc()`. Nombra `runtime_state_directory()` vs `HOST_STATE_DIRECTORY` (las DOS rutas homónimas — §3 del diseño). Con tests unitarios propios.
+## Tarea 1 — La Fase A como TEST AUTOMATIZADO (deuda importante de la revisión)
+Hoy solo existe el fixture `minimal` (codex/hermes/openclaw); la rama `claude` de `generate-manifests.py:69-70` no la ejercita ningún test. Añade `ops/tests/fixtures/fleet_snapshot/real-11/` (snapshot que replica el inventario real de los 11 alias, incluido al menos un `claude`) y un test que asevere `cmp` byte a byte contra `ops/container-aliases.json` y los 11 `ops/manifests/*.yaml` commiteados. Sin esto, un cambio futuro rompe la Fase A en silencio.
 
-## C2 — `ops/scripts/export-fleet-snapshot.py` + `ops/scripts/fleet-query.sql`
-La consulta ÚNICA (agents+memberships+role_policies) en el .sql; el exportador escribe `ops/flota.json` canónico (sort_keys, indent 2, SIN timestamp/hostname — idempotencia byte a byte) y `--check` sale 3 si difiere. Valida fail-loud: dockerHost ⊆ {local,kratos}, tenant ∈ enum del schema. JAMÁS lo invoca un gate (herméticos).
+## Tarea 2 — G-SNAP-2 al camino de escritura (deuda importante)
+Las 3 comparaciones "no debe repetir el default" (dockerHost≠local, healthContainer≠container, registryContainer≠healthContainer efectivo) viven solo en el test; muévelas a la validación del propio `export-fleet-snapshot.py`/`generate-container-aliases.py` para que fallen ruidoso al escribir, no solo al testear.
 
-## C3 — Los generadores con purga (LA FASE A ES TU CRITERIO DE HECHO)
-`generate-container-aliases.py` y `generate-manifests.py` (f-string reproduciendo el estilo flow actual, NO yaml.safe_dump; desenlaza huérfanos). **FASE A obligatoria**: construye a mano un `ops/flota.json` que iguale el inventario de HOY (11 alias) y demuestra que tus generadores reproducen `ops/container-aliases.json` y los 11 `ops/manifests/*.yaml` commiteados **BYTE A BYTE** (`cmp -s` verde, pégalo). NO conmutes el árbol al snapshot real (flota de 14): eso es del integrador (K2) tras la reconciliación en BD. Extiende `generate-units.py`/`generate-container-units.py` SOLO para importar fórmulas de fleet_derive (mínimo churn). `regenerate-fleet.sh` orquesta la cadena.
+## Tarea 3 — `runtime_state_directory()` (deuda menor): sin caller
+O se cablea como chequeo de drift en el exportador (`assert row.state_directory == runtime_state_directory(alias, row)`, fail-loud) — probablemente la intención del diseño — o se borra (regla 0). Decide, ejecuta, justifica en el commit.
 
-## C4 — Los gates del diseño §6
-(1) `validate.sh`: +2 bloques `cmp -s` (regenerar json+manifests desde `ops/flota.json` a tmp y exigir identidad) — SOLO actívalos cuando `ops/flota.json` exista en el árbol (guarda con `[ -f ]` hasta K2). (2) `container_ops_digest.py`: añade `ops/flota.json` y `ops/flota-fisica.json` a sus fuentes. (3) G-SNAP-2 (overlay: 3 claves permitidas, sin defaults redundantes), G-SNAP-3 (idempotencia doble sobre fixture), G-SNAP-4 (paridad de los 4 lectores duplicados, pineo no unificación) como tests en `ops/tests/`.
-
-## Recordatorios: byte-puro; prohibiciones del §9 del diseño (nada de borrar json/manifests, nada de escribir en BD, nada de /opt ni /etc); idioma nuevo del dueño: comentarios de CÓDIGO NUEVO en inglés.
+## Tarea 4 — Preparar K2 (para que el integrador conmute el snapshot real sin sorpresas)
+El snapshot real tendrá **14 alias** (no 11): gaia (`agv2-miguel-finca-oc`, openclaw), heraclito (`agv2-jhon-heraclito-oc`, openclaw), tales (`agv2-jhon-tales-oc`, openclaw), argos pasa a **openclaw** (dictado del dueño), iza = openclaw@claw-miguel, kant = rama host. Simula en `/tmp` esa flota de 14 y verifica que TODA la cadena (export→generate→units) produce salida válida que pasa `container_alias_lib` + `manifest_lib` + `physical-fleet-gate` (que subirá a 14 contenedores exigidos). Reporta qué rompe, si algo.
