@@ -1,0 +1,60 @@
+{
+  "fleet": {
+    "fixture-codex": {
+      "container": "host:fixture-host",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/stev",
+      "role": "operator",
+      "room": "grp.steven",
+      "runtimeStateDirectory": "/var/lib/cauce-v3/aliases/fixture-codex",
+      "tenant": "Steven",
+      "user": "stev"
+    },
+    "fixture-hermes": {
+      "container": "fixture-hermes-runtime",
+      "enabled": true,
+      "harness": "hermes",
+      "home": "/home/dev",
+      "role": "agent",
+      "room": "grp.steven",
+      "runtimeStateDirectory": "/home/dev/.local/state/cauce-v3/fixture-hermes",
+      "tenant": "Steven",
+      "user": "dev"
+    },
+    "fixture-openclaw": {
+      "container": "fixture-openclaw-runtime",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "role": "agent_notify",
+      "room": "grp.steven",
+      "runtimeStateDirectory": "/home/claw/.openclaw/cauce-v3/fixture-openclaw",
+      "tenant": "Steven",
+      "user": "claw"
+    }
+  },
+  "placement": {
+    "fixture-codex": {
+      "healthContainer": "fixture-health",
+      "registryContainer": "host:fixture-host"
+    },
+    "fixture-hermes": {
+      "registryContainer": "fixture-hermes-registry"
+    },
+    "fixture-openclaw": {
+      "dockerHost": "kratos"
+    }
+  },
+  "retired": {
+    "fixture-retired": {}
+  },
+  "schemaVersion": 1,
+  "systemPrincipals": {
+    "fixture-collector": {
+      "role": "operator",
+      "room": "grp.steven",
+      "tenant": "Steven"
+    }
+  }
+}

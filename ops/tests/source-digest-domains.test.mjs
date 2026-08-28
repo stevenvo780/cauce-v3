@@ -215,6 +215,7 @@ try {
   await write('console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
   await write('ops/harness/contract-runner.mjs', 'export const contract = 1;\n');
   await write('ops/harness/runner.mjs', 'export const run = 1;\n');
+  await write('ops/flota.json', '{"schemaVersion":1,"fleet":{}}\n');
   await write('ops/scripts/fault-compose.sh', '#!/bin/sh\n');
   await write('ops/scripts/run-testcontainers.sh', '#!/bin/sh\n');
   await write('ops/scripts/validate-testcontainers-evidence.py', 'print("ok")\n');
@@ -243,6 +244,10 @@ try {
     verification: digestOf('verification', sandbox),
     full: digestOf('full', sandbox),
   };
+  assert(pathsOf('verification', sandbox).has('ops/flota.json'),
+    'verification must pin the canonical fleet snapshot');
+  assert(pathsOf('full', sandbox).has('ops/flota.json'),
+    'full must inherit the canonical fleet snapshot pin');
 
   // 9a. Operational artifact generation rewrites timestamped evidence. It must leave the initial source digest
   //     unchanged, while a same-named directory outside the producer-owned output root remains a
@@ -378,6 +383,13 @@ try {
   };
   let priorVerification = digestOf('verification', sandbox);
   let priorFull = digestOf('full', sandbox);
+  await write('ops/flota.json', '{"schemaVersion":1,"fleet":{"reader":{}}}\n');
+  assert.notEqual(digestOf('verification', sandbox), priorVerification,
+    'the fleet snapshot must invalidate verification evidence');
+  assert.notEqual(digestOf('full', sandbox), priorFull,
+    'the fleet snapshot must invalidate full verification evidence');
+  priorVerification = digestOf('verification', sandbox);
+  priorFull = digestOf('full', sandbox);
   for (const [relative, contents] of [
     ['ops/harness/contract-runner.mjs', 'export const contract = false;\n'],
     ['ops/scripts/source-hygiene.py', 'print("hygiene disabled")\n'],

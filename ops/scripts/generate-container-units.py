@@ -10,6 +10,7 @@ import tempfile
 
 from container_alias_lib import load_container_aliases
 from container_ops_digest import operational_digest
+from fleet_derive import HARNESS_RULES
 
 
 root = pathlib.Path(__file__).resolve().parents[1]
@@ -215,7 +216,7 @@ def example(alias: str, entry: dict[str, str]) -> str:
             f"HERMES_HOME={hermes_home}",
             f"HERMES_SOURCE_COMMIT={hermes_commit}",
             f"HERMES_PYTHON={hermes_python}",
-            "HERMES_INFERENCE_MODEL=replace-with-approved-model",
+            f"{HARNESS_RULES['hermes']['operationalModelEnv']}=replace-with-approved-model",
         ))
     if entry["harness"] == "claude":
         lines.extend((
@@ -223,8 +224,11 @@ def example(alias: str, entry: dict[str, str]) -> str:
             "EXPECTED_CLI_VERSION=REPLACE_WITH_EXACT_SEMVER",
         ))
     if entry["harness"] == "openclaw":
+        workspace = HARNESS_RULES["openclaw"]["workspace"].format(
+            alias=alias, home=entry["home"]
+        )
         lines.extend((
-            f"OPENCLAW_WORKSPACE={entry['workspace']}",
+            f"OPENCLAW_WORKSPACE={workspace}",
             "# Optional verified API mode (CLI is the default):",
             "# OPENCLAW_TRANSPORT=api",
             "# OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",

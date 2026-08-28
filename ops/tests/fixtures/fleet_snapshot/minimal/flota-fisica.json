@@ -1,0 +1,15 @@
+{
+  "placement": {
+    "fixture-codex": {
+      "healthContainer": "fixture-health",
+      "registryContainer": "host:fixture-host"
+    },
+    "fixture-hermes": {
+      "registryContainer": "fixture-hermes-registry"
+    },
+    "fixture-openclaw": {
+      "dockerHost": "kratos"
+    }
+  },
+  "schemaVersion": 1
+}

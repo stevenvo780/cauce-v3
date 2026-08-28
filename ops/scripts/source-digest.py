@@ -130,6 +130,7 @@ VERIFICATION_OPERATIONAL_INPUTS = (
     "ops/cli",
     "ops/compose.test.yaml",
     "ops/container-aliases.json",
+    "ops/flota.json",
     "ops/container-runtime",
     "ops/generated",
     "ops/guardias",

@@ -8,6 +8,7 @@ import pathlib
 import tempfile
 
 from container_alias_lib import load_container_aliases
+from fleet_derive import HOST_STATE_DIRECTORY
 from manifest_lib import load_manifests
 
 root = pathlib.Path(__file__).resolve().parents[1]
@@ -26,6 +27,8 @@ args.output.mkdir(parents=True, exist_ok=True)
 def unit_for(manifest: dict) -> str:
     spec = manifest["spec"]
     alias = spec["alias"]
+    host_state_directory = HOST_STATE_DIRECTORY.format(alias=alias)
+    systemd_state_directory = host_state_directory.removeprefix("/var/lib/")
     secrets = spec["secretPathEnv"]
     operational_model = spec["process"].get("operationalModelEnv")
     operational_model_line = (
@@ -56,7 +59,7 @@ Environment=CAUCE_SEMBRAR_PERFIL=1
 {openclaw_workspace_line}Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
 Environment=CAUCE_INSTANCE_ID=systemd-{alias}
-Environment=CAUCE_STATE_DIR={spec['stateDirectory']}
+Environment=CAUCE_STATE_DIR={host_state_directory}
 Environment=CAUCE_RELAY_URL_ENV={spec['relay']['urlPathEnv']}
 Environment=CAUCE_TOKEN_PATH_ENV={secrets['token']}
 Environment=CAUCE_CERT_PATH_ENV={secrets['clientCertificate']}
@@ -69,7 +72,7 @@ Restart=always
 RestartSec=5s
 TimeoutStopSec=90s
 KillMode=mixed
-StateDirectory=cauce-v3/aliases/{alias}
+StateDirectory={systemd_state_directory}
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
@@ -90,7 +93,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 ReadOnlyPaths=/opt/cauce-v3
-ReadWritePaths={spec['stateDirectory']}
+ReadWritePaths={host_state_directory}
 
 [Install]
 WantedBy=multi-user.target

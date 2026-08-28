@@ -117,6 +117,7 @@ def tracked_tree_files(root: pathlib.Path) -> set[pathlib.Path] | None:
 
 def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: bool = False) -> list[pathlib.Path]:
     files = [root / relative for relative in (*OPERATIONS_SOURCES, *OPERATIONAL_ROOT_FILES)]
+    files.extend(root / name for name in ("flota.json", "flota-fisica.json") if (root / name).is_file())
     tracked = tracked_tree_files(root)
     for relative in OPERATIONAL_TREES:
         tree = root / relative

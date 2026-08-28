@@ -3,6 +3,42 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PROJECT="$ROOT/.."
 
+if [ -f "$ROOT/flota.json" ]; then
+  (
+    tmp_fleet_aliases=$(mktemp -d)
+    trap 'rm -rf "$tmp_fleet_aliases"' EXIT
+    PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-aliases.py" \
+      --snapshot "$ROOT/flota.json" --output "$tmp_fleet_aliases/container-aliases.json" >/dev/null
+    cmp -s "$tmp_fleet_aliases/container-aliases.json" "$ROOT/container-aliases.json" || {
+      printf 'checked-in container-aliases.json is stale; regenerate it from ops/flota.json\n' >&2
+      exit 1
+    }
+  )
+fi
+
+if [ -f "$ROOT/flota.json" ]; then
+  (
+    tmp_fleet_manifests=$(mktemp -d)
+    trap 'rm -rf "$tmp_fleet_manifests"' EXIT
+    PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-manifests.py" \
+      --snapshot "$ROOT/flota.json" --output "$tmp_fleet_manifests/manifests" >/dev/null
+    find "$tmp_fleet_manifests/manifests" -maxdepth 1 -type f -name '*.yaml' -printf '%f\n' \
+      | LC_ALL=C sort >"$tmp_fleet_manifests/generated.names"
+    find "$ROOT/manifests" -maxdepth 1 -type f -name '*.yaml' -printf '%f\n' \
+      | LC_ALL=C sort >"$tmp_fleet_manifests/checked-in.names"
+    cmp -s "$tmp_fleet_manifests/generated.names" "$tmp_fleet_manifests/checked-in.names" || {
+      printf 'checked-in fleet manifest set is stale; regenerate it from ops/flota.json\n' >&2
+      exit 1
+    }
+    while IFS= read -r manifest; do
+      cmp -s "$tmp_fleet_manifests/manifests/$manifest" "$ROOT/manifests/$manifest" || {
+        printf 'checked-in fleet manifest is stale: %s\n' "$manifest" >&2
+        exit 1
+      }
+    done <"$tmp_fleet_manifests/generated.names"
+  )
+fi
+
 for file in "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; do bash -n "$file"; done
 for file in "$ROOT"/scripts/*.mjs "$ROOT"/harness/*.mjs "$ROOT"/tests/*.mjs "$PROJECT"/deploy/*.mjs "$PROJECT"/deploy/runtime/*.mjs; do node --check "$file"; done
 PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
@@ -74,6 +110,8 @@ node "$ROOT/tests/alias-runner.test.mjs"
 node "$ROOT/tests/container-cutover.test.mjs"
 node "$ROOT/tests/container-ops-evidence.test.mjs"
 node "$ROOT/tests/sector-table.test.mjs"
+node "$ROOT/tests/fleet-snapshot-gates.test.mjs"
+node "$ROOT/tests/fleet-reader-parity.test.mjs"
 # Guards the source-digest domain split: proves the runtime domain still covers everything that
 # reaches the runtime image and that console is the only thing it drops. Removing a family from
 # a digest LOOSENS the gate, so the narrowing has to be pinned by a test.
