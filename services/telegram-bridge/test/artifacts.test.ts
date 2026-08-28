@@ -23,9 +23,10 @@ describe('plan de adjuntos', () => {
   it('sube los bytes de un data: URI y lo manda como foto', () => {
     const plan = planArtifacts(payload([{ name: 'captura.png', uri: PNG_DATA_URI }]));
     expect(plan.uploads).toHaveLength(1);
-    expect(plan.uploads[0]!.kind).toBe('photo');
-    expect(plan.uploads[0]!.name).toBe('captura.png');
-    expect(plan.uploads[0]!.bytes.equals(PNG)).toBe(true);
+    const upload = plan.uploads[0];
+    expect(upload?.kind).toBe('photo');
+    expect(upload?.name).toBe('captura.png');
+    expect(upload?.bytes.equals(PNG)).toBe(true);
     // Una foto no se anuncia en el pie: se ve.
     expect(plan.footer).toBe('');
   });
@@ -35,8 +36,9 @@ describe('plan de adjuntos', () => {
     const plan = planArtifacts(payload([{
       name: 'Guion.md', media_type: 'image/png', uri: `data:image/png;base64,${texto.toString('base64')}`
     }]));
-    expect(plan.uploads[0]!.kind).toBe('document');
-    expect(plan.uploads[0]!.bytes.equals(texto)).toBe(true);
+    const upload = plan.uploads[0];
+    expect(upload?.kind).toBe('document');
+    expect(upload?.bytes.equals(texto)).toBe(true);
   });
 
   it('lista los enlaces http(s) en vez de descargarlos (el puente vive al lado de producción)', () => {
@@ -77,7 +79,7 @@ describe('plan de adjuntos', () => {
   });
 
   it('corta en cuatro subidas por respuesta', () => {
-    const muchos = Array.from({ length: 7 }, (_, index) => ({ name: `f${index}.png`, uri: PNG_DATA_URI }));
+    const muchos = Array.from({ length: 7 }, (_, index) => ({ name: `f${String(index)}.png`, uri: PNG_DATA_URI }));
     const plan = planArtifacts(payload(muchos));
     expect(plan.uploads).toHaveLength(4);
     expect(plan.footer).toContain('ya iban 4 archivos');
@@ -175,29 +177,39 @@ class MemoryRepository implements TelegramEgressRepository {
   }
 
   async beginEffect(effectId: string): Promise<TelegramEffect> {
-    const row = { ...this.effects.get(effectId)!, state: 'sending' as const };
+    const effect = this.effects.get(effectId);
+    if (!effect) throw new Error('Effect not found');
+    const row = { ...effect, state: 'sending' as const };
     this.effects.set(effectId, row);
     return row;
   }
 
   async resetPrepared(effectId: string): Promise<void> {
-    this.effects.set(effectId, { ...this.effects.get(effectId)!, state: 'prepared' });
+    const effect = this.effects.get(effectId);
+    if (!effect) throw new Error('Effect not found');
+    this.effects.set(effectId, { ...effect, state: 'prepared' });
   }
 
   async completeEffect(effectId: string, _hash: string, providerMessageId: string): Promise<void> {
+    const effect = this.effects.get(effectId);
+    if (!effect) throw new Error('Effect not found');
     this.effects.set(effectId, {
-      ...this.effects.get(effectId)!, state: 'sent', provider_message_id: providerMessageId
+      ...effect, state: 'sent', provider_message_id: providerMessageId
     });
   }
 
   async markEffectAmbiguous(effectId: string, _hash: string, diagnostic: string): Promise<TelegramEffect> {
-    const row = { ...this.effects.get(effectId)!, state: 'ambiguous' as const, diagnostic };
+    const effect = this.effects.get(effectId);
+    if (!effect) throw new Error('Effect not found');
+    const row = { ...effect, state: 'ambiguous' as const, diagnostic };
     this.effects.set(effectId, row);
     return row;
   }
 
   async markEffectDead(effectId: string, _hash: string, diagnostic: string): Promise<TelegramEffect> {
-    const row = { ...this.effects.get(effectId)!, state: 'dead' as const, diagnostic };
+    const effect = this.effects.get(effectId);
+    if (!effect) throw new Error('Effect not found');
+    const row = { ...effect, state: 'dead' as const, diagnostic };
     this.effects.set(effectId, row);
     return row;
   }
@@ -224,7 +236,9 @@ class MemoryRepository implements TelegramEgressRepository {
     void _deadLetterId;
     void _incidentEvidenceSha256;
     void _expectedReplayCount;
-    return [...this.effects.values()].find((effect) => effect.chunk_index === chunkIndex)!;
+    const effect = [...this.effects.values()].find((entry) => entry.chunk_index === chunkIndex);
+    if (!effect) throw new Error('Effect not found');
+    return effect;
   }
 }
 
@@ -282,8 +296,8 @@ describe('egreso con adjuntos', () => {
 
     expect(sent.map((entry) => entry.method)).toEqual(['sendText', 'sendPhoto']);
     expect(repository.acks).toHaveLength(1);
-    expect(repository.acks[0]!.status).toBe('sent');
-    expect(repository.acks[0]!.effect_count).toBe(2);
+    expect(repository.acks[0]?.status).toBe('sent');
+    expect(repository.acks[0]?.effect_count).toBe(2);
   });
 
   it('un adjunto que Telegram rechaza NO impide que el texto llegue ni mata la entrega', async () => {
@@ -296,9 +310,9 @@ describe('egreso con adjuntos', () => {
     await worker(repository, api).runOnce();
 
     // El texto salió, y en lugar del archivo salió una línea que explica por qué no fue.
-    expect(sent[0]!.value).toContain('Listo, ahí va.');
-    expect(sent[1]!.value).toContain('No pude adjuntar');
-    expect(repository.acks[0]!.status).toBe('sent');
+    expect(sent[0]?.value).toContain('Listo, ahí va.');
+    expect(sent[1]?.value).toContain('No pude adjuntar');
+    expect(repository.acks[0]?.status).toBe('sent');
   });
 
   it('degrada a documento cuando Telegram rechaza la foto', async () => {
@@ -311,7 +325,7 @@ describe('egreso con adjuntos', () => {
     });
     await worker(repository, api).runOnce();
     expect(sent.map((entry) => entry.method)).toEqual(['sendText', 'sendDocument']);
-    expect(repository.acks[0]!.status).toBe('sent');
+    expect(repository.acks[0]?.status).toBe('sent');
   });
 
   it('un fallo de red al subir queda ambiguo y NO reenvía la foto sola', async () => {
@@ -323,7 +337,7 @@ describe('egreso con adjuntos', () => {
       }
     });
     await worker(repository, api).runOnce();
-    expect(repository.acks[0]!.status).toBe('dead');
+    expect(repository.acks[0]?.status).toBe('dead');
     expect([...repository.effects.values()].map((row) => row.state)).toEqual(['sent', 'ambiguous']);
   });
 
@@ -332,8 +346,8 @@ describe('egreso con adjuntos', () => {
     const repository = new MemoryRepository(event);
     const { api, sent } = fakeApi({}, true);
     await worker(repository, api).runOnce();
-    expect(sent[0]!.value).toContain('Listo, ahí va.');
-    expect(repository.acks[0]!.status).toBe('sent');
+    expect(sent[0]?.value).toContain('Listo, ahí va.');
+    expect(repository.acks[0]?.status).toBe('sent');
   });
 
   it('una respuesta sin artifacts se comporta exactamente como antes', async () => {
@@ -342,8 +356,8 @@ describe('egreso con adjuntos', () => {
     const { api, sent } = fakeApi();
     await worker(repository, api).runOnce();
     expect(sent).toHaveLength(1);
-    expect(sent[0]!.method).toBe('sendText');
-    expect(repository.acks[0]!.effect_count).toBe(1);
+    expect(sent[0]?.method).toBe('sendText');
+    expect(repository.acks[0]?.effect_count).toBe(1);
     // El hash del texto no cambió de fórmula: es el que ya tienen las filas vivas en producción.
     expect([...repository.effects.keys()]).toEqual([`${event.event_id}:0`]);
   });

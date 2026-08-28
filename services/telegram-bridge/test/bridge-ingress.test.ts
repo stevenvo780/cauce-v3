@@ -33,7 +33,8 @@ describe('Telegram group routing (poller integration)', () => {
     }).runOnce();
 
     expect(ingress.calls).toHaveLength(1);
-    const call = ingress.calls[0]!;
+    const call = ingress.calls[0];
+    if (!call) throw new Error('Call not found');
 
     // origin.metadata is what the harness renders as TRUSTED context: ids and enums only,
     // never the attacker-controlled display name.
@@ -151,7 +152,7 @@ describe('Telegram group routing (poller integration)', () => {
       groupUpdate(90, { userId: 999999, text: 'hola' }),
       groupUpdate(91, { chatId: 777, userId: 999999, text: 'hola por privado' })
     ]);
-    const suppressed: Array<{ reason: string; chat_id: string }> = [];
+    const suppressed: { reason: string; chat_id: string }[] = [];
 
     await new TelegramPoller({
       config: config({
@@ -191,7 +192,8 @@ describe('Telegram group routing (poller integration)', () => {
     }).runOnce();
 
     expect(ingress.calls).toHaveLength(1);
-    const call = ingress.calls[0]!;
+    const call = ingress.calls[0];
+    if (!call) throw new Error('Call not found');
     expect(call.body).not.toHaveProperty('thread_id');
     expect(call.body).not.toHaveProperty('addressed_by');
     expect(call.body).not.toHaveProperty('prompt');
@@ -331,7 +333,9 @@ describe('Telegram DM identity (poller integration)', () => {
       fleet: FLEET
     }).runOnce();
     expect(ingress.calls).toHaveLength(1);
-    return ingress.calls[0]!;
+    const call = ingress.calls[0];
+    if (!call) throw new Error('Ingress call not found');
+    return call;
   }
 
   it('le dice al agente con quién habla, dentro del bloque untrusted y nunca en el contexto confiable', async () => {

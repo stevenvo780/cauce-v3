@@ -11,12 +11,12 @@ import type {
 } from '../src/types.js';
 
 class RecordingTelegram implements TelegramApi {
-  readonly reactions: Array<{
+  readonly reactions: {
     chatId: string;
     messageId: string;
     reaction: TelegramReactionEmoji;
-  }> = [];
-  readonly actions: Array<{ chatId: string; action: TelegramChatAction }> = [];
+  }[] = [];
+  readonly actions: { chatId: string; action: TelegramChatAction }[] = [];
 
   async getIdentity(): Promise<{ id: string }> { return { id: '900001' }; }
   async getUpdates(): Promise<TelegramUpdate[]> { return []; }
@@ -122,9 +122,9 @@ describe('Telegram activity indicator', () => {
     });
     const message = target(api);
 
-    expect(() => activity.begin(message)).not.toThrow();
+    expect(() => { activity.begin(message); }).not.toThrow();
     await activity.whenIdle();
-    expect(() => activity.finish(message, 'done')).not.toThrow();
+    expect(() => { activity.finish(message, 'done'); }).not.toThrow();
     await activity.whenIdle();
     activity.stop();
   });
@@ -267,7 +267,7 @@ describe('Telegram activity indicator', () => {
 
 describe('Telegram Bot API activity calls', () => {
   it('sends exactly one emoji reaction and a typing action with validated numeric IDs', async () => {
-    const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const requests: { method: string; body: Record<string, unknown> }[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       const url = typeof input === 'string'
         ? input

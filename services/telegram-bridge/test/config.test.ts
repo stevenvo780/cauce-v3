@@ -42,15 +42,20 @@ describe('groupRouting', () => {
       rawAlias('kant'),
       rawAlias('argos', { bot_username: 'argos_bot', chats: [] })
     ]);
-    expect(groupRouting(config.aliases[0]!)).toBe('legacy');
-    expect(groupRouting(config.aliases[1]!)).toBe('scoped');
+    const first = config.aliases[0];
+    const second = config.aliases[1];
+    if (!first || !second) throw new Error('Aliases not found');
+    expect(groupRouting(first)).toBe('legacy');
+    expect(groupRouting(second)).toBe('scoped');
   });
 });
 
 describe('effectiveChatPolicy', () => {
   it('returns undefined when a scoped alias never declared the chat', () => {
     const config = build([rawAlias('kant', { bot_username: 'kant_bot', chats: [] })]);
-    expect(effectiveChatPolicy(config.aliases[0]!, CHAT_ID, '0')).toBeUndefined();
+    const first = config.aliases[0];
+    if (!first) throw new Error('Alias not found');
+    expect(effectiveChatPolicy(first, CHAT_ID, '0')).toBeUndefined();
   });
 
   it('merges a thread override on top of the chat entry, inheriting fields the thread omits', () => {
@@ -63,7 +68,8 @@ describe('effectiveChatPolicy', () => {
         threads: [{ thread_id: '42', mode: 'mention' }]
       }]
     })]);
-    const alias = config.aliases[0]!;
+    const alias = config.aliases[0];
+    if (!alias) throw new Error('Alias not found');
     expect(effectiveChatPolicy(alias, CHAT_ID, '0')).toMatchObject({ mode: 'always', default_alias: 'kant' });
     // Thread 42 narrows mode but does not mention default_alias, so it inherits the chat's host.
     expect(effectiveChatPolicy(alias, CHAT_ID, '42')).toMatchObject({ mode: 'mention', default_alias: 'kant' });
@@ -80,7 +86,8 @@ describe('effectiveChatPolicy', () => {
         threads: [{ thread_id: '42', default_alias: null }]
       }]
     })]);
-    const alias = config.aliases[0]!;
+    const alias = config.aliases[0];
+    if (!alias) throw new Error('Alias not found');
     expect(effectiveChatPolicy(alias, CHAT_ID, '0')).toMatchObject({ default_alias: 'kant' });
     expect(effectiveChatPolicy(alias, CHAT_ID, '42')).not.toHaveProperty('default_alias');
   });
@@ -167,7 +174,9 @@ describe('fleetParticipationGaps', () => {
       rawAlias('kant', { bot_username: 'kant_bot', chats: [{ chat_id: CHAT_ID, mode: 'always' }] }),
       rawAlias('argos', { bot_username: 'argos_bot', chats: [{ chat_id: CHAT_ID, mode: 'mention' }] })
     ]);
-    const selected = [config.aliases[0]!]; // only kant is selected to run
+    const firstAlias = config.aliases[0];
+    if (!firstAlias) throw new Error('Alias not found');
+    const selected = [firstAlias]; // only kant is selected to run
     expect(fleetParticipationGaps(config, selected)).toEqual([{ alias: 'argos', chat_id: CHAT_ID }]);
   });
 
@@ -188,7 +197,9 @@ describe('fleetParticipationGaps', () => {
         chats: [{ chat_id: '-9999' }]
       })
     ]);
-    expect(fleetParticipationGaps(config, [config.aliases[0]!])).toEqual([]);
+    const firstAlias = config.aliases[0];
+    if (!firstAlias) throw new Error('Alias not found');
+    expect(fleetParticipationGaps(config, [firstAlias])).toEqual([]);
   });
 });
 

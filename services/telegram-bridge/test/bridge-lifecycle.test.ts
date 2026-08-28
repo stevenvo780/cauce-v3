@@ -226,7 +226,8 @@ describe('Telegram egress crash recovery and replay', () => {
     await new TelegramEgressWorker({
       repository, aliases: [config()], apis: new Map([['kant', api]])
     }).runOnce();
-    const effect = [...repository.effects.values()][0]!;
+    const effect = [...repository.effects.values()][0];
+    if (!effect) throw new Error('Effect not found');
 
     await expect(repository.manualReplayEffect(
       effect.chunk_index, 'wrong-hash', 'operator ticket', 'Steven', 'kant', true,

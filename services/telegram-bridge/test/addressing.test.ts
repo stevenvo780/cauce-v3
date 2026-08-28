@@ -50,7 +50,7 @@ function message(overrides: MessageOverrides = {}): TelegramMessage {
     ...overrides
   } as TelegramMessage;
   for (const [key, value] of Object.entries(overrides)) {
-    if (value === undefined) delete (base as unknown as Record<string, unknown>)[key];
+    if (value === undefined) Reflect.deleteProperty(base, key);
   }
   return base;
 }

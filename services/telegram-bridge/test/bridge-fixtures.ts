@@ -55,7 +55,7 @@ export function update(updateId: number, chatId = 201, userId = 101): TelegramUp
       message_id: updateId + 100,
       from: { id: userId },
       chat: { id: chatId, type: 'private' },
-      text: `message-${updateId}`
+      text: `message-${String(updateId)}`
     }
   };
 }
@@ -66,7 +66,7 @@ export function groupUpdate(updateId: number, overrides: {
   chatId?: number; userId?: number; text?: string; entities?: TelegramEntity[];
   firstName?: string; username?: string;
 } = {}): TelegramUpdate {
-  const { chatId = GROUP_CHAT_ID, userId = 101, text = `message-${updateId}`, entities, firstName, username } = overrides;
+  const { chatId = GROUP_CHAT_ID, userId = 101, text = `message-${String(updateId)}`, entities, firstName, username } = overrides;
   return {
     update_id: updateId,
     message: {
@@ -84,7 +84,7 @@ export class MemoryCursorRepository implements TelegramCursorRepository {
   epoch = 0;
   current: PollLease | undefined;
 
-  async initializeCursor(): Promise<void> {}
+  async initializeCursor(): Promise<void> { /* noop */ }
 
   async acquirePollLease(botId: string, ownerId: string, leaseMs: number): Promise<PollLease | undefined> {
     if (this.current && this.current.lease_until.getTime() > Date.now() && this.current.owner_id !== ownerId) return undefined;
@@ -94,7 +94,7 @@ export class MemoryCursorRepository implements TelegramCursorRepository {
   }
 
   async renewPollLease(lease: PollLease, leaseMs: number): Promise<PollLease | undefined> {
-    if (!this.current || this.current.owner_id !== lease.owner_id || this.current.epoch !== lease.epoch ||
+    if (this.current?.owner_id !== lease.owner_id || this.current.epoch !== lease.epoch ||
         this.current.lease_until.getTime() <= Date.now()) return undefined;
     this.current = { ...lease, lease_until: new Date(Date.now() + leaseMs) };
     return this.current;
@@ -117,9 +117,9 @@ export class MemoryCursorRepository implements TelegramCursorRepository {
 
 export class FakeTelegram implements TelegramApi {
   offsets: number[] = [];
-  sends: Array<{ chat: string; text: string; options?: TelegramSendOptions; arity: number }> = [];
-  reactions: Array<{ chat: string; message: string; reaction: string }> = [];
-  actions: Array<{ chat: string; action: string }> = [];
+  sends: { chat: string; text: string; options?: TelegramSendOptions; arity: number }[] = [];
+  reactions: { chat: string; message: string; reaction: string }[] = [];
+  actions: { chat: string; action: string }[] = [];
   files = new Map<string, TelegramRemoteFile>();
   filePayloads = new Map<string, Buffer>();
 
@@ -184,7 +184,7 @@ export class DeduplicatingIngress implements TelegramIngress {
 
   async publish(message: TelegramIngressMessage): Promise<{ duplicate: boolean }> {
     this.calls.push(message);
-    const key = `${message.bot_id}:${message.update_id}`;
+    const key = `${message.bot_id}:${String(message.update_id)}`;
     const duplicate = this.effects.has(key);
     this.effects.add(key);
     return { duplicate };
@@ -261,7 +261,7 @@ export class MemoryEgressRepository implements TelegramEgressRepository {
 
   async beginEffect(effectId: string, payloadHash: string): Promise<TelegramEffect> {
     const existing = this.effects.get(effectId);
-    if (!existing || existing.payload_hash !== payloadHash) throw new Error('missing');
+    if (existing?.payload_hash !== payloadHash) throw new Error('missing');
     const next: TelegramEffect = existing.state === 'prepared' ? { ...existing, state: 'sending' } : existing;
     this.effects.set(effectId, next);
     return next;
@@ -269,13 +269,13 @@ export class MemoryEgressRepository implements TelegramEgressRepository {
 
   async resetPrepared(effectId: string, payloadHash: string): Promise<void> {
     const existing = this.effects.get(effectId);
-    if (!existing || existing.payload_hash !== payloadHash) throw new Error('missing');
+    if (existing?.payload_hash !== payloadHash) throw new Error('missing');
     this.effects.set(effectId, { ...existing, state: 'prepared' });
   }
 
   async completeEffect(effectId: string, payloadHash: string, providerMessageId: string): Promise<void> {
     const existing = this.effects.get(effectId);
-    if (!existing || existing.payload_hash !== payloadHash || existing.state !== 'sending') throw new Error('fenced');
+    if (existing?.payload_hash !== payloadHash || existing.state !== 'sending') throw new Error('fenced');
     this.effects.set(effectId, { ...existing, state: 'sent', provider_message_id: providerMessageId });
   }
 
@@ -286,7 +286,7 @@ export class MemoryEgressRepository implements TelegramEgressRepository {
     diagnostic: string
   ): TelegramEffect {
     const existing = this.effects.get(effectId);
-    if (!existing || existing.payload_hash !== payloadHash) throw new Error('missing');
+    if (existing?.payload_hash !== payloadHash) throw new Error('missing');
     if (existing.state === 'sent') return existing;
     if (existing.state !== 'prepared' && existing.state !== 'sending' && existing.state !== state) throw new Error('fenced');
     const diagnosed: TelegramEffect = { ...existing, state, diagnostic, diagnosed_at: new Date() };
@@ -324,7 +324,7 @@ export class MemoryEgressRepository implements TelegramEgressRepository {
     void _expectedReplayCount;
     const existing = [...this.effects.values()].find((candidate) =>
       candidate.chunk_index === chunkIndex && candidate.payload_hash === payloadHash);
-    if (!duplicateRiskAcknowledged || !existing || existing.payload_hash !== payloadHash ||
+    if (!duplicateRiskAcknowledged || existing?.payload_hash !== payloadHash ||
         (existing.state !== 'ambiguous' && existing.state !== 'dead') || this.outboxState !== 'dead') {
       throw new Error('unsafe replay');
     }

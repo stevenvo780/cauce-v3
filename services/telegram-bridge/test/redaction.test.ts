@@ -141,7 +141,7 @@ describe('redacción de secretos en la ingesta', () => {
     };
     const resultado = redactSecretsDeep(cuerpo);
     expect(resultado.value.text).toContain('[credencial-redactada]');
-    expect(resultado.value.attachments_v1[0]!.content_base64).toBe('AAAAAAAAAAAAAAAAAAAA');
+    expect(resultado.value.attachments_v1[0]?.content_base64).toBe('AAAAAAAAAAAAAAAAAAAA');
   });
 
   it('redacta el prompt de grupo, que es lo que realmente lee el harness', async () => {

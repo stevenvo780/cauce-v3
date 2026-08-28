@@ -45,7 +45,7 @@ class MemoryCursorRepository implements TelegramCursorRepository {
   readonly advances: number[] = [];
   failNextAdvance = false;
 
-  async initializeCursor(): Promise<void> {}
+  async initializeCursor(): Promise<void> { /* noop */ }
 
   async acquirePollLease(botId: string, ownerId: string, leaseMs: number): Promise<PollLease> {
     this.epoch += 1;
@@ -76,7 +76,7 @@ class MemoryCursorRepository implements TelegramCursorRepository {
 }
 
 class ScriptedTelegram implements TelegramApi {
-  readonly calls: Array<{ offset: number; timeout: number }> = [];
+  readonly calls: { offset: number; timeout: number }[] = [];
 
   constructor(private readonly batches: readonly TelegramUpdate[][]) {}
 
@@ -96,8 +96,8 @@ class ScriptedTelegram implements TelegramApi {
   async getFile(): Promise<TelegramRemoteFile> { throw new Error('no file fixture'); }
   async downloadFile(): Promise<Buffer> { throw new Error('no file fixture'); }
   async sendText(): Promise<TelegramSendResult> { return { message_id: 'synthetic-result' }; }
-  async setMessageReaction(): Promise<void> {}
-  async sendChatAction(): Promise<void> {}
+  async setMessageReaction(): Promise<void> { /* noop */ }
+  async sendChatAction(): Promise<void> { /* noop */ }
 }
 
 class DurableRecordingIngress implements TelegramIngress {
@@ -108,7 +108,7 @@ class DurableRecordingIngress implements TelegramIngress {
   async publish(message: TelegramIngressMessage): Promise<{ duplicate: boolean }> {
     this.calls.push(message);
     if (this.error !== undefined) throw this.error;
-    const key = `${message.bot_id}:${message.update_id}`;
+    const key = `${message.bot_id}:${String(message.update_id)}`;
     const duplicate = this.effects.has(key);
     this.effects.add(key);
     return { duplicate };
@@ -178,7 +178,7 @@ describe('Telegram update boundaries', () => {
     ): Promise<TelegramUpdate[]> => {
       rendezvous.entered();
       return new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(new Error('synthetic abort')), { once: true });
+        signal?.addEventListener('abort', () => { reject(new Error('synthetic abort')); }, { once: true });
       });
     };
     const controller = new AbortController();
@@ -197,9 +197,11 @@ describe('Telegram update boundaries', () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DurableRecordingIngress();
     const pending = update(1, 'con adjunto');
-    pending.message!.document = {
-      file_id: 'document-id', file_name: 'document.txt', mime_type: 'text/plain', file_size: 4
-    };
+    if (pending.message) {
+      pending.message.document = {
+        file_id: 'document-id', file_name: 'document.txt', mime_type: 'text/plain', file_size: 4
+      };
+    }
     const api = new ScriptedTelegram([[pending]]);
     const rendezvous = {
       entered: (): void => undefined,
@@ -246,7 +248,7 @@ describe('Telegram update boundaries', () => {
   });
 
   it('fetches update 101 on the next page after a full Telegram batch of 100', async () => {
-    const firstPage = Array.from({ length: 100 }, (_, index) => update(index + 1, `m-${index + 1}`));
+    const firstPage = Array.from({ length: 100 }, (_, index) => update(index + 1, `m-${String(index + 1)}`));
     const api = new ScriptedTelegram([firstPage, [update(101, 'm-101')]]);
     const repository = new MemoryCursorRepository();
     const ingress = new DurableRecordingIngress();

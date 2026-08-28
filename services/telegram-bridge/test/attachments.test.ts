@@ -6,13 +6,13 @@ import type { TelegramApi, TelegramMessage, TelegramRemoteFile } from '../src/ty
 class AttachmentTelegram implements TelegramApi {
   readonly files = new Map<string, TelegramRemoteFile>();
   readonly payloads = new Map<string, Buffer>();
-  downloaded: Array<{ path: string; maxBytes: number }> = [];
+  downloaded: { path: string; maxBytes: number }[] = [];
 
   async getIdentity(): Promise<{ id: string }> { return { id: '900001' }; }
   async getUpdates(): Promise<[]> { return []; }
   async sendText(): Promise<{ message_id: string }> { return { message_id: '1' }; }
-  async setMessageReaction(): Promise<void> {}
-  async sendChatAction(): Promise<void> {}
+  async setMessageReaction(): Promise<void> { /* noop */ }
+  async sendChatAction(): Promise<void> { /* noop */ }
 
   async getFile(fileId: string): Promise<TelegramRemoteFile> {
     const file = this.files.get(fileId);
@@ -102,12 +102,13 @@ describe('Telegram attachment preparation', () => {
 
     expect(result.errors).toEqual([]);
     expect(result.media).toHaveLength(1);
-    expect(result.media[0]).toMatchObject({
+    const media = result.media[0];
+    expect(media).toMatchObject({
       kind: 'image', name: 'picture.jpg', mime_type: 'image/jpeg', file_size: 7
     });
-    expect(Buffer.from(result.media[0]!.content_base64, 'base64'))
+    expect(Buffer.from(media?.content_base64 ?? '', 'base64'))
       .toEqual(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
-    expect(result.media[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(media?.sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it.each([

@@ -71,7 +71,7 @@ describe('TelegramBridgeProgress', () => {
 describe('Telegram progress health endpoints', () => {
   const servers: ReturnType<typeof startTelegramHealthServer>[] = [];
   afterEach(async () => {
-    await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+    await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => { resolve(); }))));
   });
 
   it('requires DB plus completed poller and egress ticks, while idle remains legitimate', async () => {
@@ -85,14 +85,14 @@ describe('Telegram progress health endpoints', () => {
     await once(server, 'listening');
     const port = (server.address() as AddressInfo).port;
 
-    expect((await fetch(`http://127.0.0.1:${port}/health/ready`)).status).toBe(503);
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health/ready`)).status).toBe(503);
     progress.pollCycleStarted('one'); progress.pollCycleSucceeded('one', 0);
     progress.egressCycleStarted(); progress.egressCycleSucceeded(0);
-    const ready = await fetch(`http://127.0.0.1:${port}/health/ready`);
+    const ready = await fetch(`http://127.0.0.1:${String(port)}/health/ready`);
     expect(ready.status).toBe(200);
     expect(await ready.json()).toMatchObject({ status: 'ready', aliases: 1, healthy_aliases: 1 });
 
     now += 5_001;
-    expect((await fetch(`http://127.0.0.1:${port}/health/live`)).status).toBe(503);
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health/live`)).status).toBe(503);
   });
 });

@@ -35,8 +35,8 @@ class OneUpdateTelegram implements TelegramApi {
   async getFile(): Promise<TelegramRemoteFile> { throw new Error('no file fixture'); }
   async downloadFile(): Promise<Buffer> { throw new Error('no file fixture'); }
   async sendText(): Promise<TelegramSendResult> { return { message_id: 'synthetic-result' }; }
-  async setMessageReaction(): Promise<void> {}
-  async sendChatAction(): Promise<void> {}
+  async setMessageReaction(): Promise<void> { /* noop */ }
+  async sendChatAction(): Promise<void> { /* noop */ }
 }
 
 class FailFirstAdvanceRepository implements TelegramCursorRepository {

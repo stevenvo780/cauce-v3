@@ -62,7 +62,7 @@ describe('Telegram fenced egress', () => {
 
   it('sends an interim relay ACK without finishing the original Telegram activity', async () => {
     const api = new FakeTelegram();
-    const finishes: Array<{ outcome: string }> = [];
+    const finishes: { outcome: string }[] = [];
     const repository = new MemoryEgressRepository(relay({
       payload: {
         relay_kind: 'ack',
@@ -116,7 +116,7 @@ describe('Telegram fenced egress', () => {
 
   it('delivers MISSING_FINAL_REPLY through the durable effect ledger with a safe human notice', async () => {
     const api = new FakeTelegram();
-    const finishes: Array<{ outcome: string }> = [];
+    const finishes: { outcome: string }[] = [];
     const metrics: string[] = [];
     const repository = new MemoryEgressRepository(relay({
       payload: {
@@ -508,7 +508,7 @@ describe('Telegram group egress', () => {
 describe('Telegram proactive egress', () => {
   it('delivers a proactive relay without touching the inbound activity reaction', async () => {
     const api = new FakeTelegram();
-    const finishes: Array<{ outcome: string }> = [];
+    const finishes: { outcome: string }[] = [];
     const repository = new MemoryEgressRepository(proactiveRelay());
 
     await new TelegramEgressWorker({

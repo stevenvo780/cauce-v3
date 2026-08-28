@@ -28,14 +28,14 @@ const alias: TelegramAliasConfig = {
 };
 
 class RecordingTelegram implements TelegramApi {
-  readonly sends: Array<{ chat: string; text: string }> = [];
+  readonly sends: { chat: string; text: string }[] = [];
 
   async getIdentity(): Promise<{ id: string }> { return { id: '900001' }; }
   async getUpdates(): Promise<TelegramUpdate[]> { return []; }
   async getFile(): Promise<never> { throw new Error('no file fixture'); }
   async downloadFile(): Promise<never> { throw new Error('no file fixture'); }
-  async setMessageReaction(): Promise<void> {}
-  async sendChatAction(): Promise<void> {}
+  async setMessageReaction(): Promise<void> { /* noop */ }
+  async sendChatAction(): Promise<void> { /* noop */ }
   async sendText(chatId: string, text: string): Promise<TelegramSendResult> {
     this.sends.push({ chat: chatId, text });
     return { message_id: String(this.sends.length) };
@@ -64,11 +64,13 @@ async function seedRelay(pool: DatabasePool, eventId = EVENT_ID): Promise<void> 
     relay: [],
     metadata: { bridge_alias: 'kant' }
   };
+  const messageRow = message.rows[0];
+  if (!messageRow) throw new Error('Message row not found');
   await pool.query(
     `INSERT INTO adapter_outbox(
        id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,trace_id,origin,payload,max_attempts
      ) VALUES($1,'Steven','telegram','origin_relay',$2,$3,$4,'telegram-postgres-test',$5::jsonb,$6::jsonb,1)`,
-    [eventId, `telegram-pg-${randomUUID()}`, requestId, message.rows[0]!.id,
+    [eventId, `telegram-pg-${randomUUID()}`, requestId, messageRow.id,
       JSON.stringify(origin), JSON.stringify({ result: { text: 'durable reply' } })]
   );
 }
@@ -122,17 +124,20 @@ describe('Telegram PostgreSQL crash recovery', () => {
     expect(dead.rows[0]).toMatchObject({ status: 'dead' });
     expect(dead.rows[0]?.last_error).toContain('automatic replay is disabled');
     expect(api.sends).toHaveLength(0);
-    const incident = (await database.pool.query<{ id: string; evidence_sha256: string }>(
+    const incidentRows = (await database.pool.query<{ id: string; evidence_sha256: string }>(
       `SELECT id,evidence_sha256 FROM outbox_dead_letters WHERE outbox_id=$1`, [EVENT_ID],
-    )).rows[0]!;
+    )).rows;
+    const incident = incidentRows[0];
+    if (!incident) throw new Error('Incident not found');
 
     await expect(restartedRepository.manualReplayEffect(
       0, 'b'.repeat(64), 'ticket 42', 'Steven', 'kant', true, randomUUID(),
       incident.id, incident.evidence_sha256, 0
     ))
       .rejects.toThrow('exactly one current effect');
+    if (!ambiguous) throw new Error('Ambiguous effect not found');
     const replayed = await restartedRepository.manualReplayEffect(
-      0, ambiguous!.payload_hash, 'ticket 42', 'Steven', 'kant', true, randomUUID(),
+      0, ambiguous.payload_hash, 'ticket 42', 'Steven', 'kant', true, randomUUID(),
       incident.id, incident.evidence_sha256, 0
     );
     expect(replayed).toMatchObject({ state: 'prepared', replay_count: 1 });

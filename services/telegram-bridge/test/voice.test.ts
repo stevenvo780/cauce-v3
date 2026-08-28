@@ -29,8 +29,8 @@ class VoiceTelegram implements TelegramApi {
   async getIdentity(): Promise<{ id: string }> { return { id: '900001' }; }
   async getUpdates(): Promise<[]> { return []; }
   async sendText(): Promise<{ message_id: string }> { return { message_id: '1' }; }
-  async setMessageReaction(): Promise<void> {}
-  async sendChatAction(): Promise<void> {}
+  async setMessageReaction(): Promise<void> { /* noop */ }
+  async sendChatAction(): Promise<void> { /* noop */ }
 
   async getFile(fileId: string): Promise<TelegramRemoteFile> {
     const file = this.files.get(fileId);
@@ -61,7 +61,7 @@ const VOICE = { file_id: 'voice-id', file_unique_id: 'u1', duration: 7, mime_typ
 
 describe('transcripción de notas de voz', () => {
   it('devuelve el texto dictado y manda el multipart que espera la API de OpenAI', async () => {
-    const peticiones: Array<{ url: string; body: FormData; auth: string | null }> = [];
+    const peticiones: { url: string; body: FormData; auth: string | null }[] = [];
     const resultado = await prepareTelegramVoice(
       message({ voice: VOICE }),
       voiceApi(),
@@ -80,13 +80,14 @@ describe('transcripción de notas de voz', () => {
 
     expect(resultado).toEqual({ kind: 'voice', duration: 7, transcript: 'Hola, esto es una prueba.' });
     expect(peticiones).toHaveLength(1);
-    expect(peticiones[0]!.url).toBe('http://claw-audio:8000/v1/audio/transcriptions');
-    expect(peticiones[0]!.auth).toBe('Bearer sk-local');
-    expect(peticiones[0]!.body.get('model')).toBe('deepdml/faster-whisper-large-v3-turbo-ct2');
-    expect(peticiones[0]!.body.get('language')).toBe('es');
-    expect(peticiones[0]!.body.get('response_format')).toBe('json');
+    const peticion = peticiones[0];
+    expect(peticion?.url).toBe('http://claw-audio:8000/v1/audio/transcriptions');
+    expect(peticion?.auth).toBe('Bearer sk-local');
+    expect(peticion?.body.get('model')).toBe('deepdml/faster-whisper-large-v3-turbo-ct2');
+    expect(peticion?.body.get('language')).toBe('es');
+    expect(peticion?.body.get('response_format')).toBe('json');
     // El nombre sale del magic, no de lo que declaró el usuario.
-    expect((peticiones[0]!.body.get('file') as File).name).toBe('voz.ogg');
+    expect((peticion?.body.get('file') as File | undefined)?.name).toBe('voz.ogg');
   });
 
   it('acepta audio y videomensajes, no sólo notas de voz', async () => {
@@ -156,7 +157,7 @@ describe('transcripción de notas de voz', () => {
     );
     expect(resultado.transcript).not.toContain(String.fromCharCode(0x07));
     expect(resultado.transcript).not.toContain('\u202e');
-    expect(resultado.transcript!.length).toBeLessThanOrEqual(8_001);
+    expect(resultado.transcript?.length).toBeLessThanOrEqual(8_001);
   });
 });
 
