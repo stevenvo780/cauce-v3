@@ -51,9 +51,10 @@ describe('la página del terminal, sin ninguna sesión abierta', () => {
     await screen.findByRole('button', { name: /abrir sesión con kant/i });
     // Acotado a la tira: «Adaptadores» y «Canal» también se dicen en el inspector de la derecha, y
     // una prueba que los cuente en toda la página mide otra cosa.
-    const tira = container.querySelector('.terminal-overview') as HTMLElement | null;
+    const tira = container.querySelector('.terminal-overview');
     expect(tira).not.toBeNull();
-    for (const rotulo of CONTADORES) expect(within(tira!).getByText(rotulo)).toBeInTheDocument();
+    if (!(tira instanceof HTMLElement)) throw new Error('tira not found');
+    for (const rotulo of CONTADORES) expect(within(tira).getByText(rotulo)).toBeInTheDocument();
     expect(container.querySelector('details.terminal-resumen')).toBeNull();
     /*
      * Y queda anotado por qué replegar el pie de doctrina obliga a escribirla en otro sitio: el pie

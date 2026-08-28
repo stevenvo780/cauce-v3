@@ -54,7 +54,8 @@ describe('estilos en línea del terminal', () => {
     abrirSesion('csp-sin-estilos');
     const host = document.querySelector('.pty-host');
     expect(host, 'la sesión no llegó a montar su nodo').not.toBeNull();
-    expect(host!.querySelectorAll('style').length).toBe(0);
+    if (!host) throw new Error('host not found');
+    expect(host.querySelectorAll('style').length).toBe(0);
   });
 
   /*
@@ -65,7 +66,8 @@ describe('estilos en línea del terminal', () => {
    */
   it('y el renderer sigue arrancando: se quitó la inyección, no el terminal', () => {
     abrirSesion('csp-renderer-vivo');
-    const host = document.querySelector('.pty-host') as HTMLElement;
+    const host = document.querySelector('.pty-host');
+    if (!host) throw new Error('host not found');
     expect(host.querySelector('.xterm-screen'), 'xterm no llegó a montar su pantalla').not.toBeNull();
     expect(host.querySelector('.xterm-rows'), 'xterm no llegó a montar sus filas').not.toBeNull();
   });

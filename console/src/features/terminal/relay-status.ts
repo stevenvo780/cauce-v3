@@ -52,11 +52,11 @@ export function terminalRelaySinComprobarReason(status?: number, detalle?: strin
       + 'si el canal PTY está disponible.';
   }
   if (UPSTREAM_INALCANZABLE.includes(status)) {
-    return `No se pudo alcanzar el relay de terminales a través del gateway (HTTP ${status})`
+    return `No se pudo alcanzar el relay de terminales a través del gateway (HTTP ${String(status)})`
       + `${detalle ? `: ${detalle}` : ''}. Reintentá; el upstream no contestó y eso no permite `
       + 'afirmar el estado del despliegue.';
   }
-  return `El servidor respondió HTTP ${status} al preguntar por el relay de terminales`
+  return `El servidor respondió HTTP ${String(status)} al preguntar por el relay de terminales`
     + `${detalle ? `: ${detalle}` : ''}. Eso no dice que el relay falte —la ruta contestó—, `
     + 'sólo que esa consulta no se pudo completar. Reintentá; si sigue igual, es de la consola o '
     + 'del gateway, no de tu permiso.';
@@ -96,18 +96,12 @@ export function deriveTerminalRelayState(
     return {
       status: 'unavailable',
       cause: 'no-desplegado',
-      reason: `${TERMINAL_RELAY_NOT_DEPLOYED_REASON} (HTTP ${status} al consultarlo.)`,
+      reason: `${TERMINAL_RELAY_NOT_DEPLOYED_REASON} (HTTP ${String(status)} al consultarlo.)`,
     };
   }
   if (!capability) return CHECKING_RELAY_STATE;
-  if (capability.available === false) {
-    return {
-      status: 'unavailable',
-      cause: 'no-desplegado',
-      reason: capability.reason?.trim() || TERMINAL_RELAY_NOT_DEPLOYED_REASON,
-    };
-  }
-  if (capability.available !== true) {
+  const rawAvailable = (capability as { available?: unknown }).available;
+  if (typeof rawAvailable !== 'boolean') {
     return {
       status: 'unavailable',
       cause: 'sin-comprobar',
@@ -117,7 +111,16 @@ export function deriveTerminalRelayState(
       ),
     };
   }
-  return { status: 'available', reason: capability.reason?.trim() || 'Relay de terminales disponible.' };
+  if (!capability.available) {
+    const trimmed = capability.reason?.trim();
+    return {
+      status: 'unavailable',
+      cause: 'no-desplegado',
+      reason: trimmed ?? TERMINAL_RELAY_NOT_DEPLOYED_REASON,
+    };
+  }
+  const trimmedReason = capability.reason?.trim();
+  return { status: 'available', reason: trimmedReason ?? 'Relay de terminales disponible.' };
 }
 
 /**

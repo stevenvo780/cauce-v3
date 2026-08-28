@@ -103,7 +103,7 @@ describe('deriveTerminalRelayState', () => {
       expect(state.status).toBe('unavailable');
       expect(state.cause).toBe('sin-comprobar');
       expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
-      expect(state.reason).toContain(`HTTP ${status}`);
+      expect(state.reason).toContain(`HTTP ${String(status)}`);
     });
 
     it('cita el motivo del servidor sin inventar una causa', () => {
@@ -118,7 +118,7 @@ describe('deriveTerminalRelayState', () => {
         const state = deriveTerminalRelayState(undefined, new ApiError('upstream unavailable', status));
         expect(state.cause).toBe('sin-comprobar');
         expect(state.reason).toMatch(/no se pudo alcanzar/i);
-        expect(state.reason).toContain(`HTTP ${status}`);
+        expect(state.reason).toContain(`HTTP ${String(status)}`);
         expect(state.reason).not.toContain(TERMINAL_RELAY_NOT_DEPLOYED_REASON);
       },
     );
@@ -167,7 +167,7 @@ describe('useTerminalRelayStatus', () => {
       headers: { 'content-type': 'text/html' },
     })));
     renderWithApi(<Probe />);
-    await waitFor(() => expect(screen.getByText(/^unavailable:/)).toBeInTheDocument());
+    await waitFor(() => { expect(screen.getByText(/^unavailable:/)).toBeInTheDocument(); });
     expect(screen.getByText(/no se pudo alcanzar el relay de terminales/i)).toBeInTheDocument();
     expect(screen.queryByText(/no está desplegado/i)).not.toBeInTheDocument();
   });

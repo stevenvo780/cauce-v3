@@ -40,7 +40,7 @@ export function holder(): HTMLDivElement {
 export function pintarPiel(entry: PtyEntry): void {
   const estilo = entry.container.style;
   estilo.setProperty('--pty-fuente', FUENTE_TERMINAL);
-  estilo.setProperty('--pty-cuerpo', `${entry.terminal.options.fontSize ?? CUERPO_BASE}px`);
+  estilo.setProperty('--pty-cuerpo', `${String(entry.terminal.options.fontSize ?? CUERPO_BASE)}px`);
   estilo.setProperty('--pty-tinta', TEMA_TERMINAL.foreground);
   estilo.setProperty('--pty-fondo', TEMA_TERMINAL.background);
   estilo.setProperty('--pty-cursor', TEMA_TERMINAL.cursor);
@@ -55,7 +55,7 @@ export function documentoQueNiegaLosEstilos(): Document {
     get(real, propiedad) {
       if (propiedad === 'createElement') {
         return (etiqueta: string, opciones?: ElementCreationOptions) => (
-          String(etiqueta).toLowerCase() === 'style'
+          etiqueta.toLowerCase() === 'style'
             ? real.createElement('template')
             : real.createElement(etiqueta, opciones)
         );

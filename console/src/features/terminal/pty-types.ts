@@ -54,7 +54,7 @@ export function ptyCloseMessage(code?: number, reason?: string | null): string {
   if (mapped) return mapped;
   if (code === 1000) return 'Canal PTY cerrado.';
   const detail = typeof reason === 'string' && reason.trim() ? ` · ${reason.trim()}` : '';
-  return `El servidor cerró el canal PTY${code === undefined ? ' sin decir con qué código' : ` con el código ${code}`}${detail}.`;
+  return `El servidor cerró el canal PTY${code === undefined ? ' sin decir con qué código' : ` con el código ${String(code)}`}${detail}.`;
 }
 
 /** Same-origin validation kept from the original component: no credentials, no query, no fragment. */
@@ -86,7 +86,7 @@ export const PTY_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as
 export const UTF8_ENCODER = new TextEncoder();
 
 export function decimalPositivo(value: string): boolean {
-  if (value.length === 0 || value.length > 3 || value[0] === '0') return false;
+  if (value.length === 0 || value.length > 3 || value.startsWith('0')) return false;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code < 0x30 || code > 0x39) return false;
@@ -175,7 +175,7 @@ export interface PtyEntry {
   resizeObserver?: ResizeObserver;
   geometriaDicha?: { cols: number; rows: number };
   pegadoAbajo: boolean;
-  disposers: Array<() => void>;
+  disposers: (() => void)[];
   onClosed?: (view: PtySessionView) => void;
   closed: boolean;
   outputFinished: boolean;

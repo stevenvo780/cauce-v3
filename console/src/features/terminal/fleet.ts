@@ -143,9 +143,9 @@ export function adapterBreakdownText(adapters: AdapterView[]): string {
   const { disponibles, conFallo, sinReportar, total } = adapterBreakdown(adapters);
   if (total === 0) return 'UNKNOWN';
   return [
-    `${disponibles} disponibles`,
-    conFallo ? `${conFallo} con fallo` : undefined,
-    sinReportar ? `${sinReportar} sin reportar` : undefined,
+    `${String(disponibles)} disponibles`,
+    conFallo ? `${String(conFallo)} con fallo` : undefined,
+    sinReportar ? `${String(sinReportar)} sin reportar` : undefined,
   ].filter(Boolean).join(' · ');
 }
 

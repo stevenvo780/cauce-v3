@@ -171,7 +171,7 @@ export function ensurePtySession(options: PtySessionOptions): void {
     const eventos = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart', 'compositionupdate', 'compositionend'] as const;
     for (const tipo of eventos) {
       container.addEventListener(tipo, bloquearEntradaHumana, true);
-      entry.disposers.push(() => container.removeEventListener(tipo, bloquearEntradaHumana, true));
+      entry.disposers.push(() => { container.removeEventListener(tipo, bloquearEntradaHumana, true); });
     }
   }
   entries.set(options.sessionId, entry);
@@ -185,10 +185,10 @@ export function ensurePtySession(options: PtySessionOptions): void {
 
   initTerminalWorker(entry);
 
-  const input = terminal.onData((data) => queueInput(entry, data, (message, closeCode) => {
+  const input = terminal.onData((data) => { queueInput(entry, data, (message, closeCode) => {
     publish(entry, { state: 'error', message, closeCode });
-  }));
-  entry.disposers.push(() => input.dispose());
+  }); });
+  entry.disposers.push(() => { input.dispose(); });
 
   const scroll = terminal.onScroll(() => {
     const abajo = alFinal(entry);
@@ -196,14 +196,14 @@ export function ensurePtySession(options: PtySessionOptions): void {
     entry.pegadoAbajo = abajo;
     publish(entry, { seguirAlFinal: abajo });
   });
-  entry.disposers.push(() => scroll.dispose());
+  entry.disposers.push(() => { scroll.dispose(); });
 
   openSocket(
     entry,
     options,
     false,
-    (patch) => publish(entry, patch),
-    () => sendResize(entry),
+    (patch) => { publish(entry, patch); },
+    () => { sendResize(entry); },
   );
 }
 
@@ -240,7 +240,7 @@ export function attachPtySession(sessionId: string, wrapper: HTMLElement): void 
   wrapper.appendChild(entry.container);
   entry.resizeObserver?.disconnect();
   if (typeof ResizeObserver === 'function') {
-    entry.resizeObserver ??= new ResizeObserver(() => sendResize(entry));
+    entry.resizeObserver ??= new ResizeObserver(() => { sendResize(entry); });
     entry.resizeObserver.observe(wrapper);
   }
   sendResize(entry);

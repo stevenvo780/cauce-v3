@@ -178,7 +178,7 @@ export function explicarDenegacionPty(entrada: {
 }): DenegacionExplicada {
   const codigo = codigoDeDenegacion(entrada.codigo) ?? codigoDeDenegacion(entrada.texto);
   const estado = typeof entrada.estado === 'number' && Number.isFinite(entrada.estado) ? entrada.estado : undefined;
-  const sufijoEstado = estado ? ` (HTTP ${estado}).` : '';
+  const sufijoEstado = estado ? ` (HTTP ${String(estado)}).` : '';
 
   if (codigo) {
     const copia = TERMINAL_DENY_MESSAGES[codigo];

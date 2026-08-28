@@ -54,7 +54,6 @@ export function queueInput(
     for (const chunk of chunks) {
       const chunkBytes = UTF8_ENCODER.encode(chunk).byteLength;
       if (batchBytes + chunkBytes > MAX_INPUT_FRAME_BYTES) flushBatch();
-      if (entry.socket?.readyState !== WebSocket.OPEN) return;
       batch.push(chunk);
       batchBytes += chunkBytes;
     }

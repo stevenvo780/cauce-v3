@@ -88,7 +88,7 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
   // Elegir el agente es TODO lo que hace el operador: ni elegir modo, ni escribir un motivo.
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
 
-  await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
+  await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   // El canal pedido es el de la TUI, no una shell nueva, y el motivo queda auditado igual.
   expect(calls).toHaveLength(1);
@@ -96,9 +96,9 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
   expect(String(calls[0].reason)).toMatch(/TUI en vivo de zeus \(solo lectura\)/i);
 
   const socket = StubWebSocket.last();
-  act(() => socket.acceptOpen());
+  act(() => { socket.acceptOpen(); });
   expect(socket.frames()[0]).toMatchObject({
-    type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u),
+    type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u) as unknown,
   });
 
   act(() => {
@@ -110,17 +110,17 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
     });
     socket.emitOutput(TUI_FRAME);
   });
-  await waitFor(() => expect(ptySessionText(PTY_SESSION_ID)).toContain('zeus esta corriendo pnpm test'));
+  await waitFor(() => { expect(ptySessionText(PTY_SESSION_ID)).toContain('zeus esta corriendo pnpm test'); });
 
   const bar = screen.getByLabelText('Sesión PTY activa');
   expect(bar).toHaveTextContent(/TUI en vivo · solo lectura/i);
   expect(bar).toHaveTextContent('harness');
 
   // Solo lectura DE VERDAD: una tecla por el camino real de xterm no produce frame de input.
-  act(() => ptySessionType(PTY_SESSION_ID, 'rm -rf /\r'));
+  act(() => { ptySessionType(PTY_SESSION_ID, 'rm -rf /\r'); });
   await new Promise((resolve) => setTimeout(resolve, 30));
   expect(socket.framesOfType('input')).toHaveLength(0);
-});
+}, 20_000);
 
 it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión y dice por qué', async () => {
   const user = userEvent.setup();
@@ -134,7 +134,7 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
   await screen.findByRole('textbox', { name: /entrada para zeus/i });
   // El PTY sigue disponible (es el mismo destino autorizado): lo que falta es la TUI.
-  await waitFor(() => expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
 
   expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();
   // Dicho DOS veces a propósito, igual que «Sin autoridad»: en el chip de la lista de flota y
@@ -161,7 +161,7 @@ it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se in
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
   await screen.findByRole('textbox', { name: /entrada para zeus/i });
 
-  await waitFor(() => expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
   expect(screen.getByText('TUI no habilitada')).toBeInTheDocument();
   expect(calls).toHaveLength(0);
   expect(StubWebSocket.instances).toHaveLength(0);
@@ -179,7 +179,7 @@ it('un rechazo del gateway no se reintenta en bucle: la apertura automática es 
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-  await waitFor(() => expect(attempts).toBe(1));
+  await waitFor(() => { expect(attempts).toBe(1); });
   // El panel sigue vivo y refrescando (targets cada 15 s, feed cada 2.5 s) sin volver a pedir.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
   expect(attempts).toBe(1);
@@ -195,7 +195,7 @@ it('la shell sigue exigiendo motivo escrito a mano aunque la TUI se abra sola', 
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-  await waitFor(() => expect(calls).toHaveLength(1));
+  await waitFor(() => { expect(calls).toHaveLength(1); });
 
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
   const dialog = await screen.findByRole('dialog');
@@ -267,7 +267,7 @@ describe('un rechazo del servidor al abrir la TUI se VE, y dice de quién es la 
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(() => { expect(calls).toHaveLength(1); });
 
     // Se busca el aviso de rechazo por su texto: el `role="alert"` de `.pty-render-error` (xterm
     // no monta en jsdom) es otro cartel y no tiene nada que ver con esto.

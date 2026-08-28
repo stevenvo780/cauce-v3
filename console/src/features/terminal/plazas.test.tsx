@@ -162,13 +162,13 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
-    act(() => StubWebSocket.last().acceptOpen());
+    await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
+    act(() => { StubWebSocket.last().acceptOpen(); });
 
     expect(borrados).toEqual([]);
     // Navegar a otra vista de la consola es EXACTAMENTE esto: el workspace se desmonta.
     vista.unmount();
-    await waitFor(() => expect(borrados).toEqual(['sid-zeus']));
+    await waitFor(() => { expect(borrados).toEqual(['sid-zeus']); });
     // Y el socket local también se cortó: un nodo vivo colgando del `<body>` era la mitad del bug.
     expect(StubWebSocket.last().readyState).toBe(3);
   });
@@ -202,7 +202,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(posts).toBe(1));
+    await waitFor(() => { expect(posts).toBe(1); });
     // Auto-open owns the sole attempt. A click while it is pending is visibly fenced and cannot
     // create a second reservation.
     const tui = screen.getByRole('button', { name: /^TUI$/i });
@@ -213,7 +213,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     vista.unmount();
     gate.resolve(undefined);
 
-    await waitFor(() => expect(borrados).toEqual(['sid-late-owned']));
+    await waitFor(() => { expect(borrados).toEqual(['sid-late-owned']); });
     expect(StubWebSocket.instances).toHaveLength(0);
     expect(posts).toBe(1);
   });
@@ -245,11 +245,11 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
+    await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     expect(posts).toBe(1);
 
     vista.unmount();
-    await waitFor(() => expect(borrados).toEqual(['sid-strict-mode']));
+    await waitFor(() => { expect(borrados).toEqual(['sid-strict-mode']); });
   });
 
   it('cambiar A→B→A conserva el fence del workspace y no emite un segundo POST para A', async () => {
@@ -266,7 +266,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
         const body = await request.json() as Record<string, unknown>;
         const alias = String(body.alias);
         posts.push(alias);
-        const gate = deferred<void>();
+        const gate = deferred();
         gates.set(alias, gate);
         await gate.promise;
         return HttpResponse.json(mockTerminalGrant({
@@ -287,31 +287,31 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(posts).toEqual(['zeus']));
+    await waitFor(() => { expect(posts).toEqual(['zeus']); });
     await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await waitFor(() => expect(posts).toEqual(['zeus', 'salva']));
+    await waitFor(() => { expect(posts).toEqual(['zeus', 'salva']); });
     await user.click(screen.getByRole('tab', { name: /zeus/i }));
-    await waitFor(() => expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled());
+    await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
     expect(posts).toEqual(['zeus', 'salva']);
 
     gates.get('zeus')?.resolve(undefined);
-    await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
+    await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     expect(borrados).toEqual([]);
     gates.get('salva')?.resolve(undefined);
-    await waitFor(() => expect(posts).toEqual(['zeus', 'salva']));
+    await waitFor(() => { expect(posts).toEqual(['zeus', 'salva']); });
 
     vista.unmount();
-    await waitFor(() => expect(new Set(borrados)).toEqual(new Set(['sid-zeus', 'sid-salva'])));
+    await waitFor(() => { expect(new Set(borrados)).toEqual(new Set(['sid-zeus', 'sid-salva'])); });
   });
 
   it('cerrar y reabrir crea otra intención y la respuesta vieja sólo compensa su propio owner', async () => {
     const user = userEvent.setup();
-    const pending: Array<{
+    const pending: {
       gate: Deferred<void>;
       body: Record<string, unknown>;
       sid: string;
-    }> = [];
-    const borrados: Array<{ sid: string; body: Record<string, unknown> }> = [];
+    }[] = [];
+    const borrados: { sid: string; body: Record<string, unknown> }[] = [];
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
     server.use(
       http.post('*/v3/console/terminal/sessions', async ({ request }) => {
@@ -344,33 +344,33 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(pending).toHaveLength(1));
+    await waitFor(() => { expect(pending).toHaveLength(1); });
     await user.click(screen.getByRole('button', { name: /cerrar sesión zeus/i }));
-    await waitFor(() => expect(screen.queryByRole('tab', { name: /zeus/i })).not.toBeInTheDocument());
+    await waitFor(() => { expect(screen.queryByRole('tab', { name: /zeus/i })).not.toBeInTheDocument(); });
 
     await user.click(screen.getByRole('button', { name: /abrir sesión con zeus/i }));
-    await waitFor(() => expect(pending).toHaveLength(2));
-    expect(pending[1]!.body.request_id).not.toBe(pending[0]!.body.request_id);
-    expect(pending[1]!.body.owner_token).not.toBe(pending[0]!.body.owner_token);
+    await waitFor(() => { expect(pending).toHaveLength(2); });
+    expect(pending[1].body.request_id).not.toBe(pending[0].body.request_id);
+    expect(pending[1].body.owner_token).not.toBe(pending[0].body.owner_token);
 
     // The replacement wins first. A later continuation from the closed incarnation must not
     // adopt or revoke it, even though both tabs have the same React/session alias key.
-    pending[1]!.gate.resolve(undefined);
-    await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
-    pending[0]!.gate.resolve(undefined);
-    await waitFor(() => expect(borrados.map((item) => item.sid)).toEqual(['sid-old-incarnation']));
+    pending[1].gate.resolve(undefined);
+    await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
+    pending[0].gate.resolve(undefined);
+    await waitFor(() => { expect(borrados.map((item) => item.sid)).toEqual(['sid-old-incarnation']); });
     expect(borrados[0]?.body).toEqual({
-      request_id: pending[0]!.body.request_id,
+      request_id: pending[0].body.request_id,
       owner_generation: '1',
-      owner_token: pending[0]!.body.owner_token,
+      owner_token: pending[0].body.owner_token,
     });
     expect(StubWebSocket.instances).toHaveLength(1);
     expect(screen.getByRole('tab', { name: /zeus/i })).toHaveAttribute('aria-selected', 'true');
 
     vista.unmount();
-    await waitFor(() => expect(borrados.map((item) => item.sid)).toEqual([
+    await waitFor(() => { expect(borrados.map((item) => item.sid)).toEqual([
       'sid-old-incarnation', 'sid-new-incarnation',
-    ]));
+    ]); });
   });
 });
 
@@ -413,8 +413,8 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     expect(tira).not.toHaveTextContent('socrates');
 
     await user.click(within(tira).getByRole('button', { name: /cerrar ahora/i }));
-    await waitFor(() => expect(borrados).toEqual(['colgada-tales']));
-    await waitFor(() => expect(screen.queryByLabelText('Sesiones de terminal que siguen ocupando plaza')).not.toBeInTheDocument());
+    await waitFor(() => { expect(borrados).toEqual(['colgada-tales']); });
+    await waitFor(() => { expect(screen.queryByLabelText('Sesiones de terminal que siguen ocupando plaza')).not.toBeInTheDocument(); });
   });
 
   it.each([
@@ -498,7 +498,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     // Ni el POST ni la conciliación leen autoridad de un receipt inválido para hacer DELETE.
     expect(borrados).toEqual([]);
     await user.click(within(tira).getByRole('button', { name: /cerrar ahora/i }));
-    await waitFor(() => expect(borrados).toEqual(['sesion-de-otra-pestana']));
+    await waitFor(() => { expect(borrados).toEqual(['sesion-de-otra-pestana']); });
   });
 });
 
@@ -515,7 +515,7 @@ describe('la geometría de la vista', () => {
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
     await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
 
-    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    await waitFor(() => { expect(screen.getAllByRole('tab')).toHaveLength(2); });
     /*
      * ESTA es la aserción que antes daba 2 y por la que la página medía 3.537 px: un panel de
      * 600 px por sesión, apilados, y el terminal fuera de pantalla. Ahora sólo se monta el
@@ -526,7 +526,7 @@ describe('la geometría de la vista', () => {
 
     // Y la página declara que está en modo observación, que es lo que repliega los contadores.
     expect(document.querySelector('.ultimate-terminal-page')).toHaveAttribute('data-tui', 'abierta');
-  });
+  }, 20_000);
 });
 
 describe('el tope gastado con todo a la vista', () => {

@@ -113,7 +113,7 @@ export function handleControlFrame(
   if (payload.type === 'closed') {
     const reason = typeof payload.reason === 'string' ? payload.reason : undefined;
     const exitCode = typeof payload.exit_code === 'number' ? payload.exit_code : undefined;
-    const suffix = exitCode === undefined ? '' : ` · exit ${exitCode}`;
+    const suffix = exitCode === undefined ? '' : ` · exit ${String(exitCode)}`;
     publish({ state: 'closed', message: `${reason ?? 'El servidor cerró la sesión.'}${suffix}` });
     return;
   }
@@ -130,12 +130,12 @@ export function scheduleReconnect(
   if (entry.closed || entry.resumeToken === undefined || entry.claimToken === undefined ||
       entry.claimEpoch === undefined || entry.claimLeaseMs === undefined ||
       entry.reconnectTimer !== undefined) return false;
+  if (entry.reconnectAttempt >= PTY_RECONNECT_DELAYS_MS.length) return false;
   const delay = PTY_RECONNECT_DELAYS_MS[entry.reconnectAttempt];
-  if (delay === undefined) return false;
   entry.reconnectAttempt += 1;
   publish({
     state: 'connecting',
-    message: `Canal interrumpido; reanudando el mismo PTY (${entry.reconnectAttempt}/${PTY_RECONNECT_DELAYS_MS.length}).`,
+    message: `Canal interrumpido; reanudando el mismo PTY (${String(entry.reconnectAttempt)}/${String(PTY_RECONNECT_DELAYS_MS.length)}).`,
     closeCode: undefined,
   });
   entry.reconnectTimer = window.setTimeout(() => {
@@ -175,7 +175,7 @@ export function openSocket(
     finishOutput(entry);
     publish({
       state: 'error',
-      message: `La conexión WebSocket no completó el handshake en ${Math.round(PTY_HANDSHAKE_TIMEOUT_MS / 1000)} s. `
+      message: `La conexión WebSocket no completó el handshake en ${String(Math.round(PTY_HANDSHAKE_TIMEOUT_MS / 1000))} s. `
         + 'No se reutilizó el ticket de un solo uso; pedí una sesión nueva.',
       closeCode: undefined,
     });

@@ -40,7 +40,7 @@ function actorIdentity(access: ConsoleAccess | undefined): { tenantId: string; a
   return { tenantId: parts[0].trim(), alias: parts[1].trim() };
 }
 
-function membershipSummary(states: Array<boolean | null | undefined>): boolean | undefined {
+function membershipSummary(states: (boolean | null | undefined)[]): boolean | undefined {
   if (states.length === 0) return undefined;
   if (states.some((state) => state === true)) return true;
   if (states.some((state) => state === undefined || state === null)) return undefined;
@@ -115,7 +115,7 @@ export function operatorRouteForAgent(
   const edge = (topology?.acl_edges ?? []).find((candidate) => (
     same(candidate.from_tenant, actor.tenantId) && same(candidate.to_tenant, agent.tenantId)
   ));
-  if (!edge || edge.enabled !== true || edge.allow_route !== true || edge.allow_control !== true) {
+  if (edge?.enabled !== true || edge.allow_route !== true || edge.allow_control !== true) {
     return {
       allowed: false,
       sourceRoomIds,
@@ -169,10 +169,10 @@ export function liveTuiReason(alias: string): string {
 export function ptyReasonProblem(reason: string): string | undefined {
   const text = reason.trim();
   if (text.length < PTY_REASON_MIN_LENGTH) {
-    return `El motivo necesita al menos ${PTY_REASON_MIN_LENGTH} caracteres (lleva ${text.length}).`;
+    return `El motivo necesita al menos ${String(PTY_REASON_MIN_LENGTH)} caracteres (lleva ${String(text.length)}).`;
   }
   if (text.length > PTY_REASON_MAX_LENGTH) {
-    return `El motivo no puede pasar de ${PTY_REASON_MAX_LENGTH} caracteres (lleva ${text.length}).`;
+    return `El motivo no puede pasar de ${String(PTY_REASON_MAX_LENGTH)} caracteres (lleva ${String(text.length)}).`;
   }
   return undefined;
 }
@@ -188,7 +188,7 @@ export function ptySecondsLeft(expiresAt: string | null | undefined, now = Date.
 export function formatCountdown(seconds: number | undefined): string {
   if (seconds === undefined) return 'sin dato';
   const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+  return `${String(minutes)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
 // La traducción de denegaciones PTY se centraliza en denegaciones.ts.

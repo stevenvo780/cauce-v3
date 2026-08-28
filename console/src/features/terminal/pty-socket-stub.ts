@@ -38,11 +38,11 @@ export class StubWebSocket {
   }
 
   /** Every frame the client sent, already parsed. */
-  frames(): Array<Record<string, unknown>> {
+  frames(): Record<string, unknown>[] {
     return this.sent.map((raw) => JSON.parse(raw) as Record<string, unknown>);
   }
 
-  framesOfType(type: string): Array<Record<string, unknown>> {
+  framesOfType(type: string): Record<string, unknown>[] {
     return this.frames().filter((frame) => frame.type === type);
   }
 

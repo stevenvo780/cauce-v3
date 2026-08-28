@@ -74,7 +74,7 @@ it('never presents a harness-only viewer as an interactive PTY shell', () => {
   expect(terminalChannelGate(CAPABILITY, ACCESS, targets, JARVIS)).toMatchObject({
     enabled: false,
     status: 'unknown',
-    reason: expect.stringMatching(/no publica el modo shell.*solo lectura/iu),
+    reason: expect.stringMatching(/no publica el modo shell.*solo lectura/iu) as unknown,
   });
   expect(liveTuiGate(CAPABILITY, ACCESS, targets, JARVIS)).toMatchObject({
     enabled: true,

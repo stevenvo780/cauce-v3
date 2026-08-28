@@ -97,7 +97,7 @@ it('sale de CONNECTING si el upgrade nunca responde y no reutiliza el ticket de 
     expect(socket.closeReason).toBe('handshake_timeout');
     expect(readPtySession(SESSION)).toMatchObject({
       state: 'error',
-      message: expect.stringMatching(/no completó el handshake.*sesión nueva/iu),
+      message: expect.stringMatching(/no completó el handshake.*sesión nueva/iu) as unknown,
     });
     expect(closed).toHaveLength(1);
 
@@ -336,7 +336,7 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
     first.emitClose(1006, 'network_lost');
     expect(readPtySession(SESSION)).toMatchObject({
       state: 'connecting',
-      message: expect.stringContaining('reanudando el mismo PTY'),
+      message: expect.stringContaining('reanudando el mismo PTY') as unknown,
     });
     expect(StubWebSocket.instances).toHaveLength(1);
 
@@ -446,7 +446,7 @@ it('rejects endpoints that are not a bare same-origin path', () => {
 it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al final»', async () => {
   const socket = open();
   socket.emitControl(ready());
-  socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${i}`).join('\r\n') + '\r\n');
+  socket.emitOutput(Array.from({ length: 120 }, (_, i) => `linea ${String(i)}`).join('\r\n') + '\r\n');
   await settle();
 
   const antes = ptySessionPosicion(SESSION);

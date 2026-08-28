@@ -81,7 +81,11 @@ it('resolves PTY authority per destination from the server inventory', () => {
     { tenant_id: 'Pablo', alias: 'midas' },
     { tenant_id: 'Jhon', alias: 'hegel' },
   ] });
-  const find = (alias: string) => agents.find((agent) => agent.alias === alias)!;
+  const find = (alias: string) => {
+    const found = agents.find((agent) => agent.alias === alias);
+    if (!found) throw new Error(`Agent ${alias} not found`);
+    return found;
+  };
   const targets = [
     target({ tenant_id: 'Steven', alias: 'jarvis' }),
     target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', reason: 'El agente PTY no está instalado en ctrl-infra.' }),
@@ -92,7 +96,7 @@ it('resolves PTY authority per destination from the server inventory', () => {
   expect(resolveTerminalTarget(targets, find('jarvis'))).toMatchObject({ status: 'allowed' });
   expect(resolveTerminalTarget(targets, find('argos'))).toMatchObject({ status: 'not_installed' });
   // Denial wins over any state: an unauthorised destination is never shown as merely offline.
-  expect(resolveTerminalTarget(targets, find('salva'))).toMatchObject({ status: 'denied', reason: expect.stringContaining('attribution_required') });
+  expect(resolveTerminalTarget(targets, find('salva'))).toMatchObject({ status: 'denied', reason: expect.stringContaining('attribution_required') as unknown });
   expect(resolveTerminalTarget(targets, find('midas')).reason).toContain('2026-07-24T10:00:00.000Z');
   // An alias the server never mentioned is UNKNOWN, not implicitly denied nor implicitly allowed.
   expect(resolveTerminalTarget(targets, find('hegel'))).toMatchObject({ status: 'unknown' });
@@ -135,9 +139,12 @@ it('matches a target by exact tenant and alias, never by alias alone', () => {
   ] });
   const targets = [target({ tenant_id: 'Miguel', alias: 'kant', container: 'ws-miguel' })];
 
-  expect(terminalTargetForAgent(targets, agents.find((agent) => agent.tenantId === 'Miguel')!)?.container).toBe('ws-miguel');
-  expect(terminalTargetForAgent(targets, agents.find((agent) => agent.tenantId === 'Steven')!)).toBeUndefined();
-  expect(resolveTerminalTarget(targets, agents.find((agent) => agent.tenantId === 'Steven')!).status).toBe('unknown');
+  const migAgent = agents.find((agent) => agent.tenantId === 'Miguel');
+  const stevenAgent = agents.find((agent) => agent.tenantId === 'Steven');
+  if (!migAgent || !stevenAgent) throw new Error('Agents not found');
+  expect(terminalTargetForAgent(targets, migAgent)?.container).toBe('ws-miguel');
+  expect(terminalTargetForAgent(targets, stevenAgent)).toBeUndefined();
+  expect(resolveTerminalTarget(targets, stevenAgent).status).toBe('unknown');
 });
 
 it('never resolves a duplicated alias without its tenant', () => {
@@ -146,7 +153,9 @@ it('never resolves a duplicated alias without its tenant', () => {
     { tenant_id: 'Miguel', alias: 'operator' },
   ] });
   expect(agents.every((agent) => !terminalTargetMatchesAgent('operator', agent))).toBe(true);
-  expect(terminalTargetMatchesAgent('Miguel:operator', agents.find((agent) => agent.tenantId === 'Miguel')!)).toBe(true);
+  const migAgent = agents.find((agent) => agent.tenantId === 'Miguel');
+  if (!migAgent) throw new Error('Agent not found');
+  expect(terminalTargetMatchesAgent('Miguel:operator', migAgent)).toBe(true);
 });
 
 it('keeps tenants that differ only by case as distinct identities', () => {
@@ -154,8 +163,9 @@ it('keeps tenants that differ only by case as distinct identities', () => {
     { tenant_id: 'Steven', alias: 'operator' },
     { tenant_id: 'steven', alias: 'operator' },
   ] });
-  const upper = agents.find((agent) => agent.tenantId === 'Steven')!;
-  const lower = agents.find((agent) => agent.tenantId === 'steven')!;
+  const upper = agents.find((agent) => agent.tenantId === 'Steven');
+  const lower = agents.find((agent) => agent.tenantId === 'steven');
+  if (!upper || !lower) throw new Error('Agents not found');
   const targets = [target({ tenant_id: 'steven', alias: 'operator', container: 'lower-tenant' })];
 
   expect(new Set(agents.map((agent) => agent.id))).toEqual(new Set(['Steven:operator', 'steven:operator']));

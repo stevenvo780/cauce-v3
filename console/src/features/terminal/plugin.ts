@@ -18,7 +18,8 @@ export interface PluginGate {
 function sameOriginWebsocketPath(value: unknown): value is string {
   if (typeof value !== 'string' || !value.trim()) return false;
   try {
-    const base = new URL(globalThis.location?.href ?? 'http://localhost/');
+    const currentHref = typeof globalThis.location !== 'undefined' ? globalThis.location.href : 'http://localhost/';
+    const base = new URL(currentHref);
     const endpoint = new URL(value, base);
     const compatibleProtocol = base.protocol === 'https:'
       ? endpoint.protocol === 'https:' || endpoint.protocol === 'wss:'

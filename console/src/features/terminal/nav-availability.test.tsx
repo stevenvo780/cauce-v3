@@ -34,7 +34,7 @@ describe('terminalNavAvailability', () => {
 
 function Link({ disabledReason }: { disabledReason?: string }) {
   return (
-    <a href="/terminal" onClick={(event) => onNavClick(event, '/terminal', disabledReason)}>
+    <a href="/terminal" onClick={(event) => { onNavClick(event, '/terminal', disabledReason); }}>
       Terminal de agentes
     </a>
   );
