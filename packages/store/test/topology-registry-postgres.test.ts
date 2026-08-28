@@ -75,6 +75,7 @@ describe('topology registry facts', () => {
     await seedAgent('Steven', 'agent-off', false);
 
     await seedMembership('both-off', false);
+    await seedMembership('quota-collector', true);
     await seedAgent('Steven', 'both-off', false);
 
     const snapshot = await repository.topology('Steven', 'argos');

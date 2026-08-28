@@ -240,6 +240,10 @@ beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`
     DELETE FROM memberships WHERE tenant_id='Pablo' AND alias='kant';
+    INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES
+      ('Miguel','grp.miguel','atlas','agent'),('Miguel','grp.miguel','iza','agent'),
+      ('Steven','grp.steven','zeus','agent')
+    ON CONFLICT DO NOTHING;
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
     UPDATE tenants SET enabled=true;
     UPDATE rooms SET enabled=true;
