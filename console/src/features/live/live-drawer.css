@@ -29,16 +29,25 @@
   .live-page.has-drawer::before { position: fixed; z-index: calc(var(--layer-modal) - 1); background: rgb(3 6 12 / 55%); content: ""; inset: 0; }
 }
 
-@media (max-width: 2039px) {
-  .live-page.has-drawer.cajon-ancho { grid-template-columns: minmax(0, 1fr); }
-  .live-page.has-drawer.cajon-ancho > .agent-drawer { position: fixed; z-index: var(--layer-modal); width: min(980px, 100vw - 32px); max-height: none; border-radius: var(--radius) 0 0 var(--radius); inset: 0 0 0 auto; }
-  .live-page.has-drawer.cajon-ancho::before { position: fixed; z-index: calc(var(--layer-modal) - 1); background: rgb(3 6 12 / 55%); content: ""; inset: 0; }
+/* The editing tabs are not a glance at the list, they are the work: seven fields and a preview of
+   the text that lands on disk. They take the screen at every width, inset just enough to keep the
+   page visible behind and read as a layer over it rather than a new place. */
+.live-page.has-drawer.cajon-ancho { grid-template-columns: minmax(0, 1fr); }
+.live-page.has-drawer.cajon-ancho > .agent-drawer {
+  position: fixed;
+  z-index: var(--layer-modal);
+  /* `inset` alone cannot win against the width the narrow sheet sets at the same breakpoints. */
+  width: auto;
+  max-height: none;
+  inset: var(--space-5);
 }
+.live-page.has-drawer.cajon-ancho::before { position: fixed; z-index: calc(var(--layer-modal) - 1); background: rgb(3 6 12 / 55%); content: ""; inset: 0; }
 
 /* The bottom bar owns the foot of the viewport below 760px; a sheet that covered it would trap the
    operator in the drawer with no way back to another view. */
 @media (max-width: 760px) {
   .live-page.has-drawer > .agent-drawer { inset: 0 0 var(--nav-inferior-alto) auto; }
+  .live-page.has-drawer.cajon-ancho > .agent-drawer { inset: var(--space-3) var(--space-3) calc(var(--nav-inferior-alto) + var(--space-3)); }
 }
 
 

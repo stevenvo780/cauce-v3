@@ -278,7 +278,7 @@ export function LiveFleetPage() {
 
   return (
     <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
-      + (drawer && detail && drawer.tab === 'perfil' ? ' cajon-ancho' : '')}>
+      + (drawer && detail && (drawer.tab === 'perfil' || drawer.tab === 'ficheros') ? ' cajon-ancho' : '')}>
       <div className="live-main">
         <PageHeader
           eyebrow="Flota"
