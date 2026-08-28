@@ -115,7 +115,7 @@ export class DispatcherMetrics {
   }
 
   /**
-   * Registra los resultados del barrido periódico del vigía de cadenas mudas.
+   * Records the periodic silent-chain watchdog sweep results.
    */
   recordChainSweep(result: ChainSilenceSweepResult): void {
     this.addChainSweep('scanned', result.scanned);

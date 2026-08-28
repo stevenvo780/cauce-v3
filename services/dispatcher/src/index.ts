@@ -11,15 +11,15 @@ export interface DispatcherOptions {
   staleAckMs?: number;
   interactiveBurst?: number;
   jobLeaseMs?: number;
-  /** Ver `DispatcherConfig.retryStartedDeliveries` y `CauceRepository.retryStaleDeliveries`. */
+  /** See `DispatcherConfig.retryStartedDeliveries` and `CauceRepository.retryStaleDeliveries`. */
   retryStartedDeliveries?: boolean;
-  /** Techo de vida total de un intento. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS` en el store. */
+  /** Total lease cap per attempt. See `DEFAULT_DELIVERY_LEASE_CAP_MS` in the store. */
   leaseCapMs?: number;
   leaseCapGraceMs?: number;
-  /** Cada cuánto se poda la observabilidad. 0 apaga el barrido. */
+  /** Observability sweep interval. 0 disables the sweep. */
   retentionIntervalMs?: number;
   retention?: ObservabilityRetentionPolicy;
-  /** Reloj propio del vigía de cadenas mudas (P0-4). 0 lo apaga. */
+  /** Silent-chain watchdog clock (P0-4). 0 disables it. */
   chainSweepMs?: number;
   chainSweep?: ChainSilenceSweepOptions;
   handlers?: JobHandlerRegistry;
@@ -34,7 +34,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const chainSweepMs = options.chainSweepMs ?? 60_000;
   let running = false;
   const retentionIntervalMs = options.retentionIntervalMs ?? 0;
-  // Inicializa en -infinito para ejecutar el primer barrido en el tick inicial.
+  // Initialize to -Infinity so the first sweep fires on the initial tick.
   let nextPruneAtMs = Number.NEGATIVE_INFINITY;
   let lastChainSweep = Number.NEGATIVE_INFINITY;
 
@@ -50,7 +50,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
           : { leaseCapGraceMs: options.leaseCapGraceMs })
       });
       await repository.retryExpiredJobs();
-      // Barrido periódico de cadenas mudas con aislamiento de errores.
+      // Periodic sweep of silent chains with error isolation.
       if (chainSweepMs > 0 && Date.now() - lastChainSweep >= chainSweepMs) {
         lastChainSweep = Date.now();
         try {
@@ -88,7 +88,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
           options.onError?.(error);
         }
       }
-      // Poda periódica de observabilidad con aislamiento de errores.
+      // Periodic observability pruning with error isolation.
       if (retentionIntervalMs > 0 && Date.now() >= nextPruneAtMs) {
         nextPruneAtMs = Date.now() + retentionIntervalMs;
         try {

@@ -7,12 +7,9 @@ import {
 export const DEFAULT_ACK_DEADLINE_MS = 30_000;
 export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
 
-/**
- * Intervalo de poda de observabilidad en milisegundos.
- * Un valor de 0 desactiva el barrido de retención.
- */
+/** Observability retention sweep interval in ms. 0 disables the sweep. */
 export const DEFAULT_RETENTION_INTERVAL_MS = 5 * 60_000;
-/** P0-4 — vigía de cadenas mudas. */
+/** P0-4 — silent-chain watchdog. */
 export const DEFAULT_CHAIN_SWEEP_MS = 60_000;
 export const DEFAULT_CHAIN_IDLE_MS = 6 * 60 * 60 * 1_000;
 export const DEFAULT_CHAIN_SETTLED_GRACE_MS = 15 * 60 * 1_000;
@@ -27,11 +24,11 @@ export interface DispatcherConfig {
   interactiveBurst: number;
   jobLeaseMs: number;
   /**
-   * Permite reintentar entregas que ya habían comenzado su ejecución al expirar el ACK deadline.
-   * Por defecto false para evitar reejecuciones duplicadas.
+   * When true, retries deliveries that already started executing after the ACK deadline expired.
+   * Default false to avoid duplicate re-execution.
    */
   retryStartedDeliveries: boolean;
-  /** Techo de vida total de un intento. Ver `DEFAULT_DELIVERY_LEASE_CAP_MS` en el store. */
+  /** Total lease cap per attempt. See `DEFAULT_DELIVERY_LEASE_CAP_MS` in the store. */
   leaseCapMs: number;
   leaseCapGraceMs: number;
   retentionIntervalMs: number;
@@ -55,7 +52,7 @@ function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback:
   return parsed;
 }
 
-/** Igual que `positiveInteger` pero admite 0, el valor con el que se apaga el vigía. */
+/** Like `positiveInteger` but allows 0 — the value that turns the watchdog off. */
 function nonNegativeInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const parsed = Number(environment[name] ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
@@ -78,7 +75,7 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
   const leaseCapMs = positiveInteger(
     environment, 'CAUCE_DELIVERY_LEASE_CAP_MS', DEFAULT_DELIVERY_LEASE_CAP_MS,
   );
-  // El lease cap debe ser mayor o igual al plazo de ACK para permitir al menos una renovación.
+  // Lease cap MUST be >= ACK deadline so at least one renewal fits.
   if (leaseCapMs < ackDeadlineMs) {
     throw new Error(
       'CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS',
@@ -103,8 +100,8 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
   }
   const chainIdleMs = positiveInteger(environment, 'CHAIN_IDLE_MS', DEFAULT_CHAIN_IDLE_MS);
   const chainMaxAgeMs = positiveInteger(environment, 'CHAIN_MAX_AGE_MS', DEFAULT_CHAIN_MAX_AGE_MS);
-  // Una ventana de rastreo más corta que el plazo de inactividad deja un agujero garantizado:
-  // la raíz envejecería fuera del barrido antes de poder vencer, y el silencio volvería.
+  // A sweep window shorter than the idle window guarantees a hole: the root ages out of the
+  // sweep before it can be reaped, and the silence returns.
   if (chainMaxAgeMs < chainIdleMs) {
     throw new Error('CHAIN_MAX_AGE_MS must be equal to or greater than CHAIN_IDLE_MS');
   }
@@ -117,8 +114,8 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
     ackTimeoutMs,
     interactiveBurst: positiveInteger(environment, 'INTERACTIVE_BURST', 3),
     jobLeaseMs: positiveInteger(environment, 'JOB_LEASE_MS', 30_000),
-    // Sólo el '1' explícito la prende. Cualquier otra cosa (vacío, '0', basura) deja el
-    // comportamiento seguro, que es el que ahorra cuota.
+    // Only the explicit '1' enables it. Anything else (empty, '0', garbage) keeps the safe
+    // behavior — the one that preserves quota.
     retryStartedDeliveries: environment.CAUCE_RETRY_STARTED_DELIVERIES === '1',
     leaseCapMs,
     leaseCapGraceMs: positiveInteger(
