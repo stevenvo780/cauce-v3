@@ -1,10 +1,14 @@
-import type { DeliveryState } from '@cauce/protocol';
+import type { DeliveryState, Origin } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { JobsRepository } from '../jobs.js';
 import {
   originRelayTenant, type DeliveryRow, type LateRelayDisposition
 } from '../observability.js';
 import { objectRecord, textualReply, visibleText } from './contracts.js';
+
+function hasRelayTransport(origin: Origin | null): origin is Origin {
+  return origin !== null && origin.adapter !== 'console';
+}
 
 // Human-facing correction stays in Spanish; machine-to-machine notices stay in English.
 const LATE_RESULT_HUMAN_NOTICE =
@@ -45,7 +49,7 @@ export abstract class OriginRelayRepository extends JobsRepository {
     },
     late?: { previousStatus: DeliveryState; attempt: number }
   ): Promise<LateRelayDisposition> {
-    if (!row.origin) return 'skipped';
+    if (!hasRelayTransport(row.origin)) return 'skipped';
     const rootMessageId = row.body.type === 'agent.fanin'
       ? this.rootMessageId(row)
       : undefined;
