@@ -174,3 +174,97 @@ La consecuencia operativa es distinta por modo: Claude headless y OpenClaw crean
 por entrega y pueden observar el fichero en la siguiente; un Claude/Codex TUI persistente requiere
 refresh o sesión nueva antes de retirar el bloque. Hermes one-shot también lo observaría, pero su
 proyección aún es un no-op y queda fuera de esta implementación mínima.
+
+## 3. Diseño: perfil al fichero una vez; turno sin perfil duplicado
+
+### Modelo objetivo y autoridad
+
+`agent_profiles` continúa siendo la única fuente autorada. Una publicación desde `/live` sigue
+esta secuencia, sin un escritor nuevo:
+
+1. La UI envía `PUT perfil` con `expected_revision`.
+2. Gateway normaliza y hace preflight del runtime medido sin mutar nada.
+3. Store hace CAS de desired; el trigger de 028 avanza `revision` solo cuando cambian los campos.
+4. La proyección existente escribe `CLAUDE.md` o los siete ficheros OpenClaw, relee ruta+bytes+SHA
+   bajo la misma `generation` y guarda la expectativa 035 para esa revisión.
+5. La primera entrega que termina correctamente y mide exactamente esos documentos registra la
+   adopción. Solo ese ACK cercado puede hacer `applied_revision = revision`.
+
+La revisión no se copiará como comentario dentro del Markdown. El vínculo durable es más fuerte:
+`revision + container generation + [(path, SHA, bytes)]`. Así una edición directa, un recreate o
+una revisión supersedida no puede acreditarse por conservar una etiqueta textual. En las pruebas,
+«fichero de la revisión R» significa los bytes cuyo SHA quedó ligado a R en esa expectativa.
+
+El contrato fijo de Cauce y el perfil rico siguen siendo bloques separados en el fichero nativo:
+
+- bloque A, `CAUCE:CONTEXTO-FIJO`: identidad corta, deber, salida estructurada e invariantes;
+- bloque B, `CAUCE:PERFIL`: propósito, rol, responsabilidades, restricciones, humano, herramientas
+  y reglas, repartido por fichero en OpenClaw.
+
+La proyección de `/live` es dueña de B. El adaptador, que es el único que puede componer A sin
+duplicar la redacción del protocolo, acredita y converge A antes de arrancar un turno nativo. Un
+SHA exacto del bloque A habilita únicamente el puntero corto. Si faltan el perfil propio, la ruta,
+el write o la relectura exacta, el modo nativo falla antes de invocar al proveedor: jamás elimina
+el contexto por confianza.
+
+### Flag y comportamiento por entrega
+
+El opt-in por proceso/alias será `CAUCE_NATIVE_PROFILE_CONTEXT=1`. Ausente o `0` conserva
+exactamente el comportamiento actual; cualquier otro valor es error de configuración. El opt-in
+solo admite Claude y OpenClaw. Claude con TUI compartida se rechaza al arrancar, porque una sesión
+vieja no puede probar que releyó sus instrucciones.
+
+Con el flag activo y la proyección acreditada, la entrada del turno conserva:
+
+- un puntero corto al contrato A ya cargado;
+- metadata dinámica de entrega y origen, necesaria para routing/fencing;
+- el pedido.
+
+No contiene el contrato A completo, `self_role` ni `BEGIN TRUSTED RUNTIME PROFILE`. Es «solo el
+mensaje» en el sentido relevante: ninguna faceta autorada vuelve a viajar por turno; el pequeño
+contexto transaccional no se puede volver un fichero estático.
+
+La medición de adopción permanece fuera del prompt. Para Claude acredita `CLAUDE.md`; para
+OpenClaw acredita los siete documentos. `MEMORY.md` y `HEARTBEAT.md` aportan solo ruta+SHA al ACK:
+sus bytes siguen siendo del agente y nunca se copian al bloque inyectable. Esto corrige además la
+cardinalidad actual de cinco contra una expectativa de siete, que impide adoptar OpenClaw.
+
+### Recarga y edición desde `/live`
+
+- **OpenClaw 2026.6.6:** relee el workspace en el siguiente `agent run`; no requiere reinicio.
+- **Claude headless:** Cauce crea el proceso después de converger el fichero; ese mismo turno ya
+  puede cargarlo. Un cambio posterior entra en la siguiente invocación.
+- **Claude compartido:** antes de activar hay que cerrar/recrear la TUI o pasar el alias a
+  headless. La primera versión no intentará matar una conversación ni simular una recarga.
+- **Hermes/Codex:** quedan pineados al comportamiento existente. Hermes todavía no tiene
+  proyección y Codex compartido presenta la misma barrera de recarga; ampliar soporte sin resolver
+  esas dos diferencias sería afirmar adopción sin prueba.
+
+La UI no cambia: editar directivas sigue siendo PUT → CAS → proyección → expectativa. Si la
+respuesta es `202 pending_session_refresh`, el fichero está escrito pero la revisión no se declara
+aplicada; una entrega posterior puede producir el ACK y el siguiente GET reflejar convergencia.
+
+### Ahorro esperado
+
+El piso medido es la tabla de la sección 1: 8,520–8,571 bytes, aproximadamente 2,119–2,132 tokens,
+menos en **cada entrega**. A eso se suma el JSON `runtime_profile` que `main` adjunta hoy a las TUI
+compartidas; producción 024 aún no permite medirlo con un perfil real y no se inventa una cifra.
+Los bytes siguen entrando una vez por el mecanismo nativo del arnés —son instrucciones útiles—,
+pero dejan de duplicarse dentro del mensaje de Cauce y pueden ocupar el prefijo estable/cachable
+que el proveedor diseñó para ellos.
+
+### Riesgos y prohibiciones
+
+- No activar por la mera existencia de un fichero: se exige owner del alias, sello exacto y, para
+  `applied_revision`, la expectativa completa de la revisión y generación actuales.
+- No activar Claude sobre una TUI longeva. Reiniciar el adaptador no reinicia por sí solo ese pane.
+- No meter `MEMORY.md`/`HEARTBEAT.md` en el perfil autorado ni reescribir sus bytes.
+- No servir ni modificar `openclaw.json`: mezcla configuración con credenciales y no es una
+  superficie de directivas.
+- No confiar en el harness declarado de inventario cuando los hechos medidos difieren; Iza ya
+  demuestra que esa deriva ocurre.
+- No escribir migraciones, no avanzar `applied_revision` desde el write y no habilitar el flag de
+  toda la flota a la vez. La activación debe ser por alias y con un canario real.
+- La convergencia de A y la publicación multifichero no forman una transacción común con un turno
+  concurrente. La ventana debe poner el alias en reposo mientras publica/activa y verificar la
+  primera adopción antes de devolverle tráfico normal.
