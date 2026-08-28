@@ -382,7 +382,7 @@
   "ops/tests/container-ops-evidence.test.mjs": 18,
   "ops/tests/container-supervisor.test.mjs": 175,
   "ops/tests/fake-container-supervisor.mjs": 1,
-  "ops/tests/fake-docker.mjs": 1,
+  "ops/tests/fake-docker.mjs": 3,
   "ops/tests/fake-gate-collector.mjs": 1,
   "ops/tests/fake-gate-roundtrip-probe.mjs": 1,
   "ops/tests/fake-systemctl.mjs": 1,
