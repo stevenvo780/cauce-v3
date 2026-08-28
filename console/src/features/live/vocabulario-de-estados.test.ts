@@ -5,11 +5,11 @@ import { resumenPortada } from '../landing/landing';
 import { LIVE_STATES, LIVE_STATE_META } from './agent-state';
 
 /**
- * Coherencia del vocabulario de estados de la flota:
- * asegura que las etiquetas y estados mostrados en veredicto, tarjetas y tablas coincidan.
+ * Consistency of the fleet state vocabulary:
+ * ensures that the labels and states shown in verdict, cards and tables match.
  */
 
-/** El estado del servidor y el estado derivado que nombran EL MISMO hecho. */
+/** The server state and the derived state that name THE SAME fact. */
 const MISMO_HECHO: { work: FleetWorkState; live: (typeof LIVE_STATES)[number]; porque: string }[] = [
   { work: 'idle', live: 'idle', porque: 'sin nada en vuelo' },
   { work: 'queued', live: 'receiving', porque: 'le entró trabajo y todavía no lo empezó' },
@@ -25,23 +25,23 @@ describe('el vocabulario de estados de la consola', () => {
     },
   );
 
-  it('«Libre» aparece en la tabla, que era justo lo que la leyenda enseñaba y la tabla no decía', () => {
+  it('"Libre" appears in the table, which was exactly what the legend showed and the table did not say', () => {
     expect(Object.values(WORK_STATE_LABEL)).toContain('Libre');
     expect(Object.values(WORK_STATE_LABEL)).not.toContain('INACTIVO');
   });
 
   it('ninguna etiqueta se escribe como una constante de base de datos', () => {
-    // Las etiquetas no deben escribirse como constantes en mayúsculas sostenidas.
+    // Labels must not be written as uppercase database constants.
     const constantes = [...Object.values(WORK_STATE_LABEL), ...Object.values(FLAG_LABEL)]
       .filter((etiqueta) => etiqueta === etiqueta.toUpperCase() && /[A-ZÁÉÍÓÚÑ]{2,}/.test(etiqueta));
     expect(constantes).toEqual([]);
   });
 
-  it('«detenido» dejó de ser un homónimo entre la portada y las señales de la tabla', () => {
+  it('"detenido" stopped being a homonym between the landing and the table signals', () => {
     /*
-     * `ack_stalled` se llamaba «ACK detenido» y el aviso de la portada «N agentes detenidos». Dos
-     * hechos distintos —una entrega sin acuse y un agente trabado— con la misma palabra, en dos
-     * pantallas que el operador recorre seguidas.
+     * `ack_stalled` was called "ACK detenido" and the landing alert "N agentes detenidos". Two
+     * different facts — a delivery without ACK and a stalled agent — with the same word, on two
+     * screens the operator goes through in a row.
      */
     const resumen = resumenPortada({
       activity: {
@@ -58,8 +58,8 @@ describe('el vocabulario de estados de la consola', () => {
 
   it('CONTROL NEGATIVO — el guardia marca la divergencia de rótulos', () => {
     /*
-     * Se le da de comer el mapa EXACTO que producía el defecto. Un comprobador que lo apruebe es
-     * peor que no tenerlo: haría creer que el vocabulario está unificado cuando no lo está.
+     * The checker is fed the EXACT map that produced the bug. A checker that approves it is
+     * worse than not having one: it would make the vocabulary look unified when it is not.
      */
     const viejo: Record<FleetWorkState, string> = {
       idle: 'INACTIVO', queued: 'EN COLA', working: 'TRABAJANDO', saturated: 'SATURADO', stalled: 'COLGADO',

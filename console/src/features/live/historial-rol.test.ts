@@ -5,12 +5,12 @@ import {
 } from './historial-rol';
 
 /**
- * Las reglas del diario, probadas sin montar un cajón.
+ * The journal's rules, tested without mounting a drawer.
  *
- * Cada caso de acá describe una forma concreta de mentirle al operador sobre el pasado de un rol:
- * ordenar mal el registro, llamar «reescritura» a un cambio que no tocó el texto, inventar un
- * autor que el servidor no manda, o pintar un fallo de lectura como «no cambió nunca». Las cuatro
- * se ven idénticas en pantalla si nadie las prueba.
+ * Each case here describes a concrete way of lying to the operator about a role's past:
+ * ordering the log wrong, calling "rewrite" a change that did not touch the text, inventing
+ * an author the server does not send, or painting a read failure as "never changed". All four
+ * look identical on screen if nobody tests them.
  */
 
 function entrada(parcial: Partial<RoleBriefHistoryEntry>): RoleBriefHistoryEntry {
@@ -28,8 +28,8 @@ describe('el orden del diario', () => {
   });
 
   it('desempata el id como NÚMERO: comparado como texto, la entrada 10 cae debajo de la 9', () => {
-    // El `id` viaja como cadena y este repositorio ya tuvo una consulta que ordenaba
-    // `id::text DESC`, que es exactamente este fallo. Con la misma fecha, el desempate lo decide.
+    // The `id` travels as a string and this repo already had a query that ordered
+    // `id::text DESC`, which is exactly this bug. With the same date, the tiebreaker decides it.
     const ordenadas = entradasMasNuevasPrimero([
       entrada({ id: '9', changed_at: '2026-08-23T04:00:00.000Z' }),
       entrada({ id: '10', changed_at: '2026-08-23T04:00:00.000Z' }),
@@ -67,8 +67,8 @@ describe('qué pasó en cada entrada', () => {
   });
 
   it('no llama «reescritura» a un guardado que dejó el texto igual', () => {
-    // El disparador anota CUALQUIER cambio de la fila, también uno que sólo movió la plantilla.
-    // Decir «se reescribió el rol» ahí sería inventar un cambio que no ocurrió.
+    // The trigger logs ANY row change, including one that only moved the template.
+    // Saying "the role was rewritten" there would be inventing a change that did not happen.
     const cambio = resumirCambio(entrada({ previous_brief: 'Sos kant.', new_brief: 'Sos kant.' }));
 
     expect(cambio.clase).toBe('sin-texto');
@@ -76,7 +76,7 @@ describe('qué pasó en cada entrada', () => {
   });
 
   it('en una reescritura da el salto de longitud en puntos de código, no en unidades UTF-16', () => {
-    // Un emoji es UN carácter para el CHECK de la base. Contarlo como dos daría un delta falso.
+    // An emoji is ONE character for the database CHECK. Counting it as two would give a false delta.
     const cambio = resumirCambio(entrada({ previous_brief: 'ab', new_brief: 'ab🙂' }));
 
     expect(cambio.clase).toBe('reescritura');

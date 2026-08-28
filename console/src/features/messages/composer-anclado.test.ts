@@ -9,13 +9,13 @@ import {
 } from '../../test/css-parser';
 
 /**
- * Pruebas estructurales de CSS para asegurar el anclaje del compositor en pantallas móviles.
+ * Structural CSS tests to ensure the composer stays anchored on mobile screens.
  */
 
 const MENSAJES_CSS = leerCss('features/messages/messages.css');
 const GLOBAL_CSS = leerCss('styles.css');
 
-/** El corte en el que la consola pasa a barra de navegación inferior fija. */
+/** The breakpoint at which the console switches to a fixed bottom navigation bar. */
 const CORTE_ESTRECHO = 760;
 
 function sinComentarios(css: string): string {
@@ -23,8 +23,9 @@ function sinComentarios(css: string): string {
 }
 
 /**
- * El diagnóstico completo de la hoja para el corte estrecho. Devuelve la LISTA DE DEFECTOS, no un
- * booleano: así el control negativo puede exigir el defecto concreto y no «algo falló».
+ * Full diagnosis of the sheet for the narrow breakpoint. Returns the LIST OF DEFECTS, not a
+ * boolean: that way the negative control can require the concrete defect and not "something
+ * failed".
  */
 export function defectosDelCompositorAnclado(mensajes: string, global: string): string[] {
   const defectos: string[] = [];
@@ -33,9 +34,9 @@ export function defectosDelCompositorAnclado(mensajes: string, global: string): 
 
   const compositor = declaraciones(estrecho, '.messenger-composer');
   /*
-   * `fixed`, no `sticky`. Medido en Chrome a 360x740: con `sticky` el compositor quedaba en
-   * top 778 —fuera de la ventana— porque una caja pegajosa no puede salir de su bloque
-   * contenedor, y el hilo empieza a 778 px del borde. `sticky` acá vuelve a ser el defecto.
+   * `fixed`, not `sticky`. Measured in Chrome at 360x740: with `sticky` the composer stayed at
+   * top 778 — outside the viewport — because a sticky box cannot leave its containing block,
+   * and the thread starts 778 px from the edge. `sticky` here is back to being the bug.
    */
   if (valor(compositor, 'position') !== 'fixed') {
     defectos.push(
@@ -45,9 +46,9 @@ export function defectosDelCompositorAnclado(mensajes: string, global: string): 
   }
 
   /*
-   * Un elemento fijo sale del flujo: si el hilo no reserva su alto, el final de la conversación
-   * vive DEBAJO del compositor y no hay scroll que lo saque. El hueco tiene que leer la MISMA
-   * variable que el componente escribe (ver la comprobación cruzada de más abajo).
+   * A fixed element leaves the flow: if the thread does not reserve its height, the end of the
+   * conversation lives UNDER the composer and no scroll pulls it out. The gap must read the
+   * SAME variable the component writes (see the cross-check below).
    */
   const hiloEstrecho = declaraciones(estrecho, '.messenger-thread');
   if (!/padding-bottom\s*:[^;]*var\(\s*--messenger-composer-alto/.test(hiloEstrecho)) {
@@ -55,9 +56,9 @@ export function defectosDelCompositorAnclado(mensajes: string, global: string): 
   }
 
   /*
-   * El número no se copia de memoria: se LEE de la barra de navegación que en este mismo corte se
-   * vuelve fija abajo. Anclar a 0 —o a un 66 que un día deje de ser 66— mete el botón «Enviar»
-   * debajo del menú, que es peor que el defecto que se venía a arreglar.
+   * The number is not copied from memory: it is READ from the navigation bar that at this same
+   * breakpoint becomes fixed at the bottom. Anchoring to 0 — or to a 66 that one day stops being
+   * 66 — puts the Send button under the menu, which is worse than the bug being fixed.
    */
   const navegacion = declaraciones(bloqueMedia(global, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`), '.sidebar');
   const alturaNav = valor(navegacion, 'height');
@@ -71,9 +72,10 @@ export function defectosDelCompositorAnclado(mensajes: string, global: string): 
     );
   } else {
     /*
-     * Decir lo mismo no basta si lo que dicen no existe: dos `var(--inventada)` son idénticas y
-     * las dos resuelven a nada, o sea `bottom: auto` y el compositor de vuelta al fondo del hilo.
-     * Si el ancla es un token, tiene que estar declarado —con una longitud— en el `:root` global.
+     * Saying the same thing is not enough if what they say does not exist: two `var(--made-up)`
+     * are identical and both resolve to nothing, i.e. `bottom: auto` and the composer back to the
+     * bottom of the thread. If the anchor is a token, it must be declared — with a length — in
+     * the global `:root`.
      */
     const token = /^var\(\s*(--[\w-]+)/.exec(alturaNav)?.[1];
     if (token) {
@@ -116,10 +118,11 @@ describe('el compositor de /messages en pantalla estrecha', () => {
   });
 
   /**
-   * COMPROBACIÓN CRUZADA. La hoja lee `var(--messenger-composer-alto)` y `ConversationPane` lo
-   * escribe con `style.setProperty`. Son dos cadenas en dos ficheros distintos y nada las ata:
-   * cambiar una y no la otra no rompe el typecheck, ni el lint, ni una sola prueba de DOM, y el
-   * síntoma —el final del hilo debajo del compositor, sólo en el teléfono— no lo ve nadie.
+   * CROSS-CHECK. The sheet reads `var(--messenger-composer-alto)` and `ConversationPane` writes
+   * it with `style.setProperty`. They are two strings in two different files and nothing binds
+   * them: changing one and not the other does not break the typecheck, the lint, or a single
+   * DOM test, and the symptom — the end of the thread below the composer, only on the phone —
+   * is seen by nobody.
    */
   it('la variable que el componente escribe es la MISMA que la hoja lee', () => {
     expect(VAR_ALTO_COMPOSITOR).toBe('--messenger-composer-alto');
@@ -127,9 +130,9 @@ describe('el compositor de /messages en pantalla estrecha', () => {
   });
 
   it('CONTROL NEGATIVO — marca el anclaje a 0, que mete el botón Enviar debajo del menú', () => {
-    // La mutación NO cita el valor: el ancla dejó de ser un `66px` copiado a mano y pasó a ser
-    // `var(--nav-inferior-alto)` (2026-08-23, la barra inferior es de dos filas). Un control
-    // negativo que sólo sabe mutar el número de ayer deja de mutar nada y aprueba cualquier cosa.
+    // The mutation does NOT cite the value: the anchor went from a hand-copied `66px` to
+    // `var(--nav-inferior-alto)` (the bottom bar is now two rows). A negative control that only
+    // mutates yesterday's number mutates nothing and approves anything.
     const roto = MENSAJES_CSS.replace(/(\.messenger-composer \{[^}]*?)bottom: [^;]+;/, '$1bottom: 0;');
     expect(roto).not.toBe(MENSAJES_CSS);
     expect(defectosDelCompositorAnclado(roto, GLOBAL_CSS)).toContainEqual(
@@ -139,23 +142,24 @@ describe('el compositor de /messages en pantalla estrecha', () => {
 
   it('el roster se encoge a conmutador cuando hay conversación abierta, y sólo entonces', () => {
     const estrecho = bloqueMedia(MENSAJES_CSS, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
-    // Sin conversación abierta el roster ES el contenido y conserva sus 300 px.
+    // Without an open conversation the roster IS the content and keeps its 300 px.
     expect(valor(declaraciones(estrecho, '.messenger-agent-list'), 'max-height')).toBe('300px');
     expect(estrecho).toContain('.messenger-shell[data-conversacion="abierta"] .messenger-agent-list');
   });
 });
 
 /**
- * ------------------------------------------------------------------ EL MISMO DEFECTO, EN ESCRITORIO
+ * ------------------------------------------------------------------ THE SAME BUG, ON DESKTOP
  *
- * El arreglo de arriba vive dentro del corte de 760 px, así que en escritorio el compositor seguía
- * exactamente igual que antes. Medido en la consola de producción a 1280x900, con la sesión de
- * Steven y sin tocar nada: el `textarea` en y=1546 y el botón «Enviar» en y=1633, con la ventana
- * de 900 — 646 px por debajo del pliegue. `getComputedStyle` del compositor: `position: static`.
+ * The fix above lives inside the 760 px breakpoint, so on desktop the composer stayed exactly
+ * as before. Measured in the production console at 1280x900, with the operator session and
+ * without touching anything: the `textarea` at y=1546 and the Send button at y=1633, with the
+ * 900 viewport — 646 px below the fold. `getComputedStyle` of the composer: `position: static`.
  *
- * `.messenger-composer { margin-top: auto }` ya estaba y no servía para nada: empuja al pie del
- * contenedor, y el contenedor no tenía alto. El arreglo es darle alto al bloque, restándole al
- * viewport el tope MEDIDO (`--messenger-tope`, que escribe `MessagesPage`).
+ * `.messenger-composer { margin-top: auto }` was already there and did nothing: it pushes to the
+ * bottom of the container, and the container had no height. The fix is to give the block a
+ * height, subtracting from the viewport the MEASURED top (`--messenger-tope`, written by
+ * `MessagesPage`).
  */
 export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
   const defectos: string[] = [];
@@ -163,10 +167,11 @@ export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
   if (!ancho) return ['no hay bloque @media (min-width: 761px) en messages.css: el escritorio sigue sin acotar'];
 
   /*
-   * TODAS las declaraciones de `height`, no la primera. La hoja escribe dos —una con `vh` como red
-   * para un navegador sin `dvh` y otra con `dvh`— y la que MANDA es la última que el navegador
-   * entiende. Un comprobador que mirase sólo la primera aprobaría una hoja en la que alguien
-   * arregló la de arriba y dejó rota la de abajo, que es justo la que se aplica en Chrome.
+   * ALL `height` declarations, not the first. The sheet writes two — one with `vh` as fallback
+   * for a browser without `dvh` and another with `dvh` — and the one that WINS is the last the
+   * browser understands. A checker that looked only at the first would approve a sheet where
+   * someone fixed the one on top and left the one below broken, which is exactly the one Chrome
+   * applies.
    */
   const envoltura = declaraciones(ancho, '.messenger-shell');
   const altos = [...envoltura.matchAll(/(?:^|;)\s*height\s*:\s*([^;]+)/g)].map((encontrado) => encontrado[1].trim());
@@ -189,15 +194,15 @@ export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
     defectos.push('.messenger-thread no recorta: el contenido desborda el panel acotado y el compositor se va con él');
   }
 
-  // Y el compositor no puede encogerse ni crecer: es lo último que tiene que quedar entero.
+  // And the composer must not shrink or grow: it is the last thing that has to stay whole.
   if (!/flex\s*:\s*none/.test(declaraciones(sinComentarios(mensajes), '.messenger-composer'))) {
     defectos.push('.messenger-composer no es `flex: none`: en un panel acotado se encoge y el botón Enviar se corta');
   }
 
   /*
-   * La caja de scroll es la que absorbe el alto sobrante. Sin `min-height: 0` un hijo flex NO se
-   * encoge por debajo de su contenido —regla de manual— y el panel acotado desborda igual: el
-   * `height` de arriba quedaría de adorno.
+   * The scroll box is what absorbs the leftover height. Without `min-height: 0` a flex child
+   * does NOT shrink below its content — manual rule — and the bounded panel overflows the same
+   * way: the `height` above would end up as decoration.
    */
   const caja = declaraciones(sinComentarios(mensajes), '.messenger-thread-scroll');
   if (valor(caja, 'overflow-y') !== 'auto' || valor(caja, 'min-height') !== '0') {
@@ -207,12 +212,13 @@ export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
 }
 
 /**
- * LA CABECERA DEL HILO EN EL TELÉFONO, que se pintaba en vertical.
+ * THE THREAD HEADER ON THE PHONE, which used to be painted vertically.
  *
- * Medido a 360x800: `.messenger-thread-identity` con `scrollWidth 136` y `clientWidth 46`, el
- * alias saliendo «z e u s» y el estado «S T E V E N . E P O C H 8 …», unos 570 px de alto. No es
- * lentitud: es la fila flex de tres columnas compitiendo con `.messenger-thread-actions`, que es
- * `flex: none`, más el `overflow-wrap: anywhere` que `styles.css` le pone a todo h2/p.
+ * Measured at 360x800: `.messenger-thread-identity` with `scrollWidth 136` and `clientWidth 46`,
+ * the alias coming out as "z e u s" and the status as "S T E V E N . E P O C H 8 ...", about 570 px
+ * tall. It is not slowness: it is the three-column flex row competing with
+ * `.messenger-thread-actions`, which is `flex: none`, plus the `overflow-wrap: anywhere` that
+ * `styles.css` puts on every h2/p.
  */
 export function defectosDeLaCabeceraEstrecha(mensajes: string): string[] {
   const defectos: string[] = [];
@@ -261,9 +267,10 @@ describe('el compositor de /messages en ESCRITORIO', () => {
   });
 
   /**
-   * CONTROL NEGATIVO DEL PROPIO COMPROBADOR. La hoja declara `height` dos veces y la que se aplica
-   * en Chrome es la SEGUNDA: si el comprobador mirase sólo la primera, esta mutación —arreglada
-   * arriba, rota abajo— pasaría en verde y la consola volvería al defecto sin que nadie lo viera.
+   * NEGATIVE CONTROL OF THE CHECKER ITSELF. The sheet declares `height` twice and the one
+   * applied in Chrome is the SECOND: if the checker looked only at the first, this mutation —
+   * fixed above, broken below — would pass green and the console would return to the bug
+   * without anyone noticing.
    */
   it('CONTROL NEGATIVO — marca la hoja arreglada arriba y rota abajo, que es la que manda', () => {
     const roto = MENSAJES_CSS.replace(

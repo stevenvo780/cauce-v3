@@ -7,10 +7,10 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
 /*
- * "Origin relays" dejó de ser una ruta el 2026-08-06 y "Audit" el 2026-08-22: las dos son ahora
- * partes de "Señales y auditoría". Estos tests montan la vista fusionada para que fallen si alguien
- * vuelve a partirla, y para que fallen si la tabla vuelve a alimentarse del snapshot de
- * observabilidad —que NO pasa por la fachada de visibilidad— en vez de su endpoint dedicado.
+ * "Origin relays" stopped being a route and "Audit" stopped being one too: both are now
+ * parts of "Signals and audit". These tests mount the merged view so they fail if someone
+ * splits it again, and so they fail if the table feeds off the observability snapshot again —
+ * which does NOT go through the visibility facade — instead of its dedicated endpoint.
  */
 
 const relay = {
@@ -62,10 +62,10 @@ it('la tabla sale del endpoint con fachada, no del snapshot sin fachada', async 
   relays([relay]);
   renderWithApi(<ObservabilityPage />);
 
-  // El relay de `/v3/console/origin-relays` (visibleOriginRelays) está…
+  // The relay from `/v3/console/origin-relays` (visibleOriginRelays) is…
   expect(await screen.findByText(/relay-0001/)).toBeInTheDocument();
-  // …y el que sólo venía en el snapshot de observabilidad, que el gateway devuelve SIN filtrar por
-  // participación, no. Ése era el que el volcado JSON estaba publicando.
+  // …and the one that only came in the observability snapshot, which the gateway returns WITHOUT
+  // filtering by participation, is not. That was the one the JSON dump was publishing.
   expect(screen.queryByText(/relay-de-otro/)).not.toBeInTheDocument();
   expect(screen.queryByText(/"origin_relays"/)).not.toBeInTheDocument();
   expect(screen.queryByText(/"job_id"/)).not.toBeInTheDocument();
@@ -93,9 +93,9 @@ it('no presenta como enviado un relay que dice sent sin sent_at', async () => {
 
   const row = (await screen.findByText(/relay-0001/)).closest('tr');
   if (!row) throw new Error('row not found');
-  // Columna "Estado". `sent` sin `sent_at` NO es una ausencia de dato: es una CONTRADICCIÓN del
-  // servidor, y decirle «sin dato» la escondería detrás del mismo gris que un campo que nunca
-  // llegó. Se nombra lo que pasa, y sigue sin decir «enviado» a secas.
+  // "Status" column. `sent` without `sent_at` is NOT a missing-data case: it is a server
+  // CONTRADICTION, and saying "no data" would hide it behind the same gray as a field that
+  // never arrived. We name what is happening, and still do not say plain "sent".
   expect(row.querySelectorAll('td')[4]).toHaveTextContent('DICE ENVIADO, SIN HORA');
   expect(within(row).queryByText('ENVIADO')).not.toBeInTheDocument();
   expect(within(row).queryByText('SENT')).not.toBeInTheDocument();
@@ -145,8 +145,9 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   const user = userEvent.setup();
   renderWithApi(<ObservabilityPage />);
 
-  // Las cuatro métricas del mismo `observed_at` quedan fuera de las pestañas: se ven se mire lo que
-  // se mire. Ésa es la única comparación instantánea de la consola y esconderla la rompería.
+  // The four metrics from the same `observed_at` stay outside the tabs: they show no matter
+  // which one you look at. That is the only instant comparison in the console and hiding it
+  // would break it.
   await screen.findByText('Online');
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
   expect(screen.getByText('Online')).toBeInTheDocument();
@@ -154,8 +155,8 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
   if (!eventos) throw new Error('section not found');
   const texto = eventos.textContent;
-  // Cada campo que la vista vieja mostraba, uno por uno: acción, decisión, resumen, actor, tenant,
-  // request, trace y fecha. Si alguno se cayó en la fusión, esto falla.
+  // Every field the old view showed, one by one: action, decision, summary, actor, tenant,
+  // request, trace and date. If any dropped in the merge, this fails.
   expect(texto).toContain('delivery.replay');
   expect(within(eventos).getByText('allow')).toBeInTheDocument();
   expect(within(eventos).getByText('deny')).toBeInTheDocument();
@@ -173,9 +174,10 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
 });
 
 it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', async () => {
-  // Ésta es la usabilidad que justifica la fusión. El comentario que estaba en ObservabilityPage
-  // decía que request_id y trace_id bajaban a la tabla «para cruzarlos contra Audit»: el cruce
-  // existía y se hacía a mano, con dos pestañas del navegador y un identificador copiado.
+  // This is the usability that justifies the merge. The comment that was in ObservabilityPage
+  // said request_id and trace_id were dropped to the table "to cross-check against Audit":
+  // that cross-check existed and was done by hand, with two browser tabs and a copied
+  // identifier.
   observability();
   relays([relay]);
   audit(AUDIT_EVENTS);
@@ -184,26 +186,28 @@ it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', 
 
   await user.click(await screen.findByRole('button', { name: /ver la auditoría del trace trace-4c8f-eeee/i }));
 
-  // Se cambió de pestaña solo y el filtro ya trae el trace del relay.
+  // The tab changed by itself and the filter already carries the relay's trace.
   expect(screen.getByRole('tab', { name: 'Auditoría' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByRole('searchbox')).toHaveValue('trace-4c8f-eeee');
   expect(await screen.findByText('1 visibles de 2')).toBeInTheDocument();
 
-  // CONTROL NEGATIVO: el evento del OTRO trace tiene que quedar fuera. Sin él, un filtro que no
-  // filtrara nada pasaría esta prueba igual, porque el evento correcto también estaría en pantalla.
+  // NEGATIVE CONTROL: the event from the OTHER trace must stay out. Without it, a filter that did
+  // not filter anything would pass this test the same, because the correct event would also be on
+  // screen.
   const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
   if (!eventos) throw new Error('section not found');
   expect(eventos.textContent).toContain('delivery.replay');
   expect(eventos.textContent).not.toContain('config.write');
 
-  // Y el filtro se puede quitar sin salir de la pestaña.
+  // And the filter can be cleared without leaving the tab.
   await user.click(screen.getByRole('button', { name: /quitar el filtro/i }));
   expect(await screen.findByText('2 visibles de 2')).toBeInTheDocument();
 });
 
 it('no pide el audit log hasta que se abre su pestaña', async () => {
-  // `useResource` pide al montar. Si la auditoría se montara siempre, cada visita a las señales
-  // costaría un GET /v3/console/audit que nadie miró: la fusión habría empeorado lo que arregla.
+  // `useResource` requests on mount. If the audit log mounted every time, every visit to signals
+  // would cost a GET /v3/console/audit nobody looked at: the merge would have worsened what it
+  // fixed.
   observability();
   relays([relay]);
   let pedidos = 0;
@@ -222,15 +226,15 @@ it('no pide el audit log hasta que se abre su pestaña', async () => {
 
 it('ninguna fila de relay grita UNKNOWN, ni dice el mismo hecho dos veces', async () => {
   observability();
-  // Un relay sin petición, sin traza y sin mensaje: el caso que hacía a la fila decir
-  // «req UNKNOWN · trace UNKNOWN», «msg UNKNOWN» y, en la columna de al lado, «sin trace».
+  // A relay without request, trace and message: the case that made the row say
+  // "req UNKNOWN · trace UNKNOWN", "msg UNKNOWN" and, in the column next to it, "sin trace".
   relays([{ ...relay, request_id: null, trace_id: null, message_id: null }]);
   renderWithApi(<ObservabilityPage />);
 
   const row = (await screen.findByText(/relay-0001/)).closest('tr');
   if (!row) throw new Error('row not found');
   expect(row.textContent).not.toContain('UNKNOWN');
-  // El hecho «no hay traza» se dice UNA vez, y en la columna donde importa (la de auditoría).
+  // The fact "no trace" is said ONCE, and in the column where it matters (the audit one).
   const menciones = row.textContent.match(/traza/gi) ?? [];
   expect(menciones.length).toBeLessThanOrEqual(1);
 });

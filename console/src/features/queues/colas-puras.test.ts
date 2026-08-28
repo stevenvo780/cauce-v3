@@ -21,8 +21,8 @@ describe('qué se lee en «Último error»', () => {
   });
 
   /**
-   * Lo que NO puede pasar: apagar el ámbar de una entrega muerta sin motivo. Ahí el hueco importa
-   * —una entrega muerta que nadie puede diagnosticar— y sigue siendo UNKNOWN.
+   * What MUST NOT happen: turning the amber off for a dead delivery without a reason. There
+   * the gap matters — a dead delivery nobody can diagnose — and it remains UNKNOWN.
    */
   it('UNKNOWN en los estados de error, que es donde el hueco duele', () => {
     for (const estado of ['dead', 'failed', 'retry'] as const) {
@@ -51,9 +51,9 @@ describe('el filtro de la tabla', () => {
   ];
 
   /**
-   * El caso que hay que guardar: `failed` cuenta como «requiere revisión». También deja fila en
-   * `dead_letters` y `replayDelivery` la acepta. Un grupo que sólo mirara `dead` volvería a
-   * esconder las mismas entregas que el arreglo de `replayableStates` sacó a la luz.
+   * The case that has to be guarded: `failed` counts as "needs review". It also leaves a row
+   * in `dead_letters` and `replayDelivery` accepts it. A group that only looked at `dead` would
+   * again hide the same deliveries the `replayableStates` fix brought to light.
    */
   it('«revisión» incluye dead Y failed', () => {
     expect(ESTADOS_DEL_GRUPO.revision.has('failed')).toBe(true);
@@ -71,8 +71,8 @@ describe('el filtro de la tabla', () => {
   });
 
   /**
-   * Un estado que la consola no reconoce NO se mete en ningún grupo. Adivinar acá mandaría a un
-   * operador a reinyectar algo cuyo estado nadie sabe leer.
+   * A state the console does not recognize does NOT enter any group. Guessing here would send
+   * an operator to replay something whose state nobody can read.
    */
   it('un estado desconocido no entra en ningún grupo, pero sigue estando en «todas»', () => {
     const raras = [...filas, entrega({ delivery_id: 'z', state: 'inventado' as never })];
@@ -88,13 +88,13 @@ describe('el filtro de la tabla', () => {
 });
 
 /**
- * Los dos defectos medidos a 360x800 son de layout y jsdom no los ve: corre sin motor de
- * disposición, así que ninguna de las pruebas de arriba mira una sola regla. Se comprueban sobre
- * el texto de la hoja —lo barato que sí los atrapa— y cada afirmación lleva su control negativo
- * por mutación.
+ * The two bugs measured at 360x800 are layout and jsdom does not see them: it runs without a
+ * layout engine, so none of the tests above looks at a single CSS rule. They are checked on
+ * the sheet text — the cheap thing that does catch them — and each assertion carries its
+ * negative control by mutation.
  *
- * Lo que esto NO prueba, y hay que decirlo: que en un navegador real las tres tarjetas queden
- * sobre el pliegue. Eso se mide con un Chrome a 360 px, no acá.
+ * What this does NOT prove, and it must be said: that in a real browser the three cards
+ * stay above the fold. That is measured with a Chrome at 360 px, not here.
  */
 const QUEUES_CSS = readFileSync(resolve(process.cwd(), 'src/features/queues/queues.css'), 'utf8');
 
@@ -121,15 +121,16 @@ export function defectosDeColasEnElTelefono(css: string): string[] {
   if (!estrecho) return ['queues.css no tiene bloque @media (max-width: 760px): la vista sale como a 1280'];
 
   /*
-   * `styles.css` apila `.metrics-grid.three` a UNA columna en este corte y le da 115 px de alto a
-   * cada `.metric`. Tres tarjetas apiladas son 345 px y, con la cabecera encima, «DEAD LETTERS 7»
-   * —que es a lo que un operador entra— quedaba bajo el pliegue. Medido.
+   * `styles.css` stacks `.metrics-grid.three` to ONE column at this breakpoint and gives 115 px
+   * of height to each `.metric`. Three stacked cards are 345 px and, with the header on top,
+   * "DEAD LETTERS 7" — which is what an operator enters — was below the fold. Measured.
    */
   /*
-   * El selector tiene que GANARLE a `.metrics-grid.three`, que en este mismo corte declara UNA
-   * columna en `styles.css`. Con una clase no se aplicaba; con dos empataba en especificidad y
-   * ganaba styles.css por orden de carga. Las dos veces la hoja «decía» tres columnas y Chrome
-   * pintaba una. Por eso se exige el selector de TRES clases y no sólo la propiedad.
+   * The selector has to WIN against `.metrics-grid.three`, which at this same breakpoint
+   * declares ONE column in `styles.css`. With one class it did not apply; with two it tied on
+   * specificity and styles.css won by load order. Both times the sheet "said" three columns and
+   * Chrome painted one. That is why we require the THREE-class selector and not just the
+   * property.
    */
   if (!/\.metrics-grid\.three\.metricas-de-cola\s*\{[^}]*grid-template-columns:\s*repeat\(3/.test(estrecho)) {
     defectos.push('las tres tarjetas se apilan en el teléfono: la tercera («Dead letters») queda bajo el pliegue');
@@ -139,9 +140,9 @@ export function defectosDeColasEnElTelefono(css: string): string[] {
   }
 
   /*
-   * La tabla tiene OCHO columnas y `.table-wrap` sólo la deja arrastrable en horizontal: a 360 px
-   * se veían Delivery y Destino, y «Estado» —el dato por el que se entra a esta vista— había que
-   * ir a buscarlo fuera de pantalla.
+   * The table has EIGHT columns and `.table-wrap` only makes it horizontally scrollable: at 360
+   * px Delivery and Destination were visible, and "Estado" — the data you enter this view for
+   * — had to be sought off-screen.
    */
   if (!/\.tabla-entregas td\s*\{[^}]*display:\s*(block|grid)/.test(estrecho)) {
     defectos.push('la tabla sigue siendo una tabla de 8 columnas en el teléfono: la columna «Estado» queda fuera de pantalla');
@@ -178,10 +179,10 @@ describe('/queues en el teléfono', () => {
   });
 
   /**
-   * COMPROBACIÓN CRUZADA. El rótulo de cada celda apilada sale del `data-label` que escribe
-   * `DeliveryTable`. Son dos ficheros y nada los ata: quitar los atributos deja la hoja intacta y
-   * el síntoma —ocho valores sueltos sin nombre, sólo en el teléfono— no lo ve ninguna prueba de
-   * DOM ni el typecheck.
+   * CROSS-CHECK. The label of each stacked cell comes from the `data-label` written by
+   * `DeliveryTable`. They are two files and nothing binds them: removing the attributes leaves
+   * the sheet intact and the symptom — eight loose values without a name, only on the phone —
+   * is seen by no DOM test nor by the typecheck.
    */
   it('la hoja lee los mismos `data-label` que la tabla escribe', () => {
     const tabla = readFileSync(resolve(process.cwd(), 'src/features/queues/DeliveryTable.tsx'), 'utf8');

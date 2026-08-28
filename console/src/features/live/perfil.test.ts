@@ -8,19 +8,19 @@ import {
 } from './perfil';
 
 /**
- * EL EDITOR DE PERFIL, probado por donde se rompe.
+ * THE PROFILE EDITOR, tested where it breaks.
  *
- * Estas pruebas no cubren la pintura: cubren las decisiones que, si se tuercen, hacen que
- * el operador crea que guardó algo que no guardó.
+ * These tests do not cover painting: they cover the decisions that, if they go wrong, make
+ * the operator believe they saved something they did not.
  *
- * 1. Que la cuenta de unidades del navegador sea LA MISMA que la del servidor. El 16-ago un alias
- *    se quedó sordo porque dos capas contaban el mismo 1200 en unidades distintas.
- * 2. Que los siete campos, incluido `human_brief`, viajen en el cuerpo canónico sin identidad ni
- *    acción controladas por el navegador.
- * 3. Que un texto vacío viaje como `null` y no como `''`. La columna tiene CHECK de longitud >= 1
- *    y `null` es lo que hace que el compilador OMITA la sección en vez de emitir un encabezado
- *    hueco.
- * 4. Que la UI sólo anuncie aplicado ante convergencia y ACK exacto de todos los ficheros.
+ * 1. That the browser's unit count is THE SAME as the server's. An alias once went deaf
+ *    because two layers counted the same 1200 in different units.
+ * 2. That the seven fields, including `human_brief`, travel in the canonical body without
+ *    browser-controlled identity or action.
+ * 3. That an empty text travels as `null` and not as `''`. The column has a length CHECK >= 1
+ *    and `null` is what makes the compiler OMIT the section instead of emitting an empty
+ *    header.
+ * 4. That the UI only announces "applied" on convergence and exact ACK of every file.
  */
 
 const VACIO: AgentPerfilCampos = {
@@ -42,11 +42,12 @@ function perfilDe(parcial: Partial<AgentPerfil['perfil']>): AgentPerfil {
 
 describe('la cuenta del navegador es la MISMA que la del servidor', () => {
   /*
-   * No es puntillismo. `String.length` cuenta unidades UTF-16 y `[...texto].length` cuenta puntos
-   * de código, y no coinciden: una `á` es 1 y 1, pero un emoji fuera del BMP es 1 punto y 2
-   * unidades. Si el navegador contara la unidad floja, le diría al operador que su texto entra
-   * cuando el CHECK de Postgres lo va a rechazar — o peor, lo guardaría y el adaptador lo tiraría
-   * al componer el sobre, que es literalmente cómo un alias se quedó sordo el 16-ago.
+   * Not nitpicking. `String.length` counts UTF-16 units and `[...text].length` counts code
+   * points, and they do not match: an accented `a` is 1 and 1, but an out-of-BMP emoji is 1
+   * point and 2 units. If the browser counted the loose unit, it would tell the operator that
+   * their text fits when the Postgres CHECK is going to reject it — or worse, save it and the
+   * adapter would throw it away when composing the envelope, which is literally how an alias
+   * went mute once.
    */
   const CASOS = [
     ['ascii puro', 'hola mundo'],
@@ -64,8 +65,8 @@ describe('la cuenta del navegador es la MISMA que la del servidor', () => {
   }
 
   it('CONTROL NEGATIVO: la cuenta floja NO habría servido, o esta prueba no probaría nada', () => {
-    // Si las dos unidades coincidieran siempre, comprobar la igualdad de arriba sería vacío. Acá
-    // se exige que exista al menos un texto donde SÍ se separan.
+    // If the two units always matched, checking the equality above would be empty. Here it is
+    // required that there be at least one text where they DO differ.
     const conEmoji = 'zeus 🩺';
     expect(Array.from(conEmoji).length).toBeLessThan(conEmoji.length);
     expect(contarUnidades(conEmoji)).toBe(conEmoji.length);
@@ -109,9 +110,9 @@ describe('qué cuenta como cambio', () => {
 
   it('CONTROL NEGATIVO: el MISMO contenido en un array nuevo NO es un cambio', () => {
     /*
-     * Comparar por identidad de objeto habría dado «sucio» en cuanto se pinta, porque
-     * `camposVigentes` copia las listas en cada render. El botón de guardar habría quedado
-     * habilitado siempre y el cartel verde se habría retirado solo sin que nadie tocara nada.
+     * Comparing by object identity would have returned "dirty" as soon as it painted, because
+     * `camposVigentes` copies the lists on every render. The save button would have stayed
+     * enabled and the green banner would have withdrawn on its own with nobody touching anything.
      */
     const guardado = perfilDe({ purpose: 'igual', tools: ['ssh', 'docker'] });
     const campos = camposVigentes(guardado, undefined);
@@ -119,7 +120,7 @@ describe('qué cuenta como cambio', () => {
   });
 
   it('CONTROL NEGATIVO: reordenar una lista SÍ es un cambio', () => {
-    // El orden es el orden en que se van a escribir las viñetas del fichero: no es un conjunto.
+    // The order is the order in which the file's bullets will be written: it is not a set.
     const guardado = perfilDe({ tools: ['ssh', 'docker'] });
     expect(hayCambios(guardado, { ...VACIO, tools: ['docker', 'ssh'] })).toBe(true);
   });
@@ -142,9 +143,9 @@ describe('los topes se miden antes de dejar guardar', () => {
 
   it('el TECHO del perfil entero se comprueba aunque cada campo entre en el suyo', () => {
     /*
-     * Éste es el que de verdad importa: cuatro listas llenas dan 256.000 unidades con cada campo
-     * «dentro de su tope». Sin esta comprobación el operador guardaría un perfil que Postgres
-     * rechaza, y el error llegaría como un 422 sin decir qué recortar.
+     * This is the one that really matters: four full lists give 256,000 units with each field
+     * "within its cap". Without this check the operator would save a profile Postgres rejects,
+     * and the error would arrive as a 422 without saying what to trim.
      */
     const lista = Array.from({ length: 64 }, () => 'y'.repeat(200));
     const campos = { ...VACIO, responsibilities: lista, restrictions: lista, tools: lista };
@@ -163,8 +164,8 @@ describe('los topes se miden antes de dejar guardar', () => {
   });
 
   it('CONTROL NEGATIVO: sin límites del servidor no se inventa ninguno', () => {
-    // Un gateway que no publique `limites` no puede hacer que la pantalla bloquee el guardado por
-    // un tope que se sacó de la manga: manda el servidor.
+    // A gateway that does not publish `limites` cannot make the screen block saving for a cap
+    // it made up: the server rules.
     expect(camposQueNoEntran({ ...VACIO, purpose: 'x'.repeat(99_999) }, undefined)).toEqual([]);
   });
 });

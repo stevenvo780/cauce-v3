@@ -5,16 +5,16 @@ import { leerCss } from '../../test/leer-css';
 import { sinComentarios } from '../../test/css-parser';
 
 /**
- * Ninguna clase de esta vista puede apuntar a una regla que no existe.
+ * No class of this view may point at a rule that does not exist.
  *
- * La comprobación es la barata y la que habría atrapado el fallo: toda clase que la carpeta
- * `features/messages` escribe tiene que estar definida en alguna de las dos hojas que la vista
- * carga (`styles.css`, global, y `messages.css`, propia).
+ * The check is the cheap one and the one that would have caught the bug: every class the
+ * `features/messages` folder writes must be defined in one of the two sheets the view loads
+ * (`styles.css`, global, and `messages.css`, own).
  */
 /**
- * Se resuelve desde `process.cwd()` (la raíz del paquete `@cauce/console`, tanto con `pnpm test`
- * como con `pnpm --filter`) y NO desde `import.meta.url`: bajo vitest esa URL es la del servidor
- * de vite (`/src/features/messages`), no una ruta del disco.
+ * Resolved from `process.cwd()` (the root of the `@cauce/console` package, both with `pnpm test`
+ * and with `pnpm --filter`) and NOT from `import.meta.url`: under vitest that URL is the vite
+ * server's (`/src/features/messages`), not a path on disk.
  */
 const DIRECTORIO = resolve(process.cwd(), 'src/features/messages');
 const HOJAS = [
@@ -23,7 +23,7 @@ const HOJAS = [
   join(DIRECTORIO, '..', 'terminal', 'terminal-panel.css'),
 ];
 
-/** Clases que pinta un componente COMPARTIDO (components/ui, TerminalTranscript) y no esta vista. */
+/** Classes painted by a SHARED component (components/ui, TerminalTranscript) and not by this view. */
 const AJENAS = new Set(['sr-only', 'mono', 'eyebrow', 'button', 'small', 'secondary', 'primary', 'unknown']);
 
 function clasesDefinidas(): Set<string> {
@@ -35,8 +35,8 @@ function clasesDefinidas(): Set<string> {
     } catch {
       continue;
     }
-    // Se ignoran los bloques de comentario para que un nombre citado en una explicación —como el
-    // `.metadata-grid` retirado, que se menciona justamente porque ya NO existe— no cuente.
+    // Comment blocks are ignored so a name quoted in an explanation — like the removed
+    // `.metadata-grid`, mentioned precisely because it no longer exists — does not count.
     const limpio = sinComentarios(css);
     for (const coincidencia of limpio.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) {
       definidas.add(coincidencia[1]);
@@ -46,9 +46,9 @@ function clasesDefinidas(): Set<string> {
 }
 
 /**
- * `className="..."` literal, o la parte FIJA de una plantilla (`className={\`messenger-avatar
- * ${...}\`}`). Se arma con `new RegExp` porque el backtick dentro de un literal de expresión
- * regular rompe al parser de rollup.
+ * `className="..."` literal, or the FIXED part of a template (`className={\`messenger-avatar
+ * ${...}\`}`). Built with `new RegExp` because backticks inside a regular expression literal
+ * break rollup's parser.
  */
 const PATRON_CLASSNAME = new RegExp('className=(?:"([^"]*)"|\\{`([^`$]*))', 'g');
 
@@ -57,8 +57,8 @@ function clasesUsadas(): Map<string, string> {
   for (const fichero of readdirSync(DIRECTORIO)) {
     if (!fichero.endsWith('.tsx') || fichero.includes('.test.')) continue;
     const fuente = readFileSync(join(DIRECTORIO, fichero), 'utf8');
-    // Sólo los `className` literales. Los compuestos por plantilla llevan su parte fija adelante
-    // (`messenger-avatar ${...}`) y esa parte sí se comprueba.
+    // Only literal `className` values. Composed ones via template keep their fixed part at the
+    // front (`messenger-avatar ${...}`) and that part IS checked.
     for (const coincidencia of fuente.matchAll(PATRON_CLASSNAME)) {
       for (const clase of (coincidencia.at(1) ?? coincidencia.at(2) ?? '').split(/\s+/)) {
         if (clase && !AJENAS.has(clase)) usadas.set(clase, fichero);
@@ -78,8 +78,8 @@ describe('las clases de la vista de mensajes', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del propio guardia. Un comprobador que aprueba cualquier cosa es peor que no
-   * tenerlo: acá se le da de comer la clase exacta que se retiró y se exige que la marque.
+   * NEGATIVE CONTROL of the guard itself. A checker that approves everything is worse than
+   * not having one: here it is fed the exact class that was retired and is required to flag it.
    */
   it('marcaría una clase retirada como la `metadata-grid` que rompió el detalle', () => {
     expect(clasesDefinidas().has('metadata-grid')).toBe(false);

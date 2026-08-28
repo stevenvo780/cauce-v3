@@ -19,7 +19,7 @@ it('gates replay by terminal delivery state and server permission', async () => 
   await user.click(screen.getByRole('button', { name: /^replay$/i }));
   expect(replay).toHaveBeenCalledWith('delivery-dead-1');
   expect(await screen.findByText(/Replay solicitado/i)).toBeInTheDocument();
-  // Una entrega ya terminal no se cancela: el botón existe pero no aplica.
+  // An already-terminal delivery is not cancelled: the button exists but does not apply.
   expect(screen.getByRole('button', { name: /cancelar/i })).toBeDisabled();
 });
 
@@ -27,13 +27,13 @@ it('does not expose replay when RBAC is unknown', () => {
   render(<AckInspector delivery={{ delivery_id: 'delivery-dead-2', status: 'dead' }} onReplay={vi.fn()} onCancel={vi.fn()} />);
   expect(screen.getByRole('button', { name: /^replay$/i })).toBeDisabled();
   expect(screen.getByText(/no tiene ese permiso, o no se pudo leer/i)).toBeInTheDocument();
-  // Y ya no se lo dice con las siglas del esquema de permisos.
+  // And it no longer says it with the acronyms from the permissions schema.
   expect(document.body.textContent).not.toContain('RBAC DENY');
 });
 
-// Una entrega 'failed' no tenía botón de rescate, ni acá ni en el store. Cuál de los dos finales
-// de error toca lo elige `ack.retryable`, o sea el propio agente que falló; en producción eso
-// dejó 197 entregas sin forma de recuperarse.
+// A 'failed' delivery had no rescue button, here or in the store. Which of the two error
+// endings applies is chosen by `ack.retryable`, i.e. the failing agent itself; in production
+// that left 197 deliveries with no way to recover.
 it('offers replay on failed deliveries, not only on dead ones', async () => {
   const user = userEvent.setup();
   const replay = vi.fn().mockResolvedValue(undefined);
@@ -58,7 +58,7 @@ it('enables cancel on an in-flight delivery when the server grants delivery.canc
     onCancel={cancel}
   />);
 
-  // Replay no aplica a algo en vuelo; cancelar sí.
+  // Replay does not apply to something in flight; cancel does.
   expect(screen.getByRole('button', { name: /^replay$/i })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: /cancelar/i }));
   expect(cancel).toHaveBeenCalledWith('delivery-started-1');

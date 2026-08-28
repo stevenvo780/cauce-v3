@@ -14,7 +14,7 @@ const CONFIG: TranscriptionConfig = {
   apiKey: 'sk-local'
 };
 
-/** Un Ogg/Opus mínimo: lo que Telegram manda como nota de voz. */
+/** A minimal Ogg/Opus: what Telegram sends as a voice note. */
 function ogg(size = 64): Buffer {
   const payload = Buffer.alloc(size);
   payload.write('OggS', 0, 'ascii');
@@ -86,7 +86,7 @@ describe('transcripción de notas de voz', () => {
     expect(peticion?.body.get('model')).toBe('deepdml/faster-whisper-large-v3-turbo-ct2');
     expect(peticion?.body.get('language')).toBe('es');
     expect(peticion?.body.get('response_format')).toBe('json');
-    // El nombre sale del magic, no de lo que declaró el usuario.
+    // The filename comes from the magic, not from what the user declared.
     expect((peticion?.body.get('file') as File | undefined)?.name).toBe('voz.ogg');
   });
 
@@ -104,7 +104,7 @@ describe('transcripción de notas de voz', () => {
     expect(resultado).toEqual({});
   });
 
-  /* --- Falla abierta: el mensaje llega igual, con una explicación legible --- */
+  /* --- Fail-open: the message still arrives, with a readable explanation --- */
 
   it('explica el problema en vez de perder el mensaje cuando el servicio no responde', async () => {
     const resultado = await prepareTelegramVoice(
@@ -198,9 +198,9 @@ describe('cuerpo del mensaje', () => {
       message({ voice: VOICE }), 42, voiceApi(), undefined, CONFIG, transcriptor
     );
     expect(cuerpo.prompt).toBe('[nota de voz transcrita] Comprá pan y avisale a jarvis.');
-    // El registro fiel de qué pasó con el audio, para el operador.
+    // A faithful record of what happened with the audio, for the operator.
     expect(cuerpo.voice_v1).toEqual({ kind: 'voice', duration: 7, transcript: 'Comprá pan y avisale a jarvis.' });
-    // `text` sigue siendo lo que mandó Telegram: acá, nada.
+    // `text` stays as what Telegram sent: here, nothing.
     expect(cuerpo.text).toBeUndefined();
   });
 

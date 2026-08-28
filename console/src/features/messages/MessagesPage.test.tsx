@@ -30,7 +30,7 @@ function publishReceipt(input: Record<string, unknown>, duplicate = false) {
   };
 }
 
-/** Registra cada publish para poder afirmar QUÉ se envió, no sólo que la UI dijo que envió. */
+/** Records each publish so we can assert WHAT was sent, not just that the UI said it sent. */
 function capturarPublish() {
   const enviados: Record<string, unknown>[] = [];
   server.use(http.post('*/v3/console/messages', async ({ request }) => {
@@ -48,12 +48,12 @@ async function abrirConversacion(user: ReturnType<typeof userEvent.setup>, alias
 }
 
 /**
- * Las BURBUJAS, sin el panel de detalle.
+ * The BUBBLES, without the detail panel.
  *
- * Hace falta desde que el detalle muestra el cuerpo del mensaje: antes no lo mostraba —seis campos
- * de metadatos y ni una línea del texto— y por eso un `getByText` sobre el hilo entero encontraba
- * una sola coincidencia. Que ahora haya dos es el arreglo, no un defecto, pero una prueba que
- * quiere afirmar «este mensaje NO está en este hilo» tiene que mirar las burbujas.
+ * Needed since the detail shows the message body: before it did not — six metadata fields and
+ * not a single line of text — so a `getByText` over the whole thread found only one match.
+ * That there are now two is the fix, not a bug, but a test that wants to assert "this message
+ * is NOT in this thread" must look at the bubbles.
  */
 function historial(hilo: HTMLElement): HTMLElement {
   const caja = hilo.querySelector<HTMLElement>('.terminal-transcript');
@@ -65,10 +65,10 @@ it('lista a los agentes con el estado de su cola al lado del nombre', async () =
   renderWithApi(<MessagesPage />);
 
   const argos = await screen.findByRole('button', { name: /conversación con argos,/i });
-  // Del fixture de /v3/console/activity: argos tiene 1 encolada y 1 en vuelo.
+  // From the /v3/console/activity fixture: argos has 1 queued and 1 in flight.
   expect(within(argos).getByText('1 en cola')).toBeInTheDocument();
   expect(within(argos).getByText('1 en curso')).toBeInTheDocument();
-  // Y de /v3/console/queues: la única entrega muerta es de Miguel:kratos, no suya.
+  // And from /v3/console/queues: the only dead delivery belongs to Miguel:kratos, not argos.
   expect(within(argos).getByText('0 muertas')).toBeInTheDocument();
 
   const kratos = await screen.findByRole('button', { name: /conversación con kratos,/i });
@@ -76,9 +76,10 @@ it('lista a los agentes con el estado de su cola al lado del nombre', async () =
 }, 20_000);
 
 /**
- * CONTROL NEGATIVO de la columna de cola. Si la vista rellenara con ceros lo que el servidor no
- * informa, este caso pintaría a argos con «0 en cola / 0 en curso» —o sea, sano— justo cuando su
- * cola es ilegible. La prueba exige la palabra UNKNOWN y prohíbe explícitamente el cero.
+ * NEGATIVE CONTROL of the queue column. If the view filled with zeros what the server does
+ * not report, this case would paint argos with "0 queued / 0 in flight" — that is, healthy —
+ * just when its queue is unreadable. The test requires the word UNKNOWN and explicitly
+ * forbids the zero.
  */
 it('un agente que /activity no informa sale UNKNOWN en su cola, nunca en cero', async () => {
   const sinArgos = mockActivity();
@@ -101,13 +102,13 @@ it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', asy
 
   const hilo = await abrirConversacion(user, 'argos');
 
-  // El mensaje cuya entrega es para argos.
+  // The message whose delivery is for argos.
   expect(await within(historial(hilo)).findByText('Verificar estado del adapter Hermes')).toBeInTheDocument();
-  // CONTROL NEGATIVO: el otro mensaje del feed va a Miguel:kratos. Si el hilo fuera la lista
-  // plana de antes —o si el filtro no filtrara— aparecería acá igual.
+  // NEGATIVE CONTROL: the other message in the feed goes to Miguel:kratos. If the thread were
+  // the old flat list — or if the filter did not filter — it would show up here as well.
   expect(within(hilo).queryByText('Indexar reporte operativo')).not.toBeInTheDocument();
 
-  // Y la dirección refleja la conversación abierta, para que el enlace se pueda pegar.
+  // And the URL reflects the open conversation, so the link can be pasted.
   expect(window.location.pathname).toBe('/messages/Steven/argos');
 }, 20_000);
 
@@ -117,7 +118,7 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
   renderWithApi(<MessagesPage />);
 
   const hilo = await abrirConversacion(user, 'argos');
-  // No hay ningún campo donde escribir el destinatario ni el room: eso es parte del arreglo.
+  // There is no field where to write the recipient or the room: that is part of the fix.
   expect(within(hilo).queryByLabelText(/^room$/i)).not.toBeInTheDocument();
   expect(within(hilo).queryByLabelText(/destinatario/i)).not.toBeInTheDocument();
   expect(within(hilo).getByText(/derivado de tu topología/i)).toBeInTheDocument();
@@ -252,8 +253,8 @@ it('recupera el journal sin body al cerrar y reabrir la conversación tras dos r
   await abrirConversacion(user, 'kratos');
   hilo = await abrirConversacion(user, 'argos');
   const campoReabierto = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
-  // El body no se persiste en el cliente. El operador lo vuelve a escribir y el servidor prueba
-  // que es exactamente la misma semántica antes de recuperar la clave incierta.
+  // The body is not persisted on the client. The operator types it again and the server proves
+  // it is exactly the same semantics before recovering the uncertain key.
   expect(campoReabierto).toHaveValue('');
   await user.type(campoReabierto, 'retry exacto al reabrir');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
@@ -315,10 +316,10 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
 }, 35_000);
 
 /**
- * CONTROL NEGATIVO del compositor. Steven:kant no tiene arista ACL hacia el tenant Isa (el
- * fixture lo declara a propósito: el cruce que nadie declaró queda denegado por defecto). Si el
- * botón fuera decorativo, este caso publicaría igual y el rechazo aparecería recién como un error
- * del servidor — que es exactamente lo que hacía el formulario anterior con su campo de texto.
+ * NEGATIVE CONTROL of the composer. Steven:kant has no ACL edge towards the Isa tenant (the
+ * fixture declares it on purpose: the cross nobody declared stays denied by default). If the
+ * button were decorative, this case would still publish and the rejection would only appear as
+ * a server error — which is exactly what the old form with its text field used to do.
  */
 it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar publicar', async () => {
   const user = userEvent.setup();
@@ -359,13 +360,13 @@ it('declara el techo de 100 mensajes del servidor en vez de presentar el hilo co
 }, 20_000);
 
 // ---------------------------------------------------------------------------------------------
-// PÉRDIDAS DEL REDISEÑO, REPUESTAS. Las tres salieron de una verificación adversarial: la vista
-// funcionaba y aun así había dejado de mostrar cosas que la lista plana anterior sí mostraba.
+// LOSSES OF THE REDESIGN, RESTORED. The three came from an adversarial check: the view worked
+// and still had stopped showing things the previous flat list did show.
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Deja el servidor en el estado exacto del defecto: `Steven:gaia` recibe un mensaje y NO está en
- * ninguna sala ni tiene lease. Cuánto la conoce el registro se elige con `enElRegistro`.
+ * Leave the server in the exact state of the bug: `Steven:gaia` receives a message and is NOT
+ * in any room and has no lease. How much the registry knows about it is chosen via `enElRegistro`.
  */
 function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
   const actividad = mockActivity();
@@ -385,9 +386,9 @@ function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
   };
 
   server.use(
-    // La topología NO la declara: es una membresía que nadie creó (o que alguien deshabilitó).
+    // The topology does NOT declare it: a membership nobody created (or someone disabled).
     http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
-    // Tampoco tiene lease: no aparece en `presence`.
+    // It has no lease either: it does not appear in `presence`.
     http.get('*/v3/console/status', () => HttpResponse.json(mockStatus())),
     http.get('*/v3/status', () => HttpResponse.json(mockStatus())),
     http.get('*/v3/console/activity', () => HttpResponse.json(enElRegistro
@@ -402,11 +403,11 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
   servidorConGaia({ enElRegistro: true });
   renderWithApi(<MessagesPage />);
 
-  // 1) Tiene fila en el roster, rotulada como lo que es: registrada y sin sala.
+  // 1) It has a row in the roster, labelled as what it is: registered and without a room.
   const fila = await screen.findByRole('button', { name: /conversación con gaia,.*sin sala declarada/i });
   expect(within(fila).getByText('sin sala')).toBeInTheDocument();
 
-  // 2) Y el hilo se abre con su mensaje dentro. Esto es lo que antes NO existía en ningún sitio.
+  // 2) And the thread opens with its message inside. This is what did NOT exist before anywhere.
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
   expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
@@ -426,9 +427,9 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
 }, 25_000);
 
 /**
- * CONTROL NEGATIVO del universo ampliado. El arreglo consiste en dibujar a más gente, y por eso
- * hay que probar que NO dibuja a cualquiera: un alias que ninguna de las cuatro fuentes menciona
- * tiene que seguir sin existir, y la pantalla tiene que decirlo con todas las fuentes nombradas.
+ * NEGATIVE CONTROL of the enlarged universe. The fix consists of drawing more people, and that
+ * is why we must prove that it does NOT draw anyone: an alias that none of the four sources
+ * mentions must still not exist, and the screen must say so with all the sources named.
  */
 it('un alias que ninguna fuente menciona sigue sin existir, y se dice por qué', async () => {
   servidorConGaia({ enElRegistro: true });
@@ -438,11 +439,11 @@ it('un alias que ninguna fuente menciona sigue sin existir, y se dice por qué',
   expect(await screen.findByText(/ni en el registro de agentes/i)).toBeInTheDocument();
   expect(screen.getByText('Steven:fantasma')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /conversación con fantasma,/i })).not.toBeInTheDocument();
-  // Y gaia, que sí está, aparece: la negativa es del alias inexistente, no del arreglo entero.
+  // And gaia, which is there, appears: the negative is about the non-existent alias, not the whole fix.
   expect(await screen.findByRole('button', { name: /conversación con gaia,/i })).toBeInTheDocument();
 }, 25_000);
 
-/** El mismo mensaje del hilo de argos, pero con una entrega HERMANA para Steven:jarvis. */
+/** The same message from argos' thread, but with a SIBLING delivery for Steven:jarvis. */
 function feedConFanOut() {
   const feed = mockMessages();
   const items = (feed.items ?? []).map((mensaje) => mensaje.message_id !== '8eac0520-6e1e-47e8-b7da-554e4bf850b4'
@@ -483,16 +484,16 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   expect(within(campo('Trace')).getByText('trace-fleet-00042')).toBeInTheDocument();
   expect(within(campo('Message id')).getByText('8eac0520-6e1e-47e8-b7da-554e4bf850b4')).toBeInTheDocument();
 
-  // Y la entrega hermana del fan-out, con su destinatario y su estado.
+  // And the sibling delivery of the fan-out, with its recipient and its status.
   const fanout = within(hilo).getByRole('region', { name: /entregas hermanas/i });
   expect(within(fanout).getByText('Steven:jarvis')).toBeInTheDocument();
   expect(within(fanout).getByText('failed')).toBeInTheDocument();
 }, 25_000);
 
 /**
- * CONTROL NEGATIVO del fan-out. Reponer las entregas hermanas no puede volver a mezclar los
- * hilos: la hermana se LISTA en el detalle, pero el mensaje sigue apareciendo UNA sola vez en la
- * conversación de argos y el hilo de jarvis es otro.
+ * NEGATIVE CONTROL of the fan-out. Restoring sibling deliveries must not mix threads again:
+ * the sibling is LISTED in the detail, but the message still appears only ONCE in argos'
+ * conversation and jarvis' thread is another.
  */
 it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuja del hilo', async () => {
   const user = userEvent.setup();
@@ -522,9 +523,9 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
 }, 25_000);
 
 /**
- * CONTROL NEGATIVO del selector de lane. Que exista el control no puede cambiar lo que se publica
- * cuando nadie lo toca: sin tocarlo tiene que seguir saliendo `interactive` con prioridad 10, que
- * es lo que publicaba el formulario anterior.
+ * NEGATIVE CONTROL of the lane selector. That the control exists cannot change what is
+ * published when nobody touches it: untouched, it must keep producing `interactive` with
+ * priority 10, which is what the old form published.
  */
 it('sin tocar el selector sigue publicando interactive con prioridad 10', async () => {
   const user = userEvent.setup();
@@ -540,13 +541,13 @@ it('sin tocar el selector sigue publicando interactive con prioridad 10', async 
 }, 25_000);
 
 /**
- * EL GANCHO DEL ARREGLO DE PANTALLA ESTRECHA, comprobado en el DOM.
+ * THE HOOK OF THE NARROW-SCREEN FIX, checked on the DOM.
  *
- * La regla que encoge el roster a conmutador vive en `messages.css` y sólo se activa con este
- * atributo. La hoja se comprueba aparte (`composer-anclado.test.ts`); lo que se comprueba acá es
- * lo único que jsdom sí puede ver: que el atributo se pone cuando hay conversación abierta y NO
- * antes —si se pusiera siempre, el roster nacería recortado a dos filas siendo el contenido
- * principal de la pantalla, que es el defecto contrario—.
+ * The rule that shrinks the roster to a switcher lives in `messages.css` and is only activated
+ * by this attribute. The sheet is checked separately (`composer-anclado.test.ts`); what is
+ * checked here is the only thing jsdom CAN see: that the attribute is set when there is an
+ * open conversation and NOT before — if it were always set, the roster would be born trimmed
+ * to two rows being the main content of the screen, which is the opposite bug.
  */
 it('marca la envoltura con data-conversacion sólo cuando hay un hilo abierto', async () => {
   const user = userEvent.setup();

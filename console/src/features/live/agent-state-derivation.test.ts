@@ -33,7 +33,7 @@ describe('delegationEdges', () => {
   });
 
   it('descarta la auto-arista del puente de Telegram (una persona escribiendo, no una delegación)', () => {
-    // El puente publica el mensaje del dueño con el alias del propio agente: from == to.
+    // The bridge publishes the owner's message using the agent's own alias: from == to.
     const edges = delegationEdges(snapshot([
       agent({
         tenant_id: 'Isa',
@@ -81,11 +81,12 @@ describe('buildLiveViews', () => {
 });
 
 /**
- * El panel "quién le habla a quién, ahora" sólo dibuja flechas si el snapshot trae entregas en
- * vuelo con emisor. Esto no es una propiedad del componente sino del DATO, y es exactamente lo que
- * se rompió antes: la vista se publicó con un fixture cuyas entregas eran anónimas o venían de
- * alias que la topología no declara, así que se veían los muñecos y las salas y ni una delegación.
- * Un dibujo vacío no se distingue de "nadie está trabajando", que es la respuesta contraria.
+ * The "who is talking to whom, now" panel only draws arrows if the snapshot brings in-flight
+ * deliveries with a sender. This is not a property of the component but of the DATA, and it is
+ * exactly what broke before: the view was published with a fixture whose deliveries were
+ * anonymous or came from aliases the topology does not declare, so the bots and the rooms showed
+ * up and not a single delegation. An empty drawing is indistinguishable from "nobody is
+ * working", which is the opposite answer.
  */
 describe('la topología y la actividad de demostración se corresponden', () => {
   const actividad = mockActivity();
@@ -103,8 +104,8 @@ describe('la topología y la actividad de demostración se corresponden', () => 
   it('produce delegaciones dibujables entre alias que la topología ubica', () => {
     const edges = delegationEdges(actividad);
     const dibujables = edges.filter((edge) => nodos.has(edge.from) && nodos.has(edge.to));
-    // El umbral es deliberadamente flojo: lo que hay que impedir es el CERO y el "una sola
-    // relación repetida", no clavar un número que se rompa al ajustar el fixture.
+    // The threshold is deliberately loose: what must be prevented is ZERO and "one repeated
+    // relation", not pinning a number that breaks when the fixture is adjusted.
     expect(dibujables.length).toBeGreaterThanOrEqual(10);
     expect(new Set(dibujables.map((edge) => `${edge.from}->${edge.to}`)).size).toBeGreaterThanOrEqual(6);
   });
@@ -154,8 +155,8 @@ describe('aggregateEdges', () => {
     const par = agregadas.get('Steven/zeus→Steven/kant');
     expect(par?.total).toBe(47);
     expect(par?.totalFromServer).toBe(true);
-    // El 99 del servidor NO pisa al 1 del snapshot: los muñecos que se están dibujando en esta
-    // pasada salen del snapshot, y una flecha que no coincide con ellos es una flecha que miente.
+    // The server's 99 does NOT overwrite the 1 from the snapshot: the bots being drawn in this
+    // pass come from the snapshot, and an arrow that does not match them is an arrow that lies.
     expect(par?.inFlight).toBe(1);
   });
 
@@ -171,9 +172,9 @@ describe('aggregateEdges', () => {
 
 describe('humanOrigins', () => {
   it('rescata el encargo que entró por un puente, que delegationEdges tira por from === to', () => {
-    // El puente de Telegram publica el mensaje del dueño CON EL ALIAS DEL PROPIO AGENTE. Como
-    // delegación es falsa —y por eso se descarta— pero descartarla entera pierde la procedencia:
-    // el trabajo aparece de la nada y el mapa sugiere que el agente se lo inventó solo.
+    // The Telegram bridge publishes the owner's message USING THE AGENT'S OWN ALIAS. As a
+    // delegation it is false — and that is why it is discarded — but discarding it entirely loses
+    // the provenance: the work appears from nowhere and the map suggests the agent made it up.
     const nieve = snapshot([agent({
       tenant_id: 'Jhon', alias: 'hegel', in_flight: 1,
       in_flight_items: [{
@@ -200,8 +201,9 @@ describe('humanOrigins', () => {
 
 describe('buildLiveViews y el campo que el servidor puede no traer', () => {
   it('closed_24h ausente NO se convierte en cero: queda undefined y la vista lo declara', () => {
-    // "No sé cuánto cerró" y "cerró cero" son afirmaciones distintas, y en una pantalla donde el
-    // tamaño del muñeco significa "cuánto trabajó", confundirlas es una acusación falsa.
+    // "I don't know how much it closed" and "closed zero" are different assertions, and on a
+    // screen where the bot's size means "how much it worked", confusing them is a false
+    // accusation.
     const { views } = buildLiveViews(snapshot([agent({ alias: 'zeus' })]), {}, NOW);
     expect(views[0].closed24h).toBeUndefined();
 
@@ -212,17 +214,19 @@ describe('buildLiveViews y el campo que el servidor puede no traer', () => {
 
 describe('radioDe', () => {
   it('sin el campo en NINGÚN agente, todos miden lo mismo: no se inventa una escala', () => {
-    // `maxClosed === null` es "el servidor no informa el cierre de 24 h". Dibujar a toda la flota
-    // en el radio mínimo haría que "no lo sé" se vea idéntico a "no cerró nada", que en una
-    // pantalla donde el tamaño significa cuánto trabajó cada uno es una acusación falsa.
+    // `maxClosed === null` means "the server does not report 24h closure". Drawing the whole
+    // fleet at the minimum radius would make "I don't know" look identical to "it closed
+    // nothing", which on a screen where size means how much each one worked is a false
+    // accusation.
     expect(radioDe(undefined, null)).toBe(AVATAR_UNIFORME);
     expect(radioDe(41, null)).toBe(AVATAR_UNIFORME);
   });
 
   it('cerrar CERO es un dato y se dibuja en el mínimo; no traer el campo, no', () => {
     expect(radioDe(0, 41)).toBe(AVATAR_MIN);
-    // El alias del que el servidor no informa dentro de una flota que sí informa: mínimo también,
-    // pero por otra razón — y el globo le quita el pie, que es donde se nota la diferencia.
+    // The alias the server does not report inside a fleet that does report: minimum too, but
+    // for a different reason — and the balloon removes its foot, which is where the difference
+    // shows.
     expect(radioDe(undefined, 41)).toBe(AVATAR_MIN);
   });
 
@@ -233,8 +237,8 @@ describe('radioDe', () => {
 
   it('escala por ÁREA, no por radio: el doble de trabajo no puede parecer el cuádruple', () => {
     const mitad = radioDe(50, 100);
-    // Con escala lineal sobre el radio, 50/100 daría el punto medio exacto entre 22 y 34 (28).
-    // Con raíz, queda por encima — que es lo que hace que las áreas se comparen bien.
+    // With linear scaling on the radius, 50/100 would give exactly the midpoint between 22 and
+    // 34 (28). With a square root, it sits above — which is what makes the areas compare well.
     expect(mitad).toBeGreaterThan((AVATAR_MIN + AVATAR_MAX) / 2);
     expect(mitad).toBeLessThan(AVATAR_MAX);
   });
@@ -253,7 +257,7 @@ describe('grosorDe', () => {
 });
 
 // ================================================================================================
-// Casos de prueba de derivación de estados y atribución de origen
+// Test cases for state derivation and origin attribution
 // ================================================================================================
 
 describe('D1 · atribución de quién pidió el trabajo', () => {
@@ -310,7 +314,7 @@ describe('D1 · atribución de quién pidió el trabajo', () => {
   });
 
   it('el fixture real de kant trae el caso: argos le delegó con origin_adapter telegram', () => {
-    // No es un caso de laboratorio: está en los datos de demostración desde antes del arreglo.
+    // Not a laboratory case: it has been in the demo data since before the fix.
     const actividad = mockActivity();
     const kant = (actividad.agents ?? []).find((a) => a.alias === 'kant');
     const heredada = (kant?.in_flight_items ?? []).find((item) => item.origin_adapter === 'telegram');

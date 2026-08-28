@@ -77,7 +77,7 @@ it('falla cerrado cuando no se pudo leer la membresía, y no toma prestada la sa
   expect(route.membership).toBeUndefined();
   expect(route.sourceRoomIds).not.toContain('grp.miguel');
   expect(route.reason).toMatch(/no se pudo comprobar la membresía/i);
-  // Y sigue sin llevar la palabra en inglés a la pantalla.
+  // And it still does not bring the English word to the screen.
   expect(route.reason).not.toContain('UNKNOWN');
 });
 

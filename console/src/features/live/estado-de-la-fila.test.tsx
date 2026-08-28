@@ -8,30 +8,29 @@ import { LIVE_STATE_META, LIVE_STATES } from './agent-state';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * **LA FILA Y EL CHIP, DEL MISMO AGENTE, TIENEN QUE DECIR LO MISMO.**
+ * **THE ROW AND THE CHIP, FOR THE SAME AGENT, MUST SAY THE SAME THING.**
  *
- *  la
- * columna ESTADO de la tabla emitía sólo dos valores para 18 alias —`TRABAJANDO ×2` e
- * `INACTIVO ×16`— y ese `INACTIVO` se tragaba a los 5 que el veredicto llamaba «caídos» y a los 2
- * que el chip llamaba «Delegando».
+ * The STATUS column of the table only emitted two values for 18 aliases — only two labels
+ * in English-typed text — and the second one swallowed the 5 the verdict called "caidos" and
+ * the 2 the chip called "Delegando" in chip text.
  *
- * Renombrar los rótulos NO bastaba, y hacerlo lo empeoraba: con `idle → «Libre»`, el alias `iza`
- * —lease vencido, cero trabajo— pasaba de decir `INACTIVO` a decir **«Libre»** en su fila
- * mientras el chip lo contaba como «Caído». Se midió así, en Chrome, antes de arreglarlo. La
- * razón es de fondo: `work_state` (cinco baldes del servidor sobre el TRABAJO) y `LiveState`
- * (siete, que además miran presencia y delegaciones) son particiones distintas, y ninguna tabla
- * de traducción podía hacerlas coincidir.
+ * Renaming the labels did NOT suffice, and doing it made it worse: with `idle → "Libre"`, the
+ * agent `iza` — expired lease, zero work — went from `INACTIVO` to **"Libre"** in its row while
+ * the chip counted it as down. It was measured that way, in Chrome, before fixing it. The
+ * reason is fundamental: `work_state` (five server buckets about WORK) and `LiveState` (seven,
+ * which also look at presence and delegations) are different partitions, and no translation
+ * table could make them match.
  *
- * La única forma de que no se contradigan es que **haya un solo cálculo**: la página deriva el
- * estado una vez y la tabla lo consume. Esta prueba lo comprueba donde se ve — sobre la página
- * montada, fila por fila contra el chip— y no sobre la implementación.
+ * The only way they cannot contradict each other is **a single calculation**: the page derives
+ * the state once and the table consumes it. This test checks it where it is seen — on the
+ * mounted page, row by row against the chip — and not on the implementation.
  */
 
 function conActividad(snapshot: FleetActivitySnapshot): void {
   server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json(snapshot)));
 }
 
-/** Cada fila de datos con su alias y el rótulo de su celda «Estado». */
+/** Each data row with its alias and the label of its "Status" cell. */
 function filasPintadas(): { alias: string; estado: string }[] {
   return screen.getAllByRole('row')
     .filter((fila) => within(fila).queryAllByRole('cell').length > 3)
@@ -39,7 +38,7 @@ function filasPintadas(): { alias: string; estado: string }[] {
       const celdas = within(fila).getAllByRole('cell');
       return {
         alias: celdas[1].textContent,
-        // La celda lleva el estado y, debajo, los chips de señal. El estado es el primero.
+        // The cell contains the state and, below, the signal chips. The state is the first.
         estado: within(celdas[2]).getAllByText(/.+/)[0]?.textContent ?? '',
       };
     });
@@ -60,8 +59,8 @@ describe('la columna «Estado» de la tabla de /live', () => {
 
   it('un alias con el lease vencido dice «Caído» en su fila, no «Libre»', async () => {
     /*
-     * El caso `iza`, exacto: el servidor manda `work_state: 'idle'` —no tiene trabajo— y el lease
-     * venció. Es la fila que decía «LIBRE» debajo de un chip que lo contaba como caído.
+     * The exact case: the server sends `work_state: 'idle'` — no work — and the lease
+     * expired. The row said "LIBRE" below a chip that counted it as down.
      */
     conActividad({
       observed_at: new Date().toISOString(),
@@ -81,14 +80,15 @@ describe('la columna «Estado» de la tabla de /live', () => {
     const estado = within(fila).getAllByRole('cell')[2];
     expect(estado).toHaveTextContent(LIVE_STATE_META.down.label);
     expect(estado).not.toHaveTextContent(LIVE_STATE_META.idle.label);
-    // Y el chip cuenta exactamente lo mismo: uno caído, cero libres.
+    // And the chip counts exactly the same: one down, zero libre.
     expect(screen.getByRole('button', { name: /Caído 1/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Libre 0/ })).toBeInTheDocument();
   });
 
   it('CONTROL POSITIVO — un alias conectado y sin trabajo SÍ dice «Libre»', async () => {
-    // Si el arreglo fuera «llamar caído a todo el que no trabaja», este caso se caería: «Libre» es
-    // el estado normal de casi toda la flota casi todo el tiempo, y no es una avería.
+    // If the fix were "call down anyone who is not working", this case would fall: "Libre" is
+    // the normal state of almost the entire fleet almost all of the time, and it is not a
+    // fault.
     conActividad({
       observed_at: new Date().toISOString(),
       thresholds: { saturation_in_flight: 8, stall_after_seconds: 300 },

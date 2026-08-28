@@ -21,14 +21,14 @@ import {
 import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 /**
- * `POST /v3/terminal/relay/read` sobre un servidor HTTPS de verdad y una `AgentConnection` de
- * verdad. No hay dobles en el camino: lo que se comprueba es lo que sale por el cable y lo que
- * entra por el socket, que es justo lo que un doble diría bien sin que lo estuviera.
+ * `POST /v3/terminal/relay/read` against a real HTTPS server and a real `AgentConnection`. No
+ * doubles in the path: we check what goes on the wire and what enters the socket, which is
+ * exactly what a double would claim to do well without actually doing it.
  *
- * Lo único que no se levanta aquí es el TLS **mutuo**. Eso no lo pone este módulo: lo pone
- * `createBrowserHttpsServer`, con `requestCert`/`rejectUnauthorized`, y montarlo aquí sólo probaría
- * que `node:tls` sabe verificar certificados. El servidor de estos tests usa el mismo `node:https`
- * y el mismo oyente `request`, que es la superficie que este fichero SÍ escribe.
+ * What is NOT set up here is mutual TLS. That is not owned by this module: it is owned by
+ * `createBrowserHttpsServer`, with `requestCert`/`rejectUnauthorized`, and wiring it here would
+ * only prove `node:tls` knows how to verify certificates. The server in these tests uses the same
+ * `node:https` and the same `request` listener, which is the surface this file DOES write.
  */
 
 const TOKEN = 'token-compartido-con-el-gateway-0123456789';
@@ -45,10 +45,10 @@ const HELLO = agentHello({
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
 const MEMORY_ROOT = '/home/dev/.claude/projects';
-/** Corto a propósito: el test de vencimiento cuesta este tiempo de reloj y nada más. */
+/** Intentionally short: the expiry test only costs this much clock time and nothing else. */
 const TIEMPO_LIMITE_MS = 300;
 
-/** Registra lo que el relay pone en el cable, para poder leer el `request_id` que generó. */
+/** Records what the relay puts on the wire, so we can read the `request_id` it generated. */
 class FakeAgentSocket {
   readonly written: Buffer[] = [];
 
@@ -82,7 +82,7 @@ let conexiones: Map<string, AgentConnection>;
 let token: () => Promise<string>;
 const vivos: AgentConnection[] = [];
 
-/** Material TLS de usar y tirar, con el mismo openssl del sistema que usa el arnés de interop. */
+/** Throwaway TLS material, using the same system openssl as the interop harness. */
 function certificadoEfimero(): { cert: Buffer; key: Buffer; directory: string } {
   const directory = mkdtempSync(join(tmpdir(), 'cauce-gov-relay-'));
   const keyPath = join(directory, 'key.pem');
@@ -109,8 +109,8 @@ interface Respuesta {
 }
 
 /**
- * Una llamada HTTPS real contra el listener. Se pasa la CA en vez de desactivar la verificación:
- * un test que acepte cualquier certificado no comprueba que el servidor presenta el suyo.
+ * A real HTTPS call against the listener. Passes the CA rather than disabling verification: a
+ * test that accepts any certificate does not prove the server is presenting its own.
  */
 async function pedir(opciones: {
   cuerpo?: string;
@@ -204,7 +204,7 @@ function readDone(requestId: string): Frame {
   return frame;
 }
 
-/** READ_DATA lleva el `request_id` como prefijo de 36 bytes ASCII. */
+/** READ_DATA carries the `request_id` as a 36-byte ASCII prefix. */
 function readData(requestId: string, data: Buffer): Frame {
   const frame = new FrameDecoder().push(
     encodeFrame(FRAME_TAGS.READ_DATA, Buffer.concat([Buffer.from(requestId, 'ascii'), data]))
@@ -244,7 +244,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // El ping es un `setInterval`: sin esto cada test se deja un temporizador vivo detrás.
+  // The ping is a setInterval: without this, each test leaves a live timer behind.
   while (vivos.length > 0) vivos.pop()?.destroy('test_over');
 });
 
@@ -298,8 +298,8 @@ describe('la lectura llega al agente y vuelve', () => {
     connection.handleFrame(readErr(await esperarRequestId(socket), 'symlink_detected', 'apunta a otro sitio'), Date.now);
 
     const respuesta = await pendiente;
-    // 200 con un fallo de LECTURA: la llamada llegó y se contestó. El modal necesita el motivo,
-    // no un código de transporte que no dice nada de lo que pasó dentro del contenedor.
+    // 200 with a READ failure: the call arrived and was answered. The modal needs the reason,
+    // not a transport code that says nothing about what happened inside the container.
     expect(respuesta.status).toBe(200);
     expect(cuerpo(respuesta)).toEqual({ error: 'symlink_detected', reason: 'apunta a otro sitio' });
   });
@@ -325,8 +325,8 @@ describe('la lectura falla explicando por qué', () => {
       error: 'unavailable',
       reason: 'el pty-agent de ese alias no sabe leer ficheros de gobierno'
     });
-    // Lo que de verdad se comprueba: no salió una sola trama. Un READ a un agente anterior a esta
-    // versión es una violación de protocolo para él, y se lleva por delante sus terminales abiertas.
+    // What is really checked: not a single frame went out. A READ to a pre-feature agent is a
+    // protocol violation for it and takes its open terminals down with it.
     expect(socket.frames()).toEqual([]);
   });
 
@@ -414,7 +414,7 @@ describe('el índice de memoria tiene un endpoint y contrato propios', () => {
         },
       },
     );
-    request.on('error', () => { /* ECONNRESET esperado por la cancelación del cliente. */ });
+    request.on('error', () => { /* ECONNRESET expected from client cancellation. */ });
     request.end(payload);
     await esperarRequestId(socket);
 
@@ -453,8 +453,8 @@ describe('la puerta se cierra antes de tocar al agente', () => {
 
     expect(respuesta.status).toBe(401);
     expect(respuesta.body).toBe('');
-    // Control negativo: el mismo agente que en el test de arriba SÍ recibe una trama. Sin esto,
-    // un 401 que además rompiera la búsqueda de conexiones pasaría por bueno.
+    // Negative control: the same agent in the test above DOES receive a frame. Without this,
+    // a 401 that also broke connection lookup would pass.
     expect(socket.frames()).toEqual([]);
   });
 
@@ -479,8 +479,8 @@ describe('la puerta se cierra antes de tocar al agente', () => {
 
     const respuesta = await pedir();
 
-    // Un fallo del relay no se puede disfrazar de credencial mala del que llama: el gateway
-    // reintentaría con otra credencial toda la noche buscando un problema que no es suyo.
+    // A relay failure cannot be disguised as a bad caller credential: the gateway would retry
+    // with another credential all night chasing a problem that is not theirs.
     expect(respuesta.status).toBe(503);
     expect(cuerpo(respuesta)).toEqual({ error: 'unavailable' });
   });
@@ -509,8 +509,8 @@ describe('la puerta se cierra antes de tocar al agente', () => {
       cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: 'CLAUDE.md' })
     });
     const nula = await pedir({
-      // El byte nulo se escribe así y no dentro del literal: un NUL crudo en el fuente es
-      // invisible al leerlo y cualquiera lo borra sin darse cuenta de que era el test.
+      // The NUL byte is written this way and not inside the literal: a raw NUL in source is
+      // invisible when reading, and anyone would delete it without realizing it was the test.
       cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: `/home/dev/${String.fromCharCode(0)}CLAUDE.md` })
     });
 
@@ -523,8 +523,8 @@ describe('la puerta se cierra antes de tocar al agente', () => {
       cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: `/${'a'.repeat(600_000)}` })
     });
 
-    // 413 y no una conexión cortada: si el relay tira el socket, el gateway ve «conexión caída» y
-    // nunca se entera de por qué le rechazaron la llamada.
+    // 413 instead of a dropped connection: if the relay kills the socket, the gateway sees
+    // "connection dropped" and never learns why the call was rejected.
     expect(respuesta.status).toBe(413);
     expect(cuerpo(respuesta)).toMatchObject({ error: 'invalid_request' });
   });

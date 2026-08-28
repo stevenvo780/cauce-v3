@@ -13,15 +13,15 @@ describe('cuándo un hilo está mirando el final', () => {
   });
 
   /**
-   * El caso que importa: el operador subió a leer. A partir de acá los mensajes nuevos NO pueden
-   * arrastrarlo, o la vista le mueve el texto de debajo del ojo cada 2,5 segundos —que es cada
-   * cuánto releen los mensajes—.
+   * The case that matters: the operator scrolled up to read. From here on new messages CANNOT
+   * drag them along, or the view moves the text from under their eyes every 2.5 seconds — which
+   * is how often messages are re-read.
    */
   it('deja de estar pegado en cuanto el operador sube más que el margen', () => {
     expect(estaPegadoAlFinal({
       scrollTop: 10_499 - MARGEN_PEGADO - 1, scrollHeight: 10_976, clientHeight: 477,
     })).toBe(false);
-    // Y el caso medido en producción: recién abierto, arriba del todo, a 10.976 px del final.
+    // And the case measured in production: just opened, all the way up, 10,976 px from the end.
     expect(estaPegadoAlFinal({ scrollTop: 0, scrollHeight: 10_976, clientHeight: 477 })).toBe(false);
   });
 

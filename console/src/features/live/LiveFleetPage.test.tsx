@@ -17,9 +17,9 @@ beforeEach(() => {
 
 describe('el veredicto', () => {
   it('nunca queda en verde si el fetch falla: se degrada a ámbar «No lo sé»', async () => {
-    // A2 del expediente. Se sirve UNA lectura buena y después se rompe el endpoint, que es
-    // exactamente lo que pasa cuando el gateway se cae con la consola ya abierta: el snapshot
-    // anterior sigue en pantalla y sigue pareciendo fresco. Un cartel verde encima de eso miente.
+    // A2. Serve ONE good reading and then break the endpoint, which is exactly what happens when
+    // the gateway goes down with the console already open: the previous snapshot stays on screen
+    // and still looks fresh. A green banner on top of that lies.
     let llamadas = 0;
     server.use(http.get('http://localhost/v3/console/activity', () => {
       llamadas += 1;
@@ -67,8 +67,8 @@ describe('el veredicto', () => {
   });
 
   it('las tres cifras llevan la definición del SERVIDOR en el tooltip, no en el rótulo', async () => {
-    // La fila de cinco `Metric` que esto reemplaza tenía por rótulo la expresión SQL. El dato no
-    // se pierde —hace falta para contrastar un número dudoso—, cambia de sitio.
+    // The row of five `Metric` this replaces used the SQL expression as its label. The data is
+    // not lost — it is needed to cross-check a doubtful number — it moves.
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
@@ -82,9 +82,9 @@ describe('el veredicto', () => {
 
 describe('la flota en reposo', () => {
   it('se lee tranquila y NINGÚN muñeco parece muerto', async () => {
-    // A1 del expediente, y el escenario que de verdad se ve casi siempre: en producción hay una
-    // entrega en vuelo en toda la base y cero en cola. Una pantalla que sólo se lee bien cuando
-    // hay incendio se lee mal el 95 % del tiempo.
+    // A1, and the scenario that is actually seen most of the time: in production there is one
+    // delivery in flight across the whole base and zero queued. A screen that only reads well
+    // when there is a fire reads badly 95% of the time.
     conActividad(mockActivityEnReposo());
     renderWithApi(<LiveFleetPage />);
 
@@ -94,7 +94,7 @@ describe('la flota en reposo', () => {
     expect(screen.getByText(/La flota está libre/)).toBeInTheDocument();
     expect(screen.getByText(/no es una avería/)).toBeInTheDocument();
 
-    // La palabra bajo cada alias es "libre", nunca "caído".
+    // The word under each alias is "libre", never the down label.
     const palabras = [...document.querySelectorAll('.lhg-bot-word')].map((nodo) => nodo.textContent);
     expect(palabras.length).toBeGreaterThan(0);
     expect(palabras).not.toContain('caído');
@@ -102,9 +102,9 @@ describe('la flota en reposo', () => {
   });
 
   it('la cinta de triage va de lo urgente a lo tranquilo, no en el orden del union', async () => {
-    // El orden del union `LIVE_STATES` es la PRECEDENCIA con la que se decide el estado de un
-    // agente, no una jerarquía de atención: ahí `settled` va antes que `receiving`. En la cinta va
-    // casi al final, porque "una entrega dejó de estar en vuelo" no pide nada por sí solo.
+    // The order of the `LIVE_STATES` union is the PRECEDENCE used to decide an agent's state, not
+    // an attention hierarchy: there `settled` comes before `receiving`. In the tally it sits near
+    // the end, because "a delivery stopped being in flight" does not ask for anything by itself.
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
 
@@ -114,12 +114,13 @@ describe('la flota en reposo', () => {
       .map((chip) => chip.textContent.replace(/\d+$/, '').trim());
 
     expect(etiquetas.slice(0, 7)).toEqual([
-      // «Trabado» y no «Bloqueado»: es la palabra que ya usaba el veredicto («trabado hace 22
-      // min»), la que usa la columna ESTADO de la tabla de abajo y la que usa el aviso de la
-      // portada. Eran cuatro palabras para el mismo hecho repartidas por tres pantallas.
+      // "Trabado" and not "Bloqueado": it is the word the verdict already used, the one the
+      // STATUS column of the table below uses, and the one the landing alert uses. Four words
+      // for the same fact spread across three screens.
       'Caído', 'Trabado', 'Delegando', 'Recibiendo', 'Trabajando', 'Salió de vuelo', 'Libre',
     ]);
-    // Y el chip que antes decía «Respondiendo» ya no existe: no había forma de saber si respondió.
+    // And the chip that used to say "Respondiendo" no longer exists: there was no way to know
+    // if it actually responded.
     expect(etiquetas).not.toContain('Respondiendo');
   });
 
@@ -134,30 +135,31 @@ describe('la flota en reposo', () => {
 
 describe('el mapa', () => {
   /**
-   * Los tres tests que siguen fijan LA regla del mapa, que antes no existía y por eso el dibujo
-   * contradecía a la base de datos en las dos direcciones a la vez.
+   * The three tests that follow fix THE rule of the map, which did not exist before and is why
+   * the drawing contradicted the database in both directions at once.
    *
-   * Regla: **se dibuja un muñeco por cada participante que la actividad reporta —cuyo núcleo es la
-   * tabla `agents`— y la membresía sólo decide en qué recuadro cae.** Antes era al revés: un
-   * muñeco por MEMBRESÍA, con el estado de la actividad pegado encima.
+   * Rule: **draw one bot per participant reported by activity — whose core is the `agents`
+   * table — and membership only decides which box it falls into.** Before it was the opposite:
+   * one bot per MEMBERSHIP, with the activity state glued on top.
    *
-   * Reemplazan al test de «sin reportar», que afirmaba justamente el comportamiento que resultó
-   * ser el defecto: aquel test comprobaba que una membresía sin actividad se dibujara igual, y era
-   * ese dibujo el que ponía en el mapa de la flota a un principal de operador que no es un agente.
-   * Un alias del que no se sabe nada ya no se pinta con un estado inventado: no se pinta.
+   * They replace the "sin reportar" test, which asserted exactly the behavior that turned out to
+   * be the bug: that test checked that a membership without activity was drawn anyway, and it
+   * was that drawing that put on the fleet map an operator principal that is not an agent. An
+   * alias about which nothing is known is no longer painted with an invented state: it is not
+   * painted.
    */
   it('un alias que la actividad reporta y NINGUNA sala declara se dibuja igual, en «sin sala»', async () => {
-    // El caso `gaia`: se dio de alta en `agents` y no aparecía en ninguna parte de la pantalla,
-    // porque el mapa colocaba nodos desde las membresías y ésta no tenía ninguna. Un alta que no
-    // se ve es indistinguible de un alta que no se hizo.
+    // The case: registered in `agents` and not appearing anywhere on the screen, because the
+    // map placed nodes from memberships and this one had none. A registration that is not seen
+    // is indistinguishable from a registration that was not done.
     const base = mockActivity();
     const primero = (base.agents ?? [])[0];
     conActividad({
       ...base,
       agents: [
         ...(base.agents ?? []),
-        // Registrado (`registered: true`), deshabilitado, y sin una sola sala: exactamente la
-        // fila que la vista escondía.
+        // Registered (`registered: true`), disabled, with not a single room: exactly the row
+        // the view was hiding.
         {
           ...primero, alias: 'gaia', tenant_id: 'Miguel', display_name: 'gaia',
           registered: true, agent_enabled: false, rooms: [], flags: [], in_flight: 0, queued: 0,
@@ -176,9 +178,9 @@ describe('el mapa', () => {
   });
 
   it('una membresía que la actividad NO reporta deja de dibujarse: no se inventa su estado', async () => {
-    // El caso `quota-collector`: un principal `operator` con membresía y sin fila en `agents`.
-    // Salía dibujado en el mapa de la flota, pintado «sin reportar», que es una respuesta
-    // inventada sobre algo que el plano de estado no conoce.
+    // The case: an `operator` principal with membership and no row in `agents`. It was drawn on
+    // the fleet map, painted "sin reportar", which is an invented response about something the
+    // state plane does not know.
     const base = mockActivity();
     const soloSteven = (base.agents ?? []).filter((agent) => agent.tenant_id === 'Steven');
     conActividad({ ...base, agents: soloSteven });
@@ -188,14 +190,14 @@ describe('el mapa', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('.lhg-bot').length).toBe(soloSteven.length);
     });
-    // La topología del fixture declara a Pablo, Isa, Jhon y Miguel; ninguno se dibuja.
+    // The fixture topology declares four external tenants; none of them is drawn.
     expect(document.querySelector('[data-agent-key="Isa/salva"]')).toBeNull();
     expect(document.querySelector('.lhg-bot[data-state="unknown"]')).toBeNull();
   });
 
   it('el recuento de muñecos es EXACTAMENTE el de participantes reportados', async () => {
-    // El invariante en una línea. Si alguien vuelve a colgar el dibujo de una segunda fuente,
-    // este número deja de cuadrar el mismo día.
+    // The invariant in one line. If anyone re-hooks the drawing to a second source, this number
+    // stops matching the same day.
     const base = mockActivity();
     conActividad(base);
     renderWithApi(<LiveFleetPage />);
@@ -207,27 +209,26 @@ describe('el mapa', () => {
   });
 
   /**
-   * Los dos chips de DERIVA, montados: uno por dirección.
+   * The two DERIVATION chips, mounted: one per direction.
    *
-   * El contador anterior prometía en su comentario «la diferencia simétrica entre `memberships` y
-   * `agents`» y recorría SÓLO las membresías, así que `sinSala` valía cero para siempre. Ver
-   * `deriva.ts`.
+   * The previous counter promised in its comment "the symmetric difference between `memberships`
+   * and `agents`" and only walked memberships, so `sinSala` was zero forever. See `deriva.ts`.
    *
-   * La medida de cuánto importaba: el fixture de esta misma suite YA traía el caso —`vulcano`
-   * está en `agents` y ninguna sala lo declara— y ninguna prueba lo notaba, porque el chip que
-   * debía contarlo no miraba esa dirección.
+   * How much it mattered: this suite's own fixture ALREADY carried the case — one alias is in
+   * `agents` and no room declares it — and no test noticed, because the chip that should have
+   * counted it was not looking in that direction.
    */
   it('«Sin sala» cuenta el alias del registro sin una sola membresía habilitada — el caso gaia', async () => {
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
-    // Uno, y es `vulcano`: el caso que el fixture traía desde antes de este arreglo.
+    // One, and it is the case the fixture carried before this fix.
     expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
   });
 
   it('dar de alta en el registro y no darle sala sube «Sin sala» el mismo día', async () => {
-    // Caso de agente con registro activo pero cero membresías asignadas.
+    // Case of an agent with an active registry but zero memberships assigned.
     const base = mockActivity();
     const primero = (base.agents ?? [])[0];
     conActividad({
@@ -243,14 +244,14 @@ describe('el mapa', () => {
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
-    // Dos: el `vulcano` que ya estaba, más `gaia`.
+    // Two: the one that was already there, plus the newly added one.
     expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*2/);
   });
 
   it('«Fuera del registro» cuenta la membresía habilitada sin fila en el registro', async () => {
-    // La otra dirección: `quota-collector` es un principal de operador con membresía y sin fila en
-    // `agents`. No es una avería —vive así a propósito— pero si SUBE es que alguien dio un alta o
-    // una baja tocando una sola de las dos tablas.
+    // The other direction: an operator principal with membership and no row in `agents`. It is
+    // not a fault — it lives that way on purpose — but if it GOES UP it means someone added or
+    // removed a row in only one of the two tables.
     conActividad(mockActivity());
     server.use(http.get('http://localhost/v3/console/topology', () => HttpResponse.json({
       ...topology,
@@ -266,14 +267,14 @@ describe('el mapa', () => {
     await screen.findByLabelText('Veredicto de la flota');
 
     expect(await screen.findByTestId('deriva-sin-registro')).toHaveTextContent(/Fuera del registro\s*1/);
-    // Y no se contamina la otra dirección: `vulcano` sigue siendo uno solo.
+    // And the other direction is not contaminated: the other counter stays at one.
     expect(await screen.findByTestId('deriva-sin-sala')).toHaveTextContent(/Sin sala\s*1/);
   });
 
   it('un alta COMPLETA no produce deriva por ninguno de los dos lados', async () => {
-    // El control negativo de las tres pruebas de arriba: si los chips salieran por algo que no es
-    // la deriva, este caso los delataría. `janus` está en `agents` y en `grp.miguel`, y no hay
-    // ninguna otra membresía ni ningún otro participante.
+    // The negative control for the three tests above: if the chips appeared for something that
+    // was not derivation, this case would expose it. The agent is in `agents` and in a single
+    // room, with no other membership and no other participant.
     const base = mockActivity();
     const soloConSala = (base.agents ?? []).filter((agent) => agent.alias === 'janus');
     conActividad({ ...base, agents: soloConSala });
@@ -290,8 +291,8 @@ describe('el mapa', () => {
   });
 
   it('el globo del muñeco se abre CON EL FOCO DE TECLADO y cierra con Esc', async () => {
-    // A4 del expediente. El `title` nativo del SVG nunca aparecía al tabular, así que quien
-    // recorre el mapa con el teclado no tenía forma de leer qué hace cada agente.
+    // A4. The native SVG `title` never appeared when tabbing, so whoever traversed the map with
+    // the keyboard had no way to read what each agent does.
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
@@ -303,23 +304,23 @@ describe('el mapa', () => {
       return encontrados;
     });
 
-    // `focus()` sobre un nodo SVG dispara estado de React fuera del ciclo de eventos de
-    // userEvent: sin `act` el aviso ensucia la salida de toda la suite, y una suite ruidosa es
-    // una suite en la que el aviso que sí importa pasa desapercibido.
+    // `focus()` on an SVG node triggers React state outside userEvent's event cycle: without
+    // `act` the warning pollutes the whole suite's output, and a noisy suite is one where the
+    // warning that actually matters goes unnoticed.
     act(() => { nodos[0].focus(); });
     const globo = await screen.findByRole('tooltip');
     expect(globo.textContent).toBeTruthy();
 
     await user.keyboard('{Escape}');
-    // El globo del mapa se cierra al perder el foco; Esc lo suelta igualmente sin dejar rastro.
+    // The map balloon closes when it loses focus; Esc dismisses it the same way without trace.
     act(() => { nodos[0].blur(); });
     await waitFor(() => { expect(screen.queryByRole('tooltip')).not.toBeInTheDocument(); });
   });
 
   it('conmuta a la capa de permisos sin mover un solo muñeco de sitio', async () => {
-    // Las salas y las posiciones tienen que ser IDÉNTICAS entre las dos capas: si el dibujo se
-    // reorganiza al conmutar, comparar "quién puede" con "quién está" deja de ser posible de un
-    // vistazo y hay que volver a buscar a cada agente.
+    // Rooms and positions must be IDENTICAL across the two layers: if the drawing reorganizes
+    // when toggling, comparing "who can" with "who is" is no longer possible at a glance and each
+    // agent has to be searched for again.
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
@@ -335,7 +336,7 @@ describe('el mapa', () => {
 
     const despues = [...document.querySelectorAll('.lhg-bot')].map((nodo) => nodo.getAttribute('transform'));
     expect(despues).toEqual(antes);
-    // Y las flechas cambian de significado: aristas ACL en vez de entregas en vuelo.
+    // And the arrows change meaning: ACL edges instead of in-flight deliveries.
     expect(document.querySelectorAll('.lhg-flow-acl-line').length).toBeGreaterThan(0);
     expect(document.querySelectorAll('.lhg-flow-line').length).toBe(0);
   });
@@ -372,7 +373,7 @@ describe('el cajón', () => {
 
     const cajon = await screen.findByRole('complementary', { name: /detalle de zeus/i });
     expect(within(cajon).getByRole('heading', { level: 2, name: 'zeus' })).toBeInTheDocument();
-    // El mapa NO desapareció: no se navegó a ningún sitio.
+    // The map did NOT disappear: we did not navigate anywhere.
     expect(document.querySelector('.lhg-svg')).toBeTruthy();
     expect(window.location.pathname).toBe('/live');
     expect(window.location.search).toContain('agente=Steven%2Fzeus');
@@ -393,15 +394,15 @@ describe('el cajón', () => {
     expect(within(cajon).getByText('Instancia')).toBeInTheDocument();
     expect(within(cajon).getByText('Último latido')).toBeInTheDocument();
     expect(within(cajon).getByText('Lease vence')).toBeInTheDocument();
-    // Los cuatro salen del snapshot de actividad que la página ya tenía: cero fetch nuevo. Sólo
-    // `capabilities` necesita /v3/status, y por eso se pide recién al abrir esta pestaña.
+    // All four come from the activity snapshot the page already had: zero new fetches. Only
+    // `capabilities` needs /v3/status, which is why it is requested only when this tab opens.
     expect(within(cajon).getByText('118')).toBeInTheDocument();
     expect(await within(cajon).findByText('ack')).toBeInTheDocument();
   });
 
   it('se abre también CON EL TECLADO: el clic en la fila es un atajo, no el único camino', async () => {
-    // Un `<tr onClick>` es una acción que sólo existe para el ratón. El nombre del agente es un
-    // botón real, así que la misma acción está en el tabulador.
+    // A `<tr onClick>` is an action that exists only for the mouse. The agent name is a real
+    // button, so the same action is reachable via the keyboard.
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
@@ -442,9 +443,9 @@ describe('el cajón', () => {
   });
 
   it('NO ofrece ninguna acción destructiva: la entrega se enlaza a Queues, no se reintenta acá', async () => {
-    // A9 del expediente. Esta vista se auto-refresca cada cuatro segundos y se reordena sola por
-    // urgencia: entre leer una fila y hacer clic, la fila pudo haberse movido. Es el peor sitio
-    // posible para un botón que destruye.
+    // A9. This view self-refreshes every four seconds and reorders itself by urgency: between
+    // reading a row and clicking it, the row may have moved. The worst place for a destructive
+    // button.
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
@@ -459,8 +460,8 @@ describe('el cajón', () => {
   });
 
   it('en ningún sitio de la vista aparece el TEXTO de un encargo', async () => {
-    // A8. No es una elección de la UI que se pueda revisar: /activity no selecciona cuerpos de
-    // mensaje, el dato no entra siquiera al result set. Esto lo afirma desde la pantalla.
+    // A8. Not a UI choice that can be revisited: /activity does not select message bodies, the
+    // data does not even enter the result set. This asserts it from the screen.
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);

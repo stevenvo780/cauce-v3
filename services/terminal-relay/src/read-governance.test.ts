@@ -13,10 +13,10 @@ import { requestFileRead } from './gateway-client.js';
 import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
 /**
- * Lectura de ficheros de gobierno por el cable del pty-agent.
+ * Reading governance files over the pty-agent wire.
  *
- * Se prueba contra la `AgentConnection` de verdad, no contra un doble: lo que hay que verificar es
- * justamente el decodificado de tramas y el reensamblado, que es donde un doble mentiría.
+ * Tested against the real `AgentConnection`, not a double: what must be verified is precisely
+ * the frame decoding and reassembly, which is where a double would lie.
  */
 
 const HELLO = agentHello({
@@ -31,7 +31,7 @@ const HELLO = agentHello({
 
 const RUTA = '/home/dev/.claude/CLAUDE.md';
 
-/** Registra lo que el relay pone en el cable, para poder leer el `request_id` que generó. */
+/** Records what the relay puts on the wire, so we can read the `request_id` it generated. */
 class FakeAgentSocket {
   destroyed = false;
   readonly written: Buffer[] = [];
@@ -52,7 +52,7 @@ class FakeAgentSocket {
     return this as unknown as TLSSocket;
   }
 
-  /** Las tramas que el relay mandó, ya decodificadas. */
+  /** The frames the relay sent, already decoded. */
   frames(): Frame[] {
     return new FrameDecoder().push(Buffer.concat(this.written));
   }
@@ -73,11 +73,11 @@ function conectar(hello: Partial<AgentHello> = {}): Harness {
 }
 
 afterEach(() => {
-  // El ping es un `setInterval`: sin esto cada test se deja un temporizador vivo detrás.
+  // The ping is a setInterval: without this, each test leaves a live timer behind.
   while (vivos.length > 0) vivos.pop()?.destroy('test_over');
 });
 
-/** El `request_id` que el relay puso en la trama READ. Falla si no mandó ninguna. */
+/** The `request_id` the relay put on the READ frame. Fails if none was sent. */
 function requestIdEnviado(socket: FakeAgentSocket): string {
   const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
   expect(read, 'el relay no mandó ninguna trama READ').toBeDefined();
@@ -102,7 +102,7 @@ function readOk(requestId: string, overrides: Record<string, unknown> = {}): Fra
   return frame;
 }
 
-/** READ_DATA lleva el `request_id` como prefijo de 36 bytes ASCII, igual que STDOUT la sesión. */
+/** READ_DATA carries the `request_id` as a 36-byte ASCII prefix, the same way STDOUT carries the session. */
 function readData(requestId: string, data: Buffer): Frame {
   const payload = Buffer.concat([Buffer.from(requestId, 'ascii'), data]);
   const frame = new FrameDecoder().push(encodeFrame(FRAME_TAGS.READ_DATA, payload))[0];
@@ -134,8 +134,8 @@ describe('el hello declara qué sabe hacer el agente', () => {
       image_id: 'sha256:beef', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
       agent_version: '0.3.0', modes: ['shell']
     })));
-    // Que entre es lo importante: si `features` fuese obligatorio, desplegar el relay antes que
-    // el agente dejaría a la flota entera sin terminales.
+    // That it gets through is the point: if `features` were mandatory, deploying the relay before
+    // the agent would leave the entire fleet without terminals.
     expect(hello).toBeDefined();
     expect(hello?.features).toEqual([]);
   });
@@ -228,8 +228,8 @@ describe('requestFileRead no pregunta cuando no debe', () => {
       error: 'unavailable',
       reason: 'el pty-agent de ese alias no sabe leer ficheros de gobierno'
     });
-    // Lo que de verdad se comprueba: no salió una sola trama. Un READ a un agente viejo es una
-    // violación de protocolo para él, y se lleva por delante todas sus terminales abiertas.
+    // What is really checked: not a single frame went out. A READ to an old agent is a protocol
+    // violation for it and takes all its open terminals down with it.
     expect(socket.frames()).toEqual([]);
   });
 
@@ -271,8 +271,8 @@ describe('requestFileRead decodifica y acumula la respuesta', () => {
     const body = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
     expect(body.kind).toBe('file');
     expect(body.path).toBe(RUTA);
-    // Tiene que ser un UUID en minúsculas con guiones: viaja como prefijo de 36 bytes de los
-    // READ_DATA, y el agente no puede codificarlos con otra cosa.
+    // Must be a lowercase dashed UUID: it travels as a 36-byte prefix of every READ_DATA, and
+    // the agent cannot encode them any other way.
     expect(body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
     expect(String(body.request_id)).toHaveLength(SESSION_ID_BYTES);
 
@@ -305,8 +305,8 @@ describe('requestFileRead decodifica y acumula la respuesta', () => {
     const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
     const id = requestIdEnviado(socket);
 
-    // El pty-agent corta por BYTES, así que una «ó» puede quedar a caballo entre dos tramas. Si
-    // se decodificara trama a trama saldrían dos caracteres de reemplazo en vez de la letra.
+    // The pty-agent splits by BYTES, so an accented letter can straddle two frames. Decoding per
+    // frame would produce two replacement characters instead of the letter.
     const texto = Buffer.from('dirección', 'utf8');
     const corte = texto.indexOf(0xc3) + 1;
     connection.handleFrame(readOk(id, { chunks: 2, bytes: texto.byteLength }), Date.now);

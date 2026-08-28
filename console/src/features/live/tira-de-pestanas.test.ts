@@ -3,14 +3,14 @@ import { leerCss } from '../../test/leer-css';
 import { cuerposDeSelector as cuerpos, sinComentarios } from '../../test/css-parser';
 
 /**
- * Verificación de envoltura flex para la tira de pestañas del cajón de agentes:
- * asegura que `.agent-drawer-tabs` declare `flex-wrap: wrap` para evitar desbordes horizontales.
+ * Verification of flex wrapping for the agent drawer tab strip:
+ * ensures `.agent-drawer-tabs` declares `flex-wrap: wrap` to prevent horizontal overflow.
  */
 const HOJA = leerCss('features/live/live.css');
-/** Sin comentarios: si no, un `flex-wrap: wrap` citado en la prosa contaría como declaración. */
+/** Without comments: otherwise a `flex-wrap: wrap` quoted in prose would count as a declaration. */
 const SIN_COMENTARIOS = sinComentarios(HOJA);
 
-/** Valor efectivo de una propiedad: el de la ÚLTIMA regla que la declara. */
+/** Effective value of a property: the one of the LAST rule declaring it. */
 function valor(css: string, selector: string, propiedad: string): string | undefined {
   const encontrados = cuerpos(css, selector)
     .map((cuerpo) => new RegExp(`(?:^|;)\\s*${propiedad}\\s*:\\s*([^;]+)`).exec(cuerpo)?.[1].trim())

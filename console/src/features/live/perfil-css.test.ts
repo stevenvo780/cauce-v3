@@ -3,10 +3,10 @@ import { leerCss } from '../../test/leer-css';
 import { cuerposDeSelector as cuerpos, sinComentarios } from '../../test/css-parser';
 
 /**
- * Verificación de reglas CSS y layout para el editor de perfil en el cajón de agentes.
+ * Verification of CSS and layout rules for the profile editor in the agent drawer.
  */
 const HOJA = leerCss('features/live/live.css');
-/** Sin comentarios: si no, un `@container` citado en la prosa contaría como declaración. */
+/** Without comments: otherwise a `@container` quoted in prose would count as a declaration. */
 const SIN_COMENTARIOS = sinComentarios(HOJA);
 
 describe('el editor de perfil tiene sitio donde caber', () => {
@@ -45,7 +45,7 @@ describe('el editor de perfil tiene sitio donde caber', () => {
       const m = /font-size:\s*(\d+(?:\.\d+)?)px/.exec(linea);
       if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(12.5);
     }
-    // Y que la prueba no sea vacua: el bloque del perfil SÍ declara tamaños de tipo.
+    // And that the test is not vacuous: the profile block DOES declare font sizes.
     expect(SIN_COMENTARIOS).toMatch(/\.perfil-[a-z-]+[^{]*\{[^}]*font-size/);
   });
 });

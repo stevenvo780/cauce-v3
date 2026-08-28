@@ -7,14 +7,14 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * EL DIARIO LEGACY Y SU PUENTE AL PERFIL CANÓNICO, probados desde la página viva.
+ * THE LEGACY JOURNAL AND ITS BRIDGE TO THE CANONICAL PROFILE, tested from the live page.
  *
- * Recuperar una revisión nunca escribe `agents.role_brief`: termina en `role_summary`, dentro del
- * editor Perfil. Un test del componente suelto pasaría aunque el botón reabriera el POST genérico,
- * por eso el recorrido se prueba desde la página viva.
+ * Recovering a revision never writes `agents.role_brief`: it ends up in `role_summary`, inside
+ * the Profile editor. A loose component test would pass even if the button reopened the generic
+ * POST, which is why the flow is tested from the live page.
  *
- * El borrador conserva los demás campos del perfil, pasa por sus topes estrictos y sólo se guarda
- * por el PUT canónico con CAS y ACK del runtime.
+ * The draft keeps the other profile fields, goes through its strict caps, and is only saved via
+ * the canonical PUT with CAS and runtime ACK.
  */
 
 beforeEach(() => {
@@ -52,7 +52,7 @@ it('enseña los cambios del rol, el más nuevo arriba, dentro del mismo cajón',
 
   const titulos = within(dialogo).getAllByText(/^Se (reescribió el rol|le puso rol por primera vez)$/);
   expect(titulos[0]).toHaveTextContent('Se reescribió el rol');
-  // Se sigue en /live: la vuelta atrás no manda al operador a otra vista.
+  // We stay on /live: the back navigation does not send the operator to another view.
   expect(window.location.pathname).toBe('/live');
 });
 
@@ -187,8 +187,8 @@ it('recuperar un alta se rotula como borrador vacío, no como borrado inmediato 
 });
 
 it('un texto recuperado pasa por el tope estricto de role_summary antes del PUT', async () => {
-  // 2.500 puntos de código son 5.000 unidades UTF-16: el tope canónico es 4.000 y Perfil debe
-  // bloquear el guardado antes de intentar cualquier escritura.
+  // 2,500 code points are 5,000 UTF-16 units: the canonical cap is 4,000 and Profile must
+  // block saving before attempting any write.
   const viejo = '🙂'.repeat(2500);
   conHistorial([{
     id: '1', tenant_id: 'Steven', alias: 'kant', operation: 'update',
@@ -268,9 +268,10 @@ it('el texto anterior se puede leer entero sin alterar la proyección', async ()
 });
 
 /**
- * El hueco de herramientas y prompts pasó a ser un renglón plegable en el PIE del diálogo. Abierto
- * medía 679 px —casi lo mismo que la capa 1, la única editable— y encabezaba como si fuera una
- * capa más, cuando es una nota de alcance. Sigue diciéndose entero: se pliega, no se borra.
+ * The tools and prompts gap became a collapsible line in the FOOTER of the dialog. Open it
+ * measured 679 px — almost the same as layer 1, the only editable one — and it led as if it
+ * were another layer, when it is a scope note. It is still said in full: it folds, it is not
+ * deleted.
  */
 async function abrirPendientesDeKant() {
   const user = userEvent.setup();
@@ -285,7 +286,7 @@ async function abrirPendientesDeKant() {
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
 
   const resumen = within(dialogo).getByText(/lo que todavía no se puede desde aquí/i);
-  // Cerrado por defecto: es lo que recorta el alto. Si alguien lo abre de fábrica, esto se pone rojo.
+  // Closed by default: that is what trims the height. If someone opens it from the factory, this goes red.
   expect(resumen.closest('details')?.open).toBe(false);
   await user.click(resumen);
   return within(dialogo).getByText(/lo que todavía no se puede desde aquí/i).closest('details') as HTMLElement;
@@ -295,10 +296,10 @@ it('el hueco de herramientas y prompts se DICE, con dónde vive la configuració
   const pendientes = await abrirPendientesDeKant();
   expect(within(pendientes).getByText(/herramientas · qué puede usar y qué no/i)).toBeInTheDocument();
   expect(within(pendientes).getByText(/prompts · falta acordar qué son/i)).toBeInTheDocument();
-  // Un hueco accionable dice dónde vive la cosa, no sólo que no se puede.
+  // An actionable gap says where the thing lives, not just that it cannot be done.
   expect(within(pendientes).getByText('ws-kant')).toBeInTheDocument();
   expect(within(pendientes).getByText('/home/dev')).toBeInTheDocument();
-  // Y no ofrece ningún botón: uno que no hace nada sería peor que el hueco.
+  // And it offers no button: one that does nothing would be worse than the gap.
   expect(within(pendientes).queryByRole('button')).not.toBeInTheDocument();
 });
 

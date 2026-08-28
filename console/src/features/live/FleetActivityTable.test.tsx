@@ -53,7 +53,7 @@ const BASE: FleetActivitySnapshot = {
       in_flight: 41, started: 39, claimed_not_started: 2, queued: 12, queued_ready: 12, retrying: 3, overdue_in_flight: 41,
       oldest_claimed_at: '2026-07-27T13:31:51.000Z', oldest_in_flight_seconds: 4820,
       nearest_ack_deadline_at: '2026-07-27T13:36:51.000Z', max_attempt: 2,
-      // Nunca aplicó un ACK dentro de la ventana de búsqueda: la señal más grave del panel.
+      // Never applied an ACK inside the search window: the most severe signal of the panel.
       last_ack_at: null, seconds_since_last_ack: null, acks_recent: 0,
       in_flight_items_truncated: true,
       in_flight_items: [
@@ -72,15 +72,15 @@ it('renders agents from GET /v3/console/activity, sorted with the most urgent fi
   renderWithApi(<LiveFleetPage />);
 
   const rows = await screen.findAllByRole('row');
-  // La primera fila de datos (después del header) tiene que ser la colgada, no la alfabética.
+  // The first data row (after the header) must be the stalled one, not the alphabetical one.
   const dataRows = rows.filter((row) => within(row).queryAllByRole('cell').length > 0);
   expect(dataRows[0].textContent).toMatch(/midas/i);
 
-  // El recuento de alias visibles vive ahora en la descripción de la cabecera, no en una tarjeta
-  // rotulada con la expresión SQL que lo produce.
+  // The count of visible aliases now lives in the header description, not on a card labelled with
+  // the SQL expression that produces it.
   expect(screen.getByText(/Los 3 alias que podés ver/)).toBeInTheDocument();
-  // Y las cifras bajaron a la línea de texto del veredicto, en castellano. La definición del
-  // servidor ("leased + accepted + started") sigue disponible: está en el tooltip.
+  // And the figures moved down to the verdict's text line, in Spanish. The server definition
+  // ("leased + accepted + started") is still available: it is in the tooltip.
   expect(screen.getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
 });
 
@@ -97,13 +97,13 @@ it('makes the saturated agent stand out visually with its own badge and highligh
   renderWithApi(<LiveFleetPage />);
 
   const jarvisRow = await screen.findByRole('row', { name: /jarvis/i });
-  // La saturación es una SEÑAL, no un octavo estado: el estado dice «Trabajando» —la misma
-  // palabra que el chip y la leyenda— y el chip de señal dice «Saturado». Antes la fila emitía
-  // «SATURADO» dos veces, una en cada sitio, y ninguna de las dos coincidía con la leyenda.
+  // Saturation is a SIGNAL, not an eighth state: the state says "Trabajando" — the same word as
+  // the chip and the legend — and the signal chip says "Saturado". Before the row emitted
+  // "SATURADO" twice, once in each spot, and neither matched the legend.
   expect(within(jarvisRow).getByText('Trabajando')).toBeInTheDocument();
   expect(within(jarvisRow).getByText('Saturado')).toBeInTheDocument();
-  // UNA sola vez. `work_state: 'saturated'` y `flags: ['saturated']` son dos campos del servidor
-  // para el mismo hecho, y la celda los pintaba los dos: «SATURADO SATURADO».
+  // Only ONCE. `work_state: 'saturated'` and `flags: ['saturated']` are two server fields for the
+  // same fact, and the cell used to paint both: "SATURADO SATURADO".
   expect(within(jarvisRow).getAllByText('Saturado')).toHaveLength(1);
   expect(jarvisRow.className).toContain('row-warning');
 
@@ -118,30 +118,34 @@ it('makes the stalled (incident) agent stand out even harder, and stacks its fla
 
   const midasRow = await screen.findByRole('row', { name: /midas/i });
   /*
-   * midas está `stalled` Y con el lease vencido. La fila dice «Caído» porque es lo que dice su
-   * muñeco: la precedencia de `liveState` pone el lease vencido por encima del estancamiento —un
-   * agente sin lease no va a desatascar nada— y el chip de la cinta lo cuenta como caído. La fila
-   * y el chip tienen que decir LO MISMO; antes decían `COLGADO` y «Caído».
+   * The agent is `stalled` AND with an expired lease. The row shows the down label because that
+   * is what its bot shows: `liveState` precedence puts the expired lease above the stall — an
+   * agent without a lease is not going to unstick anything — and the tally chip counts it as
+   * down. The row and the chip must say THE SAME THING; before they said `COLGADO` and the
+   * down label.
    */
   const celdaEstado = within(midasRow).getAllByRole('cell')[2];
   expect(celdaEstado).toHaveTextContent('Caído');
   expect(midasRow).toHaveAttribute('data-state', 'down');
   expect(midasRow.className).toContain('row-critical');
-  // El agente está saturado Y sin acusar recibo a la vez: las señales conviven, no se pisan.
+  // The agent is both saturated and not acknowledging at the same time: signals coexist, they do
+  // not collide.
   expect(within(midasRow).getByText('Saturado')).toBeInTheDocument();
-  // «Caído» lo dice la columna «Presencia», UNA vez en toda la fila.
-  // «Caído» sale DOS veces en la fila y son dos preguntas distintas cuya respuesta coincide:
-  // la columna «Estado» dice el estado derivado —el mismo que su muñeco, que para un lease
-  // vencido es «Caído» y gana al estancamiento— y la columna «Presencia» dice la presencia.
-  // Lo que sí desaparece es el TERCER «Caído»: el chip `lease_expired` del recuadro de señales.
+  // The down label is shown by the "Presencia" column, ONCE across the whole row.
+  // The down label appears TWICE in the row and they are two different questions whose answer
+  // coincides: the "Estado" column says the derived state — same as its bot, which for an expired
+  // lease is the down label and wins over the stall — and the "Presencia" column says the
+  // presence.
+  // What does disappear is the THIRD down label: the `lease_expired` chip in the signals panel.
   expect(within(midasRow).getAllByText('Caído')).toHaveLength(2);
 
-  // Pero NO se apilan las cinco. «Sin ACK» y «ACK vencido» son la definición de estar trabado,
-  // y «Caído» ya lo dice la columna de al lado: repetirlas no informa cinco veces, informa menos.
-  // Lo medido en producción eran CINCO insignias en una celda para decir «está trabado».
+  // But the five are NOT stacked. "Sin ACK" and "ACK vencido" are the definition of being stalled,
+  // and the down label is already shown by the next column: repeating them does not inform five
+  // times, it informs less.
+  // What was measured in production was FIVE badges in one cell to say "it is stalled".
   const insignias = celdaEstado.querySelectorAll('.badge');
   expect(insignias.length).toBeLessThanOrEqual(3);
-  // Y no se pierde ni una señal medida: el `title=` de la celda las nombra todas.
+  // And not a single measured signal is lost: the cell's `title=` names them all.
   for (const palabra of ['Sin ACK', 'ACK vencido', 'Saturado', 'Caído']) {
     expect(celdaEstado.getAttribute('title')).toContain(palabra);
   }
@@ -161,12 +165,12 @@ it('reflects totals.flagged without inventing zeroes for absent keys, and keeps 
   mockActivityOnce(BASE);
   renderWithApi(<LiveFleetPage />);
 
-  // `flagged` es acumulativo y NO se puede derivar del recuento por estado: midas está saturado Y
-  // colgado a la vez, así que suma en las dos columnas. Por eso este panel sobrevivió a la fusión
-  // mientras que "Por estado" —cinco baldes excluyentes del servidor, una versión más gruesa de
-  // los siete estados que la página ya dibuja— se quitó por redundante.
-  // El `<summary>` del desplegable y el título del panel se llaman igual, así que se busca el
-  // panel por su título dentro del desplegable, no por un texto que aparece dos veces.
+  // `flagged` is cumulative and CANNOT be derived from the per-state count: midas is both
+  // saturated and stalled, so it adds to both columns. That is why this panel survived the
+  // merge while "Por estado" — five exclusive server buckets, a coarser version of the seven
+  // states the page already draws — was removed as redundant.
+  // The fold's `<summary>` and the panel's title share the name, so we look up the panel by its
+  // title inside the fold, not by a text that appears twice.
   const fold = (await screen.findAllByText('Señales activas'))
     .map((nodo) => nodo.closest('section'))
     .find((seccion): seccion is HTMLElement => seccion !== null);

@@ -196,7 +196,7 @@ it('en solo lectura responde DA/DSR por un tipo propio y nunca abre input humano
   const socket = open({ readOnly: true });
   socket.emitControl(ready());
 
-  // Teclado, paste textual, ANSI genérico y mouse no se parecen a una respuesta técnica válida.
+  // Keyboard, text paste, generic ANSI and mouse are not valid technical responses.
   ptySessionType(SESSION, 'whoami\r');
   ptySessionType(SESSION, '\x1b[31m');
   ptySessionType(SESSION, '\x1b[<0;1;1M');
@@ -204,8 +204,8 @@ it('en solo lectura responde DA/DSR por un tipo propio y nunca abre input humano
   expect(socket.framesOfType('input')).toHaveLength(0);
   expect(socket.framesOfType('terminal_response')).toHaveLength(0);
 
-  // Son consultas que xterm procesa al pintar salida remota. Sus respuestas salen por onData,
-  // pero ya etiquetadas como emulador, no como teclado/paste.
+    // They are queries xterm processes while painting remote output. Their replies come out via
+    // onData, but already labelled as emulator, not as keyboard/paste.
   socket.emitOutput('\x1b[c\x1b[>c\x1b[5n\x1b[6n\x1b[?6n');
   await settle();
   expect(socket.framesOfType('terminal_response').map((frame) => frame.data)).toEqual([
@@ -366,8 +366,8 @@ it('reanuda con el fence exacto y conserva como string un epoch mayor a MAX_SAFE
     }));
     expect(readPtySession(SESSION)).toMatchObject({ state: 'open', closeCode: undefined });
 
-    // Un relay distinto puede emitir una generación nueva. El navegador reemplaza la anterior
-    // sólo en esta PtyEntry y devuelve exactamente esa continuidad en el siguiente transporte.
+    // A different relay can emit a new generation. The browser replaces the previous one only in
+    // this PtyEntry and returns exactly that continuity on the next transport.
     resumed.emitClose(1006, 'network_lost_again');
     vi.advanceTimersByTime(PTY_RECONNECT_DELAYS_MS[0]);
     const third = StubWebSocket.last();
@@ -435,12 +435,13 @@ it('rejects endpoints that are not a bare same-origin path', () => {
 });
 
 /* ============================================================================================= *
- * EL SCROLL. Steven, textual: «scroll que se queda abajo si estabas abajo y NO te arrastra si
- * habías subido a leer».
+ * THE SCROLL. Steven, textually: "scroll that stays at the bottom if you were at the bottom and
+ * does NOT drag you along if you had scrolled up to read".
  *
- * Son DOS afirmaciones y hacen falta las dos pruebas: una sola no distingue «sigue el final» de
- * «siempre salta al final», que es justo el defecto. La segunda es el control negativo de la
- * primera: mismo canal, misma salida, lo único que cambia es que el operador subió a leer.
+ * There are TWO assertions and both tests are needed: a single one does not distinguish "follows
+ * the end" from "always jumps to the end", which is exactly the bug. The second is the
+ * negative control of the first: same channel, same output, the only thing that changes is
+ * that the operator scrolled up to read.
  * ============================================================================================= */
 
 it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al final»', async () => {
@@ -459,6 +460,6 @@ it('mientras estás al final, la vista sigue el final y NO se ofrece «volver al
   const despues = ptySessionPosicion(SESSION);
   expect(despues.baseY).toBeGreaterThan(antes.baseY);
   expect(despues.viewportY).toBe(despues.baseY);
-  // Y la vista lo sabe: sin esto el aviso de «hay salida nueva abajo» saldría estando ya abajo.
+  // And the view knows: without this the "new output below" warning would show while already at the bottom.
   expect(readPtySession(SESSION).seguirAlFinal).toBe(true);
 });

@@ -8,19 +8,19 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * EL CONTRATO DE TECLADO Y DE FOCO DEL DIÁLOGO DE DIRECTIVA.
+ * THE KEYBOARD AND FOCUS CONTRACT OF THE DIRECTIVE DIALOG.
  *
- * Esto es exactamente lo que jsdom SÍ puede demostrar: qué elemento tiene el foco, qué escucha
- * Escape, qué atributos ARIA hay y qué pasa al cerrar. Lo que NO puede demostrar —y no se
- * pretende acá— es que el diálogo quepa: jsdom no calcula layout, todas las cajas miden 0. La
- * geometría se midió en Chrome y va en el informe.
+ * This is exactly what jsdom CAN demonstrate: which element has focus, what Escape listens to,
+ * what ARIA attributes exist and what happens when closing. What it CANNOT demonstrate — and
+ * is not attempted here — is that the dialog fits: jsdom does not compute layout, every box
+ * measures 0. Geometry was measured in Chrome and lives in the report.
  *
- * Cada caso de abajo describe un fallo que un modal mal hecho comete de verdad:
- *  · abrir y dejar el foco fuera → el teclado sigue en la página de detrás, apagada;
- *  · cerrar y soltar el foco en `body` → el siguiente tabulador vuelve al principio de la consola;
- *  · Escape sin cortar la propagación → el cajón, que tiene su PROPIO Escape, se cierra también;
- *  · tabulador sin trampa → se sale al fondo inerte y el foco desaparece de la vista;
- *  · el fondo sigue vivo → se puede desplazar y pulsar lo de detrás del velo.
+ * Each case below describes a failure that a poorly-made modal actually commits:
+ *  · open and leave focus outside → the keyboard stays on the page behind, dimmed;
+ *  · close and drop focus on `body` → the next tab returns to the start of the console;
+ *  · Escape without stopping propagation → the drawer, which has its OWN Escape, also closes;
+ *  · tab without trap → it goes to the inert background and focus disappears from view;
+ *  · the background stays alive → one can scroll and click what is behind the veil.
  */
 
 import { configConBrief } from './agent-state-fixtures';
@@ -72,9 +72,9 @@ it('desde la capa manual abre directamente el editor real de ficheros del mismo 
 }, 25_000);
 
 /**
- * Escape cierra el DIÁLOGO y sólo el diálogo. `AgentDrawer` tiene su propio escuchador de Escape
- * en `document` para cerrarse; sin cortar la propagación, una sola pulsación se llevaba los dos
- * por delante y el operador se quedaba mirando el mapa.
+ * Escape closes the DIALOG and only the dialog. `AgentDrawer` has its own Escape listener on
+ * `document` to close itself; without stopping propagation, a single press took both down and
+ * the operator was left looking at the map.
  */
 it('Escape cierra el diálogo y deja el cajón abierto', async () => {
   const { user } = await abrir();
@@ -97,9 +97,9 @@ it('un clic en el velo cierra; un clic dentro del diálogo no', async () => {
 }, 25_000);
 
 /**
- * La trampa de foco: desde el último control, Tab vuelve al primero; desde el primero, Shift+Tab
- * salta al último. Sin esto el tabulador se va al armazón —que está `inert`— y el foco
- * desaparece: no se ve dónde está y no hay forma de volver sin el ratón.
+ * The focus trap: from the last control, Tab returns to the first; from the first, Shift+Tab
+ * jumps to the last. Without this the tab goes to the frame — which is `inert` — and focus
+ * disappears: nobody sees where it is and there is no way back without the mouse.
  */
 it('el tabulador da la vuelta dentro del diálogo en vez de irse al fondo', async () => {
   const { user, dialogo } = await abrir();
@@ -117,13 +117,13 @@ it('el tabulador da la vuelta dentro del diálogo en vez de irse al fondo', asyn
 }, 25_000);
 
 /**
- * El fondo se apaga mientras el diálogo vive, y se enciende al cerrarlo.
+ * The background switches off while the dialog lives, and switches on when it closes.
  *
- * `inert` sobre `.app-shell` corta ratón, tabulador y lector de pantalla. La clase del elemento
- * raíz es lo que corta la RUEDA: medido en Chrome, con el diálogo abierto la página de detrás
- * conservaba 2.894 px de recorrido. Acá se comprueba el MECANISMO —el atributo y la clase—; que
- * la regla CSS que cuelga de esa clase haga efecto se midió en Chrome, porque jsdom no carga la
- * hoja de estilos y `getComputedStyle` devolvería el valor por defecto pase lo que pase.
+ * `inert` on `.app-shell` cuts mouse, tab and screen reader. The class on the root element is
+ * what cuts the WHEEL: measured in Chrome, with the dialog open the page behind kept 2,894 px
+ * of scroll. Here the MECHANISM is checked — the attribute and the class; that the CSS rule
+ * hanging off that class takes effect was measured in Chrome, because jsdom does not load the
+ * stylesheet and `getComputedStyle` would return the default value no matter what.
  */
 it('mientras el diálogo vive, el armazón queda inerte y el cajón marcado como no desplazable', async () => {
   const { user, dialogo } = await abrir();
@@ -133,7 +133,7 @@ it('mientras el diálogo vive, el armazón queda inerte y el cajón marcado como
   expect(document.documentElement).not.toHaveClass('directiva-modal-abierta');
 }, 25_000);
 
-/** La columna legacy no puede reabrir un guardado que omita el ACK del runtime. */
+/** The legacy column cannot reopen a save that omits the runtime ACK. */
 it('la columna 1 muestra la proyección sólo lectura y dirige al perfil canónico', async () => {
   const { dialogo } = await abrir();
   const capa1 = within(dialogo).getByLabelText('Capa 1: rol declarado');

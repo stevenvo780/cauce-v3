@@ -9,7 +9,7 @@ import { DeliveryTable } from './DeliveryTable';
 import { QueuesPage } from './QueuesPage';
 
 /**
- * Pruebas de integración para la gestión, filtrado y acciones sobre colas de entregas.
+ * Integration tests for management, filtering and actions on delivery queues.
  */
 
 /** 38 filas con la misma proporción que producción: 7 en revisión, 31 terminadas bien. */
@@ -59,7 +59,7 @@ describe('llegar a las entregas que hay que revisar', () => {
 
     await user.click(screen.getByRole('button', { name: /dead letters/i }));
 
-    // Las 7: seis `dead` y una `failed`, que TAMBIÉN deja fila en dead_letters y es replayable.
+    // The seven: six `dead` and one `failed`, which ALSO leaves a row in dead_letters and is replayable.
     const filas = filasDeLaTabla();
     expect(filas).toHaveLength(7);
     for (const fila of filas) expect(fila).toHaveTextContent(/zeus/);
@@ -93,8 +93,8 @@ describe('llegar a las entregas que hay que revisar', () => {
   }, 20_000);
 
   /**
-   * CONTROL NEGATIVO del filtro. Que exista no puede cambiar lo que se ve sin tocarlo: sin tocar
-   * nada tienen que seguir estando las 38, que es lo que un operador espera al entrar.
+   * NEGATIVE CONTROL of the filter. Its mere presence cannot change what is seen untouched:
+   * untouched, the 38 must remain, which is what an operator expects on entry.
    */
   it('sin tocar nada siguen estando las 38 filas y ninguna tarjeta apretada', async () => {
     servidorConLas38();
@@ -108,9 +108,9 @@ describe('llegar a las entregas que hay que revisar', () => {
   }, 20_000);
 
   /**
-   * El enlace profundo GANA. Si se combinaran, llegar con `?delivery=` de una entrega en `done`
-   * teniendo el filtro en «revisión» daría cero filas bajo un aviso que dice «filtrado a la
-   * entrega»: la consola afirmando a la vez que la encontró y que no está.
+   * The deep link WINS. If they were combined, landing with `?delivery=` of a `done` delivery
+   * with the "review" filter on would yield zero rows under a notice that says "filtered to the
+   * delivery": the console asserting both that it found it and that it is not there.
    */
   it('con un enlace profundo abierto, las tarjetas no filtran y lo dicen', async () => {
     servidorConLas38();
@@ -138,14 +138,14 @@ describe('la columna «Último error»', () => {
     const celda = celdas[celdas.length - 2];
     expect(celda).toBeDefined();
     expect(celda).toHaveTextContent('sin error');
-    // Y NO con la clase que pinta el ámbar de «el servidor no lo dijo».
+    // And NOT with the class that paints the amber of "the server did not say".
     expect(celda.querySelector('.unknown')).toBeNull();
   }, 20_000);
 
   /**
-   * CONTROL NEGATIVO, y es el que importa: apagar el ámbar donde sobra no puede apagarlo donde
-   * hace falta. Una entrega MUERTA sin motivo es una entrega que nadie puede diagnosticar, y ese
-   * hueco tiene que seguir gritando.
+   * NEGATIVE CONTROL, and the one that matters: turning the amber off where it is excess must
+   * not turn it off where it is needed. A DEAD delivery without a reason is one nobody can
+   * diagnose, and that gap must keep yelling.
    */
   it('🔴 una entrega MUERTA sin motivo sigue marcada como UNKNOWN', async () => {
     servidorConLas38();
@@ -159,7 +159,7 @@ describe('la columna «Último error»', () => {
     expect(celda.querySelector('.unknown')).not.toBeNull();
     expect(celda).not.toHaveTextContent('sin error');
 
-    // Y cuando el servidor sí dice el motivo, se lee el motivo.
+    // And when the server does say the reason, the reason is read.
     const muertaConMotivo = screen.getByRole('row', { name: /muerta-1/ });
     expect(within(muertaConMotivo).getAllByRole('cell').at(-2)).toHaveTextContent('max attempts exhausted');
   }, 20_000);
@@ -186,7 +186,7 @@ describe('la confirmación antes de mover trabajo de la flota', () => {
 
     await user.click(screen.getByRole('button', { name: /replay delivery delivery-dead-1/i }));
 
-    // ESTO es el arreglo: el servidor no recibió nada todavía.
+    // THIS is the fix: the server has not received anything yet.
     expect(intentos).toBe(0);
     const dialogo = await screen.findByRole('alertdialog');
     expect(dialogo).toHaveTextContent(/vuelve a encolar esta entrega/i);

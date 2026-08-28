@@ -7,10 +7,10 @@ import { renderWithApi } from '../../test/render';
 import type { QueueItem } from '../../api/types';
 
 /**
- * Aprieta el botón y CONFIRMA. 
- * con un solo clic: es producción viva y un replay reinyecta trabajo en la cola de un agente que
- * está corriendo. La confirmación se prueba de frente más abajo («un solo clic NO reinyecta»);
- * este ayudante existe para que las pruebas de la ACCIÓN sigan hablando de la acción.
+ * Click the button and CONFIRM. The conflation with a single click is the risk: it is live
+ * production, and a replay re-injects work into the queue of an agent that is running. The
+ * confirmation is tested head-on below ("a single click does NOT replay"); this helper exists
+ * so the action tests stay focused on the action.
  */
 async function confirmar(user: ReturnType<typeof userEvent.setup>, boton: HTMLElement) {
   await user.click(boton);
@@ -19,10 +19,9 @@ async function confirmar(user: ReturnType<typeof userEvent.setup>, boton: HTMLEl
 }
 
 /**
- * `DeliveryTable` se extrajo de `QueuesPage` el 2026-08-22 para que la vista de mensajes pueda
- * montar la MISMA tabla —con las mismas acciones— en vez de una copia. Estas pruebas fijan el
- * contrato de esa reutilización: quien la monta pasa las filas y los permisos, y recibe el aviso de
- * que hay que releer.
+ * `DeliveryTable` was extracted from `QueuesPage` so that the messages view can mount the SAME
+ * table — with the same actions — instead of a copy. These tests fix the contract of that
+ * reuse: whoever mounts it passes the rows and permissions, and gets the read-back notice.
  */
 
 const DEAD_ID = '10000000-0000-4000-8000-000000000001';
@@ -55,19 +54,19 @@ it('la monta cualquier vista con sus propias filas y avisa a su dueño que hay q
 
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
   expect(replayed).toBe(DEAD_ID);
-  // El dueño del snapshot es quien relee: la tabla no muta estado local para simular el efecto.
+  // The snapshot owner is the one who re-reads: the table does not mutate local state to simulate the effect.
   expect(recargas).toBe(1);
 
-  // Cada estado ofrece la acción que le corresponde, y sólo esa.
+  // Each state offers its own action, and only that one.
   const viva = screen.getByRole('row', { name: /zeus/ });
   expect(within(viva).getByRole('button', { name: /cancelar delivery/i })).toBeInTheDocument();
   expect(within(viva).queryByRole('button', { name: /replay delivery/i })).toBeNull();
 });
 
 it('🔴 CONTROL NEGATIVO: sin permiso el botón queda inerte y no sale ni una petición', async () => {
-  // Si `canReplay` se ignorara —por ejemplo montando la tabla en Messages sin pasar el permiso—,
-  // la consola ofrecería una acción que el servidor va a rechazar, y peor: la intentaría. Esta
-  // prueba es la que detecta ese fallo; la de arriba pasaría igual.
+  // If `canReplay` were ignored — for example by mounting the table in Messages without passing
+  // the permission — the console would offer an action the server will reject, and worse: would
+  // attempt it. This test is what catches that failure; the one above would pass the same.
   let intentos = 0;
   server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', () => {
     intentos += 1;
@@ -118,7 +117,7 @@ it('no afirma replay aplicado ante un 2xx sin recibo durable exacto', async () =
   await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') }));
   expect(await screen.findByText(/Resultado incierto del reinyectado/)).toHaveTextContent(/recibo durable exacto/i);
   expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
-  // El efecto remoto pudo aplicarse: se relee la verdad aunque el recibo haya sido ambiguo.
+  // The remote effect may have happened: re-read the truth even if the receipt was ambiguous.
   expect(recargas).toBe(1);
 });
 
@@ -174,18 +173,18 @@ it('trata una cancelación 2xx truncada como incierta y relee sin afirmar que ca
 });
 
 it('con cero filas dice el vacío que le pasa quien la monta, no uno genérico', async () => {
-  // Messages la va a montar filtrada por conversación: «no hay deliveries informadas» sería falso
-  // ahí, porque las hay — no las hay para ESA conversación.
+  // Messages will mount it filtered by conversation: "no deliveries reported" would be a lie there,
+  // because there are some — there are none for THAT conversation.
   renderWithApi(<DeliveryTable rows={[]} canReplay canCancel onChanged={verifiedRefresh} empty="Esta conversación no tiene entregas en cola." />);
   expect(screen.getByText('Esta conversación no tiene entregas en cola.')).toBeInTheDocument();
 });
 
 it('🔴 ofrece replay en «failed», no sólo en «dead»: la extracción no puede perder ese estado', async () => {
-  // Por qué existe: `replayableStates` era una constante DENTRO de QueuesPage y ninguna prueba la
-  // fijaba. Se comprobó por mutación el 2026-08-22 — quitar 'failed' del conjunto dejaba la suite
-  // ENTERA en verde (460/460). O sea que la copia que Messages iba a montar podía nacer sin ese
-  // estado y nadie se enteraba hasta necesitar rescatar una entrega fallida desde la pantalla
-  // equivocada. Ahora el conjunto tiene quien lo guarde.
+  // Why this exists: `replayableStates` was a constant INSIDE QueuesPage and no test pinned it.
+  // Verified by mutation: removing 'failed' from the set left the WHOLE suite green. That is,
+  // the copy Messages was going to mount could be born without that state and nobody would find
+  // out until they needed to rescue a failed delivery from the wrong screen. Now the set has
+  // someone to guard it.
   let replayed = '';
   server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', ({ params }) => {
     replayed = String(params.deliveryId);
@@ -201,6 +200,6 @@ it('🔴 ofrece replay en «failed», no sólo en «dead»: la extracción no pu
   await confirmar(user, within(fila).getByRole('button', { name: new RegExp(`replay delivery ${FAILED_ID}`, 'i') }));
   expect(await screen.findByText(/Replay encolado/)).toBeInTheDocument();
   expect(replayed).toBe(FAILED_ID);
-  // Y no se le ofrece cancelar: una entrega fallida ya no está viva.
+  // And no cancel is offered: a failed delivery is no longer alive.
   expect(within(fila).queryByRole('button', { name: /cancelar delivery/i })).toBeNull();
 });

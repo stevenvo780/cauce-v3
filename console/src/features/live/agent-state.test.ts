@@ -17,8 +17,8 @@ const NOW = 1_700_000_000_000;
 
 describe('liveState', () => {
   it('un lease vivo con trabajo tomado hace mucho es BLOQUEADO, no trabajando', () => {
-    // Ésta es la lección cara: `presence.online` sigue en true y el latido está fresco. El
-    // agente parece sano por todas las señales de conexión y está mudo igual.
+    // This is the expensive lesson: `presence.online` stays true and the heartbeat is fresh.
+    // The agent looks healthy by every connection signal and is mute nonetheless.
     const result = liveState(
       agent({ work_state: 'stalled', in_flight: 1, oldest_in_flight_seconds: 2400, presence: { online: true } }),
       { nowMs: NOW, thresholds: { stall_after_seconds: 300 } },
@@ -128,9 +128,9 @@ describe('ownerBucket', () => {
     expect(ownerBucket('down')).toBe('problema');
     expect(ownerBucket('blocked')).toBe('problema');
     expect(ownerBucket('idle')).toBe('libre');
-    // El cubo se llama `ocupado` y NO `trabajando`: «Trabajando» es el rótulo del chip de
-    // `thinking`, y usar la misma palabra para el cubo que agrupa cuatro estados es lo que hacía
-    // que el veredicto dijera «4 trabajando» encima de un chip «Trabajando 2».
+    // The bucket is called `ocupado` and NOT `trabajando`: "Trabajando" is the label of the
+    // `thinking` chip, and using the same word for the bucket that groups four states is what
+    // made the verdict say "4 trabajando" above a chip "Trabajando 2".
     expect(ownerBucket('thinking')).toBe('ocupado');
     expect(ownerBucket('delegating')).toBe('ocupado');
     expect(ownerBucket('receiving')).toBe('ocupado');
@@ -159,10 +159,10 @@ describe('fleetVerdict', () => {
   });
 
   it('NUNCA sale verde si la última lectura falló, por sano que se vea el snapshot anterior', () => {
-    // Ésta es la regla innegociable de la vista. El snapshot que se está mostrando es de dos
-    // agentes perfectamente ociosos: si la comprobación del error no fuera lo PRIMERO, cualquier
-    // rama posterior devolvería "Todo en orden" sobre datos que ya nadie puede confirmar. Es
-    // exactamente la mentira de un `systemctl is-active` sobre un proceso que dejó de atender.
+    // This is the non-negotiable rule of the view. The snapshot being shown is of two perfectly
+    // idle agents: if the error check were not FIRST, any later branch would return "Todo en
+    // orden" over data no one can confirm anymore. It is exactly the lie of a `systemctl
+    // is-active` over a process that stopped responding.
     const veredicto = fleetVerdict(
       vistas([agent({ alias: 'zeus' }), agent({ alias: 'kant' })]),
       { error: new Error('actividad caída'), observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
@@ -174,8 +174,8 @@ describe('fleetVerdict', () => {
   });
 
   it('NUNCA sale verde con el snapshot rancio, aunque no haya habido ningún error', () => {
-    // Un fetch que nunca vuelve no produce `error`: produce silencio. Sin esta rama, la pantalla
-    // seguiría afirmando en verde algo que midió hace tres minutos.
+    // A fetch that never returns produces no `error`: it produces silence. Without this branch,
+    // the screen would keep asserting in green something measured three minutes ago.
     const veredicto = fleetVerdict(
       vistas([agent({ alias: 'zeus' })]),
       { observedAt: RECIEN, nowMs: Date.parse(RECIEN) + 180_000, staleAfterMs: 12_000 },
@@ -224,8 +224,8 @@ describe('D2 · el veredicto sobre cero mediciones', () => {
   const AHORA = Date.parse(RECIEN) + 2_000;
 
   it('sin un solo agente NO dice "Todo en orden": dice que no lo sabe', () => {
-    // Alcanzable en producción sin ninguna avería: basta elegir en el selector un cliente cuyos
-    // alias no aparezcan en /activity, o que el servidor devuelva agents: [].
+    // Achievable in production without any fault: just pick in the selector a client whose
+    // aliases do not appear in /activity, or have the server return agents: [].
     const veredicto = fleetVerdict([], { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 });
     expect(veredicto.tone).toBe('desconocido');
     expect(veredicto.tone).not.toBe('ok');
@@ -260,15 +260,15 @@ describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
 
     const estado = liveState(agent(), { nowMs: NOW + 4_500, pulses: pulsos['Steven/zeus'] });
     expect(estado.state).toBe('settled');
-    // Lo que no puede volver a aparecer: la afirmación de un cierre correcto.
+    // What must not come back: the assertion of a correct closure.
     expect(estado.reason).not.toMatch(/cerró una entrega/i);
     expect(estado.reason).not.toMatch(/terminó el turno/i);
     expect(estado.reason).toMatch(/no se puede saber/i);
   });
 
   it('el estado que produce ese pulso NO es de tono positivo ni dice "respondiendo"', () => {
-    // Éste era el fallo caro: el peor evento de la flota se anunciaba con el mismo verde y el
-    // mismo texto que el mejor.
+    // This was the expensive failure: the worst event in the fleet was announced with the same
+    // green and the same text as the best.
     expect(LIVE_STATE_META.settled.tone).not.toBe('positive');
     expect(LIVE_STATE_META.settled.label).not.toMatch(/respond/i);
     expect(LIVE_STATE_META.settled.hint).toMatch(/no se puede saber/i);
@@ -294,9 +294,9 @@ describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
 });
 
 describe('D4 · un alias fuera del registro no está "deshabilitado"', () => {
-  // El backend calcula agent_enabled: COALESCE(ag.enabled, false) y el LEFT JOIN no encuentra fila
-  // para un participante que entró por 'work' o por connection_leases. Ese false es el default del
-  // COALESCE, no una baja.
+  // The backend computes agent_enabled: COALESCE(ag.enabled, false) and the LEFT JOIN finds no
+  // row for a participant that entered via 'work' or connection_leases. That false is the
+  // COALESCE default, not a deregistration.
   const sinRegistrar = agent({
     tenant_id: 'Miguel', alias: 'atlas', registered: false, agent_enabled: false,
     work_state: 'working', in_flight: 3, started: 3,

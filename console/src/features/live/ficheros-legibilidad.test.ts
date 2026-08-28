@@ -2,16 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { leerCss } from '../../test/leer-css';
 
 /**
- * QUE EL AVISO MÁS IMPORTANTE DE LA VISTA SE PUEDA LEER TAMBIÉN SOBRE PAPEL BLANCO.
+ * THAT THE MOST IMPORTANT WARNING OF THE VIEW CAN ALSO BE READ ON WHITE PAPER.
  *
- * Y era justo el peor sitio donde podía pasar. Ese recuadro es la ÚNICA explicación de por qué el
- * editor no trae contenido; si no se ve, la pantalla queda como una lista de ficheros que no se
- * abren, sin una sola palabra, que es exactamente la clase de «hueco mudo» que este trabajo venía
- * a quitar. Un aviso ilegible es peor que ninguno: ocupa el sitio del que sí se leería.
+ * And it was exactly the worst place for it to happen. That box is the ONLY explanation of why
+ * the editor has no content; if it is not seen, the screen stays as a list of files that do not
+ * open, without a single word, which is exactly the kind of "silent gap" this work came to
+ * remove. An unreadable warning is worse than none: it occupies the place of the one that
+ * would be read.
  *
- * jsdom no tiene layout ni color calculado, así que —igual que `styles.legibilidad.test.ts`— esto
- * comprueba la HOJA como texto. Es lo barato que atrapa la regresión, y lleva su control negativo
- * por mutación: se le da de comer una hoja sin el bloque y se exige que la marque.
+ * jsdom has no layout and no computed color, so — as in `styles.legibilidad.test.ts` — this
+ * checks the SHEET as text. It is the cheap thing that catches the regression, and it carries
+ * its negative control by mutation: it is fed a sheet without the block and is required to flag
+ * it.
  */
 
 const HOJA = 'features/live/live.css';
@@ -38,9 +40,9 @@ export function bloquesDeModoClaro(css: string): string {
 }
 
 /**
- * Clases del editor de ficheros que pintan color y fondo con un hex fijo en vez de con tokens del
- * tema. Cada una de ellas TIENE que redefinirse en modo claro, porque un hex de tema oscuro no se
- * adapta solo.
+ * File editor classes that paint color and background with a fixed hex instead of theme tokens.
+ * Each one of them HAS to be redefined in light mode, because a dark-theme hex does not adapt
+ * on its own.
  */
 const CON_COLOR_FIJO = ['.ficheros-caveat', '.ficheros-aviso', '.ficheros-fallo'];
 
@@ -53,8 +55,8 @@ describe('los avisos del editor de ficheros se leen en los dos temas', () => {
   });
 
   /**
-   * EL CONTROL NEGATIVO. Sin esto, la prueba de arriba pasaría igual con una función que
-   * devolviera la hoja entera —o cualquier cosa que contenga esos nombres—, y no probaría nada.
+   * THE NEGATIVE CONTROL. Without it, the test above would pass equally with a function that
+   * returned the whole sheet — or anything that contains those names — and would prove nothing.
    */
   it('una hoja SIN el bloque de modo claro se marca como rota', () => {
     const rota = '.ficheros-fallo { color: #ffb7bc; }\n@media (max-width: 600px) { .x { color: red; } }';

@@ -3,11 +3,11 @@ import type { AgentDirective } from '../../api/types';
 import { abreDeclarandoIdentidad, avisosDeCapas, girosDeAutonomia, totalDeMemoria } from './directiva';
 
 /**
- * El aviso de solapamiento entre capas, probado solo.
+ * The layer overlap warning, tested alone.
  *
- * Cada caso positivo va con su CONTROL NEGATIVO: un guardia que marca todo es tan inútil como uno
- * que no marca nada, y este en concreto es fácil que grite en falso —«permiso» y «prohibido» son
- * palabras que un manual legítimo usa todo el rato—.
+ * Each positive case goes with its NEGATIVE CONTROL: a guard that flags everything is as
+ * useless as one that flags nothing, and this one in particular is easy to scream false —
+ * "permission" and "prohibition" are words a legitimate manual uses all the time.
  */
 
 /** El brief real de un alias de la flota, con la forma que tienen los 14 en producción. */
@@ -27,9 +27,9 @@ describe('girosDeAutonomia', () => {
   });
 
   /**
-   * CONTROL NEGATIVO. Un manual de despliegue habla de permisos de fichero y de cosas prohibidas
-   * sin estar fijando la autonomía de nadie. Si esto marcara, el aviso saldría en los 14 alias y
-   * dejaría de significar nada.
+   * NEGATIVE CONTROL. A deployment manual talks about file permissions and forbidden things
+   * without fixing anyone's autonomy. If this flagged, the warning would show up for all 14
+   * aliases and stop meaning anything.
    */
   it('NO marca un manual que habla de permisos de fichero o de rutas', () => {
     const manual = '# Cómo se despliega\n\nEl script necesita permiso de lectura sobre /etc/cauce.\n'
@@ -46,12 +46,12 @@ describe('girosDeAutonomia', () => {
 });
 
 describe('abreDeclarandoIdentidad', () => {
-  it('marca el manual que abre con «Sos…», que es invadir la capa 1', () => {
+  it('flags the manual that opens with "Sos…", which is invading layer 1', () => {
     expect(abreDeclarandoIdentidad('# Manual\n\nSos janus, el operador de Miguel.\n')).toContain('Sos janus');
   });
 
-  /** CONTROL NEGATIVO: la palabra en mitad de un párrafo no es una declaración de identidad. */
-  it('NO marca un manual que menciona «sos vos quien despliega» en mitad del texto', () => {
+  /** NEGATIVE CONTROL: the word in the middle of a paragraph is not an identity declaration. */
+  it('does NOT flag a manual that mentions "sos vos quien despliega" in the middle of the text', () => {
     const manual = '# Despliegue\n\nCada desarrollador despliega lo suyo.\nAcá el repo vive en /workspace.\n'
       + 'Recordá que sos vos quien corre el rollout, no kant.';
     expect(abreDeclarandoIdentidad(manual)).toBeUndefined();
@@ -73,9 +73,9 @@ describe('avisosDeCapas', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del aviso entero. Con el reparto que el diseño propone —autonomía SÓLO en el
-   * rol, manual sólo de cómo se trabaja— no puede salir ningún choque. Si saliera, el aviso sería
-   * ruido permanente y el operador aprendería a ignorarlo.
+   * NEGATIVE CONTROL of the whole warning. With the split the design proposes —autonomy ONLY
+   * in the role, manual only about how to work— no clash can appear. If one did, the warning
+   * would be permanent noise and the operator would learn to ignore it.
    */
   it('con las capas bien repartidas NO avisa de ningún choque', () => {
     const avisos = avisosDeCapas(BRIEF_REAL, directiva({
@@ -143,10 +143,11 @@ describe('avisosDeCapas', () => {
   });
 
   /**
-   * EL CONTROL NEGATIVO QUE MÁS IMPORTA, y el que esta consola ya se equivocó en otras pantallas:
-   * un negativo que nadie midió no es un hecho. Con el gateway sin publicar los ficheros, la
-   * pantalla NO puede decir «este alias no tiene CLAUDE.md» ni «las capas no se pisan»: no se
-   * miró. La lista de avisos tiene que salir VACÍA, no con el aviso de «sin manual».
+   * THE NEGATIVE CONTROL THAT MATTERS MOST, and the one this console has already gotten wrong
+   * on other screens: a negative nobody measured is not a fact. With the gateway not
+   * publishing the files, the screen CANNOT say "this alias has no CLAUDE.md" or "the layers
+   * do not clash": nobody looked. The warning list must come out EMPTY, not with a "no
+   * manual" warning.
    */
   it('sin el endpoint publicado no emite NINGÚN aviso sobre ficheros: no se miró', () => {
     const avisos = avisosDeCapas(BRIEF_REAL, { publicado: false, motivo: 'el gateway respondió 404' });
@@ -170,7 +171,7 @@ describe('avisosDeCapas', () => {
     const nota = avisos.find((aviso) => aviso.id.startsWith('sin-texto'));
     expect(nota?.tono).toBe('nota');
     expect(nota?.detalle).toMatch(/No es «no la repite»/);
-    // Y NO se inventa un choque sobre un texto que no llegó.
+    // And it does NOT invent a clash over a text that never arrived.
     expect(avisos.filter((aviso) => aviso.id.startsWith('autonomia-duplicada'))).toEqual([]);
   });
 

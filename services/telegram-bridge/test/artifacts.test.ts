@@ -60,7 +60,7 @@ describe('plan de adjuntos', () => {
     expect(plan.footer).toContain('Guion-Museo-de-Identidades.docx');
     expect(plan.footer).toContain('no viajó al chat');
     // La ruta cruda no se repite en el chat, y sobre todo NO se abre: `/run/secrets/database_url`
-    // existe DENTRO del puente y leerlo sería publicar la credencial de producción.
+    // it exists INSIDE the bridge, and reading it would publish the production credential.
     expect(plan.footer).not.toContain('/run/secrets/database_url');
   });
 
@@ -309,7 +309,7 @@ describe('egreso con adjuntos', () => {
     const { api, sent } = fakeApi({ sendPhoto: rechazo, sendDocument: rechazo });
     await worker(repository, api).runOnce();
 
-    // El texto salió, y en lugar del archivo salió una línea que explica por qué no fue.
+    // The text went out, and instead of the file a line explaining why it did not.
     expect(sent[0]?.value).toContain('Listo, ahí va.');
     expect(sent[1]?.value).toContain('No pude adjuntar');
     expect(repository.acks[0]?.status).toBe('sent');
@@ -358,7 +358,7 @@ describe('egreso con adjuntos', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.method).toBe('sendText');
     expect(repository.acks[0]?.effect_count).toBe(1);
-    // El hash del texto no cambió de fórmula: es el que ya tienen las filas vivas en producción.
+    // The text hash formula did not change: it is the one the live rows in production already use.
     expect([...repository.effects.keys()]).toEqual([`${event.event_id}:0`]);
   });
 });

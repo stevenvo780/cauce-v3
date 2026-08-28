@@ -1,7 +1,7 @@
 /**
- * Validación de prevención de inyección inline de `<style>` en xterm:
- * verifica que xterm use el override de documento para no crear etiquetas style dinámicas
- * incompatibles con `style-src 'self'`.
+ * Validation of inline `<style>` injection prevention in xterm:
+ * verifies that xterm uses the document override to avoid creating dynamic style tags that
+ * are incompatible with `style-src 'self'`.
  */
 import { Terminal } from '@xterm/xterm';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -32,10 +32,11 @@ function abrirSesion(sessionId: string): StubWebSocket {
 
 describe('estilos en línea del terminal', () => {
   /*
-   * EL CONTROL NEGATIVO. Sin él esta prueba no vale nada: si en jsdom xterm no llegara a crear
-   * ningún `<style>` —porque el renderer no arranca, porque la versión cambió, porque el `open()`
-   * falló en silencio—, la comprobación de abajo daría verde para siempre diciendo exactamente lo
-   * mismo que diría si el arreglo funcionase. Esto acredita que el detector VE la inyección.
+   * THE NEGATIVE CONTROL. Without it this test is worth nothing: if in jsdom xterm never created
+   * any `<style>` — because the renderer does not start, because the version changed, because
+   * `open()` silently failed — the check below would go green forever saying exactly the same
+   * thing it would say if the fix worked. This one accredits that the detector SEES the
+   * injection.
    */
   it('CONTROL NEGATIVO: xterm inyecta `<style>` cuando se le deja el documento de la página', () => {
     const hueco = document.createElement('div');
@@ -59,10 +60,11 @@ describe('estilos en línea del terminal', () => {
   });
 
   /*
-   * La contracara. Quitarle a xterm el `<style>` es fácil de más: también se consigue rompiendo el
-   * renderer entero, y entonces no hay violación de CSP porque no hay terminal. Esta prueba fija
-   * que el arreglo NO se pagó con eso: el renderer arranca (sin `renderError`) y las capas que
-   * pinta xterm —la pantalla y las filas, que son las que `xterm-csp.css` viste— siguen estando.
+   * The other side. Taking the `<style>` away from xterm is too easy: it is also achieved by
+   * breaking the whole renderer, and then there is no CSP violation because there is no terminal.
+   * This test pins down that the fix was NOT paid for that: the renderer starts (no
+   * `renderError`) and the layers xterm paints — the screen and the rows, which are what
+   * `xterm-csp.css` dresses — are still there.
    */
   it('y el renderer sigue arrancando: se quitó la inyección, no el terminal', () => {
     abrirSesion('csp-renderer-vivo');

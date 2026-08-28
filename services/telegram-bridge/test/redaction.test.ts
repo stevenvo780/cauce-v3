@@ -20,7 +20,7 @@ describe('redacción de secretos en la ingesta', () => {
     delete process.env.CAUCE_TELEGRAM_REDACT_INGRESS;
   });
 
-  /* ---------------- Lo que SÍ se redacta ---------------- */
+  /* ---------------- What IS redacted ---------------- */
 
   it('redacta la URI con credenciales', () => {
     const crudo = '# Recommended for most uses\n'
@@ -29,7 +29,7 @@ describe('redacción de secretos en la ingesta', () => {
     const resultado = redactSecrets(crudo);
     expect(resultado.value).not.toContain('npg_FICTICIA0AbCdEf');
     expect(resultado.value).not.toContain('neondb_owner:');
-    // El host sobrevive: el agente necesita saber contra qué se estaba conectando el humano.
+    // The host survives: the agent needs to know what the human was connecting to.
     expect(resultado.value).toContain('ep-dry-smoke-au2e5vtg-pooler');
     expect(resultado.value).toContain('postgresql://[credencial-redactada]@');
     expect(resultado.kinds).toContain('uri_credentials');
@@ -154,8 +154,8 @@ describe('redacción de secretos en la ingesta', () => {
     expect(JSON.stringify(cuerpo)).not.toContain('npg_FICTICIA0AbCdEf');
     expect(String(cuerpo.prompt)).toContain('[credencial-redactada]');
     expect(String(cuerpo.text)).toContain('[credencial-redactada]');
-    // Dos: el `text` original y el `prompt` que se arma a partir de él. La marca cuenta
-    // redacciones, no secretos distintos.
+    // Two: the original `text` and the `prompt` assembled from it. The flag counts redactions,
+    // not distinct secrets.
     expect(cuerpo.redacted_v1).toEqual({ count: 2, kinds: ['uri_credentials'] });
   });
 

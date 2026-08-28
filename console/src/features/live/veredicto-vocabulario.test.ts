@@ -10,22 +10,22 @@ import {
 } from './agent-state';
 
 /**
- * **LA MISMA PALABRA CON DOS NÚMEROS DISTINTOS, A 140 PÍXELES DE DISTANCIA.**
+ * **THE SAME WORD WITH TWO DIFFERENT NUMBERS, 140 PIXELS APART.**
  *
- *  El veredicto decía:
+ * The verdict said:
  *
  *     13 conectados · 4 trabajando · 9 libres
  *
- * y el chip inmediatamente debajo decía **Trabajando 2**. Las dos cifras estaban bien: el 4
- * agrupa `thinking` + `delegating` + `receiving` + `settled`; el 2 es sólo `thinking`. Lo que
- * estaba mal era la PALABRA. Y las otras dos cifras del veredicto sí cuadraban con su chip (9
- * libres = Libre 9; 13 conectados = 18 − Caído 5), que es lo que lo hacía peligroso: el operador
- * comprueba dos, le cuadran, y se fía de la tercera.
+ * and the chip immediately below said **Trabajando 2**. Both numbers were right: the 4 groups
+ * `thinking` + `delegating` + `receiving` + `settled`; the 2 is only `thinking`. What was wrong
+ * was the WORD. And the other two figures of the verdict DID square with their chip (9 libres =
+ * Libre 9; 13 conectados = 18 − Caido 5), which is what made it dangerous: the operator checks
+ * two, they match, and trusts the third.
  *
- * La regla que fija este fichero no es «prohibido repetir palabras» —«libres» y «Libre» SÍ deben
- * coincidir, porque cuentan exactamente lo mismo—: es que **una palabra compartida obliga a un
- * número compartido**. Se comprueba sobre la cadena que se pinta, y no sobre la implementación,
- * porque el defecto vivía justamente en la cadena.
+ * The rule this file fixes is not "forbidden to repeat words" — "libres" and "Libre" MUST
+ * coincide, because they count exactly the same —: it is that **a shared word forces a shared
+ * number**. It is checked over the painted string, and not over the implementation, because
+ * the bug lived exactly in the string.
  */
 
 const AHORA = Date.parse('2026-08-23T10:00:00.000Z');
@@ -50,24 +50,24 @@ function agente(overrides: Partial<FleetActivityAgent> = {}): FleetActivityAgent
 }
 
 /**
- * La flota MEDIDA el día del defecto, reconstruida: 5 caídos, 2 trabajando, 2 delegando y 9
- * libres. Es la única forma de que la prueba distinga «4 ocupados» de «2 trabajando»; con una
- * flota en la que todos los ocupados estuvieran `thinking`, los dos números coincidirían por
- * casualidad y el guardia aprobaría el defecto.
+ * The fleet MEASURED on the day of the bug, rebuilt: 5 down, 2 working, 2 delegating and 9
+ * idle. It is the only way for the test to distinguish "4 ocupados" from "2 trabajando"; with
+ * a fleet in which all the busy ones were `thinking`, the two numbers would coincide by
+ * chance and the guard would approve the bug.
  */
 function flotaDelDefecto(): FleetActivitySnapshot {
   const agents: FleetActivityAgent[] = [];
   for (let i = 0; i < 5; i += 1) {
     agents.push(agente({ alias: `caido-${String(i)}`, flags: ['lease_expired'], presence: { online: false } }));
   }
-  // Dos trabajando de verdad: una entrega en vuelo cada uno, sin nadie a quien se la hayan pasado.
+  // Two really working: one in-flight delivery each, with nobody they have passed it to.
   for (let i = 0; i < 2; i += 1) {
     agents.push(agente({ alias: `trabajando-${String(i)}`, work_state: 'working', in_flight: 1, started: 1 }));
   }
   /*
-   * Dos delegando: `delegating` se deriva de que OTRO alias tenga en vuelo una entrega cuyo
-   * emisor es éste. Así que cada delegador necesita su receptor, y esos receptores son los dos
-   * `trabajando-*` de arriba: `delegando-i` → `trabajando-i`.
+   * Two delegating: `delegating` is derived from ANOTHER alias having in flight a delivery whose
+   * sender is this one. So each delegator needs its receiver, and those receivers are the two
+   * `trabajando-*` from above: `delegando-i` → `trabajando-i`.
    */
   for (let i = 0; i < 2; i += 1) {
     agents.push(agente({ alias: `delegando-${String(i)}` }));
@@ -91,7 +91,7 @@ function flotaDelDefecto(): FleetActivitySnapshot {
   };
 }
 
-/** Los pares «número + palabra» de la línea de apoyo, tal y como se leen en pantalla. */
+/** The "number + word" pairs of the support line, as read on screen. */
 function cifrasDelApoyo(apoyo: string): { numero: number; palabra: string }[] {
   return [...apoyo.matchAll(/(\d+)\s+([^·.]+)/g)].map((coincidencia) => ({
     numero: Number(coincidencia[1]),
@@ -99,7 +99,7 @@ function cifrasDelApoyo(apoyo: string): { numero: number; palabra: string }[] {
   }));
 }
 
-/** «libres» → «libre». Sin esto, la coincidencia con el rótulo del chip se escaparía por la `s`. */
+/** "libres" → "libre". Without this, the match with the chip's label would escape by the `s`. */
 function singular(palabra: string): string {
   return palabra.endsWith('s') ? palabra.slice(0, -1) : palabra;
 }
@@ -110,7 +110,7 @@ describe('el veredicto y los chips de /live hablan el mismo idioma', () => {
     const tally = stateTally(views);
     const veredicto = fleetVerdict(views, { observedAt: OBSERVADO, nowMs: AHORA, staleAfterMs: 12_000 });
 
-    // La flota reconstruida es la medida: si esto cambiara, la prueba dejaría de mirar el defecto.
+    // The rebuilt fleet is the measured one: if this changed, the test would stop looking at the bug.
     expect(views).toHaveLength(18);
     expect(tally.down).toBe(5);
     expect(tally.thinking).toBe(2);
@@ -143,9 +143,9 @@ describe('el veredicto y los chips de /live hablan el mismo idioma', () => {
   });
 
   it('y «libres» SÍ tiene que seguir cuadrando con el chip «Libre»: la regla no es no repetir', () => {
-    // CONTROL POSITIVO. Si el arreglo hubiera sido «cambiar todas las palabras para que ninguna
-    // coincida», esta comprobación se caería: perderíamos la única cifra del veredicto que el
-    // operador puede contrastar de un vistazo contra la cinta.
+    // POSITIVE CONTROL. If the fix had been "change all words so none coincide", this check
+    // would fall: we would lose the only figure of the verdict the operator can cross-check at
+    // a glance against the tally.
     const { views } = buildLiveViews(flotaDelDefecto(), {}, AHORA);
     const tally = stateTally(views);
     const veredicto = fleetVerdict(views, { observedAt: OBSERVADO, nowMs: AHORA, staleAfterMs: 12_000 });
@@ -155,8 +155,8 @@ describe('el veredicto y los chips de /live hablan el mismo idioma', () => {
 
   it('CONTROL NEGATIVO — con la palabra vieja, el guardia marca el desacuerdo', () => {
     /*
-     * Se le da de comer al comprobador la línea EXACTA que producía el defecto medido. Un guardia
-     * que no la marque estaría aprobando el fallo que vino a buscar.
+     * The checker is fed the EXACT line that produced the measured bug. A guard that does not
+     * flag it would be approving the bug it came looking for.
      */
     const { views } = buildLiveViews(flotaDelDefecto(), {}, AHORA);
     const tally = stateTally(views);

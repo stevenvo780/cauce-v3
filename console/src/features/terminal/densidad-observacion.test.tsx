@@ -1,16 +1,16 @@
 /*
- * MODO OBSERVACIÓN: QUÉ SE REPLIEGA Y QUÉ SIGUE ALCANZABLE.
+ * OBSERVATION MODE: WHAT FOLDS AWAY AND WHAT STAYS REACHABLE.
  *
- * ⚠️ **Estas pruebas NO miden alto.** jsdom no tiene maquetación: `getBoundingClientRect()`
- * devuelve ceros y ninguna regla de CSS se aplica, así que una prueba de píxeles escrita acá NO
- * PUEDE PONERSE ROJA dijera lo que dijera la hoja de estilos. La comprobación de que el terminal se
- * queda con el 60 % del alto de la ventana vive en `ops/console-legibilidad/medir-terminal.mjs`,
- * que corre un Chrome de verdad, y ahí es donde da rojo.
+ * ⚠️ **These tests do NOT measure height.** jsdom has no layout: `getBoundingClientRect()`
+ * returns zeros and no CSS rule is applied, so a pixel test written here CANNOT go red no
+ * matter what the stylesheet says. The check that the terminal stays with 60% of the
+ * viewport height lives in `ops/console-legibilidad/medir-terminal.mjs`, which runs a real
+ * Chrome, and that is where it goes red.
  *
- * Lo que SÍ se puede probar acá —y es la mitad que importa cuando se repliega algo— es que la
- * información no se BORRÓ: que los seis contadores y la frase de doctrina siguen escritos y a un
- * clic de distancia, y que el repliegue no se cuela en el camino en el que esos datos son lo que se
- * viene a mirar (la página sin ninguna sesión abierta).
+ * What CAN be tested here — and is the half that matters when something folds away — is
+ * that the information was not DELETED: that the six counters and the doctrine sentence are
+ * still written and a click away, and that the fold does not sneak into the path where those
+ * data are what you come to look at (the page with no session open).
  */
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,7 +22,7 @@ import { TEXTO_DOCTRINA } from './doctrina';
 import { installStubWebSocket } from './pty-socket-stub';
 import { TerminalPage } from './TerminalPage';
 
-/** Los seis contadores, por su rótulo. Si uno deja de estar escrito, esta lista lo dice. */
+/** The six counters, by their label. If one stops being written, this list tells it. */
 const CONTADORES = ['Leases vigentes', 'Adaptadores', 'Tu permiso', 'Canal', 'Con PTY online', 'Emiten su TUI'];
 
 let restoreSocket: () => void;
@@ -40,26 +40,26 @@ afterEach(() => {
 
 describe('la página del terminal, sin ninguna sesión abierta', () => {
   /*
-   * CONTROL NEGATIVO del repliegue. Los seis contadores y la doctrina son exactamente lo que se
-   * viene a leer ANTES de abrir una terminal: si el desplegable se colara también acá, el arreglo
-   * habría escondido el dato justo en el momento en que hace falta. Esta prueba se pone roja si
-   * alguien "simplifica" el condicional y pliega siempre.
+   * NEGATIVE CONTROL of the fold. The six counters and the doctrine are exactly what is
+   * read BEFORE opening a terminal: if the fold snuck in here too, the fix would have hidden
+   * the data right when it is needed. This test goes red if someone "simplifies" the conditional
+   * and always folds.
    */
   it('enseña los seis contadores desplegados, sin nada que abrir', async () => {
     const { container } = renderWithApi(<TerminalPage />);
 
     await screen.findByRole('button', { name: /abrir sesión con kant/i });
-    // Acotado a la tira: «Adaptadores» y «Canal» también se dicen en el inspector de la derecha, y
-    // una prueba que los cuente en toda la página mide otra cosa.
+    // Scoped to the strip: "Adaptadores" and "Canal" are also said in the right inspector,
+    // and a test that counts them across the whole page measures something else.
     const tira = container.querySelector('.terminal-overview');
     expect(tira).not.toBeNull();
     if (!(tira instanceof HTMLElement)) throw new Error('tira not found');
     for (const rotulo of CONTADORES) expect(within(tira).getByText(rotulo)).toBeInTheDocument();
     expect(container.querySelector('details.terminal-resumen')).toBeNull();
     /*
-     * Y queda anotado por qué replegar el pie de doctrina obliga a escribirla en otro sitio: el pie
-     * SÓLO existe cuando hay una sesión abierta —cuelga de la rejilla de sesiones—, o sea que se
-     * lee exactamente en el único momento en el que su alto se le está quitando al terminal.
+     * And it is noted why folding the doctrine footer forces writing it somewhere else: the
+     * footer ONLY exists when there is an open session — it hangs off the sessions grid —
+     * i.e. it is read exactly at the moment its height is being taken away from the terminal.
      */
     expect(container.querySelector('.terminal-doctrine')).toBeNull();
   });
@@ -79,7 +79,7 @@ describe('la página del terminal con una sesión abierta', () => {
     });
     // Empieza cerrado: mientras se mira una TUI, ese alto es del terminal.
     expect(plegado.open).toBe(false);
-    // Y el control dice qué hay dentro: un desplegable sin nombre es un dato perdido.
+    // And the control says what is inside: a nameless fold is a lost datum.
     expect(within(plegado).getByText(/estado de la flota/i)).toBeInTheDocument();
 
     await user.click(within(plegado).getByText(/estado de la flota/i));
@@ -88,10 +88,10 @@ describe('la página del terminal con una sesión abierta', () => {
   });
 
   /*
-   * La frase de doctrina la dice un pie que en modo observación se repliega por CSS. El nodo sigue
-   * en el documento (por eso esta prueba no puede mirarlo a él), así que lo que se exige es que la
-   * frase esté ADEMÁS dentro del desplegable, escrita desde la misma constante: si el pie deja de
-   * verse y la frase no está en ninguna otra parte, la doctrina desapareció de la vista.
+   * The doctrine sentence is said by a footer that in observation mode folds away via CSS. The
+   * node stays in the document (that is why this test cannot look at it), so what is required
+   * is that the sentence is ALSO inside the fold, written from the same constant: if the footer
+   * stops being seen and the sentence is nowhere else, the doctrine disappeared from view.
    */
   it('deja la doctrina escrita dentro del desplegable, no sólo en el pie que se repliega', async () => {
     const user = userEvent.setup();

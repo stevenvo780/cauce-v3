@@ -21,10 +21,11 @@ describe('qué se puede hacer con cada fichero', () => {
   });
 
   /**
-   * El caso de `openclaw.json`: NO es editable como fichero —lleva `auth` y `secrets`— pero sus
-   * campos proyectados sí. Si esto se leyera como «sólo lectura», Steven perdería justamente lo
-   * que pidió; si se leyera como «entero», la pantalla le enseñaría un documento incompleto
-   * haciéndole creer que es el fichero completo, y al borrar de la vista borraría lo que no ve.
+   * The `openclaw.json` case: it is NOT editable as a file — it carries `auth` and `secrets` —
+   * but its projected fields are. If this read as "read only", the operator would lose exactly
+   * what they asked for; if it read as "whole", the screen would show them an incomplete
+   * document making them believe it was the full file, and deleting from the view would delete
+   * what they cannot see.
    */
   it('un fichero con campos proyectados es un tercer estado, ni entero ni cerrado', () => {
     const proyectado = doc({ editable: false, projected_fields: ['agents'] });
@@ -36,7 +37,7 @@ describe('qué se puede hacer con cada fichero', () => {
     expect(modoDeDocumento(cerrado)).toBe('solo-lectura');
   });
 
-  /** Una lista vacía de campos NO es una proyección. Fallar cerrada también aquí. */
+  /** An empty field list is NOT a projection. Fail closed here too. */
   it('projected_fields vacío no abre nada', () => {
     expect(modoDeDocumento(doc({ editable: false, projected_fields: [] }))).toBe('solo-lectura');
   });
@@ -44,9 +45,9 @@ describe('qué se puede hacer con cada fichero', () => {
 
 describe('por qué no se puede — los cuatro motivos NO se pintan igual', () => {
   /**
-   * Éste es el corazón del módulo. 409 y 503 se arreglan (midiendo, desplegando); 403 es una
-   * decisión que no va a cambiar. Si los tres dieran `pendiente: true`, Steven esperaría a que
-   * «se arregle» que su openclaw.json no se sirva entero, que está bien como está.
+   * This is the heart of the module. 409 and 503 are fixed (by measuring, by deploying); 403 is
+   * a decision that will not change. If all three returned `pendiente: true`, the operator
+   * would wait for openclaw.json to "be fixed" to not be served whole, which is fine as it is.
    */
   it('distingue lo que está pendiente de lo que es una decisión', () => {
     expect(explicarFallo(409).pendiente).toBe(true);
@@ -61,7 +62,7 @@ describe('por qué no se puede — los cuatro motivos NO se pintan igual', () =>
     expect(new Set(titulos).size).toBe(titulos.length);
   });
 
-  /** La razón medida la redacta el gateway. Repetirla aquí sería tenerla en dos sitios. */
+  /** The measured reason is drafted by the gateway. Repeating it here would mean having it in two places. */
   it('cuando el servidor da una razón, se enseña la del servidor', () => {
     const razon = 'dentro de `skills` y de `mcp` hay claves de API vivas';
     expect(explicarFallo(403, razon).detalle).toBe(razon);
@@ -78,7 +79,7 @@ describe('el aviso de la cabecera', () => {
     publicado: true, facts_source: 'measured', items: [],
   };
 
-  /** Sin nada que advertir, NO se advierte. Un guardia que grita en falso acaba ignorado. */
+  /** With nothing to warn about, do NOT warn. A guard that screams false ends up ignored. */
   it('no inventa un aviso cuando las rutas SÍ están medidas', () => {
     expect(avisoDeFuente(base)).toBeUndefined();
   });

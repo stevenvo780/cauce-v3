@@ -321,9 +321,9 @@ it('rejects a malformed 201 grant without deleting the untrusted session_id', as
   let deleteAttempts = 0;
   server.use(
     http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({
-      // Puede ser el id de una sesión ajena: viene en el mismo recibo que ya probó ser inválido.
+      // Can be the id of another session: it comes in the same receipt that already proved invalid.
       session_id: 'another-tabs-live-session',
-      // Sin ticket/expiry/target: un 201 por sí solo no abre un canal ni acredita la reserva.
+      // No ticket/expiry/target: a 201 on its own does not open a channel nor credit the reservation.
       websocket_path: '/v3/console/terminal/ws',
     }, { status: 201 })),
     http.delete('*/v3/console/terminal/sessions/:sessionId', () => {
@@ -399,24 +399,23 @@ it('exposes TerminalApiError so callers can branch on status without parsing str
 });
 
 /*
- * EL 403 QUE MANTENÍA LA TUI CERRADA.
+ * THE 403 THAT KEPT THE TUI CLOSED.
  *
- * 
- * cuerpo en las dos corridas: sin la cabecera `X-CSRF-Token` el gateway contesta
- * 403 {"error":"forbidden","message":"se requiere un token CSRF válido"}; con ella contesta
- * 201 y entrega el grant. Con un token inventado vuelve a ser 403, así que no es "mandar la
- * cabecera": es mandar EL token de la sesión.
+ * Body in both runs: without the `X-CSRF-Token` header the gateway answers
+ * 403 with the CSRF-missing message; with it, it answers
+ * 201 and delivers the grant. With an invented token it is 403 again, so it is not "send the
+ * header": it is sending THE session token.
  *
- * La trampa que hacía irreconocible el fallo es que la autoridad del PTY también deniega con
- * 403. Los dos cuerpos se distinguen por la clave: la puerta CSRF contesta en `message`, la ruta
- * contesta en `reason`. Por eso "403 siempre, 3 de 3" parecía un permiso que faltaba.
+ * The trap that made the failure unrecognizable is that the PTY authority also denies with
+ * 403. The two bodies differ in key: the CSRF door answers in `message`, the route answers in
+ * `reason`. That is why "always 403, 3 of 3" looked like a missing permission.
  *
- * Estos casos reproducen esa puerta en el servidor de pruebas: fallan mientras `terminalRequest`
- * mande las mismas cabeceras que mandaba (Accept, X-Cauce-Console, Content-Type) y pasan cuando
- * adjunta el token de la sesión, igual que hace el cliente compartido.
+ * These cases reproduce that door on the test server: they fail while `terminalRequest` sends
+ * the same headers it was sending (Accept, X-Cauce-Console, Content-Type) and pass when it
+ * attaches the session token, as the shared client does.
  */
 
-/** La puerta CSRF del gateway, tal cual: 403 sin token, y sólo el token de la sesión abre. */
+/** The CSRF door of the gateway, exactly: 403 without a token, and only the session token opens it. */
 function puertaCsrf(token: string, alOk: () => Response) {
   return ({ request }: { request: Request }) => {
     const presentado = request.headers.get('X-CSRF-Token');
@@ -469,13 +468,13 @@ it('no manda el token en las lecturas: el gateway no lo exige a un GET y pedirlo
 });
 
 /**
- * El defecto BLOQUEANTE 
+ * The BLOCKING bug
  *
- * `POST /v3/console/terminal/sessions` volvía `403 {"error":"forbidden","message":"se requiere un
- * token CSRF válido"}` en los 3 intentos, con dos alias distintos, porque este módulo no mandaba
- * ninguna cabecera CSRF. No era la máquina estrangulada: el rechazo volvía en 1,9-3,7 s mientras
- * el resto de endpoints tardaba entre 4 y 56 s, determinista y siempre igual. Con esto, la TUI no
- * abría NUNCA.
+ * `POST /v3/console/terminal/sessions` was returning `403 {"error":"forbidden","message":"se
+ * requires a valid CSRF token"}` on all 3 attempts, with two different aliases, because
+ * this module sent no CSRF header. It was not the machine being throttled: the rejection came
+ * back in 1.9-3.7 s while the other endpoints took between 4 and 56 s, deterministic and
+ * always the same. With this, the TUI never opened.
  */
 describe('el token CSRF viaja en toda escritura del plano PTY', () => {
   const sesion = { csrfForMutation: () => Promise.resolve('token-de-la-sesion') };
@@ -521,8 +520,8 @@ describe('el token CSRF viaja en toda escritura del plano PTY', () => {
   });
 
   it('toma el token de la sesión compartida cuando el llamador no pasa ninguna', async () => {
-    // El singleton `cauceApi` lo resuelve contra `/v3/auth/session`, igual que el resto de la
-    // consola: `mock-csrf-token` sale del handler global de MSW.
+    // The `cauceApi` singleton resolves it against `/v3/auth/session`, like the rest of the
+    // console: `mock-csrf-token` comes from the global MSW handler.
     let csrf: string | null = 'ausente';
     server.use(http.post('*/v3/console/terminal/probe', ({ request }) => {
       csrf = request.headers.get('X-CSRF-Token');

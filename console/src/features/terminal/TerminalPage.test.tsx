@@ -104,10 +104,11 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
     expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
   }
-  // El encabezado tiene que contar lo MISMO que la lista que se ve debajo. El número exacto es del
-  // fixture y cambia cada vez que la topología de demostración se parece más a la flota real;
-  // clavarlo acá solo compraba un test que se rompe sin que se rompa nada. Lo que sí importa —y no
-  // depende del fixture— es que el contador no afirme un tamaño de flota distinto al que muestra.
+  // The header must count the SAME as the list shown below. The exact number comes from the
+  // fixture and changes each time the demo topology looks more like the real fleet; pinning it
+  // here only bought a test that breaks without anything breaking. What does matter — and does
+  // not depend on the fixture — is that the counter does not claim a fleet size different from
+  // what it shows.
   const listed = await screen.findAllByRole('button', { name: /abrir sesión con/i });
   expect(listed.length).toBeGreaterThan(1);
   expect(await screen.findByText(`${String(listed.length)} agentes`)).toBeInTheDocument();
@@ -119,16 +120,16 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
 
   expect(await screen.findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
-  // `getAllByText` y no `getByText`: desde que el pie de doctrina se repliega en modo observación,
-  // la misma frase se escribe TAMBIÉN en el desplegable «Estado de la flota» de la cabecera —desde
-  // una sola constante, `doctrina.ts`— para que replegarlo no la haga desaparecer de la vista. Lo
-  // que este caso afirma sigue siendo lo mismo: la doctrina está escrita en la página.
+  // `getAllByText` and not `getByText`: since the doctrine footer folds in observation mode, the
+  // same sentence is ALSO written in the "Fleet status" dropdown of the header — from a single
+  // constant, `doctrina.ts` — so folding it does not make it disappear from view. What this
+  // case asserts is still the same: the doctrine is written on the page.
   expect(screen.getAllByText(/no crea workers remotos/i).length).toBeGreaterThan(0);
-  // Timeout explícito, y no por lentitud tolerada: este caso renderiza la barra lateral entera —15
-  // alias, cada uno resolviendo su estado de PTY— y encima escribe un mensaje carácter por carácter
-  // con userEvent. Aislado tarda ~2,7 s; corriendo detrás de los otros 31 archivos, con la máquina
-  // caliente, pasaba los 5 s por defecto y fallaba por reloj, no por conducta. Un test que falla
-  // según con quién comparta la corrida no está midiendo la aplicación.
+  // Explicit timeout, not for tolerated slowness: this case renders the entire sidebar — 15
+  // aliases, each one resolving its PTY state — and also types a message character by character
+  // with userEvent. In isolation it takes ~2.7 s; running behind the other 31 files, with the
+  // machine warm, it passed the default 5 s and failed by clock, not by behavior. A test that
+  // fails depending on who shares its run is not measuring the application.
 }, 20_000);
 
 it('keeps the terminal draft and reports uncertainty when publish returns a malformed 202', async () => {
@@ -168,8 +169,8 @@ it('keeps the durable feed operational on a real PTY 501 and disables only PTY',
   await user.type(input, 'El feed no depende del PTY');
   await user.click(screen.getByRole('button', { name: /^enviar$/i }));
   expect(await screen.findByText(/Aceptado por el control plane/i)).toBeInTheDocument();
-  // El rótulo de la tarjeta «Tu permiso de terminal», en castellano: era `connectState` en
-  // mayúsculas, o sea el valor crudo del RBAC.
+  // The label of the "Your terminal permission" card, in Spanish: it used to be `connectState`
+  // in capitals, i.e. the raw RBAC value.
   expect(screen.getByText('DENEGADO')).toBeInTheDocument();
 });
 
@@ -240,8 +241,8 @@ it('labels every alias with an explicit PTY state instead of a spinner or a bare
   expect(screen.getByRole('button', { name: /abrir sesión con salva.*PTY: Sin autoridad/i })).toBeInTheDocument();
   // An alias the inventory never mentioned is UNKNOWN, never silently "available".
   expect(screen.getByRole('button', { name: /abrir sesión con kant.*PTY: PTY desconocido/i })).toBeInTheDocument();
-  // Los dos KPI cuentan 1 de 3: uno con PTY online y —al publicar jarvis su `harness`— uno que
-  // además emite su TUI.
+  // The two KPIs count 1 of 3: one with PTY online and — once jarvis publishes its `harness` —
+  // one that also emits its TUI.
   expect(await screen.findAllByText('1 / 3')).toHaveLength(2);
 });
 
@@ -256,16 +257,16 @@ it('un alias con PTY pero SIN modo harness no se pinta en verde: lleva su motivo
   const conTui = await screen.findByRole('button', { name: /abrir sesión con zeus/i });
   const sinTui = screen.getByRole('button', { name: /abrir sesión con jarvis/i });
 
-  // El que emite: verde, con el estado que el servidor sí publica.
+  // The one that emits: green, with the state the server does publish.
   expect(within(conTui).getByText('TUI en vivo')).toHaveAttribute('data-status', 'allowed');
-  // El que no: gris (`no_tui`, la misma familia que `unknown`/`not_installed`) y con el motivo
-  // del servidor en el chip, no escondido detrás de un clic.
+  // The one that does not: gray (`no_tui`, the same family as `unknown`/`not_installed`) and with
+  // the server's reason on the chip, not hidden behind a click.
   const chip = within(sinTui).getByText('Sin TUI que emitir');
   expect(chip).toHaveAttribute('data-status', 'no_tui');
   expect(chip).toHaveAttribute('title', expect.stringContaining('no publica el modo harness'));
-  // Y NO comparte el estado verde con el que sí emite.
+  // And it does NOT share the green state with the one that does emit.
   expect(chip.getAttribute('data-status')).not.toBe('allowed');
-  // El KPI que ya contaba bien (8/14 en producción) sigue contando lo mismo: 1 de 2 acá.
+  // The KPI that already counted right (8/14 in production) keeps counting the same: 1 of 2 here.
   expect(await screen.findByText('1 / 2')).toBeInTheDocument();
 });
 
@@ -279,8 +280,8 @@ it('disables PTY for a denied destination and shows the server motive, not an em
 
   const ptyButton = await screen.findByRole('button', { name: /^PTY$/i });
   await waitFor(() => { expect(ptyButton).toBeDisabled(); });
-  // El motivo del servidor trae el código DENTRO de la prosa. Se traduce, y se conserva lo
-  // que el servidor sí dijo en castellano. Ver `denegaciones.ts`.
+  // The server's reason brings the code INSIDE the prose. It is translated, and what the
+  // server did say in Spanish is preserved. See `denegaciones.ts`.
   expect(ptyButton).toHaveAttribute('title', expect.stringContaining('Falta decir qué persona está entrando'));
   expect(screen.getByText(/falta identidad por persona/i)).toBeInTheDocument();
   expect(screen.getByText(/Lo levanta:/i)).toBeInTheDocument();
@@ -371,10 +372,11 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
   // The ticket is spent once the relay is ready; the bar says so instead of freezing at 0:00.
   expect(bar).toHaveTextContent(/Ticket consumido · sesión activa/);
   /*
-   * El botón se llama «Cerrar la terminal» y NO «Cerrar sesión»: arriba a la derecha, en la barra
-   * de la consola, hay otro «Cerrar sesión» que te echa de la aplicación. La comprobación es doble
-   * a propósito —el rótulo correcto Y la ausencia del ambiguo dentro de la barra— porque sin la
-   * segunda mitad este caso volvería a pasar en verde el día que alguien deshaga el cambio.
+   * The button is called "Cerrar la terminal" and NOT "Cerrar sesion": at the top right, in the
+   * console bar, there is another "Cerrar sesion" that logs you out of the application. The
+   * check is double on purpose — the right label AND the absence of the ambiguous one inside
+   * the bar — because without the second half this case would pass green again the day someone
+   * undoes the change.
    */
   expect(within(bar).getByRole('button', { name: /cerrar la terminal/i })).toBeInTheDocument();
   expect(within(bar).queryByRole('button', { name: /^cerrar sesión$/i })).not.toBeInTheDocument();
@@ -503,8 +505,8 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   await user.type(within(dialog).getByRole('textbox'), 'intento contra un agente caido');
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
 
-  // El 409 se explica: qué pasó, por qué, y quién puede levantarlo. Antes el `[role=alert]`
-  // contenía exactamente la palabra `agent_offline` y nada más.
+  // The 409 is explained: what happened, why, and who can lift it. Before, the `[role=alert]`
+  // contained exactly the word `agent_offline` and nothing else.
   expect(await within(dialog).findByText(/El agente PTY del contenedor no está conectado/i)).toBeInTheDocument();
   expect(within(dialog).getByText(/HTTP 409/)).toBeInTheDocument();
   expect(document.body.textContent).not.toContain('agent_offline');
@@ -561,11 +563,11 @@ describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
   it('pinta el estado de cada adaptador y NUNCA un tag sin renderizar', async () => {
     renderWithApi(<TerminalPage />);
 
-    // El inspector se pinta dos veces (columna derecha y tira de abajo); CSS decide cuál se ve.
+    // The inspector is painted twice (right column and bottom strip); CSS decides which one shows.
     expect(await screen.findAllByText('Disponible')).not.toHaveLength(0);
     expect(screen.getAllByText('Degradado')).not.toHaveLength(0);
     expect(screen.getAllByText('Sin reportar')).not.toHaveLength(0);
-    // El defecto exacto, por si alguien vuelve a escapar el JSX.
+    // The exact bug, in case someone lets the JSX escape again.
     expect(screen.queryByText(/UNKNOWN VALUE=/i)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/<Unknown value/i);
   });
@@ -573,8 +575,8 @@ describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
   it('cuenta disponibles, con fallo y sin reportar en vez de una fracción que sugiere avería', async () => {
     renderWithApi(<TerminalPage />);
 
-    // El fixture trae 2 available, 1 degraded y 1 unknown.
-    // Dos veces: el KPI de arriba y la tira de salud de la lista de flota. Las dos cuentan igual.
+    // The fixture has 2 available, 1 degraded and 1 unknown.
+    // Twice: the KPI at the top and the health strip of the fleet list. Both count the same.
     expect(await screen.findAllByText('2 disponibles · 1 con fallo · 1 sin reportar')).toHaveLength(2);
     expect(screen.queryByText('2 / 4')).not.toBeInTheDocument();
   });

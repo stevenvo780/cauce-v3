@@ -1,20 +1,20 @@
 /**
- * LA PIEL DEL TERMINAL TIENE QUE ESTAR EN EL BUNDLE, Y TIENE QUE DECIR LO MISMO QUE XTERM.
+ * THE TERMINAL SKIN MUST BE IN THE BUNDLE, AND IT MUST SAY THE SAME AS XTERM.
  *
- * Esta prueba no mira la pantalla —jsdom no tiene layout ni aplica CSP— así que no puede afirmar
- * que la TUI se lee. Lo que sí puede, y es lo que se le pide, es que el fichero empaquetado no se
- * quede corto ni se desincronice de las dos cosas de las que copia:
+ * This test does not look at the screen — jsdom has no layout and does not apply CSP — so it
+ * cannot assert that the TUI is read. What it CAN, and what is asked of it, is that the
+ * bundled file does not fall short or desync from the two things it copies:
  *
- *   · de `@xterm/xterm`, los 256 colores ANSI: se vuelven a derivar leyendo los literales de SU
- *     bundle, no de mi memoria. Si xterm cambia la paleta, esto se pone rojo.
- *   · de `pty-session.ts`, el tema y la familia: el valor por defecto de cada `var()` del CSS
- *     tiene que ser el mismo que la constante de TypeScript. Ese defecto es la red de seguridad
- *     para cuando el JS no llega a pintar el atributo `style`, y una red que miente es peor que
- *     no tenerla.
+ *   · from `@xterm/xterm`, the 256 ANSI colors: they are re-derived by reading the literals of
+ *     ITS bundle, not from my memory. If xterm changes the palette, this goes red.
+ *   · from `pty-session.ts`, the theme and the family: the default value of each `var()` in
+ *     the CSS must be the same as the TypeScript constant. That default is the safety net
+ *     for when the JS fails to paint the `style` attribute, and a lying net is worse than no
+ *     net at all.
  *
- * La comprobación de que se LEE de verdad hay que hacerla en un Chrome real Y CON LA CABECERA CSP
- * PUESTA: `ops/console-legibilidad/servir-con-csp.mjs` sirve un `dist` con la misma cabecera que
- * producción. Sin ella la medición no puede dar rojo, que es exactamente cómo llegó hasta aquí.
+ * The check that it actually READS must be done in a real Chrome AND WITH THE CSP HEADER SET:
+ * `ops/console-legibilidad/servir-con-csp.mjs` serves a `dist` with the same header as
+ * production. Without it the measurement cannot go red, which is exactly how it got here.
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -29,7 +29,7 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const PIEL = leerCss(resolve(AQUI, 'xterm-csp.css'));
 const SESION = readFileSync(resolve(AQUI, 'pty-session.ts'), 'utf8');
 
-/** Los literales de la paleta salen del bundle de xterm, para que un cambio suyo se note acá. */
+/** The palette literals come from xterm's bundle, so a change there is noticed here. */
 function paletaDeXterm(): string[] {
   const require_ = createRequire(import.meta.url);
   const fuente = readFileSync(require_.resolve('@xterm/xterm'), 'utf8');
@@ -87,7 +87,7 @@ describe('la piel empaquetada del terminal', () => {
     for (const propiedad of ['color:', 'font-family:', 'font-size:', 'font-kerning: none', 'white-space: pre']) {
       expect(filas, `a \`.xterm-rows\` le falta \`${propiedad}\``).toContain(propiedad);
     }
-    // La celda: sin este `inline-block` la TUI se descuadra aunque los colores estén bien.
+    // The cell: without this `inline-block` the TUI disaligns even when the colors are right.
     expect(PIEL).toContain('.pty-host .xterm-rows span { display: inline-block; height: 100%; vertical-align: top; }');
     expect(PIEL).toContain('.xterm-cursor.xterm-cursor-block {');
     expect(PIEL).toContain('.pty-host .xterm-selection div {');
@@ -107,27 +107,28 @@ describe('la piel empaquetada del terminal', () => {
     expect(defecto('--pty-cursor')).toBe(TEMA_TERMINAL.cursor);
     expect(defecto('--pty-cursor-tinta')).toBe(TEMA_TERMINAL.cursorAccent);
     expect(defecto('--pty-seleccion')).toBe(TEMA_TERMINAL.selectionBackground);
-    // La familia lleva comas dentro, así que se compara la cadena entera de la declaración.
+    // The family carries commas inside, so the whole declaration string is compared.
     expect(PIEL).toContain(`font-family: var(--pty-fuente, ${FUENTE_TERMINAL.replace(/"/g, '')});`);
   });
 
   it('el cuerpo de letra nunca baja de lo que se puede leer', () => {
-    // Medido en Chrome a 360x800: con el suelo en 7 px entraban 65 columnas —se cortaba IGUAL,
-    // porque hacen falta 80— y encima no se leía. Bajar la letra sólo paga mientras se lea.
+    // Measured in Chrome at 360x800: with the floor at 7 px, 65 columns fit — it cut off THE SAME,
+    // because 80 are needed — and on top of that it was unreadable. Lowering the font only pays
+    // while it stays readable.
     expect(PTY_CUERPO_MINIMO).toBeGreaterThanOrEqual(10);
-    // Y no puede subir tanto que rompa el escritorio: a 1400 px de ventana el hueco mide 535 px y
-    // a 10 px entran exactamente las 80 columnas. A 11 se quedaría en 72 y avisaría de recorte.
+    // And it must not go so high that it breaks the desktop: at 1400 px of viewport the gap is
+    // 535 px and at 10 px exactly 80 columns fit. At 11 it would drop to 72 and warn about truncation.
     expect(PTY_CUERPO_MINIMO).toBeLessThanOrEqual(10);
     expect(PTY_CUERPO_BASE).toBeGreaterThan(PTY_CUERPO_MINIMO);
   });
 
   it('el terminal es SIEMPRE oscuro y con contraste de sobra: no depende del tema de la página', () => {
-    // 4,5:1 es el mínimo de WCAG para texto normal. Un terminal tiene que ir muy por encima:
-    // lo que se lee acá son trazas de 13 px durante horas.
+    // 4.5:1 is the WCAG minimum for normal text. A terminal must go well above: what is read
+    // here are traces at 13 px for hours.
     expect(contraste(TEMA_TERMINAL.foreground, TEMA_TERMINAL.background)).toBeGreaterThanOrEqual(7);
     expect(contraste(TEMA_TERMINAL.cursor, TEMA_TERMINAL.background)).toBeGreaterThanOrEqual(4.5);
-    // Ninguna regla de la piel puede depender de una variable de tema de la consola: si el
-    // terminal heredara `--text`, con el tema claro volvería a quedar ilegible.
+    // No skin rule may depend on a console theme variable: if the terminal inherited `--text`,
+    // with the light theme it would become unreadable again.
     expect(PIEL).not.toMatch(/var\(--(text|surface|bg|muted|border)[^)]*\)/);
   });
 });

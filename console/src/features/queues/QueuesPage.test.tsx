@@ -29,12 +29,12 @@ it('requests replay from the API and reports the accepted action', async () => {
 });
 
 /**
- * **El enlace «Ver en Queues» del cajón de la flota tiene que llevar a la entrega.**
+ * **The "View in Queues" link from the fleet drawer must land on the delivery.**
  *
- * Antes del 2026-08-22 aterrizaba en la lista genérica: `QueuesPage` no leía `location.search` y
- * el único código de la consola que lo tocaba era `LiveFleetPage`. Estas pruebas miden el
- * aterrizaje, no la intención: cuántas filas quedan, cuál está marcada, y qué se lee cuando la
- * entrega pedida no figura en el snapshot.
+ * Before, it landed on the generic list: `QueuesPage` did not read `location.search` and the
+ * only console code touching it was `LiveFleetPage`. These tests measure the landing, not the
+ * intent: how many rows remain, which is highlighted, and what is read when the requested
+ * delivery is not in the snapshot.
  */
 describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
   const tresEntregas = {
@@ -71,8 +71,8 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
     abrir('/queues?delivery=99999999-9999-4999-8999-999999999999');
 
     expect(await screen.findByText(/Esa entrega no está en esta página/)).toBeInTheDocument();
-    // No puede afirmar que ya no existe: el snapshot está recortado por el servidor y no hay
-    // consulta por entrega. Dice las dos posibilidades.
+    // It cannot assert that it no longer exists: the snapshot is truncated by the server and
+    // there is no per-delivery query. It says both possibilities.
     expect(screen.getByText(/puede que ya no exista/)).toBeInTheDocument();
     expect(screen.getByText(/más antigua que las que caben/)).toBeInTheDocument();
     expect(screen.queryByRole('table', { name: /colas, retries y dead letters/i })).not.toBeInTheDocument();

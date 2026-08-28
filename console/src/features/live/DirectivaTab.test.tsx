@@ -8,19 +8,19 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * LAS TRES CAPAS, PROBADAS DESDE LA PÁGINA VIVA.
+ * THE THREE LAYERS, TESTED FROM THE LIVE PAGE.
  *
- * Igual que el perfil canónico: la mitad del encargo es DÓNDE vive. Un test del componente suelto
- * pasaría verde con la pestaña desenganchada del cajón, que es exactamente el defecto que hace que
- * nadie mantenga el `CLAUDE.md` —está, pero no hay por dónde llegar—.
+ * Like the canonical profile: half of the task is WHERE it lives. A loose component test would
+ * pass green with the tab detached from the drawer, which is exactly the bug that means nobody
+ * maintains the `CLAUDE.md` — it is there, but there is no way to get to it.
  *
- * Los dos casos que importan son opuestos y los dos tienen que ser ciertos a la vez:
- *  · con el endpoint publicado, las tres capas se ven y el solapamiento se DICE;
- *  · sin el endpoint publicado, la pantalla declara que NO MIRÓ, y no puede afirmar ni que hay
- *    manual ni que no lo hay. Ese es el control negativo, y es el que esta consola ya falló antes
- *    en otras pantallas.
+ * The two cases that matter are opposite and both have to be true at the same time:
+ *  · with the endpoint published, the three layers are seen and the overlap is STATED;
+ *  · without the endpoint published, the screen declares that it DID NOT LOOK, and cannot
+ *    assert either that there is a manual or that there is not. That is the negative control,
+ *    and it is the one this console already failed before on other screens.
  *
- * Las capas se presentan en un diálogo (`role="dialog"`). Pruebas de foco, Escape, roles ARIA y contenido.
+ * Layers are presented in a dialog (`role="dialog"`). Tests of focus, Escape, ARIA roles and content.
  */
 
 import { configConBrief } from './agent-state-fixtures';
@@ -40,7 +40,7 @@ async function abrirPestanaDeKant() {
   return { user, cajon };
 }
 
-/** Abre el diálogo por el botón, que es el único camino que tiene el operador. */
+/** Open the dialog via the button, which is the only path the operator has. */
 async function abrirDirectivaDeKant() {
   const { user, cajon } = await abrirPestanaDeKant();
   const boton = await within(cajon).findByRole('button', { name: /abrir directiva completa/i });
@@ -50,24 +50,24 @@ async function abrirDirectivaDeKant() {
 }
 
 /**
- * EL RESUMEN DEL CAJÓN. Se rompe si alguien vuelve a meter las capas dentro del cajón: las tres
- * secciones dejarían de estar detrás del botón y `Capa 2` aparecería sin haberlo pulsado.
+ * THE DRAWER SUMMARY. It breaks if someone puts the layers back inside the drawer: the three
+ * sections would stop being behind the button and `Capa 2` would show without clicking.
  */
 it('la pestaña deja en el cajón sólo el resumen del rol; las capas están detrás del botón', async () => {
   configConBrief('Sos kant, el hub de la flota.\nAUTONOMIA: decidí y actuá vos.\nEscalá a Steven si hay dinero.');
   const { cajon } = await abrirPestanaDeKant();
 
-  // Las dos primeras líneas del rol, y NO la tercera.
+  // The first two lines of the role, and NOT the third.
   expect(await within(cajon).findByText('Sos kant, el hub de la flota.')).toBeInTheDocument();
   expect(within(cajon).getByText('AUTONOMIA: decidí y actuá vos.')).toBeInTheDocument();
   expect(within(cajon).queryByText('Escalá a Steven si hay dinero.')).not.toBeInTheDocument();
 
-  // El contador, en PUNTOS DE CÓDIGO y sobre el texto recortado: lo mismo que cuenta el CHECK de
-  // la base. 91 son los tres renglones de arriba; contar unidades UTF-16 daría otro número el día
-  // que alguien pegue un emoji, y ése es el número que deja al alias sordo.
+  // The counter, in CODE POINTS and over the trimmed text: the same as the database CHECK
+  // counts. 91 is the three lines above; counting UTF-16 units would give another number the
+  // day someone pastes an emoji, and that is the number that leaves the alias deaf.
   expect(within(cajon).getByText('91')).toBeInTheDocument();
 
-  // Y ni una capa dentro del cajón mientras el diálogo no se abra.
+  // And not a single layer inside the drawer while the dialog has not been opened.
   expect(within(cajon).queryByLabelText('Capa 2: manual del sitio')).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
@@ -76,12 +76,12 @@ it('la directiva rotula las TRES capas por su fin, no sólo por su nombre técni
   configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');
   const { dialogo } = await abrirDirectivaDeKant();
 
-  // Los tres rótulos son las tres preguntas que deciden dónde va a parar cada frase.
+  // The three labels are the three questions that decide where each sentence goes.
   expect(await within(dialogo).findByText('QUIÉN SOS y QUÉ PODÉS DECIDIR')).toBeInTheDocument();
   expect(within(dialogo).getByText('CÓMO SE TRABAJA AQUÍ')).toBeInTheDocument();
   expect(within(dialogo).getByText('LO QUE ESE AGENTE APRENDIÓ')).toBeInTheDocument();
 
-  // La capa 1 conserva la misma proyección, sin reabrir un editor legacy.
+  // Layer 1 keeps the same projection, without reopening a legacy editor.
   expect(await within(dialogo).findByLabelText(/proyección del rol de kant/i)).toHaveAttribute('readonly');
 }, 25_000);
 
@@ -126,11 +126,11 @@ it('los avisos y el rol visible consumen un único snapshot aunque el siguiente 
 }, 25_000);
 
 /**
- * LA PROSA SE PLIEGA. Lo que queda SIEMPRE a la vista es lo que hace falta para decidir en qué
- * capa va una frase: el fin y la fuente. El porqué está, pero cerrado.
+ * THE PROSE FOLDS. What stays ALWAYS in view is what is needed to decide which layer a
+ * sentence goes into: the purpose and the source. The why is there, but closed.
  *
- * Se rompe si alguien saca los párrafos del `<details>`: el texto pasaría a estar visible sin
- * haber abierto nada, y volverían los ~600 px que este cambio recortó.
+ * It breaks if someone pulls the paragraphs out of the `<details>`: the text would become
+ * visible without anything being opened, and the ~600 px this change trimmed would come back.
  */
 it('el porqué de cada capa está plegado y el fin de cada capa no', async () => {
   configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');
@@ -138,7 +138,7 @@ it('el porqué de cada capa está plegado y el fin de cada capa no', async () =>
 
   const capa1 = within(dialogo).getByLabelText('Capa 1: rol declarado');
   const porque = within(capa1).getByText(/es la única capa que sigue siendo verdad/i);
-  // `<details>` cerrado: jsdom no hace layout, pero sí respeta el atributo `open`.
+  // `<details>` closed: jsdom does not do layout, but it does respect the `open` attribute.
   expect(porque.closest('details')?.open).toBe(false);
   expect(within(capa1).getByText('QUIÉN SOS y QUÉ PODÉS DECIDIR')).toBeVisible();
 
@@ -146,7 +146,7 @@ it('el porqué de cada capa está plegado y el fin de cada capa no', async () =>
   expect(porque.closest('details')?.open).toBe(true);
 });
 
-/** La capa 4 es una nota de alcance en el pie, plegada. Medía 679 px abierta y no es una capa. */
+/** Layer 4 is a scope note in the footer, folded. It measured 679 px open and it is not a layer. */
 it('lo que todavía no se puede hacer está en el pie y plegado, no como cuarta capa', async () => {
   configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');
   const { dialogo } = await abrirDirectivaDeKant();
@@ -157,12 +157,12 @@ it('lo que todavía no se puede hacer está en el pie y plegado, no como cuarta 
 });
 
 /**
- * Control negativo: sin el endpoint de directiva publicado, se indica que no se miró
- * sin asumir ausencia del manual.
+ * Negative control: without the directive endpoint published, it is indicated that the manual
+ * was not looked at, without assuming its absence.
  */
 it('sin el endpoint publicado dice que NO MIRÓ, y NO afirma que falte el manual', async () => {
   configConBrief('Sos kant. AUTONOMIA: decidí y actuá vos.');
-  // El handler por defecto ya devuelve 404; se deja explícito para que el caso se lea solo.
+  // The default handler already returns 404; left explicit so the case reads by itself.
   server.use(http.get('*/v3/console/agents/:tenantId/:alias/directive', () =>
     new HttpResponse(null, { status: 404 })));
   const { dialogo } = await abrirDirectivaDeKant();
@@ -173,14 +173,15 @@ it('sin el endpoint publicado dice que NO MIRÓ, y NO afirma que falte el manual
   expect(within(capa2).getByText(/no lo vio/i)).toBeInTheDocument();
   // La frase prohibida: afirmar la ausencia.
   expect(within(capa2).queryByText(/arranca cada sesión sin manual/i)).not.toBeInTheDocument();
-  // Y se ve DISTINTO del caso medido: es el marcador que separa un diagnóstico de una invención.
+  // And it looks DIFFERENT from the measured case: it is the marker that separates a diagnosis
+  // from an invention.
   expect(within(capa2).getByText(/no se pudo mirar el manual del sitio/i).closest('.directiva-lectura'))
     .toHaveAttribute('data-medicion', 'no-medida');
 
   const capa3 = within(dialogo).getByLabelText('Capa 3: memoria');
   expect(within(capa3).getByText(/no se pudo mirar la memoria/i)).toBeInTheDocument();
 
-  // Y tampoco se inventa un aviso de solapamiento sobre ficheros que no se leyeron.
+  // And neither is an overlap warning invented over files that were not read.
   expect(within(dialogo).queryByRole('group', { name: /solapamiento/i })).not.toBeInTheDocument();
 }, 25_000);
 
@@ -221,15 +222,15 @@ it('con el endpoint publicado enseña los CLAUDE.md, avisa del duplicado y lista
   expect(await within(capa2).findByText('~/.claude/CLAUDE.md')).toBeInTheDocument();
   expect(within(capa2).getByText('/workspace/CLAUDE.md')).toBeInTheDocument();
 
-  // El aviso de solapamiento: la autonomía escrita en dos capas, con el giro concreto de evidencia.
+  // The overlap warning: autonomy written in two layers, with the specific turn of evidence.
   const avisos = within(dialogo).getByRole('group', { name: /solapamiento/i });
   expect(within(avisos).getByText(/la autonomía está escrita en dos capas/i)).toBeInTheDocument();
   expect(within(avisos).getAllByText('autonomía').length).toBeGreaterThan(0);
-  // Y el caso janus: dos manuales a la vez.
+  // And the case of two manuals at once.
   expect(within(avisos).getByText(/carga 2 manuales/i)).toBeInTheDocument();
   expect(within(avisos).getByText(/orden medido por el runtime/i)).toBeInTheDocument();
 
-  // La memoria: índice, con el total REAL del servidor aunque la lista venga recortada.
+  // The memory: index, with the REAL server total even if the list comes truncated.
   const capa3 = within(dialogo).getByLabelText('Capa 3: memoria');
   expect(within(capa3).getByText('267')).toBeInTheDocument();
   expect(within(capa3).getByText('MEMORY.md')).toBeInTheDocument();
@@ -279,8 +280,9 @@ it('un fallo discriminado de memoria muestra su causa y no un índice vacío', a
 }, 25_000);
 
 /**
- * CONTROL NEGATIVO del aviso: con las capas bien repartidas la pantalla no puede gritar. Un aviso
- * que sale siempre es un aviso que el operador aprende a ignorar, y entonces no avisa de nada.
+ * NEGATIVE CONTROL of the warning: with the layers well distributed the screen cannot scream.
+ * A warning that always shows is a warning the operator learns to ignore, and then it warns
+ * of nothing.
  */
 it('con la autonomía SÓLO en el rol y el manual limpio, no aparece ningún aviso de choque', async () => {
   configConBrief('Sos kant, el hub. AUTONOMIA: decidí y actuá vos. Pedí permiso SOLO si hay dinero.');
@@ -311,9 +313,9 @@ it('el caso gaia: el servidor MIRÓ y no hay manual, y eso sí se puede afirmar'
   expect(await within(capa2).findByText(/no hay ningún/i)).toBeInTheDocument();
   expect(within(capa2).getByText(/no hay ningún manual estándar acreditado/i)).toBeInTheDocument();
   expect(within(capa2).getByText(/no prueba ausencia de reglas o fallbacks/i)).toBeInTheDocument();
-  // Y aquí sí: la afirmación de ausencia está permitida porque la lectura ocurrió.
+  // And here yes: the absence assertion is allowed because the read happened.
   expect(within(capa2).queryByText(/no se pudo mirar/i)).not.toBeInTheDocument();
-  // El otro marcador, el que hace que los dos estados no se confundan de un vistazo.
+  // The other marker, the one that keeps the two states from being confused at a glance.
   expect(within(capa2).getByText(/el servidor miró/i).closest('.directiva-lectura'))
     .toHaveAttribute('data-medicion', 'medida-vacia');
 }, 25_000);

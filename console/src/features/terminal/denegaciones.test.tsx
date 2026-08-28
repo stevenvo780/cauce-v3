@@ -1,18 +1,18 @@
 /**
- * **El control negativo del carril.**
+ * **The negative control of the lane.**
  *
- * No basta con probar que `no_grant` hoy se ve en castellano: eso lo cumpliría un `if` suelto y
- * volvería a romperse con la próxima puerta que el gateway agregue. Lo que se prueba acá es la
- * INVARIANTE:
+ * It is not enough to prove that `no_grant` is seen in Spanish today: a loose `if` would
+ * satisfy that, and it would break again the next time the gateway adds a door. What is
+ * proven here is the INVARIANT:
  *
- *  1. la tabla de castellano cubre EXACTAMENTE los códigos que el gateway declara — el fichero del
- *     gateway se LEE de disco, así que añadir un código allá y no acá hace fallar esta prueba;
- *  2. ninguno de esos códigos se le muestra crudo al operador en la vista `/terminal`, ni en el
- *     `[role=alert]` del diálogo ni en la línea de estado del canal;
- *  3. cada traducción dice las tres cosas: qué pasó, por qué, y quién puede levantar la puerta.
+ *  1. the Spanish table covers EXACTLY the codes the gateway declares — the gateway file is
+ *     READ from disk, so adding a code there and not here makes this test fail;
+ *  2. none of those codes is shown raw to the operator in the `/terminal` view, neither in
+ *     the dialog `[role=alert]` nor in the channel status line;
+ *  3. each translation says three things: what happened, why, and who can lift the door.
  *
- * Y el negativo de verdad: `la prueba FALLA si se borra la traducción`, más abajo, mete un código
- * inventado por el camino real y comprueba que la salida NO es la palabra cruda.
+ * And the real negative: "the test FAILS if the translation is deleted", below, feeds a
+ * bogus code through the real path and checks that the output is NOT the raw word.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -33,7 +33,7 @@ import {
   type TerminalDenialCode,
 } from './denegaciones';
 
-/** Sube desde este fichero hasta la raíz del repo, buscando `services/gateway`. */
+/** Goes up from this file to the repo root, looking for `services/gateway`. */
 function rutaDelGateway(): string {
   let directorio = dirname(fileURLToPath(import.meta.url));
   for (let salto = 0; salto < 10; salto += 1) {
@@ -48,7 +48,7 @@ function rutaDelGateway(): string {
   throw new Error('No se encontró services/gateway/src/terminal/types.ts desde la consola');
 }
 
-/** Extrae los miembros de una unión de literales `export type X = 'a' | 'b';` */
+/** Extracts the members of a literal union `export type X = 'a' | 'b';` */
 function unionDelGateway(fuente: string, nombre: string): string[] {
   const bloque = new RegExp(`export type ${nombre}\\s*=([\\s\\S]*?);`).exec(fuente);
   if (!bloque) throw new Error(`No se encontró la unión ${nombre} en el gateway`);
@@ -74,32 +74,32 @@ describe('los códigos de denegación del gateway', () => {
   });
 
   it('no sobra ninguno: cada traducción corresponde a un código real del gateway o del inventario', () => {
-    // Tres no salen de la unión de denegaciones del gateway y se admiten uno por uno, para que la
-    // lista no crezca con códigos que ya nadie emite:
-    //  - `not_installed` viene del inventario de destinos (`PtyState`);
-    //  - `csrf_missing` no es una puerta del gateway sino un defecto de ESTA consola —la escritura
-    //    salía sin `X-CSRF-Token` y el gateway la rechazaba antes de mirar el permiso—, y se
-    //    reconoce por la prosa del 403, no por un identificador;
-    //  - `unauthorized` es la cookie de consola vencida, que tampoco es un permiso del operador.
-    // Las tres tienen que estar acá y no en un segundo traductor: un solo vocabulario para las
-    // negativas del plano PTY.
+    // Three do not come out of the gateway denials union and are admitted one by one, so the
+    // list does not grow with codes nobody emits anymore:
+    //  - `not_installed` comes from the targets inventory (`PtyState`);
+    //  - `csrf_missing` is not a gateway door but a bug in THIS console — the write went out
+    //    without `X-CSRF-Token` and the gateway rejected it before checking the permission —
+    //    and is recognized by the 403 prose, not by an identifier;
+    //  - `unauthorized` is the console cookie expired, which is not an operator permission either.
+    // All three must be here and not in a second translator: one vocabulary for the negatives
+    // of the PTY plane.
     const admitidos = new Set([...declarados, 'not_installed', 'csrf_missing', 'unauthorized']);
     for (const codigo of TERMINAL_DENIAL_CODES) expect(admitidos).toContain(codigo);
   });
 
-  it.each(TERMINAL_DENIAL_CODES)('«%s» dice qué pasó, por qué y quién lo levanta — en castellano', (codigo) => {
+  it.each(TERMINAL_DENIAL_CODES)('"%s" says what happened, why, and who lifts it — in Spanish', (codigo) => {
     const copia = TERMINAL_DENY_MESSAGES[codigo];
     for (const [campo, texto] of Object.entries(copia) as [string, string][]) {
-      expect(texto.length, `${codigo}.${campo} está vacío`).toBeGreaterThan(20);
-      // Ni el titular ni el motivo ni el responsable pueden contener el código crudo.
-      expect(texto, `${codigo}.${campo} repite el código crudo`).not.toContain(codigo);
-      // Ningún identificador crudo, de NINGÚN código: `snake_case` es exactamente la forma que
-      // tiene lo que sale de la base y del protocolo, y es lo que no puede llegar a la pantalla.
-      expect(texto, `${codigo}.${campo} contiene un identificador crudo`).not.toMatch(/\b[a-z][a-z0-9]*(_[a-z0-9]+)+\b/);
+      expect(texto.length, `${codigo}.${campo} is empty`).toBeGreaterThan(20);
+      // Neither the title nor the reason nor the one-who-lifts-it may contain the raw code.
+      expect(texto, `${codigo}.${campo} repeats the raw code`).not.toContain(codigo);
+      // No raw identifier of ANY code: `snake_case` is exactly the shape of what comes out of
+      // the database and the protocol, and is what must never reach the screen.
+      expect(texto, `${codigo}.${campo} contains a raw identifier`).not.toMatch(/\b[a-z][a-z0-9]*(_[a-z0-9]+)+\b/);
     }
   });
 
-  it.each(TERMINAL_DENIAL_CODES)('«%s» se explica sin devolver nunca la palabra cruda', (codigo) => {
+  it.each(TERMINAL_DENIAL_CODES)('"%s" is explained without ever returning the raw word', (codigo) => {
     const explicada = explicarDenegacionPty({ texto: codigo, estado: 403 });
     expect(explicada.codigo).toBe(codigo);
     expect(explicada.titulo).not.toContain(codigo);
@@ -108,7 +108,7 @@ describe('los códigos de denegación del gateway', () => {
     expect(explicada.porQue).toContain('HTTP 403');
   });
 
-  it.each(TERMINAL_DENIAL_CODES)('«%s» también se reconoce embebido en la prosa del inventario', (codigo) => {
+  it.each(TERMINAL_DENIAL_CODES)('"%s" is also recognized embedded in the inventory prose', (codigo) => {
     const prosa = `${codigo}: falta identidad por persona.`;
     expect(codigoDeDenegacion(prosa)).toBe(codigo);
     const traducido = traducirCodigosEnTexto(prosa);
@@ -116,7 +116,7 @@ describe('los códigos de denegación del gateway', () => {
     expect(traducido).toContain('Lo levanta:');
   });
 
-  it('un código que esta consola NO conoce se CITA, no se traduce a la ligera', () => {
+  it('a code this console does NOT know is QUOTED, not loosely translated', () => {
     const explicada = explicarDenegacionPty({ texto: 'puerta_nueva_del_futuro', estado: 403 });
     expect(explicada.codigo).toBeUndefined();
     expect(explicada.porQue).toContain('puerta_nueva_del_futuro');
@@ -124,16 +124,16 @@ describe('los códigos de denegación del gateway', () => {
     expect(explicada.titulo).not.toContain('puerta_nueva_del_futuro');
   });
 
-  it('un texto sin ningún código se devuelve intacto: no se toca lo que ya estaba bien', () => {
+  it('a text with no code is returned intact: what was already right is not touched', () => {
     const bueno = 'El servidor no informó un motivo para este destino.';
     expect(traducirCodigosEnTexto(bueno)).toBe(bueno);
   });
 });
 
 /* ---------------------------------------------------------------------------------------------
- * El mismo control, pero contra el DOM: la tabla de arriba probaría igual de bien un módulo que
- * nadie llama. Esto recorre los códigos por el camino real —el POST que rechaza el gateway— y
- * exige que la palabra cruda no llegue nunca a la pantalla.
+ * The same control, but against the DOM: the table above would test just as well a module that
+ * nobody calls. This walks the codes through the real path — the POST the gateway rejects — and
+ * requires the raw word to never reach the screen.
  * ------------------------------------------------------------------------------------------- */
 
 const AGENTE = { tenant_id: 'Steven', alias: 'zeus' };
@@ -178,7 +178,7 @@ describe('la negativa que ve el operador', () => {
     ['session_limit', 409],
     ['container_busy', 409],
   ] as [TerminalDenialCode, number][])(
-    'un %s del gateway NO se muestra crudo: se dice qué pasó y quién lo levanta',
+    'a gateway %s is NOT shown raw: it says what happened and who lifts it',
     async (codigo, estado) => {
       servirCapacidad();
       server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
@@ -190,7 +190,7 @@ describe('la negativa que ve el operador', () => {
       const boton = await screen.findByRole('button', { name: /Abrir sesión con zeus/i }, { timeout: 5000 });
       await userEvent.click(boton);
 
-      // La apertura automática de la TUI ya golpea el gateway y recibe el rechazo.
+      // The auto-open of the TUI already hits the gateway and gets the rejection.
       const aviso = await waitFor(() => {
         const encontrados = screen.getAllByRole('alert');
         const conTexto = encontrados.find((nodo) => nodo.textContent.includes('Lo levanta:'));
@@ -203,12 +203,12 @@ describe('la negativa que ve el operador', () => {
       expect(aviso.textContent).toContain(copia.titulo);
       expect(aviso.textContent).toContain('Lo levanta:');
       expect(aviso.textContent).toContain(`HTTP ${String(estado)}`);
-      // El control negativo: la palabra cruda NO puede estar en ningún sitio de la pantalla.
+      // Negative control: the raw word CANNOT be anywhere on the screen.
       expect(document.body.textContent).not.toContain(codigo);
     },
   );
 
-  it('la prosa del inventario tampoco llega cruda a la línea de estado del canal', async () => {
+  it('the inventory prose does not reach the channel status line either', async () => {
     server.use(
       http.get('*/v3/console/terminal/capability', () => HttpResponse.json({
         available: true,
@@ -248,16 +248,16 @@ describe('la negativa que ve el operador', () => {
 });
 
 /**
- * Los cuatro casos que traía `terminalSessionRefusal` (`session.ts`), que era un SEGUNDO traductor
- * del mismo 403 y se retiró en la fusión del 2026-08-23. La función se fue; lo que garantizaba se
- * queda, apuntando al traductor que sobrevivió.
+ * The four cases that `terminalSessionRefusal` (`session.ts`) used to bring — it was a SECOND
+ * translator of the same 403 and was retired in the merge on 2026-08-23. The function is gone;
+ * what it guaranteed stays, pointing at the translator that survived.
  */
 describe('el rechazo al abrir la sesión, por el único traductor que queda', () => {
   function fallo(texto: string, estado: number, codigo?: string) {
     return explicarDenegacionPty({ texto, estado, codigo });
   }
 
-  it('el 403 por CSRF es un fallo de la CONSOLA, no una falta de permiso del operador', () => {
+  it('the 403 for CSRF is a CONSOLE bug, not an operator permission failure', () => {
     const negativa = fallo('se requiere un token CSRF válido', 403, 'forbidden');
     expect(negativa.codigo).toBe('csrf_missing');
     expect(negativa.esDefectoDeLaConsola).toBe(true);
@@ -265,21 +265,21 @@ describe('el rechazo al abrir la sesión, por el único traductor que queda', ()
     expect(negativa.quienLoLevanta).toMatch(/quien mantiene la consola/i);
   });
 
-  it('un 403 que NO es de CSRF se traduce y NO acusa a la consola', () => {
+  it('a 403 that is NOT from CSRF is translated and does NOT accuse the console', () => {
     const negativa = fallo('attribution_required', 403, 'forbidden');
     expect(negativa.esDefectoDeLaConsola).toBeUndefined();
     expect(negativa.linea).not.toContain('attribution_required');
     expect(negativa.linea).toContain('403');
   });
 
-  it('distingue el 409 del destino del 401 de la sesión', () => {
+  it('distinguishes the 409 of the destination from the 401 of the session', () => {
     const conflicto = fallo('agent_offline', 409, 'conflict');
     expect(conflicto.linea).toContain('409');
     expect(conflicto.linea).not.toContain('agent_offline');
     expect(fallo('unauthorized', 401, 'unauthorized').titulo).toMatch(/caducó/i);
   });
 
-  it('un error sin estado no inventa una causa: cita lo que sabe', () => {
+  it('an error without status does not invent a cause: it quotes what it knows', () => {
     const negativa = explicarDenegacionPty({ texto: 'Failed to fetch' });
     expect(negativa.esDefectoDeLaConsola).toBeUndefined();
     expect(negativa.porQue).toContain('Failed to fetch');

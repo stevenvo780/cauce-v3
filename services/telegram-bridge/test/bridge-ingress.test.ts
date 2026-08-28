@@ -106,7 +106,7 @@ describe('Telegram group routing (poller integration)', () => {
     }]);
   });
 
-  // Un mensaje anónimo en grupo se registra con motivo anonymous_sender.
+  // An anonymous group message is recorded with reason anonymous_sender.
   it('un mensaje anonimo de grupo deja rastro con motivo anonymous_sender, no desaparece en silencio', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();
@@ -169,8 +169,8 @@ describe('Telegram group routing (poller integration)', () => {
     }).runOnce();
 
     expect(ingress.calls).toHaveLength(0);
-    // Sólo el grupo deja rastro: en el privado el descarte es el filtro de desconocidos y sería
-    // ruido permanente.
+    // Only the group leaves a record: in private chat the drop is the unknown-user filter and would
+    // be permanent noise.
     expect(suppressed.map((record) => [record.chat_id, record.reason]))
       .toEqual([[String(GROUP_CHAT_ID), 'user_denied']]);
   });
@@ -292,12 +292,12 @@ describe('Telegram human authorship', () => {
 });
 
 /**
- * P8 — la identidad del humano en el DM.
+ * P8 - human identity in DMs.
  *
- * Hasta acá el privado publicaba `conversation_id` y nada más: el agente hablaba con un número.
- * Estas pruebas fijan las dos mitades del trabajo, que se rompen por separado: que el nombre
- * LLEGUE al prompt (si no, la función no existe) y que llegue SANEADO y marcado como no confiable
- * (si no, cualquiera le dicta al agente quién dice ser).
+ * Until now the private chat only published `conversation_id` and nothing else: the agent talked
+ * to a number. These tests pin both halves of the work, which break separately: the name ARRIVES
+ * at the prompt (otherwise the function does not exist) and it arrives SANITIZED and marked
+ * untrusted (otherwise anyone can dictate to the agent who they claim to be).
  */
 describe('Telegram DM identity (poller integration)', () => {
   const DM_CHAT_ID = 201;
@@ -358,19 +358,19 @@ describe('Telegram DM identity (poller integration)', () => {
   });
 
   it('marca como sospechoso el homóglifo cirílico que imita a otro agente de la flota', async () => {
-    // "zeu" + CYRILLIC SMALL LETTER DZE (U+0455): se dibuja "zeus" y no es "zeus" en ningún byte.
+    // "zeu" + CYRILLIC SMALL LETTER DZE (U+0455): renders as "zeus" but is not "zeus" in any byte.
     const call = await publish(dmUpdate(301, { id: 101, first_name: 'zeu\u0455' }));
 
     const prompt = String(call.body.prompt);
     expect(prompt).toContain('"impersonation_suspected"');
     expect(prompt).toContain('"collides_with":"zeus"');
     expect(prompt).toContain('"normalized":"zeus"');
-    // La advertencia va en texto, no sólo en el JSON: es lo que tiene que LEER el modelo.
+    // The warning goes in text, not only in JSON: that is what the model has to READ.
     expect(prompt).toContain('WARNING: this display name imitates "zeus"');
     expect(prompt).toContain('proves nothing');
   });
 
-  // El nombre coincidente con el tenant no dispara advertencia de suplantación.
+  // A display name matching the tenant does not trigger the impersonation warning.
   it('el dueño escribiendo con su propio nombre no queda marcado como suplantador de su tenant', async () => {
     const call = await publish(dmUpdate(304, { id: 101, first_name: TENANT }));
 

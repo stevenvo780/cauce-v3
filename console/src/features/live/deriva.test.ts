@@ -4,12 +4,12 @@ import type { LiveAgentView } from './agent-state';
 import { derivaDelRegistro } from './deriva';
 
 /**
- * La prueba EN LAS DOS DIRECCIONES del contador que prometía simetría y medía una sola.
+ * The BOTH-DIRECTIONS test of the counter that promised symmetry and measured only one.
  *
- * El control que importa no es que cada dirección cuente bien por separado: es el par de casos
- * cruzados. Un contador que sólo recorre las membresías pasa `sinRegistro` con nota y devuelve
- * `sinSala = 0` para SIEMPRE, incluidos los casos en que hay deriva de sobra. Por eso cada
- * dirección tiene su caso positivo y su caso negativo, y hay un caso con las dos a la vez.
+ * The check that matters is not each direction counting correctly on its own: it is the pair of
+ * crossed cases. A counter that only walks memberships passes `sinRegistro` with note and
+ * returns `sinSala = 0` FOREVER, including cases with derivation to spare. That is why each
+ * direction has its positive and its negative case, and there is one case with both at once.
  */
 
 function vista(overrides: Partial<LiveAgentView> & { tenantId: string; alias: string }): LiveAgentView {
@@ -32,8 +32,8 @@ function vista(overrides: Partial<LiveAgentView> & { tenantId: string; alias: st
     rooms: [],
     origenes: [],
     ...overrides,
-    // Los tres van DESPUÉS del spread a propósito: la clave se deriva del par y no se pasa suelta,
-    // así ninguna prueba puede describir un alias con una `key` que no le corresponde.
+    // The three are AFTER the spread on purpose: the key is derived from the pair and is not
+    // passed loose, so no test can describe an alias with a `key` that does not match.
     key: `${tenantId}/${alias}`,
     tenantId,
     alias,
@@ -86,10 +86,11 @@ describe('membresía habilitada sin fila en el registro — el caso quota-collec
   });
 
   it('un participante que entró por una entrega abierta NO cuenta como registro', () => {
-    // El universo de la actividad es `agents ∪ entregas-abiertas ∪ connection_leases`. Un alias
-    // que aparece por una entrega y NO tiene fila en `agents` sigue estando fuera del registro, y
-    // su membresía sigue siendo deriva aunque el muñeco esté dibujado. Si esto se midiera contra
-    // «está en views» en vez de contra el registro, este caso daría 0 y el chip mentiría.
+    // The activity universe is `agents ∪ open-deliveries ∪ connection_leases`. An alias that
+    // appears through a delivery and has NO row in `agents` is still outside the registry, and
+    // its membership is still derivation even though the bot is drawn. If this were measured
+    // against "is in views" instead of against the registry, this case would return 0 and the
+    // chip would lie.
     const deriva = derivaDelRegistro(
       [vista({ tenantId: 'Steven', alias: 'intruso', flags: ['unregistered'] })],
       topologia([{ tenant: 'Steven', alias: 'intruso' }]),
@@ -100,9 +101,10 @@ describe('membresía habilitada sin fila en el registro — el caso quota-collec
 
 describe('alias del registro sin una sola membresía habilitada — el caso gaia', () => {
   /**
-   * ÉSTA es la dirección que valía cero siempre. Con el contador anterior —el bucle que sólo
-   * recorría las membresías— este test daba `0` y el chip no aparecía: `gaia` se dio de alta en
-   * `agents`, se quedó sin sala y la pantalla que existe para mostrar la flota no decía nada.
+   * THIS is the direction that was always zero. With the previous counter — the loop that only
+   * walked memberships — this test returned `0` and the chip did not show: one alias was
+   * registered in `agents`, ended up without a room, and the screen that exists to show the
+   * fleet said nothing.
    */
   it('la cuenta', () => {
     const deriva = derivaDelRegistro(
@@ -159,8 +161,8 @@ describe('la simetría, que es lo que el comentario prometía y el código no ha
   });
 
   it('sin topología leída, el registro entero es deriva y no se inventa el otro lado', () => {
-    // Una lectura que no llegó no es una flota sin salas; pero tampoco se puede afirmar lo
-    // contrario. Lo que NO puede pasar es que `sinRegistro` invente membresías inexistentes.
+    // A reading that did not arrive is not a fleet without rooms; but neither can the opposite
+    // be asserted. What CANNOT happen is that `sinRegistro` invents non-existent memberships.
     const deriva = derivaDelRegistro([vista({ tenantId: 'Miguel', alias: 'atlas' })], undefined);
     expect(deriva).toEqual({ sinRegistro: 0, sinSala: 1, total: 1 });
   });

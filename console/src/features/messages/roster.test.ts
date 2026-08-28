@@ -45,7 +45,7 @@ describe('el universo del roster de mensajería', () => {
     expect(gaia.registrado).toBe(true);
     expect(fueraDeLaTopologia(gaia)).toBe(true);
     expect(motivoDeAgenteSuelto(gaia)).toMatch(/registro de agentes y en NINGUNA sala/i);
-    // Y no se le inventa un lease: sin presencia, el estado es UNKNOWN, nunca «online».
+    // And no lease is invented: without presence, the state is UNKNOWN, never "online".
     expect(gaia.leaseState).toBe('unknown');
   });
 
@@ -86,10 +86,10 @@ describe('el universo del roster de mensajería', () => {
   });
 
   /**
-   * CONTROL NEGATIVO. El arreglo consiste en AMPLIAR el universo, y un arreglo así se equivoca en
-   * la dirección contraria: dibujando a cualquiera. Este caso exige que un alias que ninguna de
-   * las cuatro fuentes menciona siga sin existir, y que la membresía deshabilitada no se convierta
-   * en una afirmación de que sí se le puede escribir.
+   * NEGATIVE CONTROL. The fix consists of ENLARGING the universe, and a fix like that gets it
+   * wrong in the opposite direction: drawing anyone. This case requires that an alias that none
+   * of the four sources mentions still does not exist, and that the disabled membership does not
+   * become an assertion that it can be written to.
    */
   it('NO inventa un alias que ninguna de las cuatro fuentes menciona', () => {
     const roster = construirRosterDeMensajeria({

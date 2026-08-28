@@ -56,8 +56,8 @@ describe('deriveTerminalRelayState', () => {
   });
 
   /**
-   * El defecto  con una cuenta sin `control`, la ruta contesta 403 —el gate
-   * corre ANTES de mirar el backend PTY— y la consola lo contaba como «no está desplegado».
+   * The bug, on an account without `control`: the route returns 403 — the gate runs BEFORE
+   * looking at the PTY backend — and the console counted it as "not deployed".
    */
   describe('un 403 es una falta de permiso, NUNCA una ausencia de relay', () => {
     it('lo clasifica como sin-permiso y no dice que el relay no está desplegado', () => {
@@ -92,10 +92,10 @@ describe('deriveTerminalRelayState', () => {
   });
 
   /**
-   * El cartel del 2026-08-23: «Canal PTY no disponible en este stack — El relay de terminales
-   * no está desplegado en este stack. (HTTP 400 al consultarlo.)».** Ninguna de las dos frases se
-   * sigue de un 400: un 400 prueba que la ruta EXISTE y que rechazó la petición. Culpar al
-   * despliegue mandó al operador a mirar contenedores mientras el fallo estaba en la consola.
+   * The 2026-08-23 banner: "Canal PTY no disponible en este stack — El relay de terminales no
+   * esta desplegado en este stack. (HTTP 400 al consultarlo.)." Neither of the two sentences
+   * follows from a 400: a 400 proves the route EXISTS and rejected the request. Blaming the
+   * deployment sent the operator to inspect containers while the failure was in the console.
    */
   describe('una respuesta que no significa ausencia no se cuenta como ausencia', () => {
     it.each([400, 401, 405, 409, 422, 429, 500])('con %s dice que no se pudo comprobar, no que falte el relay', (status) => {

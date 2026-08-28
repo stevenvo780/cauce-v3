@@ -9,23 +9,22 @@ import { CARACTERES_DE_PREVISUALIZACION } from '../terminal/cuerpo-del-mensaje';
 import { MessagesPage } from './MessagesPage';
 
 /**
- * **LAS TRES COSAS QUE HACÍAN QUE EL HILO NO SE LEYERA COMO UNA CONVERSACIÓN.**
+ * **THE THREE THINGS THAT MADE THE THREAD NOT READ LIKE A CONVERSATION.**
  *
- * Las tres salieron de recorrer la consola de producción el 2026-08-23 con datos reales, y las
- * tres pasaban la suite entera en verde:
+ * The three came from walking through the production console with real data, and all three
+ * passed the whole suite green:
  *
- * 1. Al abrir un hilo había DIEZ burbujas con el anillo azul de «seleccionada» sin que nadie
- *    tocara nada, y el panel de detalle se abría solo sobre un mensaje de catorce horas antes.
- *    Causa, leída en el bundle desplegado: `data-selected={m?.delivery_id===i||void 0}` con los
- *    dos `undefined`, y `Z.find(w=>w.delivery?.delivery_id===L)??Z.at(-1)` devolviendo el PRIMER
- *    mensaje sin entrega, con lo que el `?? at(-1)` no se ejecutaba nunca.
- * 2. El hilo abría por el mensaje MÁS VIEJO y no había ningún control para ir al último: cero
- *    coincidencias de `ultimo|reciente|abajo|final|bajar` en todo el DOM.
- * 3. Los mensajes se cortaban a 240 caracteres a mitad de palabra, sin puntos suspensivos y sin
- *    forma de leerlos enteros; el detalle mostraba seis campos de metadatos y ni una línea del
- *    cuerpo.
+ * 1. Opening a thread showed TEN bubbles with the blue "selected" ring without anyone touching
+ *    anything, and the detail panel opened itself on a message from fourteen hours ago. Cause,
+ *    read in the deployed bundle: `data-selected={m?.delivery_id===i||void 0}` with both
+ *    undefined, and `Z.find(w=>w.delivery?.delivery_id===L)??Z.at(-1)` returning the FIRST
+ *    message without delivery, so the `?? at(-1)` never ran.
+ * 2. The thread opened on the OLDEST message and there was no control to go to the latest:
+ *    zero matches of `ultimo|reciente|abajo|final|bajar` anywhere in the DOM.
+ * 3. Messages were truncated to 240 characters mid-word, without ellipsis and with no way to read
+ *    them whole; the detail showed six metadata fields and not a single line of the body.
  *
- * Cada `it` de acá falla con el código anterior. Comprobado por reversión, no por confianza.
+ * Each `it` here fails with the previous code. Verified by reversion, not by trust.
  */
 
 beforeEach(() => {
@@ -41,15 +40,15 @@ function iso(desplazamiento: number): string {
   return new Date(Date.now() + desplazamiento).toISOString();
 }
 
-/** Un cuerpo del largo EXACTO al que el servidor corta, para probar el rótulo del recorte. */
+/** A body EXACTLY as long as the server's cut, to test the truncation label. */
 const CUERPO_LARGO = 'a'.repeat(400);
 const RECORTADO = CUERPO_LARGO.slice(0, CARACTERES_DE_PREVISUALIZACION);
 
 /**
- * El hilo de argos en el orden y con la forma del defecto: primero una SALIDA del agente (sin
- * entrega para este par, que es lo que engañaba al `find`), después una entrada con entrega, y al
- * final el mensaje más nuevo, también sin entrega. Sin esa forma el defecto no se reproduce: con
- * un hilo donde todo tiene entrega, el código viejo pasaba verde.
+ * Argus' thread in the order and shape of the bug: first an OUTGOING from the agent (no
+ * delivery for this pair, which fooled `find`), then one incoming with delivery, and finally
+ * the newest message, also without delivery. Without that shape the bug does not reproduce:
+ * with a thread where everything has delivery, the old code passed green.
  */
 function feedDeArgos({ recorte = false }: { recorte?: boolean } = {}) {
   const items = [
@@ -90,7 +89,7 @@ function burbujas(hilo: HTMLElement): HTMLElement[] {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 1. LA SELECCIÓN FANTASMA
+// 1. THE GHOST SELECTION
 // ---------------------------------------------------------------------------------------------
 
 it('🔴 sin un solo clic NINGUNA burbuja queda marcada como seleccionada', async () => {
@@ -101,8 +100,8 @@ it('🔴 sin un solo clic NINGUNA burbuja queda marcada como seleccionada', asyn
   const hilo = await abrirArgos(user);
   await waitFor(() => { expect(burbujas(hilo)).toHaveLength(3); });
 
-  // El defecto medido: dos de las tres burbujas —las que no tienen entrega— salían con
-  // `data-selected="true"` porque `undefined === undefined`.
+  // The measured bug: two of the three bubbles — those without delivery — came out with
+  // `data-selected="true"` because `undefined === undefined`.
   const marcadas = burbujas(hilo).filter((burbuja) => burbuja.getAttribute('data-selected') === 'true');
   expect(marcadas).toHaveLength(0);
 }, 25_000);
@@ -115,17 +114,17 @@ it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin en
   const hilo = await abrirArgos(user);
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 
-  // El defecto: abría en `aaaaaaaa…`, la MÁS VIEJA, porque era el primer ítem sin entrega.
+  // The bug: it opened on `aaaaaaaa…`, the OLDEST, because that was the first item without delivery.
   expect(within(detalle).getByText('cccccccc-3333-4333-8333-333333333333')).toBeInTheDocument();
   expect(within(detalle).queryByText('aaaaaaaa-1111-4111-8111-111111111111')).not.toBeInTheDocument();
-  // Y se dice que es el último y no una elección del operador, que es la queja textual.
+  // And it is said to be the last and not the operator's choice, which is the textual complaint.
   expect(within(detalle).getByText(/Último mensaje del hilo/i)).toBeInTheDocument();
 }, 25_000);
 
 /**
- * El detalle NACE CERRADO, y esto no es sólo cosmética: medido en Chrome a 1280x900 con el panel
- * ya acotado, el detalle desplegado de oficio dejaba 42 px de conversación visible. Arreglar el
- * compositor había creado un defecto del mismo tipo un poco más abajo.
+ * The detail IS BORN CLOSED, and this is not just cosmetic: measured in Chrome at 1280x900
+ * with the panel already bounded, the detail deployed on its own left 42 px of visible
+ * conversation. Fixing the composer had created a bug of the same kind a bit further down.
  */
 it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () => {
   const user = userEvent.setup();
@@ -135,7 +134,7 @@ it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () =>
   const hilo = await abrirArgos(user);
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
   expect(detalle).not.toHaveAttribute('open');
-  // Y aun cerrado dice de qué mensaje habla, para que no haya que abrirlo sólo para saberlo.
+  // And even closed it says which message it is about, so there is no need to open it just to know.
   expect(within(detalle).getByText(/Último mensaje del hilo/i)).toBeInTheDocument();
 
   await user.click(within(burbujas(hilo)[0]).getByRole('button', { name: /ver detalle/i }));
@@ -157,21 +156,21 @@ it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nad
   const detalle = within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i });
   expect(within(detalle).getByText('aaaaaaaa-1111-4111-8111-111111111111')).toBeInTheDocument();
   expect(within(detalle).getByText(/Mensaje que elegiste/i)).toBeInTheDocument();
-  // Y ahora sí hay exactamente UNA burbuja marcada: la que se clicó.
+  // And now there is exactly ONE marked bubble: the one clicked.
   const marcadas = burbujas(hilo).filter((burbuja) => burbuja.getAttribute('data-selected') === 'true');
   expect(marcadas).toHaveLength(1);
   expect(marcadas[0]).toBe(vieja);
 }, 25_000);
 
 // ---------------------------------------------------------------------------------------------
-// 2. EL HILO EMPIEZA POR EL FINAL
+// 2. THE THREAD STARTS AT THE END
 // ---------------------------------------------------------------------------------------------
 
 /**
- * jsdom no tiene layout: `scrollHeight` es 0 y el asignador de `scrollTop` no mueve nada, así que
- * una prueba que mirara `scrollTop` no distinguiría «no se llamó» de «se llamó y no pasó nada».
- * Se espía `scrollTo` —que jsdom no implementa y `irAlFinal` prefiere— y se afirma el EFECTO:
- * sobre qué caja, y con qué destino.
+ * jsdom has no layout: `scrollHeight` is 0 and the `scrollTop` setter moves nothing, so a test
+ * that looked at `scrollTop` would not distinguish "was not called" from "was called and did
+ * nothing". `scrollTo` is spied — jsdom does not implement it and `irAlFinal` prefers it — and
+ * the EFFECT is asserted: on which box, and with what destination.
  */
 function espiarDesplazamiento(alto = 10_976) {
   const llamadas: { caja: Element; top: number }[] = [];
@@ -195,7 +194,7 @@ it('🔴 abre la conversación por el FINAL, no por el mensaje más viejo', asyn
   expect(caja).not.toBeNull();
 
   await waitFor(() => { expect(llamadas.some((llamada) => llamada.caja === caja)).toBe(true); });
-  // El destino es el fondo del hilo: los 10.976 px que había que arrastrar a mano.
+  // The destination is the bottom of the thread: the 10,976 px that had to be dragged by hand.
   expect(llamadas.filter((llamada) => llamada.caja === caja).at(-1)?.top).toBe(10_976);
 }, 25_000);
 
@@ -209,10 +208,10 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
   const caja = hilo.querySelector<HTMLElement>('.messenger-thread-scroll');
   if (!caja) throw new Error('Missing .messenger-thread-scroll');
 
-  // Pegado al final no hay botón: sería un control que no lleva a ningún sitio.
+  // At the bottom there is no button: it would be a control that leads nowhere.
   expect(within(hilo).queryByRole('button', { name: /ir al último/i })).toBeNull();
 
-  // El operador sube a leer: la caja deja de estar al final.
+  // The operator scrolls up to read: the box is no longer at the end.
   act(() => {
     Object.defineProperty(caja, 'scrollTop', { configurable: true, value: 0, writable: true });
     caja.dispatchEvent(new Event('scroll', { bubbles: false }));
@@ -222,7 +221,7 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
 }, 25_000);
 
 // ---------------------------------------------------------------------------------------------
-// 3. EL CUERPO RECORTADO A 240
+// 3. THE BODY TRUNCATED TO 240
 // ---------------------------------------------------------------------------------------------
 
 it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', async () => {
@@ -238,7 +237,7 @@ it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', asyn
   });
 
   expect(recortada).toHaveTextContent(new RegExp(`sólo los primeros ${String(CARACTERES_DE_PREVISUALIZACION)} caracteres`, 'i'));
-  // Y el corte se ve en el propio texto: antes terminaba en seco, a mitad de palabra.
+  // And the cut is visible in the text itself: before it ended abruptly, mid-word.
   expect(recortada.querySelector('p')?.textContent).toBe(`${RECORTADO}…`);
 }, 25_000);
 
@@ -262,10 +261,10 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
 }, 25_000);
 
 /**
- * CONTROL NEGATIVO del arreglo anterior. La ruta es nueva y el gateway de producción todavía no la
- * publica: si el botón se comiera el 404 en silencio, el operador volvería a quedarse sin saber
- * que hay más texto — el mismo defecto, con un botón encima. Se exige que lo diga y que NO acuse
- * al mensaje de no existir, porque no es eso lo que pasó.
+ * NEGATIVE CONTROL of the previous fix. The route is new and the production gateway does not
+ * yet publish it: if the button swallowed the 404 silently, the operator would again be left
+ * without knowing there is more text — the same bug, with a button on top. It must say so
+ * and must NOT accuse the message of not existing, because that is not what happened.
  */
 it('🔴 si el gateway no publica la ruta todavía, lo dice con esas palabras', async () => {
   server.use(http.get('*/v3/console/messages/:messageId', () => HttpResponse.json(

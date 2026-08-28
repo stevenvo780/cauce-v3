@@ -7,11 +7,11 @@ import { renderWithApi } from '../../test/render';
 import { LiveFleetPage } from './LiveFleetPage';
 
 /**
- * El editor de ficheros se prueba DESDE la página viva y no aislado, por lo mismo que el editor
- * del rol declarado: la mitad del encargo es DÓNDE vive.  así que una
- * prueba del componente suelto pasaría igual con la pestaña desenganchada del cajón —que es
- * exactamente el estado del que viene todo esto: `agent-documents.ts` llevaba un día escrito con
- * su superficie HTTP en cero y ninguna prueba lo delataba—.
+ * The file editor is tested FROM the live page and not in isolation, for the same reason as
+ * the declared-role editor: half of the task is WHERE it lives. So a loose component test
+ * would pass equally with the tab detached from the drawer — which is exactly the state all
+ * this comes from: `agent-documents.ts` had been written for a day with its HTTP surface at
+ * zero and no test exposed it.
  */
 
 const RUTA_MAPA = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
@@ -95,8 +95,8 @@ it('la pestaña existe en el cajón y enseña el mapa de ficheros del alias', as
 });
 
 /**
- * Un candado sin explicación es lo que hace que alguien pida por Telegram que le desbloqueen algo
- * que está cerrado a propósito. La razón se enseña SIEMPRE, sin desplegar nada.
+ * A lock without an explanation is what makes someone ask by Telegram to unlock something
+ * that is closed on purpose. The reason is shown ALWAYS, without expanding anything.
  */
 it('lo no servido dice por qué y no finge ser desplegable ni hace GET', async () => {
   const PROMPTS_DIRECTORIO = {
@@ -112,8 +112,8 @@ it('lo no servido dice por qué y no finge ser desplegable ni hace GET', async (
   );
   const { user, cajon } = await abrirFicheros();
 
-  // Acotado a la FILA: el «hueco declarado» del pie también habla del OAuth, y una búsqueda a
-  // secas encontraría los dos. Lo que hay que probar es que la razón viaja pegada al fichero.
+  // Scoped to the ROW: the "declared gap" in the footer also talks about OAuth, and a plain
+  // search would find both. What must be tested is that the reason travels attached to the file.
   const fila = (await within(cajon).findByText('Servidores MCP')).closest('li');
   expect(fila).not.toBeNull();
   expect(within(fila as HTMLElement).getByText(/junto al OAuth de la cuenta/)).toBeInTheDocument();
@@ -172,7 +172,7 @@ it('un 200 malformado se muestra como fallo verificable, nunca como ausencia', a
   server.use(http.get(rutaContenido('identity'), () => HttpResponse.json({
     tenant_id: 'Steven', alias: 'kant', kind: 'identity',
     path: '/home/claw/workspace/IDENTITY.md', format: 'markdown', exists: true,
-    // Sin content/sha/bytes: un cliente sin validación lo confundía con un documento vacío.
+    // No content/sha/bytes: a client without validation confused it with an empty document.
     editable: false, projected: false, truncated: false,
   })));
 
@@ -235,17 +235,17 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido?.content).toBe('# nuevo');
-  // La huella de lo que se abrió VIAJA. Sin ella dos personas se pisan en silencio.
+  // The fingerprint of what was opened TRAVELS. Without it two people step on each other silently.
   expect(recibido?.expected_sha).toBe(SHA_VIEJO);
   expect(await within(cajon).findByText(/Aplicado en/)).toBeInTheDocument();
   expect(within(cajon).getByText(/ACK de escritura/)).toBeInTheDocument();
 });
 
 /**
- * EL CASO QUE DECIDE SI ESTA PANTALLA ES HONESTA. Si el relay/pty-agent no está disponible, el
- * gateway contesta 503. Lo fácil sería pintar una caja vacía con un botón de guardar: Steven
- * la leería como «este agente no tiene manual» y al guardar escribiría un fichero en blanco
- * encima del suyo.
+ * THE CASE THAT DECIDES IF THIS SCREEN IS HONEST. If the relay/pty-agent is not available, the
+ * gateway answers 503. The easy thing would be to paint an empty box with a save button: the
+ * operator would read it as "this agent has no manual" and on saving would write a blank file
+ * over theirs.
  */
 it('cuando no hay canal hasta el agente lo DICE, y no enseña una caja vacía', async () => {
   mapaDeKant([CLAUDE_MD]);
@@ -260,7 +260,7 @@ it('cuando no hay canal hasta el agente lo DICE, y no enseña una caja vacía', 
   expect(await within(cajon).findByText('Todavía no hay camino hasta el disco de este agente'))
     .toBeInTheDocument();
   expect(within(cajon).getByText(/La consola no tiene todavía ningún camino/)).toBeInTheDocument();
-  // Y NO hay dónde escribir ni qué guardar.
+  // And there is nowhere to write and nothing to save.
   expect(within(cajon).queryByLabelText(/Contenido de CLAUDE\.md/i)).not.toBeInTheDocument();
   expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
 });
@@ -359,16 +359,16 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
 });
 
 /**
- * «No se miró» y «no tiene» se pintan igual de seguros y sólo uno es un hecho. Un gateway que no
- * publica la ruta NO puede convertirse en «este alias no tiene ficheros».
+ * "Not looked at" and "doesn't have" are painted equally safely and only one is a fact. A
+ * gateway that does not publish the route CANNOT become "this alias has no files".
  */
 it('un gateway que no publica la ruta no se pinta como «este alias no tiene ficheros»', async () => {
   server.use(http.get(RUTA_MAPA, () => HttpResponse.json({ error: 'Not Found' }, { status: 404 })));
   const { cajon } = await abrirFicheros();
 
   const vacio = await within(cajon).findByText(/no publica el mapa de ficheros/i);
-  // El texto se parte en varios nodos dentro del mismo párrafo, así que se comprueba sobre el
-  // párrafo entero: lo que importa es que las DOS frases estén, no en qué etiqueta cayó cada una.
+  // The text splits into several nodes inside the same paragraph, so it is checked on the
+  // whole paragraph: what matters is that BOTH sentences are there, not in which tag each one fell.
   const parrafo = vacio.closest('p') as HTMLElement;
   expect(parrafo.textContent).toMatch(/no publica el mapa de ficheros/i);
   expect(parrafo.textContent).toMatch(/desde aquí no se ha mirado/i);
@@ -423,7 +423,7 @@ it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', 
   expect(puts).toBe(0);
 });
 
-/** El hueco declarado tiene que estar en la vista, no sólo en un comentario del código. */
+/** The declared gap must be on the view, not only in a code comment. */
 it('la vista declara en castellano lo que todavía no hace', async () => {
   mapaDeKant([CLAUDE_MD]);
   const { cajon } = await abrirFicheros();

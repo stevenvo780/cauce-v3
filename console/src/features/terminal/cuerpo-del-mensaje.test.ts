@@ -5,14 +5,14 @@ import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuer
 
 describe('el recorte del cuerpo que hace el servidor', () => {
   /**
-   * LA COMPROBACIÓN CRUZADA CONTRA EL SQL.**
+   * THE CROSS-CHECK AGAINST THE SQL.**
    *
-   * El 240 no es una elección de la consola: es el `left(...,240)` de la consulta de
-   * `CauceRepository.listMessages`. Son dos números en dos repositorios de código distintos y nada
-   * los ata. Si alguien sube el recorte del servidor a 500 y no toca esta constante, la consola
-   * empieza a rotular como «recortado» un mensaje entero de 240 y a presentar como entero uno
-   * cortado a 500 — y no falla el typecheck, ni el lint, ni una sola prueba de DOM. Esta es la
-   * comprobación barata que sí lo atrapa.
+   * The 240 is not a console choice: it is the `left(...,240)` of the `CauceRepository.listMessages`
+   * query. They are two numbers in two different code repositories and nothing binds them.
+   * If someone raises the server truncation to 500 and does not touch this constant, the
+   * console starts labelling a full 240-char message as "truncated" and presenting a 500-truncated
+   * one as full — and the typecheck does not fail, nor the lint, nor a single DOM test. This
+   * is the cheap check that does catch it.
    */
   it('el número que la consola dice es el que el servidor aplica', () => {
     let consulta: string;
@@ -47,9 +47,9 @@ describe('de dónde sale el texto del cuerpo entero', () => {
   });
 
   /**
-   * Una forma desconocida NO se esconde. Devolver `undefined` acá pintaría «el servidor devolvió
-   * el mensaje sin cuerpo» sobre una fila que SÍ tiene cuerpo: sería el mismo defecto que se está
-   * arreglando, en versión nueva.
+   * An unknown shape does NOT hide. Returning `undefined` here would paint "the server returned
+   * the message without a body" over a row that DOES have a body: it would be the same bug
+   * being fixed, in a new version.
    */
   it('una forma desconocida se muestra tal cual en vez de desaparecer', () => {
     expect(textoDelCuerpo({ attachments: [1, 2] })).toContain('attachments');

@@ -49,10 +49,10 @@ describe('saludDeColaPorAgente', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del cero inventado. Una implementación con `?? 0` —que es lo natural de
-   * escribir— devolvería aquí 0 pendientes y 0 en curso, y la vista pintaría de sano a un agente
-   * cuya cola NO se pudo leer. El caso se comprueba por los dos lados: el campo tiene que ser
-   * `undefined` Y explícitamente no puede ser 0.
+   * NEGATIVE CONTROL of the invented zero. An implementation with `?? 0` — which is the natural
+   * thing to write — would return here 0 pending and 0 in flight, and the view would paint a
+   * healthy-looking agent whose queue could NOT be read. The case is checked from both sides:
+   * the field must be `undefined` AND explicitly cannot be 0.
    */
   it('un alias que /activity NO informa queda UNKNOWN, jamás en cero', () => {
     const salud = saludDeColaPorAgente(
@@ -64,9 +64,9 @@ describe('saludDeColaPorAgente', () => {
     expect(salud['Steven:argos'].pendientes).not.toBe(0);
     expect(salud['Steven:argos'].enCurso).toBeUndefined();
     expect(salud['Steven:argos'].reintentos).toBeUndefined();
-    // Lo que SÍ se sabe de él sigue estando: apareció en la cola con una entrega muerta.
+    // What IS known about it is still there: it appeared in the queue with a dead delivery.
     expect(salud['Steven:argos'].muertas).toBe(1);
-    // Y el control por el otro lado: zeus sí venía en actividad, así que sus ceros son reales.
+    // And the other-side control: zeus DID come in activity, so its zeros are real.
     expect(salud['Steven:zeus'].pendientes).toBe(0);
   });
 
@@ -101,9 +101,9 @@ describe('saludDeColaPorAgente', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del truncado. `queueSnapshot()` corta en 200 filas y cuenta SOBRE ellas, así
-   * que a partir del techo cualquier recuento es un piso. Con 199 filas la marca tiene que estar
-   * apagada: si estuviera siempre encendida, el aviso no distinguiría nada y sería ruido.
+   * NEGATIVE CONTROL of the truncation. `queueSnapshot()` truncates at 200 rows and counts ON
+   * them, so above the ceiling any count is a floor. With 199 rows the flag must be off: if it
+   * were always on, the warning would distinguish nothing and be noise.
    */
   it(`marca truncado exactamente al llegar al techo de ${String(LIMITE_COLA)} filas`, () => {
     const fila = (indice: number, state: QueueItem['state']) => filaDeCola({
@@ -139,7 +139,7 @@ describe('colaNecesitaAtencion', () => {
   it('sangra por muertas y por reintentos, no por trabajo en curso', () => {
     expect(colaNecesitaAtencion({ muertas: 1, muertasTruncadas: false })).toBe(true);
     expect(colaNecesitaAtencion({ reintentos: 2, muertasTruncadas: false })).toBe(true);
-    // Un agente trabajando NO es una alarma: si lo fuera, la cabecera estaría siempre roja.
+    // An agent working is NOT an alarm: if it were, the header would always be red.
     expect(colaNecesitaAtencion({ enCurso: 9, pendientes: 20, muertas: 0, muertasTruncadas: false })).toBe(false);
     expect(colaNecesitaAtencion(undefined)).toBe(false);
   });

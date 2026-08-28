@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado, contarRoleBrief } from './role-brief';
 
 /**
- * La guarda existe porque esta pantalla vuelve ALCANZABLE un agujero que antes no lo era: los
- * adaptadores desplegados miden `self_role` en unidades UTF-16 y la base en puntos de código.
- * Ver el comentario largo de `bloqueoPorRuntimeDesplegado`.
+ * The guard exists because this screen makes REACHABLE a hole that was not before: deployed
+ * adapters measure `self_role` in UTF-16 units and the database in code points.
+ * See the long comment of `bloqueoPorRuntimeDesplegado`.
  */
 describe('bloqueoPorRuntimeDesplegado', () => {
   it('no molesta al caso normal: un brief largo sin emojis pasa', () => {
@@ -20,8 +20,8 @@ describe('bloqueoPorRuntimeDesplegado', () => {
     expect(texto.length).toBe(1300);             // el adaptador desplegado lo rechaza
     const motivo = bloqueoPorRuntimeDesplegado(texto);
     expect(motivo).toBeDefined();
-    // El mensaje tiene que dar LOS DOS numeros: sin ellos el operador no entiende por que un
-    // texto que "mide 1200" no se puede guardar.
+    // The message must give BOTH numbers: without them the operator does not understand why a
+    // text that "measures 1200" cannot be saved.
     expect(motivo).toContain('1200');
     expect(motivo).toContain('1300');
     expect(motivo).toContain('SORDO');

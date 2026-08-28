@@ -139,8 +139,8 @@ describe('Telegram egress text extraction', () => {
       reply: 'texto humano', messages: [], status: 'done', retryable: false, artifacts: []
     });
 
-    // Un arnés que no produce salida estructurada deja el sobre entero como texto plano.
-    // Publicarlo tal cual es lo que el operador ve como "JSON en el chat".
+    // A harness that does not produce structured output leaves the whole envelope as plain text.
+    // Publishing it as-is is what the operator sees as "JSON in the chat".
     expect(telegramTextChunks({ result: { text: envelope } })).toEqual(['texto humano']);
     expect(telegramTextChunks({ result: { output: { reply: envelope } } })).toEqual(['texto humano']);
 
@@ -217,7 +217,7 @@ describe('Telegram durable polling (core)', () => {
   });
 
   it('descarta el adjunto que el esquema rechaza y publica igual el mensaje del humano', async () => {
-    // Un archivo con tamaño inválido es descartado por el tamiz de adjuntos sin bloquear la publicación.
+    // A file with invalid size is dropped by the attachment sieve without blocking publication.
     const repository = new MemoryCursorRepository();
     const published: PublishMessage[] = [];
     const ingress = new StoreTelegramIngress({

@@ -5,26 +5,26 @@ import {
 } from '../src/untrusted.js';
 
 /**
- * Los nombres de la flota tal como llegarían del directorio que arma `main.ts` con el archivo de
- * config desplegado. Están acá como literales porque es un fixture de prueba: el código de
- * producción los deriva de la config y no tiene ninguno escrito.
+ * Fleet names as they would arrive from the directory built by `main.ts` with the deployed config
+ * file. They live here as literals because this is a test fixture: production code derives them
+ * from the config and has none of them hardcoded.
  */
 const RESERVED = ['zeus', 'kant', 'argos', 'jarvis', 'kant_bot', 'Steven'];
 
 /**
- * Todo carácter hostil va escrito como escape `\uXXXX`, nunca como glifo.
+ * Every hostile codepoint is written as a `\uXXXX` escape, never as a glyph.
  *
- * Es el punto entero de la prueba: si el homóglifo cirílico estuviera pegado literalmente, ni el
- * que la escribe ni el que la revisa podrían distinguirlo de la letra latina —que es exactamente
- * el ataque— y la prueba pasaría a demostrar lo que uno cree en vez de lo que dice.
+ * This is the whole point of the test: if the Cyrillic homoglyph were pasted literally, neither
+ * the author nor the reviewer could tell it apart from the Latin letter - which is exactly the
+ * attack - and the test would end up proving what one believes instead of what it claims.
  */
 describe('confusableSkeleton: dos strings que se dibujan igual dan el mismo esqueleto', () => {
   it('pliega el cirílico que imita al latino', () => {
     // zeu + CYRILLIC SMALL LETTER DZE (U+0455), que se dibuja igual que una "s".
     expect(confusableSkeleton('zeu\u0455')).toBe('zeus');
-    // CYRILLIC CAPITAL DZE (U+0405): primero pliega a minúscula, después mapea.
+    // CYRILLIC CAPITAL DZE (U+0405): folds to lowercase first, then maps.
     expect(confusableSkeleton('\u0405teven')).toBe('steven');
-    // k-a-n-t escrito entero en cirílico: KA, A, PE, TE.
+    // k-a-n-t written entirely in Cyrillic: KA, A, PE, TE.
     expect(confusableSkeleton('\u043a\u0430\u043f\u0442')).toBe('kant');
     // CYRILLIC SMALL LETTER IE (U+0435) en el medio de una palabra latina.
     expect(confusableSkeleton('s\u0435neca')).toBe('seneca');
@@ -72,7 +72,7 @@ describe('reservedNameHit: quién se está haciendo pasar por quién', () => {
   });
 
   it('un nombre vacío o sólo de emoji no colisiona con nadie', () => {
-    // El esqueleto vacío coincidiría con todo si el guardia no estuviera.
+    // The empty skeleton would collide with everything if the guard were not in place.
     expect(reservedNameHit('', RESERVED)).toBeUndefined();
     expect(reservedNameHit('\u{1f98a}', RESERVED)).toBeUndefined();
     expect(reservedNameHit('   ', RESERVED)).toBeUndefined();
@@ -119,7 +119,7 @@ describe('untrustedAuthor: la identidad que sí llega al prompt', () => {
   });
 
   it('también mira el @username, que no admite homóglifos pero sí el nombre de un agente', () => {
-    // El `_` separa palabras, así que `kant_bot` colisiona con el alias `kant`: es el mismo intento.
+    // `_` separates words, so `kant_bot` collides with the alias `kant`: same impersonation attempt.
     const { impersonation } = untrustedAuthor({ id: 1, first_name: 'Ana', username: 'kant_bot' }, RESERVED);
     expect(impersonation).toEqual({ collides_with: 'kant', field: 'username', normalized: 'kant_bot' });
   });

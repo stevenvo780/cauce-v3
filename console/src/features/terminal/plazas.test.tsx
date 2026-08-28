@@ -1,17 +1,18 @@
 /**
- * **La trampa que dejaba muerta Ultimate Terminal, con su control negativo.**
+ * **The trap that left Ultimate Terminal dead, with its negative control.**
  *
- * 
- *   abrir la TUI de dos alias  → 2 tarjetas, 2 `.pty-host`, 2 filas `active` en `terminal_sessions`
- *   navegar a Portada y volver → 0 tarjetas, 2 `.pty-host` VIVOS, 2 filas `active`
- *   abrir un tercer alias      → 409 `session_limit`
- * y la pantalla contestaba «cerrá alguna de las sesiones que tenés abiertas» sin tener a la vista
- * una sola sesión que cerrar. Quince minutos muerta, sin un error que lo dijera.
+ *   open the TUI of two aliases → 2 cards, 2 `.pty-host`, 2 `active` rows in `terminal_sessions`
+ *   navigate to Home and back    → 0 cards, 2 LIVE `.pty-host`, 2 `active` rows
+ *   open a third alias          → 409 `session_limit`
+ * and the screen answered "close one of your open sessions" without having a single session
+ * to close in view. Fifteen minutes dead, with no error saying so.
  *
- * Cada caso de acá se escribió preguntándose qué tendría que pasar para que diera ROJO:
- *  · si la limpieza al desmontar mirase los grants del primer render (vacíos), el DELETE no sale;
- *  · si `ocupaPlaza` sólo mirase `state`, un ticket vencido a las 17:50 se seguiría ofreciendo;
- *  · si la rejilla volviera a pintar todos los paneles apilados, habría dos cabeceras, no una.
+ * Each case here was written asking what would have to happen for it to go RED:
+ *  · if the unmount cleanup looked at the first render's grants (empty), the DELETE does not
+ *    go out;
+ *  · if `ocupaPlaza` only looked at `state`, an expired ticket at 17:50 would keep being
+ *    offered;
+ *  · if the grid went back to painting all stacked panels, there would be two headers, not one.
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -169,7 +170,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     // Navegar a otra vista de la consola es EXACTAMENTE esto: el workspace se desmonta.
     vista.unmount();
     await waitFor(() => { expect(borrados).toEqual(['sid-zeus']); });
-    // Y el socket local también se cortó: un nodo vivo colgando del `<body>` era la mitad del bug.
+    // And the local socket was cut too: a live node hanging off the `<body>` was half the bug.
     expect(StubWebSocket.last().readyState).toBe(3);
   });
 
@@ -390,7 +391,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
             request_id: '11111111-1111-4111-8111-111111111111', owner_generation: '1',
           },
           {
-            // El gateway evalúa su reloj y proyecta la vencida como closed: NO se ofrece.
+            // The gateway evaluates its clock and projects the expired one as closed: it is NOT offered.
             session_id: 'ticket-muerto', tenant_id: 'Steven', alias: 'socrates', mode: 'shell',
             opened_at: new Date(Date.now() - 7 * 3_600_000).toISOString(),
             expires_at: new Date(Date.now() - 6 * 3_600_000).toISOString(), state: 'closed',
@@ -468,7 +469,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
     server.use(
       http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({
-        // El recibo roto afirma el id de una sesión que ya existía en otra pestaña.
+        // The broken receipt states the id of a session that already existed in another tab.
         session_id: 'sesion-de-otra-pestana',
         websocket_path: WS_PATH,
       }, { status: 201 })),
@@ -495,7 +496,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     expect(tira).toHaveTextContent(/No se usó el session_id del recibo roto para borrar nada/i);
     expect(tira).toHaveTextContent('argos');
     expect(lecturas).toBeGreaterThanOrEqual(2);
-    // Ni el POST ni la conciliación leen autoridad de un receipt inválido para hacer DELETE.
+    // Neither the POST nor the reconciliation read authority from an invalid receipt to DELETE.
     expect(borrados).toEqual([]);
     await user.click(within(tira).getByRole('button', { name: /cerrar ahora/i }));
     await waitFor(() => { expect(borrados).toEqual(['sesion-de-otra-pestana']); });
@@ -517,25 +518,25 @@ describe('la geometría de la vista', () => {
 
     await waitFor(() => { expect(screen.getAllByRole('tab')).toHaveLength(2); });
     /*
-     * ESTA es la aserción que antes daba 2 y por la que la página medía 3.537 px: un panel de
-     * 600 px por sesión, apilados, y el terminal fuera de pantalla. Ahora sólo se monta el
-     * escenario activo; el otro sigue vivo fuera de React, con su socket y su scrollback.
+     * THIS is the assertion that previously returned 2 and made the page measure 3,537 px: a
+     * 600 px panel per session, stacked, and the terminal off-screen. Now only the active stage
+     * is mounted; the other stays alive outside React, with its socket and its scrollback.
      */
     expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
     expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('salva');
 
-    // Y la página declara que está en modo observación, que es lo que repliega los contadores.
+    // And the page declares it is in observation mode, which is what folds the counters.
     expect(document.querySelector('.ultimate-terminal-page')).toHaveAttribute('data-tui', 'abierta');
   }, 20_000);
 });
 
 describe('el tope gastado con todo a la vista', () => {
   /*
-   * El otro lado del mismo 409, y hace falta probarlo aparte: cuando NO hay ninguna colgada, las
-   * que gastan el tope son las pestañas de arriba. Repetir ahí «cerrá alguna de las sesiones que
-   * tenés abiertas» no ayuda a nadie —ya están abiertas y a la vista—; lo que hay que decir es que
-   * la salida es cerrar una pestaña. Sin este caso, la rama entera del texto nuevo no la mira
-   * nadie y podría decir cualquier cosa.
+   * The other side of the same 409, and it must be tested separately: when there is NO orphan,
+   * the ones spending the cap are the tabs above. Repeating "close one of your open sessions"
+   * there does not help anyone — they are already open and in view; what must be said is that the
+   * way out is to close a tab. Without this case, nobody looks at the whole branch of the new
+   * text and it could say anything.
    */
   it('cuando las que gastan el tope están a la vista, lo dice y no ofrece cerrar nada de fuera', async () => {
     const user = userEvent.setup();
@@ -582,7 +583,7 @@ describe('el tope gastado con todo a la vista', () => {
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('Tope de sesiones alcanzado: las 2 que lo gastan están abiertas acá');
-    // Ni una sola fila con «Cerrar ahora»: no hay nada de fuera que cerrar, y ofrecerlo sería mentir.
+    // Not a single row with "Cerrar ahora": there is nothing from outside to close, and offering it would be a lie.
     expect(within(tira).queryByRole('button', { name: /cerrar ahora/i })).not.toBeInTheDocument();
   });
 });
