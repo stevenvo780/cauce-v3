@@ -3,38 +3,38 @@ import { test } from 'node:test';
 import { parseFinalText } from '../src/sdk/output-parser.js';
 
 // ---------------------------------------------------------------------------
-// BUG MEDIDO: `argos` perdio 4 turnos ENTEROS el 2026-08-15 (y 5 el 31-jul) con
-// `last_error = "OpenClaw result contained a malformed JSON object"` y `deliveries.result = NULL`.
-// Los cuatro eran entregas de tipo `agent.response`: el agente hizo el trabajo, escribio la
-// respuesta, y el parser la descarto COMPLETA porque un caracter del sobre no era JSON valido.
-// Era el unico alias de la flota con ese error en 7 dias.
+// MEASURED BUG: `argos` lost 4 ENTIRE turns on 2026-08-15 (and 5 on 31-jul) with
+// `last_error = "OpenClaw result contained a malformed JSON object"` and `deliveries.result = NULL`.
+// All four were `agent.response` deliveries: the agent did the work, wrote the reply, and the
+// parser discarded it COMPLETELY. It was the only alias in the fleet with that error in 7 days.
 //
-// LA CAUSA, ya con la salida cruda de los cuatro turnos delante, ES UN SOLO CARACTER: el separador
-// entre la clave y el valor llego como `>` en vez de `:`. Los cuatro sobres empiezan literalmente
-// `{"reply">"**…` y `JSON.parse` muere siempre en la misma posicion 8. NO estaban truncados
-// (`stopReason: "stop"`): los cuatro cierran limpio en
-// `…,"notify":[],"status":"done","retryable":false,"artifacts":[]}`, y sustituyendo ese unico
-// caracter parsean perfecto —seis claves, `status:"done"`, replies de 2.743 a 3.683 caracteres—.
-// El modelo era `claude-opus-5[1m]` por `provider: claude-cli`, y el patron `"reply">` aparece 4
-// veces en TODA la flota, las cuatro en argos. Los `task_runs` de openclaw figuran `succeeded` con
-// `terminal_summary=completed` y sin error: el turno CORRIO BIEN y murio al parsearse.
+// THE CAUSE, with the raw output of all four turns in front of us, IS ONE SINGLE CHARACTER: the
+// separator between key and value arrived as `>` instead of `:`. All four envelopes start literally
+// `{"reply">"**…` and `JSON.parse` always dies at the same position 8. They were NOT truncated
+// (`stopReason: "stop"`): all four close cleanly with
+// `…,"notify":[],"status":"done","retryable":false,"artifacts":[]}`, and substituting that single
+// character they parse perfectly —six keys, `status:"done"`, replies from 2,743 to 3,683 chars—.
+// The model was `claude-opus-5[1m]` for `provider: claude-cli`, and the pattern `"reply">` appears
+// 4 times in the WHOLE fleet, all four in argos. The `task_runs` from openclaw show `succeeded`
+// with `terminal_summary=completed` and no error: the turn RAN FINE and died on parse.
 //
-// `rescataReply` ya existia y no lo rescataba porque su marca era `/"reply"\s*:\s*"/u` y exige el
-// `:` literal. Ademas solo cubria el sobre cortado DESPUES de un `reply` intacto; se corrio el
-// parser caso por caso sobre las otras formas de sobre roto (no de memoria) y 20 mas morian en ese
-// mismo `throw`. Estan todas abajo, cada una con su ejemplo literal medido.
+// `rescataReply` already existed and did not rescue it because its mark was `/"reply"\s*:\s*"/u`,
+// which requires the literal `:`. It also only covered the envelope truncated AFTER an intact
+// `reply`; the parser was run case by case over the other broken envelope shapes (not from
+// memory) and 20 more died in that same `throw`. They are all below, each with its own literal
+// measured example.
 //
-// Principio rector: LA RESPUESTA ES EL TRABAJO. Ningun campo accesorio mal formado puede costar un
-// turno entero; se descarta la parte mala y el turno queda vivo.
+// Guiding principle: THE REPLY IS THE WORK. No malformed accessory field may cost an entire turn;
+// the bad part is discarded and the turn stays alive.
 // ---------------------------------------------------------------------------
 
 const SOBRE = '"messages":[],"status":"done","retryable":false,"artifacts":[]';
 
-// --- Familia 0: EL CASO DE ARGOS. Separador corrupto entre la clave y el valor -------------------
+// --- Family 0: THE ARGOS CASE. Corrupt separator between key and value ---------------------------
 
-// Prefijo LITERAL del crudo de la entrega `c8fb53c6`, con su cierre real. Este test falla contra el
-// parser anterior —`OpenClaw result contained a malformed JSON object`, `result` NULL— y pasa con
-// el parche.
+// LITERAL prefix of the raw delivery `c8fb53c6`, with its real closing. This test fails against the
+// previous parser —`OpenClaw result contained a malformed JSON object`, `result` NULL— and passes
+// with the patch.
 const CRUDO_ARGOS_C8FB53C6 = '{"reply">"**12/12 con la relectura, en el entorno aislado y sin tocar producción: el frente queda cerrado y sin huecos.** Y lo mejor de esta entrega no son los doce verdes: es que **no te quedaste con el 10/10 que reportó heraclito ","messages":[],"notify":[],"status":"done","retryable":false,"artifacts":[]}';
 
 test('el crudo real de argos c8fb53c6 se entrega entero, no se pierde el turno', () => {
@@ -45,9 +45,10 @@ test('el crudo real de argos c8fb53c6 se entrega entero, no se pierde el turno',
   assert.deepEqual(salida.messages, []);
 });
 
-// `bea579a8` traia 2 `messages` legitimos. Como el sobre cierra bien, el arreglo repara el
-// separador y revalida el sobre ENTERO: rescatar solo el texto habria salvado la respuesta y tirado
-// las dos delegaciones, que es el mismo dano que ya documenta `recoverEmbeddedEnvelope`.
+// `bea579a8` carried 2 legitimate `messages`. Since the envelope closes cleanly, the fix repairs
+// the separator and revalidates the WHOLE envelope: rescuing only the text would have saved the
+// reply and thrown away the two delegations, which is the same damage `recoverEmbeddedEnvelope`
+// already documents.
 test('un sobre de argos con delegaciones las conserva: se repara y se revalida entero', () => {
   const crudo = '{"reply">"El GO ya esta dado.","messages":[{"to":"kant","body":"segui con el despliegue"},{"to":"zeus","body":"mira el limite de salida"}],"notify":[],"status":"done","retryable":false,"artifacts":[]}';
   const salida = parseFinalText(crudo, 'OpenClaw result');
@@ -65,17 +66,17 @@ test('el separador corrupto tolera los espacios que JSON ya permitia', () => {
   assert.equal(parseFinalText(`{"reply" > "Ya revise.",${SOBRE}}`, 'X').reply, 'Ya revise.');
 });
 
-// El ancho de la tolerancia es de UN caracter y se excluyen los estructurales de JSON. Estos son
-// los falsos positivos que esa decision compra, y tienen que seguir cayendo al piso honesto en vez
-// de devolver el texto de otro campo como si fuera la respuesta.
+// The tolerance width is ONE character and JSON structural chars are excluded. These are the false
+// positives that decision buys, and they must keep falling to the honest floor instead of
+// returning another field's text as if it were the reply.
 test('la marca tolerante NO confunde un "reply" usado como VALOR ajeno', () => {
-  // Una coma como separador devolveria "cuerpo ajeno" como respuesta del agente.
+  // A comma as separator would return "cuerpo ajeno" as the agent's reply.
   assert.equal(parseFinalText('{"messages":[{"to":"reply","body":"cuerpo ajeno","x', 'X').status, 'failed');
   assert.equal(parseFinalText('{"artifacts":[{"name":"reply","uri":"memory://x","z', 'X').status, 'failed');
 });
 
 test('la marca tolerante NO rescata un valor de reply que no es texto', () => {
-  // Con dos caracteres de tolerancia, `:{` y `:[` saltarian al primer texto de adentro.
+  // With two characters of tolerance, `:{` and `:[` would jump to the first text inside.
   for (const valor of ['null', '123', 'true', '{"texto":"hola"}', '["a","b"]']) {
     const salida = parseFinalText(`{"reply":${valor},"messages":[{"to":"kant","bo`, 'X');
     assert.equal(salida.status, 'failed', `no debio rescatar ${valor} como texto`);
@@ -87,8 +88,8 @@ test('un separador AUSENTE no se adivina', () => {
 });
 
 test('reparar el separador NUNCA toca el texto de una respuesta', () => {
-  // argos escribe sobre las claves de Cauce a diario: si el remiendo mirara dentro de las cadenas,
-  // este reply quedaria alterado en silencio.
+  // argos writes about Cauce keys daily: if the patch peeked inside the strings, this reply would
+  // be silently altered.
   const crudo = `{"reply">"Revise el campo \\"status\\" y el \\"reply\\", y usa {\\"a\\": 1} como ejemplo.",${SOBRE}}`;
   assert.equal(
     parseFinalText(crudo, 'X').reply,
@@ -116,10 +117,10 @@ test('dos claves reply dentro del mismo sobre roto son ambiguas y fallan cerrado
   assert.deepEqual(salida.messages, []);
 });
 
-// --- Familia 1: caracteres de control CRUDOS dentro de la cadena --------------------------------
-// La mas probable de todas, y la que no tiene NADA de truncamiento: el modelo escribe su JSON a
-// mano y mete el salto de linea real en vez de `\n`. El `reply` esta COMPLETO y aun asi se perdia
-// el turno entero. Aca no se rescata solo el reply: se repara el sobre y se recupera ENTERO.
+// --- Family 1: RAW control characters inside the string ------------------------------------------
+// The most likely of all, and the one with NO truncation at all: the model writes its JSON by
+// hand and inserts the real newline instead of `\n`. The `reply` is COMPLETE and still the whole
+// turn was lost. Here only the reply is not rescued: the envelope is repaired and recovered WHOLE.
 
 test('un salto de linea REAL sin escapar ya no cuesta el turno: se repara el sobre entero', () => {
   const crudo = `{"reply":"Primera linea\nSegunda linea",${SOBRE}}`;
@@ -142,8 +143,8 @@ test('un caracter de control invisible dentro del reply tampoco', () => {
   );
 });
 
-// Reparar el sobre ENTERO —en vez de rescatar solo el `reply`— es lo que salva las delegaciones:
-// un `messages` intacto llega a su destino en lugar de descartarse por un salto de linea.
+// Repairing the WHOLE envelope —instead of rescuing only the `reply`— is what saves delegations:
+// an intact `messages` reaches its destination instead of being discarded by a stray newline.
 test('al reparar los controles crudos sobreviven las delegaciones, no solo el reply', () => {
   const crudo = '{"reply":"Delegado.\nYa le escribi.","messages":[{"to":"kant","body":"mira el gateway"}],"status":"done","retryable":false,"artifacts":[]}';
   const salida = parseFinalText(crudo, 'OpenClaw result');
@@ -156,9 +157,9 @@ test('salto de linea real Y corte dentro del reply: se entrega lo que alcanzo a 
   assert.equal(salida.reply, 'Primera linea\nSegunda li');
 });
 
-// --- Familia 2: el corte cae a mitad de un escape ------------------------------------------------
-// Firma exacta de un corte de transporte a mitad de caracter multibyte. Se descarta la cola rota
-// —un caracter— en vez del turno entero.
+// --- Family 2: the cut lands mid-escape ---------------------------------------------------------
+// Exact signature of a transport cut in the middle of a multibyte character. The broken tail —one
+// character— is discarded instead of the whole turn.
 
 test('un escape \\u cortado por la mitad no se lleva puesto el reply', () => {
   const salida = parseFinalText('{"reply":"Ya revise el caf\\u00e', 'OpenClaw result');
@@ -166,16 +167,16 @@ test('un escape \\u cortado por la mitad no se lleva puesto el reply', () => {
 });
 
 test('una barra invertida legitima al final NO se recorta de mas', () => {
-  // `"ruta C:\\"` es un reply valido y cerrado: si el recorte fuera ciego se comeria la barra.
+  // `"ruta C:\\"` is a valid, closed reply: if the trim were blind it would eat the backslash.
   const salida = parseFinalText(`{"reply":"ruta C:\\\\","messages":[`, 'OpenClaw result');
   assert.equal(salida.reply, 'ruta C:\\');
 });
 
-// --- Familia 3: la valla de codigo que no cierra ------------------------------------------------
-// `CODE_FENCE` esta anclada con `$`, asi que una valla sin cerrar no casaba: el candidato se
-// quedaba con los ``` delante, dejaba de empezar por `{`, y el sobre entero se publicaba como
-// texto plano. El dueno del agente leia por Telegram el volcado crudo del JSON en vez de la
-// respuesta — que es justo el bug que la valla existe para evitar.
+// --- Family 3: the code fence that does not close ------------------------------------------------
+// `CODE_FENCE` is anchored with `$`, so an unclosed fence did not match: the candidate kept the
+// ``` in front, stopped starting with `{`, and the whole envelope was published as plain text. The
+// agent's owner read the raw JSON dump via Telegram instead of the reply —exactly the bug the
+// fence exists to prevent.
 
 test('valla ```json sin cerrar con el objeto truncado adentro: entrega el reply, no el volcado', () => {
   const crudo = '```json\n{"reply":"Ya revise el bridge y esta sano.","messages":[{"to":"arg';
@@ -188,10 +189,10 @@ test('texto del modelo ANTES de la valla, con el objeto truncado adentro', () =>
   assert.equal(parseFinalText(crudo, 'OpenClaw result').reply, 'Ya revise el bridge y esta sano.');
 });
 
-// --- Familia 4: prosa DESPUES del `}` final -----------------------------------------------------
-// Este caso no moria, pero perdia las delegaciones EN SILENCIO: el sobre estaba entero y valido, y
-// el rescate se quedaba solo con el `reply`. Es el mismo dano que documenta `recoverEmbeddedEnvelope`
-// (39 delegaciones destruidas en seis dias). Ahora se recupera el sobre completo.
+// --- Family 4: prose AFTER the final `}` --------------------------------------------------------
+// This case did not die, but it lost delegations SILENTLY: the envelope was whole and valid, and
+// the rescue kept only the `reply`. Same damage `recoverEmbeddedEnvelope` documents (39 delegations
+// destroyed in six days). Now the full envelope is recovered.
 
 test('prosa despues del } final: el sobre se recupera ENTERO, con sus delegaciones', () => {
   const crudo = '{"reply":"Delegado.","messages":[{"to":"kant","body":"mira el gateway"}],"status":"done","retryable":false,"artifacts":[]}\n\nAviso: ya le escribi a kant.';
@@ -202,37 +203,36 @@ test('prosa despues del } final: el sobre se recupera ENTERO, con sus delegacion
 });
 
 test('dos sobres pegados NO se adivinan: se cae al reply del primero, sin delegar', () => {
-  // Ambiguedad. `recoverEmbeddedEnvelope` se niega a elegir, y el peldano de abajo entrega la
-  // respuesta con `messages` vacio: mejor perder la delegacion que despachar trabajo al azar.
+  // Ambiguity. `recoverEmbeddedEnvelope` refuses to pick, and the step below delivers the reply
+  // with empty `messages`: better lose the delegation than dispatch work at random.
   const crudo = `{"reply":"primero",${SOBRE}}{"reply":"segundo",${SOBRE}}`;
   const salida = parseFinalText(crudo, 'OpenClaw result');
   assert.equal(salida.reply, 'primero');
   assert.deepEqual(salida.messages, []);
 });
 
-// --- Familia 5: el PISO. Sin nada rescatable, el turno sigue vivo -------------------------------
-// Antes esto era `throw`, y un throw deja
-// `deliveries.result` en NULL: quien pregunto no recibe NADA —ni respuesta, ni aviso, ni motivo—.
-// Asi estan los 4 turnos de argos de hoy y los 5 del 31-jul. Ahora degrada a "failed" CON TEXTO,
-// que es el mismo movimiento que `validateDeliveryOutput` ya hizo dos veces (el MISSING_FINAL_REPLY
-// de janus y el volcado de herramienta de openclaw). No se convierte en "done": el turno de verdad
-// no produjo respuesta legible y las metricas tienen que seguir contandolo como el fracaso que fue.
+// --- Family 5: the FLOOR. With nothing rescuable, the turn stays alive --------------------------
+// Before this was `throw`, and a throw leaves `deliveries.result` NULL: the asker gets NOTHING
+// —no reply, no notice, no reason—. That is the state of argos's 4 turns today and the 5 on
+// 31-jul. Now it degrades to "failed" WITH TEXT, the same move `validateDeliveryOutput` already
+// made twice (janus's MISSING_FINAL_REPLY and openclaw's tool dump). It does not become "done":
+// the turn truly produced no legible reply and metrics must keep counting it as the failure it was.
 
 test('un sobre con "reply": null y el resto cortado degrada a failed con texto, no a result NULL', () => {
   const salida = parseFinalText('{"reply":null,"messages":[{"to":"kant","bo', 'OpenClaw result');
   assert.equal(salida.status, 'failed');
   assert.equal(salida.retryable, false);
   assert.match(salida.reply ?? '', /no quedo ni una linea de texto rescatable/u);
-  // La muestra del sobre viaja acotada en el bloque tecnico: sin ella el diagnostico vuelve a ser
-  // adivinar que caracter rompio el JSON.
+  // The envelope sample travels bounded inside the technical block: without it the diagnosis is
+  // back to guessing which character broke the JSON.
   assert.match(salida.reply ?? '', /Empieza asi: \{"reply":null/u);
 });
 
 test('un sobre SIN reply, cortado mas adelante, tampoco deja la entrega sin result', () => {
   const salida = parseFinalText('{"messages":[{"to":"kant","body":"revisa el bridge"}],"status":"done","retry', 'OpenClaw result');
   assert.equal(salida.status, 'failed');
-  // Los accesorios de un sobre roto se descartan A PROPOSITO: un `messages` a medias podria
-  // despachar trabajo a quien no corresponde. La delegacion NO se materializa.
+  // Accessories of a broken envelope are discarded ON PURPOSE: a half `messages` could dispatch
+  // work to the wrong recipient. The delegation does NOT materialise.
   assert.deepEqual(salida.messages, []);
 });
 
@@ -252,11 +252,11 @@ test('un reply vacio o solo con espacios cae al piso, no al throw', () => {
   assert.equal(parseFinalText('{"reply":"","messages":[{"to":"arg', 'X').status, 'failed');
 });
 
-// --- Lo que NO cambia --------------------------------------------------------------------------
+// --- What does NOT change ----------------------------------------------------------------------
 
 test('un objeto BIEN formado que incumple el esquema sigue siendo fallo duro', () => {
-  // Aca el agente declaro un sobre COMPLETO y le faltan campos: no es un corte de transporte, es un
-  // contrato incumplido, y ablandarlo esconderia agentes que no aprenden el formato.
+  // Here the agent declared a COMPLETE envelope and fields are missing: it is not a transport cut,
+  // it is a broken contract, and softening it would hide agents that never learn the format.
   assert.throws(() => parseFinalText('{"reply":"hola"}', 'X'), /missing 'messages'/u);
 });
 

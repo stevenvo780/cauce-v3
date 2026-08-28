@@ -11,54 +11,54 @@ import {
 import { errorLabel, logEvent } from './log.js';
 
 /**
- * `POST /v3/terminal/relay/read|write` — puertas mTLS del gateway hacia el disco gobernado.
+ * `POST /v3/terminal/relay/read|write` — mTLS gates from the gateway to the governed disk.
  *
- * Es el eslabón que faltaba entre el gateway y el pty-agent: `requestFileRead` ya sabía hablar con
- * el agente, pero nadie desde fuera del proceso podía llamarla. Esto la expone, y nada más.
+ * The missing link between the gateway and the pty-agent: `requestFileRead` could already talk
+ * to the agent, but no one outside the process could call it. This exposes it, nothing more.
  *
- * Lo que este módulo NO decide:
- *  - QUÉ se puede leer. La ruta la resuelve el gateway desde hechos medidos (`verifyReadablePath`)
- *    y el pty-agent la vuelve a validar contra su propia lista blanca antes de abrir nada. El relay
- *    no tiene los hechos del alias, así que no tiene con qué opinar; si opinara con menos
- *    información que los otros dos, sería una tercera regla que se contradice con las buenas.
- *  - QUIÉN puede pedirlo. Eso lo resolvió el gateway con el principal de la consola. Aquí sólo se
- *    comprueba que quien llama ES el gateway.
+ * What this module does NOT decide:
+ *  - WHAT can be read. The path is resolved by the gateway from measured facts (`verifyReadablePath`)
+ *    and the pty-agent re-validates it against its own whitelist before opening anything. The
+ *    relay has none of the alias's facts, so it has nothing to opine on; if it opined with less
+ *    information than the other two, it would be a third rule that contradicts the good ones.
+ *  - WHO can request it. The gateway already settled that with the console principal. Here it is
+ *    only checked that the caller IS the gateway.
  *
- * Lo que sí decide, y por eso está aquí: que la llamada no pueda hacerle daño al resto. Cuerpo
- * acotado, alias con forma de alias, y la lectura delegada a `requestFileRead`, que ya corta por
- * tiempo, por bytes y por agente que no anuncia la capacidad.
+ * What it does decide, and why it lives here: that the call cannot harm the rest. Bounded body,
+ * alias-shaped alias, and the read delegated to `requestFileRead`, which already cuts by time,
+ * by bytes, and by an agent that does not advertise the capability.
  *
- * SOBRE EL TRANSPORTE: esto se engancha al servidor HTTPS del lado navegador, que
- * `createBrowserHttpsServer` levanta con `requestCert`/`rejectUnauthorized`. O sea que antes de
- * llegar a este código el par ya presentó un certificado de cliente firmado por la CA de la
- * consola. El token es la SEGUNDA barrera, no la única.
+ * ABOUT THE TRANSPORT: this hooks into the browser-side HTTPS server that `createBrowserHttpsServer`
+ * brings up with `requestCert`/`rejectUnauthorized` — so the peer has already presented a client
+ * certificate signed by the console CA. The token is the SECOND barrier, not the only one.
  */
 
-/** Ruta de la lectura. Vive fuera de `/v3/console/` por lo mismo que las del gateway: no es un navegador. */
+/** Read path. Lives outside `/v3/console/` for the same reason as the gateway's: it is not a browser. */
 export const GOVERNANCE_READ_PATH = '/v3/terminal/relay/read';
 export const GOVERNANCE_LIST_PATH = '/v3/terminal/relay/list';
 export const GOVERNANCE_WRITE_PATH = '/v3/terminal/relay/write';
 export const GOVERNANCE_WRITE_BATCH_PATH = '/v3/terminal/relay/write-batch';
 
-/** Base64 de 256 KiB más JSON. No se acumula nada por encima de este techo. */
+/** 256 KiB base64 plus JSON. Nothing above this ceiling is accumulated. */
 const MAX_REQUEST_BYTES = 512 * 1024;
 
-/** Misma forma de alias que exige el gateway al pedir una sesión de terminal. */
+/** Same alias shape the gateway requires when requesting a terminal session. */
 const ALIAS_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/u;
 
 const MAX_TENANT_LENGTH = 64;
 const MAX_PATH_LENGTH = 4096;
 
 export interface GovernanceRelayOptions {
-  /** El mismo servidor del lado navegador; se le añade un oyente de `request`, no se crea otro. */
+  /** The same browser-side server; a `request` listener is added to it, not a new one. */
   readonly server: HttpsServer;
   readonly agents: AgentLookup;
   /**
-   * El token compartido con el gateway. Es una función y no una cadena a propósito: el relay ya lee
-   * su token del disco en cada llamada saliente, y así rotarlo tampoco obliga a reiniciar aquí.
+   * The token shared with the gateway. It is a function and not a string on purpose: the relay
+   * already reads its token from disk on every outgoing call, so rotating it does not force a
+   * restart here either.
    */
   readonly token: () => Promise<string>;
-  /** Se propaga a `requestFileRead`; su default (5 s) es el que manda si no se pasa nada. */
+  /** Propagated to `requestFileRead`; its default (5 s) wins if nothing is passed. */
   readonly timeoutMs?: number;
 }
 
@@ -83,7 +83,7 @@ interface WriteBatchRequest {
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
-/** Digerir antes de comparar: tiempo constante, y una longitud distinta no revienta ni se filtra. */
+/** Digest before comparing: constant time, and a different length neither crashes nor leaks. */
 function digest(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
 }
@@ -102,8 +102,8 @@ function hasControlCharacter(value: string): boolean {
 }
 
 /**
- * El cuerpo, o `undefined` si se pasó del tope. Quien mande un volcado no consigue que el relay lo
- * guarde entero antes de rechazarlo.
+ * The body, or `undefined` if it overshot the ceiling. Whoever sends a dump will not get the
+ * relay to store it whole before rejecting it.
  */
 async function readBody(request: IncomingMessage): Promise<string | undefined> {
   return new Promise<string | undefined>((resolve, reject) => {
@@ -113,10 +113,10 @@ async function readBody(request: IncomingMessage): Promise<string | undefined> {
     request.on('data', (chunk: Buffer) => {
       size += chunk.byteLength;
       if (size > MAX_REQUEST_BYTES) {
-        // Se deja de ACUMULAR, pero se sigue drenando. Cortar el socket a media petición le llega
-        // al que llama como una conexión caída, y entonces el 413 —que es la explicación de por qué
-        // no se le contestó— no lo lee nadie. Lo que queda acotado aquí es la MEMORIA, no la
-        // transferencia: de quién puede siquiera abrir esta conexión ya se ocupa el TLS mutuo.
+        // Stop ACCUMULATING, but keep draining. Cutting the socket mid-request shows up to the
+        // caller as a dropped connection, and then the 413 —which is the explanation of why nobody
+        // replied— is read by no one. What is bounded here is MEMORY, not the transfer: who can
+        // even open this connection is already handled by mutual TLS.
         overflowed = true;
         chunks.length = 0;
         return;
@@ -128,7 +128,7 @@ async function readBody(request: IncomingMessage): Promise<string | undefined> {
   });
 }
 
-/** El pedido, o el motivo del rechazo. Falla cerrado: un campo que no cuadra no se corrige, se rechaza. */
+/** The request, or the rejection reason. Fail-closed: a field that does not match is not corrected, it is rejected. */
 export function parseReadRequest(raw: string): ReadRequest | { readonly rejected: string } {
   let parsed: unknown;
   try {
@@ -149,15 +149,15 @@ export function parseReadRequest(raw: string): ReadRequest | { readonly rejected
   if (typeof alias !== 'string' || !ALIAS_PATTERN.test(alias)) {
     return { rejected: 'alias no tiene forma de alias' };
   }
-  // La ruta se valida sólo en lo que hace falta para no romper el cable; QUÉ ruta es aceptable lo
-  // deciden el gateway y el pty-agent, cada uno con su lista y sus hechos.
+  // The path is validated only insofar as it is needed to keep the wire intact; WHICH path is
+  // acceptable is decided by the gateway and the pty-agent, each with its own list and facts.
   if (typeof path !== 'string' || !path.startsWith('/') || path.length > MAX_PATH_LENGTH || path.includes('\0')) {
     return { rejected: 'path tiene que ser una ruta absoluta sin bytes nulos' };
   }
   return { tenantId, alias, path };
 }
 
-/** El endpoint de índice usa la misma identidad, pero exige un objeto y una ruta canónicos. */
+/** The index endpoint uses the same identity, but requires a canonical object and path. */
 export function parseDirectoryRequest(raw: string): DirectoryRequest | { readonly rejected: string } {
   const common = parseReadRequest(raw);
   if ('rejected' in common) return common;
@@ -175,7 +175,7 @@ export function parseDirectoryRequest(raw: string): DirectoryRequest | { readonl
   return common;
 }
 
-/** Escritura cerrada: no hay una forma implícita que pueda significar create o replace según el disco. */
+/** Closed write: there is no implicit shape that can mean create or replace depending on the disk. */
 export function parseWriteRequest(raw: string): WriteRequest | { readonly rejected: string } {
   let parsed: unknown;
   try {
@@ -219,7 +219,7 @@ export function parseWriteRequest(raw: string): WriteRequest | { readonly reject
   return { rejected: 'precondition debe ser absent o present con SHA-256 minúscula' };
 }
 
-/** Lote cerrado: cada entrada declara si escribe o sólo verifica, nunca se infiere por su forma. */
+/** Closed batch: each entry declares whether it writes or only verifies, never inferred from its shape. */
 export function parseWriteBatchRequest(raw: string): WriteBatchRequest | { readonly rejected: string } {
   let parsed: unknown;
   try {
@@ -302,7 +302,7 @@ export function parseWriteBatchRequest(raw: string): WriteBatchRequest | { reado
   return { tenantId: common.tenantId, alias: common.alias, entries };
 }
 
-/** `body` es `unknown` y no un registro: lo que se sirve son tipos cerrados (`FileReadOutcome`). */
+/** `body` is `unknown` and not a record: what is served are closed types (`FileReadOutcome`). */
 function send(response: ServerResponse, status: number, body?: unknown): void {
   if (response.writableEnded) return;
   const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), 'utf8');
@@ -345,16 +345,16 @@ async function handle(
   try {
     expected = await options.token();
   } catch (error) {
-    // Sin token no se puede autenticar a nadie, y dejar pasar sería justo lo contrario de fallar
-    // cerrado. Es un fallo del relay, no del que llama: 503, no 401.
+    // Without a token no one can be authenticated, and letting it through would be the opposite
+    // of failing closed. This is a relay failure, not the caller's: 503, not 401.
     logEvent('terminal_relay_governance_token_unreadable', { operation, error: errorLabel(error) });
     request.resume();
     send(response, 503, { error: 'unavailable' });
     return;
   }
   if (!authorized(request.headers.authorization, expected)) {
-    // Cuerpo vacío a propósito, igual que en las rutas de relay del gateway: quien no se autentica
-    // no aprende nada del plano. Y el cuerpo ni se lee: un no autenticado no mueve al pty-agent.
+    // Empty body on purpose, as in the gateway's relay routes: whoever does not authenticate learns
+    // nothing from the wire, and the body is not even read (no auth → no pty-agent moved).
     logEvent('terminal_relay_governance_rejected', { operation, reason: 'bad_token' });
     request.resume();
     send(response, 401);
@@ -421,8 +421,8 @@ function logOutcome(
   outcome: FileReadOutcome | FileWriteOutcome,
 ): void {
   const failed = 'error' in outcome;
-  // Nunca el contenido: el tamaño y el veredicto bastan para diagnosticar, y el manual de un alias
-  // es suyo. Lo mismo vale para el resto de este fichero.
+  // Never the content: size and verdict are enough to diagnose, and an alias's manual is its own.
+  // The same applies to the rest of this file.
   logEvent('terminal_relay_governance_served', {
     operation,
     tenant_id: parsed.tenantId,
@@ -434,8 +434,8 @@ function logOutcome(
 }
 
 function offlineOutcome(operation: 'read' | 'write', parsed: ReadRequest, response: ServerResponse): void {
-  // 200 con un fallo de DOMINIO, no 404: la llamada llegó y se contestó. Que el alias no tenga
-  // pty-agent conectado es un hecho del alias y no un fallo del transporte HTTP.
+  // 200 with a DOMAIN failure, not 404: the call arrived and was answered. The alias not having
+  // a pty-agent connected is a fact of the alias, not an HTTP transport failure.
   const outcome: FileReadOutcome | FileWriteOutcome = {
     error: 'unavailable',
     reason: 'no hay ningún pty-agent conectado para ese alias',
@@ -472,7 +472,7 @@ async function serveRead(
 
 function logDirectoryOutcome(parsed: DirectoryRequest, outcome: DirectoryReadOutcome): void {
   const failed = 'error' in outcome;
-  // Sólo conteos: los nombres de memoria también pueden ser sensibles y no pertenecen al log.
+  // Only counts: memory names can also be sensitive and do not belong in the log.
   logEvent('terminal_relay_governance_served', {
     operation: 'list',
     tenant_id: parsed.tenantId,
@@ -581,16 +581,16 @@ async function serveWriteBatch(
 }
 
 /**
- * Engancha lectura y escritura de gobierno al servidor mTLS del lado navegador.
+ * Hooks governance read and write onto the browser-side mTLS server.
  *
- * No recibe el cliente del gateway a propósito: la decisión de si esta lectura vale ya la tomó el
- * gateway antes de llamar, así que preguntársela de vuelta sería un viaje de ida y vuelta que no
- * cambia ningún resultado. Lo único que hace falta saber es que quien llama es él, y eso es el token.
+ * The gateway client is not received on purpose: that decision was already made before the call,
+ * so asking back would be a no-op round trip. The only thing that needs to be known is that the
+ * caller is the gateway, and that is the token.
  */
 export function setupGovernanceRelay(options: GovernanceRelayOptions): void {
   options.server.on('request', (request: IncomingMessage, response: ServerResponse) => {
     handle(options, request, response).catch((error: unknown) => {
-      // Una operación rota no puede tumbar el proceso y con él todas las terminales abiertas.
+      // A broken operation must not take down the process and, with it, every open terminal.
       logEvent('terminal_relay_governance_failed', { error: errorLabel(error) });
       send(response, 500, { error: 'unknown', reason: 'la operación de gobierno falló en el relay' });
     });

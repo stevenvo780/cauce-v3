@@ -1,61 +1,61 @@
 import { countCodePoints } from './schemas.js';
 
 /**
- * Perfil por alias: tipos, límites y validación de la configuración de un agente.
+ * Per-alias profile: types, limits, and validation of an agent's configuration.
  *
- * Regla de doble unidad:
- * Para evitar inconsistencias entre capas (PostgreSQL midiendo puntos de código y JS/Zod midiendo
- * unidades UTF-16), las longitudes se validan con la más estricta de ambas:
+ * Two-unit rule:
+ * To avoid inconsistencies across layers (PostgreSQL measuring code points and JS/Zod measuring
+ * UTF-16 units), lengths are validated against the strictest of the two:
  * `measureStrictestUnits(t) = Math.max(countCodePoints(t), countUtf16Units(t))`.
  */
 
-/** Largo en unidades UTF-16 (`String.length`). */
+/** Length in UTF-16 units (`String.length`). */
 export function countUtf16Units(text: string): number {
   return text.length;
 }
 
-/** Longitud calculada con la unidad más estricta (máximo entre puntos de código y UTF-16). */
+/** Length measured with the strictest unit (max of code points and UTF-16). */
 export function measureStrictestUnits(text: string): number {
   return Math.max(countCodePoints(text), countUtf16Units(text));
 }
 
-/** Límites de longitud por campo y acumulados para el perfil de agente. */
+/** Per-field and total length limits for the agent profile. */
 export const AGENT_PROFILE_LIMITS = {
-  /** Identidad y propósito: para qué existe este alias. */
+  /** Identity and purpose: why this alias exists. */
   purpose: 2_000,
-  /** Rol declarado del agente. */
+  /** Declared role of the agent. */
   role_summary: 4_000,
-  /** Instrucciones de interacción con el usuario humano. */
+  /** Instructions for interacting with the human user. */
   human_brief: 2_000,
-  /** Límite de caracteres para un elemento individual de lista. */
+  /** Character limit for an individual list entry. */
   item: 1_000,
-  /** Cantidad máxima de elementos admitidos en una lista. */
+  /** Maximum number of entries allowed in a list. */
   items: 64,
-  /** Límite acumulado de caracteres para el perfil completo. */
+  /** Cumulative character limit for the full profile. */
   total: 24_000
 } as const;
 
-/** Las listas del perfil, en el orden en que se suman al presupuesto y se renderizan. */
+/** Profile lists, in the order they add to the budget and are rendered. */
 export const AGENT_PROFILE_LIST_FIELDS = [
   'responsibilities', 'restrictions', 'tools', 'operating_rules'
 ] as const;
 
-/** Los textos sueltos del perfil, en el mismo orden. */
+/** Profile free-text fields, in the same order. */
 export const AGENT_PROFILE_TEXT_FIELDS = ['purpose', 'role_summary', 'human_brief'] as const;
 
 export type AgentProfileListField = (typeof AGENT_PROFILE_LIST_FIELDS)[number];
 export type AgentProfileTextField = (typeof AGENT_PROFILE_TEXT_FIELDS)[number];
 export type AgentProfileField = AgentProfileListField | AgentProfileTextField;
 
-/** Perfil autorado de un alias. */
+/** Authored profile of an alias. */
 export interface AgentProfile {
   readonly tenant_id: string;
   readonly alias: string;
-  /** Identidad y propósito. NULL = no declarado. */
+  /** Identity and purpose. NULL = undeclared. */
   readonly purpose: string | null;
-  /** Rol declarado. NULL = no declarado. */
+  /** Declared role. NULL = undeclared. */
   readonly role_summary: string | null;
-  /** Instrucciones de interacción con el humano. NULL = no declarado. */
+  /** Instructions for interacting with the human. NULL = undeclared. */
   readonly human_brief: string | null;
   readonly responsibilities: readonly string[];
   readonly restrictions: readonly string[];
@@ -63,7 +63,7 @@ export interface AgentProfile {
   readonly operating_rules: readonly string[];
 }
 
-/** Error de validación en campos del perfil de agente. */
+/** Validation error on agent profile fields. */
 export class AgentProfileError extends Error {
   constructor(readonly field: AgentProfileField | 'total' | 'tenant_id' | 'alias', message: string) {
     super(message);
@@ -78,7 +78,7 @@ function requireIdentifier(value: unknown, field: 'tenant_id' | 'alias'): string
   return value.trim();
 }
 
-/** Normaliza un campo de texto; devuelve null si está vacío y valida límites. */
+/** Normalizes a text field; returns null if empty and validates limits. */
 function normalizeText(value: unknown, field: AgentProfileTextField): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string') {
@@ -96,7 +96,7 @@ function normalizeText(value: unknown, field: AgentProfileTextField): string | n
   return trimmed;
 }
 
-/** Normaliza una lista descartando elementos vacíos y validando límites. */
+/** Normalizes a list by dropping empty entries and validating limits. */
 function normalizeList(value: unknown, field: AgentProfileListField): readonly string[] {
   if (value === null || value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -127,7 +127,7 @@ function normalizeList(value: unknown, field: AgentProfileListField): readonly s
   return items;
 }
 
-/** Calcula las unidades totales ocupadas por el perfil. */
+/** Computes the total units occupied by the profile. */
 export function agentProfileUnits(profile: AgentProfile): number {
   let total = 0;
   for (const field of AGENT_PROFILE_TEXT_FIELDS) {
@@ -139,7 +139,7 @@ export function agentProfileUnits(profile: AgentProfile): number {
   return total;
 }
 
-/** Valida y normaliza la entrada de un perfil de agente. */
+/** Validates and normalizes an agent profile input. */
 export function normalizeAgentProfile(input: Record<string, unknown>): AgentProfile {
   const profile: AgentProfile = {
     tenant_id: requireIdentifier(input.tenant_id, 'tenant_id'),
@@ -162,7 +162,7 @@ export function normalizeAgentProfile(input: Record<string, unknown>): AgentProf
   return profile;
 }
 
-/** Crea una estructura de perfil vacía para un alias. */
+/** Builds an empty profile structure for an alias. */
 export function emptyAgentProfile(tenantId: string, alias: string): AgentProfile {
   return {
     tenant_id: tenantId, alias, purpose: null, role_summary: null, human_brief: null,
@@ -171,46 +171,46 @@ export function emptyAgentProfile(tenantId: string, alias: string): AgentProfile
 }
 
 /**
- * ── LOS HECHOS DERIVADOS ────────────────────────────────────────────────────────────────────
+ * ── THE DERIVED FACTS ────────────────────────────────────────────────────────────────────────
  *
- * Las tres caras del fichero que NO se escriben a mano: permisos, cuotas y configuración del
- * arnés. Ya existen como filas en `memberships`/`role_policies`, en el camino
+ * The three faces of the file that are NOT written by hand: permissions, quotas, and harness
+ * configuration. They already exist as rows in `memberships`/`role_policies`, along the path
  * `agent_account_bindings` -> `alias_routing_ceiling` -> `provider_accounts` (+ `quota_window_state`)
- * y en `agents` + `harness_definitions`.
+ * and in `agents` + `harness_definitions`.
  *
- * Viven acá, y no en `@cauce/adapter-sdk`, por lo mismo que `AgentProfile`: los produce
- * `@cauce/store` y los consume `@cauce/adapter-sdk`, que no se pueden importar entre sí.
- * `@cauce/protocol` es la única que las dos ven.
+ * They live here, and not in `@cauce/adapter-sdk`, for the same reason as `AgentProfile`: `@cauce/store`
+ * produces them and `@cauce/adapter-sdk` consumes them, and the two cannot import each other.
+ * `@cauce/protocol` is the only one both can see.
  *
- * NO SE GUARDAN EN `agent_profiles`, y esa es la decisión que sostiene todo: copiarlos como texto
- * autorado sería una segunda fuente de verdad que se desincroniza en silencio — se revoca el
- * permiso en `role_policies` y el fichero del contenedor sigue diciendo que lo tiene. Se leen
- * frescos cada vez que se genera.
+ * THEY ARE NOT STORED IN `agent_profiles`, and that is the decision that holds everything together:
+ * copying them as authored text would be a second source of truth that silently drifts — revoke the
+ * permission in `role_policies` and the container file still claims to hold it. They are read fresh
+ * every time the file is generated.
  */
 
-/** Permisos EFECTIVOS: la unión de lo que conceden todas las salas del alias. */
+/** EFFECTIVE permissions: the union of what every room the alias belongs to grants. */
 export interface PermisosDelAlias {
   readonly ruta: boolean;
   readonly lectura: boolean;
   readonly control: boolean;
   /**
-   * Notificar a un humano exige DOS puertas y las dos son necesarias: que el rol lo permita
-   * (`role_policies.allow_notify`) y que exista al menos un destino aprobado
-   * (`egress_destinations.enabled`). Sin destinos la respuesta es NO, aunque el rol diga que sí:
-   * `notify` es default-deny por lista, no por rol.
+   * Notifying a human requires TWO gates and both are necessary: the role must allow it
+   * (`role_policies.allow_notify`) AND at least one approved destination must exist
+   * (`egress_destinations.enabled`). With no destinations the answer is NO, even if the role says
+   * yes: `notify` is default-deny by list, not by role.
    */
   readonly notificacion: boolean;
 }
 
-/** Cuotas asignadas al alias para proveedores externos. */
+/** Quotas assigned to the alias for external providers. */
 export interface CuotaDelAlias {
   readonly proveedor: string;
   readonly cuenta: string;
-  /** Descripción legible del límite observado. */
+  /** Human-readable description of the observed limit. */
   readonly limite?: string | undefined;
 }
 
-/** Configuración de ejecución y capacidades del arnés. */
+/** Runtime configuration and harness capabilities. */
 export interface ArnesDelAlias {
   readonly harness: string;
   readonly home: string;
@@ -218,35 +218,35 @@ export interface ArnesDelAlias {
   readonly capacidades: readonly string[];
 }
 
-/** Hechos derivados consolidados del alias. */
+/** Consolidated derived facts for the alias. */
 export interface HechosDelAlias {
   readonly permisos: PermisosDelAlias;
   readonly cuotas: readonly CuotaDelAlias[];
   readonly arnes: ArnesDelAlias;
-  /** Alias alcanzables por ACL. */
+  /** Aliases reachable via ACL. */
   readonly destinos: readonly string[];
 }
 
-/** Contexto completo del alias (perfil autorado y hechos derivados). */
+/** Full alias context (authored profile and derived facts). */
 export interface ContextoDeAlias {
   readonly perfil: AgentProfile;
   readonly hechos: HechosDelAlias;
 }
 
-// ── Composición del bloque de perfil ────────────────────────────────────────
+// ── Composing the profile block ────────────────────────────────────────────
 
-/** Renderiza una lista como viñetas Markdown. */
+/** Renders a list as Markdown bullets. */
 export function vinetas(items: readonly string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
-/** Renderiza una sección Markdown con título y cuerpo, o undefined si el cuerpo está vacío. */
+/** Renders a Markdown section with title and body, or undefined if the body is empty. */
 export function seccion(titulo: string, cuerpo: string | undefined): string | undefined {
   if (cuerpo === undefined || cuerpo.trim().length === 0) return undefined;
   return `## ${titulo}\n\n${cuerpo.trim()}`;
 }
 
-/** Renderiza el resumen de permisos del alias. */
+/** Renders the alias permission summary. */
 export function lineasDePermisos(permisos: PermisosDelAlias): string {
   const marca = (concedido: boolean): string => (concedido ? "sí" : "no");
   return [
@@ -257,7 +257,7 @@ export function lineasDePermisos(permisos: PermisosDelAlias): string {
   ].join("\n");
 }
 
-/** Renderiza las cuotas asociadas al alias. */
+/** Renders the quotas associated with the alias. */
 export function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undefined {
   if (cuotas.length === 0) return undefined;
   return cuotas
@@ -268,7 +268,7 @@ export function lineasDeCuotas(cuotas: readonly CuotaDelAlias[]): string | undef
     .join("\n");
 }
 
-/** Renderiza la información técnica del arnés y destinos alcanzables. */
+/** Renders the harness technical info and reachable destinations. */
 export function lineasDeArnes(hechos: HechosDelAlias): string {
   const lineas = [`- Arnés: ${hechos.arnes.harness}`, `- HOME: ${hechos.arnes.home}`];
   if (hechos.arnes.contenedor !== undefined && hechos.arnes.contenedor.length > 0) {
@@ -281,8 +281,8 @@ export function lineasDeArnes(hechos: HechosDelAlias): string {
 }
 
 /**
- * Compone el bloque de perfil consolidado para el arnés en formato Markdown.
- * Si no hay campos autorados, devuelve una cadena vacía.
+ * Composes the consolidated profile block for the harness in Markdown format.
+ * Returns an empty string when no authored fields are present.
  */
 export function componerBloqueDePerfil(perfil: AgentProfile, hechos: HechosDelAlias): string {
   const rol = [

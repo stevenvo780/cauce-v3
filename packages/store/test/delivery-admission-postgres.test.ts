@@ -9,8 +9,8 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Reparto de cupo y políticas de admisión/reintento para optimizar concurrencia
- * y evitar ejecuciones redundantes de harnesses.
+ * Capacity partitioning and admission/retry policies to optimize concurrency
+ * and avoid redundant harness runs.
  */
 
 let database: TestDatabase;
@@ -39,9 +39,9 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
 }
 
 /**
- * Publica una entrega agente-a-agente sin pasar por la cadena completa de delegación: escribe
- * el mismo `body.type` que escribe `materializeAgentOutputs` y el mismo `lane='batch'`.
- * `publish()` rechaza los tipos reservados a propósito, así que el INSERT va directo.
+ * Publishes an agent-to-agent delivery without going through the full delegation chain: it
+ * writes the same `body.type` that `materializeAgentOutputs` writes, and the same `lane='batch'`.
+ * `publish()` rejects reserved types on purpose, so the INSERT goes straight through.
  */
 async function publishRawDelivery(body: Record<string, unknown>, priority: number): Promise<string> {
   const message = await pool.query<{ id: string }>(
@@ -83,10 +83,10 @@ function ack(
 }
 
 /**
- * Reproduce lo que hace el SDK cuando el harness ARRANCA de verdad: un 'started' normal primero
- * (que es sólo "la entrega fue admitida") y después, ya con el turno de sesión en la mano y a
- * punto de invocar al harness, otro 'started' con `execution_started`. Los dos hacen falta
- * porque la diferencia entre ellos es justamente lo que el reaper tiene que poder distinguir.
+ * Reproduces what the SDK does when the harness REALLY STARTS: a normal 'started' first
+ * (which is only "the delivery was admitted") and then, with the session turn in hand and about
+ * to invoke the harness, another 'started' with `execution_started`. Both are required because
+ * the difference between them is precisely what the reaper must be able to distinguish.
  */
 async function startExecution(
   delivery: DeliveryEnvelope,
@@ -213,8 +213,8 @@ describe('claim admission with a reserve for humans', () => {
     await publishAgentDelivery('otra tarea larga');
     await repository.publish(command({ body: { text: '¿cómo venís?' } }));
 
-    // El cupo general está explícitamente en cero. Sin reserva esto devolvería cero y la
-    // persona esperaría a que termine la tarea.
+    // The general capacity is explicitly zero. Without a reserve this would return zero and the
+    // human would be left waiting for the task to finish.
     const claimed = await repository.claimDeliveries(
       consumerTenant, consumerAlias, 'assistant-1', lease.epoch!, 0, 30_000, 3,
       { generalCapacity: 0, humanReservedCapacity: 1, maxClaims: 1 }
@@ -222,7 +222,7 @@ describe('claim admission with a reserve for humans', () => {
 
     expect(claimed).toHaveLength(1);
     expect(claimed[0]!.body).toMatchObject({ text: '¿cómo venís?' });
-    // Y las dos tareas entre agentes siguen esperando: el humano usó su cupo, no el de ellas.
+    // And the two agent-to-agent tasks keep waiting: the human used its share, not theirs.
     expect((await pool.query(
       `SELECT 1 FROM deliveries WHERE status='pending'`
     )).rowCount).toBe(2);
@@ -251,8 +251,8 @@ describe('claim admission with a reserve for humans', () => {
       consumerTenant, consumerAlias, 'assistant-3', lease.epoch!, 8, 30_000, 3
     );
 
-    // Tres humanos, después uno de agentes, después humano de nuevo: la misma alternancia que
-    // ya hacía `delivery_lane_fairness`, sólo que ahora la partición discrimina de verdad.
+    // Three humans, then one agent, then a human again: the same alternation that
+    // `delivery_lane_fairness` already did, except now the partition actually discriminates.
     expect(claimed.map(
       (delivery) => typeof delivery.body.type === 'string' ? delivery.body.type : 'human'
     )).toEqual([
@@ -261,10 +261,10 @@ describe('claim admission with a reserve for humans', () => {
   });
 
   /**
-   * El presupuesto de admisión tiene que poder reconstruirse desde la base, o una reconexión lo
-   * multiplica: el gateway creaba un mapa de garras vacío en cada `hello` y le devolvía el cupo
-   * entero al adaptador. Con `renewable_delivery_claims_v1` eso es doblemente grave, porque esa
-   * capacidad existe para CONSERVAR el lease entre reconexiones.
+   * The admission budget must be reconstructible from the database, or a reconnect multiplies
+   * it: the gateway used to build an empty claim map on every `hello` and hand the entire
+   * capacity back to the adapter. With `renewable_delivery_claims_v1` this is doubly severe,
+   * because that capacity exists to PRESERVE the lease across reconnects.
    */
   it('reports the live claims of an alias with their admission class', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-5', [], 30_000);
@@ -279,7 +279,7 @@ describe('claim admission with a reserve for humans', () => {
     expect(live).toHaveLength(2);
     expect(new Set(live.map((claim) => claim.human_originated))).toEqual(new Set([true, false]));
 
-    // Una garra terminada deja de ocupar cupo en el acto.
+    // A finished claim stops occupying capacity immediately.
     const first = claimed.find((delivery) => delivery.body.type === undefined)!;
     await repository.ackDelivery(
       first.delivery_id, consumerTenant, consumerAlias,
@@ -323,9 +323,8 @@ describe('agent-derived messages leave the interactive lane', () => {
       `SELECT lane,body->>'type' AS type FROM messages WHERE body->>'type'='agent.message'`
     );
     expect(derived.rowCount).toBe(1);
-    // El mensaje original de la persona sigue en 'interactive'; sólo la descendencia baja a
-    // 'batch'. Heredarlo era lo que hacía que la cola del asistente y la cola de trabajo
-    // fueran la misma cola.
+    // The original message from the human stays on 'interactive'; only the descendents move to
+    // 'batch'. Inheriting it was what made the assistant queue and the work queue the same queue.
     expect(derived.rows[0]).toEqual({ lane: 'batch', type: 'agent.message' });
     expect((await pool.query<{ lane: string }>(
       `SELECT lane FROM messages WHERE request_id=$1`, [source.request_id]
@@ -349,19 +348,18 @@ describe('stale delivery reaper', () => {
        FROM deliveries WHERE id=$1`, [delivery!.delivery_id]
     );
     expect(row.rows[0]?.status).toBe('retry');
-    // `available_at=now()` devolvía la entrega al mismo agente saturado en el tick siguiente:
-    // es la realimentación positiva del incidente, cada muerte generando más carga.
+    // `available_at=now()` returned the delivery to the same saturated agent on the next tick:
+    // it is the positive feedback of the incident, every death generating more load.
     expect(Number(row.rows[0]?.available_in)).toBeGreaterThan(timeoutRetryBackoffSeconds(1) - 5);
   });
 
   /**
-   * EL caso que hacía perder trabajo del usuario, y por eso va antes que el del ahorro.
+   * THE case that caused user work to be lost, and that is why it comes before the cost-saving one.
    *
-   * Un ACK 'started' NO prueba ejecución: el SDK lo emite antes de llamar al harness y la
-   * entrega puede quedarse minutos esperando el candado de sesión, renovando cada 60 s, sin
-   * haber gastado un centavo. La versión anterior del reaper lo tomaba como prueba y mandaba
-   * esas entregas a `dead`: trabajo pedido por una persona, perdido para siempre, sin haberse
-   * corrido jamás.
+   * A 'started' ACK does NOT prove execution: the SDK emits it before calling the harness, and the
+   * delivery can sit for minutes waiting on the session lock, renewing every 60 s, without having
+   * spent a cent. The previous version of the reaper took it as proof and sent those deliveries to
+   * `dead`: work requested by a human, lost forever, never having run.
    */
   it('retries a delivery that only ACKed started, because that is not proof of execution', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'waiting-1', [], 30_000);
@@ -387,8 +385,8 @@ describe('stale delivery reaper', () => {
     const [delivery] = await repository.claimDeliveries(
       consumerTenant, consumerAlias, 'worker-1', lease.epoch!, 1, 30_000
     );
-    // Marca explícita del SDK: el harness obtuvo el turno de sesión y se lo invocó. ESO es lo
-    // que significa que ya se pagó una corrida.
+    // Explicit mark from the SDK: the harness obtained the session turn and was invoked. THAT is
+    // what it means that a run has already been paid for.
     await startExecution(delivery!, 'worker-1', lease.epoch!);
     await expire(delivery!.delivery_id);
 
@@ -399,12 +397,12 @@ describe('stale delivery reaper', () => {
     );
     expect(row.rows[0]).toMatchObject({
       status: 'dead',
-      // No consumió un intento más: no se re-ejecutó nada.
+      // It did not consume an extra attempt: nothing was re-executed.
       attempt: 1,
       last_error: 'ACK timeout: execution already started; held for manual replay'
     });
-    // `dead` + fila en dead_letters es exactamente lo que exige `replayDelivery`, o sea que
-    // el operador tiene el botón de reencolar sin que se haya reencolado solo.
+    // `dead` + row in dead_letters is exactly what `replayDelivery` requires, so the
+    // operator has the reenqueue button without it having been reenqueued on its own.
     expect((await pool.query(
       `SELECT 1 FROM dead_letters
        WHERE delivery_id=$1 AND reason='ACK timeout: execution already started; held for manual replay'`,
@@ -416,12 +414,12 @@ describe('stale delivery reaper', () => {
          AND metadata->>'reason'='execution_already_started'`,
       [delivery!.delivery_id]
     )).rowCount).toBe(1);
-    // Y sobre todo: nadie se lo puede volver a llevar.
-    // `takeover: true` a proposito: sin el, acquireLease devuelve acquired:false SIN epoch
-    // (worker-1 todavia tiene el lease vivo) y el reclamo siguiente saldria con epoch undefined,
-    // o sea rechazado por fencing -- que es correcto, pero probaria otra cosa. Lo que se quiere
-    // demostrar aca es que ni un consumidor legitimo, con lease propio y epoca nueva, puede
-    // llevarse una entrega retenida para revision manual.
+    // And above all: nobody can take it over again.
+    // `takeover: true` on purpose: without it, acquireLease returns acquired:false WITHOUT epoch
+    // (worker-1 still has the lease alive) and the next claim would go out with epoch undefined,
+    // i.e. rejected by fencing -- which is correct, but would prove something different. What we
+    // want to show here is that not even a legitimate consumer, with its own lease and a new epoch,
+    // can claim a delivery held for manual review.
     const secondLease = await repository.acquireLease(
       consumerTenant, consumerAlias, 'worker-2', [], 30_000, { takeover: true }
     );
@@ -445,8 +443,8 @@ describe('stale delivery reaper', () => {
 
     await repository.retryStaleDeliveries(0);
 
-    // "Se quedó a medias" es una respuesta; el silencio no lo es. El dueño del sistema pidió
-    // explícitamente poder saber qué pasó, aunque la respuesta sea que falló.
+    // "It stopped halfway" is a reply; silence is not. The system owner explicitly asked
+    // to be able to know what happened, even if the answer is that it failed.
     const relay = await pool.query<{ payload: Record<string, unknown> }>(
       `SELECT payload FROM adapter_outbox WHERE kind='origin_relay' AND delivery_id=$1`,
       [delivery!.delivery_id]
@@ -482,9 +480,9 @@ describe('stale delivery reaper', () => {
     );
     await startExecution(first!, 'worker-5', lease.epoch!);
     await expire(first!.delivery_id);
-    // Se fuerza el reintento del intento 1 con la palanca, para dejar en delivery_acks un
-    // 'started' aplicado de un intento VIEJO. El backoff corre available_at al futuro, así que
-    // hay que rehabilitarla para poder reclamarla dentro del test.
+    // Force the retry of attempt 1 with the lever, to leave in delivery_acks a
+    // 'started' applied from an OLD attempt. The backoff pushes available_at into the future, so
+    // it has to be rehabilitated to be claimable inside the test.
     expect(await repository.retryStaleDeliveries(0, 100, { retryStartedDeliveries: true }))
       .toEqual({ retried: 1, dead: 0, parked: 0 });
     await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [first!.delivery_id]);
@@ -495,20 +493,20 @@ describe('stale delivery reaper', () => {
     expect(second?.attempt).toBe(2);
     await expire(second!.delivery_id);
 
-    // El intento 2 no arrancó nunca. La marca pertenece al intento y se limpia tanto en el
-    // reintento como en el reclamo; sin eso, una entrega quedaría retenida para siempre por
-    // evidencia de una corrida anterior.
+    // Attempt 2 never started. The mark belongs to the attempt and is cleared both on
+    // retry and on claim; without that, a delivery would be held forever by evidence from an
+    // earlier run.
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
   });
 });
 
 describe('ack deadline bookkeeping', () => {
   /**
-   * El PRIMER 'started' también corre el plazo. Antes sólo lo movían las renovaciones, así que
-   * la base seguía contando desde el reclamo mientras el gateway —que sí lo corre al ver el ACK
-   * aplicado— daba la garra por viva más tiempo del real. Las dos vistas de la misma garra se
-   * separaban por lo que hubiera tardado el arranque, y el cupo del gateway quedaba retenido
-   * contra una entrega que la base ya podía reclamarle al reaper.
+   * The FIRST 'started' also moves the deadline. Before, only renewals moved it, so
+   * the database kept counting from the claim while the gateway -- which does move it on seeing
+   * the ACK applied -- considered the claim alive longer than it actually was. The two views of
+   * the same claim diverged by how long the startup took, and the gateway capacity was held
+   * against a delivery the database could already hand back to the reaper.
    */
   it('moves the ack deadline on the first started, not only on renewals', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'deadline-1', [], 30_000);

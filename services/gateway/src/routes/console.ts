@@ -37,7 +37,7 @@ export function registerConsoleRoutesPhase3(
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
       const row = visibleMessage(await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias), actor);
-      // `not_found`, nunca `forbidden`: no confirma que exista un mensaje invisible.
+      // `not_found`, never `forbidden`: it does not confirm that an invisible message exists.
       if (!row) throw new StoreError('not_found', 'message not found or not visible');
       return row;
     } catch (error) { replyError(reply, error); }
@@ -51,11 +51,10 @@ export function registerConsoleRoutesPhase3(
     } catch (error) { replyError(reply, error); }
   });
 
-  // La reconciliación causal es superficie de operador, no una segunda lista de colas. Tanto la
-  // lectura como la decisión exigen `control`: la lista revela que existe un incidente operativo
-  // y cada fila puede convertirse inmediatamente en una mutación auditada. El store repite la
-  // autorización y aplica visibilidad multi-tenant; la fachada es una segunda allowlist para que
-  // una regresión SQL nunca filtre payloads, errores ni ids del proveedor al navegador.
+  // Causal reconciliation is operator surface, not a second queue listing. Both read and decision
+  // require `control`: the list reveals an operational incident and each row can immediately
+  // become an audited mutation. The store re-applies authorization and visibility; the facade is
+  // a second allowlist so an SQL regression never leaks payloads, errors, or vendor ids.
   app.get<{ Querystring: { limit?: string; cursor?: string } }>(
     '/v3/console/dlq',
     async (request, reply) => {
@@ -74,10 +73,10 @@ export function registerConsoleRoutesPhase3(
     },
   );
 
-  // Esta ruta nunca reinyecta un efecto. Registra una decisión humana contra la huella exacta
-  // de la evidencia vigente; si la fila cambió, el CAS del store falla. Target/id vienen de la
-  // ruta pero actor/tenant sólo del principal autenticado, y el body es exacto para no aceptar
-  // autoridad accidental en campos que un cliente viejo o comprometido pudiera agregar.
+  // This route never re-injects a side effect. It records a human decision against the exact
+  // fingerprint of the current evidence; if the row changed, the store's CAS fails. Target/id
+  // come from the route but actor/tenant only from the authenticated principal, and the body is
+  // exact to avoid granting accidental authority on fields an old or compromised client might add.
   app.post<{
     Params: { target: string; id: string };
   }>(
@@ -108,16 +107,16 @@ export function registerConsoleRoutesPhase3(
     } catch (error) { replyError(reply, error); }
   });
 
-  // Cancelar es la operación gemela de replay y va con exactamente el mismo candado
-  // (`requireOperatorPermission(actor,'control')` acá y `assertReplayAuthorization` en el store).
-  // Se expone por la misma superficie a propósito: hasta hoy la única forma de cancelar era un
-  // UPDATE a mano en la base, sin auditoría, sin aviso al origen y sin liberar al padre.
+  // Cancel is the twin operation of replay and runs with exactly the same lock
+  // (`requireOperatorPermission(actor,'control')` here and `assertReplayAuthorization` in the store).
+  // It is exposed through the same surface on purpose: until today, the only way to cancel was a
+  // hand-issued UPDATE in the database, with no audit, no notice to the origin, no freeing of the parent.
   app.post<{ Params: { deliveryId: string } }>('/v3/console/deliveries/:deliveryId/cancel', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
       requireOperatorPermission(actor, 'control');
-      // El motivo es opcional y sólo se acepta como texto. Cualquier otra forma se ignora en vez
-      // de rechazarse: la cancelación no puede fallar por un campo decorativo.
+      // The reason is optional and only accepted as text. Anything else is ignored rather than
+      // rejected: cancellation must not fail because of a decorative field.
       const body = request.body as { reason?: unknown } | undefined;
       const reason = typeof body?.reason === 'string' ? body.reason : undefined;
       const deliveryId = DeliveryIdSchema.parse(request.params.deliveryId);
@@ -157,12 +156,12 @@ export function registerConsoleRoutesPhase3(
     } catch (error) { replyError(reply, error); }
   });
 
-  // "Qué está trabajando cada agente ahora mismo", agregado por alias. Igual que topology()/
-  // listAgents(), el alcance cross-tenant sale de acl_edges allow_read dentro del propio store
-  // (fleetActivity() se autochequea el permiso, no hace falta un facade acá) -- este endpoint no
-  // tiene un "modo flota" especial, es la misma regla default-deny de siempre. No lleva
-  // sameTenantRows: aplastarlo por tenant sería esconder exactamente el caso que este panel
-  // existe para mostrar (un alias sin registrar con entregas en vuelo en otro tenant visible).
+  // "What each agent is working on right now", aggregated by alias. Like topology()/listAgents(),
+  // the cross-tenant scope comes from acl_edges allow_read inside the store itself
+  // (fleetActivity() self-checks the permission, no facade needed here) -- this endpoint has no
+  // special "fleet mode", it is the same default-deny rule as always. It does not use
+  // sameTenantRows: flattening it by tenant would hide exactly the case this panel exists to
+  // show (an unregistered alias with deliveries in flight in another visible tenant).
   app.get('/v3/console/activity', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
@@ -171,9 +170,9 @@ export function registerConsoleRoutesPhase3(
     } catch (error) { replyError(reply, error); }
   });
 
-  // Consumo de cuotas de las suscripciones de IA, con su propio observed_at: es una muestra
-  // fuera de banda de hace minutos, no de hace milisegundos como fleetActivity(), así que
-  // fusionar los dos payloads mentiría sobre una de las dos frescuras.
+  // AI subscription quota consumption, with its own observed_at: this is an out-of-band sample
+  // from minutes ago, not milliseconds ago like fleetActivity(), so merging the two payloads
+  // would lie about one of the two freshnesses.
   app.get('/v3/console/quotas', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
@@ -186,18 +185,18 @@ export function registerConsoleRoutesPhase3(
   // another tenant), so no sameTenantRows facade runs here: the store already applied the
   // visibility rule and redacted the payer's account identity.
   /*
-   * Registro del repositorio de perfiles y documentos de agentes.
-   * Se registran en el ámbito de `/v3/console` de forma independiente del plugin de terminal.
+   * Registry of the agent profiles and documents repository.
+   * Registered within the `/v3/console` scope independently of the terminal plugin.
    */
-  // A ESTE nivel y no dentro del bloque: lo usan las rutas de consola Y el saludo del socket, que
-  // manda el perfil una vez por conexión. Dos instancias sobre el mismo pool serían dos cachés y
-  // dos sitios donde divergir.
+  // At THIS level and not inside the block: it is used by the console routes AND the socket hello,
+  // which sends the profile once per connection. Two instances over the same pool would be two
+  // caches and two places to diverge.
   const agentProfiles = new AgentProfileRepository(options.pool);
 
   /*
-   * El hueco donde el plano de terminal deja su sonda. Se decora sobre ESTA instancia de Fastify y
-   * no vive como estado de módulo a propósito: los tests montan varios gateways en el mismo
-   * proceso y compartirían la sonda del último en arrancar.
+   * The slot where the terminal plane leaves its probe. Decorated on THIS Fastify instance and
+   * not held as module state on purpose: tests mount several gateways in the same process and
+   * would otherwise share the probe of whichever one started last.
   */
   const sondaDeDocumentos = new SondaCompartida();
   const profileProbe = sondaDiferida(sondaDeDocumentos);
@@ -227,8 +226,8 @@ export function registerConsoleRoutesPhase3(
             actorTenant, actor.alias, targetTenant, targetAlias, permission,
           );
         } catch (error) {
-          // No se distingue «actor sin permiso», «destino oculto» y «destino ausente» en esta
-          // superficie: los tres fallan cerrados sin confirmar que la identidad existe.
+          // This surface does not distinguish "actor without permission", "hidden target", and
+          // "missing target": all three fail closed without confirming that the identity exists.
           if (error instanceof StoreError
             && (error.code === 'forbidden' || error.code === 'invalid_actor')) return undefined;
           throw error;
@@ -236,9 +235,9 @@ export function registerConsoleRoutesPhase3(
       }
 
       /*
-       * Compatibilidad exclusiva para repositorios falsos anteriores a esta primitiva: sólo la
-       * ruta LEGACY, sólo el tenant del actor y con permiso del store. Las rutas canónicas nunca
-       * entran acá; sin método exacto responden 404.
+       * Compatibility reserved for fake repositories that predate this primitive: only the LEGACY
+       * route, only the actor's tenant, and with the store's permission. Canonical routes never
+       * reach here; without the exact method they respond 404.
        */
       if (!legacySameTenant || targetTenant !== actorTenant) return undefined;
       await repository.assertPermission(actorTenant, actor.alias, permission);
@@ -285,15 +284,15 @@ export function registerConsoleRoutesPhase3(
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
       /*
-       * La sonda se resuelve en CADA petición a través del hueco, no se captura acá.
+       * The probe is resolved on EACH request through the slot, it is not captured here.
        *
-       * La que de verdad lee el disco del contenedor la construye el plano de terminal, que en
-       * `main.ts` se registra DESPUÉS de `buildGateway`: cuando estas rutas se montan, todavía no
-       * existe. Capturarla acá guardaría para siempre la degradada, y el despliegue posterior del
-       * plano no cambiaría nada — sin un error, además. Ver `console/sonda-compartida.ts`.
+       * The one that actually reads the container's disk is built by the terminal plane, which in
+       * `main.ts` registers AFTER `buildGateway`: when these routes mount, it does not exist yet.
+       * Capturing it here would freeze the degraded one forever, and the later deployment of the
+       * plane would change nothing — without an error either. See `console/sonda-compartida.ts`.
        *
-       * Mientras nadie instale una, la degradada contesta «no medido» y «no hay canal» con esas
-       * palabras, que es lo que la pantalla ya sabe pintar.
+       * Until someone installs one, the degraded version answers "not measured" and "no channel"
+       * with those exact words, which is what the screen already knows how to render.
        */
       probe: profileProbe,
     });
@@ -373,8 +372,8 @@ export function registerConsoleRoutesPhase3(
     },
   );
 
-  // Compatibilidad sin tenant: significa estrictamente el tenant autenticado. Un alias visible
-  // en otro tenant jamás puede ganar por orden alfabético ni por el orden físico de PostgreSQL.
+  // Compatibility without tenant: it means strictly the authenticated tenant. A visible alias
+  // in another tenant can never win by alphabetical order or by PostgreSQL's physical order.
   app.get<{ Params: { alias: string } }>('/v3/console/agents/:alias', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);

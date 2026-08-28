@@ -8,10 +8,10 @@ import type { ConsoleUser, ConsoleUserRole, ConsoleUserStore } from './console-u
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 
 /**
- * Proveedor de autenticación por contraseña para usuarios de la consola.
- * Emite una cookie de sesión HttpOnly con un JWT firmado y delega en el
- * proveedor fallback (como mTLS) las solicitudes que no presentan dicha cookie.
- * El rol y los permisos se revalidan contra el almacén de usuarios en cada petición.
+ * Password authentication provider for console users.
+ * Emits an HttpOnly session cookie carrying a signed JWT and delegates to the
+ * fallback provider (such as mTLS) any request that does not carry that cookie.
+ * Role and permissions are revalidated against the user store on every request.
  */
 
 const JWT_HEADER = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' }), 'utf8').toString('base64url');
@@ -19,7 +19,7 @@ const JWT_ISSUER = 'cauce-v3-gateway';
 const JWT_AUDIENCE = 'cauce-v3-console';
 const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1_000;
 const MIN_SIGNING_KEY_BYTES = 32;
-/** Mensaje único para "no existe", "contraseña mala" y "cuenta apagada". Ver `login()`. */
+/** Single message for "not found", "wrong password", and "disabled account". See `login()`. */
 const CREDENTIAL_FAILURE_MESSAGE = 'Correo o contraseña incorrectos.';
 
 export interface ConsoleSessionClaims {
@@ -46,7 +46,7 @@ export interface ConsolePasswordAuthState {
   reason?: string;
 }
 
-/** Se distingue del resto de los `AuthError` sólo para poder decirle a la persona qué pasó. */
+/** Distinguished from the rest of `AuthError` only so the user can be told what happened. */
 class SessionExpiredError extends AuthError {
   constructor() {
     super('La sesión venció. Volvé a iniciar sesión.');
@@ -54,10 +54,10 @@ class SessionExpiredError extends AuthError {
 }
 
 /**
- * Rol de la consola -> autoridad de Cauce. Es la traducción MÍNIMA razonable y vive en el código
- * y no en la base porque es una decisión de producto, no un dato: `operator` opera (publicar,
- * cancelar, reintentar, terminales) y `reader` sólo mira. Cualquiera de las dos queda acotada
- * después por `memberships`/`role_policies`.
+ * Console role -> Cauce authority. This is the MINIMUM reasonable mapping and lives in the code
+ * rather than the database because it is a product decision, not data: `operator` operates
+ * (publish, cancel, retry, terminals) and `reader` only watches. Either is then narrowed by
+ * `memberships`/`role_policies`.
  */
 const ROLE_AUTHORITY: Readonly<Record<ConsoleUserRole, {
   roles: readonly PrincipalRole[]; permissions: readonly PrincipalPermission[];
@@ -81,9 +81,9 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Devuelve `undefined` si la cabecera trae la cookie repetida. Dos valores con el mismo nombre
- * son la forma clásica de "cookie tossing": un subdominio comprometido escribe una segunda
- * cookie y el servidor elige la equivocada. Acá se elige ninguna.
+ * Returns `undefined` if the header carries the cookie more than once. Two values with the same
+ * name are the classic "cookie tossing" pattern: a compromised subdomain writes a second cookie
+ * and the server picks the wrong one. Here we pick neither.
  */
 function cookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
@@ -108,9 +108,9 @@ export function signConsoleSession(key: Buffer, claims: ConsoleSessionClaims): s
 }
 
 /**
- * Verificación completa antes de mirar NADA del contenido: algoritmo fijado en el servidor (un
- * `alg` que venga en el token no se lee jamás — así es como se cuela `alg: none`), firma
- * comparada en tiempo constante, y recién entonces se decodifica el payload.
+ * Full verification before looking at ANY content: algorithm hardcoded on the server (an `alg`
+ * coming in the token is never read — that is how `alg: none` slips in), signature compared in
+ * constant time, and only then the payload is decoded.
  */
 export function verifyConsoleSession(key: Buffer, token: string, nowMs: number): ConsoleSessionClaims {
   const parts = token.split('.');
@@ -137,18 +137,18 @@ export function verifyConsoleSession(key: Buffer, token: string, nowMs: number):
   }
   if (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat)) throw new AuthError('emisión del token inválida');
   if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw new AuthError('vencimiento del token inválido');
-  // Sin tolerancia de reloj hacia el futuro: emisor y verificador son EL MISMO proceso.
+  // No clock-skew tolerance for the future: issuer and verifier are THE SAME process.
   if (claims.exp * 1_000 <= nowMs) throw new SessionExpiredError();
   return claims as ConsoleSessionClaims;
 }
 
 /**
- * Freno de fuerza bruta, en memoria y por correo normalizado.
+ * Brute-force brake, in memory and keyed by normalized email.
  *
- * En memoria a propósito: el gateway corre en un proceso y un contador en PostgreSQL agregaría
- * una escritura por intento fallido en el camino menos autenticado que existe. Si el proceso se
- * reinicia el contador se pierde — es el lado barato del error, y el costo por intento lo pone
- * scrypt igual.
+ * In memory on purpose: the gateway runs in one process, and a counter in PostgreSQL would add
+ * one write per failed attempt on the least authenticated path that exists. If the process
+ * restarts the counter is lost — that is the cheap side of the error, and scrypt already sets
+ * the per-attempt cost.
  */
 export class LoginThrottle {
   private readonly failures = new Map<string, { count: number; blockedUntil: number; seenAt: number }>();
@@ -159,7 +159,7 @@ export class LoginThrottle {
     private readonly maxTracked = 10_000
   ) {}
 
-  /** Milisegundos que faltan para poder reintentar, o 0 si se puede intentar ahora. */
+  /** Milliseconds until another attempt is allowed, or 0 if an attempt can be made now. */
   retryAfterMs(key: string, now: number): number {
     const record = this.failures.get(key);
     if (!record) return 0;
@@ -188,36 +188,36 @@ export class LoginThrottle {
     for (const [key, record] of this.failures) {
       if (record.blockedUntil <= now && now - record.seenAt > this.windowMs) this.failures.delete(key);
     }
-    // Si aun así sigue llena, se vacía entera: preferimos perder contadores antes que crecer sin
-    // techo. Un atacante puede forzarlo, pero para hacerlo tiene que pagar 10.000 verificaciones.
+    // If it is still full after that, the whole map is cleared: we prefer losing counters to
+    // growing without a ceiling. An attacker can force this, but it costs 10,000 verifications.
     if (this.failures.size >= this.maxTracked) this.failures.clear();
   }
 }
 
 export interface PasswordAuthProviderOptions {
   users: ConsoleUserStore;
-  /** Clave HMAC del JWT. Sale de un archivo de secreto, nunca del repositorio ni del navegador. */
+  /** HMAC key for the JWT. Comes from a secret file, never from the repository or the browser. */
   signingKey: Uint8Array;
-  /** Proveedor que atiende todo lo que NO trae cookie de sesión: hoy, el mTLS de los agentes. */
+  /** Provider that handles anything that does NOT carry a session cookie: today, the agents' mTLS. */
   fallback?: AuthProvider;
   sessionTtlMs?: number;
   cookieName?: string;
   now?: () => number;
   throttle?: LoginThrottle;
   /**
-   * Canal del principal de máquina asociado a la consola web.
-   * Requiere sesión humana explícita para acceder a las rutas de superficie de consola,
-   * impidiendo que el certificado de transporte del proxy autorice accesos web anónimos.
+   * Channel of the machine principal associated with the web console.
+   * Requires an explicit human session to access console surface routes, preventing the proxy's
+   * transport certificate from authorizing anonymous web access.
    */
   machineChannelRequiringSession?: string;
 }
 
-/** Mensaje único de la puerta de sesión: no distingue "no hay cookie" de "cookie no vale acá". */
+/** Single message at the session gate: it does not distinguish "no cookie" from "cookie does not apply here". */
 const SESSION_REQUIRED_MESSAGE = 'se requiere la cookie de sesión de la consola';
 
 /**
- * Determina si una URL pertenece a la superficie de consola que requiere sesión de usuario.
- * Protege las rutas administrativas y de estado frente a accesos directos de navegador sin sesión.
+ * Determines whether a URL belongs to the console surface that requires a user session.
+ * Protects administrative and status routes against direct browser access without a session.
  */
 export function isConsoleSurface(url: string): boolean {
   const path = url.split('?', 1)[0] ?? '';
@@ -264,13 +264,13 @@ export class PasswordAuthProvider implements AuthProvider {
   }
 
   /**
-   * Todo lo que no trae cookie pasa por acá, y sale con la identidad de MÁQUINA del `fallback`.
+   * Anything without a cookie passes through here, exiting with the MACHINE identity of the `fallback`.
    *
-   * La única excepción es la superficie de CONSOLA pedida por el principal que tiene un navegador
-   * del otro lado (el certificado del proxy, canal `console`): ahí hace falta una persona con
-   * sesión y el certificado no la sustituye. Fuera de esa intersección el mTLS manda, así que el
-   * bus (`/v3/messages`, `/v3/query`, `/v3/quotas/samples`, `/v3/egress/notifications`, `/v3/ws`…)
-   * sigue abierto a TODOS los principales de máquina, incluido el del proxy.
+   * The only exception is the CONSOLE surface requested by the principal with a browser on the
+   * other side (the proxy certificate, `console` channel): there a person with a session is
+   * required and the certificate does not replace one. Outside that intersection mTLS rules, so
+   * the bus (`/v3/messages`, `/v3/query`, `/v3/quotas/samples`, `/v3/egress/notifications`,
+   * `/v3/ws`...) stays open to ALL machine principals, including the proxy's.
    */
   private async viaFallback(
     request: FastifyRequest,
@@ -301,11 +301,11 @@ export class PasswordAuthProvider implements AuthProvider {
       channel: 'console',
       roles: authority.roles,
       permissions: authority.permissions,
-      // Identificador del operador autenticado derivado de la cuenta de consola.
+      // Identifier of the authenticated operator, derived from the console account.
       operator_id: user.email,
       /*
-       * Una sesión web no es un transporte de retorno. La identidad humana queda
-       * trazada por operator_id y session_id sin registrarse como ruta de entrega durable.
+       * A web session is not a return transport. The human identity is tracked through
+       * operator_id and session_id without registering as a durable delivery route.
        */
     });
   }
@@ -317,16 +317,16 @@ export class PasswordAuthProvider implements AuthProvider {
     if (token === undefined) throw new AuthError(SESSION_REQUIRED_MESSAGE);
     const claims = verifyConsoleSession(this.signingKey, token, this.now());
     const user = await this.users.findById(claims.sub);
-    // Se relee SIEMPRE. Un token firmado no es autoridad sobre el estado actual de la cuenta.
+    // ALWAYS re-read. A signed token is not authority over the current state of the account.
     if (!user || !user.active) throw new AuthError('la cuenta de consola no está habilitada');
-    // Cambiar la contraseña invalida lo emitido antes: es la revocación sin tabla de revocación.
+    // Changing the password invalidates previously issued tokens: revocation without a revocation table.
     if (claims.iat * 1_000 < user.password_changed_at - 1_000) throw new SessionExpiredError();
     const loaded = { claims, user, principal: this.principalFor(user, claims) };
     this.requestCache.set(request, loaded);
     return loaded;
   }
 
-  /** `true` cuando el request trae cookie de consola; el resto es del `fallback` (mTLS). */
+  /** `true` when the request carries the console cookie; the rest belongs to the `fallback` (mTLS). */
   handles(request: FastifyRequest): boolean {
     return this.token(request) !== undefined;
   }
@@ -392,10 +392,10 @@ export class PasswordAuthProvider implements AuthProvider {
   }
 
   /**
-   * UN SOLO MENSAJE para las tres formas de fallar (correo desconocido, contraseña equivocada,
-   * cuenta desactivada) y el MISMO trabajo criptográfico en todos los casos: si el correo no
-   * existe se verifica igual contra un hash señuelo. Un mensaje distinto —o una respuesta más
-   * rápida— convierte al login en un directorio de quién tiene cuenta.
+   * ONE SINGLE MESSAGE for the three failure modes (unknown email, wrong password, disabled
+   * account) and the SAME cryptographic work in every case: if the email does not exist the
+   * password is still checked against a decoy hash. A different message —or a faster response—
+   * turns login into a directory of who has an account.
    */
   async login(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const body: unknown = request.body;
@@ -433,7 +433,7 @@ export class PasswordAuthProvider implements AuthProvider {
     try {
       await this.users.recordLogin(user.id, new Date(now));
     } catch {
-      // La marca de último ingreso es informativa: perderla no puede costar el login.
+      // The last-login marker is informational: losing it must never cost the login itself.
     }
     const authority = ROLE_AUTHORITY[user.role];
     await reply
@@ -453,10 +453,10 @@ export class PasswordAuthProvider implements AuthProvider {
   }
 
   /**
-   * Cerrar sesión es borrar la cookie, y es lo único que puede ser: el token es autocontenido.
-   * Por eso la vida de la sesión es corta y por eso `active=false` y el cambio de contraseña
-   * cortan de verdad — un token robado ANTES del logout vence solo, o se mata desactivando la
-   * cuenta. Contesta 204 aunque no hubiera sesión: cerrar algo que ya está cerrado no es un error.
+   * Logging out means clearing the cookie, and that is all it can be: the token is self-contained.
+   * That is why the session lifetime is short and why `active=false` and a password change really
+   * cut off access — a token stolen BEFORE logout simply expires, or is killed by disabling the
+   * account. Replies 204 even if there was no session: closing something already closed is not an error.
    */
   async logout(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
     await reply
@@ -473,9 +473,9 @@ function isUnsafe(method: string): boolean {
 
 export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAuthProvider): void {
   app.addHook('onRequest', async (request, reply) => {
-    // El CSRF se exige SÓLO a lo que viaja con cookie: es la credencial ambiental que un sitio
-    // ajeno puede hacer que el navegador mande solo. Un agente por mTLS no tiene cómo obtener un
-    // token CSRF ni lo necesita, y exigírselo lo dejaría sin poder publicar nada.
+    // CSRF is required ONLY for what travels with a cookie: it is the ambient credential a third-party
+    // site can make the browser send on its own. An mTLS agent has no way to obtain a CSRF token,
+    // nor needs one, and requiring it would leave it unable to publish anything.
     if (!request.url.startsWith('/v3/') || !isUnsafe(request.method)) return;
     if (request.url.split('?', 1)[0] === '/v3/auth/login') return;
     if (!provider.handles(request)) return;

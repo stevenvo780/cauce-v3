@@ -1,13 +1,13 @@
 import type { ConfigMutation } from '../../api/types';
 
 /**
- * Renderizado de colecciones de configuración como tabla y construcción de mutaciones.
+ * Rendering of config collections as tables and construction of mutations.
  */
 
 /**
- * Orden de columnas de las colecciones que tienen forma conocida (el SELECT de
- * `packages/store/src/configuration.ts`). Para el resto se derivan de las filas: una colección que
- * el servidor agregue mañana igual se ve como tabla, con los nombres de campo del servidor.
+ * Column order for collections with a known shape (the SELECT in
+ * `packages/store/src/configuration.ts`). The rest are derived from the rows: a collection the
+ * server adds tomorrow still renders as a table, with the server's field names.
  */
 const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
   tenants: ['id', 'display_name', 'is_hub', 'enabled', 'created_at'],
@@ -17,8 +17,8 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
 };
 
 /**
- * Rótulo en castellano de cada columna.
- * Los campos no listados se muestran con su nombre de columna original.
+ * Spanish label for each column.
+ * Columns not listed are shown with their original column name.
  */
 const ETIQUETAS: Record<string, string> = {
   id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol',
@@ -41,13 +41,13 @@ const ETIQUETAS: Record<string, string> = {
 };
 
 /**
- * Columnas que se funden en una de identidad para mejorar la legibilidad de aristas y relaciones.
+ * Columns merged into one identity column to improve readability of edges and relations.
  */
 const IDENTIDAD_FUNDIDA: Record<string, { clave: string; etiqueta: string; campos: readonly string[]; union: string }> = {
   acl_edges: { clave: '__arista', etiqueta: 'Arista', campos: ['from_tenant', 'to_tenant'], union: ' → ' },
 };
 
-/** El texto de una columna fundida, o `undefined` si esta fila no trae los campos que la componen. */
+/** The text of a merged column, or `undefined` if this row lacks the fields that compose it. */
 export function identidadFundida(clave: string, fila: Record<string, unknown>): string | undefined {
   const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
   if (!fusion) return undefined;
@@ -65,19 +65,19 @@ export interface ColumnaTabla {
   etiqueta: string;
 }
 
-/** Campos que se formatean como fecha en vez de como texto plano. */
+/** Fields formatted as dates rather than plain text. */
 export function esColumnaDeFecha(clave: string): boolean {
   return clave === 'created_at' || clave === 'updated_at';
 }
 
 /**
- * Campos que traen un PÁRRAFO, no un dato. `role_brief` admite hasta 1200 caracteres en la base y
- * volcarlo entero en una celda empuja las otras once columnas de «Agent registry» fuera de la
- * pantalla: una fila deja de leerse por culpa de un campo que acá no se edita.
+ * Fields that carry a PARAGRAPH, not a value. `role_brief` allows up to 1200 chars in the database,
+ * and dumping it whole in a cell pushes the other eleven columns of "Agent registry" off-screen:
+ * a row becomes unreadable because of a field you do not edit here.
  *
- * El texto completo no se pierde: sigue en el `title` de la celda, en el desplegable «Ver crudo»
- * de la colección, y se EDITA en la pestaña «Rol» del cajón de «La flota ahora». Acá alcanza con
- * verlo resumido.
+ * The full text is not lost: it remains in the cell's `title`, in the "Ver crudo" dropdown of the
+ * collection, and is EDITED in the "Rol" tab of the "La flota ahora" drawer. Here it is enough to
+ * see it summarised.
  */
 const COLUMNAS_LARGAS: ReadonlySet<string> = new Set(['role_brief']);
 
@@ -85,15 +85,15 @@ export function esColumnaLarga(clave: string): boolean {
   return COLUMNAS_LARGAS.has(clave);
 }
 
-/** Cuántos caracteres de un campo largo entran en una celda antes de recortar. */
+/** How many characters of a long field fit in a cell before truncating. */
 export const LARGO_DE_RESUMEN = 120;
 
 /**
- * Recorte visible. El «…» final no es decorativo: es la única señal de que lo que se está leyendo
- * NO es el valor entero, y sin ella un brief cortado se confunde con un brief corto.
+ * Visible truncation. The trailing "..." is not decorative: it is the only signal that what you are
+ * reading is NOT the full value, and without it a truncated brief is mistaken for a short one.
  *
- * Cuenta puntos de código (`[...texto]`) y no unidades UTF-16, igual que el contador de la pestaña
- * «Rol»: cortar por la mitad un emoji dejaría un carácter roto en pantalla.
+ * It counts code points (`[...texto]`) instead of UTF-16 units, like the counter in the "Rol" tab:
+ * cutting an emoji in half would leave a broken character on screen.
  */
 export function resumirTextoLargo(valor: string, largo: number = LARGO_DE_RESUMEN): string {
   const puntos = Array.from(valor);
@@ -101,9 +101,9 @@ export function resumirTextoLargo(valor: string, largo: number = LARGO_DE_RESUME
 }
 
 /**
- * Una columna sólo se dibuja si al menos una fila TRAE la clave. Un `created_at` que el gateway no
- * publica no debe aparecer como una columna entera de UNKNOWN: eso no es un dato faltante fila por
- * fila, es una columna que este servidor no tiene.
+ * A column is only drawn if at least one row CARRIES the key. A `created_at` that the gateway does
+ * not publish should not appear as a full column of UNKNOWN: that is not missing data per row, it
+ * is a column this server does not have.
  */
 export function columnasDe(clave: string, filas: readonly Record<string, unknown>[]): ColumnaTabla[] {
   const fijas = COLUMNAS_FIJAS[clave] ?? [];
@@ -128,17 +128,17 @@ export function columnasDe(clave: string, filas: readonly Record<string, unknown
 }
 
 /**
- * Si una columna es de NÚMEROS, para alinearla a la derecha.
+ * Whether a column is NUMERIC, to right-align it.
  *
- * Una columna de números alineada a la izquierda obliga a comparar magnitudes contando dígitos:
- * `8` y `120` empiezan en el mismo píxel y el que PARECE más grande es el que tiene más
- * caracteres. En `/config` hay unas cuantas —`max_per_hour`, `max_per_day`, `contact_ttl_days`,
- * `min_interval_seconds`, `priority`, `generation`— y todas se leen para comparar.
+ * A left-aligned number column forces comparing magnitudes by counting digits: `8` and `120`
+ * start at the same pixel and the one that LOOKS bigger is the one with more characters. `/config`
+ * has a few —`max_per_hour`, `max_per_day`, `contact_ttl_days`, `min_interval_seconds`, `priority`,
+ * `generation`— and they are all read for comparison.
  *
- * Exige que TODOS los valores presentes sean números y que haya al menos uno: una columna mixta
- * («12» en una fila y «sin límite» en otra) alineada a la derecha se lee peor que a la izquierda,
- * y un booleano en JavaScript no es un número pero sí lo parece si uno mira `typeof` con prisa.
- * Los nulos y las claves ausentes no cuentan: un `null` no desmiente que la columna sea numérica.
+ * Requires EVERY present value to be a number and at least one: a mixed column ("12" in one row
+ * and "sin límite" in another) reads worse right-aligned than left, and a JavaScript boolean is
+ * not a number but looks like one if you glance at `typeof` in a hurry. Nulls and missing keys
+ * do not count: a `null` does not disprove a numeric column.
  */
 export function columnaNumerica(filas: readonly Record<string, unknown>[], columna: string): boolean {
   let vistos = 0;
@@ -152,7 +152,7 @@ export function columnaNumerica(filas: readonly Record<string, unknown>[], colum
   return vistos > 0;
 }
 
-/** Campos que identifican una fila en cada colección, en el orden de la clave primaria. */
+/** Fields identifying a row in each collection, in primary-key order. */
 const IDENTIDAD: Record<string, readonly string[]> = {
   tenants: ['id'],
   rooms: ['tenant_id', 'id'],
@@ -169,9 +169,9 @@ const IDENTIDAD: Record<string, readonly string[]> = {
 };
 
 /**
- * Clave de React de una fila. El índice es el último recurso y no el primero: reordenar la lista
- * con claves por índice reusa el estado del componente de OTRA fila, y acá cada fila tiene botones
- * que escriben en la base.
+ * React key of a row. The index is the last resort, not the first: reordering the list with index
+ * keys reuses another row's component state, and here each row has buttons that write to the
+ * database.
  */
 export function claveDeFila(clave: string, fila: Record<string, unknown>, indice: number): string {
   const campos = IDENTIDAD[clave] ?? [];
@@ -185,35 +185,35 @@ function texto(fila: Record<string, unknown>, campo: string): string | undefined
 }
 
 /**
- * Lo que el operador puede cambiar de una fila SIN salir de la tabla.
+ * What the operator can change in a row WITHOUT leaving the table.
  *
- * Los booleanos —`enabled` y los tres permisos de una arista— ya no son botones: son interruptores,
- * y su lógica vive en `interruptores.ts`. Acá queda lo que no es un booleano y por lo tanto no es un
- * interruptor: el ROL de una membresía, que es una elección entre varios valores y para eso está el
- * `<select>` de su propia columna.
+ * Booleans —`enabled` and the three permissions of an edge— are no longer buttons: they are
+ * switches, and their logic lives in `interruptores.ts`. What remains here is what is not a boolean
+ * and so is not a switch: the ROLE of a membership, a choice between several values, which is what
+ * the `<select>` of its own column is for.
  */
 
 export interface AccionDeRol {
-  /** Estable dentro de la fila: identifica qué cambio está esperando confirmación. */
+  /** Stable inside the row: identifies which change is awaiting confirmation. */
   id: string;
-  /** Frase completa; sirve de encabezado de la confirmación y del cartel del desenlace. */
+  /** Full phrase; serves as the header of the confirmation and of the outcome notice. */
   descripcion: string;
   mutation: ConfigMutation;
 }
 
-/** Igual que `AliasSchema`/rol en `packages/protocol/src/schemas.ts`. */
+/** Same as `AliasSchema`/role in `packages/protocol/src/schemas.ts`. */
 const ROL = /^[a-z][a-z0-9_-]{0,63}$/;
 
-/** Campos sin los que no se puede identificar la membership a la que cambiarle el rol. */
+/** Fields without which the membership whose role is being changed cannot be identified. */
 const IDENTIDAD_MEMBERSHIP = ['tenant_id', 'room_id', 'alias'] as const;
 
 /**
- * Por qué NO se puede cambiar el rol de esta fila, o `undefined` si sí se puede.
+ * Why this row's role CANNOT be changed, or `undefined` if it can.
  *
- * Existe porque el selector llamaba a `accionDeRol`, recibía `undefined` y se tragaba el clic sin
- * rastro: el operador elegía «operator», no pasaba nada y no había nada escrito que se lo
- * explicara. Un control que no puede hacer su trabajo se apaga y DICE por qué; quedarse mudo es
- * indistinguible de estar roto.
+ * It exists because the selector called `accionDeRol`, got `undefined`, and swallowed the click
+ * silently: the operator picked "operator", nothing happened, and nothing on screen explained why.
+ * A control that cannot do its job switches itself off and SAYS why; staying silent is
+ * indistinguishable from being broken.
  */
 export function motivoSinCambioDeRol(fila: Record<string, unknown>): string | undefined {
   const faltan = IDENTIDAD_MEMBERSHIP.filter((campo) => texto(fila, campo) === undefined);
@@ -223,9 +223,9 @@ export function motivoSinCambioDeRol(fila: Record<string, unknown>): string | un
 }
 
 /**
- * Cambio de rol de una membership. Devuelve `undefined` cuando el rol pedido no pasa la misma
- * expresión que el zod del gateway, o cuando es el que la fila ya tiene: mandar una mutación que el
- * servidor va a rechazar —o que no cambia nada pero igual gasta una revisión— no es una acción.
+ * Role change of a membership. Returns `undefined` when the requested role fails the same regex as
+ * the gateway's zod, or matches what the row already has: sending one the server will reject —or
+ * that changes nothing but still spends a revision— is not an action.
  */
 export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionDeRol | undefined {
   const tenantId = texto(fila, 'tenant_id');
@@ -246,9 +246,9 @@ export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionD
 }
 
 /**
- * Roles que se ofrecen en el selector: los de `role_policies` —que son los únicos que el JOIN de
- * `assertControl` sabe resolver— más el que la fila ya tiene, aunque haya quedado huérfano. Ocultar
- * el rol actual haría que el selector mintiera sobre lo que la fila dice.
+ * Roles offered in the selector: those in `role_policies` —the only ones the `assertControl` JOIN
+ * can resolve— plus the one the row already has, even if it became orphaned. Hiding the current
+ * role would make the selector lie about what the row says.
  */
 export function rolesDisponibles(
   politicas: readonly Record<string, unknown>[] | undefined,
