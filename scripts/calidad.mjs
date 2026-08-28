@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Gate determinista de calidad con TRINQUETE. Reglas:
-//  1) lineas: ningun fichero fuente >800 lineas salvo los del baseline, que ademas NO pueden crecer.
-//  2) fechas: ninguna fecha AAAA-MM-DD en lineas de comentario salvo el conteo del baseline (no puede crecer).
-// `--update` regenera el baseline desde el estado actual (solo lo usa el integrador tras revisar).
+// Deterministic quality gate with RATCHET. Rules:
+//  1) lines: no source file >800 lines except those in the baseline, which also MUST NOT grow.
+//  2) dates: no YYYY-MM-DD dates in comment lines except the baseline count (which must not grow).
+// `--update` regenerates the baseline from current state (integrator only, after review).
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -51,7 +51,7 @@ for (const [f, v] of Object.entries(estado)) {
   if (v.lineas > tope) fallos.push(`${f}: ${v.lineas} lineas (tope ${tope}${base.lineas[f] ? ', trinquete' : ''})`);
   const topeF = base.fechas[f] ?? 0;
   if (v.fechas > topeF) fallos.push(`${f}: ${v.fechas} fechas en comentarios (tope ${topeF})`);
-  // Comentarios: los existentes solo pueden BAJAR; un fichero nuevo tolera hasta 15% de densidad.
+  // Comments: existing counts can only GO DOWN; new files tolerate up to 15% density.
   const topeC = base.comentarios?.[f] ?? Math.ceil(v.lineas * 0.15);
   if (v.comentarios > topeC) fallos.push(`${f}: ${v.comentarios} lineas de comentario (tope ${topeC}${f in (base.comentarios ?? {}) ? ', trinquete' : ', 15% para nuevos'})`);
 }

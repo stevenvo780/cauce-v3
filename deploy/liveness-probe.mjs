@@ -1,32 +1,32 @@
 #!/usr/bin/env node
 
 /**
- * Sonda de PROGRESO, no de respuesta.
+ * PROGRESS probe, not a responsiveness probe.
  *
- * `readiness-probe.mjs` responde a la pregunta "¿el proceso contesta y su Postgres está vivo?".
- * Esa pregunta se contesta que sí con el bucle de trabajo PARADO: el dispatcher puede tener el
- * `setInterval` muerto, el puente puede haber dejado de pedir updates, y el `SELECT 1` sigue
- * saliendo bien. Los nueve contenedores del plano de control decían `healthy` en ese estado.
+ * `readiness-probe.mjs` answers "does the process answer and is its Postgres alive?". That
+ * question is answered YES while the work loop is STOPPED: the dispatcher may have its
+ * `setInterval` dead, the bridge may have stopped asking for updates, and `SELECT 1` keeps
+ * succeeding. All nine control-plane containers reported `healthy` in that state.
  *
- * Esta sonda pregunta otra cosa: **¿el contador del bucle AVANZÓ desde la última vez?**. Toma una
- * muestra por ejecución, la guarda, y falla sólo cuando el contador lleva `stallMs` congelado.
- * No confía en ningún reloj ni en ningún cálculo del propio servicio: compara dos observaciones
- * independientes del mismo contador monótono.
+ * This probe asks a different question: **did the loop counter MOVE since the last sample?**.
+ * It takes one sample per run, persists it, and only fails when the counter has been frozen
+ * for `stallMs`. It trusts no clock and no service-side computation: it compares two
+ * independent observations of the same monotonic counter.
  *
- *   node deploy/liveness-probe.mjs <url> <campo> [stallMs]
+ *   node deploy/liveness-probe.mjs <url> <field> [stallMs]
  *
- * `campo` admite ruta con puntos (`progress.ticks`). Debe ser un contador monótono no negativo.
+ * `field` accepts dotted paths (`progress.ticks`). It MUST be a non-negative monotonic counter.
  *
- * Estados y veredictos:
- *   - sin estado previo            -> se registra la muestra y PASA (arranque; nunca sabemos aún)
- *   - valor mayor que el anterior  -> el bucle avanzó, PASA y se reinicia la ventana
- *   - valor menor que el anterior  -> el proceso reinició, PASA y se reinicia la ventana
- *   - valor igual y edad < stallMs -> PASA (un bucle lento no debe hacer flapear el contenedor)
- *   - valor igual y edad >= stallMs-> FALLA: el bucle está parado
+ * States and verdicts:
+ *   - no prior state              -> sample recorded and PASS (startup; we don't know yet)
+ *   - value > previous            -> loop advanced, PASS and reset window
+ *   - value < previous            -> process restarted, PASS and reset window
+ *   - value == prev, age < stallMs -> PASS (a slow loop MUST NOT flap the container)
+ *   - value == prev, age >= stallMs -> FAIL: the loop is stopped
  *
- * El estado vive en un fichero cuyo nombre es un hash de (url, campo): si el contenedor reinicia,
- * el estado se pierde y la sonda vuelve a arrancar, que es exactamente lo correcto — un bucle
- * recién arrancado todavía no tiene derecho a ser declarado muerto.
+ * State lives in a file whose name is a hash of (url, field): if the container restarts,
+ * state is lost and the probe restarts from scratch, which is exactly right — a freshly
+ * started loop has no right to be declared dead yet.
  */
 
 import { createHash } from 'node:crypto';
@@ -48,7 +48,7 @@ function positiveInteger(value, fallback, name) {
   return parsed;
 }
 
-/** Lee `a.b.c` sin heredar nada del prototipo: un cuerpo hostil no puede colar `__proto__`. */
+/** Read `a.b.c` without inheriting anything from the prototype: a hostile body cannot smuggle `__proto__`. */
 function fieldValue(document, path) {
   let current = document;
   for (const segment of path.split('.')) {
@@ -136,12 +136,12 @@ async function readState(path) {
     if (!Number.isSafeInteger(since) || since <= 0) return undefined;
     return { value, since };
   } catch {
-    // Un estado corrupto no puede tumbar el contenedor: se trata como primera observación.
+    // A corrupted state MUST NOT take the container down: treat it as the first observation.
     return undefined;
   }
 }
 
-/** Escritura atómica y 0600: el fichero de estado no lleva secretos, pero tampoco se comparte. */
+/** Atomic write, mode 0600: the state file carries no secrets, but it is also not shared. */
 async function writeState(path, state) {
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
@@ -167,7 +167,7 @@ try {
   const now = Date.now();
 
   if (!previous || value !== previous.value) {
-    // Avanzó (o el proceso reinició y el contador volvió atrás): ventana nueva.
+    // Advanced (or the process restarted and the counter went back): new window.
     await writeState(path, { value, since: now });
     process.exit(0);
   }

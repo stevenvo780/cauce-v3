@@ -22,8 +22,8 @@ export async function assertProductionPostgresTls(timeoutMs = 3000) {
   } catch (error) {
     throw new Error('production PostgreSQL root certificate is unavailable', { cause: error });
   }
-  // `pg` se resuelve desde las dependencias del store: a un nivel en la imagen
-  // (/app/deploy → /app/packages) y a dos en el árbol fuente (deploy/runtime/).
+  // `pg` is resolved from the store's dependencies: one level deep in the image
+  // (/app/deploy → /app/packages) and two levels in the source tree (deploy/runtime/).
   const storePackage = ['../packages/store/package.json', '../../packages/store/package.json']
     .map((ruta) => new URL(ruta, import.meta.url))
     .find((url) => existsSync(url)) ?? new URL('../packages/store/package.json', import.meta.url);

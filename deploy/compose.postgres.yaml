@@ -1,5 +1,3 @@
-# Optional production overlay for a self-managed PostgreSQL with real TLS.
-# The base production compose defaults to an external managed DATABASE_URL secret.
 services:
   postgres:
     image: ${CAUCE_POSTGRES_IMAGE:?set an immutable CAUCE_POSTGRES_IMAGE digest}

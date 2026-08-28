@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Genera docs/grafo.md: el grafo de dependencias del repo (quien referencia a quien).
-// Fuentes de aristas: imports TS/JS, package.json scripts, compose, Dockerfile, systemd, invocaciones sh/py.
-// Deterministico y regenerable: `pnpm grafo`.
+// Generates docs/grafo.md: the repo's dependency graph (who references whom).
+// Edge sources: TS/JS imports, package.json scripts, compose, Dockerfile, systemd, sh/py invocations.
+// Deterministic and regenerable: `pnpm grafo`.
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -11,7 +11,7 @@ const esFuente = f => /\.(ts|tsx|mjs|cjs|py|sh|yaml|yml|json|conf)$/.test(f) && 
 const contenido = {};
 for (const f of files) { if (esFuente(f)) try { contenido[f] = readFileSync(f, 'utf8'); } catch { /* ilegible: fuera del grafo */ } }
 
-// nodo = directorio de primer nivel, o segundo nivel para services/packages/ops/deploy
+// node = top-level dir, or two-level for services/packages/ops/deploy
 function nodo(f) {
   const p = f.split('/');
   if (p.length === 1) return '(raiz)';
@@ -30,7 +30,7 @@ function arista(fDesde, fHasta, peso = 1) {
   aristas.set(k, (aristas.get(k) ?? 0) + peso);
 }
 
-// indice por basename para resolver referencias por nombre
+// index by basename to resolve name references
 const porBase = new Map();
 for (const f of files) {
   const b = f.split('/').pop();
@@ -54,14 +54,14 @@ for (const [f, txt] of Object.entries(contenido)) {
       }
     }
   }
-  // referencias por ruta textual (compose, Dockerfile, sh, py, json, systemd): cualquier ruta tracked mencionada
+  // textual path references (compose, Dockerfile, sh, py, json, systemd): any tracked path mentioned
   for (const m of txt.matchAll(/[\w./-]*\/(?:[\w.-]+\.(?:mjs|sh|py|yaml|yml|json|conf|ts))/g)) {
     let r = m[0].replace(/^\.\//, '').replace(/^\/app\//, '').replace(/^\.\.\//, '');
     if (r !== f && files.includes(r)) arista(f, r);
   }
 }
 
-// metricas
+// metrics
 const dirs = new Map();
 for (const f of files) { if (!esFuente(f)) continue; const n = nodo(f); dirs.set(n, (dirs.get(n) ?? 0) + 1); }
 const huerfanos = Object.keys(contenido).filter(f =>

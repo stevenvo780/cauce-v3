@@ -1,25 +1,15 @@
-# Additive overlay: adds Alertmanager to the cauce-v3-prod stack.
-# Mirrors the hardening of the prometheus service (non-root, read-only rootfs,
-# no-new-privileges, all caps dropped, digest-pinned image).
-#
-# Apply together with the base files, never alone:
-#   docker compose -f compose.yaml -f compose.postgres.yaml -f compose.alertmanager.yaml ...
+# Always apply with compose.yaml + compose.postgres.yaml; never alone.
 
 services:
   alertmanager:
     profiles: [observability]
     image: ${CAUCE_ALERTMANAGER_IMAGE:?set an immutable CAUCE_ALERTMANAGER_IMAGE digest}
-    # Reuse the owner of the already-provisioned Telegram token without copying
-    # that token. provision-alertmanager-config.py emits these non-secret IDs and
-    # verifies config/state ownership before this container can start.
     user: "${CAUCE_ALERTMANAGER_UID:?set the provisioned non-root uid}:${CAUCE_ALERTMANAGER_GID:?set the provisioned non-root gid}"
     restart: always
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yaml"
       - "--storage.path=/alertmanager"
     volumes:
-      # The tracked config contains no identity data: Alertmanager reads both the
-      # token and destination through separate protected files.
       - type: bind
         source: ${CAUCE_ALERTMANAGER_CONFIG_PATH:?set the tracked identity-free Alertmanager config}
         target: /etc/alertmanager/alertmanager.yaml

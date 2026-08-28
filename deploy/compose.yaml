@@ -3,8 +3,6 @@ name: ${COMPOSE_PROJECT_NAME:-cauce-v3-prod}
 x-runtime-service: &runtime-service
   image: ${CAUCE_RUNTIME_IMAGE:?set an immutable CAUCE_RUNTIME_IMAGE digest}
   user: "1000:1000"
-  # `unless-stopped` preserves crash recovery but makes an authenticated bridge
-  # stop durable across Docker daemon and host restarts.
   restart: unless-stopped
   init: true
   read_only: true
@@ -52,10 +50,6 @@ services:
       PGSSLROOTCERT: /run/secrets/postgres_ca
       CAUCE_DEV_AUTH: "0"
       CAUCE_AUTH_PROVIDER: ${CAUCE_AUTH_PROVIDER:?select password, oidc, mtls, or token-file}
-      # Login humano por correo + contraseña (tabla console_users). Sólo se lee cuando
-      # CAUCE_AUTH_PROVIDER=password; mientras tanto el secreto apunta a /dev/null y el gateway
-      # arranca exactamente como hoy. El fallback decide QUIÉN atiende lo que no trae cookie de
-      # consola: `mtls` deja a los agentes entrando por su certificado igual que siempre.
       CAUCE_CONSOLE_JWT_KEY_FILE: /run/secrets/console_jwt_key
       CAUCE_CONSOLE_PASSWORD_FALLBACK: ${CAUCE_CONSOLE_PASSWORD_FALLBACK:-mtls}
       CAUCE_CONSOLE_SESSION_TTL_SECONDS: ${CAUCE_CONSOLE_SESSION_TTL_SECONDS:-28800}
@@ -69,8 +63,8 @@ services:
       CAUCE_OIDC_POST_LOGIN_PATH: ${CAUCE_OIDC_POST_LOGIN_PATH:-/}
       CAUCE_OIDC_SESSION_KEY_FILE: /run/secrets/gateway_oidc_session_key
       CAUCE_OIDC_CLIENT_SECRET_FILE: ${CAUCE_OIDC_CLIENT_SECRET_CONTAINER_FILE:-}
-      # Identity registries are re-read on every request, so they must resolve through the
-      # directory bind below and never through a single-file secret mount. See the volumes block.
+      # Identity registries are re-read every request; they MUST resolve through the
+      # directory bind below (never a single-file secret mount). See the volumes block.
       CAUCE_TOKEN_HASH_FILE: /run/cauce-identities/token_hashes.json
       CAUCE_MTLS_IDENTITY_FILE: /run/cauce-identities/mtls_identities.json
       CAUCE_TLS_CERT_FILE: /run/secrets/gateway_tls_cert
@@ -80,9 +74,7 @@ services:
       CAUCE_CONSOLE_ORIGINS: ${CAUCE_CONSOLE_ORIGINS:?set exact HTTPS console origins}
       CAUCE_REQUIRE_ACK_CLAIMS: "1"
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
-      # Sin declararla aqui, la variable de prod.env NO llega al contenedor (el ancla
-      # no usa env_file) y el codigo cae a su default de 12 h. gateway y dispatcher
-      # deben leer el mismo valor: uno escribe el plazo, el otro lo cobra.
+      # Gateway and dispatcher MUST read the same value (one writes the lease, the other enforces it).
       CAUCE_DELIVERY_LEASE_CAP_MS: ${CAUCE_DELIVERY_LEASE_CAP_MS:-21600000}
       CAUCE_MAX_INFLIGHT_DELIVERIES: ${CAUCE_MAX_INFLIGHT_DELIVERIES:-2}
       CAUCE_HUMAN_RESERVED_DELIVERIES: ${CAUCE_HUMAN_RESERVED_DELIVERIES:-2}
@@ -93,21 +85,18 @@ services:
       CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}
       CAUCE_TERMINAL_TICKET_KEY_FILE: /run/secrets/terminal_ticket_key
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/secrets/terminal_relay_token
-      # Gateway -> terminal-relay is a separate mTLS client leg from
-      # terminal-relay -> gateway.  The server certificate cannot be reused:
-      # production certificates carry explicit serverAuth/clientAuth EKUs.
+      # Separate mTLS leg from relay->gateway; the server cert cannot be reused
+      # (production certs carry explicit serverAuth/clientAuth EKUs).
       CAUCE_TERMINAL_RELAY_URL: ${CAUCE_TERMINAL_RELAY_URL:-}
       CAUCE_TERMINAL_RELAY_CA_FILE: /run/secrets/gateway_tls_ca
       CAUCE_TERMINAL_RELAY_CLIENT_CERT_FILE: /run/secrets/gateway_relay_client_cert
       CAUCE_TERMINAL_RELAY_CLIENT_KEY_FILE: /run/secrets/gateway_relay_client_key
-      # SHA-256 of the terminal-relay -> gateway mTLS leaf DER. The gateway recomputes it from
-      # the peer certificate; an empty/mismatched release pin keeps the PTY plane closed.
+      # Empty or mismatched release pin keeps the PTY plane closed.
       CAUCE_TERMINAL_RELAY_INSTANCE_ID: ${CAUCE_TERMINAL_RELAY_INSTANCE_ID:?64 hex - sha256 del DER del leaf mTLS del relay}
       CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
       CAUCE_TERMINAL_SESSION_TTL_SECONDS: "900"
-      # Gateway and relay must agree exactly; both reject rollout skew instead of silently using
-      # different takeover deadlines.
+      # Gateway and relay MUST agree exactly; rollout skew is rejected.
       CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: "150"
       CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: "2"
       CAUCE_TERMINAL_OPERATOR_HEADER: x-cauce-operator
@@ -181,28 +170,19 @@ services:
         gid: "1000"
         mode: 0400
     volumes:
-      # Compose file secrets are single-file bind mounts, and a single-file bind pins the inode it
-      # was created from. mtls_identities.json and token_hashes.json are the only secrets the
-      # gateway re-reads on every request, and both are rotated by atomic rename, which allocates a
-      # NEW inode: mounted as files the container would keep serving the pre-rotation registry
-      # forever, so neither an alta nor a revocation would ever reach the gateway. Mounting the
-      # parent directory makes the rename visible because each read re-resolves the name.
-      # This directory must hold ONLY those two registries: everything inside it is readable by the
-      # gateway. Do not mount /etc/cauce-v3/secrets itself (that would newly expose the relay
-      # provider module, the PostgreSQL password and any future secret) and do not leave rotation
-      # backups inside it (keep them outside the mount).
+      # Single-file bind pins the inode; atomic rotation would never reach the container.
+      # Mount the parent directory so reads re-resolve the name on every request.
+      # This directory holds ONLY mtls_identities.json and token_hashes.json — never mount
+      # /etc/cauce-v3/secrets itself (would expose other secrets) and keep rotation backups outside.
       - type: bind
         source: ${CAUCE_GATEWAY_IDENTITY_DIR:?set CAUCE_GATEWAY_IDENTITY_DIR to the directory that holds mtls_identities.json and token_hashes.json}
         target: /run/cauce-identities
         read_only: true
         bind:
           create_host_path: false
-      # Bind de DIRECTORIO, no secret de archivo, por el mismo motivo que el
-      # directorio de identidades: `grants.json` se rota por rename atómico y el
-      # rename crea un inodo nuevo. Un secret/bind de archivo deja al gateway
-      # leyendo el inodo viejo para siempre, así que una revocación no llegaría
-      # jamás. Montado el directorio, el gateway relee la ruta en cada request y
-      # ve la fila nueva sin reiniciar nada.
+      # Directory bind (not single-file secret): grants.json is rotated by atomic
+      # rename, which allocates a new inode. Mounting the parent directory makes
+      # renames visible on every read.
       - type: bind
         source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
         target: /run/cauce-terminal

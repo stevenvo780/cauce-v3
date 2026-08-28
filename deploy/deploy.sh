@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Despliegue simple de Cauce V3 (FASE 3). Sustituye a la maquinaria retirada del árbol (histórico en git).
-# Contrato: build -> pin por digest -> migrar -> up -> smoke -> registrar. Todo o rollback.
-# SOLO se ejecuta con el dueño presente: exige CAUCE_FASE3_CON_DUENO=si.
+# Simple Cauce V3 deploy (PHASE 3). Replaces retired machinery (history in git).
+# Contract: build -> pin by digest -> migrate -> up -> smoke -> record. All or rollback.
+# Owner MUST be present: requires CAUCE_FASE3_CON_DUENO=si.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,7 +30,7 @@ if ! find /var/backups -name "*cauce*" -mmin -1440 2>/dev/null | grep -q .; then
   read -r -p "¿Continuar igual? (si/NO) " ok; [ "$ok" = "si" ] || die "abortado por falta de backup fresco"
 fi
 
-# Build con procedencia (la consola compila desde la raiz: su Dockerfile hace COPY . . + pnpm)
+# Build with provenance (console compiles from root via its Dockerfile: COPY . . + pnpm).
 docker build -f deploy/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
 docker build -f console/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
 docker push -q "$RUNTIME_TAG" && docker push -q "$CONSOLE_TAG"

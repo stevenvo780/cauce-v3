@@ -57,8 +57,8 @@ services:
       CAUCE_TERMINAL_ENABLED: ${CAUCE_TERMINAL_ENABLED:-1}
       CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}
       CAUCE_TERMINAL_GRANTS_FILE: /run/cauce-terminal/grants.json
-      # Dev no tiene bloque `secrets:`; la clave de tickets y el token compartido
-      # viven en el mismo directorio de trabajo, nunca en el repo.
+      # Dev has no `secrets:` block; ticket key and shared token live in the
+      # working directory, never in the repo.
       CAUCE_TERMINAL_TICKET_KEY_FILE: /run/cauce-terminal/ticket.key
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/cauce-terminal/relay.token
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: "30"
@@ -68,8 +68,8 @@ services:
       CAUCE_TERMINAL_OPERATORS: ${CAUCE_TERMINAL_OPERATORS:-}
       PORT: "8080"
     volumes:
-      # Directorio, no archivo: `grants.json` se rota por rename atómico. Ver el
-      # comentario largo en deploy/compose.yaml.
+      # Must be a directory, not a file: grants.json is rotated via atomic
+      # rename. See compose.yaml for the full note.
       - type: bind
         source: ${CAUCE_TERMINAL_CONFIG_DIR:-/dev/null}
         target: /run/cauce-terminal
@@ -110,11 +110,6 @@ services:
 
   terminal-relay:
     <<: *dev-runtime
-    # Opt-in igual que en producción. Este bloque se escribió antes que el servicio y asumía un
-    # "modo claro" de dev que el relay NO tiene: las dos piernas exigen TLS con certificado de
-    # cliente sin excepción, y `CAUCE_TERMINAL_GATEWAY_URL` se rechaza si no es HTTPS. Levantar
-    # el stack de dev sin material TLS dejaba al relay en un bucle de reinicio, así que ahora hay
-    # que pedirlo a propósito y darle certificados (pueden ser autofirmados de usar y tirar).
     profiles: [terminal]
     command: ["node", "services/terminal-relay/dist/main.js"]
     environment:
@@ -123,14 +118,14 @@ services:
       CAUCE_TERMINAL_RELAY_BROWSER_PORT: "8446"
       CAUCE_TERMINAL_RELAY_AGENT_PORT: "8445"
       CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: /run/cauce-terminal/pty_agent_identities.json
-      # Los cuatro son obligatorios: sin ellos el proceso no arranca. En dev pueden apuntar a un
-      # certificado autofirmado que haga de servidor y de CA de las dos piernas a la vez.
+      # All four are mandatory; the process refuses to start without them. In
+      # dev they may point to a self-signed cert used as server and CA for both legs.
       CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: /run/cauce-terminal/relay.crt
       CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: /run/cauce-terminal/relay.key
       CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: /run/cauce-terminal/relay.crt
       CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: /run/cauce-terminal/relay.crt
       CAUCE_TERMINAL_RELAY_CONSOLE_CN: ${CAUCE_TERMINAL_CONSOLE_CN:-localhost}
-      # HTTPS obligatorio: `gatewayUrl()` rechaza cualquier otro esquema.
+      # HTTPS required: gatewayUrl() rejects any other scheme.
       CAUCE_TERMINAL_GATEWAY_URL: https://gateway:8443
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: /run/cauce-terminal/relay.token
       CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: "600"
@@ -145,8 +140,8 @@ services:
         target: /run/cauce-terminal
         read_only: true
     ports:
-      # En dev se publican las dos piernas: la de agentes para correr el agente
-      # PTY fuera del compose y la del navegador para probarla sin la consola.
+      # Both legs are published: agent leg to run a PTY agent outside compose,
+      # browser leg to test the relay without the console.
       - "${CAUCE_DEV_BIND_IP:-127.0.0.1}:${TERMINAL_RELAY_AGENT_PORT:-8445}:8445"
       - "${CAUCE_DEV_BIND_IP:-127.0.0.1}:${TERMINAL_RELAY_BROWSER_PORT:-8446}:8446"
     depends_on:

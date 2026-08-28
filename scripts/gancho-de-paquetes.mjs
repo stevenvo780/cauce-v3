@@ -1,13 +1,13 @@
 /**
- * El gancho de resolución que registra `paquetes-de-este-arbol.mjs`. Ver allí el porqué.
+ * Resolution hook registered by `paquetes-de-este-arbol.mjs`. See that file for rationale.
  *
- * Sólo intercepta los especificadores `@cauce/...` EXACTOS de los paquetes del monorepo. Todo lo
- * demás —`ws`, `zod`, `node:fs`, las rutas relativas— cae al resolvedor de siempre sin tocarse:
- * un gancho que reescribiera de más rompería la resolución de dependencias reales y el fallo se
- * vería lejos de aquí.
+ * Only intercepts EXACT `@cauce/...` specifiers for monorepo packages. Everything
+ * else —`ws`, `zod`, `node:fs`, relative paths— falls through to the default
+ * resolver untouched: a hook that rewrote too much would break real dependency
+ * resolution and the failure would surface far from here.
  */
 
-/** Dónde vive el punto de entrada COMPILADO de cada paquete, relativo a la raíz del árbol. */
+/** Path to each package's COMPILED entry, relative to the repo root. */
 const ENTRADAS = {
   '@cauce/protocol': 'packages/protocol/dist/index.js',
   '@cauce/store': 'packages/store/dist/index.js',
