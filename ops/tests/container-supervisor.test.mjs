@@ -43,30 +43,34 @@ const lockRoot = path.join(temporary, "locks");
 const binRoot = path.join(temporary, "bin");
 const log = path.join(temporary, "docker.jsonl");
 const imageId = `sha256:${"a".repeat(64)}`;
-const hermesCommit = "62b2d78025c349996e753c6f7c748de035eb8048";
-const hermesRuntimeId = "hermes-0.20.5-62b2d78025c3-uv0.11.21-2856d1bf7e5b";
-const hermesRuntimeDir = `/opt/cauce-v3-hermes-runtime/iza/${hermesRuntimeId}`;
 const firstId = "1".repeat(64);
 const secondId = "2".repeat(64);
 const firstGenerationStartedAt = "2026-07-22T10:00:00.000000000Z";
 const secondGenerationStartedAt = "2026-07-22T10:01:00.000000000Z";
 const labelKey = "com.example.runtime";
 const labelValue = "approved-runtime";
+// kant is the host-branch operator alias (stev/ctrl-infra); atlas/kratos are the codex
+// pair co-located on ws-humanizar; argos/iza/jarvis are openclaw agents under /home/claw;
+// zeus is the fleet's only claude-harness alias.
 const aliasState = {
-  kant: "/home/dev/.local/state/cauce-v3/kant",
-  argos: "/home/dev/.local/state/cauce-v3/argos",
+  kant: "/var/lib/cauce-v3/aliases/kant",
+  argos: "/home/claw/.openclaw/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas",
-  iza: "/home/dev/.local/state/cauce-v3/iza",
+  iza: "/home/claw/.openclaw/cauce-v3/iza",
   jarvis: "/home/claw/.openclaw/cauce-v3/jarvis",
+  kratos: "/home/dev/.local/state/cauce-v3/kratos",
+  zeus: "/home/dev/.local/state/cauce-v3/zeus",
 };
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
-  kant: "/home/dev/.local",
-  argos: "/home/dev/.local",
+  kant: "/var/lib/cauce-v3/aliases",
+  argos: "/home/claw/.openclaw",
   atlas: "/home/dev/.local",
-  iza: "/home/dev/.local",
+  iza: "/home/claw/.openclaw",
   jarvis: "/home/claw/.openclaw",
+  kratos: "/home/dev/.local",
+  zeus: "/home/dev/.local",
 };
 let bundleDigest;
 let bundleDigest2;
@@ -100,15 +104,9 @@ async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
     MOUNT_DESTINATION: aliasMount[alias],
     MOUNT_RW: "true",
     CAUCE_SEMBRAR_PERFIL: "1",
-    ...(alias === "kant" || alias === "argos" || alias === "atlas" ? { CONFIG_POR_ALIAS: "1" } : {}),
-    ...(alias === "argos" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
-    ...(alias === "iza" ? {
-      HERMES_HOME: "/home/dev/.local/share/cauce-v3/hermes/iza",
-      HERMES_SOURCE_COMMIT: hermesCommit,
-      HERMES_PYTHON: `${hermesRuntimeDir}/venv/bin/python`,
-      HERMES_INFERENCE_MODEL: "approved/model-v1",
-    } : {}),
-    ...(alias === "jarvis" ? { OPENCLAW_WORKSPACE: "/home/claw/clawd" } : {}),
+    ...(alias === "kant" || alias === "atlas" || alias === "kratos" ? { CONFIG_POR_ALIAS: "1" } : {}),
+    ...(alias === "zeus" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
+    ...(alias === "argos" || alias === "iza" || alias === "jarvis" ? { OPENCLAW_WORKSPACE: "/home/claw/clawd" } : {}),
     ...overrides,
   };
   for (const key of omit) delete values[key];
@@ -140,7 +138,10 @@ async function dockerState(alias, overrides = {}) {
   const statePath = path.join(temporary, `docker-${alias}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
   const state = {
     containerName: alias === "jarvis" ? "claw"
-      : alias === "iza" || alias === "atlas" ? "ws-humanizar" : "ctrl-infra",
+      : alias === "iza" ? "claw-iza"
+      : alias === "atlas" || alias === "kratos" ? "ws-humanizar"
+      : alias === "zeus" ? "ws-zeus"
+      : "ctrl-infra", // kant, argos
     currentId: firstId,
     replacementId: secondId,
     running: true,
@@ -159,13 +160,24 @@ async function dockerState(alias, overrides = {}) {
         Destination: aliasMount[alias],
         RW: true,
       },
-      ...(alias === "kant" || alias === "atlas" ? [{
+      ...(alias === "kant" ? [{
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-home`,
+        Destination: "/home/stev",
+        RW: true,
+      }, {
+        Type: "bind",
+        Source: `${mountSourceRoot}/${alias}-workspace`,
+        Destination: "/workspace",
+        RW: true,
+      }] : []),
+      ...(alias === "atlas" || alias === "kratos" ? [{
         Type: "bind",
         Source: `${mountSourceRoot}/${alias}-codex`,
         Destination: "/home/dev/.codex",
         RW: true,
       }] : []),
-      ...(alias === "argos" ? [{
+      ...(alias === "zeus" ? [{
         Type: "bind",
         Source: `${mountSourceRoot}/${alias}-claude`,
         Destination: "/home/dev/.claude",
@@ -176,13 +188,7 @@ async function dockerState(alias, overrides = {}) {
         Destination: "/home/dev/.claude.json",
         RW: true,
       }] : []),
-      ...(alias === "kant" || alias === "atlas" || alias === "argos" || alias === "iza" ? [{
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-workspace`,
-        Destination: "/workspace",
-        RW: true,
-      }] : []),
-      ...(alias === "jarvis" ? [{
+      ...(alias === "argos" || alias === "iza" || alias === "jarvis" ? [{
         Type: "bind",
         Source: `${mountSourceRoot}/${alias}-workspace`,
         Destination: "/home/claw/clawd",
@@ -507,14 +513,14 @@ try {
   for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw"]) {
     await executable(path.join(release, `packages/adapter-sdk/dist/src/bin/${harness}.js`), "#!/usr/bin/env node\n");
   }
-  await executable(path.join(release2, "packages/adapter-sdk/dist/src/bin/hermes.js"),
+  await executable(path.join(release2, "packages/adapter-sdk/dist/src/bin/openclaw.js"),
     "#!/usr/bin/env node\n// independently pinned release-2\n");
   await immutableFixture();
   bundleDigest = bundleDigestFor(release);
   bundleDigest2 = bundleDigestFor(release2);
   await copyFile(fakeDockerSource, path.join(binRoot, "docker"));
   await chmod(path.join(binRoot, "docker"), 0o755);
-  for (const alias of ["kant", "argos", "atlas", "iza", "jarvis"]) {
+  for (const alias of ["kant", "argos", "atlas", "iza", "jarvis", "kratos", "zeus"]) {
     await preparePki(alias, { bearer: alias !== "kant" });
     await mkdir(path.join(mountSourceRoot, alias), { recursive: true });
   }
@@ -524,6 +530,8 @@ try {
   await writeConfig("argos");
   await writeConfig("atlas");
   await writeConfig("iza");
+  await writeConfig("kratos");
+  await writeConfig("zeus");
   await writeConfig("jarvis", [
     "OPENCLAW_TRANSPORT=api",
     "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",
@@ -626,28 +634,38 @@ try {
   // Claude containers are upgraded independently.  The version pin therefore belongs to each
   // alias config and must be exact; a source-global version would reject two healthy containers
   // whenever their prebuilt images differ.
-  await writeConfig("argos", [], {}, ["EXPECTED_CLI_VERSION"]);
+  await writeConfig("zeus", [], {}, ["EXPECTED_CLI_VERSION"]);
   await clearLog();
-  result = runSupervisor("start", "argos", await dockerState("argos"));
+  result = runSupervisor("start", "zeus", await dockerState("zeus"));
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /claude requires EXPECTED_CLI_VERSION/u);
   assert.equal((await records()).length, 0, "missing Claude version must fail before Docker");
 
-  await writeConfig("argos", [], { EXPECTED_CLI_VERSION: "2.1" });
+  await writeConfig("zeus", [], { EXPECTED_CLI_VERSION: "2.1" });
   await clearLog();
-  result = runSupervisor("start", "argos", await dockerState("argos"));
+  result = runSupervisor("start", "zeus", await dockerState("zeus"));
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /exact semantic version/u);
   assert.equal((await records()).length, 0, "malformed Claude version must fail before Docker");
 
-  await writeConfig("argos");
+  await writeConfig("zeus");
   await clearLog();
-  result = runSupervisor("start", "argos", await dockerState("argos"));
+  result = runSupervisor("start", "zeus", await dockerState("zeus"));
   assert.equal(result.status, 0, result.stderr);
   const claudeVersionProbe = (await records()).find(({ argv }) =>
     argv[0] === "exec" && argv.includes("bash") && argv.some((value) => value.includes("required_ver=\"2.1.220\"")));
   assert(claudeVersionProbe, "Claude version probe must use the alias-specific exact pin");
   process.stdout.write("claude version: alias-specific exact pin required and probed\n");
+
+  // OpenClaw's mandatory persistent path is its workspace, not a CLI-version pin; a plain
+  // start with no per-alias config-directory switch must still succeed under cli transport.
+  await clearLog();
+  result = runSupervisor("start", "argos", await dockerState("argos"));
+  assert.equal(result.status, 0, result.stderr);
+  const argosFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=argos"));
+  assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_WORKSPACE=/home/claw/clawd"));
+  assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_TRANSPORT=cli"));
+  process.stdout.write("argos openclaw defaults: workspace-only persistence starts under cli transport\n");
 
   // ---- Sesión compartida: una sola conversación en la terminal y en Telegram. ----
   // El interruptor sólo existe para claude y codex, sólo admite el valor exacto 1, y cuando está
@@ -694,8 +712,8 @@ try {
   await writeConfig("iza", ["SHARED_SESSION=1"]);
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.notEqual(result.status, 0, "hermes no tiene sesión compartida");
-  assert.match(result.stderr, /config key is not allowed for hermes: SHARED_SESSION/u);
+  assert.notEqual(result.status, 0, "openclaw no tiene sesión compartida");
+  assert.match(result.stderr, /config key is not allowed for openclaw: SHARED_SESSION/u);
   await writeConfig("iza");
   await writeConfig("kant");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
@@ -719,9 +737,9 @@ try {
   result = runSupervisor("start", "kant", await dockerState("kant"));
   assert.equal(result.status, 0, `config por alias debe arrancar: ${result.stderr}`);
   const conInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
-  // kant es codex y su home mapeado es /home/dev. La ruta se DERIVA del alias: es la misma que
+  // kant es codex y su home mapeado es /home/stev. La ruta se DERIVA del alias: es la misma que
   // calcula ops/scripts/separar-config-alias.mjs, que es quien copia los ficheros ahí.
-  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/dev/.local/share/cauce-v3/config/kant/.codex"),
+  assert(conInterruptor?.argv.includes("CODEX_HOME=/home/stev/.local/share/cauce-v3/config/kant/.codex"),
     "el interruptor tiene que exportar el directorio derivado del alias");
   assert(!conInterruptor?.argv.some((value) => value.startsWith("CLAUDE_CONFIG_DIR=")),
     "un alias codex no puede recibir además la variable de claude");
@@ -744,8 +762,8 @@ try {
   await writeConfig("iza", ["CONFIG_POR_ALIAS=1"]);
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.notEqual(result.status, 0, "hermes no lee ~/.codex ni ~/.claude");
-  assert.match(result.stderr, /config key is not allowed for hermes: CONFIG_POR_ALIAS/u);
+  assert.notEqual(result.status, 0, "openclaw no lee ~/.codex ni ~/.claude");
+  assert.match(result.stderr, /config key is not allowed for openclaw: CONFIG_POR_ALIAS/u);
   await writeConfig("iza");
 
   await writeConfig("jarvis", [
@@ -816,7 +834,7 @@ try {
   ]) await chmod(path.join(legacyRoot, directory), 0o755).catch(() => undefined);
   process.stdout.write("layout guard: legacy dist/src/bin bundle rejected by validate_bundle before any copy\n");
 
-  // OpenClaw receives only a token-file path; Hermes receives alias-scoped settings.
+  // OpenClaw receives only a token-file path, never the bearer token itself.
   await clearLog();
   statePath = await dockerState("jarvis");
   result = runSupervisor("start", "jarvis", statePath);
@@ -858,12 +876,8 @@ try {
   result = runSupervisor("start", "iza", statePath);
   assert.equal(result.status, 0, result.stderr);
   const izaFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=iza"));
-  assert(izaFinal?.argv.includes("HERMES_HOME=/home/dev/.local/share/cauce-v3/hermes/iza"));
-  assert(izaFinal?.argv.includes("HERMES_INFERENCE_MODEL=approved/model-v1"));
-  assert(izaFinal?.argv.includes(`CAUCE_HERMES_RUNTIME_DIR=${hermesRuntimeDir}`));
-  assert(izaFinal?.argv.includes(`CAUCE_HERMES_SOURCE_DIR=${hermesRuntimeDir}/source`));
-  assert(izaFinal?.argv.includes(`CAUCE_HERMES_PYTHON=${hermesRuntimeDir}/venv/bin/python`),
-    "the adapter must receive the verified immutable interpreter");
+  assert(izaFinal?.argv.includes("CAUCE_OPENCLAW_WORKSPACE=/home/claw/clawd"));
+  assert(izaFinal?.argv.includes("CAUCE_OPENCLAW_TRANSPORT=cli"));
 
   // Each alias consumes its exact BUNDLE_RELEASE pin. A canary pin for iza must copy and
   // execute release-2 directly, without consulting or changing a shared host `current` pointer.
@@ -887,56 +901,6 @@ try {
   await writeConfig("iza");
   process.stdout.write("per-alias release pin: iza release-2 selected directly without a current symlink\n");
 
-  // Hermes profile is persistent; source+venv are mandatory at their exact immutable /opt path.
-  await writeConfig("iza");
-  await clearLog();
-  result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.equal(result.status, 0, `profile HERMES_HOME must start: ${result.stderr}`);
-  const izaProfileFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=iza"));
-  assert(izaProfileFinal?.argv.includes("HERMES_HOME=/home/dev/.local/share/cauce-v3/hermes/iza"),
-    "the persistent alias profile must be accepted and exported verbatim");
-  await writeConfig("iza", [], { HERMES_HOME: "/home/dev/.local/share/cauce-v3/hermes/otro" });
-  await clearLog();
-  result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.notEqual(result.status, 0, "another alias HERMES_HOME must fail");
-  assert.match(result.stderr, /multi-alias container requires an alias-scoped HERMES_HOME/u);
-  assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false,
-    "an escaping HERMES_HOME must fail before any container copy");
-  await writeConfig("iza");
-  process.stdout.write("hermes profile: exact persistent alias path accepted; another alias rejected before copy\n");
-
-  await writeConfig("iza", [], {
-    HERMES_SOURCE_COMMIT: "f".repeat(40),
-    HERMES_PYTHON: `${hermesRuntimeDir}/venv/bin/python`,
-  });
-  await clearLog();
-  result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.notEqual(result.status, 0, "an unapproved but syntactically valid Hermes commit must fail");
-  assert.match(result.stderr, /HERMES_SOURCE_COMMIT is not the approved operations pin/u);
-  assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
-  await writeConfig("iza");
-
-  // Only the exact immutable alias runtime may run the Hermes bridge.
-  await writeConfig("iza");
-  await clearLog();
-  result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.equal(result.status, 0, `exact immutable HERMES_PYTHON must start: ${result.stderr}`);
-  const izaPythonFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=iza"));
-  assert(izaPythonFinal?.argv.includes(`CAUCE_HERMES_PYTHON=${hermesRuntimeDir}/venv/bin/python`),
-    "the exact immutable venv must be exported as CAUCE_HERMES_PYTHON");
-  // A HERMES_PYTHON outside the mapped container home (here the system interpreter that lacks
-  // hermes_cli) is rejected fail-closed before any container copy: the bridge must never fall back
-  // to a host binary.
-  await writeConfig("iza", [], { HERMES_PYTHON: "/usr/bin/python3" });
-  await clearLog();
-  result = runSupervisor("start", "iza", await dockerState("iza"));
-  assert.notEqual(result.status, 0, "HERMES_PYTHON outside the container home must fail");
-  assert.match(result.stderr, /HERMES_PYTHON must be the exact immutable alias runtime interpreter/u);
-  assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false,
-    "a HERMES_PYTHON outside the container home must fail before any container copy");
-  await writeConfig("iza");
-  process.stdout.write("hermes python: exact immutable alias venv exported; system python rejected before copy\n");
-
   // Image is mandatory; the label and MOUNT_* keys are optional reinforcement. When declared,
   // each must match. The persistent mount is the bind/volume that CONTAINS the state dir, so
   // an ephemeral/read-write-off ancestor or a missing ancestor fails before any PKI copy.
@@ -956,9 +920,9 @@ try {
     assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
   }
 
-  // A persistent state mount does not make an ephemeral harness home acceptable.  The isolated
-  // destination lives below .local, but its single-source Codex auth/config live below .codex and
-  // must survive the same container recreation as the state.
+  // A persistent state mount does not make an ephemeral harness home acceptable.  Codex
+  // auth/config live on a separate mounted home and must survive the same container
+  // recreation as the state.
   await clearLog();
   statePath = await dockerState("kant", { mounts: [{
     Type: "bind", Source: `${mountSourceRoot}/kant`, Destination: aliasMount.kant, RW: true,
@@ -998,9 +962,8 @@ try {
   assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
   await writeConfig("kant");
 
-  // `check` is a complete read-only preflight: it revalidates host PKI and the harness-specific
-  // runtime before accepting lifecycle metadata.  Missing PKI or a broken Hermes import cannot be
-  // hidden behind a healthy old adapter process.
+  // `check` is a complete read-only preflight: it revalidates host PKI before accepting
+  // lifecycle metadata.  Missing PKI cannot be hidden behind a healthy old adapter process.
   await rm(path.join(pkiRoot, "kant/ca.crt"));
   await clearLog();
   result = runSupervisor("check", "kant", await dockerState("kant"));
@@ -1011,21 +974,9 @@ try {
   await chmod(path.join(pkiRoot, "kant/ca.crt"), 0o600);
 
   await clearLog();
-  result = runSupervisor("check", "iza", await dockerState("iza", { hermesRuntimeOk: false }));
-  assert.notEqual(result.status, 0, "check must reject a broken pinned Hermes runtime");
-  assert.match(result.stderr, /Hermes runtime verification failed/u);
-  assert.equal((await records()).some(({ argv }) => argv.includes("check")), false,
-    "lifecycle metadata cannot mask a failed Hermes preflight");
-
-  await clearLog();
-  result = runSupervisor("check", "iza", await dockerState("iza"));
-  assert.equal(result.status, 0, `full Hermes check must pass: ${result.stderr}`);
-  calls = await records();
-  const hermesProbeIndex = calls.findIndex(({ argv }) => argv.some((value) => value.includes("hermes_cli.oneshot")));
-  const lifecycleCheckIndex = calls.findIndex(({ argv }) => argv.includes("check"));
-  assert(hermesProbeIndex >= 0 && lifecycleCheckIndex > hermesProbeIndex,
-    "Hermes source/import preflight must precede lifecycle metadata check");
-  process.stdout.write("complete check: PKI and Hermes runtime precede lifecycle metadata\n");
+  result = runSupervisor("check", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, `full check must pass: ${result.stderr}`);
+  process.stdout.write("complete check: PKI precedes lifecycle metadata\n");
 
   // Optional-key omission still starts. First: image ID correct, NO label declared, so the
   // label check is skipped even though the container reports an unverified label value.
@@ -1056,7 +1007,7 @@ try {
   assert.equal((await records()).length, 0);
   await writeConfig("kant");
 
-  // atlas and iza share ONE persistent bind (/home/dev/.local, one Source) in ws-humanizar.
+  // atlas and kratos share ONE persistent bind (/home/dev/.local, one Source) in ws-humanizar.
   // Each alias state dir is a disjoint subtree, so both discover the same mount without
   // colliding: disjoint /opt trees and disjoint prepared state dirs prove the isolation.
   await clearLog();
@@ -1066,17 +1017,17 @@ try {
     { Type: "bind", Source: `${mountSourceRoot}/ws-humanizar-codex`, Destination: "/home/dev/.codex", RW: true },
   ];
   await writeConfig("atlas", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.atlas });
-  await writeConfig("iza", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.iza });
+  await writeConfig("kratos", [], { MOUNT_SOURCE: sharedSource, MOUNT_DESTINATION: aliasMount.kratos });
   assert.equal(runSupervisor("start", "atlas", await dockerState("atlas", { mounts: sharedBind })).status, 0);
-  assert.equal(runSupervisor("start", "iza", await dockerState("iza", { mounts: sharedBind })).status, 0);
+  assert.equal(runSupervisor("start", "kratos", await dockerState("kratos", { mounts: sharedBind })).status, 0);
   calls = await records();
   assert(calls.some(({ argv }) => argv.some((value) => value.includes("/opt/cauce-v3-adapter/atlas/"))));
-  assert(calls.some(({ argv }) => argv.some((value) => value.includes("/opt/cauce-v3-adapter/iza/"))));
+  assert(calls.some(({ argv }) => argv.some((value) => value.includes("/opt/cauce-v3-adapter/kratos/"))));
   assert(calls.some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasState.atlas)));
-  assert(calls.some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasState.iza)));
+  assert(calls.some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasState.kratos)));
   assert.equal(calls.some(({ argv }) => argv.includes("rm") && argv.includes("/opt/cauce-v3-adapter")), false);
   await writeConfig("atlas");
-  await writeConfig("iza");
+  await writeConfig("kratos");
 
   // Recreate with same declared mount relaunches on the new ID and retains state/instance identity.
   await clearLog();
