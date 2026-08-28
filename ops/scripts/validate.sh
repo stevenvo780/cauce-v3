@@ -221,6 +221,7 @@ PY
   export CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH=/dev/null CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH=/dev/null
   export CAUCE_RELAY_ALLOWED_ORIGINS=https://relay.invalid CAUCE_RELAY_ADAPTERS=telegram CAUCE_TELEGRAM_ALLOWED_ORIGINS=https://api.telegram.org
   export CAUCE_POSTGRES_PASSWORD_PATH=/dev/null CAUCE_POSTGRES_SERVER_CERT_PATH=/dev/null CAUCE_POSTGRES_SERVER_KEY_PATH=/dev/null
+  export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$zeros"
   docker compose -f "$PROJECT/deploy/compose.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.postgres.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.alertmanager.yaml" config --quiet
