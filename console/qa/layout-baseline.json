@@ -58,11 +58,11 @@
     "huecoMaximo": 272,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 288,
-    "recorteMaximoEn": "/live#perfil",
-    "recorteMaximoQue": "div.table-wrap",
+    "recorteMaximo": 0,
+    "recorteMaximoEn": "/",
+    "recorteMaximoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 3.84
+    "pantallasMaximas": 3.73
   }
 }
