@@ -514,6 +514,9 @@ cmd_sesiones() { exec "$BIN/ia" "$1" sesiones; }
 unit_del_alias() {
   es_host_native "$1" && printf 'cauce-v3-host-%s.service\n' "$1" || printf 'cauce-v3-container-%s.service\n' "$1"
 }
+systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
+  local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  ${c_err}systemctl --user %s %s fallo${c_reset}\n" "$verbo" "$unit" >&2; printf "  ${c_dim}%s${c_reset}\n" "$salida" >&2; printf "  ${c_dim}sin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M stev@ %s %s${c_reset}\n" "$verbo" "$unit" >&2; return 1
+}
 
 # Los PIDs que llevan CAUCE_ALIAS=<alias>, mirados donde de verdad corren. Esta es la unica senal
 # que no miente: systemd dijo "inactive" sobre un adaptador que siguio 3h27m con su socket al bus,
@@ -546,14 +549,12 @@ pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nad
 
 cmd_on() {
   local a=$1 u; u=$(unit_del_alias "$a")
-  systemctl --user start "$u" || true
-  # El adaptador hace STAGING del bundle (docker cp del release + chmod/chown -R recursivos +
-  # verificacion del binario de claude) ANTES de que exista el proceso real: medido entre 45 y
-  # 75s en un despliegue real. Un `sleep 6` fijo con una sola comprobacion reporta "NO arranco"
-  # sobre un alias que solo esta a mitad de copiar. El operador que le cree o reintenta el on, o
-  # peor: da el alias por muerto y le repone el panel, que le BORRA la conversacion. Se sondea la
-  # CONDICION (el proceso vivo en /proc, no lo que dice systemd) con reintentos hasta un techo
-  # generoso, avisando que sigue esperando para que no parezca colgado.
+  systemctl_user_o_avisa start "$u"
+  # El adaptador hace STAGING del bundle (docker cp + chmod/chown -R + verificacion del binario)
+  # ANTES de existir el proceso real: medido 45-75s en despliegue real. Un `sleep 6` con una sola
+  # comprobacion reporta "NO arranco" a mitad de copiar; el operador reintenta o, peor, da el
+  # alias por muerto y le repone el panel, que le BORRA la conversacion. Se sondea la CONDICION
+  # (el proceso vivo en /proc) con reintentos hasta un techo generoso, avisando que sigue.
   local techo=120 paso=5 transcurrido=0 pids
   pids=$(pids_del_alias "$a" | tr '\n' ' ')
   if [ -z "${pids// /}" ]; then
@@ -603,7 +604,7 @@ cmd_on() {
 
 cmd_off() {
   local a=$1 u; u=$(unit_del_alias "$a")
-  systemctl --user stop "$u" || true
+  systemctl_user_o_avisa stop "$u"
   sleep 3
   # No alcanza con parar la unit: hay un caso medido donde el alias siguio contestando el bus con
   # la unit en "inactive". Si sobrevivio algo, matarlo — "off" quiere decir off.
@@ -644,9 +645,8 @@ cmd_off() {
     [ -n "$ctr2" ] && docker exec "$ctr2" sh -lc "$matar_panel" >/dev/null 2>&1
   fi
   printf "  %s ${c_ok}adaptador del bus apagado de verdad${c_reset} ${c_dim}(su TUI tambien se fue, si no el proximo \"on\" falla con 78/CONFIG)${c_reset}\n" "$a"
-  # "off" apaga el ADAPTADOR DEL BUS. El canal PTY es otro servicio, con su propia unit, y sigue
-  # en pie: el alias mantiene una conexion TLS abierta al relay de agora y su terminal web sigue
-  # alcanzable. Creer que "off" apaga al alias entero es concluir lo contrario de la verdad.
+  # "off" apaga el ADAPTADOR DEL BUS. El canal PTY es otro servicio con su propia unit, y sigue
+  # en pie: el alias mantiene su TLS al relay y su terminal web sigue alcanzable — no es "off" total.
   if [ "$(systemctl --user is-active "cauce-v3-pty@$a.service" 2>/dev/null)" = active ]; then
     printf "  ${c_warn}ojo:${c_reset} su agente PTY sigue vivo y conectado al relay ${c_dim}(cauce-v3-pty@%s)${c_reset}\n" "$a"
     printf "        ${c_dim}el terminal web de %s sigue en pie. Para bajarlo tambien:${c_reset}\n" "$a"
