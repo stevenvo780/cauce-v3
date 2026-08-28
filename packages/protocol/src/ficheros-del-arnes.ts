@@ -399,6 +399,10 @@ function comprobarTopes(harness: string, ficheros: readonly FicheroGenerado[]): 
   for (const fichero of ficheros) {
     // Los ficheros del agente (solo-si-falta) no computan para los topes gestionados.
     if (fichero.politica === "solo-si-falta") continue;
+    // Un fichero que la siembra no va a escribir (sin bloque propio, o bloque de otro alias)
+    // es asunto del dueño del workspace: su tamaño no puede vetar los ficheros que sí se
+    // escriben. El tope gobierna lo que Cauce escribe, no lo que ya vivía allí.
+    if (!fichero.escribir) continue;
     const medido = measureStrictestUnits(fichero.texto);
     if (medido > TOPES_OPENCLAW.porFichero) {
       throw new ErrorDeTopeDelArnes(fichero.nombre, medido, TOPES_OPENCLAW.porFichero);

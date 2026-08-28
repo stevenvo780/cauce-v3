@@ -497,3 +497,18 @@ test("la proyección rechaza CRLF antes de producir una mezcla de finales de lí
     /does not accept CR or CRLF/u,
   );
 });
+
+test("un TOOLS.md enorme que la siembra no toca no veta los ficheros que sí escribe", () => {
+  const enorme = "x".repeat(TOPES_OPENCLAW.porFichero + 1);
+  const existentes = new Map([["TOOLS.md", enorme]]);
+  const generados = ficherosDelArnes(
+    "openclaw", { perfil: perfil({ tools: [] }), hechos: hechos() }, existentes, { revision: 3 },
+  );
+  const tools = generados.find((f: FicheroGenerado) => f.nombre === "TOOLS.md");
+  assert.ok(tools);
+  assert.equal(tools.escribir, false);
+  assert.equal(tools.texto, enorme);
+  const soul = generados.find((f: FicheroGenerado) => f.nombre === "SOUL.md");
+  assert.ok(soul, "el generador no emitió SOUL.md");
+  assert.ok(soul.escribir, "SOUL.md debía escribirse aunque TOOLS.md sea enorme");
+});
