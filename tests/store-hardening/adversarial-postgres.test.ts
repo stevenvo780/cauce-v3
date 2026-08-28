@@ -259,7 +259,7 @@ describe('adversarial PostgreSQL store hardening', () => {
       version: '3.0', status: 'started', instance_id: 'other-worker', epoch: leaseEpoch,
       event_id: randomUUID(), claim_token: claimToken, attempt,
       retryable: false
-    }, 60_000)).rejects.toMatchObject({ code: 'fenced' });
+    }, 60_000)).resolves.toMatchObject({ applied: false, receipt: 'ownership_lost' });
     const afterFenced = await pool.query<{ ack_deadline_at: Date }>(
       'SELECT ack_deadline_at FROM deliveries WHERE id=$1', [deliveryId]
     );
@@ -290,7 +290,7 @@ describe('adversarial PostgreSQL store hardening', () => {
     expect(expiredRow.claim_expires_at.getTime()).toBeLessThan(Date.now());
     expect((await pool.query('SELECT 1 FROM delivery_acks WHERE delivery_id=$1 AND NOT applied', [
       deliveryId
-    ])).rowCount).toBe(2);
+    ])).rowCount).toBe(3);
   });
 
   it('preserves ownership_lost when replaying a rejected renewal event', async () => {

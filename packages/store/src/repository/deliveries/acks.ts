@@ -137,7 +137,9 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           receipt: 'ownership_lost',
         };
       }
-      if (row.claim_token === ack.claim_token && row.attempt === ack.attempt &&
+      // A live claim's foreign identity falls through to the lease/identity check below, which
+      // already answers a correlated ownership_lost instead of fencing; only a dead claim fences.
+      if (row.claim_token === ack.claim_token && row.attempt === ack.attempt && !row.claim_live &&
           (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
         throw new StoreError('fenced', 'ACK identity does not own this delivery claim');
       }
@@ -359,10 +361,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         );
       }
       // Todo error final deja rastro replayable en dead_letters, no sólo 'dead'.
-      //
       // Mantener registro en dead_letters permite que `replayDelivery` funcione tanto
       // para entregas en estado 'failed' como 'dead'.
-      //
       // La corrección NO es fusionar 'failed' con 'dead'. Los dos estados los consumen hoy, con
       // significados distintos, `terminal()`, el conteo de fan-in (`status IN ('done','failed',
       // 'dead')`), el CHECK de `deliveries.status`, `DeliveryStateSchema` del protocolo, la serie
