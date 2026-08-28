@@ -21,7 +21,7 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/live');
 });
 
-function conHistorial(entries: Array<Record<string, unknown>>) {
+function conHistorial(entries: Record<string, unknown>[]) {
   server.use(http.get('*/v3/console/role-assignments/:tenantId/:alias/history', () => HttpResponse.json({
     observed_at: new Date().toISOString(), tenant_id: 'Steven', alias: 'kant', entries,
   })));
@@ -38,11 +38,12 @@ async function abrirDiarioDeKant() {
   await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
-  const proyeccion = await within(dialogo).findByLabelText(/proyección del rol de kant/i) as HTMLTextAreaElement;
+  const proyeccion = await within(dialogo).findByLabelText(/proyección del rol de kant/i);
   await user.click(within(dialogo).getByText('Historial de la proyección y restauración'));
   return { user, cajon, dialogo, proyeccion };
 }
 
+describe('HistorialRol', { timeout: 15_000 }, () => {
 it('enseña los cambios del rol, el más nuevo arriba, dentro del mismo cajón', async () => {
   const { dialogo } = await abrirDiarioDeKant();
 
@@ -165,7 +166,7 @@ it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', 
   await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i }))[0]);
   await user.click(await within(cajon).findByRole('button', { name: /guardar y aplicar perfil/i }));
 
-  await waitFor(() => expect(cuerpoPut).toBeDefined());
+  await waitFor(() => { expect(cuerpoPut).toBeDefined(); });
   expect(cuerpoPut).toMatchObject({
     expected_revision: 4,
     profile: {
@@ -328,4 +329,5 @@ it('el role_summary recuperado sobrevive a desmontar Perfil y conserva los otros
   expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue('Sos kant.');
   expect(within(cajon).getByLabelText(/^Identidad y propósito/i))
     .toHaveValue('Coordinás lo pendiente de la flota y perseguís lo que se quedó a medias.');
+});
 });

@@ -60,7 +60,7 @@ export function DirectivaModal({
       onCerrar();
     };
     document.addEventListener('keydown', alPulsar, true);
-    return () => document.removeEventListener('keydown', alPulsar, true);
+    return () => { document.removeEventListener('keydown', alPulsar, true); };
   }, [onCerrar]);
 
   const teclado = useFocusTrap(dialogo);

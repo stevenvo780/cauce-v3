@@ -88,7 +88,9 @@ it('un clic en el velo cierra; un clic dentro del diálogo no', async () => {
   await user.click(within(dialogo).getByText('Directiva de kant'));
   expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-  const velo = dialogo.parentElement as HTMLElement;
+  const velo = dialogo.parentElement;
+  expect(velo).not.toBeNull();
+  if (!velo) throw new Error('dialogo.parentElement is missing');
   expect(velo).toHaveClass('directiva-modal-fondo');
   await user.click(velo);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

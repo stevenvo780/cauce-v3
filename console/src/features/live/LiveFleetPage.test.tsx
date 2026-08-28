@@ -32,11 +32,11 @@ describe('el veredicto', () => {
     renderWithApi(<LiveFleetPage />);
 
     const banda = await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(banda).toHaveAttribute('data-tone', 'ok'));
+    await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'ok'); });
 
     await user.click(screen.getByRole('button', { name: /refrescar ahora/i }));
 
-    await waitFor(() => expect(banda).toHaveAttribute('data-tone', 'desconocido'));
+    await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'desconocido'); });
     expect(banda).not.toHaveAttribute('data-tone', 'ok');
     expect(within(banda).getByText(/no lo sé/i)).toBeInTheDocument();
     expect(within(banda).getByText(/última lectura buena/i)).toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('el veredicto', () => {
     renderWithApi(<LiveFleetPage />);
 
     const banda = await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(banda).toHaveAttribute('data-tone', 'alerta'));
+    await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'alerta'); });
     expect(within(banda).getByText(/necesitan atención/i)).toBeInTheDocument();
 
     const chip = within(banda).getAllByRole('button')[0];
@@ -89,7 +89,7 @@ describe('la flota en reposo', () => {
     renderWithApi(<LiveFleetPage />);
 
     const banda = await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(banda).toHaveAttribute('data-tone', 'ok'));
+    await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'ok'); });
 
     expect(screen.getByText(/La flota está libre/)).toBeInTheDocument();
     expect(screen.getByText(/no es una avería/)).toBeInTheDocument();
@@ -111,7 +111,7 @@ describe('la flota en reposo', () => {
     await screen.findByLabelText('Veredicto de la flota');
     const cinta = document.querySelector('.live-tally');
     const etiquetas = [...(cinta?.querySelectorAll('.live-tally-chip') ?? [])]
-      .map((chip) => chip.textContent?.replace(/\d+$/, '').trim());
+      .map((chip) => chip.textContent.replace(/\d+$/, '').trim());
 
     expect(etiquetas.slice(0, 7)).toEqual([
       // «Trabado» y no «Bloqueado»: es la palabra que ya usaba el veredicto («trabado hace 22
@@ -284,7 +284,7 @@ describe('el mapa', () => {
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
 
-    await waitFor(() => expect(document.querySelectorAll('.lhg-bot').length).toBe(1));
+    await waitFor(() => { expect(document.querySelectorAll('.lhg-bot').length).toBe(1); });
     expect(screen.queryByTestId('deriva-sin-registro')).toBeNull();
     expect(screen.queryByTestId('deriva-sin-sala')).toBeNull();
   });
@@ -306,14 +306,14 @@ describe('el mapa', () => {
     // `focus()` sobre un nodo SVG dispara estado de React fuera del ciclo de eventos de
     // userEvent: sin `act` el aviso ensucia la salida de toda la suite, y una suite ruidosa es
     // una suite en la que el aviso que sí importa pasa desapercibido.
-    act(() => nodos[0].focus());
+    act(() => { nodos[0].focus(); });
     const globo = await screen.findByRole('tooltip');
     expect(globo.textContent).toBeTruthy();
 
     await user.keyboard('{Escape}');
     // El globo del mapa se cierra al perder el foco; Esc lo suelta igualmente sin dejar rastro.
-    act(() => nodos[0].blur());
-    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+    act(() => { nodos[0].blur(); });
+    await waitFor(() => { expect(screen.queryByRole('tooltip')).not.toBeInTheDocument(); });
   });
 
   it('conmuta a la capa de permisos sin mover un solo muñeco de sitio', async () => {
@@ -428,7 +428,7 @@ describe('el cajón', () => {
 
     await user.keyboard('{Escape}');
 
-    await waitFor(() => expect(screen.queryByRole('complementary')).not.toBeInTheDocument());
+    await waitFor(() => { expect(screen.queryByRole('complementary')).not.toBeInTheDocument(); });
     expect(window.location.search).not.toContain('agente=');
   });
 

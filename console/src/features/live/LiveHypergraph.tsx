@@ -187,7 +187,7 @@ export function LiveHypergraph({
   const personas = useMemo(() => {
     const lista = (origins ?? [])
       .filter((origin) => position.has(origin.agentKey))
-      .map((origin) => ({ ...origin, y: position.get(origin.agentKey)!.y }))
+      .map((origin) => ({ ...origin, y: position.get(origin.agentKey)?.y ?? 0 }))
       .sort((left, right) => left.y - right.y || left.agentKey.localeCompare(right.agentKey));
     let ultimo = -Infinity;
     return lista.map((origin) => {
@@ -199,8 +199,8 @@ export function LiveHypergraph({
 
   const conPasillo = personas.length > 0;
   const viewBox = conPasillo
-    ? `${-GUTTER} 0 ${model.width + GUTTER} ${model.height}`
-    : `0 0 ${model.width} ${model.height}`;
+    ? `${String(-GUTTER)} 0 ${String(model.width + GUTTER)} ${String(model.height)}`
+    : `0 0 ${String(model.width)} ${String(model.height)}`;
 
   /**
    * SMIL no lo apaga el CSS.
@@ -212,7 +212,7 @@ export function LiveHypergraph({
    */
   const animar = useMemo(() => {
     try {
-      return !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch {
       return true;
     }
@@ -266,9 +266,9 @@ export function LiveHypergraph({
 
   const trabajando = placed.filter((item) => item.view && item.view.state !== 'idle' && item.view.state !== 'down').length;
   const descripcion = layer === 'permisos'
-    ? `Mapa de permisos: ${placed.length} agentes en ${model.edges.length} salas y ${model.arcs.length} aristas ACL entre clientes.`
-    : `Mapa vivo: ${placed.length} agentes en ${model.edges.length} salas. ${trabajando} con trabajo en curso. `
-      + `${vivas.length} delegaciones en vuelo ahora mismo.`;
+    ? `Mapa de permisos: ${String(placed.length)} agentes en ${String(model.edges.length)} salas y ${String(model.arcs.length)} aristas ACL entre clientes.`
+    : `Mapa vivo: ${String(placed.length)} agentes en ${String(model.edges.length)} salas. ${String(trabajando)} con trabajo en curso. `
+      + `${String(vivas.length)} delegaciones en vuelo ahora mismo.`;
 
   return (
     <div className={`lhg${atenuando ? ' is-focusing' : ''}`} data-layer={layer}>
@@ -290,8 +290,8 @@ export function LiveHypergraph({
         {/* Capa 1 — las salas. Al fondo: los muñecos se leen siempre por encima. */}
         <g className="lhg-rooms">
           {model.edges.map((room) => (
-            <g className={`lhg-room lhg-hue-${room.hue}`} key={room.key}>
-              <title>{`#${room.roomLabel ?? 'sala sin nombre'} — ${room.members.length} miembros`}</title>
+            <g className={`lhg-room lhg-hue-${String(room.hue)}`} key={room.key}>
+              <title>{`#${room.roomLabel ?? 'sala sin nombre'} — ${String(room.members.length)} miembros`}</title>
               <path className="lhg-room-fill" d={room.outline} />
               <path className="lhg-room-line" d={room.outline} />
               <text className="lhg-room-label" x={room.labelAnchor.x} y={room.labelAnchor.y} textAnchor="middle">
@@ -316,21 +316,26 @@ export function LiveHypergraph({
           </g>
         ) : (
           <g className="lhg-flows">
-            {vivas.map((edge, index) => (
-              <FlowArrow
-                key={edgePairKey(edge.from, edge.to)}
-                edge={edge}
-                index={index}
-                from={position.get(edge.from) as Point}
-                to={position.get(edge.to) as Point}
-                fromRadius={radios.get(edge.from) ?? AVATAR_UNIFORME}
-                toRadius={radios.get(edge.to) ?? AVATAR_UNIFORME}
-                width={grosorDe(edge.total, maxTotal)}
-                lento={(edge.oldestSeconds ?? 0) > stallAfter}
-                dim={atenuando && !(activos.has(edge.from) && activos.has(edge.to))}
-                animar={animar}
-              />
-            ))}
+            {vivas.map((edge, index) => {
+              const fromPt = position.get(edge.from);
+              const toPt = position.get(edge.to);
+              if (!fromPt || !toPt) return null;
+              return (
+                <FlowArrow
+                  key={edgePairKey(edge.from, edge.to)}
+                  edge={edge}
+                  index={index}
+                  from={fromPt}
+                  to={toPt}
+                  fromRadius={radios.get(edge.from) ?? AVATAR_UNIFORME}
+                  toRadius={radios.get(edge.to) ?? AVATAR_UNIFORME}
+                  width={grosorDe(edge.total, maxTotal)}
+                  lento={(edge.oldestSeconds ?? 0) > stallAfter}
+                  dim={atenuando && !(activos.has(edge.from) && activos.has(edge.to))}
+                  animar={animar}
+                />
+              );
+            })}
           </g>
         )}
 
@@ -338,15 +343,16 @@ export function LiveHypergraph({
         {layer === 'ahora' ? (
           <g className="lhg-humans">
             {personas.map((persona) => {
-              const destino = position.get(persona.agentKey) as Point;
+              const destino = position.get(persona.agentKey);
+              if (!destino) return null;
               const x = -GUTTER / 2;
               return (
                 <g className="lhg-human" key={`${persona.agentKey}|${persona.adapter}`}>
                   <title>
                     {`Una persona, por ${persona.adapter} → ${aliasDe(persona.agentKey)}`}
-                    {` · ${persona.count} ${persona.count === 1 ? 'encargo' : 'encargos'} en vuelo`}
+                    {` · ${String(persona.count)} ${persona.count === 1 ? 'encargo' : 'encargos'} en vuelo`}
                   </title>
-                  <path className="lhg-human-line" d={`M ${x + 22} ${persona.y} L ${destino.x - 40} ${destino.y}`} />
+                  <path className="lhg-human-line" d={`M ${String(x + 22)} ${String(persona.y)} L ${String(destino.x - 40)} ${String(destino.y)}`} />
                   <circle className="lhg-human-dot" cx={x} cy={persona.y} r="15" />
                   <text className="lhg-human-glyph" x={x} y={persona.y + 5} textAnchor="middle">@</text>
                   <text className="lhg-human-name" x={x} y={persona.y + 32} textAnchor="middle">
@@ -376,7 +382,7 @@ export function LiveHypergraph({
                 data-state={estado}
                 // El veredicto usa esta clave para traer al muñeco culpable a la vista.
                 data-agent-key={item.key}
-                transform={`translate(${item.point.x} ${item.point.y})`}
+                transform={`translate(${String(item.point.x)} ${String(item.point.y)})`}
                 tabIndex={0}
                 role="button"
                 aria-label={detalle}
@@ -385,14 +391,12 @@ export function LiveHypergraph({
                   onHover?.(item.key, event.currentTarget.getBoundingClientRect(), view, item.alias);
                 }}
                 onMouseLeave={() => { onFocus?.(null); onHover?.(null, null, null, item.alias); }}
-                // El globo tiene que abrirse también al TABULAR, no sólo al pasar el ratón: el mapa
-                // se recorre con el teclado y ahí es donde el `title` nativo nunca aparecía.
                 onFocus={(event) => {
                   onFocus?.(item.key);
                   onHover?.(item.key, event.currentTarget.getBoundingClientRect(), view, item.alias);
                 }}
                 onBlur={() => { onFocus?.(null); onHover?.(null, null, null, item.alias); }}
-                onClick={() => view && onOpen?.(view)}
+                onClick={() => { if (view) onOpen?.(view); }}
                 onKeyDown={(event) => {
                   if (view && (event.key === 'Enter' || event.key === ' ')) {
                     event.preventDefault();
@@ -420,9 +424,9 @@ export function LiveHypergraph({
                     flota muerta, la vista falla justo el día que todo está bien. */}
                 <text className="lhg-bot-word" y={r + 30} textAnchor="middle">{WORD[estado]}</text>
                 {view && view.queued > 0 ? (
-                  <g className="lhg-bot-queue" transform={`translate(${r - 4} ${-r + 4})`}>
+                  <g className="lhg-bot-queue" transform={`translate(${String(r - 4)} ${String(-r + 4)})`}>
                     <circle r="10" />
-                    <text textAnchor="middle" dy="3.5">{view.queued > 99 ? '99+' : view.queued}</text>
+                    <text textAnchor="middle" dy="3.5">{view.queued > 99 ? '99+' : String(view.queued)}</text>
                   </g>
                 ) : null}
               </g>

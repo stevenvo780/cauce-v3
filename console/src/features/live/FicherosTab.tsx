@@ -83,7 +83,7 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
               alias={alias}
               canWrite={canWrite}
               abierto={abierto === item.kind}
-              onAbrir={() => setAbierto(abierto === item.kind ? undefined : item.kind)}
+              onAbrir={() => { setAbierto(abierto === item.kind ? undefined : item.kind); }}
             />
           ))}
         </ul>
@@ -279,10 +279,10 @@ function Editor({ item, tenantId, alias, canWrite }: {
       });
       return;
     }
-    if (!servido.editable || servido.truncated !== false) {
+    if (!servido.editable || servido.truncated) {
       setFallo({
         titulo: 'Este contenido no se puede reemplazar',
-        detalle: servido.truncated !== false
+        detalle: servido.truncated
           ? 'Lo servido es sólo un prefijo recortado. Reemplazarlo borraría el resto del fichero.'
           : 'El servidor marcó este documento como sólo lectura.',
       });
@@ -362,7 +362,7 @@ function Editor({ item, tenantId, alias, canWrite }: {
         </p>
       ) : null}
 
-      {servido.truncated !== false ? (
+      {servido.truncated ? (
         <p className="ficheros-aviso" role="alert">
           <AlertTriangle size={14} aria-hidden="true" /> Esta lectura está recortada. Se muestra para
           diagnóstico, pero no se puede editar ni reemplazar: guardar este prefijo borraría el resto.
@@ -375,8 +375,8 @@ function Editor({ item, tenantId, alias, canWrite }: {
         value={borrador}
         spellCheck={false}
         rows={18}
-        readOnly={!canWrite || !servido.editable || servido.truncated !== false}
-        aria-readonly={!canWrite || !servido.editable || servido.truncated !== false}
+        readOnly={!canWrite || !servido.editable || servido.truncated}
+        aria-readonly={!canWrite || !servido.editable || servido.truncated}
         onChange={(event) => {
           setBorrador(event.target.value);
           setGuardado(undefined);
@@ -397,7 +397,7 @@ function Editor({ item, tenantId, alias, canWrite }: {
           className="button small"
           onClick={() => void guardar()}
           disabled={!canWrite || !sucio || guardando || !servido.editable
-            || servido.truncated !== false}
+            || servido.truncated}
         >
           <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}
         </button>

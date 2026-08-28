@@ -96,7 +96,7 @@ export function DirectivaTab({
         type="button"
         className="button primary directiva-abrir"
         ref={abridor}
-        onClick={() => setAbierto(true)}
+        onClick={() => { setAbierto(true); }}
       >
         <Maximize2 size={16} aria-hidden="true" /> Abrir directiva completa
       </button>

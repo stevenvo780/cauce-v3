@@ -113,7 +113,7 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
                   <button
                     type="button"
                     className="button small secondary"
-                    onClick={() => onRestaurar(restauracion.clase === 'texto' ? restauracion.texto : '')}
+                    onClick={() => { onRestaurar(restauracion.clase === 'texto' ? restauracion.texto : ''); }}
                   >
                     <RotateCcw size={14} aria-hidden="true" />
                     {restauracion.clase === 'texto'

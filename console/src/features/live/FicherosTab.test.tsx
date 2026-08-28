@@ -226,14 +226,14 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
   const { user, cajon } = await abrirFicheros();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
 
-  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i) as HTMLTextAreaElement;
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   expect(caja).toHaveValue('# manual viejo\n');
 
   await user.clear(caja);
   await user.type(caja, '# nuevo');
   await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
 
-  await waitFor(() => expect(recibido).toBeDefined());
+  await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido?.content).toBe('# nuevo');
   // La huella de lo que se abrió VIAJA. Sin ella dos personas se pisan en silencio.
   expect(recibido?.expected_sha).toBe(SHA_VIEJO);
@@ -313,7 +313,7 @@ it('un fichero ausente se crea con create_if_absent, nunca como reemplazo sin SH
   await user.type(caja, '# nuevo');
   await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
 
-  await waitFor(() => expect(recibido).toBeDefined());
+  await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido).toEqual({ content: '# nuevo', create_if_absent: true });
 });
 

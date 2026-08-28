@@ -35,7 +35,7 @@ export function LiveFleetTally({
               style={{ ['--accent' as string]: STATE_ACCENT[state] }}
               data-empty={tally[state] === 0 ? 'true' : undefined}
               aria-pressed={stateFilter === state}
-              onClick={() => setStateFilter((current) => (current === state ? undefined : state))}
+              onClick={() => { setStateFilter((current) => (current === state ? undefined : state)); }}
               title={meta.hint}
             >
               <span className="live-tally-swatch" aria-hidden="true" />

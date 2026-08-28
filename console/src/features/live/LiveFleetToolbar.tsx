@@ -70,7 +70,7 @@ export function LiveFleetToolbar({
         Refresco
         <select
           value={intervalMs}
-          onChange={(event) => setIntervalMs(Number(event.target.value))}
+          onChange={(event) => { setIntervalMs(Number(event.target.value)); }}
           aria-label="Intervalo de refresco"
         >
           {INTERVALS.map((option) => (
@@ -96,14 +96,14 @@ export function LiveFleetToolbar({
           type="search"
           value={query}
           placeholder="Buscar alias…"
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => { setQuery(event.target.value); }}
         />
       </label>
 
       {tenants.length > 1 ? (
         <label>
           Cliente
-          <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)}>
+          <select value={tenantFilter} onChange={(event) => { setTenantFilter(event.target.value); }}>
             <option value="todos">todos ({tenants.length})</option>
             {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
           </select>

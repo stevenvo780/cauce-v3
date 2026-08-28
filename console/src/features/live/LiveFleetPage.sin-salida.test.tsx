@@ -35,7 +35,7 @@ describe('/live cuando el gateway no contesta', () => {
     expect(aviso).toHaveTextContent(/\/v3\/console\/activity/);
     expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
     // Nada de jerga del navegador en la cara del operador.
-    expect(aviso.textContent ?? '').not.toMatch(/abort/i);
+    expect(aviso.textContent).not.toMatch(/abort/i);
   });
 
   it('el cartel de carga avisa de que va lento en vez de girar mudo', () => {
@@ -77,7 +77,7 @@ describe('/live cuando el gateway no contesta', () => {
     // Se pulsa el botón. Arranca otra lectura que tampoco va a volver: eso es lo que hay que decir.
     fireEvent.click(screen.getByRole('button', { name: /reintentar/i }));
 
-    await waitFor(() => expect(aviso).toHaveTextContent(/Hay una lectura en curso/));
+    await waitFor(() => { expect(aviso).toHaveTextContent(/Hay una lectura en curso/); });
     expect(aviso).toHaveTextContent(/se corta a los 30 s/);
     // Y el botón sigue siendo pulsable: deshabilitarlo lo dejaría inerte casi siempre, porque con
     // el refresco automático de esta vista casi siempre hay una lectura en vuelo.

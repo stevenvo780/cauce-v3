@@ -74,7 +74,7 @@ export function AgentDrawer({
   useEffect(() => {
     const alPulsar = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     document.addEventListener('keydown', alPulsar);
-    return () => document.removeEventListener('keydown', alPulsar);
+    return () => { document.removeEventListener('keydown', alPulsar); };
   }, [onClose]);
 
   const meta = LIVE_STATE_META[view.state];
@@ -106,7 +106,7 @@ export function AgentDrawer({
             role="tab"
             aria-selected={tab === entry.id}
             className="agent-drawer-tab"
-            onClick={() => onTab(entry.id)}
+            onClick={() => { onTab(entry.id); }}
           >
             {entry.label}
           </button>
@@ -124,8 +124,8 @@ export function AgentDrawer({
             key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}
-            onEditarEnPerfil={() => onTab('perfil')}
-            onEditarEnFicheros={() => onTab('ficheros')}
+            onEditarEnPerfil={() => { onTab('perfil'); }}
+            onEditarEnFicheros={() => { onTab('ficheros'); }}
             onRestaurarEnPerfil={(texto) => {
               // Sólo cambia `role_summary`: una restauración nunca pisa los otros seis campos que
               // el operador ya tuviera en borrador para este alias.
@@ -150,7 +150,7 @@ export function AgentDrawer({
         <a
           className="button small secondary"
           href={`/fleet/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`}
-          onClick={(event) => onNavClick(event, `/fleet/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`)}
+          onClick={(event) => { onNavClick(event, `/fleet/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`); }}
         >
           <ExternalLink size={14} aria-hidden="true" /> Abrir la Terminal acotada a este agente
         </a>
@@ -297,7 +297,7 @@ function DeliveryCard({ item, origen }: {
         <a
           className="button small secondary"
           href={`/queues?delivery=${encodeURIComponent(item.delivery_id ?? '')}`}
-          onClick={(event) => onNavClick(event, `/queues?delivery=${encodeURIComponent(item.delivery_id ?? '')}`)}
+          onClick={(event) => { onNavClick(event, `/queues?delivery=${encodeURIComponent(item.delivery_id ?? '')}`); }}
         >
           Ver en Queues
         </a>

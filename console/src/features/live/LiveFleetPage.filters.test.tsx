@@ -100,7 +100,7 @@ describe('el selector de Cliente', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(dibujados().length).toBeGreaterThan(5));
+    await waitFor(() => { expect(dibujados().length).toBeGreaterThan(5); });
     expect(dibujados().some((key) => key.startsWith('Steven/'))).toBe(true);
 
     await elegirCliente(user, 'Miguel');
@@ -139,7 +139,7 @@ describe('el selector de Cliente', () => {
 
     const descripcion = await screen.findByText(/Los 4 alias de Miguel/);
     expect(descripcion).toBeInTheDocument();
-    await waitFor(() => expect(dibujados().every((key) => key.startsWith('Miguel/'))).toBe(true));
+    await waitFor(() => { expect(dibujados().every((key) => key.startsWith('Miguel/'))).toBe(true); });
   });
 
   it('la cinta de triage cuenta el ALCANCE, no la flota entera', async () => {
@@ -151,12 +151,12 @@ describe('el selector de Cliente', () => {
     // `:not(.is-unreported)` deja fuera los dos chips de DERIVA: no son estados, y sumarlos a la
     // cinta mezclaría «cuántos alias hay en cada estado» con «cuántas altas están a medias».
     const sumaChips = () => [...document.querySelectorAll('.live-tally-chip:not(.is-unreported) strong')]
-      .reduce((total, chip) => total + Number(chip.textContent ?? 0), 0);
-    await waitFor(() => expect(sumaChips()).toBe(15));
+      .reduce((total, chip) => total + Number(chip.textContent), 0);
+    await waitFor(() => { expect(sumaChips()).toBe(15); });
 
     await elegirCliente(user, 'Miguel');
     // janus, kratos, iza y atlas: los cuatro alias de Miguel que la actividad reporta.
-    await waitFor(() => expect(sumaChips()).toBe(4));
+    await waitFor(() => { expect(sumaChips()).toBe(4); });
   });
 
   it('un cliente del que la actividad no reporta NADA no sale verde: sale «no lo sé»', async () => {
@@ -173,7 +173,7 @@ describe('el selector de Cliente', () => {
     const banda = await screen.findByLabelText('Veredicto de la flota');
     await elegirCliente(user, 'Miguel');
 
-    await waitFor(() => expect(banda).toHaveAttribute('data-tone', 'desconocido'));
+    await waitFor(() => { expect(banda).toHaveAttribute('data-tone', 'desconocido'); });
     expect(banda).not.toHaveAttribute('data-tone', 'ok');
     expect(within(banda).getByText(/no hay ni un alias que mirar/i)).toBeInTheDocument();
   });
@@ -214,7 +214,9 @@ describe('el selector de Cliente', () => {
 
     // `kant` no tiene ninguna relación con `salva`: bajo la regla vieja, enfocarlo dejaba a salva
     // fuera del conjunto activo y por tanto atenuado.
-    const kant = document.querySelector('[data-agent-key="Steven/kant"]') as SVGGElement;
+    const kant = document.querySelector('[data-agent-key="Steven/kant"]');
+    expect(kant).not.toBeNull();
+    if (!kant) throw new Error('kant node not found');
     await user.hover(kant);
 
     expect(salva.classList.contains('is-dim')).toBe(false);
@@ -260,7 +262,7 @@ describe('la topología caída', () => {
     falla = false;
     await user.click(screen.getAllByRole('button', { name: /reintentar la topología/i })[0]);
 
-    await waitFor(() => expect(document.querySelector('.lhg-svg')).toBeTruthy());
+    await waitFor(() => { expect(document.querySelector('.lhg-svg')).toBeTruthy(); });
     expect(screen.queryAllByText(/No se pudo leer la topología/)).toHaveLength(0);
   });
 
@@ -275,10 +277,10 @@ describe('la topología caída', () => {
 
     renderWithApi(<LiveFleetPage />);
     await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(lecturas).toBe(1));
+    await waitFor(() => { expect(lecturas).toBe(1); });
 
     await user.click(screen.getByRole('button', { name: /refrescar ahora/i }));
-    await waitFor(() => expect(lecturas).toBe(2));
+    await waitFor(() => { expect(lecturas).toBe(2); });
   });
 });
 
@@ -287,7 +289,7 @@ describe('prefers-reduced-motion', () => {
     // jsdom no implementa matchMedia. Se instala una que responda lo que el test necesita, y se
     // conserva la firma real (addEventListener incluido) para no acreditar un falso positivo con
     // un doble más permisivo que el navegador.
-    window.matchMedia = ((query: string) => ({
+    window.matchMedia = (query: string) => ({
       matches: reduce && query.includes('reduce'),
       media: query,
       onchange: null,
@@ -296,7 +298,7 @@ describe('prefers-reduced-motion', () => {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
       dispatchEvent: () => false,
-    })) as unknown as typeof window.matchMedia;
+    });
   }
 
   afterEach(() => {
@@ -312,7 +314,7 @@ describe('prefers-reduced-motion', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(document.querySelectorAll('.lhg-flow-line').length).toBeGreaterThan(0));
+    await waitFor(() => { expect(document.querySelectorAll('.lhg-flow-line').length).toBeGreaterThan(0); });
 
     expect(document.querySelectorAll('animateMotion')).toHaveLength(0);
     // Pero el punto NO desaparece: se queda fijo a mitad de la curva. Una flecha viva y una muerta
@@ -328,7 +330,7 @@ describe('prefers-reduced-motion', () => {
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    await waitFor(() => expect(document.querySelectorAll('animateMotion').length).toBeGreaterThan(0));
+    await waitFor(() => { expect(document.querySelectorAll('animateMotion').length).toBeGreaterThan(0); });
     expect(document.querySelector('.lhg-flow-dot')?.getAttribute('cx')).toBeNull();
   });
 });

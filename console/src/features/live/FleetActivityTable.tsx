@@ -88,7 +88,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
           value={query}
           placeholder="Buscar alias, tenant o arnés…"
           aria-label="Buscar un agente por alias"
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => { setQuery(event.target.value); }}
         />
       </label>
       {agents.length === 0 ? (
@@ -133,7 +133,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
                     presenceLabel={presence.label}
                     presenceTone={presence.tone}
                     expanded={isExpanded}
-                    onToggle={() => toggle(key)}
+                    onToggle={() => { toggle(key); }}
                     items={items}
                     ackLookbackSeconds={thresholds?.ack_lookback_seconds}
                     highlighted={selectedKey === agentKeyOf(agent)}
@@ -263,7 +263,7 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
         className={urgency ? `row-${urgency}` : undefined}
         onMouseEnter={() => onHover?.(agentKeyOf(agent))}
         onMouseLeave={() => onHover?.(null)}
-        onClick={onOpen ? () => onOpen(agentKeyOf(agent)) : undefined}
+        onClick={onOpen ? () => { onOpen(agentKeyOf(agent)); } : undefined}
         data-clickable={onOpen ? 'true' : undefined}
       >
         <td>

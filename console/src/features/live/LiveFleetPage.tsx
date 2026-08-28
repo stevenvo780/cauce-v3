@@ -90,19 +90,18 @@ export function LiveFleetPage() {
       for (const [key, list] of Object.entries(fresh)) merged[key] = [...(merged[key] ?? []), ...list];
       return merged;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observedAt]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => { setNow(Date.now()); }, 1000);
+    return () => { window.clearInterval(timer); };
   }, []);
 
   const { reload } = activity;
   useEffect(() => {
     if (intervalMs <= 0) return undefined;
     const timer = window.setInterval(reload, intervalMs);
-    return () => window.clearInterval(timer);
+    return () => { window.clearInterval(timer); };
   }, [intervalMs, reload]);
 
   const { views, edges } = useMemo(
@@ -153,14 +152,16 @@ export function LiveFleetPage() {
     const salasPorTenant = new Map<string, Map<string, string[]>>();
     const etiquetaSala = new Map<string, string | null>();
     for (const tenant of base.tenants ?? []) {
+      if (!tenant.id) continue;
       for (const room of tenant.rooms ?? []) {
         if (room.id) etiquetaSala.set(`${tenant.id}/${room.id}`, room.label ?? room.id);
       }
     }
 
     for (const view of alcance) {
-      const declaradas = view.rooms ?? [];
-      const sala = declaradas[0] ?? salaDeclarada.get(view.key) ?? SIN_SALA;
+      const declaradas = view.rooms;
+      const primeraDeclarada = declaradas.length > 0 ? declaradas[0] : undefined;
+      const sala = primeraDeclarada ?? salaDeclarada.get(view.key) ?? SIN_SALA;
       const porSala = salasPorTenant.get(view.tenantId) ?? new Map<string, string[]>();
       const miembros = porSala.get(sala) ?? [];
       miembros.push(view.alias);
@@ -232,8 +233,8 @@ export function LiveFleetPage() {
     if (tenantsList.length === 0) return 'sin datos';
     const salas = tenantsList.reduce((total, tenant) => total + (tenant.rooms ?? []).length, 0);
     const permisos = (topologiaEnAlcance?.acl_edges ?? []).length;
-    return `${tenantsList.length} ${tenantsList.length === 1 ? 'cliente' : 'clientes'}, `
-      + `${salas} ${salas === 1 ? 'sala' : 'salas'}, ${permisos} ${permisos === 1 ? 'permiso' : 'permisos'}`;
+    return `${String(tenantsList.length)} ${tenantsList.length === 1 ? 'cliente' : 'clientes'}, `
+      + `${String(salas)} ${salas === 1 ? 'sala' : 'salas'}, ${String(permisos)} ${permisos === 1 ? 'permiso' : 'permisos'}`;
   }, [topologiaEnAlcance, topology.data, topology.error]);
 
   const staleAfterMs = (intervalMs > 0 ? intervalMs : 30000) * STALE_FACTOR;
@@ -277,14 +278,14 @@ export function LiveFleetPage() {
 
   return (
     <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
-      + `${drawer && detail && drawer.tab === 'perfil' ? ' cajon-ancho' : ''}`}>
+      + (drawer && detail && drawer.tab === 'perfil' ? ' cajon-ancho' : '')}>
       <div className="live-main">
         <PageHeader
           eyebrow="Flota"
           title="La flota ahora"
           description={tenantFilter === 'todos'
-            ? `Los ${alcance.length} alias que podés ver, qué tienen entre manos y quién se lo pidió.`
-            : `Los ${alcance.length} alias de ${tenantFilter}, qué tienen entre manos y quién se lo pidió.`
+            ? `Los ${String(alcance.length)} alias que podés ver, qué tienen entre manos y quién se lo pidió.`
+            : `Los ${String(alcance.length)} alias de ${tenantFilter}, qué tienen entre manos y quién se lo pidió.`
               + ' Todo lo de abajo —veredicto, cinta, mapa y lista— está acotado a este cliente.'}
         />
 
@@ -308,7 +309,7 @@ export function LiveFleetPage() {
         <FleetVerdict
           verdict={verdict}
           totals={snapshot?.totals}
-          onCulprit={(culprit) => enfocarCulpable(culprit.key)}
+          onCulprit={(culprit) => { enfocarCulpable(culprit.key); }}
         />
 
         <LiveFleetTally
@@ -329,7 +330,7 @@ export function LiveFleetPage() {
                 type="button"
                 className="live-layer-button"
                 aria-pressed={layer === option}
-                onClick={() => setLayer(option)}
+                onClick={() => { setLayer(option); }}
               >
                 {option === 'ahora' ? 'Ahora' : 'Permisos'}
               </button>
@@ -350,7 +351,7 @@ export function LiveFleetPage() {
               <strong>{tenantFilter === 'todos' ? 'La flota está libre.' : `Nadie de ${tenantFilter} tiene trabajo entre manos.`}</strong>
               {' '}Nadie tiene trabajo entre manos ahora mismo — eso no es una avería.
               {tenantFilter === 'todos' && typeof snapshot?.totals?.in_flight === 'number'
-                ? ` Hay ${snapshot.totals.in_flight} en vuelo y ${snapshot.totals.queued ?? 0} esperando turno.`
+                ? ` Hay ${String(snapshot.totals.in_flight)} en vuelo y ${String(snapshot.totals.queued ?? 0)} esperando turno.`
                 : null}
             </p>
           ) : null}
@@ -368,8 +369,8 @@ export function LiveFleetPage() {
             loadingTopology={topology.loading && !topology.data}
             topologyError={topology.error ?? null}
             onRetryTopology={recargarTopologia}
-            onFocus={(key) => setHovered(key ?? undefined)}
-            onOpen={(view) => abrirCajon(view.key)}
+            onFocus={(key) => { setHovered(key ?? undefined); }}
+            onOpen={(view) => { abrirCajon(view.key); }}
             onHover={(key, anchor, view, alias) => {
               setTip(key && anchor ? { anchor, view, alias } : null);
             }}
@@ -382,8 +383,8 @@ export function LiveFleetPage() {
           onlyKeys={spotlight}
           filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
           estados={estadosVivos}
-          onSelect={(key) => setHovered(key ?? undefined)}
-          onOpen={(key) => abrirCajon(key)}
+          onSelect={(key) => { setHovered(key ?? undefined); }}
+          onOpen={(key) => { abrirCajon(key); }}
         />
 
         <LiveFleetLegend
@@ -398,14 +399,13 @@ export function LiveFleetPage() {
           view={detail}
           tab={drawer.tab}
           borradorPerfil={borradoresPerfil[drawer.key]}
-          onBorradorPerfil={(campos) => setBorradoresPerfil((actuales) => {
+          onBorradorPerfil={(campos) => { setBorradoresPerfil((actuales) => {
             if (campos === undefined) {
-              const resto = { ...actuales };
-              delete resto[drawer.key];
+              const { [drawer.key]: _omitted, ...resto } = actuales;
               return resto;
             }
             return { ...actuales, [drawer.key]: campos };
-          })}
+          }); }}
           onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab); }}
           onClose={cerrarCajon}
         />

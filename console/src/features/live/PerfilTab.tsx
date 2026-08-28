@@ -136,7 +136,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
     setAviso(undefined);
     setBusy(true);
     try {
-      const expectedRevision = perfil.data?.exists === true ? perfil.data.revision as number : null;
+      const expectedRevision = perfil.data?.exists === true ? (perfil.data.revision ?? null) : null;
       const result = await api.putAgentPerfil(
         tenantId, alias, perfilParaGuardar(campos), expectedRevision,
       );
@@ -165,7 +165,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       if (recarga.error) {
         setAviso({
           tone: 'parcial',
-          text: `El runtime acreditó la revisión ${result.revision}, pero no pude releer el perfil `
+          text: `El runtime acreditó la revisión ${String(result.revision)}, pero no pude releer el perfil `
             + `(${recarga.error.message}). Conservo el borrador para no volver a mostrar un snapshot viejo.`,
         });
         return;
@@ -180,8 +180,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           !== recarga.data.runtime_verification.generation) {
         setAviso({
           tone: 'parcial',
-          text: `El runtime acreditó la revisión ${result.revision}, pero la relectura ya muestra `
-            + `desired ${recarga.data.revision ?? 'ausente'} y aplicado ${recarga.data.applied_revision ?? 'ninguno'}. `
+          text: `El runtime acreditó la revisión ${String(result.revision)}, pero la relectura ya muestra `
+            + `desired ${String(recarga.data.revision ?? 'ausente')} y aplicado ${String(recarga.data.applied_revision ?? 'ninguno')}. `
             + 'No limpio el borrador ni presento esa revisión más nueva como aplicada.',
         });
         return;
@@ -189,8 +189,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       onBorrador(undefined);
       setAviso({
         tone: 'success',
-        text: `Aplicado: desired y runtime acreditan la revisión ${result.revision}; `
-          + `${result.acknowledgements.length} ficheros respondieron SHA y bytes.`,
+        text: `Aplicado: desired y runtime acreditan la revisión ${String(result.revision)}; `
+          + `${String(result.acknowledgements.length)} ficheros respondieron SHA y bytes.`,
       });
     } catch (error) {
       const crudo = error instanceof Error ? error.message : 'el servidor no dijo por qué';
@@ -201,14 +201,14 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       setAviso({
         tone: 'error',
         text: recarga.error
-          ? `No hubo un 2xx aplicado (HTTP ${status ?? 'sin dato'}: ${crudo}) y tampoco pude `
+          ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}) y tampoco pude `
             + `releer (${recarga.error.message}). El borrador se conserva; no se infiere si el desired avanzó.`
           : quedaPendiente
-            ? `No hubo un 2xx aplicado (HTTP ${status ?? 'sin dato'}: ${crudo}). La relectura `
-              + `muestra desired ${relectura.revision ?? 'ausente'} pendiente sobre aplicado `
-              + `${relectura.applied_revision ?? 'ninguno'}; el borrador se conserva y podés reintentar el lote.`
-            : `No hubo un 2xx aplicado (HTTP ${status ?? 'sin dato'}: ${crudo}). Releí desired `
-              + `${relectura?.revision ?? 'ausente'} / aplicado ${relectura?.applied_revision ?? 'ninguno'}; `
+            ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). La relectura `
+              + `muestra desired ${String(relectura.revision ?? 'ausente')} pendiente sobre aplicado `
+              + `${String(relectura.applied_revision ?? 'ninguno')}; el borrador se conserva y podés reintentar el lote.`
+            : `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). Releí desired `
+              + `${String(relectura?.revision ?? 'ausente')} / aplicado ${String(relectura?.applied_revision ?? 'ninguno')}; `
               + 'el borrador se conserva.',
       });
     } finally {
@@ -258,7 +258,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
                 rows={campo === 'purpose' ? 4 : 3}
                 disabled={soloLectura || busy || !agenteHabilitado
                   || runtimeNoVerificado || !runtimeActual}
-                onChange={(event) => editarTexto(campo, event.target.value)}
+                onChange={(event) => { editarTexto(campo, event.target.value); }}
               />
               <span className={`perfil-cuenta${tope !== undefined && medido > tope ? ' perfil-cuenta-fuera' : ''}`}>
                 {medido} / {tope ?? '—'}
@@ -280,7 +280,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
                 rows={4}
                 disabled={soloLectura || busy || !agenteHabilitado
                   || runtimeNoVerificado || !runtimeActual}
-                onChange={(event) => editarLista(campo, event.target.value)}
+                onChange={(event) => { editarLista(campo, event.target.value); }}
               />
               <span className={`perfil-cuenta${items.length > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
                 {items.length} {items.length === 1 ? 'entrada' : 'entradas'} / {perfil.data?.limites?.items ?? '—'}
@@ -404,27 +404,25 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
                   key={fichero.nombre}
                   type="button"
                   role="tab"
-                  aria-selected={abierto?.nombre === fichero.nombre}
+                  aria-selected={abierto.nombre === fichero.nombre}
                   className="perfil-fichero-tab"
-                  onClick={() => setFicheroAbierto(fichero.nombre)}
+                  onClick={() => { setFicheroAbierto(fichero.nombre); }}
                 >
                   {fichero.nombre}
                   {fichero.politica === 'solo-si-falta' ? <span className="perfil-del-agente"> · del agente</span> : null}
                 </button>
               ))}
             </div>
-            {abierto ? (
-              <div className="perfil-fichero-cuerpo" role="tabpanel">
-                {abierto.politica === 'solo-si-falta' ? (
-                  <p className="muted">
-                    {abierto.nombre} es del agente: lo escribe él. Si ya existe NO se toca ni para
-                    fusionar un bloque nuestro; si falta se crea vacío.
-                  </p>
-                ) : null}
-                <pre className="perfil-fichero-texto">{abierto.texto || '(este fichero queda sin bloque: no hay nada declarado que le toque)'}</pre>
-                <p className="muted">{abierto.unidades.toLocaleString('es')} unidades</p>
-              </div>
-            ) : null}
+            <div className="perfil-fichero-cuerpo" role="tabpanel">
+              {abierto.politica === 'solo-si-falta' ? (
+                <p className="muted">
+                  {abierto.nombre} es del agente: lo escribe él. Si ya existe NO se toca ni para
+                  fusionar un bloque nuestro; si falta se crea vacío.
+                </p>
+              ) : null}
+              <pre className="perfil-fichero-texto">{abierto.texto || '(este fichero queda sin bloque: no hay nada declarado que le toque)'}</pre>
+              <p className="muted">{abierto.unidades.toLocaleString('es')} unidades</p>
+            </div>
           </>
         ) : null}
       </section>

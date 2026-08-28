@@ -154,7 +154,7 @@ it('never renders a null seconds_since_last_ack as zero or a dash: it reads as a
   const midasRow = await screen.findByRole('row', { name: /midas/i });
   const ackCell = within(midasRow).getAllByRole('cell')[7];
   expect(ackCell.textContent).not.toBe('0');
-  expect(ackCell.textContent?.toLowerCase()).toContain('ack');
+  expect(ackCell.textContent.toLowerCase()).toContain('ack');
 });
 
 it('reflects totals.flagged without inventing zeroes for absent keys, and keeps it separate from the seven states', async () => {
@@ -169,7 +169,9 @@ it('reflects totals.flagged without inventing zeroes for absent keys, and keeps 
   // panel por su título dentro del desplegable, no por un texto que aparece dos veces.
   const fold = (await screen.findAllByText('Señales activas'))
     .map((nodo) => nodo.closest('section'))
-    .find((seccion): seccion is HTMLElement => seccion !== null)!;
+    .find((seccion): seccion is HTMLElement => seccion !== null);
+  expect(fold).toBeDefined();
+  if (!fold) throw new Error('fold section not found');
   expect(within(fold).getByText('Saturado').closest('.chip')).toHaveTextContent('2');
   expect(within(fold).getByText('Caído').closest('.chip')).toHaveTextContent('1');
   expect(within(fold).queryByText('Nunca conectó')).not.toBeInTheDocument();

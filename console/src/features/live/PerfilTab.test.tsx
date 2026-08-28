@@ -26,7 +26,7 @@ function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<
       }],
     } : null,
     runtime_adoption: exists ? {
-      evidence: 'adapter_delivery', revision: revision!, generation: 'gen-4',
+      evidence: 'adapter_delivery', revision: 4, generation: 'gen-4',
       adopted_at: '2026-08-26T00:01:00Z',
       documents: [{
         name: 'AGENTS.md', path: '/home/kant/.codex/AGENTS.md', sha: SHA,
@@ -92,9 +92,9 @@ async function casoDeGuardado(existeAlAbrir: boolean) {
       actual = {
         ...actual, exists: true, revision, applied_revision: revision,
         runtime_state: 'applied', perfil: body.profile,
-        runtime_adoption: {
-          ...actual.runtime_adoption!, revision,
-        },
+        runtime_adoption: actual.runtime_adoption ? {
+          ...actual.runtime_adoption, revision,
+        } : null,
       };
       return HttpResponse.json(ackAplicado(revision));
     }),
@@ -104,7 +104,7 @@ async function casoDeGuardado(existeAlAbrir: boolean) {
   const caja = await screen.findByLabelText(/Identidad y propósito/i);
   await user.type(caja, 'coordinar la flota');
   await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
-  await waitFor(() => expect(recibido).toBeDefined());
+  await waitFor(() => { expect(recibido).toBeDefined(); });
   return recibido;
 }
 
@@ -169,7 +169,7 @@ it('un desired pendiente se puede reintentar sin cambiar el texto', async () => 
   renderWithApi(<Vista />);
   expect(await screen.findByText(/Desired revisión 4 pendiente/)).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: /Reintentar aplicación/i }));
-  await waitFor(() => expect(recibido?.expected_revision).toBe(4));
+  await waitFor(() => { expect(recibido?.expected_revision).toBe(4); });
   expect(await screen.findByText(/Aplicado: desired y runtime acreditan la revisión 4/)).toBeInTheDocument();
 });
 
@@ -211,11 +211,17 @@ it('permiso ausente o no acreditado bloquea caja y PUT', async () => {
 });
 
 it('drift se pinta rojo y permite restaurar el lote sin cambiar texto', async () => {
+  const baseResp = respuesta(true);
+  const baseVerification = baseResp.runtime_verification ?? {
+    state: 'current', generation: 'gen-4', container_id: 'ws-kant',
+    observed_at: '2026-08-26T00:00:00Z',
+    documents: [],
+  };
   server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, {
     runtime_state: 'drifted',
     runtime_verification: {
-      ...respuesta(true).runtime_verification!, state: 'drifted',
-      documents: respuesta(true).runtime_verification!.documents.map((document) => ({
+      ...baseVerification, state: 'drifted',
+      documents: baseVerification.documents.map((document) => ({
         ...document, observed_sha: 'b'.repeat(64), current: false,
       })),
     },
@@ -227,10 +233,16 @@ it('drift se pinta rojo y permite restaurar el lote sin cambiar texto', async ()
 });
 
 it('runtime sin generación no se presenta aplicado ni deja editar', async () => {
+  const baseResp = respuesta(true);
+  const baseVerification = baseResp.runtime_verification ?? {
+    state: 'current', generation: 'gen-4', container_id: 'ws-kant',
+    observed_at: '2026-08-26T00:00:00Z',
+    documents: [],
+  };
   server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, {
     runtime_state: 'runtime_unverified',
     runtime_verification: {
-      ...respuesta(true).runtime_verification!, state: 'unverified', generation: null,
+      ...baseVerification, state: 'unverified', generation: null,
     },
   }))));
   renderWithApi(<Vista />);

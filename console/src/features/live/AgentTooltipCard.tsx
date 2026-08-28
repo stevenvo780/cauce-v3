@@ -63,7 +63,7 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
       {/* 3 — cuántos esperan turno detrás. Se omite entera en cero: una línea que dice "0" ocupa
              el mismo sitio que una que informa, y no informa. */}
       {view.queued > 0 ? (
-        <p>{view.queued === 1 ? '1 esperando turno detrás' : `${view.queued} esperando turno detrás`}.</p>
+        <p>{view.queued === 1 ? '1 esperando turno detrás' : `${String(view.queued)} esperando turno detrás`}.</p>
       ) : null}
 
       {/* 4 — sólo si va mal. En un agente sano esta línea no existe. */}
@@ -74,7 +74,7 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
             hoy" inventado sobre un dato ausente es una acusación falsa a un agente que quizá
             cerró treinta. */}
         {typeof view.closed24h === 'number'
-          ? <p>{view.closed24h === 1 ? 'Cerró 1 encargo hoy' : `Cerró ${view.closed24h} encargos hoy`}.</p>
+          ? <p>{view.closed24h === 1 ? 'Cerró 1 encargo hoy' : `Cerró ${String(view.closed24h)} encargos hoy`}.</p>
           : null}
         <p>Enter para abrir el detalle.</p>
       </div>
@@ -109,7 +109,7 @@ function lineaTrabajo(view: LiveAgentView): string {
   const cuanto = typeof edad === 'number' ? ` desde hace ${humanSeconds(edad)}` : '';
   return view.inFlight === 1
     ? `Con 1 entrega entre manos${cuanto}.`
-    : `Con ${view.inFlight} entregas entre manos${cuanto}.`;
+    : `Con ${String(view.inFlight)} entregas entre manos${cuanto}.`;
 }
 
 function lineaSenal(view: LiveAgentView): string {
