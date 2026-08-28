@@ -5,7 +5,7 @@
       "agentes": [
         {
           "nombre": "salva",
-          "rol": ""
+          "rol": "Asiste de diseño en ClaudeCode"
         }
       ]
     },
@@ -14,23 +14,23 @@
       "agentes": [
         {
           "nombre": "jarvis",
-          "rol": ""
+          "rol": "Mi asistente persona len OpenClaw"
         },
         {
           "nombre": "zeus",
-          "rol": ""
+          "rol": "Encargado de la gestión de Cuce y de la infraestructura de los agentes"
         },
         {
           "nombre": "argos",
-          "rol": ""
+          "rol": "Director general encargado de los proyectos de desarrollo"
         },
         {
           "nombre": "socrates",
-          "rol": ""
+          "rol": "Desarrollador de software encargado esencialmente de desarrollos personales mios"
         },
         {
           "nombre": "kant",
-          "rol": ""
+          "rol": "Devops encargado de la infraestructura de todos los servidores y ayuda a cualquier a gente en todo lado con problemas de infraestructura"
         }
       ]
     },
@@ -39,15 +39,15 @@
       "agentes": [
         {
           "nombre": "tales",
-          "rol": ""
+          "rol": "Desarrollador para lo que sea que necesite Jhon"
         },
         {
           "nombre": "heraclito",
-          "rol": ""
+          "rol": "Desarrollador para lo que sea que necesite Jhon"
         },
         {
           "nombre": "hegel",
-          "rol": ""
+          "rol": "Asistente personal de jhon para todo lo que necesite y mucho de ventas de sus productos y servicios"
         }
       ]
     },
@@ -56,23 +56,23 @@
       "agentes": [
         {
           "nombre": "atlas",
-          "rol": ""
+          "rol": "Desarrollador para lo que sea que necesite Miguel"
         },
         {
           "nombre": "kratos",
-          "rol": ""
+          "rol": "Desarrollador para lo que sea que necesite Miguel casi siempre se encarga de Demeter y graf pero es abierto igual"
         },
         {
           "nombre": "iza",
-          "rol": ""
+          "rol": "Asistente empresarial que atiende la empresa humanizar"
         },
         {
           "nombre": "janus",
-          "rol": ""
+          "rol": "Asistente personal de Miguel para todo lo que necesite asistencia de sus multiples empresas y vida personal"
         },
         {
           "nombre": "gaia",
-          "rol": ""
+          "rol": "Asistente empresarial para la empresa de Finca directa de Miguel y ayuda a Miguel en lo que necesite para su empresa"
         }
       ]
     }
