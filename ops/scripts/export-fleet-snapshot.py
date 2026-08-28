@@ -13,6 +13,8 @@ import sys
 import tempfile
 from typing import Any
 
+from fleet_derive import runtime_state_directory
+
 PROJECT = pathlib.Path(__file__).resolve().parents[2]
 OPS_DIR = PROJECT / "ops"
 QUERY_PATH = pathlib.Path(__file__).with_name("fleet-query.sql")
@@ -236,7 +238,7 @@ def snapshot_document(
         alias_identities[alias] = identity
         if enabled and None in (harness, container, user, home, state_directory):
             raise SnapshotError(f"enabled agent has incomplete runtime placement: {tenant}/{alias}")
-        agents_by_identity[identity] = {
+        normalized_agent = {
             "alias": alias,
             "tenant": tenant,
             "harness": harness,
@@ -246,6 +248,17 @@ def snapshot_document(
             "home": home,
             "runtimeStateDirectory": state_directory,
         }
+        if enabled:
+            try:
+                expected_state_directory = runtime_state_directory(alias, normalized_agent)
+            except ValueError as exc:
+                raise SnapshotError(f"{label}.harness_id is unsupported: {harness}") from exc
+            if state_directory != expected_state_directory:
+                raise SnapshotError(
+                    f"{label}.state_directory drifts from the derived runtime path: "
+                    f"expected {expected_state_directory}, got {state_directory}"
+                )
+        agents_by_identity[identity] = normalized_agent
 
     fleet: dict[str, dict[str, Any]] = {}
     retired: dict[str, dict[str, Any]] = {}

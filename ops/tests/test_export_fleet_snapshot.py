@@ -17,6 +17,7 @@ from unittest import mock
 SCRIPT = pathlib.Path(__file__).parents[1] / "scripts" / "export-fleet-snapshot.py"
 QUERY = SCRIPT.with_name("fleet-query.sql")
 GENERATOR = SCRIPT.with_name("generate-container-aliases.py")
+sys.path.insert(0, os.fspath(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("export_fleet_snapshot", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -34,7 +35,7 @@ def agent(
         "container_name": "ctrl-infra",
         "runtime_user": "dev",
         "home_directory": "/home/dev",
-        "state_directory": f"/var/lib/cauce-v3/aliases/{alias}",
+        "state_directory": f"/home/dev/.local/state/cauce-v3/{alias}",
     }
     return {
         "tenant_id": tenant,
@@ -121,7 +122,7 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
                 "container": "ctrl-infra",
                 "user": "dev",
                 "home": "/home/dev",
-                "runtimeStateDirectory": "/var/lib/cauce-v3/aliases/kant",
+                "runtimeStateDirectory": "/home/dev/.local/state/cauce-v3/kant",
             },
         )
 
@@ -196,6 +197,35 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
             allowed_tenants=frozenset({"Steven"}),
         )
         self.assertEqual(document["retired"], {"dedalo": {}})
+
+    def test_validates_container_and_host_runtime_paths_but_copies_the_literal(self) -> None:
+        container_agent = agent("argos")
+        container_agent["harness_id"] = "openclaw"
+        container_agent["runtime_user"] = "claw"
+        container_agent["home_directory"] = "/home/claw"
+        container_agent["state_directory"] = "/home/claw/.openclaw/cauce-v3/argos"
+        host_agent = agent("kant")
+        host_agent["container_name"] = "host:kratos"
+        host_agent["runtime_user"] = "stev"
+        host_agent["home_directory"] = "/home/stev"
+        host_agent["state_directory"] = "/var/lib/cauce-v3/aliases/kant"
+        for row, alias in ((container_agent, "argos"), (host_agent, "kant")):
+            with self.subTest(alias=alias):
+                literal = row["state_directory"]
+                document = MODULE.snapshot_document(
+                    source(agents=[row], memberships=[membership(alias)]),
+                    allowed_tenants=frozenset({"Steven"}),
+                )
+                self.assertEqual(document["fleet"][alias]["runtimeStateDirectory"], literal)
+
+    def test_rejects_runtime_state_directory_drift(self) -> None:
+        drifting = agent("kant")
+        drifting["state_directory"] = "/var/lib/cauce-v3/aliases/kant"
+        with self.assertRaisesRegex(MODULE.SnapshotError, "state_directory drifts"):
+            MODULE.snapshot_document(
+                source(agents=[drifting]),
+                allowed_tenants=frozenset({"Steven"}),
+            )
 
     def test_retired_agent_does_not_require_a_membership(self) -> None:
         document = MODULE.snapshot_document(
