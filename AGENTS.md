@@ -12,6 +12,8 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 - `packages/mcp-fleet-monitor` — MCP de observación de flota (escrito; sin registrar en ningún alias)
 - `services/gateway | dispatcher | terminal-relay | telegram-bridge` — los 4 servicios vivos
 - `console` — SPA React del operador
+
+**Quiénes somos y para qué**: `docs/flota-y-participantes.md` (máquinas, humanos, agentes con `grupos.json`, los 5 escenarios esenciales) — LÉELO antes de tocar nada que afecte a la flota.
 - `ops/` — systemd, pty-agent (terminal dentro de cada contenedor), scripts operativos
 - `plan-reestructura/` y `ordenes/` — el plan vigente y tu orden de trabajo
 

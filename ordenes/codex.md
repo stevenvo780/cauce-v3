@@ -1,20 +1,17 @@
-# Codex — ORDEN ACTIVA (sesión larga; oleadas de 4; sector: store + gateway + protocol/adapter-sdk/mcp + ops/{scripts,tests,harness,schemas})
+# Codex — ORDEN ACTIVA: RONDA FLOTA-COMO-DATOS, carril C (la ruta crítica antes de la ventana)
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. Evidencia madre: `ordenes/reportes/claude-megaauditoria.md` §3.1. Reglas: main directo, pathspec, sin clean/reset/stash, gate como usuario normal con `umask 022` (correr como root ahora está BLOQUEADO por guardia), **COMMIT+PUSH AL CERRAR CADA TAREA — tu ronda anterior dejó la cosecha sin commitear y las 2 tareas difíciles sin tocar: esta vez las difíciles van PRIMERO.**
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`plan-reestructura/flota-como-datos.md` COMPLETO** (es tu especificación: §1 snapshot, §3 fórmulas, §4 generadores, §6 gates, §9 riesgos y prohibiciones) → `docs/flota-y-participantes.md` (contexto). Reglas: pathspec, `umask 022`, commit+push POR TAREA. El supervisor (tu vieja tarea 1) YA NO ES TUYO — lo tomó el integrador.
 
-## Tarea 1 (CARRYOVER, obligatoria antes que nada) — el rojo determinista del supervisor
-`ops/tests/container-supervisor.test.mjs` falla SIEMPRE en la barrera de flock (~línea 1127; `waitForLogOrExit` 15s, ~línea 293): el primer supervisor lanzado se CUELGA antes del docker-exec falso (no sale — se queda). Llegó en `c7345da` y plausiblemente jamás pasó en esta máquina. Investiga arnés vs producto (¿`container-adapter-supervisor.sh` se bloquea en el flock del fixture, o el fixture arma mal la barrera?). Si es producto, es un cuelgue REAL de arranque. Cierra con el test completo VERDE y pega la duración.
+## C1 — `ops/scripts/fleet_derive.py` (módulo puro, sin IO)
+HARNESS_RULES por arnés (rama stateDirectory contenedor/host, workspace de openclaw, operationalModelEnv de hermes), `env_name(alias, kind)`, `SYSTEMD_USER="stev"`, `alias_entry()`, `manifest_doc()`. Nombra `runtime_state_directory()` vs `HOST_STATE_DIRECTORY` (las DOS rutas homónimas — §3 del diseño). Con tests unitarios propios.
 
-## Tarea 2 (CARRYOVER, obligatoria) — los 14 skips ambientales
-12 en `packages/adapter-sdk/test/shared-session.test.ts` (tmux) + 2 en `harnesses.test.ts` (plataforma). El gate NUNCA los corre. Garantiza tmux en el entorno del gate y quita el skip, o convierte la ausencia en FALLO ruidoso. Que el gate los ejecute de verdad y pega el conteo.
+## C2 — `ops/scripts/export-fleet-snapshot.py` + `ops/scripts/fleet-query.sql`
+La consulta ÚNICA (agents+memberships+role_policies) en el .sql; el exportador escribe `ops/flota.json` canónico (sort_keys, indent 2, SIN timestamp/hostname — idempotencia byte a byte) y `--check` sale 3 si difiere. Valida fail-loud: dockerHost ⊆ {local,kratos}, tenant ∈ enum del schema. JAMÁS lo invoca un gate (herméticos).
 
-## Tarea 3 — Lista §3.1 de la mega-auditoría (los ejecutables)
-1. `ops/scripts/validate.sh:6,197`: amplia ambos globs a los 10 `.sh` fuera (empieza por `scripts/test.sh`).
-2. `packages/mcp-fleet-monitor/package.json`: añade `esbuild` (pin de la raíz) y `@types/pg` a devDependencies (fallos verificados ocultando los de la raíz).
-3. `packages/store/src/repository/messages/_insert.ts` nuevo: `insertMessage`/`insertDelivery` con lista de columnas exportada; migra los 7 INSERT de messages y 6 de deliveries (y el INSERT…SELECT de `outbox/operator.ts:227`) en el MISMO cambio.
-4. `packages/protocol/src/schemas.ts` (1.093): parte por dominio de mensaje, barril re-export intacto.
-5. `ops/scripts/host-backup.sh:102`: quita la fecha del comentario, conserva la restricción.
-6. `packages/mcp-fleet-monitor/src/server.ts:253,261`: `shutdown(signal)` con try/catch, `process.once(..., () => { void shutdown(...) })`.
-7. Traspaso del ACK: avisa en tu reporte que `services/telegram-bridge/src/types.ts` (Gemini) puede importar de `@cauce/protocol/outbox-contracts` — dato: tus campos son `readonly`, los suyos mutables.
+## C3 — Los generadores con purga (LA FASE A ES TU CRITERIO DE HECHO)
+`generate-container-aliases.py` y `generate-manifests.py` (f-string reproduciendo el estilo flow actual, NO yaml.safe_dump; desenlaza huérfanos). **FASE A obligatoria**: construye a mano un `ops/flota.json` que iguale el inventario de HOY (11 alias) y demuestra que tus generadores reproducen `ops/container-aliases.json` y los 11 `ops/manifests/*.yaml` commiteados **BYTE A BYTE** (`cmp -s` verde, pégalo). NO conmutes el árbol al snapshot real (flota de 14): eso es del integrador (K2) tras la reconciliación en BD. Extiende `generate-units.py`/`generate-container-units.py` SOLO para importar fórmulas de fleet_derive (mínimo churn). `regenerate-fleet.sh` orquesta la cadena.
 
-## Vigilancia (NO tocar hoy): `session-control.ts` (785), `container-adapter-supervisor.sh` (976), `chain-control/materialization.ts` (778), `mutations.ts` (728), `runner.mjs` (718) — no los engordes.
+## C4 — Los gates del diseño §6
+(1) `validate.sh`: +2 bloques `cmp -s` (regenerar json+manifests desde `ops/flota.json` a tmp y exigir identidad) — SOLO actívalos cuando `ops/flota.json` exista en el árbol (guarda con `[ -f ]` hasta K2). (2) `container_ops_digest.py`: añade `ops/flota.json` y `ops/flota-fisica.json` a sus fuentes. (3) G-SNAP-2 (overlay: 3 claves permitidas, sin defaults redundantes), G-SNAP-3 (idempotencia doble sobre fixture), G-SNAP-4 (paridad de los 4 lectores duplicados, pineo no unificación) como tests en `ops/tests/`.
+
+## Recordatorios: byte-puro; prohibiciones del §9 del diseño (nada de borrar json/manifests, nada de escribir en BD, nada de /opt ni /etc); idioma nuevo del dueño: comentarios de CÓDIGO NUEVO en inglés.

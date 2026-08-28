@@ -1,17 +1,14 @@
-# Gemini — ORDEN ACTIVA (sesión nueva; sector: console + terminal-relay + telegram-bridge + dispatcher + ops/pty-agent + ops/runbooks)
+# Gemini — ORDEN ACTIVA: RONDA FLOTA-COMO-DATOS, carril G (+ el runbook que enseña la nueva era)
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden → verifica con comandos. Evidencia madre: `ordenes/reportes/claude-megaauditoria.md` §3.2 (líneas exactas ahí). Reglas de siempre + `umask 022`; commit+push POR TAREA (tu mv de ayer quedó horas en el índice).
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → **`plan-reestructura/flota-como-datos.md`** (§5 credenciales, §6 gates, §7 tu carril) → `docs/flota-y-participantes.md`. Tu mega-ronda quedó verificada COMPLETA (typechecked, 31 promesas, citas, relay corriendo — excelente). Reglas de siempre + `umask 022`, commit+push POR TAREA.
 
-## Tarea 1 — terminal-relay: primeras 14 suites de su vida
-`pnpm --filter @cauce/terminal-relay test` (el filter ya está cableado en `test:services`). Jamás se han ejecutado: presupuesta arreglos, no solo el run. Cierra con el conteo verde.
+## G2 (primero — no depende de nadie) — `ops/pty-agent/publish-alias-key.sh`
+Envuelve el `derive-alias-key.py` existente y publica su stdout como `alias-key.hex` 0400 atómico (patrón de publicación de provision-terminal-client). Con test en la suite PTY. Es la pieza 3 del `cauce aprovisionar`.
 
-## Tarea 2 — La consola gana chequeo de tipos (el hallazgo #2 del sistema)
-`console/eslint.config.js:10` → `recommendedTypeChecked` + `projectService` (replica `eslint.config.js:18-25` de la raíz con sus 2 ajustes). EN DOS COMMITS: config con reglas ruidosas en `warn` → luego `error`. Después: **las 31 `no-floating-promises` de PRODUCCIÓN** (lista exacta con líneas en §3.2.3 — AccountsPage, FleetAgentDetailPage, LiveFleetPage, MessagesPage, ObservabilityPage, SessionStage, TerminalPage). Es el único hallazgo de toda la auditoría que ve el usuario final.
+## G3 — El runbook de la nueva era + purga de los pasos viejos
+`ops/runbooks/alta-y-baja-de-agente.md` (en ESPAÑOL — regla nueva de idioma): el flujo completo del diseño — INSERT en BD → export → regenerate → validate → aprovisionar → efecto verificado; y la baja inversa. PURGA de `authentication.md` y `container-adapters.md` todo paso que diga editar `container-aliases.json`/manifests A MANO (van a ser generados: documentarlo como prohibido). Criterio del diseño: el runbook debe poder ejecutarlo alguien que no lo escribió.
 
-## Tarea 3 — Las 20 citas fichero:línea rotas (tabla completa en §3.2.4)
-Corrígelas verificando cada destino con grep ANTES de escribirlo. PRIORIDAD: las 3 de `selfRoleBrief` (función que NO EXISTE sosteniendo decisiones de producto). Y `campos-inertes.test.ts:23`: cambia el match de coordenada por match de símbolo (hoy es un test verde certificando una línea imposible).
+## G1 (ÚLTIMO — espera la señal K2 del integrador en tu orden o en main: "snapshot real conmutado")
+Cuando `ops/container-aliases.json` cambie de bytes (flota de 14 + historicals desde BD): re-publica y re-firma el release PTY (mappingSha256 nuevo) UNA sola vez, y ajusta/ejercita los tests de `Fleet.load` con `historicalAliases` NO vacío y la flota real (recuerda: argos=openclaw, iza=openclaw@claw-miguel, gaia/heraclito/tales presentes — `grupos.json` tiene sus roles). `test_rollout_pty.py` verde con el mapping nuevo.
 
-## Tarea 4 — Dedup de tu sector (§3.2.8-15, mapa exacto ahí)
-`useFocusTrap` (único dup de producción), fixtures de relay (grant/CLAIM_TOKEN ×3, agentHello ×7), fakes del bridge (×2), ticket helper de terminal-pty (×3), agent-state fixtures, ConfigPage helpers (×3), renombre `navigation.ts→router.ts`, y recibe el ACK de Codex (`types.ts` importa de protocol + `effect_count?`).
-
-## Tarea 5 — Dos fechas narradas: `filtro-de-colas.ts:7` y `role-brief.ts:55` (regla 4).
+## Mientras esperas G1: los "assert-sobre-texto" de consola del top-20 de dientes que quedaran pendientes, y comentarios de CÓDIGO NUEVO en inglés (regla de idioma del dueño 28-08).

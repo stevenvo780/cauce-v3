@@ -50,7 +50,10 @@ El reporte anterior medía **alias de redirección**, no vistas (4 de 8 veredict
 4. **Aislamiento por tenant** (tu D1): cada tenant en su docker con carpetas aparte. Ojo: el checkout compartido de git hoy lo leen los 4 tenants — el aislamiento real exige credenciales por-tenant DENTRO del contenedor de cada uno (patrón `/opt/cauce-v3-secrets/<alias>` ya existente).
 5. **Notificaciones recurrentes por agente** (tu redefinición de las "alertas"): cualquier agente puede tener mensajes programados tipo cron encolados a su canal por el bus — generalizar el patrón del revividor-de-colas (pieza ya probada en este host, con su salvaguarda de idempotencia). Zeus-guardián es solo el primer uso.
 6. **Mega-refactor de consola**: con las deudas de §3 + los 74 asserts-sobre-texto (el renombre de topology ya lo hizo Gemini). Incluye tu idea: la legibilidad la revisa un AGENTE con Chrome, no código quemado (las sondas CDP se borraron por tu (d)).
-7. **Evolución del CLI** (tu g): de la fuente única rescatada (1.138 líneas) a un CLI instalable en cualquier ordenador sin depender de la torre, con auth hacia TUIs/máquinas y cuotas en tiempo real integradas.
+7. **Contextos NATIVOS por harness** (anexo 28-08 — dolor central): HOY se inyecta el contexto en cada mensaje gastando tokens; el objetivo es editar el fichero nativo de cada harness (CLAUDE.md/Codex.md/Soul.md) y que el harness lo consuma solo. La UI /live directivas apunta ahí; el modo inyección es el defecto a matar.
+8. **El cuello de botella OpenClaw** (anexo): jarvis migró a WhatsApp porque las colas de cauce se atascan — investigar y resolver post-despliegue (candidato: primera misión del Zeus guardián + logs de comportamiento).
+9. **Logs de auditoría de comportamiento** (anexo): detectar patrones indeseables (contaminación de contextos) — hoy no existen.
+10. **Evolución del CLI** (tu g): de la fuente única rescatada (1.138 líneas) a un CLI instalable en cualquier ordenador sin depender de la torre, con auth hacia TUIs/máquinas y cuotas en tiempo real integradas.
 
 ## 6. DECISIONES DEL DUEÑO — TODAS RESPONDIDAS (27-08 noche; texto original en git, commit 267b365)
 
