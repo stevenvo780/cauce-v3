@@ -426,8 +426,8 @@ export class AdapterEngine {
           timeoutMs: executionBudget.harnessTimeoutMs,
           signal: controller.signal,
           beforeHarnessInvoke: async () => {
-            // The adapter calls this after its last local preflight and immediately before its
-            // runner. The same operation proves ownership and durably marks the point of no return.
+            // The adapter calls this after another disk preflight, then revalidates once more
+            // before its runner. This operation proves ownership and marks the point of no return.
             try {
               await this.commitExecutionIntent(
                 started.record,

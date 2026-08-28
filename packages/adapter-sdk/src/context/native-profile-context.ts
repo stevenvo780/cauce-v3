@@ -259,6 +259,20 @@ export class NativeProfileContext {
     return block;
   }
 
+  private assertManagedBlocksDoNotOverlap(file: string, path: string): void {
+    const fixedStart = file.indexOf(MARCA_INICIO);
+    const fixedEndMarker = file.indexOf(MARCA_FIN);
+    const profileStart = file.indexOf(MARCA_PERFIL_INICIO);
+    const profileEndMarker = file.indexOf(MARCA_PERFIL_FIN);
+    if (fixedStart === -1 || fixedEndMarker === -1
+      || profileStart === -1 || profileEndMarker === -1) return;
+    const fixedEnd = fixedEndMarker + MARCA_FIN.length;
+    const profileEnd = profileEndMarker + MARCA_PERFIL_FIN.length;
+    if (fixedStart < profileEnd && profileStart < fixedEnd) {
+      throw new Error(`${path} has overlapping fixed-context and profile blocks`);
+    }
+  }
+
   private measure(context: HarnessRequestContext): RuntimeProfileMeasurement {
     const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;
     const documents: Array<{ path: string; sha256: string }> = [];
@@ -278,6 +292,7 @@ export class NativeProfileContext {
         throw new Error(`${entry.path} has misplaced, malformed, or repeated fixed-context markers`);
       }
       const block = entry.authored ? this.ownedBlock(file, entry.path, owner) : undefined;
+      if (entry.authored) this.assertManagedBlocksDoNotOverlap(file, entry.path);
       documents.push({
         path: entry.path,
         sha256: createHash("sha256").update(file, "utf8").digest("hex"),

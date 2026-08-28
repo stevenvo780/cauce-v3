@@ -14,6 +14,7 @@ import {
   FICHEROS_OPENCLAW,
   MARCA_FIN,
   MARCA_INICIO,
+  MARCA_PERFIL_FIN,
   MARCA_PERFIL_INICIO,
   TOPES_OPENCLAW,
   conBloqueDePerfil,
@@ -435,6 +436,55 @@ test("openclaw proves seven files without exposing memory, heartbeat, or profile
   assert.match(readFileSync(join(workspace, "AGENTS.md"), "utf8"), new RegExp(PRIMARY_DUTY_HEADER, "u"));
 });
 
+test("openclaw rejects overlapping managed blocks before modifying AGENTS.md", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "cauce-native-openclaw-overlap-"));
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  const paths = FICHEROS_OPENCLAW.map((name) => join(workspace, name));
+  const overlapping = `${MARCA_INICIO}\n${MARCA_PERFIL_INICIO}\n`
+    + `<!-- alias: Steven/argos -->\nPROFILE-AGENTS\n${MARCA_FIN}\n${MARCA_PERFIL_FIN}\n`;
+  for (const name of FICHEROS_OPENCLAW) {
+    const path = join(workspace, name);
+    if (name === "MEMORY.md" || name === "HEARTBEAT.md") {
+      writeFileSync(path, "agent-owned", "utf8");
+    } else {
+      writeFileSync(
+        path,
+        name === "AGENTS.md"
+          ? overlapping
+          : conBloqueDePerfil("", `<!-- alias: Steven/argos -->\nPROFILE-${name}`),
+        "utf8",
+      );
+    }
+  }
+  const agentsPath = join(workspace, "AGENTS.md");
+  const previousWorkspace = process.env.CAUCE_OPENCLAW_WORKSPACE;
+  const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
+  process.env.CAUCE_OPENCLAW_WORKSPACE = workspace;
+  process.env.CAUCE_CONTAINER_GENERATION = "runtime-91";
+  t.after(() => {
+    restoreEnvironment("CAUCE_OPENCLAW_WORKSPACE", previousWorkspace);
+    restoreEnvironment("CAUCE_CONTAINER_GENERATION", previousGeneration);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const { runner, requests } = spyRunner();
+  const adapter = new HarnessAdapter({
+    definition: definition("openclaw"),
+    runner,
+    store: await DurableStore.open(join(root, "state")),
+    environment: nativeEnvironment(),
+  });
+  await assert.rejects(adapter.execute({
+    prompt: "must not run",
+    context: { ...context("argos"), native_profile_contract: contract(91, paths) },
+    timeoutMs: 2_000,
+    signal: AbortSignal.timeout(2_000),
+  }), /overlapping fixed-context and profile blocks/u);
+  assert.equal(requests.length, 0);
+  assert.equal(readFileSync(agentsPath, "utf8"), overlapping);
+});
+
 test("openclaw rejects a fixed block that would exceed the native document limit", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "cauce-native-openclaw-limit-"));
   const workspace = join(root, "workspace");
@@ -528,6 +578,11 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
       name: "inverted fixed",
       file: `${conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT")}`
         + `\n${MARCA_FIN}\nold\n${MARCA_INICIO}\n`,
+    },
+    {
+      name: "overlapping managed blocks",
+      file: `${MARCA_INICIO}\n${MARCA_PERFIL_INICIO}\n`
+        + `<!-- alias: Steven/zeus -->\nCURRENT\n${MARCA_FIN}\n${MARCA_PERFIL_FIN}\n`,
     },
   ];
   for (const scenario of cases) {
