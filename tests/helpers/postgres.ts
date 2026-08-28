@@ -120,7 +120,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   const container = await builder.start();
   const host = network ? container.getIpAddress(network) : container.getHost();
   const port = network ? 5432 : container.getMappedPort(5432);
-  const url = `postgresql://cauce_test:${encodeURIComponent(password)}@${host}:${port}/cauce_test`;
+  const url = `postgresql://cauce_test:${encodeURIComponent(password)}@${host}:${String(port)}/cauce_test`;
   const pool = createPool(url);
   try {
     // A healthy container can become visible a few milliseconds before its
@@ -183,7 +183,7 @@ export async function guardarSemillaDeCatalogo(pool: DatabasePool): Promise<void
   if (existe.rows[0]?.hay) {
     const guardada = await pool.query<{ huella: string }>(
       `SELECT huella FROM ${ESQUEMA_SEMILLA}.${TABLA_HUELLA}`,
-    ).catch(() => ({ rows: [] as Array<{ huella: string }> }));
+    ).catch(() => ({ rows: [] as { huella: string }[] }));
     const anterior = guardada.rows[0]?.huella;
     if (anterior === huella) return;
     throw new Error(

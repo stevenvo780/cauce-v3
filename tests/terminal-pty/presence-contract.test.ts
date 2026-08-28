@@ -73,7 +73,8 @@ describe('pty-agent -> relay -> gateway presence contract', () => {
   it('feeds the relay presence straight through the gateway parser without losing a field', () => {
     const hello = parseAgentHello(helloFrame());
     expect(hello).toBeDefined();
-    const presence = relayPresence(hello!);
+    if (!hello) throw new Error('Expected hello frame');
+    const presence = relayPresence(hello);
 
     // The real assertion: the gateway parses the relay's own output. It throws on any drift.
     const parsed = parseAgentPresence(JSON.parse(JSON.stringify(presence)));
@@ -97,13 +98,15 @@ describe('pty-agent -> relay -> gateway presence contract', () => {
     // publish a number here, and the gateway must refuse it rather than store the wrong type.
     expect(parseAgentHello(helloFrame({ generation: 7 }))).toBeUndefined();
     const hello = parseAgentHello(helloFrame());
-    const numeric = { ...relayPresence(hello!), generation: 7 as unknown as string };
+    if (!hello) throw new Error('Expected hello frame');
+    const numeric = { ...relayPresence(hello), generation: 7 as unknown as string };
     expect(() => parseAgentPresence(numeric)).toThrow(/generation/);
   });
 
   it('rejects the connected_at spelling the relay used to publish', () => {
     const hello = parseAgentHello(helloFrame());
-    const presence: Record<string, unknown> = { ...relayPresence(hello!) };
+    if (!hello) throw new Error('Expected hello frame');
+    const presence: Record<string, unknown> = { ...relayPresence(hello) };
     presence.connected_at = presence.connected_since;
     delete presence.connected_since;
     expect(() => parseAgentPresence(presence)).toThrow(/connected_since/);

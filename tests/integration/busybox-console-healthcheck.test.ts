@@ -61,7 +61,13 @@ async function resolveDockerReachability(): Promise<DockerReachability> {
 
 function close(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
   });
 }
 
@@ -144,7 +150,7 @@ describe('BusyBox console healthcheck runtime', () => {
       '--entrypoint', 'sh', busyboxImage, '-c',
     ];
     const installCa = `printf '%s' "$CAUCE_TEST_CONSOLE_CA" > ${caPath} && chmod 0444 ${caPath} && `;
-    const targetUrl = `https://${targetHost}:${port}/`;
+    const targetUrl = `https://${targetHost}:${String(port)}/`;
     try {
       const result = await execFileAsync('docker', [
         ...commonArguments,

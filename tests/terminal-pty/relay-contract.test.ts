@@ -107,7 +107,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  if (tls) rmSync(tls.directory, { recursive: true, force: true });
+  rmSync(tls.directory, { recursive: true, force: true });
 });
 
 describe('fake gateway: the /v3/terminal/relay contract', () => {

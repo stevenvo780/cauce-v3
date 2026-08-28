@@ -65,7 +65,7 @@ class AgentLeg {
     const address = server.address();
     const port = typeof address === 'object' && address !== null ? address.port : 0;
     const leg = new AgentLeg(server, port);
-    server.on('secureConnection', (socket) => leg.accept(socket));
+    server.on('secureConnection', (socket) => { leg.accept(socket); });
     return leg;
   }
 
@@ -93,14 +93,14 @@ class AgentLeg {
     const queued = this.queued.shift();
     if (queued) return queued;
     return new Promise<DecodedFrame>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timed out waiting for a frame')), timeoutMs);
+      const timer = setTimeout(() => { reject(new Error('timed out waiting for a frame')); }, timeoutMs);
       this.waiting.push((frame) => { clearTimeout(timer); resolve(frame); });
     });
   }
 
   async expect(tag: number, timeoutMs = 5_000): Promise<DecodedFrame> {
     const frame = await this.next(timeoutMs);
-    expect(TAG_NAME[frame.tag] ?? frame.tag, `expected ${TAG_NAME[tag]}`).toBe(TAG_NAME[tag]);
+    expect(TAG_NAME[frame.tag] ?? frame.tag, `expected ${String(TAG_NAME[tag])}`).toBe(TAG_NAME[tag]);
     return frame;
   }
 
@@ -122,7 +122,7 @@ class AgentLeg {
 
   async close(): Promise<void> {
     this.socket?.destroy();
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await new Promise<void>((resolve) => this.server.close(() => { resolve(); }));
   }
 }
 
@@ -131,7 +131,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  if (tls) rmSync(tls.directory, { recursive: true, force: true });
+  rmSync(tls.directory, { recursive: true, force: true });
 });
 
 describe('fake pty agent: the agent leg without kratos', () => {
@@ -299,5 +299,5 @@ async function runAgentProcess(script: string, environment: Record<string, strin
     env: { ...process.env, ...environment },
     stdio: ['ignore', 'ignore', 'ignore'],
   });
-  return new Promise<number>((resolve) => child.on('exit', (code) => resolve(code ?? -1)));
+  return new Promise<number>((resolve) => child.on('exit', (code) => { resolve(code ?? -1); }));
 }

@@ -46,7 +46,7 @@ beforeAll(async () => {
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${address.port}`;
+  httpUrl = `http://127.0.0.1:${String(address.port)}`;
   stopDispatcher = runDispatcher(database.pool, {
     pollMs: 20,
     staleAckMs: 50,
@@ -57,14 +57,14 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  stopDispatcher?.();
-  if (app) await app.close();
-  if (database?.pool) await database.pool.end();
-  if (database?.container) await database.container.stop();
+  if (stopDispatcher) stopDispatcher();
+  await app.close();
+  await database.pool.end();
+  await database.container.stop();
   for (const key of [
     'CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST', 'CAUCE_TESTCONTAINERS_DB_IMAGE_ID',
     'CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE', 'CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256',
-  ]) delete process.env[key];
+  ]) Reflect.deleteProperty(process.env, key);
 });
 
 async function inspectDatabaseImage(): Promise<DatabaseImageBinding> {
@@ -205,13 +205,13 @@ describe('real external QA harness', () => {
           },
           stdio: ['ignore', 'pipe', 'pipe'],
         });
-        child.stdout?.on('data', (chunk: Buffer) => diagnostics.push(chunk.toString('utf8').trim()));
-        child.stderr?.on('data', (chunk: Buffer) => diagnostics.push(chunk.toString('utf8').trim()));
+        child.stdout.on('data', (chunk: Buffer) => diagnostics.push(chunk.toString('utf8').trim()));
+        child.stderr.on('data', (chunk: Buffer) => diagnostics.push(chunk.toString('utf8').trim()));
         adapters.push(child);
       }
       try {
         await waitFor(async () => {
-          const status = await authenticatedFetch<{ presence: Array<Record<string, unknown>> }>('/v3/status');
+          const status = await authenticatedFetch<{ presence: Record<string, unknown>[] }>('/v3/status');
           return identities.every((item) => status.presence.some((row) =>
             row.tenant_id === item.tenant && row.alias === item.alias && row.online === true));
         });
@@ -237,8 +237,8 @@ describe('real external QA harness', () => {
         let latestState = 'unknown';
         try {
           await waitFor(async () => {
-            const message = await authenticatedFetch<{ deliveries: Array<{ status: string }> }>(`/v3/messages/${published.message_id}`);
-            latestState = message.deliveries?.[0]?.status ?? 'missing';
+            const message = await authenticatedFetch<{ deliveries: { status: string }[] }>(`/v3/messages/${published.message_id}`);
+            latestState = message.deliveries[0]?.status ?? 'missing';
             if (latestState === 'failed' || latestState === 'dead') throw new Error(`fake adapter ${item.alias} ended ${latestState}`);
             return latestState === 'done';
           });
@@ -249,7 +249,7 @@ describe('real external QA harness', () => {
     } finally {
       await Promise.all(adapters.map(async (child) => {
         if (child.exitCode !== null) return;
-        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+        const exited = new Promise<void>((resolve) => child.once('exit', () => { resolve(); }));
         child.kill('SIGTERM');
         await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
       }));
@@ -322,7 +322,7 @@ async function restartGateway(): Promise<void> {
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${address.port}`;
+  httpUrl = `http://127.0.0.1:${String(address.port)}`;
 }
 
 async function reconnectDatabaseAfterContainerRestart(): Promise<void> {
@@ -408,7 +408,7 @@ async function writeRestartArtifacts(results: RestartResult[], startedAt: string
     tests: results,
   }, null, 2)}\n`;
   const skipped = results.filter((result) => result.status === 'skipped').length;
-  const junit = `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="cauce-v3-restart-e2e" tests="${results.length}" failures="0" skipped="${skipped}">\n${results.map((result) => `  <testcase classname="cauce.restart" name="${result.name}">${result.status === 'skipped' ? `<skipped message="${result.error}"/>` : ''}</testcase>`).join('\n')}\n</testsuite>\n`;
+  const junit = `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="cauce-v3-restart-e2e" tests="${String(results.length)}" failures="0" skipped="${String(skipped)}">\n${results.map((result) => `  <testcase classname="cauce.restart" name="${result.name}">${result.status === 'skipped' ? `<skipped message="${result.error ?? ''}"/>` : ''}</testcase>`).join('\n')}\n</testsuite>\n`;
   await writeFile(join(directory, 'report.json'), report);
   await writeFile(join(directory, 'junit.xml'), junit);
   const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
@@ -416,17 +416,18 @@ async function writeRestartArtifacts(results: RestartResult[], startedAt: string
 }
 
 async function authenticatedFetch<T = Record<string, unknown>>(pathname: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('accept', 'application/json');
+  headers.set('x-cauce-tenant', 'Steven');
+  headers.set('x-cauce-alias', 'kant');
+  if (init.body && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
   const response = await fetch(`${httpUrl}${pathname}`, {
     ...init,
-    headers: {
-      accept: 'application/json',
-      'x-cauce-tenant': 'Steven',
-      'x-cauce-alias': 'kant',
-      ...(init.body ? { 'content-type': 'application/json' } : {}),
-      ...init.headers,
-    },
+    headers,
   });
-  if (!response.ok) throw new Error(`${pathname} returned ${response.status}`);
+  if (!response.ok) throw new Error(`${pathname} returned ${String(response.status)}`);
   return response.json() as Promise<T>;
 }
 
@@ -436,5 +437,5 @@ async function waitFor(operation: () => Promise<unknown>, timeoutMs = 15_000): P
     if (await operation()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`condition timed out after ${timeoutMs}ms`);
+  throw new Error(`condition timed out after ${String(timeoutMs)}ms`);
 }

@@ -22,7 +22,7 @@
     "lint:calidad": "node scripts/calidad.mjs",
     "lint:ops": "eslint ops/harness ops/patches ops/scripts ops/tests --max-warnings 0",
     "lint:tooling": "eslint scripts deploy --max-warnings 0",
-    "lint:estricto:zonas": "eslint -c eslint.estricto.config.js console services/terminal-relay services/telegram-bridge services/dispatcher --max-warnings 0",
+    "lint:estricto:zonas": "eslint -c eslint.estricto.config.js console services/terminal-relay services/telegram-bridge services/dispatcher tests --max-warnings 0",
     "lint:py": "ruff check --select E9,F ops scripts deploy",
     "lint:estricto": "eslint -c eslint.estricto.config.js packages services console tests",
     "lint:py:estricto": "ruff check ops scripts deploy",

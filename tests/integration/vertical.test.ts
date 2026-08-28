@@ -30,7 +30,7 @@ interface TestPublish {
   tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel';
   room_id: string;
   actor_alias: string;
-  recipients: Array<{ tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel'; alias: string }>;
+  recipients: { tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel'; alias: string }[];
   body: Record<string, unknown>;
   idempotency_key: string;
   lane: 'interactive' | 'batch';
@@ -65,7 +65,7 @@ async function waitForHarnessLeaseRelease(clients: FakeHarness[]): Promise<void>
   ])).values()];
   const predicates = identities.map((_, index) => {
     const offset = index * 3;
-    return `(tenant_id=$${offset + 1} AND alias=$${offset + 2} AND instance_id=$${offset + 3})`;
+    return `(tenant_id=$${String(offset + 1)} AND alias=$${String(offset + 2)} AND instance_id=$${String(offset + 3)})`;
   });
   const parameters = identities.flatMap(({ tenant_id, alias, instance_id }) => [
     tenant_id, alias, instance_id
@@ -146,8 +146,8 @@ beforeAll(async () => {
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${address.port}`;
-  wsUrl = `ws://127.0.0.1:${address.port}/v3/ws`;
+  httpUrl = `http://127.0.0.1:${String(address.port)}`;
+  wsUrl = `ws://127.0.0.1:${String(address.port)}/v3/ws`;
 }, 120_000);
 
 beforeEach(async () => {
@@ -172,9 +172,9 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  if (app) await app.close();
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await app.close();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
@@ -292,7 +292,8 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     expect(queried.deliveries).toHaveLength(1);
     expect(queried.deliveries[0]?.message_id).toBe((sent.body as Published).message_id);
 
-    const queriedDelivery = queried.deliveries[0]!;
+    const queriedDelivery = queried.deliveries[0];
+    if (!queriedDelivery) throw new Error('expected queriedDelivery');
     const deliveryId = queriedDelivery.delivery_id;
     const ackResponse = await fetch(`${httpUrl}/v3/ack`, {
       method: 'POST', headers,
@@ -308,20 +309,26 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
 
   it('fences a new consumer from ACKing work claimed under an older epoch', async () => {
     const firstLease = await repository.acquireLease('Jhon', 'hegel', 'epoch-a', [], 10_000);
+    expect(firstLease.epoch).toBeDefined();
+    if (firstLease.epoch === undefined) throw new Error('expected firstLease.epoch');
     await publish(message({ recipients: [{ tenant_id: 'Jhon', alias: 'hegel' }] }));
-    const claimed = await repository.claimDeliveries('Jhon', 'hegel', 'epoch-a', firstLease.epoch!, 1);
-    await repository.releaseLease('Jhon', 'hegel', 'epoch-a', firstLease.epoch!);
+    const claimed = await repository.claimDeliveries('Jhon', 'hegel', 'epoch-a', firstLease.epoch, 1);
+    await repository.releaseLease('Jhon', 'hegel', 'epoch-a', firstLease.epoch);
     const secondLease = await repository.acquireLease('Jhon', 'hegel', 'epoch-b', [], 10_000);
+    expect(secondLease.epoch).toBeDefined();
+    if (secondLease.epoch === undefined) throw new Error('expected secondLease.epoch');
 
-    await expect(repository.ackDelivery(claimed[0]!.delivery_id, 'Jhon', 'hegel', {
-      version: '3.0', event_id: randomUUID(), status: 'done', instance_id: 'epoch-b', epoch: secondLease.epoch!,
-      attempt: claimed[0]!.attempt, claim_token: claimed[0]!.claim_token, retryable: false
+    const firstClaimed = claimed[0];
+    if (!firstClaimed) throw new Error('expected claimed delivery');
+    await expect(repository.ackDelivery(firstClaimed.delivery_id, 'Jhon', 'hegel', {
+      version: '3.0', event_id: randomUUID(), status: 'done', instance_id: 'epoch-b', epoch: secondLease.epoch,
+      attempt: firstClaimed.attempt, claim_token: firstClaimed.claim_token, retryable: false
     })).rejects.toMatchObject({ code: 'fenced' });
 
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
-    await assertAndElapseTimeoutBackoff(claimed[0]!.delivery_id);
-    const reclaimed = await repository.claimDeliveries('Jhon', 'hegel', 'epoch-b', secondLease.epoch!, 1);
-    expect(reclaimed[0]).toMatchObject({ delivery_id: claimed[0]!.delivery_id, attempt: 2, epoch: secondLease.epoch });
+    await assertAndElapseTimeoutBackoff(firstClaimed.delivery_id);
+    const reclaimed = await repository.claimDeliveries('Jhon', 'hegel', 'epoch-b', secondLease.epoch, 1);
+    expect(reclaimed[0]).toMatchObject({ delivery_id: firstClaimed.delivery_id, attempt: 2, epoch: secondLease.epoch });
   });
 
   it('requeues a delivery when the consumer dies before terminal ACK', async () => {
@@ -366,11 +373,13 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
       'SELECT ack_deadline_at,claim_expires_at,status,last_ack_rank FROM deliveries WHERE id=$1',
       [delivery.delivery_id]
     );
-    expect(afterStarted.rows[0]).toMatchObject({ status: 'started', last_ack_rank: 2 });
-    expect(afterStarted.rows[0]!.ack_deadline_at.getTime() - Date.now()).toBeGreaterThan(9 * 60_000);
+    const firstRow = afterStarted.rows[0];
+    if (!firstRow) throw new Error('expected afterStarted row');
+    expect(firstRow).toMatchObject({ status: 'started', last_ack_rank: 2 });
+    expect(firstRow.ack_deadline_at.getTime() - Date.now()).toBeGreaterThan(9 * 60_000);
     expect(Math.abs(
-      afterStarted.rows[0]!.ack_deadline_at.getTime()
-      - afterStarted.rows[0]!.claim_expires_at.getTime()
+      firstRow.ack_deadline_at.getTime()
+      - firstRow.claim_expires_at.getTime()
     )).toBeLessThanOrEqual(5);
 
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -698,8 +707,9 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     await pool.query('UPDATE jobs SET max_attempts=1 WHERE id=$1', [jobId]);
     const [job] = await repository.claimJobs('batch', 'worker-a', 1, 5_000);
     expect(job).toMatchObject({ id: jobId, attempts: 1, status: 'running' });
-    await expect(repository.completeJob(jobId, 'worker-b', job!.claim_token)).resolves.toBe(false);
-    await expect(repository.failJob(jobId, 'worker-a', 'permanent failure', job!.claim_token)).resolves.toBe('dead');
+    if (!job) throw new Error('expected job');
+    await expect(repository.completeJob(jobId, 'worker-b', job.claim_token)).resolves.toBe(false);
+    await expect(repository.failJob(jobId, 'worker-a', 'permanent failure', job.claim_token)).resolves.toBe('dead');
     expect((await pool.query('SELECT 1 FROM dead_letters WHERE job_id=$1', [jobId])).rowCount).toBe(1);
   });
 });

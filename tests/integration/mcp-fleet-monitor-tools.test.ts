@@ -73,7 +73,7 @@ class StdioMcpClient {
     });
 
     this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk: string) => this.absorb(chunk));
+    this.child.stdout.on('data', (chunk: string) => { this.absorb(chunk); });
     this.child.stderr.setEncoding('utf8');
     this.child.stderr.on('data', (chunk: string) => this.stderr.push(chunk));
   }
@@ -159,9 +159,9 @@ describe('MCP fleet monitor tool surface', () => {
   }, 300_000);
 
   afterAll(async () => {
-    await client?.close();
-    if (database?.pool) await database.pool.end();
-    if (database?.container) await database.container.stop();
+    await client.close();
+    await database.pool.end();
+    await database.container.stop();
   });
 
   it('advertises the documented read-only fleet tools', () => {
@@ -184,7 +184,7 @@ describe('MCP fleet monitor tool surface', () => {
     for (const tool of advertised) {
       const result = await client.callTool(tool.name, argumentsFor(tool.name));
       const text = textOf(result);
-      if (result.isError === true || /^Unknown tool:/u.test(text)) {
+      if (result.isError === true || text.startsWith("Unknown tool:")) {
         unimplemented.push(`${tool.name} -> ${text}`);
         continue;
       }
@@ -271,7 +271,7 @@ describe('MCP fleet monitor tool surface', () => {
     expect(definition, 'deliveries.status CHECK constraint not found').toBeTypeOf('string');
     const allowed = [
       ...new Set(
-        [...(definition ?? '').matchAll(/'([a-z_]+)'/gu)].map((match) => match[1] as string),
+        [...(definition ?? '').matchAll(/'([a-z_]+)'/gu)].map((match) => match[1] ?? ''),
       ),
     ].sort();
 
@@ -305,7 +305,7 @@ describe('MCP fleet monitor tool surface', () => {
     expect(promptSource).not.toMatch(/get_agent_chain_status/u);
 
     const advertisedInPrompt = [...promptSource.matchAll(/"name"\s*:\s*"([a-z_]+)"/gu)]
-      .map((match) => match[1] as string)
+      .map((match) => match[1] ?? '')
       .filter((name) => !implemented.has(name));
     expect(advertisedInPrompt, 'harness prompt names a tool the MCP server does not implement')
       .toEqual([]);

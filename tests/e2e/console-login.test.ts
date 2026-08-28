@@ -79,13 +79,13 @@ beforeAll(async () => {
   app = await buildGateway({ pool: database.pool, authProvider: provider });
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${address.port}`;
+  httpUrl = `http://127.0.0.1:${String(address.port)}`;
 }, 120_000);
 
 afterAll(async () => {
-  if (app) await app.close();
-  if (database?.pool) await database.pool.end();
-  if (database?.container) await database.container.stop();
+  await app.close();
+  await database.pool.end();
+  await database.container.stop();
 });
 
 describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef√≠mera)', () => {
@@ -112,6 +112,7 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef√
     expect(response.status).toBe(200);
     const [cookie] = response.headers.getSetCookie();
     expect(cookie).toBeDefined();
+    if (!cookie) throw new Error('expected cookie');
     expect(cookie).toContain('__Host-cauce_session=');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('Secure');
@@ -122,12 +123,12 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef√
       roles: [], permissions: ['read']
     });
     // The token never travels in the body: if it appeared here, an XSS would steal it.
-    expect(JSON.stringify(body)).not.toContain(cookieToken(cookie!).slice(0, 24));
+    expect(JSON.stringify(body)).not.toContain(cookieToken(cookie).slice(0, 24));
   });
 
   it('FLUJOS PRINCIPALES: con sesi√≥n, la consola navega sus vistas de lectura', async () => {
     const { cookie } = await authenticatedSession();
-    const reads: Array<[string, number]> = [
+    const reads: [string, number][] = [
       ['/v3/auth/session', 200],
       ['/v3/status', 200],
       ['/v3/console/access', 200],
@@ -170,7 +171,7 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef√
       'x-csrf-token': csrf,
       'content-type': 'application/json',
     };
-    const mutations: Array<{ method: 'POST' | 'PUT'; path: string; body: unknown }> = [
+    const mutations: { method: 'POST' | 'PUT'; path: string; body: unknown }[] = [
       {
         method: 'POST', path: '/v3/console/messages',
         body: {
@@ -263,7 +264,7 @@ async function authenticatedSession(): Promise<{ cookie: string; csrf: string }>
   const response = await login(CONSOLE_EMAIL, CONSOLE_PASSWORD);
   const [rawCookie] = response.headers.getSetCookie();
   if (!rawCookie) throw new Error('login no entreg√≥ cookie de sesi√≥n');
-  const cookie = rawCookie.split(';', 1)[0]!;
+  const cookie = rawCookie.split(';', 1)[0] ?? '';
   const { csrf_token: csrf } = (await response.json()) as { csrf_token: string };
   return { cookie, csrf };
 }

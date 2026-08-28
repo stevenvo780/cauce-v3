@@ -336,7 +336,7 @@ describe('pty wire vectors: framing', () => {
     expectedFrames.forEach((raw, index) => {
       const expectedFrame = raw as Record<string, unknown>;
       const frame = collected[index];
-      if (frame === undefined) throw new Error(`missing decoded frame ${index}`);
+      if (frame === undefined) throw new Error(`missing decoded frame ${String(index)}`);
       expect(tagName(frame.tag)).toBe(String(expectedFrame.tag));
       if (typeof expectedFrame.session_id === 'string') {
         const data = decodeDataPayload(frame.payload);

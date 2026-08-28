@@ -156,7 +156,7 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
 
   function openBrowserSocket(): WebSocket {
     const socket = new WebSocket(
-      `wss://127.0.0.1:${wsPort}/v3/console/terminal/relays/${relayInstanceId}/ws`,
+      `wss://127.0.0.1:${String(wsPort)}/v3/console/terminal/relays/${relayInstanceId}/ws`,
       consoleClientOptions(tls, wsPort));
     sockets.push(socket);
     return socket;
@@ -192,14 +192,14 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
     for (const socket of sockets.splice(0)) socket.close();
     agent?.destroy();
     const child = process_;
-    if (child && child.exitCode === null) {
-      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    if (child?.exitCode === null) {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => { resolve(); }));
       child.kill('SIGTERM');
       await exited;
     }
     await gateway.close();
     if (relayDirectory) rmSync(relayDirectory, { recursive: true, force: true });
-    if (tls) rmSync(tls.directory, { recursive: true, force: true });
+    rmSync(tls.directory, { recursive: true, force: true });
   });
 
   it('attaches with a valid ticket, says ready and echoes bytes back', async () => {
@@ -219,12 +219,12 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
   it('returns HTTP 404 for another relay instance path before any ticket can be consumed', async () => {
     const before = gateway.auditOf('terminal.session.consume').length;
     const socket = new WebSocket(
-      `wss://127.0.0.1:${wsPort}/v3/console/terminal/relays/${'c'.repeat(64)}/ws`,
+      `wss://127.0.0.1:${String(wsPort)}/v3/console/terminal/relays/${'c'.repeat(64)}/ws`,
       consoleClientOptions(tls, wsPort),
     );
     sockets.push(socket);
     const status = await new Promise<number>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('wrong relay path did not answer')), 5_000);
+      const timer = setTimeout(() => { reject(new Error('wrong relay path did not answer')); }, 5_000);
       socket.once('unexpected-response', (_request, response) => {
         clearTimeout(timer);
         response.resume();
@@ -379,20 +379,20 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
 function consoleClientOptions(material: SelfSignedCert, port: number): Record<string, unknown> {
   return {
     cert: material.cert, key: material.key, ca: material.cert, servername: 'localhost',
-    origin: `https://127.0.0.1:${port}`,
+    origin: `https://127.0.0.1:${String(port)}`,
   };
 }
 
 function once(socket: WebSocket, event: 'open'): Promise<void> {
   return new Promise((resolve, reject) => {
-    socket.once(event, () => resolve());
+    socket.once(event, () => { resolve(); });
     socket.once('error', reject);
   });
 }
 
 async function closeCode(socket: WebSocket, timeoutMs = 10_000): Promise<number> {
   return new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('socket never closed')), timeoutMs);
+    const timer = setTimeout(() => { reject(new Error('socket never closed')); }, timeoutMs);
     socket.once('close', (code) => { clearTimeout(timer); resolve(code); });
   });
 }
@@ -435,7 +435,7 @@ function collect(socket: WebSocket): BrowserStream {
       const queued = control.shift();
       if (queued) return queued;
       return new Promise<Record<string, unknown>>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('no control frame arrived')), timeoutMs);
+        const timer = setTimeout(() => { reject(new Error('no control frame arrived')); }, timeoutMs);
         waiting.push((value) => { clearTimeout(timer); resolve(value); });
       });
     },
@@ -457,13 +457,13 @@ async function waitForPort(port: number, material: SelfSignedCert, timeoutMs = 2
   for (;;) {
     const reachable = await new Promise<boolean>((resolve) => {
       const probe = new WebSocket(
-        `wss://127.0.0.1:${port}/v3/console/terminal/relays/${relayInstanceId}/ws`,
+        `wss://127.0.0.1:${String(port)}/v3/console/terminal/relays/${relayInstanceId}/ws`,
         consoleClientOptions(material, port));
       probe.once('open', () => { probe.close(); resolve(true); });
-      probe.once('error', () => resolve(false));
+      probe.once('error', () => { resolve(false); });
     });
     if (reachable) return;
-    if (Date.now() > deadline) throw new Error(`terminal-relay never listened on ${port}`);
+    if (Date.now() > deadline) throw new Error(`terminal-relay never listened on ${String(port)}`);
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 }
