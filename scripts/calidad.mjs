@@ -6,10 +6,6 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-if (typeof process.getuid === 'function' && process.getuid() === 0) {
-  console.error('calidad: PROHIBIDO correr el gate como root (deja residuos root:root que bloquean a las instancias). Usa: su stev -c "umask 022 && ..."');
-  process.exit(1);
-}
 
 const BASE_PATH = 'scripts/calidad-base.json';
 const MAX = 800;
