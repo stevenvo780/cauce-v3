@@ -19,6 +19,7 @@ SNAPSHOT_KEYS = {
     "retired",
     "placement",
 }
+PLACEMENT_KEYS = frozenset({"dockerHost", "registryContainer", "healthContainer"})
 
 
 class GeneratorError(ValueError):
@@ -29,6 +30,30 @@ def mapping(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise GeneratorError(f"{label} must be an object")
     return value
+
+
+def validate_placement_defaults(
+    placement: dict[str, Any],
+    fleet: dict[str, Any],
+) -> None:
+    for alias, raw_entry in placement.items():
+        entry = mapping(raw_entry, f"placement.{alias}")
+        unknown = sorted(set(entry) - PLACEMENT_KEYS)
+        if unknown:
+            raise GeneratorError(f"placement.{alias} has unsupported keys: {unknown}")
+        if not entry:
+            raise GeneratorError(f"placement.{alias} is empty and redundant")
+        for key, value in entry.items():
+            if not isinstance(value, str) or not value or value != value.strip():
+                raise GeneratorError(f"placement.{alias}.{key} must be a non-empty trimmed string")
+        container = fleet[alias].get("container")
+        health_container = entry.get("healthContainer", container)
+        if entry.get("dockerHost") == "local":
+            raise GeneratorError(f"placement.{alias}.dockerHost repeats its default: local")
+        if entry.get("healthContainer") == container:
+            raise GeneratorError(f"placement.{alias}.healthContainer repeats its default: {container}")
+        if entry.get("registryContainer") == health_container:
+            raise GeneratorError(f"placement.{alias}.registryContainer repeats its default: {health_container}")
 
 
 def load_snapshot(path: pathlib.Path) -> dict[str, Any]:
@@ -53,6 +78,7 @@ def load_snapshot(path: pathlib.Path) -> dict[str, Any]:
     for alias, row in fleet.items():
         if not isinstance(row, dict) or row.get("enabled") is not True:
             raise GeneratorError(f"fleet.{alias} must be an enabled agent object")
+    validate_placement_defaults(placement, fleet)
     for alias, row in retired.items():
         if not isinstance(row, dict):
             raise GeneratorError(f"retired.{alias} must be an object")

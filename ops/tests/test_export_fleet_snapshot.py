@@ -9,12 +9,14 @@ import pathlib
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
 SCRIPT = pathlib.Path(__file__).parents[1] / "scripts" / "export-fleet-snapshot.py"
 QUERY = SCRIPT.with_name("fleet-query.sql")
+GENERATOR = SCRIPT.with_name("generate-container-aliases.py")
 SPEC = importlib.util.spec_from_file_location("export_fleet_snapshot", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -281,6 +283,69 @@ class PhysicalFleetOverlayTest(unittest.TestCase):
                 frozenset({"Steven"}),
             )
 
+    def test_rejects_defaults_that_make_the_overlay_redundant(self) -> None:
+        cases = {
+            "docker host": ({"dockerHost": "local"}, "dockerHost repeats"),
+            "health container": ({"healthContainer": "ctrl-infra"}, "healthContainer repeats"),
+            "implicit registry container": (
+                {"registryContainer": "ctrl-infra"},
+                "registryContainer repeats",
+            ),
+            "explicit registry container": (
+                {
+                    "healthContainer": "ctrl-health",
+                    "registryContainer": "ctrl-health",
+                },
+                "registryContainer repeats",
+            ),
+        }
+        for label, (entry, error) in cases.items():
+            with self.subTest(label=label), self.assertRaisesRegex(MODULE.SnapshotError, error):
+                MODULE.snapshot_document(
+                    source(),
+                    {"kant": entry},
+                    frozenset({"Steven"}),
+                )
+
+    def test_generator_rejects_redundant_defaults_before_writing(self) -> None:
+        document = MODULE.snapshot_document(
+            source(),
+            allowed_tenants=frozenset({"Steven"}),
+        )
+        snapshot = self.root / "flota.json"
+        output = self.root / "container-aliases.json"
+        original = b"unchanged\n"
+        cases = (
+            {"dockerHost": "local"},
+            {"healthContainer": "ctrl-infra"},
+            {"registryContainer": "ctrl-infra"},
+            {
+                "healthContainer": "ctrl-health",
+                "registryContainer": "ctrl-health",
+            },
+        )
+        for entry in cases:
+            with self.subTest(entry=entry):
+                document["placement"] = {"kant": entry}
+                snapshot.write_bytes(MODULE.canonical_bytes(document))
+                output.write_bytes(original)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        os.fspath(GENERATOR),
+                        "--snapshot",
+                        os.fspath(snapshot),
+                        "--output",
+                        os.fspath(output),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 1)
+                self.assertIn("repeats its default", completed.stderr)
+                self.assertEqual(output.read_bytes(), original)
+
 
 class FleetQueryTest(unittest.TestCase):
     def test_sql_is_one_read_only_query_over_all_three_tables(self) -> None:
@@ -360,6 +425,22 @@ class FleetSnapshotCliTest(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), MODULE.canonical_bytes(document))
         self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o644)
         self.assertEqual(fsync.call_count, 2)
+
+    def test_rejects_redundant_overlay_before_writing(self) -> None:
+        self.output.write_bytes(b"unchanged\n")
+        self.overlay.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "placement": {"kant": {"dockerHost": "local"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        result, stderr = self.run_main()
+        self.assertEqual(result, 1)
+        self.assertIn("dockerHost repeats its default", stderr)
+        self.assertEqual(self.output.read_bytes(), b"unchanged\n")
 
     def test_check_returns_three_on_missing_or_different_bytes_without_writing(self) -> None:
         result, stderr = self.run_main(["--check"])

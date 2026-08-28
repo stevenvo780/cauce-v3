@@ -128,6 +128,23 @@ def validate_placement(value: Any) -> dict[str, dict[str, str]]:
     return normalized
 
 
+def validate_placement_defaults(
+    placement: dict[str, dict[str, str]],
+    fleet: dict[str, dict[str, Any]],
+) -> None:
+    for alias, entry in placement.items():
+        if not entry:
+            raise SnapshotError(f"placement.{alias} is empty and redundant")
+        container = fleet[alias]["container"]
+        health_container = entry.get("healthContainer", container)
+        if entry.get("dockerHost") == "local":
+            raise SnapshotError(f"placement.{alias}.dockerHost repeats its default: local")
+        if entry.get("healthContainer") == container:
+            raise SnapshotError(f"placement.{alias}.healthContainer repeats its default: {container}")
+        if entry.get("registryContainer") == health_container:
+            raise SnapshotError(f"placement.{alias}.registryContainer repeats its default: {health_container}")
+
+
 def load_placement(path: pathlib.Path | None = DEFAULT_PLACEMENT) -> dict[str, dict[str, str]]:
     if path is None or not path.exists():
         return {}
@@ -257,6 +274,7 @@ def snapshot_document(
     unknown_placement = sorted(set(physical) - set(fleet))
     if unknown_placement:
         raise SnapshotError(f"physical fleet overlay names non-fleet aliases: {unknown_placement}")
+    validate_placement_defaults(physical, fleet)
 
     return {
         "schemaVersion": 1,
