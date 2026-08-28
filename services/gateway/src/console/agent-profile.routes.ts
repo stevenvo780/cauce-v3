@@ -46,10 +46,10 @@ export interface AgentProfileDeps {
     revision: number;
     applied_revision: number | null;
   }>;
-  /** Preflight sin mutar disco. El `apply` posterior es un lote con rollback y ACK por fichero. */
+  /** Read-only runtime snapshot that is materialized only after the durable CAS returns a revision. */
   prepareRuntime?(
     tenantId: string, alias: string, contexto: ContextoDeAlias,
-  ): Promise<PreparedProfileRuntime>;
+  ): Promise<ProfileRuntimePreflight>;
   /**
    * Persiste la expectativa exacta que viajará en entregas capability-aware. Sigue siendo
    * evidencia de disco; sólo un ACK posterior del adaptador puede convertirla en adopción.
@@ -128,6 +128,8 @@ export interface ProfileRuntimeAdoptionAck {
 }
 
 export interface PreparedProfileRuntime {
+  /** Durable profile revision rendered into the native file. */
+  readonly revision: number;
   /** Nombres exactos que el lote debe acreditar; no se aceptan ACK parciales ni extras. */
   readonly documents: readonly string[];
   /** Arnés medido, que puede diferir de la columna declarada en la base. */
@@ -137,6 +139,11 @@ export interface PreparedProfileRuntime {
   /** Evidencia viva ANTES del lote; `current` es requisito para un GET `applied`. */
   readonly verification: ProfileRuntimeVerification;
   apply(): Promise<readonly ProfileRuntimeAck[]>;
+}
+
+export interface ProfileRuntimePreflight {
+  readonly harness: string;
+  materialize(revision: number): PreparedProfileRuntime;
 }
 
 /** De qué está compuesta la vista previa: nunca de una medición que no se hizo. */
@@ -296,7 +303,11 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       let runtimeReason: string | undefined;
       if (target.enabled === true && lectura.exists && deps.prepareRuntime !== undefined) {
         try {
-          prepared = await deps.prepareRuntime(tenantId, alias, contexto);
+          if (lectura.revision === null) {
+            throw new Error('an existing profile must have a durable revision');
+          }
+          const preflight = await deps.prepareRuntime(tenantId, alias, contexto);
+          prepared = preflight.materialize(lectura.revision);
         } catch (error) {
           runtimeReason = mensajeDeError(error, 'no se pudo verificar el runtime vivo');
         }
@@ -391,7 +402,10 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
          * esto como «el fichero entero».
          */
         const generados = prepared?.preview
-          ?? ficherosDelArnes(harness ?? '', contexto, new Map()).map((fichero) => ({
+          ?? ficherosDelArnes(
+            harness ?? '', contexto, new Map(),
+            lectura.revision === null ? {} : { revision: lectura.revision },
+          ).map((fichero) => ({
             nombre: fichero.nombre,
             politica: fichero.politica,
             texto: fichero.texto,
@@ -543,9 +557,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       });
     }
 
-    let prepared: PreparedProfileRuntime;
+    let preflight: ProfileRuntimePreflight;
     try {
-      prepared = await deps.prepareRuntime(tenantId, alias, {
+      preflight = await deps.prepareRuntime(tenantId, alias, {
         perfil: profile, hechos: current.contexto.hechos,
       });
     } catch (error) {
@@ -566,6 +580,30 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       return reply.code(status).send({
         error: code ?? 'profile_write_failed',
         message: mensajeDeError(error, 'no se pudo persistir el perfil desired'),
+      });
+    }
+
+    let prepared: PreparedProfileRuntime;
+    try {
+      prepared = preflight.materialize(desired.revision);
+    } catch (error) {
+      return reply.code(statusDeRuntime(error)).send({
+        error: codigoDeError(error) ?? 'runtime_revision_materialization_failed',
+        state: 'pending',
+        message: mensajeDeError(
+          error, 'el perfil desired quedó guardado, pero no se pudo materializar su revisión',
+        ),
+        revision: desired.revision,
+        applied_revision: desired.applied_revision,
+      });
+    }
+    if (prepared.revision !== desired.revision) {
+      return reply.code(502).send({
+        error: 'runtime_revision_mismatch',
+        state: 'pending',
+        message: 'el lote preparado no contiene la revisión durable devuelta por el store',
+        revision: desired.revision,
+        applied_revision: desired.applied_revision,
       });
     }
 

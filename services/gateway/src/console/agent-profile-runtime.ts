@@ -9,7 +9,7 @@ import type {
 } from './agent-documents.routes.js';
 import { profileDocumentPaths } from './agent-documents.js';
 import type {
-  FicheroDeLaVistaPrevia, PreparedProfileRuntime, ProfileRuntimeAck,
+  FicheroDeLaVistaPrevia, PreparedProfileRuntime, ProfileRuntimeAck, ProfileRuntimePreflight,
   ProfileRuntimeDocumentEvidence,
 } from './agent-profile.routes.js';
 
@@ -66,19 +66,15 @@ function sameRuntimeIdentity(
 }
 
 /**
- * Prepara el lote SIN mutar ni Postgres ni disco.
- *
- * Lee cada documento completo con SHA, compone contra esos bytes y captura precondiciones. El
- * `apply()` posterior manda todos los documentos gestionados en un único lote del agente; un
- * conflicto o fallo revierte el lote entero. MEMORY/HEARTBEAT existentes sólo se acreditan como
- * preservados: su contenido es del agente y nunca se reescribe.
+ * Captures native files and write preconditions without mutating PostgreSQL or disk.
+ * The returned snapshot renders the CAS-returned revision in memory before one atomic batch.
  */
 export async function prepareAgentProfileRuntime(
   probe: AgentFactsProbe,
   tenantId: string,
   alias: string,
   contexto: ContextoDeAlias,
-): Promise<PreparedProfileRuntime> {
+): Promise<ProfileRuntimePreflight> {
   const measured = await probe.factsFor(tenantId, alias);
   if (measured === undefined || measured.source !== 'measured') {
     throw new ProfileRuntimeError('unavailable', 'el runtime no publicó hechos medidos del alias');
@@ -136,174 +132,178 @@ export async function prepareAgentProfileRuntime(
       },
     },
   };
-  let generated: ReturnType<typeof ficherosDelArnes>;
-  try {
-    generated = ficherosDelArnes(harness, runtimeContext, existing);
-  } catch (error) {
-    if (error instanceof ErrorDeTopeDelArnes) {
-      throw new ProfileRuntimeError('too_large', error.message);
-    }
-    throw error;
-  }
-
-  const owner = `<!-- alias: ${tenantId}/${alias} -->`;
-  for (const file of generated) {
-    const before = existing.get(file.nombre);
-    const previousBlock = before === undefined ? undefined : bloqueDePerfil(before);
-    if (file.politica === 'bloque-gestionado' && !file.escribir && before !== undefined
-      && previousBlock !== undefined && !previousBlock.includes(owner)) {
-      throw new ProfileRuntimeError(
-        'conflict', `${file.nombre} contiene un bloque gestionado de otro alias`,
-      );
-    }
-  }
-
-  const writes: GovernanceBatchWrite[] = [];
-  const stateByName = new Map<string, ProfileRuntimeAck['state']>();
-  const evidence: ProfileRuntimeDocumentEvidence[] = [];
-  const preview: FicheroDeLaVistaPrevia[] = [];
-  for (const file of generated) {
-    const path = pathByName.get(file.nombre)!;
-    const precondition = preconditions.get(file.nombre) ?? { state: 'absent' as const };
-    const preservedFile = file.politica === 'solo-si-falta' && existing.has(file.nombre);
-    const expectedSha = preservedFile && precondition.state === 'present'
-      ? precondition.sha256
-      : hash(file.texto);
-    const expectedBytes = preservedFile
-      ? (observed.get(file.nombre)?.bytes ?? Buffer.byteLength(file.texto, 'utf8'))
-      : Buffer.byteLength(file.texto, 'utf8');
-    const before = observed.get(file.nombre);
-    evidence.push({
-      name: file.nombre,
-      path,
-      expected_sha: expectedSha,
-      observed_sha: before?.sha ?? null,
-      expected_bytes: expectedBytes,
-      observed_bytes: before?.bytes ?? null,
-      current: before?.sha === expectedSha && before.bytes === expectedBytes,
-    });
-    preview.push({
-      nombre: file.nombre,
-      politica: file.politica,
-      texto: file.texto,
-      unidades: units(file.texto),
-    });
-    if (preservedFile) {
-      writes.push({ mode: 'verify', path, precondition });
-      stateByName.set(file.nombre, 'preserved');
-      continue;
-    }
-    /*
-     * También entra el documento gestionado que ya coincide. El agente compara SHA y lo trata
-     * como no-op; incluirlo en el lote cierra la carrera preflight→ACK sin tocar sus bytes.
-     */
-    writes.push({ mode: 'write', path, content: file.texto, precondition });
-    stateByName.set(
-      file.nombre,
-      file.escribir || precondition.state === 'absent' ? 'written' : 'already_current',
-    );
-  }
-
   const generation = typeof measured.facts.generation === 'string'
     && measured.facts.generation.length > 0
     ? measured.facts.generation
     : null;
-  const verification: PreparedProfileRuntime['verification'] = generation === null
-    ? {
-        state: 'unverified', generation: null,
-        container_id: measured.facts.containerId ?? null,
-        observed_at: null, documents: evidence,
-        reason: 'la presencia medida no publica una generación de runtime acreditable',
+  let consumed = false;
+  const materialize = (revision: number): PreparedProfileRuntime => {
+    let generated: ReturnType<typeof ficherosDelArnes>;
+    try {
+      generated = ficherosDelArnes(harness, runtimeContext, existing, { revision });
+    } catch (error) {
+      if (error instanceof ErrorDeTopeDelArnes) {
+        throw new ProfileRuntimeError('too_large', error.message);
       }
-    : {
-        state: evidence.every((document) => document.current) ? 'current' : 'drifted',
-        generation,
-        container_id: measured.facts.containerId ?? null,
-        observed_at: new Date().toISOString(),
-        documents: evidence,
-      };
+      throw new ProfileRuntimeError(
+        'conflict', error instanceof Error ? error.message : 'la topología nativa no es válida',
+      );
+    }
 
-  return {
-    documents: [...names],
-    harness,
-    preview,
-    verification,
-    async apply(): Promise<readonly ProfileRuntimeAck[]> {
-      if (probe.writeGovernanceBatch === undefined) {
-        throw new ProfileRuntimeError('unavailable', 'la sonda no anuncia escritura gobernada por lote');
-      }
-      if (generation === null) {
+    const owner = `<!-- alias: ${tenantId}/${alias} -->`;
+    for (const file of generated) {
+      const before = existing.get(file.nombre);
+      const previousBlock = before === undefined ? undefined : bloqueDePerfil(before);
+      const previousOwner = previousBlock?.trimStart().split(/\r?\n/u, 1)[0];
+      if (file.politica === 'bloque-gestionado' && !file.escribir && before !== undefined
+        && previousBlock !== undefined && previousOwner !== owner) {
         throw new ProfileRuntimeError(
-          'unavailable', 'el lote no se escribe sin una generación medida que pueda cercar su ACK',
+          'conflict', `${file.nombre} contiene un bloque gestionado de otro alias`,
         );
       }
-      const batch = await probe.writeGovernanceBatch(writes, measured.facts, tenantId, alias);
-      if (isFailure(batch)) throw new ProfileRuntimeError(batch.error, batch.reason);
-      if (batch.length !== writes.length) {
-        throw new ProfileRuntimeError('invalid_ack', 'el lote no acreditó todas sus escrituras');
+    }
+
+    const writes: GovernanceBatchWrite[] = [];
+    const stateByName = new Map<string, ProfileRuntimeAck['state']>();
+    const evidence: ProfileRuntimeDocumentEvidence[] = [];
+    const preview: FicheroDeLaVistaPrevia[] = [];
+    for (const file of generated) {
+      const path = pathByName.get(file.nombre)!;
+      const precondition = preconditions.get(file.nombre) ?? { state: 'absent' as const };
+      const preservedFile = file.politica === 'solo-si-falta' && existing.has(file.nombre);
+      const expectedSha = preservedFile && precondition.state === 'present'
+        ? precondition.sha256
+        : hash(file.texto);
+      const expectedBytes = preservedFile
+        ? (observed.get(file.nombre)?.bytes ?? Buffer.byteLength(file.texto, 'utf8'))
+        : Buffer.byteLength(file.texto, 'utf8');
+      const before = observed.get(file.nombre);
+      evidence.push({
+        name: file.nombre,
+        path,
+        expected_sha: expectedSha,
+        observed_sha: before?.sha ?? null,
+        expected_bytes: expectedBytes,
+        observed_bytes: before?.bytes ?? null,
+        current: before?.sha === expectedSha && before.bytes === expectedBytes,
+      });
+      preview.push({
+        nombre: file.nombre,
+        politica: file.politica,
+        texto: file.texto,
+        unidades: units(file.texto),
+      });
+      if (preservedFile) {
+        writes.push({ mode: 'verify', path, precondition });
+        stateByName.set(file.nombre, 'preserved');
+        continue;
       }
-      const byPath = new Map(batch.map((ack) => [ack.path, ack]));
-      if (byPath.size !== batch.length) {
-        throw new ProfileRuntimeError('invalid_ack', 'el lote repitió una ruta en sus ACK');
-      }
-      const ackByName = new Map<string, GovernanceBatchWriteAck>();
-      for (const file of generated) {
-        const path = pathByName.get(file.nombre)!;
-        const ack = byPath.get(path);
-        const preservedFile = file.politica === 'solo-si-falta' && existing.has(file.nombre);
-        const precondition = preconditions.get(file.nombre);
-        const expectedSha = preservedFile && precondition?.state === 'present'
-          ? precondition.sha256
-          : hash(file.texto);
-        const expectedBytes = preservedFile ? undefined : Buffer.byteLength(file.texto, 'utf8');
-        if (ack === undefined || ack.sha === null || ack.sha !== expectedSha
-          || (expectedBytes !== undefined && ack.bytes !== expectedBytes)
-          || (preservedFile && ack.operation !== 'unchanged')) {
-          throw new ProfileRuntimeError('invalid_ack', `${file.nombre} no trajo SHA/bytes acreditables`);
+      writes.push({ mode: 'write', path, content: file.texto, precondition });
+      stateByName.set(
+        file.nombre,
+        file.escribir || precondition.state === 'absent' ? 'written' : 'already_current',
+      );
+    }
+
+    const verification: PreparedProfileRuntime['verification'] = generation === null
+      ? {
+          state: 'unverified', generation: null,
+          container_id: measured.facts.containerId ?? null,
+          observed_at: null, documents: evidence,
+          reason: 'la presencia medida no publica una generación de runtime acreditable',
         }
-        ackByName.set(file.nombre, ack);
-      }
-
-      /*
-       * El ACK del write no demuestra que sigamos mirando el mismo contenedor. Se vuelve a medir
-       * la identidad y se relee cada ruta: sólo la terna generación+ruta+SHA permite marcar la
-       * revisión como aplicada. Un recreate o una edición concurrente queda pending, nunca verde.
-       */
-      const after = await probe.factsFor(tenantId, alias);
-      if (!sameRuntimeIdentity(measured, after)) {
-        throw new ProfileRuntimeError(
-          'conflict', 'la generación o las rutas medidas cambiaron durante la aplicación del perfil',
-        );
-      }
-
-      const acknowledgements: ProfileRuntimeAck[] = [];
-      for (const document of evidence) {
-        const readBack = await probe.readGovernanceDocument(
-          document.path, after!.facts, tenantId, alias,
-        );
-        const mayBeTruncated = stateByName.get(document.name) === 'preserved';
-        if ('error' in readBack || (readBack.truncated && !mayBeTruncated)
-          || readBack.sha !== document.expected_sha
-          || readBack.bytes !== document.expected_bytes) {
+      : {
+          state: evidence.every((document) => document.current) ? 'current' : 'drifted',
+          generation,
+          container_id: measured.facts.containerId ?? null,
+          observed_at: new Date().toISOString(),
+          documents: evidence,
+        };
+    return {
+      revision,
+      documents: [...names],
+      harness,
+      preview,
+      verification,
+      async apply(): Promise<readonly ProfileRuntimeAck[]> {
+        if (consumed) {
+          throw new ProfileRuntimeError('conflict', 'la foto de runtime sólo se puede aplicar una vez');
+        }
+        consumed = true;
+        if (probe.writeGovernanceBatch === undefined) {
+          throw new ProfileRuntimeError('unavailable', 'la sonda no anuncia escritura gobernada por lote');
+        }
+        if (generation === null) {
           throw new ProfileRuntimeError(
-            'invalid_ack', `${document.name} no coincide al releer ruta+SHA en la generación aplicada`,
+            'unavailable', 'el lote no se escribe sin una generación medida que pueda cercar su ACK',
           );
         }
-        const ack = ackByName.get(document.name);
-        if (ack === undefined || ack.sha === null) {
-          throw new ProfileRuntimeError('invalid_ack', `${document.name} perdió su ACK correlacionado`);
+        const batch = await probe.writeGovernanceBatch(writes, measured.facts, tenantId, alias);
+        if (isFailure(batch)) throw new ProfileRuntimeError(batch.error, batch.reason);
+        if (batch.length !== writes.length) {
+          throw new ProfileRuntimeError('invalid_ack', 'el lote no acreditó todas sus escrituras');
         }
-        acknowledgements.push({
-          name: document.name,
-          path: document.path,
-          state: stateByName.get(document.name) ?? 'written',
-          sha: readBack.sha,
-          bytes: readBack.bytes,
-          generation,
-          container_id: after!.facts.containerId ?? null,
-        });
-      }
-      return acknowledgements;
-    },
+        const byPath = new Map(batch.map((ack) => [ack.path, ack]));
+        if (byPath.size !== batch.length) {
+          throw new ProfileRuntimeError('invalid_ack', 'el lote repitió una ruta en sus ACK');
+        }
+        const ackByName = new Map<string, GovernanceBatchWriteAck>();
+        for (const file of generated) {
+          const path = pathByName.get(file.nombre)!;
+          const ack = byPath.get(path);
+          const preservedFile = file.politica === 'solo-si-falta' && existing.has(file.nombre);
+          const precondition = preconditions.get(file.nombre);
+          const expectedSha = preservedFile && precondition?.state === 'present'
+            ? precondition.sha256
+            : hash(file.texto);
+          const expectedBytes = preservedFile ? undefined : Buffer.byteLength(file.texto, 'utf8');
+          if (ack === undefined || ack.sha === null || ack.sha !== expectedSha
+            || (expectedBytes !== undefined && ack.bytes !== expectedBytes)
+            || (preservedFile && ack.operation !== 'unchanged')) {
+            throw new ProfileRuntimeError('invalid_ack', `${file.nombre} no trajo SHA/bytes acreditables`);
+          }
+          ackByName.set(file.nombre, ack);
+        }
+
+        const after = await probe.factsFor(tenantId, alias);
+        if (!sameRuntimeIdentity(measured, after)) {
+          throw new ProfileRuntimeError(
+            'conflict', 'la generación o las rutas medidas cambiaron durante la aplicación del perfil',
+          );
+        }
+
+        const acknowledgements: ProfileRuntimeAck[] = [];
+        for (const document of evidence) {
+          const readBack = await probe.readGovernanceDocument(
+            document.path, after!.facts, tenantId, alias,
+          );
+          const mayBeTruncated = stateByName.get(document.name) === 'preserved';
+          if ('error' in readBack || (readBack.truncated && !mayBeTruncated)
+            || readBack.sha !== document.expected_sha
+            || readBack.bytes !== document.expected_bytes) {
+            throw new ProfileRuntimeError(
+              'invalid_ack', `${document.name} no coincide al releer ruta+SHA en la generación aplicada`,
+            );
+          }
+          const ack = ackByName.get(document.name);
+          if (ack === undefined || ack.sha === null) {
+            throw new ProfileRuntimeError('invalid_ack', `${document.name} perdió su ACK correlacionado`);
+          }
+          acknowledgements.push({
+            name: document.name,
+            path: document.path,
+            state: stateByName.get(document.name) ?? 'written',
+            sha: readBack.sha,
+            bytes: readBack.bytes,
+            generation,
+            container_id: after!.facts.containerId ?? null,
+          });
+        }
+        return acknowledgements;
+      },
+    };
   };
+
+  materialize(Number.MAX_SAFE_INTEGER);
+  return { harness, materialize };
 }

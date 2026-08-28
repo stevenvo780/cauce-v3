@@ -19,6 +19,7 @@ import {
   TOPES_OPENCLAW,
   conBloqueDePerfil,
   conBloqueGestionado,
+  marcaDeRevisionDelPerfil,
   measureStrictestUnits,
   type ProfileRuntimeContract,
 } from "@cauce/protocol";
@@ -53,6 +54,11 @@ const OUTPUT = {
 
 function hash(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+function profileFile(alias: string, revision: number | undefined, body: string): string {
+  const managed = conBloqueDePerfil("", `<!-- alias: Steven/${alias} -->\n${body}`);
+  return revision === undefined ? managed : `${marcaDeRevisionDelPerfil(revision)}\n${managed}`;
 }
 
 function context(alias: string): HarnessRequestContext {
@@ -232,8 +238,8 @@ test("claude projects the fixed contract and sends only pointer, metadata, and r
   const state = join(root, "state");
   mkdirSync(config, { recursive: true });
   const path = join(config, "CLAUDE.md");
-  const profile = "<!-- alias: Steven/zeus -->\n## Rol\n\nPROFILE-NATIVE-CLAUDE";
-  writeFileSync(path, conBloqueDePerfil("# Human manual\n", profile), "utf8");
+  const profile = profileFile("zeus", 7, "## Rol\n\nPROFILE-NATIVE-CLAUDE");
+  writeFileSync(path, `# Human manual\n\n${profile}`, "utf8");
   const previousHome = process.env.HOME;
   const previousConfig = process.env.CLAUDE_CONFIG_DIR;
   const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
@@ -327,7 +333,7 @@ test("native file drift during execution withholds adoption evidence", async (t)
   writeFileSync(
     path,
     conBloqueGestionado(
-      conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nPROFILE-STABLE"),
+      profileFile("zeus", 21, "PROFILE-STABLE"),
       textoNativoDelSobre(base),
     ),
     "utf8",
@@ -392,7 +398,7 @@ test("openclaw proves seven files without exposing memory, heartbeat, or profile
     else {
       writeFileSync(
         path,
-        conBloqueDePerfil("", `<!-- alias: Steven/argos -->\nPROFILE-${name}`),
+        profileFile("argos", name === "AGENTS.md" ? 9 : undefined, `PROFILE-${name}`),
         "utf8",
       );
     }
@@ -441,8 +447,9 @@ test("openclaw rejects overlapping managed blocks before modifying AGENTS.md", a
   const workspace = join(root, "workspace");
   mkdirSync(workspace, { recursive: true });
   const paths = FICHEROS_OPENCLAW.map((name) => join(workspace, name));
-  const overlapping = `${MARCA_INICIO}\n${MARCA_PERFIL_INICIO}\n`
-    + `<!-- alias: Steven/argos -->\nPROFILE-AGENTS\n${MARCA_FIN}\n${MARCA_PERFIL_FIN}\n`;
+  const overlapping = `${marcaDeRevisionDelPerfil(91)}\n${MARCA_PERFIL_INICIO}\n`
+    + `<!-- alias: Steven/argos -->\nPROFILE-AGENTS\n${MARCA_INICIO}\n`
+    + `fixed-inside-profile\n${MARCA_PERFIL_FIN}\n${MARCA_FIN}\n`;
   for (const name of FICHEROS_OPENCLAW) {
     const path = join(workspace, name);
     if (name === "MEMORY.md" || name === "HEARTBEAT.md") {
@@ -452,7 +459,7 @@ test("openclaw rejects overlapping managed blocks before modifying AGENTS.md", a
         path,
         name === "AGENTS.md"
           ? overlapping
-          : conBloqueDePerfil("", `<!-- alias: Steven/argos -->\nPROFILE-${name}`),
+          : profileFile("argos", undefined, `PROFILE-${name}`),
         "utf8",
       );
     }
@@ -480,7 +487,7 @@ test("openclaw rejects overlapping managed blocks before modifying AGENTS.md", a
     context: { ...context("argos"), native_profile_contract: contract(91, paths) },
     timeoutMs: 2_000,
     signal: AbortSignal.timeout(2_000),
-  }), /overlapping fixed-context and profile blocks/u);
+  }), /overlapping (?:fixed-context and profile|managed) blocks/u);
   assert.equal(requests.length, 0);
   assert.equal(readFileSync(agentsPath, "utf8"), overlapping);
 });
@@ -490,12 +497,15 @@ test("openclaw rejects a fixed block that would exceed the native document limit
   const workspace = join(root, "workspace");
   mkdirSync(workspace, { recursive: true });
   const paths = FICHEROS_OPENCLAW.map((name) => join(workspace, name));
-  const managed = conBloqueDePerfil("", "<!-- alias: Steven/argos -->\nPROFILE-LIMIT");
-  const padding = "x".repeat(TOPES_OPENCLAW.porFichero - measureStrictestUnits(managed));
+  const managed = profileFile("argos", 10, "PROFILE-LIMIT");
+  const unversioned = profileFile("argos", undefined, "PROFILE-LIMIT");
+  const padding = `${"x".repeat(
+    TOPES_OPENCLAW.porFichero - measureStrictestUnits(managed) - 1,
+  )}\n`;
   for (const name of FICHEROS_OPENCLAW) {
     const path = join(workspace, name);
     if (name === "MEMORY.md" || name === "HEARTBEAT.md") writeFileSync(path, "agent-owned", "utf8");
-    else writeFileSync(path, name === "AGENTS.md" ? `${padding}${managed}` : managed, "utf8");
+    else writeFileSync(path, name === "AGENTS.md" ? `${padding}${managed}` : unversioned, "utf8");
   }
   assert.equal(
     measureStrictestUnits(readFileSync(join(workspace, "AGENTS.md"), "utf8")),
@@ -557,31 +567,51 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
   }> = [
     {
       name: "stale",
-      file: conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT"),
+      file: profileFile("zeus", 11, "CURRENT"),
       mutateContract: true,
     },
-    { name: "absent contract", file: conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT"), omitContract: true },
-    { name: "foreign", file: conBloqueDePerfil("", "<!-- alias: Steven/kant -->\nFOREIGN") },
-    { name: "malformed", file: `${MARCA_PERFIL_INICIO}\n<!-- alias: Steven/zeus -->\nBROKEN` },
+    { name: "absent contract", file: profileFile("zeus", 11, "CURRENT"), omitContract: true },
+    { name: "foreign", file: profileFile("kant", 11, "FOREIGN") },
+    {
+      name: "malformed",
+      file: `${marcaDeRevisionDelPerfil(11)}\n${MARCA_PERFIL_INICIO}\n`
+        + `<!-- alias: Steven/zeus -->\nBROKEN`,
+    },
+    {
+      name: "missing revision marker",
+      file: conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT"),
+    },
+    {
+      name: "malformed revision marker",
+      file: `<!-- CAUCE:REVISION-PERFIL v1 revision=eleven -->\n`
+        + conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT"),
+    },
+    { name: "wrong revision marker", file: profileFile("zeus", 12, "CURRENT") },
     { name: "no owned managed block", file: "# Human-only instructions\n" },
     {
       name: "another runtime generation",
-      file: conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT"),
+      file: profileFile("zeus", 11, "CURRENT"),
       mutateGeneration: true,
     },
     {
       name: "repeated fixed",
-      file: `${conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT")}`
+      file: `${profileFile("zeus", 11, "CURRENT")}`
         + `\n${MARCA_INICIO}\nold-a\n${MARCA_FIN}\n${MARCA_INICIO}\nold-b\n${MARCA_FIN}\n`,
     },
     {
       name: "inverted fixed",
-      file: `${conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nCURRENT")}`
+      file: `${profileFile("zeus", 11, "CURRENT")}`
         + `\n${MARCA_FIN}\nold\n${MARCA_INICIO}\n`,
     },
     {
       name: "overlapping managed blocks",
-      file: `${MARCA_INICIO}\n${MARCA_PERFIL_INICIO}\n`
+      file: `${marcaDeRevisionDelPerfil(11)}\n${MARCA_PERFIL_INICIO}\n`
+        + `<!-- alias: Steven/zeus -->\nCURRENT\n${MARCA_INICIO}\ninside\n`
+        + `${MARCA_PERFIL_FIN}\n${MARCA_FIN}\n`,
+    },
+    {
+      name: "reverse overlapping managed blocks",
+      file: `${MARCA_INICIO}\n${marcaDeRevisionDelPerfil(11)}\n${MARCA_PERFIL_INICIO}\n`
         + `<!-- alias: Steven/zeus -->\nCURRENT\n${MARCA_FIN}\n${MARCA_PERFIL_FIN}\n`,
     },
   ];

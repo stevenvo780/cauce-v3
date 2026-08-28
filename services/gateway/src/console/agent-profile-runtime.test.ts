@@ -69,6 +69,16 @@ function probe(
   };
 }
 
+async function prepareRevision(
+  p: AgentFactsProbe,
+  tenantId: string,
+  alias: string,
+  context: ContextoDeAlias,
+  revision = 7,
+) {
+  return (await prepareAgentProfileRuntime(p, tenantId, alias, context)).materialize(revision);
+}
+
 function ackFor(writes: readonly GovernanceBatchWrite[]): readonly GovernanceBatchWriteAck[] {
   return writes.map((write) => {
     if (write.mode === 'verify') {
@@ -90,7 +100,7 @@ describe('prepareAgentProfileRuntime', () => {
     const path = '/home/dev/.codex-kant/AGENTS.md';
     const before = '# manual humano\n';
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
-    const prepared = await prepareAgentProfileRuntime(
+    const prepared = await prepareRevision(
       probe(
         { harness: 'codex', home: '/home/dev', codexHome: '/home/dev/.codex-kant' },
         new Map([[path, read(before)]]),
@@ -114,11 +124,14 @@ describe('prepareAgentProfileRuntime', () => {
     if (write?.mode !== 'write') throw new Error('el lote no trajo una escritura');
     expect(write.content).toContain('# manual humano');
     expect(write.content).toContain('<!-- alias: Steven/kant -->');
+    expect(write.content).not.toContain('CAUCE:REVISION-PERFIL');
     expect(acks).toEqual([{
       name: 'AGENTS.md', path, state: 'written',
       sha: sha(write.content), bytes: Buffer.byteLength(write.content, 'utf8'),
       generation: 'gen-1', container_id: 'ws-test',
     }]);
+    await expect(prepared.apply()).rejects.toMatchObject({ code: 'conflict' });
+    expect(batch).toHaveBeenCalledOnce();
   });
 
   it('un documento truncado aborta en preflight antes de persistir o escribir', async () => {
@@ -140,7 +153,7 @@ describe('prepareAgentProfileRuntime', () => {
     const memory = `${workspace}/MEMORY.md`;
     const heartbeat = `${workspace}/HEARTBEAT.md`;
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
-    const prepared = await prepareAgentProfileRuntime(
+    const prepared = await prepareRevision(
       probe(
         { harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace },
         new Map([
@@ -165,6 +178,15 @@ describe('prepareAgentProfileRuntime', () => {
       { name: 'AGENTS.md', mode: 'write' },
       { name: 'TOOLS.md', mode: 'write' },
     ]);
+    const agentsWrite = writes.find((write) => write.path.endsWith('/AGENTS.md'));
+    expect(agentsWrite?.mode).toBe('write');
+    if (agentsWrite?.mode !== 'write') throw new Error('AGENTS.md no se materializó');
+    expect(agentsWrite.content).toContain('<!-- CAUCE:REVISION-PERFIL v1 revision=7 -->');
+    for (const write of writes) {
+      if (write.mode === 'write' && !write.path.endsWith('/AGENTS.md')) {
+        expect(write.content).not.toContain('CAUCE:REVISION-PERFIL');
+      }
+    }
     expect(acks).toHaveLength(7);
     expect(acks.find((ack) => ack.name === 'MEMORY.md')).toMatchObject({
       state: 'preserved', sha: sha('memoria del agente'),
@@ -181,7 +203,7 @@ describe('prepareAgentProfileRuntime', () => {
     const fullBytes = 900_000;
     const fullSha = 'd'.repeat(64);
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
-    const prepared = await prepareAgentProfileRuntime(
+    const prepared = await prepareRevision(
       probe(
         { harness: 'openclaw', home: '/home/claw', openclawWorkspace: workspace },
         new Map([[memory, read(prefix, {
@@ -219,7 +241,7 @@ describe('prepareAgentProfileRuntime', () => {
           return ackFor(writes);
         },
       );
-      const prepared = await prepareAgentProfileRuntime(p, 'Steven', alias, contexto(alias, 'codex'));
+      const prepared = await prepareRevision(p, 'Steven', alias, contexto(alias, 'codex'));
       await prepared.apply();
     };
 
@@ -232,7 +254,7 @@ describe('prepareAgentProfileRuntime', () => {
   });
 
   it('un fallo de lote se propaga y no produce un ACK parcial', async () => {
-    const prepared = await prepareAgentProfileRuntime(
+    const prepared = await prepareRevision(
       probe(
         { harness: 'openclaw', home: '/home/claw', openclawWorkspace: '/home/claw/ws' },
         new Map(),
@@ -248,7 +270,8 @@ describe('prepareAgentProfileRuntime', () => {
   it('un bloque de otro alias falla cerrado antes del lote', async () => {
     const path = '/home/dev/.codex/AGENTS.md';
     const foreign = '<!-- CAUCE:PERFIL v1 — generado desde la configuración, no editar dentro de este bloque -->\n'
-      + '<!-- alias: Steven/atlas -->\najeno\n<!-- CAUCE:FIN-PERFIL -->';
+      + '<!-- alias: Steven/atlas -->\najeno\n<!-- alias: Steven/kratos -->\n'
+      + '<!-- CAUCE:FIN-PERFIL -->';
     await expect(prepareAgentProfileRuntime(
       probe(
         { harness: 'codex', home: '/home/dev' },
@@ -259,10 +282,47 @@ describe('prepareAgentProfileRuntime', () => {
     )).rejects.toMatchObject({ name: 'ProfileRuntimeError', code: 'conflict' });
   });
 
+  it('una topología gestionada solapada falla antes del CAS y del lote', async () => {
+    const path = '/home/dev/.claude/CLAUDE.md';
+    const overlapping = '<!-- CAUCE:CONTEXTO-FIJO v1 — generado, no editar dentro de este bloque -->\n'
+      + '<!-- CAUCE:PERFIL v1 — generado desde la configuración, no editar dentro de este bloque -->\n'
+      + '<!-- alias: Steven/kant -->\n<!-- CAUCE:FIN-CONTEXTO-FIJO -->\n'
+      + '<!-- CAUCE:FIN-PERFIL -->\n';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    await expect(prepareAgentProfileRuntime(
+      probe(
+        { harness: 'claude', home: '/home/dev' },
+        new Map([[path, read(overlapping)]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'claude'),
+    )).rejects.toMatchObject({ name: 'ProfileRuntimeError', code: 'conflict' });
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('una foto de runtime sólo permite aplicar una de sus materializaciones', async () => {
+    const path = '/home/dev/.codex/AGENTS.md';
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+    const preflight = await prepareAgentProfileRuntime(
+      probe(
+        { harness: 'codex', home: '/home/dev' },
+        new Map([[path, read('# manual\n')]]),
+        batch,
+      ),
+      'Steven', 'kant', contexto('kant', 'codex'),
+    );
+    const revisionDos = preflight.materialize(2);
+    const revisionTres = preflight.materialize(3);
+
+    await revisionDos.apply();
+    await expect(revisionTres.apply()).rejects.toMatchObject({ code: 'conflict' });
+    expect(batch).toHaveBeenCalledOnce();
+  });
+
   it('GET puede distinguir bytes actuales de drift sin escribir nada', async () => {
     const path = '/home/dev/.codex/AGENTS.md';
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
-    const prepared = await prepareAgentProfileRuntime(
+    const prepared = await prepareRevision(
       probe(
         { harness: 'codex', home: '/home/dev' },
         new Map([[path, read('# manual\n')]]),
@@ -287,7 +347,7 @@ describe('prepareAgentProfileRuntime', () => {
       async (writes) => ackFor(writes),
       false,
     );
-    const prepared = await prepareAgentProfileRuntime(p, 'Steven', 'kant', contexto('kant', 'codex'));
+    const prepared = await prepareRevision(p, 'Steven', 'kant', contexto('kant', 'codex'));
 
     expect(prepared.verification.state).toBe('unverified');
     await expect(prepared.apply()).rejects.toMatchObject({ code: 'unavailable' });
@@ -315,7 +375,7 @@ describe('prepareAgentProfileRuntime', () => {
         return ackFor(writes);
       },
     };
-    const prepared = await prepareAgentProfileRuntime(p, 'Steven', 'kant', contexto('kant', 'codex'));
+    const prepared = await prepareRevision(p, 'Steven', 'kant', contexto('kant', 'codex'));
 
     await expect(prepared.apply()).rejects.toMatchObject({ code: 'conflict' });
   });

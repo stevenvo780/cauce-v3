@@ -5,7 +5,8 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import {
-  ErrorDeTopeDelArnes, ficherosDelArnes, nombresDelArnes, type ContextoDeAlias,
+  ErrorDeTopeDelArnes, PREFIJO_REVISION_PERFIL, bloqueDePerfil, ficherosDelArnes, nombresDelArnes,
+  revisionDelPerfil, type ContextoDeAlias,
   type FicheroGenerado,
 } from "@cauce/protocol";
 
@@ -494,8 +495,21 @@ export function sembrarPerfilDelArnes(
   }
 
   let generados: readonly FicheroGenerado[];
+  let revisionNativa: number | undefined;
   try {
-    generados = ficherosDelArnes(harness, contexto, existentes);
+    const nombreCanonico = harness === "claude"
+      ? "CLAUDE.md"
+      : harness === "openclaw" ? "AGENTS.md" : undefined;
+    const textoCanonico = nombreCanonico === undefined ? undefined : existentes.get(nombreCanonico);
+    revisionNativa = textoCanonico === undefined || !textoCanonico.includes(PREFIJO_REVISION_PERFIL)
+      ? undefined
+      : revisionDelPerfil(textoCanonico);
+    generados = ficherosDelArnes(
+      harness,
+      contexto,
+      existentes,
+      revisionNativa === undefined ? {} : { revision: revisionNativa },
+    );
   } catch (error) {
     if (error instanceof ErrorDeTopeDelArnes) {
 // NONE is written. A half-persona —four files today, three not— contradicts itself, and the
@@ -503,6 +517,18 @@ export function sembrarPerfilDelArnes(
       return { estado: "no-entra", fichero: error.fichero, medido: error.medido, tope: error.tope };
     }
     return { estado: "no-entra", fichero: "desconocido", medido: 0, tope: 0 };
+  }
+
+  if (revisionNativa !== undefined
+    && generados.some((fichero) => fichero.escribir || !existentes.has(fichero.nombre))) {
+    return {
+      estado: "hecho",
+      ficheros: generados.map((fichero) => ({
+        nombre: fichero.nombre,
+        estado: "no-se-pudo-escribir" as const,
+        motivo: "la proyección revisionada difiere; sólo el publicador durable puede cambiarla",
+      })),
+    };
   }
 
   const porNombre = new Map<string, ResultadoDeFichero>();
@@ -517,9 +543,12 @@ export function sembrarPerfilDelArnes(
        * looking for why an alias lacks its profile.
        */
       const previo = existentes.get(fichero.nombre);
+      const bloquePrevio = previo === undefined ? undefined : bloqueDePerfil(previo);
+      const duenoPrevio = bloquePrevio?.trimStart().split(/\r?\n/u, 1)[0];
+      const duenoEsperado = `<!-- alias: ${contexto.perfil.tenant_id}/${contexto.perfil.alias} -->`;
       const ajeno = previo !== undefined && previo === fichero.texto
-        && fichero.politica === "bloque-gestionado" && previo.includes("CAUCE:PERFIL")
-        && !previo.includes(`<!-- alias: ${contexto.perfil.tenant_id}/${contexto.perfil.alias} -->`);
+        && fichero.politica === "bloque-gestionado" && bloquePrevio !== undefined
+        && duenoPrevio !== duenoEsperado;
       porNombre.set(fichero.nombre, {
         nombre: fichero.nombre,
         estado: ajeno ? "ocupado-por-otro-alias" : "ya-estaba",

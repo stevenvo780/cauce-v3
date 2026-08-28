@@ -1,7 +1,131 @@
 import {
   measureStrictestUnits, seccion, vinetas, type AgentProfile, type ContextoDeAlias,
 } from "./agent-profile.js";
-import { bloqueDePerfil, conBloqueDePerfil, sinBloqueDePerfil } from "./marcas-de-bloque.js";
+import {
+  MARCA_FIN,
+  MARCA_INICIO,
+  MARCA_PERFIL_FIN,
+  MARCA_PERFIL_INICIO,
+  bloqueDePerfil,
+  conBloqueDePerfil,
+  sinBloqueDePerfil,
+} from "./marcas-de-bloque.js";
+
+export const VERSION_REVISION_PERFIL = "1";
+export const PREFIJO_REVISION_PERFIL = "<!-- CAUCE:REVISION-PERFIL";
+
+interface RevisionLine {
+  readonly start: number;
+  readonly end: number;
+  readonly revision: number;
+}
+
+interface StrictBlock {
+  readonly start: number;
+  readonly end: number;
+}
+
+export function marcaDeRevisionDelPerfil(revision: number): string {
+  if (!Number.isSafeInteger(revision) || revision <= 0) {
+    throw new RangeError("profile revision must be a positive safe integer");
+  }
+  return `${PREFIJO_REVISION_PERFIL} v${VERSION_REVISION_PERFIL} revision=${String(revision)} -->`;
+}
+
+function occurrences(text: string, marker: string): number {
+  let total = 0;
+  for (
+    let position = text.indexOf(marker);
+    position !== -1;
+    position = text.indexOf(marker, position + 1)
+  ) total += 1;
+  return total;
+}
+
+function isFullLine(text: string, position: number, length: number): boolean {
+  const before = position === 0 || text[position - 1] === "\n";
+  const after = position + length === text.length || text[position + length] === "\n";
+  return before && after;
+}
+
+function strictBlock(
+  text: string,
+  startMarker: string,
+  endMarker: string,
+  name: string,
+): StrictBlock | undefined {
+  const starts = occurrences(text, startMarker);
+  const ends = occurrences(text, endMarker);
+  if (starts === 0 && ends === 0) return undefined;
+  if (starts !== 1 || ends !== 1) {
+    throw new Error(`native profile file has malformed or repeated ${name} markers`);
+  }
+  const start = text.indexOf(startMarker);
+  const closing = text.indexOf(endMarker);
+  if (closing <= start
+    || !isFullLine(text, start, startMarker.length)
+    || !isFullLine(text, closing, endMarker.length)) {
+    throw new Error(`native profile file has malformed ${name} marker topology`);
+  }
+  return { start, end: closing + endMarker.length };
+}
+
+export function validaTopologiaDeBloquesGestionados(text: string): void {
+  if (text.includes("\r")) {
+    throw new Error("native profile projection does not accept CR or CRLF line endings");
+  }
+  const fixed = strictBlock(text, MARCA_INICIO, MARCA_FIN, "fixed-context");
+  const profile = strictBlock(text, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN, "profile");
+  if (fixed !== undefined && profile !== undefined
+    && fixed.start < profile.end && profile.start < fixed.end) {
+    throw new Error("native profile file has overlapping managed blocks");
+  }
+}
+
+function revisionLine(text: string): RevisionLine | undefined {
+  validaTopologiaDeBloquesGestionados(text);
+  const position = text.indexOf(PREFIJO_REVISION_PERFIL);
+  if (position === -1) return undefined;
+  if (text.indexOf(PREFIJO_REVISION_PERFIL, position + PREFIJO_REVISION_PERFIL.length) !== -1) {
+    throw new Error("native profile file has repeated revision markers");
+  }
+  const start = text.lastIndexOf("\n", position - 1) + 1;
+  const newline = text.indexOf("\n", position);
+  const end = newline === -1 ? text.length : newline;
+  const line = text.slice(start, end);
+  const exact = new RegExp(
+    `^${PREFIJO_REVISION_PERFIL} v${VERSION_REVISION_PERFIL} revision=([1-9][0-9]*) -->$`,
+    "u",
+  ).exec(line);
+  if (start !== position || exact === null) {
+    throw new Error("native profile file has a malformed revision marker");
+  }
+  const after = newline === -1 ? end : end + 1;
+  if (!text.startsWith(MARCA_PERFIL_INICIO, after)) {
+    throw new Error("native profile revision marker is not adjacent to the profile block");
+  }
+  const revision = Number(exact[1]);
+  if (!Number.isSafeInteger(revision)) {
+    throw new Error("native profile revision marker is outside the safe integer range");
+  }
+  return { start, end, revision };
+}
+
+export function revisionDelPerfil(text: string): number | undefined {
+  return revisionLine(text)?.revision;
+}
+
+export function conRevisionDelPerfil(text: string, revision: number): string {
+  const marker = marcaDeRevisionDelPerfil(revision);
+  const existing = revisionLine(text);
+  if (existing !== undefined) {
+    return text.slice(0, existing.start) + marker + text.slice(existing.end);
+  }
+  validaTopologiaDeBloquesGestionados(text);
+  const profile = text.indexOf(MARCA_PERFIL_INICIO);
+  if (profile === -1) throw new Error("native profile revision requires a managed profile block");
+  return `${text.slice(0, profile)}${marker}\n${text.slice(profile)}`;
+}
 
 /**
  * Generador de ficheros de arnés a partir de un perfil y hechos del alias.
@@ -53,6 +177,10 @@ export interface FicheroGenerado {
   readonly texto: string;
   /** `false` cuando lo que hay en el disco ya es esto: no hay nada que escribir. */
   readonly escribir: boolean;
+}
+
+export interface OpcionesDeProyeccionDelPerfil {
+  readonly revision?: number;
 }
 
 /** Los nombres que le tocan a un arnés, sin generar nada. Un arnés desconocido no recibe ninguno. */
@@ -137,9 +265,28 @@ export function ficherosDelArnes(
   harness: string,
   contexto: ContextoDeAlias,
   existentes: ReadonlyMap<string, string> = new Map(),
+  opciones: OpcionesDeProyeccionDelPerfil = {},
 ): readonly FicheroGenerado[] {
   const nombres = nombresDelArnes(harness);
+  if (nombres.length === 0) return [];
   const generados: FicheroGenerado[] = [];
+  const nombreCanonico = harness === "claude" ? "CLAUDE.md" : "AGENTS.md";
+  const revisionNativa = harness === "claude" || harness === "openclaw"
+    ? opciones.revision
+    : undefined;
+  for (const nombre of nombres) {
+    if (esDelAgente(harness, nombre)) continue;
+    const existente = existentes.get(nombre) ?? "";
+    if (revisionNativa === undefined && !existente.includes(PREFIJO_REVISION_PERFIL)) continue;
+    validaTopologiaDeBloquesGestionados(existente);
+    const revisionExistente = revisionDelPerfil(existente);
+    if (revisionExistente !== undefined && nombre !== nombreCanonico) {
+      throw new Error(`${nombre} has a profile revision marker outside the canonical file`);
+    }
+    if (revisionExistente !== undefined && revisionNativa === undefined) {
+      throw new Error("a revisioned native profile requires an explicit durable revision");
+    }
+  }
 
   for (const nombre of nombres) {
     const previo = existentes.get(nombre);
@@ -153,12 +300,14 @@ export function ficherosDelArnes(
       });
       continue;
     }
-
     // El fichero único de claude/codex consolida el perfil completo.
     const cuerpo = harness === "openclaw"
       ? bloqueDeFichero(nombre, contexto.perfil)
       : bloqueUnico(contexto.perfil);
-    const bloque = cuerpo.trim().length === 0 ? "" : `${renglonDeDueno(contexto.perfil)}\n${cuerpo}`;
+    const canonico = esFicheroCanonico(harness, nombre);
+    const bloque = cuerpo.trim().length === 0
+      ? canonico && revisionNativa !== undefined ? renglonDeDueno(contexto.perfil) : ""
+      : `${renglonDeDueno(contexto.perfil)}\n${cuerpo}`;
 
     // Si el bloque está vacío y existía un bloque previo, se retira el bloque conservando el resto del archivo.
     const anterior = previo === undefined ? undefined : bloqueDePerfil(previo);
@@ -186,7 +335,21 @@ export function ficherosDelArnes(
       continue;
     }
 
-    const texto = conBloqueDePerfil(previo ?? "", bloque);
+    let texto = conBloqueDePerfil(previo ?? "", bloque);
+    if (revisionNativa !== undefined) {
+      if (canonico) texto = conRevisionDelPerfil(texto, revisionNativa);
+    }
+    if (revisionNativa !== undefined) {
+      validaTopologiaDeBloquesGestionados(texto);
+      const revisionGenerada = revisionDelPerfil(texto);
+      if (canonico && revisionGenerada !== revisionNativa) {
+        throw new Error(`${nombre} does not identify the requested durable profile revision`);
+      }
+      if (!canonico && revisionGenerada !== undefined) {
+        throw new Error(`${nombre} has a profile revision marker outside the canonical file`);
+      }
+      assertNoReservedMarkersInProfile(texto, nombre);
+    }
     generados.push({
       nombre, politica: "bloque-gestionado", texto, escribir: texto !== previo,
     });
@@ -194,6 +357,14 @@ export function ficherosDelArnes(
 
   comprobarTopes(harness, generados);
   return generados;
+}
+
+function assertNoReservedMarkersInProfile(text: string, name: string): void {
+  const block = bloqueDePerfil(text);
+  if (block === undefined) return;
+  if (block.includes("<!-- CAUCE:")) {
+    throw new Error(`${name} has a reserved Cauce marker inside the authored profile block`);
+  }
 }
 
 /** Comentario HTML con el identificador del alias dueño del bloque. */
@@ -215,6 +386,10 @@ function esDelMismoAlias(anterior: string, perfil: AgentProfile): boolean {
 /** MEMORY.md y HEARTBEAT.md de openclaw son gestionados por el agente. */
 function esDelAgente(harness: string, nombre: string): boolean {
   return harness === "openclaw" && (nombre === "MEMORY.md" || nombre === "HEARTBEAT.md");
+}
+
+function esFicheroCanonico(harness: string, nombre: string): boolean {
+  return nombre === (harness === "claude" ? "CLAUDE.md" : "AGENTS.md");
 }
 
 /** Valida los topes de tamaño por fichero y acumulado en openclaw. */

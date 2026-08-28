@@ -1,9 +1,10 @@
 import Fastify from 'fastify';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ContextoDeAlias } from '@cauce/protocol';
+import { marcaDeRevisionDelPerfil, type ContextoDeAlias } from '@cauce/protocol';
 import {
-  registerAgentProfileRoutes, type AgentProfileDeps, type RespuestaDelPerfil, type TopeSuperado,
+  registerAgentProfileRoutes, type AgentProfileDeps, type PreparedProfileRuntime,
+  type ProfileRuntimePreflight, type RespuestaDelPerfil, type TopeSuperado,
 } from './agent-profile.routes.js';
 
 /**
@@ -165,17 +166,14 @@ describe('lo que la ruta NO sabe, lo dice', () => {
     expect(cuerpo.aviso).toContain('hermes');
   });
 
-  it('un perfil ENTERAMENTE vacío no produce un esqueleto de encabezados', async () => {
-    /*
-     * Los permisos y la configuración del arnés son hechos que SIEMPRE existen. Sin el corte, un
-     * alias sin nada escrito recibiría un fichero que sólo le dice en qué contenedor corre: ruido
-     * con forma de contrato.
-     */
+  it('un perfil vacío sólo proyecta identidad y revisión, nunca encabezados autorados huecos', async () => {
     abierto = await servidor(contexto({}, 'claude'));
     const ficheros = (await abierto.inject({
       method: 'GET', url: RUTA
     })).json<RespuestaDelPerfil>().ficheros;
-    expect(ficheros[0]?.texto).toBe('');
+    expect(ficheros[0]?.texto).toContain(marcaDeRevisionDelPerfil(1));
+    expect(ficheros[0]?.texto).toContain('<!-- alias: Steven/zeus -->');
+    expect(ficheros[0]?.texto).not.toMatch(/^## /mu);
   });
 });
 
@@ -370,16 +368,33 @@ const RUNTIME_ADOPTION: NonNullable<AgentProfileDeps['readRuntimeAdoption']> = a
     name: document.name, path: document.path, sha: document.expected_sha,
   })),
 });
-const PREPARE_RUNTIME: NonNullable<AgentProfileDeps['prepareRuntime']> = async () => ({
-  documents: ['AGENTS.md'],
-  harness: 'codex',
-  preview: [{ nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: 'nuevo', unidades: 5 }],
-  verification: RUNTIME_VERIFICATION,
-  apply: async () => ([{
-    name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md', state: 'written',
-    sha: sha('nuevo'), bytes: 5, generation: 'gen-1', container_id: 'ws-zeus',
-  }]),
-});
+function preparedRuntime(
+  revision: number,
+  overrides: Partial<PreparedProfileRuntime> = {},
+): PreparedProfileRuntime {
+  return {
+    revision,
+    documents: ['AGENTS.md'],
+    harness: 'codex',
+    preview: [{ nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: 'nuevo', unidades: 5 }],
+    verification: RUNTIME_VERIFICATION,
+    apply: async () => ([{
+      name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md', state: 'written',
+      sha: sha('nuevo'), bytes: 5, generation: 'gen-1', container_id: 'ws-zeus',
+    }]),
+    ...overrides,
+  };
+}
+
+function runtimePreflight(
+  materialize: (revision: number) => PreparedProfileRuntime = preparedRuntime,
+  harness = 'codex',
+): ProfileRuntimePreflight {
+  return { harness, materialize };
+}
+
+const PREPARE_RUNTIME: NonNullable<AgentProfileDeps['prepareRuntime']> = async () =>
+  runtimePreflight();
 const MARK_PROFILE_APPLIED: NonNullable<AgentProfileDeps['markProfileApplied']> = async (
   _tenant, _alias, revision,
 ) => ({
@@ -428,8 +443,7 @@ describe('GET perfil: convergencia medida del runtime', () => {
 
   it('misma revisión con bytes distintos se declara drifted, nunca applied', async () => {
     const app = await appDeEscritura({
-      prepareRuntime: async () => ({
-        ...(await PREPARE_RUNTIME('Steven', 'zeus', contexto(PERFIL_BODY, 'codex'))),
+      prepareRuntime: async () => runtimePreflight((revision) => preparedRuntime(revision, {
         verification: {
           ...RUNTIME_VERIFICATION,
           state: 'drifted',
@@ -437,7 +451,7 @@ describe('GET perfil: convergencia medida del runtime', () => {
             ...document, observed_sha: sha('edición directa'), current: false,
           })),
         },
-      }),
+      })),
     });
 
     const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
@@ -524,7 +538,7 @@ describe('GET perfil: convergencia medida del runtime', () => {
 
   it('el arnés y la vista vienen del runtime medido, no de la columna declarada', async () => {
     const app = await appDeEscritura({
-      prepareRuntime: async () => ({
+      prepareRuntime: async () => runtimePreflight((revision) => preparedRuntime(revision, {
         documents: ['CLAUDE.md'], harness: 'claude',
         preview: [{ nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: 'medido', unidades: 6 }],
         verification: {
@@ -535,7 +549,7 @@ describe('GET perfil: convergencia medida del runtime', () => {
           }],
         },
         apply: async () => [],
-      }),
+      }), 'claude'),
     });
 
     const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
@@ -625,9 +639,8 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
   it('un ACK parcial deja desired pendiente y nunca llama markApplied', async () => {
     const markProfileApplied = vi.fn(MARK_PROFILE_APPLIED);
     const app = await appDeEscritura({
-      prepareRuntime: async () => ({
+      prepareRuntime: async () => runtimePreflight((revision) => preparedRuntime(revision, {
         documents: ['AGENTS.md', 'TOOLS.md'],
-        harness: 'codex',
         preview: [],
         verification: {
           ...RUNTIME_VERIFICATION,
@@ -644,7 +657,7 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
           name: 'AGENTS.md', path: '/workspace/AGENTS.md', state: 'written',
           sha: sha('x'), bytes: 1, generation: 'gen-1', container_id: 'ws-zeus',
         }]),
-      }),
+      })),
       markProfileApplied,
     });
 
@@ -680,15 +693,12 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
   it('si el lote falla después del CAS conserva desired pendiente y no afirma éxito', async () => {
     const markProfileApplied = vi.fn(MARK_PROFILE_APPLIED);
     const app = await appDeEscritura({
-      prepareRuntime: async () => ({
-        documents: ['AGENTS.md'],
-        harness: 'codex',
+      prepareRuntime: async () => runtimePreflight((revision) => preparedRuntime(revision, {
         preview: [],
-        verification: RUNTIME_VERIFICATION,
         apply: async () => {
           throw Object.assign(new Error('rollback completo del lote'), { code: 'conflict' });
         },
-      }),
+      })),
       markProfileApplied,
     });
     const res = await app.inject({

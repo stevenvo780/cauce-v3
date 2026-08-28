@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   FICHEROS_OPENCLAW,
   bloqueDePerfil,
+  marcaDeRevisionDelPerfil,
   profileRuntimeAdoptionFor,
   type AgentProfile,
   type ContextoDeAlias,
@@ -149,7 +150,7 @@ describe('native profile publishing saga', () => {
     'reprojects two %s revisions and advances applied only through exact path/SHA evidence',
     async (harness) => {
       const runtime = liveRuntime(harness);
-      let current = contextFor(profile('REV-1'), harness);
+      let current = contextFor(profile('alpha'), harness);
       let revision = 1;
       let appliedRevision = 1;
       let exactAdoptionFor: number | undefined;
@@ -185,14 +186,21 @@ describe('native profile publishing saga', () => {
         },
         prepareRuntime: async (tenantId, alias, next) => {
           events.push('prepare');
-          const prepared = await prepareAgentProfileRuntime(
+          const preflight = await prepareAgentProfileRuntime(
             runtime.probe, tenantId, alias, next,
           );
           return {
-            ...prepared,
-            apply: async () => {
-              events.push('apply');
-              return prepared.apply();
+            ...preflight,
+            materialize: (materializedRevision: number) => {
+              events.push(`materialize:${String(materializedRevision)}`);
+              const prepared = preflight.materialize(materializedRevision);
+              return {
+                ...prepared,
+                apply: async () => {
+                  events.push('apply');
+                  return prepared.apply();
+                },
+              };
             },
           };
         },
@@ -265,15 +273,16 @@ describe('native profile publishing saga', () => {
         const first = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 1, profile: profile('REV-2') },
+          payload: { expected_revision: 1, profile: profile('beta') },
         });
         expect(first.statusCode).toBe(202);
         expect(first.json()).toMatchObject({ revision: 2, applied_revision: 1 });
+        const revisionTwoBytes = runtime.paths.map((path) => runtime.disk.get(path));
         supplyExactAdoption(2);
         const firstApplied = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 2, profile: profile('REV-2') },
+          payload: { expected_revision: 2, profile: profile('beta') },
         });
         expect(firstApplied.statusCode).toBe(200);
         expect(firstApplied.json<PerfilAplicado>()).toMatchObject({
@@ -281,12 +290,12 @@ describe('native profile publishing saga', () => {
           applied_revision: 2,
           runtime_adoption: { revision: 2 },
         });
-        const revisionTwoBytes = runtime.paths.map((path) => runtime.disk.get(path));
+        expect(runtime.paths.map((path) => runtime.disk.get(path))).toEqual(revisionTwoBytes);
 
         const second = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 2, profile: profile('REV-3') },
+          payload: { expected_revision: 2, profile: profile('gamma') },
         });
         expect(second.statusCode).toBe(202);
         expect(second.json()).toMatchObject({ revision: 3, applied_revision: 2 });
@@ -294,7 +303,7 @@ describe('native profile publishing saga', () => {
         const secondApplied = await app.inject({
           method: 'PUT',
           url: URL,
-          payload: { expected_revision: 3, profile: profile('REV-3') },
+          payload: { expected_revision: 3, profile: profile('gamma') },
         });
         expect(secondApplied.statusCode).toBe(200);
         expect(secondApplied.json<PerfilAplicado>()).toMatchObject({
@@ -303,12 +312,12 @@ describe('native profile publishing saga', () => {
           runtime_adoption: { revision: 3 },
         });
         expect(events).toEqual([
-          'prepare', 'replace:2', 'apply', 'expect:2', 'adopt:2',
+          'prepare', 'replace:2', 'materialize:2', 'apply', 'expect:2', 'adopt:2',
           'evidence:2',
-          'prepare', 'replace:2', 'apply', 'expect:2', 'adopt:2', 'mark:2',
-          'prepare', 'replace:3', 'apply', 'expect:3', 'adopt:3',
+          'prepare', 'replace:2', 'materialize:2', 'apply', 'expect:2', 'adopt:2', 'mark:2',
+          'prepare', 'replace:3', 'materialize:3', 'apply', 'expect:3', 'adopt:3',
           'evidence:3',
-          'prepare', 'replace:3', 'apply', 'expect:3', 'adopt:3', 'mark:3',
+          'prepare', 'replace:3', 'materialize:3', 'apply', 'expect:3', 'adopt:3', 'mark:3',
         ]);
         expect(expectations.get(2)?.key).not.toBe(expectations.get(3)?.key);
         expect(expectations.get(3)?.contract.documents.map((document) => document.name))
@@ -316,15 +325,23 @@ describe('native profile publishing saga', () => {
 
         if (harness === 'claude') {
           const text = runtime.disk.get(runtime.paths[0]!) ?? '';
-          expect(bloqueDePerfil(text)).toContain('REV-3');
-          expect(bloqueDePerfil(text)).not.toContain('REV-2');
+          expect(text).toContain(marcaDeRevisionDelPerfil(3));
+          expect(text).not.toContain(marcaDeRevisionDelPerfil(2));
+          expect(bloqueDePerfil(text)).toContain('gamma');
+          expect(bloqueDePerfil(text)).not.toContain('beta');
           expect(runtime.paths.map((path) => runtime.disk.get(path))).not.toEqual(revisionTwoBytes);
         } else {
           for (const name of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'AGENTS.md', 'TOOLS.md']) {
             const text = runtime.disk.get(`${runtime.paths[0]!.slice(0, runtime.paths[0]!.lastIndexOf('/'))}/${name}`) ?? '';
             const block = bloqueDePerfil(text) ?? '';
-            expect(block).toContain('REV-3');
-            expect(block).not.toContain('REV-2');
+            expect(block).toContain('gamma');
+            expect(block).not.toContain('beta');
+            if (name === 'AGENTS.md') {
+              expect(text).toContain(marcaDeRevisionDelPerfil(3));
+              expect(text).not.toContain(marcaDeRevisionDelPerfil(2));
+            } else {
+              expect(text).not.toContain('CAUCE:REVISION-PERFIL');
+            }
           }
           expect(runtime.disk.get(runtime.paths[3]!)).toBe('PRIVATE MEMORY\n');
           expect(runtime.disk.get(runtime.paths[4]!)).toBe('PRIVATE HEARTBEAT\n');

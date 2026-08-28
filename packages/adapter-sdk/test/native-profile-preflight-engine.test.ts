@@ -4,7 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { FICHEROS_OPENCLAW, conBloqueDePerfil, conBloqueGestionado } from "@cauce/protocol";
+import {
+  FICHEROS_OPENCLAW,
+  conBloqueDePerfil,
+  conBloqueGestionado,
+  marcaDeRevisionDelPerfil,
+} from "@cauce/protocol";
 import { HARNESS_DEFINITIONS, HarnessAdapter, fakeDefinition } from "../src/harnesses/index.js";
 import type { HarnessRequestContext } from "../src/contracts/harness.js";
 import { textoNativoDelSobre } from "../src/harnesses/shared/prompt.js";
@@ -52,6 +57,11 @@ function nativeEnvironment(): NodeJS.ProcessEnv {
   return { ...process.env, CAUCE_NATIVE_PROFILE_CONTEXT: "1" };
 }
 
+function profileFile(alias: string, revision: number | undefined, body: string): string {
+  const managed = conBloqueDePerfil("", `<!-- alias: Steven/${alias} -->\n${body}`);
+  return revision === undefined ? managed : `${marcaDeRevisionDelPerfil(revision)}\n${managed}`;
+}
+
 test("native preflight failure remains accepted-side and never commits execution intent", async () => {
   const store = await storeFor("native-preflight-before-barrier");
   const runner = new ControlledRunner();
@@ -90,7 +100,7 @@ test("native drift after accepted preflight fails before execution intent and ru
   mkdirSync(config, { recursive: true });
   writeFileSync(
     path,
-    conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nPROFILE-BEFORE-DRIFT"),
+    profileFile("zeus", 31, "PROFILE-BEFORE-DRIFT"),
     "utf8",
   );
   const previousHome = process.env.HOME;
@@ -171,7 +181,7 @@ test("native drift while execution intent is confirmed still fails before runner
   mkdirSync(config, { recursive: true });
   writeFileSync(
     path,
-    conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nPROFILE-BEFORE-INTENT"),
+    profileFile("zeus", 32, "PROFILE-BEFORE-INTENT"),
     "utf8",
   );
   const previousHome = process.env.HOME;
@@ -263,7 +273,7 @@ test("a real native engine turn emits adoption only for its exact measured contr
   writeFileSync(
     path,
     conBloqueGestionado(
-      conBloqueDePerfil("", "<!-- alias: Steven/zeus -->\nPROFILE-REVISION-41"),
+      profileFile("zeus", 41, "PROFILE-CLAUDE-BETA"),
       textoNativoDelSobre(requestContext),
     ),
     "utf8",
@@ -332,7 +342,7 @@ test("a real native engine turn emits adoption only for its exact measured contr
 
   assert.equal(executionIntents, 1);
   assert.equal(runner.calls, 1);
-  assert.doesNotMatch(runner.requests[0]?.stdin ?? "", /PROFILE-REVISION-41/u);
+  assert.doesNotMatch(runner.requests[0]?.stdin ?? "", /PROFILE-CLAUDE-BETA/u);
   assert.deepEqual(events.map((event) => ({
     phase: event.phase,
     error: event.error?.code,
@@ -379,9 +389,10 @@ test("a real openclaw engine turn emits adoption for all seven native documents"
     if (name === "MEMORY.md") writeFileSync(path, "PRIVATE-MEMORY", "utf8");
     else if (name === "HEARTBEAT.md") writeFileSync(path, "PRIVATE-HEARTBEAT", "utf8");
     else {
-      const profiled = conBloqueDePerfil(
-        "",
-        `<!-- alias: Steven/argos -->\nPROFILE-REVISION-52-${name}`,
+      const profiled = profileFile(
+        "argos",
+        name === "AGENTS.md" ? 52 : undefined,
+        `PROFILE-OPENCLAW-GAMMA-${name}`,
       );
       writeFileSync(
         path,
@@ -454,7 +465,7 @@ test("a real openclaw engine turn emits adoption for all seven native documents"
   assert.equal(runner.calls, 1);
   assert.doesNotMatch(
     runner.requests[0]?.stdin ?? "",
-    /PROFILE-REVISION-52|PRIVATE-MEMORY|PRIVATE-HEARTBEAT/u,
+    /PROFILE-OPENCLAW-GAMMA|PRIVATE-MEMORY|PRIVATE-HEARTBEAT/u,
   );
   assert.deepEqual(events.at(-1)?.profile_adoption, {
     evidence: "adapter_delivery",

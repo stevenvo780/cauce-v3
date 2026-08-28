@@ -5,7 +5,8 @@ import {
   MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO,
 } from "../src/marcas-de-bloque.js";
 import {
-  ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, TOPES_OPENCLAW, ficherosDelArnes, nombresDelArnes,
+  ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL, TOPES_OPENCLAW,
+  ficherosDelArnes, marcaDeRevisionDelPerfil, nombresDelArnes, revisionDelPerfil,
   type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
@@ -59,6 +60,15 @@ test("claude recibe UN solo CLAUDE.md, y codex UN solo AGENTS.md", () => {
   assert.deepEqual(deCodex.map((f: FicheroGenerado) => f.nombre), ["AGENTS.md"]);
 });
 
+test("el formato legacy conserva un solo salto entre owner y cuerpo", () => {
+  const claude = textoDe(
+    ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() }),
+    "CLAUDE.md",
+  );
+  assert.ok(claude.includes("<!-- alias: Steven/zeus -->\n## Identidad y propósito"));
+  assert.ok(!claude.includes("<!-- alias: Steven/zeus -->\n\n## Identidad y propósito"));
+});
+
 test("openclaw recibe los SIETE ficheros medidos, con esos nombres exactos", () => {
   const ficheros = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
   assert.deepEqual(
@@ -72,7 +82,11 @@ test("openclaw recibe los SIETE ficheros medidos, con esos nombres exactos", () 
 });
 
 test("un arnés desconocido no recibe ningún fichero, en vez de recibir el de otro", () => {
-  assert.deepEqual(ficherosDelArnes("hermes", { perfil: perfil(), hechos: hechos() }), []);
+  assert.deepEqual(ficherosDelArnes(
+    "hermes",
+    { perfil: perfil(), hechos: hechos() },
+    new Map([["AGENTS.md", `${MARCA_PERFIL_INICIO}\nroto`]]),
+  ), []);
   assert.deepEqual(nombresDelArnes("hermes"), []);
 });
 
@@ -342,4 +356,144 @@ test("un perfil sin nada escrito no produce encabezados huecos", () => {
   const soul = textoDe(ficheros, "SOUL.md");
   assert.ok(!soul.includes(MARCA_PERFIL_INICIO), "SOUL vacío no debe llevar bloque");
   assert.equal(soul.trim(), "");
+});
+
+test("la proyección revisionada escribe y reemplaza una sola revisión en el fichero canónico", () => {
+  const contexto = { perfil: perfil(), hechos: hechos() };
+  const legacy = ficherosDelArnes("openclaw", contexto);
+  assert.ok(legacy.every((file) => !file.texto.includes(PREFIJO_REVISION_PERFIL)));
+
+  const revisionDos = ficherosDelArnes(
+    "openclaw", contexto,
+    new Map([
+      ["AGENTS.md", "# Manual humano\n"],
+      ["MEMORY.md", "memoria privada\n"],
+      ["HEARTBEAT.md", "latido privado\n"],
+    ]),
+    { revision: 2 },
+  );
+  const agentsDos = textoDe(revisionDos, "AGENTS.md");
+  assert.equal(revisionDelPerfil(agentsDos), 2);
+  assert.equal(agentsDos.split(PREFIJO_REVISION_PERFIL).length - 1, 1);
+  assert.match(
+    agentsDos,
+    new RegExp(`${marcaDeRevisionDelPerfil(2)}\\n${MARCA_PERFIL_INICIO}`, "u"),
+  );
+
+  const existentes = new Map(revisionDos.map((file) => [file.nombre, file.texto]));
+  const revisionTres = ficherosDelArnes("openclaw", contexto, existentes, { revision: 3 });
+  const agentsTres = textoDe(revisionTres, "AGENTS.md");
+  assert.equal(revisionDelPerfil(agentsTres), 3);
+  assert.ok(!agentsTres.includes(marcaDeRevisionDelPerfil(2)));
+  assert.ok(agentsTres.includes("# Manual humano"));
+  assert.equal(textoDe(revisionTres, "MEMORY.md"), "memoria privada\n");
+  assert.equal(textoDe(revisionTres, "HEARTBEAT.md"), "latido privado\n");
+  for (const file of revisionTres) {
+    if (file.nombre !== "AGENTS.md") assert.ok(!file.texto.includes(PREFIJO_REVISION_PERFIL));
+  }
+});
+
+test("un perfil vacío revisionado conserva un bloque propio acreditable", () => {
+  const vacio: AgentProfile = {
+    tenant_id: "Steven", alias: "zeus", purpose: null, role_summary: null, human_brief: null,
+    responsibilities: [], restrictions: [], tools: [], operating_rules: [],
+  };
+  const claude = textoDe(
+    ficherosDelArnes("claude", { perfil: vacio, hechos: hechos() }, new Map(), { revision: 8 }),
+    "CLAUDE.md",
+  );
+  assert.equal(revisionDelPerfil(claude), 8);
+  assert.match(claude, /<!-- alias: Steven\/zeus -->/u);
+  assert.ok(claude.includes(MARCA_PERFIL_INICIO));
+});
+
+test("codex queda en el formato legacy porque el modo nativo todavía no lo soporta", () => {
+  const codex = textoDe(
+    ficherosDelArnes("codex", { perfil: perfil(), hechos: hechos() }, new Map(), { revision: 8 }),
+    "AGENTS.md",
+  );
+  assert.ok(!codex.includes(PREFIJO_REVISION_PERFIL));
+  assert.match(codex, /PROPOSITO-SOUL/u);
+});
+
+test("una revisión malformada, repetida o fuera del fichero canónico falla cerrado", () => {
+  const contexto = { perfil: perfil(), hechos: hechos() };
+  const cases = [
+    new Map([["AGENTS.md", `${PREFIJO_REVISION_PERFIL} basura -->\n`]]),
+    new Map([["AGENTS.md", `${marcaDeRevisionDelPerfil(1)}\n${marcaDeRevisionDelPerfil(1)}\n`]]),
+    new Map([[
+      "AGENTS.md",
+      `${MARCA_PERFIL_INICIO}\n<!-- alias: Steven/zeus -->\n${marcaDeRevisionDelPerfil(1)}\n${MARCA_PERFIL_FIN}\n`,
+    ]]),
+    new Map([["SOUL.md", `${marcaDeRevisionDelPerfil(1)}\n${MARCA_PERFIL_INICIO}\nx\n${MARCA_PERFIL_FIN}\n`]]),
+  ];
+  for (const existing of cases) {
+    assert.throws(() => ficherosDelArnes("openclaw", contexto, existing, { revision: 2 }));
+  }
+});
+
+test("la siembra sin revisión rechaza una proyección revisionada en vez de falsear vigencia", () => {
+  const contexto = { perfil: perfil(), hechos: hechos() };
+  const revisionada = ficherosDelArnes("openclaw", contexto, new Map(), { revision: 4 });
+  const existing = new Map(revisionada.map((file) => [file.nombre, file.texto]));
+  assert.throws(
+    () => ficherosDelArnes(
+      "openclaw",
+      { perfil: perfil({ purpose: "cambio sin revisión" }), hechos: hechos() },
+      existing,
+    ),
+    /requires an explicit durable revision/u,
+  );
+});
+
+test("la proyección rechaza bloques incompletos, duplicados, no alineados y solapados", () => {
+  const perfilPropio = `${MARCA_PERFIL_INICIO}\n<!-- alias: Steven/zeus -->\n${MARCA_PERFIL_FIN}`;
+  const fijo = `${MARCA_INICIO}\ncontrato\n${MARCA_FIN}`;
+  const topologias = [
+    `${MARCA_PERFIL_INICIO}\n<!-- alias: Steven/zeus -->`,
+    `${perfilPropio}\n${perfilPropio}\n`,
+    `manual${perfilPropio}`,
+    `${MARCA_INICIO}\n${MARCA_PERFIL_INICIO}\n${MARCA_FIN}\n${MARCA_PERFIL_FIN}\n`,
+    `${MARCA_PERFIL_INICIO}\n${MARCA_INICIO}\n${MARCA_PERFIL_FIN}\n${MARCA_FIN}\n`,
+    `${MARCA_INICIO}\n${perfilPropio}\n${MARCA_FIN}\n`,
+    `${MARCA_PERFIL_INICIO}\n${fijo}\n${MARCA_PERFIL_FIN}\n`,
+  ];
+  for (const text of topologias) {
+    assert.throws(() => ficherosDelArnes(
+      "openclaw",
+      { perfil: perfil(), hechos: hechos() },
+      new Map([["AGENTS.md", text]]),
+      { revision: 2 },
+    ));
+  }
+});
+
+test("los campos autorados no pueden inyectar delimitadores reservados", () => {
+  const delimiters = [
+    MARCA_PERFIL_INICIO,
+    MARCA_PERFIL_FIN,
+    MARCA_INICIO,
+    MARCA_FIN,
+    PREFIJO_REVISION_PERFIL,
+  ];
+  for (const delimiter of delimiters) {
+    assert.throws(() => ficherosDelArnes(
+      "openclaw",
+      { perfil: perfil({ purpose: delimiter }), hechos: hechos() },
+      new Map(),
+      { revision: 2 },
+    ));
+  }
+});
+
+test("la proyección rechaza CRLF antes de producir una mezcla de finales de línea", () => {
+  assert.throws(
+    () => ficherosDelArnes(
+      "claude",
+      { perfil: perfil(), hechos: hechos() },
+      new Map([["CLAUDE.md", "# Manual\r\n"]]),
+      { revision: 2 },
+    ),
+    /does not accept CR or CRLF/u,
+  );
 });

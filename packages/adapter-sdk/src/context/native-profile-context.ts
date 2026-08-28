@@ -9,6 +9,7 @@ import {
   bloqueGestionado,
   bloqueDePerfil,
   measureStrictestUnits,
+  revisionDelPerfil,
   TOPES_OPENCLAW,
 } from "@cauce/protocol";
 import type {
@@ -275,6 +276,10 @@ export class NativeProfileContext {
 
   private measure(context: HarnessRequestContext): RuntimeProfileMeasurement {
     const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;
+    const expectedRevision = context.native_profile_contract?.revision;
+    if (expectedRevision === undefined) {
+      throw new Error("delivery has no native profile revision contract");
+    }
     const documents: Array<{ path: string; sha256: string }> = [];
     const blocks: Array<{ path: string; block: string }> = [];
     const instructionPath = this.instructionPath();
@@ -290,6 +295,17 @@ export class NativeProfileContext {
         && bloqueGestionado(file) !== undefined;
       if (!hasNoFixedMarkers && !hasOneValidFixedBlock) {
         throw new Error(`${entry.path} has misplaced, malformed, or repeated fixed-context markers`);
+      }
+      if (entry.authored) {
+        const observedRevision = revisionDelPerfil(file);
+        if (entry.path === instructionPath && observedRevision !== expectedRevision) {
+          throw new Error(
+            `${entry.path} does not identify profile revision ${String(expectedRevision)}`,
+          );
+        }
+        if (entry.path !== instructionPath && observedRevision !== undefined) {
+          throw new Error(`${entry.path} has a profile revision marker outside the canonical file`);
+        }
       }
       const block = entry.authored ? this.ownedBlock(file, entry.path, owner) : undefined;
       if (entry.authored) this.assertManagedBlocksDoNotOverlap(file, entry.path);

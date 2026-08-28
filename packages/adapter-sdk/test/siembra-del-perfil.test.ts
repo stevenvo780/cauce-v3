@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
-import type { AgentProfile, ContextoDeAlias, HechosDelAlias } from "@cauce/protocol";
-import { bloqueDePerfil } from "@cauce/protocol";
+import {
+  bloqueDePerfil, ficherosDelArnes, type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
+} from "@cauce/protocol";
 import {
   directorioDelArnes, discoReal, resumenDeLaSiembra, sembrarPerfilDelArnes,
   type DiscoDelArnes,
@@ -159,6 +160,20 @@ test("lo que escribió una persona se conserva BYTE A BYTE", () => {
   assert.ok(despues.includes("el médico"));
 });
 
+test("un CLAUDE.md legacy con CRLF sigue por la siembra default-off", () => {
+  const path = "/home/dev/.claude-zeus/CLAUDE.md";
+  const manual = "# Manual de zeus\r\n\r\ntexto humano\r\n";
+  const d = disco({ [path]: manual });
+
+  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "el médico" }), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO,
+  });
+
+  assert.equal(resultado.estado, "hecho");
+  assert.deepEqual(d.escrituras, [path]);
+  assert.match(d.ficheros.get(path) ?? "", /# Manual de zeus\r\n\r\ntexto humano/u);
+});
+
 test("segunda conexión con el mismo perfil: NO se reescribe el fichero", () => {
   /*
    * Un alias se reconecta muchas veces al día. Si cada saludo reescribiera el fichero, quince
@@ -176,6 +191,93 @@ test("segunda conexión con el mismo perfil: NO se reescribe el fichero", () => 
   if (segunda.estado === "hecho") assert.equal(segunda.ficheros[0]?.estado, "ya-estaba");
 });
 
+test("la siembra sólo verifica una proyección revisionada que ya coincide", () => {
+  const ctx = contexto({ purpose: "el médico" });
+  const projected = ficherosDelArnes("claude", ctx, new Map(), { revision: 4 })[0];
+  assert.ok(projected);
+  const path = "/home/dev/.claude-zeus/CLAUDE.md";
+  const d = disco({ [path]: projected.texto });
+
+  const resultado = sembrarPerfilDelArnes("claude", ctx, {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO,
+  });
+
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(d.ficheros.get(path), projected.texto);
+  assert.deepEqual(resultado, {
+    estado: "hecho", ficheros: [{ nombre: "CLAUDE.md", estado: "ya-estaba" }],
+  });
+});
+
+test("la siembra no modifica ni acredita una proyección revisionada con drift", () => {
+  const oldContext = contexto({ purpose: "perfil viejo" });
+  const projected = ficherosDelArnes("claude", oldContext, new Map(), { revision: 4 })[0];
+  assert.ok(projected);
+  const path = "/home/dev/.claude-zeus/CLAUDE.md";
+  const d = disco({ [path]: projected.texto });
+
+  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "perfil nuevo" }), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO,
+  });
+
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(d.ficheros.get(path), projected.texto);
+  assert.equal(resultado.estado, "hecho");
+  if (resultado.estado === "hecho") {
+    assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
+  }
+});
+
+test("la siembra no finge que un lote OpenClaw revisionado incompleto está vigente", () => {
+  const ctx = contexto({ purpose: "perfil", role_summary: "rol", tools: ["cauce"] }, "argos");
+  const projected = ficherosDelArnes("openclaw", ctx, new Map(), { revision: 4 });
+  const initial = Object.fromEntries(
+    projected
+      .filter((file) => file.nombre !== "SOUL.md")
+      .map((file) => [`/ws/${file.nombre}`, file.texto]),
+  );
+  const d = disco(initial);
+
+  const resultado = sembrarPerfilDelArnes("openclaw", ctx, {
+    habilitado: true,
+    disco: d.puerto,
+    entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
+  });
+
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(d.ficheros.has("/ws/SOUL.md"), false);
+  assert.equal(resultado.estado, "hecho");
+  if (resultado.estado === "hecho") {
+    assert.equal(resultado.ficheros.length, 7);
+    assert.ok(resultado.ficheros.every((file) => file.estado === "no-se-pudo-escribir"));
+  }
+});
+
+test("un fichero OpenClaw vacío pero ausente también es drift revisionado", () => {
+  const ctx = contexto({}, "argos");
+  const projected = ficherosDelArnes("openclaw", ctx, new Map(), { revision: 4 });
+  const included = new Set(["AGENTS.md", "MEMORY.md", "HEARTBEAT.md"]);
+  const initial = Object.fromEntries(
+    projected
+      .filter((file) => included.has(file.nombre))
+      .map((file) => [`/ws/${file.nombre}`, file.texto]),
+  );
+  const d = disco(initial);
+
+  const resultado = sembrarPerfilDelArnes("openclaw", ctx, {
+    habilitado: true,
+    disco: d.puerto,
+    entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
+  });
+
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(d.ficheros.has("/ws/SOUL.md"), false);
+  assert.equal(resultado.estado, "hecho");
+  if (resultado.estado === "hecho") {
+    assert.ok(resultado.ficheros.every((file) => file.estado === "no-se-pudo-escribir"));
+  }
+});
+
 test("el bloque de OTRO alias no se pisa, y el parte lo dice con esas palabras", () => {
   /*
    * `kratos` y `atlas` comparten `$HOME` y su `AGENTS.md` es el MISMO inodo (12.942 bytes en los
@@ -189,6 +291,26 @@ test("el bloque de OTRO alias no se pisa, y el parte lo dice con esas palabras",
 
   const resultado = sembrarPerfilDelArnes("codex", contexto({ purpose: "soy atlas" }, "atlas"), opciones);
   assert.equal(d.ficheros.get("/compartido/AGENTS.md"), trasKratos, "atlas pisó a kratos");
+  assert.equal(resultado.estado, "hecho");
+  if (resultado.estado === "hecho") {
+    assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
+  }
+});
+
+test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera línea", () => {
+  const path = "/compartido/AGENTS.md";
+  const foreign = "<!-- CAUCE:PERFIL v1 — generado desde la configuración, no editar dentro de este bloque -->\n"
+    + "<!-- alias: Steven/kratos -->\najeno\n<!-- alias: Steven/atlas -->\n"
+    + "<!-- CAUCE:FIN-PERFIL -->\n";
+  const d = disco({ [path]: foreign });
+  const resultado = sembrarPerfilDelArnes("codex", contexto({ purpose: "soy atlas" }, "atlas"), {
+    habilitado: true,
+    disco: d.puerto,
+    entorno: { HOME: "/h", CODEX_HOME: "/compartido" },
+  });
+
+  assert.deepEqual(d.escrituras, []);
+  assert.equal(d.ficheros.get(path), foreign);
   assert.equal(resultado.estado, "hecho");
   if (resultado.estado === "hecho") {
     assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
