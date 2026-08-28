@@ -219,7 +219,6 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
                 self.assertEqual(document["fleet"][alias]["runtimeStateDirectory"], literal)
 
     def test_warns_on_runtime_state_directory_drift(self) -> None:
-        # DB is the truth: drift is reported to stderr, never rejected (historical state dirs exist).
         drifting = agent("kant")
         drifting["state_directory"] = "/var/lib/cauce-v3/aliases/kant"
         stderr = io.StringIO()
