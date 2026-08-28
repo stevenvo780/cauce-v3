@@ -18,7 +18,7 @@ export interface GridContainerProps {
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
   grants: Record<string, TerminalSessionGrant>;
-  closedChannels: Record<string, true>;
+  closedChannels: Record<string, true | undefined>;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onUpdate: (session: OperatorSession) => void;
@@ -63,14 +63,14 @@ export function GridContainer({
     <div className="terminal-grid-wrapper">
       <nav className="terminal-session-tabs" role="tablist" aria-label="Sesiones abiertas">
         {sessions.map((session) => (
-          <span className="terminal-session-tab" key={session.id} data-active={session.id === visible?.id || undefined}>
+          <span className="terminal-session-tab" key={session.id} data-active={session.id === visible.id || undefined}>
             <button
               className="terminal-panel-title-btn"
               type="button"
               role="tab"
-              aria-selected={session.id === visible?.id}
+              aria-selected={session.id === visible.id}
               aria-controls={`terminal-session-${session.id}`}
-              onClick={() => onActivate(session.id)}
+              onClick={() => { onActivate(session.id); }}
             >
               <span className={`tab-live-dot ${session.agent.leaseState}`} aria-hidden="true" />
               <span><strong>{session.agent.alias}</strong><small>{session.agent.tenantId}</small></span>
@@ -87,28 +87,26 @@ export function GridContainer({
         ))}
       </nav>
       <div className="terminal-grid-container">
-        {visible ? (
-          <div className="terminal-panel" data-active="true" key={visible.id}>
-            <div className="terminal-panel-body">
-              <SessionStage
-                session={visible}
-                sessionToken={sessionTokens.get(visible.id) ?? 0}
-                agents={agents}
-                access={access}
-                topologyAccess={topologyAccess}
-                capability={capability}
-                targets={targets}
-                grants={grants}
-                closedChannels={closedChannels}
-                onUpdate={onUpdate}
-                onRequestGrant={onRequestGrant}
-                onChannelClosed={onChannelClosed}
-                onReleaseChannel={onReleaseChannel}
-                onReconciliarPlazas={onReconciliarPlazas}
-              />
-            </div>
+        <div className="terminal-panel" data-active="true" key={visible.id}>
+          <div className="terminal-panel-body">
+            <SessionStage
+              session={visible}
+              sessionToken={sessionTokens.get(visible.id) ?? 0}
+              agents={agents}
+              access={access}
+              topologyAccess={topologyAccess}
+              capability={capability}
+              targets={targets}
+              grants={grants}
+              closedChannels={closedChannels}
+              onUpdate={onUpdate}
+              onRequestGrant={onRequestGrant}
+              onChannelClosed={onChannelClosed}
+              onReleaseChannel={onReleaseChannel}
+              onReconciliarPlazas={onReconciliarPlazas}
+            />
           </div>
-        ) : null}
+        </div>
       </div>
       <footer className="terminal-doctrine"><ShieldCheck size={14} aria-hidden="true" /> {TEXTO_DOCTRINA}</footer>
     </div>

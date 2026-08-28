@@ -64,18 +64,18 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     attachPtySession(sessionId, wrapper);
-    return () => detachPtySession(sessionId);
+    return () => { detachPtySession(sessionId); };
   }, [sessionId]);
 
   const finished = view.state === 'closed' || view.state === 'error';
   return (
-    <div className="pty-shell" data-read-only={readOnly || undefined} data-state={view.state}>
+    <div className="pty-shell" data-read-only={readOnly ? true : undefined} data-state={view.state}>
       <div className="pty-status" role="status">
         <span>
           <span className={`connection-dot ${view.state}`} aria-hidden="true" /> Conexión: {STATE_LABELS[view.state]}
           {readOnly ? ' · SOLO LECTURA' : ''}
           {view.message ? ` · ${view.message}` : ''}
-          {view.closeCode !== undefined ? ` (código ${view.closeCode})` : ''}
+          {view.closeCode !== undefined ? ` (código ${String(view.closeCode)})` : ''}
         </span>
         {finished && onRequestNewSession ? (
           <button type="button" onClick={onRequestNewSession} title="El ticket es de un solo uso; se pide una sesión nueva con motivo y auditoría.">
@@ -95,9 +95,9 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
         <p
           className="pty-estrecho"
           role="status"
-          title={`El agente PTY se engancha a la tmux del alias en solo lectura y sin participar del tamaño de la ventana (attach-session -r -f ignore-size), así que la ventana remota conserva su ancho y no se adapta a esta pantalla. Caben ${view.columnas} columnas. Girá el teléfono o abrila en una pantalla más ancha.`}
+          title={`El agente PTY se engancha a la tmux del alias en solo lectura y sin participar del tamaño de la ventana (attach-session -r -f ignore-size), así que la ventana remota conserva su ancho y no se adapta a esta pantalla. Caben ${String(view.columnas)} columnas. Girá el teléfono o abrila en una pantalla más ancha.`}
         >
-          Caben {view.columnas} columnas: la TUI del agente es más ancha y se corta por la derecha.
+          Caben {String(view.columnas)} columnas: la TUI del agente es más ancha y se corta por la derecha.
         </p>
       ) : null}
       <div className="pty-viewport">
@@ -106,7 +106,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
           <button
             className="pty-volver-al-final"
             type="button"
-            onClick={() => ptySessionVolverAlFinal(sessionId)}
+            onClick={() => { ptySessionVolverAlFinal(sessionId); }}
             title="Subiste a leer, así que la salida nueva no te arrastra. Esto vuelve al final y reengancha el seguimiento."
           >
             <ArrowDownToLine size={13} aria-hidden="true" /> Salida nueva abajo · volver al final
@@ -119,7 +119,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
       {view.notices.length ? (
         <ul className="pty-notices" aria-label="Avisos del relay">
           {view.notices.map((notice, index) => (
-            <li key={`${notice.level}-${index}`} data-level={notice.level}>{notice.message}</li>
+            <li key={`${notice.level}-${String(index)}`} data-level={notice.level}>{notice.message}</li>
           ))}
         </ul>
       ) : null}

@@ -89,7 +89,7 @@ describe('los códigos de denegación del gateway', () => {
 
   it.each(TERMINAL_DENIAL_CODES)('«%s» dice qué pasó, por qué y quién lo levanta — en castellano', (codigo) => {
     const copia = TERMINAL_DENY_MESSAGES[codigo];
-    for (const [campo, texto] of Object.entries(copia)) {
+    for (const [campo, texto] of Object.entries(copia) as [string, string][]) {
       expect(texto.length, `${codigo}.${campo} está vacío`).toBeGreaterThan(20);
       // Ni el titular ni el motivo ni el responsable pueden contener el código crudo.
       expect(texto, `${codigo}.${campo} repite el código crudo`).not.toContain(codigo);
@@ -177,7 +177,7 @@ describe('la negativa que ve el operador', () => {
     ['agent_offline', 409],
     ['session_limit', 409],
     ['container_busy', 409],
-  ] as Array<[TerminalDenialCode, number]>)(
+  ] as [TerminalDenialCode, number][])(
     'un %s del gateway NO se muestra crudo: se dice qué pasó y quién lo levanta',
     async (codigo, estado) => {
       servirCapacidad();
@@ -193,15 +193,16 @@ describe('la negativa que ve el operador', () => {
       // La apertura automática de la TUI ya golpea el gateway y recibe el rechazo.
       const aviso = await waitFor(() => {
         const encontrados = screen.getAllByRole('alert');
-        const conTexto = encontrados.find((nodo) => (nodo.textContent ?? '').includes('Lo levanta:'));
+        const conTexto = encontrados.find((nodo) => nodo.textContent.includes('Lo levanta:'));
         expect(conTexto).toBeDefined();
-        return conTexto!;
+        if (!conTexto) throw new Error('Aviso no encontrado');
+        return conTexto;
       }, { timeout: 6000 });
 
       const copia = TERMINAL_DENY_MESSAGES[codigo];
       expect(aviso.textContent).toContain(copia.titulo);
       expect(aviso.textContent).toContain('Lo levanta:');
-      expect(aviso.textContent).toContain(`HTTP ${estado}`);
+      expect(aviso.textContent).toContain(`HTTP ${String(estado)}`);
       // El control negativo: la palabra cruda NO puede estar en ningún sitio de la pantalla.
       expect(document.body.textContent).not.toContain(codigo);
     },

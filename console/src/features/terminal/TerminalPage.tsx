@@ -16,7 +16,7 @@ function useRefreshInterval(reload: () => void, milliseconds: number, loading: b
   useEffect(() => {
     if (loading) return;
     const interval = window.setInterval(reload, milliseconds);
-    return () => window.clearInterval(interval);
+    return () => { window.clearInterval(interval); };
   }, [loading, milliseconds, reload]);
 }
 
@@ -59,7 +59,7 @@ export function TerminalPage() {
     ? 'Operación privilegiada · leyendo la flota'
     : fleetError && agents.length === 0
       ? 'Operación privilegiada · no se pudo leer la flota'
-      : `Operación privilegiada · ${agents.length} agentes`;
+      : `Operación privilegiada · ${String(agents.length)} agentes`;
   // El relay PTY es opt-in por stack (ver 0a1d0e3): ausencia, permiso y medición inconclusa tienen
   // un aviso propio y explícito, en vez de sumarse como un "PTY: Bad Gateway" sin clasificación.
   const relay = deriveTerminalRelayState(capability.data, capability.error);
@@ -107,8 +107,8 @@ export function TerminalPage() {
       <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adaptadores</small><strong>{adapters.data?.items ? adapterBreakdownText(adapterItems) : 'sin dato'}</strong></div><Badge tone={adapterCuenta.conFallo ? 'warning' : adapterCuenta.disponibles ? 'info' : 'unknown'}>SERVER</Badge></article>
       <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Tu permiso</small><strong>{connectState === 'allowed' ? 'CONCEDIDO' : connectState === 'denied' ? 'DENEGADO' : 'SIN DATO'}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
       <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Canal</small><strong>{ptyEnabled ? 'PTY + FEED' : 'SÓLO FEED'}</strong></div><Badge tone={ptyEnabled ? 'online' : 'info'}>CLIENT</Badge></article>
-      <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Con PTY online</small><strong>{ptyOnline === undefined ? 'sin dato' : `${ptyOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
-      <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Emiten su TUI</small><strong>{tuiOnline === undefined ? 'sin dato' : `${tuiOnline} / ${verifiedTargets?.items?.length ?? 0}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
+      <article><span className="overview-icon"><TerminalSquare size={17} aria-hidden="true" /></span><div><small>Con PTY online</small><strong>{ptyOnline === undefined ? 'sin dato' : `${String(ptyOnline)} / ${String(verifiedTargets?.items?.length ?? 0)}`}</strong></div><Badge tone={ptyOnline ? 'online' : ptyOnline === 0 ? 'warning' : 'unknown'}>TARGETS</Badge></article>
+      <article><span className="overview-icon"><MonitorPlay size={17} aria-hidden="true" /></span><div><small>Emiten su TUI</small><strong>{tuiOnline === undefined ? 'sin dato' : `${String(tuiOnline)} / ${String(verifiedTargets?.items?.length ?? 0)}`}</strong></div><Badge tone={tuiOnline ? 'online' : tuiOnline === 0 ? 'warning' : 'unknown'}>TUI</Badge></article>
     </div>
   );
 

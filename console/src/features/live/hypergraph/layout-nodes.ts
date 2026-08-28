@@ -63,9 +63,9 @@ export function collect(tenants: TenantNode[]): { nodes: Map<string, RawNode>; e
   const edges: RawEdge[] = [];
 
   tenants.forEach((tenant, tenantIndex) => {
-    const tenantId = tenant.id ?? `tenant#${tenantIndex}`;
+    const tenantId = tenant.id ?? `tenant#${String(tenantIndex)}`;
     (tenant.rooms ?? []).forEach((room, roomIndex) => {
-      const roomId = room.id ?? `room#${roomIndex}`;
+      const roomId = room.id ?? `room#${String(roomIndex)}`;
       const key = edgeKey(tenantId, roomId);
       const members: string[] = [];
       let unknownMembers = 0;
@@ -328,7 +328,7 @@ export function arcBetween(from: Point, to: Point, bend: number): { path: string
   };
   const tangent = { x: control.x - from.x + (to.x - control.x), y: control.y - from.y + (to.y - control.y) };
   return {
-    path: `M ${round(from.x)} ${round(from.y)} Q ${round(control.x)} ${round(control.y)} ${round(to.x)} ${round(to.y)}`,
+    path: `M ${String(round(from.x))} ${String(round(from.y))} Q ${String(round(control.x))} ${String(round(control.y))} ${String(round(to.x))} ${String(round(to.y))}`,
     midpoint: { x: round(midpoint.x), y: round(midpoint.y) },
     angle: round((Math.atan2(tangent.y, tangent.x) * 180) / Math.PI),
   };

@@ -101,7 +101,7 @@ export const TERMINAL_REQUEST_TIMEOUT_MS = 30_000;
 
 function terminalTimeout(method: string, path: string): TerminalApiError {
   return new TerminalApiError(
-    `El plano terminal no contestó en ${Math.round(TERMINAL_REQUEST_TIMEOUT_MS / 1000)} s `
+    `El plano terminal no contestó en ${String(Math.round(TERMINAL_REQUEST_TIMEOUT_MS / 1000))} s `
       + `y la consola cortó la espera (${method} ${path}). Se puede volver a intentar sin asumir que la operación terminó.`,
     504,
     'timeout',
@@ -110,11 +110,12 @@ function terminalTimeout(method: string, path: string): TerminalApiError {
 
 function safeBase(baseUrl: string): string {
   if (!baseUrl) return '';
-  const parsed = new URL(baseUrl, globalThis.location?.origin ?? 'http://localhost');
+  const currentOrigin = typeof globalThis.location !== 'undefined' ? globalThis.location.origin : 'http://localhost';
+  const parsed = new URL(baseUrl, currentOrigin);
   if (parsed.username || parsed.password) {
     throw new Error('VITE_CAUCE_API_BASE must not contain credentials');
   }
-  if (import.meta.env.PROD && globalThis.location?.origin && parsed.origin !== globalThis.location.origin) {
+  if (import.meta.env.PROD && typeof globalThis.location !== 'undefined' && parsed.origin !== globalThis.location.origin) {
     throw new Error('Production OIDC BFF API base must be same-origin');
   }
   return baseUrl.replace(/\/$/, '');
@@ -171,14 +172,12 @@ async function terminalResponse(
 ): Promise<{ status: number; body: unknown }> {
   const method = init.method?.toUpperCase() ?? 'GET';
   const controller = new AbortController();
-  let timedOut = false;
-  const onExternalAbort = () => controller.abort(init.signal?.reason);
+  const onExternalAbort = () => { controller.abort(init.signal?.reason); };
   if (init.signal?.aborted) onExternalAbort();
   else init.signal?.addEventListener('abort', onExternalAbort, { once: true });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      timedOut = true;
       controller.abort();
       reject(terminalTimeout(method, path));
     }, TERMINAL_REQUEST_TIMEOUT_MS);
@@ -186,17 +185,26 @@ async function terminalResponse(
 
   const operation = async (): Promise<{ status: number; body: unknown }> => {
     const csrf = esEscritura(init.method) ? await csrfParaEscritura(session) : undefined;
+    const requestHeaders: Record<string, string> = {
+      Accept: 'application/json',
+      'X-Cauce-Console': '1',
+      ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+    };
+    if (init.headers) {
+      if (init.headers instanceof Headers) {
+        init.headers.forEach((val, key) => { requestHeaders[key] = val; });
+      } else if (Array.isArray(init.headers)) {
+        for (const [k, v] of init.headers) requestHeaders[k] = v;
+      } else {
+        Object.assign(requestHeaders, init.headers);
+      }
+    }
     const response = await fetch(`${safeBase(import.meta.env.VITE_CAUCE_API_BASE ?? '')}${path}`, {
       ...init,
       credentials: 'include',
       signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        'X-Cauce-Console': '1',
-        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...init.headers,
-      },
+      headers: requestHeaders,
     });
 
     // The deadline intentionally remains armed while consuming the body. A proxy can deliver
@@ -211,7 +219,7 @@ async function terminalResponse(
     if (!response.ok) {
       const detail = errorBody(body);
       // 403/409 carry their operator-facing explanation in `reason`; keep it instead of the status text.
-      const message = detail.message ?? detail.reason ?? response.statusText ?? 'Terminal API request failed';
+      const message = detail.message ?? detail.reason ?? (response.statusText ? response.statusText : 'Terminal API request failed');
       throw new TerminalApiError(message, response.status, detail.error);
     }
     return { status: response.status, body };
@@ -219,9 +227,6 @@ async function terminalResponse(
 
   try {
     return await Promise.race([operation(), deadline]);
-  } catch (error) {
-    if (timedOut) throw terminalTimeout(method, path);
-    throw error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     init.signal?.removeEventListener('abort', onExternalAbort);
@@ -320,7 +325,7 @@ export async function listTerminalTargets(): Promise<TerminalTargetsSnapshot> {
     const payload = await terminalRequest<Record<string, unknown>>('/v3/console/terminal/targets');
     let items: TerminalTarget[] | null = null;
     let invalidInventory = false;
-    if (Array.isArray(payload?.items)) {
+    if (Array.isArray(payload.items)) {
       const parsed: TerminalTarget[] = [];
       const seen = new Set<string>();
       for (const item of payload.items) {
@@ -338,8 +343,8 @@ export async function listTerminalTargets(): Promise<TerminalTargetsSnapshot> {
       if (!invalidInventory) items = parsed;
     }
     return {
-      observed_at: safeText(payload?.observed_at),
-      websocket_path: safeText(payload?.websocket_path),
+      observed_at: safeText(payload.observed_at),
+      websocket_path: safeText(payload.websocket_path),
       items,
       ...(items ? {} : {
         reason: invalidInventory
@@ -394,13 +399,12 @@ export function createTerminalSession(
 }
 
 function boundedOpaque(value: unknown, maximum: number): string | undefined {
-  return typeof value === 'string' && value.length >= 1 && value.length <= maximum
-    && [...value].every((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code > 31 && code !== 127;
-    })
-    ? value
-    : undefined;
+  if (typeof value !== 'string' || value.length < 1 || value.length > maximum) return undefined;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.codePointAt(i) ?? 0;
+    if (code <= 31 || code === 127) return undefined;
+  }
+  return value;
 }
 
 function exactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
@@ -564,8 +568,7 @@ export function exactTerminalSessionGrant(
       || targetRow.alias !== requested.alias
       || targetRow.mode !== requested.mode
       || container === undefined || runtimeUser === undefined || cohort === undefined
-      || !ticketClaims
-      || ticketClaims.sid !== sessionId
+      || ticketClaims?.sid !== sessionId
       || ticketClaims.tenant !== requested.tenant_id
       || ticketClaims.alias !== requested.alias
       || ticketClaims.container !== container

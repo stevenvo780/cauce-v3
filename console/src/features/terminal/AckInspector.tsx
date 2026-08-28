@@ -69,8 +69,8 @@ export function AckInspector({ delivery, access, onReplay, onCancel }: {
             <div><dt>Intento</dt><dd><Unknown value={delivery.attempt} /></dd></div>
           </dl>
           <ol className="ack-timeline">
-            {(delivery.timeline ?? []).length ? delivery.timeline!.map((event, index) => (
-              <li key={`${event.status}-${event.at ?? index}`} data-state={event.status}>
+            {(delivery.timeline ?? []).length ? (delivery.timeline ?? []).map((event, index) => (
+              <li key={`${event.status}-${String(event.at ?? index)}`} data-state={event.status}>
                 <span className="ack-node" aria-hidden="true" />
                 <div>
                   <strong>{event.status.toUpperCase()}</strong>

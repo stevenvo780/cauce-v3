@@ -6,8 +6,8 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type FormEvent,
   type KeyboardEvent,
+  type SyntheticEvent,
 } from 'react';
 import {
   Activity,
@@ -82,7 +82,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
   grants: Record<string, TerminalSessionGrant>;
-  closedChannels: Record<string, true>;
+  closedChannels: Record<string, true | undefined>;
   onUpdate: (session: OperatorSession) => void;
   /** Workspace-owned fence: survives stage unmounts caused by switching tabs. */
   onRequestGrant: RequestTerminalGrant;
@@ -120,12 +120,12 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
 
   const currentAgent = agents.find((agent) => agent.id === session.agent.id) ?? session.agent;
   const liveSession = { ...session, agent: currentAgent };
-  const grant = grants[liveSession.id];
-  const ptyChannelLive = Boolean(liveSession.mode === 'pty' && grant && !closedChannels[liveSession.id]);
+  const grant = grants[liveSession.id] as TerminalSessionGrant | undefined;
+  const ptyChannelLive = liveSession.mode === 'pty' && grant !== undefined && !closedChannels[liveSession.id];
   /** El terminal está a la vista y pintando: lo accesorio deja de robarle alto. */
-  const mostrandoTui = ptyChannelLive && liveSession.mode === 'pty';
+  const mostrandoTui = ptyChannelLive;
 
-  const channelSessionId = grant?.session_id;
+  const channelSessionId = grant ? grant.session_id : undefined;
   const subscribeChannel = useCallback(
     (listener: () => void) => channelSessionId ? subscribePtySession(channelSessionId, listener) : () => undefined,
     [channelSessionId],
@@ -136,13 +136,13 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   useEffect(() => {
     if (messages.loading || ptyChannelLive) return;
     const interval = window.setInterval(messages.reload, 2_500);
-    return () => window.clearInterval(interval);
+    return () => { window.clearInterval(interval); };
   }, [messages.loading, messages.reload, ptyChannelLive]);
 
   useEffect(() => {
     if (!ptyChannelLive || channelView?.state === 'open') return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
+    const interval = window.setInterval(() => { setNow(Date.now()); }, 1_000);
+    return () => { window.clearInterval(interval); };
   }, [channelView?.state, ptyChannelLive]);
 
   const transcript = transcriptForSession(messages.data, liveSession);
@@ -160,34 +160,34 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
     ? liveSession.sourceRoomId
     : route.sourceRoomIds[0] ?? '';
   const roomEnabled = route.membership === true && Boolean(sourceRoomId);
-  const canRoute = route.allowed === true && roomEnabled;
+  const canRoute = route.allowed && roomEnabled;
   const channel = terminalChannelGate(capability, access, targets, liveSession.agent);
-  const channelLabel = channel && channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
+  const channelLabel = channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
   const channelTarget = terminalTargetForAgent(targets?.items, liveSession.agent);
   const liveTui = liveTuiGate(capability, access, targets, liveSession.agent);
   const liveTuiLabel = liveTui.status === 'blocked' ? 'TUI no habilitada' : LIVE_TUI_LABELS[liveTui.status];
 
-  const liveTuiDetail = liveTui.reason === channel?.reason
+  const liveTuiDetail = liveTui.reason === channel.reason
     ? 'Sin canal PTY no hay TUI que emitir: el motivo es el mismo del canal, acá arriba.'
     : traducirCodigosEnTexto(liveTui.reason);
 
-  const channelReason = channel?.reason
+  const channelReason = channel.reason
     ? traducirCodigosEnTexto(channel.reason)
     : 'Todavía no se pudo leer si hay canal PTY para este alias.';
 
-  const channelIsLiveTui = (grant?.target.mode ?? liveSession.channelMode) === LIVE_TUI_MODE;
+  const targetMode = grant ? grant.target.mode : liveSession.channelMode;
+  const channelIsLiveTui = targetMode === LIVE_TUI_MODE;
 
   /** Apertura automática de TUI viva al seleccionar el panel si está disponible. */
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;
-    if (grants[liveSession.id] || closedChannels[liveSession.id]) return;
+    if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
     void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveTui.enabled]);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canPublish || !sourceRoomId || !canRoute) return;
     const text = draft.trim();
@@ -252,7 +252,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   }
 
   async function requestChannel(reason: string, mode: string) {
-    if (mode === LIVE_TUI_MODE ? !liveTui.enabled : !channel?.enabled) return;
+    if (mode === LIVE_TUI_MODE ? !liveTui.enabled : !channel.enabled) return;
     if (requestAttemptRef.current !== undefined) return;
     const attempt = { sequence: ++requestSequenceRef.current };
     requestAttemptRef.current = attempt;
@@ -260,8 +260,8 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
     setRequesting(true);
     setRequestError(undefined);
     try {
-      const current = grants[liveSession.id];
-      if (current && (current.target.mode !== mode || closedChannels[liveSession.id])) {
+      const current = grants[liveSession.id] as TerminalSessionGrant | undefined;
+      if (current !== undefined && (current.target.mode !== mode || closedChannels[liveSession.id])) {
         await onReleaseChannel(liveSession.id);
       }
       if (!ownsAttempt()) return;
@@ -297,7 +297,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
 
   function openLiveTui() {
     if (!liveTui.enabled) return;
-    if (grant && !closedChannels[liveSession.id] && grant.target.mode === LIVE_TUI_MODE) {
+    if (grant !== undefined && !closedChannels[liveSession.id] && grant.target.mode === LIVE_TUI_MODE) {
       onUpdate({ ...liveSession, mode: 'pty' });
       return;
     }
@@ -316,9 +316,9 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   }
 
   function selectPtyMode() {
-    if (!channel?.enabled) return;
-    const current = grants[liveSession.id];
-    if (current && !closedChannels[liveSession.id] && current.target.mode !== LIVE_TUI_MODE) {
+    if (!channel.enabled) return;
+    const current = grants[liveSession.id] as TerminalSessionGrant | undefined;
+    if (current !== undefined && !closedChannels[liveSession.id] && current.target.mode !== LIVE_TUI_MODE) {
       onUpdate({ ...liveSession, mode: 'pty' });
     } else {
       setRequestError(undefined);
@@ -337,12 +337,12 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
           </div>
           <div className="session-controls">
              <label className="terminal-room-label">Room de origen
-               <span className="room-select-wrap"><select value={sourceRoomId} onChange={(event) => onUpdate({ ...liveSession, sourceRoomId: event.target.value })} disabled={!route.sourceRoomIds.length}>
+               <span className="room-select-wrap"><select value={sourceRoomId} onChange={(event) => { onUpdate({ ...liveSession, sourceRoomId: event.target.value }); }} disabled={!route.sourceRoomIds.length}>
                  {route.sourceRoomIds.length ? route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>) : <option value="">No autorizado</option>}
                </select><ChevronDown size={14} aria-hidden="true" /></span>
              </label>
              <div className="terminal-mode-switch" aria-label="Canal de sesión">
-               <button type="button" aria-pressed={liveSession.mode === 'transcript'} data-active={liveSession.mode === 'transcript' || undefined} onClick={() => onUpdate({ ...liveSession, mode: 'transcript' })}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
+               <button type="button" aria-pressed={liveSession.mode === 'transcript'} data-active={liveSession.mode === 'transcript' || undefined} onClick={() => { onUpdate({ ...liveSession, mode: 'transcript' }); }}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
                <button
                  type="button"
                  aria-pressed={liveSession.mode === 'pty' && channelIsLiveTui}
@@ -355,14 +355,14 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                  type="button"
                  aria-pressed={liveSession.mode === 'pty' && !channelIsLiveTui}
                  data-active={(liveSession.mode === 'pty' && !channelIsLiveTui) || undefined}
-                 disabled={!channel?.enabled || requesting}
+                 disabled={!channel.enabled || requesting}
                  onClick={selectPtyMode}
                  title={channelReason}
                ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
                <button
                  type="button"
                  data-active={showInspector || undefined}
-                 onClick={() => setShowInspector(!showInspector)}
+                 onClick={() => { setShowInspector(!showInspector); }}
                  title="Ver detalles / ACK inspector"
                ><Activity size={14} aria-hidden="true" /> Detalles</button>
             </div>
@@ -371,7 +371,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
 
         {mostrandoTui ? null : (
           <>
-            <p className="terminal-channel-state" data-status={channel?.status ?? 'blocked'}>
+            <p className="terminal-channel-state" data-status={channel.status}>
               <ShieldCheck size={13} aria-hidden="true" />
               <strong>{channelLabel}</strong>
               <span>{channelReason}</span>
@@ -388,21 +388,21 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
         {requestError ? (
           <div className="terminal-channel-refusal">
             <NegativaPty negativa={requestError} />
-            <button type="button" className="button small secondary" onClick={() => setRequestError(undefined)}>Descartar</button>
+            <button type="button" className="button small secondary" onClick={() => { setRequestError(undefined); }}>Descartar</button>
           </div>
         ) : null}
 
         {mostrandoTui ? null : (
           <div className="terminal-connection-bar" role="status">
-            <span className={`connection-dot ${messages.error ? 'error' : ptyChannelLive ? 'open' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
-            <strong>{messages.error ? 'FEED DEGRADADO' : ptyChannelLive ? 'POLLING EN PAUSA' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
-            <span>{messages.error?.message ?? (ptyChannelLive ? 'el canal PTY es la fuente en vivo de esta sesión' : 'deliveries + ACK cada 2.5 s')}</span>
+            <span className={`connection-dot ${messages.error ? 'error' : messages.data ? 'open' : 'connecting'}`} aria-hidden="true" />
+            <strong>{messages.error ? 'FEED DEGRADADO' : messages.data ? 'POLLING ACTIVO' : 'CONECTANDO'}</strong>
+            <span>{messages.error?.message ?? 'deliveries + ACK cada 2.5 s'}</span>
             <button type="button" onClick={messages.reload} disabled={messages.loading}><RefreshCw size={13} aria-hidden="true" /> Sincronizar</button>
           </div>
         )}
 
         {liveSession.mode === 'pty' ? (
-           channel?.enabled && grant && channel.websocketPath ? (
+           channel.enabled && grant && channel.websocketPath ? (
              <div className="terminal-pty-pane">
                <PtySessionBar
                  agent={liveSession.agent}
@@ -419,7 +419,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                    sessionId={grant.session_id}
                    ticket={grant.ticket}
                    readOnly={channelIsLiveTui}
-                   onClosed={() => onChannelClosed(liveSession.id)}
+                   onClosed={() => { onChannelClosed(liveSession.id); }}
                    onRequestNewSession={() => { void onReleaseChannel(liveSession.id).then(() => { setRequestError(undefined); setShowPtyDialog(true); }); }}
                  />
                </Suspense>
@@ -432,7 +432,11 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                  key={liveSession.id}
                  items={transcript}
                  selectedMessageId={selectedMessageId}
-                 onSelectItem={(item) => item.delivery?.delivery_id && setSelectedDeliveryId(item.delivery.delivery_id)}
+                 onSelectItem={(item) => {
+                   if (item.delivery?.delivery_id) {
+                     setSelectedDeliveryId(item.delivery.delivery_id);
+                   }
+                 }}
               />
             )}
             <form className="terminal-composer" onSubmit={(event) => void submit(event)}>
@@ -440,7 +444,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
               <textarea
                 id={`terminal-input-${liveSession.id}`}
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => { setDraft(event.target.value); }}
                 onKeyDown={composerKeyDown}
                 rows={3}
                 maxLength={8_000}
@@ -456,7 +460,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere message.publish.</p> : null}
                {route.membership === undefined ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> No se pudo leer si sos miembro del room de origen; no se asume que lo seas.</p> : null}
                {route.membership === false ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership deshabilitada o sin room compartido.</p> : null}
-               {route && !route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
+               {!route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
               {notice ? <p className={`notice ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
             </form>
           </>
@@ -482,7 +486,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
           resolution={{ status: channel.status === 'blocked' ? 'unknown' : channel.status, reason: channel.reason, target: channelTarget }}
           pending={requesting}
           {...(requestError ? { error: requestError } : {})}
-          onCancel={() => setShowPtyDialog(false)}
+          onCancel={() => { setShowPtyDialog(false); }}
           onConfirm={(reason) => void requestChannel(reason, SHELL_MODE)}
         />
       ) : null}

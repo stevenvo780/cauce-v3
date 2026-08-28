@@ -10,7 +10,7 @@ import { LIVE_STATES, LIVE_STATE_META } from './agent-state';
  */
 
 /** El estado del servidor y el estado derivado que nombran EL MISMO hecho. */
-const MISMO_HECHO: Array<{ work: FleetWorkState; live: (typeof LIVE_STATES)[number]; porque: string }> = [
+const MISMO_HECHO: { work: FleetWorkState; live: (typeof LIVE_STATES)[number]; porque: string }[] = [
   { work: 'idle', live: 'idle', porque: 'sin nada en vuelo' },
   { work: 'queued', live: 'receiving', porque: 'le entró trabajo y todavía no lo empezó' },
   { work: 'working', live: 'thinking', porque: 'turno en curso' },

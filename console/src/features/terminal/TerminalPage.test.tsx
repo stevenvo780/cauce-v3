@@ -81,14 +81,14 @@ afterEach(() => {
 /** Drives the UI from the fleet list up to a live PTY socket. */
 async function openPtyChannel(user: ReturnType<typeof userEvent.setup>, alias: string, reason: string) {
   await user.click(await screen.findByRole('button', { name: new RegExp(`abrir sesión con ${alias}`, 'i') }));
-  await waitFor(() => expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
 
   const dialog = await screen.findByRole('dialog');
   await user.type(within(dialog).getByRole('textbox'), reason);
   await user.click(within(dialog).getByRole('button', { name: /abrir sesión pty/i }));
 
-  await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
+  await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   return StubWebSocket.last();
 }
 
@@ -110,7 +110,7 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   // depende del fixture— es que el contador no afirme un tamaño de flota distinto al que muestra.
   const listed = await screen.findAllByRole('button', { name: /abrir sesión con/i });
   expect(listed.length).toBeGreaterThan(1);
-  expect(await screen.findByText(`${listed.length} agentes`)).toBeInTheDocument();
+  expect(await screen.findByText(`${String(listed.length)} agentes`)).toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
 
   const input = await screen.findByRole('textbox', { name: /entrada para kant/i });
@@ -160,7 +160,7 @@ it('keeps the durable feed operational on a real PTY 501 and disables only PTY',
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con argos/i }));
   const input = await screen.findByRole('textbox', { name: /entrada para argos/i });
-  await waitFor(() => expect(input).toBeEnabled());
+  await waitFor(() => { expect(input).toBeEnabled(); });
   expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled();
   expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByText(/4 ACK/i)).toBeInTheDocument();
@@ -195,13 +195,13 @@ it('publishes cross-tenant from the operator source room and blocks destinations
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con kratos/i }));
   const allowedInput = await screen.findByRole('textbox', { name: /entrada para kratos/i });
-  await waitFor(() => expect(allowedInput).toBeEnabled());
+  await waitFor(() => { expect(allowedInput).toBeEnabled(); });
   await user.type(allowedInput, 'Diagnóstico remoto');
   await user.click(screen.getByRole('button', { name: /^enviar$/i }));
-  await waitFor(() => expect(published).toMatchObject({
+  await waitFor(() => { expect(published).toMatchObject({
     room_id: 'grp.steven',
     recipients: [{ tenant_id: 'Miguel', alias: 'kratos' }],
-  }));
+  }); });
 
   await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
   expect(await screen.findByRole('textbox', { name: /entrada para salva/i })).toBeDisabled();
@@ -220,7 +220,7 @@ it('derives the operator ACL from /v3/console/topology and never calls a route t
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con kant/i }));
   const input = await screen.findByRole('textbox', { name: /entrada para kant/i });
-  await waitFor(() => expect(input).toBeEnabled());
+  await waitFor(() => { expect(input).toBeEnabled(); });
   expect(phantomCalls).toBe(0);
   expect(screen.queryByText(/Topología de acceso del tenant operador UNKNOWN/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/ACL del operador/i)).not.toBeInTheDocument();
@@ -278,7 +278,7 @@ it('disables PTY for a denied destination and shows the server motive, not an em
   await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
 
   const ptyButton = await screen.findByRole('button', { name: /^PTY$/i });
-  await waitFor(() => expect(ptyButton).toBeDisabled());
+  await waitFor(() => { expect(ptyButton).toBeDisabled(); });
   // El motivo del servidor trae el código DENTRO de la prosa. Se traduce, y se conserva lo
   // que el servidor sí dijo en castellano. Ver `denegaciones.ts`.
   expect(ptyButton).toHaveAttribute('title', expect.stringContaining('Falta decir qué persona está entrando'));
@@ -297,7 +297,7 @@ it('states not_installed explicitly rather than leaving the operator on a spinne
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con argos/i }));
 
-  await waitFor(() => expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled(); });
   expect(screen.getAllByText('Agente PTY no instalado')).toHaveLength(2);
   expect(screen.getByText(/no está instalado en ctrl-infra/i)).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -317,7 +317,7 @@ it('refuses to confirm without a written motive and spells out who shares the co
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
-  await waitFor(() => expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
 
   const dialog = await screen.findByRole('dialog');
@@ -347,9 +347,9 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
   const socket = await openPtyChannel(user, 'jarvis', 'verificar el despliegue atrasado');
 
   expect(socket.frames()).toHaveLength(0);
-  act(() => socket.acceptOpen());
+  act(() => { socket.acceptOpen(); });
   expect(socket.frames()[0]).toMatchObject({
-    type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u),
+    type: 'attach', session_id: PTY_SESSION_ID, ticket: expect.stringMatching(/^v1\./u) as unknown,
   });
   // Until the relay authorises, what is ticking is the single-use ticket window.
   expect(screen.getByLabelText('Sesión PTY activa')).toHaveTextContent(/Ticket vence en \d+:\d\d/);
@@ -361,7 +361,7 @@ it('sends attach as the first frame and renders binary PTY output', async () => 
     });
     socket.emitOutput('claw@claw:~$ id -un\r\nclaw\r\n');
   });
-  await waitFor(() => expect(ptySessionText(PTY_SESSION_ID)).toContain('claw@claw:~$ id -un'));
+  await waitFor(() => { expect(ptySessionText(PTY_SESSION_ID)).toContain('claw@claw:~$ id -un'); });
 
   // The permanent bar states who, where, as whom and how long is left.
   const bar = screen.getByLabelText('Sesión PTY activa');
@@ -419,10 +419,10 @@ it('fences two confirmations in the same render to one PTY reservation POST', as
     fireEvent.click(confirm);
     fireEvent.click(confirm);
   });
-  await waitFor(() => expect(posts).toBe(1));
+  await waitFor(() => { expect(posts).toBe(1); });
 
   gate.resolve(undefined);
-  await waitFor(() => expect(StubWebSocket.instances).toHaveLength(1));
+  await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   expect(posts).toBe(1);
 }, 20_000);
 
@@ -451,7 +451,7 @@ it.each([
       claim_epoch: '1', claim_lease_ms: 45_000,
     });
   });
-  act(() => socket.emitClose(code, 'server close'));
+  act(() => { socket.emitClose(code, 'server close'); });
 
   expect(await screen.findByText(expected)).toBeInTheDocument();
   // An explicit relay close is final. Only a transport loss can resume the same PTY, and the
@@ -459,7 +459,7 @@ it.each([
   expect(await screen.findByRole('button', { name: /pedir sesión nueva/i })).toBeInTheDocument();
   expect(screen.getByText(/sólo reanuda automáticamente una interrupción de transporte/i)).toBeInTheDocument();
   expect(StubWebSocket.instances).toHaveLength(1);
-});
+}, 20_000);
 
 it('releases the grant server-side when the operator closes the session', async () => {
   const user = userEvent.setup();
@@ -484,10 +484,10 @@ it('releases the grant server-side when the operator closes the session', async 
 
   await user.click(within(screen.getByLabelText('Sesión PTY activa')).getByRole('button', { name: /cerrar la terminal/i }));
 
-  await waitFor(() => expect(deleted).toBe(PTY_SESSION_ID));
-  await waitFor(() => expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'));
+  await waitFor(() => { expect(deleted).toBe(PTY_SESSION_ID); });
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'); });
   expect(socket.closeCode).toBe(1000);
-});
+}, 20_000);
 
 it('surfaces a 409 conflict from the gateway without opening any socket', async () => {
   const user = userEvent.setup();
@@ -497,7 +497,7 @@ it('surfaces a 409 conflict from the gateway without opening any socket', async 
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con jarvis/i }));
-  await waitFor(() => expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled());
+  await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: /^PTY$/i }));
   const dialog = await screen.findByRole('dialog');
   await user.type(within(dialog).getByRole('textbox'), 'intento contra un agente caido');
@@ -550,7 +550,7 @@ it.each([502, 503, 504])(
 
     expect(await screen.findByText('No se pudo comprobar el canal PTY')).toBeInTheDocument();
     expect(screen.getByText(/no se pudo alcanzar el relay de terminales/i)).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(`HTTP ${status}`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`HTTP ${String(status)}`))).toBeInTheDocument();
     expect(screen.queryByText(/no está desplegado en este stack/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
   },

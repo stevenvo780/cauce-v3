@@ -55,19 +55,19 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
         <label className="terminal-search">
           <span className="sr-only">Buscar agente o capacidad</span>
           <Search size={15} aria-hidden="true" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar agente…" />
+          <input value={query} onChange={(event) => { setQuery(event.target.value); }} placeholder="Buscar agente…" />
         </label>
         <div className="fleet-filter-row">
           <label>
             <span><Filter size={12} aria-hidden="true" /> Cliente</span>
-            <select value={tenantId} onChange={(event) => setTenantId(event.target.value)}>
+            <select value={tenantId} onChange={(event) => { setTenantId(event.target.value); }}>
               <option value="all">Todos</option>
               {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
             </select>
           </label>
           <label>
             <span><Radio size={12} aria-hidden="true" /> Sala</span>
-            <select value={roomId} onChange={(event) => setRoomId(event.target.value)}>
+            <select value={roomId} onChange={(event) => { setRoomId(event.target.value); }}>
               <option value="all">Todos</option>
               {rooms.map((room) => <option key={room} value={room}>{room}</option>)}
             </select>
@@ -94,7 +94,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
               data-active={activeAgentId === agent.id || undefined}
               key={agent.id}
               type="button"
-              onClick={() => onOpenAgent(agent)}
+              onClick={() => { onOpenAgent(agent); }}
               aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${LEASE_STATE_LABEL[agent.leaseState]}, PTY: ${pty.label}`}
             >
               <span className={`agent-presence ${agent.leaseState}`} aria-hidden="true">

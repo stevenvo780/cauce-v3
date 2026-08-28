@@ -17,7 +17,7 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
   topeAlcanzado: boolean;
   motivo?: MotivoReconciliacionPlaza;
   revisando: boolean;
-  cerrando: Record<string, true>;
+  cerrando: Record<string, boolean | undefined>;
   error?: string;
   onRevisar: () => void;
   onCerrar: (sessionId: string) => void;
@@ -40,16 +40,16 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
               : motivo === 'invalid_grant_receipt' && items.length > 0
                 ? 'El grant fue inválido; estas son las reservas visibles'
               : items.length === 0
-              ? `Tope de sesiones alcanzado: las ${total} que lo gastan están abiertas acá`
+              ? `Tope de sesiones alcanzado: las ${String(total)} que lo gastan están abiertas acá`
               : items.length === 1
                 ? 'Una sesión tuya sigue ocupando plaza fuera de esta pantalla'
-                : `${items.length} sesiones tuyas siguen ocupando plaza fuera de esta pantalla`}
+                : `${String(items.length)} sesiones tuyas siguen ocupando plaza fuera de esta pantalla`}
           </strong>
           <p>
             {error
               ? items.length === 0
                 ? 'El inventario del gateway no es verificable. No se infiere que haya cero sesiones ni que todas estén abiertas en esta pantalla. Reintentá la lectura antes de decidir qué cerrar.'
-                : `No se pudo actualizar el inventario. Las ${items.length} filas de abajo son el último inventario verificable y pueden estar desactualizadas; no prueban cuántas plazas siguen ocupadas ahora.`
+                : `No se pudo actualizar el inventario. Las ${String(items.length)} filas de abajo son el último inventario verificable y pueden estar desactualizadas; no prueban cuántas plazas siguen ocupadas ahora.`
               : items.length === 0 && aLaVista === 0 && motivo === 'session_limit'
                 ? 'El POST recibió 409, pero el GET exacto posterior ya no encontró ninguna sesión ocupando plaza. Hubo una liberación concurrente: no hay nada que cerrar y podés reintentar la apertura.'
               : items.length === 0 && aLaVista === 0 && motivo === 'invalid_grant_receipt'
@@ -76,8 +76,8 @@ export function PlazasColgadas({ items, aLaVista, topeAlcanzado, motivo, revisan
             <span className="pty-plazas-alias"><Bot size={12} aria-hidden="true" /> <strong>{item.alias}</strong> <small>{item.tenant_id}</small></span>
             <span className="pty-plazas-modo">{item.mode === LIVE_TUI_MODE ? 'TUI en vivo' : item.mode === SHELL_MODE ? 'shell' : item.mode}</span>
             <span className="pty-plazas-resto"><Timer size={12} aria-hidden="true" /> se suelta sola en {minutosParaLiberar(item, ahora)} min</span>
-            <button className="button small" type="button" onClick={() => onCerrar(item.session_id)} disabled={Boolean(cerrando[item.session_id])}>
-              <PowerOff size={13} aria-hidden="true" /> {cerrando[item.session_id] ? 'Cerrando…' : 'Cerrar ahora'}
+            <button className="button small" type="button" onClick={() => { onCerrar(item.session_id); }} disabled={cerrando[item.session_id] === true}>
+              <PowerOff size={13} aria-hidden="true" /> {cerrando[item.session_id] === true ? 'Cerrando…' : 'Cerrar ahora'}
             </button>
           </li>
         ))}

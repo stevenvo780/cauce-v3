@@ -40,7 +40,7 @@ function sessionInput(overrides: Partial<CreateTerminalSessionInput> = {}): Crea
 }
 
 it('keeps the shared client hygiene: cookies, console header and JSON only when there is a body', async () => {
-  const seen: Array<{ method: string; console: string | null; contentType: string | null; credentials: string }> = [];
+  const seen: { method: string; console: string | null; contentType: string | null; credentials: string }[] = [];
   server.use(
     http.get('*/v3/console/terminal/probe', ({ request }) => {
       seen.push({ method: request.method, console: request.headers.get('X-Cauce-Console'), contentType: request.headers.get('Content-Type'), credentials: request.credentials });
@@ -213,7 +213,7 @@ it('returns the grant on 201 and releases it with a 204 DELETE', async () => {
 
   const grant = await createTerminalSession(sessionInput());
   expect(grant).toMatchObject({
-    session_id: 'sess-1', ticket: expect.stringMatching(/^v1\./u), ttl_seconds: 30,
+    session_id: 'sess-1', ticket: expect.stringMatching(/^v1\./u) as unknown, ttl_seconds: 30,
     receipt_recovered: false,
   });
   await expect(deleteTerminalSession('sess-1', OWNER)).resolves.toBeUndefined();
@@ -428,7 +428,7 @@ function puertaCsrf(token: string, alOk: () => Response) {
 }
 
 it('adjunta el token CSRF de la sesión al pedir un grant: sin él el gateway responde 403 y la TUI no abre', async () => {
-  const vistos: Array<string | null> = [];
+  const vistos: (string | null)[] = [];
   server.use(http.post('*/v3/console/terminal/sessions', (info) => {
     vistos.push(info.request.headers.get('X-CSRF-Token'));
     return puertaCsrf('mock-csrf-token', () => HttpResponse.json(mockTerminalGrant({
@@ -446,7 +446,7 @@ it('adjunta el token CSRF de la sesión al pedir un grant: sin él el gateway re
 });
 
 it('adjunta el token CSRF también al soltar la sesión: un DELETE sin token deja la shell colgada del otro lado', async () => {
-  const vistos: Array<string | null> = [];
+  const vistos: (string | null)[] = [];
   server.use(http.delete('*/v3/console/terminal/sessions/sess-csrf', (info) => {
     vistos.push(info.request.headers.get('X-CSRF-Token'));
     return puertaCsrf('mock-csrf-token', () => new HttpResponse(null, { status: 204 }))(info);
@@ -457,7 +457,7 @@ it('adjunta el token CSRF también al soltar la sesión: un DELETE sin token dej
 });
 
 it('no manda el token en las lecturas: el gateway no lo exige a un GET y pedirlo sería un viaje de más', async () => {
-  const vistos: Array<string | null> = [];
+  const vistos: (string | null)[] = [];
   server.use(http.get('*/v3/console/terminal/targets', ({ request }) => {
     vistos.push(request.headers.get('X-CSRF-Token'));
     return HttpResponse.json({ items: [] });

@@ -67,7 +67,7 @@ describe('la cuenta del navegador es la MISMA que la del servidor', () => {
     // Si las dos unidades coincidieran siempre, comprobar la igualdad de arriba sería vacío. Acá
     // se exige que exista al menos un texto donde SÍ se separan.
     const conEmoji = 'zeus 🩺';
-    expect([...conEmoji].length).toBeLessThan(conEmoji.length);
+    expect(Array.from(conEmoji).length).toBeLessThan(conEmoji.length);
     expect(contarUnidades(conEmoji)).toBe(conEmoji.length);
   });
 });

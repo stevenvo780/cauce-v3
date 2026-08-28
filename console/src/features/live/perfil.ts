@@ -92,7 +92,7 @@ export const ETIQUETAS: Record<CampoDeTexto | CampoDeLista, { titulo: string; ay
  * unidad de la otra (acentos y emojis fuera del BMP), que es lo que impide que se separen.
  */
 export function contarUnidades(texto: string): number {
-  return Math.max([...texto].length, texto.length);
+  return Math.max(Array.from(texto).length, texto.length);
 }
 
 /** Lo que el operador tiene delante: el perfil guardado con el borrador encima si lo hay. */
@@ -160,9 +160,9 @@ export function unidadesDelPerfil(campos: AgentPerfilCampos): number {
 export function camposQueNoEntran(
   campos: AgentPerfilCampos,
   limites: AgentPerfil['limites'] | undefined,
-): Array<{ campo: string; medido: number; tope: number }> {
+): { campo: string; medido: number; tope: number }[] {
   if (limites === undefined) return [];
-  const fuera: Array<{ campo: string; medido: number; tope: number }> = [];
+  const fuera: { campo: string; medido: number; tope: number }[] = [];
 
   for (const campo of CAMPOS_DE_TEXTO) {
     const tope = campo === 'role_summary' ? limites.role_summary : limites.purpose;

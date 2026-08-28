@@ -60,7 +60,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
           return (
             <article
               className={`transcript-entry ${direction}`}
-              key={message.message_id ?? `${direction}-${index}`}
+              key={message.message_id ?? `${direction}-${String(index)}`}
               data-selected={(selectedMessageId != null && message.message_id === selectedMessageId) || undefined}
             >
               <header>
@@ -89,7 +89,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
                 <span className="mono">trace {compactId(message.trace_id)}</span>
               </footer>
               {delivery ? (
-                <DeliveryProgress delivery={delivery} onSelect={() => onSelectItem(item)} />
+                <DeliveryProgress delivery={delivery} onSelect={() => { onSelectItem(item); }} />
               ) : (
                 /*
                  * Antes esto era un `<span>` inerte: la mitad del hilo —todo lo que el agente
@@ -99,7 +99,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
                 <button
                   className="transcript-output-note"
                   type="button"
-                  onClick={() => onSelectItem(item)}
+                  onClick={() => { onSelectItem(item); }}
                 >Salida observada desde el feed durable del room · ver detalle</button>
               )}
             </article>

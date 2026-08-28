@@ -7,7 +7,6 @@ import {
   buildLiveViews,
   fleetVerdict,
   stateTally,
-  type LiveState,
 } from './agent-state';
 
 /**
@@ -59,11 +58,11 @@ function agente(overrides: Partial<FleetActivityAgent> = {}): FleetActivityAgent
 function flotaDelDefecto(): FleetActivitySnapshot {
   const agents: FleetActivityAgent[] = [];
   for (let i = 0; i < 5; i += 1) {
-    agents.push(agente({ alias: `caido-${i}`, flags: ['lease_expired'], presence: { online: false } }));
+    agents.push(agente({ alias: `caido-${String(i)}`, flags: ['lease_expired'], presence: { online: false } }));
   }
   // Dos trabajando de verdad: una entrega en vuelo cada uno, sin nadie a quien se la hayan pasado.
   for (let i = 0; i < 2; i += 1) {
-    agents.push(agente({ alias: `trabajando-${i}`, work_state: 'working', in_flight: 1, started: 1 }));
+    agents.push(agente({ alias: `trabajando-${String(i)}`, work_state: 'working', in_flight: 1, started: 1 }));
   }
   /*
    * Dos delegando: `delegating` se deriva de que OTRO alias tenga en vuelo una entrega cuyo
@@ -71,20 +70,20 @@ function flotaDelDefecto(): FleetActivitySnapshot {
    * `trabajando-*` de arriba: `delegando-i` → `trabajando-i`.
    */
   for (let i = 0; i < 2; i += 1) {
-    agents.push(agente({ alias: `delegando-${i}` }));
-    const receptor = agents.find((candidato) => candidato.alias === `trabajando-${i}`);
+    agents.push(agente({ alias: `delegando-${String(i)}` }));
+    const receptor = agents.find((candidato) => candidato.alias === `trabajando-${String(i)}`);
     if (receptor) {
       receptor.in_flight_items = [{
-        delivery_id: `d-${i}`,
+        delivery_id: `d-${String(i)}`,
         from_tenant: 'Steven',
-        from_alias: `delegando-${i}`,
+        from_alias: `delegando-${String(i)}`,
         status: 'started',
         seconds_in_flight: 12,
         ack_deadline_at: '2026-08-23T10:30:00.000Z',
       }];
     }
   }
-  for (let i = 0; i < 9; i += 1) agents.push(agente({ alias: `libre-${i}` }));
+  for (let i = 0; i < 9; i += 1) agents.push(agente({ alias: `libre-${String(i)}` }));
   return {
     observed_at: OBSERVADO,
     thresholds: { saturation_in_flight: 8, stall_after_seconds: 300 },
@@ -93,7 +92,7 @@ function flotaDelDefecto(): FleetActivitySnapshot {
 }
 
 /** Los pares «número + palabra» de la línea de apoyo, tal y como se leen en pantalla. */
-function cifrasDelApoyo(apoyo: string): Array<{ numero: number; palabra: string }> {
+function cifrasDelApoyo(apoyo: string): { numero: number; palabra: string }[] {
   return [...apoyo.matchAll(/(\d+)\s+([^·.]+)/g)].map((coincidencia) => ({
     numero: Number(coincidencia[1]),
     palabra: coincidencia[2].trim().toLowerCase(),
@@ -125,8 +124,8 @@ describe('el veredicto y los chips de /live hablan el mismo idioma', () => {
         if (singular(palabra) !== singular(rotulo)) continue;
         if (numero !== tally[estado]) {
           desacuerdos.push(
-            `el veredicto dice «${numero} ${palabra}» y el chip «${LIVE_STATE_META[estado].label} `
-            + `${tally[estado]}»: misma palabra, números distintos`,
+            `el veredicto dice «${String(numero)} ${palabra}» y el chip «${LIVE_STATE_META[estado].label} `
+            + `${String(tally[estado])}»: misma palabra, números distintos`,
           );
         }
       }
@@ -151,7 +150,7 @@ describe('el veredicto y los chips de /live hablan el mismo idioma', () => {
     const tally = stateTally(views);
     const veredicto = fleetVerdict(views, { observedAt: OBSERVADO, nowMs: AHORA, staleAfterMs: 12_000 });
 
-    expect(veredicto.apoyo).toContain(`${tally.idle} libres`);
+    expect(veredicto.apoyo).toContain(`${String(tally.idle)} libres`);
   });
 
   it('CONTROL NEGATIVO — con la palabra vieja, el guardia marca el desacuerdo', () => {
@@ -167,8 +166,8 @@ describe('el veredicto y los chips de /live hablan el mismo idioma', () => {
     for (const { numero, palabra } of cifrasDelApoyo(apoyoViejo)) {
       for (const estado of LIVE_STATES) {
         const rotulo = LIVE_STATE_META[estado].label.toLowerCase();
-        if (singular(palabra) === singular(rotulo) && numero !== tally[estado as LiveState]) {
-          desacuerdos.push(`${palabra}: ${numero} vs ${tally[estado]}`);
+        if (singular(palabra) === singular(rotulo) && numero !== tally[estado]) {
+          desacuerdos.push(`${palabra}: ${String(numero)} vs ${String(tally[estado])}`);
         }
       }
     }

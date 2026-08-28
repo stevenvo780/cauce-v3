@@ -41,7 +41,7 @@ export const ROLE_BRIEF_CERCA = 120;
  *    lo acepta —o al revés, según dónde cayera el corte—.
  */
 export function contarRoleBrief(text: string): number {
-  return [...text.trim()].length;
+  return Array.from(text.trim()).length;
 }
 
 export type RoleBriefTono = 'ok' | 'cerca' | 'pasado';
@@ -59,10 +59,10 @@ export function tonoRoleBrief(largo: number): RoleBriefTono {
 export function bloqueoPorRuntimeDesplegado(text: string): string | undefined {
   const recortado = text.trim();
   const utf16 = recortado.length;
-  const puntos = [...recortado].length;
+  const puntos = Array.from(recortado).length;
   if (utf16 <= ROLE_BRIEF_MAX || puntos > ROLE_BRIEF_MAX) return undefined;
   return (
-    `Son ${puntos} caracteres, que la base acepta, pero ${utf16} unidades UTF-16 — y los ` +
+    `Son ${String(puntos)} caracteres, que la base acepta, pero ${String(utf16)} unidades UTF-16 — y los ` +
     'adaptadores que corren hoy en producción todavía miden así. Guardarlo dejaría al alias ' +
     'SORDO sin dar ningún error. Quitá algún emoji o acortá el texto; la restricción se levanta ' +
     'cuando salga el runtime nuevo.'

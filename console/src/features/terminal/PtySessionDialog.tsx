@@ -17,7 +17,7 @@ export function NegativaPty({ negativa }: { negativa: DenegacionExplicada }) {
       className="pty-negativa"
       role="alert"
       data-codigo={negativa.codigo}
-      data-consola={negativa.esDefectoDeLaConsola || undefined}
+      data-consola={negativa.esDefectoDeLaConsola ? true : undefined}
     >
       <strong>{negativa.titulo}</strong>
       <p>{negativa.porQue}</p>
@@ -76,7 +76,7 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
             id="pty-dialog-reason"
             ref={reasonRef}
             value={reason}
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => { setReason(event.target.value); }}
             rows={3}
             maxLength={PTY_REASON_MAX_LENGTH}
             autoComplete="off"
@@ -85,7 +85,7 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
             aria-describedby="pty-dialog-reason-hint"
           />
         </label>
-        <p className="pty-dialog-hint" id="pty-dialog-reason-hint">{problem ?? `Motivo válido · ${reason.trim().length}/${PTY_REASON_MAX_LENGTH}`}</p>
+        <p className="pty-dialog-hint" id="pty-dialog-reason-hint">{problem ?? `Motivo válido · ${String(reason.trim().length)}/${String(PTY_REASON_MAX_LENGTH)}`}</p>
 
         {error ? <NegativaPty negativa={error} /> : null}
 
@@ -96,7 +96,7 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
             type="button"
             disabled={Boolean(problem) || pending}
             title={problem}
-            onClick={() => onConfirm(reason.trim())}
+            onClick={() => { onConfirm(reason.trim()); }}
           >
             <TerminalSquare size={15} aria-hidden="true" /> {pending ? 'Solicitando…' : 'Abrir sesión PTY'}
           </button>

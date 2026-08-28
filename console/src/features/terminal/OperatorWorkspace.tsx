@@ -77,11 +77,10 @@ function terminalRequestInputKey(input: Omit<CreateTerminalSessionInput, 'reques
 }
 
 function terminalCapabilityUuid(): string {
-  const value = globalThis.crypto?.randomUUID?.();
-  if (value === undefined) {
-    throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
+  if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
   }
-  return value;
+  throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
 }
 
 export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
@@ -90,7 +89,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [grants, setGrants] = useState<Record<string, TerminalSessionGrant>>({});
-  const [closedChannels, setClosedChannels] = useState<Record<string, true>>({});
+  const [closedChannels, setClosedChannels] = useState<Record<string, true | undefined>>({});
   const [plazas, setPlazas] = useState<TerminalSessionListItem[]>([]);
   const [plazasAlaVista, setPlazasAlaVista] = useState(0);
   const [topeAlcanzado, setTopeAlcanzado] = useState(false);
@@ -172,8 +171,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       await revisarPlazas();
     } finally {
       setCerrandoPlaza((current) => {
-        const next = { ...current };
-        delete next[id];
+        const { [id]: _, ...next } = current;
         return next;
       });
     }
@@ -216,7 +214,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
     }
     const inputKey = terminalRequestInputKey(input);
     let intent = terminalIntentsRef.current.get(id);
-    if (intent === undefined || intent.sessionToken !== sessionToken || intent.inputKey !== inputKey) {
+    if (intent?.sessionToken !== sessionToken || intent.inputKey !== inputKey) {
       intent = {
         sessionToken,
         inputKey,
@@ -226,7 +224,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       terminalIntentsRef.current.set(id, intent);
     }
     const existing = terminalAttemptsRef.current.get(id);
-    if (existing && existing.sessionToken === sessionToken) {
+    if (existing?.sessionToken === sessionToken) {
       if (existing.inputKey !== inputKey) {
         return Promise.reject(new TerminalApiError(
           'Ya hay otra reserva PTY en curso para esta pestaña.', 409, 'request_in_flight',
@@ -258,8 +256,8 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         return { grant, adopted: false };
       }
 
-      const current = grantsRef.current[id];
-      if (current && current.session_id !== grant.session_id) {
+      const current = grantsRef.current[id] as TerminalSessionGrant | undefined;
+      if (current !== undefined && current.session_id !== grant.session_id) {
         if (!governedElsewhere()) {
           await deleteTerminalSession(grant.session_id, grant, apiRef.current).catch(() => undefined);
         }
@@ -271,9 +269,8 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       setTopeAlcanzado(false);
       setMotivoReconciliacionPlaza(undefined);
       setClosedChannels((channels) => {
-        if (channels[id] === undefined) return channels;
-        const open = { ...channels };
-        delete open[id];
+        if (!(id in channels)) return channels;
+        const { [id]: _, ...open } = channels;
         return open;
       });
       setSessions((currentSessions) => currentSessions.map((session) => session.id === id
@@ -292,11 +289,10 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   }
 
   async function releaseChannel(id: string) {
-    const grant = grantsRef.current[id];
+    const grant = grantsRef.current[id] as TerminalSessionGrant | undefined;
     if (!grant) return;
-    const remaining = { ...grantsRef.current };
     terminalIntentsRef.current.delete(id);
-    delete remaining[id];
+    const { [id]: _, ...remaining } = grantsRef.current;
     grantsRef.current = remaining;
     setGrants(remaining);
     closePtySession(grant.session_id);
@@ -306,8 +302,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       // The socket still has to go: a client-side failure must not leave a shell attached here.
     } finally {
       setClosedChannels((current) => {
-        const next = { ...current };
-        delete next[id];
+        const { [id]: _, ...next } = current;
         return next;
       });
     }
@@ -367,7 +362,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         onClose={closeSession}
         onUpdate={updateSession}
         onRequestGrant={requestTerminalGrant}
-        onChannelClosed={(id) => setClosedChannels((current) => ({ ...current, [id]: true }))}
+        onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
         onReleaseChannel={releaseChannel}
         onReconciliarPlazas={(motivo) => {
           setTopeAlcanzado(true);
