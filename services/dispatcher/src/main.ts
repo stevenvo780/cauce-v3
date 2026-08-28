@@ -114,7 +114,7 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   dispatcher.stop();
-  await new Promise<void>((resolve) => health.close(() => resolve()));
+  await new Promise<void>((resolve) => { health.close(() => { resolve(); }); });
   await pool.end();
 }
 process.once('SIGINT', () => { void shutdown(); });

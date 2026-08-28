@@ -39,8 +39,8 @@ describe('dispatcher delivery deadline configuration', () => {
   });
 });
 
-describe('techo de vida total de una entrega', () => {
-  it('usa un default conservador y lo deja mover por entorno', () => {
+describe('total delivery lease cap', () => {
+  it('uses conservative defaults and permits environment override', () => {
     expect(configuredDispatcher({})).toMatchObject({
       leaseCapMs: DEFAULT_DELIVERY_LEASE_CAP_MS,
       leaseCapGraceMs: DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS,
@@ -50,7 +50,7 @@ describe('techo de vida total de una entrega', () => {
     }).leaseCapMs).toBe(48 * 60 * 60_000);
   });
 
-  it('falla al arrancar si el techo es menor que el plazo de ACK', () => {
+  it('fails on startup if lease cap is shorter than ACK timeout', () => {
     expect(() => configuredDispatcher({
       CAUCE_ACK_DEADLINE_MS: '1800000',
       ACK_TIMEOUT_MS: '1800000',
@@ -59,8 +59,8 @@ describe('techo de vida total de una entrega', () => {
   });
 });
 
-describe('retencion de la observabilidad', () => {
-  it('trae ventanas por defecto y audit mas larga que los ACK', () => {
+describe('observability retention', () => {
+  it('uses default windows with audit longer than ACK', () => {
     const config = configuredDispatcher({});
     expect(config.retentionAckRenewalMs).toBe(DEFAULT_RETENTION_ACK_RENEWAL_MS);
     expect(config.retentionAckMs).toBe(DEFAULT_RETENTION_ACK_MS);
@@ -70,7 +70,7 @@ describe('retencion de la observabilidad', () => {
     expect(config.retentionBatch).toBe(DEFAULT_RETENTION_BATCH);
   });
 
-  it('acepta el cero SOLO en el intervalo, que es la palanca de apagado', () => {
+  it('accepts zero only on interval to disable sweep', () => {
     expect(configuredDispatcher({ CAUCE_RETENTION_INTERVAL_MS: '0' }).retentionIntervalMs).toBe(0);
     expect(() => configuredDispatcher({ CAUCE_RETENTION_ACK_MS: '0' }))
       .toThrow(/positive integer/u);
@@ -78,7 +78,7 @@ describe('retencion de la observabilidad', () => {
       .toThrow(/positive integer/u);
   });
 
-  it('rechaza una ventana de renovaciones mas larga que la general', () => {
+  it('rejects renewal retention window longer than general retention window', () => {
     expect(() => configuredDispatcher({
       CAUCE_RETENTION_ACK_RENEWAL_MS: String(30 * 24 * 60 * 60_000),
       CAUCE_RETENTION_ACK_MS: String(24 * 60 * 60_000),
@@ -86,8 +86,8 @@ describe('retencion de la observabilidad', () => {
   });
 });
 
-describe('vigía de cadenas mudas (P0-4)', () => {
-  it('trae los plazos medidos como valores por defecto', () => {
+describe('silent-chain watchdog (P0-4)', () => {
+  it('uses measured defaults', () => {
     expect(configuredDispatcher({})).toMatchObject({
       chainSweepMs: DEFAULT_CHAIN_SWEEP_MS,
       chainIdleMs: DEFAULT_CHAIN_IDLE_MS,
@@ -95,20 +95,18 @@ describe('vigía de cadenas mudas (P0-4)', () => {
       chainMaxAgeMs: DEFAULT_CHAIN_MAX_AGE_MS,
       chainSweepLimit: DEFAULT_CHAIN_SWEEP_LIMIT,
     });
-    // 6 h de inactividad = 1,4× el p99 medido de huecos sanos (4,25 h); 15 min de gracia
-    // para una cadena que ya está probadamente quieta; 48 h de ventana de rastreo.
     expect(DEFAULT_CHAIN_IDLE_MS).toBe(6 * 60 * 60 * 1_000);
     expect(DEFAULT_CHAIN_SETTLED_GRACE_MS).toBe(15 * 60 * 1_000);
     expect(DEFAULT_CHAIN_MAX_AGE_MS).toBe(48 * 60 * 60 * 1_000);
   });
 
-  it('se puede apagar con 0 sin apagar el resto del dispatcher', () => {
+  it('can be disabled with 0 without affecting other dispatcher operations', () => {
     expect(configuredDispatcher({ CHAIN_SWEEP_MS: '0' })).toMatchObject({
       chainSweepMs: 0, chainIdleMs: DEFAULT_CHAIN_IDLE_MS,
     });
   });
 
-  it('acepta plazos propios del operador', () => {
+  it('accepts operator-defined timeouts', () => {
     expect(configuredDispatcher({
       CHAIN_SWEEP_MS: '30000',
       CHAIN_IDLE_MS: '7200000',
@@ -124,9 +122,7 @@ describe('vigía de cadenas mudas (P0-4)', () => {
     });
   });
 
-  it('falla cerrado si la ventana de rastreo no alcanza para vencer', () => {
-    // Con la ventana más corta que el plazo, una raíz muda envejecería fuera del barrido
-    // antes de poder cerrarse: el silencio volvería, pero en silencio.
+  it('fails closed when max age is shorter than idle window', () => {
     expect(() => configuredDispatcher({
       CHAIN_IDLE_MS: '21600000', CHAIN_MAX_AGE_MS: '3600000',
     })).toThrow(/equal to or greater/u);
@@ -136,7 +132,7 @@ describe('vigía de cadenas mudas (P0-4)', () => {
     { CHAIN_SWEEP_MS: '-1' },
     { CHAIN_SWEEP_MS: '1.5' },
     { CHAIN_SWEEP_MS: 'invalid' },
-  ])('rechaza un reloj de barrido inválido %#', (environment) => {
+  ])('rejects invalid sweep interval %#', (environment) => {
     expect(() => configuredDispatcher(environment)).toThrow(/non-negative integer/u);
   });
 
@@ -144,7 +140,7 @@ describe('vigía de cadenas mudas (P0-4)', () => {
     { CHAIN_IDLE_MS: '0' },
     { CHAIN_SETTLED_GRACE_MS: '0' },
     { CHAIN_SWEEP_LIMIT: '0' },
-  ])('rechaza plazos y techos no positivos %#', (environment) => {
+  ])('rejects non-positive deadlines %#', (environment) => {
     expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
   });
 });

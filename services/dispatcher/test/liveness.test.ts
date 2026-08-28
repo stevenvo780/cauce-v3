@@ -12,7 +12,7 @@ import { DispatcherMetrics } from '../src/metrics.js';
 const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const probePath = join(repositoryRoot, 'deploy/liveness-probe.mjs');
 
-/** Pool simulado que lanza error para verificar el avance del bucle bajo fallos. */
+/** Stub pool that throws an error to verify work loop progress under failure. */
 const failingPool = {
   query: async () => { throw new Error('stub pool'); },
   connect: async () => { throw new Error('stub pool'); },
@@ -48,7 +48,7 @@ function runProbe(url: string, stallMs: number): Promise<{ code: number | null; 
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.once('error', reject);
-    child.once('close', (code) => resolve({ code, stderr }));
+    child.once('close', (code) => { resolve({ code, stderr }); });
   });
 }
 
@@ -59,7 +59,8 @@ beforeEach(async () => {
 afterEach(async () => {
   dispatcher?.stop();
   dispatcher = undefined;
-  if (health) await new Promise<void>((resolve) => health!.close(() => resolve()));
+  const currentHealth = health;
+  if (currentHealth) await new Promise<void>((resolve) => { currentHealth.close(() => { resolve(); }); });
   health = undefined;
   await rm(stateDirectory, { recursive: true, force: true });
 });
@@ -74,8 +75,8 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
       onError: () => undefined,
     });
 
-    // `/health/ready` servido con el mismo contrato de progreso que main.ts.
-    health = createServer((_request, response) => {
+    // `/health/ready` served with the same progress contract as main.ts.
+    const server = createServer((_request, response) => {
       const progress = metrics.progress(200);
       response.writeHead(progress.ready ? 200 : 503, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
@@ -85,12 +86,13 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
         tick_age_ms: progress.tickAgeMs ?? null,
       }));
     });
-    await new Promise<void>((resolve) => health!.listen(0, '127.0.0.1', resolve));
-    const address = health.address();
-    if (typeof address === 'string' || address === null) throw new Error('no port');
-    const url = `http://127.0.0.1:${address.port}/health/ready`;
+    health = server;
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', () => { resolve(); }); });
+    const address = server.address();
+    if (typeof address !== 'object' || address === null) throw new Error('no port');
+    const url = `http://127.0.0.1:${String(address.port)}/health/ready`;
 
-    // El bucle gira de verdad: esperamos a ver ticks reales antes de juzgar nada.
+    // Loop runs for real: wait to see real ticks before assertions.
     await new Promise((resolve) => setTimeout(resolve, 120));
     const turning = metrics.progress().ticks;
     expect(turning).toBeGreaterThan(0);
@@ -100,8 +102,7 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
     expect((await runProbe(url, 200)).code).toBe(0);
     expect(metrics.progress().ticks).toBeGreaterThan(turning);
 
-    // Se para el bucle. El proceso HTTP sigue en pie, pero readiness deja de mentir cuando vence
-    // el deadline local de progreso.
+    // Stop the loop. The HTTP process stays alive, but readiness fails once the deadline expires.
     dispatcher.stop();
     const frozen = metrics.progress().ticks;
     await new Promise((resolve) => setTimeout(resolve, 120));

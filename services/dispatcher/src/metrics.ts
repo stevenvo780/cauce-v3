@@ -137,30 +137,30 @@ export class DispatcherMetrics {
     const lines = [
       '# HELP cauce_dispatcher_ticks_total Dispatcher polling ticks by result.',
       '# TYPE cauce_dispatcher_ticks_total counter',
-      ...(['ok', 'error', 'fenced'] as const).map((result) => `cauce_dispatcher_ticks_total{result="${result}"} ${this.ticks.get(result) ?? 0}`),
+      ...(['ok', 'error', 'fenced'] as const).map((result) => `cauce_dispatcher_ticks_total{result="${result}"} ${String(this.ticks.get(result) ?? 0)}`),
       '# HELP cauce_dispatcher_jobs_processed_total Jobs whose registered handler was selected, by outcome.',
       '# TYPE cauce_dispatcher_jobs_processed_total counter',
     ];
     for (const lane of lanes) {
       for (const result of ['done', 'retry', 'dead', 'fenced', 'unknown_kind'] as const) {
-        lines.push(`cauce_dispatcher_jobs_processed_total{lane="${lane}",result="${result}"} ${this.jobResults.get(`${lane}:${result}`) ?? 0}`);
+        lines.push(`cauce_dispatcher_jobs_processed_total{lane="${lane}",result="${result}"} ${String(this.jobResults.get(`${lane}:${result}`) ?? 0)}`);
       }
     }
     lines.push('# HELP cauce_dispatcher_chain_sweep_total Human-rooted chains handled by the silence sweep, by outcome.');
     lines.push('# TYPE cauce_dispatcher_chain_sweep_total counter');
     for (const outcome of ['scanned', 'fanin_recovered', 'notified', 'skipped', 'failed'] as const) {
-      lines.push(`cauce_dispatcher_chain_sweep_total{outcome="${outcome}"} ${this.chainSweeps.get(outcome) ?? 0}`);
+      lines.push(`cauce_dispatcher_chain_sweep_total{outcome="${outcome}"} ${String(this.chainSweeps.get(outcome) ?? 0)}`);
     }
     const progress = this.progress();
     lines.push('# HELP cauce_dispatcher_tick_age_seconds Seconds since the dispatcher work loop last completed a tick; -1 before its first tick.');
     lines.push('# TYPE cauce_dispatcher_tick_age_seconds gauge');
-    lines.push(`cauce_dispatcher_tick_age_seconds ${progress.tickAgeMs === undefined ? -1 : progress.tickAgeMs / 1_000}`);
+    lines.push(`cauce_dispatcher_tick_age_seconds ${String(progress.tickAgeMs === undefined ? -1 : progress.tickAgeMs / 1_000)}`);
     lines.push('# HELP cauce_dispatcher_loop_stale Whether no dispatcher tick has completed inside the bounded deadline.');
     lines.push('# TYPE cauce_dispatcher_loop_stale gauge');
-    lines.push(`cauce_dispatcher_loop_stale ${progress.reason === 'loop_stale' ? 1 : 0}`);
+    lines.push(`cauce_dispatcher_loop_stale ${String(progress.reason === 'loop_stale' ? 1 : 0)}`);
     lines.push('# HELP cauce_dispatcher_ready Whether the latest completed dispatcher tick was clean and recent.');
     lines.push('# TYPE cauce_dispatcher_ready gauge');
-    lines.push(`cauce_dispatcher_ready ${progress.ready ? 1 : 0}`);
+    lines.push(`cauce_dispatcher_ready ${String(progress.ready ? 1 : 0)}`);
 
     if (!databaseAllowed) {
       lines.push('# HELP cauce_dispatcher_metrics_query_success Whether exact PostgreSQL gauges were collected.');
@@ -212,7 +212,7 @@ export class DispatcherMetrics {
       appendLaneGauge(lines, 'cauce_dispatcher_delivery_leases_active', 'Non-expired delivery claim leases.', deliveryLeases.rows);
       lines.push('# HELP cauce_dispatcher_consumer_leases_active Non-expired consumer identity leases.');
       lines.push('# TYPE cauce_dispatcher_consumer_leases_active gauge');
-      lines.push(`cauce_dispatcher_consumer_leases_active ${number(consumerLeases.rows[0]?.count)}`);
+      lines.push(`cauce_dispatcher_consumer_leases_active ${String(number(consumerLeases.rows[0]?.count))}`);
       appendMatrix(lines, 'cauce_dispatcher_origin_relay_depth', 'Origin relay rows by durable status.', lanes, relayStates, relays.rows);
       appendOldest(lines, 'cauce_dispatcher_origin_relay_oldest_seconds', 'Age of oldest unfinished origin relay.', lanes, ['pending', 'processing', 'failed'], relayOldest.rows);
     } catch {
@@ -231,7 +231,7 @@ function appendMatrix(
   lines.push(`# TYPE ${name} gauge`);
   for (const lane of laneValues) for (const status of states) {
     const row = rows.find((candidate) => candidate.lane === lane && candidate.status === status);
-    lines.push(`${name}{lane="${lane}",status="${status}"} ${number(row?.count)}`);
+    lines.push(`${name}{lane="${lane}",status="${status}"} ${String(number(row?.count))}`);
   }
 }
 
@@ -242,7 +242,7 @@ function appendOldest(
   lines.push(`# TYPE ${name} gauge`);
   for (const lane of laneValues) for (const status of states) {
     const row = rows.find((candidate) => candidate.lane === lane && candidate.status === status);
-    lines.push(`${name}{lane="${lane}",status="${status}"} ${number(row?.oldest_seconds)}`);
+    lines.push(`${name}{lane="${lane}",status="${status}"} ${String(number(row?.oldest_seconds))}`);
   }
 }
 
@@ -252,7 +252,7 @@ function appendTargetMatrix(lines: string[], rows: readonly CountRow[]): void {
   lines.push(`# TYPE ${name} gauge`);
   for (const lane of lanes) for (const target of ['delivery', 'job']) {
     const row = rows.find((candidate) => candidate.lane === lane && candidate.target === target);
-    lines.push(`${name}{lane="${lane}",target="${target}"} ${number(row?.count)}`);
+    lines.push(`${name}{lane="${lane}",target="${target}"} ${String(number(row?.count))}`);
   }
 }
 
@@ -260,7 +260,7 @@ function appendLaneGauge(lines: string[], name: string, help: string, rows: read
   lines.push(`# HELP ${name} ${help}`);
   lines.push(`# TYPE ${name} gauge`);
   for (const lane of lanes) {
-    lines.push(`${name}{lane="${lane}"} ${number(rows.find((row) => row.lane === lane)?.count)}`);
+    lines.push(`${name}{lane="${lane}"} ${String(number(rows.find((row) => row.lane === lane)?.count))}`);
   }
 }
 

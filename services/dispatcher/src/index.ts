@@ -113,7 +113,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
     void tick().catch((error: unknown) => options.onError?.(error));
   }, options.pollMs ?? 250);
   timer.unref();
-  return { stop: () => clearInterval(timer), tick };
+  return { stop: () => { clearInterval(timer); }, tick };
 }
 
 export class UnknownJobKindError extends Error {
