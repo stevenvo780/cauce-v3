@@ -18,3 +18,6 @@ Entregable `ordenes/reportes/gemini-escenarios-pre-deploy.md`: tabla escenario �
 `ops/runbooks/ventana-primer-despliegue.md`: el guion exacto de `plan-reestructura/plan-de-cierre.md` §4 + `fase3/{migraciones,compose-canonico}.md`: backup → B1 (3 sesiones fantasma, ids en migraciones.md) → prod.env (B2 instance-id = sha256 del DER del leaf del relay: comando exacto; B3 rutas repo) → `deploy/deploy.sh` con `CAUCE_FASE3_CON_DUENO=si` → smoke → los 5 escenarios "después". Con CRITERIO DE PARADA por paso y el rollback exacto (backup restore probado).
 
 Push por tarea + reporte ≤5 líneas por tarea.
+
+## ★ SEÑAL K2 (integrador, 28-08): el snapshot real ESTÁ CONMUTADO en main — G1 desbloqueada
+`ops/container-aliases.json` cambió de bytes (14 alias: argos/iza openclaw, gaia/heraclito/tales nuevos; `historicalAliases` vacío — `retired` vive en `ops/flota.json`). Ejecuta G1 cuando cierres lo que tengas entre manos: re-publica y re-firma el release PTY UNA sola vez con los bytes nuevos (mappingSha256), y ajusta/ejercita los tests de `Fleet.load` con la flota real de 14 (en `test_rollout_pty.py` el integrador ya cambió 3 fixtures a nombres ficticios porque gaia/heraclito/tales son reales ahora). `pnpm test:pty` verde + commit + push.
