@@ -17,12 +17,12 @@ COPY services/gateway/package.json ./services/gateway/
 COPY services/dispatcher/package.json services/dispatcher/tsconfig.json ./services/dispatcher/
 COPY services/telegram-bridge/package.json ./services/telegram-bridge/
 COPY services/terminal-relay/package.json ./services/terminal-relay/
-COPY console/package.json console/tsconfig*.json ./apps/console/
+COPY console/package.json console/tsconfig*.json ./console/
 RUN pnpm install --frozen-lockfile
 
 COPY packages ./packages
 COPY services ./services
-COPY console ./apps/console
+COPY console ./console
 COPY vitest.config.ts ./
 ARG VITE_CAUCE_API_BASE=""
 ARG VITE_CAUCE_DEV_AUTH="false"
@@ -119,7 +119,7 @@ LABEL io.cauce.source.digest=${CAUCE_SOURCE_DIGEST} \
   io.cauce.target-platform=${CAUCE_TARGET_PLATFORM} \
   org.opencontainers.image.revision=${CAUCE_RELEASE_COMMIT} \
   org.opencontainers.image.base.name=${CAUCE_NGINX_BASE}
-COPY --from=build /app/apps/console/dist /usr/share/nginx/html
+COPY --from=build /app/console/dist /usr/share/nginx/html
 USER 101
 
 FROM console-base AS console-dev

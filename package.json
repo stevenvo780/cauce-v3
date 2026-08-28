@@ -11,7 +11,7 @@
     "prepare:runtime": "pnpm --filter @cauce/protocol build",
     "build:core": "pnpm prepare:runtime && tsc -p tsconfig.build.json",
     "build:adapter": "pnpm --filter @cauce/adapter-sdk build",
-    "build:console": "pnpm --filter @cauce/console build",
+    "build:console": "pnpm --fail-if-no-match --filter @cauce/console build",
     "build:mcp": "pnpm --filter @cauce/mcp-fleet-monitor build",
     "build": "pnpm build:core && pnpm build:adapter && pnpm build:mcp && pnpm build:console",
     "lint:core": "eslint packages/protocol packages/store services tests vitest.config.ts --max-warnings 0",
