@@ -3,6 +3,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
+    "recorteMaximo": 738,
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "pantallasMaximas": 8.15
@@ -11,6 +14,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
+    "recorteMaximo": 338,
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "pantallasMaximas": 5.5
@@ -19,6 +25,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
+    "recorteMaximo": 306,
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "pantallasMaximas": 4.37
@@ -27,6 +36,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
+    "recorteMaximo": 136,
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
     "pantallasMaximas": 3.89
@@ -35,16 +47,22 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
+    "recorteMaximo": 96,
+    "recorteMaximoEn": "/live#cajon",
+    "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 3.78
+    "pantallasMaximas": 3.9
   },
   "2560": {
     "huecoMaximo": 272,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
+    "recorteMaximo": 288,
+    "recorteMaximoEn": "/live#perfil",
+    "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 3.73
+    "pantallasMaximas": 3.84
   }
 }

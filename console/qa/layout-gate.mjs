@@ -35,7 +35,19 @@ const VIEWPORTS = [360, 760, 1100, 1440, 1920, 2560];
 
 /** Noise floor per budget. Scroll depth is a ratio, so a pixel tolerance there would wave through
     a view that grew from one screen to three. */
-const TOLERANCIA = { huecoMaximo: 2, desbordeMaximo: 0, enlacesSinNombre: 0, solapesDeRotulo: 0, pantallasMaximas: 0.1 };
+const TOLERANCIA = {
+  huecoMaximo: 2,
+  desbordeMaximo: 0,
+  recorteMaximo: 8,
+  enlacesSinNombre: 0,
+  solapesDeRotulo: 0,
+  pantallasMaximas: 0.1,
+};
+
+/** States reached by clicking, measured on top of the plain route: the fleet table is only clipped
+    once the drawer takes half the width, and Perfil is the tab that takes the most. */
+const CAJON = '/live#cajon';
+const PERFIL = '/live#perfil';
 
 const escribirBaseline = process.argv.includes('--update');
 
@@ -97,9 +109,30 @@ function medirEnLaPagina() {
   const anchoBarraHorizontal = cajaBarra && cajaBarra.width < ancho ? cajaBarra.width : 0;
   const hueco = cajaMain ? Math.round(ancho - anchoBarraHorizontal - cajaMain.width) : 0;
 
+  // A box with `overflow-x:auto` hides its content instead of widening the document, so the root
+  // scrollWidth stays clean while the columns are cut mid-word. The document-level overflow has its
+  // own budget below, so the scrolling root is skipped here rather than counted twice.
+  const selectorDe = (nodo) => {
+    const clases = Array.from(nodo.classList).slice(0, 3).map((clase) => `.${clase}`).join('');
+    return `${nodo.tagName.toLowerCase()}${nodo.id ? `#${nodo.id}` : ''}${clases}`;
+  };
+  let recorte = 0;
+  let recorteSelector = '';
+  for (const nodo of document.querySelectorAll('*')) {
+    if (nodo === raiz || nodo === document.body) continue;
+    const desbordeX = window.getComputedStyle(nodo).overflowX;
+    if (desbordeX !== 'auto' && desbordeX !== 'scroll') continue;
+    const oculto = Math.round(nodo.scrollWidth - nodo.clientWidth);
+    if (oculto <= recorte) continue;
+    recorte = oculto;
+    recorteSelector = selectorDe(nodo);
+  }
+
   return {
     desborde: Math.round(raiz.scrollWidth - ancho),
     hueco: Math.max(0, hueco),
+    recorte,
+    recorteSelector,
     anchoMain: cajaMain ? Math.round(cajaMain.width) : 0,
     altoContenido: main ? Math.round(main.scrollHeight) : 0,
     pantallas: main ? Number((main.scrollHeight / window.innerHeight).toFixed(2)) : 0,
@@ -109,9 +142,35 @@ function medirEnLaPagina() {
   };
 }
 
+/**
+ * Drives the two clicked states of /live. A state that cannot be reached is recorded and the run
+ * continues: losing one state must not cost the other five viewports.
+ */
+async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
+  const medir = async (etiqueta, accion) => {
+    try {
+      await accion();
+      await pagina.waitForTimeout(700);
+      medidas.push({ ruta: etiqueta, viewport, ...(await pagina.evaluate(medirEnLaPagina)) });
+      return true;
+    } catch (error) {
+      sinMedir.push(`${String(viewport)}px ${etiqueta}: ${String(error.message).split('\n')[0]}`);
+      return false;
+    }
+  };
+
+  const abierto = await medir(CAJON, () => pagina.locator('table tbody tr').first().click({ timeout: 5000 }));
+  if (!abierto) {
+    sinMedir.push(`${String(viewport)}px ${PERFIL}: not attempted, the drawer never opened`);
+    return;
+  }
+  await medir(PERFIL, () => pagina.locator('.agent-drawer-tab', { hasText: /perfil/i }).first().click({ timeout: 5000 }));
+}
+
 async function medirTodo() {
   const navegador = await chromium.launch();
   const medidas = [];
+  const sinMedir = [];
   try {
     for (const viewport of VIEWPORTS) {
       const contexto = await navegador.newContext({ viewport: { width: viewport, height: 1000 } });
@@ -125,13 +184,14 @@ async function medirTodo() {
         await pagina.waitForTimeout(700);
         const medida = await pagina.evaluate(medirEnLaPagina);
         medidas.push({ ruta, viewport, ...medida });
+        if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
       }
       await contexto.close();
     }
   } finally {
     await navegador.close();
   }
-  return medidas;
+  return { medidas, sinMedir };
 }
 
 /**
@@ -143,10 +203,14 @@ function resumir(medidas) {
   for (const viewport of VIEWPORTS) {
     const delViewport = medidas.filter((m) => m.viewport === viewport);
     const peorHueco = delViewport.reduce((peor, m) => (m.hueco > peor.hueco ? m : peor), delViewport[0]);
+    const peorRecorte = delViewport.reduce((peor, m) => (m.recorte > peor.recorte ? m : peor), delViewport[0]);
     porViewport[String(viewport)] = {
       huecoMaximo: peorHueco.hueco,
       huecoMaximoEn: peorHueco.ruta,
       desbordeMaximo: Math.max(...delViewport.map((m) => m.desborde)),
+      recorteMaximo: peorRecorte.recorte,
+      recorteMaximoEn: peorRecorte.ruta,
+      recorteMaximoQue: peorRecorte.recorteSelector,
       enlacesSinNombre: Math.max(...delViewport.map((m) => m.enlacesSinNombre)),
       solapesDeRotulo: Math.max(...delViewport.map((m) => m.solapesDeRotulo)),
       pantallasMaximas: Math.max(...delViewport.map((m) => m.pantallas)),
@@ -157,6 +221,12 @@ function resumir(medidas) {
 
 /** Every tracked number is one where lower is better, so one comparison covers them all. */
 const CLAVES = Object.keys(TOLERANCIA);
+
+/** Where to look, for the budgets whose number alone does not say it. */
+const DONDE = {
+  huecoMaximo: (v) => v.huecoMaximoEn,
+  recorteMaximo: (v) => `${v.recorteMaximoEn} ${v.recorteMaximoQue}`,
+};
 
 function comparar(actual, base) {
   const peores = [];
@@ -176,7 +246,7 @@ function comparar(actual, base) {
       }
       const margen = TOLERANCIA[clave];
       if (valor > tope + margen) {
-        const donde = clave === 'huecoMaximo' ? ` (${actual[viewport].huecoMaximoEn})` : '';
+        const donde = DONDE[clave] ? ` (${DONDE[clave](actual[viewport])})` : '';
         peores.push(`${viewport}px ${clave}: ${String(valor)} against a budget of ${String(tope)}${donde}`);
       } else if (valor < tope - margen) {
         mejores.push(`${viewport}px ${clave}: ${String(valor)}, better than the recorded ${String(tope)}`);
@@ -187,12 +257,15 @@ function comparar(actual, base) {
 }
 
 function imprimirTabla(medidas) {
-  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'pantallas', 'sin nombre', 'solapes'];
+  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'recorte', 'recortado en', 'pantallas', 'sin nombre', 'solapes'];
   const filas = medidas.map((m) => [
-    m.ruta, m.viewport, m.anchoMain, m.hueco, m.desborde, m.pantallas, m.enlacesSinNombre, m.solapesDeRotulo,
+    m.ruta, m.viewport, m.anchoMain, m.hueco, m.desborde, m.recorte, m.recorteSelector || '-',
+    m.pantallas, m.enlacesSinNombre, m.solapesDeRotulo,
   ].map(String));
   const anchos = cabecera.map((titulo, i) => Math.max(titulo.length, ...filas.map((f) => f[i].length)));
-  const linea = (celdas) => celdas.map((c, i) => (i === 0 ? c.padEnd(anchos[i]) : c.padStart(anchos[i]))).join('  ');
+  const esNumero = (celda) => /^-?\d+(\.\d+)?$/.test(celda);
+  const texto = cabecera.map((_, i) => filas.length === 0 || !esNumero(filas[0][i]));
+  const linea = (celdas) => celdas.map((c, i) => (texto[i] ? c.padEnd(anchos[i]) : c.padStart(anchos[i]))).join('  ');
   console.log(linea(cabecera));
   for (const fila of filas) console.log(linea(fila));
 }
@@ -204,15 +277,21 @@ async function principal() {
     stdio: 'ignore',
   });
   let medidas;
+  let sinMedir;
   try {
     await esperarServidor();
-    medidas = await medirTodo();
+    ({ medidas, sinMedir } = await medirTodo());
   } finally {
     servidor.kill('SIGTERM');
   }
 
   imprimirTabla(medidas);
   const resumen = resumir(medidas);
+
+  if (sinMedir.length > 0) {
+    console.error('\nlayout: these states could not be reached, so their budgets went unmeasured:');
+    for (const linea of sinMedir) console.error(`  - ${linea}`);
+  }
 
   if (escribirBaseline) {
     await writeFile(BASELINE, `${JSON.stringify(resumen, null, 2)}\n`, 'utf8');
@@ -232,7 +311,7 @@ async function principal() {
     console.error('\nlayout: the rendered layout got worse:');
     for (const linea of peores) console.error(`  - ${linea}`);
   }
-  if (peores.length > 0 || mejores.length > 0) process.exit(1);
+  if (peores.length > 0 || mejores.length > 0 || sinMedir.length > 0) process.exit(1);
   console.log('\nlayout: every measured budget holds.');
 }
 
