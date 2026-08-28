@@ -1,20 +1,20 @@
-# Gemini — ORDEN ACTIVA (ronda nocturna, larga y AUTÓNOMA — el dueño duerme, el integrador también)
+# Gemini — ORDEN ACTIVA (grande): cerrar tests/ + LA PRUEBA DE LOS 5 ESCENARIOS (antesala del despliegue)
 
-ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → esta orden. Tu ronda anterior: **console, terminal-relay y telegram-bridge a CERO problemas en nivel estricto** + G2 + G3 — de lo mejor de toda la restructuración. Esta noche NADIE revisa en vivo: cada tarea cierra con su comando en verde PEGADO en el commit y push inmediato. Si algo te bloquea, sáltalo, anótalo en tu reporte y sigue. Zonas EXCLUSIVAS de esta orden: `services/dispatcher/**` · `tests/**` (TODO el árbol de tests de la raíz) · `console/**` · `services/terminal-relay/**` · `services/telegram-bridge/**` · `ops/runbooks/**`. Nada de `ops/scripts`, `packages/*`, `services/gateway`.
+ARRANQUE: `git pull` → `ordenes/00-PROTOCOLO.md` → `docs/flota-y-participantes.md` → esta orden. Tu nocturna: dispatcher a cero, zonas promovidas al gate — bien. Queda `tests/` (368). Zonas EXCLUSIVAS: `tests/**` · `console/**` · `services/{terminal-relay,telegram-bridge,dispatcher}/**` · `ops/runbooks/**`. El despliegue arranca en cuanto cierres esto: velocidad con evidencia.
 
-## Tarea 1 — Promover tus 3 zonas limpias al gate (que lo limpio se quede limpio)
-En `package.json` crea `lint:estricto:zonas` = `eslint -c eslint.estricto.config.js console services/terminal-relay services/telegram-bridge --max-warnings 0` y encadénalo dentro de `pnpm lint` (tras `lint:tooling`). Gate global verde, commit, push. A partir de aquí nadie puede ensuciar esas zonas sin ponerse rojo.
+## Tarea 1 — `tests/` a CERO (368) — oleadas de 4 por directorio
+`tests/unit` · `tests/gateway-hardening` · `tests/store-hardening` · `tests/integration`+`e2e` · `tests/terminal-pty`+`helpers`. Por directorio: `--fix` (commit) → a mano (commit) → `0 problems` pegado → ruta añadida a `lint:estricto:zonas`. `tests/helpers/postgres.ts` NO se mueve (46 importadores). Gate global (con `pnpm test:unit`) verde por commit; comentarios tocados → inglés.
 
-## Tarea 2 — `services/dispatcher/src` a CERO (13 problemas — calentamiento)
-Mismo protocolo de siempre; ciérrala con `0 problems` pegado y añade la ruta a `lint:estricto:zonas`.
+## Tarea 2 — LA PRUEBA DE LOS 5 ESCENARIOS contra el stack de PRODUCCIÓN ACTUAL (solo lectura + un mensaje de prueba por escenario)
+El dueño definió los 5 flujos que DEBEN funcionar (`docs/flota-y-participantes.md`). Antes de desplegar necesitamos saber qué funciona HOY (con las imágenes viejas) para distinguir en la ventana "roto por el deploy" de "ya estaba roto". Para cada escenario, ejecuta la sonda mínima y NO toques nada de prod salvo el mensaje de prueba:
+1. **Steven→argos por Telegram → delega → responde**: ¿argos tiene lease activo (`SELECT alias, lease_until>now() FROM connection_leases`)? ¿el telegram-bridge tiene su token vivo? Publica UN mensaje de prueba por el bus (patrón de `ops/guardias/cauce-envoltorio-local.sh` `probar`, con marca única) y mide: ¿llega a la TUI del contenedor? ¿responde? ¿en cuánto? ¿la cadena de delegación (audit_events/deliveries) se registra?
+2. **Miguel→janus** — mismo protocolo (sin escribirle a Miguel: publica en su room con marca).
+3. **Jhon→hegel** — ídem.
+4. **Steven→jarvis por OpenClaw**: aquí está EL DOLOR (cuello de botella → migró a WhatsApp). Mide: latencia de cola para jarvis, entregas en `queued` >5 min en los últimos 7 días (`deliveries`), y `dead_letters` de openclaw. Diagnóstico con cifras: ¿dónde se atasca?
+5. **Operación por TUI/CLI**: `ops/cli/cauce <alias> estado/sesiones` contra 3 alias; entrada a TUI de uno (`cauce-attach` con guardas) y salida limpia.
+Entregable `ordenes/reportes/gemini-escenarios-pre-deploy.md`: tabla escenario → sonda → resultado medido → FUNCIONA/DEGRADADO/ROTO → causa probable. Es el "antes" de la ventana; la misma tabla se rellena "después".
 
-## Tarea 3 — `tests/**` a CERO (419 problemas — el plato fuerte de la noche; oleadas de 4 por directorio)
-`tests/unit` · `tests/gateway-hardening` · `tests/store-hardening` · `tests/integration`+`e2e` · `tests/terminal-pty`+`helpers`. Por directorio: medir → `--fix` (commit) → a mano (commit) → `0 problems` pegado → añadir al script de zonas. OJO: `tests/helpers/postgres.ts` lo importan 46 ficheros con ruta literal — NO lo muevas ni renombres, solo límpialo por dentro. Los tests que ejecutan scripts por subproceso (25 de tests/unit leen deploy/ y ops/ del disco) NO cambian de comportamiento: solo limpieza de tipos/estilo. Gate global (incluido `pnpm test:unit`) verde por commit.
+## Tarea 3 — Runbook de la VENTANA en español, ejecutable por alguien que no lo escribió
+`ops/runbooks/ventana-primer-despliegue.md`: el guion exacto de `plan-reestructura/plan-de-cierre.md` §4 + `fase3/{migraciones,compose-canonico}.md`: backup → B1 (3 sesiones fantasma, ids en migraciones.md) → prod.env (B2 instance-id = sha256 del DER del leaf del relay: comando exacto; B3 rutas repo) → `deploy/deploy.sh` con `CAUCE_FASE3_CON_DUENO=si` → smoke → los 5 escenarios "después". Con CRITERIO DE PARADA por paso y el rollback exacto (backup restore probado).
 
-## Tarea 4 — Comentarios de código → INGLÉS en todo lo que toques (regla del dueño)
-En cada fichero de las Tareas 2-3 que abras: comentario en español → inglés conciso; narrativa/ceremonial/fechas/nombres → fuera; invariantes → traducidos con fuerza. `tests/**` es también zona de minimax-2 para traducción: coordinación simple — TÚ vas por directorio en el orden de la Tarea 3 y lo anotas en cada commit ("tests/unit traducido"); si al hacer pull ves que minimax-2 ya tradujo un directorio, no lo repitas.
-
-## Tarea 5 (si sobra noche) — Asserts-sobre-texto de consola del top-20 de `ordenes/reportes/minimax-dientes.md`
-Solo los citados en el top-20; conviértelos en asserts de comportamiento. Los 74 restantes esperan al mega-refactor.
-
-## Cierre: reporte en `ordenes/reportes/gemini-nocturna.md` — por tarea: comando de verificación + salida en verde + commits. ≤20 líneas. Push.
+Push por tarea + reporte ≤5 líneas por tarea.
