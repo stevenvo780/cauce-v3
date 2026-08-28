@@ -184,7 +184,7 @@ class RolloutPtyTest(unittest.TestCase):
         empty = {"server": {}, "kratos": {}}
         rollout.validate_inventories(self.fleet, empty, migrate_kant=False)
         cases = (
-            {"server": {"gaia": rollout.UnitPresence(selector=True)}, "kratos": {}},
+            {"server": {"ficticio": rollout.UnitPresence(selector=True)}, "kratos": {}},
             {"server": {"fantasma": rollout.UnitPresence(active=True)}, "kratos": {}},
             {
                 "server": {"janus": rollout.UnitPresence(active=True)},
@@ -198,8 +198,8 @@ class RolloutPtyTest(unittest.TestCase):
 
     def test_unknown_alias_units_block_fail_closed(self) -> None:
         measured = {
-            "server": {"tales": rollout.UnitPresence(enabled=True)},
-            "kratos": {"heraclito": rollout.UnitPresence(active=True)},
+            "server": {"espectro": rollout.UnitPresence(enabled=True)},
+            "kratos": {"sombra": rollout.UnitPresence(active=True)},
         }
         with self.assertRaisesRegex(rollout.RolloutError, "desconocido"):
             rollout.validate_inventories(self.fleet, measured, migrate_kant=False)
@@ -304,7 +304,7 @@ class RolloutPtyTest(unittest.TestCase):
         temporary, worker, runner = self.worker("kratos")
         self.addCleanup(temporary.cleanup)
         with self.assertRaisesRegex(rollout.RolloutError, "historico"):
-            worker.deactivate_retired("heraclito", self.bundle)
+            worker.deactivate_retired("hegel", self.bundle)
         alias = "fantasma"
         catalogo = json.loads(self.bundle.files["container-aliases.json"])
         catalogo["historicalAliases"] = {alias: {"expectedEnabled": False}}

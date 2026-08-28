@@ -6,8 +6,8 @@ spec:
   tenant: Miguel
   room: grp.miguel
   alias: iza
-  harness: hermes
-  profile: {seedOnConnect: true, configScope: alias}
+  harness: openclaw
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_IZA_RELAY_URL, requiredScheme: wss}
   secretPathEnv:
@@ -15,7 +15,5 @@ spec:
     clientCertificate: CAUCE_IZA_CERT_PATH
     clientKey: CAUCE_IZA_KEY_PATH
     certificateAuthority: CAUCE_IZA_CA_PATH
-  process:
-    executablePathEnv: CAUCE_IZA_EXEC_PATH
-    operationalModelEnv: HERMES_INFERENCE_MODEL
+  process: {executablePathEnv: CAUCE_IZA_EXEC_PATH}
   stateDirectory: /var/lib/cauce-v3/aliases/iza

@@ -1,0 +1,12 @@
+{
+  "placement": {
+    "kant": {
+      "healthContainer": "ctrl-infra",
+      "registryContainer": "host:kratos"
+    },
+    "salva": {
+      "dockerHost": "kratos"
+    }
+  },
+  "schemaVersion": 1
+}

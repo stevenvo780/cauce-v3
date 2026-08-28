@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter iza (ws-humanizar/hermes)
+Description=Cauce V3 rootless container adapter iza (claw-iza/openclaw)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/iza.env

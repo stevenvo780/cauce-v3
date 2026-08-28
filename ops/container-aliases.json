@@ -14,10 +14,11 @@
       "room": "grp.steven",
       "container": "ctrl-infra",
       "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
-      "harness": "claude",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/argos",
+      "harness": "openclaw",
       "membershipRole": "agent"
     },
     "atlas": {
@@ -29,6 +30,18 @@
       "home": "/home/dev",
       "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
       "harness": "codex",
+      "membershipRole": "agent"
+    },
+    "gaia": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "agv2-miguel-finca-oc",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
+      "harness": "openclaw",
       "membershipRole": "agent"
     },
     "hegel": {
@@ -43,15 +56,28 @@
       "harness": "openclaw",
       "membershipRole": "agent"
     },
+    "heraclito": {
+      "tenant": "Jhon",
+      "room": "grp.jhon",
+      "container": "agv2-jhon-heraclito-oc",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
+      "harness": "openclaw",
+      "membershipRole": "agent"
+    },
     "iza": {
       "tenant": "Miguel",
       "room": "grp.miguel",
-      "container": "ws-humanizar",
+      "container": "claw-iza",
       "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/iza",
-      "harness": "hermes",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/iza",
+      "harness": "openclaw",
       "membershipRole": "agent"
     },
     "janus": {
@@ -84,9 +110,9 @@
       "container": "ctrl-infra",
       "registryContainer": "host:kratos",
       "systemdUser": "stev",
-      "user": "dev",
-      "home": "/home/dev",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/kant",
+      "user": "stev",
+      "home": "/home/stev",
+      "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
       "harness": "codex",
       "membershipRole": "operator"
     },
@@ -123,6 +149,18 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
       "harness": "codex",
       "membershipRole": "agent_notify"
+    },
+    "tales": {
+      "tenant": "Jhon",
+      "room": "grp.jhon",
+      "container": "agv2-jhon-tales-oc",
+      "systemdUser": "stev",
+      "user": "claw",
+      "home": "/home/claw",
+      "workspace": "/home/claw/clawd",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",
+      "harness": "openclaw",
+      "membershipRole": "agent"
     },
     "zeus": {
       "tenant": "Steven",

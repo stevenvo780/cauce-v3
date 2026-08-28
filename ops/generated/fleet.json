@@ -1,0 +1,145 @@
+{
+  "aliases": {
+    "argos": {
+      "container": "ctrl-infra",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.steven",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/argos",
+      "tenant": "Steven",
+      "user": "claw"
+    },
+    "atlas": {
+      "container": "ws-humanizar",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/dev",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/atlas",
+      "tenant": "Miguel",
+      "user": "dev"
+    },
+    "gaia": {
+      "container": "agv2-miguel-finca-oc",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
+      "tenant": "Miguel",
+      "user": "claw"
+    },
+    "hegel": {
+      "container": "agv2-jhon-hegel-oc",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.jhon",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/hegel",
+      "tenant": "Jhon",
+      "user": "claw"
+    },
+    "heraclito": {
+      "container": "agv2-jhon-heraclito-oc",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.jhon",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/heraclito",
+      "tenant": "Jhon",
+      "user": "claw"
+    },
+    "iza": {
+      "container": "claw-iza",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/iza",
+      "tenant": "Miguel",
+      "user": "claw"
+    },
+    "janus": {
+      "container": "claw-miguel",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/janus",
+      "tenant": "Miguel",
+      "user": "claw"
+    },
+    "jarvis": {
+      "container": "claw",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.steven",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/jarvis",
+      "tenant": "Steven",
+      "user": "claw"
+    },
+    "kant": {
+      "container": "ctrl-infra",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/stev",
+      "room": "grp.steven",
+      "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
+      "tenant": "Steven",
+      "user": "stev"
+    },
+    "kratos": {
+      "container": "ws-humanizar",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/dev",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/kratos",
+      "tenant": "Miguel",
+      "user": "dev"
+    },
+    "salva": {
+      "container": "ws-isa",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/dev",
+      "room": "grp.isa",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/salva",
+      "tenant": "Isa",
+      "user": "dev"
+    },
+    "socrates": {
+      "container": "ws-prizma",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/dev",
+      "room": "grp.steven",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
+      "tenant": "Steven",
+      "user": "dev"
+    },
+    "tales": {
+      "container": "agv2-jhon-tales-oc",
+      "enabled": true,
+      "harness": "openclaw",
+      "home": "/home/claw",
+      "room": "grp.jhon",
+      "stateDirectory": "/home/claw/.openclaw/cauce-v3/tales",
+      "tenant": "Jhon",
+      "user": "claw"
+    },
+    "zeus": {
+      "container": "ws-zeus",
+      "enabled": true,
+      "harness": "claude",
+      "home": "/home/dev",
+      "room": "grp.steven",
+      "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
+      "tenant": "Steven",
+      "user": "dev"
+    }
+  },
+  "schemaVersion": 1
+}

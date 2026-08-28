@@ -6,8 +6,8 @@ spec:
   tenant: Steven
   room: grp.steven
   alias: argos
-  harness: claude
-  profile: {seedOnConnect: true, configScope: alias}
+  harness: openclaw
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_ARGOS_RELAY_URL, requiredScheme: wss}
   secretPathEnv:
@@ -15,6 +15,5 @@ spec:
     clientCertificate: CAUCE_ARGOS_CERT_PATH
     clientKey: CAUCE_ARGOS_KEY_PATH
     certificateAuthority: CAUCE_ARGOS_CA_PATH
-  process:
-    executablePathEnv: CAUCE_ARGOS_EXEC_PATH
+  process: {executablePathEnv: CAUCE_ARGOS_EXEC_PATH}
   stateDirectory: /var/lib/cauce-v3/aliases/argos

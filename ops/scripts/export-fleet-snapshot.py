@@ -199,6 +199,10 @@ def snapshot_document(
         role = _text(membership["role"], f"{label}.role")
         _boolean(membership["enabled"], f"{label}.enabled")
         if tenant not in tenants:
+            if membership["enabled"] is False:
+                # Disabled membership of a retired tenant: message history keeps it alive via FK.
+                print(f"{label}: skipping disabled membership of retired tenant {tenant}", file=sys.stderr)
+                continue
             raise SnapshotError(f"{label}.tenant_id is outside the alias manifest tenant enum")
         if role not in roles:
             raise SnapshotError(f"{label}.role has no role policy: {role}")

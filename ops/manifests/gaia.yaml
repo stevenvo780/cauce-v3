@@ -1,0 +1,19 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: gaia
+spec:
+  tenant: Miguel
+  room: grp.miguel
+  alias: gaia
+  harness: openclaw
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_GAIA_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_GAIA_TOKEN_PATH
+    clientCertificate: CAUCE_GAIA_CERT_PATH
+    clientKey: CAUCE_GAIA_KEY_PATH
+    certificateAuthority: CAUCE_GAIA_CA_PATH
+  process: {executablePathEnv: CAUCE_GAIA_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/gaia

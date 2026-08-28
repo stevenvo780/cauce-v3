@@ -1,8 +1,8 @@
 [Unit]
-Description=Cauce V3 alias consumer iza (Miguel/openclaw)
+Description=Cauce V3 alias consumer tales (Jhon/openclaw)
 After=network-online.target cauce-v3-compose@prod.service
 Wants=network-online.target
-ConditionPathExists=/etc/cauce-v3/aliases/iza.env
+ConditionPathExists=/etc/cauce-v3/aliases/tales.env
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 
@@ -11,29 +11,29 @@ Type=simple
 User=cauce-v3
 Group=cauce-v3
 UMask=0077
-Environment=CAUCE_ALIAS=iza
-Environment=CAUCE_TENANT=Miguel
-Environment=CAUCE_ROOM=grp.miguel
+Environment=CAUCE_ALIAS=tales
+Environment=CAUCE_TENANT=Jhon
+Environment=CAUCE_ROOM=grp.jhon
 Environment=CAUCE_HARNESS=openclaw
 Environment=CAUCE_SEMBRAR_PERFIL=1
 Environment=CAUCE_OPENCLAW_WORKSPACE=/home/claw/clawd
 Environment=CAUCE_ORIGIN_TRANSPORT=telegram
 Environment=CAUCE_ENVIRONMENT=production
-Environment=CAUCE_INSTANCE_ID=systemd-iza
-Environment=CAUCE_STATE_DIR=/var/lib/cauce-v3/aliases/iza
-Environment=CAUCE_RELAY_URL_ENV=CAUCE_IZA_RELAY_URL
-Environment=CAUCE_TOKEN_PATH_ENV=CAUCE_IZA_TOKEN_PATH
-Environment=CAUCE_CERT_PATH_ENV=CAUCE_IZA_CERT_PATH
-Environment=CAUCE_KEY_PATH_ENV=CAUCE_IZA_KEY_PATH
-Environment=CAUCE_CA_PATH_ENV=CAUCE_IZA_CA_PATH
-Environment=CAUCE_EXEC_PATH_ENV=CAUCE_IZA_EXEC_PATH
-EnvironmentFile=/etc/cauce-v3/aliases/iza.env
-ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh iza
+Environment=CAUCE_INSTANCE_ID=systemd-tales
+Environment=CAUCE_STATE_DIR=/var/lib/cauce-v3/aliases/tales
+Environment=CAUCE_RELAY_URL_ENV=CAUCE_TALES_RELAY_URL
+Environment=CAUCE_TOKEN_PATH_ENV=CAUCE_TALES_TOKEN_PATH
+Environment=CAUCE_CERT_PATH_ENV=CAUCE_TALES_CERT_PATH
+Environment=CAUCE_KEY_PATH_ENV=CAUCE_TALES_KEY_PATH
+Environment=CAUCE_CA_PATH_ENV=CAUCE_TALES_CA_PATH
+Environment=CAUCE_EXEC_PATH_ENV=CAUCE_TALES_EXEC_PATH
+EnvironmentFile=/etc/cauce-v3/aliases/tales.env
+ExecStart=/opt/cauce-v3/ops/scripts/alias-runner.sh tales
 Restart=always
 RestartSec=5s
 TimeoutStopSec=90s
 KillMode=mixed
-StateDirectory=cauce-v3/aliases/iza
+StateDirectory=cauce-v3/aliases/tales
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
@@ -54,7 +54,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
 ReadOnlyPaths=/opt/cauce-v3
-ReadWritePaths=/var/lib/cauce-v3/aliases/iza
+ReadWritePaths=/var/lib/cauce-v3/aliases/tales
 
 [Install]
 WantedBy=multi-user.target
