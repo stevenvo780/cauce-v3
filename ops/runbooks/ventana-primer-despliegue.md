@@ -85,7 +85,7 @@ La migración 034 exige que no existan sesiones de terminal abiertas sin anclar.
    sed -i '/^CAUCE_TERMINAL_RELAY_INSTANCE_ID=/d' /etc/cauce-v3/prod.env
    printf 'CAUCE_TERMINAL_RELAY_INSTANCE_ID=%s\n' "$ID" >> /etc/cauce-v3/prod.env
    ```
-4. Enmascarar durante la ventana los timers que escriben en la BD por el gateway (la 034/037 toman locks exclusivos): `systemctl mask --now cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer` — y **desenmascararlos al cerrar** (`systemctl unmask` + `start`).
+4. Enmascarar durante la ventana los timers que escriben en la BD por el gateway (la 034/037 toman locks exclusivos): `systemctl stop cauce-revividor-de-colas.timer cauce-v3-fleet-watchdog.timer` (son ficheros reales en /etc/systemd/system: `mask` no aplica) — y **`systemctl start` de ambos al cerrar**.
 5. Validar renderizado canónico de Docker Compose:
    ```bash
    docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config > /dev/null
