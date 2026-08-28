@@ -3,13 +3,18 @@
 ## Cuándo usar
 Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecutan dentro de contenedores Docker existentes mediante systemd (rootless o system).
 
+> **Importante**: `ops/container-aliases.json`, `ops/manifests/*.yaml` y `ops/generated/container-systemd/**` son estrictamente GENERADOS a partir de `ops/flota.json` (exportado desde PostgreSQL). La edición manual de estos archivos está estrictamente PROHIBIDA y bloqueada por el gate de validación (`ops/scripts/validate.sh`). Para altas, bajas o aprovisionamiento de adaptadores en contenedor, consultar [Runbook: Alta y Baja de Agente](file:///datos/workspaces/zeus/cauce-v3/ops/runbooks/alta-y-baja-de-agente.md) y utilizar `ops/scripts/regenerate-fleet.sh` junto con `cauce <alias> aprovisionar`.
+
 ## Pasos
-1. Generar y verificar unidades systemd y digests:
+1. Regenerar y verificar unidades systemd y digests desde el snapshot de flota:
    ```sh
+   ops/scripts/regenerate-fleet.sh
+   ops/scripts/validate.sh
+   # O verificación directa de unidades de contenedor:
    python3 ops/scripts/generate-container-units.py --rootless --home "$HOME" --output ops/generated/container-systemd/rootless
    python3 ops/scripts/container_ops_digest.py --rootless --check
    ```
-2. Instalar unidades y configurar entorno para el alias (`0600`):
+2. Instalar unidades y configurar entorno para el alias (`0600`) (para aprovisionar credenciales y entorno usar `cauce <alias> aprovisionar`):
    ```sh
    # [no ejecutable en verificación]
    install -d -m 0700 "$HOME/.config/systemd/user"
@@ -52,7 +57,7 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
      --sha256 sha256:<digest-anterior>
    systemctl --user restart cauce-v3-container-kant.service
    ```
-2. Si se requiere apagar el adapter por completo:
+2. Si se requiere apagar el adapter por completo (para baja definitiva seguir `ops/runbooks/alta-y-baja-de-agente.md`):
    ```sh
    # [no ejecutable en verificación]
    systemctl --user disable --now cauce-v3-container-kant.service
