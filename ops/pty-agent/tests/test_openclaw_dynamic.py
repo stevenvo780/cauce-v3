@@ -59,9 +59,9 @@ class DynamicOpenClawSessionTests(unittest.TestCase):
         instance.bundle = self.bundle
         self.assertEqual(instance._resolve_command("harness")[-3:], ["conversation-first", "--history-limit", "200"])
 
-        # El pointer cambia por rename atómico. No se reinicia agente ni launcher.
+        # Pointer changes via atomic rename. No agent or launcher restart.
         self._write("conversation-second")
-        # Un transcript más nuevo no participa de la decisión.
+        # A newer transcript does NOT participate in the decision.
         decoy = self.home / ".openclaw" / "agents" / "main" / "sessions" / "newest.jsonl"
         decoy.parent.mkdir(parents=True)
         decoy.write_text("{}\n", encoding="utf-8")

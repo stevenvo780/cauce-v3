@@ -98,8 +98,8 @@ class WriteGovernanceBatchTests(unittest.TestCase):
         memory_before = os.stat(memory)
 
         tag, body = run_batch(self.instance, "11111111-1111-1111-1111-111111111111", [
-            # Simula retry después de ACK perdido: ya están los bytes deseados y el SHA anterior
-            # ya no coincide. Debe ser `unchanged`, no conflicto ni rewrite.
+            # Simulates retry after a lost ACK: the desired bytes are already there and the
+            # previous SHA no longer matches. It MUST be `unchanged`, not conflict nor rewrite.
             write_entry(soul, b"same", "replace", "0" * 64),
             verify_entry(memory, "present", sha(b"agent memory")),
             verify_entry(self.path("HEARTBEAT.md"), "absent"),

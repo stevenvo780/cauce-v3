@@ -42,24 +42,24 @@ TAG_OPEN_ERR = 0x12
 TAG_STDIN = 0x20
 TAG_STDOUT = 0x21
 TAG_RESIZE = 0x22
-# Respuesta DA/DSR generada por el emulador. Un tag propio impide confundirla con teclado/paste.
+# DA/DSR response emitted by the emulator. A dedicated tag prevents confusing it with keyboard/paste.
 TAG_TERMINAL_RESPONSE = 0x23
-# Backpressure por SESION. El relay nunca pausa el TLS multiplexado: eso bloquearia PONG y las
-# demas terminales del mismo agente.
+# Backpressure per SESSION. The relay never pauses the multiplexed TLS: that would block PONG
+# and the other terminals of the same agent.
 TAG_PAUSE_OUTPUT = 0x24
 TAG_RESUME_OUTPUT = 0x25
 TAG_CLOSE = 0x30
 TAG_CLOSED = 0x31
 TAG_PING = 0x40
 TAG_PONG = 0x41
-# Lectura de ficheros de gobierno (CLAUDE.md / AGENTS.md y el indice de memoria). Es una
-# transaccion suelta, no una sesion: por eso no reusa TAG_OPEN, que abre un PTY con estado.
+# Reading governance files (CLAUDE.md / AGENTS.md and the memory index). A loose transaction,
+# not a session: that is why it does not reuse TAG_OPEN, which opens a PTY with state.
 TAG_READ = 0x50
 TAG_READ_OK = 0x51
 TAG_READ_ERR = 0x52
 TAG_READ_DATA = 0x53
-# Escritura gobernada v1. Tags separados de READ mantienen compatibilidad: un relay sólo los manda
-# cuando el hello anuncia `write_governance_v1`; un agente anterior conserva terminal y lectura.
+# Governed write v1. Tags kept separate from READ preserve compatibility: a relay only sends them
+# when the hello advertises `write_governance_v1`; an older agent keeps terminal and read working.
 TAG_WRITE = 0x54
 TAG_WRITE_DATA = 0x55
 TAG_WRITE_OK = 0x56
@@ -70,8 +70,8 @@ TAG_WRITE_BATCH_DATA = 0x5A
 TAG_WRITE_BATCH_OK = 0x5B
 TAG_WRITE_BATCH_ERR = 0x5C
 TAG_WRITE_BATCH_CANCEL = 0x5D
-# Cierre inequivoco de una lectura exitosa. READ_ERR ya es terminal por si mismo; READ_DONE solo
-# aparece despues de READ_OK y de todos sus READ_DATA, incluso cuando el indice/directiva es vacio.
+# Unambiguous close of a successful read. READ_ERR is already terminal on its own; READ_DONE
+# only appears after READ_OK and all its READ_DATA, even when the index/directive is empty.
 TAG_READ_DONE = 0x5E
 
 MAX_FRAME = 65536
@@ -79,9 +79,9 @@ MAX_FRAME = 65536
 SESSION_ID_BYTES = 36
 MAX_DATA = MAX_FRAME - SESSION_ID_BYTES
 DATA_TAGS = frozenset({TAG_STDIN, TAG_STDOUT, TAG_TERMINAL_RESPONSE})
-# Tags cuyo payload empieza por un identificador de 36 bytes ASCII. READ_DATA lleva el
-# `request_id` de la peticion, no una sesion, pero el formato del prefijo es el mismo a proposito:
-# asi el relay reusa su decodificador de tramas de datos sin una segunda ruta de codigo.
+# Tags whose payload starts with a 36-byte ASCII identifier. READ_DATA carries the request's
+# `request_id`, not a session, but the prefix format is intentionally the same: so the relay
+# reuses its data-frame decoder without a second code path.
 PREFIXED_TAGS = DATA_TAGS | frozenset({TAG_READ_DATA, TAG_WRITE_DATA, TAG_WRITE_BATCH_DATA})
 
 MAX_SESSIONS = 2
@@ -93,8 +93,8 @@ FLUSH_BYTES = 8192
 # the pressure lands on the writer inside the container instead of on our heap (a `ls -R /` must
 # not balloon the agent nor stall the relay for the other session).
 SESSION_HIGH_WATER = 262144
-# El descriptor PTY tambien puede bloquear escrituras. Esta cota evita que una rafaga del browser
-# crezca sin limite mientras `select` espera que ese descriptor vuelva a ser escribible.
+# The PTY descriptor can also block writes. This cap keeps a browser burst from growing without
+# bound while `select` waits for that descriptor to become writable again.
 SESSION_INPUT_HIGH_WATER = 262144
 # Same idea one level up: while this much is already queued for the relay nothing new is coalesced
 # into it, so a slow relay pushes the pressure back to SESSION_HIGH_WATER and from there to the pty.
@@ -114,14 +114,14 @@ TICKET_RE = re.compile(r"^v1\.([A-Za-z0-9_-]{1,4096})\.([A-Za-z0-9_-]{43})$")
 IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MODES = ("shell", "harness")
 
-# Misma geometria contractual que el browser leg y SessionManager. OPEN y RESIZE pasan por una
-# sola funcion para que una ventana inicial extrema no esquive el clamp aplicado despues.
+# Same contractual geometry as the browser leg and SessionManager. OPEN and RESIZE go through
+# one function so an extreme initial window cannot bypass the clamp applied afterwards.
 MIN_COLS = 20
 MAX_COLS = 500
 MIN_ROWS = 5
 MAX_ROWS = 200
 
-# Juego cerrado que xterm 5.5 emite para Device Attributes / Device Status Report.
+# Closed set emitted by xterm 5.5 for Device Attributes / Device Status Report.
 MAX_TERMINAL_RESPONSE_BYTES = 256
 TERMINAL_FIXED_RESPONSES = (b"\x1b[?1;2c", b"\x1b[>0;276;0c", b"\x1b[0n")
 TERMINAL_CURSOR_RESPONSE_RE = re.compile(rb"^\x1b\[(?:\?)?([1-9][0-9]{0,2});([1-9][0-9]{0,2})R")
@@ -130,34 +130,34 @@ TMUX_SOCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 TMUX_IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SESSION_STORE_BYTES = 1 << 20
 
-# Modos de VISOR: se miran, no se teclean. El agente nunca acepta STDIN humano; sólo puede escribir
-# respuestas técnicas DA/DSR que llegan por su tag propio y vuelven a pasar por una lista cerrada.
+# VIEWER modes: looked at, not typed into. The agent never accepts human STDIN; it may only
+# write DA/DSR technical replies that arrive through their own tag and pass back through a
+# closed list.
 #
-# El candado vivia en el argv (`tmux attach -r`) y eso no alcanza por dos motivos medidos:
-#   1. `HARNESS_COMMAND` se puede escribir a mano en el `.env` del alias; uno sin `-r` convierte
-#      la consola en un teclado sobre la sesion del humano que trabaja ahi, sin aviso.
-#   2. La TUI nativa de OpenClaw —la unica que pueden emitir los alias openclaw, porque en sus
-#      imagenes no hay `tmux`— NO tiene equivalente de `-r`.
-# Con la sesion compartida encendida hay una sola caja de entrada por alias, asi que un segundo
-# escritor no abre una conversacion: pisa el turno en curso (cuatro `input_busy` seguidas, medido
-# el 2026-07-31). El `-r` del tmux se mantiene como defensa en profundidad.
+# The lock used to live in argv (`tmux attach -r`) and that is not enough for two measured reasons:
+#   1. `HARNESS_COMMAND` can be written by hand in the alias `.env`; one without `-r` turns the
+#      console into a keyboard on the session the human is working in, without warning.
+#   2. The native OpenClaw TUI (the only one openclaw aliases can emit, because their images
+#      have no `tmux`) has NO `-r` equivalent.
+# With shared session enabled there is a single input box per alias, so a second writer does not
+# open a conversation: it stomps the current turn (four `input_busy` in a row, measured
+# 2026-07-31). The tmux `-r` is kept as defence in depth.
 READ_ONLY_MODES = frozenset({"harness"})
 
-# --- Lectura de ficheros de gobierno ----------------------------------------------------------
+# --- Reading governance files ----------------------------------------------------------------
 #
-# El bundle trae harness, HOME y los overrides medidos que el agente publica en AGENT_HELLO. La
-# lectura de directorio acepta UNICAMENTE la raiz de memoria derivada de esos mismos hechos; los
-# nombres sensibles de abajo son redaccion en profundidad, nunca la fuente de autorizacion. Los
-# documentos de perfil usan su propio juego cerrado por arnes. Ninguna de las dos rutas sigue
-# enlaces ni sale del HOME del alias.
+# The bundle carries harness, HOME, and the measured overrides the agent publishes in AGENT_HELLO.
+# Directory reads accept ONLY the memory root derived from those same facts; the sensitive names
+# below are defence in depth, never the source of authorisation. Profile documents use their own
+# closed set per harness. Neither path follows symlinks nor leaves the alias HOME.
 FEATURES = (
     "read_governance", "write_governance_v1", "write_governance_batch_v1",
     "session_output_flow_control", "read_governance_done_v1",
 )
 
-# Nunca se sirven ni se listan, esten donde esten. Espejo de NEVER_SERVE_BASENAMES del gateway
-# (`services/gateway/src/console/agent-documents.ts`): las dos listas se defienden por separado a
-# proposito, porque un fallo en una sola no debe bastar para filtrar una credencial.
+# Never served or listed, wherever they live. Mirror of NEVER_SERVE_BASENAMES in the gateway
+# (`services/gateway/src/console/agent-documents.ts`): the two lists defend separately on purpose,
+# because a failure in only one must not be enough to leak a credential.
 NEVER_SERVE_BASENAMES = frozenset({
     ".credentials.json", "auth.json", ".claude.json", "openclaw.json", ".env", ".netrc",
     "id_ed25519", "id_rsa", "known_hosts", "authorized_keys",
@@ -166,18 +166,18 @@ NEVER_SERVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 
 READ_KINDS = ("file", "dir")
 MAX_READ_PATH = 4096
-# 256 KB: el CLAUDE.md mas grande medido en la flota es el de zeus (10.733 B) y el AGENTS.md de
-# hermes llega a 75 KB. Sobra margen sin convertir la via en un canal de volcado.
+# 256 KB: the largest CLAUDE.md measured in the fleet is zeus's (10733 B) and hermes's AGENTS.md
+# reaches 75 KB. Margin remains without turning the channel into a dump pipe.
 MAX_DOCUMENT_BYTES = 256 * 1024
 MAX_WRITE_TRANSACTIONS = 4
 MAX_WRITE_BATCH_FILES = 7
 MAX_WRITE_BATCH_BYTES = MAX_DOCUMENT_BYTES
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-# Indice de memoria: sale metadato, nunca contenido.
+# Memory index: metadata only, never content.
 MAX_DIR_ENTRIES = 200
 MAX_DIR_DEPTH = 3
 DIR_SCAN_CAP = 5000
-# Presupuesto en bytes para las entradas del indice dentro de su UNICA trama (MAX_FRAME = 64 KiB).
+# Byte budget for index entries inside their SINGLE frame (MAX_FRAME = 64 KiB).
 READ_INDEX_BUDGET = 48 * 1024
 
 BUNDLE_KEYS = (
@@ -748,7 +748,7 @@ def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
             or len(document["sessions"]) > 4096):
         return None
     alias = bundle["alias"]
-    # La clave es determinista y se deriva localmente; no llega desde OPEN ni se imprime.
+    # The key is deterministic and derived locally; it does not arrive via OPEN nor is it printed.
     pointer = document["sessions"].get(f"openclaw:{alias}:shared:{alias}")
     if not isinstance(pointer, dict):
         return None
@@ -779,8 +779,8 @@ class PtySession:
         self.out = bytearray()
         self.pending_input = bytearray()
         self.output_paused = False
-        # Se registra UNA vez por sesion: un visor recibe pulsaciones a rafagas y el journal no
-        # puede convertirse en el eco del teclado del operador.
+        # Logged once per session: a viewer receives keystrokes in bursts and the journal must not
+        # become the echo of the operator's keyboard.
         self.refused_input = False
         self.last_flush = time.monotonic()
         self.eof = False
@@ -1014,8 +1014,8 @@ class PtyAgent:
         self.connection = connection
         self.connected_at = time.monotonic()
         self.last_ping = self.connected_at
-        # El pointer puede haber cambiado entre el bundle del launcher y la conexión al relay.
-        # La presencia nace de la observación actual, no de que exista un binario OpenClaw.
+        # The pointer may have changed between the launcher's bundle and the relay connection.
+        # Presence is born from the current observation, not from an OpenClaw binary existing.
         self.modes = self._advertised_modes()
         self.next_dynamic_capability_check = self.connected_at + DYNAMIC_CAPABILITY_CHECK_INTERVAL
         self._queue(encode_json(TAG_AGENT_HELLO, {
@@ -1028,18 +1028,16 @@ class PtyAgent:
             "runtime_user": self.bundle["runtime_user"],
             "runtime_uid": self.bundle["runtime_uid"],
             "harness": self.bundle["harness"],
-            # El HOME del alias, que el agente conoce desde que arranca y NO publicaba.
-            #
-            # Sin el, `MeasuredFactsSource` del gateway no tiene fuente y toda la via de documentos
-            # -leer y editar el CLAUDE.md de un agente desde la consola- contesta "no medido" para
-            # siempre: no hay forma de saber QUE fichero es "la directiva" de este alias sin saber
-            # donde vive su arnes. Deducirlo del registro no vale, y esta medido por que: el
-            # 23-ago-2026 el registro se equivocaba de arnes en 5 de los 14 alias, asi que serviria
-            # el fichero de OTRO arnes.
-            #
-            # El agente es la unica pieza que lo sabe de verdad: lo lee del bundle con el que se
-            # lanzo, dentro del contenedor. Va aqui y no en el `.env` del gateway por lo mismo que
-            # el `harness`: quien tiene el dato delante es quien lo dice.
+            # The alias HOME, known to the agent from launch and previously NOT published.
+            # Without it, the gateway's `MeasuredFactsSource` has no source and the entire document
+            # channel (read/edit an agent's CLAUDE.md from the console) answers "unmeasured"
+            # forever: there is no way to know WHICH file is "the directive" for this alias without
+            # knowing where its harness lives. Deducing it from the registry is not enough:
+            # 2026-08-23 the registry picked the wrong harness for 5 of the 14 aliases, so it would
+            # serve another harness's file.
+            # The agent is the only piece that truly knows it: it reads it from the bundle it was
+            # launched with, inside the container. It goes here, not in the gateway `.env`, for
+            # the same reason as `harness`: the one with the data in front is the one who says it.
             "home": self.bundle["home"],
             # `harness` and `home` identify the configured container, but they do not prove that
             # the adapter process was alive and measured.  Keep that distinction explicit so an
@@ -1048,10 +1046,10 @@ class PtyAgent:
             **self.bundle["runtime_facts"],
             "agent_version": self.bundle["agent_version"],
             "modes": self.modes,
-            # El relay NO manda TAG_READ a un agente que no lo anuncie. Un agente viejo trata un
-            # tag desconocido como violacion de protocolo y se tira la conexion encima (ver
-            # `_dispatch`), asi que sin esta declaracion desplegar el relay antes que el agente
-            # dejaria terminales caidas por toda la flota.
+            # The relay does NOT send TAG_READ to an agent that does not advertise it. An older
+            # agent treats an unknown tag as a protocol violation and drops the connection (see
+            # `_dispatch`), so without this declaration deploying the relay before the agent would
+            # leave terminals down across the whole fleet.
             "features": list(FEATURES),
         }))
         while not self.stopping:
@@ -1256,8 +1254,8 @@ class PtyAgent:
         if kind not in READ_KINDS:
             self._read_error(request_id, "invalid_path", "kind must be file or dir")
             return
-        # La respuesta puede pesar 256 KB. Si la cola de salida ya va cargada se rechaza en vez de
-        # invertir la presion sobre las terminales, que son lo que de verdad no puede esperar.
+        # The reply can weigh 256 KB. If the outbound queue is already loaded, reject instead of
+        # inverting the pressure onto the terminals, which are what truly cannot wait.
         if len(self.outbound) > OUTBOUND_HIGH_WATER:
             self._read_error(request_id, "unavailable", "outbound queue is congested")
             return
@@ -1279,7 +1277,7 @@ class PtyAgent:
         except PermissionError:
             self._read_error(request_id, "permission_denied", "permission denied")
         except FileNotFoundError:
-            # Carrera legitima: existia al validar y ya no. Se cuenta como lo que es.
+            # Legitimate race: existed at validation and no longer does. Counted as what it is.
             self._read_error(request_id, "not_found", "vanished while being read")
         except OSError as error:
             self._read_error(request_id, "unknown", f"read failed: {type(error).__name__}")
@@ -1300,9 +1298,9 @@ class PtyAgent:
         if not path.startswith("/"):
             return ("invalid_path", "path is not absolute")
         segments = path.split("/")
-        # Se exige forma canonica: ni `..`, ni `.`, ni barras dobles, ni barra final. Cualquier
-        # otra forma se rechaza en vez de normalizarse, porque normalizar es justo donde aparecen
-        # las diferencias entre lo que valida el gateway y lo que abre el agente.
+        # Canonical form required: no `..`, `.`, double slashes, or trailing slash. Any other
+        # form is rejected rather than normalised, because normalisation is exactly where the
+        # differences between what the gateway validates and what the agent opens show up.
         if ".." in segments or "." in segments or "" in segments[1:]:
             return ("invalid_path", "path is not canonical")
         if kind == "dir":
@@ -1322,15 +1320,15 @@ class PtyAgent:
             return ("permission_denied", "looks like credential material")
         if not self._is_readable_governance_file_path(path):
             return ("permission_denied", f"{base} is not a governance document")
-        # Los manuales de proyecto pueden vivir en `/workspace`, fuera de HOME. No se autoriza por
-        # contención amplia: la lista exacta de arriba sale de cwd/root medidos. Los documentos de
-        # perfil sí siguen confinados a HOME, también cuando un test construye el bundle a mano.
+        # Project manuals may live in `/workspace`, outside HOME. They are not authorised by a
+        # broad containment rule: the exact list above comes from the measured cwd/root. Profile
+        # documents remain confined to HOME, also when a test builds the bundle by hand.
         if not self._is_project_manual_path(path):
             home = str(self.bundle["home"]).rstrip("/")
             if not home.startswith("/") or (path != home and not path.startswith(home + "/")):
                 return ("permission_denied", "path is outside the agent home")
-        # `realpath` resuelve TODOS los componentes, asi que esto tambien caza un directorio padre
-        # enlazado — que es exactamente el vector que una lista negra de nombres no ve.
+        # `realpath` resolves ALL components, so this also catches a symlinked parent directory —
+        # which is exactly the vector a name blacklist misses.
         try:
             resolved = os.path.realpath(path)
         except OSError:
@@ -1374,9 +1372,9 @@ class PtyAgent:
             os.close(descriptor)
             os.close(directory)
         truncated = info.st_size > MAX_DOCUMENT_BYTES
-        # Se manda UTF-8 valido SIEMPRE: el corte por bytes puede partir un caracter por la mitad y
-        # el relay y el gateway decodifican sin red. Un fichero que no sea texto sale con
-        # reemplazos, no revienta la lectura.
+        # Always send valid UTF-8: a byte-wise cut can split a character in half and the relay and
+        # gateway decode with no network. A non-text file is sent with replacements, it does not
+        # crash the read.
         payload = bytes(raw).decode("utf-8", "replace").encode("utf-8")
         if len(payload) > MAX_DOCUMENT_BYTES:
             payload = payload[:MAX_DOCUMENT_BYTES].decode("utf-8", "ignore").encode("utf-8")
@@ -1386,13 +1384,13 @@ class PtyAgent:
             "request_id": request_id,
             "kind": "file",
             "path": path,
-            # Tamaño REAL del fichero, aunque el texto vaya recortado: el que mira tiene que poder
-            # ver que lo que lee no es todo.
+            # TRUE size of the file, even when the text is truncated: the viewer must be able to
+            # see that what they read is not everything.
             "bytes": info.st_size,
             "truncated": truncated,
             "modified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(info.st_mtime)),
-            # Huella de los bytes REALES. Para un fichero truncado no es la huella del prefijo que
-            # viaja: la UI nunca lo edita, pero sigue pudiendo identificar qué versión observó.
+            # Hash of the REAL bytes. For a truncated file it is not the hash of the prefix that
+            # travels: the UI never edits it, but it can still identify which version was observed.
             "sha": digest.hexdigest(),
             "chunks": len(chunks),
         }))
@@ -1416,9 +1414,9 @@ class PtyAgent:
             try:
                 with os.scandir(directory) as entries:
                     for entry in entries:
-                        # La cota cuenta entradas inspeccionadas, no solo ficheros publicables. De
-                        # otro modo miles de directorios, sockets o nombres secretos harian el
-                        # barrido ilimitado aunque `found` nunca creciese.
+                        # The cap counts inspected entries, not just publishable files.
+                        # Otherwise thousands of directories, sockets, or secret names would make
+                        # the scan unbounded even when `found` never grew.
                         if scanned >= DIR_SCAN_CAP:
                             capped = True
                             return
@@ -1437,8 +1435,8 @@ class PtyAgent:
                             discovered = os.stat(name, dir_fd=directory, follow_symlinks=False)
                         except OSError:
                             continue
-                        # Ni se siguen los enlaces ni se nombran: el nombre de un enlace ya dice
-                        # que algo existe al otro lado.
+                        # Symlinks are neither followed nor named: the name of a symlink already
+                        # tells that something exists on the other side.
                         if stat.S_ISLNK(discovered.st_mode):
                             continue
                         if stat.S_ISDIR(discovered.st_mode):
@@ -1446,8 +1444,8 @@ class PtyAgent:
                                 try:
                                     child = self._open_memory_directory_at(directory, name)
                                 except OSError:
-                                    # Un subdirectorio ilegible, sustituido o enlazado se omite.
-                                    # O_NOFOLLOW asegura que la omision nunca se convierta en fuga.
+                                    # An unreadable, replaced, or linked subdirectory is skipped.
+                                    # O_NOFOLLOW ensures the skip never becomes a leak.
                                     continue
                                 try:
                                     walk(child, logical_path, depth + 1)
@@ -1464,16 +1462,16 @@ class PtyAgent:
             except OSError:
                 if depth == 0:
                     raise
-                # Un subdirectorio ilegible no invalida el indice: se omite y se sigue.
+                # An unreadable subdirectory does not invalidate the index: skipped and continued.
 
         try:
             walk(root_fd, root, 0)
         finally:
             os.close(root_fd)
         found.sort(key=lambda item: item[2], reverse=True)
-        # El indice viaja en UNA trama y una trama tiene tope duro (MAX_FRAME). 200 rutas de 4 KB
-        # no caben, y pasarse no seria un indice recortado sino una ProtocolError que tira la
-        # conexion y con ella las terminales abiertas. Se corta por PRESUPUESTO, no solo por conteo.
+        # The index travels in ONE frame and a frame has a hard cap (MAX_FRAME). 200 paths of 4 KB
+        # do not fit, and overshooting would not be a truncated index but a ProtocolError that
+        # drops the connection and with it the open terminals. Cut by BUDGET, not just by count.
         rows: list[dict[str, Any]] = []
         budget = READ_INDEX_BUDGET
         for item in found[:MAX_DIR_ENTRIES]:
@@ -1490,9 +1488,9 @@ class PtyAgent:
             "request_id": request_id,
             "kind": "dir",
             "path": root,
-            # Si el cap de barrido corto el arbol no existe un total exacto: `null` impide que una
-            # capa posterior convierta el prefijo observado en un conteo del disco completo. Un
-            # recorte exclusivo de filas/bytes conserva `total`, porque el barrido si termino.
+            # If the scan cap cut the tree there is no exact total: `null` prevents a downstream
+            # layer from turning the observed prefix into a full-disk count. A pure row/byte
+            # truncation preserves `total`, because the scan did finish.
             "total": None if capped else len(found),
             "observed_at_least": len(found),
             "truncated": capped or len(rows) < len(found),
@@ -1568,8 +1566,8 @@ class PtyAgent:
 
     def _on_write_data(self, request_id: str, data: bytes) -> None:
         pending = self.pending_writes.get(request_id)
-        # Puede llegar tarde después de WRITE_CANCEL/timeout. Es stale, no una violación capaz de
-        # tirar la conexión y con ella las PTY que comparten el socket.
+        # May arrive late after WRITE_CANCEL/timeout. Stale, not a violation that could drop the
+        # connection and with it the PTYs that share the socket.
         if pending is None:
             return
         pending.received_chunks += 1
@@ -1756,7 +1754,7 @@ class PtyAgent:
         """Preflight, stage, revalidate and commit; any failed commit rolls the prefix back."""
         plans: list[dict[str, Any]] = []
         try:
-            # PRE-FLIGHT COMPLETO. Nada se crea, trunca, renombra ni toca antes de acabar este bucle.
+            # COMPLETE PRE-FLIGHT. Nothing is created, truncated, renamed, or touched before this loop ends.
             for index, entry in enumerate(pending.entries):
                 directory, basename = self._open_governance_parent(entry.path)
                 plan: dict[str, Any] = {
@@ -1797,7 +1795,7 @@ class PtyAgent:
                         raise ValueError(f"{basename} changed; SHA-256 precondition failed")
                 plan["ack_operation"] = entry.operation
 
-            # STAGING COMPLETO. Los temporales no son nombres servidos y no cambian los destinos.
+            # COMPLETE STAGING. Temporaries are not served names and do not change destinations.
             for plan in plans:
                 entry = plan["entry"]
                 if entry.mode != "write" or plan["ack_operation"] == "unchanged":
@@ -1828,7 +1826,7 @@ class PtyAgent:
                 finally:
                     os.close(temp_fd)
 
-            # REVALIDACION GLOBAL. Los verifies/no-op también se vuelven a medir justo antes.
+            # GLOBAL REVALIDATION. Verifies and no-ops are also re-measured right before.
             for plan in plans:
                 entry = plan["entry"]
                 directory = plan["directory"]
@@ -1848,15 +1846,15 @@ class PtyAgent:
                     backup = f".cauce-profile-{pending.request_id}-{plan['index']}.bak"
                     os.link(basename, backup, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
                     plan["backup"] = backup
-                    # Crear el hardlink de rollback cambia ctime/nlink del inodo aunque nadie haya
-                    # editado sus bytes. Esa identidad posterior es la que debe llegar al commit.
+                    # Creating the rollback hardlink changes the inode's ctime/nlink even though
+                    # nobody edited its bytes. That post-link identity is the one that must reach commit.
                     plan["commit_identity"] = self._stat_identity(
                         os.stat(basename, dir_fd=directory, follow_symlinks=False),
                     )
                 elif latest_info is not None:
                     plan["commit_identity"] = self._stat_identity(latest_info)
 
-            # COMMIT. Cada paso es atómico; si uno falla, se revierte el prefijo en orden inverso.
+            # COMMIT. Each step is atomic; if one fails, the prefix is reverted in reverse order.
             try:
                 for plan in plans:
                     entry = plan["entry"]
@@ -2173,9 +2171,9 @@ class PtyAgent:
 
     @staticmethod
     def _memory_regular_stat_at(directory: int, basename: str) -> os.stat_result | None:
-        # O_PATH obtiene metadata sin abrir el contenido (ni activar dispositivos/FIFOs si el
-        # nombre fue sustituido tras el lstat). Con O_NOFOLLOW, un swap a symlink produce un fd al
-        # propio enlace y fstat lo descarta abajo.
+        # O_PATH obtains metadata without opening content (or activating devices/FIFOs if the
+        # name was swapped after lstat). With O_NOFOLLOW, a swap to symlink produces an fd on
+        # the link itself and fstat rejects it below.
         flags = getattr(os, "O_PATH", os.O_RDONLY | os.O_NONBLOCK)
         flags |= os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
         try:
@@ -2194,8 +2192,8 @@ class PtyAgent:
         if home == "/" or not root.startswith(home + "/"):
             raise PermissionError("memory root is outside HOME")
         relative = root[len(home) + 1:].split("/")
-        # HOME tambien se recorre desde `/` con openat: O_NOFOLLOW sobre un path absoluto solo
-        # protege su ultimo componente y podria seguir un enlace en cualquiera de sus padres.
+        # HOME is also walked from `/` with openat: O_NOFOLLOW on an absolute path only protects
+        # its last component and could follow a symlink at any parent.
         directory = self._open_absolute_memory_directory(home)
         try:
             for segment in relative:
@@ -2272,7 +2270,7 @@ class PtyAgent:
             except FileNotFoundError:
                 current_sha, current_info, exists = None, None, False
 
-            # ACK perdido: repetir la misma operación no debe convertir un éxito real en conflicto.
+            # Lost ACK: repeating the same operation must not turn a real success into a conflict.
             if exists and current_sha == pending.content_sha:
                 self._write_ok(pending)
                 return
@@ -2307,8 +2305,8 @@ class PtyAgent:
             temp_fd = None
 
             if pending.operation == "create":
-                # linkat falla con EEXIST: a diferencia de replace(), nunca pisa una creación que
-                # ganó la carrera entre el chequeo y el commit.
+                # linkat fails with EEXIST: unlike replace(), it never overwrites a creation that
+                # won the race between the check and the commit.
                 os.link(
                     temporary, basename,
                     src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False,
@@ -2316,8 +2314,8 @@ class PtyAgent:
                 os.unlink(temporary, dir_fd=directory)
                 temp_exists = False
             else:
-                # Revalida la MISMA identidad justo antes del commit. Serializa las escrituras de
-                # este agente y detecta ediciones externas que ocurrieron durante el staging.
+                # Revalidate the SAME identity right before commit. Serialises this agent's writes
+                # and catches external edits that happened during staging.
                 latest = os.stat(basename, dir_fd=directory, follow_symlinks=False)
                 expected_identity = (
                     current_info.st_dev, current_info.st_ino, current_info.st_size,
@@ -2406,8 +2404,8 @@ class PtyAgent:
         if session is None:
             return  # tombstoned or unknown: late keystrokes never reach a fresh session
         if session.mode in READ_ONLY_MODES:
-            # Se descarta ANTES de tocar el descriptor, y no se encola: guardarlo seria una fuga
-            # que se vaciaria sola en cuanto el modo cambiara o el pty aceptara escrituras.
+            # Discarded BEFORE touching the descriptor, and not queued: storing it would be a leak
+            # that would drain itself as soon as the mode changed or the pty accepted writes.
             if not session.refused_input:
                 session.refused_input = True
                 log(f"input refused on a read-only session mode={session.mode} session={session_id}")
@@ -2415,8 +2413,8 @@ class PtyAgent:
         self._enqueue_session_input(session, data)
 
     def _on_terminal_response(self, session_id: str, data: bytes) -> None:
-        # Se valida incluso si la sesion ya termino: una trama mal formada nunca gana un camino
-        # permisivo por llegar tarde.
+        # Validated even if the session is already gone: a malformed frame never gains a permissive
+        # path by arriving late.
         if not is_terminal_emulator_response(data):
             raise ProtocolError("TERMINAL_RESPONSE is not an allowed DA/DSR response")
         session = self.sessions.get(session_id)
@@ -2558,8 +2556,8 @@ class PtyAgent:
         if self.bundle.get("openclaw_tui") is not None and now >= self.next_dynamic_capability_check:
             self.next_dynamic_capability_check = now + DYNAMIC_CAPABILITY_CHECK_INTERVAL
             if self._advertised_modes() != self.modes:
-                # Reconectar retira/publica la capacidad mediante un HELLO nuevo. Mantener el
-                # socket anunciaría una TUI que el siguiente OPEN ya no puede resolver.
+                # Reconnecting withdraws/publishes the capability through a fresh HELLO. Keeping
+                # the socket would advertise a TUI that the next OPEN can no longer resolve.
                 raise ProtocolError("dynamic harness capability changed")
         if self.acknowledged and now - self.last_ping > PING_TIMEOUT:
             raise ProtocolError("relay stopped sending PING")

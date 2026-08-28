@@ -182,19 +182,19 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
         self.assertEqual(self._run(node_path=None), "NO_TUI")
 
     def test_control_negativo_un_node_relativo_no_se_ejecuta(self) -> None:
-        # `command -v` que no devuelve una ruta absoluta jamas se ejecuta.
+        # `command -v` that does not return an absolute path MUST NOT be executed.
         self.assertEqual(self._run(node_path="node"), "NO_TUI")
 
     def test_control_negativo_sin_la_entrada_de_openclaw_no_hay_tui(self) -> None:
         self.assertEqual(self._run(entry_present=False), "NO_TUI")
 
     def test_control_negativo_una_version_sin_subcomando_tui_no_se_anuncia(self) -> None:
-        # `tui --help` falla: esta version no tiene la TUI. Anunciarla abriria una pantalla en negro.
+        # `tui --help` fails: this version has no TUI. Advertising it would open a black screen.
         self.assertEqual(self._run(tui_help=None), "NO_TUI")
 
     def test_control_negativo_una_tui_que_no_acepta_session_no_se_anuncia(self) -> None:
-        # El subcomando existe pero el flag cambio de nombre: se le pregunta al binario instalado,
-        # porque openclaw se actualiza solo y la memoria de nadie es la fuente.
+        # The subcommand exists but the flag renamed: ask the installed binary,
+        # because openclaw self-updates and nobody's memory is the source.
         self.assertEqual(
             self._run(tui_help="Usage: openclaw tui [--conversation <key>]"),
             "NO_TUI",

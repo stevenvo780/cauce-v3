@@ -33,8 +33,8 @@ def run_launcher(directory: pathlib.Path, *args: str) -> subprocess.CompletedPro
         [str(directory / "cauce-pty-launcher.sh"), *args],
         capture_output=True,
         text=True,
-        # PATH real: docker/flock/timeout se comprueban ANTES que el artefacto, y si faltan el
-        # lanzador sale por otra rama y la prueba mediria otra cosa.
+        # Real PATH: docker/flock/timeout are checked BEFORE the artifact, and if missing the
+        # launcher exits via a different branch and the test would measure something else.
         env={"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": str(directory)},
         check=False,
     )
@@ -45,7 +45,7 @@ class MissingShippedArtefactIsRetryable(unittest.TestCase):
 
     def setUp(self) -> None:
         self.prevented = prevented_exit_codes()
-        # La prueba no vale nada si la unit dejo de declarar codigos permanentes.
+        # The test is worthless if the unit stopped declaring permanent exit codes.
         self.assertTrue(self.prevented, "la unit no previene ningun reinicio: la prueba seria vacua")
 
     def _launcher_alone(self, tmp: pathlib.Path) -> pathlib.Path:

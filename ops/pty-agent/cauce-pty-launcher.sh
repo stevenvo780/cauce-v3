@@ -2,10 +2,8 @@
 set -euo pipefail
 umask 077
 
-# Runs on kratos as the unprivileged `stev` user (member of the docker group). It publishes the
-# PTY agent and its bundle inside the target container and then execs the agent as the mapped
-# runtime UID. It never opens a listening socket: the agent dials OUT to the relay on agora,
-# exactly like the container adapters already dial wss://100.64.0.6:8443/v3/ws.
+# Publishes the PTY agent and its bundle inside the target container, then execs the agent
+# as the mapped runtime UID. Never opens a listening socket: the agent dials OUT to the relay.
 
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OPS_ROOT=${CAUCE_PTY_OPS_ROOT:-$(cd "$SCRIPT_ROOT/.." && pwd)}
@@ -28,14 +26,10 @@ die() {
   exit "${2:-2}"
 }
 
-# Fallo TRANSITORIO: 75 (EX_TEMPFAIL) y, sobre todo, un codigo que NO esta en el
-# `RestartPreventExitStatus=2 78` de la unit.
-#
-# Se separa de `die` porque los dos fallos NO son el mismo fallo. Un artefacto del release que no
-# viajo (el agente, y cualquier fichero que se le sume) se arregla volviendo a desplegar, sin
-# tocar systemd: si sale 2, las 15 unidades de PTY quedan PARADAS PARA SIEMPRE y ya no reintentan
-# ni cuando el fichero vuelve. Un fallo de configuracion —un alias que no es un alias— si es
-# permanente, y ese sigue saliendo por `die`.
+# Transient failure: exit 75 (EX_TEMPFAIL), which is NOT in the unit's
+# RestartPreventExitStatus=2 78. Separated from `die` because the two failures are distinct:
+# a missing release artifact (redeployable) must not stop the 15 PTY units forever the way a
+# permanent configuration error (caught by `die`) would.
 die_transient() {
   printf '%s\n' "$1" >&2
   exit 75
@@ -132,8 +126,8 @@ validate_channel_material() {
   for name in client.crt client.key ca.crt; do
     assert_secure_file "$pki/$name" 600 "PTY channel material ($name)"
   done
-  # The derived alias key is the agent's second, independent ticket check. It is per-alias, so it
-  # cannot authorise any other agent even if kratos is fully compromised.
+# The derived alias key is the agent's second, independent ticket check. Per-alias, so it
+# cannot authorise any other agent even if the manager is fully compromised.
   assert_secure_file "${CONFIG[ALIAS_KEY_FILE]}" 400 'PTY alias key'
   [[ $(stat -c '%s' "${CONFIG[ALIAS_KEY_FILE]}") -ge 64 ]] || die 'PTY alias key file is too short to hold 32 bytes of hex'
 }
@@ -151,7 +145,7 @@ read_generation() {
   [[ $image =~ ^sha256:[a-f0-9]{64}$ ]] || die 'container image id is invalid' 75
   [[ $started =~ ^[0-9T:.+-]+Z?$ && $restart =~ ^[0-9]+$ && -z ${extra:-} ]] || die 'container state signature is invalid' 75
   [[ $running == true ]] || die "container is not running for alias $alias_name" 1
-  # The generation binds this launch to one container incarnation: the ticket the gateway signs
+  # The generation binds this launch to one container incarnation: the gateway-signed ticket
   # names it, so a restart between issue and use invalidates every outstanding ticket.
   digest=$(printf '%s|%s|%s' "$id" "$started" "$restart" | sha256sum)
   digest=${digest%% *}
@@ -170,8 +164,7 @@ resolve_runtime_identity() {
   runtime_uid=${runtime_uid//[$'\r\n']/}
   runtime_gid=${runtime_gid//[$'\r\n']/}
   [[ $runtime_uid =~ ^[0-9]+$ && $runtime_gid =~ ^[0-9]+$ ]] || die 'container runtime identity is invalid' 1
-  # The whole channel exists to give a shell as the mapped agent user. A root identity would
-  # collapse that boundary, so refuse fail-closed with the supervisor's own code.
+  # Fail-closed exit reserved for identity violations: a root identity would collapse the boundary.
   [[ $runtime_uid != 0 && $runtime_gid != 0 ]] || die 'container runtime identity must not be root' 78
 }
 
@@ -186,28 +179,25 @@ cleanup() {
 trap cleanup EXIT
 
 publish_agent() {
-  # Root-owned and non-writable inside the container: the runtime user executes it but can never
-  # rewrite it, so a compromised agent process cannot persist itself into the next launch.
+  # Root-owned and non-writable inside the container: the runtime user executes but cannot rewrite.
   docker_control cp "$AGENT_SOURCE" "$container_id:$agent_path" || die 'cannot publish the PTY agent'
   docker_control exec --user 0 "$container_id" chown 0:0 "$agent_path" || die 'cannot own the published PTY agent'
   docker_control exec --user 0 "$container_id" chmod 0555 "$agent_path" || die 'cannot secure the published PTY agent'
 }
 
-# Socket de tmux de la flota. NO es el socket por defecto: `tmux ls` a secas no ve estas
-# sesiones, que es por lo que la TUI de los agentes parecia no existir.
+# Fleet tmux socket. Not the default: plain `tmux ls` does not see these sessions.
 TMUX_SOCKET=${CAUCE_PTY_TMUX_SOCKET:-cauce}
 
-# El modo `harness` del agente PTY es lo unico que emite la TUI que el agente YA esta corriendo;
-# `shell` abre una terminal nueva, que no es lo que se pidio ver. Si el operador no declaro un
-# HARNESS_COMMAND, se descubre el binario tmux dentro del contenedor y como el usuario del agente
-# (el socket es por uid). El bundle guarda path+socket aunque la sesion todavia no exista: el
-# agente acredita nombre, marcadores y panel atomically en CADA OPEN, de modo que una tmux que
-# aparezca mas tarde queda disponible sin reiniciar esta unidad. La sonda inicial sirve solamente
-# para medir el cwd de un panel que ya este validado; nunca congela el target.
+# `harness` mode emits the TUI for an already-running agent; `shell` opens a new terminal.
+# When HARNESS_COMMAND is unset, the tmux binary is discovered inside the container as the
+# agent user (socket is per-uid). The bundle stores path+socket even if no session exists yet:
+# the agent validates name, markers, and panel atomically on every OPEN, so a tmux appearing
+# later becomes available without restarting the unit. The initial probe only measures the
+# cwd of an already-validated panel and never freezes the target.
 #
-#   -r              cliente de SOLO LECTURA: desde la consola no se puede teclear en la TUI ajena.
-#   -f ignore-size  el tamano del navegador no renegocia el de la sesion, asi mirar no le encoge
-#                   el panel al humano que esta trabajando en esa misma tmux.
+#   -r              READ-ONLY client: console cannot type into someone else's TUI.
+#   -f ignore-size  browser size does not renegotiate session size; viewing does not shrink
+#                   the panel for the human working in that same tmux.
 derive_harness_command() {
   local tmux_path session windows observed_session_name observed_session_id extra session_id
   local validated_pane_cwd
@@ -219,21 +209,21 @@ derive_harness_command() {
   [[ $tmux_path != *$'\r'* && $tmux_path != *$'\n'* ]] || return 1
   [[ -n $tmux_path ]] || return 1
   valid_absolute_path "$tmux_path" || return 1
-  # El ejecutable es la capacidad estable de la imagen. Se conserva aunque no haya servidor o
-  # sesion todavia; el agente valida ademas propiedad/modo y resuelve la sesion por cada OPEN.
+  # The executable is the image's stable capability: kept even when no server/session exists yet;
+  # the agent additionally validates ownership/mode and resolves the session per OPEN.
   TMUX_PATH_FOUND=$tmux_path
   session="cauce-$alias_name"
 
-  # One tmux server command returns session, markers, window cardinality and pane facts from the
-  # same observation.  Five independent probes could otherwise assemble a cwd from states which
-  # never coexisted. `list-windows` also lets us reject duplicate `tui` windows explicitly.
+  # One tmux command returns session, markers, window cardinality and pane facts from the same
+  # observation: five independent probes could otherwise assemble a cwd from states that never
+  # coexisted. `list-windows` also lets us reject duplicate `tui` windows explicitly.
   windows=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
     "$tmux_path" -L "$TMUX_SOCKET" list-windows -t "$session" -F \
     $'#{session_name}\t#{session_id}\t#{window_name}\t#{window_panes}\t#{@cauce_alias}\t#{@cauce_harness}\t#{pane_pid}\t#{pane_dead}\t#{pane_current_path}' \
     2>/dev/null) || return 1
   [[ $windows != *$'\r'* ]] || return 1
-  # Desde este punto existe una sesión que reclama el nombre del alias. Si cualquiera de sus
-  # marcadores/paneles falla, no se degrada a una raíz inventada: el llamador distingue el choque.
+  # From here a session claims the alias name: if any marker/pane fails, do NOT degrade to an
+  # invented root; the caller distinguishes the clash.
   TMUX_MEASUREMENT_CONFLICT=1
   session_id=''
   validated_pane_cwd=''
@@ -259,35 +249,28 @@ derive_harness_command() {
   return 0
 }
 
-# Entrada real de OpenClaw dentro del contenedor, y donde guarda sus conversaciones.
-#
-# Se invoca la entrada y no el envoltorio `openclaw`: ese re-ejecuta y deja su argv en «openclaw»
-# a secas —por eso el supervisor del gateway tampoco lo usa— y un argv que no se puede reconocer
-# no se puede supervisar ni auditar.
+# Real OpenClaw entry inside the container, and where it stores its conversations.
+# Invoke the entry, not the `openclaw` wrapper: the wrapper re-execs and leaves its argv as
+# bare `openclaw`, which the gateway supervisor also avoids; an unrecognisable argv cannot be
+# supervised or audited.
 OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 [[ $OPENCLAW_HISTORY_LIMIT =~ ^[0-9]{1,5}$ && $((10#$OPENCLAW_HISTORY_LIMIT)) -ge 1 \
   && $((10#$OPENCLAW_HISTORY_LIMIT)) -le 10000 ]] || die 'OpenClaw history limit is invalid'
 
-# La TUI NATIVA de OpenClaw, para los alias que no tienen panel tmux y no pueden tenerlo.
-#
-# El panel que hoy emiten 7 alias es el de la SESION COMPARTIDA, y esa existe solo para `claude` y
-# `codex` (`SharedSessionHarness = Extract<HarnessId, "claude" | "codex">`). Un alias `openclaw` no
-# levanta `cauce-<alias>` en tmux, y en sus imagenes ni siquiera hay tmux: su proceso es un demonio
-# (`node .../openclaw/dist/index.js gateway`), no una pantalla. Por eso `derive_harness_command`
-# devuelve vacio para siempre y la consola dice «Sin TUI que emitir».
-#
-# Pero OpenClaw SI trae una TUI, y es un CLIENTE del gateway que ese mismo alias ya corre en
-# loopback. O sea que no hace falta tmux, ni una imagen nueva, ni un proceso supervisado mas: se
-# lanza en el pty del agente como cualquier otro `harness_command`.
-#
-# El candado de solo lectura NO esta aca: la TUI de openclaw no tiene equivalente de `tmux -r`.
-# Lo pone el agente PTY: un modo visor rechaza STDIN humano y sólo deja pasar por otro tag la
-# lista cerrada de respuestas técnicas DA/DSR que necesita el emulador.
-#
-# La capacidad se mide DENTRO del contenedor y como el usuario del alias. La presencia sólo anuncia
-# `harness` si el pointer canónico ya existe, está inicializado y pasa la misma frontera de
-# propiedad/modo/schema que volverá a comprobar el agente en cada OPEN. El native id nunca sale de
-# ese proceso ni se congela en el bundle.
+# Native OpenClaw TUI for aliases that do not (and cannot) have a tmux panel.
+# The panel emitted by 7 aliases today is the SHARED SESSION, which exists only for `claude` and
+# `codex`. An `openclaw` alias does not start `cauce-<alias>` in tmux, and its images may not even
+# ship tmux: its process is a daemon (`node .../openclaw/dist/index.js gateway`), not a screen.
+# Hence `derive_harness_command` returns empty and the console says "no TUI to emit".
+# OpenClaw DOES bring its own TUI, a client of the gateway that the same alias already runs on
+# loopback. So no tmux, no new image, no extra supervised process: launch it in the agent's pty
+# like any other `harness_command`.
+# The read-only lock is NOT here (no `tmux -r` equivalent); the PTY agent enforces it via a viewer
+# mode that rejects human STDIN and only forwards the closed list of DA/DSR technical replies.
+# Capability is measured INSIDE the container as the alias user. Presence only advertises
+# `harness` when the canonical pointer exists, is initialised, and passes the same
+# ownership/mode/schema boundary the agent re-checks on every OPEN. The native id never leaves
+# that process nor is frozen in the bundle.
 validate_openclaw_tui_pointer() {
   docker_control exec -i --user "$runtime_uid:$runtime_gid" \
     --env "CAUCE_PTY_OPENCLAW_POINTER_ALIAS=$alias_name" \
@@ -351,8 +334,8 @@ if (not isinstance(document, dict)
         or len(document["sessions"]) > 4096):
     raise SystemExit(1)
 
-# Una clave exacta, derivada localmente. El object_pairs_hook anterior evita que dos pointers con
-# el mismo nombre sobrevivan al parser eligiendo silenciosamente el último.
+# An exact key, derived locally. The object_pairs_hook above prevents two pointers with the same
+# name from surviving the parser by silently picking the last one.
 pointer = document["sessions"].get(f"openclaw:{alias}:shared:{alias}")
 if (not isinstance(pointer, dict)
         or set(pointer) not in ({"native_id", "initialized"}, {"native_id", "initialized", "origin"})
@@ -370,15 +353,15 @@ derive_openclaw_tui_command() {
     sh -c 'command -v node' 2>/dev/null) || return 1
   node_path=${node_path//[$'\r\n']/}
   valid_absolute_path "$node_path" || return 1
-  # Detectar el binario no basta: una TUI sin conversación resoluble es una capacidad falsa.
+  # Detecting the binary is not enough: a TUI without a resolvable conversation is a false capability.
   validate_openclaw_tui_pointer >/dev/null 2>&1 || return 1
 
   configured_dist=${CONFIG[OPENCLAW_DIST_DIR]:-}
   if [[ -n $configured_dist ]]; then
     entry_candidates+=("${configured_dist%/}/index.js")
   else
-    # La instalación canónica de la flota es user-local. La global queda como compatibilidad
-    # medida para contenedores antiguos; nunca se camina PATH ni el filesystem buscando candidatos.
+    # The canonical fleet install is user-local. The global one is measured compatibility for
+    # older containers; never walk PATH or the filesystem looking for candidates.
     entry_candidates+=(
       "${container_home%/}/.openclaw/node_modules/openclaw/dist/index.js"
       "/usr/lib/node_modules/openclaw/dist/index.js"
@@ -389,9 +372,9 @@ derive_openclaw_tui_command() {
     docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
       test -f "$entry" >/dev/null 2>&1 || continue
 
-    # Se le pregunta al binario INSTALADO si tiene la TUI y si acepta `--session`. openclaw se
-    # actualiza solo, asi que la memoria de nadie sirve como fuente: el dia que el subcomando o el
-    # flag cambien, esto deja de anunciar la TUI en vez de anunciar una pantalla vacia.
+    # Ask the INSTALLED binary whether it has the TUI and accepts `--session`. openclaw updates
+    # itself, so nobody's memory is authoritative: when the subcommand or flag changes, this
+    # stops advertising the TUI instead of advertising an empty screen.
     tui_help=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
       "$node_path" "$entry" tui --help 2>/dev/null) || continue
     [[ $tui_help == *"--session"* ]] || continue
@@ -403,17 +386,17 @@ derive_openclaw_tui_command() {
   return 1
 }
 
-# Read only non-secret path facts from the adapter that is actually running for this
-# alias/generation. `cwd` comes from `/proc/<pid>/cwd`, never from the launcher's PWD nor from the
-# browser. `workspace_root` is published only when that same adapter explicitly carries
+# Read only non-secret path facts from the adapter actually running for this alias/generation.
+# `cwd` comes from `/proc/<pid>/cwd`, never from the launcher's PWD or the browser.
+# `workspace_root` is published only when that same adapter explicitly carries
 # `CAUCE_SHARED_SESSION_WORKSPACE`; inside that bounded root the nearest real `.git` marker
-# accredits `project_root`. Without a workspace root, cwd authorizes exactly one project level.
+# accredits `project_root`. Without a workspace root, cwd authorises exactly one project level.
 #
 # The scan runs as the runtime uid and never prints the rest of `/proc/*/environ`. Every matching
-# process must agree byte-for-byte. Absence, ambiguity or an unsafe path yields `{}`: runtime facts
-# are optional evidence and must never stop the shell/PTY transport. A half-measured fact is worse
-# than no project context because shared containers and shared HOME directories make plausible-
-# looking sibling paths exist.
+# process must agree byte-for-byte. Absence, ambiguity, or an unsafe path yields `{}`: runtime
+# facts are optional evidence and must never stop the shell/PTY transport. A half-measured fact
+# is worse than no project context because shared containers and shared HOME directories make
+# plausible-looking sibling paths exist.
 measure_adapter_runtime_facts() {
   local measured
   local -a measurement_environment=(
@@ -474,8 +457,8 @@ for name in os.listdir("/proc"):
         continue
     profile = "" if wire_for_harness is None else environment.get(wire_for_harness[0], "")
     workspace_root = environment.get("CAUCE_SHARED_SESSION_WORKSPACE", "")
-    # Keep the process cwd even for a shared adapter. Without a validated tmux pane it is the only
-    # cwd actually observed; it may be used only when it is itself inside the shared workspace.
+    # Keep the process cwd even for a shared adapter. Without a validated tmux pane it is the
+    # only cwd actually observed; may be used only when it lies inside the shared workspace.
     observed.add((profile, cwd, workspace_root))
 
 def safe_directory(path, *, below_home=False):
@@ -638,7 +621,7 @@ publish_bundle() {
   if [[ -z $harness_command ]]; then
     TMUX_PATH_FOUND=''
     TMUX_SESSION_FOUND=''
-    # shellcheck disable=SC2034  # contrato: la suite PTY verifica esta variable
+    # shellcheck disable=SC2034  # contract: the PTY suite reads this variable
     TMUX_TARGET_FOUND=''
     if [[ $harness == codex || $harness == claude ]]; then
       if derive_harness_command; then
@@ -663,9 +646,8 @@ publish_bundle() {
       printf 'cauce-pty-launcher: dynamic tmux resolver enabled alias=%s socket=%s\n' \
         "$alias_name" "$TMUX_SOCKET" >&2
     else
-      # Sin panel tmux se prueba la TUI nativa de OpenClaw. El orden importa y no se puede
-      # invertir: un alias con sesion compartida tiene que seguir emitiendo el panel que su dueno
-      # esta mirando, no otra cosa.
+      # Without a tmux panel, try the native OpenClaw TUI. Order matters and cannot be inverted:
+      # an alias with a shared session must keep emitting the panel its owner is watching.
       OPENCLAW_NODE_FOUND=''
       if [[ $harness == openclaw ]] && derive_openclaw_tui_command; then
         harness_command=null
@@ -674,8 +656,8 @@ publish_bundle() {
           PYTHONDONTWRITEBYTECODE=1 python3 -c \
           'import json,os;print(json.dumps({"node":os.environ["CAUCE_OPENCLAW_NODE"],"entry":os.environ["CAUCE_OPENCLAW_ENTRY"],"state_directory":os.environ["CAUCE_OPENCLAW_STATE"],"history_limit":int(os.environ["CAUCE_OPENCLAW_HISTORY"])}))') \
           || die "cannot assemble the dynamic openclaw harness resolver"
-        # No native id ni store key en journal: el launcher acredita que existe un pointer, y la
-        # seleccion exacta se vuelve a resolver dentro del agente por cada OPEN.
+        # No native id or store key in the journal: the launcher accredits that a pointer exists,
+        # the exact selection is re-resolved inside the agent on every OPEN.
         printf 'cauce-pty-launcher: dynamic openclaw tui resolver enabled alias=%s\n' \
           "$alias_name" >&2
       else
@@ -686,7 +668,7 @@ publish_bundle() {
     fi
   fi
   # Runtime facts enrich presence/governance but are not a precondition for terminal transport.
-  # The measurement function returns `{}` on zero, ambiguous or unsafe adapter evidence.
+  # The measurement function returns `{}` on zero, ambiguous, or unsafe adapter evidence.
   runtime_facts=$(measure_adapter_runtime_facts)
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"
@@ -769,15 +751,15 @@ PYTHON
   local_bundle=''
   docker_control exec --user 0 "$container_id" chown "$runtime_uid:$runtime_gid" "$bundle_path" || die 'cannot own the published PTY bundle'
   docker_control exec --user 0 "$container_id" chmod 0400 "$bundle_path" || die 'cannot secure the published PTY bundle'
-  # Only names, owner and mode: the bundle body (channel key, certificate, alias key) is never printed.
+  # Only names, owner, and mode: the bundle body (channel key, certificate, alias key) is never printed.
   printf 'cauce-pty-launcher: bundle published alias=%s path=%s owner=%s:%s mode=0400\n' \
     "$alias_name" "$bundle_path" "$runtime_uid" "$runtime_gid" >&2
 }
 
-# El flock del host muere con el cliente `docker exec`, pero el agente Python DENTRO del
-# contenedor sobrevive. Dos agentes del mismo alias comparten certificado y el relay los
-# expulsa mutuamente sin fin. Antes de arrancar, mata cualquier agente previo del alias
-# dentro del contenedor (guarda por nombre exacto de script para no señalar a nadie mas).
+# Host flock dies with the `docker exec` client, but the Python agent INSIDE the container
+# survives. Two agents of the same alias share a certificate and the relay kicks each other
+# out forever. Before starting, kill any prior agent of the alias inside the container (match
+# by exact script name so no other process is targeted).
 reap_orphan_agents() {
   local victims
   victims=$(docker exec "$container_id" sh -c \
@@ -809,8 +791,8 @@ start_agent() {
   publish_agent
   publish_bundle
   # Re-verify the incarnation: if the container restarted while we were copying, the published
-  # bundle names a generation that no longer exists and no ticket for it can ever verify, so the
-  # only safe move is to abort and let systemd start a fresh launch.
+  # bundle names a generation that no longer exists and no ticket for it can ever verify, so
+  # abort and let systemd start a fresh launch.
   read_generation
   [[ $container_generation == "$previous_generation" ]] || die 'container generation changed during publication' 75
   reap_orphan_agents

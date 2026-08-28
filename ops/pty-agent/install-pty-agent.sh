@@ -2,13 +2,10 @@
 set -euo pipefail
 umask 077
 
-# Installs or refreshes the PTY user unit for ONE alias on kratos and proves, before enabling
-# anything, that the outbound path the agent needs actually exists. It is idempotent and it never
-# touches cauce-v3-container-*: the adapters keep running untouched, including the ones that are
-# currently unhealthy.
-#
-# kratos runs fish, so remote invocations must avoid heredocs and nested quoting:
-#   ssh kratos "echo '<base64 of this command line>' | base64 -d | bash -l"
+# Installs or refreshes the PTY user unit for ONE alias and proves the outbound path exists
+# before enabling anything. Idempotent; never touches cauce-v3-container-* adapters.
+# Remote invocations must avoid heredocs and nested quoting:
+#   ssh <host> "echo '<base64 of this command line>' | base64 -d | bash -l"
 
 SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OPS_ROOT=${CAUCE_PTY_OPS_ROOT:-$(cd "$SCRIPT_ROOT/.." && pwd)}
@@ -70,12 +67,12 @@ check_owner_mode() {
 
 # 1. Alias mapping (read-only use of the ops/scripts fleet mapping).
 mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
-# shellcheck disable=SC2034  # campos posicionales del mapping; no todos se usan aqui
+# shellcheck disable=SC2034  # positional fields from the mapping; not all are used here
 IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness extra <<<"$mapping_line"
 [[ -n $container_name && -n $container_user && -z ${extra:-} ]] || die 'container alias mapping returned invalid fields'
 note "alias=$alias_name tenant=$tenant container=$container_name user=$container_user harness=$harness"
 
-# 2. Alias config and channel material on kratos.
+# 2. Alias config and channel material.
 [[ -d $CONFIG_ROOT ]] || die "PTY config root is missing: $CONFIG_ROOT"
 check_owner_mode "$config_file" 600 'PTY alias config'
 relay_host=$(sed -n 's/^RELAY_HOST=//p' "$config_file" | head -n1)
@@ -85,12 +82,12 @@ relay_port=$(sed -n 's/^RELAY_PORT=//p' "$config_file" | head -n1)
 for name in client.crt client.key ca.crt; do
   check_owner_mode "$pki_dir/$name" 600 "PTY channel material ($name)"
 done
-# The derived per-alias ticket key. 0400 on purpose: it is read once per launch and never written.
+# The derived per-alias ticket key. 0400 on purpose: read once per launch, never written.
 check_owner_mode "$key_file" 400 'PTY alias key'
 [[ $(stat -c '%s' "$key_file") -ge 64 ]] || die 'PTY alias key must hold 64 hex characters'
 
-# 3. Container preflight. Everything below runs INSIDE the container, because that is where the
-# agent will run: agora can never dial in, so the only path that matters is this outbound one.
+# 3. Container preflight. Runs INSIDE the container, because that is where the agent will run;
+# the only path that matters is the outbound one.
 container_id=$(docker_control inspect --format '{{.Id}}' "$container_name") || die "container is not inspectable: $container_name" 1
 [[ $container_id =~ ^[a-f0-9]{64}$ ]] || die 'container id is invalid'
 running=$(docker_control inspect --format '{{.State.Running}}' "$container_id") || die 'cannot read container state'
@@ -126,7 +123,7 @@ if (( PREFLIGHT_ONLY == 1 )); then
   exit 0
 fi
 
-# 4. Unit installation. Idempotent: the template is rewritten only when its body differs.
+# 4. Unit installation. Idempotent: template is rewritten only when its body differs.
 [[ -f $UNIT_SOURCE ]] || die "unit template is missing: $UNIT_SOURCE"
 mkdir -p -- "$UNIT_ROOT"
 target="$UNIT_ROOT/cauce-v3-pty@.service"

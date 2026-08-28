@@ -11,8 +11,7 @@ import re
 import sys
 
 
-# Domain separation for the PTY ticket key hierarchy. Changing either string invalidates every
-# derived key, which is exactly how a key rotation is performed.
+# Domain separation for the PTY ticket key hierarchy.
 TICKET_SALT = b"cauce-v3/pty-ticket/v1"
 INFO_PREFIX = "pty:"
 KEY_LENGTH = 32
@@ -45,10 +44,7 @@ def decode_master(body: bytes | str) -> bytes:
     Hex is probed first: 64 hex characters are also valid base64, so probing base64 first would
     silently turn a hex master into 48 unrelated bytes.
     """
-    # El runbook genera la maestra con `openssl rand -out ... 32`, que son 32 bytes CRUDOS, y el
-    # gateway los acepta tal cual (readTicketKey admite raw 32, hex o base64). Esta herramienta sólo
-    # aceptaba texto, así que seguir el runbook al pie de la letra terminaba en UnicodeDecodeError.
-    # Se aceptan las mismas tres formas que el gateway, para que no haya dos verdades.
+    # Accept the same three encodings the gateway accepts so the runbook command does not fail.
     if isinstance(body, bytes):
         if len(body) == 32:
             return body
@@ -89,8 +85,7 @@ def main(argv: list[str]) -> int:
         derived = alias_key(master, args.tenant, args.alias)
     except ValueError as error:
         raise SystemExit(str(error)) from None
-    # Only the derived key reaches stdout, and only ever this one: it authorises exactly one alias,
-    # so copying it to kratos does not put the other thirteen at risk. The master never leaves agora.
+    # Only the derived key is emitted: it authorises exactly one alias.
     sys.stdout.write(derived.hex() + "\n")
     return 0
 

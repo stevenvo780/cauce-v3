@@ -50,8 +50,8 @@ class SuiteLoadsEveryFile(unittest.TestCase):
             set(),
         )
         self.assertNotIn("test_fichero_que_no_existe", discovered)
-        # Y ademas tiene que haber cargado algo: un conjunto vacio satisfaria la prueba de arriba
-        # solo si el disco tambien estuviera vacio, pero no esta.
+        # And it MUST have loaded something: an empty set would satisfy the test above
+        # only if the disk were also empty, but it is not.
         self.assertGreater(len(discovered), 1, "el descubrimiento no cargo practicamente nada")
 
 

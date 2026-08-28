@@ -14,9 +14,9 @@ LANZADOR = pathlib.Path(__file__).resolve().parent.parent / "cauce-pty-launcher.
 class LaPresenciaLlevaElHome(unittest.TestCase):
     def test_la_trama_de_presencia_incluye_home(self) -> None:
         fuente = AGENTE.read_text(encoding="utf-8")
-        # La trama se arma con un literal de diccionario dentro de `json.dumps`. Se busca la clave
-        # tal cual viaja por el cable —`"home": self.bundle["home"]`— y no un `home` cualquiera del
-        # fichero, que aparece en media docena de sitios sin relacion con la presencia.
+        # The frame is built with a dictionary literal inside `json.dumps`. We search for the key
+        # exactly as it travels on the wire —`"home": self.bundle["home"]`— and not any `home`
+        # in the file, which appears in half a dozen unrelated places.
         self.assertIn(
             '"home": self.bundle["home"]',
             fuente,
@@ -37,7 +37,7 @@ class LaPresenciaLlevaElHome(unittest.TestCase):
         indice_home = fuente.find('"home": self.bundle["home"]')
         self.assertNotEqual(indice_harness, -1, "la presencia perdio el harness")
         self.assertNotEqual(indice_home, -1, "la presencia perdio el home")
-        # Dentro de la misma trama: entre los dos no puede haber un cierre de diccionario.
+        # Inside the same frame: no dictionary close may appear between them.
         entre = fuente[min(indice_harness, indice_home):max(indice_harness, indice_home)]
         self.assertNotIn(
             "}))",
@@ -96,7 +96,7 @@ class LaPresenciaLlevaElHome(unittest.TestCase):
             bloque.count("{"), bloque.count("}"),
             "el diccionario de la presencia quedo desbalanceado",
         )
-        # Y que el JSON de ejemplo con las mismas claves se serializa sin sorpresas.
+        # And that the sample JSON with the same keys serializes without surprises.
         json.dumps({"harness": "claude", "home": "/home/dev", "modes": ["shell", "harness"]})
 
 
