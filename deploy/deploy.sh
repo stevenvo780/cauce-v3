@@ -10,6 +10,11 @@ REGISTRY="127.0.0.1:5000"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$REPO/deploy/compose.yaml" -f "$REPO/deploy/compose.postgres.yaml" --project-directory "$REPO/deploy")
 
 die() { echo "deploy: $*" >&2; exit 1; }
+# Prompts are skipped only when the owner pre-authorised the run (CAUCE_DEPLOY_CONFIRMADO=si).
+confirmar() {
+  if [ "${CAUCE_DEPLOY_CONFIRMADO:-}" = "si" ]; then echo "confirmado por el dueño (entorno): $1"; return 0; fi
+  read -r -p "$1 (si/NO) " ok; [ "$ok" = "si" ]
+}
 
 [ "${CAUCE_FASE3_CON_DUENO:-}" = "si" ] || die "FASE 3 solo con el dueño presente (exporta CAUCE_FASE3_CON_DUENO=si)"
 [ "$(id -u)" = 0 ] || die "necesita root (lee $ENV_FILE y reescribe pins)"
@@ -27,12 +32,18 @@ echo "== Cauce V3 deploy: commit $REV ($STAMP) =="
 
 if ! find /var/backups -name "*cauce*" -mmin -1440 2>/dev/null | grep -q .; then
   echo "AVISO: no veo backup de <24h en /var/backups; confirma que cauce-v3-db-backup corrio hoy."
-  read -r -p "¿Continuar igual? (si/NO) " ok; [ "$ok" = "si" ] || die "abortado por falta de backup fresco"
+  confirmar "¿Continuar igual?" || die "abortado por falta de backup fresco"
 fi
 
-# Build with provenance (console compiles from root via its Dockerfile: COPY . . + pnpm).
-docker build -f deploy/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
-docker build -f console/Dockerfile --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
+# Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the
+# target is explicit; the console stage bakes the relay instance id into its nginx route at build.
+INSTANCE_ID="$(sed -n 's/^CAUCE_TERMINAL_RELAY_INSTANCE_ID=//p' "$ENV_FILE" | tail -1)"
+[[ $INSTANCE_ID =~ ^[0-9a-f]{64}$ ]] || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID ausente o invalido en $ENV_FILE (dossier B2: sha256 del DER del leaf del relay)"
+docker build -f deploy/Dockerfile --target runtime --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
+docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
+  --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
+[ "$(docker inspect --format '{{index .Config.Labels "io.cauce.terminal-relay.instance-id"}}' "$CONSOLE_TAG")" = "$INSTANCE_ID" ] \
+  || die "la imagen de consola no lleva el instance id horneado"
 docker push -q "$RUNTIME_TAG" && docker push -q "$CONSOLE_TAG"
 RUNTIME_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$RUNTIME_TAG")"
 CONSOLE_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$CONSOLE_TAG")"
@@ -42,13 +53,12 @@ echo "console: $CONSOLE_DIGEST"
 cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP"
 sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$ENV_FILE"
 sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FILE"
-grep -q "^CAUCE_TERMINAL_RELAY_INSTANCE_ID=" "$ENV_FILE" || die "falta CAUCE_TERMINAL_RELAY_INSTANCE_ID en $ENV_FILE (dossier B2)"
 
 "${COMPOSE[@]}" config >/dev/null || die "el compose canonico no renderiza con $ENV_FILE"
 
-read -r -p "¿Migrar (026..037, una transaccion) y desplegar $REV? (si/NO) " ok; [ "$ok" = "si" ] || die "abortado por el dueño"
+confirmar "¿Migrar (026..037, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
 
-"${COMPOSE[@]}" run --rm migrator || die "migracion fallida (rollback automatico); NO se desplego nada"
+"${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico); NO se desplego nada"
 "${COMPOSE[@]}" up -d --wait --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
 "$REPO/deploy/smoke.sh" || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en 037."
 
