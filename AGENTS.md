@@ -15,7 +15,7 @@ Cauce V3: bus de mensajería durable entre agentes de IA en CLI (Claude Code, Co
 | `docs/flota-y-participantes.md` | máquinas, humanos, los 14 agentes, los 5 escenarios esenciales |
 | `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `main` sin pisarse — LÉELO antes de tocar nada |
 
-Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`).
+Referencia adicional: `docs/adr/` (decisiones de diseño aceptadas), `docs/threat-model.md` (amenazas y controles), `docs/grafo.md` (mapa de dependencias, generado con `pnpm grafo`), `docs/consola.md` (consola web del operador), `docs/telegram.md` (puente Telegram), `docs/adapter-sdk.md` (SDK del consumidor durable), `docs/calidad-y-gates.md` (sistema de calidad y gates).
 
 ## Regla 0
 

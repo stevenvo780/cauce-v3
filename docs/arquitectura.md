@@ -4,6 +4,8 @@
 
 Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants, con consola web de operador y puente Telegram (`AGENTS.md:3`). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull*: el adapter de cada agente reclama sus entregas por WebSocket con fencing (`claim_token`+`epoch`) (`AGENTS.md:3`). El `dispatcher` no reparte nada — es el segador de reintentos (`services/dispatcher/README.md:3`). "Entregar" significa pegar el texto en la sesión tmux viva del CLI del agente (`packages/adapter-sdk/README.md:5`). Estado a 28-08-2026: primer despliegue real completado, commit `caa8789a`, esquema 024→037, 10 contenedores `cauce-v3-prod-*` sanos (`deploy/HISTORIAL.md:7`).
 
+Documentación detallada por pieza: [consola.md](consola.md), [telegram.md](telegram.md), [adapter-sdk.md](adapter-sdk.md), [calidad-y-gates.md](calidad-y-gates.md).
+
 ## 2. Mapa de piezas
 
 ### 2.1 Servicios (`deploy/compose.yaml`, stack `cauce-v3-prod`)
