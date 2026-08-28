@@ -178,14 +178,16 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const targetMode = grant ? grant.target.mode : liveSession.channelMode;
   const channelIsLiveTui = targetMode === LIVE_TUI_MODE;
 
+  const requestChannelRef = useRef(requestChannel);
+  requestChannelRef.current = requestChannel;
+
   /** Apertura automática de TUI viva al seleccionar el panel si está disponible. */
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;
     if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
-    void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
   }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveTui.enabled]);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {

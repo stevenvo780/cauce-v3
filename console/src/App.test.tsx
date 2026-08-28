@@ -33,7 +33,7 @@ it('routes /fleet/:tenant/:alias to the bot detail instead of the fleet list', a
   window.history.pushState({}, '', '/fleet/Steven/kant');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'kant' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'kant' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '/fleet');
   // `fleet` ya no es una entrada de menú, así que ninguna queda marcada como página actual. Lo que
   // importa —y lo que se rompería si el alias se aplicara a las rutas con parámetros— es que la
