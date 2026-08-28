@@ -67,15 +67,14 @@ export interface ControlDeInterruptores {
  * lo desmiente.
  */
 function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number | undefined): number | undefined {
-  if (recarga && recarga.releido) return recarga.revision;
+  if (recarga?.releido) return recarga.revision;
   return actual;
 }
 
 function sinClave<T>(mapa: Record<string, T>, clave: string): Record<string, T> {
   if (!Object.hasOwn(mapa, clave)) return mapa;
-  const copia = { ...mapa };
-  delete copia[clave];
-  return copia;
+  const { [clave]: _eliminada, ...resto } = mapa;
+  return resto;
 }
 
 export function useInterruptores(
@@ -133,7 +132,7 @@ export function useInterruptores(
       setAviso({
         coleccion: interruptor.coleccion, tone: 'parcial', revision,
         text: `${interruptor.descripcion}: el servidor lo aplicó en la revisión `
-          + `${desenlace.result.revision ?? 'UNKNOWN'}.${textoRecarga(desenlace.recarga)}`,
+          + `${String(desenlace.result.revision ?? 'UNKNOWN')}.${textoRecarga(desenlace.recarga)}`,
       });
       return;
     }
@@ -142,7 +141,7 @@ export function useInterruptores(
     setAviso({
       coleccion: interruptor.coleccion, tone: 'success', revision,
       text: `${interruptor.descripcion}: aplicado en la revisión `
-        + `${desenlace.result.revision ?? 'UNKNOWN'} (${desenlace.result.summary ?? 'sin resumen del servidor'}).`
+        + `${String(desenlace.result.revision ?? 'UNKNOWN')} (${desenlace.result.summary ?? 'sin resumen del servidor'}).`
         + textoRecarga(desenlace.recarga),
     });
   }
@@ -158,7 +157,7 @@ export function useInterruptores(
       const registrado = Object.hasOwn(fallos, clave) ? fallos[clave] : undefined;
       return registrado && registrado.revision === revisionActual ? registrado : undefined;
     },
-    avisoDe: (coleccion) => (aviso && aviso.coleccion === coleccion && aviso.revision === revisionActual
+    avisoDe: (coleccion) => (aviso?.coleccion === coleccion && aviso.revision === revisionActual
       ? { text: aviso.text, tone: aviso.tone }
       : undefined),
     confirmacion,
@@ -175,7 +174,7 @@ export function useInterruptores(
       setConfirmacion(undefined);
       if (pedida) void aplicar(pedida.interruptor);
     },
-    cancelar: () => setConfirmacion(undefined),
+    cancelar: () => { setConfirmacion(undefined); },
     reintentar: (clave) => {
       const registrado = Object.hasOwn(fallos, clave) ? fallos[clave] : undefined;
       if (registrado) void aplicar(registrado.interruptor);

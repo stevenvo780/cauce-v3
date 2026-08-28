@@ -91,6 +91,6 @@ export function catalogoDeRoles(agentes: readonly Record<string, unknown>[] | nu
 export function resumenDeRol(texto: string): string {
   const primeraLinea = texto.split('\n', 1)[0]?.trim() ?? '';
   const base = primeraLinea || texto.trim();
-  const puntos = [...base];
+  const puntos = Array.from(base);
   return puntos.length <= 72 ? base : `${puntos.slice(0, 71).join('')}…`;
 }

@@ -86,7 +86,7 @@ function exactResolutionReceipt(
 }
 
 function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 31 || code === 127;
   });
@@ -259,8 +259,9 @@ export function OperationalDlqPanel() {
 
   async function resolveWithoutReplay() {
     if (!draft || !canResolve(draft.item)) return;
-    const itemTarget = target(draft.item.target)!;
-    const itemDisposition = disposition(draft.item.disposition)!;
+    const itemTarget = target(draft.item.target);
+    const itemDisposition = disposition(draft.item.disposition);
+    if (!itemTarget || !itemDisposition || !draft.item.id || !draft.item.evidenceSha256) return;
     const reason = draft.reason.trim();
     const duplicateRequired = DUPLICATE_RISK.has(itemDisposition);
     if (!reason || reason.length > 1_000 || hasControlCharacter(reason)
@@ -271,8 +272,8 @@ export function OperationalDlqPanel() {
     try {
       const result = await api.resolveDlqWithoutReplay({
         target: itemTarget,
-        id: draft.item.id!,
-        evidenceSha256: draft.item.evidenceSha256!,
+        id: draft.item.id,
+        evidenceSha256: draft.item.evidenceSha256,
         reason,
         possibleDuplicateAcknowledged: duplicateRequired && draft.possibleDuplicate,
         possibleNoDeliveryAcknowledged: draft.possibleNoDelivery,
@@ -312,10 +313,10 @@ export function OperationalDlqPanel() {
       subtitle="Incidentes causales separados de las entregas. Cerrar aquí registra una decisión sin replay; nunca reenvía Telegram ni vuelve a ejecutar un agente."
     >
       <div className="dlq-toolbar">
-        <label><input type="checkbox" checked={onlyOpen} onChange={(event) => setOnlyOpen(event.target.checked)} /> Sólo abiertos</label>
+        <label><input type="checkbox" checked={onlyOpen} onChange={(event) => { setOnlyOpen(event.target.checked); }} /> Sólo abiertos</label>
         <label>
           Disposición
-          <select value={selectedDisposition} onChange={(event) => setSelectedDisposition(event.target.value as 'all' | DlqDisposition)}>
+          <select value={selectedDisposition} onChange={(event) => { setSelectedDisposition(event.target.value as 'all' | DlqDisposition); }}>
             <option value="all">Todas</option>
             {Object.entries(DISPOSITION).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
@@ -345,14 +346,14 @@ export function OperationalDlqPanel() {
               rows={3}
               maxLength={1_000}
               value={draft.reason}
-              onChange={(event) => setDraft({ ...draft, reason: event.target.value })}
+              onChange={(event) => { setDraft({ ...draft, reason: event.target.value }); }}
             />
           </label>
           <label className="dlq-ack">
             <input
               type="checkbox"
               checked={draft.possibleNoDelivery}
-              onChange={(event) => setDraft({ ...draft, possibleNoDelivery: event.target.checked })}
+              onChange={(event) => { setDraft({ ...draft, possibleNoDelivery: event.target.checked }); }}
             />
             Entiendo que cerrar sin replay puede dejar el efecto sin entregar.
           </label>
@@ -361,7 +362,7 @@ export function OperationalDlqPanel() {
               <input
                 type="checkbox"
                 checked={draft.possibleDuplicate}
-                onChange={(event) => setDraft({ ...draft, possibleDuplicate: event.target.checked })}
+                onChange={(event) => { setDraft({ ...draft, possibleDuplicate: event.target.checked }); }}
               />
               La evidencia es incierta: entiendo que el efecto pudo haberse entregado y existir duplicado fuera de Cauce.
             </label>
@@ -370,7 +371,7 @@ export function OperationalDlqPanel() {
             <button type="button" className="button primary" disabled={!confirmationReady || submitting} onClick={() => void resolveWithoutReplay()}>
               <CheckCircle2 size={15} aria-hidden="true" /> {submitting ? 'Cerrando…' : 'Cerrar sin replay'}
             </button>
-            <button type="button" className="button small secondary" disabled={submitting} onClick={() => setDraft(undefined)}>No hacer nada</button>
+            <button type="button" className="button small secondary" disabled={submitting} onClick={() => { setDraft(undefined); }}>No hacer nada</button>
           </div>
         </div>
       ) : null}
@@ -384,7 +385,7 @@ export function OperationalDlqPanel() {
               const itemDisposition = disposition(item.disposition);
               const resolvable = canResolve(item);
               return (
-                <tr key={`${item.target ?? 'unknown'}:${item.id ?? index}`}>
+                <tr key={`${item.target ?? 'unknown'}:${String(item.id ?? index)}`}>
                   <td data-label="Incidente"><span className="mono" title={item.id ?? undefined}>{compactId(item.id)}</span><small className="subline"><Unknown value={target(item.target)} /></small></td>
                   <td data-label="Tenant"><Unknown value={item.tenantId} /></td>
                   <td data-label="Origen"><Unknown value={item.kind} /><small className="subline"><Unknown value={item.adapter} ausente="no-aplica" /></small></td>
@@ -395,7 +396,7 @@ export function OperationalDlqPanel() {
                   <td data-label="Resolución"><Unknown value={item.resolutionRule} ausente={item.open ? 'todavia-no' : 'sin-dato'} /><small className="subline"><Time value={item.resolvedAt} relativo /></small></td>
                   <td data-label="Acción">
                     {resolvable ? (
-                      <button type="button" className="button small" onClick={() => setDraft({ item, reason: '', possibleDuplicate: false, possibleNoDelivery: false })}>
+                      <button type="button" className="button small" onClick={() => { setDraft({ item, reason: '', possibleDuplicate: false, possibleNoDelivery: false }); }}>
                         <ShieldAlert size={15} aria-hidden="true" /> Cerrar sin replay
                       </button>
                     ) : <span className="muted">{item.open ? 'Requiere evidencia causal' : 'Cerrado'}</span>}

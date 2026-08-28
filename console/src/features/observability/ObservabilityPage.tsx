@@ -71,7 +71,7 @@ export function ObservabilityPage() {
 
     {tab === 'senales' ? <ViewTabPanel id="senales">
       <div className="trust-grid">
-        <article><Gauge /><div><strong>Queues</strong><p>{queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas. El detalle por delivery, con replay y cancel, está en <a href="/queues" onClick={(event) => onNavClick(event, '/queues')}>Queues &amp; DLQ</a>.</p></div></article>
+        <article><Gauge /><div><strong>Queues</strong><p>{queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas. El detalle por delivery, con replay y cancel, está en <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Queues &amp; DLQ</a>.</p></div></article>
         <article><RadioTower /><div><strong>Egress al origen</strong><p>{relayItems.length} relays hacia el canal de origen, con su estado durable en la tabla de abajo.</p></div></article>
       </div>
       <Panel title="Relays al canal de origen" subtitle="La consola observa; no ejecuta egress ni reintenta relays. Sólo los relays en los que este actor participa: GET /v3/console/origin-relays aplica la fachada de visibilidad que el snapshot de observabilidad no aplica.">
@@ -87,6 +87,7 @@ export function ObservabilityPage() {
                   const state = safeOriginRelayState(item.status);
                   const actuallySent = state === 'sent' && typeof item.sent_at === 'string' && !Number.isNaN(Date.parse(item.sent_at));
                   const tone = actuallySent ? 'done' : state === 'failed' ? 'danger' : state ? 'running' : 'unknown';
+                  const traceId = item.trace_id;
                   return (
                     <tr key={item.id ?? index}>
                       <td>
@@ -118,8 +119,8 @@ export function ObservabilityPage() {
                       <td><Time value={item.created_at} relativo /></td>
                       <td>{actuallySent ? <Time value={item.sent_at} relativo /> : <span className="muted" title="El servidor no informó hora de envío para este relay.">{NO_APLICA}</span>}</td>
                       <td>
-                        {typeof item.trace_id === 'string' && item.trace_id
-                          ? <button className="button small" type="button" onClick={() => investigate(item.trace_id!)} aria-label={`Ver la auditoría del trace ${item.trace_id}`}>
+                        {typeof traceId === 'string' && traceId.length > 0
+                          ? <button className="button small" type="button" onClick={() => { investigate(traceId); }} aria-label={`Ver la auditoría del trace ${traceId}`}>
                             <Search size={14} aria-hidden="true" />Ver auditoría
                           </button>
                           : <span className="muted">no hay traza que abrir</span>}

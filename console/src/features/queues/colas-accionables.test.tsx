@@ -17,14 +17,14 @@ function snapshotComoProduccion(): { observed_at: string; pending: number; retry
   const items: QueueItem[] = [];
   for (let indice = 0; indice < 31; indice += 1) {
     items.push({
-      delivery_id: `bien-${indice}`, message_id: `msg-bien-${indice}`, tenant_id: 'Steven',
+      delivery_id: `bien-${String(indice)}`, message_id: `msg-bien-${String(indice)}`, tenant_id: 'Steven',
       recipient_alias: indice % 2 === 0 ? 'kant' : 'argos', lane: 'interactive', state: 'done',
       attempts: 1, max_attempts: 5, available_at: '2026-08-23T02:00:00.000Z', last_error: null,
     });
   }
   for (let indice = 0; indice < 7; indice += 1) {
     items.push({
-      delivery_id: `muerta-${indice}`, message_id: `msg-muerta-${indice}`, tenant_id: 'Steven',
+      delivery_id: `muerta-${String(indice)}`, message_id: `msg-muerta-${String(indice)}`, tenant_id: 'Steven',
       recipient_alias: 'zeus', lane: 'interactive', state: indice === 6 ? 'failed' : 'dead',
       attempts: 5, max_attempts: 5, available_at: '2026-08-23T02:00:00.000Z',
       last_error: indice === 0 ? null : 'max attempts exhausted',
@@ -42,7 +42,7 @@ function filasDeLaTabla(): HTMLElement[] {
   return within(tabla).getAllByRole('row').slice(1);
 }
 
-afterEach(() => window.history.pushState({}, '', '/'));
+afterEach(() => { window.history.pushState({}, '', '/'); });
 
 // ---------------------------------------------------------------------------------------------
 // 1. LAS 7 QUE IMPORTAN
@@ -134,7 +134,9 @@ describe('la columna «Último error»', () => {
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const terminadaBien = screen.getByRole('row', { name: /bien-0/ });
-    const celda = within(terminadaBien).getAllByRole('cell').at(-2)!;
+    const celdas = within(terminadaBien).getAllByRole('cell');
+    const celda = celdas[celdas.length - 2];
+    expect(celda).toBeDefined();
     expect(celda).toHaveTextContent('sin error');
     // Y NO con la clase que pinta el ámbar de «el servidor no lo dijo».
     expect(celda.querySelector('.unknown')).toBeNull();
@@ -151,7 +153,9 @@ describe('la columna «Último error»', () => {
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const muertaSinMotivo = screen.getByRole('row', { name: /muerta-0/ });
-    const celda = within(muertaSinMotivo).getAllByRole('cell').at(-2)!;
+    const celdas = within(muertaSinMotivo).getAllByRole('cell');
+    const celda = celdas[celdas.length - 2];
+    expect(celda).toBeDefined();
     expect(celda.querySelector('.unknown')).not.toBeNull();
     expect(celda).not.toHaveTextContent('sin error');
 

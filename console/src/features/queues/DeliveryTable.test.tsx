@@ -149,7 +149,7 @@ it('keeps an uncertain replay locked until its deferred server reread is verifie
   expect(replayPosts).toBe(1);
 
   finishRefresh({ data: {} });
-  await waitFor(() => expect(replayButton).toBeEnabled());
+  await waitFor(() => { expect(replayButton).toBeEnabled(); });
   expect(screen.getByRole('status')).toHaveTextContent(/cola ya se releyó/i);
   expect(replayPosts).toBe(1);
 });

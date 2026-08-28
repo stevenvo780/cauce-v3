@@ -5,7 +5,7 @@ const LARGO_DESCRIPCION = 90;
 const vacia = (key: string) => ({ key, title: key, rows: [] });
 
 it('reparte las doce colecciones conocidas por área, sin perder ninguna', () => {
-  const colecciones = configCollections({ revision: 1, tenants: [], rooms: [] } as never);
+  const colecciones = configCollections({ revision: 1, tenants: [], rooms: [] });
   const repartidas = agruparPorArea(colecciones).flatMap((entrada) => entrada.colecciones.map((c) => c.key));
 
   // El agrupador no es un filtro: entra lo mismo que sale.
@@ -43,11 +43,11 @@ export function prosaDemasiadoLarga(areas: readonly ConfigArea[]): string[] {
   const fallos: string[] = [];
   for (const area of areas) {
     if (area.descripcion.length > LARGO_DESCRIPCION) {
-      fallos.push(`«${area.label}»: la descripción son ${area.descripcion.length} caracteres, el tope es ${LARGO_DESCRIPCION}`);
+      fallos.push(`«${area.label}»: la descripción son ${String(area.descripcion.length)} caracteres, el tope es ${String(LARGO_DESCRIPCION)}`);
     }
     // UNA frase. Dos puntos seguidos son dos frases, y la segunda es justo la que se relee de más.
     const frases = area.descripcion.split(/\.\s/).filter((parte) => parte.trim() !== '');
-    if (frases.length > 1) fallos.push(`«${area.label}»: la descripción son ${frases.length} frases, tiene que ser una`);
+    if (frases.length > 1) fallos.push(`«${area.label}»: la descripción son ${String(frases.length)} frases, tiene que ser una`);
     if (area.detalle.trim() === '') fallos.push(`«${area.label}»: no tiene detalle plegado`);
   }
   return fallos;

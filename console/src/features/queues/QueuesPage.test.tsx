@@ -52,7 +52,7 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
     return renderWithApi(<QueuesPage />);
   }
 
-  afterEach(() => window.history.pushState({}, '', '/'));
+  afterEach(() => { window.history.pushState({}, '', '/'); });
 
   it('filtra a la entrega pedida, la resalta y escribe su id completo', async () => {
     abrir('/queues?delivery=22222222-2222-4222-8222-222222222222');

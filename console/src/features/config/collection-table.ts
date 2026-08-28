@@ -57,7 +57,7 @@ export function identidadFundida(clave: string, fila: Record<string, unknown>): 
 
 export function esColumnaFundida(clave: string, columna: string): boolean {
   const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
-  return fusion !== undefined && fusion.clave === columna;
+  return fusion?.clave === columna;
 }
 
 export interface ColumnaTabla {
@@ -96,7 +96,7 @@ export const LARGO_DE_RESUMEN = 120;
  * «Rol»: cortar por la mitad un emoji dejaría un carácter roto en pantalla.
  */
 export function resumirTextoLargo(valor: string, largo: number = LARGO_DE_RESUMEN): string {
-  const puntos = [...valor];
+  const puntos = Array.from(valor);
   return puntos.length <= largo ? valor : `${puntos.slice(0, largo).join('')}…`;
 }
 
@@ -105,7 +105,7 @@ export function resumirTextoLargo(valor: string, largo: number = LARGO_DE_RESUME
  * publica no debe aparecer como una columna entera de UNKNOWN: eso no es un dato faltante fila por
  * fila, es una columna que este servidor no tiene.
  */
-export function columnasDe(clave: string, filas: ReadonlyArray<Record<string, unknown>>): ColumnaTabla[] {
+export function columnasDe(clave: string, filas: readonly Record<string, unknown>[]): ColumnaTabla[] {
   const fijas = COLUMNAS_FIJAS[clave] ?? [];
   const presentes = fijas.filter((campo) => filas.some((fila) => Object.hasOwn(fila, campo)));
   const extra: string[] = [];
@@ -115,13 +115,13 @@ export function columnasDe(clave: string, filas: ReadonlyArray<Record<string, un
     }
   }
   const fusion = Object.hasOwn(IDENTIDAD_FUNDIDA, clave) ? IDENTIDAD_FUNDIDA[clave] : undefined;
-  const fundir = fusion !== undefined && fusion.campos.every((campo) => presentes.includes(campo));
+  const fundir = Boolean(fusion?.campos.every((campo) => presentes.includes(campo)));
   const orden = fundir && fusion
     ? [fusion.clave, ...presentes.filter((campo) => !fusion.campos.includes(campo)), ...extra]
     : [...presentes, ...extra];
   return orden.map((campo) => ({
     clave: campo,
-    etiqueta: fundir && fusion && campo === fusion.clave
+    etiqueta: fundir && campo === fusion?.clave
       ? fusion.etiqueta
       : Object.hasOwn(ETIQUETAS, campo) ? ETIQUETAS[campo] : campo,
   }));
@@ -140,7 +140,7 @@ export function columnasDe(clave: string, filas: ReadonlyArray<Record<string, un
  * y un booleano en JavaScript no es un número pero sí lo parece si uno mira `typeof` con prisa.
  * Los nulos y las claves ausentes no cuentan: un `null` no desmiente que la columna sea numérica.
  */
-export function columnaNumerica(filas: ReadonlyArray<Record<string, unknown>>, columna: string): boolean {
+export function columnaNumerica(filas: readonly Record<string, unknown>[], columna: string): boolean {
   let vistos = 0;
   for (const fila of filas) {
     if (!Object.hasOwn(fila, columna)) continue;
@@ -176,7 +176,7 @@ const IDENTIDAD: Record<string, readonly string[]> = {
 export function claveDeFila(clave: string, fila: Record<string, unknown>, indice: number): string {
   const campos = IDENTIDAD[clave] ?? [];
   const partes = campos.map((campo) => texto(fila, campo)).filter((parte) => parte !== undefined);
-  return partes.length === campos.length && partes.length > 0 ? partes.join('/') : `fila-${indice}`;
+  return partes.length === campos.length && partes.length > 0 ? partes.join('/') : `fila-${String(indice)}`;
 }
 
 function texto(fila: Record<string, unknown>, campo: string): string | undefined {
@@ -251,7 +251,7 @@ export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionD
  * el rol actual haría que el selector mintiera sobre lo que la fila dice.
  */
 export function rolesDisponibles(
-  politicas: ReadonlyArray<Record<string, unknown>> | undefined,
+  politicas: readonly Record<string, unknown>[] | undefined,
   rolActual: string | undefined,
 ): string[] {
   const roles = (politicas ?? [])

@@ -21,7 +21,7 @@ export type ConfigChangeOutcome =
 export function textoRecarga(recarga: EstadoRecarga | undefined): string {
   if (!recarga) return '';
   return recarga.releido
-    ? ` Releído del servidor: las tablas de abajo están en la revisión ${recarga.revision ?? 'UNKNOWN'}.`
+    ? ` Releído del servidor: las tablas de abajo están en la revisión ${String(recarga.revision ?? 'UNKNOWN')}.`
     : ` PERO la relectura del snapshot NO llegó (${recarga.motivo}): las tablas de abajo pueden estar`
       + ' vencidas, usá «Actualizar» antes de seguir tocando.';
 }

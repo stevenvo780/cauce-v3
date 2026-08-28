@@ -73,16 +73,16 @@ describe('el elegir-modo del alta ya no es una segunda tira de pestañas', () =>
   it('el segmentado del alta no se dibuja igual que las pestañas de la página', () => {
     const tira = declaraciones(sinComentarios(PROPIA), '.config-tabs');
     const segmento = declaraciones(sinComentarios(PROPIA), '.alta-segmento');
-    expect(segmento['display'], '.alta-segmento no existe en la hoja').toBeDefined();
-    const firma = (d: Record<string, string>) => [d['padding'], d['border-radius'], d['display']].join('|');
+    expect(segmento.display, '.alta-segmento no existe en la hoja').toBeDefined();
+    const firma = (d: Record<string, string>) => [d.padding, d['border-radius'], d.display].join('|');
     expect(firma(segmento)).not.toBe(firma(tira));
-    expect(segmento['display']).toBe('inline-flex');
+    expect(segmento.display).toBe('inline-flex');
   });
 
   it('CONTROL NEGATIVO — detecta que el segmentado vuelva a copiar la forma de la tira', () => {
     const tira = declaraciones(sinComentarios(PROPIA), '.config-tabs');
-    const clonado = { padding: tira['padding'], 'border-radius': tira['border-radius'], display: tira['display'] };
-    const firma = (d: Record<string, string>) => [d['padding'], d['border-radius'], d['display']].join('|');
+    const clonado = { padding: tira.padding, 'border-radius': tira['border-radius'], display: tira.display };
+    const firma = (d: Record<string, string>) => [d.padding, d['border-radius'], d.display].join('|');
     expect(firma(clonado)).toBe(firma(tira));
   });
 });
@@ -104,15 +104,15 @@ describe('las columnas de números se alinean a la derecha', () => {
 describe('los párrafos de /config son párrafos', () => {
   it('un `<p class="muted">` vuelve a ser bloque dentro de la vista', () => {
     const regla = declaraciones(sinComentarios(PROPIA), 'p.muted');
-    expect(regla['display'], 'no hay regla para p.muted dentro de .config-pagina').toBe('block');
+    expect(regla.display, 'no hay regla para p.muted dentro de .config-pagina').toBe('block');
     expect(regla['max-width']).toBe('var(--medida)');
   });
 
   it('CONTROL NEGATIVO — `.muted` global sigue siendo inline-flex, que es lo que hay que tapar', () => {
-    expect(declaraciones(sinComentarios(GLOBAL), '.muted')['display']).toBe('inline-flex');
+    expect(declaraciones(sinComentarios(GLOBAL), '.muted').display).toBe('inline-flex');
     const roto = sinComentarios(PROPIA).replace(/p\.muted \{[^{}]*\}/, 'p.muted { color: red; }');
     expect(roto).not.toBe(sinComentarios(PROPIA));
-    expect(declaraciones(roto, 'p.muted')['display']).not.toBe('block');
+    expect(declaraciones(roto, 'p.muted').display).not.toBe('block');
   });
 });
 
@@ -126,7 +126,7 @@ describe('el interruptor le gana a la regla de casilla de la hoja global', () =>
       .exec(sinComentarios(GLOBAL));
     expect(ajeno, 'la regla de `width: auto` de styles.css ya no existe: revisá si hace falta esto').not.toBeNull();
 
-    expect(especificidad(propio![1])).toBeGreaterThan(especificidad('.config-area input[type="checkbox"]'));
+    expect(especificidad(propio?.[1] ?? '')).toBeGreaterThan(especificidad('.config-area input[type="checkbox"]'));
   });
 
   it('CONTROL NEGATIVO — el selector que estaba desplegado empata, y empatar es perder', () => {

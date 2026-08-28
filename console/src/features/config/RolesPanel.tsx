@@ -56,7 +56,7 @@ export function RolesPanel({ snapshot }: RolesPanelProps) {
     <>
       <Panel
         title="Roles en uso"
-        subtitle={`${catalogo.roles.length} texto(s) de rol repartidos entre ${catalogo.todos.length} bot(s) registrados`}
+        subtitle={`${String(catalogo.roles.length)} texto(s) de rol repartidos entre ${String(catalogo.todos.length)} bot(s) registrados`}
       >
         <p className="muted">
           Esta lista agrupa la proyección corta <code>agents.role_brief</code>. Es de sólo lectura:

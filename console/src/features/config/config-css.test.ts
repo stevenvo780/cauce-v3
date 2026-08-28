@@ -32,11 +32,11 @@ function variables(css: string): Map<string, string> {
 }
 
 function resolver(valor: string, vars: Map<string, string>): string {
-  const referencia = valor.match(/var\((--[\w-]+)\)/);
+  const referencia = /var\((--[\w-]+)\)/.exec(valor);
   if (!referencia) return valor;
   const resuelto = vars.get(referencia[1]);
   expect(resuelto, `${referencia[1]} no está definida en el modo claro`).toBeDefined();
-  return resuelto!;
+  return resuelto ?? '';
 }
 
 function canal(hex: string): number[] {
@@ -58,7 +58,7 @@ export function contraste(frente: string, fondo: string): number {
   return (Math.max(uno, otro) + 0.05) / (Math.min(uno, otro) + 0.05);
 }
 
-const PASTILLAS: ReadonlyArray<[string, string, string]> = [
+const PASTILLAS: readonly [string, string, string][] = [
   ['.badge-online', '--on-mint', '--mint-dim'],
   ['.badge-done', '--on-mint', '--mint-dim'],
   ['.badge-running', '--on-blue', '--blue-dim'],
@@ -77,8 +77,10 @@ describe('las pastillas de estado en modo claro', () => {
     expect(base.color, `${clase} no toma su color de un token`).toBe(`var(${token})`);
     const texto = vars.get(token);
     expect(texto, `${token} no está redefinido en el modo claro`).toBeDefined();
-    expect(contraste(texto!, resolver(fondo.startsWith('#') ? fondo : `var(${fondo})`, vars)))
-      .toBeGreaterThanOrEqual(4.5);
+    if (texto) {
+      expect(contraste(texto, resolver(fondo.startsWith('#') ? fondo : `var(${fondo})`, vars)))
+        .toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it('la pastilla es de un tamaño con el que se puede exigir contraste (>= 12px)', () => {
@@ -86,7 +88,9 @@ describe('las pastillas de estado en modo claro', () => {
     const escala = new Map(Object.entries(declaraciones(sinComentarios(GLOBAL), ':root')));
     const px = enPixeles(base['font-size'], escala);
     expect(px, `.badge { font-size: ${base['font-size']} } no resuelve a píxeles`).toBeDefined();
-    expect(px!).toBeGreaterThanOrEqual(12);
+    if (px !== undefined) {
+      expect(px).toBeGreaterThanOrEqual(12);
+    }
   });
 
   it('el medidor reprueba el par que estaba desplegado (#8ff0d3 sobre #d8f3ea)', () => {
@@ -98,7 +102,7 @@ describe('las pastillas de estado en modo claro', () => {
 describe('el texto del tema claro', () => {
   const claro = sinComentarios(bloqueClaro(sinComentarios(GLOBAL)));
   const vars = variables(claro);
-  const SOBRE: ReadonlyArray<[string, string, string]> = [
+  const SOBRE: readonly [string, string, string][] = [
     ['--faint', 'var(--surface-2)', 'cabeceras de columna (`th`) y `.muted`'],
     ['--text-2', 'var(--surface)', 'rótulos, botón secundario y el JSON de «Ver crudo»'],
   ];
@@ -106,7 +110,9 @@ describe('el texto del tema claro', () => {
   it.each(SOBRE)('%s se lee sobre %s (%s)', (que, fondo) => {
     const texto = vars.get(que);
     expect(texto, `${que} no está redefinido en el modo claro`).toBeDefined();
-    expect(contraste(resolver(texto!, vars), resolver(fondo, vars))).toBeGreaterThanOrEqual(4.5);
+    if (texto) {
+      expect(contraste(resolver(texto, vars), resolver(fondo, vars))).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it.each(['label', '.button.secondary', '.config-records code'])(
@@ -126,7 +132,13 @@ describe('el texto del tema claro', () => {
 
   it('`--faint` del tema OSCURO también llega a AA sobre la superficie del panel', () => {
     const oscuro = variables(sinComentarios(GLOBAL).slice(0, sinComentarios(GLOBAL).indexOf('@media')));
-    expect(contraste(oscuro.get('--faint')!, oscuro.get('--surface')!)).toBeGreaterThanOrEqual(4.5);
+    const faint = oscuro.get('--faint');
+    const surface = oscuro.get('--surface');
+    expect(faint).toBeDefined();
+    expect(surface).toBeDefined();
+    if (faint && surface) {
+      expect(contraste(faint, surface)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it('el medidor reprueba los tres colores que estaban desplegados', () => {
@@ -150,9 +162,11 @@ describe('el contenedor de las pestañas de /config', () => {
 
   it('deja el panel con `min-width: 0` para que el envoltorio de tabla pueda recortar', () => {
     expect(declaraciones(global, '.config-area')['grid-template-columns']).toBeDefined();
-    const panel = global.match(/\.config-area\s+\.panel\s*\{([^{}]*)\}/);
+    const panel = /\.config-area\s+\.panel\s*\{([^{}]*)\}/.exec(global);
     expect(panel, '.config-area .panel no existe').not.toBeNull();
-    expect(panel![1]).toMatch(/min-width\s*:\s*0/);
+    if (panel) {
+      expect(panel[1]).toMatch(/min-width\s*:\s*0/);
+    }
   });
 
   it('no está redefinido en la hoja propia de la vista', () => {
@@ -173,13 +187,14 @@ describe('las reglas `.config-*` de las hojas', () => {
     const clases = new Set<string>();
     const pendientes = [RAIZ];
     while (pendientes.length) {
-      const directorio = pendientes.pop()!;
+      const directorio = pendientes.pop();
+      if (!directorio) continue;
       for (const entrada of readdirSync(directorio, { withFileTypes: true })) {
         const ruta = join(directorio, entrada.name);
         if (entrada.isDirectory()) { pendientes.push(ruta); continue; }
         if (!entrada.name.endsWith('.tsx') || entrada.name.includes('.test.')) continue;
         for (const uso of readFileSync(ruta, 'utf8').matchAll(/className=(?:"([^"]*)"|\{`([^`$]*))/g)) {
-          for (const clase of (uso[1] ?? uso[2] ?? '').split(/\s+/)) if (clase) clases.add(clase);
+          for (const clase of (uso[1] || uso[2] || '').split(/\s+/)) if (clase) clases.add(clase);
         }
       }
     }
@@ -197,8 +212,8 @@ describe('las reglas `.config-*` de las hojas', () => {
   });
 });
 
-function tamanosDeLetra(css: string): Array<{ selector: string; valor: string }> {
-  const salida: Array<{ selector: string; valor: string }> = [];
+function tamanosDeLetra(css: string): { selector: string; valor: string }[] {
+  const salida: { selector: string; valor: string }[] = [];
   for (const regla of sinComentarios(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     for (const declaracion of regla[2].matchAll(/(?:^|;)\s*font-size\s*:\s*([^;]+)/g)) {
       salida.push({ selector: regla[1].trim().replace(/\s+/g, ' '), valor: declaracion[1].trim() });
@@ -227,7 +242,7 @@ export function enPixeles(valor: string, escala: Map<string, string>): number | 
 const SUELO = 12.5;
 const SUELO_CUERPO = 13;
 
-const EXCEPCIONES: ReadonlyArray<{ selector: string; valor: string }> = [
+const EXCEPCIONES: readonly { selector: string; valor: string }[] = [
   { selector: '.sidebar nav a', valor: '.6875rem' },
 ];
 
@@ -243,7 +258,7 @@ export function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[]
         fallos.push(`${selector} { font-size: ${valor} } no se sabe resolver a píxeles`);
         continue;
       }
-      if (px + 0.001 < suelo) fallos.push(`${selector} { font-size: ${valor} } = ${px}px, el suelo es ${suelo}px`);
+      if (px + 0.001 < suelo) fallos.push(`${selector} { font-size: ${valor} } = ${String(px)}px, el suelo es ${String(suelo)}px`);
     }
   }
   return fallos;
@@ -256,34 +271,42 @@ describe('la escala tipográfica de /config', () => {
     const pixeles = ESCALA.map((nombre) => {
       const bruto = escala.get(nombre);
       expect(bruto, `${nombre} no está declarada en el :root de styles.css`).toBeDefined();
-      const px = enPixeles(bruto!, escala);
-      expect(px, `${nombre} = ${bruto} no es un tamaño en píxeles`).toBeDefined();
-      return px!;
+      const px = bruto !== undefined ? enPixeles(bruto, escala) : undefined;
+      expect(px, `${nombre} = ${bruto ?? ''} no es un tamaño en píxeles`).toBeDefined();
+      return px ?? 0;
     });
     for (let i = 1; i < pixeles.length; i += 1) {
-      expect(pixeles[i], `${ESCALA[i]} (${pixeles[i]}px) no baja de ${ESCALA[i - 1]} (${pixeles[i - 1]}px)`)
+      expect(pixeles[i], `${ESCALA[i]} (${String(pixeles[i])}px) no baja de ${ESCALA[i - 1]} (${String(pixeles[i - 1])}px)`)
         .toBeLessThan(pixeles[i - 1]);
     }
   });
 
   it('el cuerpo y los rótulos no bajan de 13px, y el suelo de todo es 12,5px', () => {
-    expect(enPixeles(escala.get('--tipo-cuerpo')!, escala)).toBeGreaterThanOrEqual(SUELO_CUERPO);
-    expect(enPixeles(escala.get('--tipo-rotulo')!, escala)).toBeGreaterThanOrEqual(SUELO_CUERPO);
-    expect(enPixeles(escala.get('--tipo-apunte')!, escala)).toBeGreaterThanOrEqual(SUELO);
+    const cuerpo = enPixeles(escala.get('--tipo-cuerpo') ?? '', escala);
+    const rotulo = enPixeles(escala.get('--tipo-rotulo') ?? '', escala);
+    const apunte = enPixeles(escala.get('--tipo-apunte') ?? '', escala);
+    expect(cuerpo).toBeGreaterThanOrEqual(SUELO_CUERPO);
+    expect(rotulo).toBeGreaterThanOrEqual(SUELO_CUERPO);
+    expect(apunte).toBeGreaterThanOrEqual(SUELO);
   });
 
   it('el monoespaciado no se sale de la escala: ni más grande que el cuerpo ni por debajo del suelo', () => {
-    const mono = enPixeles(escala.get('--tipo-mono')!, escala);
+    const mono = enPixeles(escala.get('--tipo-mono') ?? '', escala);
+    const cuerpo = enPixeles(escala.get('--tipo-cuerpo') ?? '', escala);
     expect(mono, '--tipo-mono no está declarada').toBeDefined();
-    expect(mono!).toBeGreaterThanOrEqual(SUELO);
-    expect(mono!).toBeLessThanOrEqual(enPixeles(escala.get('--tipo-cuerpo')!, escala)!);
+    if (mono !== undefined && cuerpo !== undefined) {
+      expect(mono).toBeGreaterThanOrEqual(SUELO);
+      expect(mono).toBeLessThanOrEqual(cuerpo);
+    }
   });
 
   it('el título no puede volver a ser tres veces el cuerpo', () => {
-    const titulo = enPixeles(escala.get('--tipo-titulo')!, escala)!;
-    const cuerpo = enPixeles(escala.get('--tipo-cuerpo')!, escala)!;
-    expect(titulo / cuerpo).toBeLessThanOrEqual(3);
-    expect(titulo).toBeGreaterThan(cuerpo);
+    const titulo = enPixeles(escala.get('--tipo-titulo') ?? '', escala);
+    const cuerpo = enPixeles(escala.get('--tipo-cuerpo') ?? '', escala);
+    if (titulo !== undefined && cuerpo !== undefined) {
+      expect(titulo / cuerpo).toBeLessThanOrEqual(3);
+      expect(titulo).toBeGreaterThan(cuerpo);
+    }
   });
 
   it('ninguna regla de las hojas de /config declara letra por debajo del suelo', () => {
@@ -301,8 +324,10 @@ describe('la escala tipográfica de /config', () => {
 
   it('CONTROL NEGATIVO — una escala aplanada no es una escala', () => {
     const plana = variables(sinComentarios(GLOBAL.replace('--tipo-rotulo: 13px', '--tipo-rotulo: 14px')));
-    const cuerpo = enPixeles(plana.get('--tipo-cuerpo')!, plana)!;
-    const rotulo = enPixeles(plana.get('--tipo-rotulo')!, plana)!;
-    expect(rotulo).not.toBeLessThan(cuerpo);
+    const cuerpo = enPixeles(plana.get('--tipo-cuerpo') ?? '', plana);
+    const rotulo = enPixeles(plana.get('--tipo-rotulo') ?? '', plana);
+    if (rotulo !== undefined && cuerpo !== undefined) {
+      expect(rotulo).not.toBeLessThan(cuerpo);
+    }
   });
 });

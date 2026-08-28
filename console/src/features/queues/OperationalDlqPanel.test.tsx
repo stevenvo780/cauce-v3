@@ -64,7 +64,7 @@ it('renders only the safe DLQ projection and never leaks extra payload/error/pro
 });
 
 it('walks the opaque keyset cursor and appends older incidents without duplicating the first page', async () => {
-  const cursors: Array<string | null> = [];
+  const cursors: (string | null)[] = [];
   const older = {
     ...incident,
     id: '8b31b078-dd9f-4da2-8d1e-f4050965db84',
@@ -106,7 +106,7 @@ it('installs the first-page cursor in the same committed frame as its rows', asy
   const committedFrames: string[] = [];
 
   renderWithApi(
-    <Profiler id="dlq-first-page" onRender={() => committedFrames.push(document.body.textContent ?? '')}>
+    <Profiler id="dlq-first-page" onRender={() => committedFrames.push(document.body.textContent)}>
       <OperationalDlqPanel />
     </Profiler>,
   );
@@ -178,11 +178,11 @@ it('aborts and fences an old loadMore when a fresh first page starts', async () 
   renderWithApi(<OperationalDlqPanel />);
 
   await user.click(await screen.findByRole('button', { name: /cargar más/i }));
-  await waitFor(() => expect(loadMoreStarted).toBe(true));
+  await waitFor(() => { expect(loadMoreStarted).toBe(true); });
   await user.click(screen.getByRole('button', { name: /^actualizar$/i }));
 
   expect(await screen.findByText('Pablo')).toBeInTheDocument();
-  await waitFor(() => expect(loadMoreAborted).toBe(true));
+  await waitFor(() => { expect(loadMoreAborted).toBe(true); });
   expect(screen.queryByText('STALE-TENANT')).not.toBeInTheDocument();
   expect(firstPageReads).toBe(2);
 });
@@ -207,13 +207,13 @@ it('admits only one loadMore when two clicks arrive in the same render tick', as
     loadMore.click();
     loadMore.click();
   });
-  await waitFor(() => expect(loadMoreCalls).toBe(1));
+  await waitFor(() => { expect(loadMoreCalls).toBe(1); });
   expect(loadMore).toBeDisabled();
 
   finishLoadMore(HttpResponse.json({
     schemaVersion: 1, total: 2, truncated: false, nextCursor: null, items: [],
   }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: /cargar más/i })).not.toBeInTheDocument());
+  await waitFor(() => { expect(screen.queryByRole('button', { name: /cargar más/i })).not.toBeInTheDocument(); });
   expect(loadMoreCalls).toBe(1);
 });
 
@@ -244,10 +244,10 @@ it('aborts an in-flight loadMore on unmount and ignores its late response', asyn
   const view = renderWithApi(<OperationalDlqPanel />);
   await screen.findByText('Steven');
   await userEvent.click(screen.getByRole('button', { name: /cargar más/i }));
-  await waitFor(() => expect(loadMoreStarted).toBe(true));
+  await waitFor(() => { expect(loadMoreStarted).toBe(true); });
 
   view.unmount();
-  await waitFor(() => expect(loadMoreAborted).toBe(true));
+  await waitFor(() => { expect(loadMoreAborted).toBe(true); });
   expect(screen.queryByText('LATE-AFTER-UNMOUNT')).not.toBeInTheDocument();
 });
 
@@ -277,9 +277,9 @@ it('requires reason plus both uncertainty acknowledgements and sends an exact no
   await user.type(within(dialog).getByRole('textbox', { name: /motivo operativo/i }), 'Validación causal del operador');
   expect(submit).toBeDisabled();
   const checks = within(dialog).getAllByRole('checkbox');
-  await user.click(checks[0]!);
+  await user.click(checks[0]);
   expect(submit).toBeDisabled();
-  await user.click(checks[1]!);
+  await user.click(checks[1]);
   expect(submit).toBeEnabled();
   await user.click(submit);
 

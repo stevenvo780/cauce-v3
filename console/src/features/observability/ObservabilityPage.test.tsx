@@ -32,7 +32,7 @@ function observability(overrides: Record<string, unknown> = {}) {
   })));
 }
 
-function relays(items: Array<Record<string, unknown>>) {
+function relays(items: Record<string, unknown>[]) {
   server.use(http.get('*/v3/console/origin-relays', () => HttpResponse.json({ items })));
 }
 
@@ -54,7 +54,7 @@ it('/relays no da 404 ni cae al fallback: redirige a /observability', async () =
   renderWithApi(<App />);
 
   expect(await screen.findByRole('heading', { level: 1, name: /señales y auditoría/i })).toBeInTheDocument();
-  await waitFor(() => expect(window.location.pathname).toBe('/observability'));
+  await waitFor(() => { expect(window.location.pathname).toBe('/observability'); });
 });
 
 it('la tabla sale del endpoint con fachada, no del snapshot sin fachada', async () => {
@@ -78,11 +78,12 @@ it('conserva request_id, message_id y trace_id, que sólo estaban en el volcado 
 
   const row = (await screen.findByText(/relay-0001/)).closest('tr');
   expect(row).not.toBeNull();
-  expect(within(row!).getByText(/req-7f3c/)).toBeInTheDocument();
-  expect(within(row!).getByText(/trace-4c8f/)).toBeInTheDocument();
-  expect(within(row!).getByText(/msg-91ab/)).toBeInTheDocument();
-  expect(within(row!).getByText(/del-22de/)).toBeInTheDocument();
-  expect(within(row!).getByText('ENVIADO')).toBeInTheDocument();
+  if (!row) throw new Error('row not found');
+  expect(within(row).getByText(/req-7f3c/)).toBeInTheDocument();
+  expect(within(row).getByText(/trace-4c8f/)).toBeInTheDocument();
+  expect(within(row).getByText(/msg-91ab/)).toBeInTheDocument();
+  expect(within(row).getByText(/del-22de/)).toBeInTheDocument();
+  expect(within(row).getByText('ENVIADO')).toBeInTheDocument();
 });
 
 it('no presenta como enviado un relay que dice sent sin sent_at', async () => {
@@ -91,12 +92,13 @@ it('no presenta como enviado un relay que dice sent sin sent_at', async () => {
   renderWithApi(<ObservabilityPage />);
 
   const row = (await screen.findByText(/relay-0001/)).closest('tr');
+  if (!row) throw new Error('row not found');
   // Columna "Estado". `sent` sin `sent_at` NO es una ausencia de dato: es una CONTRADICCIÓN del
   // servidor, y decirle «sin dato» la escondería detrás del mismo gris que un campo que nunca
   // llegó. Se nombra lo que pasa, y sigue sin decir «enviado» a secas.
-  expect(row!.querySelectorAll('td')[4]).toHaveTextContent('DICE ENVIADO, SIN HORA');
-  expect(within(row!).queryByText('ENVIADO')).not.toBeInTheDocument();
-  expect(within(row!).queryByText('SENT')).not.toBeInTheDocument();
+  expect(row.querySelectorAll('td')[4]).toHaveTextContent('DICE ENVIADO, SIN HORA');
+  expect(within(row).queryByText('ENVIADO')).not.toBeInTheDocument();
+  expect(within(row).queryByText('SENT')).not.toBeInTheDocument();
 });
 
 it('mantiene las señales del gateway medidas en un mismo instante', async () => {
@@ -119,7 +121,7 @@ it('si fallan los relays, las señales siguen en pantalla y la falla se declara'
 });
 
 /** Eventos de auditoría cruzables contra el relay de arriba por su `trace_id`. */
-function audit(items: Array<Record<string, unknown>>) {
+function audit(items: Record<string, unknown>[]) {
   server.use(http.get('*/v3/console/audit', () => HttpResponse.json({ items })));
 }
 
@@ -149,8 +151,9 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
   expect(screen.getByText('Online')).toBeInTheDocument();
 
-  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section')!;
-  const texto = eventos.textContent ?? '';
+  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
+  if (!eventos) throw new Error('section not found');
+  const texto = eventos.textContent;
   // Cada campo que la vista vieja mostraba, uno por uno: acción, decisión, resumen, actor, tenant,
   // request, trace y fecha. Si alguno se cayó en la fusión, esto falla.
   expect(texto).toContain('delivery.replay');
@@ -188,9 +191,10 @@ it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', 
 
   // CONTROL NEGATIVO: el evento del OTRO trace tiene que quedar fuera. Sin él, un filtro que no
   // filtrara nada pasaría esta prueba igual, porque el evento correcto también estaría en pantalla.
-  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section')!;
-  expect(eventos.textContent ?? '').toContain('delivery.replay');
-  expect(eventos.textContent ?? '').not.toContain('config.write');
+  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
+  if (!eventos) throw new Error('section not found');
+  expect(eventos.textContent).toContain('delivery.replay');
+  expect(eventos.textContent).not.toContain('config.write');
 
   // Y el filtro se puede quitar sin salir de la pestaña.
   await user.click(screen.getByRole('button', { name: /quitar el filtro/i }));
@@ -223,9 +227,10 @@ it('ninguna fila de relay grita UNKNOWN, ni dice el mismo hecho dos veces', asyn
   relays([{ ...relay, request_id: null, trace_id: null, message_id: null }]);
   renderWithApi(<ObservabilityPage />);
 
-  const row = (await screen.findByText(/relay-0001/)).closest('tr')!;
+  const row = (await screen.findByText(/relay-0001/)).closest('tr');
+  if (!row) throw new Error('row not found');
   expect(row.textContent).not.toContain('UNKNOWN');
   // El hecho «no hay traza» se dice UNA vez, y en la columna donde importa (la de auditoría).
-  const menciones = (row.textContent ?? '').match(/traza/gi) ?? [];
+  const menciones = row.textContent.match(/traza/gi) ?? [];
   expect(menciones.length).toBeLessThanOrEqual(1);
 });

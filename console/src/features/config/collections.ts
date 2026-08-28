@@ -35,7 +35,7 @@ export interface ConfigCollection {
    * mismo que `[]` (cero filas conocidas). Un gateway anterior a una migración no publica su
    * tabla, y decir "sin registros" ahí sería mentir.
    */
-  rows?: Array<Record<string, unknown>>;
+  rows?: Record<string, unknown>[];
 }
 
 export function configCollections(snapshot: ConfigurationSnapshot | undefined): ConfigCollection[] {
@@ -51,7 +51,7 @@ export function configCollections(snapshot: ConfigurationSnapshot | undefined): 
     return {
       key,
       title: Object.hasOwn(COLLECTION_TITLES, key) ? COLLECTION_TITLES[key] : key,
-      ...(Array.isArray(rows) ? { rows: rows as Array<Record<string, unknown>> } : {}),
+      ...(Array.isArray(rows) ? { rows: rows as Record<string, unknown>[] } : {}),
     };
   });
 }

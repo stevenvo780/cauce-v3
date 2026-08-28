@@ -205,7 +205,7 @@ export function DeliveryTable({
             <button className="button primary" type="button" onClick={confirmar}>
               {pendiente.accion === 'replay' ? 'Sí, reinyectar' : 'Sí, cancelar la entrega'}
             </button>
-            <button className="button small secondary" type="button" onClick={() => setPendiente(undefined)}>
+            <button className="button small secondary" type="button" onClick={() => { setPendiente(undefined); }}>
               No hacer nada
             </button>
           </div>
@@ -242,7 +242,7 @@ export function DeliveryTable({
                       `title=` dice qué mandó el servidor. */}
                   <td data-label="Estado"><Badge tone={stateTone(state)}><Unknown
                     value={state ? ESTADO_ENTREGA[state] : undefined}
-                    motivo={item.state ? `El servidor mandó un estado que esta consola no conoce: ${String(item.state)}` : undefined}
+                    motivo={item.state ? `El servidor mandó un estado que esta consola no conoce: ${item.state}` : undefined}
                   /></Badge></td>
                   <td data-label="Intentos"><Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} /></td>
                   <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
@@ -260,11 +260,11 @@ export function DeliveryTable({
                   </td>
                   <td data-label="Acción">
                     {replayable ? (
-                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'replay', deliveryId, alias })} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
+                      <button className="button small" type="button" onClick={() => { setPendiente({ accion: 'replay', deliveryId, alias }); }} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
                         <RotateCcw size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : replayInFlight ? 'Enviando…' : 'Replay'}
                       </button>
                     ) : cancellable ? (
-                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'cancel', deliveryId, alias })} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
+                      <button className="button small" type="button" onClick={() => { setPendiente({ accion: 'cancel', deliveryId, alias }); }} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
                         <Ban size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : cancelInFlight ? 'Cancelando…' : 'Cancelar'}
                       </button>
                     ) : <span className="muted"><ArchiveX size={15} aria-hidden="true" /> No aplica</span>}

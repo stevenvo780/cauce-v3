@@ -117,15 +117,15 @@ export function QueuesPage() {
                 type="search"
                 value={filtro.texto}
                 placeholder="Alias, tenant, delivery id, message id o texto del error"
-                onChange={(evento) => setFiltro((previo) => ({ ...previo, texto: evento.target.value }))}
+                onChange={(evento) => { setFiltro((previo) => ({ ...previo, texto: evento.target.value })); }}
               />
             </label>
             <p className="queues-conteo" role="status">
               {filas.length === items.length
-                ? `${items.length} entregas en este snapshot.`
-                : `${filas.length} de ${items.length} entregas · ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` que dicen «${filtro.texto.trim()}»` : ''}.`}
+                ? `${String(items.length)} entregas en este snapshot.`
+                : `${String(filas.length)} de ${String(items.length)} entregas · ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` que dicen «${filtro.texto.trim()}»` : ''}.`}
               {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
-                <>{' '}<button type="button" className="button small secondary" onClick={() => setFiltro(FILTRO_VACIO)}>Quitar el filtro</button></>
+                <>{' '}<button type="button" className="button small secondary" onClick={() => { setFiltro(FILTRO_VACIO); }}>Quitar el filtro</button></>
               ) : null}
             </p>
           </div>
@@ -140,7 +140,7 @@ export function QueuesPage() {
           empty={foco.estado === 'ausente'
             ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
             : filas.length === 0 && items.length > 0
-              ? `Ninguna de las ${items.length} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
+              ? `Ninguna de las ${String(items.length)} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
               : 'No hay deliveries informadas.'}
         />
       </Panel>
@@ -185,7 +185,7 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
       type="button"
       aria-pressed={activo}
       disabled={bloqueado}
-      onClick={() => onElegir(grupo)}
+      onClick={() => { onElegir(grupo); }}
       title={bloqueado ? 'Hay un enlace profundo abierto: quitá el foco para filtrar' : `Ver ${ROTULO_DEL_GRUPO[grupo]}`}
     >
       <p>{etiqueta}</p>
@@ -199,7 +199,7 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
       {String(enPagina) !== cifra ? (
         <span
           className="metrica-en-pagina"
-          title={`El servidor cuenta ${cifra} en total; en esta página caben ${enPagina} porque el snapshot viene recortado por su LIMIT.`}
+          title={`El servidor cuenta ${cifra} en total; en esta página caben ${String(enPagina)} porque el snapshot viene recortado por su LIMIT.`}
         >{enPagina} acá · snapshot recortado</span>
       ) : null}
     </button>
@@ -208,7 +208,7 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
 
 function suscribirseAlHistorial(callback: () => void): () => void {
   window.addEventListener('popstate', callback);
-  return () => window.removeEventListener('popstate', callback);
+  return () => { window.removeEventListener('popstate', callback); };
 }
 
 /**

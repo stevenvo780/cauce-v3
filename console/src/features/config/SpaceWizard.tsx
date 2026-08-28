@@ -214,7 +214,7 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
     const falloLaRelectura = outcome.recarga !== undefined && !outcome.recarga.releido;
     setNotice({
       tone: falloLaRelectura ? 'parcial' : 'success',
-      text: `${stepTitles[pending.step]} aplicado en revisión ${outcome.result.revision ?? 'UNKNOWN'}.`
+      text: `${stepTitles[pending.step]} aplicado en revisión ${String(outcome.result.revision ?? 'UNKNOWN')}.`
         + textoRecarga(outcome.recarga),
     });
   }
@@ -222,35 +222,35 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
   return <Panel title="Wizard de espacios" subtitle="Cada paso pasa por dry-run y se aplica por separado, sobre el mismo change endpoint.">
     {encabezado}
     <div className="config-actions" role="group" aria-label="Pasos del wizard">
-      {wizardSteps.map((item, position) => <button key={item} type="button" className={`button small${item === step ? ' primary' : ''}`} onClick={() => setStep(item)}>
+      {wizardSteps.map((item, position) => <button key={item} type="button" className={`button small${item === step ? ' primary' : ''}`} onClick={() => { setStep(item); }}>
         {doneSteps.has(item) ? <CircleCheck size={14} aria-hidden="true" /> : null}{position + 1}. {stepTitles[item]}
       </button>)}
     </div>
 
     {step === 'tenant' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withTenant} onChange={(event) => edit({ withTenant: event.target.checked })} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
-      <label>Tenant id<input value={draft.tenantId} onChange={(event) => edit({ tenantId: event.target.value })} /></label>
-      <label>Display name <span className="label-hint">opcional</span><input value={draft.tenantLabel} onChange={(event) => edit({ tenantLabel: event.target.value })} /></label>
-      <label className="casilla"><input type="checkbox" checked={draft.tenantIsHub} onChange={(event) => edit({ tenantIsHub: event.target.checked })} /> Es hub</label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
+      <label>Tenant id<input value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
+      <label>Display name <span className="label-hint">opcional</span><input value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
+      <label className="casilla"><input type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es hub</label>
     </div> : null}
 
     {step === 'room' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withRoom} onChange={(event) => edit({ withRoom: event.target.checked })} /> Crear el room</label>
-      <label>Room id<input value={draft.roomId} onChange={(event) => edit({ roomId: event.target.value })} /></label>
-      <label>Display name <span className="label-hint">opcional</span><input value={draft.roomLabel} onChange={(event) => edit({ roomLabel: event.target.value })} /></label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear el room</label>
+      <label>Room id<input value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} /></label>
+      <label>Display name <span className="label-hint">opcional</span><input value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'membership' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withMembership} onChange={(event) => edit({ withMembership: event.target.checked })} /> Crear la membership</label>
-      <label>Alias<input value={draft.alias} onChange={(event) => edit({ alias: event.target.value })} /></label>
-      <label>Rol <span className="label-hint">route/read/control salen de role_policies</span><input value={draft.role} onChange={(event) => edit({ role: event.target.value })} /></label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
+      <label>Alias<input value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
+      <label>Rol <span className="label-hint">route/read/control salen de role_policies</span><input value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'harness' ? <div className="config-form">
-      <label className="config-json casilla"><input type="checkbox" checked={draft.withHarness} onChange={(event) => edit({ withHarness: event.target.checked })} /> Registrar el harness</label>
-      <label>Harness id<input value={draft.harnessId} onChange={(event) => edit({ harnessId: event.target.value })} /></label>
-      <label>Display name<input value={draft.harnessLabel} onChange={(event) => edit({ harnessLabel: event.target.value })} /></label>
-      <label>Capabilities <span className="label-hint">separadas por coma</span><input value={draft.harnessCapabilities} onChange={(event) => edit({ harnessCapabilities: event.target.value })} /></label>
+      <label className="config-json casilla"><input type="checkbox" checked={draft.withHarness} onChange={(event) => { edit({ withHarness: event.target.checked }); }} /> Registrar el harness</label>
+      <label>Harness id<input value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} /></label>
+      <label>Display name<input value={draft.harnessLabel} onChange={(event) => { edit({ harnessLabel: event.target.value }); }} /></label>
+      <label>Capabilities <span className="label-hint">separadas por coma</span><input value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
       {/* Dónde se fue «Command». Quitar un campo sin decirlo deja al operador buscándolo y creyendo
           que la pantalla se rompió; decir que no lo lee nadie contesta la pregunta de una vez. */}
       <p className="muted">
@@ -289,8 +289,8 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
     >{notice.text}</p> : null}
 
     {step === 'review' ? null : <div className="config-actions">
-      <button className="button small" type="button" disabled={index === 0} onClick={() => setStep(wizardSteps[index - 1])}><ArrowLeft size={14} aria-hidden="true" />Atrás</button>
-      <button className="button small" type="button" disabled={Boolean(invalid)} onClick={() => setStep(wizardSteps[index + 1])}>Siguiente<ArrowRight size={14} aria-hidden="true" /></button>
+      <button className="button small" type="button" disabled={index === 0} onClick={() => { setStep(wizardSteps[index - 1]); }}><ArrowLeft size={14} aria-hidden="true" />Atrás</button>
+      <button className="button small" type="button" disabled={Boolean(invalid)} onClick={() => { setStep(wizardSteps[index + 1]); }}>Siguiente<ArrowRight size={14} aria-hidden="true" /></button>
     </div>}
   </Panel>;
 }

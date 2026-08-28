@@ -39,7 +39,8 @@ export interface FocoDeEntrega {
  */
 export function leerEntregaPedida(search: string): string | undefined {
   const pedido = new URLSearchParams(search).get('delivery')?.trim();
-  return pedido ? pedido : undefined;
+  if (!pedido) return undefined;
+  return pedido;
 }
 
 export function enfocarEntrega(
