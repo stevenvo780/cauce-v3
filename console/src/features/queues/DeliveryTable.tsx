@@ -260,11 +260,11 @@ export function DeliveryTable({
                   </td>
                   <td data-label="Acción">
                     {replayable ? (
-                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'replay', deliveryId: deliveryId!, alias })} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
+                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'replay', deliveryId, alias })} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
                         <RotateCcw size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : replayInFlight ? 'Enviando…' : 'Replay'}
                       </button>
                     ) : cancellable ? (
-                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'cancel', deliveryId: deliveryId!, alias })} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
+                      <button className="button small" type="button" onClick={() => setPendiente({ accion: 'cancel', deliveryId, alias })} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
                         <Ban size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : cancelInFlight ? 'Cancelando…' : 'Cancelar'}
                       </button>
                     ) : <span className="muted"><ArchiveX size={15} aria-hidden="true" /> No aplica</span>}

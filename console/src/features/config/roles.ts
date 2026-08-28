@@ -53,7 +53,7 @@ export function claveDeAlias(entrada: AliasConRol): string {
  * dos roles idénticos y llevaría a «arreglar» una diferencia que no existe.
  */
 export function catalogoDeRoles(agentes: readonly Record<string, unknown>[] | null | undefined): CatalogoDeRoles {
-  if (!Array.isArray(agentes)) return { roles: [], sinRol: [], todos: [] };
+  if (!agentes) return { roles: [], sinRol: [], todos: [] };
   const porTexto = new Map<string, AliasConRol[]>();
   const sinRol: AliasConRol[] = [];
   const todos: AliasConRol[] = [];

@@ -132,7 +132,7 @@ export function instalarPtyDeMentira(): void {
       const lineas = [`[32mbanco de pruebas[0m ${cols}x${filas}`, regla];
       for (let i = lineas.length; i < filas; i += 1) lineas.push(`fila ${String(i + 1).padStart(3, '0')} ` + '·'.repeat(Math.max(0, cols - 12)));
       const bytes = new TextEncoder().encode(`[2J[H${lineas.join('\r\n')}`);
-      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       this.onmessage?.(new MessageEvent('message', { data: buffer }));
     }
 
@@ -161,9 +161,9 @@ export function instalarPtyDeMentira(): void {
    * una sola señal de que eso había pasado.
    */
   const Fachada = new Proxy(Original, {
-    construct(objetivo, argumentos: [string, ...unknown[]]) {
+    construct(objetivo, argumentos: [string, ...unknown[]]): WebSocket {
       const url = String(argumentos[0] ?? '');
-      if (!url.includes('/console/terminal/stream')) return Reflect.construct(objetivo, argumentos);
+      if (!url.includes('/console/terminal/stream')) return Reflect.construct(objetivo, argumentos) as WebSocket;
       return new PtyFalsa(url) as unknown as WebSocket;
     },
   });

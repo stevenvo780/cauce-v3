@@ -23,7 +23,7 @@ Object.defineProperties(globalThis, {
  * es una prueba: este relleno es lo que le devuelve la capacidad de fallar.
  */
 if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
-  window.matchMedia = ((query: string) => ({
+  window.matchMedia = (query: string): MediaQueryList => ({
     matches: false,
     media: query,
     onchange: null,
@@ -32,7 +32,7 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
     addListener: () => undefined,
     removeListener: () => undefined,
     dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
+  });
 }
 
 /*

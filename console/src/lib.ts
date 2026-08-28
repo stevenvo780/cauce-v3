@@ -21,8 +21,10 @@ import type {
 export function display(value: unknown): string {
   if (value === null || value === undefined || value === '') return UNKNOWN;
   if (typeof value === 'boolean') return value ? 'Sí' : 'No';
-  if (typeof value === 'number' && !Number.isFinite(value)) return UNKNOWN;
-  return String(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : UNKNOWN;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return '';
 }
 
 /**
@@ -137,5 +139,5 @@ export function safeAuditDecision(value: unknown): 'allow' | 'deny' | 'info' | u
 }
 
 function oneOf<const T extends readonly string[]>(value: unknown, allowed: T): T[number] | undefined {
-  return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? value as T[number] : undefined;
+  return typeof value === 'string' && allowed.includes(value) ? value : undefined;
 }

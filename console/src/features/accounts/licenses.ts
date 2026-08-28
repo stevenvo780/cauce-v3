@@ -90,7 +90,7 @@ export function freshness(
   }
 
   if (collector.stale === true) {
-    const ageSeconds = (collector.age_seconds ?? null) as number | null;
+    const ageSeconds = collector.age_seconds ?? null;
     /*
      * `age_seconds` ya es la antigüedad de la muestra: negarlo imprimía "caduco hace -1h 29m", un
      * tiempo negativo hacia el pasado que no significa nada. Visto en pantalla contra la columna
@@ -107,7 +107,7 @@ export function freshness(
   }
 
   const staleThresholdSeconds = thresholds?.stale_after_seconds ?? 300;
-  const ageSecondsValue = (collector.age_seconds ?? null) as number | null;
+  const ageSecondsValue = collector.age_seconds ?? null;
   if (ageSecondsValue !== null && ageSecondsValue > staleThresholdSeconds) {
     const ageLabel = `sin datos hace ${formatDurationSeconds(ageSecondsValue)}`;
     return {
@@ -417,7 +417,7 @@ export function formatResetIn(seconds: unknown): string {
 
 export function extractProviderAccounts(config: ConfigurationSnapshot | null | undefined): ProviderAccount[] {
   if (!config?.provider_accounts) return [];
-  return (config.provider_accounts as Array<Record<string, unknown>>).map((raw) => ({
+  return config.provider_accounts.map((raw) => ({
     id: (raw.id ?? '') as string,
     provider: (raw.provider ?? null) as string | null,
     payer_tenant_id: (raw.payer_tenant_id ?? null) as string | null,
@@ -433,7 +433,7 @@ export function extractProviderAccounts(config: ConfigurationSnapshot | null | u
 
 export function extractAgents(config: ConfigurationSnapshot | null | undefined): Agent[] {
   if (!config?.agents) return [];
-  return (config.agents as Array<Record<string, unknown>>).map((raw) => ({
+  return config.agents.map((raw) => ({
     tenant_id: (raw.tenant_id ?? null) as string | null,
     alias: (raw.alias ?? null) as string | null,
     harness_id: (raw.harness_id ?? null) as string | null,
@@ -445,7 +445,7 @@ export function extractAgents(config: ConfigurationSnapshot | null | undefined):
 
 export function extractBindings(config: ConfigurationSnapshot | null | undefined): AgentAccountBinding[] {
   if (!config?.agent_account_bindings) return [];
-  return (config.agent_account_bindings as Array<Record<string, unknown>>).map((raw) => ({
+  return config.agent_account_bindings.map((raw) => ({
     tenant_id: (raw.tenant_id ?? null) as string | null,
     agent_alias: (raw.agent_alias ?? null) as string | null,
     account_id: (raw.account_id ?? null) as string | null,
@@ -456,7 +456,7 @@ export function extractBindings(config: ConfigurationSnapshot | null | undefined
 
 export function extractCeiling(config: ConfigurationSnapshot | null | undefined): AliasRoutingCeiling[] {
   if (!config?.alias_routing_ceiling) return [];
-  return (config.alias_routing_ceiling as Array<Record<string, unknown>>).map((raw) => ({
+  return config.alias_routing_ceiling.map((raw) => ({
     tenant_id: (raw.tenant_id ?? null) as string | null,
     alias: (raw.alias ?? null) as string | null,
     account_id: (raw.account_id ?? null) as string | null,

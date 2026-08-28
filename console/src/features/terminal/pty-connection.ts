@@ -118,7 +118,7 @@ export function handleControlFrame(
     return;
   }
   publish({
-    notices: [...entry.view.notices, { level: 'warn', message: `El relay mandó una trama de control que esta consola no conoce: ${String(payload.type ?? 'sin tipo')}` }],
+    notices: [...entry.view.notices, { level: 'warn', message: `El relay mandó una trama de control que esta consola no conoce: ${typeof payload.type === 'string' ? payload.type : 'sin tipo'}` }],
   });
 }
 

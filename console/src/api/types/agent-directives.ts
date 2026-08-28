@@ -9,7 +9,7 @@
 export interface AgentDirectiveFile {
   path?: string | null;
   /** `user` = `~/.claude/CLAUDE.md`; `workspace` = `~/CLAUDE.md` o `/workspace/CLAUDE.md`. */
-  scope?: 'user' | 'workspace' | string | null;
+  scope?: 'user' | 'workspace' | (string & {}) | null;
   /** Orden medido: Codex aplica precedencia; Claude lo expone sólo como orden de carga. */
   precedence?: number | null;
   /** Huella real para detectar manuales duplicados aunque el texto visible esté truncado. */
@@ -22,7 +22,7 @@ export interface AgentDirectiveFile {
   truncated?: boolean | null;
   error?:
     | 'permission_denied' | 'invalid_path' | 'symlink_detected' | 'too_large'
-    | 'timeout' | 'cancelled' | 'busy' | 'unavailable' | 'unknown' | string | null;
+    | 'timeout' | 'cancelled' | 'busy' | 'unavailable' | 'unknown' | (string & {}) | null;
   reason?: string | null;
 }
 
@@ -148,8 +148,8 @@ export interface AgentDirective {
   observed_at?: string | null;
   container_id?: string | null;
   files?: AgentDirectiveFile[] | null;
-  manual_order?: 'codex_precedence' | 'claude_load_order' | 'workspace_only' | string | null;
-  context_coverage?: 'standard_manuals' | string | null;
+  manual_order?: 'codex_precedence' | 'claude_load_order' | 'workspace_only' | (string & {}) | null;
+  context_coverage?: 'standard_manuals' | (string & {}) | null;
   context_limitations?: string[] | null;
   memory?: AgentMemoryIndex | null;
 }
