@@ -84,11 +84,11 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
         <label className="messenger-search">
           <span className="sr-only">Buscar agente</span>
           <Search size={15} aria-hidden="true" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar agente…" />
+          <input value={query} onChange={(event) => { setQuery(event.target.value); }} placeholder="Buscar agente…" />
         </label>
         <label className="messenger-tenant-filter">
           <span><Filter size={12} aria-hidden="true" /> Cliente</span>
-          <select value={tenantId} onChange={(event) => setTenantId(event.target.value)}>
+          <select value={tenantId} onChange={(event) => { setTenantId(event.target.value); }}>
             <option value="all">Todos</option>
             {tenants.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
           </select>
@@ -122,7 +122,7 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
                   data-state={agent.leaseState}
                   data-active={activeAgentId === agent.id || undefined}
                   data-attention={colaNecesitaAtencion(salud[agent.id]) || undefined}
-                  onClick={() => onSelect(agent)}
+                  onClick={() => { onSelect(agent); }}
                   aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${agent.leaseState}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
                   aria-current={activeAgentId === agent.id ? 'true' : undefined}
                 >

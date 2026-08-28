@@ -28,8 +28,8 @@ function sinComentarios(css: string): string {
  */
 export function defectosDelCompositorAnclado(mensajes: string, global: string): string[] {
   const defectos: string[] = [];
-  const estrecho = bloqueMedia(mensajes, `@media (max-width: ${CORTE_ESTRECHO}px)`);
-  if (!estrecho) return [`no hay bloque @media (max-width: ${CORTE_ESTRECHO}px) en messages.css`];
+  const estrecho = bloqueMedia(mensajes, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
+  if (!estrecho) return [`no hay bloque @media (max-width: ${String(CORTE_ESTRECHO)}px) en messages.css`];
 
   const compositor = declaraciones(estrecho, '.messenger-composer');
   /*
@@ -59,7 +59,7 @@ export function defectosDelCompositorAnclado(mensajes: string, global: string): 
    * vuelve fija abajo. Anclar a 0 —o a un 66 que un día deje de ser 66— mete el botón «Enviar»
    * debajo del menú, que es peor que el defecto que se venía a arreglar.
    */
-  const navegacion = declaraciones(bloqueMedia(global, `@media (max-width: ${CORTE_ESTRECHO}px)`), '.sidebar');
+  const navegacion = declaraciones(bloqueMedia(global, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`), '.sidebar');
   const alturaNav = valor(navegacion, 'height');
   const posicionNav = valor(navegacion, 'position');
   if (posicionNav !== 'fixed' || !alturaNav) {
@@ -138,7 +138,7 @@ describe('el compositor de /messages en pantalla estrecha', () => {
   });
 
   it('el roster se encoge a conmutador cuando hay conversación abierta, y sólo entonces', () => {
-    const estrecho = bloqueMedia(MENSAJES_CSS, `@media (max-width: ${CORTE_ESTRECHO}px)`);
+    const estrecho = bloqueMedia(MENSAJES_CSS, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
     // Sin conversación abierta el roster ES el contenido y conserva sus 300 px.
     expect(valor(declaraciones(estrecho, '.messenger-agent-list'), 'max-height')).toBe('300px');
     expect(estrecho).toContain('.messenger-shell[data-conversacion="abierta"] .messenger-agent-list');
@@ -216,8 +216,8 @@ export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
  */
 export function defectosDeLaCabeceraEstrecha(mensajes: string): string[] {
   const defectos: string[] = [];
-  const estrecho = bloqueMedia(mensajes, `@media (max-width: ${CORTE_ESTRECHO}px)`);
-  if (!estrecho) return [`no hay bloque @media (max-width: ${CORTE_ESTRECHO}px) en messages.css`];
+  const estrecho = bloqueMedia(mensajes, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
+  if (!estrecho) return [`no hay bloque @media (max-width: ${String(CORTE_ESTRECHO)}px) en messages.css`];
 
   if (valor(declaraciones(estrecho, '.messenger-thread-head'), 'flex-direction') !== 'column') {
     defectos.push(

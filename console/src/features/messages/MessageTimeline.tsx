@@ -6,7 +6,7 @@ const ordered = ['published', 'accepted', 'started'] as const;
 export function MessageTimeline({ events = [] }: { events?: TimelineEvent[] | null }) {
   const safeEvents = events ?? [];
   const terminal = safeEvents.find((event) => event.status === 'done' || event.status === 'failed');
-  const steps: Array<{ label: string; event?: TimelineEvent }> = [
+  const steps: { label: string; event?: TimelineEvent }[] = [
     ...ordered.map((status) => ({ label: status, event: safeEvents.find((event) => event.status === status) })),
     { label: terminal?.status ?? 'done / failed', event: terminal },
   ];

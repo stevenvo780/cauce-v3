@@ -99,7 +99,7 @@ it('🔴 sin un solo clic NINGUNA burbuja queda marcada como seleccionada', asyn
   renderWithApi(<MessagesPage />);
 
   const hilo = await abrirArgos(user);
-  await waitFor(() => expect(burbujas(hilo)).toHaveLength(3));
+  await waitFor(() => { expect(burbujas(hilo)).toHaveLength(3); });
 
   // El defecto medido: dos de las tres burbujas —las que no tienen entrega— salían con
   // `data-selected="true"` porque `undefined === undefined`.
@@ -174,12 +174,12 @@ it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nad
  * sobre qué caja, y con qué destino.
  */
 function espiarDesplazamiento(alto = 10_976) {
-  const llamadas: Array<{ caja: Element; top: number }> = [];
+  const llamadas: { caja: Element; top: number }[] = [];
   Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get() { return alto; } });
   Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get() { return 477; } });
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
     configurable: true, writable: true,
-    value(this: Element, opciones: { top?: number }) { llamadas.push({ caja: this, top: opciones?.top ?? -1 }); },
+    value(this: Element, opciones: { top?: number }) { llamadas.push({ caja: this, top: opciones.top ?? -1 }); },
   });
   return llamadas;
 }
@@ -194,7 +194,7 @@ it('🔴 abre la conversación por el FINAL, no por el mensaje más viejo', asyn
   const caja = hilo.querySelector('.messenger-thread-scroll');
   expect(caja).not.toBeNull();
 
-  await waitFor(() => expect(llamadas.some((llamada) => llamada.caja === caja)).toBe(true));
+  await waitFor(() => { expect(llamadas.some((llamada) => llamada.caja === caja)).toBe(true); });
   // El destino es el fondo del hilo: los 10.976 px que había que arrastrar a mano.
   expect(llamadas.filter((llamada) => llamada.caja === caja).at(-1)?.top).toBe(10_976);
 }, 25_000);
@@ -206,7 +206,8 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
   renderWithApi(<MessagesPage />);
 
   const hilo = await abrirArgos(user);
-  const caja = hilo.querySelector<HTMLElement>('.messenger-thread-scroll')!;
+  const caja = hilo.querySelector<HTMLElement>('.messenger-thread-scroll');
+  if (!caja) throw new Error('Missing .messenger-thread-scroll');
 
   // Pegado al final no hay botón: sería un control que no lleva a ningún sitio.
   expect(within(hilo).queryByRole('button', { name: /ir al último/i })).toBeNull();
@@ -231,12 +232,12 @@ it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', asyn
 
   const hilo = await abrirArgos(user);
   const recortada = await waitFor(() => {
-    const encontrada = burbujas(hilo).find((burbuja) => burbuja.textContent?.includes(RECORTADO));
+    const encontrada = burbujas(hilo).find((burbuja) => burbuja.textContent.includes(RECORTADO));
     if (!encontrada) throw new Error('todavía no está la burbuja');
     return encontrada;
   });
 
-  expect(recortada).toHaveTextContent(new RegExp(`sólo los primeros ${CARACTERES_DE_PREVISUALIZACION} caracteres`, 'i'));
+  expect(recortada).toHaveTextContent(new RegExp(`sólo los primeros ${String(CARACTERES_DE_PREVISUALIZACION)} caracteres`, 'i'));
   // Y el corte se ve en el propio texto: antes terminaba en seco, a mitad de palabra.
   expect(recortada.querySelector('p')?.textContent).toBe(`${RECORTADO}…`);
 }, 25_000);
@@ -255,9 +256,9 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
-  await waitFor(() => expect(pedido).toBe('cccccccc-3333-4333-8333-333333333333'));
+  await waitFor(() => { expect(pedido).toBe('cccccccc-3333-4333-8333-333333333333'); });
   const cuerpo = within(detalle).getByLabelText('Cuerpo del mensaje');
-  await waitFor(() => expect(cuerpo.querySelector('pre')?.textContent).toBe(CUERPO_LARGO));
+  await waitFor(() => { expect(cuerpo.querySelector('pre')?.textContent).toBe(CUERPO_LARGO); });
 }, 25_000);
 
 /**

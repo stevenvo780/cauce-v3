@@ -52,7 +52,6 @@ function exactReconciliationReceipt(
     receipt: cause.reconciliation.receipt,
   };
   return exactPreparedPublishIntent(candidate, expectedDeliveries, publisherSubject)
-    && candidate.state === 'committed'
     ? candidate.receipt
     : undefined;
 }
@@ -157,10 +156,6 @@ export async function publishDurably({
         );
       }
     }
-  }
-
-  if (receipt === undefined) {
-    throw new Error('El gateway no devolvió un recibo durable exacto.');
   }
 
   let journalStatus: DurablePublishOutcome['journalStatus'] = 'pending';

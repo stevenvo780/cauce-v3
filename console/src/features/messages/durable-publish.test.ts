@@ -79,7 +79,7 @@ describe('durable console publish', () => {
   });
 
   it('retries a lost prepare response once with the same ephemeral submit nonce', async () => {
-    const preparePublishIntent = vi.fn()
+    const preparePublishIntent = vi.fn<PublishApi['preparePublishIntent']>()
       .mockRejectedValueOnce(new TypeError('connection lost'))
       .mockResolvedValueOnce({
         version: 1, state: 'prepared', idempotency_key: key, receipt: null,
@@ -116,7 +116,7 @@ describe('durable console publish', () => {
         idempotency_key: candidate.idempotency_key,
       };
     });
-    const confirmPublishIntent = vi.fn(async (candidate) => ({
+    const confirmPublishIntent = vi.fn<PublishApi['confirmPublishIntent']>(async (candidate) => ({
       version: 1 as const, confirmed: true as const, ...candidate,
     }));
     const api = apiWith({ preparePublishIntent, publishMessage, confirmPublishIntent });

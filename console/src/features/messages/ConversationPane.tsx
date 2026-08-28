@@ -1,5 +1,5 @@
 import { ArrowDownToLine, ChevronDown, CircleOff, DoorClosed, LockKeyhole, RefreshCw, Send, TerminalSquare } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent, type KeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
@@ -106,7 +106,7 @@ export function ConversationPane({
     const compositor = compositorRef.current;
     if (!hilo || !compositor) return;
     const anotar = () => {
-      hilo.style.setProperty(VAR_ALTO_COMPOSITOR, `${Math.ceil(compositor.getBoundingClientRect().height)}px`);
+      hilo.style.setProperty(VAR_ALTO_COMPOSITOR, `${String(Math.ceil(compositor.getBoundingClientRect().height))}px`);
     };
     anotar();
     // jsdom no trae `ResizeObserver`, y tampoco lo traen navegadores viejos. Sin observador queda
@@ -114,7 +114,7 @@ export function ConversationPane({
     if (typeof ResizeObserver !== 'function') return;
     const observador = new ResizeObserver(anotar);
     observador.observe(compositor);
-    return () => observador.disconnect();
+    return () => { observador.disconnect(); };
   }, []);
 
   /*
@@ -191,7 +191,7 @@ export function ConversationPane({
     }
   }, [api]);
 
-  async function enviar(event: FormEvent<HTMLFormElement>) {
+  async function enviar(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const texto = draft.trim();
     if (!puedeEnviar || !texto) return;
@@ -268,7 +268,7 @@ export function ConversationPane({
           <a
             className="button small secondary"
             href={rutaDeTui(agent)}
-            onClick={(event) => onNavClick(event, rutaDeTui(agent))}
+            onClick={(event) => { onNavClick(event, rutaDeTui(agent)); }}
             title={`Abrir la terminal de ${agent.alias} (feed durable y PTY cuando el servidor lo declara)`}
           ><TerminalSquare size={14} aria-hidden="true" /> Abrir TUI</a>
           <button className="button small secondary" type="button" onClick={onReload} disabled={loading}>
@@ -297,8 +297,8 @@ export function ConversationPane({
       <div className="messenger-thread-scroll" ref={cajaRef} onScroll={alDesplazar}>
         <p className="messenger-window-note" data-truncated={totalVisible >= LIMITE_MENSAJES || undefined}>
           {totalVisible >= LIMITE_MENSAJES
-            ? `Ventana llena: el servidor devuelve como máximo ${LIMITE_MENSAJES} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.`
-            : `Hilo filtrado sobre los ${totalVisible} mensajes que el servidor publica para tu identidad (tope ${LIMITE_MENSAJES}, sin filtro por par).`}
+            ? `Ventana llena: el servidor devuelve como máximo ${String(LIMITE_MENSAJES)} mensajes de TODA la flota y este hilo se filtra sobre ellos. Puede haber historia anterior que no entra.`
+            : `Hilo filtrado sobre los ${String(totalVisible)} mensajes que el servidor publica para tu identidad (tope ${String(LIMITE_MENSAJES)}, sin filtro por par).`}
         </p>
         {error && !page ? (
           <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
@@ -320,9 +320,9 @@ export function ConversationPane({
       */}
       {!pegado && hilo.length > 0 ? (
         <div className="messenger-al-final">
-          <button className="button small" type="button" onClick={() => alFinal(true)}>
+          <button className="button small" type="button" onClick={() => { alFinal(true); }}>
             <ArrowDownToLine size={14} aria-hidden="true" />
-            {nuevosSinVer > 0 ? `Ir al último · ${nuevosSinVer} nuevo${nuevosSinVer === 1 ? '' : 's'}` : 'Ir al último'}
+            {nuevosSinVer > 0 ? `Ir al último · ${String(nuevosSinVer)} nuevo${nuevosSinVer === 1 ? '' : 's'}` : 'Ir al último'}
           </button>
         </div>
       ) : null}
@@ -333,7 +333,7 @@ export function ConversationPane({
           role="group"
           aria-label="Detalle del mensaje seleccionado"
           open={detalleAbierto}
-          onToggle={(evento) => setDetalleAbierto(evento.currentTarget.open)}
+          onToggle={(evento) => { setDetalleAbierto(evento.currentTarget.open); }}
         >
           <summary className="messenger-detalle-origen">
             {elegidoPorElOperador
@@ -421,7 +421,7 @@ export function ConversationPane({
         {route.sourceRoomIds.length > 1 ? (
           <label className="messenger-room-select">Room de origen
             <span className="room-select-wrap">
-              <select value={roomOrigen} onChange={(event) => setRoomElegido(event.target.value)}>
+              <select value={roomOrigen} onChange={(event) => { setRoomElegido(event.target.value); }}>
                 {route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>)}
               </select>
               <ChevronDown size={14} aria-hidden="true" />
@@ -435,7 +435,7 @@ export function ConversationPane({
             <select
               id={`messenger-lane-${agent.id}`}
               value={lane}
-              onChange={(event) => setLane(event.target.value === 'batch' ? 'batch' : 'interactive')}
+              onChange={(event) => { setLane(event.target.value === 'batch' ? 'batch' : 'interactive'); }}
             >
               <option value="interactive">Interactive · prioridad 10</option>
               <option value="batch">Batch · prioridad 0</option>
@@ -446,7 +446,7 @@ export function ConversationPane({
         <textarea
           id={`messenger-input-${agent.id}`}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => { setDraft(event.target.value); }}
           onKeyDown={teclaDelCompositor}
           rows={3}
           maxLength={8_000}

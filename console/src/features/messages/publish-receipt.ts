@@ -97,7 +97,7 @@ export function exactConfirmedPublishIntent(
 ): value is ConfirmPublishIntentResult {
   if (value === null || typeof value !== 'object' || Array.isArray(value)
       || !exactKeys(value, EXACT_CONFIRM_KEYS)) return false;
-  const result = value as ConfirmPublishIntentResult;
+  const result = value as Record<string, unknown>;
   return result.version === 1
     && result.confirmed === true
     && result.idempotency_key === receipt.idempotency_key

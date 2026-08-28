@@ -80,7 +80,7 @@ export function saludDeColaPorAgente(
   const mapa = new Map<string, SaludDeCola>();
 
   for (const agente of activity?.agents ?? []) {
-    if (!agente?.tenant_id || !agente.alias) continue;
+    if (!agente.tenant_id || !agente.alias) continue;
     const salud = entrada(mapa, fleetAgentId(agente.tenant_id, agente.alias));
     salud.pendientes = cifra(agente.queued);
     salud.enCurso = cifra(agente.in_flight);
@@ -94,7 +94,7 @@ export function saludDeColaPorAgente(
   // o 4.000, así que a partir de ahí todo recuento derivado es un piso.
   const truncado = filas.length >= LIMITE_COLA;
   for (const fila of filas) {
-    if (!fila?.tenant_id || !fila.recipient_alias) continue;
+    if (!fila.tenant_id || !fila.recipient_alias) continue;
     const salud = entrada(mapa, fleetAgentId(fila.tenant_id, fila.recipient_alias));
     if (fila.state === 'dead' || fila.state === 'failed') salud.muertas = (salud.muertas ?? 0) + 1;
   }
@@ -112,7 +112,7 @@ export function saludDeColaPorAgente(
 
 /** Un agente «pide atención» si tiene entregas muertas o en reintento. En vuelo NO es alarma. */
 export function colaNecesitaAtencion(salud: SaludDeCola | undefined): boolean {
-  return Boolean((salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0);
+  return (salud?.muertas ?? 0) > 0 || (salud?.reintentos ?? 0) > 0;
 }
 
 /**

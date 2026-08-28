@@ -105,9 +105,9 @@ describe('saludDeColaPorAgente', () => {
    * que a partir del techo cualquier recuento es un piso. Con 199 filas la marca tiene que estar
    * apagada: si estuviera siempre encendida, el aviso no distinguiría nada y sería ruido.
    */
-  it(`marca truncado exactamente al llegar al techo de ${LIMITE_COLA} filas`, () => {
+  it(`marca truncado exactamente al llegar al techo de ${String(LIMITE_COLA)} filas`, () => {
     const fila = (indice: number, state: QueueItem['state']) => filaDeCola({
-      delivery_id: `d-${indice}`, tenant_id: 'Steven', recipient_alias: 'argos', state,
+      delivery_id: `d-${String(indice)}`, tenant_id: 'Steven', recipient_alias: 'argos', state,
     });
     const alTecho = Array.from({ length: LIMITE_COLA }, (_, indice) => fila(indice, indice === 0 ? 'dead' : 'pending'));
     const debajo = alTecho.slice(0, LIMITE_COLA - 1);

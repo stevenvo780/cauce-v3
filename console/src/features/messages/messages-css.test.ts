@@ -60,7 +60,7 @@ function clasesUsadas(): Map<string, string> {
     // Sólo los `className` literales. Los compuestos por plantilla llevan su parte fija adelante
     // (`messenger-avatar ${...}`) y esa parte sí se comprueba.
     for (const coincidencia of fuente.matchAll(PATRON_CLASSNAME)) {
-      for (const clase of (coincidencia[1] ?? coincidencia[2] ?? '').split(/\s+/)) {
+      for (const clase of (coincidencia.at(1) ?? coincidencia.at(2) ?? '').split(/\s+/)) {
         if (clase && !AJENAS.has(clase)) usadas.set(clase, fichero);
       }
     }

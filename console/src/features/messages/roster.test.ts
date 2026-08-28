@@ -40,12 +40,13 @@ describe('el universo del roster de mensajería', () => {
 
     const gaia = roster.find((agente) => agente.alias === 'gaia');
     expect(gaia).toBeDefined();
-    expect(gaia?.origenes).toEqual(['registro']);
-    expect(gaia?.registrado).toBe(true);
-    expect(fueraDeLaTopologia(gaia!)).toBe(true);
-    expect(motivoDeAgenteSuelto(gaia!)).toMatch(/registro de agentes y en NINGUNA sala/i);
+    if (!gaia) throw new Error('Missing gaia');
+    expect(gaia.origenes).toEqual(['registro']);
+    expect(gaia.registrado).toBe(true);
+    expect(fueraDeLaTopologia(gaia)).toBe(true);
+    expect(motivoDeAgenteSuelto(gaia)).toMatch(/registro de agentes y en NINGUNA sala/i);
     // Y no se le inventa un lease: sin presencia, el estado es UNKNOWN, nunca «online».
-    expect(gaia?.leaseState).toBe('unknown');
+    expect(gaia.leaseState).toBe('unknown');
   });
 
   it('un hilo con mensajes tiene fila aunque NI el registro conozca al alias', () => {
@@ -58,9 +59,10 @@ describe('el universo del roster de mensajería', () => {
 
     const gaia = roster.find((agente) => agente.alias === 'gaia');
     expect(gaia).toBeDefined();
-    expect(gaia?.origenes).toEqual(['mensajes']);
-    expect(gaia?.mensajesVisibles).toBe(1);
-    expect(motivoDeAgenteSuelto(gaia!)).toMatch(/sólo porque el servidor publicó mensajes suyos/i);
+    if (!gaia) throw new Error('Missing gaia');
+    expect(gaia.origenes).toEqual(['mensajes']);
+    expect(gaia.mensajesVisibles).toBe(1);
+    expect(motivoDeAgenteSuelto(gaia)).toMatch(/sólo porque el servidor publicó mensajes suyos/i);
   });
 
   it('también trae al EMISOR del mensaje, no sólo al destinatario', () => {
@@ -105,9 +107,11 @@ describe('el universo del roster de mensajería', () => {
       status: presenciaDeArgos(), topology: topologiaConSoloArgos(),
     });
     const argos = roster.find((agente) => agente.alias === 'argos');
-    expect(fueraDeLaTopologia(argos!)).toBe(false);
-    expect(motivoDeAgenteSuelto(argos!)).toBeUndefined();
-    expect(argos?.origenes).toEqual(['topologia', 'presencia']);
+    expect(argos).toBeDefined();
+    if (!argos) throw new Error('Missing argos');
+    expect(fueraDeLaTopologia(argos)).toBe(false);
+    expect(motivoDeAgenteSuelto(argos)).toBeUndefined();
+    expect(argos.origenes).toEqual(['topologia', 'presencia']);
   });
 
   it('no duplica al alias que aparece en las cuatro fuentes a la vez', () => {

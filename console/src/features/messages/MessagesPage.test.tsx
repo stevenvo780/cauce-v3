@@ -32,7 +32,7 @@ function publishReceipt(input: Record<string, unknown>, duplicate = false) {
 
 /** Registra cada publish para poder afirmar QUÉ se envió, no sólo que la UI dijo que envió. */
 function capturarPublish() {
-  const enviados: Array<Record<string, unknown>> = [];
+  const enviados: Record<string, unknown>[] = [];
   server.use(http.post('*/v3/console/messages', async ({ request }) => {
     const input = await request.json() as Record<string, unknown>;
     enviados.push(input);
@@ -89,7 +89,7 @@ it('un agente que /activity no informa sale UNKNOWN en su cola, nunca en cero', 
   renderWithApi(<MessagesPage />);
 
   const argos = await screen.findByRole('button', { name: /conversación con argos,/i });
-  await waitFor(() => expect(within(argos).getByText('UNKNOWN en cola')).toBeInTheDocument());
+  await waitFor(() => { expect(within(argos).getByText('UNKNOWN en cola')).toBeInTheDocument(); });
   expect(within(argos).getByText('UNKNOWN en curso')).toBeInTheDocument();
   expect(within(argos).queryByText('0 en cola')).not.toBeInTheDocument();
   expect(within(argos).queryByText('0 en curso')).not.toBeInTheDocument();
@@ -125,7 +125,7 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  await waitFor(() => expect(enviados).toHaveLength(1));
+  await waitFor(() => { expect(enviados).toHaveLength(1); });
   expect(enviados[0]).toMatchObject({
     room_id: 'grp.steven',
     recipients: [{ tenant_id: 'Steven', alias: 'argos' }],
@@ -196,7 +196,7 @@ it('conserva el borrador y no reintenta cuando el servidor prueba que la reserva
 
 it('reconcilia un lost-202 reintentando una sola vez con la misma clave y sin duplicar intención', async () => {
   const user = userEvent.setup();
-  const enviados: Array<Record<string, unknown>> = [];
+  const enviados: Record<string, unknown>[] = [];
   server.use(http.post('*/v3/console/messages', async ({ request }) => {
     const input = await request.json() as Record<string, unknown>;
     enviados.push(input);
@@ -328,7 +328,7 @@ it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar pu
   const hilo = await abrirConversacion(user, 'salva');
 
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para salva/i });
-  await waitFor(() => expect(campo).toBeDisabled());
+  await waitFor(() => { expect(campo).toBeDisabled(); });
   expect(within(hilo).getByRole('button', { name: /^enviar$/i })).toBeDisabled();
   expect(within(hilo).getByText(/no concede route \+ control|no pertenece a un room de origen|no comparten un room/i)).toBeInTheDocument();
   expect(enviados).toHaveLength(0);
@@ -469,7 +469,11 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   const hilo = await abrirConversacion(user, 'argos');
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 
-  const campo = (etiqueta: string) => within(detalle).getByText(etiqueta).closest('div')!;
+  const campo = (etiqueta: string) => {
+    const el = within(detalle).getByText(etiqueta).closest('div');
+    if (!el) throw new Error(`Missing container for ${etiqueta}`);
+    return el;
+  };
   expect(within(campo('Room')).getByText('grp.steven')).toBeInTheDocument();
   expect(within(campo('Lane')).getByText('interactive')).toBeInTheDocument();
   expect(within(campo('Actor verificado')).getByText('kant')).toBeInTheDocument();
@@ -513,7 +517,7 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexá el informe');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  await waitFor(() => expect(enviados).toHaveLength(1));
+  await waitFor(() => { expect(enviados).toHaveLength(1); });
   expect(enviados[0]).toMatchObject({ lane: 'batch', priority: 0 });
 }, 25_000);
 
@@ -531,7 +535,7 @@ it('sin tocar el selector sigue publicando interactive con prioridad 10', async 
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  await waitFor(() => expect(enviados).toHaveLength(1));
+  await waitFor(() => { expect(enviados).toHaveLength(1); });
   expect(enviados[0]).toMatchObject({ lane: 'interactive', priority: 10 });
 }, 25_000);
 

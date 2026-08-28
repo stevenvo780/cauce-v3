@@ -25,7 +25,7 @@ export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
 function suscribirRuta(callback: () => void): () => void {
   window.addEventListener('popstate', callback);
-  return () => window.removeEventListener('popstate', callback);
+  return () => { window.removeEventListener('popstate', callback); };
 }
 
 function rutaActual(): string {
@@ -121,7 +121,7 @@ export function MessagesPage() {
     // `+ scrollY` para que sea el tope en el DOCUMENTO y no en la ventana: sin eso la medida
     // cambia con cada scroll y el panel se estiraría y encogería mientras el operador lee.
     const tope = Math.round(envoltura.getBoundingClientRect().top + window.scrollY);
-    envoltura.style.setProperty(VAR_TOPE_MENSAJERIA, `${tope}px`);
+    envoltura.style.setProperty(VAR_TOPE_MENSAJERIA, `${String(tope)}px`);
   }, []);
   // Sin lista de dependencias a propósito: lo que hay ENCIMA del bloque cambia de alto con el
   // texto que devuelve el servidor (el chip de permiso, la descripción), así que se remide en
@@ -129,7 +129,7 @@ export function MessagesPage() {
   useEffect(medirElTope);
   useEffect(() => {
     window.addEventListener('resize', medirElTope);
-    return () => window.removeEventListener('resize', medirElTope);
+    return () => { window.removeEventListener('resize', medirElTope); };
   }, [medirElTope]);
 
   function abrir(agent: FleetAgent) {
@@ -221,6 +221,6 @@ function useIntervalo(reload: () => void, milisegundos: number, cargando: boolea
   useEffect(() => {
     if (cargando) return;
     const intervalo = window.setInterval(reload, milisegundos);
-    return () => window.clearInterval(intervalo);
+    return () => { window.clearInterval(intervalo); };
   }, [cargando, milisegundos, reload]);
 }
