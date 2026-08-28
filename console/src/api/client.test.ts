@@ -40,7 +40,7 @@ describe('CauceApi', () => {
   });
 
   it('keeps OIDC session and CSRF state in memory and logs out without bearer credentials', async () => {
-    const requests: Array<{ path: string; csrf: string | null; authorization: string | null }> = [];
+    const requests: { path: string; csrf: string | null; authorization: string | null }[] = [];
     server.use(
       http.get('http://localhost/v3/auth/session', () => HttpResponse.json({
         authenticated: true, subject: 'Steven:kant', csrf_token: 'one-time-browser-csrf',
@@ -267,7 +267,7 @@ describe('CauceApi', () => {
   });
 
   it('sends revision-guarded config dry-runs and rollback without client authority', async () => {
-    const observed: Array<Record<string, unknown>> = [];
+    const observed: Record<string, unknown>[] = [];
     server.use(
       http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
         observed.push(await request.json() as Record<string, unknown>);

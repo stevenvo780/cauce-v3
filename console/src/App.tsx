@@ -129,9 +129,9 @@ function RouteNotFound({ path }: { path: string }) {
           ocultaría un enlace roto.
         </p>
         <p>
-          <a href="/" onClick={(event) => onNavClick(event, '/')}>Ir a la portada</a>
+          <a href="/" onClick={(event) => { onNavClick(event, '/'); }}>Ir a la portada</a>
           {' · '}
-          <a href="/live" onClick={(event) => onNavClick(event, '/live')}>Abrir la flota</a>
+          <a href="/live" onClick={(event) => { onNavClick(event, '/live'); }}>Abrir la flota</a>
         </p>
       </div>
     </div>
@@ -179,7 +179,7 @@ function matchRoute(path: string): RouteMatch {
 
 function subscribe(callback: () => void): () => void {
   window.addEventListener('popstate', callback);
-  return () => window.removeEventListener('popstate', callback);
+  return () => { window.removeEventListener('popstate', callback); };
 }
 
 export function App() {
@@ -222,7 +222,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
                 <li key={item.id}>
                   <a
                     href={`/${item.id}`}
-                    onClick={(event) => onNavClick(event, `/${item.id}`, disponible.reason)}
+                    onClick={(event) => { onNavClick(event, `/${item.id}`, disponible.reason); }}
                     aria-current={!notFoundPath && route?.id === item.id ? 'page' : undefined}
                     aria-disabled={disponible.disabled ? true : undefined}
                     className={disponible.disabled ? 'nav-inerte' : undefined}
