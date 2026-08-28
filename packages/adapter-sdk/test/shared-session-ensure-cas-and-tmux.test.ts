@@ -1,0 +1,462 @@
+import assert from "node:assert/strict";
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import test from "node:test";
+import { randomUUID } from "node:crypto";
+import type { CommandRunner } from "../src/sdk/types.js";
+import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
+import { codexTranscript, type RolloutLine } from "../src/shared-session/rollout.js";
+import { ensureSharedSession } from "../src/shared-session/session.js";
+import {
+  CliTmux,
+  clearCurrentPaneQuarantine,
+  clearPaneQuarantine,
+  killSessionIdIfNamed,
+  paneIdentity,
+} from "../src/shared-session/tmux.js";
+import type { ResumeSpec } from "../src/shared-session/types.js";
+import {
+  FakeTmux,
+  RecordingFallback,
+  TmuxController,
+  TmuxResult,
+  adapterFor,
+  envelopeText,
+  exactTmuxPaneState,
+  exactTmuxPaneStateViaList,
+  execute,
+  freshState,
+} from "./shared-session-fixtures.js";
+
+const immediate = (): Promise<void> => Promise.resolve();
+
+/**
+ * Una línea de rollout con el formato generado por codex.
+ */
+function rolloutLine(type: string, payload: Record<string, unknown>): string {
+  return JSON.stringify({ timestamp: new Date().toISOString(), type, payload });
+}
+
+async function codexWorkspace(name: string): Promise<{
+  state: string;
+  codexHome: string;
+  rollout: string;
+  sessionId: string;
+}> {
+  const { state, home } = await freshState(name);
+  const codexHome = join(home, ".codex");
+  const day = join(codexHome, "sessions", "2026", "07", "31");
+  await mkdir(day, { recursive: true });
+  const sessionId = randomUUID();
+  // El nombre lleva el session_id, que es de donde sale la sesión observada sin abrir el fichero.
+  const rollout = join(day, `rollout-2026-07-31T16-33-07-${sessionId}.jsonl`);
+  await appendFile(rollout, `${rolloutLine("session_meta", { session_id: sessionId })}\n`);
+  return { state, codexHome, rollout, sessionId };
+}
+
+function codexRunner(
+  options: { alias: string; codexHome: string; tmux: FakeTmux; fallback: CommandRunner },
+): PasteSessionRunner<RolloutLine> {
+  options.tmux.sessionName = `cauce-${options.alias}`;
+  if (options.tmux.sessionOptions.size === 0) options.tmux.paneStartCommand = "exec codex";
+  return new PasteSessionRunner({
+    alias: options.alias,
+    harness: "codex",
+    workspace: "/workspace",
+    transcript: codexTranscript(options.codexHome),
+    tmux: options.tmux,
+    fallback: options.fallback,
+    sleep: immediate,
+    acquireTimeoutMs: 30,
+    turnTimeoutMs: 2_000,
+    injectTimeoutMs: 20,
+    settleMs: 0,
+    pollMs: 1,
+    readyTimeoutMs: 30,
+  });
+}
+
+/** Un `ResumeSpec` de mentira, con la respuesta que el test quiera y un contador de llamadas. */
+function fakeResume(
+  args: readonly string[],
+  hay: boolean | (() => Promise<boolean>),
+): { spec: ResumeSpec; preguntas: () => number } {
+  let preguntas = 0;
+  return {
+    spec: {
+      args,
+      hasPreviousConversation: async (): Promise<boolean> => {
+        preguntas += 1;
+        return typeof hay === "boolean" ? hay : hay();
+      },
+    },
+    preguntas: () => preguntas,
+  };
+}
+
+test("el adaptador degrada con razon explicita ante harness incompatible", async () => {
+  const { state, codexHome } = await codexWorkspace("identidad-harness-aviso");
+  const tmux = new FakeTmux();
+  tmux.sessionOptions.set("@cauce_alias", "socrates");
+  tmux.sessionOptions.set("@cauce_harness", "claude");
+  const fallback = new RecordingFallback([
+    JSON.stringify({ type: "thread.started", thread_id: "fallback" }),
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: envelopeText("camino seguro") },
+    }),
+  ].join("\n"));
+  const runner = codexRunner({ alias: "socrates", codexHome, tmux, fallback });
+  const adapter = await adapterFor(runner, state, "socrates", "codex");
+
+  const result = await execute(adapter);
+
+  assert.equal(fallback.calls, 1);
+  assert.match(result.reply ?? "", /session_harness_mismatch/u);
+  assert.match(result.reply ?? "", /conservó intacta/u);
+  assert.equal(tmux.sessionExists, true);
+  assert.equal(tmux.used("kill-session"), false);
+});
+
+test("un marcador de otro alias falla cerrado sin corregirlo ni tocar el panel", async () => {
+  const { workspace } = await freshState("identidad-alias-incompatible");
+  const tmux = new FakeTmux();
+  tmux.sessionName = "cauce-atlas";
+  tmux.sessionOptions.set("@cauce_alias", "kratos");
+  tmux.sessionOptions.set("@cauce_harness", "codex");
+
+  const result = await ensureSharedSession(
+    tmux,
+    { alias: "atlas", harness: "codex", workspace, command: "codex" },
+    { sleep: immediate, readyTimeoutMs: 30 },
+  );
+
+  assert.equal(result.ready, false);
+  assert.equal(result.failure, "session_alias_mismatch");
+  assert.equal(tmux.sessionOptions.get("@cauce_alias"), "kratos");
+  assert.equal(tmux.used("kill-session"), false);
+  assert.equal(tmux.used("rename-window"), false);
+});
+
+test("una sesion legacy ambigua queda viva pero no se acredita", async () => {
+  const { workspace } = await freshState("identidad-legacy-ambigua");
+  const tmux = new FakeTmux();
+  tmux.sessionName = "cauce-salva";
+  tmux.sessionOptions.clear();
+  tmux.paneStartCommand = "bash -lc 'exec codex-wrapper --fallback claude'";
+
+  const result = await ensureSharedSession(
+    tmux,
+    { alias: "salva", harness: "codex", workspace, command: "codex-wrapper" },
+    { sleep: immediate, readyTimeoutMs: 30 },
+  );
+
+  assert.equal(result.ready, false);
+  assert.equal(result.failure, "session_identity_unverified");
+  assert.equal(tmux.sessionOptions.size, 0, "una inferencia ambigua no puede dejar marcas parciales");
+  assert.equal(tmux.sessionExists, true);
+  assert.equal(tmux.used("kill-session"), false);
+  assert.equal(tmux.used("rename-window"), false);
+});
+
+test("dos ensure concurrentes acreditan el mismo session_id y el perdedor no mata por nombre", async () => {
+  const { workspace } = await freshState("ensure-doble");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = false;
+  tmux.windows = [];
+  const spec = { alias: "socrates", harness: "codex" as const, workspace, command: "codex" };
+
+  const [first, second] = await Promise.all([
+    ensureSharedSession(tmux, spec, { sleep: immediate, readyTimeoutMs: 30 }),
+    ensureSharedSession(tmux, spec, { sleep: immediate, readyTimeoutMs: 30 }),
+  ]);
+
+  assert.equal(first.ready, true);
+  assert.equal(second.ready, true);
+  assert.equal(first.sessionId, second.sessionId);
+  assert.match(first.sessionId ?? "", /^\$[0-9]+$/u);
+  assert.deepEqual([first.created, second.created].sort(), [false, true]);
+  assert.equal(tmux.calls.filter((call) => call[0] === "new-session").length, 2);
+  assert.equal(tmux.used("kill-session"), false);
+  assert.equal(tmux.sessionOptions.get("@cauce_alias"), "socrates");
+  assert.equal(tmux.sessionOptions.get("@cauce_harness"), "codex");
+});
+
+test("el cleanup atómico rechaza un rename en la antigua frontera compare-kill", async () => {
+  const tmux = new FakeTmux();
+  const creationNonce = "a".repeat(64);
+  tmux.sessionOptions.set("@cauce_creation_nonce", creationNonce);
+  const identity = await paneIdentity(tmux, tmux.paneId);
+  assert.ok(identity);
+  const ownership = {
+    ...identity,
+    paneStartCommand: tmux.paneStartCommand,
+    creationNonce,
+  };
+  const originalRun = tmux.run.bind(tmux);
+  let raced = false;
+  tmux.run = async (args, stdin): Promise<TmuxResult> => {
+    if (!raced && args[0] === "if-shell"
+      && args.some((argument) => argument.includes("#{session_name}"))) {
+      raced = true;
+      tmux.sessionName = "renombrada-antes-de-la-orden";
+    }
+    return originalRun(args, stdin);
+  };
+
+  const killed = await killSessionIdIfNamed(tmux, ownership);
+
+  assert.equal(killed, false);
+  assert.equal(tmux.sessionExists, true);
+  assert.equal(tmux.sessionName, "renombrada-antes-de-la-orden");
+  assert.equal(tmux.calls.filter((call) => call[0] === "if-shell").length, 1);
+  assert.equal(tmux.used("list-sessions"), false, "no existe compare separado antes del kill");
+  assert.equal(tmux.used("kill-session"), false);
+});
+
+test(
+  "tmux real: cleanup CAS de cuarentena preserva exactamente una marca concurrente y la UI",
+  async () => {
+    const socket = `cauce-quarantine-cas-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const base = new CliTmux(socket);
+    try {
+      const created = await base.run([
+        "new-session", "-d", "-s", "quarantine-cas", "-n", "agente", "sleep 30",
+      ]);
+      assert.equal(created.exitCode, 0, created.stderr);
+      const identity = await paneIdentity(base, "quarantine-cas:agente");
+      assert.ok(identity);
+      const stale = "$9:@9:%9:9999";
+      const concurrent = "$8:@8:%8:8888";
+      assert.equal((await base.run([
+        "set-option", "-t", identity.sessionId, "@cauce_quarantined_pane", stale,
+      ])).exitCode, 0);
+      assert.equal((await base.run([
+        "set-hook", "-g", "after-display-message", "list-panes -F HOOK_OUTPUT",
+      ])).exitCode, 0);
+      let racedState: string | undefined;
+      const tmux: TmuxController = {
+        run: async (args, stdin, control): Promise<TmuxResult> => {
+          if (racedState === undefined && args[0] === "if-shell"
+            && args.some((argument) => argument.includes("@cauce_quarantined_pane"))) {
+            const changed = await base.run([
+              "set-option", "-t", identity.sessionId,
+              "@cauce_quarantined_pane", concurrent,
+            ]);
+            assert.equal(changed.exitCode, 0, changed.stderr);
+            racedState = await exactTmuxPaneStateViaList(base, identity.paneId);
+          }
+          return base.run(args, stdin, control);
+        },
+      };
+
+      assert.equal(await clearPaneQuarantine(tmux, identity), false);
+      assert.equal((await base.run([
+        "set-hook", "-gu", "after-display-message",
+      ])).exitCode, 0);
+      assert.ok(racedState);
+      assert.equal(await exactTmuxPaneState(base, identity.paneId), racedState);
+      assert.equal(racedState.split("\t")[11], concurrent);
+      assert.doesNotThrow(() => process.kill(Number(identity.panePid), 0));
+
+      // La otra cleanup CAS tampoco puede tocar UI al rechazar/aceptar: el hook copy-mode sólo se
+      // dispararía si reapareciera display-message en su canal de testigo o postcondición.
+      const currentGeneration = `${identity.sessionId}:${identity.windowId}`
+        + `:${identity.paneId}:${identity.panePid}`;
+      assert.equal((await base.run([
+        "set-option", "-t", identity.sessionId,
+        "@cauce_quarantined_pane", currentGeneration,
+      ])).exitCode, 0);
+      const currentMarked = await exactTmuxPaneState(base, identity.paneId);
+      assert.equal((await base.run([
+        "set-hook", "-g", "after-display-message", `copy-mode -t ${identity.paneId}`,
+      ])).exitCode, 0);
+      assert.equal(await clearCurrentPaneQuarantine(base, identity), true);
+      assert.equal((await base.run([
+        "set-hook", "-gu", "after-display-message",
+      ])).exitCode, 0);
+      const cleared = currentMarked.split("\t");
+      cleared[11] = "";
+      assert.equal(await exactTmuxPaneState(base, identity.paneId), cleared.join("\t"));
+    } finally {
+      await base.run(["kill-server"]).catch(() => undefined);
+    }
+  },
+);
+
+test(
+  "tmux real: rename antes del if-shell atómico preserva la sesión original por id",
+  async () => {
+    const socket = `cauce-test-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const base = new CliTmux(socket);
+    try {
+      const created = await base.run([
+        "new-session", "-d", "-s", "cleanup-original", "-n", "agente", "sleep 30",
+      ]);
+      assert.equal(created.exitCode, 0, created.stderr);
+      const identity = await paneIdentity(base, "cleanup-original:agente");
+      assert.ok(identity);
+      const creationNonce = "b".repeat(64);
+      assert.equal(
+        (await base.run([
+          "set-option", "-t", identity.sessionId, "@cauce_creation_nonce", creationNonce,
+        ])).exitCode,
+        0,
+      );
+      const startCommand = (await base.run([
+        "display-message", "-p", "-t", identity.paneId, "#{pane_start_command}",
+      ])).stdout.replace(/\r?\n$/u, "");
+      const ownership = { ...identity, paneStartCommand: startCommand, creationNonce };
+      assert.equal((await base.run([
+        "set-hook", "-g", "after-display-message", `copy-mode -t ${identity.paneId}`,
+      ])).exitCode, 0);
+      let raced = false;
+      let racedState: string | undefined;
+      const tmux: TmuxController = {
+        run: async (args, stdin): Promise<TmuxResult> => {
+          if (!raced && args[0] === "if-shell") {
+            raced = true;
+            const renamed = await base.run([
+              "rename-session", "-t", identity.sessionId, "cleanup-renamed",
+            ]);
+            assert.equal(renamed.exitCode, 0, renamed.stderr);
+            racedState = await exactTmuxPaneStateViaList(base, identity.paneId);
+          }
+          return base.run(args, stdin);
+        },
+      };
+
+      assert.equal(
+        await killSessionIdIfNamed(tmux, ownership),
+        false,
+      );
+      assert.equal((await base.run([
+        "set-hook", "-gu", "after-display-message",
+      ])).exitCode, 0);
+      assert.equal((await base.run(["has-session", "-t", identity.sessionId])).exitCode, 0);
+      assert.equal(
+        (await base.run(["display-message", "-p", "-t", identity.sessionId, "#{session_name}"]))
+          .stdout.trim(),
+        "cleanup-renamed",
+      );
+      assert.ok(racedState);
+      assert.equal(racedState.split("\t")[9], "0", "cleanup rechazado no dispara copy-mode");
+      assert.equal(await exactTmuxPaneState(base, identity.paneId), racedState);
+    } finally {
+      await base.run(["kill-server"]).catch(() => undefined);
+    }
+  },
+);
+
+test(
+  "tmux real: respawn con PID nuevo invalida ownership y cleanup preserva el proceso humano",
+  async () => {
+    const socket = `cauce-cleanup-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const tmux = new CliTmux(socket);
+    try {
+      const created = await tmux.run([
+        "new-session", "-d", "-s", "cleanup-respawn", "-n", "agente", "sleep 30",
+      ]);
+      assert.equal(created.exitCode, 0, created.stderr);
+      const before = await paneIdentity(tmux, "cleanup-respawn:agente");
+      assert.ok(before);
+      const creationNonce = "c".repeat(64);
+      assert.equal((await tmux.run([
+        "set-option", "-t", before.sessionId, "@cauce_creation_nonce", creationNonce,
+      ])).exitCode, 0);
+      const startCommand = (await tmux.run([
+        "display-message", "-p", "-t", before.paneId, "#{pane_start_command}",
+      ])).stdout.replace(/\r?\n$/u, "");
+      const ownership = { ...before, paneStartCommand: startCommand, creationNonce };
+
+      const respawned = await tmux.run([
+        "respawn-pane", "-k", "-t", before.paneId, "sleep 30",
+      ]);
+      assert.equal(respawned.exitCode, 0, respawned.stderr);
+      let after = await paneIdentity(tmux, before.paneId);
+      for (let attempt = 0; after?.panePid === before.panePid && attempt < 50; attempt += 1) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+        after = await paneIdentity(tmux, before.paneId);
+      }
+      assert.ok(after);
+      assert.notEqual(after.panePid, before.panePid);
+      const replacementState = await exactTmuxPaneState(tmux, before.paneId);
+      assert.equal((await tmux.run([
+        "set-hook", "-g", "after-display-message", "list-panes -F HOOK_OUTPUT",
+      ])).exitCode, 0);
+      assert.equal(await killSessionIdIfNamed(tmux, ownership), false);
+      assert.equal((await tmux.run([
+        "set-hook", "-gu", "after-display-message",
+      ])).exitCode, 0);
+      assert.equal((await tmux.run(["has-session", "-t", before.sessionId])).exitCode, 0);
+      assert.equal(await exactTmuxPaneState(tmux, before.paneId), replacementState);
+      assert.equal((await paneIdentity(tmux, before.paneId))?.panePid, after.panePid);
+    } finally {
+      await tmux.run(["kill-server"]).catch(() => undefined);
+    }
+  },
+);
+
+test("una sesión viva cuya ventana cambió durante creación se conserva y no habilita fallback", async () => {
+  const { workspace } = await freshState("cleanup-id-propio");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = false;
+  tmux.windows = [];
+  const originalRun = tmux.run.bind(tmux);
+  let firstCreatedId: string | undefined;
+  tmux.run = async (args, stdin): Promise<TmuxResult> => {
+    const response = await originalRun(args, stdin);
+    if (args[0] === "new-session" && firstCreatedId === undefined && response.exitCode === 0) {
+      firstCreatedId = response.stdout.trim();
+      // La sesión sigue viva con el mismo id/nombre, pero el panel de la TUI murió.
+      tmux.windows = ["shell"];
+    }
+    return response;
+  };
+  const resume = fakeResume(["--continue"], true);
+
+  const outcome = await ensureSharedSession(
+    tmux,
+    { alias: "kratos", harness: "claude", workspace, command: "claude", resume: resume.spec },
+    { sleep: immediate, readyTimeoutMs: 30 },
+  );
+
+  assert.equal(outcome.ready, false);
+  assert.equal(outcome.failure, "session_identity_unverified");
+  assert.equal(outcome.sessionId, firstCreatedId);
+  assert.equal(tmux.sessionExists, true);
+  assert.deepEqual(tmux.windows, ["shell"]);
+  assert.equal(tmux.used("kill-session"), false);
+});
+
+test("un reemplazo con el mismo nombre falla cerrado y nunca se adopta ni se mata", async () => {
+  const { workspace } = await freshState("replacement-mismo-nombre");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = false;
+  tmux.windows = [];
+  const originalRun = tmux.run.bind(tmux);
+  let ownId: string | undefined;
+  let replacementId: string | undefined;
+  tmux.run = async (args, stdin): Promise<TmuxResult> => {
+    const response = await originalRun(args, stdin);
+    if (args[0] === "new-session" && ownId === undefined && response.exitCode === 0) {
+      ownId = response.stdout.trim();
+      replacementId = tmux.replaceSession({ alias: "kratos", harness: "claude" });
+    }
+    return response;
+  };
+
+  const outcome = await ensureSharedSession(
+    tmux,
+    { alias: "kratos", harness: "claude", workspace, command: "claude" },
+    { sleep: immediate, readyTimeoutMs: 30 },
+  );
+
+  assert.equal(outcome.ready, false);
+  assert.equal(outcome.failure, "session_identity_unverified");
+  assert.equal(outcome.sessionId, ownId);
+  assert.equal(tmux.sessionId, replacementId);
+  assert.equal(tmux.sessionExists, true);
+  assert.equal(tmux.used("kill-session"), false);
+  assert.equal(tmux.calls.filter((call) => call[0] === "new-session").length, 1);
+});
