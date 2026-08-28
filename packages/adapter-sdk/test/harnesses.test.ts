@@ -19,6 +19,10 @@ const stateRoot = resolve(".test-state");
 const definitions = Object.values(HARNESS_DEFINITIONS);
 const canonicalScope = `auth-v1:${"A".repeat(43)}`;
 
+function requirePosixProcessGroups(): void {
+  assert.notEqual(process.platform, "win32", "POSIX process-group tests require a POSIX runner");
+}
+
 function fixture(definition: HarnessDefinition): string {
   return resolve(`test/fixtures/fake-${definition.id}.mjs`);
 }
@@ -490,7 +494,8 @@ test("Hermes remains explicitly stateless", async () => {
   assert.equal(runner.requests[0]?.args.some((argument) => argument.includes("session")), false);
 });
 
-test("timeout terminates the complete POSIX process group", { skip: process.platform === "win32" }, async () => {
+test("timeout terminates the complete POSIX process group", async () => {
+  requirePosixProcessGroups();
   const directory = resolve(stateRoot, "process-group");
   await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });
@@ -513,7 +518,8 @@ test("timeout terminates the complete POSIX process group", { skip: process.plat
   assert.equal(exists, false, "grandchild survived process-group termination");
 });
 
-test("cancellation terminates the complete POSIX process group", { skip: process.platform === "win32" }, async () => {
+test("cancellation terminates the complete POSIX process group", async () => {
+  requirePosixProcessGroups();
   const directory = resolve(stateRoot, "cancel-process-group");
   await rm(directory, { recursive: true, force: true });
   await mkdir(directory, { recursive: true });

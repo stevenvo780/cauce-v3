@@ -73,6 +73,11 @@ import {
 
 const stateRoot = resolve(".test-state/shared-session");
 
+for (const [command, args] of [["tmux", ["-V"]], ["script", ["--version"]]] as const) {
+  const result = spawnSync(command, args, { stdio: "ignore" });
+  assert.equal(result.status, 0, `${command} is required for shared-session integration tests`);
+}
+
 const EXACT_TMUX_PANE_STATE_FORMAT = [
   "#{session_id}",
   "#{session_name}",
@@ -1605,7 +1610,6 @@ test("un settle colgado tras paste termina la generación antes de liberar", asy
 
 test(
   "tmux real: cancelar tras paste igualmente compromete Enter y borra el buffer nombrado",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-shared-commit-"));
     const output = join(scratch, "submitted.txt");
@@ -1664,7 +1668,6 @@ test(
 
 test(
   "tmux real: copy-mode rechaza la adquisición como busy y conserva vivo el pane humano",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-copy-mode-${process.pid}-${randomUUID().slice(0, 8)}`;
     const session = "copy-mode";
@@ -1882,10 +1885,6 @@ test("adquisición no acreditada conserva pending sin release ni terminación", 
 
 test(
   "tmux real: input de cliente tras la última captura no se concatena con paste+Enter",
-  {
-    skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0
-      || spawnSync("script", ["--version"], { stdio: "ignore" }).status !== 0,
-  },
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-input-barrier-"));
     const output = join(scratch, "lines.txt");
@@ -1970,7 +1969,6 @@ test(
 
 test(
   "tmux real: token ajeno rechaza adquisición sin alterar modo, input, identidad ni opción",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-foreign-token-${process.pid}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
@@ -2043,7 +2041,6 @@ test(
 
 test(
   "tmux real: mutación con identidad anterior preserva exactamente el pane respawnado",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-replacement-${process.pid}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
@@ -2839,7 +2836,6 @@ test("todo hook tmux efectivo rechaza la barrera antes de tocar la caja", async 
 
 test(
   "tmux real: after-load-buffer preexistente falla cerrado sin duplicar ni tocar el pane",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-after-load-preexisting-"));
     const output = join(scratch, "lines.txt");
@@ -2886,7 +2882,6 @@ test(
 
 test(
   "tmux real: hook agregado durante la barrera impide load y release hasta retirarlo",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-after-load-race-"));
     const output = join(scratch, "lines.txt");
@@ -3019,7 +3014,6 @@ test("si delete y scrub no se acreditan el aborto falla cerrado y pone la genera
 
 test(
   "tmux real: aborto tras load y delete fallido deja sólo el marcador inocuo acreditado",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-test-${process.pid}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);
@@ -4632,7 +4626,6 @@ test("una ventana TUI con más de un pane falla cerrada sin elegir el activo", a
 
 test(
   "tmux real: un respawn con otro comando invalida una sesión marcada",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-identity-${process.pid}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
@@ -4796,7 +4789,6 @@ test("el cleanup atómico rechaza un rename en la antigua frontera compare-kill"
 
 test(
   "tmux real: cleanup CAS de cuarentena preserva exactamente una marca concurrente y la UI",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-quarantine-cas-${process.pid}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);
@@ -4867,7 +4859,6 @@ test(
 
 test(
   "tmux real: rename antes del if-shell atómico preserva la sesión original por id",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-test-${process.pid}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);
@@ -4932,7 +4923,6 @@ test(
 
 test(
   "tmux real: respawn con PID nuevo invalida ownership y cleanup preserva el proceso humano",
-  { skip: spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0 },
   async () => {
     const socket = `cauce-cleanup-${process.pid}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
