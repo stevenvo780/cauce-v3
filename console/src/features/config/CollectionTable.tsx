@@ -1,7 +1,7 @@
 import { Braces } from 'lucide-react';
 import { Fragment, useEffect, useRef, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { Badge, EmptyState, Panel, Unknown } from '../../components/ui';
 import type { ConfigCollection } from './collections';

@@ -4,7 +4,7 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
 import { permissionState } from '../../lib';
-import { navigate } from '../../navigation';
+import { navigate } from '../../router';
 import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
 import { operatorRouteForAgent } from '../terminal/session';
 import { AgentRoster } from './AgentRoster';

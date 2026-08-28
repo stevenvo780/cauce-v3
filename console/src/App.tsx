@@ -8,7 +8,7 @@ import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/Aut
 import type { AuthGateState } from './features/auth/auth-session';
 import { LandingPage } from './features/landing/LandingPage';
 import { NAV_ENTRIES, useNavAvailability } from './nav';
-import { onNavClick, redirect } from './navigation';
+import { onNavClick, redirect } from './router';
 
 /**
  * Every operational view used to be imported into the landing bundle. That made opening the

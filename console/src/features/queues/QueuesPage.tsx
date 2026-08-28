@@ -214,7 +214,7 @@ function suscribirseAlHistorial(callback: () => void): () => void {
 /**
  * Quita `?delivery=` y avisa a quien escucha `popstate`.
  *
- * No usa `redirect()` de `navigation.ts` a propósito: esa función compara `location.pathname`
+ * No usa `redirect()` de `router.ts` a propósito: esa función compara `location.pathname`
  * contra el destino y acá el pathname NO cambia —sigue siendo `/queues`—, así que se saldría por
  * el `return` temprano y el filtro quedaría puesto con un botón que parece funcionar. Es
  * `replaceState` y no `pushState` por lo mismo que el cajón de la flota: quitar un filtro no es un

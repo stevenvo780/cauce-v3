@@ -10,7 +10,7 @@ import {
   navigate,
   onNavClick,
   terminalNavAvailability,
-} from '../../navigation';
+} from '../../router';
 import type { TerminalRelayState } from './relay-status';
 
 function relay(status: TerminalRelayState['status'], reason = ''): TerminalRelayState {

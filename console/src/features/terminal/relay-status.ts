@@ -32,7 +32,7 @@ export interface TerminalRelayState {
 export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no está desplegado en este stack.';
 
 /**
- * Mismo reparto de palabras que `CONFIG_SIN_CONTROL_REASON` en `navigation.ts`, y a propósito:
+ * Mismo reparto de palabras que `CONFIG_SIN_CONTROL_REASON` en `router.ts`, y a propósito:
  * es el mismo permiso, negado por el mismo gate. Dos redacciones distintas para la misma negativa
  * le harían creer al operador que son dos problemas.
  */

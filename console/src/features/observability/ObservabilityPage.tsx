@@ -8,7 +8,7 @@ import {
 } from '../../components/ui';
 import { NO_APLICA, compactId, safeOriginRelayState } from '../../lib';
 import { AuditPanel } from '../audit/AuditPanel';
-import { onNavClick } from '../../navigation';
+import { onNavClick } from '../../router';
 
 /** Los estados durables del egress, en castellano. `sent` se decide aparte: exige `sent_at`. */
 const ESTADO_RELAY: Readonly<Record<string, string>> = {

@@ -1,7 +1,7 @@
 import { Braces, Plus, SearchCheck } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigMutation } from '../../api/types';
-import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { Panel } from '../../components/ui';
 import {
   BORRADOR_VACIO, errorDeAlta, mutacionDeAlta, RECURSOS_ALTA, TITULOS_ALTA,

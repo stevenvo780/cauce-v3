@@ -1,7 +1,7 @@
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Tooltip } from '../../components/ui';
-import { CONFIG_SIN_CONTROL_REASON } from '../../navigation';
+import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { MARCA_INERTE } from './campos-inertes';
 import { fechaRelativa } from './fecha-relativa';
 import type { Interruptor } from './interruptores';

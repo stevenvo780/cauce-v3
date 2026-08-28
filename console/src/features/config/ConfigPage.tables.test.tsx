@@ -7,7 +7,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import {
   CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
-} from '../../navigation';
+} from '../../router';
 import {
   irA, recordChanges, snapshotDeConfig, snapshotConAudit, servirConfig,
   MEMBERSHIP_JANUS, type ChangeRequest,

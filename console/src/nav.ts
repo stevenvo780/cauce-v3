@@ -11,7 +11,7 @@ import {
   configNavAvailability,
   terminalNavAvailability,
   type NavEntryAvailability,
-} from './navigation';
+} from './router';
 
 /**
  * Definición centralizada de entradas del menú principal de la consola.

@@ -5,7 +5,7 @@ import { useResource } from '../../api/use-resource';
 import type { AgentPerfilCampos, FleetActivityItem } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
-import { onNavClick } from '../../navigation';
+import { onNavClick } from '../../router';
 import { AgentAvatar } from './AgentAvatar';
 import { DirectivaTab } from './DirectivaTab';
 import { FicherosTab } from './FicherosTab';

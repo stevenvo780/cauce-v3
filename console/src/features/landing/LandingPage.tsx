@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, CircleHelp, Gauge } from 'lucide-react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { LoadingState, Metric, PageHeader, RefreshButton, Time } from '../../components/ui';
-import { onNavClick } from '../../navigation';
+import { onNavClick } from '../../router';
 import { HarnessStrip } from './HarnessStrip';
 import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
 

@@ -1,7 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { useMemo } from 'react';
 import { useApi } from '../../api/context';
-import { onNavClick } from '../../navigation';
+import { onNavClick } from '../../router';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
 // Regla del encargo: la lógica de fleet/leases vive en features/terminal; se reutiliza, no se duplica.

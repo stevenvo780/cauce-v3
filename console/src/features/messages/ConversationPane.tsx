@@ -5,7 +5,7 @@ import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
-import { onNavClick } from '../../navigation';
+import { onNavClick } from '../../router';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { fleetAgentId } from '../terminal/fleet';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';

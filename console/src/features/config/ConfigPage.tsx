@@ -11,7 +11,7 @@ import {
 import { permissionState } from '../../lib';
 import {
   CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON, onNavClick,
-} from '../../navigation';
+} from '../../router';
 import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { ArnesesPanel } from './ArnesesPanel';
