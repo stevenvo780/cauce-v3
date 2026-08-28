@@ -65,6 +65,22 @@ await appendFile(state.log, `${JSON.stringify({
 })}\n`);
 await writeFile(statePath, `${JSON.stringify(state)}\n`);
 
+// The start gate must sit BEFORE any early-exit branch: call 1 of a `start` is always
+// `inspect --format {{.Id}}`, which answers and exits below — placed later, this gate is dead code.
+if (state.startGate && state.callCount === 1) {
+  const started = Date.now();
+  let released = false;
+  while (!released && Date.now() - started < 15000) {
+    try {
+      await readFile(state.startGate);
+      released = true;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  if (!released) process.exit(124);
+}
+
 if (argv[0] === "inspect") {
   const format = argv[2] ?? "";
   if (target === state.containerName && format === "{{.Id}}") {
@@ -126,19 +142,6 @@ if (command === "/usr/bin/python3" && commandArgs.includes("stop")) {
   process.exit(state.stopExit ?? 0);
 }
 if (command === "/usr/bin/python3" && commandArgs.includes("check")) process.exit(state.checkExit ?? 0);
-if (state.startGate && state.callCount === 1) {
-  const started = Date.now();
-  let released = false;
-  while (!released && Date.now() - started < 15000) {
-    try {
-      await readFile(state.startGate);
-      released = true;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  }
-  if (!released) process.exit(124);
-}
 if ((command === "/usr/bin/env" || commandArgs.includes("/usr/bin/env")) && state.finalGate) {
   const started = Date.now();
   let released = false;
