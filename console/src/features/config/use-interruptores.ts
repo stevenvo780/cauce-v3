@@ -4,32 +4,32 @@ import { textoRecarga, type ConfigChangeOutcome, type EstadoRecarga } from './co
 import type { Interruptor } from './interruptores';
 
 /**
- * **El comportamiento de un interruptor: pinta al instante y REVIERTE SOLO si el servidor lo
- * rechaza.**
+ * **Switch behavior: paint instantly and REVERT ONLY if the server rejects.**
  *
- * Es la parte que hay que probar de este carril. Un interruptor optimista sin marcha atrás es peor
- * que un botón: el botón que falla al menos deja la fila como estaba, mientras que el interruptor
- * que se queda encendido después de un 409 le está diciendo al operador que un permiso está
- * concedido cuando la base dice que no. Esa mentira no la desmiente nada hasta que alguien recarga
- * la página, y para entonces ya tomó una decisión sobre ella.
+ * This is what must be tested for this lane. An optimistic switch with no rollback is worse than
+ * a button: a button that fails at least leaves the row as it was, whereas a switch that stays
+ * flipped after a 409 is telling the operator that a permission is granted when the database says
+ * it is not. Nothing refutes that lie until someone reloads the page — and by then a decision has
+ * already been made on top of it.
  *
- * La regla, sin excepciones:
- *  - mientras la escritura vuela, se pinta lo que el operador pidió y el control queda `aria-busy`;
- *  - si el servidor responde bien Y la relectura llegó, se descarta el valor optimista: manda el
- *    snapshot fresco, que es lo que la base tiene de verdad (y que puede no ser lo que se pidió, si
- *    otro operador escribió en el medio);
- *  - si el servidor responde bien pero la relectura NO llegó, se mantiene lo pedido y se dice con
- *    todas las letras que la tabla puede estar vencida;
- *  - si el servidor RECHAZA, se descarta el valor optimista —o sea, el interruptor vuelve solo a lo
- *    que el snapshot dice— y sale el motivo **del servidor**, no uno inventado acá, con un botón
- *    para reintentar exactamente la misma mutación.
+ * The rule, without exceptions:
+ *  - while the write is in flight, paint what the operator asked for and leave the control
+ *    `aria-busy`;
+ *  - if the server responds OK AND the reread arrived, drop the optimistic value: the fresh
+ *    snapshot rules — that is what the database actually holds (and may differ from what was
+ *    requested if another operator wrote in the meantime);
+ *  - if the server responds OK but the reread did NOT arrive, keep what was requested and state
+ *    plainly that the table may be stale;
+ *  - if the server REJECTS, drop the optimistic value — i.e. the switch returns on its own to what
+ *    the snapshot says — and show the reason **from the server**, not one invented here, with a
+ *    button to retry exactly the same mutation.
  */
 
 export interface FalloDeInterruptor {
   interruptor: Interruptor;
-  /** El motivo tal como lo contó el servidor. Nunca un «no se pudo» genérico. */
+  /** The reason as the server reported it. Never a generic "could not" message. */
   motivo: string;
-  /** La revisión bajo la cual este fallo es lo último que pasó. */
+  /** The revision under which this failure is the latest thing that happened. */
   revision: number | undefined;
 }
 
@@ -46,25 +46,25 @@ export interface AvisoDeInterruptor {
 }
 
 export interface ControlDeInterruptores {
-  /** Lo que la celda tiene que pintar: el valor optimista si hay uno, si no el del servidor. */
+  /** What the cell must paint: the optimistic value if there is one, otherwise the server's. */
   valorPintado: (interruptor: Interruptor) => boolean;
   enVuelo: (clave: string) => boolean;
   fallo: (clave: string) => FalloDeInterruptor | undefined;
   avisoDe: (coleccion: string) => { text: string; tone: 'success' | 'parcial' } | undefined;
   confirmacion: ConfirmacionDeInterruptor | undefined;
-  /** Un clic en el interruptor. Confirma sólo si el interruptor lo exige. */
+  /** A click on the switch. Confirms only if the switch requires it. */
   pulsar: (interruptor: Interruptor) => void;
   confirmar: () => void;
   cancelar: () => void;
   reintentar: (clave: string) => void;
-  /** Al cambiar de pestaña: los carteles valen para la pantalla que los produjo. */
+  /** On tab change: banners belong to the screen that produced them. */
   limpiar: () => void;
 }
 
 /**
- * La revisión que el snapshot tiene DESPUÉS de una escritura: la releída si la relectura llegó, y
- * si no, la que había. Igual criterio que `ConfigPage`, para que un cartel no sobreviva al dato que
- * lo desmiente.
+ * The revision the snapshot holds AFTER a write: the reread if it arrived, otherwise the one it
+ * already had. Same criterion as `ConfigPage`, so a banner does not outlive the data that
+ * refutes it.
  */
 function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number | undefined): number | undefined {
   if (recarga?.releido) return recarga.revision;
@@ -90,8 +90,8 @@ export function useInterruptores(
   const [confirmacion, setConfirmacion] = useState<ConfirmacionDeInterruptor>();
   const [aviso, setAviso] = useState<AvisoDeInterruptor>();
 
-  // Patrón «última referencia»: los manejadores se pasan al DOM y no deben congelar ni la revisión
-  // esperada ni el `change` de la página. Sin esto, el segundo clic mandaría la revisión del primero.
+  // "Latest reference" pattern: handlers are passed to the DOM and must not freeze either the
+  // expected revision or the page's `change`; without it, the second click would send the first's.
   const ultimo = useRef({ escribir, revisionActual });
   ultimo.current = { escribir, revisionActual };
 
@@ -106,9 +106,8 @@ export function useInterruptores(
     try {
       desenlace = await ultimo.current.escribir(interruptor.mutation);
     } catch (error) {
-      // `change()` no tira, pero si alguna vez lo hiciera, un interruptor encendido para siempre
-      // sobre una escritura que reventó es exactamente la mentira que este módulo existe para
-      // impedir. Se revierte igual.
+// `change()` does not throw, but if it ever did, a switch stuck on after a write that blew up is
+        // exactly the lie this module exists to prevent. It reverts anyway.
       desenlace = {
         ok: false, conflict: false,
         message: error instanceof Error ? error.message : 'Cambio rechazado: UNKNOWN',
@@ -118,9 +117,9 @@ export function useInterruptores(
     const revision = revisionTrasEscribir(desenlace.recarga, ultimo.current.revisionActual);
 
     if (!desenlace.ok) {
-      // ⬅️ LA REVERSIÓN. Quitar el valor optimista devuelve la celda a lo que el snapshot dice, que
-      // es lo que la base tiene. Sin esta línea el interruptor se queda pintado en un estado que
-      // nadie guardó.
+      // ⬅️ THE REVERT. Dropping the optimistic value returns the cell to what the snapshot says,
+      // which is what the database holds. Without this line the switch stays painted in a state
+      // nobody saved.
       setOptimista((actual) => sinClave(actual, clave));
       setFallos((actual) => ({
         ...actual,
@@ -130,8 +129,8 @@ export function useInterruptores(
     }
 
     if (desenlace.recarga && !desenlace.recarga.releido) {
-      // Se guardó, pero no se pudo comprobar releyendo. Se mantiene lo pedido —el servidor dijo que
-      // lo aplicó— y se avisa de que el resto de la tabla puede estar vencido.
+      // It was saved, but could not be verified by rereading. What was requested is kept — the server
+      // said it applied it — and a notice warns that the rest of the table may be stale.
       setAviso({
         coleccion: interruptor.coleccion, tone: 'parcial', revision,
         text: `${interruptor.descripcion}: el servidor lo aplicó en la revisión `
@@ -154,8 +153,9 @@ export function useInterruptores(
       ? optimista[interruptor.clave]
       : interruptor.valor),
     enVuelo: (clave) => Object.hasOwn(volando, clave),
-    // Un cartel vale para el estado que lo produjo: si el snapshot se movió debajo —otro operador,
-    // «Actualizar», otra escritura— deja de mostrarse en vez de seguir afirmándose.
+    // A banner belongs to the state that produced it: if the snapshot shifted underneath — another
+    // operator, "Refresh", another write — it stops being shown instead of continuing to assert
+    // itself.
     fallo: (clave) => {
       const registrado = Object.hasOwn(fallos, clave) ? fallos[clave] : undefined;
       return registrado && registrado.revision === revisionActual ? registrado : undefined;

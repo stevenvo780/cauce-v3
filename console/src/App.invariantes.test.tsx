@@ -5,14 +5,14 @@ import { NAV_ENTRIES } from './nav';
 import { renderWithApi } from './test/render';
 
 /**
- * Pruebas sobre la tabla y estructura de rutas y alias del enrutador de la consola.
+ * Tests on the route and alias tables and structure of the console router.
  */
 
-/** Qué tiene que verse cuando una ruta resuelve BIEN. Es el contrato, no una copia del código. */
+/** What must be seen when a route resolves WELL. It is the contract, not a copy of the code. */
 interface Destino {
-  /** Texto del `<h1>` de la vista, o `undefined` si la vista no tiene encabezado propio. */
+  /** Text of the view's `<h1>`, or `undefined` if the view has no own header. */
   encabezado?: RegExp;
-  /** Marca de texto para las vistas sin `<h1>` (los avisos de ruta retirada). */
+  /** Text marker for views without an `<h1>` (the retired-route notices). */
   marca?: RegExp;
 }
 
@@ -23,76 +23,71 @@ const DESTINOS: Record<string, Destino> = {
   messages: { encabezado: /^mensajes$/i },
   queues: { encabezado: /colas y dlq operativo/i },
   observability: { encabezado: /^señales y auditoría$/i },
-  /*
-   * El `h1` dice EXACTAMENTE lo que dice la entrada del menú. Decía «Ajustes & rollback» debajo de
-   * un antetítulo en inglés («ATOMIC CONTROL PLANE») mientras el menú decía «Ajustes y altas»:
-   * tres nombres para una pantalla, y ninguno de los tres confirma que llegaste a donde ibas. El
-   * ancla `^…$` no es decoración — es lo que impide que vuelva a haber dos nombres.
-   */
+  /* The `h1` matches the menu entry name exactly. The `^…$` anchor ensures title consistency. */
   config: { encabezado: /^ajustes y altas$/i },
   terminal: { encabezado: /^terminal de agentes$/i },
   ayuda: { encabezado: /^ayuda y documentación$/i },
 };
 
-/** Cómo se alcanza cada ruta oculta: no tienen entrada de menú. */
+/** How each hidden route is reached: they have no menu entry. */
 const RUTA_DIRECTA: Record<string, string> = {
   ayuda: '/ayuda',
 };
 
 async function verDestino(id: string) {
   const destino: Destino | undefined = (DESTINOS as Partial<Record<string, Destino>>)[id];
-  if (!destino) throw new Error(`la tabla DESTINOS no declara qué se ve en «/${id}»`);
+  if (!destino) throw new Error(`the DESTINOS table does not declare what is shown at "/${id}"`);
   if (destino.encabezado) {
     return screen.findByRole('heading', { level: 1, name: destino.encabezado }, { timeout: 10_000 });
   }
   if (!destino.marca) {
-    throw new Error(`el destino «/${id}» no declara ni encabezado ni marca`);
+    throw new Error(`the destination "/${id}" declares neither header nor marker`);
   }
   return screen.findByText(destino.marca, undefined, { timeout: 10_000 });
 }
 
 // ================================================================================================
-// Nivel 1 · estructural. Sin montar nada: dice POR QUÉ falla.
+// Level 1 · structural. Without mounting anything: it says WHY it failed.
 // ================================================================================================
 
-describe('la tabla de rutas', () => {
-  it('no declara dos veces el mismo id', () => {
+describe('the route table', () => {
+  it('does not declare the same id twice', () => {
     const ids = ROUTE_TABLE.map((route) => route.id);
     expect([...new Set(ids)]).toEqual(ids);
   });
 
-  it('cada ruta declarada tiene un componente: un `undefined` acá es una pantalla en blanco', () => {
-    // `routes` se construye mapeando NAV_ENTRIES contra el diccionario PAGES. Un id del menú que
-    // falte en PAGES entra en la lista con `component: undefined`, pasa el typecheck y revienta al
-    // renderizar. Es el fallo más barato de cometer al integrar dos ramas que tocan las dos listas.
+  it('every declared route has a component: an `undefined` here is a blank screen', () => {
+    // `routes` is built by mapping NAV_ENTRIES against the PAGES dictionary. A menu id missing
+    // from PAGES enters the list with `component: undefined`, passes the typecheck, and blows up
+    // at render. It is the cheapest failure when integrating two branches that touch both lists.
     const sinComponente = ROUTE_TABLE.filter((route) => typeof route.component !== 'function');
     expect(sinComponente.map((route) => route.id)).toEqual([]);
   });
 
-  it('las entradas del menú son exactamente las que tienen rótulo, y ninguna está vacía', () => {
+  it('menu entries are exactly those with a label, and none is empty', () => {
     const conRotulo = ROUTE_TABLE.filter((route) => route.label !== '');
     expect(conRotulo.map((route) => route.id)).toEqual(NAV_ENTRIES.map((entry) => entry.id));
     for (const entrada of conRotulo) expect(entrada.label.trim()).not.toBe('');
   });
 
-  it('la tabla de este fichero cubre TODAS las rutas: una ruta nueva sin destino declarado falla acá', () => {
-    // Sin esto, agregar una ruta y olvidarse de probarla no rompería nada: la tabla de abajo
-    // simplemente no la recorrería, y el hueco sería invisible.
+  it("this file's table covers ALL routes: a new route with no declared destination fails here", () => {
+    // Without this, adding a route and forgetting to test it would not break anything: the table
+    // below would simply not walk it, and the gap would be invisible.
     expect(ROUTE_TABLE.map((route) => route.id).filter((id) => !(id in DESTINOS))).toEqual([]);
   });
 });
 
-describe('la tabla de alias', () => {
-  it('cada alias apunta a una ruta que EXISTE', () => {
+describe('the alias table', () => {
+  it('every alias points to a route that EXISTS', () => {
     const ids = new Set(ROUTE_TABLE.map((route) => route.id));
     const rotos = Object.entries(ROUTE_ALIAS_TABLE).filter(([, destino]) => !ids.has(destino));
     expect(rotos).toEqual([]);
   });
 
-  it('🔴 NINGÚN alias apunta a otro alias: `matchRoute` resuelve el mapa UNA sola vez', () => {
-    // El fallo que este test existe para impedir: `licenses → quotas` cuando `quotas → accounts`.
-    // El id resuelto (`quotas`) ya no está en `routes`, así que `/licenses` termina en el fallback
-    // con la barra de direcciones diciendo `/licenses`. No hay error de ningún tipo.
+  it('🔴 NO alias points to another alias: `matchRoute` resolves the map a SINGLE time', () => {
+    // The failure this test exists to prevent: `licenses → quotas` when `quotas → accounts`.
+    // The resolved id (`quotas`) is no longer in `routes`, so `/licenses` ends up in the fallback
+    // with the address bar still saying `/licenses`. There is no error of any kind.
     const claves = new Set(Object.keys(ROUTE_ALIAS_TABLE));
     const encadenados = Object.entries(ROUTE_ALIAS_TABLE)
       .filter(([, destino]) => claves.has(destino))
@@ -100,10 +95,10 @@ describe('la tabla de alias', () => {
     expect(encadenados).toEqual([]);
   });
 
-  it('🔴 ningún id de ruta queda TAPADO por un alias', () => {
-    // Un id que es también clave de alias no se puede alcanzar nunca: `matchRoute` mira el mapa
-    // ANTES que `routes`. La entrada de ruta queda viva en el código, con su import y su
-    // componente, y sin forma de llegar. Pasó con `topology`.
+  it('🔴 no route id is COVERED by an alias', () => {
+    // An id that is also an alias key can never be reached: `matchRoute` looks at the map
+    // BEFORE `routes`. The route entry stays alive in code, with its import and its component,
+    // and no way to reach it. That happened with `topology`.
     const claves = new Set(Object.keys(ROUTE_ALIAS_TABLE));
     const tapadas = ROUTE_TABLE
       .map((route) => route.id)
@@ -111,43 +106,43 @@ describe('la tabla de alias', () => {
     expect(tapadas).toEqual([]);
   });
 
-  it('ningún alias se llama igual que una entrada del menú', () => {
+  it('no alias shares a name with a menu entry', () => {
     const menu = new Set(NAV_ENTRIES.map((entry) => entry.id));
     expect(Object.keys(ROUTE_ALIAS_TABLE).filter((clave) => menu.has(clave))).toEqual([]);
   });
 });
 
 // ================================================================================================
-// Nivel 2 · montando la App. «Está en la lista» no es «se pinta».
+// Level 2 · mounting the App. "It is in the list" is not "it gets drawn".
 // ================================================================================================
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/');
 });
 
-describe('cada entrada del MENÚ resuelve a una vista real', () => {
-  it.each(NAV_ENTRIES.map((entry) => [entry.id || '(portada)', entry.id, entry.label] as const))(
-    '/%s → «%s» dibuja «%s»',
+describe('every MENU entry resolves to a real view', () => {
+  it.each(NAV_ENTRIES.map((entry) => [entry.id || '(cover)', entry.id, entry.label] as const))(
+    '/%s → "%s" draws "%s"',
     async (_nombre, id) => {
       window.history.pushState({}, '', `/${id}`);
       renderWithApi(<App />);
 
       expect(await verDestino(id)).toBeInTheDocument();
-      // Y NO cayó al fallback: la portada tiene su propio encabezado, y ninguna otra vista puede
-      // mostrarlo. Sin esta línea, un id retirado pasaría el test dibujando la portada.
+      // And it did NOT fall back to the cover: the cover has its own header, and no other view
+      // can show it. Without this line, a retired id would pass the test by drawing the cover.
       if (id !== '') {
         expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
       }
-      // La barra de direcciones no se mueve: una ruta canónica no es un alias.
+      // The address bar does not move: a canonical route is not an alias.
       expect(window.location.pathname).toBe(`/${id}`);
     },
   );
 });
 
-describe('cada ruta OCULTA resuelve a lo suyo, que no es el fallback', () => {
+describe('every HIDDEN route resolves to its own, which is not the fallback', () => {
   it.each(
     ROUTE_TABLE.filter((route) => route.label === '').map((route) => [route.id] as const),
-  )('/%s no cae en la portada', async (id) => {
+  )('/%s does not fall into the cover', async (id) => {
     window.history.pushState({}, '', RUTA_DIRECTA[id] ?? `/${id}`);
     renderWithApi(<App />);
 
@@ -156,33 +151,33 @@ describe('cada ruta OCULTA resuelve a lo suyo, que no es el fallback', () => {
   });
 });
 
-describe('cada ALIAS declarado llega a su heredera y reescribe la barra de direcciones', () => {
+describe('every declared ALIAS reaches its heir and rewrites the address bar', () => {
   it.each(Object.entries(ROUTE_ALIAS_TABLE).map(([origen, destino]) => [origen, destino] as const))(
     '/%s → /%s',
     async (origen, destino) => {
       window.history.pushState({}, '', `/${origen}`);
       renderWithApi(<App />);
 
-      // 1) Se ve la vista heredera, no el fallback. Ésta es la mitad que agarra el alias
-      //    encadenado: un alias roto dibuja la portada y la comprobación de abajo la delataría
-      //    igual, pero ésta dice cuál es la vista que faltó.
+      // 1) The heir view is shown, not the fallback. This is the half that catches a chained
+      //    alias: a broken alias draws the cover and the check below would catch it too, but
+      //    this one says WHICH view was missing.
       expect(await verDestino(destino)).toBeInTheDocument();
-      // 2) Y la URL se reescribió. Un alias que dibuja bien pero deja la barra en la ruta muerta
-      //    deja al botón «atrás» dando vueltas, que es el defecto que ROUTE_ALIASES existe para
-      //    evitar. `replaceState` corre en un efecto, así que se espera.
+      // 2) And the URL was rewritten. An alias that draws fine but leaves the bar on the dead
+      //    route leaves the "back" button spinning, which is the defect ROUTE_ALIASES exists to
+      //    prevent. `replaceState` runs in an effect, so it is awaited.
       await waitFor(() => { expect(window.location.pathname).toBe(`/${destino}`); });
     },
   );
 });
 
 /**
- * El CONTROL NEGATIVO de todo lo de arriba.
+ * The NEGATIVE CONTROL of everything above.
  *
- * Sin él, la suite no demostraría que una dirección ajena a las tablas conserva su URL y se
- * distingue de una vista válida. Estos casos fijan la cara del 404 explícito.
+ * Without it, the suite would not demonstrate that an address outside the tables keeps its URL
+ * and is distinguishable from a valid view. These cases fix the face of the explicit 404.
  */
-describe('el estado explícito para direcciones desconocidas', () => {
-  it('un id que NO existe conserva la URL y no inventa la portada', async () => {
+describe('the explicit state for unknown addresses', () => {
+  it('an id that DOES NOT exist keeps the URL and does not invent the cover', async () => {
     window.history.pushState({}, '', '/ruta-que-nadie-declaro');
     renderWithApi(<App />);
 
@@ -192,7 +187,7 @@ describe('el estado explícito para direcciones desconocidas', () => {
     expect(window.location.pathname).toBe('/ruta-que-nadie-declaro');
   });
 
-  it('un id retirado sin alias también se declara roto', async () => {
+  it('a retired id without an alias is also declared broken', async () => {
     window.history.pushState({}, '', '/assignments-viejo');
     renderWithApi(<App />);
 

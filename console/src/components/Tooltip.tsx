@@ -3,45 +3,45 @@ import { createPortal } from 'react-dom';
 import { createId } from '../lib';
 
 /**
- * La primitiva que no existía.
+ * The primitive that did not exist.
  *
- * La consola no tenía **ninguna**: donde hacía falta explicar algo se usaba `title`, que es lo
- * único peor que no explicar nada — no se estiliza, no aparece al tabular, tarda un segundo largo
- * en salir y en un `<svg>` ni siquiera se puede leer con el teclado. La queja del dueño ("sin
- * tooltips, poco claras") es sobre la vista entera, así que esto tiene que servir para las tres
- * cosas a la vez: una palabra en un párrafo, la cabecera de una columna y un muñeco dibujado en
- * SVG.
+ * The console had **none**: where something needed explaining it used `title`, which is the
+ * only thing worse than not explaining — it cannot be styled, it does not appear on tab focus,
+ * it takes a long second to show up, and inside an `<svg>` it cannot even be read with the
+ * keyboard. The owner's complaint ("sin tooltips, poco claras") is about the entire view, so
+ * this must serve all three at once: a word in a paragraph, a column header, and a puppet
+ * drawn in SVG.
  *
- * Dos razones para que el globo se monte con `createPortal` en `document.body` y NUNCA dentro del
- * `<svg>`:
- *  - un `<foreignObject>` lo recorta el `overflow` de `.lhg-scroll`, así que el texto del nodo del
- *    borde derecho quedaría cortado justo cuando más se lo necesita;
- *  - dentro del SVG hereda el `transform` del nodo y el escalado del `viewBox`, o sea que el
- *    tamaño de letra dependería de cuántos alias tenga la flota.
+ * Two reasons the bubble is mounted with `createPortal` to `document.body` and NEVER inside
+ * the `<svg>`:
+ *  - a `<foreignObject>` is clipped by the `overflow` of `.lhg-scroll`, so the text of the
+ *    right-edge node would be cut off exactly when it is most needed;
+ *  - inside the SVG it inherits the node's `transform` and the `viewBox` scaling, meaning the
+ *    font size would depend on how many aliases the fleet has.
  *
- * El `title` nativo se CONSERVA en los sitios donde ya existía: es el respaldo del lector de
- * pantalla y del usuario que no llega con el ratón. Esto se suma, no lo reemplaza.
+ * The native `title` is PRESERVED where it already existed: it is the screen-reader and
+ * mouse-less user's fallback. This adds to it; it does not replace it.
  */
 
-/** Retraso antes de abrir con el ratón. Sin él, barrer la pantalla dispara diez globos seguidos. */
+/** Delay before opening with the mouse. Without it, sweeping the screen triggers ten bubbles in a row. */
 export const TOOLTIP_DELAY_MS = 120;
 
 export type TooltipPlacement = 'top' | 'bottom';
 
 export interface FloatingTooltipProps {
-  /** Rectángulo del disparador en coordenadas de viewport (`getBoundingClientRect()`). */
+  /** Trigger's rectangle in viewport coordinates (`getBoundingClientRect()`). */
   anchor: DOMRect | null;
   open: boolean;
   children: ReactNode;
-  /** Debe coincidir con el `aria-describedby` del disparador. */
+  /** Must match the trigger's `aria-describedby`. */
   id?: string;
   placement?: TooltipPlacement;
 }
 
 /**
- * El globo, controlado desde afuera. Es el que usan los nodos del grafo: el SVG no puede
- * envolver a un nodo en un `<span>`, así que emite su rectángulo por `onHover` y la página
- * mantiene UN solo globo para todos los muñecos.
+ * The bubble, controlled from outside. It is the one used by the graph nodes: the SVG cannot
+ * wrap a node in a `<span>`, so it emits its rectangle via `onHover` and the page keeps ONE
+ * single bubble for all the puppets.
  */
 export function FloatingTooltip({ anchor, open, children, id, placement = 'top' }: FloatingTooltipProps) {
   if (!open || !anchor || typeof document === 'undefined') return null;
@@ -61,25 +61,25 @@ export function FloatingTooltip({ anchor, open, children, id, placement = 'top' 
 }
 
 export interface TooltipProps {
-  /** Lo que se explica. Acepta nodos: varias líneas, `<strong>`, cifras. */
+  /** What gets explained. Accepts nodes: multiple lines, `<strong>`, figures. */
   label: ReactNode;
   children: ReactNode;
   placement?: TooltipPlacement;
   /**
-   * `false` cuando lo que se envuelve YA es enfocable (un `<button>`, un enlace). El envoltorio
-   * deja de tomar foco y se apoya en que el evento `focus` del hijo burbujea hasta acá: dos
-   * paradas de tabulador para un solo control es peor accesibilidad, no mejor.
+   * `false` when what is wrapped is ALREADY focusable (a `<button>`, a link). The wrapper stops
+   * taking focus and relies on the child's `focus` event bubbling up here: two tab stops for a
+   * single control is worse accessibility, not better.
    */
   focusable?: boolean;
   className?: string;
 }
 
 /**
- * Envoltorio HTML. Abre con el ratón **y con el foco de teclado**, cierra con Esc.
+ * HTML wrapper. Opens with the mouse **and with keyboard focus**, closes with Esc.
  *
- * Que abra con el foco no es un extra: la vista se navega con Tab y un globo que sólo responde al
- * ratón deja fuera exactamente la mitad del contenido explicativo que este componente existe para
- * dar.
+ * Opening on focus is not a bonus: the view is navigated with Tab and a bubble that only
+ * responds to the mouse leaves out exactly half of the explanatory content this component
+ * exists to provide.
  */
 export function Tooltip({ label, children, placement = 'top', focusable = true, className }: TooltipProps) {
   const id = useMemo(() => createId('tooltip'), []);
@@ -101,8 +101,8 @@ export function Tooltip({ label, children, placement = 'top', focusable = true, 
 
   useEffect(() => () => { window.clearTimeout(timer.current); }, []);
 
-  // Esc cierra desde donde sea que esté el foco. Se engancha sólo mientras hay globo abierto:
-  // un oyente global permanente por cada tooltip de la página es un coste que no hace falta pagar.
+  // Esc closes from wherever the focus is. It is only attached while a bubble is open: a
+  // permanent global listener for every tooltip on the page is a cost we don't need to pay.
   useEffect(() => {
     if (!anchor) return undefined;
     const alPulsar = (event: KeyboardEvent) => { if (event.key === 'Escape') cerrar(); };
@@ -118,7 +118,7 @@ export function Tooltip({ label, children, placement = 'top', focusable = true, 
       aria-describedby={anchor ? id : undefined}
       onMouseEnter={() => { abrir(TOOLTIP_DELAY_MS); }}
       onMouseLeave={cerrar}
-      // El teclado no tiene "pasar por encima sin querer", así que no hay nada que amortiguar.
+      // The keyboard has no "hover by accident", so there is nothing to dampen.
       onFocus={() => { abrir(0); }}
       onBlur={cerrar}
     >

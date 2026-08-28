@@ -89,7 +89,15 @@ function ControlPlaneDialog({ onCerrar, ...contenido }: ControlPlaneProps & { on
   };
 
   return createPortal(
-    <div className="terminal-inspector-fondo" onMouseDown={(evento) => { if (evento.target === evento.currentTarget) onCerrar(); }}>
+    <div
+      className="terminal-inspector-fondo"
+      onMouseDown={(evento) => {
+        if (evento.target !== evento.currentTarget) return;
+        // Sin esto el foco se lo queda el fondo al soltar el ratón y no vuelve al control.
+        evento.preventDefault();
+        onCerrar();
+      }}
+    >
       <div
         className="terminal-inspector-modal"
         role="dialog"

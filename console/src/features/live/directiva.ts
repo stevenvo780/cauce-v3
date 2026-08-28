@@ -1,10 +1,10 @@
 import type { AgentDirective, AgentDirectiveFile } from '../../api/types';
 
 /**
- * Detección de solapamientos entre las tres capas de directiva:
- * Capa 1 (role_brief): Identidad y límites de autonomía.
- * Capa 2 (CLAUDE.md / AGENTS.md): Reglas de entorno y operativas.
- * Capa 3 (memoria): Conocimiento persistido del arnés.
+ * Detection of overlaps between the three directive layers:
+ * Layer 1 (role_brief): Identity and autonomy boundaries.
+ * Layer 2 (CLAUDE.md / AGENTS.md): Environment and operational rules.
+ * Layer 3 (memory): Persisted harness knowledge.
  */
 
 export type TonoAvisoCapa = 'choque' | 'hueco' | 'nota';
@@ -14,18 +14,18 @@ export interface AvisoDeCapas {
   tono: TonoAvisoCapa;
   titulo: string;
   detalle: string;
-  /** Los fragmentos concretos que lo disparan. Un aviso sin evidencia es una opinión. */
+  /** The concrete fragments that trigger it. A warning without evidence is an opinion. */
   evidencia: string[];
 }
 
-/** Sin tildes y en minúsculas: los briefs de la flota escriben «AUTONOMIA» y «autonomía». */
+/** Without accents and in lowercase: fleet briefs write both "AUTONOMIA" and "autonomía". */
 function normalizar(texto: string): string {
   return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 /**
- * Giros para detectar declaraciones de autonomía y permisos.
- * Se buscan giros y no palabras sueltas para evitar falsos positivos.
+ * Turns of phrase to detect declarations of autonomy and permissions.
+ * Phrases are matched instead of standalone words to avoid false positives.
  */
 const GIROS_DE_AUTONOMIA: { patron: RegExp; etiqueta: string }[] = [
   { patron: /\bautonomia\b/, etiqueta: 'autonomía' },
@@ -41,7 +41,7 @@ const GIROS_DE_AUTONOMIA: { patron: RegExp; etiqueta: string }[] = [
   { patron: /\bprohibido\b/, etiqueta: 'prohibido' },
 ];
 
-/** Con qué giros habla un texto de autonomía o de permisos. Vacío = no habla. */
+/** Which phrases a text uses to talk about autonomy or permissions. Empty = it does not talk. */
 export function girosDeAutonomia(texto: string | null | undefined): string[] {
   if (!texto) return [];
   const plano = normalizar(texto);
@@ -49,12 +49,12 @@ export function girosDeAutonomia(texto: string | null | undefined): string[] {
 }
 
 /**
- * Si un texto abre declarando identidad. «Si un `CLAUDE.md` empieza con "Sos…", está invadiendo la
- * capa 1» — literal del diseño.
+ * Whether a text opens by declaring identity. "If a `CLAUDE.md` starts with 'You are...' it is
+ * invading layer 1" — a literal of the design.
  *
- * Se mira sólo el ARRANQUE (primeras líneas con contenido) y no el fichero entero: un manual puede
- * mencionar «sos vos quien despliega» en mitad de un párrafo sin estar declarando identidad, y
- * marcar eso convertiría el aviso en ruido.
+ * Only the BEGINNING (the first content lines) is inspected, not the whole file: a manual may
+ * mention "you are the one who deploys" in the middle of a paragraph without declaring identity,
+ * and flagging that would turn the warning into noise.
  */
 export function abreDeclarandoIdentidad(texto: string | null | undefined): string | undefined {
   if (!texto) return undefined;
@@ -74,13 +74,13 @@ function rotuloDeFichero(fichero: AgentDirectiveFile): string {
 }
 
 /**
- * Los avisos de solapamiento entre capas.
+ * The overlap warnings between layers.
  *
- * `publicado:false`, `medido:false` y `files:null` significan que los ficheros NO SE MIRARON.
- * Devuelve lista vacía a propósito —ni un «no tiene manual», ni un «no se pisan»—, porque las dos
- * frases serían afirmaciones sobre algo que nadie leyó. `files:null` conserva el cierre seguro ante
- * gateways legacy sin el discriminante `medido`. Quien pinta la pantalla explica por qué no pudo
- * mirar; ver `DirectivaTab`.
+ * `publicado:false`, `medido:false` and `files:null` mean the files WERE NOT INSPECTED. It returns
+ * an empty list on purpose — neither a "no manual" nor a "no overlap" — because both statements
+ * would be claims about something nobody read. `files:null` preserves the safe closure against
+ * legacy gateways without the `medido` discriminator. The screen renderer explains why it could
+ * not look; see `DirectivaTab`.
  */
 export function avisosDeCapas(roleBrief: string | null | undefined, directiva: AgentDirective | undefined): AvisoDeCapas[] {
   if (!directiva?.publicado || directiva.medido === false || directiva.files == null) return [];
@@ -103,7 +103,7 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
   }
 
   for (const fichero of existentes) {
-    // Sin texto no se puede cotejar. Y NO se asume que no se pisa: se dice que no se pudo mirar.
+    // Without text we cannot compare. And we do NOT assume no overlap: we say we could not look.
     if (typeof fichero.text !== 'string') {
       avisos.push({
         id: `sin-texto:${rotuloDeFichero(fichero)}`,
@@ -205,12 +205,12 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
 }
 
 /**
- * Las primeras líneas CON CONTENIDO de un texto, para el resumen del cajón.
+ * The first content lines of a text, for the slot's summary.
  *
- * Salta las vacías en vez de contarlas: los briefs de la flota abren con una línea en blanco o con
- * un `#` de título más de una vez, y un resumen de «dos líneas» que gasta las dos en el hueco no
- * resume nada. Se recorta cada línea porque el resumen se pinta en un renglón: los espacios de
- * sangrado del `.md` original correrían el texto sin decir nada.
+ * Empty lines are skipped rather than counted: fleet briefs open with a blank line or with a
+ * title `#` more than once, and a "two lines" summary that spends both on the gap summarizes
+ * nothing. Each line is trimmed because the summary is rendered on a single line: indentation
+ * spaces from the original `.md` would shift the text without saying anything.
  */
 export function primerasLineas(texto: string | null | undefined, cuantas: number): string[] {
   if (!texto) return [];
@@ -222,10 +222,10 @@ export function primerasLineas(texto: string | null | undefined, cuantas: number
 }
 
 /**
- * Estado de medición de una capa:
- * - `no-se-miro`: sin lectura o contenedor no medido
- * - `miro-y-no-hay`: lectura confirmada con resultado vacío
- * - `hay-datos`: presencia de ficheros o entradas
+ * Measurement status of a layer:
+ * - `no-se-miro`: not read or container not measured
+ * - `miro-y-no-hay`: read confirmed with an empty result
+ * - `hay-datos`: files or entries present
  */
 export type MedicionDeCapa = 'cargando' | 'no-se-miro' | 'miro-y-no-hay' | 'hay-datos';
 
@@ -255,7 +255,7 @@ export function medicionDeCapa(recurso: RecursoDeCapa, campo: 'files' | 'memory'
   return total === 0 ? 'miro-y-no-hay' : 'hay-datos';
 }
 
-/** Conteo exacto, o límite inferior cuando `total:null` acredita un barrido cortado. */
+/** Exact count, or lower bound when `total:null` certifies a truncated scan. */
 export function totalDeMemoria(directiva: AgentDirective | undefined): number | undefined {
   const memoria = directiva?.memory;
   if (!memoria) return undefined;

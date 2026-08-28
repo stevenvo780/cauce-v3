@@ -44,10 +44,17 @@ const TOLERANCIA = {
   pantallasMaximas: 0.1,
 };
 
-/** States reached by clicking, measured on top of the plain route: the fleet table is only clipped
-    once the drawer takes half the width, and Perfil is the tab that takes the most. */
+/** Drawer states, measured apart from the plain route: the fleet table is only clipped once the
+    drawer takes its share of the width, and Perfil is the tab that takes the most. */
 const CAJON = '/live#cajon';
 const PERFIL = '/live#perfil';
+
+/* Opened through the deep link the console already supports, never by clicking the first row: the
+   fleet table sorts by state, so the row under the cursor changes between runs and so does the
+   height it measures. A ratchet that flaps is worse than no ratchet. */
+const ALIAS_MEDIDO = 'Steven/jarvis';
+
+const SIN_MOVIMIENTO = '*,*::before,*::after{animation:none!important;transition:none!important}';
 
 const escribirBaseline = process.argv.includes('--update');
 
@@ -159,12 +166,19 @@ async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
     }
   };
 
-  const abierto = await medir(CAJON, () => pagina.locator('table tbody tr').first().click({ timeout: 5000 }));
+  const abrir = (pestana) => async () => {
+    await pagina.goto(`${ORIGIN}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}&pestana=${pestana}`, {
+      waitUntil: 'networkidle', timeout: 30000,
+    });
+    await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
+    await pagina.locator('.agent-drawer').waitFor({ state: 'visible', timeout: 5000 });
+  };
+  const abierto = await medir(CAJON, abrir('ahora'));
   if (!abierto) {
     sinMedir.push(`${String(viewport)}px ${PERFIL}: not attempted, the drawer never opened`);
     return;
   }
-  await medir(PERFIL, () => pagina.locator('.agent-drawer-tab', { hasText: /perfil/i }).first().click({ timeout: 5000 }));
+  await medir(PERFIL, abrir('perfil'));
 }
 
 async function medirTodo() {
@@ -178,9 +192,7 @@ async function medirTodo() {
       for (const ruta of ROUTES) {
         await pagina.goto(ORIGIN + ruta, { waitUntil: 'networkidle', timeout: 30000 });
         // Transitions in flight report boxes that are still moving.
-        await pagina.addStyleTag({
-          content: '*,*::before,*::after{animation:none!important;transition:none!important}',
-        });
+        await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
         await pagina.waitForTimeout(700);
         const medida = await pagina.evaluate(medirEnLaPagina);
         medidas.push({ ruta, viewport, ...medida });

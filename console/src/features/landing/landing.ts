@@ -6,30 +6,30 @@ import type {
 } from '../../api/types';
 
 /**
- * Derivación PURA de la portada. Vive fuera del componente por una razón concreta: es la única
- * parte de la landing que decide algo —si hay que actuar o no— y una decisión así tiene que poder
- * probarse con su control negativo, no observarse a ojo en una pantalla.
+ * PURE derivation of the landing. Lives outside the component for a specific reason: it is the
+ * only part of the landing that decides anything —whether to act or not— and a decision like
+ * that has to be testable with its negative control, not eyeballed on a screen.
  */
 
 export type AlertaTono = 'danger' | 'warning';
 
 export interface Alerta {
-  /** Estable: sirve de `key` de React y de ancla en las pruebas. */
+  /** Stable: serves as React `key` and as an anchor in tests. */
   id: string;
   tono: AlertaTono;
-  /** La frase, en castellano y con el número adentro. */
+  /** The sentence, with the number baked in. */
   titulo: string;
-  /** Qué significa, en castellano. Es lo que se lee. */
+  /** What it means, in plain language. This is what gets read. */
   detalle: string;
   /**
-   * De qué lectura del servidor sale el número.
+   * Which server reading the number comes from.
    *
-   * Esto iba DENTRO de `detalle` —«GET /v3/console/activity → totals.overdue_in_flight»— y se
-   * pintaba en la primera pantalla del operador, ocho veces. Una ruta de API es depuración: hace
-   * falta para poder contrastar un número dudoso y no hace falta para nada más. Va al `title=`.
+   * This used to live INSIDE `detalle` —"GET /v3/console/activity → totals.overdue_in_flight"—
+   * and was painted on the operator's first screen, eight times. An API path is debug info: it
+   * is needed to cross-check a dubious number and for nothing else. It goes in `title=`.
    */
   fuente: string;
-  /** Adónde se va a resolver. Siempre una ruta viva de la consola. */
+  /** Where the resolution happens. Always a live console route. */
   ruta: string;
   rutaLabel: string;
 }
@@ -37,9 +37,9 @@ export interface Alerta {
 export interface ResumenPortada {
   alertas: Alerta[];
   /**
-   * Las fuentes que NO contestaron. Es la mitad que casi siempre falta: sin esto, una portada a la
-   * que se le cayó `/v3/console/quotas` dibuja cero alertas y se lee exactamente igual que una
-   * flota sana. "No lo sé" y "no pasa nada" no pueden pintarse del mismo color.
+   * The sources that did NOT answer. This is the half that is almost always missing: without
+   * it, a landing where `/v3/console/quotas` has died draws zero alerts and reads exactly like a
+   * healthy fleet. "I don't know" and "nothing is wrong" cannot be painted the same colour.
    */
   fuentesAusentes: string[];
 }
@@ -56,12 +56,12 @@ function positivo(value: number | null | undefined): number | undefined {
 }
 
 /**
- * Las alertas de la consola entera, en un solo sitio.
+ * All the console's alerts, in one place.
  *
- * Nada se sintetiza: cada regla sale de un campo que el servidor manda y el detalle dice cuál es,
- * para que un número dudoso se pueda contrastar contra su vista completa. Una fuente que no llegó
- * no produce alerta —no se puede afirmar sobre lo que no se leyó— pero sí queda anotada en
- * `fuentesAusentes`.
+ * Nothing is synthesised: each rule comes from a field the server sends and the detail names it,
+ * so a dubious number can be cross-checked against its full view. A source that did not arrive
+ * does not produce an alert —you cannot assert about what you have not read— but it is recorded
+ * in `fuentesAusentes`.
  */
 export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
   const alertas: Alerta[] = [];
@@ -69,7 +69,7 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
 
   if (!entrada.status) fuentesAusentes.push('Estado del sistema');
   if (!entrada.queues) fuentesAusentes.push('Colas y DLQ');
-  // Identifica la lectura de cuotas ausente.
+  // Identifies the missing quotas reading.
   if (!entrada.quotas) fuentesAusentes.push('Consumo de cuotas');
   if (!entrada.activity) fuentesAusentes.push('Actividad de la flota');
 
@@ -154,8 +154,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
   }
 
   /**
-   * Un recolector rancio no es un detalle de infraestructura: significa que TODOS los porcentajes
-   * de arriba pueden estar mintiendo, y sin este aviso se leerían como frescos.
+   * A stale collector is not an infrastructure detail: it means ALL the percentages above may
+   * be lying, and without this notice they would be read as fresh.
    */
   const rancios = (entrada.quotas?.collectors ?? []).filter((collector) => collector.stale === true);
   if (rancios.length > 0) {
@@ -187,27 +187,27 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
 }
 
 /**
- * `true` sólo cuando se leyeron TODAS las fuentes y ninguna trajo una incidencia. Es la única
- * condición bajo la que la portada tiene derecho a decir "sin incidencias".
+ * `true` only when ALL sources were read and none brought an incident. This is the only
+ * condition under which the landing is allowed to say "no incidents".
  */
 export function puedeDecirSinIncidencias(resumen: ResumenPortada): boolean {
   return resumen.alertas.length === 0 && resumen.fuentesAusentes.length === 0;
 }
 
 /* ============================================================================================ *
- * Agrupar las alertas por su destino.
+ * Group alerts by their destination.
  * ============================================================================================ */
 
 export interface GrupoDeAlertas {
   ruta: string;
   rutaLabel: string;
-  /** El peor tono del grupo: si una sola es `danger`, el grupo es `danger`. */
+  /** The worst tone in the group: if a single one is `danger`, the group is `danger`. */
   tono: AlertaTono;
   alertas: Alerta[];
 }
 
 /**
- * Agrupa las alertas por su ruta de destino conservando el orden de gravedad.
+ * Groups alerts by their destination route, preserving severity order.
  */
 export function agruparAlertas(alertas: readonly Alerta[]): GrupoDeAlertas[] {
   const grupos: GrupoDeAlertas[] = [];

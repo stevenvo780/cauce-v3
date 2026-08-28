@@ -14,12 +14,12 @@ import { saludDeColaPorAgente } from './queue-health';
 import { construirRosterDeMensajeria } from './roster';
 
 /**
- * El nombre de la variable CSS con el tope del bloque de mensajería dentro del documento.
+ * The name of the CSS variable holding the top of the messenger block within the document.
  *
- * Se exporta por lo mismo que `VAR_ALTO_COMPOSITOR`: la hoja la LEE y el componente la ESCRIBE, y
- * si las dos cadenas se separan no falla el typecheck, ni el lint, ni una prueba de DOM — el
- * síntoma sería el compositor volviendo a caer fuera de pantalla en escritorio, que es el defecto
- * que esto viene a cerrar. `messenger-css.test.ts` exige que sean la misma.
+ * Exported for the same reason as `VAR_ALTO_COMPOSITOR`: the stylesheet READS it and the
+ * component WRITES it, and if the two strings drift there is no typecheck, lint or DOM-test
+ * failure — the symptom would be the composer falling off-screen again on desktop, which is
+ * the defect this exists to close. `messenger-css.test.ts` requires them to be the same.
  */
 export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
@@ -40,7 +40,7 @@ function decodificar(segmento: string): string {
   }
 }
 
-/** `/messages/:tenant/:alias` identifica la conversación abierta; `/messages` a secas, ninguna. */
+/** `/messages/:tenant/:alias` identifies the open conversation; plain `/messages`, none. */
 function agenteDeLaRuta(path: string): { tenantId: string; alias: string } | undefined {
   const segmentos = path.split('/').filter(Boolean).map(decodificar);
   if (segmentos[0] !== 'messages' || segmentos.length < 3) return undefined;
@@ -48,7 +48,7 @@ function agenteDeLaRuta(path: string): { tenantId: string; alias: string } | und
 }
 
 /**
- * Vista de mensajería interactiva con agentes de la flota y monitoreo de colas.
+ * Interactive messaging view with fleet agents and queue monitoring.
  */
 export function MessagesPage() {
   const api = useApi();
@@ -67,10 +67,10 @@ export function MessagesPage() {
 
   const path = useSyncExternalStore(suscribirRuta, rutaActual, () => '/messages');
   /**
-   * El roster NO se construye sólo con `memberships ∪ presence`. Ver `roster.ts`: con esa única
-   * fuente, un mensaje dirigido a un alias sin membresía ni lease no aparecía en ninguna parte de
-   * esta pantalla —el caso `gaia`—, y el feed de mensajes entra acá justamente para que un hilo
-   * con historia no pueda desaparecer por una tabla que nadie tocó.
+   * The roster is NOT built only from `memberships ∪ presence`. See `roster.ts`: with that single
+   * source, a message addressed to an alias without membership or lease showed up nowhere on this
+   * screen —the `gaia` case—, and the messages feed is added precisely so a thread with history
+   * cannot disappear because of a table nobody touched.
    */
   const agents = useMemo(
     () => construirRosterDeMensajeria({
@@ -91,9 +91,9 @@ export function MessagesPage() {
   const accesoVerificado = access.error ? undefined : access.data;
   const topologiaVerificada = topology.error ? undefined : topology.data;
   const canPublish = permissionState(accesoVerificado, 'message.publish') === 'allowed';
-  // El feed de mensajes es AHORA una de las fuentes del roster, así que también gatea el aviso
-  // de «el servidor no observa a este alias»: afirmarlo con el feed a medio cargar sería otra
-  // negativa dicha antes de tener la evidencia.
+  // The messages feed is NOW one of the roster's sources, so it also gates the "the server does
+  // not observe this alias" notice: asserting it with a half-loaded feed would be another denial
+  // spoken before having the evidence.
   const flotaCargando = (status.loading && !status.data)
     || (topology.loading && !topology.data)
     || (activity.loading && !activity.data)
@@ -101,31 +101,31 @@ export function MessagesPage() {
   const flotaError = status.error ?? topology.error;
 
   /*
-   * -------------------------------------------------- EL COMPOSITOR, TAMBIÉN EN ESCRITORIO
+   * -------------------------------------------------- THE COMPOSER, ALSO ON DESKTOP
    *
-   * Medido en producción a 1280x900: el `textarea` estaba en y=1546 y el botón «Enviar» en
-   * y=1633, o sea 646 px POR DEBAJO del pliegue, con `position: static` en el compositor. El
-   * arreglo del teléfono (commit c2a75d0) no toca este caso: su `position: fixed` vive dentro del
-   * corte de 760 px. Acá el compositor se ancla al pie del PANEL, y para eso el panel necesita un
-   * alto: `.messenger-shell` crecía con su contenido, así que `margin-top: auto` no empujaba nada.
+   * Measured in production at 1280x900: the `textarea` was at y=1546 and the "Send" button at
+   * y=1633, i.e. 646 px BELOW the fold, with `position: static` on the composer. The phone fix
+   * (commit c2a75d0) does not touch this case: its `position: fixed` lives inside the 760 px
+   * cutoff. Here the composer anchors to the bottom of the PANEL, and for that the panel needs
+   * a height: `.messenger-shell` grew with its content, so `margin-top: auto` pushed nothing.
    *
-   * El alto se MIDE en vez de escribirse a mano porque depende de lo que hay encima —la cabecera
-   * de página, la descripción y el chip de permiso ocupan distinto según el ancho y según el texto
-   * del servidor—, y un número fijo en la hoja volvería a dejar el botón fuera en cuanto alguien
-   * agregue una línea. Se escribe el tope real del bloque en el documento y la hoja resta.
+   * The height is MEASURED, not hand-written, because it depends on what is above —the page
+   * header, the description, and the permission chip occupy different amounts by width and by
+   * server text—, and a fixed number in the sheet would push the button off again as soon as
+   * someone adds a line. The block's real top is written to the document and the sheet subtracts.
    */
   const envolturaRef = useRef<HTMLDivElement | null>(null);
   const medirElTope = useCallback(() => {
     const envoltura = envolturaRef.current;
     if (!envoltura) return;
-    // `+ scrollY` para que sea el tope en el DOCUMENTO y no en la ventana: sin eso la medida
-    // cambia con cada scroll y el panel se estiraría y encogería mientras el operador lee.
+    // `+ scrollY` so it is the top within the DOCUMENT and not the viewport: without it the
+    // measurement would change with every scroll and the panel would stretch and shrink while the operator reads.
     const tope = Math.round(envoltura.getBoundingClientRect().top + window.scrollY);
     envoltura.style.setProperty(VAR_TOPE_MENSAJERIA, `${String(tope)}px`);
   }, []);
-  // Sin lista de dependencias a propósito: lo que hay ENCIMA del bloque cambia de alto con el
-  // texto que devuelve el servidor (el chip de permiso, la descripción), así que se remide en
-  // cada pintada. El oyente de `resize`, en cambio, se registra una sola vez.
+  // No dependency list on purpose: what sits ABOVE the block changes height with the text the
+  // server returns (the permission chip, the description), so it is re-measured on every paint.
+  // The `resize` listener, on the other hand, is registered once.
   useEffect(medirElTope);
   useEffect(() => {
     window.addEventListener('resize', medirElTope);
@@ -173,10 +173,10 @@ export function MessagesPage() {
         {seleccionado ? (
           <ConversationPane
             /*
-              La `key` es del ARREGLO, no decorativa: sin ella, cambiar de agente conserva el
-              borrador, el mensaje seleccionado y la posición del hilo del agente anterior — un
-              borrador escrito para zeus quedaba en la caja de kant— y el efecto que abre el hilo
-              por el final no se vuelve a ejecutar, porque el componente no se monta otra vez.
+              The `key` belongs to the ARRAY, not decorative: without it, switching agents keeps
+              the previous agent's draft, selected message, and thread position — a draft written
+              for zeus would stay in kant's box — and the effect that opens the thread at the
+              bottom does not run again, because the component is not remounted.
             */
             key={seleccionado.id}
             agent={seleccionado}

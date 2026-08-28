@@ -131,25 +131,25 @@ function errorBody(value: unknown): { message?: string; error?: string; reason?:
   };
 }
 
-/** Escritura = lo que el gancho `onRequest` del gateway considera inseguro. Misma lista, misma fuente. */
+/** Write = whatever the gateway's `onRequest` hook considers unsafe. Same list, same source. */
 function esEscritura(method: string | undefined): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes((method ?? 'GET').toUpperCase());
 }
 
 /**
- * Lo mínimo que este módulo necesita de la sesión. Es un `Pick` y no `CauceApi` entero para que un
- * componente o un test pueda pasar el suyo sin construir el cliente completo.
+ * The minimum this module needs from the session. It is a `Pick`, not the whole `CauceApi`, so a
+ * component or test can pass its own without building the full client.
  */
 type SesionConToken = Pick<CauceApi, 'csrfForMutation'>;
 
 /**
- * El token que abre la puerta CSRF, pedido a la sesión porque es de la SESIÓN, no del módulo. Sólo
- * se pide en las escrituras: en una lectura el gateway no lo exige y pedirlo costaría un viaje de
- * más contra `/v3/auth/session` por cada refresco de la lista de destinos.
+ * The token that opens the CSRF door, fetched from the session because it belongs to the SESSION,
+ * not the module. Fetched only on writes: on a read the gateway does not require it, and fetching
+ * it would cost an extra round-trip to `/v3/auth/session` for every target-list refresh.
  *
- * Un fallo de sesión sale como `TerminalApiError` y no como `ApiError`: quien llama a este módulo
- * ramifica por `TerminalApiError`, y dejar escapar otro tipo convertiría un 401 legible en un
- * error suelto que el panel pinta como fallo desconocido.
+ * A session failure surfaces as `TerminalApiError`, not `ApiError`: callers of this module branch
+ * on it, and letting another type through would turn a readable 401 into a loose error that the
+ * panel paints as an unknown failure.
  */
 async function csrfParaEscritura(session: SesionConToken): Promise<string | undefined> {
   try {
@@ -161,9 +161,9 @@ async function csrfParaEscritura(session: SesionConToken): Promise<string | unde
 }
 
 /**
- * `session` es la sesión que tiene el token CSRF en memoria. Por defecto la compartida; los
- * componentes pasan la suya (`useApi()`) para que una consola con dos clientes —los tests, sin ir
- * más lejos— no escriba con el token del otro.
+ * `session` is the session that holds the CSRF token in memory. The shared one by default; the
+ * components pass their own (`useApi()`) so a console with two clients —tests, for one— does not
+ * write with the other's token.
  */
 async function terminalResponse(
   path: string,
@@ -332,8 +332,8 @@ export async function listTerminalTargets(): Promise<TerminalTargetsSnapshot> {
         const target = readTerminalTarget(item);
         const key = target === undefined ? undefined : `${target.tenant_id}\u0000${target.alias}`;
         if (target === undefined || key === undefined || seen.has(key)) {
-          // Ocultar sólo la fila rota fabricaría un inventario parcial que parece completo. Para
-          // autoridad PTY, parcial es UNKNOWN: no se habilita ni se cuenta ningún destino.
+          // Hiding only the broken row would fabricate a partial inventory that looks complete.
+          // For PTY authority, partial is UNKNOWN: no destination is enabled or counted.
           invalidInventory = true;
           break;
         }
@@ -386,10 +386,10 @@ export function createTerminalSession(
     const grant = status === 201 ? exactTerminalSessionGrant(value, payload) : undefined;
     if (grant) return grant;
 
-    // El INSERT puede haber confirmado aunque el JSON haya quedado truncado, pero un `session_id`
-    // dentro de ESE recibo mal formado no es autoridad causal para borrar nada: podría pertenecer
-    // a otra pestaña o ser directamente hostil. La UI relee el inventario exacto del operador y
-    // sólo ofrece un DELETE explícito sobre una fila visible; acá nunca se revoca a ciegas.
+    // The INSERT may have committed even though the JSON was truncated, but a `session_id` inside
+    // that malformed receipt has no causal authority to revoke anything: it might belong to
+    // another tab or be outright hostile. The UI re-reads the exact operator inventory and only
+    // exposes an explicit DELETE on a visible row; we never revoke blindly here.
     throw new TerminalApiError(
       'El gateway devolvió un grant PTY incompleto. No se usó su session_id para revocar nada; se debe conciliar contra el inventario exacto de sesiones visibles.',
       409,
@@ -556,9 +556,9 @@ export function exactTerminalSessionGrant(
   const container = targetRow.container === null ? null : boundedOpaque(targetRow.container, 256);
   const runtimeUser = targetRow.runtime_user === null ? null : boundedOpaque(targetRow.runtime_user, 128);
   if (!sessionId || !ticket || !websocketPath || !/^\/[A-Za-z0-9/_-]+$/u.test(websocketPath)
-      // El reloj autoritativo del ticket es el gateway. El navegador sólo exige un ISO válido:
-      // con clock skew o una red lenta, decidir localmente que ya venció cerraría una sesión que
-      // el servidor todavía puede aceptar (y el WebSocket hará la validación real al canjearlo).
+      // The gateway is the authoritative clock for the ticket. The browser only requires a valid
+      // ISO: with clock skew or a slow network, deciding locally that it already expired would
+      // close a session the server can still accept (the WebSocket checks it when redeeming).
       || !expiresAt || !Number.isFinite(expiry)
       || !Number.isSafeInteger(ttl) || Number(ttl) < 1 || Number(ttl) > 120
       || typeof record.receipt_recovered !== 'boolean'
@@ -664,12 +664,12 @@ export function rotateTerminalSessionOwner(
 }
 
 /**
- * Una sesión de terminal tal como la lista el gateway para ESTE operador.
+ * A terminal session as listed by the gateway for THIS operator.
  *
- * `expires_at` no es decorativo: es el mismo instante con el que el servidor decide si la sesión
- * sigue ocupando una de las plazas del operador (`openPredicate` en el plugin del gateway). Sin
- * ese campo la consola no puede distinguir una sesión que ocupa plaza de un ticket que caducó
- * hace horas, y las dos llegan con `state` distinto de `closed`.
+ * `expires_at` is not decorative: it is the same instant the server uses to decide whether the
+ * session still occupies one of the operator's slots (`openPredicate` in the gateway plugin).
+ * Without this field the console cannot tell apart a session that is occupying a slot from a
+ * ticket that expired hours ago, and both arrive with a `state` other than `closed`.
  */
 export interface TerminalSessionListItem {
   session_id: string;
@@ -684,7 +684,7 @@ export interface TerminalSessionListItem {
 }
 
 /**
- * Lista las sesiones activas del operador para conciliar el cupo de sesiones concurrentes.
+ * Lists the operator's active sessions to reconcile the concurrent session budget.
  */
 export async function listTerminalSessions(session?: SesionConToken): Promise<TerminalSessionListItem[]> {
   const payload = await terminalRequest<unknown>('/v3/console/terminal/sessions', {}, session);

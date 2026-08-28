@@ -207,6 +207,8 @@
  */
 .terminal-inspector-modal-cuerpo .terminal-adapter-list article { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
 .terminal-inspector-modal-cuerpo .terminal-adapter-list article > .badge { grid-column: auto; margin-top: 0; }
+/* Same reason on the channel card: with 70 px the "Ruta WebSocket" label wrapped in two. */
+.terminal-inspector-modal-cuerpo .terminal-pty-capability dl div { grid-template-columns: 120px minmax(0, 1fr); }
 
 @media (prefers-color-scheme: light) {
   .terminal-inspector-boton, .terminal-inspector-modal { background: #f8fafc; }

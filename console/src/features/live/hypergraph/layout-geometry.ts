@@ -4,32 +4,32 @@ export interface Point {
 }
 
 /**
- * Cuánto espacio ocupa REALMENTE un nodo en pantalla, medido desde su centro.
+ * How much space a node ACTUALLY occupies on screen, measured from its center.
  *
- * Un nodo no es un punto: es el avatar **más** su nombre debajo **más** el globo de la cola arriba
- * a la derecha. Separar por `nodeSpacing` circular contra el radio del avatar es justamente el
- * error que hacía que `zeus` pisara a `argos`: los avatares no se tocaban, pero sus nombres y sus
- * globos sí. La caja es asimétrica porque el dibujo lo es (el nombre sólo cuelga hacia abajo).
+ * A node is not a point: it is the avatar **plus** its name below **plus** the queue bubble on
+ * the top right. Spacing them by circular `nodeSpacing` against the avatar's radius is exactly
+ * the mistake that made `zeus` overlap `argos`: the avatars never touched, but their names and
+ * bubbles did. The box is asymmetric because the drawing is (the name only hangs downward).
  */
 export interface NodeFootprint {
-  /** Semiancho: la mitad del nombre más largo esperable, no el radio del avatar. */
+  /** Half-width: half of the longest expected name, not the avatar's radius. */
   halfWidth: number;
-  /** Desplazamiento del borde superior respecto del centro (negativo). */
+  /** Offset of the top edge from the center (negative). */
   top: number;
-  /** Desplazamiento del borde inferior respecto del centro (positivo). */
+  /** Offset of the bottom edge from the center (positive). */
   bottom: number;
 }
 
-/** El nodo del hipergrafo estructural: punto de 9 px con su alias debajo. */
+/** Hypergraph node: 9-px dot with its alias below. */
 export const NODE_FOOTPRINT: NodeFootprint = { halfWidth: 32, top: -20, bottom: 36 };
 
 /**
- * ¿Se pisan dos nodos colocados en `a` y `b`?
+ * Do two nodes placed at `a` and `b` overlap?
  *
- * Se exporta porque es la condición que los tests afirman: dos cajas axis-aligned se solapan si y
- * sólo si se solapan en los dos ejes a la vez. Comprobarlo con distancia euclídea contra un radio
- * es más simple y está mal — deja pasar exactamente los casos que se ven feos (dos nodos casi a la
- * misma altura, separados lo justo para que los círculos no se toquen y los nombres sí).
+ * Exported because it is the condition the tests assert: two axis-aligned boxes overlap iff
+ * they overlap on both axes at once. Checking it with Euclidean distance against a radius is
+ * simpler and wrong — it lets through exactly the cases that look ugly (two nodes nearly at
+ * the same height, separated just enough that the circles do not touch but the names do).
  */
 export function footprintsOverlap(a: Point, b: Point, box: NodeFootprint = NODE_FOOTPRINT): boolean {
   const width = box.halfWidth * 2;
@@ -38,11 +38,11 @@ export function footprintsOverlap(a: Point, b: Point, box: NodeFootprint = NODE_
 }
 
 /**
- * Hash determinista (FNV-1a de 32 bits) sobre una cadena.
+ * Deterministic hash (32-bit FNV-1a) over a string.
  *
- * Se usa para desempatar posiciones iniciales sin recurrir a un generador aleatorio: la misma
- * cadena produce siempre el mismo desplazamiento, así que el dibujo es reproducible entre
- * refrescos, entre sesiones y entre máquinas.
+ * Used to break ties on initial positions without resorting to a random generator: the same
+ * string always produces the same offset, so the drawing is reproducible across refreshes,
+ * sessions and machines.
  */
 export function hashString(value: string): number {
   let hash = 0x811c9dc5;
@@ -53,12 +53,12 @@ export function hashString(value: string): number {
   return hash >>> 0;
 }
 
-/** Pseudo-aleatorio determinista en [0, 1) derivado de una cadena y un canal. */
+/** Deterministic pseudo-random in [0, 1) derived from a string and a channel. */
 export function jitter(seed: string, channel: number): number {
   return (hashString(`${seed}::${String(channel)}`) % 10_000) / 10_000;
 }
 
-/** Envolvente convexa (monotone chain de Andrew). Devuelve los vértices en sentido horario. */
+/** Convex hull (Andrew's monotone chain). Returns the vertices in clockwise order. */
 export function convexHull(points: Point[]): Point[] {
   if (points.length <= 2) return points.slice();
   const sorted = points
@@ -92,18 +92,18 @@ export function normalize(vector: Point): Point {
 }
 
 /**
- * Infla un polígono convexo empujando cada vértice a lo largo de su bisectriz exterior.
+ * Inflates a convex polygon by pushing each vertex along its exterior bisector.
  *
- * Para un polígono convexo, `(v - anterior) + (v - siguiente)` apunta hacia afuera, así que sirve
- * de dirección de inflado sin necesidad de calcular normales por arista. Se prefiere a empujar
- * desde el centroide porque en envolventes alargadas (dos o tres nodos casi alineados) el empuje
- * radial deja los extremos sin padding y el contorno acaba cortando los nodos que debería contener.
+ * For a convex polygon, `(v - previous) + (v - next)` points outward, so it serves as the
+ * inflation direction without computing per-edge normals. Preferred over pushing from the
+ * centroid because on elongated hulls (two or three nodes nearly aligned) the radial push
+ * leaves the ends with no padding and the outline ends up cutting the nodes it should contain.
  */
 export function inflateHull(hull: Point[], padding: number): Point[] {
   const count = hull.length;
   if (count === 0) return [];
   if (count === 1) {
-    // Un solo miembro: círculo. Se aproxima con 8 puntos para que el suavizado lo cierre redondo.
+    // Single member: a circle. Approximated with 8 points so the smoothing closes it round.
     const [center] = hull;
     return Array.from({ length: 8 }, (_, index) => {
       const angle = (index / 8) * Math.PI * 2;
@@ -111,7 +111,7 @@ export function inflateHull(hull: Point[], padding: number): Point[] {
     });
   }
   if (count === 2) {
-    // Dos miembros: cápsula. Se extiende `padding` a lo largo del eje y `padding` en perpendicular.
+    // Two members: a capsule. Extends `padding` along the axis and `padding` perpendicular to it.
     const [a, b] = hull;
     const axis = normalize({ x: b.x - a.x, y: b.y - a.y });
     const perpendicular = { x: -axis.y, y: axis.x };
@@ -142,10 +142,10 @@ export function inflateHull(hull: Point[], padding: number): Point[] {
 }
 
 /**
- * Convierte un polígono cerrado en un `path` suave (Catmull-Rom → Bézier cúbica).
+ * Converts a closed polygon into a smooth `path` (Catmull-Rom to cubic Bezier).
  *
- * El suavizado es lo que hace que una hiperarista se lea como "una región que contiene cosas" y no
- * como un polígono técnico. Es puramente visual: no mueve los nodos ni cambia quién está adentro.
+ * The smoothing is what makes a hyperedge read as "a region that contains things" rather than a
+ * technical polygon. It is purely visual: it does not move nodes nor change who is inside.
  */
 export function closedSmoothPath(points: Point[]): string {
   const count = points.length;
@@ -176,7 +176,7 @@ export function centroidOf(points: Point[]): Point {
   return { x: sum.x / points.length, y: sum.y / points.length };
 }
 
-/** Punto dentro de polígono (ray casting). Se usa en los tests: el contorno debe contener a sus miembros. */
+/** Point-in-polygon (ray casting). Used by the tests: the outline must contain its members. */
 export function pointInPolygon(point: Point, polygon: Point[]): boolean {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {

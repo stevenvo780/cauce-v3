@@ -13,23 +13,23 @@ const stepTitles: Record<WizardStep, string> = {
   tenant: 'Tenant', room: 'Room', membership: 'Membership', harness: 'Harness', review: 'Dry-run y aplicar',
 };
 
-// Mismas expresiones que TenantSchema y AliasSchema en packages/protocol/src/schemas.ts.
+// Same expressions as TenantSchema and AliasSchema in packages/protocol/src/schemas.ts.
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /**
- * `harnessCommand` YA NO EXISTE, y su ausencia es el cambio.
+ * `harnessCommand` NO LONGER EXISTS, and its absence is the change.
  *
- * `harness_definitions.command` se guardaba, se auditaba y se podía deshacer… y no lo lee nadie:
- * `listAdapters` ni siquiera lo selecciona (packages/store/src/repository/agents.ts:278), y el adaptador
- * toma la orden que ejecuta de su propia tabla compilada
- * (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su fichero de
- * configuración local (packages/adapter-sdk/src/bin/config.ts:179). Un campo de alta que escribe una
- * columna que nadie obedece es justo la promesa falsa que este cambio retira.
+ * `harness_definitions.command` was being saved, audited, and undoable… and nobody reads it:
+ * `listAdapters` does not even select it (packages/store/src/repository/agents.ts:278), and the
+ * adapter takes the command it runs from its own compiled table
+ * (packages/adapter-sdk/src/harnesses/index.ts:12) or from its local config file's
+ * `harness_command` (packages/adapter-sdk/src/bin/config.ts:179). A create field that writes a
+ * column nobody obeys is exactly the false promise this change withdraws.
  *
- * No se pierde capacidad: `HarnessConfigMutationSchema` lo sigue admitiendo
- * (packages/protocol/src/schemas/configuration.ts:31) y el editor de mutaciones crudas lo puede mandar. Lo que
- * desaparece es la invitación a rellenarlo.
+ * No capability is lost: `HarnessConfigMutationSchema` still admits it
+ * (packages/protocol/src/schemas/configuration.ts:31) and the raw-mutation editor can send it.
+ * What disappears is the invitation to fill it in.
  */
 interface SpaceDraft {
   tenantId: string; tenantLabel: string; tenantIsHub: boolean; withTenant: boolean;
@@ -52,10 +52,10 @@ function capabilityList(value: string): string[] {
 interface PlanEntry { step: SpaceStep; mutation: ConfigMutation }
 
 /**
- * Identidad de un paso del plan: el paso MÁS el JSON exacto de la mutación. Lo aplicado se registra
- * con esta clave y no con el nombre del paso, porque el nombre sobrevive a cualquier edición del
- * draft: si el operador cambia un campo después de aplicar, la mutación es otra —una que el control
- * plane nunca recibió— y el paso tiene que volver a quedar pendiente en vez de heredar el "aplicado".
+ * Identity of a plan step: the step PLUS the exact JSON of the mutation. What was applied is
+ * recorded under this key, not the step's name, because the name survives any edit of the draft:
+ * if the operator changes a field after applying, the mutation is a different one —one the plan
+ * control never received— and the step has to become pending again instead of inheriting "applied".
  */
 function entryKey(entry: PlanEntry): string {
   return `${entry.step}:${JSON.stringify(entry.mutation)}`;
@@ -86,9 +86,9 @@ function planFor(draft: SpaceDraft): PlanEntry[] {
   if (draft.withHarness) {
     plan.push({ step: 'harness', mutation: {
       resource: 'harness', action: 'create', id: draft.harnessId.trim(),
-      // Sin `command`: la clave no viaja, no se manda `null` «por si acaso». Mandar `null` haría
-      // que un alta pisara con NULL el valor que otro operador hubiera puesto por el editor crudo,
-      // y eso es escribir un campo que este formulario ya no dice gobernar.
+      // Without `command`: the key is not sent, and no `null` is sent "just in case". Sending
+      // `null` would let a create overwrite with NULL the value another operator set through the
+      // raw editor, which is writing a field this form no longer claims to govern.
       value: {
         display_name: draft.harnessLabel.trim(),
         capabilities: capabilityList(draft.harnessCapabilities), enabled: true,
@@ -131,21 +131,21 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
 }
 
 /**
- * Guía tenant -> room -> membership -> harness sobre el mismo POST /v3/console/config/changes que
- * usa el editor crudo. El endpoint aplica UNA mutación atómica por llamada y cada paso depende de
- * las filas que creó el anterior, así que el plan se previsualiza y se aplica de a un paso: no hay
- * dry-run posible del room antes de que exista el tenant.
+ * Guides tenant -> room -> membership -> harness over the same POST /v3/console/config/changes
+ * that the raw editor uses. The endpoint applies ONE atomic mutation per call and each step
+ * depends on the rows the previous one created, so the plan is previewed and applied one step
+ * at a time: there is no possible dry-run of the room before the tenant exists.
  */
 export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
   canWrite: boolean;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
-  /** El control que elige entre este wizard y el alta de un solo recurso. Ver `AltaDeEspacios`. */
+  /** The control that picks between this wizard and a single-resource create. See `AltaDeEspacios`. */
   encabezado?: ReactNode;
 }) {
   const [draft, setDraft] = useState<SpaceDraft>(emptyDraft);
   const [step, setStep] = useState<WizardStep>('tenant');
-  // Claves (entryKey) de las mutaciones que el servidor aceptó, no nombres de paso.
+  // Keys (entryKey) of the mutations the server accepted, not step names.
   const [applied, setApplied] = useState<string[]>([]);
   const [validated, setValidated] = useState<string>();
   const [preview, setPreview] = useState<string>();
@@ -167,7 +167,7 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
   const pendingKey = pending?.key;
   const pendingText = pending ? JSON.stringify(pending.mutation, null, 2) : undefined;
   const invalid = stepError(step, draft);
-  // El apply sólo se habilita contra la mutación exacta que el servidor ya validó en dry-run.
+  // Apply is only enabled against the exact mutation the server already validated in dry-run.
   const applicable = pendingKey !== undefined && validated === pendingKey && !invalid;
   const index = wizardSteps.indexOf(step);
 
@@ -204,13 +204,13 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
       setNotice({ text: `Dry-run de ${stepTitles[pending.step]} aceptado: revisá el resultado antes de aplicar.`, tone: 'success' });
       return;
     }
-    // Se registra la mutación que el servidor aceptó, aunque el draft haya cambiado durante el await.
+    // The mutation the server accepted is recorded, even if the draft changed during the await.
     setApplied((current) => (current.includes(pendingKey) ? current : [...current, pendingKey]));
     setValidated(undefined);
     setPreview(undefined);
-    // El wizard era el único de los cuatro caminos de escritura que tiraba el desenlace de la
-    // relectura: decía «aplicado en revisión 2» aunque el GET posterior hubiera fallado con un 500,
-    // y el paso siguiente se armaba contra un snapshot vencido sin que nadie lo dijera.
+    // The wizard was the only one of the four write paths that discarded the outcome of the
+    // re-read: it said "applied at revision 2" even when the subsequent GET had failed with a
+    // 500, and the next step was built against a stale snapshot with no one calling it out.
     const falloLaRelectura = outcome.recarga !== undefined && !outcome.recarga.releido;
     setNotice({
       tone: falloLaRelectura ? 'parcial' : 'success',
@@ -251,8 +251,8 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
       <label>Harness id<input value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} /></label>
       <label>Display name<input value={draft.harnessLabel} onChange={(event) => { edit({ harnessLabel: event.target.value }); }} /></label>
       <label>Capabilities <span className="label-hint">separadas por coma</span><input value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
-      {/* Dónde se fue «Command». Quitar un campo sin decirlo deja al operador buscándolo y creyendo
-          que la pantalla se rompió; decir que no lo lee nadie contesta la pregunta de una vez. */}
+      {/* Where did "Command" go. Removing a field without saying so leaves the operator hunting for
+          it and thinking the screen broke; saying nobody reads it answers the question at once. */}
       <p className="muted">
         «Command» ya no se pide: esa columna se guarda pero no la lee ningún camino de ejecución —el
         adaptador toma su orden de su propio paquete o de su fichero local—. Sigue admitida por el
@@ -267,8 +267,8 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
           <code>{JSON.stringify(entry.mutation)}</code>
         </li>)}
       </ul>}
-      {/* El JSON del paso pendiente no se pierde: deja de estar abierto. Lo que hace falta leer
-          para decidir es la lista de arriba —qué paso va y en qué estado—, no cómo se codifica. */}
+      {/* The pending step's JSON is not lost: it stops being open. What matters for the decision is
+          the list above —which step goes and in what state—, not how it is encoded. */}
       {pendingText !== undefined ? <details className="config-crudo">
         <summary><Braces size={13} aria-hidden="true" /> Ver la mutación del paso pendiente</summary>
         <pre className="config-preview" aria-label="Mutación pendiente del wizard">{pendingText}</pre>

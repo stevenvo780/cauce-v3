@@ -6,19 +6,8 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
 /**
- * **El carril de los interruptores, y sobre todo su CONTROL NEGATIVO.**
- *
- * La pregunta que estas pruebas contestan no es «¿el interruptor se mueve?» —eso lo hace cualquier
- * casilla— sino la única que puede costar caro: **¿puede quedar pintado un permiso que la base no
- * tiene?** Un interruptor optimista sin marcha atrás es peor que el botón que reemplaza: el botón
- * que falla al menos deja la fila como estaba, mientras que el interruptor que se queda encendido
- * después de un 409 le afirma al operador que un cruce entre clientes está abierto cuando el
- * servidor dice que no. Nada desmiente esa mentira hasta que alguien recarga la página, y para
- * entonces ya decidió sobre ella.
- *
- * Las pruebas de más abajo FALLAN si alguien quita la reversión de `use-interruptores.ts` (la línea
- * que descarta el valor optimista cuando `desenlace.ok` es falso): el interruptor se quedaría en el
- * valor pedido y el `toBeChecked()` de después del rechazo no se cumpliría.
+ * Switch testing and optimistic state rollback: guarantees that rejected mutations (e.g. 409)
+ * revert optimistic switch toggles, preventing UI desynchronization with the database.
  */
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }

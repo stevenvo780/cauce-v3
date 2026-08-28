@@ -18,7 +18,7 @@ import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './inte
 import type { ControlDeInterruptores } from './use-interruptores';
 import './toggles.css';
 
-/** Qué cambio de ROL de qué fila está esperando el «Confirmar». Sólo hay uno a la vez. */
+/** Which ROLE change of which row is awaiting the "Confirm". Only one at a time. */
 export interface AccionPendiente {
   coleccion: string;
   filaId: string;
@@ -31,14 +31,14 @@ export interface AvisoDeColeccion {
 }
 
 /**
- * Tabla interactiva para visualizar y modificar colecciones de configuración mediante interruptores.
+ * Interactive table to view and modify configuration collections via toggles.
  */
 export function CollectionTable({
   coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,
   onPedir, onConfirmar, onCancelar,
 }: {
   coleccion: ConfigCollection;
-  /** `role_policies` del snapshot: alimenta el selector de rol de las memberships. */
+  /** `role_policies` from the snapshot: feeds the role selector of memberships. */
   politicasDeRol: readonly Record<string, unknown>[] | undefined;
   soloLectura: boolean;
   busy: boolean;
@@ -52,12 +52,12 @@ export function CollectionTable({
   const { key, title, rows } = coleccion;
   const filas = rows ?? [];
   const columnas = columnasDe(key, filas);
-  // Qué columnas se alinean a la derecha. Se decide por los DATOS de esta colección y no por una
-  // lista de nombres: `max_per_hour` es numérico acá y podría no serlo en un gateway que publique
-  // otra cosa con ese nombre. Ver `columnaNumerica`.
+  // Which columns right-align. Decided from this collection's DATA, not a name list: `max_per_hour`
+  // is numeric here and might not be on a gateway that publishes something else under that name.
+  // See `columnaNumerica`.
   const numericas = new Set(columnas.filter((columna) => columnaNumerica(filas, columna.clave)).map((columna) => columna.clave));
-  // Las columnas inertes QUE ESTA TABLA ESTÁ PINTANDO, no las que el catálogo conoce de esta
-  // colección: el aviso de arriba tiene que aparecer y desaparecer con lo que el gateway publica.
+  // The inert columns THIS TABLE IS PAINTING, not those the catalog knows of this collection: the
+  // notice above has to show and hide with what the gateway publishes.
   const inertesPresentes = columnasInertesDe(key, columnas.map((columna) => columna.clave));
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
@@ -111,8 +111,8 @@ export function CollectionTable({
           </tr></thead><tbody>
             {filas.map((fila, indice) => {
               const filaId = claveDeFila(key, fila, indice);
-              // Un fallo por fila: el `busy` global serializa las escrituras, así que no puede
-              // haber dos interruptores de la misma fila rechazados a la vez.
+// One failure per row: the global `busy` serializes writes, so two toggles of the same row
+                // cannot be rejected at the same time.
               const fallo = columnas
                 .map((columna) => control.fallo(`${key}|${filaId}|${columna.clave}`))
                 .find((encontrado) => encontrado !== undefined);
@@ -175,7 +175,7 @@ function Celda({
   control: ControlDeInterruptores;
   onPedir: (pendiente: AccionPendiente) => void;
 }) {
-  // La columna de identidad fundida: `Desde` + `Hacia` se leen como una sola arista.
+  // The merged identity column: `From` + `To` are read as a single edge.
   if (esColumnaFundida(coleccion, columna.clave)) {
     const arista = identidadFundida(coleccion, fila);
     return arista === undefined ? <Unknown value={null} /> : <span className="mono">{arista}</span>;
@@ -183,8 +183,8 @@ function Celda({
 
   const valor = fila[columna.clave];
 
-  // **El interruptor.** Sólo sale si se puede armar la mutación con lo que la fila trae: si no,
-  // se cae a la píldora de sólo lectura, que dice el dato sin prometer que se pueda cambiar.
+  // **The toggle.** Only rendered when the mutation can be assembled from what the row carries;
+  // otherwise it falls back to the read-only pill, which shows the data without promising it is changeable.
   if (esCampoConmutable(coleccion, columna.clave)) {
     const interruptor = interruptorDeFila(coleccion, fila, columna.clave, indice);
     if (interruptor) {
@@ -194,15 +194,15 @@ function Celda({
     }
   }
 
-  // El rol de una membership se cambia acá mismo, en su propia columna. No es un booleano —es una
-  // elección entre varios valores—, así que sigue siendo un `<select>` y sigue confirmando: cambiar
-  // de rol reescribe qué puede hacer ese agente, y no hay «el contrario» al que volver de un clic.
+  // A membership's role is changed right here, in its own column. It is not a boolean —it is a
+  // choice among several values— so it stays a `<select>` and keeps confirming: changing role
+  // rewrites what the agent can do, and there is no "opposite" to revert to with one click.
   if (coleccion === 'memberships' && columna.clave === 'role') {
     const actual = typeof valor === 'string' ? valor : '';
     const opciones = rolesDisponibles(politicasDeRol, actual === '' ? undefined : actual);
-    // Sin los tres campos de identidad no hay mutación que armar. Antes el `onChange` llamaba
-    // igual, recibía `undefined` y no pasaba NADA: ni escritura ni cartel. Ahora el control se
-    // apaga y el motivo queda escrito al lado, que es la diferencia entre «no se puede» y «roto».
+    // Without the three identity fields there is no mutation to assemble. Previously `onChange` was
+    // called the same and received `undefined`, so nothing happened: no write, no notice. Now the
+    // control disables and the reason is written next to it — the difference between "can't" and "broken".
     const motivo = motivoSinCambioDeRol(fila);
     return <>
       <select
@@ -222,9 +222,9 @@ function Celda({
     </>;
   }
 
-  // Un campo de párrafo entero (`role_brief`: hasta 1200 caracteres) empuja las otras once columnas
-  // de «Agent registry» fuera de la pantalla. Se muestra resumido; el texto completo queda en el
-  // `title`, en «Ver crudo» y —para editarlo— en la pestaña «Rol» del cajón de «La flota ahora».
+  // A full-paragraph field (`role_brief`: up to 1200 characters) pushes the other eleven columns
+  // of "Agent registry" off-screen. It is shown summarized; the full text lives in the `title`,
+  // in "View raw", and —to edit it— in the "Role" tab of the "Fleet now" drawer.
   if (esColumnaLarga(columna.clave) && typeof valor === 'string' && valor.trim() !== '') {
     return <span className="config-resumen" title={valor}>{resumirTextoLargo(valor)}</span>;
   }
@@ -234,7 +234,7 @@ function Celda({
   }
   if (esColumnaDeFecha(columna.clave)) return <FechaRelativa value={valor} />;
   if (Array.isArray(valor)) {
-    // Una lista vacía es un dato conocido —«no tiene ninguna»—, no un UNKNOWN.
+    // An empty list is a known datum —"has none"—, not UNKNOWN.
     return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="unknown">(vacío)</span>;
   }
   if (valor !== null && typeof valor === 'object') return <code>{JSON.stringify(valor)}</code>;
@@ -242,8 +242,8 @@ function Celda({
 }
 
 /**
- * Diálogo modal de confirmación con la mutación exacta para cambios no booleanos (rol).
- * Se monta como modal con `inert` en el fondo, trampa de foco y soporte para ESC.
+ * Modal confirmation dialog carrying the exact mutation for non-boolean changes (role).
+ * Mounted as a modal with `inert` on the background, a focus trap, and ESC support.
  */
 function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
   pendiente: AccionPendiente;
@@ -256,8 +256,8 @@ function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
 
   useEffect(() => {
     const abridor = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // `inert` sobre el armazón —no sobre `body`, donde vive este diálogo— es lo que apaga de verdad
-    // la cabecera y la barra lateral: ni ratón, ni tabulador, ni lector de pantalla.
+    // `inert` on the shell —not on `body`, where this dialog lives— is what actually disables the
+    // header and the side bar: no mouse, no tab, no screen reader.
     const fondo = document.querySelector('.app-shell');
     fondo?.setAttribute('inert', '');
     confirmar.current?.focus();
@@ -268,7 +268,7 @@ function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
   }, []);
 
   const atraparFoco = useFocusTrap(dialogo);
-  // ESC cancela, y el tabulador da la vuelta dentro del diálogo en vez de irse al fondo.
+  // ESC cancels, and the tab wraps inside the dialog instead of going to the background.
   const teclado = (evento: KeyboardEvent<HTMLDivElement>) => {
     if (evento.key === 'Escape') { evento.stopPropagation(); onCancelar(); return; }
     atraparFoco(evento);

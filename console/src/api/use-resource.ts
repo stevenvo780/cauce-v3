@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
- * El desenlace de UNA recarga concreta: o trajo dato, o trajo error. Nunca las dos cosas.
+ * The outcome of ONE concrete reload: it either fetched data, or it fetched an error. Never both.
  *
- * Existe porque `reload()` devolvía `void` y quien la llamaba no tenía forma de saber si la
- * lectura llegó: el editor del rol declarado anunciaba «se recargó el snapshot» sin haber
- * esperado nada, y encima seguía mandando la revisión vencida. Una pantalla no puede afirmar lo
- * que no comprobó, así que la recarga devuelve su resultado a quien la pidió.
+ * Exists because `reload()` returned `void` and the caller had no way to know whether the read
+ * had arrived: the declared-role editor announced "the snapshot reloaded" without having waited
+ * for anything, and on top of that kept sending the stale revision. A screen cannot claim what it
+ * did not check, so the reload returns its result to the one who asked for it.
  */
 export type RecargaResultado<T> =
   | { data: T; error?: undefined }
@@ -17,15 +17,15 @@ export interface Resource<T> {
   error?: Error;
   loading: boolean;
   /**
-   * Vuelve a leer. La promesa se resuelve con el resultado del fetch que ARRANCA a partir de esta
-   * llamada —nunca con el de uno que ya venía en vuelo—, que es la única forma de que quien
-   * espera sepa que está mirando datos posteriores a su pedido.
+   * Reload. The promise resolves with the result of the fetch that STARTS from this call —never
+   * with one that was already in flight—, which is the only way for the waiter to know it is
+   * looking at data that came after its own request.
    */
   reload: () => Promise<RecargaResultado<T>>;
 }
 
 interface ResourceState<T> extends Omit<Resource<T>, 'reload'> {
-  /** Clave exacta a la que pertenecen `data` y `error`. Nunca se muestran bajo otra clave. */
+  /** Exact key under which `data` and `error` belong. They are never shown under another key. */
   key: string;
 }
 
@@ -38,9 +38,9 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
   const pendingRef = useRef(false);
   const generationRef = useRef(0);
   const runRef = useRef<() => void>(() => undefined);
-  // Quien pidió recarga y todavía no tiene un fetch que responda por él.
+  // Whoever asked for a reload and still has no fetch answering for them.
   const esperandoRef = useRef<((resultado: RecargaResultado<T>) => void)[]>([]);
-  // Quien ya fue adoptado por el fetch en curso: se le contesta cuando ese fetch termine.
+  // Whoever was already adopted by the in-flight fetch: they get answered when that fetch ends.
   const adoptadosRef = useRef<((resultado: RecargaResultado<T>) => void)[]>([]);
   const claveRef = useRef(key);
 
@@ -49,8 +49,8 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
     return () => {
       mountedRef.current = false;
       pendingRef.current = false;
-      // Desmontado no es «recargado»: a quien esperaba se le dice que su lectura no va a llegar,
-      // en vez de dejarle un `await` colgado para siempre.
+      // Unmounted is not "reloaded": whoever was waiting is told their read will not arrive,
+      // instead of leaving them with an `await` hanging forever.
       const huerfanos = [...esperandoRef.current, ...adoptadosRef.current];
       esperandoRef.current = [];
       adoptadosRef.current = [];
@@ -71,7 +71,7 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
     const generation = generationRef.current;
     const runKey = claveRef.current;
     let resultado: RecargaResultado<T> | undefined;
-    // Si no hay datos previos, se preserva el error durante la recarga para evitar parpadeos.
+    // If there is no prior data, the error is kept during the reload to avoid flicker.
     setState((current) => current.key === runKey
       ? {
           ...current,
@@ -109,8 +109,8 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
   };
 
   const queueReload = useCallback(() => {
-    // El resolver se anota ANTES de arrancar nada: así el fetch que se dispara acá abajo ya lo
-    // encuentra y lo adopta, y no hay ventana en la que la respuesta llegue sin destinatario.
+    // The resolver is registered BEFORE anything starts: that way the fetch fired below already
+    // finds and adopts it, and there is no window in which the response arrives with no recipient.
     const promesa = new Promise<RecargaResultado<T>>((resolve) => {
       esperandoRef.current.push(resolve);
     });
@@ -119,20 +119,20 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
     return promesa;
   }, []);
 
-  // La generación solo incrementa cuando cambia la clave del recurso para descartar respuestas obsoletas.
+  // The generation only increments when the resource key changes, to discard stale responses.
   useEffect(() => {
     if (claveRef.current !== key) {
       claveRef.current = key;
       generationRef.current += 1;
-      // El snapshot anterior pertenece a otra identidad. Se invalida aunque la lectura previa
-      // siga en vuelo: conservarlo permitiría rotular datos de A con la cabecera de B.
+      // The previous snapshot belongs to another identity. It is invalidated even if the prior
+      // read is still in flight: keeping it would let data from A be labelled with B's header.
       setState({ key, loading: true });
     }
     void queueReload();
   }, [key, queueReload]);
 
-  // Los efectos corren después del render. Este guard evita incluso ese primer frame en el que
-  // React ya entregó la nueva `key` pero todavía no ejecutó la invalidación de arriba.
+  // Effects run after the render. This guard avoids even that first frame where React already
+  // delivered the new `key` but has not yet run the invalidation above.
   if (state.key !== key) return { loading: true, reload: queueReload };
   return {
     data: state.data,
