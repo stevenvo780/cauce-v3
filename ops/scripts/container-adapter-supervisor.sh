@@ -191,6 +191,9 @@ load_config() {
       OPENCLAW_TRANSPORT|OPENCLAW_API_URL|OPENCLAW_TOKEN_FILE|OPENCLAW_AGENT_TARGET|OPENCLAW_DIST_DIR|OPENCLAW_WORKSPACE)
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
+      CLAUDE_PERMISSION_MODE)
+        [[ $harness == claude ]] || die "config key is not allowed for $harness: $key"
+        ;;
       *) die "container alias config key is not allowlisted: $key" ;;
     esac
     CONFIG[$key]=$value
@@ -877,6 +880,13 @@ start_adapter() {
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
+  if [[ -v CONFIG[CLAUDE_PERMISSION_MODE] ]]; then
+    case "${CONFIG[CLAUDE_PERMISSION_MODE]}" in
+      acceptEdits|auto|bypassPermissions|manual|dontAsk|plan) ;;
+      *) die 'CLAUDE_PERMISSION_MODE is invalid' ;;
+    esac
+    environment+=("CAUCE_CLAUDE_PERMISSION_MODE=${CONFIG[CLAUDE_PERMISSION_MODE]}")
+  fi
   if [[ $bearer_token_present == true ]]; then environment+=("CAUCE_TOKEN_FILE=$secret_directory/token"); fi
   if [[ -v CONFIG[SHARED_SESSION] ]]; then
     environment+=("CAUCE_SHARED_SESSION=${CONFIG[SHARED_SESSION]}")
