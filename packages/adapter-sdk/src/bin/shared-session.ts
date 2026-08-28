@@ -58,9 +58,9 @@ function spec(options: Options, home: string): SharedSessionSpec {
     process.stderr.write(`el harness '${options.harness}' no tiene sesión compartida\n`);
     process.exit(3);
   }
-  // MISMO spec —y sobre todo mismo entorno— que si la sesión la creara el adaptador. El servidor
-  // tmux se queda con el entorno del primero que lo crea y descarta el del segundo, así que dos
-  // rutinas parecidas darían una TUI distinta según quién ganó la carrera.
+  // SAME spec — and above all same environment — as if the adapter created the session. The tmux
+  // server keeps the environment of the first creator and discards the second's, so two
+  // similar routines would yield a different TUI depending on who won the race.
   return cliSharedSessionSpec(
     options.harness as "claude" | "codex",
     options.alias,
@@ -73,8 +73,8 @@ async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
   const tmux = new CliTmux();
-  // Este temporizador NO se puede `unref()`: aquí no hay otro trabajo pendiente que sostenga
-  // el bucle de eventos, y con `unref()` Node termina con código 0 antes de que la TUI arranque.
+  // This timer MUST NOT be `unref()`-ed: there is no other pending work keeping the event
+  // loop alive here, and with `unref()` Node exits with code 0 before the TUI starts.
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolveSleep) => {
       setTimeout(resolveSleep, ms);
@@ -93,15 +93,13 @@ async function main(): Promise<void> {
   if (options.command === "status") {
     const status = await sharedSessionStatus(tmux, sessionSpec);
     process.stdout.write(`${JSON.stringify(status)}\n`);
-    // Usa exitCode para asegurar que stdout se vacía completamente antes de finalizar.
+    // Use exitCode so stdout is fully drained before the process exits.
     process.exitCode = status.present ? 0 : 1;
     return;
   }
 
   if (options.command === "ensure") {
-    // El aviso va a stderr, no al JSON de stdout: quien llama a esto es `cauce <alias>`, un script
-    // bash que parsea stdout. Una reanudación que no salió tiene que verse igualmente, porque el
-    // panel vuelve en blanco y por fuera eso no se distingue de un panel que nunca tuvo contexto.
+    // Notice goes to stderr, not stdout JSON: invoked by `cauce <alias>` parsing stdout.
     const result = await ensureSharedSession(tmux, sessionSpec, {
       sleep,
       log: (detail: string): void => {
