@@ -11,7 +11,7 @@ import { NAV_ENTRIES } from '../../nav';
 
 it('describe TODAS las vistas del menú, con la dirección real de cada una', () => {
   render(<HelpPage />);
-  const texto = document.body.textContent ?? '';
+  const texto = document.body.textContent;
 
   for (const entrada of NAV_ENTRIES) {
     expect(texto).toContain(`${entrada.label} (/${entrada.id})`);
@@ -19,8 +19,7 @@ it('describe TODAS las vistas del menú, con la dirección real de cada una', ()
 });
 
 it('documenta el atajo que la consola declara en su propia barra lateral', () => {
-  // `App.tsx` publishes `aria-keyshortcuts="Alt+Shift+B"` on the toggle: a shortcut announced by
-  // the interface and absent from the help is a shortcut nobody discovers.
+  // `App.tsx` publishes `aria-keyshortcuts="Alt+Shift+B"` on the toggle: a shortcut announced by the interface and ab
   render(<HelpPage />);
   const atajos = screen.getByRole('heading', { name: /atajos de teclado/i }).closest('.card');
 

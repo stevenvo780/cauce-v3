@@ -3,11 +3,7 @@ import { expect, it } from 'vitest';
 import { App } from '../../App';
 import { renderWithApi } from '../../test/render';
 
-/**
- * A bookmark to `/audit` must open the AUDIT tab. The address is rewritten to `/observability`
- * —the audit book is a tab of that view, not a route of its own— and the requested tab used to be
- * lost in that rewrite: whoever saved the audit link landed on "Señales y relays" every time.
- */
+/** A bookmark to `/audit` must open the AUDIT tab: the rewrite to `/observability` used to lose it. */
 
 it('/audit abre la pestaña de auditoría, no «Señales»', async () => {
   window.history.pushState({}, '', '/audit');
@@ -18,7 +14,6 @@ it('/audit abre la pestaña de auditoría, no «Señales»', async () => {
   expect(screen.getByRole('tab', { name: /señales y relays/i })).toHaveAttribute('aria-selected', 'false');
   // The audit book is there, with its own search, and the relay table is not.
   expect(await screen.findByRole('searchbox', { name: /filtrar auditoría/i })).toBeInTheDocument();
-  // And the address is still normalised to the canonical route.
   await waitFor(() => { expect(window.location.pathname).toBe('/observability'); });
 });
 

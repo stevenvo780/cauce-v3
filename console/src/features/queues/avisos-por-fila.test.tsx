@@ -42,7 +42,7 @@ async function confirmar(user: ReturnType<typeof userEvent.setup>, boton: HTMLEl
 }
 
 function avisos(): string[] {
-  return screen.queryAllByRole('status').map((nodo) => nodo.textContent ?? '');
+  return screen.queryAllByRole('status').map((nodo) => nodo.textContent);
 }
 
 describe('el aviso de cada entrega es suyo', () => {

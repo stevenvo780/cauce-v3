@@ -5,6 +5,7 @@ import { AccountsPage } from './AccountsPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { QuotaSnapshot } from '../../api/types';
+import type { QuotaSeverity } from '../../api/types/quotas';
 
 /**
  * The balance, read across the two tabs that show it.
@@ -35,7 +36,7 @@ const COLLECTORS = [
  * `severity` travels separately from the percentage because that is how the sample comes: the server decides it
  * and the console does not recompute it. `null` is the case where the console has to fall back to the number.
  */
-function provider(accountId: string, remaining: number, severity: string | null, overrides: Record<string, unknown> = {}) {
+function provider(accountId: string, remaining: number, severity: QuotaSeverity | null, overrides: Record<string, unknown> = {}) {
   return {
     host: 'kratos', provider: `prov-${accountId}`, ok: true, available: true, plan: null,
     observed_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, severity,
@@ -83,7 +84,7 @@ function metrics(): HTMLElement {
 function metric(label: string): HTMLElement {
   const article = within(metrics()).getByText(label).closest('article');
   if (!article) throw new Error(`metric ${label} not found`);
-  return article as HTMLElement;
+  return article;
 }
 
 async function openTab(user: ReturnType<typeof userEvent.setup>, label: string) {
@@ -93,9 +94,9 @@ async function openTab(user: ReturnType<typeof userEvent.setup>, label: string) 
 /** The balance badge of an account's row in the Inventory. */
 function balanceBadge(accountId: string): HTMLElement {
   const row = screen.getByRole('row', { name: new RegExp(`^${accountId} `) });
-  const balance = Array.from(row.querySelectorAll('.badge')).find((node) => node.textContent?.includes('libre'));
-  if (!balance) throw new Error(`${accountId} sin badge de saldo: ${row.textContent ?? ''}`);
-  return balance as HTMLElement;
+  const balance = Array.from(row.querySelectorAll<HTMLElement>('.badge')).find((node) => node.textContent.includes('libre'));
+  if (!balance) throw new Error(`${accountId} sin badge de saldo: ${row.textContent}`);
+  return balance;
 }
 
 it('«Peor remanente» mide la peor VENTANA, no el porcentaje efectivo que la propia página desaconseja', async () => {
@@ -208,7 +209,7 @@ it('no imprime el 33.333333333333336 crudo del recolector: un decimal como mucho
   await openTab(user, 'Inventario');
   expect(balanceBadge('tercios').textContent).toBe('33.3% libre');
   // Nowhere on the page: a number with more than one decimal is unreadable and nobody can act on it.
-  expect(document.body.textContent ?? '').not.toMatch(/\d+\.\d{2,}\s*%/);
+  expect(document.body.textContent).not.toMatch(/\d+\.\d{2,}\s*%/);
 });
 
 /** Two clients with an agent named the same: the real fleet has more than one `claude`. */

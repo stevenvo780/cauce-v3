@@ -28,7 +28,7 @@ function montarPerfil() {
     http.get(RUTA_PERFIL, () => HttpResponse.json(actual)),
     http.put(RUTA_PERFIL, async ({ request }) => {
       const body = await request.json() as { profile: AgentPerfil['perfil'] };
-      recibido = body as unknown as Record<string, unknown>;
+      recibido = body;
       actual = perfilAplicado(5, { perfil: body.profile });
       return HttpResponse.json(ackAplicado(5));
     }),

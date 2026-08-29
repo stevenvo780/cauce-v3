@@ -418,9 +418,10 @@ export function LiveFleetPage() {
           }); }}
           borradoresFicheros={borradoresFicheros[drawer.key]}
           onBorradorFichero={(kind, nuevo) => { setBorradoresFicheros((actuales) => {
-            const delAgente = { ...actuales[drawer.key] };
-            if (nuevo === undefined) delete delAgente[kind];
-            else delAgente[kind] = nuevo;
+            const previos = actuales[drawer.key] ?? {};
+            const delAgente = nuevo === undefined
+              ? Object.fromEntries(Object.entries(previos).filter(([clave]) => clave !== kind))
+              : { ...previos, [kind]: nuevo };
             return { ...actuales, [drawer.key]: delAgente };
           }); }}
           onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab); }}
