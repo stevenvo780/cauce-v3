@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGENT_PRIORITY_CEILING, AuthenticatedPublishSchema, clampAgentPriority, HUMAN_CHAT_PRIORITY,
-  HUMAN_PRIORITY_FLOOR, isHumanPriority, PublishMessageSchema
+  HUMAN_PRIORITY_FLOOR, PublishMessageSchema
 } from '../src/index.js';
 
 /**
@@ -13,8 +13,6 @@ describe('delivery priority bands', () => {
   it('puts the whole human band strictly above everything an agent can reach', () => {
     expect(AGENT_PRIORITY_CEILING).toBeLessThan(HUMAN_PRIORITY_FLOOR);
     expect(HUMAN_CHAT_PRIORITY).toBeGreaterThanOrEqual(HUMAN_PRIORITY_FLOOR);
-    expect(isHumanPriority(AGENT_PRIORITY_CEILING)).toBe(false);
-    expect(isHumanPriority(HUMAN_CHAT_PRIORITY)).toBe(true);
   });
 
   it('leaves headroom above the chat entry point for an operator who escalates on purpose', () => {
@@ -26,7 +24,6 @@ describe('delivery priority bands', () => {
     for (const requested of [100, 90, 85, 60, 51, 1_000]) {
       const applied = clampAgentPriority(requested);
       expect(applied).toBe(AGENT_PRIORITY_CEILING);
-      expect(isHumanPriority(applied)).toBe(false);
     }
   });
 
@@ -42,7 +39,6 @@ describe('delivery priority bands', () => {
     expect(clampAgentPriority(Number.NaN)).toBe(0);
     expect(clampAgentPriority(Number.POSITIVE_INFINITY)).toBe(0);
     expect(clampAgentPriority(12.9)).toBe(12);
-    expect(isHumanPriority(Number.NaN)).toBe(false);
   });
 
   it('keeps both bands inside the range the wire schemas accept', () => {

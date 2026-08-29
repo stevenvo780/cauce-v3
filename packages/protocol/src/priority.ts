@@ -23,8 +23,3 @@ export function clampAgentPriority(priority: number): number {
   if (!Number.isFinite(priority)) return 0;
   return Math.min(Math.trunc(priority), AGENT_PRIORITY_CEILING);
 }
-
-/** True when the priority belongs to the reserved human band. */
-export function isHumanPriority(priority: number): boolean {
-  return Number.isFinite(priority) && priority >= HUMAN_PRIORITY_FLOOR;
-}
