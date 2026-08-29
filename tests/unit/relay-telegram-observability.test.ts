@@ -23,4 +23,17 @@ describe('relay and Telegram observability wiring', () => {
       expect(alerts).toContain(`absent(up{job="${job}"})`);
     }
   });
+
+  // ── NEGATIVE CONTROL: el assert de arriba dice que cada alerta está en el YAML; aquí
+  //    confirmamos que efectivamente lo detecta al desaparecer. Sin esto, el `toContain`
+  //    podría pasar por una coincidencia textual residual (p.ej. un comentario que mencione
+  //    el nombre) y el test de arriba nunca se pondría rojo aunque la alerta se borrase.
+  it('CONTROL NEGATIVO — quitar una alerta del YAML hace fallar la verificación de presencia', () => {
+    const sinAlerta = alerts.replace(
+      / {6}- alert: CauceDispatcherLoopStale\n[\s\S]*?(?=\n {6}- alert:|\n {2}- name:|$)/u,
+      '',
+    );
+    expect(sinAlerta).not.toBe(alerts);
+    expect(sinAlerta).not.toContain('alert: CauceDispatcherLoopStale');
+  });
 });

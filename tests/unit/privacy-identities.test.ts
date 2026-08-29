@@ -32,4 +32,13 @@ describe('tracked operational material does not inventory external identities', 
       expect(await source(path), path).not.toMatch(longDecimal);
     }
   });
+
+  // ── NEGATIVE CONTROL: el regex `longDecimal` se usa para asegurar AUSENCIA de decimales
+  //    largos en paths donde no deben aparecer. Si el regex midiera siempre vacío, los
+  //    `not.toMatch` de arriba pasarían por las buenas aunque los paths trajeran un ID
+  //    numérico. Comprobamos que el detector sí se dispara contra entradas positivas.
+  it('CONTROL NEGATIVO — el detector de decimales largos sí reacciona contra números construidos a propósito', () => {
+    expect('+5491131234567').toMatch(longDecimal);
+    expect('1234567890123456789').toMatch(longDecimal);
+  });
 });

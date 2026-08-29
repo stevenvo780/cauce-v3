@@ -23,4 +23,15 @@ describe('production console TLS healthchecks', () => {
       expect(source).not.toContain('--no-check-certificate');
     }
   });
+
+  // ── NEGATIVE CONTROL: el assert de arriba exige que `SSL_CERT_FILE=` esté en el wget del
+  //    healthcheck. Sin este control, el `toContain` podría pasar por una coincidencia residual
+  //    (otro `SSL_CERT_FILE` en otra parte del YAML) aunque se hubiera borrado del healthcheck.
+  //    Cambiamos el nombre de la variable y comprobamos que `wgetCommand` ya no aparece.
+  it('CONTROL NEGATIVO — quitar SSL_CERT_FILE del healthcheck lo deja inseguro y el test lo cazaría', async () => {
+    const compose = await readFile(composeUrl, 'utf8');
+    const sinCert = compose.replace('SSL_CERT_FILE=', 'SSL_CERT_DIR=');
+    expect(sinCert).not.toBe(compose);
+    expect(sinCert).not.toContain(wgetCommand);
+  });
 });
