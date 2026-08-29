@@ -22,7 +22,6 @@ import {
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
 import { exactConfigurationReceipt } from './config-receipt';
-import { RolesPanel } from './RolesPanel';
 import { useInterruptores } from './use-interruptores';
 import './config.css';
 
@@ -465,12 +464,6 @@ export function ConfigPage() {
           corrects—a "Harness" column with a value written in appears to pick the program the bot runs, and does not
           pick it—. Placed after, it would read as a footnote to something the operator has already misinterpreted. */}
       {areaVisible === 'agentes' ? <ArnesesPanel /> : null}
-
-      {areaVisible === 'roles' ? <>
-        <RolesPanel
-          {...(config.data ? { snapshot: config.data } : {})}
-        />
-      </> : null}
 
       {(activa?.colecciones ?? []).map((coleccion) => {
         const pedido = pendiente?.coleccion === coleccion.key ? pendiente : undefined;

@@ -1,6 +1,6 @@
 import { FileText, Slash } from 'lucide-react';
 import { Panel } from '../../components/ui';
-import { ARNESES_REALES, LO_QUE_AJUSTES_GOBIERNA } from './arneses';
+import { ARNESES_REALES, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO } from './arneses';
 
 /**
  * **Qué lee cada arnés de verdad**, encima del registro de bots.
@@ -13,8 +13,8 @@ import { ARNESES_REALES, LO_QUE_AJUSTES_GOBIERNA } from './arneses';
  *
  * Lo que este panel hace es contestar la pregunta siguiente, que es la útil: si no es esa columna,
  * ¿dónde se toca lo que el bot lee? La respuesta es distinta en los cuatro arneses y en ninguno de
- * los cuatro es esta pantalla — salvo el rol declarado, que es lo único que Cauce antepone él mismo
- * y por eso funciona hasta con el arnés que no lee ningún fichero.
+ * los cuatro es esta pantalla, tampoco para el rol declarado, que Cauce antepone él mismo y por eso
+ * funciona hasta con el arnés que no lee ningún fichero.
  */
 export function ArnesesPanel() {
   return (
@@ -50,9 +50,9 @@ export function ArnesesPanel() {
           </li>
         ))}
       </ul>
-      {/* El cierre: qué SÍ gobierna esta pantalla. Un panel que sólo dice «acá no» manda al
-          operador a otra pantalla sin decirle qué se lleva de ésta. */}
-      <p className="notice arnes-gobierna" role="note">{LO_QUE_AJUSTES_GOBIERNA}</p>
+      {/* El cierre: dónde se escribe el rol declarado, que acá tampoco. Un panel que sólo dice
+          «acá no» manda al operador a otra pantalla sin decirle a cuál. */}
+      <p className="notice arnes-gobierna" role="note">{DONDE_SE_ESCRIBE_EL_ROL_DECLARADO}</p>
     </Panel>
   );
 }

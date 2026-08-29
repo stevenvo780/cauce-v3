@@ -5,7 +5,7 @@ import type { ConfigCollection } from './collections';
  */
 
 export type ConfigAreaId =
-  | 'espacios' | 'permisos' | 'roles' | 'agentes' | 'avisos' | 'historial' | 'otros';
+  | 'espacios' | 'permisos' | 'agentes' | 'avisos' | 'historial' | 'otros';
 
 export interface ConfigArea {
   id: ConfigAreaId;
@@ -40,13 +40,6 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
     label: 'Permisos',
     descripcion: 'Quién puede hablarle a quién entre clientes, y qué puede hacer cada rol.',
     detalle: 'Todo empieza denegado: lo que no esté acá, no pasa.',
-  },
-  {
-    id: 'roles',
-    label: 'Roles de agente',
-    descripcion: 'El texto de identidad que cada bot recibe antes de su contrato.',
-    detalle: 'Acá se ve qué roles hay en uso, quién lleva cada uno y cómo pasarle el mismo rol a '
-      + 'otro agente.',
   },
   {
     id: 'agentes',
@@ -113,8 +106,8 @@ export interface AreaConColecciones {
 /**
  * Las pestañas a pintar, en orden, con lo que va dentro de cada una.
  *
- * «Roles» e «Historial» salen siempre aunque no tengan colecciones asignadas: su contenido no es
- * una tabla del snapshot. «Otros» sale SÓLO si el servidor publicó algo que no sabemos clasificar —
+ * «Historial» sale siempre aunque no tenga colecciones asignadas: su contenido no es una tabla
+ * del snapshot. «Otros» sale SÓLO si el servidor publicó algo que no sabemos clasificar —
  * una pestaña vacía y permanente enseña a ignorarla, y el día que aparezca una colección nueva
  * nadie la va a mirar.
  */

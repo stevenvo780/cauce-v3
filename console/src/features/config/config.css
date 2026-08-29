@@ -280,44 +280,6 @@
   text-align: right;
 }
 
-/* --- Roles ------------------------------------------------------------------------------------ */
-
-.rol-lista { display: grid; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
-
-.rol-card {
-  display: grid;
-  gap: 8px;
-  padding: 13px 14px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-2, #0a111d);
-}
-
-.rol-card header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.rol-card h3 { margin: 0; font-size: 15px; }
-.rol-resumen-nota { max-width: var(--medida); margin: 0; font-size: var(--tipo-rotulo); line-height: 1.5; }
-.rol-portadores { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 0; font-size: var(--tipo-rotulo); }
-.rol-portador { padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-apunte); }
-.rol-medidor { display: grid; gap: 2px; margin: 0; font-size: var(--tipo-rotulo); font-variant-numeric: tabular-nums; }
-.rol-medidor[data-tone='ok'] { color: var(--muted); }
-.rol-medidor[data-tone='cerca'] { color: var(--amber, #d08700); }
-.rol-medidor[data-tone='pasado'] { color: var(--danger, #d64545); font-weight: 600; }
-.rol-texto summary { font-size: var(--tipo-rotulo); color: var(--muted); cursor: pointer; }
-.rol-texto pre {
-  max-height: 260px;
-  overflow: auto;
-  margin: 8px 0 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  font-size: var(--tipo-apunte);
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-.rol-asignar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
-.rol-asignar label { display: grid; gap: 4px; font-size: var(--tipo-rotulo); color: var(--muted); }
-.rol-sin-rol { display: grid; gap: 5px; margin: 0 0 10px; padding: 0; list-style: none; font-size: var(--tipo-rotulo); }
-
 /* --- El aviso de columnas sin efecto, arriba de la tabla ------------------------------------- */
 
 .config-inertes {
@@ -392,9 +354,9 @@
 
 @media (max-width: 900px) {
   /* MEDIDO a 360 px: la tira ya era un carrusel (`flex-wrap: nowrap` + `overflow-x: auto`) pero
-     el TEXTO de cada pestaña sí se partía, y «Roles de agente» salía en tres renglones sobre una
-     tira de 90 px de alto. Con `nowrap` cada rótulo se lee entero y lo que se arrastra es la
-     tira, que es lo que ya hacía igual. */
+     el TEXTO de cada pestaña sí se partía, y un rótulo de tres palabras salía en tres renglones
+     sobre una tira de 90 px de alto. Con `nowrap` cada rótulo se lee entero y lo que se arrastra
+     es la tira, que es lo que ya hacía igual. */
   .config-tabs { overflow-x: auto; flex-wrap: nowrap; }
   .config-tab { white-space: nowrap; }
   /* A 360 px el título y el botón «Actualizar» no caben en una fila: apilados, el botón queda
@@ -412,7 +374,6 @@
 @media (prefers-color-scheme: light) {
   .config-tabs { background: #f4f7fb; }
   .config-tab[aria-selected='true'] { background: #e6eef8; }
-  .rol-card { background: #f8fafd; }
   .config-permiso { background: #ffffff; }
   .alta-segmento { background: #eef3f9; }
   .alta-segmento-boton[aria-pressed='true'] { background: #ffffff; box-shadow: 0 1px 2px rgb(38 63 92 / 18%); }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ARNESES_REALES, LO_QUE_AJUSTES_GOBIERNA,
+  ARNESES_REALES, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
 } from './arneses';
 
 /**
@@ -52,9 +52,16 @@ describe('la tabla de arneses reales', () => {
     }
   });
 
-  it('la frase de lo que esta pantalla SÍ gobierna cita la cadena entera del rol declarado', () => {
-    expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/role_brief/);
-    expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/selfRoleFromProfile/);
-    expect(LO_QUE_AJUSTES_GOBIERNA).toMatch(/self_role/);
+  it('la frase de cierre cita la cadena entera del rol declarado y manda a donde SÍ se escribe', () => {
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/role_brief/);
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/selfRoleFromProfile/);
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/self_role/);
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/«Perfil»/);
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/sólo lectura/);
+  });
+
+  it('CONTROL NEGATIVO — la frase no vuelve a prometer que el rol se escribe en esta pantalla', () => {
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO)
+      .not.toMatch(/se escribe desde acá|se edita desde acá|se escribe acá|lo único de esta lista/i);
   });
 });

@@ -76,8 +76,8 @@ export function esColumnaDeFecha(clave: string): boolean {
  * a row becomes unreadable because of a field you do not edit here.
  *
  * The full text is not lost: it remains in the cell's `title`, in the "Ver crudo" dropdown of the
- * collection, and is EDITED in the "Rol" tab of the "La flota ahora" drawer. Here it is enough to
- * see it summarised.
+ * collection, and is shown read-only in the "Rol" tab of the "La flota ahora" drawer; the editor is
+ * the "Perfil" tab beside it. Here it is enough to see it summarised.
  */
 const COLUMNAS_LARGAS: ReadonlySet<string> = new Set(['role_brief']);
 

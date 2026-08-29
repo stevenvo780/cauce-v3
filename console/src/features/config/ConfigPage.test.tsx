@@ -14,20 +14,8 @@ import {
 
 const ESPACIOS = /espacios y miembros/i;
 const PERMISOS = /^permisos$/i;
-const ROLES = /roles de agente/i;
 const AVISOS = /avisos y cadena/i;
 const HISTORIAL = /historial y json/i;
-
-function snapshotConAgentes() {
-  return {
-    ...snapshotDeConfig(1),
-    agents: [
-      { tenant_id: 'Steven', alias: 'zeus', role_brief: 'Sos el orquestador de la flota.', enabled: true },
-      { tenant_id: 'Steven', alias: 'kant', role_brief: 'Sos el orquestador de la flota.', enabled: true },
-      { tenant_id: 'Steven', alias: 'argos', role_brief: null, enabled: true },
-    ],
-  };
-}
 
 function panelDe(nombre: RegExp): HTMLElement {
   const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
@@ -60,14 +48,14 @@ it('no confunde una clave que el gateway no publica con una colección vacía', 
   expect(chain).toHaveTextContent(/no publica esta colección/i);
 });
 
-it('FAMILIA 5: /config son SEIS pestañas reales, en el orden en que se monta una flota', async () => {
+it('FAMILIA 5: /config son CINCO pestañas reales, en el orden en que se monta una flota', async () => {
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
     .getAllByRole('tab');
   expect(pestanas.map((boton) => boton.textContent)).toEqual([
-    'Espacios y miembros', 'Permisos', 'Roles de agente', 'Agentes y cuentas',
+    'Espacios y miembros', 'Permisos', 'Agentes y cuentas',
     'Avisos y cadena', 'Historial y JSON',
   ]);
   expect(pestanas[0]).toHaveAttribute('aria-selected', 'true');
@@ -158,66 +146,6 @@ it('FAMILIA 5: una colección que la consola no sabe clasificar aparece en «Otr
 
   await irA(user, /^otros$/i);
   expect(screen.getByRole('heading', { name: 'gizmos' })).toBeInTheDocument();
-});
-
-it('FAMILIA 6: «Roles de agente» cataloga los roles en uso y dice quién lleva cada uno', async () => {
-  servirConfig(snapshotConAgentes);
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ROLES);
-
-  const enUso = panelDe(/roles en uso/i);
-  expect(within(enUso).getByRole('heading', { name: /sos el orquestador de la flota/i })).toBeInTheDocument();
-  expect(within(enUso).getByText('Steven/zeus')).toBeInTheDocument();
-  expect(within(enUso).getByText('Steven/kant')).toBeInTheDocument();
-  expect(within(enUso).getByText(/no un nombre guardado/i)).toBeInTheDocument();
-  expect(within(panelDe(/bots sin rol declarado/i)).getByText('Steven/argos')).toBeInTheDocument();
-});
-
-it('FAMILIA 6: el catálogo es sólo lectura y enlaza al Perfil canónico sin POST genérico', async () => {
-  const changes: ChangeRequest[] = [];
-  servirConfig(snapshotConAgentes);
-  recordChanges(changes);
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ROLES);
-
-  const enlace = within(panelDe(/bots sin rol declarado/i)).getByRole('link', { name: /Steven\/argos/i });
-  expect(enlace).toHaveAttribute('href', '/live?agente=Steven%2Fargos&pestana=perfil');
-  expect(screen.getByText(/esta vista no envía mutaciones genéricas/i)).toBeInTheDocument();
-  expect(screen.queryByLabelText(/bot que recibirá el rol/i)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /aplicar el rol/i })).not.toBeInTheDocument();
-  expect(changes).toEqual([]);
-});
-
-it('FAMILIA 6: un rol pasado del tope NO se puede aplicar a otro bot: lo dejaría SORDO', async () => {
-  const changes: ChangeRequest[] = [];
-  const conEmojis = '🙂'.repeat(1150);
-  servirConfig(() => ({
-    ...snapshotDeConfig(1),
-    agents: [
-      { tenant_id: 'Steven', alias: 'zeus', role_brief: conEmojis, enabled: true },
-      { tenant_id: 'Steven', alias: 'argos', role_brief: null, enabled: true },
-    ],
-  }));
-  recordChanges(changes);
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ROLES);
-
-  expect(screen.getByText(/lo dejaría SORDO/i)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /aplicar el rol a ese bot/i })).not.toBeInTheDocument();
-  expect(changes).toEqual([]);
-});
-
-it('FAMILIA 6: un gateway que no publica el registro de agentes no inventa un catálogo vacío', async () => {
-  servirConfig(() => snapshotDeConfig(1));
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ROLES);
-
-  expect(await screen.findByText(/no publica el registro de agentes/i)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /aplicar el rol a ese bot/i })).not.toBeInTheDocument();
 });
 
 describe('llegar a /config por URL directa sin permiso de control', () => {

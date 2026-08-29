@@ -62,20 +62,22 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     directiva: '',
     detalle: 'El gateway no le resuelve ninguno: cae al `default` de `resolveAgentDocuments` y '
       + 'devuelve lista vacía (services/gateway/src/console/agent-documents/catalog.ts:317). Lo único que le llega delante de su contrato '
-      + 'es el rol declarado que sale de acá.',
+      + 'es el rol declarado.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'No hay documento que tocar. Su identidad se le da con el rol declarado, en la '
-      + 'pestaña «Roles de agente».',
+    dondeSeToca: 'No hay documento que tocar. Su identidad se le da con el rol declarado, y ése se '
+      + 'escribe en la pestaña «Perfil» del bot en «La flota ahora».',
   },
 ];
 
 /**
- * Lo ÚNICO que «Ajustes y altas» gobierna sobre lo que el bot lee, y por qué vale para los cuatro
+ * El cierre del panel: dónde se escribe de verdad el rol declarado, y por qué le vale a los cuatro
  * arneses por igual: no lo lee el arnés de un fichero suyo, lo antepone Cauce dentro del sobre.
  */
-export const LO_QUE_AJUSTES_GOBIERNA =
-  'El rol declarado (`agents.role_brief`) es lo único de esta lista que se escribe desde acá, y '
-  + 'funciona con los cuatro arneses por igual porque no sale de ningún fichero del bot: lo lee el '
-  + 'servidor al entregar (`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215), viaja en el '
-  + 'sobre como `self_role` y el adaptador lo antepone al contrato. Por eso un bot sin directiva '
-  + 'propia —hermes— igual recibe identidad.';
+export const DONDE_SE_ESCRIBE_EL_ROL_DECLARADO =
+  'El rol declarado tampoco sale de esta pantalla: `agents.role_brief` es una proyección de sólo '
+  + 'lectura y el editor genérico rechaza mutarla. Se redacta en la pestaña «Perfil» del bot en «La '
+  + 'flota ahora», sobre `agent_profiles.role_summary`, y desde ahí le llega a los cuatro arneses '
+  + 'por igual porque no vive en ningún fichero del bot: lo lee el servidor al entregar '
+  + '(`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215), viaja en el sobre como '
+  + '`self_role` y el adaptador lo antepone al contrato. Por eso un bot sin directiva propia '
+  + '—hermes— igual recibe identidad.';

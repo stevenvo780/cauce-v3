@@ -175,14 +175,16 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
     expect(within(panel).getByText(/no lee ningún documento/i)).toBeInTheDocument();
   });
 
-  it('dice que el rol declarado es lo único que esta pantalla gobierna de eso', async () => {
+  it('dice que el rol declarado TAMPOCO se escribe acá, y manda a «Perfil» a escribirlo', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
     await irA(user, AGENTES);
 
-    const panel = panelDe(/qué lee cada arnés/i);
-    expect(within(panel).getByText(/role_brief/)).toBeInTheDocument();
+    const cierre = within(panelDe(/qué lee cada arnés/i)).getByRole('note');
+    expect(cierre).toHaveTextContent(/role_brief/);
+    expect(cierre).toHaveTextContent(/proyección de sólo lectura/);
+    expect(cierre).toHaveTextContent(/«Perfil»/);
   });
 
   /** NEGATIVE CONTROL: the panel belongs to that tab, not a banner glued to the whole page. */

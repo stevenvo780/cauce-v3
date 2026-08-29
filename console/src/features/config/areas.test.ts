@@ -31,10 +31,10 @@ it('una colección que la consola no conoce cae en «Otros» en vez de desaparec
   expect(sinDesconocida.map((entrada) => entrada.area.id)).not.toContain('otros');
 });
 
-it('«Roles» e «Historial» salen siempre, aunque no tengan ninguna colección detrás', () => {
+it('«Historial» sale siempre, aunque no tenga ninguna colección detrás', () => {
   const areas = agruparPorArea([]).map((entrada) => entrada.area.id);
 
-  expect(areas).toEqual(['espacios', 'permisos', 'roles', 'agentes', 'avisos', 'historial']);
+  expect(areas).toEqual(['espacios', 'permisos', 'agentes', 'avisos', 'historial']);
   expect(areas[0]).toBe(AREA_POR_DEFECTO);
 });
 
