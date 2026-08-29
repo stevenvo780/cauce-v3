@@ -4,11 +4,10 @@
  */
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import type {
-  ConfigurationSnapshot, QuotaCollector, QuotaSnapshot,
+  ConfigurationSnapshot, QuotaCollector, QuotaSeverity, QuotaSnapshot,
   QuotaThresholds,
 } from '../../api/types';
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // Internal types
 
 export interface Collector {
@@ -59,7 +58,6 @@ export interface AliasRoutingCeiling {
   created_by_tenant: string | null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // Freshness: is the probe stale?
 
 export type FreshnessState = 'fresh' | 'stale' | 'absent';
@@ -70,11 +68,8 @@ export interface Freshness {
   label: string;
 }
 
-/**
- * Determines whether a collector is fresh, stale, or absent.
- * Freshness is measured against `received_at` (server clock), not `captured_at`.
- * The `now` parameter is reserved for testing and lets you inject a specific timestamp.
- */
+/** Fresh, stale or absent, measured against `received_at` (server clock), not `captured_at`. `now` is there so
+ *  a test can inject an instant. */
 export function freshness(
   collector: (Collector | QuotaCollector) | null | undefined,
   thresholds: QuotaThresholds | null | undefined,
@@ -127,7 +122,6 @@ export function freshness(
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // Per-account consumption: mandatory honesty
 
 export interface WindowSummary {
@@ -137,7 +131,7 @@ export interface WindowSummary {
   remaining_percent: number | string; // string = "?" for stale/missing data
   reset_in: string;
   reset_at: string | null;
-  severity: string | null;
+  severity: QuotaSeverity | null;
 }
 
 /**
@@ -289,16 +283,23 @@ export function accountConsumption(
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // Per-account bindings: who has it?
 
 export interface AssignedAgent {
+  tenant_id: string | null;
   alias: string | null;
   display_name: string | null;
   container_name: string | null;
   priority: number | null;
   enabled: boolean | null;
   isPrimary: boolean;
+}
+
+/** Identity of an agent: the PAIR (tenant, alias), the one `buildAssignmentMatrix` already crosses by. An alias
+ *  is unique inside its tenant, not across the fleet: crossing by alias alone brought the homonym of another
+ *  client. The components are escaped so two different pairs cannot collide. */
+function agentIdentity(tenantId: string | null, alias: string | null): string {
+  return `${encodeURIComponent(tenantId ?? '')}/${encodeURIComponent(alias ?? '')}`;
 }
 
 /**
@@ -310,9 +311,9 @@ export function accountAssignments(
   bindings: AgentAccountBinding[],
   agents: Agent[],
 ): AssignedAgent[] {
-  const agentsMap = new Map<string | null, Agent>();
+  const agentsMap = new Map<string, Agent>();
   agents.forEach((a) => {
-    agentsMap.set(a.alias, a);
+    agentsMap.set(agentIdentity(a.tenant_id, a.alias), a);
   });
 
   const relevant = bindings.filter((b) => b.account_id === accountId);
@@ -323,8 +324,9 @@ export function accountAssignments(
   });
 
   return sorted.map((b) => {
-    const agent = agentsMap.get(b.agent_alias);
+    const agent = agentsMap.get(agentIdentity(b.tenant_id, b.agent_alias));
     return {
+      tenant_id: b.tenant_id,
       alias: b.agent_alias,
       display_name: agent?.display_name ?? null,
       container_name: agent?.container_name ?? null,
@@ -335,7 +337,6 @@ export function accountAssignments(
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // Orphans: the three directions
 
 export interface Orphans {
@@ -385,10 +386,10 @@ export function orphans(
     detail: ug.detail ?? null,
   }));
 
-  const bindingAliases = new Set<string | null>(
-    bindings.map((b) => b.agent_alias),
+  const bound = new Set<string>(
+    bindings.map((b) => agentIdentity(b.tenant_id, b.agent_alias)),
   );
-  const agentsWithoutBindings = agents.filter((a) => !bindingAliases.has(a.alias));
+  const agentsWithoutBindings = agents.filter((a) => !bound.has(agentIdentity(a.tenant_id, a.alias)));
 
   return {
     accountsWithoutQuotas,
@@ -397,7 +398,6 @@ export function orphans(
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // UI formatters
 
 /**
@@ -414,7 +414,6 @@ export function formatResetIn(seconds: unknown): string {
   return `en ${formatDurationSeconds(seconds)}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────────────
 // Configuration extractors
 
 export function extractProviderAccounts(config: ConfigurationSnapshot | null | undefined): ProviderAccount[] {

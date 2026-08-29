@@ -85,13 +85,12 @@ export function describeConfigError(
 /**
  * **A 403 when READING the configuration is a permission failure, not the control plane going down.**
  *
- * `GET /v3/console/config` requires `requireOperatorPermission(actor,'control')`. The sidebar
- * already knew that (`configNavAvailability`), but whoever reached `/config` via a bookmark or
- * by pasting the URL skipped the entire menu and landed on the generic `ErrorState`: "Could not
- * read Cauce V3 / Forbidden / Retry". Three lies in one line — Cauce reads fine, "Forbidden"
- * explains nothing, and retrying cannot change a permission — for the same fact the sidebar
- * reported correctly three centimetres to the left.
+ * `GET /v3/console/config` requires `read` — NOT `control`, which only the mutations demand: the
+ * caller must name the READ permission, or the operator comes back with the wrong one and still no
+ * view. Reaching `/config` by bookmark used to land on the generic `ErrorState` ("Could not read
+ * Cauce V3 / Forbidden / Retry"), which is three lies: Cauce reads fine, "Forbidden" explains
+ * nothing, and retrying cannot change a permission.
  */
-export function esNegativaDeControl(error: unknown): error is ApiError {
+export function esNegativaDePermiso(error: unknown): error is ApiError {
   return error instanceof ApiError && error.status === 403;
 }

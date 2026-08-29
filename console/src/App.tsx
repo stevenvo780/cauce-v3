@@ -21,21 +21,26 @@ import { onNavClick, redirect } from './router';
  * before the operator chose a view (the main minified chunk exceeded 1.1 MiB). Keep the landing
  * page immediate and make each route a real code-split boundary.
  *
- * The wrapper is intentionally a function component rather than storing React.lazy directly in
- * ROUTE_TABLE: the route invariant checks that every declared destination is callable, which has
- * caught unreachable routes before, while LazyExoticComponent is represented as an object.
+ * The wrapper is a function component rather than React.lazy stored directly in ROUTE_TABLE: the
+ * route invariant checks that every declared destination is callable, and LazyExoticComponent is
+ * an object.
  */
-function deferredPage(
-  load: () => Promise<{ default: ComponentType }>,
-): ComponentType {
+function deferredPage<P extends object>(
+  load: () => Promise<{ default: ComponentType<P> }>,
+): ComponentType<P> {
   const Deferred = lazy(load);
-  return function DeferredRoutePage() {
+  return function DeferredRoutePage(props: P) {
     return (
       <Suspense fallback={<p className="muted" role="status">Cargando vista…</p>}>
-        <Deferred />
+        <Deferred {...props} />
       </Suspense>
     );
   };
+}
+
+/** What a route receives from the router: only `/audit` uses it, to land on the audit tab. */
+interface RoutePageProps {
+  initialTab?: 'senales' | 'auditoria';
 }
 
 const LiveFleetPage = deferredPage(async () => ({
@@ -68,10 +73,10 @@ interface Route {
   id: string;
   label: string;
   icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  component: ComponentType;
+  component: ComponentType<RoutePageProps>;
 }
 
-const PAGES: Record<string, ComponentType> = {
+const PAGES: Record<string, ComponentType<RoutePageProps>> = {
   '': LandingPage,
   live: LiveFleetPage,
   accounts: AccountsPage,
@@ -262,6 +267,12 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
     redirect(`/${routeId}`);
   }, [aliasedFrom, routeId]);
 
+  /* The rewrite of `/audit` to `/observability` used to take the requested tab with it. The intent
+     survives it —the view is still loading— and is dropped on leaving the route. */
+  const auditoriaPedida = useRef(false);
+  if (aliasedFrom === 'audit') auditoriaPedida.current = true;
+  else if (routeId !== 'observability') auditoriaPedida.current = false;
+
   const Page = route?.component;
   // Sub-detail /fleet/:tenant/:alias reuses the terminal workspace.
   const requestedSegment = path.split('/').filter(Boolean).map(decodeSegment)[0] ?? '';
@@ -356,7 +367,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
                 />
               </Suspense>
             )
-            : Page ? <Page /> : null}
+            : Page
+            ? <Page initialTab={auditoriaPedida.current ? 'auditoria' : undefined} />
+            : null}
         </main>
       </div>
     </div>

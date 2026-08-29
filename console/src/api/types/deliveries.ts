@@ -42,12 +42,9 @@ export interface MessageView {
 }
 
 /**
- * `GET /v3/console/messages/:messageId` — the whole message, with the body UNTRUNCATED.
- *
- * `body` is `jsonb` in the database and its shape depends on who published (`text` in adapters,
- * `prompt` in commissions, and rows with another shape). It is typed as `unknown` on purpose: the
- * console interprets it in `features/terminal/cuerpo-del-mensaje.ts` and what it does when the
- * shape is none of the known ones is documented there.
+ * `GET /v3/console/messages/:messageId` — the whole message, body UNTRUNCATED. `body` is `jsonb`
+ * whose shape depends on the publisher, so it stays `unknown`: it is interpreted, with its
+ * unknown-shape case, in `features/terminal/cuerpo-del-mensaje.ts`.
  */
 export interface MessageDetail {
   id?: string | null;
@@ -164,11 +161,22 @@ export interface QueueItem {
   last_error?: string | null;
 }
 
-export interface QueueSnapshot {
-  observed_at?: string | null;
+/** `COUNT` over EVERY visible delivery, no `LIMIT`; absent on a gateway older than the field. */
+export interface QueueTotals {
   pending?: number | null;
   retrying?: number | null;
   dead?: number | null;
+}
+
+export interface QueueSnapshot {
+  observed_at?: string | null;
+  /** Counted over the rows of THIS page only; `totals` counts the queue. */
+  pending?: number | null;
+  retrying?: number | null;
+  dead?: number | null;
+  totals?: QueueTotals | null;
+  /** `true` when the server's `LIMIT` left visible deliveries out of `items`. */
+  muestra_recortada?: boolean | null;
   items?: QueueItem[] | null;
 }
 

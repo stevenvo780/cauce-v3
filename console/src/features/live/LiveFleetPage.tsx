@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type {
-  AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
+  AgentDocumentKind, AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
 } from '../../api/types';
 import {
   ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel,
 } from '../../components/ui';
 import { FleetActivityTable } from './FleetActivityTable';
 import { AgentDrawer, type DrawerTab } from './AgentDrawer';
+import type { BorradorDeFichero } from './FicherosTab';
 import { AgentTooltipCard } from './AgentTooltipCard';
 import { FleetVerdict } from './FleetVerdict';
 import {
@@ -72,6 +73,8 @@ export function LiveFleetPage() {
 
   const [borradoresPerfil, setBorradoresPerfil] =
     useState<Record<string, Partial<AgentPerfilCampos>>>({});
+  const [borradoresFicheros, setBorradoresFicheros] =
+    useState<Record<string, Partial<Record<AgentDocumentKind, BorradorDeFichero>>>>({});
 
   const memoryRef = useRef<FleetMemory>({});
   const [pulses, setPulses] = useState<PulseMap>({});
@@ -412,6 +415,13 @@ export function LiveFleetPage() {
               return resto;
             }
             return { ...actuales, [drawer.key]: campos };
+          }); }}
+          borradoresFicheros={borradoresFicheros[drawer.key]}
+          onBorradorFichero={(kind, nuevo) => { setBorradoresFicheros((actuales) => {
+            const delAgente = { ...actuales[drawer.key] };
+            if (nuevo === undefined) delete delAgente[kind];
+            else delAgente[kind] = nuevo;
+            return { ...actuales, [drawer.key]: delAgente };
           }); }}
           onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab); }}
           onClose={cerrarCajon}

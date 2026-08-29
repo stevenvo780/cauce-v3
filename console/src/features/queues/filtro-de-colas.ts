@@ -1,4 +1,4 @@
-import type { DeliveryState, QueueItem } from '../../api/types';
+import type { DeliveryState, QueueItem, QueueSnapshot } from '../../api/types';
 import { safeDeliveryState } from '../../lib';
 
 /**
@@ -9,13 +9,9 @@ import { safeDeliveryState } from '../../lib';
 export type GrupoDeEstado = 'todas' | 'revision' | 'retry' | 'pendientes';
 
 /**
- * `revision` includes `failed` alongside `dead`, and that is not a detail.
- *
- * `failed` ALSO leaves a row in `dead_letters` and `replayDelivery` accepts it: the server's own
- * `dead` counter sums it (`queueSnapshot`, packages/store). A "require review" group showing only
- * `dead` would hide exactly the same 197 deliveries the replay button had stopped hiding, and the
- * operator would land on a filter that tells them there is nothing to do while rescue is
- * available.
+ * `revision` includes `failed` alongside `dead`: `failed` also leaves a row in `dead_letters`,
+ * `replayDelivery` accepts it and the server's `dead` counter sums it, so leaving it out would
+ * hide rescuable deliveries behind a filter that says there is nothing to do.
  */
 export const ESTADOS_DEL_GRUPO: Record<Exclude<GrupoDeEstado, 'todas'>, ReadonlySet<DeliveryState>> = {
   revision: new Set<DeliveryState>(['dead', 'failed']),
@@ -59,13 +55,8 @@ export function filtrarEntregas(items: readonly QueueItem[], filtro: FiltroDeCol
 }
 
 /**
- * How many rows each group has WITHIN the snapshot being watched.
- *
- * `snapshot.pending/retrying/dead` are not reused here: the server computes those three over the
- * same data, but they are numbers over the whole snapshot, and here we need the count of what
- * the table can actually show. When they match, they match; when they do not, the difference is
- * information —it means the server's `LIMIT` truncated it— and covering it with the server's
- * number would paint a filter that promises rows that are not there.
+ * How many rows each group has WITHIN the page. NOT the total —`totalDelGrupo` is—: the total is
+ * what the operator acts on and this is what the table can show; the difference IS the truncation.
  */
 export function contarPorGrupo(items: readonly QueueItem[]): Record<GrupoDeEstado, number> {
   return {
@@ -74,4 +65,33 @@ export function contarPorGrupo(items: readonly QueueItem[]): Record<GrupoDeEstad
     retry: filtrarEntregas(items, { grupo: 'retry', texto: '' }).length,
     pendientes: filtrarEntregas(items, { grupo: 'pendientes', texto: '' }).length,
   };
+}
+
+const CAMPO_DEL_GRUPO: Record<Exclude<GrupoDeEstado, 'todas'>, 'pending' | 'retrying' | 'dead'> = {
+  revision: 'dead',
+  retry: 'retrying',
+  pendientes: 'pending',
+};
+
+/** Only a finite number is data: `null`, missing or NaN stay UNKNOWN, never collapsed to 0. */
+function cifra(valor: unknown): number | undefined {
+  return typeof valor === 'number' && Number.isFinite(valor) ? valor : undefined;
+}
+
+/**
+ * How many deliveries of a group the server sees IN TOTAL: `totals`, its `COUNT` with no `LIMIT`.
+ * A gateway that does not publish it falls back to the per-page counters, which under-count but
+ * are never UNKNOWN; `muestraRecortada` still says the page is not everything.
+ */
+export function totalDelGrupo(
+  snapshot: QueueSnapshot | undefined,
+  grupo: Exclude<GrupoDeEstado, 'todas'>,
+): number | undefined {
+  const campo = CAMPO_DEL_GRUPO[grupo];
+  return cifra(snapshot?.totals?.[campo]) ?? cifra(snapshot?.[campo]);
+}
+
+/** `true` only when the server ASSERTS the page left visible deliveries out. */
+export function muestraRecortada(snapshot: QueueSnapshot | undefined): boolean {
+  return snapshot?.muestra_recortada === true;
 }

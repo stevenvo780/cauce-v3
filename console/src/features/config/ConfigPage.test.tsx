@@ -5,7 +5,7 @@ import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import {
-  CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
+  CONFIG_SIN_CONTROL_REASON, CONFIG_SIN_LECTURA_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
 } from '../../router';
 import {
   irA, recordChanges, snapshotDeConfig, servirConfig,
@@ -148,11 +148,12 @@ it('FAMILIA 5: una colección que la consola no sabe clasificar aparece en «Otr
   expect(screen.getByRole('heading', { name: 'gizmos' })).toBeInTheDocument();
 });
 
-describe('llegar a /config por URL directa sin permiso de control', () => {
+describe('llegar a /config por URL directa sin permiso de lectura', () => {
   function servir403() {
     server.use(
       http.get('http://localhost/v3/console/config', () => HttpResponse.json(
-        { error: 'forbidden', message: 'control permission is required' }, { status: 403 },
+        { error: 'forbidden', message: 'read permission is required for configuration' },
+        { status: 403 },
       )),
       http.get('http://localhost/v3/console/access', () => HttpResponse.json({
         subject: 'Miguel:janus', roles: ['agent'], permissions: ['message.publish'],
@@ -160,11 +161,15 @@ describe('llegar a /config por URL directa sin permiso de control', () => {
     );
   }
 
-  it('dice LO MISMO que la barra lateral, y no que no se pudo leer Cauce', async () => {
+  it('nombra el permiso que el servidor exige —LECTURA—, y no que no se pudo leer Cauce', async () => {
+    // El GET exige `read` (gateway: requirePermission(actor,'read')). Mandar a pedir «control»
+    // devolvía al operador con el permiso equivocado y sin la vista.
     servir403();
     renderWithApi(<ConfigPage />);
 
-    expect(await screen.findByText(CONFIG_SIN_CONTROL_REASON)).toBeInTheDocument();
+    expect(await screen.findByText(CONFIG_SIN_LECTURA_REASON)).toBeInTheDocument();
+    expect(screen.getByText(/necesita permiso de lectura/i)).toBeInTheDocument();
+    expect(screen.queryByText(CONFIG_SIN_CONTROL_REASON)).not.toBeInTheDocument();
     expect(screen.queryByText('No se pudo leer Cauce V3')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /reintentar/i })).not.toBeInTheDocument();
   });
@@ -174,7 +179,7 @@ describe('llegar a /config por URL directa sin permiso de control', () => {
     renderWithApi(<ConfigPage />);
 
     expect(await screen.findByText(/El servidor contestó 403/)).toBeInTheDocument();
-    expect(screen.getByText('control permission is required')).toBeInTheDocument();
+    expect(screen.getByText('read permission is required for configuration')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /ir a la portada/i })).toHaveAttribute('href', '/');
   });
 
@@ -186,7 +191,7 @@ describe('llegar a /config por URL directa sin permiso de control', () => {
 
     expect(await screen.findByText('No se pudo leer Cauce V3')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
-    expect(screen.queryByText(CONFIG_SIN_CONTROL_REASON)).not.toBeInTheDocument();
+    expect(screen.queryByText(CONFIG_SIN_LECTURA_REASON)).not.toBeInTheDocument();
   });
 });
 

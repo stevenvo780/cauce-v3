@@ -186,9 +186,14 @@ export function camposVigentes(
   return { ...base, ...borrador };
 }
 
-/** A list is edited as text, one entry per line. Blank lines are not entries. */
-export function lineasALista(texto: string): string[] {
-  return texto.split('\n').map((linea) => linea.trim()).filter((linea) => linea.length > 0);
+/** One entry per line, kept AS TYPED: normalising each keystroke ate the space and the newline. */
+export function lineasCrudas(texto: string): string[] {
+  return texto.split('\n');
+}
+
+/** The entries that count: trimmed, no blank lines. Applied when measuring and when saving. */
+export function entradasDeLista(items: readonly string[]): string[] {
+  return items.map((linea) => linea.trim()).filter((linea) => linea.length > 0);
 }
 
 export function listaALineas(items: readonly string[]): string {
@@ -205,8 +210,8 @@ export function hayCambios(
     if (campos[campo] !== guardado[campo]) return true;
   }
   for (const campo of CAMPOS_DE_LISTA) {
-    const a = campos[campo];
-    const b = guardado[campo];
+    const a = entradasDeLista(campos[campo]);
+    const b = entradasDeLista(guardado[campo]);
     if (a.length !== b.length) return true;
     if (a.some((item, i) => item !== b[i])) return true;
   }
@@ -222,7 +227,7 @@ export function unidadesDelPerfil(campos: AgentPerfilCampos): number {
   let total = 0;
   for (const campo of CAMPOS_DE_TEXTO) total += contarUnidades(campos[campo]);
   for (const campo of CAMPOS_DE_LISTA) {
-    for (const item of campos[campo]) total += contarUnidades(item);
+    for (const item of entradasDeLista(campos[campo])) total += contarUnidades(item);
   }
   return total;
 }
@@ -242,7 +247,7 @@ export function camposQueNoEntran(
   }
 
   for (const campo of CAMPOS_DE_LISTA) {
-    const items = campos[campo];
+    const items = entradasDeLista(campos[campo]);
     if (items.length > limites.items) {
       fuera.push({ campo: `${ETIQUETAS[campo].titulo} (nº de entradas)`, medido: items.length, tope: limites.items });
     }
@@ -267,10 +272,10 @@ export function perfilParaGuardar(campos: AgentPerfilCampos): AgentPerfilValor {
     purpose: texto(campos.purpose),
     role_summary: texto(campos.role_summary),
     human_brief: texto(campos.human_brief),
-    responsibilities: [...campos.responsibilities],
-    restrictions: [...campos.restrictions],
-    tools: [...campos.tools],
-    operating_rules: [...campos.operating_rules],
+    responsibilities: entradasDeLista(campos.responsibilities),
+    restrictions: entradasDeLista(campos.restrictions),
+    tools: entradasDeLista(campos.tools),
+    operating_rules: entradasDeLista(campos.operating_rules),
   };
 }
 

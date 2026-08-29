@@ -342,7 +342,10 @@ export function ConversationPane({
           <summary className="messenger-detalle-origen">
             {elegidoPorElOperador
               ? <>Mensaje que elegiste · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span></>
-              : <>Último mensaje del hilo · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span> · clicá una burbuja para ver la suya</>}
+              /* It names the control that DOES select —the delivery row, or the "ver detalle" of a
+                 bubble without one—: clicking the text of a bubble selects nothing, and the
+                 previous wording ("clicá una burbuja") promised exactly that. */
+              : <>Último mensaje del hilo · <span className="mono">{compactId(mensajeSeleccionado.message_id)}</span> · clicá la entrega de una burbuja, o su «ver detalle», para ver la suya</>}
           </summary>
           <p className="eyebrow">
             {seleccionada

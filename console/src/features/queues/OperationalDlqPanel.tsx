@@ -321,7 +321,7 @@ export function OperationalDlqPanel() {
             {Object.entries(DISPOSITION).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
-        <span className="dlq-total">{rows.length} visibles · {allItems.length} cargados de <Unknown value={resource.data?.total} />{nextCursor ? ' · quedan páginas' : ''}</span>
+        <span className="dlq-total">{rows.length} visible{rows.length === 1 ? '' : 's'} · {allItems.length} cargado{allItems.length === 1 ? '' : 's'} de <Unknown value={resource.data?.total} />{nextCursor ? ' · quedan páginas' : ''}</span>
         <div className="dlq-toolbar-actions">
           {nextCursor ? (
             <button type="button" className="button small secondary" disabled={loadingMore} onClick={() => void loadMore()}>

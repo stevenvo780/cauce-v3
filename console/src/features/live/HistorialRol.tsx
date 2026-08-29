@@ -1,4 +1,5 @@
 import { History, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, Time } from '../../components/ui';
@@ -23,8 +24,11 @@ export interface HistorialRolProps {
   onRestaurar?: (texto: string) => void;
 }
 
+const ENTRADAS_POR_PAGINA = 10;
+
 export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps) {
   const api = useApi();
+  const [visibles, setVisibles] = useState(ENTRADAS_POR_PAGINA);
   const historial = useResource(
     `historial-rol-${tenantId}-${alias}`,
     () => api.getRoleBriefHistory(tenantId, alias),
@@ -67,6 +71,10 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
     );
   }
 
+  const entradas = estado.entradas;
+  const mostradas = entradas.slice(0, visibles);
+  const restantes = entradas.length - mostradas.length;
+
   return (
     <div className="historial-rol">
       <p className="notice" role="note">{AVISO_DE_PROFUNDIDAD}</p>
@@ -80,7 +88,7 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
       </p>
 
       <ol className="historial-lista">
-        {estado.entradas.map((entrada, indice) => {
+        {mostradas.map((entrada, indice) => {
           const cambio = resumirCambio(entrada);
           const plantilla = cambioDePlantilla(entrada);
           const actor = actorDeEntrada(entrada);
@@ -131,6 +139,21 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
           );
         })}
       </ol>
+
+      {restantes > 0 ? (
+        <div className="historial-paginacion">
+          <p className="historial-nota-actor">
+            Se ven los {mostradas.length} cambios más nuevos de {entradas.length} anotados.
+          </p>
+          <button
+            type="button"
+            className="button small secondary"
+            onClick={() => { setVisibles((cuantas) => cuantas + ENTRADAS_POR_PAGINA); }}
+          >
+            Ver {Math.min(ENTRADAS_POR_PAGINA, restantes)} más
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

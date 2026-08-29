@@ -1,4 +1,6 @@
-import type { QuotaGroup, QuotaProviderReport, QuotaSeverity, QuotaWindow } from '../../api/types';
+import type {
+  QuotaGroup, QuotaProviderReport, QuotaSeverity, QuotaThresholds, QuotaWindow,
+} from '../../api/types';
 import type { BadgeTone } from '../live/activity';
 
 export const SEVERITY_LABEL: Record<QuotaSeverity, string> = {
@@ -52,6 +54,35 @@ export function worstWindow(windows: readonly QuotaWindow[]): QuotaWindow | unde
   })[0];
 }
 
+/** Severity of a balance with the SAME rule as the server (`windowSeverity`, packages/store): strict `<` against
+ *  the sample's thresholds, and 0 % is exhausted, not merely critical. The server's severity wins when it travels
+ *  —it is the authority and it also knows about `rate-limited`—; this only fills the gap, so that one page does
+ *  not paint the same account by two criteria in two tabs. */
+export function balanceSeverity(
+  remainingPercent: number | null | undefined,
+  severity: QuotaSeverity | null | undefined,
+  thresholds: QuotaThresholds | null | undefined,
+): QuotaSeverity {
+  if (severity) return severity;
+  if (typeof remainingPercent !== 'number' || !Number.isFinite(remainingPercent)) return 'unknown';
+  if (remainingPercent <= 0) return 'exhausted';
+  if (remainingPercent < (thresholds?.critical_remaining_percent ?? 10)) return 'critical';
+  if (remainingPercent < (thresholds?.warn_remaining_percent ?? 25)) return 'warn';
+  return 'ok';
+}
+
+/** Tone for the metric strip, which has its own four-word vocabulary. */
+export function severityMetricTone(severity: QuotaSeverity): 'neutral' | 'positive' | 'warning' | 'danger' {
+  if (severity === 'exhausted' || severity === 'critical') return 'danger';
+  if (severity === 'warn') return 'warning';
+  return severity === 'ok' ? 'positive' : 'neutral';
+}
+
+/** At most one decimal: the collectors publish ratios like `33.333333333333336`, unreadable and unactionable. */
+export function formatPercent(value: number): string {
+  return `${String(Math.round(value * 10) / 10)}%`;
+}
+
 export interface WindowFamilyGroup {
   /** Stable key for React; synthetic when the window does not declare a family. */
   key: string;
@@ -63,10 +94,7 @@ export interface WindowFamilyGroup {
   collapsible: boolean;
 }
 
-/**
- * Groups a group's windows by `family` (fallback: each window without a family is its own
- * single-element family, so things that declare no kinship are not mixed together).
- */
+/** Groups windows by `family`; one without a family is its own group, so unrelated things are not mixed. */
 export function groupWindowsByFamily(windows: readonly QuotaWindow[]): WindowFamilyGroup[] {
   const order: string[] = [];
   const buckets = new Map<string, QuotaWindow[]>();
@@ -142,14 +170,7 @@ export function formatUnits(used: number | null | undefined, limit: number | nul
   return `${String(used ?? '?')} / ${String(limit)}`;
 }
 
-/* ============================================================================================ *
- * The percentage on a provider's header.
- * ============================================================================================ */
-
-/**
- * Computes the worst remaining percentage across a provider's windows, to align it with the
- * most restrictive severity on the header.
- */
+/** The percentage on a provider's header: the worst of its windows, aligned with the severity beside it. */
 export function peorPorcentajeDelProveedor(provider: QuotaProviderReport): number | undefined {
   let peor: number | undefined;
   for (const group of provider.groups ?? []) {
@@ -162,10 +183,8 @@ export function peorPorcentajeDelProveedor(provider: QuotaProviderReport): numbe
   return peor;
 }
 
-/**
- * `true` when the server's effective percentage and the worst window do NOT tell the same story.
- * Used to say so on the header instead of letting the operator discover it.
- */
+/** `true` when the server's effective percentage and the worst window do not tell the same story: it is said on
+ *  the header instead of letting the operator discover it. */
 export function porcentajesEnConflicto(provider: QuotaProviderReport): boolean {
   const efectivo = provider.effective_remaining_percent;
   const peor = peorPorcentajeDelProveedor(provider);

@@ -231,7 +231,7 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
 
   await user.clear(caja);
   await user.type(caja, '# nuevo');
-  await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido?.content).toBe('# nuevo');
@@ -284,7 +284,7 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'lo mio');
-  await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
 
   expect(await within(cajon).findByText(/cambió mientras lo editabas/i)).toBeInTheDocument();
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
@@ -311,7 +311,7 @@ it('un fichero ausente se crea con create_if_absent, nunca como reemplazo sin SH
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.type(caja, '# nuevo');
-  await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido).toEqual({ content: '# nuevo', create_if_absent: true });
@@ -331,7 +331,7 @@ it('un contenido truncado se enseña pero nunca queda editable ni guardable', as
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   expect(caja).toHaveAttribute('readonly');
   expect(await within(cajon).findByRole('alert')).toHaveTextContent(/lectura está recortada/i);
-  expect(within(cajon).getByRole('button', { name: /Guardar/i })).toBeDisabled();
+  expect(within(cajon).getByRole('button', { name: /^Guardar/i })).toBeDisabled();
 });
 
 it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', async () => {
@@ -350,11 +350,11 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'nuevo');
-  await user.click(within(cajon).getByRole('button', { name: /Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
 
   expect(await within(cajon).findByText(/no confirmó la aplicación/i)).toBeInTheDocument();
   expect(caja).toHaveValue('nuevo');
-  expect(within(cajon).getByRole('button', { name: /Guardar/i })).toBeEnabled();
+  expect(within(cajon).getByRole('button', { name: /^Guardar/i })).toBeEnabled();
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
 });
 
@@ -419,7 +419,7 @@ it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   expect(caja).toHaveAttribute('readonly');
   expect(within(cajon).getByText(/No se pudo acreditar config\.write/)).toBeInTheDocument();
-  expect(within(cajon).getByRole('button', { name: /Guardar/i })).toBeDisabled();
+  expect(within(cajon).getByRole('button', { name: /^Guardar/i })).toBeDisabled();
   expect(puts).toBe(0);
 });
 
@@ -430,4 +430,112 @@ it('la vista declara en castellano lo que todavía no hace', async () => {
 
   const hueco = await within(cajon).findByLabelText(/Lo que esta vista todavía no hace/i);
   expect(within(hueco).getByText(/no se editan desde aquí/i)).toBeInTheDocument();
+});
+
+it('un 413 al guardar dice el tope y NO se lleva por delante lo escrito', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: 'corto', sha: SHA_VIEJO, bytes: 5,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json(
+      { error: 'too_large', message: 'el contenido se pasa del tope de 256 KiB' }, { status: 413 },
+    )),
+  );
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, 'lo que no cabe');
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+
+  expect(await within(cajon).findByText(/El fichero pasa del tope/)).toBeInTheDocument();
+  expect(within(cajon).getByText(/se pasa del tope de 256 KiB/)).toBeInTheDocument();
+  expect(caja).toHaveValue('lo que no cabe');
+  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
+});
+
+it('un 403 de la política de rutas se explica como decisión, no como avería', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: 'corto', sha: SHA_VIEJO, bytes: 5,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json(
+      { error: 'forbidden', message: 'esa ruta mezcla configuración con credenciales' }, { status: 403 },
+    )),
+  );
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, 'mio');
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+
+  expect(await within(cajon).findByText(/no se sirve por esta vía/)).toBeInTheDocument();
+  expect(within(cajon).getByText(/mezcla configuración con credenciales/)).toBeInTheDocument();
+  expect(caja).toHaveValue('mio');
+});
+
+it('una ruta sin medir se distingue de un fichero que no está', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(http.get(RUTA_CONTENIDO, () => HttpResponse.json(
+    { error: 'facts_not_measured', message: 'nadie midió qué arnés corre este alias' }, { status: 409 },
+  )));
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+
+  expect(await within(cajon).findByText(/no está medida/)).toBeInTheDocument();
+  expect(within(cajon).getByText(/nadie midió qué arnés corre este alias/)).toBeInTheDocument();
+  expect(within(cajon).queryByLabelText(/Contenido de CLAUDE\.md/i)).not.toBeInTheDocument();
+});
+
+it('el visor de un fichero que no está lo dice y deja volver a comprobarlo', async () => {
+  mapaDeKant([IDENTIDAD_DE_PERFIL]);
+  let existe = false;
+  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json({
+    tenant_id: 'Steven', alias: 'kant', kind: 'identity',
+    path: '/home/claw/workspace/IDENTITY.md', format: 'markdown',
+    exists: existe, content: existe ? '# identidad\n' : '',
+    sha: existe ? SHA_NUEVO : null, bytes: existe ? 12 : 0,
+    editable: false, projected: false, truncated: false,
+  })));
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
+
+  expect(await within(cajon).findByText(/todavía no existe/)).toBeInTheDocument();
+  expect(within(cajon).queryByLabelText(/Contenido de Identidad/i)).not.toBeInTheDocument();
+
+  existe = true;
+  await user.click(within(cajon).getByRole('button', { name: /Volver a comprobar/i }));
+
+  expect(await within(cajon).findByLabelText(/Contenido de Identidad/i)).toHaveValue('# identidad\n');
+});
+
+it('el visor avisa de que lo recortado es un prefijo, y no ofrece guardarlo', async () => {
+  mapaDeKant([IDENTIDAD_DE_PERFIL]);
+  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json({
+    tenant_id: 'Steven', alias: 'kant', kind: 'identity',
+    path: '/home/claw/workspace/IDENTITY.md', format: 'markdown', exists: true,
+    content: 'prefijo', sha: SHA_NUEVO, bytes: 900_000,
+    editable: false, projected: false, truncated: true,
+  })));
+
+  const { user, cajon } = await abrirFicheros();
+  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
+
+  expect(await within(cajon).findByRole('alert')).toHaveTextContent(/lectura está recortada/i);
+  expect(within(cajon).getByLabelText(/Contenido de Identidad/i)).toHaveAttribute('readonly');
+  expect(within(cajon).getByText(/prefijo recortado/)).toBeInTheDocument();
+  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
 });

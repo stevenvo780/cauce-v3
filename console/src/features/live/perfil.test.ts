@@ -3,7 +3,8 @@ import { ficherosDelArnes, measureStrictestUnits, nombresDelArnes } from '@cauce
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DEL_PERFIL, camposQueNoEntran, camposVigentes, contarUnidades,
-  destinosDelArnes, hayCambios, esPerfilAplicado, lineasALista, listaALineas, motivoSinDestino,
+  destinosDelArnes, entradasDeLista, hayCambios, esPerfilAplicado, lineasCrudas, listaALineas,
+  motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil, type CampoDelPerfil,
 } from './perfil';
 
@@ -246,16 +247,17 @@ describe('la escritura aplicada del perfil', () => {
 
 describe('las listas se editan por líneas', () => {
   it('una línea por entrada, sin las vacías ni los espacios de los bordes', () => {
-    expect(lineasALista('  ssh \n\n docker\n  \n')).toEqual(['ssh', 'docker']);
+    expect(entradasDeLista(lineasCrudas('  ssh \n\n docker\n  \n'))).toEqual(['ssh', 'docker']);
   });
 
   it('ida y vuelta conserva las entradas', () => {
     const items = ['reparar Cauce', 'no tocar credenciales'];
-    expect(lineasALista(listaALineas(items))).toEqual(items);
+    expect(entradasDeLista(lineasCrudas(listaALineas(items)))).toEqual(items);
   });
 
   it('CONTROL NEGATIVO: una entrada con espacios internos NO se parte', () => {
-    expect(lineasALista('reparar Cauce de punta a punta')).toEqual(['reparar Cauce de punta a punta']);
+    expect(entradasDeLista(lineasCrudas('reparar Cauce de punta a punta')))
+      .toEqual(['reparar Cauce de punta a punta']);
   });
 });
 

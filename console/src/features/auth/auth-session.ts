@@ -65,11 +65,21 @@ export function useAuthGate(): AuthGateState {
     };
   }, [check]);
 
+  /* A 401 on any data call asks the SERVER again at once instead of waiting for the 60 s poll,
+     which left the console in limbo. Overlapping 401s share one answer. */
+  useEffect(() => {
+    let revalidando = false;
+    return api.onUnauthorized(() => {
+      if (revalidando) return;
+      revalidando = true;
+      void check().finally(() => { revalidando = false; });
+    });
+  }, [api, check]);
+
   /**
-   * Password login. Same as logout: do not assume its own optimism — after the POST it asks
-   * the server again who it is. A credential failure is NOT saved into `error` (that would paint
-   * the screen "could not verify the session", which is something else): it is propagated to the
-   * caller so they can show it inside the form.
+   * Password login. Like logout, it does not assume its own optimism: after the POST it asks the
+   * server again. A credential failure is propagated to the caller —to be shown inside the form—
+   * instead of becoming `error`, which paints "could not verify the session".
    */
   const login = useCallback(async (email: string, password: string) => {
     setBusy(true);

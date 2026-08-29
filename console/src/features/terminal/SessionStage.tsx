@@ -105,10 +105,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const [showInspector, setShowInspector] = useState(false);
   /** Panel that already tried to open its TUI on its own. It is per panel and is not retried. */
   const autoOpenedRef = useRef<string>(undefined);
-  /**
-   * Synchronous fence for the POST. React state cannot provide this guarantee: auto-open and a
-   * click can both enter before `setRequesting(true)` has rendered.
-   */
+  /** Synchronous POST fence: auto-open and a click both enter before `setRequesting` renders. */
   const requestAttemptRef = useRef<{ sequence: number } | undefined>(undefined);
   const requestSequenceRef = useRef(0);
   const mountedRef = useRef(false);
@@ -185,7 +182,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;
-    // Guardián durable: sobrevive al remonte del panel al cambiar de pestaña (autoOpenedRef no).
+    // Durable guard: survives the panel remount on a tab switch, which `autoOpenedRef` does not.
     if (liveSession.liveTuiAttempted) return;
     if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
@@ -310,6 +307,18 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
     void requestChannel(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
   }
 
+  /** Reopens the SAME channel that died: a read-only observation never becomes a writable shell. */
+  async function pedirCanalNuevo() {
+    const eraTui = channelIsLiveTui;
+    await onReleaseChannel(liveSession.id);
+    setRequestError(undefined);
+    if (eraTui) {
+      await requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
+      return;
+    }
+    setShowPtyDialog(true);
+  }
+
   async function releaseChannel() {
     setClosingChannel(true);
     try {
@@ -366,6 +375,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                ><TerminalSquare size={14} aria-hidden="true" /> PTY</button>
                <button
                  type="button"
+                 aria-pressed={showInspector}
                  data-active={showInspector || undefined}
                  onClick={() => { setShowInspector(!showInspector); }}
                  title="Ver detalles / ACK inspector"
@@ -414,7 +424,8 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                  grant={grant}
                  secondsLeft={ptySecondsLeft(grant.expires_at, now)}
                  readOnly={channelIsLiveTui}
-                 ticketConsumed={channelView?.state === 'open'}
+                 ticketConsumed={channelView?.ticketConsumido === true}
+                 feedEnPausa={ptyChannelLive}
                  closing={closingChannel}
                  onClose={() => void releaseChannel()}
                />
@@ -425,11 +436,21 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                    ticket={grant.ticket}
                    readOnly={channelIsLiveTui}
                    onClosed={() => { onChannelClosed(liveSession.id); }}
-                   onRequestNewSession={() => { void onReleaseChannel(liveSession.id).then(() => { setRequestError(undefined); setShowPtyDialog(true); }); }}
+                   onRequestNewSession={() => { void pedirCanalNuevo(); }}
                  />
                </Suspense>
             </div>
-          ) : <div className="terminal-channel-unavailable"><CircleOff aria-hidden="true" /><h3>{channelLabel}</h3><p>{channelReason}</p></div>
+          ) : (
+            <div className="terminal-channel-unavailable">
+              <CircleOff aria-hidden="true" />
+              {/* With the gate open and no grant the channel is simply not open: painting the
+                  destination state here said "PTY online" over an empty stage. */}
+              <h3>{channel.enabled ? 'No hay canal PTY abierto' : channelLabel}</h3>
+              <p>{channel.enabled
+                ? 'El canal se cerró o todavía no se pidió. Abrí la TUI en vivo o una shell nueva desde los botones de arriba, o volvé al feed.'
+                : channelReason}</p>
+            </div>
+          )
         ) : (
           <>
             {messages.loading && !messages.data ? <LoadingState label="Abriendo feed durable de mensajes…" /> : (

@@ -16,14 +16,12 @@ export interface PtySessionView {
   notices: PtyNotice[];
   /** The DOM renderer refused to start (headless/jsdom); the channel may still be live. */
   renderError?: string;
-  /**
-   * `false` when the operator scrolled up to read and new output arrived below.
-   */
+  /** `false` when the operator scrolled up to read and new output arrived below. */
   seguirAlFinal: boolean;
-  /**
-   * Columns that actually fit on this screen.
-   */
+  /** Columns that actually fit on this screen. */
   columnas?: number;
+  /** Spent single-use ticket. Never returns to false: a reconnection resumes the same PTY. */
+  ticketConsumido?: boolean;
 }
 
 export interface PtySessionOptions {

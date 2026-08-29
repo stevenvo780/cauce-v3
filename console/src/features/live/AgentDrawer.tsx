@@ -2,13 +2,15 @@ import { ExternalLink, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useApi } from '../../api/context';
 import { useResource, type Resource } from '../../api/use-resource';
-import type { AgentPerfilCampos, ConfigurationSnapshot, FleetActivityItem } from '../../api/types';
+import type {
+  AgentDocumentKind, AgentPerfilCampos, ConfigurationSnapshot, FleetActivityItem,
+} from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
 import { AgentAvatar } from './AgentAvatar';
 import { DirectivaTab } from './DirectivaTab';
-import { FicherosTab } from './FicherosTab';
+import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
 import { PerfilTab } from './PerfilTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
@@ -59,16 +61,18 @@ export interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
   configuracion: Resource<ConfigurationSnapshot>;
-  /** The only editable draft is the canonical profile; the `role_brief` projection is read-only. */
+  /** Two editable drafts —profile and files—; the `role_brief` projection is read-only. */
   borradorPerfil?: Partial<AgentPerfilCampos>;
   onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
+  borradoresFicheros?: Partial<Record<AgentDocumentKind, BorradorDeFichero>>;
+  onBorradorFichero: (kind: AgentDocumentKind, borrador: BorradorDeFichero | undefined) => void;
   onTab: (tab: DrawerTab) => void;
   onClose: () => void;
 }
 
 export function AgentDrawer({
   view, tab, configuracion, borradorPerfil, onBorradorPerfil,
-  onTab, onClose,
+  borradoresFicheros, onBorradorFichero, onTab, onClose,
 }: AgentDrawerProps) {
   // Esc closes from anywhere. A panel that can only be closed with the little X forces you to hunt
   // for it with the mouse each time, and this drawer is opened and closed many times in a row when triaging.
@@ -119,7 +123,7 @@ export function AgentDrawer({
         {tab === 'conexion' ? <TabConexion view={view} /> : null}
         {tab === 'entregas' ? <TabEntregas view={view} /> : null}
         {/* `key` por alias evita que las lecturas y el modal de un bot sobrevivan al cambio de
-            agente. El único borrador editable vive en Perfil y ya viene indexado por alias. */}
+            agente. Los borradores editables viven fuera, ya indexados por alias. */}
         {tab === 'rol' ? (
           <DirectivaTab
             key={view.key}
@@ -145,7 +149,15 @@ export function AgentDrawer({
             onBorrador={onBorradorPerfil}
           />
         ) : null}
-        {tab === 'ficheros' ? <FicherosTab key={view.key} tenantId={view.tenantId} alias={view.alias} /> : null}
+        {tab === 'ficheros' ? (
+          <FicherosTab
+            key={view.key}
+            tenantId={view.tenantId}
+            alias={view.alias}
+            borradores={borradoresFicheros}
+            onBorrador={onBorradorFichero}
+          />
+        ) : null}
       </div>
 
       <footer className="agent-drawer-foot">

@@ -94,7 +94,7 @@ export function handleControlFrame(
     entry.claimLeaseMs = claim.claimLeaseMs;
     entry.reconnectAttempt = 0;
     stopReconnect(entry);
-    publish({ state: 'open', message: undefined });
+    publish({ state: 'open', message: undefined, ticketConsumido: true });
     startViewerHeartbeat(entry);
     onReady();
     try {

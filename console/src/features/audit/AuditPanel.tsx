@@ -11,16 +11,10 @@ import { readableAuditSummary } from './audit-summary';
  * **The audit** — not a
  * route of its own.
  *
- * It used to be `/audit`, sitting next to `/observability` in the menu. That they were two entries
- * was written in the code itself: the comment on `ObservabilityPage` explained that `request_id`
- * and `trace_id` were pushed down to the relays table "to cross-reference them against Audit". That
- * is, the console documented that a normal investigation starts at a relay and ends at the audit,
- * and forced the operator to do it with two browser tabs and an identifier copied by hand.
- *
- * The cross-reference is now one click: the relay row carries a button that lands here with the
- * `trace_id` already in the filter. That is why the search text lives on the PAGE and not in this
- * component — if it lived here, switching tabs would lose it, which is exactly the manual step
- * the merge comes to remove.
+ * An investigation starts at a relay and ends at the audit, and it used to take two browser tabs
+ * and an identifier copied by hand. The relay row now carries a button that lands here with the
+ * `trace_id` already in the filter, which is why the search text lives on the PAGE and not in this
+ * component: here, switching tabs would lose it.
  *
  * What is preserved in full from the old view, without exception: the search over the six fields
  * (action, actor, tenant, request, trace, summary), the "N visible of M" counter, the icon by
@@ -123,6 +117,9 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
   const needle = query.trim().toLocaleLowerCase();
   const filtered = needle ? events.filter((event) => [event.action, event.actor_alias, event.tenant_id, event.request_id, event.trace_id, event.summary]
     .some((value) => value?.toLocaleLowerCase().includes(needle))) : events;
+  /* The search runs in the browser over what is LOADED —the server takes no filter—, so with pages
+     left to walk "no events match" is a claim about the whole log that cannot be made here. */
+  const busquedaParcial = needle.length > 0 && nextCursor !== null;
 
   if (resource.loading && !resource.data) return <LoadingState label="Leyendo audit log…" />;
   if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
@@ -133,13 +130,23 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
         <label className="search-field"><Search size={17} aria-hidden="true" /><span className="sr-only">Filtrar auditoría</span><input type="search" value={query} onChange={(event) => { onQuery(event.target.value); }} placeholder="Filtrar por actor, action, trace…" /></label>
         {needle ? (
           <p className="notice" role="status">
-            Filtrando por <span className="mono">{query.trim()}</span>.{' '}
+            Filtrando por <span className="mono">{query.trim()}</span>{busquedaParcial
+              ? ` entre los ${String(events.length)} eventos ya cargados; la auditoría tiene más atrás.`
+              : '.'}{' '}
             <button className="button small" type="button" onClick={() => { onQuery(''); }}>Quitar el filtro</button>
           </p>
         ) : null}
       </Panel>
       <Panel title="Eventos" subtitle={`${String(filtered.length)} visibles de ${String(events.length)}`}>
-        {filtered.length === 0 ? <EmptyState>No hay eventos que coincidan.</EmptyState> : (
+        {filtered.length === 0 ? (
+          <EmptyState>
+            {busquedaParcial
+              ? `Ninguno de los ${String(events.length)} eventos cargados coincide. NO quiere decir que no exista: `
+                + 'la búsqueda sólo cubre lo cargado y quedan eventos anteriores sin leer — seguí con '
+                + '«Cargar anteriores».'
+              : 'No hay eventos que coincidan.'}
+          </EmptyState>
+        ) : (
           <div className="audit-list">
             {filtered.map((event, index) => {
               const decision = safeAuditDecision(event.decision);

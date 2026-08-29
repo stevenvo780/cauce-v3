@@ -10,7 +10,8 @@ import {
 } from '../../components/ui';
 import { permissionState } from '../../lib';
 import {
-  CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON, onNavClick,
+  CONFIG_SIN_CONTROL_REASON, CONFIG_SIN_LECTURA_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
+  onNavClick,
 } from '../../router';
 import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
@@ -18,7 +19,7 @@ import { ArnesesPanel } from './ArnesesPanel';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import {
-  describeConfigError, esNegativaDeControl, textoRecarga,
+  describeConfigError, esNegativaDePermiso, textoRecarga,
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
 import { exactConfigurationReceipt } from './config-receipt';
@@ -398,10 +399,10 @@ export function ConfigPage() {
   }
 
   if (config.loading && !config.data) return <LoadingState label="Leyendo configuración versionada…" />;
-  // A 403 is NOT a crash: it is the same permission the sidebar already explains. See `esNegativaDeControl` and `SinPermisoDeControl`.
+  // A 403 is NOT a crash: the GET was refused for lack of `read`. See `esNegativaDePermiso` and `SinPermisoDeLectura`.
   if (config.error && !config.data) {
-    return esNegativaDeControl(config.error)
-      ? <SinPermisoDeControl detalle={config.error.message} />
+    return esNegativaDePermiso(config.error)
+      ? <SinPermisoDeLectura detalle={config.error.message} />
       : <ErrorState error={config.error} onRetry={config.reload} />;
   }
 
@@ -588,23 +589,23 @@ function PermisoDeEscritura({
 }
 
   /**
-   * What someone arriving at `/config` via a bookmark without `control` permission sees.
+   * What someone arriving at `/config` via a bookmark without `read` permission sees.
    *
-   * It says **exactly** `CONFIG_SIN_CONTROL_REASON`, the same wording the sidebar puts on the inert entry: two
-   * different wordings for the same denial would lead the operator to believe they are two different problems. There
-   * is no "Retry" button—repeating the request cannot grant a permission, and offering it is promising an exit that
-   * does not exist—but there is a real exit to the homepage.
+   * It names the READ permission, which is the one the refused GET requires; the sidebar's `control` wording belongs
+   * to writing and would send the operator to ask for a permission that does not open this view. There is no "Retry"
+   * button—repeating the request cannot grant a permission, and offering it is promising an exit that does not
+   * exist—but there is a real exit to the homepage.
    *
    * The raw server message is shown the same, in the background: it is what you need to cite to request the
    * permission, and hiding it would leave the operator with nothing to take to whoever administers it.
    */
-function SinPermisoDeControl({ detalle }: { detalle: string }) {
+function SinPermisoDeLectura({ detalle }: { detalle: string }) {
   return (
     <div className="state-card" role="note">
       <ShieldOff aria-hidden="true" />
       <div>
-        <strong>«Ajustes y altas» necesita permiso de control</strong>
-        <p>{CONFIG_SIN_CONTROL_REASON}</p>
+        <strong>«Ajustes y altas» necesita permiso de lectura</strong>
+        <p>{CONFIG_SIN_LECTURA_REASON}</p>
         <p className="muted">
           El servidor contestó 403: <span className="mono">{detalle || 'sin mensaje'}</span>. Reintentar
           no cambia nada: falta el permiso, no se cayó Cauce.

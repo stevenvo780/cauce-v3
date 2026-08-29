@@ -10,7 +10,8 @@ import { DeliveryTable, EXPLICACION_CANCEL, EXPLICACION_REPLAY } from './Deliver
 import { OperationalDlqPanel } from './OperationalDlqPanel';
 import { enfocarEntrega, leerEntregaPedida, TEXTO_AUSENTE } from './foco-de-entrega';
 import {
-  contarPorGrupo, filtrarEntregas, FILTRO_VACIO, ROTULO_DEL_GRUPO, type GrupoDeEstado,
+  contarPorGrupo, filtrarEntregas, FILTRO_VACIO, muestraRecortada, ROTULO_DEL_GRUPO, totalDelGrupo,
+  type GrupoDeEstado,
 } from './filtro-de-colas';
 import './queues.css';
 
@@ -84,23 +85,25 @@ export function QueuesPage() {
       />
 
       {/*
-        The cards are BUTTONS. The number is still the server's —`snapshot.pending`,
-        `retrying`, `dead`, computed on the same snapshot— and below it goes, when they differ,
-        how many rows of that group fit on this page: the difference means the server's `LIMIT`
-        truncated, and hiding it would promise rows that aren't there. */}
+        The cards are BUTTONS, and the number is the server's TOTAL —`snapshot.totals`, a `COUNT`
+        with no `LIMIT` and with the same visibility filters as the listing—, not what fits on this
+        page: a dead-letter count capped at the page size reads as "there are 200" on a queue with
+        thousands and hides exactly the work that has to be rescued. Below it goes, when they
+        differ, how many rows of that group DID fit here: that difference is the page truncation,
+        and hiding it would promise rows the table below does not have. */}
       <div className="metrics-grid three metricas-de-cola" role="group" aria-label="Filtrar por estado">
         <TarjetaFiltro
-          etiqueta="Pendientes" valor={snapshot?.pending} tono="neutral" detalle="disponibles o claimed"
+          etiqueta="Pendientes" valor={totalDelGrupo(snapshot, 'pendientes')} tono="neutral" detalle="disponibles o claimed"
           grupo="pendientes" activo={filtro.grupo === 'pendientes'} enPagina={porGrupo.pendientes}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
         <TarjetaFiltro
-          etiqueta="En retry" valor={snapshot?.retrying} tono="warning" detalle="backoff durable"
+          etiqueta="En retry" valor={totalDelGrupo(snapshot, 'retry')} tono="warning" detalle="backoff durable"
           grupo="retry" activo={filtro.grupo === 'retry'} enPagina={porGrupo.retry}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
         <TarjetaFiltro
-          etiqueta="Dead letters" valor={snapshot?.dead} tono="danger" detalle="requieren revisión"
+          etiqueta="Dead letters" valor={totalDelGrupo(snapshot, 'revision')} tono="danger" detalle="requieren revisión"
           grupo="revision" activo={filtro.grupo === 'revision'} enPagina={porGrupo.revision}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
@@ -113,7 +116,14 @@ export function QueuesPage() {
             date formats that coexisted in the product. Now it goes through the same `<Time>` as
             the rest: relative to the view, exact in `title=`. */}
         <Panel title="Entregas" subtitle={undefined}>
-          <p className="observation-line">Leído del servidor: <Time value={snapshot?.observed_at} relativo /></p>
+          <p className="observation-line">
+            Leído del servidor: <Time value={snapshot?.observed_at} relativo />
+            {/* Said with the server's own flag, not guessed from `items.length === LIMIT`: with
+                exactly `LIMIT` deliveries that guess would announce a truncation that isn't. */}
+            {muestraRecortada(snapshot)
+              ? ' · Página recortada: el servidor devolvió sólo las entregas más recientes; las tarjetas de arriba sí cuentan todo.'
+              : null}
+          </p>
 
           {/* The requested id is written IN FULL, not compacted: it's what the operator has to be
               able to compare against the one in the link, and `compactId` eats the middle. */}
@@ -216,14 +226,14 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
       <strong>{cifra}</strong>
       <span>{detalle}</span>
       {/*
-        The number above is computed by the SERVER over everything it sees; this one is how many
-        rows of that group fit on this page. It's only shown when they DON'T match, and then it
-        says why: the snapshot's `LIMIT` left the rest out. */}
+        The number above is the SERVER's total over everything it sees; this one is how many rows of
+        that group fit on this page. It's only shown when they DON'T match, and then it says why:
+        the snapshot's `LIMIT` left the rest out. */}
       {String(enPagina) !== cifra ? (
         <span
           className="metrica-en-pagina"
           title={`El servidor cuenta ${cifra} en total; en esta página caben ${String(enPagina)} porque el snapshot viene recortado por su LIMIT.`}
-        >{enPagina} acá · snapshot recortado</span>
+        >{enPagina} en esta página · total {cifra}</span>
       ) : null}
     </button>
   );

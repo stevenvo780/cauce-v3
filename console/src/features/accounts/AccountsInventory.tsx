@@ -2,7 +2,9 @@ import {
   ChevronDown, ChevronRight, CreditCard, EyeOff, KeyRound, Lock, PencilLine, Plus, Power, PowerOff, Share2,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
-import type { ConfigurationSnapshot, ConsoleAccess, QuotaSnapshot } from '../../api/types';
+import type {
+  ConfigurationSnapshot, ConsoleAccess, QuotaSeverity, QuotaSnapshot, QuotaThresholds,
+} from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import {
   Badge, EmptyState, Metric, Panel, Unknown, Time,
@@ -16,6 +18,7 @@ import {
   readAgents, readBindings, readCeiling, readProviderAccounts, updateAccountMutation, viewerTenant,
   type AccountDraft, type CredentialRefKind, type ProviderAccount, type RegistryContext,
 } from './registry';
+import { SEVERITY_TONE, balanceSeverity, formatPercent } from './quotas';
 import { useRegistryMutation } from './use-registry-mutation';
 
 const emptyDraft: AccountDraft = {
@@ -77,9 +80,7 @@ function PayerScoped({ account, children }: { account: ProviderAccount; children
   return <>{children}</>;
 }
 
-/**
- * Inventory and management of AI provider accounts and consumption state.
- */
+/** Inventory and management of AI provider accounts and consumption state. */
 export function AccountsInventory({ config, access, quotas }: {
   config: Resource<ConfigurationSnapshot>;
   access: Resource<ConsoleAccess>;
@@ -190,7 +191,7 @@ export function AccountsInventory({ config, access, quotas }: {
                   <td>{account.enabled === null
                     ? <Badge tone="unknown">SIN DATO</Badge>
                     : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
-                  <td><AccountUsage consumption={consumption} /></td>
+                  <td><AccountUsage consumption={consumption} thresholds={quotas.data?.thresholds} /></td>
                   <td><PayerScoped account={account}><span className="mono"><Unknown value={account.externalAccountId} /></span></PayerScoped></td>
                   <td><PayerScoped account={account}><span className="mono"><Unknown value={account.credentialRefKind} /></span></PayerScoped></td>
                   <td><Time value={account.updatedAt} /></td>
@@ -315,9 +316,13 @@ function RowAction({ label, onClick, expanded, undoes = false, children }: {
  * many windows, and the plan when the provider declares one. Amber is kept for a fault —a probe
  * that answered `ok: false`, or a sample whose percentages are unusable. An account the collector
  * simply does not watch gets a grey dash: painting an expected absence amber on every row is what
- * stops amber from meaning anything.
+ * stops amber from meaning anything. The color comes from `balanceSeverity`, the criterion of the Consumption
+ * tab and of the server: with the `<=` that used to live here, 25 % changed color between tabs of one page.
  */
-function AccountUsage({ consumption }: { consumption: AccountConsumption }) {
+function AccountUsage({ consumption, thresholds }: {
+  consumption: AccountConsumption;
+  thresholds: QuotaThresholds | null | undefined;
+}) {
   const plan = consumption.plan ? `plan ${consumption.plan}` : null;
   if (!consumption.available || consumption.windows.length === 0) {
     return <span>
@@ -327,17 +332,21 @@ function AccountUsage({ consumption }: { consumption: AccountConsumption }) {
       {plan ? <small className="subline">{plan}</small> : null}
     </span>;
   }
-  const numeric = consumption.windows
-    .map((window) => window.remaining_percent)
-    .filter((value): value is number => typeof value === 'number');
-  if (numeric.length === 0) {
+  let worst: { percent: number; severity: QuotaSeverity | null } | null = null;
+  for (const window of consumption.windows) {
+    const percent = window.remaining_percent;
+    if (typeof percent !== 'number') continue;
+    if (worst === null || percent < worst.percent) worst = { percent, severity: window.severity };
+  }
+  if (worst === null) {
     return <span className="unknown" title="Ninguna ventana trajo un porcentaje utilizable">?</span>;
   }
-  const worst = Math.min(...numeric);
   const windows = `${String(consumption.windows.length)} ${consumption.windows.length === 1 ? 'ventana' : 'ventanas'}`;
   return (
     <span>
-      <Badge tone={worst <= 10 ? 'danger' : worst <= 25 ? 'warning' : 'online'}>{worst}% libre</Badge>
+      <Badge tone={SEVERITY_TONE[balanceSeverity(worst.percent, worst.severity, thresholds)]}>
+        {formatPercent(worst.percent)} libre
+      </Badge>
       <small className="subline">{plan ? `${windows} · ${plan}` : windows}</small>
     </span>
   );

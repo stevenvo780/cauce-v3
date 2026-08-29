@@ -15,12 +15,14 @@ import type { TerminalSessionGrant } from './api';
 import type { FleetAgent } from './fleet';
 import { formatCountdown } from './session';
 
-export function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsumed, closing, onClose }: {
+export function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsumed, feedEnPausa, closing, onClose }: {
   agent: FleetAgent;
   grant: TerminalSessionGrant;
   secondsLeft?: number;
   readOnly: boolean;
   ticketConsumed: boolean;
+  /** The durable feed stands down only while this channel is the live source. */
+  feedEnPausa: boolean;
   closing: boolean;
   onClose: () => void;
 }) {
@@ -37,7 +39,7 @@ export function PtySessionBar({ agent, grant, secondsLeft, readOnly, ticketConsu
           ? <>Ticket consumido · <strong>sesión activa</strong></>
           : <>Ticket vence en <strong>{formatCountdown(secondsLeft)}</strong></>}
       </span>
-      <span className="pty-bar-feed"><MessageSquareText size={13} aria-hidden="true" /> POLLING EN PAUSA</span>
+      <span className="pty-bar-feed"><MessageSquareText size={13} aria-hidden="true" /> {feedEnPausa ? 'POLLING EN PAUSA' : 'POLLING ACTIVO'}</span>
       <button className="button small secondary pty-bar-close" type="button" onClick={onClose} disabled={closing} title="Cierra el canal PTY de este alias. No cierra tu sesión de la consola.">
         <PowerOff size={13} aria-hidden="true" /> {closing ? 'Cerrando…' : 'Cerrar la terminal'}
       </button>

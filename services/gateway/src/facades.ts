@@ -61,17 +61,26 @@ function queueRowVisible(row: Row, principal: Principal): boolean {
 }
 
 export function visibleQueue(value: Row, principal: Principal): Row {
-  const items = Array.isArray(value.items)
-    ? value.items.map(object).filter((item): item is Row => item !== undefined).filter((item) => queueRowVisible(item, principal))
+  const parsed = Array.isArray(value.items)
+    ? value.items.map(object).filter((item): item is Row => item !== undefined)
     : [];
+  const items = parsed.filter((item) => queueRowVisible(item, principal));
   const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((result, row) => {
     if (row.state === 'retry') result.retrying += 1;
-    // `failed` cuenta como dead letter, igual que el store, la tabla y Mensajes (antes se omitía).
     else if (row.state === 'dead' || row.state === 'failed') result.dead += 1;
     else if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) result.pending += 1;
     return result;
   }, { pending: 0, retrying: 0, dead: 0 });
-  return { ...value, ...counts, items };
+  // Store totals span a broader rule: forwarding them after dropping rows would headline withheld deliveries.
+  const withheld = parsed.length !== items.length;
+  const vouched = withheld ? {} : {
+    ...(value.totals === undefined ? {} : { totals: value.totals }),
+    ...(value.muestra_recortada === undefined ? {} : { muestra_recortada: value.muestra_recortada }),
+  };
+  const rest = { ...value };
+  delete rest.totals;
+  delete rest.muestra_recortada;
+  return { ...rest, ...vouched, ...counts, items };
 }
 
 const DLQ_TARGETS = new Set(['delivery', 'outbox']);

@@ -331,4 +331,52 @@ it('el role_summary recuperado sobrevive a desmontar Perfil y conserva los otros
   expect(within(cajon).getByLabelText(/^Identidad y propósito/i))
     .toHaveValue('Coordinás lo pendiente de la flota y perseguís lo que se quedó a medias.');
 });
+
+function diarioLargo(cuantos: number) {
+  conHistorial(Array.from({ length: cuantos }, (_unused, indice) => ({
+    id: String(indice + 1), tenant_id: 'Steven', alias: 'kant', operation: 'update',
+    previous_brief: `rol ${String(indice)}`, new_brief: `rol ${String(indice + 1)}`,
+    previous_template_slug: null, new_template_slug: null,
+    actor_tenant: null, actor_alias: null,
+    changed_at: new Date(Date.UTC(2026, 7, 23, 3, indice)).toISOString(),
+  })));
+}
+
+const entradasDe = (dialogo: HTMLElement) => dialogo.querySelectorAll('.historial-entrada').length;
+
+it('un diario largo se pagina: se ven los más nuevos y el resto queda a un clic', async () => {
+  diarioLargo(25);
+  const { user, dialogo } = await abrirDiarioDeKant();
+
+  await waitFor(() => { expect(entradasDe(dialogo)).toBe(10); });
+  expect(within(dialogo).getByText(/Se ven los 10 cambios más nuevos de 25 anotados/)).toBeInTheDocument();
+
+  await user.click(within(dialogo).getByRole('button', { name: /Ver 10 más/ }));
+
+  await waitFor(() => { expect(entradasDe(dialogo)).toBe(20); });
+  expect(within(dialogo).getByText(/Se ven los 20 cambios más nuevos de 25 anotados/)).toBeInTheDocument();
+
+  await user.click(within(dialogo).getByRole('button', { name: /Ver 5 más/ }));
+
+  await waitFor(() => { expect(entradasDe(dialogo)).toBe(25); });
+  expect(within(dialogo).queryByRole('button', { name: /más$/ })).not.toBeInTheDocument();
+});
+
+it('la primera página es la de los cambios MÁS NUEVOS, no la de los primeros que llegaron', async () => {
+  diarioLargo(25);
+  const { dialogo } = await abrirDiarioDeKant();
+
+  await waitFor(() => { expect(entradasDe(dialogo)).toBe(10); });
+  expect(within(dialogo).getAllByText(/^Pasó de \d+ a \d+ caracteres\.$/)).toHaveLength(10);
+  expect(within(dialogo).getByText(/rol 24/)).toBeInTheDocument();
+  expect(within(dialogo).queryByText(/rol 1$/)).not.toBeInTheDocument();
+});
+
+it('un diario corto no ofrece paginación que no lleva a ninguna parte', async () => {
+  const { dialogo } = await abrirDiarioDeKant();
+
+  expect(await within(dialogo).findByText('Se reescribió el rol')).toBeInTheDocument();
+  expect(within(dialogo).queryByText(/Se ven los/)).not.toBeInTheDocument();
+  expect(within(dialogo).queryByRole('button', { name: /más$/ })).not.toBeInTheDocument();
+});
 });

@@ -17,14 +17,12 @@ import {
 } from './licenses';
 import { Sparkline } from './Sparkline';
 import {
-  SEVERITY_LABEL, SEVERITY_TONE, buildQuotaRows, formatResetIn, formatUnits, isAgeStale,
-  peorPorcentajeDelProveedor, porcentajesEnConflicto, sortProvidersBySeverity,
-  type QuotaRow as QuotaRowType,
+  SEVERITY_LABEL, SEVERITY_TONE, balanceSeverity, buildQuotaRows, formatPercent, formatResetIn,
+  formatUnits, isAgeStale, peorPorcentajeDelProveedor, porcentajesEnConflicto, severityMetricTone,
+  sortProvidersBySeverity, type QuotaRow as QuotaRowType,
 } from './quotas';
 
-/**
- * Consumption and quota balance section per provider and account.
- */
+/** Consumption and quota balance section per provider and account. */
 export function ConsumptionSection({ quotas, config }: {
   quotas: Resource<QuotaSnapshot>;
   config: Resource<ConfigurationSnapshot>;
@@ -68,9 +66,12 @@ export function ConsumptionSection({ quotas, config }: {
   const collectors = snapshot?.collectors ?? [];
   const unbound = snapshot?.unbound_groups ?? [];
   const paused = snapshot?.paused_accounts ?? [];
+  // The WORST WINDOW, not the effective percentage: the effective one looks at the whole and hides the account
+  // that ran out. This card contradicted the argument the page itself makes further down.
   const worstRemaining = providers.reduce<number | null>((acc, provider) => {
-    if (typeof provider.effective_remaining_percent !== 'number') return acc;
-    return acc === null ? provider.effective_remaining_percent : Math.min(acc, provider.effective_remaining_percent);
+    const worst = peorPorcentajeDelProveedor(provider);
+    if (worst === undefined) return acc;
+    return acc === null ? worst : Math.min(acc, worst);
   }, null);
 
   const isCollectorAbsent = !quotasDown && collectors.length === 0;
@@ -91,11 +92,7 @@ export function ConsumptionSection({ quotas, config }: {
     : collectors.length === 0
       ? 'danger'
       : staleCollectors.length > 0 ? 'warning' : 'positive';
-  const worstTone = worstRemaining === null
-    ? 'neutral'
-    : worstRemaining <= (thresholds?.critical_remaining_percent ?? 10)
-      ? 'danger'
-      : worstRemaining <= (thresholds?.warn_remaining_percent ?? 25) ? 'warning' : 'positive';
+  const worstTone = severityMetricTone(balanceSeverity(worstRemaining, null, thresholds));
   const hasFindings = accountsWithoutQuotas.length > 0
     || unbound.length > 0
     || orphanedItems.agentsWithoutBindings.length > 0;
@@ -180,9 +177,9 @@ export function ConsumptionSection({ quotas, config }: {
         <Metric label="Proveedores" value={quotasDown ? null : providers.length} detail="proveedores presentes en la última muestra" />
         <Metric
           label="Peor remanente"
-          value={worstRemaining === null ? null : `${String(worstRemaining)}%`}
+          value={worstRemaining === null ? null : formatPercent(worstRemaining)}
           tone={worstTone}
-          detail="saldo del proveedor que menos tiene"
+          detail="la peor ventana de todas: la que puede dejarte sin turno"
         />
       </div>
 
@@ -288,8 +285,8 @@ export function ConsumptionSection({ quotas, config }: {
               <p>Registrados pero no asignados a ninguna cuenta:</p>
               <ul className="finding-list">
                 {orphanedItems.agentsWithoutBindings.map((agent) => (
-                  <li key={agent.alias}>
-                    <span className="mono">{agent.alias}</span> — {agent.display_name ?? '—'} en {agent.container_name ?? '?'}
+                  <li key={`${agent.tenant_id ?? 'unknown'}/${agent.alias ?? 'unknown'}`}>
+                    <span className="mono">{agent.tenant_id ? `${agent.tenant_id}/${agent.alias ?? '?'}` : agent.alias ?? '?'}</span> — {agent.display_name ?? '—'} en {agent.container_name ?? '?'}
                   </li>
                 ))}
               </ul>
@@ -356,12 +353,8 @@ function CollectorRow({ collector, thresholds }: {
   collector: QuotaCollector;
   thresholds: QuotaThresholds | null | undefined;
 }) {
-  /*
-   * The server sends `stale`, but a sample with `stale:false` and older than
-   * `stale_after_seconds` is not fresh either: `freshness()` applies both conditions (it was the
-   * licenses view's reading, stricter than the quotas one). When there is NEITHER flag NOR age
-   * nothing is decided: UNKNOWN, because not knowing is not being fresh.
-   */
+  /* A sample with `stale:false` and older than `stale_after_seconds` is not fresh either: `freshness()` applies
+   * both conditions. With NEITHER flag NOR age nothing is decided: UNKNOWN, because not knowing is not fresh. */
   const undecidable = (collector.stale === null || collector.stale === undefined)
     && (collector.age_seconds === null || collector.age_seconds === undefined);
   const state = freshness(collector, thresholds);
@@ -398,8 +391,10 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
   const peor = peorPorcentajeDelProveedor(provider);
   const conflicto = porcentajesEnConflicto(provider);
   const efectivo = provider.effective_remaining_percent;
+  const peorTexto = peor === undefined ? UNKNOWN : formatPercent(peor);
+  const efectivoTexto = typeof efectivo === 'number' ? formatPercent(efectivo) : UNKNOWN;
   const efectivoTitulo = typeof efectivo === 'number'
-    ? `El servidor publica effective_remaining_percent = ${String(efectivo)}%, que es lo que el enrutador usa para elegir cuenta. `
+    ? `El servidor publica effective_remaining_percent = ${efectivoTexto}, que es lo que el enrutador usa para elegir cuenta. `
       + 'Acá se muestra el peor porcentaje de las ventanas, que es el que va con la severidad de al lado.'
     : 'El peor porcentaje de las ventanas de este proveedor.';
   return (
@@ -422,15 +417,15 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
             </span>
           ) : (
             <strong className="quota-effective" title={efectivoTitulo}>
-              {peor}% libre en la peor ventana
+              {peorTexto} libre en la peor ventana
             </strong>
           )}
         </div>
       </header>
       {conflicto ? (
         <p className="notice" role="status">
-          El porcentaje efectivo que publica el servidor es <strong>{efectivo}%</strong> y su peor ventana está al{' '}
-          <strong>{peor}%</strong>: el efectivo mira el conjunto, la severidad mira la cuenta que se agotó. Arriba va el
+          El porcentaje efectivo que publica el servidor es <strong>{efectivoTexto}</strong> y su peor ventana está al{' '}
+          <strong>{peorTexto}</strong>: el efectivo mira el conjunto, la severidad mira la cuenta que se agotó. Arriba va el
           peor, que es el que puede dejarte sin turno.
         </p>
       ) : null}
@@ -511,7 +506,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
         <td><Badge tone={SEVERITY_TONE[severity]}>{SEVERITY_LABEL[severity]}</Badge></td>
         <td>
           <strong className="mono">
-            {typeof worst.remaining_percent === 'number' ? `${String(worst.remaining_percent)}% libre` : <span className="unknown">sin dato</span>}
+            {typeof worst.remaining_percent === 'number' ? `${formatPercent(worst.remaining_percent)} libre` : <span className="unknown">sin dato</span>}
           </strong>
           {units ? <small className="subline">{units}</small> : null}
         </td>
@@ -534,7 +529,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
                     <tr key={window.window_key}>
                       <td><Unknown value={window.label ?? window.window_key} /></td>
                       <td><Badge tone={SEVERITY_TONE[window.severity ?? 'unknown']}>{SEVERITY_LABEL[window.severity ?? 'unknown']}</Badge></td>
-                      <td>{typeof window.remaining_percent === 'number' ? `${String(window.remaining_percent)}% libre` : <span className="unknown">sin dato</span>}</td>
+                      <td>{typeof window.remaining_percent === 'number' ? `${formatPercent(window.remaining_percent)} libre` : <span className="unknown">sin dato</span>}</td>
                       <td><Unknown value={window.model} /></td>
                       <td>{formatResetIn(window.reset_in_seconds)}</td>
                       <td><Sparkline history={window.history} /></td>
