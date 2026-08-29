@@ -17,15 +17,15 @@ it('agrupa por rol a los bots que llevan el MISMO texto, aunque difieran en espa
     ['zeus', 'kant'],
     ['argos'],
   ]);
-  // Ni el null ni el texto en blanco crean un rol vacío: son «sin rol declarado».
+  // Neither null nor blank text creates an empty role: they are "role not declared".
   expect(catalogo.sinRol.map((entrada) => entrada.alias)).toEqual(['iza', 'midas']);
   expect(catalogo.todos).toHaveLength(5);
 });
 
-// CONTROL NEGATIVO del medidor: si `utf16` se calculara igual que `puntos`, este rol se declararía
-// dentro del tope y el adaptador desplegado rechazaría cada sobre en silencio.
+// NEGATIVE CONTROL of the meter: if `utf16` were calculated the same as `puntos`, this role would be
+// declared within the cap and the deployed adapter would silently reject every envelope.
 it('mide el rol en las DOS unidades y lo declara pasado cuando cualquiera de las dos se pasa', () => {
-  // 1150 puntos de código, pero cada emoji ocupa dos unidades UTF-16: 1150 vs 2300.
+  // 1150 code points, but each emoji takes two UTF-16 units: 1150 vs 2300.
   const conEmojis = '🙂'.repeat(1150);
   const catalogo = catalogoDeRoles([agente('zeus', conEmojis)]);
   const rol = catalogo.roles[0];
@@ -35,7 +35,7 @@ it('mide el rol en las DOS unidades y lo declara pasado cuando cualquiera de las
   expect(rol.puntos).toBeLessThanOrEqual(1200);
   expect(rol.pasado).toBe(true);
 
-  // Y el caso simétrico: texto normal dentro del tope, las dos unidades coinciden y NO está pasado.
+  // And the symmetric case: normal text within the cap, the two units match and it is NOT over.
   const normal = catalogoDeRoles([agente('kant', 'a'.repeat(1150))]).roles[0];
   expect(normal.puntos).toBe(1150);
   expect(normal.utf16).toBe(1150);
@@ -43,11 +43,11 @@ it('mide el rol en las DOS unidades y lo declara pasado cuando cualquiera de las
 });
 
 it('no inventa un catálogo cuando el gateway no publica el registro de agentes', () => {
-  // Clave ausente no es lista vacía: las dos dan cero roles y la pantalla las distingue mirando el
-  // snapshot, no este resultado.
+  // Missing key is not an empty list: both yield zero roles and the UI distinguishes them by looking
+  // at the snapshot, not at this result.
   expect(catalogoDeRoles(undefined)).toEqual({ roles: [], sinRol: [], todos: [] });
   expect(catalogoDeRoles(null)).toEqual({ roles: [], sinRol: [], todos: [] });
-  // Una fila sin alias utilizable no identifica a ningún bot y no entra en el catálogo.
+  // A row without a usable alias identifies no bot and does not enter the catalog.
   expect(catalogoDeRoles([{ tenant_id: 'Steven', role_brief: 'algo' }]).todos).toEqual([]);
 });
 

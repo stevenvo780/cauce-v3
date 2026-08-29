@@ -915,8 +915,8 @@ start_adapter() {
   if [[ -v CONFIG[CONFIG_POR_ALIAS] ]]; then
     environment+=("$(config_por_alias_variable "$harness")=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name")")
   elif [[ ( $harness == claude || $harness == codex ) && ! -v CONFIG[CREDENTIAL_HOME] ]]; then
-    # Sin aislar, claude/codex usan su default pero no EXPORTAN la var, y la medicion de
-    # runtime_facts del pty-agent (escanea /proc por el perfil observado) no la ve → perfil en 503.
+    # Without isolation, claude/codex use their default but do NOT EXPORT the var, and the pty-agent
+    # runtime_facts measurement (it scans /proc for the observed profile) does not see it → 503 profile.
     [[ $harness == claude ]] && environment+=("CLAUDE_CONFIG_DIR=$container_home/.claude") || environment+=("CODEX_HOME=$container_home/.codex")
   fi
   if [[ $harness == hermes ]]; then
