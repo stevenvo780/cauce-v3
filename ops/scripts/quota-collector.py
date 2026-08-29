@@ -347,9 +347,7 @@ def normalize_window(raw_window: dict) -> dict:
     remaining_percent = to_number(pick(raw_window, 'remainingPercent', 'remaining_percent'))
     used_units = to_units(pick(raw_window, 'usedUnits', 'used_units'), 0)
     if used_percent is None and remaining_percent is None and used_units is None:
-        # Mirrors the CHECK quota_window_samples_has_a_number: a row without any consumption
-        # number reports nothing and only inflates the series. It is discarded HERE, with a
-        # reason, instead of letting the gateway's INSERT fail blindly.
+        # Mirrors CHECK quota_window_samples_has_a_number: discard here, with a reason.
         raise ValueError(f"ventana '{window_key}' sin usedPercent/remainingPercent/usedUnits")
     return {
         'window_key': window_key,
@@ -388,16 +386,17 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
         group_key = sanitize_key(pick(raw_window, 'limitId', 'limit_id', default='default'), 'default')
         groups.setdefault(group_key, []).append(window)
 
-    group_list = []
+    # One row per window: the schema carries group_key/account_id/binding_note per window.
+    flat_windows = []
     for group_key, windows in groups.items():
         account_id, binding_note = bindings.resolve(name, group_key)
-        group_list.append({
-            'group_key': group_key,
-            'limit_id': None if group_key == 'default' else group_key,
-            'account_id': account_id,
-            'binding_note': binding_note,
-            'windows': windows,
-        })
+        for window in windows:
+            flat_windows.append({
+                **window,
+                'group_key': group_key,
+                'account_id': account_id,
+                'binding_note': binding_note,
+            })
 
     note = trim(pick(raw, 'note'), 512)
     if dropped:
@@ -416,7 +415,7 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
         'observed_at': pick(raw, 'observedAt', 'observed_at', default=captured_at),
         'available_groups': to_str_list(pick(raw, 'availableGroups', 'available_groups', default=[])),
         'limiting_groups': to_str_list(pick(raw, 'limitingGroups', 'limiting_groups', default=[])),
-        'groups': group_list,
+        'windows': flat_windows,
     }
 
 
@@ -426,7 +425,7 @@ def failed_provider_entry(name: str, reason: str, captured_at: str) -> dict:
         'kind': None, 'source': None, 'plan': None,
         'note': trim(reason, 512),
         'effective_remaining_percent': None, 'observed_at': captured_at,
-        'available_groups': [], 'limiting_groups': [], 'groups': [],
+        'available_groups': [], 'limiting_groups': [], 'windows': [],
     }
 
 
