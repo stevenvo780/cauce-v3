@@ -211,7 +211,7 @@ test(
           if (!raced && loaded && args[0] === "capture-pane") {
             raced = true;
             client?.stdin?.write("HUMAN_RACE");
-            // Da tiempo a que el servidor reciba y descarte el byte con `pane_input_off=1`.
+            // Gives the server time to receive and discard the byte with `pane_input_off=1`.
             await new Promise((resolveWait) => setTimeout(resolveWait, 40));
           }
           return response;
@@ -233,7 +233,7 @@ test(
         try {
           lines = (await readFile(output, "utf8")).trimEnd().split("\n");
         } catch {
-          // El primer Enter puede no haber llegado todavía al proceso del pane.
+          // The first Enter may not have reached the pane process yet.
         }
         if (lines.length < 2) await new Promise((resolveWait) => setTimeout(resolveWait, 10));
       }
@@ -300,8 +300,8 @@ test(
         "la negativa no dispara el hook que habría inyectado XX",
       );
 
-      // Este hook reproduce el spoof de R7: display-message imprimía primero el sentinel y su hook
-      // agregaba HOOK_OUTPUT, de modo que la clasificación por stdout era falsificable.
+      // This hook reproduces the R7 spoof: display-message printed the sentinel first and its hook
+      // appended HOOK_OUTPUT, so that classification by stdout was forgeable.
       assert.equal((await tmux.run([
         "set-hook", "-g", "after-display-message", "list-panes -F HOOK_OUTPUT",
       ])).exitCode, 0);

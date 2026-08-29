@@ -40,11 +40,11 @@ function safeScalar(key: string, value: unknown): string | number | boolean | un
 }
 
 /**
- * Produce un resumen positivo/allowlisted del JSON de auditoría.
+ * Produces a positive/allowlisted summary of the audit JSON.
  *
- * Nunca devuelve el objeto original: varios eventos contienen session ids, locators de
- * credenciales, mutaciones completas o texto autorado. El endpoint de consola sólo necesita una
- * frase operacional; los campos no declarados se omiten, no se serializan "por si acaso".
+ * Never returns the original object: several events contain session ids, credential locators,
+ * complete mutations, or authored text. The console endpoint only needs an operational phrase;
+ * undeclared fields are omitted, not serialized "just in case".
  */
 export function safeAuditSummary(action: unknown, metadata: unknown): string | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;

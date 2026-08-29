@@ -21,8 +21,8 @@ export interface Principal {
   readonly roles: readonly PrincipalRole[];
   readonly permissions: readonly PrincipalPermission[];
   /**
-   * Persona detrás del request, cuando el proveedor de autenticación pudo establecerla.
-   * Es autoridad autenticada por el servidor que tiene precedencia sobre cabeceras delegadas.
+   * Person behind the request, when the authentication provider was able to establish it.
+   * It is server-authenticated authority that takes precedence over delegated headers.
    */
   readonly operator_id?: string;
 }

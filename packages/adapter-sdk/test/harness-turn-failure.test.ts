@@ -9,11 +9,11 @@ import {
 } from "../src/sdk/output-parser.js";
 
 /**
- * BUG 3 — un turno que el harness declaró FALLIDO se registraba como 'done'.
+ * BUG 3 — a turn the harness declared FAILED was recorded as 'done'.
  *
- * Ninguno de estos casos sale con código distinto de cero, así que la red de `shared.ts`
- * (`exitCode !== 0` → PROCESS_EXIT_AMBIGUOUS) no los ve: el fracaso viaja DENTRO del JSON.
- * Campos verificados el 2026-07-29 contra claude 2.1.220 y codex 0.145.0 instalados.
+ * None of these cases exits with a non-zero code, so the `shared.ts` net
+ * (`exitCode !== 0` → PROCESS_EXIT_AMBIGUOUS) does not see them: the failure travels INSIDE the JSON.
+ * Fields verified on 2026-07-29 against the installed claude 2.1.220 and codex 0.145.0.
  */
 
 const SUCCESS = {
@@ -38,7 +38,7 @@ test("Claude: is_error con error_max_turns termina fallido, no 'done'", () => {
   assert.equal(parsed.output.retryable, false);
   assert.deepEqual(parsed.output.messages, []);
   assert.match(String(parsed.output.reply), /error_max_turns/u);
-  // El texto propio del harness se conserva: es lo único que explica el fracaso.
+  // The harness's own text is kept: it is the only thing that explains the failure.
   assert.match(String(parsed.output.reply), /maximum number of turns/u);
   assert.equal(parsed.nativeSessionId, "claude-native");
 });

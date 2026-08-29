@@ -1,7 +1,7 @@
 import type { PtyEntry } from './pty-types';
 
 /**
- * Paleta de colores para emulación de terminal con soporte ANSI sobre fondo oscuro.
+ * Color palette for terminal emulation with ANSI support over a dark background.
  */
 export const TEMA_TERMINAL = {
   background: '#0a0e16',
@@ -12,7 +12,7 @@ export const TEMA_TERMINAL = {
 } as const;
 
 /**
- * La familia monoespaciada del terminal.
+ * The monospaced family of the terminal.
  */
 export const FUENTE_TERMINAL =
   "ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace";

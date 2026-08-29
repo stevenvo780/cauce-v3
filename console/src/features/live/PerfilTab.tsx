@@ -15,7 +15,7 @@ import {
 } from './perfil';
 
 /**
- * Editor y previsualización de perfil y campos de directiva del agente.
+ * Editor and preview of the agent profile and directive fields.
  */
 
 type TonoAviso = 'error' | 'parcial' | 'success';
@@ -38,9 +38,9 @@ export interface PerfilTabProps {
   tenantId: string;
   alias: string;
   /**
-   * El borrador vive FUERA de este componente, igual que el del rol: cambiar de pestaña dentro
-   * del mismo cajón lo desmonta, y perder ahí lo que el operador venía redactando —sin avisar—
-   * ya fue un defecto una vez.
+   * The draft lives OUTSIDE this component, like the role one: switching tabs within the same
+   * drawer unmounts it, and losing there what the operator was drafting —without warning— was
+   * already a defect once.
    */
   borrador?: Partial<AgentPerfilCampos>;
   onBorrador: (campos: Partial<AgentPerfilCampos> | undefined) => void;
@@ -57,7 +57,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const [ficheroAbierto, setFicheroAbierto] = useState<string>();
 
   const estadoPermiso = permissionState(access.data, 'config.write');
-  // Ausencia, error o respuesta vieja del endpoint de acceso nunca habilitan una mutación.
+  // Absence, error or a stale response from the access endpoint never enable a mutation.
   const soloLectura = estadoPermiso !== 'allowed';
   const campos = camposVigentes(perfil.data, borrador);
   const sucio = hayCambios(perfil.data, campos);
@@ -91,8 +91,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const destinos = destinosDelArnes(perfil.data?.harness, ficheros);
   const sinDestino = motivoSinDestino(destinos);
 
-  // El estado de persistencia habla del texto anterior. En cuanto se vuelve a editar, ya no
-  // describe el borrador visible y se retira. El rojo se conserva: el rechazo sigue siendo cierto.
+  // The persistence state speaks about the previous text. As soon as it is edited again, it no
+  // longer describes the visible draft and is withdrawn. The red is kept: the rejection is still true.
   useEffect(() => {
     if (sucio) setAviso((actual) => (actual?.tone === 'error' ? actual : undefined));
   }, [sucio]);
@@ -179,7 +179,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
         return;
       }
 
-      // El ACK prueba el runtime; la relectura evita soltar el borrador sobre un snapshot viejo.
+      // The ACK proves the runtime; the re-read avoids dropping the draft onto a stale snapshot.
       const recarga: RecargaResultado<AgentPerfil> = await perfil.reload();
       if (recarga.error) {
         setAviso({

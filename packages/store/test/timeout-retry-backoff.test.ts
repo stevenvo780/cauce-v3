@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { CauceRepository, timeoutRetryBackoffSeconds } from '../src/repository.js';
 
 /**
- * La espera del reintento por garra vencida. No necesita Postgres: es aritmética pura, y es
- * justamente la pieza que faltaba — antes el reaper reintentaba con `available_at=now()`.
+ * The retry wait for an expired claim. It does not need Postgres: it is pure arithmetic, and it is
+ * precisely the piece that was missing — before, the reaper retried with `available_at=now()`.
  */
 describe('ACK-timeout retry backoff', () => {
   it('never schedules a real timeout retry in the same instant', () => {
@@ -23,8 +23,8 @@ describe('ACK-timeout retry backoff', () => {
   });
 
   it('espera más que un fallo declarado por el agente, que llega a 60 s', () => {
-    // Un fallo declarado significa que el agente contestó; una garra vencida significa que
-    // estuvo mudo todo el plazo. El segundo caso merece más paciencia, no menos.
+    // A declared failure means the agent answered; an expired claim means it stayed mute for the
+    // whole deadline. The second case deserves more patience, not less.
     const falloDeclarado = (attempt: number): number => Math.min(60, 2 ** Math.max(0, attempt - 1));
     for (let attempt = 1; attempt <= 6; attempt += 1) {
       expect(timeoutRetryBackoffSeconds(attempt)).toBeGreaterThan(falloDeclarado(attempt));

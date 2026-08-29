@@ -1,7 +1,7 @@
 import type { TopologySnapshot } from '../../api/types';
 
 /**
- * Topología de demostración, calcada de la flota real: 5 tenants y 15 alias.
+ * Demonstration topology, traced from the real fleet: 5 tenants and 15 aliases.
  */
 export const topology: TopologySnapshot = {
   observed_at: '2026-07-22T16:12:08.000Z',

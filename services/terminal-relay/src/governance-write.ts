@@ -47,8 +47,8 @@ function normalizeWriteCode(value: string): GovernanceWriteFailure['error'] {
 }
 
 /**
- * Escritura CAS extremo a extremo. El único éxito posible es un WRITE_OK cuyo path, operación,
- * bytes y SHA describen exactamente el contenido que este relay puso en el socket del agente.
+ * End-to-end CAS write. The only possible success is a WRITE_OK whose path, operation, bytes and
+ * SHA describe exactly the content this relay put into the agent's socket.
  */
 export async function requestFileWrite(
   connection: AgentConnection,
@@ -162,9 +162,9 @@ export type GovernanceWriteBatchOutcome =
 export const MAX_GOVERNANCE_BATCH_FILES = 7;
 
 /**
- * Perfil gobernado multi-fichero. `verify` acredita estado sin abrir para escritura ni cambiar
- * mtime; `write` acepta `unchanged` si un retry encuentra exactamente los bytes deseados. El
- * único éxito es un ACK completo y correlacionado para todas las entradas.
+ * Multi-file governed profile. `verify` accredits state without opening for writing or changing
+ * mtime; `write` accepts `unchanged` if a retry finds exactly the desired bytes. The only success
+ * is a complete and correlated ACK for all entries.
  */
 export async function requestFileWriteBatch(
   connection: AgentConnection,

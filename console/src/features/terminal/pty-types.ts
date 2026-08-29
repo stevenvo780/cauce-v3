@@ -17,11 +17,11 @@ export interface PtySessionView {
   /** The DOM renderer refused to start (headless/jsdom); the channel may still be live. */
   renderError?: string;
   /**
-   * `false` cuando el operador subió a leer y hay salida nueva más abajo.
+   * `false` when the operator scrolled up to read and new output arrived below.
    */
   seguirAlFinal: boolean;
   /**
-   * Columnas que caben de verdad en esta pantalla.
+   * Columns that actually fit on this screen.
    */
   columnas?: number;
 }
@@ -94,7 +94,7 @@ export function decimalPositivo(value: string): boolean {
   return true;
 }
 
-/** Longitud del CPR/DECXCPR inicial, o cero si el prefijo no es exactamente una respuesta DSR. */
+/** Length of the initial CPR/DECXCPR, or zero if the prefix is not exactly a DSR response. */
 export function longitudRespuestaDeCursor(data: string): number {
   if (!data.startsWith('\x1b[')) return 0;
   let start = 2;
@@ -110,7 +110,7 @@ export function longitudRespuestaDeCursor(data: string): number {
   return end + 1;
 }
 
-/** Exportada para que la frontera negativa de la consola se pueda probar sin abrir una sesión. */
+/** Exported so the negative boundary of the console can be tested without opening a session. */
 export function esRespuestaTecnicaDelTerminal(data: string): boolean {
   if (data.length === 0 || data.length > MAX_RESPUESTA_TECNICA) return false;
   for (let index = 0; index < data.length; index += 1) {
@@ -137,7 +137,7 @@ export function esRespuestaTecnicaDelTerminal(data: string): boolean {
   return true;
 }
 
-/** PostgreSQL `bigint` positivo, conservado como texto para no perder bits en JavaScript. */
+/** Positive PostgreSQL `bigint`, kept as text so no bits are lost in JavaScript. */
 export function claimEpochCanonico(value: unknown): value is string {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) return false;
   if (value.length !== MAX_POSTGRES_BIGINT.length) return value.length < MAX_POSTGRES_BIGINT.length;

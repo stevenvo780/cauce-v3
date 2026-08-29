@@ -1,11 +1,11 @@
 import type { QuotaHistory } from '../../api/types';
 
 /**
- * Sparkline de 24h ya submuestreada por el servidor (≤48 puntos, ver thresholds.history_*). No
- * hay eje ni tooltip: es una forma, no un instrumento de lectura exacta — para el número exacto
- * está la celda de al lado. Ventanas de sesión ("session", "5h") resetean por diseño y el trazo
- * cae a 0 en cada reset; eso NO es un bug de datos, así que el llamador debe mostrar reset_at al
- * lado para que la caída se lea como "reinició la ventana", no como "se liberó cuota sola".
+ * 24h sparkline already subsampled by the server (≤48 points, see thresholds.history_*). There is
+ * no axis or tooltip: it is a shape, not an instrument for exact reading — for the exact number
+ * there is the cell next to it. Session windows ("session", "5h") reset by design and the trace
+ * falls to 0 on each reset; that is NOT a data bug, so the caller must show reset_at alongside so
+ * the drop reads as "the window restarted", not as "quota was freed on its own".
  */
 export function Sparkline({ history, width = 108, height = 26 }: { history?: QuotaHistory | null; width?: number; height?: number }) {
   const points = (history?.points ?? []).filter((point): point is { at?: string | null; used_percent: number } =>

@@ -54,7 +54,7 @@ describe('la memoria que no se pudo listar es un fallo discriminado, no un índi
     expect(codigo!.memory).toMatchObject({ error: 'unavailable', root: null });
     expect(codigo!.memory).not.toHaveProperty('total');
     expect(codigo!.memory).not.toHaveProperty('entries');
-    // Control negativo: un índice de cero legítimo sigue siendo representable y no tiene error.
+    // Negative control: a legitimate zero index is still representable and carries no error.
     const indiceRealVacio = { root: '/home/dev/.claude/projects', total: 0, truncated: false, entries: [] };
     expect(indiceRealVacio).not.toHaveProperty('error');
     expect(indiceRealVacio.total).toBe(0);

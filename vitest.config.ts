@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
- * Configuración de resolución de paquetes locales de `@cauce/*` a `src/` en el árbol de trabajo actual.
+ * Resolution configuration mapping local `@cauce/*` packages to `src/` in the current workspace.
  */
 const paquete = (nombre: string): string =>
   fileURLToPath(new URL(`./packages/${nombre}/src/index.ts`, import.meta.url));

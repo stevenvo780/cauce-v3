@@ -30,8 +30,8 @@ type PromptCommitOutcome =
   };
 
 /**
- * Ejecutor de sesión compartida que inyecta prompts en la TUI interactiva vía tmux
- * y recupera los resultados desde el transcript estructurado.
+ * Shared-session runner that injects prompts into the interactive TUI via tmux
+ * and recovers the results from the structured transcript.
  */
 export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implements SharedSessionRunner {
   constructor(options: PasteSessionOptions<E>) {
@@ -230,11 +230,11 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
   }
 
   /**
-   * Mantiene `pane_input_off` desde ANTES de la captura final hasta DESPUÉS de Enter.
+   * Keeps `pane_input_off` from BEFORE the final capture until AFTER Enter.
    *
-   * No hay `return` dentro del try: el resultado sólo se publica después de que el finally haya
-   * restaurado y comprobado exactamente el flag/token de esta generación. Si no puede, la salida
-   * se sobreescribe como ambigua y el llamador la pone en cuarentena o la termina exactamente.
+   * There is no `return` inside the try: the result is only published after the finally has
+   * restored and checked exactly the flag/token of this generation. If it cannot, the output is
+   * overwritten as ambiguous and the caller quarantines it or terminates it exactly.
    */
   private async commitUnderInputBarrier(
     barrier: PaneInputBarrier,

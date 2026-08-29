@@ -9,13 +9,13 @@ import { AdapterError } from "./errors.js";
 import type { HarnessAttachment } from "./types.js";
 
 /**
- * Lo que la ENTREGA acepta, que tiene que ser lo mismo que acepta la INGESTA.
+ * What DELIVERY accepts, which has to be the same as what INGESTION accepts.
  *
- * Este allowlist es OTRO —hardcodeado acá, sin relación con `ATTACHMENT_MIME_TYPES`—, así que
- * ampliar solo el protocolo mueve el fallo de la ingesta a la entrega: el adjunto entra, se
- * guarda, y al entregarlo `materializeAttachments` tira `INVALID_ATTACHMENT` no reintentable, que
- * el motor convierte en `finishError` ANTES de invocar al harness. El agente no ve el archivo Y
- * TAMPOCO el texto del humano. Por eso los dos lados se mueven juntos o no se mueve ninguno.
+ * This allowlist is ANOTHER one —hardcoded here, unrelated to `ATTACHMENT_MIME_TYPES`—, so
+ * widening only the protocol moves the failure from ingestion to delivery: the attachment gets in,
+ * is stored, and on delivery `materializeAttachments` throws a non-retryable `INVALID_ATTACHMENT`,
+ * which the engine turns into `finishError` BEFORE invoking the harness. The agent sees neither
+ * the file NOR the human's text. That is why both sides move together or neither moves.
  */
 const SUPPORTED_MIME = new Set([
   "image/jpeg",
@@ -30,12 +30,12 @@ const SUPPORTED_MIME = new Set([
 ]);
 
 /**
- * Extensiones admitidas por cada mime de texto.
+ * Extensions accepted for each text mime.
  *
- * Telegram no manda un mime estable para markdown: según el cliente llega `text/markdown`,
- * `text/x-markdown` o directamente `text/plain`. Por eso `text/plain` acepta las tres extensiones
- * y no solo `.txt`. La extensión NO es el control de seguridad: sigue siéndolo `validUtf8Text`,
- * que exige UTF-8 real y sin bytes nulos, igual que antes.
+ * Telegram does not send a stable mime for markdown: depending on the client it arrives as
+ * `text/markdown`, `text/x-markdown` or plainly `text/plain`. That is why `text/plain` accepts the
+ * three extensions and not only `.txt`. The extension is NOT the security control: `validUtf8Text`
+ * still is, requiring real UTF-8 with no null bytes, just like before.
  */
 const TEXT_EXTENSIONS = new Map<string, readonly string[]>([
   ["text/plain", [".txt", ".md", ".csv"]],

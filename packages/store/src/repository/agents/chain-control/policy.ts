@@ -30,11 +30,11 @@ import { hashToUuidV7 } from '../../_hash-to-uuidv7.js';
 const agentOutputHopBudget = 16;
 export const maxAgentOutputExpandedBytes = 512 * 1024;
 export const maxVisitedPathEntries = agentOutputHopBudget;
-/** Coincide con el CHECK de `agent_chain_gates.question` (8192 caracteres). */
+/** Matches the CHECK on `agent_chain_gates.question` (8192 characters). */
 export const maxChainGateQuestionBytes = 8 * 1_024;
 
 /**
- * Los códigos durables y sus avisos legibles comparten delegation-guard.ts como fuente única.
+ * The durable codes and their readable notices share delegation-guard.ts as their single source.
  */
 export type AgentOutputRejectionCode = DelegationRejectionCode;
 

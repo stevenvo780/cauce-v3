@@ -97,7 +97,7 @@ test("cancelar después del paste compromete Enter y nunca deja un prompt ejecut
   assert.equal(tmux.interruptedCount, 1);
   const interrupt = tmux.calls.find((call) => call[0] === "send-keys" && call.includes("Escape"));
   assert.equal(interrupt?.[interrupt.indexOf("-t") + 1], tmux.paneId);
-  // Un Enter humano posterior encuentra una caja vacía: no puede revivir la entrega cancelada.
+  // A later human Enter finds an empty box: it cannot revive the cancelled delivery.
   await tmux.run(["send-keys", "-t", tmux.paneId, "Enter"]);
   assert.equal(submitted.length, 1);
   assert.equal(fallback.calls, 0);
@@ -168,7 +168,7 @@ test(
         { state: "pasted", bufferScrubbed: true },
       );
       controller.abort();
-      // La frontera comprometida ignora la cancelación y entrega Enter al MISMO pane exacto.
+      // The committed boundary ignores the cancellation and delivers Enter to the EXACT SAME pane.
       assert.equal(await sendEnter(tmux, identity), "applied");
 
       let observed: string | undefined;
@@ -182,7 +182,7 @@ test(
       assert.equal(observed, text);
       assert.notEqual((await tmux.run(["show-buffer", "-b", buffer])).exitCode, 0);
 
-      // Un Enter posterior no vuelve a ejecutar el prompt: el proceso ya consumió la caja.
+      // A later Enter does not run the prompt again: the process already consumed the box.
       await sendEnter(tmux, identity);
       await new Promise((resolveWait) => setTimeout(resolveWait, 20));
       assert.equal(await readFile(output, "utf8"), text);
@@ -239,9 +239,9 @@ test(
         "la rama negativa debe preservar byte a byte copy-mode stack 1",
       );
 
-      // `choose-tree` apila una segunda modalidad humana sin ejecutar un proceso fallido ni
-      // contaminar stdout/stderr. La rama rechazada no puede disparar after-display y apilar una
-      // tercera modalidad.
+      // `choose-tree` stacks a second human modality without running a failed process or
+      // contaminating stdout/stderr. The rejected branch cannot fire after-display and stack a
+      // third modality.
       assert.equal((await tmux.run(["choose-tree", "-t", identity.paneId])).exitCode, 0);
       const stacked = await exactTmuxPaneState(tmux, identity.paneId);
       assert.equal(stacked.split("\t")[9], "2", "el escenario debe partir de stack 2");

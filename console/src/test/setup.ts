@@ -15,12 +15,12 @@ Object.defineProperties(globalThis, {
   },
 });
 /*
- * `matchMedia` NO existe en jsdom, y xterm lo llama al abrir el renderer. Sin este relleno,
- * `terminal.open()` lanzaba `this._parentWindow.matchMedia is not a function`, la sesión quedaba
- * con `renderError`, y —lo que importa— el VIEWPORT no llegaba a existir: `scrollLines()` no movía
- * nada y `viewportY` era siempre igual a `baseY`. O sea que cualquier prueba sobre el scroll del
- * terminal daba verde SIEMPRE, dijera lo que dijera el código. Una prueba que no puede dar rojo no
- * es una prueba: este relleno es lo que le devuelve la capacidad de fallar.
+ * `matchMedia` does NOT exist in jsdom, and xterm calls it when opening the renderer. Without this
+ * shim, `terminal.open()` threw `this._parentWindow.matchMedia is not a function`, the session was
+ * left with `renderError`, and —what matters— the VIEWPORT never came to exist: `scrollLines()`
+ * moved nothing and `viewportY` was always equal to `baseY`. That is, any test about the terminal
+ * scroll went green ALWAYS, whatever the code said. A test that cannot go red is not a test: this
+ * shim is what gives it back the ability to fail.
  */
 if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   window.matchMedia = (query: string): MediaQueryList => ({

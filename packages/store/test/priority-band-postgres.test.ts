@@ -243,9 +243,9 @@ describe('lane fairness burst', () => {
   }
 
   /**
-   * Escribe una entrega agente-a-agente igual que `materializeAgentOutputs`: mismo `body.type` y
-   * mismo `lane='batch'`. Va por INSERT directo porque `publish()` rechaza los tipos reservados
-   * a propósito — un cliente no puede fabricar tráfico entre agentes.
+   * Writes an agent-to-agent delivery like `materializeAgentOutputs`: same `body.type` and same
+   * `lane='batch'`. Goes through a direct INSERT because `publish()` rejects reserved types on
+   * purpose — a client cannot fabricate traffic between agents.
    */
   async function seedAgentToAgent(alias: string, text: string): Promise<void> {
     const message = await pool.query<{ id: string }>(
@@ -272,7 +272,7 @@ describe('lane fairness burst', () => {
   }
 
   /**
-   * Garantiza que el trabajo entre agentes obtenga su turno una vez agotada la ráfaga de prioridad humana.
+   * Ensures that agent-to-agent work gets its turn once the human-priority burst is spent.
    */
   it('gives agent-to-agent work its turn once the human burst is spent', async () => {
     const instanceId = 'burst-control';
@@ -281,7 +281,7 @@ describe('lane fairness burst', () => {
     await seedInteractive('kant', HUMAN_CHAT_PRIORITY, 'person two');
     await seedAgentToAgent('kant', 'agent work');
 
-    // humanBurst=1: servida una persona, el segundo reclamo de la llamada cede el turno.
+    // humanBurst=1: after serving one person, the second claim of the call yields the turn.
     const claimed = await repository.claimDeliveries('Steven', 'kant', instanceId, epoch, 2, 30_000, 1);
     expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'agent work']);
   });

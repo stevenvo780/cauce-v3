@@ -235,7 +235,7 @@ export async function requestFileRead(
           finish({ error: 'unknown', reason: 'el agente contestó sin los metadatos de la lectura' });
           return;
         }
-        // Contestar por otra ruta sería servir un fichero que nadie pidió.
+        // Answering for a different path would mean serving a file nobody asked for.
         if (answered !== path) {
           finish({ error: 'unknown', reason: 'el agente contestó por una ruta distinta de la pedida' });
           return;

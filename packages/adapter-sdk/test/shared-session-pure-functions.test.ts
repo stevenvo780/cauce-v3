@@ -12,16 +12,16 @@ test("la caja de entrada se reconoce ocupada en los casos medidos", () => {
   assert.equal(inputBoxState("linea\n❯ ").occupied, false);
   assert.equal(inputBoxState("❯ algo a medias").occupied, true);
   assert.equal(inputBoxState("│ ❯ dentro del recuadro │").occupied, true);
-  // Un pegado sin enviar cuenta como ocupada aunque el cursor parezca libre.
+  // An unsubmitted paste counts as occupied even when the cursor looks free.
   assert.equal(inputBoxState("[Pasted text #1 +12 lines]\n❯ ").occupied, true);
   assert.equal(inputBoxState("paste again to expand\n❯ ").occupied, true);
-  // Fallar cerrado: sin panel legible no se inyecta.
+  // Fail closed: without a legible panel, no input is injected.
   assert.equal(inputBoxState(undefined).occupied, true);
   assert.equal(inputBoxState("sin caja de entrada").occupied, true);
 });
 
 test("tmux no hereda la identidad de ciclo de vida del adaptador", () => {
-  // Evita que el servidor tmux herede variables de entorno de ciclo de vida del adaptador.
+  // Prevents the tmux server from inheriting lifecycle environment variables from the adapter.
   const limpio = withoutLifecycleIdentity({
     CAUCE_ALIAS: "atlas",
     CAUCE_STATE_DIR: "/home/dev/.local/state/cauce-v3/atlas",
@@ -31,13 +31,13 @@ test("tmux no hereda la identidad de ciclo de vida del adaptador", () => {
     PATH: "/usr/bin",
     HOME: "/home/dev",
   });
-  // Las CINCO de `IDENTITY_ENV_KEYS`, no solo las tres que hoy mira el barrido de /proc.
+  // All FIVE from `IDENTITY_ENV_KEYS`, not just the three that the /proc sweep currently checks.
   assert.equal(limpio.CAUCE_ALIAS, undefined);
   assert.equal(limpio.CAUCE_STATE_DIR, undefined);
   assert.equal(limpio.CAUCE_CONTROL_DIR, undefined);
   assert.equal(limpio.CAUCE_CONTAINER_ID, undefined);
   assert.equal(limpio.CAUCE_CONTAINER_GENERATION, undefined);
-  // El resto del entorno NO se toca: la TUI arranca con lo que le hace falta.
+  // The rest of the environment is NOT touched: the TUI starts with what it needs.
   assert.equal(limpio.PATH, "/usr/bin");
   assert.equal(limpio.HOME, "/home/dev");
 });
@@ -148,14 +148,14 @@ test("CliTmux cancela y reapea cada operación sin permitir una mutación tardí
 });
 
 test("el cursor de codex se reconoce con los dos glifos que dibuja segun su version", () => {
-  // codex 0.144.x dibuja `›` (U+203A); 0.145.0 lo redibujo como `»` (U+00BB). Los dos son la MISMA
-  // caja de entrada: si uno no se reconoce, el panel queda "sin caja" y el turno degrada con
-  // `modal_blocking` por un modal que no existe.
+  // codex 0.144.x draws `›` (U+203A); 0.145.0 redrew it as `»` (U+00BB). Both are the SAME input
+  // box: if one is not recognized, the panel stays "without a box" and the turn degrades with
+  // `modal_blocking` because of a modal that does not exist.
   for (const cursor of ["›", "»"]) {
     assert.equal(inputBoxState(`${cursor} `).occupied, false);
     assert.equal(inputBoxState(`conversacion previa\n${cursor} `).occupied, false);
     assert.equal(inputBoxState(`${cursor} algo a medias`).occupied, true);
-    // Lo que NO debe pasar nunca: confundir la caja vacia con un dialogo a pantalla completa.
+    // What must NEVER happen: confusing the empty box with a full-screen dialog.
     assert.notEqual(inputBoxState(`conversacion previa\n${cursor} `).kind, "modal");
   }
 });
@@ -164,7 +164,7 @@ test("el vallado Markdown se quita solo cuando envuelve todo el texto", () => {
   assert.equal(stripJsonFence("```json\n{\"a\":1}\n```"), '{"a":1}');
   assert.equal(stripJsonFence("```\n{\"a\":1}\n```"), '{"a":1}');
   assert.equal(stripJsonFence('{"a":1}'), '{"a":1}');
-  // Un bloque de código EN MEDIO es contenido, no transporte: no se toca.
+  // A code block IN THE MIDDLE is content, not transport: it is not touched.
   const mixed = "texto\n```json\n{\"a\":1}\n```\nmas texto";
   assert.equal(stripJsonFence(mixed), mixed);
 });

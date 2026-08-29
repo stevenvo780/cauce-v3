@@ -69,11 +69,11 @@ export abstract class OutboxClaimsRepository extends OriginRelayRepository {
   }
 
   /**
-   * Reclama wakes sólo para identidades que el gateway observó conectadas.
+   * Claims wakes only for identities the gateway observed as connected.
    *
-   * El filtro vive dentro del mismo CTE que toma el lock y aumenta `attempts`: aplicarlo después
-   * de `claimOutbox` ya habría consumido un intento de cada alias offline del lote. Una lista vacía
-   * falla cerrada y no toca la cola. Los pares se validan y deduplican antes de llegar a SQL.
+   * The filter lives inside the same CTE that takes the lock and increases `attempts`: applying it after
+   * `claimOutbox` would already have consumed one attempt from each offline alias of the batch. An empty
+   * list fails closed and does not touch the queue. Pairs are validated and deduplicated before SQL.
    */
   async claimWakeOutbox(
     worker: string,

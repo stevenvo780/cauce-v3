@@ -1,4 +1,4 @@
-/** Campos comunes de un acuse de recibo de outbox durable. */
+/** Common fields of a durable outbox acknowledgment. */
 export interface OutboxAck {
   readonly event_id: string;
   readonly attempt: number;
@@ -8,12 +8,12 @@ export interface OutboxAck {
   readonly retry_after_ms?: number;
 }
 
-/** Un ACK de wake queda cercado por la sesión que lo recibió. */
+/** A wake ACK is fenced by the session that received it. */
 export type OutboxAckWithConnection<TConnection> = OutboxAck & {
   readonly connection: TConnection;
 };
 
-/** Los egresses que producen efectos durables informan cuántos confirmaron. */
+/** Egresses that produce durable effects report how many confirmed. */
 export type OutboxAckWithEffectCount = OutboxAck & {
   readonly effect_count?: number;
 };

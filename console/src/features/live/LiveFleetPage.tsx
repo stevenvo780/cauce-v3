@@ -34,12 +34,12 @@ import './live.css';
 import './live-hypergraph.css';
 
 /**
- * Cuántos intervalos de refresco pueden pasar antes de que el dato deje de acreditar nada.
+ * How many refresh intervals may pass before the data stops attesting anything.
  */
 const STALE_FACTOR = 3;
 
 /**
- * Id de la sala sintética donde van los alias del registro que no tienen ninguna membresía.
+ * Identifier of the synthetic room where record aliases without any membership go.
  */
 const SIN_SALA = '__sin_sala__';
 

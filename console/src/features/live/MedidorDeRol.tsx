@@ -1,8 +1,8 @@
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from './role-brief';
 
 /**
- * Cuánto del rol declarado LLEGA al agente: 1200 de los 4000 que admite el campo, y medido en las
- * dos unidades que no coinciden —puntos de código en la base, UTF-16 en el adaptador desplegado—.
+ * How much of the declared role REACHES the agent: 1200 of the 4000 the field admits, measured in
+ * the two units that do not match — code points in the store, UTF-16 in the deployed adapter —.
  */
 export function MedidorDeRol({ texto }: { texto: string }) {
   const recortado = texto.trim();

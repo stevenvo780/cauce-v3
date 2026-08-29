@@ -102,7 +102,7 @@ class TestDerivacionPorAlias(unittest.TestCase):
             "CLAUDE_CONFIG_DIR=/home/claw/.local/share/cauce-v3/config/hegel/.claude",
         )
 
-    # ---------------- CONTROLES NEGATIVOS ----------------
+    # ---------------- NEGATIVE CONTROLS ----------------
     def test_control_negativo_un_arnes_sin_directorio_se_RECHAZA(self) -> None:
         """
         hermes sólo lee stdin y los openclaw no leen ~/.codex ni ~/.claude.
@@ -157,8 +157,8 @@ class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
     def test_la_exportacion_esta_condicionada_al_interruptor(self) -> None:
         texto = SUPERVISOR.read_text(encoding="utf-8")
         self.assertIn("CONFIG_POR_ALIAS", texto)
-        # La única línea que mete la variable en el entorno del adaptador tiene que estar dentro
-        # del bloque del interruptor, no suelta.
+        # The only line that puts the variable into the adapter's environment must be inside
+        # the switch block, not loose.
         lineas = texto.splitlines()
         indices = [i for i, linea in enumerate(lineas) if "config_por_alias_directorio" in linea
                    and "environment+=" in linea]
