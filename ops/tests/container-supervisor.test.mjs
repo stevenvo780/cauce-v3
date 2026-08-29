@@ -210,7 +210,7 @@ async function dockerState(alias, overrides = {}) {
 
 function environment(statePath) {
   return {
-    // systemd (CI) arranca sin HOME tras el drop a nobody; el supervisor deriva XDG de HOME.
+    // systemd (CI) starts without HOME after dropping to nobody; the supervisor derives XDG from HOME.
     HOME: temporary,
     ...process.env,
     PATH: `${binRoot}:${process.env.PATH ?? ""}`,
@@ -659,8 +659,8 @@ try {
   assert(claudeVersionProbe, "Claude version probe must use the alias-specific exact pin");
   process.stdout.write("claude version: alias-specific exact pin required and probed\n");
 
-  // claude/codex sin aislar exportan su CONFIG_DIR por defecto para que la medición de runtime_facts
-  // (y la escritura de perfil desde la consola) los vea. zeus es claude sin aislar: default $HOME/.claude.
+  // claude/codex without isolation export their default CONFIG_DIR so runtime_facts measurement
+  // (and profile writing from the console) sees them. zeus is claude without isolation: default $HOME/.claude.
   await clearLog();
   result = runSupervisor("start", "zeus", await dockerState("zeus"));
   assert.equal(result.status, 0, result.stderr);
