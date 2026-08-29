@@ -192,7 +192,6 @@ function subscribe(callback: () => void): () => void {
 /** Rail (78px, icons only) or full bar (248px, with labels). */
 type SidebarState = 'rail' | 'expanded';
 
-const SIDEBAR_PREFERENCE_KEY = 'cauce.console.sidebar';
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
 const NAV_ID = 'nav-principal';
 /** Breakpoints from `responsive.css`: the viewport forces the rail, and below that the bar moves below. */
@@ -201,16 +200,19 @@ const BOTTOM_BAR_VIEWPORT = '(max-width: 760px)';
 const CONSOLE_TITLE = 'Cauce V3 Console';
 const NOT_FOUND_TITLE = 'Ruta no encontrada';
 
+/**
+ * La consola opera la flota entera, así que tiene prohibido el almacenamiento duradero del
+ * navegador (`ops/scripts/validate.sh`). La preferencia vive en memoria: dura lo que la pestaña,
+ * que es justo el desenlace que este código ya contemplaba cuando el almacenamiento se denegaba.
+ */
+let sidebarPreference: SidebarState = 'expanded';
+
 function readSidebarPreference(): SidebarState {
-  try {
-    return window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'rail' ? 'rail' : 'expanded';
-  } catch { return 'expanded'; }
+  return sidebarPreference;
 }
 
 function writeSidebarPreference(state: SidebarState): void {
-  try {
-    window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, state);
-  } catch { /* almacenamiento denegado: la elección dura lo que la pestaña */ }
+  sidebarPreference = state;
 }
 
 function useMediaQuery(query: string): boolean {
