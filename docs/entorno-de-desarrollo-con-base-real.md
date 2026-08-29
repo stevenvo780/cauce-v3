@@ -99,13 +99,36 @@ NODE_ENV=development DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_dev" 
 Levanta en `127.0.0.1:8080`. Desde ahí la consola puede correr **sin `VITE_USE_MOCKS`**, contra
 datos que salen del esquema real.
 
+## Las suites de servicios
+
+También dependían de la base y ahora corren enteras:
+
+```bash
+CAUCE_TEST_DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_test" \
+  pnpm --no-bail --filter @cauce/gateway --filter @cauce/telegram-bridge run test
+```
+
+| Paquete | Antes | Ahora |
+|---|---|---|
+| `@cauce/gateway` | 31 ficheros / 472 tests, 2 en rojo | **32 / 474, EXIT=0** |
+| `@cauce/telegram-bridge` | 19 / 256 + 3 saltados, 2 en rojo | **19 / 259, EXIT=0** |
+
+Fijate en el gateway: sube de 31 a 32 ficheros. **No es que ahora pasen los que fallaban, es que
+antes ni siquiera se ejecutaban.** El verde anterior estaba inflado por dos ficheros que nunca
+llegaban a correr.
+
+## Leer bien el error cuando algo falla
+
+**`Could not find a working container runtime strategy` NO significa «falta Postgres».** Significa
+que esa suite quería un contenedor propio. Es un mensaje que invita a instalar lo que no era: la
+distinción que desatasca es **base externa vs testcontainers**, no la presencia de la base.
+
 ## Lo que sigue sin poder hacerse aquí
 
 - **No hay demonio de Docker** (`/var/run/docker.sock` no existe). El camino de `testcontainers`
   sigue muerto en este workspace; la variable de entorno es el único camino.
-- Por eso falla **un** caso, y es legítimo:
-  `migration-integrity-postgres.test.ts > derives the 024 contract from a clean database applying
-  exactly through 024` levanta su **propio** contenedor a propósito. No se puede correr sin Docker y
-  no hay que taparlo.
-- **`pnpm test:services` y `pnpm test` completos** siguen sin verificarse en este entorno más allá de
-  lo que cubre la orden de arriba.
+- Por eso quedan **seis ficheros en rojo, y ninguno es del store**: cuatro necesitan un contenedor
+  de verdad —levantan el suyo, o llaman a `container.restart()` para simular pérdida de backend, que
+  contra una base externa es un no-op—, uno es `mcp-fleet-monitor` sin construir (`dist/server.js`
+  no existe) y otro es el extractor de rutas de `console-api-contract`. No hay que taparlos.
+- **`pnpm test` completo** sigue sin verificarse en este entorno.
