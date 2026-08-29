@@ -164,7 +164,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   await received;
   assert.equal(entries.length, 1);
   assert.deepEqual(
-    // `JSON.parse` devuelve `any`: sin la anotación esta línea rompe `lint:adapter`.
+    // `JSON.parse` returns `any`: without the annotation this line breaks `lint:adapter`.
     delivered.map((raw) => (JSON.parse(raw) as { type: string }).type),
     ["heartbeat"],
   );
@@ -175,17 +175,17 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
 
 /**
  * ============================================================================================
- * EL FRAME QUE MATABA LA COLA
+ * THE FRAME THAT KILLED THE QUEUE
  *
- * `ack_result` ganó `delegation_rejections` y `chain_gate` en el store, el gateway los esparcía
- * al frame sin gate, y el miembro del esquema seguía `.strict()`. Del lado del adaptador eso NO
- * era "descarto este frame": `parse()` tiraba, el catch llamaba `queue.fail(...)` y eso rechaza
- * al iterador y a todos los que esperan — se cae la cola ENTERA de la conexión y con ella todas
- * las entregas en vuelo.
+ * `ack_result` gained `delegation_rejections` and `chain_gate` in the store; the gateway spread
+ * them into the frame without a gate, and the schema member kept `.strict()`. On the adapter side
+ * this was NOT "discard this frame": `parse()` threw, the catch called `queue.fail(...)` and that
+ * rejected the iterator and everyone waiting — the WHOLE connection queue fell, and with it all
+ * in-flight deliveries.
  *
- * Estos tests miran el FRAME, que es el hueco por donde entró el defecto: los tests que había
- * verificaban el valor de retorno de `ackDelivery` en el store, y ese valor era correcto. Lo que
- * nadie validaba era el frame que salía al cable.
+ * These tests look at the FRAME, which is the gap through which the bug slipped in: the tests
+ * there were verified the return value of `ackDelivery` in the store, and that value was correct.
+ * What nobody validated was the frame going out on the wire.
  * ============================================================================================
  */
 
@@ -232,7 +232,7 @@ function deliveryFrame(): Record<string, unknown> {
   };
 }
 
-/** Un servidor que dice exactamente los frames que le pidamos, en orden. */
+/** A server that says exactly the frames we ask for, in order. */
 async function frameServer(): Promise<{
   port: number;
   say: (frame: unknown) => Promise<void>;
@@ -291,7 +291,7 @@ test("the delegation feedback fields are part of the ack_result frame contract",
   assert.equal(received.done, false);
   const frame = received.value as Record<string, unknown>;
   assert.equal(frame.type, "ack_result");
-  // El adaptador que declara la capability RECIBE los campos, no una versión recortada.
+  // The adapter that declares the capability RECEIVES the fields, not a trimmed version.
   assert.deepEqual(frame.delegation_rejections, [{
     code: "fanout_exceeded",
     reason: "Abanico agotado: este turno ya delegó 3 veces.",
@@ -323,15 +323,15 @@ test("a frame outside the schema is dropped and the queue keeps serving the next
   const connection = await connector.connect(new AbortController().signal);
   const frames = connection.frames()[Symbol.asyncIterator]();
 
-  // Un gateway MÁS NUEVO que este adaptador: un campo que su esquema no conoce. Es la forma
-  // exacta del defecto, y también la de cualquier campo que se agregue en el futuro.
+  // A gateway NEWER than this adapter: a field its schema does not know. It is the exact shape
+  // of the bug, and also that of any field added in the future.
   await server.say(ackResultFrame({ delegation_disciplina_v2: { cap: 3 } }));
-  // Y las otras dos formas de frame ilegible que llegaban al mismo `queue.fail`.
+  // And the other two forms of unreadable frame that landed in the same `queue.fail`.
   await server.say("{no-es-json");
   await server.say({ type: "ack_result", applied: "no-es-booleano" });
 
-  // LA aserción: la cola sobrevivió a los tres y sigue entregando. Los frames del WebSocket
-  // están ordenados, así que recibir éste prueba que los anteriores no la mataron.
+  // THE assertion: the queue survived all three and keeps delivering. WebSocket frames are ordered,
+  // so receiving this one proves the previous ones did not kill it.
   await server.say(deliveryFrame());
   const received = await frames.next();
   assert.equal(received.done, false);
@@ -339,7 +339,7 @@ test("a frame outside the schema is dropped and the queue keeps serving the next
   assert.equal(survivor.type, "delivery");
   assert.equal(survivor.trace_id, "trace-survives-the-bad-frame");
 
-  // El descarte es observable, nunca silencioso.
+  // The drop is observable, never silent.
   assert.equal(entries.length, 3);
   assert.deepEqual(entries.map((entry) => entry.event), [
     "inbound_frame_invalid", "inbound_frame_invalid", "inbound_frame_invalid",
@@ -353,14 +353,14 @@ test("a frame outside the schema is dropped and the queue keeps serving the next
   assert.equal(entries[0]?.frame_type, "ack_result");
   assert.equal(entries[0]?.alias, "zeus");
   assert.equal(entries[0]?.delivery_id, frameIds.delivery);
-  // `unrecognized_keys` se reporta en la raíz, no en la clave: el path es `<root>` y el NOMBRE
-  // del campo que sobra viaja en el mensaje. Es el dato que sirve para diagnosticar deriva de
-  // protocolo ("qué campo nuevo nos rompió"), así que el test lo fija explícitamente.
+  // `unrecognized_keys` is reported at the root, not at the key: the path is `<root>` and the NAME
+  // of the leftover field travels in the message. It is the data that serves to diagnose protocol
+  // drift ("which new field broke us"), so the test pins it explicitly.
   assert.equal(entries[0]?.issues?.length, 1);
   assert.equal(entries[0]?.issues?.[0]?.code, "unrecognized_keys");
   assert.deepEqual(entries[0]?.issues?.map((issue) => issue.path), ["<root>"]);
   assert.match(String(entries[0]?.issues?.[0]?.message), /delegation_disciplina_v2/u);
-  // El JSON roto no tiene forma, y aun así no derriba nada ni inventa campos.
+  // The broken JSON has no shape, and still does not take anything down or invent fields.
   assert.equal(entries[1]?.frame_type, "unknown");
   assert.deepEqual(entries[1]?.issues, []);
 

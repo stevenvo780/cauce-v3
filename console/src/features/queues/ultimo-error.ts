@@ -1,40 +1,40 @@
 import type { DeliveryState } from '../../api/types';
 
 /**
- * **«UNKNOWN» ÁMBAR EN LA COLUMNA DE ERRORES DE ENTREGAS QUE SALIERON BIEN.**
+ * **AMBER "UNKNOWN" IN THE ERROR COLUMN OF DELIVERIES THAT SUCCEEDED.**
  *
- *  38 filas en la tabla de `/queues`, de las
- * cuales 31 gritaban un `UNKNOWN` en ámbar bajo «Último error». Las 31 estaban en `done`. El ojo
- * del operador iba a ese color —treinta y una veces— y las 7 dead letters, que son lo único que
- * hay que mirar, quedaban sueltas entre ellas sin nada que las distinguiera.
+ * 38 rows in the `/queues` table, of which 31 were shouting an amber `UNKNOWN` under "Last error".
+ * All 31 were in `done`. The operator's eye went to that color — thirty-one times — and the 7
+ * dead letters, which are the only thing worth looking at, were lost among them with nothing to
+ * set them apart.
  *
- * El defecto es de vocabulario, no de dato. `<Unknown>` pinta ámbar cuando el valor es nulo, y esa
- * regla es correcta casi siempre: significa «el servidor no lo dijo, y esta consola no rellena con
- * ceros lo que no sabe». Pero para `last_error` de una entrega TERMINADA BIEN, el nulo no es
- * ignorancia: es la respuesta. Que no haya error es exactamente lo que una entrega en `done`
- * tiene que informar, y pintarlo del color de la alarma convierte el acierto en ruido.
+ * The defect is in the vocabulary, not in the data. `<Unknown>` paints amber when the value is
+ * null, and that rule is right almost everywhere: it means "the server did not say, and this
+ * console does not fill with zeros what it does not know". But for `last_error` of a delivery
+ * that FINISHED WELL, null is not ignorance: it is the answer. The absence of an error is exactly
+ * what a `done` delivery must report; painting it in the alarm color turns the success into noise.
  *
- * La distinción, entonces, es por ESTADO:
- * - estado sin error (`done`, `pending`, `leased`, `accepted`, `started`) + `last_error` nulo
- *   → «sin error», apagado. Es un hecho, no un hueco.
- * - estado de error (`dead`, `failed`, `retry`) + `last_error` nulo
- *   → UNKNOWN, ámbar. Acá sí falta un dato, y falta uno grave: una entrega muerta sin motivo es
- *     una entrega que nadie puede diagnosticar. Ese ámbar hay que conservarlo.
- * - estado UNKNOWN → UNKNOWN. No se puede afirmar «sin error» sobre una fila cuyo estado no se
- *   conoce; eso sería inventar la mitad tranquilizadora.
+ * The distinction, then, is by STATE:
+ * - non-error state (`done`, `pending`, `leased`, `accepted`, `started`) + null `last_error`
+ *   → "no error", muted. It is a fact, not a gap.
+ * - error state (`dead`, `failed`, `retry`) + null `last_error`
+ *   → UNKNOWN, amber. Here the data really is missing, and gravely so: a dead delivery without
+ *     a reason is one nobody can diagnose. That amber must be kept.
+ * - UNKNOWN state → UNKNOWN. One cannot assert "no error" on a row whose state is unknown; that
+ *   would be inventing the reassuring half.
  */
 
-/** Estados en los que «sin error» es una AFIRMACIÓN del servidor y no un hueco. */
+/** States in which "no error" is an AFFIRMATION by the server, not a gap. */
 const ESTADOS_SIN_ERROR: ReadonlySet<DeliveryState> = new Set<DeliveryState>([
   'done', 'pending', 'leased', 'accepted', 'started',
 ]);
 
 export type LecturaDeUltimoError =
-  /** El servidor dijo qué falló. */
+  /** The server said what failed. */
   | { clase: 'texto'; texto: string }
-  /** El servidor dijo que no falló nada: el estado lo garantiza. */
+  /** The server said nothing failed: the state guarantees it. */
   | { clase: 'sin-error' }
-  /** Falta el dato, y en este estado su falta importa. */
+  /** The data is missing, and in this state its absence matters. */
   | { clase: 'desconocido' };
 
 export function leerUltimoError(

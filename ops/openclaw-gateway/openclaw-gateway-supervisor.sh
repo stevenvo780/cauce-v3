@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# Supervisor del gateway de OpenClaw de un alias que vive DENTRO de un contenedor.
+# Supervisor for the OpenClaw gateway of an alias that lives INSIDE a container.
 #
-# POR QUE EXISTE
+# WHY IT EXISTS
 # --------------
-# En `claw` el gateway es el PID 1 del contenedor: docker lo supervisa y jarvis lo tiene gratis.
-# En `ctrl-infra` el PID 1 es un `sleep infinity` con sshd al lado, asi que un gateway lanzado a
-# mano ahi muere con el contenedor y nadie lo vuelve a levantar. Este guion es el equivalente
-# barato: una unit systemd de usuario en el host hace `docker exec` y systemd es el supervisor.
-# No hace falta recrear el contenedor, que es lo unico que dejaria PKI huerfana.
+# In `claw` the gateway is the container's PID 1: docker supervises it and jarvis gets it for free.
+# In `ctrl-infra` the PID 1 is a `sleep infinity` with sshd next to it, so a gateway launched by
+# hand there dies with the container and nobody restarts it. This script is the cheap equivalent:
+# a systemd user unit on the host runs `docker exec` and systemd is the supervisor. There is no
+# need to recreate the container, which is the only thing that would leave the PKI orphaned.
 #
-# LAS DOS TRAMPAS QUE RESUELVE, Y POR QUE NO SE PUEDEN IGNORAR
+# THE TWO TRAPS IT SOLVES, AND WHY THEY CANNOT BE IGNORED
 # ------------------------------------------------------------
-# 1. `docker exec` NO propaga senales. Si systemd mata al cliente `docker exec`, el proceso de
-#    DENTRO sigue vivo: el `KillMode=control-group` de la unit solo alcanza al cliente. Por eso
-#    `stop` no confia en la unit: entra al contenedor y mata el arbol el mismo.
-# 2. Al morir el gateway quedan `claude -p` huerfanos de ~330 MB cada uno (medido). No son hijos
-#    directos: hay que recorrer el arbol de descendientes por /proc. `stop` los recoge.
+# 1. `docker exec` does NOT propagate signals. If systemd kills the `docker exec` client, the
+#    process INSIDE keeps running: the unit's `KillMode=control-group` only reaches the client,
+#    so `stop` goes into the container and kills the tree itself.
+# 2. When the gateway dies, orphan `claude -p` processes of ~330 MB each remain (measured). They
+#    are not direct children: the descendant tree has to be walked via /proc. `stop` reaps them.
 #
-# Y LA TRAMPA QUE NO SE PUEDE COMPROBAR POR NOMBRE DE PROCESO
+# AND THE TRAP THAT CANNOT BE CHECKED BY PROCESS NAME
 # ------------------------------------------------------------
-# `openclaw` es un envoltorio que re-ejecuta y deja su argv en "openclaw" a secas, asi que un
-# `pkill -f "openclaw gateway"` sale 0 sin matar nada. Aca se arranca `node .../dist/index.js
-# gateway` (el argv exacto del gateway que ya funciona en `claw`) y se mata por PID de fichero,
-# y la vida o muerte se comprueba SIEMPRE con una conexion TCP real, nunca con `ps`.
+# `openclaw` is a wrapper that re-executes and leaves its argv as just "openclaw", so
+# `pkill -f "openclaw gateway"` exits 0 without killing anything. Here we start
+# `node .../dist/index.js gateway` (the exact argv of the gateway that already works in `claw`)
+# and kill it by PID from a file; liveness is ALWAYS checked with a real TCP connection, never with `ps`.
 
 set -Eeuo pipefail
 
@@ -39,7 +39,7 @@ CONFIG_FILE="${CONFIG_ROOT}/${ALIAS}.env"
 
 if [[ ! -r ${CONFIG_FILE} ]]; then
   echo "GATEWAY_CONFIG_MISSING: no existe ${CONFIG_FILE}" >&2
-  exit 78 # EX_CONFIG: la unit tiene RestartPreventExitStatus=78, no reintenta en bucle
+  exit 78 # EX_CONFIG: the unit has RestartPreventExitStatus=78, it does not retry in a loop
 fi
 
 # shellcheck disable=SC1090
@@ -56,7 +56,7 @@ PID_FILE="${RUN_DIR}/gateway.pid"
 
 DOCKER=${DOCKER:-/usr/bin/docker}
 
-in_container() { # ejecuta en el contenedor como el usuario del alias, SIN tty
+in_container() { # runs inside the container as the alias's user, NO tty
   "${DOCKER}" exec -i --user "${RUNTIME_USER}" \
     -e HOME="${RUNTIME_HOME}" -e USER="${RUNTIME_USER}" -e LOGNAME="${RUNTIME_USER}" \
     "${CONTAINER}" "$@"
@@ -66,12 +66,12 @@ container_running() {
   [[ $("${DOCKER}" inspect -f '{{.State.Running}}' "${CONTAINER}" 2>/dev/null) == "true" ]]
 }
 
-# Espera a que el contenedor vuelva, en vez de salir con error.
+# Waits for the container to come back, instead of exiting with an error.
 #
-# Salir con error parece equivalente porque la unit tiene Restart=always, pero NO lo es:
-# StartLimitBurst=10 con RestartSec=5s agota el presupuesto de reintentos en ~50 s y despues la
-# unit se queda en `failed` para siempre. Un contenedor recreado tarda mas que eso, y entonces la
-# durabilidad —el motivo entero de esta unit— se pierde justo el dia que hace falta.
+# Exiting with an error looks equivalent because the unit has Restart=always, but it is NOT:
+# StartLimitBurst=10 with RestartSec=5s burns the retry budget in ~50 s and afterwards the unit
+# stays `failed` forever. A recreated container takes longer than that, and then the durability
+# —the entire reason for this unit— is lost precisely the day it is needed.
 wait_for_container() {
   local deadline=$(( SECONDS + ${CONTAINER_WAIT_SECONDS:-600} ))
   local announced=0
@@ -90,8 +90,8 @@ wait_for_container() {
   return 0
 }
 
-# Unica prueba de vida aceptada: una conexion TCP que el servidor ACEPTA.
-# Ni el fichero de PID, ni `ps`, ni el nombre del proceso. Sale 0 si acepta.
+# The only accepted liveness check: a TCP connection that the server ACCEPTS.
+# Not the PID file, not `ps`, not the process name. Exits 0 if it accepts.
 accepts_connections() {
   in_container node -e '
 const net = require("node:net");
@@ -103,8 +103,8 @@ socket.on("timeout", () => { socket.destroy(); process.exit(1); });
 ' "${PORT}" >/dev/null 2>&1
 }
 
-# Mata el gateway Y TODOS sus descendientes (los `claude -p` huerfanos). Recorre /proc, que es la
-# unica fuente que no miente cuando el argv del proceso cambia debajo tuyo.
+# Kills the gateway AND all its descendants (the orphan `claude -p` processes). It walks /proc,
+# which is the only source that does not lie when a process's argv changes underneath you.
 kill_tree() {
   in_container python3 - "${PID_FILE}" <<'PY'
 import os, signal, sys, time
@@ -186,8 +186,8 @@ start)
     exit 75 # EX_TEMPFAIL
   fi
 
-  # Un arranque limpio empieza matando lo que haya quedado de antes: systemd puede haber matado
-  # solo al cliente `docker exec` y dejado el gateway (y sus `claude -p`) vivos adentro.
+  # A clean start begins by killing whatever was left over: systemd may have killed only the
+  # `docker exec` client and left the gateway (and its `claude -p`) alive inside.
   kill_tree || true
   if accepts_connections; then
     echo "PUERTO_OCUPADO: 127.0.0.1:${PORT} sigue aceptando conexiones tras el barrido" >&2
@@ -196,8 +196,8 @@ start)
 
   in_container mkdir -p "${RUN_DIR}"
 
-  # `exec` deja al cliente `docker exec` como proceso principal de la unit: si el gateway de
-  # adentro muere, este cliente sale y systemd reinicia. La salida va al journal de la unit.
+  # `exec` keeps the `docker exec` client as the unit's main process: if the gateway inside
+  # dies, this client exits and systemd restarts. Output goes to the unit's journal.
   exec "${DOCKER}" exec -i --user "${RUNTIME_USER}" \
     -e HOME="${RUNTIME_HOME}" -e USER="${RUNTIME_USER}" -e LOGNAME="${RUNTIME_USER}" \
     "${CONTAINER}" bash -s -- "${OPENCLAW_ENTRY}" "${PORT}" "${BIND}" "${PID_FILE}" <<'EOS'

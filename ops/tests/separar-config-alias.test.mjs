@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * Planificador de separación de configuración por alias.
+ * Planner for per-alias configuration separation.
  *
- * QUÉ SE ESTÁ PROBANDO, Y POR QUÉ IMPORTA TANTO EL `.claude.json`
+ * WHAT IS BEING TESTED, AND WHY `.claude.json` MATTERS SO MUCH
  * ==============================================================
  *
- * `CLAUDE_CONFIG_DIR` no mueve solamente el `CLAUDE.md`: mueve TAMBIÉN el `.claude.json`, y con él
- * la lista entera de servidores MCP del alias. Si el plan apunta la variable a un directorio nuevo
- * sin llevarse ese fichero, el alias pierde TODAS sus herramientas **sin un solo error**: no falla,
- * no avisa, arranca igual y se queda mudo de capacidades. Eso ya se pagó una vez.
+ * `CLAUDE_CONFIG_DIR` does not move only the `CLAUDE.md`: it ALSO moves the `.claude.json`, and
+ * with it the alias's entire MCP server list. If the plan points that variable at a new
+ * directory without carrying that file, the alias loses ALL its tools **without a single
+ * error**: it does not fail, does not warn, boots anyway and ends up mute of capabilities.
  *
- * Por eso aquí no basta con que el plan "funcione": se exige EXPLÍCITAMENTE que `.claude.json`
- * esté entre las operaciones y que lleve escrito el motivo. Se enlaza al origen autorizado en vez
- * de copiar sus posibles secretos. Una prueba que sólo mirara el directorio pasaría con el fallo
- * dentro.
+ * That is why it is not enough here for the plan to "work": the test EXPLICITLY requires that
+ * `.claude.json` be among the operations and that it carries a written reason. It links to the
+ * authorised source instead of copying its possible secrets. A test that only looked at the
+ * directory would pass with the failure hidden inside.
  *
- * Y la lista de BORRADOS tiene que estar vacía siempre: el origen es la reversa. Mientras el
- * directorio original siga ahí, revertir es quitar una variable de entorno; si el plan lo borra,
- * revertir es restaurar de un respaldo que nadie tomó.
+ * And the DELETIONS list must always be empty: the source is the rollback. While the original
+ * directory is still there, reverting is removing an environment variable; if the plan deletes
+ * it, reverting is restoring from a backup that nobody took.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -44,7 +44,7 @@ function copiaDe(plan, destino) {
 }
 
 // ---------------------------------------------------------------------------
-// El destino: derivado, nunca a mano.
+// The destination: derived, never hand-written.
 // ---------------------------------------------------------------------------
 
 test("el destino vive bajo el árbol persistente .local/share, derivado del alias", () => {
@@ -55,7 +55,7 @@ test("el destino vive bajo el árbol persistente .local/share, derivado del alia
 });
 
 test("kratos y atlas, mismo home y mismo contenedor, salen a destinos DISTINTOS", () => {
-  // Es el punto entero del trabajo: hoy los dos leen el mismo inodo en /home/dev/.codex.
+  // That is the entire point of the work: today both read the same inode in /home/dev/.codex.
   const kratos = planificarSeparacion({ alias: "kratos", home: "/home/dev", arnes: "codex" });
   const atlas = planificarSeparacion({ alias: "atlas", home: "/home/dev", arnes: "codex" });
   assert.equal(kratos.directorioOrigen, atlas.directorioOrigen, "hoy comparten el origen");
@@ -65,7 +65,7 @@ test("kratos y atlas, mismo home y mismo contenedor, salen a destinos DISTINTOS"
 });
 
 // ---------------------------------------------------------------------------
-// LA TRAMPA MEDIDA: el .claude.json.
+// THE MEASURED TRAP: the .claude.json.
 // ---------------------------------------------------------------------------
 
 test("EXIGENCIA: .claude.json está entre las copias, y con el motivo escrito", () => {
@@ -87,9 +87,9 @@ test("EXIGENCIA: .claude.json está entre las copias, y con el motivo escrito", 
 });
 
 test("si el alias YA tiene CLAUDE_CONFIG_DIR puesto, el .claude.json se toma de ahí, no del home", () => {
-  // Cuando la variable está puesta, el CLI lee `$CLAUDE_CONFIG_DIR/.claude.json` y NO `~/.claude.json`
-  // (ops/runbooks/encender-un-alias.md). Tomarlo del home copiaría el fichero equivocado y el alias
-  // arrancaría con los MCP de otro.
+  // When the variable is set, the CLI reads `$CLAUDE_CONFIG_DIR/.claude.json` and NOT
+  // `~/.claude.json` (ops/runbooks/encender-un-alias.md). Taking it from the home would copy the
+  // wrong file and the alias would boot with someone else's MCP.
   const plan = planificarSeparacion({
     ...ZEUS,
     entornoActual: { CLAUDE_CONFIG_DIR: "/datos/agents/zeus/.claude" },
@@ -120,7 +120,7 @@ test("si el alias ya tiene CODEX_HOME puesto, el origen es ese y no ~/.codex", (
 });
 
 // ---------------------------------------------------------------------------
-// CONTROL NEGATIVO de esta prueba: los borrados.
+// NEGATIVE CONTROL of this test: the deletions.
 // ---------------------------------------------------------------------------
 
 test("CONTROL NEGATIVO: la lista de borrados está VACÍA — el origen ES la reversa", () => {
@@ -135,8 +135,8 @@ test("CONTROL NEGATIVO: la lista de borrados está VACÍA — el origen ES la re
 });
 
 test("CONTROL NEGATIVO: ninguna copia escribe DENTRO del directorio de origen", () => {
-  // Una copia cuyo destino cayera bajo el origen dejaría de ser una reversa intacta: el alias
-  // "revertido" arrancaría con ficheros que la separación metió ahí.
+  // A copy whose destination fell under the source would no longer be a clean rollback: the
+  // "reverted" alias would boot with files the separation put there.
   for (const entrada of [KRATOS, ZEUS]) {
     const plan = planificarSeparacion(entrada);
     for (const copia of plan.copias) {
@@ -149,8 +149,8 @@ test("CONTROL NEGATIVO: ninguna copia escribe DENTRO del directorio de origen", 
 });
 
 test("CONTROL NEGATIVO: el destino no puede caer dentro del origen ni al revés", () => {
-  // Si el origen ya estuviera bajo el destino persistente del alias, copiar
-  // el directorio dentro de sí mismo es una recursión infinita, no una separación.
+  // If the source were already under the alias's persistent destination, copying the directory
+  // inside itself is an infinite recursion, not a separation.
   assert.throws(
     () => planificarSeparacion({
       ...KRATOS,
@@ -161,7 +161,7 @@ test("CONTROL NEGATIVO: el destino no puede caer dentro del origen ni al revés"
 });
 
 // ---------------------------------------------------------------------------
-// El entorno nuevo.
+// The new environment.
 // ---------------------------------------------------------------------------
 
 test("el entorno nuevo declara exactamente UNA variable, la del arnés", () => {
@@ -171,8 +171,8 @@ test("el entorno nuevo declara exactamente UNA variable, la del arnés", () => {
 });
 
 test("el entorno apunta al MISMO sitio que el destino de las copias", () => {
-  // Dos fuentes de verdad para la misma ruta es exactamente cómo se llega a un alias que copia a
-  // un lado y lee de otro.
+  // Two sources of truth for the same path is exactly how an alias ends up copying to one side
+  // and reading from another.
   for (const entrada of [KRATOS, ZEUS]) {
     const plan = planificarSeparacion(entrada);
     assert.equal(Object.values(plan.entorno)[0], plan.directorioDestino);
@@ -184,7 +184,7 @@ test("el entorno apunta al MISMO sitio que el destino de las copias", () => {
 });
 
 // ---------------------------------------------------------------------------
-// El testigo: qué fichero mira el ejecutor para comprobar por EFECTO.
+// The witness: which file the executor checks by EFFECT.
 // ---------------------------------------------------------------------------
 
 test("el plan nombra el fichero testigo cuyo inodo tiene que dejar de coincidir", () => {
@@ -193,13 +193,13 @@ test("el plan nombra el fichero testigo cuyo inodo tiene que dejar de coincidir"
 });
 
 // ---------------------------------------------------------------------------
-// Advertencias: lo que el plan NO resuelve y hay que decir en voz alta.
+// Warnings: what the plan does NOT solve and must be said out loud.
 // ---------------------------------------------------------------------------
 
 test("el plan conserva una sola fuente de credencial y lo advierte", () => {
-  // Separar el directorio no puede duplicar `auth.json` / `.credentials.json`: si dos alias usan
-  // una misma cuenta, una copia queda obsoleta cuando la otra rota el refresh token. Los enlaces
-  // mantienen una sola fuente y hacen visible esa decisión.
+  // Splitting the directory cannot duplicate `auth.json` / `.credentials.json`: if two aliases
+  // share the same account, one copy goes stale when the other rotates its refresh token.
+  // Links keep a single source and make that decision visible.
   const codex = planificarSeparacion(KRATOS);
   assert.ok(codex.advertencias.some((aviso) => /auth\.json/u.test(aviso)));
   assert.ok(codex.advertencias.some((aviso) => /no se copian|compartid/iu.test(aviso)));
@@ -232,7 +232,7 @@ test("el plan lleva escrita la reversa exacta", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Falla cerrado.
+// Fail closed.
 // ---------------------------------------------------------------------------
 
 test("un arnés sin directorio de configuración se rechaza, no se planifica a ojo", () => {
@@ -252,7 +252,7 @@ test("home relativo, no canónico o con .. se rechaza", () => {
 });
 
 test("un alias con barra o .. no puede construir la ruta de destino", () => {
-  // El destino se DERIVA del alias: un alias con travesía escribiría fuera de su carpeta.
+  // The destination is DERIVED from the alias: an alias with traversal would write outside its folder.
   for (const alias of ["../otro", "kratos/x", "/kratos", "", "Kratos", ".hidden"]) {
     assert.throws(() => planificarSeparacion({ ...KRATOS, alias }), ErrorDePlan, `alias ${alias}`);
   }
@@ -266,7 +266,7 @@ test("una variable de entorno actual con ruta relativa se rechaza", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Interfaz de línea: lo que consume el ejecutor.
+// Command-line interface: what the executor consumes.
 // ---------------------------------------------------------------------------
 
 test("el guion imprime el plan en JSON y sale con 0", () => {

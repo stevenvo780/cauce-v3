@@ -3,21 +3,21 @@ import type { DatabasePool, DatabaseClient } from './db.js';
 import { withTransaction } from './db.js';
 
 /**
- * Prefijo que identifica una pausa automática aplicada por el recolector de cuotas.
+ * Prefix that identifies an automatic pause applied by the quota collector.
  */
 export const AUTOMATIC_PAUSE_PREFIX = 'quota_exhausted:';
 
-/** Motivo por el cual una cuenta candidata no está disponible para selección. */
+/** Reason a candidate account is not available for selection. */
 export type AccountSkipReason =
-  /** `agent_account_bindings.enabled = false`: binding deshabilitado. */
+  /** `agent_account_bindings.enabled = false`: binding disabled. */
   | 'binding_disabled'
-  /** `provider_accounts.enabled = false`: cuenta deshabilitada globalmente. */
+  /** `provider_accounts.enabled = false`: account disabled globally. */
   | 'account_disabled'
-  /** `paused_until > now()` con motivo automático por cuota. */
+  /** `paused_until > now()` with automatic reason due to quota. */
   | 'paused_automatic'
-  /** `paused_until > now()` con motivo manual de operador. */
+  /** `paused_until > now()` with manual operator reason. */
   | 'paused_manual'
-  /** Sin pausa activa, pero con cuota agotada reportada en quota_window_state. */
+  /** No active pause, but quota exhausted reported in quota_window_state. */
   | 'quota_exhausted';
 
 export interface AccountCandidate {
@@ -26,16 +26,16 @@ export interface AccountCandidate {
   readonly priority: number;
   readonly payer_tenant_id: string;
   readonly label: string | null;
-  /** Tipo de localizador de credenciales. */
+  /** Type of credential locator. */
   readonly credential_ref_kind: 'env_path' | 'file' | 'secret_manager';
   readonly credential_ref: string;
-  /** `null` si fue seleccionada, o el motivo por el cual fue omitida. */
+  /** `null` if it was selected, or the reason it was skipped. */
   readonly skipped: AccountSkipReason | null;
-  /** Detalle legible para operador sobre la selección u omisión. */
+  /** Human-readable detail for the operator about the selection or skip. */
   readonly detail: string | null;
-  /** Fecha hasta la que se encuentra pausada la cuenta, si aplica. */
+  /** Date until which the account is paused, if applicable. */
   readonly paused_until: string | null;
-  /** Identificador de la ventana agotada (`proveedor/grupo/ventana`), si aplica. */
+  /** Identifier of the exhausted window (`proveedor/grupo/ventana`), if applicable. */
   readonly exhausted_window: string | null;
 }
 
@@ -44,13 +44,13 @@ export interface AccountSelection {
   readonly alias: string;
   readonly provider: string;
   readonly observed_at: string;
-  /** La cuenta a usar, o `null` si ninguna quedó disponible. */
+  /** The account to use, or `null` if none remained available. */
   readonly selected: AccountCandidate | null;
-  /** TODOS los candidatos del techo, en el orden real de fallback. Incluye a la elegida. */
+  /** ALL ceiling candidates, in the actual fallback order. Includes the selected one. */
   readonly candidates: readonly AccountCandidate[];
-  /** true cuando la elegida no fue la de mayor prioridad: hubo failover. */
+  /** true when the chosen one was not the highest priority: there was failover. */
   readonly failover: boolean;
-  /** Cuentas que ESTA llamada acaba de auto-pausar. */
+  /** Accounts that THIS call just auto-paused. */
   readonly auto_paused: readonly {
     readonly account_id: string;
     readonly paused_until: string;
@@ -70,9 +70,9 @@ interface CandidateRow {
   account_enabled: boolean;
   paused_until: Date | null;
   paused_reason: string | null;
-  /** Ventana agotada más restrictiva de la cuenta, o NULL si ninguna lo está AHORA. */
+  /** Most restrictive exhausted window of the account, or NULL if none is NOW. */
   exhausted_window: string | null;
-  /** `reset_at` de esa ventana. NULL = el proveedor no informó horizonte de reset. */
+  /** `reset_at` of that window. NULL = the provider did not report a reset horizon. */
   exhausted_reset_at: Date | null;
 }
 
@@ -121,7 +121,7 @@ export interface SelectAccountOptions {
   readonly tenant_id: Tenant;
   readonly alias: string;
   readonly provider: string;
-  /** Inyectable para pruebas deterministas. */
+  /** Injectable for deterministic tests. */
   readonly now?: Date;
 }
 
@@ -147,8 +147,8 @@ async function selectWithClient(
   let selected: AccountCandidate | null = null;
 
   for (const row of rows.rows) {
-    // Se evalúa TODA la lista aunque ya haya elegida: la traza de por qué se descartó cada una
-    // es lo que hace auditable el failover. Son ≤ 6 filas por alias en el peor caso real.
+    // We evaluate the WHOLE list even after one is chosen: the trace of why each was discarded
+    // is what makes failover auditable. There are ≤ 6 rows per alias in the worst real case.
     const verdict = await evaluate(client, row, now, autoPaused);
     const candidate: AccountCandidate = {
       account_id: row.account_id,
@@ -174,8 +174,8 @@ async function selectWithClient(
     observed_at: now.toISOString(),
     selected,
     candidates,
-    // Hubo failover si la elegida no es la primera de la lista, que ya viene en orden de
-    // prioridad. Comparar por identidad de objeto es exacto: `selected` sale de este mismo array.
+    // There is failover if the chosen one is not the first in the list, which already comes in
+    // priority order. Comparing by object identity is exact: `selected` comes from this very array.
     failover: selected !== null && candidates[0] !== selected,
     auto_paused: autoPaused
   };
@@ -188,14 +188,14 @@ interface Verdict {
 }
 
 /**
- * El orden de los chequeos ES la semántica y no es intercambiable:
+ * The order of checks IS the semantics and is NOT interchangeable:
  *
- *  1. `binding_disabled` / `account_disabled` primero: son decisiones explícitas de un operador y
- *     ganan sobre cualquier estado derivado de cuotas.
- *  2. La pausa VIGENTE antes que el agotamiento: si ya está pausada no hay nada que decidir, y
- *     además distinguir `paused_manual` de `paused_automatic` acá es lo que le dice al operador
- *     si esa pausa la puso él o la máquina.
- *  3. El agotamiento último, que es el único caso que además ESCRIBE.
+ *  1. `binding_disabled` / `account_disabled` first: they are explicit decisions from an operator
+ *     and win over any quota-derived state.
+ *  2. The CURRENT pause before exhaustion: if it is already paused there is nothing to decide, and
+ *     distinguishing `paused_manual` from `paused_automatic` here is what tells the operator
+ *     whether they or the machine set that pause.
+ *  3. Exhaustion last, which is the only case that also WRITES.
  */
 async function evaluate(
   client: DatabaseClient,
@@ -232,7 +232,7 @@ async function evaluate(
 
   if (row.exhausted_window === null) return { skipped: null, detail: null, pausedUntil: null };
 
-  // Agotada y sin pausa vigente. Se salta SIEMPRE; persistir la pausa depende de tener horizonte.
+  // Exhausted and with no current pause. Always skipped; persisting the pause depends on having a horizon.
   if (row.exhausted_reset_at === null) {
     return {
       skipped: 'quota_exhausted',
@@ -243,9 +243,9 @@ async function evaluate(
     };
   }
 
-  // Una pausa manual SIN `paused_until` vigente (o ya vencida) igual conserva su motivo: el WHERE
-  // del UPDATE no matchea y `rowCount` vuelve 0. Se informa como pausa manual respetada en vez de
-  // reportar una auto-pausa que no ocurrió.
+  // A manual pause WITHOUT a current `paused_until` (or already expired) still keeps its reason: the
+  // WHERE of the UPDATE does not match and `rowCount` returns 0. Reported as a respected manual pause
+  // instead of reporting an auto-pause that did not occur.
   const reason = `${AUTOMATIC_PAUSE_PREFIX}${row.exhausted_window}`;
   const paused = await client.query<{ paused_until: Date; paused_reason: string }>(AUTO_PAUSE_SQL, [
     row.account_id, now.toISOString(), row.exhausted_reset_at.toISOString(), reason

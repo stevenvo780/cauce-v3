@@ -7,12 +7,12 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Manejo de fallos con códigos ambiguos:
+ * Handling of failures with ambiguous codes:
  *
- * La señal `execution_started_at` distingue si el harness llegó a ejecutarse o no:
- *  1. ambiguo SIN arrancar        -> 'retry', y consume un intento (no es gratis).
- *  2. ambiguo DESPUÉS de arrancar -> 'dead' + dead_letter (no se re-ejecuta trabajo pagado).
- *  3. ambiguo sin arrancar en el ÚLTIMO intento -> 'dead' (hay techo, no hay bucle infinito).
+ * The `execution_started_at` signal distinguishes whether the harness actually ran or not:
+ *  1. ambiguous WITHOUT starting        -> 'retry', consuming an attempt (not free).
+ *  2. ambiguous AFTER starting         -> 'dead' + dead_letter (paid work is not re-executed).
+ *  3. ambiguous without starting on the LAST attempt -> 'dead' (cap exists, no infinite loop).
  */
 
 let database: TestDatabase;
@@ -35,7 +35,7 @@ function command(): PublishMessage {
   };
 }
 
-/** El ACK 'started' que SÍ sella la marca: el que el SDK manda antes de invocar al harness. */
+/** The 'started' ACK that DOES seal the flag: the one the SDK sends before invoking the harness. */
 function executionStartedAck(delivery: DeliveryEnvelope, epoch: number): Ack {
   return {
     version: '3.0',
@@ -51,9 +51,9 @@ function executionStartedAck(delivery: DeliveryEnvelope, epoch: number): Ack {
 }
 
 /**
- * El ambiguo se manda con `retryable: false`, que es lo que emite el harness de verdad
- * (`harnesses/shared.ts`). El arreglo NO consiste en volverlo `true`: ese `false` sigue siendo
- * correcto para la entrega que ejecutó. Lo que decide es la marca de ejecución.
+ * The ambiguous failure is sent with `retryable: false`, which is what the real harness emits
+ * (`harnesses/shared.ts`). The fix is NOT flipping it to `true`: that `false` is still correct
+ * for the delivery that executed. What decides is the execution flag.
  */
 function ambiguousFailureAck(
   delivery: DeliveryEnvelope,
@@ -133,7 +133,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     );
     if (!claimed) throw new Error('expected a claimed delivery');
 
-    // El CLI murió al arrancar: la entrega nunca ACKeó `execution_started`.
+    // The CLI died on startup: the delivery never ACKed `execution_started`.
     const before = await deliveryRow(deliveryId);
     expect(before.attempt).toBe(1);
     expect(before.max_attempts).toBeGreaterThan(1);
@@ -145,13 +145,13 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
 
     const after = await deliveryRow(deliveryId);
     expect(after.status).toBe('retry');
-    // No es un final: nada de terminal_at ni de dead_letters, que es lo que la mandaba a revisión
-    // manual con dos intentos intactos.
+    // Not a terminal outcome: no `terminal_at` and no `dead_letters`, which is what would have
+    // sent it to manual review with two intact attempts.
     expect(after.terminal).toBe(false);
     expect(await deadLetterCount(deliveryId)).toBe(0);
 
-    // Y el reintento CONSUME presupuesto: el próximo reclamo sube el intento. Sin esto el
-    // arreglo sería un bucle gratis en vez de un reintento.
+    // And the retry CONSUMES budget: the next claim advances the attempt. Without this the fix
+    // would be a free loop instead of a retry.
     await pool.query(`UPDATE deliveries SET available_at=now() WHERE id=$1`, [deliveryId]);
     const [reclaimed] = await repository.claimDeliveries(
       'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
@@ -169,13 +169,13 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     );
     if (!claimed) throw new Error('expected a claimed delivery');
 
-    // El harness arrancó de verdad: reserva tomada, proceso invocado, cuota comprometida.
+    // The harness actually started: lease taken, process invoked, quota committed.
     await repository.ackDelivery(
       deliveryId, 'Isa', 'salva', executionStartedAck(claimed, lease.epoch!), 30_000
     );
     const started = await deliveryRow(deliveryId);
     expect(started.execution_started_at).not.toBeNull();
-    // Con intentos de sobra: lo que retiene la entrega es la marca, no el presupuesto agotado.
+    // With attempts to spare: what keeps the delivery is the flag, not exhausted budget.
     expect(started.attempt).toBeLessThan(started.max_attempts);
 
     await expect(repository.ackDelivery(
@@ -185,9 +185,9 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     const after = await deliveryRow(deliveryId);
     expect(after.status).toBe('dead');
     expect(after.terminal).toBe(true);
-    // Queda para replay manual, que es el punto de conservar el trabajo ya pagado.
+    // It is left for manual replay, which is the point of preserving already-paid work.
     expect(await deadLetterCount(deliveryId)).toBe(1);
-    // Y se audita como ambigüedad con ejecución, no como el caso rescatado.
+    // And it is audited as ambiguity WITH execution, not as the rescued case.
     expect((await pool.query<{ metadata: Record<string, unknown> }>(
       `SELECT metadata FROM audit_events
        WHERE action='delivery.ack' AND delivery_id=$1 AND metadata->>'resulting_status'='dead'
@@ -202,8 +202,8 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     const deliveryId = published.delivery_ids[0]!;
     const { max_attempts: maxAttempts } = await deliveryRow(deliveryId);
 
-    // Se repite el ciclo completo: cada vuelta muere ambigua SIN arrancar. Las primeras
-    // reintentan; la última tiene que terminar en 'dead'.
+    // The full cycle is repeated: every round dies ambiguously WITHOUT starting. The early ones
+    // retry; the last one must end up as 'dead'.
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       await pool.query(`UPDATE deliveries SET available_at=now() WHERE id=$1`, [deliveryId]);
       const [claimed] = await repository.claimDeliveries(
@@ -226,7 +226,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     expect(final.terminal).toBe(true);
     expect(await deadLetterCount(deliveryId)).toBe(1);
 
-    // Agotado el presupuesto no queda nada reclamable: el techo es real.
+    // With the budget exhausted, nothing is claimable: the cap is real.
     await pool.query(`UPDATE deliveries SET available_at=now() WHERE id=$1`, [deliveryId]);
     expect(await repository.claimDeliveries(
       'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
@@ -234,9 +234,9 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
   });
 
   it('applies the same rule to every ambiguous code, not just the three best known', async () => {
-    // Los OCHO códigos de `AMBIGUOUS_ACK_ERROR_CODES`. Si alguien agrega uno nuevo al esquema y
-    // no lo cubre, este test no lo detecta: lo que fija es que la regla sea del CONJUNTO y no de
-    // un puñado de casos especiales.
+    // The EIGHT codes from `AMBIGUOUS_ACK_ERROR_CODES`. If someone adds a new one to the schema
+    // without covering it, this test will not catch it: what it pins is that the rule is on the
+    // SET, not on a handful of special cases.
     const codes = [
       'EXECUTION_TIMEOUT_AMBIGUOUS',
       'EXECUTION_CANCELLED_AMBIGUOUS',

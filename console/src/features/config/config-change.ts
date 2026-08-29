@@ -2,9 +2,10 @@ import { ApiError } from '../../api/client';
 import type { ConfigurationChangeResult } from '../../api/types';
 
 /**
- * Qué pasó con la RELECTURA del snapshot que sigue a una escritura. Existe porque «se recargó» era
- * una afirmación que la pantalla no comprobaba: `config.reload()` se llamaba sin esperarla y el
- * cartel salía igual aunque el GET fallara. Una pantalla no puede afirmar lo que no comprobó.
+ * What happened with the RELOAD of the snapshot that follows a write. It exists because
+ * "it reloaded" was a claim the screen did not verify: `config.reload()` was called without
+ * awaiting it, and the banner appeared anyway even if the GET failed. A screen cannot assert
+ * what it did not verify.
  */
 export type EstadoRecarga =
   | { releido: true; revision?: number }
@@ -15,8 +16,8 @@ export type ConfigChangeOutcome =
   | { ok: false; message: string; conflict: boolean; uncertain?: boolean; recarga?: EstadoRecarga };
 
 /**
- * Frase que se le AGREGA al aviso para contar el desenlace de la relectura. `undefined` (un
- * dry-run, que no escribe nada) no agrega nada: no hubo relectura que contar.
+ * Sentence that is ADDED to the notice to describe the reload outcome. `undefined` (a dry-run,
+ * which writes nothing) adds nothing: there was no reload to describe.
  */
 export function textoRecarga(recarga: EstadoRecarga | undefined): string {
   if (!recarga) return '';
@@ -29,9 +30,9 @@ export function textoRecarga(recarga: EstadoRecarga | undefined): string {
 const REVISION_MISMATCH = /revision changed: expected (\d+), current (\d+)/i;
 
 /**
- * El gateway mapea a 409 cualquier conflicto de configuración —fila duplicada, tenant con
- * deliveries activas, revisión vencida—, así que el status por sí solo no identifica el choque
- * optimista: sólo el mensaje del store trae el par expected/current.
+ * The gateway maps every configuration conflict to 409 — duplicate row, tenant with active
+ * deliveries, stale revision — so the status alone does not identify the optimistic clash:
+ * only the store message carries the expected/current pair.
  */
 function revisionMismatch(error: unknown): { expected: string; current: string } | undefined {
   if (!(error instanceof ApiError) || error.status !== 409) return undefined;
@@ -40,15 +41,15 @@ function revisionMismatch(error: unknown): { expected: string; current: string }
 }
 
 /**
- * Por qué camino se pidió la escritura que chocó. Existe porque el mensaje del 409 mandaba a
- * «volver a previsualizar» a TODOS por igual, incluidos los botones de un clic de las tablas y el
- * rollback del audit trail, que no tienen dry-run: el operador leía una instrucción imposible de
- * seguir y no sabía qué se esperaba de él. Un texto que no sirve para el camino que lo usa es tan
- * inútil como no decir nada.
+ * Which path the clashing write came from. It exists because the 409 message told EVERYONE
+ * alike to "go back to preview", including the one-click buttons on the tables and the audit
+ * trail rollback, which have no dry-run: the operator read an instruction impossible to follow
+ * and did not know what was expected of them. Text that does not serve the path it is used on
+ * is as useless as saying nothing.
  */
 export type CaminoDeCambio = 'previsualizado' | 'directo' | 'rollback';
 
-/** Qué hacer después del choque, según el camino que lo disparó. */
+/** What to do after the clash, depending on the path that triggered it. */
 const QUE_HACER: Record<CaminoDeCambio, string> = {
   previsualizado: 'revisá los datos efectivos, volvé a previsualizar y recién ahí aplicá.',
   directo: 'revisá los datos efectivos y volvé a pedir el cambio sobre la revisión nueva.',
@@ -56,7 +57,7 @@ const QUE_HACER: Record<CaminoDeCambio, string> = {
     + 'sobre el estado nuevo.',
 };
 
-/** Cómo se llegó a la revisión vencida, según el camino. */
+/** How the stale revision was reached, per path. */
 const COMO_LLEGO: Record<CaminoDeCambio, string> = {
   previsualizado: 'previsualizaste sobre la revisión',
   directo: 'pediste el cambio sobre la revisión',
@@ -72,8 +73,8 @@ export function describeConfigError(
   if (mismatch) {
     return {
       conflict: true,
-      // El texto NO dice «se recargó el snapshot»: quien llama es el único que sabe si la
-      // relectura llegó, y lo agrega con `textoRecarga` DESPUÉS de esperarla.
+      // The text does NOT say "the snapshot was reloaded": the caller is the only one who knows
+      // whether the reload arrived, and appends it via `textoRecarga` AFTER awaiting it.
       message: `Conflicto de revisión: ${COMO_LLEGO[camino]} ${mismatch.expected} y el servidor ya va por la ${mismatch.current}. `
         + `Otro operador cambió la configuración y no se aplicó nada: ${QUE_HACER[camino]}`,
     };
@@ -82,15 +83,14 @@ export function describeConfigError(
 }
 
 /**
- * **Un 403 al LEER la configuración es una falta de permiso, no una caída del control plane.**
+ * **A 403 when READING the configuration is a permission failure, not the control plane going down.**
  *
- * `GET /v3/console/config` exige `requireOperatorPermission(actor,'control')`. La barra lateral ya
- * lo sabía 
- * (`configNavAvailability`), pero quien llegaba a `/config` por un marcador o pegando la URL se
- * saltaba el menú entero y aterrizaba en el `ErrorState` genérico: «No se pudo leer Cauce V3 /
- * Forbidden / Reintentar». Tres mentiras en una línea —Cauce se lee perfectamente, «Forbidden» no
- * explica nada, y reintentar no puede cambiar un permiso— para el mismo hecho que la barra contaba
- * bien tres centímetros a la izquierda.
+ * `GET /v3/console/config` requires `requireOperatorPermission(actor,'control')`. The sidebar
+ * already knew that (`configNavAvailability`), but whoever reached `/config` via a bookmark or
+ * by pasting the URL skipped the entire menu and landed on the generic `ErrorState`: "Could not
+ * read Cauce V3 / Forbidden / Retry". Three lies in one line — Cauce reads fine, "Forbidden"
+ * explains nothing, and retrying cannot change a permission — for the same fact the sidebar
+ * reported correctly three centimetres to the left.
  */
 export function esNegativaDeControl(error: unknown): error is ApiError {
   return error instanceof ApiError && error.status === 403;

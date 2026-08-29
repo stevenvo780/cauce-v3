@@ -3,16 +3,15 @@ import type { AgentFactsProbe } from './agent-documents.routes.js';
 import { SondaCompartida, sondaDiferida } from './sonda-compartida.js';
 
 /**
- * EL HUECO ENTRE DOS REGISTROS QUE NO PUEDEN VERSE.
+ * THE GAP BETWEEN TWO REGISTRIES THAT CANNOT SEE EACH OTHER.
  *
- * Las rutas de documentos se montan en `app.ts` y la sonda que de verdad lee el disco del
- * contenedor la construye el plano de terminal, que se registra DESPUÉS. Sin este hueco había que
- * elegir entre dos cosas malas: rutas caídas —404, el estado del que venimos— o rutas montadas y
- * muertas.
+ * The document routes are mounted in `app.ts`, and the probe that actually reads the container's
+ * disk is built by the terminal plane, which registers AFTER. Without this gap there was a choice
+ * between two bad options: dead routes — 404, the state we came from — or routes mounted but dead.
  *
- * Lo que se prueba acá es sobre todo la trampa: que la sonda se resuelva EN CADA llamada. Una
- * implementación que la capture al arrancar pasa cualquier prueba escrita al revés —instalar
- * primero, llamar después— y falla exactamente en el orden real de producción.
+ * What is tested here is mainly the trap: that the probe is resolved on EVERY call. An
+ * implementation that captures it at startup passes any test written the other way around —
+ * install first, call later — and fails exactly in the real production order.
  */
 
 function sondaFalsa(marca: string): AgentFactsProbe {
@@ -32,9 +31,9 @@ describe('sin sonda instalada, la degradada dice la verdad en vez de lanzar', ()
 
   it('leer contesta «no hay canal», no una excepción', async () => {
     /*
-     * Lanzar convertiría un canal ausente en un 500 «internal error», que es lo que el operador no
-     * puede accionar. Y peor: el manejador de las rutas envuelve la llamada, así que un throw se
-     * vería como un fallo del gateway en vez de como lo que es.
+     * Throwing would turn a missing channel into a 500 "internal error", which is what the
+     * operator cannot act on. Worse: the routes' handler wraps the call, so a throw would show
+     * up as a gateway failure instead of as what it really is.
      */
     const hueco = new SondaCompartida();
     const resultado = await sondaDiferida(hueco).readGovernanceDocument(
@@ -75,13 +74,14 @@ describe('con sonda instalada, delega en ella', () => {
 describe('🔴 la trampa: se resuelve en CADA llamada, no al construirse', () => {
   it('una sonda diferida creada ANTES de instalar igual encuentra la real', async () => {
     /*
-     * Éste es EL orden de producción: `app.ts` crea la diferida y monta las rutas, y sólo después
-     * `main.ts` registra el plano de terminal que instala la real. Una implementación que capturase
-     * `hueco.actual()` al construirse guardaría la degradada para siempre y este caso —el único
-     * que ocurre de verdad— fallaría, mientras que instalar-antes-de-crear pasaría sin problema.
+     * This IS the production order: `app.ts` creates the deferred and mounts the routes, and
+     * only `main.ts` registers the terminal plane that installs the real one afterwards. An
+     * implementation that captured `hueco.actual()` at build time would keep the degraded
+     * probe forever and this case — the only one that actually occurs — would fail, while
+     * install-before-create would pass without trouble.
      *
-     * Sin esta prueba, ese defecto no daría ningún error: las rutas seguirían contestando «no hay
-     * canal» con el canal ya montado al lado.
+     * Without this test, the defect would not produce any error: the routes would keep
+     * answering "no channel" while the channel is already mounted next door.
      */
     const hueco = new SondaCompartida();
     const diferida = sondaDiferida(hueco);           // se crea PRIMERO, como en app.ts
@@ -117,9 +117,9 @@ describe('🔴 la trampa: se resuelve en CADA llamada, no al construirse', () =>
 
   it('CONTROL NEGATIVO: dos huecos NO comparten sonda', () => {
     /*
-     * Por esto el hueco se decora sobre la instancia de Fastify y no vive como estado de módulo:
-     * los tests montan varios gateways en el mismo proceso, y con estado de módulo todos acabarían
-     * usando la sonda del último en arrancar — o sea leyendo el disco del contenedor equivocado.
+     * This is why the gap is decorated onto the Fastify instance and does not live as module
+     * state: the tests mount several gateways in the same process, and with module state they
+     * would all end up using the last probe started — reading the wrong container's disk.
      */
     const uno = new SondaCompartida();
     const otro = new SondaCompartida();

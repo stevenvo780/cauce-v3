@@ -1,11 +1,11 @@
 /**
- * Saneo de contenido de terceros y detección de nombres confundibles.
+ * Third-party content sanitisation and confusable-name detection.
  */
 
 import type { TelegramUser } from './types.js';
 
-// Detectar caracteres de control ES el objetivo: este regex sanea texto libre controlado por
-// terceros (nombres, usernames, extractos de reply) antes de que llegue al prompt del harness.
+// Detecting control characters IS the goal: this regex sanitises free text controlled by third
+// parties (names, usernames, reply excerpts) before it reaches the harness's prompt.
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f]+', 'gu');
 
@@ -21,17 +21,17 @@ const INVISIBLE_CHARACTERS =
   new RegExp('[\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufeff\\ufff9-\\ufffb]', 'gu');
 
 /**
- * Marcas combinantes y formato. Se borran para el esqueleto (no para el nombre que se muestra):
- * `\p{M}` cubre tildes, diacríticos y el punto que `toLowerCase()` le agrega a la İ turca;
- * `\p{Cf}` es la red de seguridad por si a alguien le llega acá un texto que no pasó por
- * `safeInline` (el bidi y los de ancho cero ya los sacó `INVISIBLE_CHARACTERS`).
+ * Combining marks and formatting. They are erased for the skeleton (not for the displayed name):
+ * `\p{M}` covers accents, diacritics and the dot that `toLowerCase()` adds to Turkish İ;
+ * `\p{Cf}` is the safety net in case some text that did not pass through `safeInline` reaches here
+ * (bidi and zero-width were already stripped by `INVISIBLE_CHARACTERS`).
  */
 const SKELETON_NOISE = /[\p{M}\p{Cf}]/gu;
 
-/** Separador de palabras para comparar por token: todo lo que no sea letra ni dígito. */
+/** Word separator for token comparison: anything that is not a letter or a digit. */
 const SKELETON_SEPARATORS = /[^\p{L}\p{N}]+/gu;
 
-/** [prototipo latino, confundibles que colapsan en él]. Ver el comentario de cabecera. */
+/** [latin prototype, confusables that collapse onto it]. See the header comment. */
 const CONFUSABLE_TABLE: readonly (readonly [string, string])[] = [
   // CYRILLIC A / GREEK ALPHA / LATIN ALPHA / SMALL CAPITAL A
   ['a', '\u0430\u03b1\u0251\u1d00'],
@@ -69,11 +69,11 @@ const CONFUSABLE_TABLE: readonly (readonly [string, string])[] = [
   ['q', '\u051b'],
   // CYRILLIC GHE / SMALL CAPITAL R
   ['r', '\u0433\u0280'],
-  // CYRILLIC DZE  <- la S del informe: la mayuscula U+0405 pliega aca
+  // CYRILLIC DZE  <- the S from the report: the uppercase U+0405 folds here
   ['s', '\u0455'],
   // CYRILLIC TE / GREEK TAU / SMALL CAPITAL T
   ['t', '\u0442\u03c4\u1d1b'],
-  // GREEK UPSILON / GREEK MU (la MICRO SIGN U+00B5 descompone en ella) / SMALL CAPITAL U
+  // GREEK UPSILON / GREEK MU (the MICRO SIGN U+00B5 decomposes into it) / SMALL CAPITAL U
   ['u', '\u03c5\u03bc\u1d1c'],
   // GREEK NU / CYRILLIC IZHITSA / SMALL CAPITAL V / ROMAN NUMERAL 5
   ['v', '\u03bd\u0475\u1d20\u2174'],
@@ -83,9 +83,9 @@ const CONFUSABLE_TABLE: readonly (readonly [string, string])[] = [
   ['x', '\u0445\u03c7\u2179'],
   // CYRILLIC U / CYRILLIC STRAIGHT U / GREEK GAMMA / SMALL CAPITAL Y
   ['y', '\u0443\u04af\u03b3\u028f'],
-  // GREEK ZETA (la mayuscula U+0396 pliega aca) / SMALL CAPITAL Z
+  // GREEK ZETA (the uppercase U+0396 folds here) / SMALL CAPITAL Z
   ['z', '\u03b6\u1d22'],
-  // LATIN SHARP S: toLowerCase() la deja igual; el case-folding real la abre en "ss"
+  // LATIN SHARP S: toLowerCase() leaves it as is; the real case-folding splits it into "ss"
   ['ss', '\u00df']
 ];
 
@@ -94,14 +94,14 @@ const CONFUSABLES: ReadonlyMap<string, string> = new Map(
 );
 
 /**
- * Nombre mínimo que se compara contra un alias.
+ * Minimum name length that is compared against an alias.
  *
- * Con menos de tres caracteres la coincidencia deja de significar algo: cualquier apodo corto
- * chocaría con cualquier cosa y la advertencia perdería todo su valor por saturación.
+ * Below three characters a match stops meaning anything: any short nickname would collide with
+ * anything else and the warning would lose all its value through saturation.
  */
 const MIN_RESERVED_NAME_LENGTH = 3;
 
-/** Techos de longitud. Un nombre no es un mensaje: recortar es parte de la defensa. */
+/** Length ceilings. A name is not a message: truncating is part of the defence. */
 export const MAX_DISPLAY_NAME_LENGTH = 64;
 export const MAX_USERNAME_LENGTH = 32;
 
@@ -134,11 +134,11 @@ export function safeInline(value: unknown, limit: number): string | undefined {
 }
 
 /**
- * Esqueleto de confundibles: dos strings que se DIBUJAN igual tienen que dar el mismo esqueleto.
+ * Confusable skeleton: two strings that RENDER the same must yield the same skeleton.
  *
- * Sólo se usa para comparar contra los nombres reservados de la flota y para mostrarle al agente
- * contra qué se comparó. Nunca reemplaza al nombre que escribió el humano: el nombre que se
- * muestra es el suyo, saneado, no su esqueleto.
+ * Only used to compare against the fleet's reserved names and to show the agent what was compared
+ * against. It never replaces the human-written name: the displayed name is theirs, sanitised, not
+ * their skeleton.
  */
 export function confusableSkeleton(value: string): string {
   const folded = value.normalize('NFKD').toLowerCase().replace(SKELETON_NOISE, '');
@@ -148,12 +148,12 @@ export function confusableSkeleton(value: string): string {
 }
 
 /**
- * ¿Este nombre se dibuja como el de alguien de la flota?
+ * Does this name render like that of someone on the fleet?
  *
- * Compara el esqueleto completo y también cada palabra suelta, porque «Ζeus (soporte)» es el
- * mismo intento que «Ζeus». NO compara por subcadena a propósito: «kanta» no es un intento de
- * hacerse pasar por `kant`, y una advertencia que salta con nombres normales se vuelve ruido y
- * deja de leerse, que es exactamente cómo se pierde la advertencia que sí importaba.
+ * It compares the full skeleton and also each individual token, because "Ζeus (support)" is the
+ * same attempt as "Ζeus". It intentionally does NOT match by substring: "kanta" is not an attempt
+ * to impersonate `kant`, and a warning that fires with normal names becomes noise and stops being
+ * read — which is exactly how the warning that actually mattered gets lost.
  */
 export function reservedNameHit(value: string, reserved: Iterable<string>): string | undefined {
   const skeleton = confusableSkeleton(value);
@@ -168,7 +168,7 @@ export function reservedNameHit(value: string, reserved: Iterable<string>): stri
   return undefined;
 }
 
-/** Sospecha de suplantación: qué nombre imita, por qué campo, y con qué esqueleto se detectó. */
+/** Impersonation suspicion: which name it mimics, by which field, and with which skeleton it was detected. */
 export interface ImpersonationSuspicion {
   readonly collides_with: string;
   readonly field: 'display_name' | 'username';
@@ -176,18 +176,18 @@ export interface ImpersonationSuspicion {
 }
 
 export interface UntrustedAuthor {
-  /** Ausente cuando Telegram no mandó ni nombre ni username utilizable. */
+  /** Absent when Telegram did not send a usable name or username. */
   readonly author: Record<string, unknown> | undefined;
   readonly impersonation: ImpersonationSuspicion | undefined;
 }
 
 /**
- * Identidad NO VERIFICADA del humano que escribió el mensaje, lista para el bloque untrusted.
+ * UNVERIFIED identity of the human who wrote the message, ready for the untrusted block.
  *
- * `display_name` es texto libre que eligió el remitente; `username` es el @ de Telegram, que
- * Telegram sí obliga a ser único y ASCII pero que igual puede llamarse `zeus_oficial`. Los dos se
- * comparan contra los nombres reservados de la flota: el vector de suplantación es hacerse pasar
- * por otro agente o por el dueño de la instalación.
+ * `display_name` is free text chosen by the sender; `username` is the Telegram @, which Telegram
+ * does force to be unique and ASCII but which can still be called `zeus_oficial`. Both are
+ * compared against the fleet's reserved names: the impersonation vector is to pose as another
+ * agent or as the install's owner.
  */
 export function untrustedAuthor(
   from: TelegramUser | undefined,
@@ -200,7 +200,7 @@ export function untrustedAuthor(
     ...(displayName === undefined ? {} : { display_name: displayName })
   };
   if (Object.keys(author).length === 0) return { author: undefined, impersonation: undefined };
-  // El nombre visible primero: es el que se ve en el chat y el que no cuesta nada falsificar.
+  // The visible name first: it is the one seen in the chat and the cheapest to forge.
   const byDisplayName = displayName === undefined ? undefined : reservedNameHit(displayName, reserved);
   const byUsername = username === undefined ? undefined : reservedNameHit(username, reserved);
   const impersonation: ImpersonationSuspicion | undefined =

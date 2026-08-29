@@ -10,12 +10,12 @@ import {
 } from './agent-state-helpers';
 
 /**
- * Los siete estados que la consola distingue, cada uno con su muñeco. El orden del
- * union es el de precedencia: `down` gana a todo, `idle` pierde con todo.
+ * The seven states the console distinguishes, each with its own doll. The order of the union
+ * is the precedence: `down` wins over everything, `idle` loses to everything.
  *
- * Un lease vivo no prueba que el agente responda: `blocked` se deriva de señales de estancamiento
- * (`work_state: 'stalled'`, `ack_stalled`, `overdue_acks`), y `down` se declara cuando el
- * lease venció o nunca hubo conexión.
+ * A live lease does not prove the agent responds: `blocked` is derived from stall signals
+ * (`work_state: 'stalled'`, `ack_stalled`, `overdue_acks`), and `down` is declared when the
+ * lease has expired or there was never a connection.
  */
 export type LiveState =
   | 'down'
@@ -32,7 +32,7 @@ export const LIVE_STATES: readonly LiveState[] = [
 
 export interface LiveStateMeta {
   label: string;
-  /** Una línea, en castellano, que explica qué está pasando sin jerga de base de datos. */
+  /** One line, in Spanish, explaining what is happening without database jargon. */
   hint: string;
   tone: 'neutral' | 'info' | 'positive' | 'warning' | 'danger';
 }
@@ -65,7 +65,7 @@ export const STATE_ACCENT: Record<LiveState, string> = {
   idle: 'var(--faint)',
 };
 
-/** Cuánto dura en pantalla un estado transitorio antes de caer al estado estable. */
+/** How long a transient state stays on screen before falling to the stable state. */
 export const BURST_MS = 4500;
 
 export function agentKey(agent: { tenant_id: string; alias: string }): string {
@@ -79,9 +79,9 @@ export interface LiveAgentView {
   displayName?: string | null;
   harnessId?: string | null;
   state: LiveState;
-  /** Motivo concreto y verificable del estado, para el tooltip y el lector de pantalla. */
+  /** Concrete and verifiable reason for the state, for the tooltip and the screen reader. */
   reason: string;
-  /** `working` con `in_flight >= saturation_in_flight`: el muñeco piensa, pero recalentado. */
+  /** `working` with `in_flight >= saturation_in_flight`: the doll is thinking, but overheated. */
   overloaded: boolean;
   inFlight: number;
   queued: number;
@@ -91,7 +91,7 @@ export interface LiveAgentView {
   delegatedFrom: string[];
   flags: string[];
   /**
-   * Entregas cerradas en 24 h, o `undefined` si el servidor no lo informa.
+   * Deliveries closed in the last 24 h, or `undefined` if the server does not report it.
    */
   closed24h?: number;
   rooms: string[];
@@ -107,8 +107,8 @@ export interface LiveStateContext {
 }
 
 /**
- * El estado del muñeco. Precedencia explícita, de arriba abajo, y cada rama deja escrito POR QUÉ
- * decidió eso: si mañana un muñeco miente, el motivo dice contra qué campo contrastarlo.
+ * The doll's state. Explicit precedence, top to bottom, and each branch states WHY it decided
+ * that: if a doll lies tomorrow, the reason says which field to contrast it against.
  */
 export function liveState(
   agent: FleetActivityAgent,
@@ -225,7 +225,7 @@ function decidirEstado(
   return { state: 'idle', reason: 'Conectado, con lease vigente y nada en vuelo.', overloaded };
 }
 
-/** Cuenta por estado, para la barra de resumen. Siempre publica los siete, incluso en cero. */
+/** Count per state, for the summary bar. Always publishes all seven, even at zero. */
 export function stateTally(views: readonly LiveAgentView[]): Record<LiveState, number> {
   const tally = Object.fromEntries(LIVE_STATES.map((state) => [state, 0])) as Record<LiveState, number>;
   for (const view of views) tally[view.state] += 1;
@@ -233,11 +233,11 @@ export function stateTally(views: readonly LiveAgentView[]): Record<LiveState, n
 }
 
 // ==============================================================================================
-// El veredicto, y lo que hace falta para poder emitirlo honestamente.
+// The verdict, and what is needed to be able to issue it honestly.
 // ==============================================================================================
 
 /**
- * Los siete estados son la verdad del sistema; estos tres son la pregunta del dueño.
+ * The seven states are the system's truth; these three are the owner's question.
  */
 export type OwnerBucket = 'problema' | 'ocupado' | 'libre';
 
@@ -252,26 +252,26 @@ export const ROTULO_OCUPADOS = 'con trabajo entre manos';
 export interface VerdictCulprit {
   key: string;
   alias: string;
-  /** Frase corta y comprobable: "trabado hace 22 min", "caído". Es lo que va dentro del chip. */
+  /** Short and verifiable phrase: "stuck 22 min ago", "down". It is what goes inside the chip. */
   motivo: string;
 }
 
 export interface Verdict {
   tone: 'ok' | 'alerta' | 'desconocido';
-  /** Una sola frase, la que se lee en tres segundos. */
+  /** A single sentence, the one read in three seconds. */
   frase: string;
-  /** La línea de apoyo, con las cifras que sostienen la frase. */
+  /** The support line, with the figures that back the sentence. */
   apoyo: string;
   culpables: VerdictCulprit[];
 }
 
 export interface VerdictInput {
-  /** La última lectura falló. Basta por sí solo para que el veredicto NO sea verde. */
+  /** The last read failed. Enough on its own to make the verdict NOT green. */
   error?: Error | null;
-  /** `observed_at` del snapshot que se está mostrando. */
+  /** `observed_at` of the snapshot being shown. */
   observedAt?: string | null;
   nowMs: number;
-  /** A partir de qué antigüedad el snapshot deja de acreditar nada. */
+  /** From what age the snapshot stops proving anything. */
   staleAfterMs: number;
 }
 

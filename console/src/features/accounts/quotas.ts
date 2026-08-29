@@ -25,12 +25,12 @@ const SEVERITY_RANK: Record<QuotaSeverity, number> = {
   ok: 0,
 };
 
-/** unknown se ordena por encima de ok: un proveedor sin severidad no debe asumirse sano. */
+/** unknown sorts above ok: a provider without a severity must not be assumed healthy. */
 export function severityRank(severity: QuotaSeverity | null | undefined): number {
   return severity && severity in SEVERITY_RANK ? SEVERITY_RANK[severity] : SEVERITY_RANK.unknown;
 }
 
-/** Peor primero: el proveedor que se está por agotar tiene que aparecer arriba de la lista. */
+/** Worst first: the provider about to run out must appear at the top of the list. */
 export function sortProvidersBySeverity(providers: readonly QuotaProviderReport[]): QuotaProviderReport[] {
   return [...providers].sort((left, right) => {
     const rankDiff = severityRank(right.severity) - severityRank(left.severity);
@@ -39,8 +39,8 @@ export function sortProvidersBySeverity(providers: readonly QuotaProviderReport[
   });
 }
 
-/** La ventana más comprometida de un conjunto: mayor severidad, y a igual severidad, menos
- *  remaining_percent (nulls van al final: no informar no es lo mismo que estar en cero). */
+/** The most compromised window in a set: highest severity, and at equal severity, the lowest
+ *  remaining_percent (nulls go last: not reporting is not the same as being at zero). */
 export function worstWindow(windows: readonly QuotaWindow[]): QuotaWindow | undefined {
   if (windows.length === 0) return undefined;
   return [...windows].sort((left, right) => {
@@ -53,19 +53,19 @@ export function worstWindow(windows: readonly QuotaWindow[]): QuotaWindow | unde
 }
 
 export interface WindowFamilyGroup {
-  /** Clave estable para React; sintética cuando la ventana no declara family. */
+  /** Stable key for React; synthetic when the window does not declare a family. */
   key: string;
-  /** family real, o el label/window_key de la única ventana cuando no hay agrupación real. */
+  /** Real family, or the label/window_key of the single window when there is no real grouping. */
   label: string;
   windows: QuotaWindow[];
   worst: QuotaWindow;
-  /** true cuando hay múltiples ventanas en la misma familia de cuotas (colapsado por defecto). */
+  /** true when there are multiple windows in the same quota family (collapsed by default). */
   collapsible: boolean;
 }
 
 /**
- * Agrupa las ventanas de un grupo por `family` (fallback: cada ventana sin family es su propia
- * familia de un solo elemento, para no mezclar cosas que no declaran ningún parentesco).
+ * Groups a group's windows by `family` (fallback: each window without a family is its own
+ * single-element family, so things that declare no kinship are not mixed together).
  */
 export function groupWindowsByFamily(windows: readonly QuotaWindow[]): WindowFamilyGroup[] {
   const order: string[] = [];
@@ -98,8 +98,8 @@ export interface QuotaRow {
   family: WindowFamilyGroup;
 }
 
-/** Aplana (proveedor→grupo→familia) a filas de tabla: una fila por cuenta+familia de ventana,
- *  que es exactamente el grano que "gritar desde la pantalla" necesita mostrar de un vistazo. */
+/** Flattens (provider→group→family) into table rows: one row per account+window family, which
+ *  is exactly the grain that "shouting from the screen" needs to show at a glance. */
 export function buildQuotaRows(groups: readonly QuotaGroup[]): QuotaRow[] {
   const rows: QuotaRow[] = [];
   for (const group of groups) {
@@ -110,8 +110,8 @@ export function buildQuotaRows(groups: readonly QuotaGroup[]): QuotaRow[] {
   return rows;
 }
 
-/** reset_in_seconds <= 0 se muestra explícitamente "vencido": un reloj de recolector atrasado
- *  no debe leerse como "resetea en -3s". null se queda UNKNOWN, nunca "ahora mismo". */
+/** reset_in_seconds <= 0 is explicitly shown as "expired": a slow collector clock must not be
+ *  read as "resets in -3s". null stays UNKNOWN, never "right now". */
 export function formatResetIn(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return 'sin dato';
   if (seconds <= 0) return 'vencido';
@@ -128,27 +128,27 @@ function humanDuration(totalSeconds: number): string {
   return `${String(minutes)}m`;
 }
 
-/** Ausencia de umbral o de edad deja el resultado UNKNOWN en vez de asumir frescura. */
+/** Absence of threshold or age leaves the result UNKNOWN instead of assuming freshness. */
 export function isAgeStale(ageSeconds: number | null | undefined, staleAfterSeconds: number | null | undefined): boolean | undefined {
   if (ageSeconds === null || ageSeconds === undefined) return undefined;
   if (staleAfterSeconds === null || staleAfterSeconds === undefined) return undefined;
   return ageSeconds > staleAfterSeconds;
 }
 
-/** used/limit sólo se muestran cuando el proveedor los informa (opencode); no se inventa un
- *  denominador para providers que sólo hablan en porcentaje. */
+/** used/limit are only shown when the provider reports them (opencode); a denominator is not
+ *  invented for providers that only speak in percentages. */
 export function formatUnits(used: number | null | undefined, limit: number | null | undefined): string | undefined {
   if (limit === null || limit === undefined) return undefined;
   return `${String(used ?? '?')} / ${String(limit)}`;
 }
 
 /* ============================================================================================ *
- * El porcentaje de la cabecera de un proveedor.
+ * The percentage on a provider's header.
  * ============================================================================================ */
 
 /**
- * Calcula el peor porcentaje restante de las ventanas de un proveedor para alinearlo
- * con la severidad más restrictiva en la cabecera.
+ * Computes the worst remaining percentage across a provider's windows, to align it with the
+ * most restrictive severity on the header.
  */
 export function peorPorcentajeDelProveedor(provider: QuotaProviderReport): number | undefined {
   let peor: number | undefined;
@@ -163,8 +163,8 @@ export function peorPorcentajeDelProveedor(provider: QuotaProviderReport): numbe
 }
 
 /**
- * `true` cuando el porcentaje efectivo del servidor y el peor de las ventanas NO cuentan la misma
- * historia. Se usa para decirlo en la cabecera en vez de dejar que el operador lo descubra.
+ * `true` when the server's effective percentage and the worst window do NOT tell the same story.
+ * Used to say so on the header instead of letting the operator discover it.
  */
 export function porcentajesEnConflicto(provider: QuotaProviderReport): boolean {
   const efectivo = provider.effective_remaining_percent;

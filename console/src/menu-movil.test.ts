@@ -8,42 +8,41 @@ import {
 } from './test/css-parser';
 
 /**
- * **LA NAVEGACIÓN PRIMARIA, ILEGIBLE EN EL TELÉFONO.**
+ * **THE PRIMARY NAVIGATION, UNREADABLE ON THE PHONE.**
  *
- * 
- * `/live`. Los ocho rótulos de la barra inferior se PISABAN unos con otros y se leían como texto
- * corrupto:
+ * `/live`. The eight labels of the bottom bar OVERLAPPED each other and read like corrupted text:
  *
- *     «Portada  La flota ahoCuentas y cuotaMensajesQueues &SDBlQles y a»
+ *     "Portada  La flota ahoCuentas y cuotaMensajesQueues &SDBlQles y a"
  *
- * Sólo «Portada» quedaba legible. Cinco pares de rótulos adyacentes se solapaban, medido con
- * `getBoundingClientRect`: «Señales y auditoría»↔«Ajustes y altas» 42,2 px ·
- * «Ajustes y altas»↔«Ultimate Terminal» 38,4 px · «Queues & DLQ»↔«Señales y auditoría»
- * 25,0 px · «La flota ahora»↔«Cuentas y cuotas» 18,5 px · «Cuentas y cuotas»↔«Mensajes» 6,9 px.
- * Cada `<a>` medía 54 px de caja con 62–81 px de texto dentro, y el `<ul>` sumaba 493 px en una
- * barra de 344. El CSS servido en producción era
- * `.sidebar nav ul{display:flex;overflow-x:auto;gap:4px}` con el rótulo en `nowrap`.
+ * Only "Portada" stayed readable. Five pairs of adjacent labels overlapped, measured with
+ * `getBoundingClientRect`: "Señales y auditoría"↔"Ajustes y altas" 42.2 px ·
+ * "Ajustes y altas"↔"Ultimate Terminal" 38.4 px · "Queues & DLQ"↔"Señales y auditoría"
+ * 25.0 px · "La flota ahora"↔"Cuentas y cuotas" 18.5 px · "Cuentas y cuotas"↔"Mensajes" 6.9 px.
+ * Each `<a>` measured 54 px of box with 62-81 px of text inside, and the `<ul>` summed 493 px in
+ * a 344-px bar. The production CSS was `.sidebar nav ul{display:flex;overflow-x:auto;gap:4px}`
+ * with the label in `nowrap`.
  *
- * **Lo que este fichero NO prueba, y hay que decirlo:** que en un navegador real los rótulos no
- * se toquen. Eso se mide con Chrome a 360 px, no acá — vitest corre en jsdom, que no hace layout,
- * así que ninguna de las 650 pruebas de esta consola mira una sola regla y un menú que se pisa
- * pasa verde por unanimidad. Lo que sí prueba es la causa, sobre la hoja: la tira que se arrastra
- * y el rótulo que no puede partirse. Cada afirmación lleva su CONTROL NEGATIVO POR MUTACIÓN.
+ * **What this file does NOT test, and has to be said:** that in a real browser the labels do
+ * not touch. That is measured with Chrome at 360 px, not here — vitest runs on jsdom, which
+ * does not do layout, so none of this console's 650 tests looks at a single rule and an
+ * overlapping menu passes green by unanimity. What it does test is the cause, on the stylesheet:
+ * the scrolling strip and the label that cannot break. Every assertion carries its own
+ * NEGATIVE MUTATION CONTROL.
  *
- * La reja de cuatro columnas viene de `consola/fix-legibilidad-20260823`, donde se midió en
- * Chrome con el arnés de `ops/console-legibilidad/`. Acá se replica idéntica —a propósito: dos
- * ramas que arreglan lo mismo con el mismo texto se funden sin conflicto— y se le pone el guardia
- * que faltaba en esta rama.
+ * The four-column grid comes from `consola/fix-legibilidad-20260823`, where it was measured in
+ * Chrome with the harness from `ops/console-legibilidad/`. It is replicated here identically — on
+ * purpose: two branches fixing the same thing with the same text merge without conflict — and the
+ * guard that was missing in this branch is added here.
  */
 
 const GLOBAL = leerCss('styles.css');
 
-/** El corte en el que la consola pasa a barra de navegación inferior fija. */
+/** The breakpoint at which the console switches to a fixed bottom navigation bar. */
 const CORTE_ESTRECHO = 760;
 
 /**
- * El diagnóstico completo del menú de móvil. Devuelve la LISTA DE DEFECTOS y no un booleano, para
- * que el control negativo pueda exigir el defecto concreto y no «algo falló».
+ * The complete mobile menu diagnosis. Returns the LIST OF DEFECTS, not a boolean, so the
+ * negative control can require the specific defect rather than "something failed".
  */
 export function defectosDelMenuMovil(global: string): string[] {
   const defectos: string[] = [];
@@ -61,7 +60,7 @@ export function defectosDelMenuMovil(global: string): string[] {
   const columnas = valor(lista, 'grid-template-columns');
   const repeticion = columnas ? /repeat\(\s*(\d+)\s*,/.exec(columnas) : null;
   const cuantas = repeticion ? Number(repeticion[1]) : 0;
-  // Con las ocho entradas de `NAV_ENTRIES` y dos filas, hacen falta cuatro columnas o más.
+  // With the eight entries in `NAV_ENTRIES` and two rows, four columns or more are needed.
   if (cuantas < Math.ceil(NAV_ENTRIES.length / 2)) {
     defectos.push(
       `el menú de móvil declara ${String(cuantas)} columnas y hay ${String(NAV_ENTRIES.length)} entradas: `
@@ -100,9 +99,9 @@ describe('el menú de móvil de la consola', () => {
   });
 
   it('CONTROL NEGATIVO — marca la vuelta a la tira `flex` que se arrastra, que es lo que se midió', () => {
-    // La reja del menú de ESCRITORIO también empieza por `display: grid`: sin citar las columnas,
-    // la mutación caería sobre ella y el bloque de móvil quedaría intacto — un control negativo
-    // que muta la regla equivocada aprueba el defecto que venía a buscar.
+    // The DESKTOP menu grid also starts with `display: grid`: without naming the columns, the
+    // mutation would land there and the mobile block would remain untouched — a negative control
+    // that mutates the wrong rule would pass the defect it came to look for.
     const roto = GLOBAL.replace(
       /\.sidebar nav ul \{ display: grid; grid-template-columns:[^}]*\}/,
       '.sidebar nav ul { display: flex; overflow-x: auto; gap: 4px; }',
@@ -128,9 +127,9 @@ describe('el menú de móvil de la consola', () => {
 
   it('la reja se dimensiona para las entradas que HAY, no para las que había cuando se escribió', () => {
     /*
-     * El recuento no se copia a mano. `NAV_ENTRIES` pasó de trece entradas a ocho en agosto; un
-     * «cuatro columnas» escrito de memoria envejece en cuanto alguien agregue la novena, y
-     * envejece en silencio: no rompe el typecheck, ni el lint, ni ninguna prueba de DOM.
+     * The count is not copy-pasted by hand. `NAV_ENTRIES` went from thirteen entries to eight in
+     * August; a "four columns" written from memory ages the moment someone adds the ninth, and it
+     * ages silently: it does not break typecheck, nor lint, nor any DOM test.
      */
     const estrecho = bloqueMedia(GLOBAL, `@media (max-width: ${String(CORTE_ESTRECHO)}px)`);
     const columnas = valor(declaraciones(estrecho, '.sidebar nav ul'), 'grid-template-columns') ?? '';

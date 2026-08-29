@@ -8,14 +8,14 @@ import type {
 } from './agent-documents.routes.js';
 
 /**
- * Cliente HTTP para comunicación con el endpoint de lectura y escritura de gobierno del terminal-relay.
- * Transmite solicitudes autenticadas mediante token compartido y TLS mutuo.
+ * HTTP client for communication with the terminal-relay governance read/write endpoint.
+ * Transmits requests authenticated via shared token and mutual TLS.
  */
 
-/** Límite de bytes acumulados de la respuesta HTTP. */
+/** Limit on accumulated bytes of the HTTP response. */
 const MAX_RESPONSE_BYTES = 512 * 1024;
 
-/** Tiempo de espera predeterminado para solicitudes hacia el terminal-relay. */
+/** Default timeout for requests to the terminal-relay. */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 const READ_CODES: readonly GovernanceReadError['error'][] = [
@@ -37,14 +37,14 @@ const SENSITIVE_BASENAMES = new Set([
 const SENSITIVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 
 export interface HttpGovernanceRelayClientOptions {
-  /** Origen HTTPS del lado navegador del relay, p. ej. `https://terminal-relay:8446`. */
+  /** Browser-side HTTPS origin of the relay, e.g. `https://terminal-relay:8446`. */
   readonly relayUrl: string;
-  /** El token compartido, ya en memoria: es el mismo `relayToken` de `TerminalConfig`. */
+  /** The shared token, already in memory: it is the same `relayToken` from `TerminalConfig`. */
   readonly token: string;
   readonly timeoutMs?: number;
-  /** CA del certificado de servidor del relay, si lo firma una CA privada. */
+  /** CA of the relay's server certificate, if it is signed by a private CA. */
   readonly ca?: Buffer;
-  /** Certificado y clave de cliente para autenticación mTLS contra el relay. */
+  /** Client certificate and key for mTLS authentication against the relay. */
   readonly clientCert?: Buffer;
   readonly clientKey?: Buffer;
 }
@@ -52,7 +52,7 @@ export interface HttpGovernanceRelayClientOptions {
 interface HttpResult {
   readonly status: number;
   readonly body: string;
-  /** El relay se pasó del tope y se cortó la respuesta a medias. */
+  /** The relay exceeded the cap and the response was cut off mid-stream. */
   readonly overflowed: boolean;
 }
 
@@ -101,7 +101,7 @@ function validIsoDate(value: unknown): value is string {
     && date.getUTCSeconds() === Number(match[6]);
 }
 
-/** Un código que no reconocemos es `unknown`, nunca se propaga tal cual. */
+/** A code we do not recognize is `unknown`, it is never propagated as-is. */
 function normalizeCode(value: string): GovernanceReadError['error'] {
   return READ_CODES.includes(value as GovernanceReadError['error'])
     ? (value as GovernanceReadError['error'])
@@ -109,9 +109,9 @@ function normalizeCode(value: string): GovernanceReadError['error'] {
 }
 
 /**
- * Lo que el relay contestó, ya entendido. Una respuesta que no se entiende del todo NO se completa
- * con valores por defecto: se devuelve como fallo. Rellenar huecos aquí sería inventar el contenido
- * o el tamaño de un fichero que nadie leyó.
+ * What the relay replied, already understood. A response that is not fully understood is NOT
+ * completed with defaults: it is returned as a failure. Filling gaps here would be inventing the
+ * content or the size of a file that nobody read.
  */
 export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadError {
   let parsed: unknown;
@@ -153,7 +153,7 @@ export function parseReadOutcome(body: string): RelayFileRead | GovernanceReadEr
   return { path, bytes, truncated, modified_at: modifiedAt, sha, content };
 }
 
-/** Valida de nuevo el índice aunque el relay ya lo validó: son dos procesos y dos fronteras. */
+/** Re-validates the index even though the relay already did: two processes, two boundaries. */
 export function parseDirectoryOutcome(body: string): RelayDirectoryRead | GovernanceReadError {
   let parsed: unknown;
   try {
@@ -224,10 +224,10 @@ export function parseDirectoryOutcome(body: string): RelayDirectoryRead | Govern
 }
 
 /**
- * Un ACK de escritura no se completa con valores del pedido. El relay tiene que devolver las
- * cuatro pruebas que recibió del agente: ruta, operación, SHA y bytes. `TerminalRelayFactsProbe`
- * las vuelve a contrastar con el contenido solicitado; esta primera puerta impide que un 200
- * vacío o una forma legacy parezcan un ACK.
+ * A write ACK is not completed with values from the request. The relay must return the four
+ * pieces of evidence it received from the agent: path, operation, SHA, and bytes.
+ * `TerminalRelayFactsProbe` re-checks them against the requested content; this first gate keeps
+ * an empty 200 or a legacy shape from looking like an ACK.
  */
 export function parseWriteOutcome(body: string): RelayFileWrite | GovernanceWriteError {
   let parsed: unknown;
@@ -267,7 +267,7 @@ export function parseWriteOutcome(body: string): RelayFileWrite | GovernanceWrit
   return { path, operation, sha, bytes };
 }
 
-/** El lote sólo existe si TODOS sus ACK individuales tienen forma completa y rutas únicas. */
+/** The batch only exists if ALL its individual ACKs have complete shape and unique paths. */
 export function parseWriteBatchOutcome(body: string): RelayFileWriteBatch | GovernanceWriteError {
   let parsed: unknown;
   try {
@@ -347,8 +347,8 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       result = await this.send('/v3/terminal/relay/read', { tenant_id: tenantId, alias, path }, signal);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'sin detalle';
-      // El vencimiento se distingue del resto porque significa otra cosa para quien mira el modal:
-      // el relay puede estar vivo y ser el agente el que no contesta.
+      // Expiry is distinguished from the rest because it means something different to whoever
+      // is looking at the modal: the relay may be alive and it is the agent that is not responding.
       if (signal?.aborted) {
         return { error: 'cancelled', reason: 'se cerró la petición antes de terminar la lectura' };
       }
@@ -504,8 +504,8 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
           if (overflowed) return;
           size += chunk.byteLength;
           if (size > MAX_RESPONSE_BYTES) {
-            // Se corta la descarga en cuanto se pasa: acumular el resto sólo serviría para gastar
-            // la memoria del gateway en algo que ya se va a rechazar.
+            // The download is cut off as soon as it crosses the cap: accumulating the rest would
+            // only waste the gateway's memory on something that will be rejected anyway.
             overflowed = true;
             response.destroy();
             resolve({ status: response.statusCode ?? 0, body: '', overflowed: true });

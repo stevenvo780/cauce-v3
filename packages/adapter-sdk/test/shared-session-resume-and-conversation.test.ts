@@ -19,10 +19,10 @@ import { FakeTmux, freshState } from "./shared-session-fixtures.js";
 const immediate = (): Promise<void> => Promise.resolve();
 
 // ---------------------------------------------------------------------------
-// Rehacer el panel debe reanudar la conversación existente desde disco.
+// Rebuilding the panel must resume the existing conversation from disk.
 // ---------------------------------------------------------------------------
 
-/** Un `ResumeSpec` de mentira, con la respuesta que el test quiera y un contador de llamadas. */
+/** A fake `ResumeSpec`, with whatever response the test wants and a call counter. */
 function fakeResume(
   args: readonly string[],
   hay: boolean | (() => Promise<boolean>),
@@ -59,8 +59,8 @@ test("con conversacion previa, el panel nace REANUDANDO en vez de en blanco", as
 
   assert.equal(result.ready, true);
   assert.equal(result.created, true);
-  // Que lo diga importa tanto como que lo haga: el aviso que lee el dueño distingue "se creó vacía"
-  // de "se creó con su conversación", y decir lo primero cuando pasó lo segundo es mentirle.
+  // Saying it matters as much as doing it: the notice the owner reads distinguishes "created empty"
+  // from "created with its conversation", and saying the former when the latter happened is lying.
   assert.equal(result.resumed, true);
   const created = tmux.calls.find((call) => call[0] === "new-session");
   assert.equal(created?.at(-1), "exec env CODEX_HOME='/home/dev/.codex' codex resume --last");
@@ -68,8 +68,8 @@ test("con conversacion previa, el panel nace REANUDANDO en vez de en blanco", as
 });
 
 test("sin conversacion previa NO se intenta reanudar: se arranca pelado", async () => {
-  // `claude --continue` sin nada que continuar sale con código 1 y mata el panel (medido con
-  // claude 2.1.223). Preguntar antes cuesta leer un directorio; no preguntar cuesta un alias mudo.
+  // `claude --continue` with nothing to continue exits with code 1 and kills the panel (measured
+  // with claude 2.1.223). Asking first costs reading a directory; not asking costs a mute alias.
   const { workspace } = await freshState("reanuda-sin-nada");
   const tmux = new FakeTmux();
   tmux.sessionExists = false;
@@ -93,14 +93,14 @@ test("sin conversacion previa NO se intenta reanudar: se arranca pelado", async 
 });
 
 test("si la reanudacion mata el panel, se rehace EN BLANCO y se dice", async () => {
-  // La regla que ordena las dos malas opciones: un panel sin contexto es malo, un panel que no
-  // arranca es peor. Un alias mudo es el fallo más caro de la flota.
+  // The rule that orders the two bad options: a panel without context is bad, a panel that fails
+  // to start is worse. A mute alias is the most expensive failure in the fleet.
   const { workspace } = await freshState("reanuda-falla");
   const tmux = new FakeTmux();
   tmux.sessionExists = false;
   tmux.windows = [];
-  // El detector dice que sí hay conversación, pero el harness no la puede abrir: un rollout roto,
-  // una versión que cambió el subcomando, un permiso. Esa discrepancia TIENE que ser sobrevivible.
+  // The detector says there IS a conversation, but the harness cannot open it: a broken rollout,
+  // a version that changed the subcommand, a permission. That mismatch MUST be survivable.
   tmux.fatalPaneArguments = "--continue";
   const resume = fakeResume(["--continue"], true);
   const avisos: string[] = [];
@@ -118,22 +118,22 @@ test("si la reanudacion mata el panel, se rehace EN BLANCO y se dice", async () 
   assert.equal(creadas.length, 2);
   assert.equal(creadas[0]?.at(-1), "exec claude --continue");
   assert.equal(creadas[1]?.at(-1), "exec claude");
-  // El panel fatal se llevó la sesión entera. No se mata por nombre: si otro creador hubiera
-  // ocupado `cauce-zeus` en ese instante, ese kill borraría SU conversación.
+  // The fatal panel took the whole session with it. It is not killed by name: if another creator
+  // had occupied `cauce-zeus` at that instant, that kill would wipe THEIR conversation.
   assert.equal(tmux.calls.some((call) => call[0] === "kill-session"), false);
-  // Y el dueño tiene que poder enterarse de que su conversación no volvió.
+  // And the owner must be able to learn that their conversation did not come back.
   assert.equal(avisos.length, 1);
   assert.ok(avisos[0]?.includes("EN BLANCO"), avisos[0]);
 });
 
 test("un panel VIVO pero lento no se mata: se reporta, no se rehace", async () => {
-  // Una conversación grande tarda en dibujarse —la de kant pesaba 38 MB—. Confundir "tarda" con
-  // "se murió" sería cometer a mano el mismo borrado que este mecanismo viene a evitar.
+  // A large conversation takes a long time to render —kant's weighed 38 MB—. Confusing "slow" with
+  // "dead" would be committing by hand the same deletion this mechanism is designed to prevent.
   const { workspace } = await freshState("reanuda-lenta");
   const tmux = new FakeTmux();
   tmux.sessionExists = false;
   tmux.windows = [];
-  tmux.paneContent = "❯ el dueño estaba escribiendo esto";  // caja ocupada: nunca "lista"
+  tmux.paneContent = "❯ el dueño estaba escribiendo esto";  // busy box: never "ready"
   const resume = fakeResume(["resume", "--last"], true);
   const avisos: string[] = [];
 
@@ -177,7 +177,7 @@ test("los argumentos de reanudacion no pueden colarse al shell", () => {
   assert.deepEqual(resumeArgumentSuffix(["--continue"]), { ok: true, suffix: " --continue" });
   assert.deepEqual(resumeArgumentSuffix(undefined), { ok: true, suffix: "" });
   assert.deepEqual(resumeArgumentSuffix([]), { ok: true, suffix: "" });
-  // Falla cerrado en vez de mandarle al login shell algo que nadie escribió a propósito.
+  // Fails closed instead of sending the login shell something nobody wrote on purpose.
   assert.equal(resumeArgumentSuffix(["; rm -rf /"]).ok, false);
   assert.equal(resumeArgumentSuffix(["$(whoami)"]).ok, false);
 });
@@ -193,21 +193,21 @@ test("codex: solo cuenta una conversacion interactiva de ESTE directorio", async
     payload: { session_id: randomUUID(), cwd, source, originator: "codex-tui" },
   })}\n{"type":"event_msg","payload":{"type":"task_started"}}\n`;
 
-  // Sin nada, no hay nada que reanudar. Es la rama que impide el panel muerto.
+  // With nothing, there is nothing to resume. This is the branch that prevents the dead panel.
   assert.equal(await codexHasPreviousConversation(codexHome, "/workspace"), false);
 
-  // La de OTRO directorio no cuenta: `resume --last` filtra por cwd, y prometer una reanudación que
-  // codex no va a hacer es volver a dejar el panel a merced del harness.
+  // The one from ANOTHER directory does not count: `resume --last` filters by cwd, and promising
+  // a resume that codex will not perform leaves the panel at the harness's mercy once again.
   await appendFile(join(dia, `rollout-2026-08-06T09-00-00-${randomUUID()}.jsonl`),
     cabecera("/otro/sitio", "cli"));
   assert.equal(await codexHasPreviousConversation(codexHome, "/workspace"), false);
 
-  // La de un subagente tampoco: codex la esconde salvo `--include-non-interactive`.
+  // The subagent's one either: codex hides it unless `--include-non-interactive`.
   await appendFile(join(dia, `rollout-2026-08-06T09-30-00-${randomUUID()}.jsonl`),
     cabecera("/workspace", { subagent: "revisor" }));
   assert.equal(await codexHasPreviousConversation(codexHome, "/workspace"), false);
 
-  // Y la del dueño, en su directorio, sí.
+  // And the owner's, in their directory, yes.
   await appendFile(join(dia, `rollout-2026-08-06T09-57-00-${randomUUID()}.jsonl`),
     cabecera("/workspace", "cli"));
   assert.equal(await codexHasPreviousConversation(codexHome, "/workspace"), true);
@@ -218,14 +218,14 @@ test("claude: cuenta el transcript del directorio, y solo si tiene algo dentro",
   const configDirectory = join(state, ".claude");
   const proyecto = transcriptDirectoryIn(configDirectory, "/workspace");
 
-  // Ni siquiera existe el directorio: no hay nada que continuar.
+  // The directory does not even exist: there is nothing to continue.
   assert.equal(await claudeHasPreviousConversation(configDirectory, "/workspace"), false);
 
-  // Existe y está vacío: tampoco. `--continue` saldría con código 1 y se llevaría el panel.
+  // It exists and is empty: same. `--continue` would exit with code 1 and take the panel with it.
   await mkdir(proyecto, { recursive: true });
   assert.equal(await claudeHasPreviousConversation(configDirectory, "/workspace"), false);
 
-  // Un `.jsonl` de cero bytes es un fichero recién creado, no una conversación.
+  // A zero-byte `.jsonl` is a freshly-created file, not a conversation.
   await appendFile(join(proyecto, `${randomUUID()}.jsonl`), "");
   assert.equal(await claudeHasPreviousConversation(configDirectory, "/workspace"), false);
 
@@ -233,14 +233,14 @@ test("claude: cuenta el transcript del directorio, y solo si tiene algo dentro",
     `${JSON.stringify({ type: "user", uuid: "u1" })}\n`);
   assert.equal(await claudeHasPreviousConversation(configDirectory, "/workspace"), true);
 
-  // Y lo de OTRO workspace no se cuenta: claude reanuda por directorio de trabajo.
+  // And the one from ANOTHER workspace does not count: claude resumes by working directory.
   assert.equal(await claudeHasPreviousConversation(configDirectory, "/otro"), false);
 });
 
 test("los dos creadores del panel reanudan igual", async () => {
-  // El adaptador y `cauce <alias>` son los dos únicos que crean la sesión, y el que gana la carrera
-  // le impone su forma al panel para siempre. Si sólo uno reanudara, la conversación del dueño
-  // dependería de quién llegó primero — que es como se perdieron los 38 MB de kant: por el CLI.
+  // The adapter and `cauce <alias>` are the only two session creators, and whichever wins the race
+  // imposes its shape on the panel forever. If only one resumed, the owner's conversation would
+  // depend on who arrived first — which is how kant's 38 MB were lost: via the CLI.
   const cli = cliSharedSessionSpec("codex", "socrates", "/workspace", "/home/dev", {});
   assert.deepEqual(cli.resume?.args, ["resume", "--last"]);
   const claude = cliSharedSessionSpec("claude", "kratos", "/workspace", "/home/dev", {});

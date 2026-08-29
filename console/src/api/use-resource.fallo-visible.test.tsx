@@ -4,9 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { useResource } from './use-resource';
 
 /**
- * Verificación de visibilidad y persistencia de errores en `useResource`:
- * comprueba que los rechazos de fetch no se descarten por desincronización de generación
- * ni queden silenciados bajo recargas automáticas o StrictMode.
+ * Visibility and persistence check of errors in `useResource`: verifies that fetch rejections are
+ * not discarded by generation desynchronization, nor silenced under automatic reloads or StrictMode.
  */
 
 function cargadorGobernado() {
@@ -18,9 +17,9 @@ function cargadorGobernado() {
 }
 
 /**
- * Contesta todo lo que haya en vuelo —incluida la recarga que `StrictMode` deja encolada— hasta
- * que el hook queda quieto. Sin esto, un `reload()` posterior se encola en vez de arrancar y la
- * prueba mide otra cosa que la que cree medir.
+ * Resolves everything in flight — including the reload `StrictMode` leaves queued — until the
+ * hook is idle. Without this, a subsequent `reload()` queues instead of starting and the test
+ * measures something different from what it thinks it measures.
  */
 async function enReposo(
   pendientes: { resolver: (v: string) => void; rechazar: (e: Error) => void }[],
@@ -42,7 +41,7 @@ async function enReposo(
 
 describe('useResource: el fallo tiene que llegar a la pantalla', () => {
   it('el rechazo de la PRIMERA lectura llega al estado, aunque el efecto haya corrido dos veces', async () => {
-    // StrictMode desmonta y remonta; el error debe registrarse igualmente sin descartarse.
+    // StrictMode unmounts and remounts; the error must still be recorded, not discarded.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
 
@@ -56,12 +55,12 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
   });
 
   it('el fallo SOBREVIVE al reintento que el refresco automático dispara en el acto', async () => {
-    // Si el reintento automático arranca inmediatamente, el fallo previo no debe desaparecer hasta resolverse.
+    // If the automatic retry starts immediately, the previous failure must not disappear until resolved.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
     await waitFor(() => { expect(pendientes).toHaveLength(1); });
 
-    // El refresco pide otra lectura mientras la primera sigue en vuelo: queda encolada.
+    // The refresh requests another read while the first is still in flight: it stays queued.
     act(() => { void result.current.reload(); });
 
     await act(async () => {
@@ -69,16 +68,16 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
       await Promise.resolve();
     });
 
-    // El reintento ya arrancó...
+    // The retry has already started...
     await waitFor(() => { expect(pendientes.length).toBeGreaterThan(1); });
-    // ...y el fallo sigue en pie, porque no hay ni un dato que enseñar en su lugar.
+    // ...and the failure is still standing, because there is no data to show in its place.
     expect(result.current.error?.message).toBe('el servidor no contestó en 30 s');
     expect(result.current.data).toBeUndefined();
   });
 
   it('en cuanto una lectura BUENA llega, el fallo se va: no se queda pegado', async () => {
-    // CONTROL POSITIVO. Un error que no se borra nunca sería peor que el defecto: dejaría la vista
-    // en rojo permanente sobre un servidor ya recuperado.
+    // POSITIVE CONTROL. An error that never clears would be worse than the bug: it would leave
+    // the view red forever against an already recovered server.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
     await waitFor(() => { expect(pendientes).toHaveLength(1); });
@@ -94,13 +93,14 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
   });
 
   it('con dato en mano, un reintento SÍ limpia el error: ahí la pantalla tiene qué enseñar', async () => {
-    // La otra mitad de la regla. Con snapshot anterior a la vista, el fallo se cuenta aparte
-    // («la última lectura falló, se muestra el anterior») y no tiene que bloquear la pantalla.
+    // The other half of the rule. With a previous snapshot already on screen, the failure is
+    // reported separately ("the last read failed, the previous one is shown") and must not block
+    // the screen.
     const { cargador, pendientes } = cargadorGobernado();
     const { result } = renderHook(() => useResource('clave-fija', cargador), { wrapper: StrictMode });
 
-    // Se lleva el hook a reposo CON dato: `StrictMode` deja una recarga encolada que también hay
-    // que contestar, o el `reload()` de más abajo se encolaría en vez de arrancar.
+    // Drive the hook to idle WITH data: `StrictMode` leaves a reload queued that also has to be
+    // answered, otherwise the `reload()` below would queue instead of starting.
     await enReposo(pendientes, () => result.current.loading, 'primer dato');
     expect(result.current.data).toBe('primer dato');
 
@@ -110,10 +110,10 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
     await act(async () => { pendientes[conDato].rechazar(new Error('se cayó')); await Promise.resolve(); });
     await waitFor(() => { expect(result.current.error?.message).toBe('se cayó'); });
 
-    // El dato viejo sigue en pantalla: el fallo no lo borra.
+    // The old data stays on screen: the failure does not erase it.
     expect(result.current.data).toBe('primer dato');
 
-    // Y el siguiente intento SÍ limpia el error, porque hay algo que enseñar mientras tanto.
+    // And the next attempt DOES clear the error, because there is something to show meanwhile.
     act(() => { void result.current.reload(); });
     await waitFor(() => { expect(result.current.error).toBeUndefined(); });
     expect(result.current.data).toBe('primer dato');
@@ -121,9 +121,9 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
 
   it('una lectura de OTRA clave sí se descarta: la generación sigue haciendo su trabajo', async () => {
     /*
-     * CONTROL NEGATIVO del arreglo de la generación. Si «no subirla en cada pasada» se hubiera
-     * implementado como «no subirla nunca», el resultado tardío de la clave vieja pisaría al de la
-     * nueva y la vista mostraría datos de otro alias sin decirlo.
+     * NEGATIVE CONTROL of the generation fix. If "don't bump on every pass" had been implemented
+     * as "never bump", the late result of the old key would clobber the new one's, and the view
+     * would show data from another alias without saying so.
      */
     const { cargador, pendientes } = cargadorGobernado();
     const { result, rerender } = renderHook(
@@ -134,16 +134,16 @@ describe('useResource: el fallo tiene que llegar a la pantalla', () => {
 
     rerender({ clave: 'segunda' });
 
-    // Contesta la lectura de la clave VIEJA, que quedó obsoleta al cambiar de clave.
+    // Resolve the read of the OLD key, which became obsolete when the key changed.
     await act(async () => { pendientes[0].resolver('dato viejo'); await Promise.resolve(); });
     expect(result.current.data).not.toBe('dato viejo');
 
-    // La de la clave nueva sí pinta.
+    // The new key's read does paint.
     await waitFor(() => { expect(pendientes.length).toBeGreaterThan(1); });
     await act(async () => { pendientes[pendientes.length - 1].resolver('dato nuevo'); await Promise.resolve(); });
     await waitFor(() => { expect(result.current.data).toBe('dato nuevo'); });
   });
 });
 
-/** Silencia el aviso de React sobre actos fuera de `act` en los rechazos deliberados. */
+/** Silences React's warning about acts outside `act` in the deliberate rejections. */
 vi.spyOn(console, 'error').mockImplementation(() => undefined);

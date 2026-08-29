@@ -17,12 +17,12 @@ import {
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
 
 /*
- * LA PRUEBA DE PUNTA A PUNTA DEL RECORTE, dentro del adaptador de verdad.
+ * THE END-TO-END TEST OF THE TRIM, inside the real adapter.
  *
- * Las otras pruebas del sello miden funciones sueltas. Ésta monta un `HarnessAdapter` real, le
- * pone un `HOME` con un fichero de instrucciones sembrado, y mira lo que le llega al arnés por
- * stdin. Es la única que puede afirmar que el recorte OCURRE en la ruta que se usa en producción,
- * y no sólo que la función que lo decide devuelve `true`.
+ * The other sello tests measure individual functions. This one assembles a real `HarnessAdapter`,
+ * gives it a `HOME` with a seeded instructions file, and looks at what reaches the harness via
+ * stdin. It is the only one that can assert that the trim HAPPENS on the path used in
+ * production, not only that the function that decides it returns `true`.
  */
 
 function contexto(alias: string): HarnessRequestContext {
@@ -39,15 +39,15 @@ function contexto(alias: string): HarnessRequestContext {
   };
 }
 
-/** Un runner que no ejecuta nada: sólo guarda el stdin que le habrían mandado al arnés. */
+/** A runner that executes nothing: it just stores the stdin that would have been sent to the harness. */
 function runnerEspia(): { runner: CommandRunner; visto: string[] } {
   const visto: string[] = [];
   const runner: CommandRunner = {
     async run(request: CommandRunRequest): Promise<CommandRunResult> {
       visto.push(request.stdin ?? "");
-      // La forma que emite `claude --print --output-format json`: el resultado estructurado va
-      // DENTRO de `result`. Fabricarlo a mano aquí es lo que permite usar el arnés `claude` de
-      // verdad, que es el único que resuelve una ruta de fichero de instrucciones.
+      // The shape emitted by `claude --print --output-format json`: the structured result goes
+      // INSIDE `result`. Hand-fabricating it here is what allows using the real `claude` harness,
+      // which is the only one that resolves an instructions-file path.
       return {
         stdout: JSON.stringify({
           type: "result",
@@ -75,10 +75,10 @@ async function correrUnTurno(home: string, alias: string): Promise<string> {
   });
   const homePrevio = process.env.HOME;
   /*
-   * `CLAUDE_CONFIG_DIR` GANA sobre `HOME`, y eso no es un detalle del test: es exactamente el
-   * mecanismo con el que se le da a cada alias su propio directorio de configuración cuando
-   * comparten `$HOME`. Si no se aísla aquí, la prueba lee el `CLAUDE.md` real de quien la corre
-   * —a mí me pasó— y da rojo por el motivo equivocado.
+   * `CLAUDE_CONFIG_DIR` WINS over `HOME`, and that is not a test detail: it is exactly the
+   * mechanism by which each alias gets its own configuration directory when they share `$HOME`.
+   * If it is not isolated here, the test reads the real `CLAUDE.md` of whoever runs it —it
+   * happened to me— and fails for the wrong reason.
    */
   const configPrevio = process.env.CLAUDE_CONFIG_DIR;
   process.env.HOME = home;
@@ -137,8 +137,8 @@ test("CONTROL NEGATIVO: sin fichero sembrado, el adaptador manda el sobre ENTERO
 
 test("CONTROL NEGATIVO: con el fichero de OTRO alias, el sobre va ENTERO", async () => {
   /*
-   * El caso real de `kratos` y `atlas`, que comparten `$HOME` y cuyo fichero es el MISMO inodo.
-   * Si el sello no dependiera del alias, el manual de uno acreditaría el contrato del otro.
+   * The real case of `kratos` and `atlas`, which share `$HOME` and whose file is the SAME inode.
+   * If the sello did not depend on the alias, one's manual would accredit the other's contract.
    */
   const home = mkdtempSync(join(tmpdir(), "cauce-home-compartido-"));
   try {
@@ -171,9 +171,9 @@ test("CONTROL NEGATIVO: un fichero sin bloque gestionado NO recorta nada", async
 
 test("con la siembra ENCENDIDA, el segundo turno ya va recortado", async () => {
   /*
-   * Esto es lo que hace que el ahorro ocurra en producción sin ventana de mantenimiento: el
-   * primer turno tras una actualización escribe el bloque y manda el sobre entero; del segundo en
-   * adelante va recortado. Se cura solo.
+   * This is what makes the saving happen in production without a maintenance window: the first
+   * turn after an upgrade writes the block and sends the whole envelope; from the second one
+   * onward it is trimmed. It heals itself.
    */
   const home = mkdtempSync(join(tmpdir(), "cauce-home-siembra-"));
   const previo = process.env.CAUCE_SEMBRAR_CONTEXTO;
@@ -182,9 +182,9 @@ test("con la siembra ENCENDIDA, el segundo turno ya va recortado", async () => {
     const { mkdirSync } = await import("node:fs");
     mkdirSync(join(home, ".claude"), { recursive: true });
     /*
-     * MEDIDO: recorta ya en el PRIMER turno, no en el segundo. La siembra ocurre antes de armar
-     * el sobre, y en el camino headless el proceso del arnés arranca después de escribir: lee el
-     * fichero recién sembrado en esa misma invocación. Yo esperaba dos turnos y son cero.
+     * MEASURED: it already trims on the FIRST turn, not the second. Seeding happens before the
+     * envelope is assembled, and on the headless path the harness process starts after writing:
+     * it reads the freshly-seeded file in that very invocation. I expected two turns and it is zero.
      */
     const primero = await correrUnTurno(home, "zeus");
     assert.ok(!primero.includes(PRIMARY_DUTY_HEADER), "no recortó ni siquiera tras sembrar");
@@ -263,7 +263,7 @@ test("la TUI compartida recibe el perfil vivo en cada turno sin reiniciar su pro
       consumidos[1]?.documents[0]?.sha256,
       createHash("sha256").update(profile("perfil actualizado sin reiniciar la TUI"), "utf8").digest("hex"),
     );
-    // Una TUI vieja no acredita el contrato fijo: éste sigue viajando completo.
+    // An old TUI does not accredit the fixed contract: it still travels in full.
     assert.match(visto[1] ?? "", new RegExp(PRIMARY_DUTY_HEADER, "u"));
   } finally {
     if (previousHome === undefined) delete process.env.HOME;

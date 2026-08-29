@@ -10,9 +10,9 @@ import {
   type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
-// Tests para el generador de ficheros por arnés.
+// Tests for the per-harness file generator.
 
-/** Un emoji fuera del BMP: 1 punto de código, 2 unidades UTF-16. */
+/** An emoji outside the BMP: 1 code point, 2 UTF-16 units. */
 const ASTRAL = "\u{1F389}";
 
 function perfil(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -43,14 +43,14 @@ function hechos(overrides: Partial<HechosDelAlias> = {}): HechosDelAlias {
   };
 }
 
-/** El texto de un fichero del plan, por nombre. Falla si el generador no lo emitió. */
+/** The text of a plan file, by name. Fails if the generator did not emit it. */
 function textoDe(ficheros: readonly { nombre: string; texto: string }[], nombre: string): string {
   const encontrado = ficheros.find((fichero) => fichero.nombre === nombre);
   assert.ok(encontrado, `el generador no emitió ${nombre}`);
   return encontrado.texto;
 }
 
-// ── EL REPARTO ───────────────────────────────────────────────────────────────────────────────
+// ── THE CAST ──────────────────────────────────────────────────────────────────────────────────
 
 test("claude recibe UN solo CLAUDE.md, y codex UN solo AGENTS.md", () => {
   const deClaude = ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() });
@@ -75,8 +75,8 @@ test("openclaw recibe los SIETE ficheros medidos, con esos nombres exactos", () 
     ficheros.map((f: FicheroGenerado) => f.nombre),
     ["SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md"],
   );
-  // La lista exportada y lo que se emite son la MISMA cosa: una prueba contra una copia suya se
-  // quedaría verde el día que el generador dejara de emitir uno.
+  // The exported list and what is emitted are the SAME thing: a test against a copy of itself
+  // would stay green the day the generator stopped emitting one.
   assert.deepEqual(ficheros.map((f: FicheroGenerado) => f.nombre), [...FICHEROS_OPENCLAW]);
   assert.deepEqual(nombresDelArnes("openclaw"), [...FICHEROS_OPENCLAW]);
 });
@@ -93,7 +93,7 @@ test("un arnés desconocido no recibe ningún fichero, en vez de recibir el de o
 test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
   const ficheros = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
 
-  // Cada marcador aparece en el fichero que le toca...
+  // Each marker appears in the file that owns it...
   assert.match(textoDe(ficheros, "SOUL.md"), /PROPOSITO-SOUL/);
   assert.match(textoDe(ficheros, "IDENTITY.md"), /ROL-IDENTITY/);
   assert.match(textoDe(ficheros, "USER.md"), /HUMANO-USER/);
@@ -103,8 +103,8 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
   assert.match(textoDe(ficheros, "TOOLS.md"), /HERRAMIENTA-TOOLS/);
   assert.doesNotMatch(textoDe(ficheros, "TOOLS.md"), /CAPACIDAD-TOOLS|CUOTA-TOOLS/);
 
-  // ...y en NINGÚN otro. Éste es el control que hace la prueba capaz de dar rojo: sin él, un
-  // generador que escribiera el perfil entero en los siete ficheros pasaría los asertos de arriba.
+  // ...and in NO other one. This is the control that makes the test able to fail: without it, a
+  // generator that wrote the whole profile in the seven files would pass the assertions above.
   const marcadores: ReadonlyArray<readonly [string, RegExp]> = [
     ["SOUL.md", /PROPOSITO-SOUL/], ["IDENTITY.md", /ROL-IDENTITY/], ["USER.md", /HUMANO-USER/],
     ["AGENTS.md", /RESPONSABILIDAD-AGENTS/], ["TOOLS.md", /HERRAMIENTA-TOOLS/],
@@ -147,7 +147,7 @@ test("revocar permisos o cambiar destinos, cuotas y montaje NO deja una fotograf
   }
 });
 
-// ── MEMORY Y HEARTBEAT SON DEL AGENTE ────────────────────────────────────────────────────────
+// ── MEMORY AND HEARTBEAT BELONG TO THE AGENT ──────────────────────────────────────────────────
 
 test("MEMORY y HEARTBEAT que YA existen se devuelven intactos byte a byte, y sin escribir", () => {
   const memoriaViva = "# Memoria\n\nlo que el agente aprendió solo\n";
@@ -161,9 +161,9 @@ test("MEMORY y HEARTBEAT que YA existen se devuelven intactos byte a byte, y sin
   assert.ok(memoria);
   assert.equal(memoria.texto, memoriaViva, "MEMORY.md se modificó: es del agente, no nuestro");
   assert.equal(memoria.escribir, false, "no hay que reescribir un MEMORY.md que ya estaba");
-  // La POLÍTICA declarada, y no sólo el resultado: hoy un MEMORY tratado como bloque gestionado
-  // daría el mismo texto de casualidad —porque no le toca ninguna sección—, y esa casualidad se
-  // acaba el día que alguien le asigne una. Lo que protege el fichero es la política, no el empate.
+  // The DECLARED POLICY, not just the result: today a MEMORY treated as a managed block would
+  // happen to yield the same text —because no section applies to it—, and that coincidence
+  // disappears the day someone assigns it one. What protects the file is the policy, not the tie.
   assert.equal(memoria.politica, "solo-si-falta");
 
   const latido = ficheros.find((f: FicheroGenerado) => f.nombre === "HEARTBEAT.md");
@@ -174,8 +174,8 @@ test("MEMORY y HEARTBEAT que YA existen se devuelven intactos byte a byte, y sin
 });
 
 test("CONTROL NEGATIVO: un MEMORY con marcas nuestras TAMPOCO se toca", () => {
-  // Si el generador tratara MEMORY como «bloque gestionado», este fichero se reescribiría. La
-  // política de MEMORY no es «fusionar»: es «no es mío».
+  // If the generator treated MEMORY as a "managed block", this file would be rewritten. The MEMORY
+  // policy is not "merge": it is "it is not mine".
   const memoriaConMarcas = `${MARCA_PERFIL_INICIO}\nviejo\n${MARCA_PERFIL_FIN}\nlo del agente\n`;
   const ficheros = ficherosDelArnes(
     "openclaw", { perfil: perfil(), hechos: hechos() },
@@ -195,14 +195,14 @@ test("MEMORY y HEARTBEAT que FALTAN se siembran vacíos, y se escriben", () => {
     assert.ok(fichero);
     assert.equal(fichero.escribir, true, `${nombre} falta: hay que crearlo`);
     assert.equal(fichero.politica, "solo-si-falta");
-    // Vacío de CONTENIDO nuestro: ni perfil, ni bloque gestionado. Que exista el fichero es lo
-    // único que aporta la siembra; lo que diga dentro es del agente.
+    // Empty of OUR CONTENT: neither profile nor managed block. The file existing is the only thing
+    // the seeding adds; whatever it says inside is the agent's.
     assert.doesNotMatch(fichero.texto, /PROPOSITO-SOUL|ROL-IDENTITY|RESPONSABILIDAD-AGENTS/);
     assert.ok(!fichero.texto.includes(MARCA_PERFIL_INICIO), `${nombre} no lleva bloque gestionado`);
   }
 });
 
-// ── EL BLOQUE GESTIONADO: lo que escribió una persona sobrevive ──────────────────────────────
+// ── THE MANAGED BLOCK: what a person wrote survives ──────────────────────────────────────────
 
 test("lo que escribió una persona sobrevive byte a byte, antes y después del bloque", () => {
   const humano = "# Mi SOUL a mano\n\nesto lo escribí yo\n";
@@ -228,8 +228,8 @@ test("regenerar sobre lo ya generado NO duplica el bloque", () => {
 });
 
 test("el bloque SELLADO del contrato no se toca: el generador sólo escribe el suyo", () => {
-  // El bloque A lo escribe el adaptador y su sha es el del sobre. Si el generador lo reformateara,
-  // el sello dejaría de coincidir, el sobre iría entero para siempre y no habría ningún error.
+  // Block A is written by the adapter and its sha is the envelope's. If the generator reformatted
+  // it, the seal would stop matching and the envelope would ship whole forever with no error.
   const sellado = `${MARCA_INICIO}\nCONTRATO INTOCABLE\n${MARCA_FIN}`;
   const ficheros = ficherosDelArnes(
     "openclaw", { perfil: perfil(), hechos: hechos() },
@@ -240,7 +240,7 @@ test("el bloque SELLADO del contrato no se toca: el generador sólo escribe el s
   assert.ok(agents.includes("de una persona"));
 });
 
-// ── DETERMINISMO ─────────────────────────────────────────────────────────────────────────────
+// ── DETERMINISM ──────────────────────────────────────────────────────────────────────────────
 
 test("mismo perfil y mismos hechos -> los MISMOS bytes", () => {
   const uno = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
@@ -249,8 +249,8 @@ test("mismo perfil y mismos hechos -> los MISMOS bytes", () => {
 });
 
 test("el ORDEN EN QUE SE CONSTRUYÓ el perfil no cambia un solo byte", () => {
-  // `JSON.stringify` y `Object.keys` respetan el orden de inserción, así que un perfil venido de
-  // un `JSON.parse` produce bytes distintos que uno construido a mano si algo depende del orden.
+  // `JSON.stringify` and `Object.keys` respect insertion order, so a profile coming from a
+  // `JSON.parse` produces different bytes from one built by hand if anything depends on order.
   const derecho: AgentProfile = {
     tenant_id: "Steven", alias: "zeus", purpose: "P", role_summary: "R", human_brief: "H",
     responsibilities: ["a"], restrictions: ["b"], tools: ["c"], operating_rules: ["d"],
@@ -266,7 +266,7 @@ test("el ORDEN EN QUE SE CONSTRUYÓ el perfil no cambia un solo byte", () => {
 });
 
 test("CONTROL NEGATIVO del determinismo: cambiar UN campo SÍ cambia los bytes", () => {
-  // Sin esta prueba, un generador que devolviera siempre la cadena vacía pasaría las dos de arriba.
+  // Without this test, a generator that always returned the empty string would pass the two above.
   const base = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
   const movido = ficherosDelArnes("openclaw", {
     perfil: perfil({ purpose: "OTRO proposito distinto" }), hechos: hechos(),
@@ -274,7 +274,7 @@ test("CONTROL NEGATIVO del determinismo: cambiar UN campo SÍ cambia los bytes",
   assert.notDeepEqual(base.map((f: FicheroGenerado) => f.texto), movido.map((f: FicheroGenerado) => f.texto));
 });
 
-// ── LOS TOPES DE OPENCLAW ────────────────────────────────────────────────────────────────────
+// ── THE OPENCLAW CAPS ─────────────────────────────────────────────────────────────────────────
 
 test("un fichero que pasa de 60.000 da error CLARO, y no un fichero truncado", () => {
   const enorme = "x".repeat(TOPES_OPENCLAW.porFichero + 1);
@@ -284,7 +284,7 @@ test("un fichero que pasa de 60.000 da error CLARO, y no un fichero truncado", (
     }),
     (error: unknown) => {
       assert.ok(error instanceof ErrorDeTopeDelArnes, "el error tiene que ser identificable");
-      // El fichero por su nombre, y los dos números: sin ellos el operador no sabe cuánto recortar.
+      // The file by name, and the two numbers: without them the operator does not know how much to trim.
       assert.equal(error.fichero, "SOUL.md");
       assert.equal(error.tope, TOPES_OPENCLAW.porFichero);
       assert.ok(error.medido > TOPES_OPENCLAW.porFichero);
@@ -295,8 +295,8 @@ test("un fichero que pasa de 60.000 da error CLARO, y no un fichero truncado", (
 });
 
 test("el TOTAL que pasa de 150.000 da error, aunque NINGÚN fichero pase por su cuenta", () => {
-  // Cada campo entra holgado en su fichero; lo que no entra es la suma. Sin el tope total esto
-  // pasaría, y openclaw dejaría de cargar la persona entera sin decir por qué.
+  // Each field fits comfortably in its file; what does not fit is the sum. Without the total cap
+  // this would pass, and openclaw would stop loading the whole person without saying why.
   const grande = "y".repeat(50_000);
   assert.throws(
     () => ficherosDelArnes("openclaw", {
@@ -314,8 +314,8 @@ test("el TOTAL que pasa de 150.000 da error, aunque NINGÚN fichero pase por su 
 });
 
 test("CONTROL NEGATIVO de los topes: justo por debajo NO falla y NO se trunca", () => {
-  // Si la guarda estuviera mal puesta —un `>=` donde va un `>`, o el tope medido sobre el texto
-  // equivocado— esta prueba se pone roja. Y comprueba además que el texto sale ENTERO.
+  // If the guard were misplaced —a `>=` where a `>` belongs, or the cap measured against the
+  // wrong text— this test would turn red. It also checks that the text comes out WHOLE.
   const casi = "z".repeat(1_999);
   const ficheros = ficherosDelArnes("openclaw", {
     perfil: perfil({ purpose: casi }), hechos: hechos(),
@@ -325,8 +325,8 @@ test("CONTROL NEGATIVO de los topes: justo por debajo NO falla y NO se trunca", 
 });
 
 test("el tope se mide en la unidad de openclaw (UTF-16), no en bytes ni en puntos de código", () => {
-  // Un emoji fuera del BMP vale 1 punto de código y 2 unidades UTF-16. openclaw cuenta como JS.
-  // Medir puntos de código dejaría pasar un fichero que a openclaw no le entra.
+  // An emoji outside the BMP weighs 1 code point and 2 UTF-16 units. openclaw counts like JS.
+  // Measuring code points would let through a file that openclaw cannot fit.
   const mitad = Math.floor(TOPES_OPENCLAW.porFichero / 2) + 1;
   const astral = ASTRAL.repeat(mitad);
   assert.equal(measureStrictestUnits(astral), mitad * 2);
@@ -337,15 +337,15 @@ test("el tope se mide en la unidad de openclaw (UTF-16), no en bytes ni en punto
 });
 
 test("claude y codex no tienen tope declarado: un perfil enorme NO se rechaza por el de openclaw", () => {
-  // CONTROL NEGATIVO del alcance de la guarda: los topes son de openclaw, medidos en su config.
-  // Aplicárselos a claude sería inventarle un límite que su arnés no declara.
+  // NEGATIVE CONTROL on the guard's scope: the caps belong to openclaw, measured against its config.
+  // Applying them to claude would be inventing a limit its harness does not declare.
   const enorme = "x".repeat(TOPES_OPENCLAW.porFichero + 1);
   assert.doesNotThrow(
     () => ficherosDelArnes("claude", { perfil: perfil({ purpose: enorme }), hechos: hechos() }),
   );
 });
 
-// ── EL PERFIL VACÍO ──────────────────────────────────────────────────────────────────────────
+// ── THE EMPTY PROFILE ────────────────────────────────────────────────────────────────────────
 
 test("un perfil sin nada escrito no produce encabezados huecos", () => {
   const vacio: AgentProfile = {

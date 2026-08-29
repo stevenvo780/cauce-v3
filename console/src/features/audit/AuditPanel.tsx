@@ -8,24 +8,24 @@ import { compactId, safeAuditDecision } from '../../lib';
 import { readableAuditSummary } from './audit-summary';
 
 /**
- * **La auditoría** — no una
- * ruta propia.
+ * **The audit** — not a
+ * route of its own.
  *
- * Era `/audit`, y estaba al lado de `/observability` en el menú. Que fueran dos entradas lo tenía
- * escrito el propio código: el comentario de `ObservabilityPage` explicaba que `request_id` y
- * `trace_id` bajaban a la tabla de relays *«para cruzarlos contra Audit»*. O sea que la consola
- * documentaba que la investigación normal empieza en un relay y termina en la auditoría, y obligaba
- * a hacerla con dos pestañas del navegador y un identificador copiado a mano.
+ * It used to be `/audit`, sitting next to `/observability` in the menu. That they were two entries
+ * was written in the code itself: the comment on `ObservabilityPage` explained that `request_id`
+ * and `trace_id` were pushed down to the relays table "to cross-reference them against Audit". That
+ * is, the console documented that a normal investigation starts at a relay and ends at the audit,
+ * and forced the operator to do it with two browser tabs and an identifier copied by hand.
  *
- * Ahora el cruce es un clic: la fila del relay lleva un botón que trae acá con el `trace_id` ya
- * puesto en el filtro. Por eso el texto del buscador vive en la PÁGINA y no en este componente —si
- * viviera acá, cambiar de pestaña lo perdería, que es exactamente el paso a mano que la fusión
- * viene a quitar.
+ * The cross-reference is now one click: the relay row carries a button that lands here with the
+ * `trace_id` already in the filter. That is why the search text lives on the PAGE and not in this
+ * component — if it lived here, switching tabs would lose it, which is exactly the manual step
+ * the merge comes to remove.
  *
- * Lo que se conserva entero de la vista vieja, sin excepción: el buscador sobre los seis campos
- * (action, actor, tenant, request, trace, resumen), el contador «N visibles de M», el icono según
- * la decisión, la insignia allow/deny/UNKNOWN, el resumen, y la ficha de actor · tenant · request ·
- * trace · fecha. Y sus tres estados: cargando, error con reintento, y vacío.
+ * What is preserved in full from the old view, without exception: the search over the six fields
+ * (action, actor, tenant, request, trace, summary), the "N visible of M" counter, the icon by
+ * decision, the allow/deny/UNKNOWN badge, the summary, and the actor · tenant · request · trace ·
+ * timestamp card. Plus its three states: loading, error with retry, and empty.
  */
 export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value: string) => void }) {
   const api = useApi();
@@ -44,20 +44,20 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
   const mounted = useRef(true);
 
   /*
-   * `resource.data` y las páginas anteriores forman UN snapshot. Antes, la primera página se
-   * copiaba a dos `useState` dentro de un efecto: React alcanzaba a confirmar un frame con el
-   * recurso ya resuelto pero esos estados todavía vacíos ("0 visibles de 0") y recién en el
-   * commit siguiente instalaba los eventos. Además de hacer intermitente la prueba fusionada,
-   * durante ese frame la consola afirmaba falsamente que el audit log estaba vacío.
+   * `resource.data` and the older pages form ONE snapshot. Before, the first page was copied
+   * into two `useState` slots inside an effect: React managed to commit a frame with the resource
+   * already resolved but those states still empty ("0 visible of 0"), and only on the next
+   * commit installed the events. Besides making the merged test flaky, during that frame the
+   * console falsely claimed the audit log was empty.
    *
-   * La primera página se renderiza ahora directamente. Sólo aparece estado local cuando de verdad
-   * se agrega una página anterior, y queda ligado por identidad a la primera página que amplía. Si
-   * una recarga reemplaza el snapshot mientras un cursor está en vuelo, esa respuesta vieja ya no
-   * puede mezclarse con la nueva.
+   * The first page now renders directly. Local state only appears when an older page is actually
+   * appended, and stays linked by identity to the first page it extends. If a reload replaces
+   * the snapshot while a cursor is in flight, that older response can no longer mix with the
+   * new one.
   */
   const currentPagination = pagination?.source === resource.data ? pagination : undefined;
   const events = currentPagination?.events ?? resource.data?.items ?? [];
-  // `null` es el final durable de la caminata, no una ausencia que deba caer al cursor inicial.
+  // `null` is the durable end of the walk, not an absence that has to fall back to the initial cursor.
   const nextCursor = currentPagination
     ? currentPagination.nextCursor
     : resource.data?.next_cursor ?? null;

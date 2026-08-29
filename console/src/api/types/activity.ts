@@ -1,14 +1,14 @@
 import type { DeliveryState, JobLane } from './deliveries';
 
 // ---------------------------------------------------------------------------------------------
-// GET /v3/console/activity — actividad en vuelo de la flota, agregada por alias. Ver
-// features/activity para la derivación pura de badges y umbrales, y el SQL de referencia en el
-// contrato (fleetActivity()): esta vista NUNCA trae cuerpos de mensaje, `result` ni `last_error`;
-// eso queda para Messages/Chains, que ya redactan.
+// GET /v3/console/activity — in-flight fleet activity, aggregated by alias. See
+// features/activity for the pure derivation of badges and thresholds, and the reference SQL in
+// the contract (fleetActivity()): this view NEVER carries message bodies, `result` or
+// `last_error`; that is left to Messages/Chains, which already redact.
 
 export type FleetWorkState = 'idle' | 'queued' | 'working' | 'saturated' | 'stalled';
 
-/** Acumulativo y no excluyente: un agente puede estar saturado Y con ACKs detenidos a la vez. */
+/** Cumulative and not mutually exclusive: an agent can be saturated AND with stalled ACKs at once. */
 export type FleetActivityFlag =
   | 'saturated'
   | 'ack_stalled'
@@ -26,7 +26,7 @@ export interface FleetActivityThresholds {
   items_per_agent?: number | null;
 }
 
-/** Subconjunto de PresenceLease relevante a esta vista; misma fuente (connection_leases). */
+/** Subset of PresenceLease relevant to this view; same source (connection_leases). */
 export interface FleetActivityPresence {
   online?: boolean | null;
   instance_id?: string | null;
@@ -42,7 +42,7 @@ export interface FleetActivityItem {
   from_tenant?: string | null;
   from_alias?: string | null;
   lane?: JobLane | null;
-  /** Sólo el adaptador de origen ('bus', 'telegram'…). Nunca conversation_id. */
+  /** Only the origin adapter ('bus', 'telegram'…). Never conversation_id. */
   origin_adapter?: string | null;
   published_at?: string | null;
   status?: DeliveryState | null;
@@ -59,7 +59,7 @@ export interface FleetActivityAgent {
   alias: string;
   display_name?: string | null;
   harness_id?: string | null;
-  /** false: el alias apareció por deliveries o por lease, no por el registro de agentes. */
+  /** false: the alias appeared via deliveries or lease, not via the agent registry. */
   registered?: boolean | null;
   agent_enabled?: boolean | null;
   presence?: FleetActivityPresence | null;
@@ -78,24 +78,24 @@ export interface FleetActivityAgent {
   max_attempt?: number | null;
   last_ack_at?: string | null;
   /**
-   * null significa "ningún ACK aplicado dentro de ack_lookback_seconds" — la señal MÁS grave,
-   * nunca "recién ackeado". No renderizar como 0; usar formatAckAge() de features/activity.
+   * null means "no ACK applied within ack_lookback_seconds" — the MOST severe signal, never
+   * "just acked". Do not render as 0; use formatAckAge() from features/activity.
    */
   seconds_since_last_ack?: number | null;
   acks_recent?: number | null;
   in_flight_items_truncated?: boolean | null;
   in_flight_items?: FleetActivityItem[] | null;
   /**
-   * Salas del alias. Evita cruzar a mano contra la topología para saber dónde vive un agente.
-   * Opcional: hoy el SQL de /activity no lo trae (ver fase de backend del expediente).
+   * Alias rooms. Avoids manually crossing with the topology to know where an agent lives.
+   * Optional: today the /activity SQL does not bring it (see the backend phase of the file).
    */
   rooms?: string[] | null;
   /**
-   * Entregas CERRADAS en las últimas 24 h. Es el tamaño del muñeco en el mapa.
+   * CLOSED deliveries in the last 24 h. It is the size of the figure on the map.
    *
-   * `undefined` (campo ausente) y `0` NO son lo mismo y no pueden dibujarse igual: ausente
-   * significa "el servidor no informa el cierre de 24 h" y obliga a tamaño uniforme más una
-   * leyenda que lo declare; 0 significa "no cerró nada", que sí es un dato y sí se dibuja chico.
+   * `undefined` (field absent) and `0` are NOT the same and cannot be drawn the same: absent
+   * means "the server does not report the 24 h closure" and forces a uniform size plus a legend
+   * declaring so; 0 means "closed nothing", which IS data and IS drawn small.
    */
   closed_24h?: number | null;
   failed_24h?: number | null;
@@ -103,9 +103,9 @@ export interface FleetActivityAgent {
 
 export interface FleetActivityTotals {
   agents?: number | null;
-  /** Excluyente: suma a totals.agents. */
+  /** Mutually exclusive: it adds up to totals.agents. */
   by_state?: Partial<Record<FleetWorkState, number>> | null;
-  /** Acumulativo: NO suma a totals.agents ni entre sí. */
+  /** Cumulative: it does NOT add up to totals.agents nor to itself. */
   flagged?: Partial<Record<FleetActivityFlag, number>> | null;
   in_flight?: number | null;
   queued?: number | null;
@@ -114,20 +114,20 @@ export interface FleetActivityTotals {
 }
 
 /**
- * Delegación agregada por par, tal como la contaría el servidor sobre una ventana.
+ * Delegation aggregated by pair, as the server would count it over a window.
  *
- * El extremo que el actor no puede ver llega ya reducido a un id opaco desde el store (mismo
- * vocabulario `redacted`/`opaqueNodeId` que `agentChain`): la arista NO se borra, porque un mapa
- * al que le faltan flechas miente por omisión y no hay forma de notarlo desde la pantalla.
+ * The endpoint the actor cannot see already arrives reduced to an opaque id from the store (same
+ * `redacted`/`opaqueNodeId` vocabulary as `agentChain`): the edge is NOT removed, because a map
+ * that is missing arrows lies by omission and there is no way to notice it from the screen.
  */
 export interface FleetDelegationEdge {
   from_tenant?: string | null;
   from_alias?: string | null;
   to_tenant?: string | null;
   to_alias?: string | null;
-  /** Entregas de ese par en vuelo AHORA. Es lo que pinta la flecha de azul. */
+  /** Deliveries of that pair in flight NOW. This is what paints the arrow blue. */
   in_flight?: number | null;
-  /** Entregas de ese par en toda la ventana. Es lo que da el grosor. */
+  /** Deliveries of that pair over the whole window. This is what gives the thickness. */
   total_window?: number | null;
   last_at?: string | null;
 }
@@ -137,6 +137,6 @@ export interface FleetActivitySnapshot {
   thresholds?: FleetActivityThresholds | null;
   totals?: FleetActivityTotals | null;
   agents?: FleetActivityAgent[] | null;
-  /** Opcional: hasta la fase de backend, el grosor sale sólo de las entregas en vuelo. */
+  /** Optional: until the backend phase, the thickness comes only from in-flight deliveries. */
   edges?: FleetDelegationEdge[] | null;
 }

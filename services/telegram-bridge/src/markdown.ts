@@ -1,5 +1,5 @@
 /**
- * Conversión de Markdown a subconjunto HTML compatible con Telegram.
+ * Markdown to Telegram-compatible HTML subset conversion.
  */
 
 const ESCAPES: readonly (readonly [RegExp, string])[] = [
@@ -12,7 +12,7 @@ export function escapeHtml(value: string): string {
   return ESCAPES.reduce((texto, [patron, reemplazo]) => texto.replace(patron, reemplazo), value);
 }
 
-/** Marcador interno para proteger un tramo ya convertido de las pasadas siguientes. */
+/** Internal marker to protect an already-converted stretch from later passes. */
 const RESERVADO = '\u0000';
 
 function protegido(piezas: string[], html: string): string {
@@ -28,16 +28,16 @@ function restaurar(texto: string, piezas: string[]): string {
 }
 
 /**
- * Una tabla de markdown en un teléfono es ilegible: las barras no se alinean con nada. Se
- * convierte a filas monoespaciadas con las columnas alineadas, que es lo más parecido a la
- * intención original que Telegram puede mostrar.
+ * A markdown table on a phone is unreadable: the pipes do not line up with anything. It is
+ * converted to monospaced rows with aligned columns, which is the closest Telegram can get to
+ * the original intent.
  */
 function convertirTabla(lineas: string[]): string | undefined {
   const filas = lineas
     .map((linea) => linea.trim())
     .filter((linea) => linea.startsWith('|'))
     .map((linea) => linea.replace(/^\||\|$/gu, '').split('|').map((celda) => celda.trim()));
-  // La segunda fila de una tabla markdown es el separador (---|---) y no lleva contenido.
+  // The second row of a markdown table is the separator (---|---) and carries no content.
   const contenido = filas.filter((fila) => !fila.every((celda) => /^:?-{2,}:?$/u.test(celda)));
   if (contenido.length < 2) return undefined;
 
@@ -54,59 +54,59 @@ function convertirTabla(lineas: string[]): string | undefined {
 
 export function markdownToTelegramHtml(source: string): string {
   const piezas: string[] = [];
-  // Los nulos son separador interno: si el texto ya traía uno, se descarta.
+  // NULs are an internal separator: if the text already carried one, it is discarded.
   let texto = source.split(RESERVADO).join('');
 
-  // 1. Bloques de código cercados. Van primero: adentro no se interpreta nada más.
+  // 1. Fenced code blocks. They go first: nothing else is interpreted inside them.
   texto = texto.replace(/```[A-Za-z0-9_+-]*\r?\n([\s\S]*?)```/gu, (_, cuerpo: string) =>
     protegido(piezas, `<pre>${escapeHtml(cuerpo.replace(/\n$/u, ''))}</pre>`));
 
-  // 2. Tablas completas, antes de tocar las líneas sueltas.
+  // 2. Full tables, before touching the loose lines.
   texto = texto.replace(/(?:^\|.*\|[ \t]*\r?\n?){2,}/gmu, (bloque: string) => {
     const html = convertirTabla(bloque.split(/\r?\n/u));
     return html === undefined ? bloque : protegido(piezas, html);
   });
 
-  // 3. Código en línea.
+  // 3. Inline code.
   texto = texto.replace(/`([^`\n]+)`/gu, (_, cuerpo: string) =>
     protegido(piezas, `<code>${escapeHtml(cuerpo)}</code>`));
 
-  // 4. Enlaces [texto](url). Sólo http/https: un `javascript:` no tiene nada que hacer acá.
+  // 4. Links [text](url). http/https only: a `javascript:` has no business here.
   texto = texto.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gu, (entero, etiqueta: string, url: string) =>
     protegido(piezas, `<a href="${escapeHtml(url)}">${escapeHtml(etiqueta)}</a>`) || entero);
 
-  // 5. Lo que queda es texto del usuario: se escapa ANTES de inyectar ninguna etiqueta nuestra.
+  // 5. What is left is user text: it is escaped BEFORE injecting any of our own tags.
   texto = escapeHtml(texto);
 
-  // 6. Encabezados → negrita. Telegram no tiene encabezados.
+  // 6. Headings → bold. Telegram does not have headings.
   texto = texto.replace(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*$/gmu, (_, titulo: string) => `<b>${titulo}</b>`);
 
-  // 7. Reglas horizontales: no existen; una línea en blanco comunica lo mismo.
+  // 7. Horizontal rules: they do not exist; a blank line communicates the same thing.
   texto = texto.replace(/^[ \t]{0,3}(?:[-*_][ \t]*){3,}$/gmu, '');
 
-  // 8. Viñetas y numeradas. La sangría se conserva para que se lea la jerarquía.
+  // 8. Bullets and numbered lists. Indentation is kept so the hierarchy reads correctly.
   texto = texto.replace(/^([ \t]*)[-*+][ \t]+/gmu, (_, sangria: string) => `${sangria}• `);
 
-  // 9. Énfasis. El negrita va antes que la itálica para que `**` no se lea como dos `*`.
+  // 9. Emphasis. Bold goes before italic so `**` is not parsed as two `*`.
   texto = texto.replace(/\*\*([^\n*]+)\*\*/gu, '<b>$1</b>');
   texto = texto.replace(/__([^\n_]+)__/gu, '<b>$1</b>');
   texto = texto.replace(/(^|[\s(])\*([^\n*]+)\*/gu, '$1<i>$2</i>');
   texto = texto.replace(/~~([^\n~]+)~~/gu, '<s>$1</s>');
 
-  // 10. Citas.
+  // 10. Quotes.
   texto = texto.replace(/^[ \t]{0,3}&gt;[ \t]?(.*)$/gmu, '<blockquote>$1</blockquote>');
 
-  // 11. Tres líneas en blanco seguidas no aportan nada en una pantalla de teléfono.
+  // 11. Three blank lines in a row add nothing on a phone screen.
   texto = texto.replace(/\n{3,}/gu, '\n\n');
 
   return restaurar(texto, piezas).trim();
 }
 
 /**
- * Quita el marcado y deja texto plano legible.
+ * Strips the markup and leaves readable plain text.
  *
- * Es la red de abajo: si Telegram rechaza el HTML, el mensaje se reenvía con esto y llega igual,
- * sin etiquetas y sin los símbolos del markdown que motivaron todo el ejercicio.
+ * It is the safety net below: if Telegram rejects the HTML, the message is resent with this
+ * and arrives the same, with no tags and without the markdown symbols that motivated it all.
  */
 export function markdownToPlainText(source: string): string {
   return source

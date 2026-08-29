@@ -128,22 +128,22 @@ export function conRevisionDelPerfil(text: string, revision: number): string {
 }
 
 /**
- * Generador de ficheros de arnés a partir de un perfil y hechos del alias.
- * Distribuye las secciones del perfil en los ficheros correspondientes según el arnés
+ * Generator of harness files from a profile and alias facts.
+ * Distributes the profile sections into the corresponding files per harness
  * (`claude`, `codex`, `openclaw`).
  *
- * `MEMORY.md` y `HEARTBEAT.md` en `openclaw` son gestionados por el agente y no se sobrescriben si existen.
+ * `MEMORY.md` and `HEARTBEAT.md` in `openclaw` are agent-managed and are not overwritten if they exist.
  */
 
-/** Topes de tamaño por fichero y total para openclaw, medidos en unidades UTF-16. */
+/** Per-file and total size caps for openclaw, measured in UTF-16 units. */
 export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 } as const;
 
-/** Los siete ficheros de openclaw, en el orden en que se emiten. */
+/** The seven openclaw files, in the order they are emitted. */
 export const FICHEROS_OPENCLAW = [
   "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md",
 ] as const;
 
-/** Error lanzado cuando un fichero generado o el total excede el tope configurado para el arnés. */
+/** Error thrown when a generated file or the total exceeds the cap configured for the harness. */
 export class ErrorDeTopeDelArnes extends Error {
   constructor(
     readonly fichero: string,
@@ -192,7 +192,7 @@ function bloqueDeFichero(nombre: string, perfil: AgentProfile): string {
     return unir([seccion("Tu humano y cómo tratarlo", perfil.human_brief ?? undefined)]);
   }
   if (nombre === "AGENTS.md") {
-    // Solo reglas autoradas y estables.
+    // Only authored, stable rules.
     const autorado = unir([
       seccion("Responsabilidades",
         perfil.responsibilities.length > 0 ? vinetas(perfil.responsibilities) : undefined),
@@ -205,15 +205,15 @@ function bloqueDeFichero(nombre: string, perfil: AgentProfile): string {
     return autorado;
   }
   if (nombre === "TOOLS.md") {
-    // Solo herramientas declaradas.
+    // Only declared tools.
     if (perfil.tools.length === 0) return "";
     return seccion("Herramientas", vinetas(perfil.tools)) ?? "";
   }
-  // MEMORY.md y HEARTBEAT.md no reciben contenido generado; son gestionados por el agente.
+  // MEMORY.md and HEARTBEAT.md do not receive generated content; they are managed by the agent.
   return "";
 }
 
-/** Bloque único de Claude/Codex con el contenido autorado. */
+/** Single block for Claude/Codex with the authored content. */
 function bloqueUnico(perfil: AgentProfile): string {
   const rol = unir([
     perfil.role_summary ?? undefined,
@@ -242,8 +242,8 @@ function unir(partes: readonly (string | undefined)[]): string {
 }
 
 /**
- * Ficheros asignados al arnés con los bloques fusionados sobre el contenido existente.
- * Lanza ErrorDeTopeDelArnes si el tamaño supera el límite configurado.
+ * Files assigned to the harness with the blocks merged on top of the existing content.
+ * Throws ErrorDeTopeDelArnes if the size exceeds the configured limit.
  */
 export function ficherosDelArnes(
   harness: string,
@@ -275,7 +275,7 @@ export function ficherosDelArnes(
   for (const nombre of nombres) {
     const previo = existentes.get(nombre);
 
-    // MEMORY y HEARTBEAT: gestionados por el agente. Si existen no se modifican.
+    // MEMORY and HEARTBEAT: managed by the agent. If they exist they are not modified.
     if (esDelAgente(harness, nombre)) {
       generados.push({
         nombre, politica: "solo-si-falta",
@@ -284,7 +284,7 @@ export function ficherosDelArnes(
       });
       continue;
     }
-    // El fichero único de claude/codex consolida el perfil completo.
+    // The single claude/codex file consolidates the full profile.
     const cuerpo = harness === "openclaw"
       ? bloqueDeFichero(nombre, contexto.perfil)
       : bloqueUnico(contexto.perfil);
@@ -293,10 +293,10 @@ export function ficherosDelArnes(
       ? canonico && revisionNativa !== undefined ? renglonDeDueno(contexto.perfil) : ""
       : `${renglonDeDueno(contexto.perfil)}\n${cuerpo}`;
 
-    // Si el bloque está vacío y existía un bloque previo, se retira el bloque conservando el resto del archivo.
+    // If the block is empty and a previous block existed, remove it and keep the rest of the file.
     const anterior = previo === undefined ? undefined : bloqueDePerfil(previo);
 
-    // Guarda de pertenencia: solo se modifica o retira si el bloque pertenece al mismo alias.
+    // Ownership guard: only modified or removed if the block belongs to the same alias.
     if (anterior !== undefined && !esDelMismoAlias(anterior, contexto.perfil)) {
       generados.push({
         nombre, politica: "bloque-gestionado", texto: previo ?? "", escribir: false,
@@ -351,23 +351,23 @@ function assertNoReservedMarkersInProfile(text: string, name: string): void {
   }
 }
 
-/** Comentario HTML con el identificador del alias dueño del bloque. */
+/** HTML comment with the identifier of the alias that owns the block. */
 function renglonDeDueno(perfil: AgentProfile): string {
   return `<!-- alias: ${perfil.tenant_id}/${perfil.alias} -->`;
 }
 
-/** El alias que declara un bloque, o `undefined` si no lo declara. */
+/** The alias that declares a block, or `undefined` if it does not declare one. */
 function duenoDelBloque(bloque: string): string | undefined {
   return /^\s*<!--\s*alias:\s*([^\s>]+)\s*-->/.exec(bloque)?.[1];
 }
 
-/** Comprueba si el bloque existente pertenece al mismo alias y tenant. */
+/** Checks whether the existing block belongs to the same alias and tenant. */
 function esDelMismoAlias(anterior: string, perfil: AgentProfile): boolean {
   const suyo = duenoDelBloque(anterior);
   return suyo !== undefined && suyo === `${perfil.tenant_id}/${perfil.alias}`;
 }
 
-/** MEMORY.md y HEARTBEAT.md de openclaw son gestionados por el agente. */
+/** MEMORY.md and HEARTBEAT.md in openclaw are managed by the agent. */
 function esDelAgente(harness: string, nombre: string): boolean {
   return harness === "openclaw" && (nombre === "MEMORY.md" || nombre === "HEARTBEAT.md");
 }
@@ -376,14 +376,14 @@ function esFicheroCanonico(harness: string, nombre: string): boolean {
   return nombre === (harness === "claude" ? "CLAUDE.md" : "AGENTS.md");
 }
 
-/** Valida los topes de tamaño por fichero y acumulado en openclaw. */
+/** Validates per-file and accumulated size caps in openclaw. */
 function comprobarTopes(harness: string, ficheros: readonly FicheroGenerado[]): void {
   if (harness !== "openclaw") return;
   let total = 0;
   for (const fichero of ficheros) {
-    // Los ficheros del agente (solo-si-falta) no computan para los topes gestionados.
+    // Agent-managed files (solo-si-falta) do not count against the managed caps.
     if (fichero.politica === "solo-si-falta") continue;
-    // Ficheros que la siembra no va a escribir no computan para topes gestionados.
+    // Files the seeding will not write do not count against managed caps.
     if (!fichero.escribir) continue;
     const medido = measureStrictestUnits(fichero.texto);
     if (medido > TOPES_OPENCLAW.porFichero) {

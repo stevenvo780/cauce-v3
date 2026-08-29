@@ -42,15 +42,15 @@ const borrowedAccount = {
 };
 
 /**
- * El alta de cuenta y la asignación tienen barras de escritura con botones del mismo texto desde
- * que las dos mitades comparten pantalla. Este helper acota al formulario de cuenta.
+ * Account creation and assignment have write bars with buttons of the same text since the two
+ * halves share screen. This helper scopes to the account form.
  */
 function accountActions() {
   return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
 }
 
 /**
- * Abre explícitamente la pestaña de Inventario en Cuentas y cuotas.
+ * Explicitly opens the Inventory tab in Cuentas y cuotas.
  */
 async function openInventory(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
@@ -76,7 +76,7 @@ it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe 
   window.history.pushState({}, '', '/assignments');
   renderWithApi(<App />);
 
-  // La vista correcta se elige en el match, no después de un rebote: la matriz está en pantalla.
+  // The right view is chosen in the match, not after a bounce: the matrix is on screen.
   expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
   await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
 });
@@ -119,9 +119,9 @@ it('declara no disponible el inventario cuando el gateway no publica provider_ac
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  // Las DOS mitades lo declaran por separado, cada una con lo que a ella le falta: el inventario no
-  // se puede listar, la matriz no se puede formar. Fundir las vistas no fundió los avisos, porque
-  // no son el mismo hecho — y ahora que son pestañas de la misma página, sigue sin serlo.
+  // Both halves declare it separately, each with what is missing for them: inventory cannot be
+  // listed, the matrix cannot be formed. Merging the views did not merge the warnings, because
+  // they are not the same fact — and now that they are tabs of the same page, it still isn't.
   const inventario = await openInventory(user);
   expect(await inventario.findByText(/no se muestra inventario porque no hay dato que mostrar/i)).toBeInTheDocument();
   expect(inventario.queryByRole('table')).not.toBeInTheDocument();
@@ -141,8 +141,8 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
 
-  // El apply no existe como camino paralelo: está deshabilitado hasta que el servidor validó
-  // exactamente esta mutación en dry-run.
+// Apply does not exist as a parallel path: it is disabled until the server validated exactly
+    // this mutation in dry-run.
   expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
   expect(changes).toHaveLength(0);
 
@@ -250,13 +250,13 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
 });
 
 /**
- * El punto que decidió la fusión (b), y la objeción que estaba escrita en `App.tsx`: «Cuotas y
- * licencias» es de LECTURA y depende del recolector externo; «Cuentas de IA» ESCRIBE el registro y
- * tiene que funcionar aunque el recolector esté caído. La conclusión que se sacaba de ahí —que por
- * eso tenían que ser dos vistas— era falsa: se resuelve degradando por RECURSO.
+ * The point that decided fusion (b), and the objection that was written in `App.tsx`: "Cuotas y
+ * licencias" is for READING and depends on the external collector; "Cuentas de IA" WRITES to the
+ * registry and must work even with the collector down. The conclusion that was drawn from that —
+ * that they had to be two views — was false: it is solved by degrading per RESOURCE.
  *
- * Las dos pruebas van en pareja a propósito. La segunda es el control negativo de la primera: sin
- * ella, una versión que pintara un `0%` inventado con el recolector muerto pasaría igual.
+ * The two tests come as a pair on purpose. The second is the negative control of the first:
+ * without it, a version that painted an invented `0%` with a dead collector would pass anyway.
  */
 it('con el recolector CAÍDO el registro se sigue escribiendo: alta con dry-run y apply', async () => {
   const changes: ChangeRequest[] = [];
@@ -268,7 +268,7 @@ it('con el recolector CAÍDO el registro se sigue escribiendo: alta con dry-run 
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  // La vista NO se cae entera: una fuente muerta no apaga la otra.
+  // The view does NOT collapse entirely: a dead source does not turn off the other.
   await openInventory(user);
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
@@ -293,8 +293,8 @@ it('🔴 CONTROL NEGATIVO: con el recolector caído el saldo dice «?», nunca u
   const fila = cell.closest('tr');
   expect(fila).not.toBeNull();
   if (fila) {
-    // Consumo declara que no hay muestra. Un `0%` acá se leería como «esta cuenta está agotada»,
-    // que es una afirmación sobre un dato que no llegó.
+    // Consumo declares there is no sample. A `0%` here would read as "this account is exhausted",
+    // which is a statement about a datum that never arrived.
     expect(within(fila).getByLabelText('sin muestra')).toBeInTheDocument();
     expect(fila.textContent).not.toMatch(/\d+%/);
     expect(fila.textContent).not.toMatch(/libre/);
@@ -329,8 +329,8 @@ it('la sonda caída sí grita en ámbar: el gris es sólo para la cuenta que el 
 });
 
 it('con el recolector VIVO la misma columna sí trae el número: el «?» no es un cartel fijo', async () => {
-  // El otro brazo del control: si la celda dijera «?» siempre, la prueba de arriba pasaría sin
-  // demostrar nada. Acá el mismo componente, con muestra, tiene que dar el porcentaje.
+  // The other arm of the control: if the cell always said "?", the test above would pass without
+  // proving anything. Here the same component, with a sample, has to give the percentage.
   configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
   server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({
     observed_at: '2026-08-22T10:00:00.000Z',

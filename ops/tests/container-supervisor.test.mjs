@@ -661,10 +661,10 @@ try {
   assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_TRANSPORT=cli"));
   process.stdout.write("argos openclaw defaults: workspace-only persistence starts under cli transport\n");
 
-  // ---- Sesión compartida: una sola conversación en la terminal y en Telegram. ----
-  // El interruptor sólo existe para claude y codex, sólo admite el valor exacto 1, y cuando está
-  // encendido tiene que llegar al adaptador junto con un TERM utilizable: sin TERM tmux crea la
-  // sesión con un terminal desconocido y la TUI se dibuja rota para el dueño.
+  // ---- Shared session: a single conversation in the terminal and in Telegram. ----
+  // The switch only exists for claude and codex, only accepts the exact value 1, and when on it
+  // must reach the adapter along with a usable TERM: without TERM tmux creates the session with
+  // an unknown terminal and the TUI renders broken for the owner.
   await writeConfig("kant", ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace"]);
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -675,7 +675,7 @@ try {
   assert(sharedFinal?.argv.includes("TERM=xterm-256color"),
     "con sesión compartida el adaptador necesita un TERM utilizable para crear la sesión tmux");
 
-  // Sin el interruptor, el comportamiento es byte a byte el de siempre.
+  // Without the switch, the behavior is byte-for-byte the same as always.
   await writeConfig("kant");
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -701,8 +701,8 @@ try {
     assert.equal((await records()).length, 0, `${name} debe fallar antes de tocar Docker`);
   }
 
-  // Un harness sin TUI compartible no puede declarar el interruptor: aceptarlo dejaría un alias
-  // convencido de compartir una conversación que no existe.
+  // A harness without a shareable TUI cannot declare the switch: accepting it would leave an
+  // alias convinced it is sharing a conversation that does not exist.
   await writeConfig("iza", ["SHARED_SESSION=1"]);
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
@@ -712,13 +712,13 @@ try {
   await writeConfig("kant");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
 
-  // ---- Configuración por alias: cada alias con SU directorio de configuración. ----
-  // kratos y atlas corren en el MISMO contenedor con el mismo HOME, y su ~/.codex/AGENTS.md es el
-  // mismo INODO: por fichero es imposible darles identidades distintas. CODEX_HOME/CLAUDE_CONFIG_DIR
-  // ya gobiernan dónde busca cada CLI, así que el supervisor puede apuntar a cada alias al suyo.
+  // ---- Per-alias configuration: each alias with its OWN configuration directory. ----
+  // kratos and atlas run in the SAME container with the same HOME, and their ~/.codex/AGENTS.md is the
+  // same INODE: per-file it is impossible to give them distinct identities. CODEX_HOME/CLAUDE_CONFIG_DIR
+  // already govern where each CLI looks, so the supervisor can point each alias to its own.
   //
-  // En todo contenedor físico con más de un alias la separación es obligatoria. Omitir el
-  // interruptor debe fallar antes de Docker: nunca se cae silenciosamente al HOME compartido.
+  // In every physical container with more than one alias, the separation is mandatory. Omitting
+  // the switch must fail before Docker: never silently fall back to the shared HOME.
   await writeConfig("kant", [], {}, ["CONFIG_POR_ALIAS"]);
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -731,8 +731,8 @@ try {
   result = runSupervisor("start", "kant", await dockerState("kant"));
   assert.equal(result.status, 0, `config por alias debe arrancar: ${result.stderr}`);
   const conInterruptor = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
-  // kant es codex y su home mapeado es /home/stev. La ruta se DERIVA del alias: es la misma que
-  // calcula ops/scripts/separar-config-alias.mjs, que es quien copia los ficheros ahí.
+  // kant is codex and its mapped home is /home/stev. The path is DERIVED from the alias: the
+  // same one computed by ops/scripts/separar-config-alias.mjs, which copies the files there.
   assert(conInterruptor?.argv.includes("CODEX_HOME=/home/stev/.local/share/cauce-v3/config/kant/.codex"),
     "el interruptor tiene que exportar el directorio derivado del alias");
   assert(!conInterruptor?.argv.some((value) => value.startsWith("CLAUDE_CONFIG_DIR=")),
@@ -750,9 +750,9 @@ try {
     assert.equal((await records()).length, 0, `${name} debe fallar antes de tocar Docker`);
   }
 
-  // Un arnés que no lee ningún directorio gobernado por una variable no puede declarar el
-  // interruptor: exportarle la variable movería un directorio que nadie lee y dejaría a alguien
-  // convencido de que ese alias ya está separado.
+  // A harness that does not read any directory governed by a variable cannot declare the switch:
+  // exporting the variable to it would move a directory no one reads and leave someone convinced
+  // that alias is already separated.
   await writeConfig("iza", ["CONFIG_POR_ALIAS=1"]);
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));

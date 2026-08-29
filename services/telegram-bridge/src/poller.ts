@@ -55,8 +55,8 @@ export interface TelegramPollerOptions {
   /** Structured audit sink for suppressed group updates. Defaults to a stderr JSON line. */
   onSuppressed?: (record: SuppressedUpdate) => void;
   /**
-   * Servicio de transcripción para las notas de voz. Sin esto el puente sigue funcionando: los
-   * audios llegan como hasta ahora, con su metadata y un aviso de que no se pudieron escuchar.
+   * Transcription service for voice notes. Without it the bridge keeps working: the audio
+   * messages arrive as before, with their metadata and a notice that they could not be heard.
    */
   transcription?: TranscriptionConfig;
 }
@@ -104,12 +104,12 @@ export class TelegramPoller {
   private readonly onSuppressed: (record: SuppressedUpdate) => void;
   private readonly transcription: TranscriptionConfig | undefined;
   /**
-   * Nombres por los que un desconocido podría intentar hacerse pasar.
+   * Names under which an outsider could try to impersonate a known identity.
    *
-   * Sale del directorio de la flota que ya arma `main.ts` con el archivo de config desplegado
-   * —alias y @usernames de los bots— más el alias y el tenant de este puente. NINGUNO está escrito
-   * en el código: un alias nuevo queda cubierto por el mismo despliegue que lo da de alta, y este
-   * módulo no es una quinta fuente de verdad del mapa de alias que haya que recordar actualizar.
+   * It comes from the fleet directory that `main.ts` already builds from the deployed config
+   * file — aliases and @usernames of the bots — plus this bridge's alias and tenant. NONE of
+   * them is hardcoded here: a new alias is covered by the same deployment that registers it, and
+   * this module is not a fifth source of truth for the alias map needing manual updates.
    */
   private readonly reservedNames: ReadonlySet<string>;
   private currentLease: PollLease | undefined;
@@ -138,7 +138,7 @@ export class TelegramPoller {
     this.participants = options.participants;
     this.onSuppressed = options.onSuppressed ?? logSuppressedUpdate;
     this.transcription = options.transcription;
-    // Nombres reservados de la flota para detección de suplantación en grupos.
+    // Reserved fleet names for impersonation detection in groups.
     this.reservedNames = new Set([
       ...this.fleet.byUsername.keys(),
       ...this.fleet.byUsername.values(),
@@ -170,16 +170,16 @@ export class TelegramPoller {
   }
 
   /**
-   * Deja rastro de los updates de grupo que `accepted()` descarta antes de llegar al resolutor.
+   * Leaves a trace of the group updates that `accepted()` discards before they reach the resolver.
    */
   private reportSilentDrop(update: TelegramUpdate): void {
     const message = update.message;
     if (!message || !Number.isSafeInteger(message.message_id)) return;
     const chatId = conversationId(message.chat.id);
     if (chatId === undefined || isPrivateChatId(chatId)) return;
-    // El orden importa: un mensaje anónimo TAMBIÉN falla el allowlist de usuario (Telegram lo firma
-    // como GroupAnonymousBot), así que si se preguntara primero por el usuario el motivo real
-    // quedaría escondido detrás de un 'user_denied' que no explica nada.
+    // Order matters: an anonymous message ALSO fails the user allowlist (Telegram signs it as
+    // GroupAnonymousBot), so asking about the user first would hide the real reason behind a
+    // 'user_denied' that explains nothing.
     const reason: SuppressionReason =
       message.sender_chat !== undefined ? 'anonymous_sender'
         : id(message.from?.id) === undefined ? 'no_author'
@@ -200,7 +200,7 @@ export class TelegramPoller {
         chat_configured: effectiveChatPolicy(this.config, chatId, threadId) !== undefined
       });
     } catch {
-      // El rastro es best effort; jamás puede trabar el poller en este update.
+      // The trace is best effort; it must never wedge the poller on this update.
     }
   }
 
@@ -233,10 +233,9 @@ export class TelegramPoller {
    * Sanitised, explicitly untrusted identity of the author and of the quoted message.
    * Rendered inside the fenced UNTRUSTED block of the prompt, never inside `origin.metadata`.
    *
-   * `scope: 'private'` deja fuera el extracto del mensaje citado: en un DM lo citado es casi
-   * siempre la respuesta anterior del propio agente, y meterle de vuelta su propio texto marcado
-   * como NO CONFIABLE es ruido que no ayuda a nadie. Lo que faltaba en el privado era saber CON
-   * QUIÉN habla, y eso es el autor.
+   * `scope: 'private'` drops the quoted message excerpt: in a DM the quoted message is almost
+   * always the agent's own previous reply, and feeding its own text back in as UNTRUSTED is noise
+   * that helps no one. What the private channel lacked was knowing WHO the human is, which is the author.
    */
   private untrustedContext(
     message: TelegramMessage,
@@ -318,11 +317,12 @@ export class TelegramPoller {
     // untrusted block, and the legacy `user`-scoped session key.
     const group = decision.reason !== 'private' && decision.reason !== 'legacy';
     /**
-     * P8: el DM también lleva la identidad del humano, y `legacy` sigue sin llevar nada.
+     * P8: the DM also carries the human's identity, and `legacy` still carries nothing.
      *
-     * `legacy` es un GRUPO de un alias que nunca declaró `chats`: su escotilla de escape es
-     * publicar byte por byte lo que publicaba antes del ruteo, y meterle el bloque untrusted la
-     * rompería. El privado no tiene esa deuda: hoy el agente ve un número de chat y nada más.
+     * `legacy` is a GROUP of an alias that never declared `chats`: its escape hatch is to publish
+     * byte-for-byte what it published before the routing change, and adding the untrusted block
+     * would break that. The private channel has no such debt: today the agent just sees a chat
+     * number, nothing more.
      */
     const context: BodyContext | undefined = group
       ? { threadId, bucket: decision.bucket, untrusted: this.untrustedContext(message, 'group') }
@@ -492,7 +492,7 @@ export class TelegramPoller {
         this.observer?.pollCycleFailed(this.config.alias);
         this.onMetric('poll_error');
         failures += 1;
-        // Registro de error en el ciclo de polling.
+        // Error log entry for the polling cycle.
         logJsonLine({
           event: 'telegram_poll_error',
           bot_id: this.botId,

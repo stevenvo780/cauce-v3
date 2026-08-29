@@ -11,16 +11,16 @@ import {
 } from "../src/harnesses/contexto-fijo.js";
 
 /*
- * EL FICHERO DEL ARNÉS NO ES DE CAUCE. Es del alias, y hay personas escribiendo ahí: medido el
- * 2026-08-24, `zeus` tiene 10.733 bytes en su `CLAUDE.md`, `jarvis` 23.762 en su `openclaw.json`
- * y `janus` un `CLAUDE.md` de espacio de trabajo de 510 bytes escrito a mano.
+ * THE HARNESS FILE IS NOT OWNED BY CAUCE. It belongs to the alias, and people write in it: as of
+ * 2026-08-24, `zeus` has 10,733 bytes in its `CLAUDE.md`, `jarvis` has 23,762 in its
+ * `openclaw.json`, and `janus` has a workspace `CLAUDE.md` of 510 bytes written by hand.
  *
- * El generador que ya existe (`scripts/genera-contexto-harness.sh`) promete en su cabecera que
- * hace copia de seguridad y NO la hace: su `write_file()` es un `cat >` que sobreescribe. Si la
- * siembra automática se comporta así, la primera pasada borra el manual de alguien.
+ * The existing generator (`scripts/genera-contexto-harness.sh`) claims in its header that it
+ * takes a backup and it does NOT: its `write_file()` is a `cat >` that overwrites. If the
+ * automatic seed behaves that way, the first pass wipes someone's manual.
  *
- * De ahí el bloque con marcas: Cauce escribe SÓLO entre ellas y todo lo demás se conserva byte a
- * byte. Estas pruebas son las que impiden que eso se rompa.
+ * Hence the marked block: Cauce writes ONLY between the markers and everything else is preserved
+ * byte-for-byte. These tests are the ones that keep that from breaking.
  */
 
 const MANUAL_HUMANO = `# El manual de zeus
@@ -63,9 +63,9 @@ test("un fichero vacío recibe el bloque y nada más", () => {
 
 test("una marca de apertura SIN cierre no se lleva por delante el fichero", () => {
   /*
-   * Un fichero a medio escribir —una siembra cortada, un disco lleno— tiene la marca de apertura
-   * y no la de cierre. Adivinar dónde terminaba el bloque anterior es exactamente cómo se borra
-   * texto ajeno. Se conserva TODO y el bloque nuevo va detrás.
+   * A half-written file — a cut-off seed, a full disk — has the opening marker but no closing
+   * one. Guessing where the previous block ended is exactly how other people's text gets deleted.
+   * Everything is preserved and the new block goes after.
    */
   const roto = `${MANUAL_HUMANO}\n${MARCA_INICIO}\nse corto aca`;
   const resultado = conBloqueGestionado(roto, "CONTRATO NUEVO");
@@ -74,7 +74,7 @@ test("una marca de apertura SIN cierre no se lleva por delante el fichero", () =
   assert.equal(bloqueGestionado(resultado), "CONTRATO NUEVO");
 });
 
-// ── CONTROLES NEGATIVOS ─────────────────────────────────────────────────────────────────────
+// ── NEGATIVE CONTROLS ──────────────────────────────────────────────────────────────────────
 
 test("CONTROL NEGATIVO: sin marcas no hay bloque, y no se inventa uno", () => {
   assert.equal(bloqueGestionado(MANUAL_HUMANO), undefined);
@@ -87,8 +87,8 @@ test("CONTROL NEGATIVO: con la marca de apertura pero sin cierre, NO hay bloque"
 
 test("CONTROL NEGATIVO: openclaw NO tiene ruta de fichero de texto", () => {
   /*
-   * `openclaw.json` guarda `auth` y `secrets` junto a la directiva, y está en la lista de «nunca
-   * se sirve» del pty-agent y del gateway. Devolver una ruta aquí llevaría a escribirlo entero.
+   * `openclaw.json` stores `auth` and `secrets` next to the directive, sits on the "never
+   * served" list of the pty-agent and the gateway, and returning a path here would write it whole.
    */
   assert.equal(rutaDelContextoFijo("openclaw", "/home/claw"), undefined);
   assert.equal(rutaDelContextoFijo("hermes", "/home/dev"), undefined);
@@ -101,7 +101,7 @@ test("la ruta respeta CLAUDE_CONFIG_DIR y CODEX_HOME, que es como se separan los
     rutaDelContextoFijo("claude", "/home/dev", { CLAUDE_CONFIG_DIR: "/home/dev/.cauce/atlas/.claude" }),
     "/home/dev/.cauce/atlas/.claude/CLAUDE.md",
   );
-  // Una ruta relativa se ignora en vez de componerse: componerla daría un fichero fuera del home.
+  // A relative path is ignored instead of composed: composing it would land a file outside the home.
   assert.equal(rutaDelContextoFijo("codex", "/home/dev", { CODEX_HOME: "relativa" }), "/home/dev/.codex/AGENTS.md");
 });
 
@@ -111,7 +111,7 @@ test("el cierre del bloque queda bien formado y es reconocible", () => {
   assert.equal(resultado.split(MARCA_FIN).length - 1, 1);
 });
 
-// ── El sello leído del disco ────────────────────────────────────────────────────────────────
+// ── The seal read from disk ────────────────────────────────────────────────────────────────
 
 test("el sello sale del bloque, no del fichero entero", () => {
   const fijo = "CONTRATO DE ZEUS";
@@ -119,14 +119,14 @@ test("el sello sale del bloque, no del fichero entero", () => {
   const sello = selloDesdeElDisco("/da/igual", () => fichero);
   assert.ok(sello);
   assert.equal(sello.sha256, resumirContextoFijo(fijo));
-  // Y por tanto: cambiar el texto HUMANO de alrededor no invalida el sello. Eso es lo que hace
-  // que una persona pueda editar su manual sin que la flota vuelva a pagar 8.000 caracteres.
+  // And therefore: changing the surrounding HUMAN text does not invalidate the seal. That is what
+  // makes it possible for a person to edit their manual without the fleet paying 8,000 chars again.
   const conMasTextoHumano = conBloqueGestionado(`${MANUAL_HUMANO}\nUna nota nueva.\n`, fijo);
   assert.equal(selloDesdeElDisco("/da/igual", () => conMasTextoHumano)?.sha256, sello.sha256);
 });
 
 test("CONTROL NEGATIVO: un fichero que no se puede leer NO produce sello", () => {
-  // Fichero ausente, sin permisos, ruta que era un directorio: todo tiene que dar «mandá todo».
+  // Missing file, no permissions, path that was a directory: everything must yield "send all".
   const sello = selloDesdeElDisco("/no/existe", () => {
     throw new Error("ENOENT");
   });

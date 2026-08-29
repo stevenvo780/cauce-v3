@@ -11,21 +11,21 @@ import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import './toggles.css';
 
 /**
- * Alta de un recurso con formulario. Reemplaza al «tipeá la mutación a mano en JSON» para los
- * cuatro recursos que se dan de alta a diario; el editor crudo sigue abajo para todo lo demás.
+ * Onboarding for a resource via form. Replaces "type the mutation by hand in JSON" for the four
+ * resources onboarded on a daily basis; the raw editor stays below for everything else.
  *
- * Va por el MISMO `onChange` que el wizard y que el editor crudo —o sea, por
- * `api.changeConfiguration` con `expected_revision`—, así que no hay un segundo camino de escritura
- * que pueda quedarse atrás del primero.
+ * It goes through the SAME `onChange` as the wizard and the raw editor — that is, through
+ * `api.changeConfiguration` with `expected_revision` — so there is no second write path that
+ * could fall behind the first one.
  */
 export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
   soloLectura: boolean;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
   /**
-   * El control que elige entre este alta y el wizard. Se pinta DENTRO del panel, arriba del
-   * formulario que gobierna: colgado por fuera era una segunda tira de pestañas idéntica a la de
-   * las áreas, y se leía como navegación de la página. Ver `AltaDeEspacios`.
+   * The control that picks between this onboarding and the wizard. It is rendered INSIDE the
+   * panel, above the form it governs: hanging it outside was a second strip of tabs identical to
+   * the areas' one, and read as page navigation. See `AltaDeEspacios`.
    */
   encabezado?: ReactNode;
 }) {
@@ -33,8 +33,8 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
   const [borrador, setBorrador] = useState<BorradorAlta>(BORRADOR_VACIO);
   const [aviso, setAviso] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   const [preview, setPreview] = useState<string>();
-  // Un formulario recién abierto no es un formulario mal llenado: el motivo se grita (role=alert)
-  // recién cuando el operador tocó algo o intentó enviar. Antes de eso se muestra como pista.
+  // A freshly opened form is not a badly filled form: the reason is shouted (role=alert) only once
+  // the operator touched something or tried to submit. Until then it is shown as a hint.
   const [tocado, setTocado] = useState(false);
 
   const invalido = errorDeAlta(recurso, borrador);
@@ -43,8 +43,8 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
   function editar(parche: Partial<BorradorAlta>) {
     setBorrador((actual) => ({ ...actual, ...parche }));
     setTocado(true);
-    // El dry-run anterior valía para OTRA mutación: dejarlo en pantalla lo convertiría en una
-    // promesa sobre algo que el servidor nunca vio.
+    // The previous dry-run applied to ANOTHER mutation: leaving it on screen would turn it into a
+    // promise about something the server never saw.
     setPreview(undefined);
     setAviso(undefined);
   }
@@ -53,9 +53,9 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
     setRecurso(siguiente);
     setPreview(undefined);
     setAviso(undefined);
-    // Otro recurso pide otros campos: el formulario vuelve a estar recién abierto y el motivo de
-    // «todavía no se puede crear» deja de ser un `role=alert`. Sin esto, elegir «Room» le gritaba
-    // al operador un error de validación sobre campos que ni siquiera había visto.
+    // Another resource asks for different fields: the form is freshly opened again and the
+    // "cannot create yet" reason stops being a `role=alert`. Without this, picking "Room"
+    // shouted at the operator a validation error about fields they had not even seen.
     setTocado(false);
   }
 
@@ -78,24 +78,24 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
       return;
     }
     setPreview(undefined);
-    // El verde sale con la respuesta del servidor y con el desenlace de la relectura, nunca antes.
+    // The green comes from the server response and the reload outcome, never before.
     const fallo = desenlace.recarga && !desenlace.recarga.releido;
     setAviso({
       tone: fallo ? 'parcial' : 'success',
       text: `${TITULOS_ALTA[recurso]} creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
         + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`,
     });
-    // El recurso YA existe: dejar los campos llenos rearma «Crear» sobre él y el segundo clic se
-    // gana un 409 de fila duplicada. El formulario vuelve a vacío y sin `tocado`, así que el
-    // motivo de que «Crear» esté apagado se muestra como pista y no como error. El aviso verde no
-    // se toca: es lo único que queda del alta que sí se hizo.
+    // The resource ALREADY exists: leaving the fields filled reassembles "Create" on top of it
+    // and the second click earns a 409 for a duplicate row. The form returns to empty with no
+    // `tocado`, so the reason "Create" is disabled shows as a hint, not as an error. The green
+    // notice is not touched: it is the only thing left from the onboarding that did succeed.
     setBorrador(BORRADOR_VACIO);
     setTocado(false);
   }
 
-  // Sin `config.write` el formulario no se esconde —los campos siguen a la vista para saber QUÉ se
-  // podría dar de alta— pero queda inerte: llenarlo entero y ver la mutación actualizarse en vivo,
-  // en una pantalla que arriba dice «Solo lectura», es prometer una escritura que nunca va a salir.
+  // Without `config.write` the form is not hidden — fields stay visible so the operator knows
+  // WHAT could be onboarded — but it goes inert: filling it out and seeing the mutation update
+  // live, on a screen whose header says "Read-only", is promising a write that will never go out.
   const inerte = { disabled: soloLectura, ...(soloLectura ? { title: CONFIG_SIN_CONTROL_REASON } : {}) };
 
   return <Panel title="Alta rápida" subtitle="Arma la mutación y la manda por el mismo change endpoint versionado que el editor crudo.">
@@ -129,8 +129,8 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
       {recurso === 'acl_edge' ? <>
         <label>Desde el tenant<input {...inerte} aria-label="Desde el tenant" value={borrador.desde} onChange={(event) => { editar({ desde: event.target.value }); }} /></label>
         <label>Hacia el tenant<input {...inerte} aria-label="Hacia el tenant" value={borrador.hacia} onChange={(event) => { editar({ hacia: event.target.value }); }} /></label>
-        {/* Los tres permisos arrancan en NO: el default del backend es deny, y el formulario no
-            debe abrir un cruce entre tenants por omisión. */}
+        {/* The three permissions default to NO: the backend default is deny, and the form must
+            not open a cross-tenant link by default. */}
         <label className="casilla"><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => { editar({ allowRoute: event.target.checked }); }} /> Ruta <span className="label-hint">allow_route: dejar que le mande mensajes</span></label>
         <label className="casilla"><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Lectura <span className="label-hint">allow_read: dejar que lea su actividad</span></label>
         <label className="casilla"><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Control <span className="label-hint">allow_control: dejar que le escriba la configuración</span></label>
@@ -138,11 +138,11 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
       <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
     </div>
 
-    {/* Lo que se va a enviar, a UN CLIC de la vista.
-        Estaba abierto por defecto y ocupaba once líneas de JSON crudo entre el formulario y sus
-        botones: para llegar a «Crear» había que pasar por delante de `{"resource":"membership"…}`,
-        que no es lo que se está por hacer sino cómo se codifica. No se esconde —sigue estando
-        entero, y es lo que hay que leer antes de firmar algo raro—: deja de ser lo primero. */}
+    {/* What is about to be sent, one click from view.
+        It was open by default and occupied eleven lines of raw JSON between the form and its
+        buttons: to reach "Create" one had to walk past `{"resource":"membership"…}`, which is not
+        what is being done but how it is encoded. It is not hidden — it is still all there, and
+        is what must be read before signing anything odd — it just stops being the first thing. */}
     <details className="config-crudo">
       <summary><Braces size={13} aria-hidden="true" /> Ver la mutación que se va a enviar</summary>
       <pre className="config-preview" aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>

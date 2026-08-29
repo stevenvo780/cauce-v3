@@ -1,22 +1,22 @@
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
- * Lo que dice un muñeco cuando le pasás el puntero por encima o lo enfocás con el teclado.
+ * What a doll says when you hover it with the pointer or focus it with the keyboard.
  *
- * Cuatro líneas y un pie, en castellano, respondiendo la pregunta que se hace quien mira el mapa:
- * *qué tiene entre manos, quién se lo pidió, hace cuánto y cuántos esperan detrás*. Ni un
- * `delivery_id`, ni un `message_id`, ni un `lane`, ni un `epoch`: eso es material del cajón
- * lateral, donde hay sitio para leerlo despacio, y meterlo acá convierte una explicación en un
- * volcado.
+ * Four lines and a footer, in Spanish, answering the question of whoever looks at the map: *what
+ * it has in hand, who asked for it, how long ago, and how many are queued behind it*. Not a
+ * single `delivery_id`, not a `message_id`, not a `lane`, not an `epoch`: that is material for
+ * the side drawer, where there is room to read it slowly, and putting it here turns an
+ * explanation into a dump.
  *
- * Y NUNCA el texto del encargo. No es una decisión de diseño que se pueda revisar: `/activity` no
- * selecciona cuerpos de mensaje —el dato no entra siquiera al result set del servidor— así que
- * esta tarjeta dice QUÉ entrega tiene el agente, no qué dice la entrega. Si algún día apareciera
- * un cuerpo por acá, sería un fallo del backend, no una mejora de la UI.
+ * And NEVER the text of the task. It is not a design decision that can be revisited: `/activity`
+ * does not select message bodies — the data does not even enter the server's result set — so this
+ * card says WHICH delivery the agent has, not what the delivery says. If a body ever shows up
+ * here, it would be a backend failure, not a UI improvement.
  */
 
 export interface AgentTooltipCardProps {
-  /** `null` = la topología declara al alias y la actividad no lo reporta. */
+  /** `null` = the topology declares the alias and activity does not report it. */
   view: LiveAgentView | null;
   alias: string;
 }
@@ -33,10 +33,10 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
   }
 
   const meta = LIVE_STATE_META[view.state];
-  // El origen viene YA desambiguado desde `buildLiveViews`, que es el único sitio con el conjunto
-  // de alias de la flota entera delante. Acá no se vuelve a mirar `origin_adapter`: ese campo se
-  // copia byte a byte en cada salto y por sí solo convertía cualquier delegación entre agentes en
-  // «se lo pidió una persona, por telegram».
+  // The origin arrives ALREADY disambiguated from `buildLiveViews`, which is the only place that
+  // has the whole fleet's alias set in front of it. `origin_adapter` is not consulted again here:
+  // that field is copied byte-for-byte on every hop and on its own turned any inter-agent delegation
+  // into "someone asked for it, via telegram".
   const origen = view.origenes[0];
   const vaMal = view.state === 'blocked' || view.state === 'down';
 
@@ -44,35 +44,36 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
     <div className="agent-tip">
       <p><strong>{alias}</strong> — {meta.label}</p>
 
-      {/* 1 — qué está haciendo, y desde cuándo. */}
+      {/* 1 — what it is doing, and since when. */}
       <p>{lineaTrabajo(view)}</p>
 
-      {/* 2 — quién se lo pidió. Un encargo sin remitente visible es media respuesta; uno con un
-             remitente INVENTADO es peor, así que el caso sin dato se declara en vez de omitirse. */}
+      {/* 2 — who asked for it. A task without a visible sender is half an answer; one with an
+             INVENTED sender is worse, so the missing-data case is declared rather than omitted. */}
       <LineaOrigen origen={origen} />
 
-      {/* 2b — si hay más de un encargo, el globo habla de UNO y lo dice. Antes callaba, y quien
-              leía "se lo pidió X" con nueve entregas en vuelo se llevaba una atribución parcial
-              creyendo que era la del agente entero. El total sale de `inFlight` y no del largo de
-              la lista porque el servidor la trunca (`in_flight_items_truncated`): contar los ítems
-              recibidos diría "3 encargos" en un agente que tiene 41. */}
+      {/* 2b — if there is more than one task, the tooltip speaks about ONE of them and says so.
+              Before it was silent, and whoever read "X asked for it" while nine deliveries were
+              in flight walked away with a partial attribution thinking it belonged to the whole
+              agent. The total comes from `inFlight`, not from the list length, because the
+              server truncates it (`in_flight_items_truncated`), so counting received items
+              would say "3 tasks" on an agent with 41. */}
       {view.inFlight > 1 && view.origenes.length > 0 ? (
         <p className="muted">Es uno de {view.inFlight} encargos en vuelo, y cada uno tiene su propio remitente. Enter para verlos.</p>
       ) : null}
 
-      {/* 3 — cuántos esperan turno detrás. Se omite entera en cero: una línea que dice "0" ocupa
-             el mismo sitio que una que informa, y no informa. */}
+      {/* 3 — how many are waiting in line behind. Omitted entirely at zero: a line that says
+             "0" takes the same space as one that informs, and does not inform. */}
       {view.queued > 0 ? (
         <p>{view.queued === 1 ? '1 esperando turno detrás' : `${String(view.queued)} esperando turno detrás`}.</p>
       ) : null}
 
-      {/* 4 — sólo si va mal. En un agente sano esta línea no existe. */}
+      {/* 4 — only if something is wrong. On a healthy agent this line does not exist. */}
       {vaMal ? <p className="tooltip-warn">{lineaSenal(view)}</p> : null}
 
       <div className="tooltip-foot">
-        {/* El pie de trabajo cerrado DESAPARECE si el servidor no informa el campo. Un "cerró 0
-            hoy" inventado sobre un dato ausente es una acusación falsa a un agente que quizá
-            cerró treinta. */}
+        {/* The closed-work footer DISAPPEARS if the server does not report the field. An invented
+            "closed 0 today" over missing data is a false accusation against an agent that may
+            have closed thirty. */}
         {typeof view.closed24h === 'number'
           ? <p>{view.closed24h === 1 ? 'Cerró 1 encargo hoy' : `Cerró ${String(view.closed24h)} encargos hoy`}.</p>
           : null}
@@ -83,11 +84,11 @@ export function AgentTooltipCard({ view, alias }: AgentTooltipCardProps) {
 }
 
 /**
- * La línea de "quién se lo pidió", una por cada forma de saberlo — y una para cuando no se sabe.
+ * The "who asked for it" line, one for each way to know it — and one for when it is unknown.
  *
- * Sin encargo en vuelo no hay nada que atribuir y la línea desaparece entera. Con encargo y sin
- * remitente identificable se escribe que no se sabe: callarlo dejaría al lector suponiendo que se
- * lo pidió el último nombre que vio.
+ * Without a task in flight there is nothing to attribute and the line disappears entirely. With
+ * a task and without an identifiable sender, it is written that it is unknown: staying silent
+ * would leave the reader assuming the last name they saw is the one who asked.
  */
 function LineaOrigen({ origen }: { origen: OrigenEncargo | undefined }) {
   if (!origen) return null;
@@ -115,7 +116,7 @@ function lineaTrabajo(view: LiveAgentView): string {
 function lineaSenal(view: LiveAgentView): string {
   if (view.state === 'down') return view.reason;
   const desde = view.secondsSinceLastAck;
-  // `null` no es `0`: significa "ni una señal dentro de la ventana de búsqueda", que es peor.
+  // `null` is not `0`: it means "not a single signal within the search window", which is worse.
   if (desde === null || desde === undefined) return 'No dio ni una señal en la última hora.';
   return `Sin dar señales desde hace ${humanSeconds(desde)}.`;
 }

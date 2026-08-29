@@ -7,10 +7,10 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Tratamiento de ACKs terminales tardíos:
+ * Handling of late terminal ACKs:
  *
- * Distingue la caducidad de exclusividad de lease de la validez del resultado transportado,
- * permitiendo recuperar respuestas válidas en casos donde la entrega expiró por timeout.
+ * Distinguishes lease-exclusivity expiry from the validity of the carried result, allowing valid
+ * replies to be recovered in cases where the delivery expired by timeout.
  */
 
 let database: TestDatabase;
@@ -37,7 +37,7 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   };
 }
 
-/** Publica con origen de Telegram, que es lo que hace que exista un relay al humano. */
+/** Publishes with a Telegram origin, which is what makes a relay to the human exist. */
 function humanCommand(conversation: string, overrides: Partial<PublishMessage> = {}): PublishMessage {
   return command({
     authenticated_context: {
@@ -89,7 +89,7 @@ function doneAck(
   });
 }
 
-/** Lo que hace el SDK cuando el harness arranca de verdad: sin esto el reaper reintenta. */
+/** What the SDK does when the harness really starts: without this the reaper retries. */
 async function startExecution(
   delivery: DeliveryEnvelope,
   instanceId: string,
@@ -152,8 +152,8 @@ async function relayRows(deliveryId: string): Promise<Array<{
 }
 
 /**
- * Deja una entrega humana muerta por "ACK timeout: execution already started", que es
- * exactamente el estado en el que quedaron las 387 respuestas perdidas.
+ * Leaves a human delivery dead by "ACK timeout: execution already started", which is exactly the
+ * state the 387 lost replies were left in.
  */
 async function killByTimeout(conversation: string): Promise<{
   delivery: DeliveryEnvelope; epoch: number; instanceId: string;
@@ -201,14 +201,14 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
     expect(row.late_result_at).not.toBeNull();
     expect(row.late_result_attempt).toBe(delivery.attempt);
 
-    // El botón de replay del operador no puede ofrecer una entrega ya contestada: eso es una
-    // corrida duplicada esperando a que alguien haga clic.
+    // The operator's replay button cannot offer an already answered delivery: that is a duplicate
+    // run waiting for someone to click.
     expect((await pool.query(
       `SELECT 1 FROM dead_letters WHERE delivery_id=$1 AND resolved_at IS NULL`,
       [delivery.delivery_id]
     )).rowCount).toBe(0);
 
-    // El ACK queda registrado como aplicado, no como descarte.
+    // The ACK is recorded as applied, not as discarded.
     const stored = await pool.query<{ applied: boolean }>(
       `SELECT applied FROM delivery_acks WHERE event_id=$1`, [late.event_id]
     );
@@ -246,7 +246,7 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
       outcome: 'done',
       late_result: true
     });
-    // Sin encabezado de corrección: la persona nunca vio el fallo, no hay nada que corregirle.
+    // No correction header: the person never saw the failure, there is nothing to correct.
     expect(relays[0]?.reply).toBe('Acá está tu respuesta.');
   });
 
@@ -265,7 +265,7 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
 
     const relays = await relayRows(delivery.delivery_id);
     expect(relays).toHaveLength(2);
-    // El aviso viejo queda intacto: ya lo leyó la persona y reescribirlo sería mentirle al log.
+    // The old notice stays intact: the person already read it and rewriting it would lie to the log.
     expect(relays[0]).toMatchObject({ status: 'sent', outcome: 'dead' });
     expect(relays[1]).toMatchObject({
       idempotency_key: `relay-late:${delivery.delivery_id}:${delivery.attempt}`,
@@ -294,8 +294,8 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
     const row = await deliveryRow(delivery.delivery_id);
     expect(row.status).toBe('dead');
     expect(row.last_error).toBe('quota exhausted on the weekly window');
-    // El dead letter sigue ABIERTO —sigue siendo un fracaso— pero ahora dice la causa real y no
-    // el "ACK timeout" genérico del reaper.
+    // The dead letter stays OPEN —it is still a failure— but it now states the real cause and not
+    // the generic "ACK timeout" from the reaper.
     const letter = await pool.query<{ reason: string; resolved_at: Date | null }>(
       `SELECT reason,resolved_at FROM dead_letters WHERE delivery_id=$1`, [delivery.delivery_id]
     );
@@ -324,9 +324,9 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
 
 describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
   /**
-   * El reaper reintentó (nunca constó ejecución) y el MISMO adaptador se la volvió a llevar.
-   * Es el caso realista: hay una sola instancia viva por alias, así que el lease de conexión
-   * sigue siendo el mismo y el intento 2 está corriendo cuando llega el 'done' del intento 1.
+   * The reaper retried (execution was never recorded) and the SAME adapter picked it up again.
+   * This is the realistic case: there is a single live instance per alias, so the connection lease
+   * is still the same one and attempt 2 is running when the 'done' from attempt 1 arrives.
    */
   async function retriedTwice(conversation: string): Promise<{
     first: DeliveryEnvelope; second: DeliveryEnvelope; epoch: number; instanceId: string;
@@ -369,8 +369,8 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
     expect(row.reply).toBe('terminé, sólo que tarde');
     expect(row.late_result_attempt).toBe(first.attempt);
 
-    // Y la corrida en vuelo se entera en su próxima renovación: el SDK aborta el harness con
-    // CLAIM_OWNERSHIP_LOST y deja de quemar cuota repitiendo un trabajo ya hecho.
+    // The in-flight run finds out at its next renewal: the SDK aborts the harness with
+    // CLAIM_OWNERSHIP_LOST and stops burning quota repeating work that is already done.
     const renewal = await repository.ackDelivery(
       second.delivery_id, tenant, alias, ack(second, instanceId, epoch, 'started')
     );
@@ -389,9 +389,9 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
       [first.delivery_id]
     );
     expect(audit.rows[0]?.metadata).toMatchObject({
-      // La entrega estaba arrendada al intento 2 cuando llegó el 'done' del intento 1: la
-      // procedencia NO pudo salir de la fila (su garra ya era otra) y salió del ACK 'started'
-      // aplicado que el intento 1 dejó en `delivery_acks`.
+      // The delivery was leased to attempt 2 when the 'done' from attempt 1 arrived: the
+      // provenance COULD NOT come from the row (its claim was already a different one) and came
+      // from the applied 'started' ACK that attempt 1 left in `delivery_acks`.
       previous_status: 'leased',
       claim_provenance: 'applied',
       attempt: first.attempt,
@@ -426,7 +426,7 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
       return { first, second, epoch: lease.epoch!, instanceId };
     })();
 
-    // La corrida NUEVA contesta primero, dentro de plazo.
+    // The NEW run answers first, within the deadline.
     await repository.ackDelivery(
       second.delivery_id, tenant, alias,
       doneAck(second, instanceId, epoch, 'respuesta de la corrida nueva')
@@ -441,9 +441,9 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
     const row = await deliveryRow(first.delivery_id);
     expect(row.reply).toBe('respuesta de la corrida nueva');
     expect(row.late_result_at).toBeNull();
-    // Un event_id nuevo sobre una fila terminal no amplía el historial para siempre. El ACK
-    // aplicado de la corrida ganadora ya conserva el resultado canónico; la corrida vieja recibe
-    // ownership_lost pero no puede poblar delivery_acks después del cierre.
+    // A new event_id on a terminal row does not grow the history forever. The applied ACK of the
+    // winning run already preserves the canonical result; the old run receives ownership_lost but
+    // cannot populate delivery_acks after closure.
     expect((await pool.query(
       `SELECT 1 FROM delivery_acks WHERE delivery_id=$1 AND applied=false AND status='done'`,
       [first.delivery_id]
@@ -453,8 +453,8 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
   it('la carrera de dos corridas devolviendo done a la vez la gana una sola', async () => {
     const { delivery, epoch, instanceId } = await killByTimeout('carrera');
 
-    // Dos ACKs terminales del mismo intento, con contenidos distintos, lanzados a la vez. El
-    // `FOR UPDATE OF d` de `ackDelivery` los serializa: el segundo re-lee la fila ya cerrada.
+    // Two terminal ACKs from the same attempt, with different contents, launched at once.
+    // `ackDelivery`'s `FOR UPDATE OF d` serialises them: the second one re-reads the already closed row.
     const [left, right] = await Promise.all([
       repository.ackDelivery(
         delivery.delivery_id, tenant, alias, doneAck(delivery, instanceId, epoch, 'izquierda')
@@ -469,7 +469,7 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
     const row = await deliveryRow(delivery.delivery_id);
     expect(row.status).toBe('done');
     expect(['izquierda', 'derecha']).toContain(row.reply);
-    // Un solo rescate, un solo aviso al humano.
+    // A single salvage, a single notice to the human.
     expect(await relayRows(delivery.delivery_id)).toHaveLength(1);
     expect((await pool.query(
       `SELECT 1 FROM audit_events WHERE action='delivery.late_result' AND delivery_id=$1`,
@@ -504,7 +504,7 @@ describe('qué NO se acepta tarde', () => {
     );
     expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
     expect((await deliveryRow(delivery.delivery_id)).status).toBe('dead');
-    // Lo importante: NO se creó una entrega nueva para kant.
+    // The point: NO new delivery was created for kant.
     expect((await pool.query(
       `SELECT 1 FROM deliveries WHERE recipient_alias='kant'`
     )).rowCount).toBe(0);
@@ -532,7 +532,7 @@ describe('qué NO se acepta tarde', () => {
     );
 
     expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
-    // Sigue en 'retry': un fracaso viejo no mata un reintento en curso.
+    // It stays in 'retry': an old failure does not kill an in-flight retry.
     expect((await deliveryRow(delivery.delivery_id)).status).toBe('retry');
   });
 
@@ -582,7 +582,7 @@ describe('el mismo evento rechazado y reenviado', () => {
     const rejected = await repository.ackDelivery(delivery.delivery_id, tenant, alias, late);
     expect(rejected).toMatchObject({ applied: false, receipt: 'ownership_lost' });
 
-    // El adaptador reconecta con la MISMA identidad (resume) y reenvía el mismo evento.
+    // The adapter reconnects with the SAME identity (resume) and resends the same event.
     const resumed = await repository.acquireLease(
       tenant, alias, instanceId, [], 60_000, { resume: true }
     );
@@ -618,7 +618,7 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
       tenant, alias, parentInstance, parentLease.epoch!, 1, 30_000
     );
     if (!root) throw new Error('expected the root delivery');
-    // argos delega en kant.
+    // argos delegates to kant.
     await repository.ackDelivery(
       root.delivery_id, tenant, alias,
       ack(root, parentInstance, parentLease.epoch!, 'done', {
@@ -641,7 +641,7 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
     await expire(child.delivery_id);
     expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
 
-    // El padre ya tiene el aviso de fallo en su bandeja.
+    // The parent already has the failure notice in its inbox.
     const notices = await pool.query<{ text: string; outcome: string }>(
       `SELECT body->>'text' AS text,body->>'outcome' AS outcome FROM messages
        WHERE body->>'type'='agent.response' ORDER BY created_at`
@@ -669,7 +669,7 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
     expect(responses.rows[1]?.text?.endsWith('sí lo hice, acá está')).toBe(true);
     expect(responses.rows[1]?.late).toMatchObject({ superseded_outcome: 'dead' });
 
-    // Y el rescate de una rama NO manda el relay al humano: el padre es quien cierra la cadena.
+    // And rescuing a branch does NOT send the relay to the human: the parent closes the chain.
     expect(await relayRows(child.delivery_id)).toHaveLength(0);
   });
 });

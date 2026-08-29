@@ -7,30 +7,30 @@ import { useAuthGate, type AuthGateState, type GateStatus } from './auth-session
 import './auth.css';
 
 /**
- * Puerta de sesión de la consola.
+ * Console session gate.
  *
- * Bloquea la aplicación entera hasta que el SERVIDOR dice que hay sesión. No decide nada por su
- * cuenta y no guarda ningún secreto: la autoridad es la cookie HttpOnly, que este código no
- * puede leer ni falsificar. Ni la contraseña ni el token quedan en `localStorage` — un XSS acá
- * no se lleva la sesión porque no hay nada que llevarse.
+ * Locks the entire application until the SERVER says there is a session. It decides nothing on
+ * its own and stores no secret: the authority is the HttpOnly cookie, which this code cannot
+ * read or forge. Neither the password nor the token end up in `localStorage` — an XSS here
+ * does not steal the session because there is nothing to steal.
  *
- * El gateway dice CÓMO se entra, en `login_mode`:
- *  - `password` → formulario de correo y contraseña contra `POST /v3/auth/login`
- *    (`services/gateway/src/password-auth.ts`, cuentas en la tabla `console_users`).
- *  - `redirect` o ausente → el BFF OIDC de `services/gateway/src/oidc-bff.ts`, que se activa
- *    navegando a `/v3/auth/login`.
+ * The gateway says HOW to enter, in `login_mode`:
+ *  - `password` → email and password form against `POST /v3/auth/login`
+ *    (`services/gateway/src/password-auth.ts`, accounts in the `console_users` table).
+ *  - `redirect` or absent → the OIDC BFF from `services/gateway/src/oidc-bff.ts`, activated
+ *    by navigating to `/v3/auth/login`.
  *
- * Los tres desenlaces posibles, y por qué cada uno se comporta así:
- *  - `authenticated: true`  → pasa, y la identidad queda visible arriba con su vencimiento.
- *  - `authenticated: false` → pantalla de login. NO se renderiza nada de la consola detrás.
- *  - `authenticated: null`  → el gateway no expone ningún BFF (`CAUCE_AUTH_PROVIDER=mtls`, que
- *    es lo desplegado mientras no se encienda el login). Se deja pasar, porque bloquear dejaría
- *    la consola inservible en producción, pero con un aviso permanente que dice con todas las
- *    letras que no hay login de verdad. Mentir acá sería peor que el propio agujero: un candado
- *    dibujado es más peligroso que una puerta abierta señalizada.
+ * The three possible outcomes, and why each behaves that way:
+ *  - `authenticated: true`  → passes, and the identity stays visible at the top with its expiry.
+ *  - `authenticated: false` → login screen. Nothing behind the console is rendered.
+ *  - `authenticated: null`  → the gateway exposes no BFF (`CAUCE_AUTH_PROVIDER=mtls`, which is
+ *    what is deployed until login is enabled). It lets through, because blocking would render
+ *    the console unusable in production, but with a permanent notice that spells out that there
+ *    is no real login. Lying here would be worse than the hole itself: a drawn padlock is more
+ *    dangerous than a marked-open door.
  *
- * Un error de red NO se trata como "sin sesión": se falla cerrado con reintento, porque un
- * gateway caído no es una autorización.
+ * A network error is NOT treated as "no session": it fails closed with retry, because a downed
+ * gateway is not an authorization.
  */
 
 const LEDE = 'Esta consola opera la flota entera: publica mensajes, cancela entregas y abre '
@@ -43,7 +43,7 @@ const FINEPRINT = (
   </p>
 );
 
-/** Formulario de contraseña. El error de credenciales se muestra acá, no en la pantalla de fallo. */
+/** Password form. Credential errors are shown here, not in the failure screen. */
 function PasswordLoginForm({ login, busy, reason }: {
   login: (email: string, password: string) => Promise<void>;
   busy: boolean;
@@ -61,7 +61,7 @@ function PasswordLoginForm({ login, busy, reason }: {
     } catch (cause) {
       setFailure(cause instanceof Error ? cause.message : 'No se pudo iniciar sesión.');
     } finally {
-      // La contraseña no sobrevive al intento ni en memoria del componente.
+      // The password does not survive the attempt, not even in the component's memory.
       setPassword('');
     }
   };
@@ -95,7 +95,7 @@ function PasswordLoginForm({ login, busy, reason }: {
   );
 }
 
-/** Login por redirección: el BFF OIDC. Se conserva porque el gateway puede correr en ese modo. */
+/** Redirect login: the OIDC BFF. Kept because the gateway may run in that mode. */
 function RedirectLoginScreen({ loginUrl, reason }: { loginUrl: string; reason?: string | null }) {
   return (
     <main className="auth-screen" id="main-content">
@@ -141,7 +141,7 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
   );
 }
 
-/** Identidad de la sesión para la barra superior. */
+/** Session identity for the top bar. */
 export function SessionBadge({ state, status, busy, onLogout }: {
   state?: ConsoleAuthState;
   status: GateStatus;
@@ -172,8 +172,8 @@ export function SessionBadge({ state, status, busy, onLogout }: {
 }
 
 /**
- * Aviso permanente cuando el gateway no tiene login de usuario. Es feo a propósito: tiene que
- * molestar hasta que se configure el proveedor de identidad.
+ * Permanent notice when the gateway has no user login. It is ugly on purpose: it must be
+ * annoying until the identity provider is configured.
  */
 export function UnmanagedAuthBanner() {
   return (
@@ -197,8 +197,8 @@ export function AuthGate({ children }: { children: (gate: AuthGateState) => Reac
   if (gate.status === 'checking') return <CheckingScreen />;
   if (gate.status === 'error' && gate.error) return <ErrorScreen error={gate.error} onRetry={() => void gate.check()} />;
   if (gate.status === 'out') {
-    // Sin `login_mode` se asume redirección: así se comportaba la consola antes de que existiera
-    // el login por contraseña, y un gateway viejo tiene que seguir entrando por su camino.
+    // Without `login_mode` redirect is assumed: that is how the console behaved before password
+    // login existed, and an old gateway has to keep coming in through its own path.
     return gate.state?.login_mode === 'password'
       ? <PasswordLoginForm login={gate.login} busy={gate.busy} reason={gate.state.reason} />
       : <RedirectLoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;

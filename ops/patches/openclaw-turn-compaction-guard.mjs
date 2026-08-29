@@ -1,17 +1,17 @@
 /**
- * Parche sobre openclaw: una compactación fallida no puede llevarse la respuesta del turno.
+ * Patch over openclaw: a failed compaction must not take down the turn's response.
  *
- * `runCliTurnCompactionLifecycle(...)` se llamaba SIN proteger, mientras que la persistencia del
- * transcript —tres líneas más arriba, en el mismo bloque— sí tiene su `try/catch` con `log.warn`.
- * Si la compactación tiraba, la excepción se llevaba el turno entero: la respuesta ya estaba
- * calculada y pagada, y no se entregaba nunca. Se ve como un agente que trabaja y no contesta.
+ * `runCliTurnCompactionLifecycle(...)` was called UNPROTECTED, while the transcript persistence
+ * — three lines above, in the same block — already has its `try/catch` with `log.warn`. If the
+ * compaction threw, the exception took the whole turn: the response was already computed and
+ * paid for, and was never delivered. It looks like an agent that works and never answers.
  *
- * Es software de terceros: el archivo se reescribe en cada instalación de openclaw y el nombre del
- * bundle es un hash que cambia con la versión. Ver ops/patches/README.md.
+ * This is third-party software: the file is rewritten on every openclaw install and the bundle
+ * name is a hash that changes with the version. See ops/patches/README.md.
  *
- * Uso: OPENCLAW_DIST=/ruta/al/bundle.js node openclaw-turn-compaction-guard.mjs
- * Imprime una sola palabra en stdout: `aplicado` o `ya-aplicado`. Cualquier otra cosa es un fallo
- * y sale distinto de 0.
+ * Use: OPENCLAW_DIST=/path/to/bundle.js node openclaw-turn-compaction-guard.mjs
+ * Prints a single word on stdout: `applied` or `already-applied`. Anything else is a failure and
+ * exits non-zero.
  */
 import { execFileSync } from "node:child_process";
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -19,12 +19,12 @@ import { copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 const DEFAULT_DIST = "/usr/lib/node_modules/openclaw/dist/agent-command-DimMXeog.js";
 const target = process.env.OPENCLAW_DIST ?? DEFAULT_DIST;
 
-/** El punto de anclaje: la llamada desprotegida, tal cual la emite el bundler. */
+/** Anchor point: the unprotected call, exactly as emitted by the bundler. */
 const ANCHOR = "if (persistedCliTurnTranscript && !suppressVisibleSessionEffects) sessionEntry = "
   + "await (await loadCliCompactionRuntime()).runCliTurnCompactionLifecycle({";
 const GUARDED = "if (persistedCliTurnTranscript && !suppressVisibleSessionEffects) try { sessionEntry = "
   + "await (await loadCliCompactionRuntime()).runCliTurnCompactionLifecycle({";
-/** Marca de que el parche ya está puesto. Es lo mismo que busca la comprobación del README. */
+/** Mark that the patch is already in place. It's what the README check looks for. */
 const MARK = "Turn compaction failed for";
 const RESCUE = "} catch (error) { log.warn(`Turn compaction failed for ${sessionKey ?? sessionId}: "
   + "${error instanceof Error ? error.message : String(error)}`); }";
@@ -47,9 +47,9 @@ if (original.split(ANCHOR).length !== 2) {
 }
 
 /**
- * El `catch` va después del `});` que cierra la llamada, no en la primera línea que empiece igual:
- * el objeto de argumentos tiene sus propias llaves y cortar por la primera coincidencia dejaría el
- * archivo sintácticamente roto. Se busca desde el ancla hacia adelante.
+ * The `catch` goes after the `});` that closes the call, not on the first line that starts the
+ * same way: the arguments object has its own braces and cutting at the first match would leave
+ * the file syntactically broken. We search forward from the anchor.
  */
 const start = original.indexOf(ANCHOR);
 const closing = original.indexOf("\n\t\t\t\t});\n", start);
@@ -59,13 +59,13 @@ const after = closing + "\n\t\t\t\t});\n".length;
 const patched = `${original.slice(0, start)}${GUARDED}${original.slice(start + ANCHOR.length, after)}\t\t\t\t${RESCUE}\n${original.slice(after)}`;
 
 /**
- * Se comprueba el EFECTO, no que el reemplazo haya "funcionado": un bundle roto deja al agente sin
- * arrancar, y eso es peor que el fallo que vinimos a arreglar. Se valida antes de escribir.
+ * We check the EFFECT, not that the replacement "worked": a broken bundle leaves the agent unable
+ * to start, which is worse than the failure we came to fix. We validate before writing.
  */
 const stamp = new Date().toISOString().replace(/[-:]/gu, "").slice(0, 15);
-// La extensión del temporal NO es cosmética: `node --check` deduce el dialecto del nombre, y con
-// cualquier otro sufijo falla con ERR_UNKNOWN_FILE_EXTENSION antes de mirar el contenido. El
-// bundle de openclaw es ESM, así que `.mjs`.
+// The temp file's extension is NOT cosmetic: `node --check` infers the dialect from the name,
+// and with any other suffix it fails with ERR_UNKNOWN_FILE_EXTENSION before inspecting the content.
+// The openclaw bundle is ESM, so `.mjs`.
 const scratch = `${target}.parche-${stamp}.mjs`;
 writeFileSync(scratch, patched, "utf8");
 try {

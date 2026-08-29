@@ -72,8 +72,8 @@ test("accepted is durable and published before started and execution", async () 
   };
   await context.engine.handleDelivery(delivery("order-1"));
   assert.deepEqual(phasesAtRun, ["accepted", "started", "started"]);
-  // La marca ya estaba emitida cuando el harness arrancó, no después: emitirla después dejaría
-  // una corrida que muere en el primer segundo indistinguible de una que nunca arrancó.
+  // The mark was already emitted when the harness started, not after: emitting it afterwards would
+  // leave a run that dies in its first second indistinguishable from one that never started.
   assert.equal(executionMarkedAtRun, 1);
   assert.deepEqual(
     context.events.map((event) => event.phase),
@@ -179,18 +179,18 @@ test("concurrent deliveries for different authenticated sessions execute in para
 });
 
 /**
- * EL escenario del dueño del sistema, tal como lo describió el revisor, y el motivo de todo el
- * carril de agentes.
+ * THE system owner's scenario, exactly as the reviewer described it, and the reason for the
+ * whole agent-lane track.
  *
- * jarvis (openclaw, sessionStrategy 'generated' ⇒ candado activo) atiende a su dueño en el chat
- * C. La cadena delega y vuelve como `agent.response` HEREDANDO
- * `origin={adapter:'telegram', conversation_id:C}`, así que antes le tocaba la MISMA clave de
- * sesión: esa respuesta agarraba el candado de la conversación de la persona y lo retenía toda
- * su corrida. Cuando el dueño escribía, su mensaje entraba rápido al gateway y se quedaba
- * esperando ese candado. 114 minutos de mediana en midas, 235 en el peor caso.
+ * jarvis (openclaw, sessionStrategy 'generated' ⇒ lock active) serves its owner in chat C. The
+ * chain delegates and comes back as `agent.response` INHERITING
+ * `origin={adapter:'telegram', conversation_id:C}`, so it used to land on the SAME session key:
+ * that reply grabbed the conversation lock and held it for its whole run. When the owner typed,
+ * their message arrived at the gateway quickly and was left waiting for that lock. 114 minutes
+ * median on midas, 235 in the worst case.
  *
- * Lo que se afirma acá es exactamente lo que pidió el dueño: la tarea agente-a-agente NO se
- * cancela ni se acorta —sigue bloqueada— y aun así el mensaje humano ejecuta.
+ * What this asserts is exactly what the owner asked for: the agent-to-agent task is NOT
+ * cancelled nor shortened — it stays blocked — and the human message still executes.
  */
 test("a human message executes while agent-to-agent work of the same conversation is still running", async () => {
   const context = await setupSessionConcurrency("engine-human-lane-preemption");
@@ -199,7 +199,7 @@ test("a human message executes while agent-to-agent work of the same conversatio
     actor_alias: "kant",
     body: { type: "agent.response", text: "kant volvió con el resultado" },
   };
-  // Misma conversación, mismo origin, misma clave base: lo único que difiere es la clase.
+  // Same conversation, same origin, same base key: the only thing that differs is the class.
   const ownerMessage: Delivery = {
     ...delivery("human-lane-owner-message"),
     body: { prompt: "che, ¿qué estás haciendo?" },
@@ -209,28 +209,28 @@ test("a human message executes while agent-to-agent work of the same conversatio
   await context.runner.waitForCalls(1);
 
   const owner = context.engine.handleDelivery(ownerMessage);
-  // Sin carriles esto se colgaba acá para siempre: waitForCalls(2) no llegaba nunca hasta que
-  // la tarea del agente terminara.
+  // Without lanes this would hang here forever: waitForCalls(2) never arrived until the agent
+  // task finished.
   await context.runner.waitForCalls(2);
   assert.equal(context.runner.maxActive, 2);
   assert.match(context.runner.requests[1]?.stdin ?? "", /qué estás haciendo/u);
-  // Sesiones nativas distintas: es el costo declarado del cambio (el agente pierde el hilo
-  // conversacional entre los dos carriles) y a la vez lo que hace posible la concurrencia.
+  // Distinct native sessions: that is the declared cost of the change (the agent loses the
+  // conversational thread across the two lanes) and at the same time what makes concurrency possible.
   assert.notEqual(
     context.runner.requests[0]?.args.at(-1),
     context.runner.requests[1]?.args.at(-1),
   );
 
-  // El humano puede terminar primero sin que nadie haya tocado la tarea larga.
+  // The human can finish first without anyone having touched the long task.
   context.runner.releaseNext();
   context.runner.releaseNext();
   await Promise.all([agent, owner]);
 });
 
 /**
- * El contracargo del test de arriba: separar carriles no puede volver concurrente lo que tiene
- * que seguir serializado. Dos mensajes de la MISMA persona en la misma conversación siguen
- * ejecutándose de a uno, o el harness se pisaría a sí mismo dentro de una conversación.
+ * The counter-test to the one above: separating lanes cannot make concurrent what must remain
+ * serialized. Two messages from the SAME person in the same conversation still run one at a
+ * time, otherwise the harness would clobber itself inside a conversation.
  */
 test("two human messages of the same conversation stay serialized", async () => {
   const context = await setupSessionConcurrency("engine-human-lane-serialized");
@@ -243,9 +243,9 @@ test("two human messages of the same conversation stay serialized", async () => 
     ...delivery("human-lane-second"),
     body: { prompt: "segunda pregunta" },
   });
-  // la segunda entrega ya no pasa por 'started' mientras hace fila —
-  // se estaciona en 'accepted' y late ahí. `waitForQueued` es el reemplazo exacto de la vieja
-  // `waitForStarted` para este caso: mismo punto del ciclo, señal correcta.
+  // the second delivery no longer passes through 'started' while it queues —
+  // it parks at 'accepted' and waits there. `waitForQueued` is the exact replacement for the old
+  // `waitForStarted` in this case: same point of the cycle, correct signal.
   await waitForQueued(context.store, "human-lane-second");
 
   assert.equal(context.runner.requests.length, 1);

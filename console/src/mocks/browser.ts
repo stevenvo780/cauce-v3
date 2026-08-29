@@ -3,17 +3,17 @@ import { handlers } from './handlers';
 import { instalarPtyDeMentira, terminalDemoHandlers } from './terminal-demo';
 
 /*
- * Los del banco de la terminal van DELANTE: MSW se queda con el primer manejador que empareja, y
- * `handlers.ts` responde `capability.available:false` —lo que las pruebas de la vista afirman—.
- * Aquí, en el navegador, hace falta lo contrario para poder mirar la PTY. Ver `terminal-demo.ts`.
+ * The terminal bench ones go FIRST: MSW keeps the first matching handler, and `handlers.ts`
+ * answers `capability.available:false` —which the view tests assert—. Here, in the browser, the
+ * opposite is needed in order to look at the PTY. See `terminal-demo.ts`.
  */
 export const worker = setupWorker(...terminalDemoHandlers, ...handlers);
 
 /*
- * La PTY de mentira se instala DESPUÉS de `worker.start()`, no antes: MSW monta su propio
- * interceptor de `WebSocket` al arrancar y pisaba el nuestro sin decir nada. Se veía como
- * «Conexión: ERROR · Error interno del relay (código 1011)» —o sea, el socket real intentando
- * llegar a un gateway que no existe—, que es exactamente lo que este banco viene a evitar.
+ * The fake PTY is installed AFTER `worker.start()`, not before: MSW mounts its own `WebSocket`
+ * interceptor at startup and overwrote ours without a word. It looked like "Connection: ERROR ·
+ * Internal relay error (code 1011)" —i.e. the real socket trying to reach a gateway that does
+ * not exist—, which is exactly what this bench exists to prevent.
  */
 const arrancar = worker.start.bind(worker);
 worker.start = async (...argumentos: Parameters<typeof worker.start>) => {
@@ -23,27 +23,27 @@ worker.start = async (...argumentos: Parameters<typeof worker.start>) => {
 };
 
 /**
- * Mantiene vivo —y re-registrado— el service worker de MSW.
+ * Keeps the MSW service worker alive — and re-registered.
  *
- * El worker guarda los clientes con mocking activo en un `Set` **en memoria**
- * (`activeClientIds`, en `public/mockServiceWorker.js`). El navegador apaga un service worker
- * ocioso a los ~30 s; cuando después lo despierta, ese `Set` viene vacío y su handler de `fetch`
- * deja pasar TODO a la red (`if (activeClientIds.size === 0) return`). La página sigue
- * "controlada" —`navigator.serviceWorker.controller` sigue estando— así que no hay error, ni
- * aviso, ni nada roto a la vista: simplemente los datos dejan de llegar.
+ * The worker stores the clients with mocking enabled in a `Set` **in memory**
+ * (`activeClientIds`, in `public/mockServiceWorker.js`). The browser shuts down an idle service
+ * worker after ~30 s; when it later wakes it up, that `Set` comes back empty and its `fetch`
+ * handler lets EVERYTHING through to the network (`if (activeClientIds.size === 0) return`). The
+ * page remains "controlled" —`navigator.serviceWorker.controller` is still there— so there is no
+ * error, no warning, nothing visibly broken: the data simply stops arriving.
  *
- * Medido en la consola desplegada: al entrar directo a una vista se dibujaba entera, pero al
- * llegar a esa misma vista por el menú medio minuto después la pantalla salía vacía, con
- * "UNKNOWN" en vez de datos, porque `GET /v3/console/topology` se lo terminaba comiendo el
- * fallback SPA del servidor estático y devolvía el `index.html`. Peor todavía: la revalidación de
- * sesión cada 60 s caía en la misma red real y tiraba la pantalla de "No se pudo verificar la
- * sesión" sobre una consola que hasta hacía un momento funcionaba.
+ * Measured on the deployed console: going directly into a view rendered it fully, but reaching
+ * that same view via the menu half a minute later left the screen blank, with "UNKNOWN" instead
+ * of data, because `GET /v3/console/topology` ended up being swallowed by the static server's SPA
+ * fallback and returned `index.html`. Worse still: the session revalidation every 60 s fell into
+ * the same real network and threw the "Could not verify the session" screen over a console that
+ * had been working just moments before.
  *
- * El ping resuelve las dos mitades del problema con un solo mensaje: atender un evento renueva la
- * vida del worker (así no lo apagan mientras la pestaña esté abierta), y `MOCK_ACTIVATE` vuelve a
- * meter este cliente en el `Set` si igual lo apagaron —una suspensión de la máquina, por
- * ejemplo—. Se dispara además al volver a la pestaña, que es cuando más probable es que el worker
- * haya muerto mientras nadie miraba.
+ * The ping solves both halves of the problem with a single message: handling an event renews the
+ * worker's life (so it is not shut down while the tab is open), and `MOCK_ACTIVATE` puts this
+ * client back into the `Set` if it was shut down anyway — a machine suspension, for example. It
+ * also fires on returning to the tab, which is when the worker is most likely to have died while
+ * nobody was looking.
  */
 export function keepMockingAlive(intervalMs = 10_000): () => void {
   const reactivate = (): void => {

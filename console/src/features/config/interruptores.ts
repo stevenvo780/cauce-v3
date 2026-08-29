@@ -2,39 +2,39 @@ import type { ConfigMutation } from '../../api/types';
 import { claveDeFila } from './collection-table';
 
 /**
- * Especificación pura de interruptores de configuración (toggles):
- * mapea campos booleanos de colecciones a sus mutaciones inversas y descripciones operativas.
+ * Pure specification of configuration toggles:
+ * maps boolean collection fields to their inverse mutations and operational descriptions.
  */
 
 export interface Interruptor {
-  /** Identifica el interruptor en toda la página: colección, fila y campo. */
+  /** Identifies the toggle across the whole page: collection, row and field. */
   clave: string;
   coleccion: string;
   filaId: string;
   campo: string;
-  /** Lo que el interruptor dice ahora, según el último snapshot bueno del servidor. */
+  /** What the toggle says now, according to the server's last good snapshot. */
   valor: boolean;
   /**
-   * `aria-label` del control. Nombra la fila Y el permiso: un lector de pantalla que sólo dice
-   * «Ruta» veinticuatro veces no permite saber de qué arista se está hablando.
+   * `aria-label` of the control. Names the row AND the permission: a screen reader that just
+   * says "Route" twenty-four times does not let you tell which edge is being discussed.
    */
   aria: string;
-  /** Lo que se afirma cuando se aplica. Sale en el aviso y en el mensaje de un rechazo. */
+  /** What is asserted when it is applied. Shown in the notice and in a rejection message. */
   descripcion: string;
-  /** La mutación que lleva el campo a `!valor`. Parcial a propósito: ver el comentario de abajo. */
+  /** The mutation that flips the field to `!valor`. Partial on purpose: see the comment below. */
   mutation: ConfigMutation;
-  /** Texto de la confirmación obligatoria, o `undefined` si no hace falta ninguna. */
+  /** Mandatory confirmation text, or `undefined` if none is required. */
   confirmar?: string;
 }
 
 /**
- * Qué campo de qué colección se conmuta, EN ORDEN. Lo que no está acá se sigue viendo como dato
- * —píldora «Sí»/«No»— y se edita por el editor de mutaciones: un interruptor que arma una mutación
- * que el servidor va a rechazar es peor que no ofrecer el interruptor.
+ * Which field of which collection is toggled, IN ORDER. Anything not listed here keeps being shown
+ * as data —the "Yes"/"No" pill— and is edited through the mutation editor: a toggle that builds a
+ * mutation the server will reject is worse than not offering the toggle.
  *
- * `is_hub` de un tenant NO está a propósito aunque sea booleano y el esquema lo acepte: mover el hub
- * de una flota no es una operación de un clic, y ponerla al lado de «Habilitado» invita a hacerla
- * sin querer.
+ * `is_hub` of a tenant is INTENTIONALLY absent even though it is boolean and the schema accepts
+ * it: moving a fleet's hub is not a one-click operation, and putting it next to "Enabled" invites
+ * doing it by accident.
  */
 export const CAMPOS_CONMUTABLES: Record<string, readonly string[]> = {
   tenants: ['enabled'],
@@ -49,9 +49,9 @@ export function esCampoConmutable(coleccion: string, campo: string): boolean {
 }
 
 /**
- * Qué concede cada permiso, en castellano y en una frase. Va al tooltip de la cabecera de la
- * columna: `allow_route` es el nombre de una columna de Postgres, no una explicación, y el operador
- * que llega a esta pantalla necesita saber qué está encendiendo ANTES de encenderlo.
+ * What each permission grants, in one short sentence in English. Goes into the column header's
+ * tooltip: `allow_route` is the name of a Postgres column, not an explanation, and the operator
+ * reaching this screen needs to know what they are turning on BEFORE turning it on.
  */
 export const EXPLICACION_DE_CAMPO: Record<string, Record<string, string>> = {
   acl_edges: {
@@ -95,7 +95,7 @@ function texto(fila: Record<string, unknown>, campo: string): string | undefined
   return typeof valor === 'string' && valor.trim() !== '' ? valor : undefined;
 }
 
-/** Cómo se nombra la fila en una frase. `undefined` si le falta identidad para armar la mutación. */
+/** How the row is named in one phrase. `undefined` if it lacks the identity needed to build the mutation. */
 export function sujetoDeFila(coleccion: string, fila: Record<string, unknown>): string | undefined {
   if (coleccion === 'tenants') {
     const id = texto(fila, 'id');
@@ -126,7 +126,7 @@ export function sujetoDeFila(coleccion: string, fila: Record<string, unknown>): 
   return undefined;
 }
 
-/** El nombre corto del permiso, para el `aria-label` y para el aviso. */
+/** Short permission name, for the `aria-label` and the notice. */
 const NOMBRE_DE_CAMPO: Record<string, string> = {
   enabled: 'Habilitado', allow_route: 'Ruta', allow_read: 'Lectura',
   allow_control: 'Control', allow_notify: 'Aviso proactivo',
@@ -137,13 +137,13 @@ function nombreDeCampo(campo: string): string {
 }
 
 /**
- * La mutación PARCIAL que cambia un solo campo. Que sea parcial no es un atajo: el store hace merge
- * campo por campo contra la fila que leyó `FOR UPDATE`
- * (`has(value,'enabled') ? value.enabled : old.enabled`), así que mandar sólo `allow_read` no pisa
- * el `allow_route` que otro operador acaba de cambiar en la misma arista.
+ * The PARTIAL mutation that changes a single field. It being partial is not a shortcut: the store
+ * field-by-field merges against the row read with `FOR UPDATE`
+ * (`has(value,'enabled') ? value.enabled : old.enabled`), so sending only `allow_read` does not
+ * overwrite the `allow_route` another operator just changed on the same edge.
  *
- * Lo que el ENVÍO es parcial no lo es el DESHACER: la inversa que el store guarda en
- * `config_revisions` lleva la fila ENTERA que había antes. El panel del audit trail lo dice.
+ * What the SEND is partial, the UNDO is not: the inverse stored in `config_revisions` carries the
+ * ENTIRE row that existed before. The audit trail panel says so.
  */
 function mutacion(
   coleccion: string, fila: Record<string, unknown>, campo: string, siguiente: boolean,
@@ -180,7 +180,7 @@ function mutacion(
 }
 
 /**
- * Genera el mensaje de confirmación para acciones críticas (como revocar allow_control).
+ * Builds the confirmation message for critical actions (such as revoking allow_control).
  */
 function confirmacion(campo: string, valor: boolean, sujeto: string): string | undefined {
   if (campo !== 'allow_control' || !valor) return undefined;
@@ -190,12 +190,12 @@ function confirmacion(campo: string, valor: boolean, sujeto: string): string | u
 }
 
 /**
- * El interruptor de un campo de una fila, o `undefined` si no se puede armar.
+ * The toggle for a row's field, or `undefined` if it cannot be built.
  *
- * Devuelve `undefined` —y la celda cae a la píldora de sólo lectura— en dos casos, los dos a
- * propósito: cuando el valor no es un booleano (no se puede escribir «el contrario» de algo que no
- * se conoce) y cuando la fila no trae los campos de identidad que la mutación necesita. Un
- * interruptor que no puede escribir es peor que un dato que no se puede tocar.
+ * Returns `undefined` —and the cell falls back to the read-only pill— in two cases, both on
+ * purpose: when the value is not a boolean (you cannot write "the opposite" of something that is
+ * not known) and when the row does not carry the identity fields the mutation needs. A toggle
+ * that cannot write is worse than a datum that cannot be touched.
  */
 export function interruptorDeFila(
   coleccion: string, fila: Record<string, unknown>, campo: string, indice: number,

@@ -8,7 +8,7 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Recuperación y trazabilidad de entregas terminales y operaciones de cancelación.
+ * Recovery and traceability of terminal deliveries and cancellation operations.
  */
 
 let database: TestDatabase;
@@ -65,7 +65,7 @@ async function publishAndClaim(
   return { delivery, epoch: lease.epoch!, deliveryId: published.delivery_ids[0]! };
 }
 
-/** ACK terminal de error NO reintentable: la rama que dejaba la entrega en 'failed'. */
+/** Terminal error ACK NOT retryable: the branch that used to leave the delivery in 'failed'. */
 function nonRetryableFailure(
   delivery: DeliveryEnvelope,
   instanceId: string,
@@ -140,14 +140,14 @@ describe('todo final de error queda replayable', () => {
       nonRetryableFailure(delivery, 'failed-consumer', epoch)
     )).resolves.toMatchObject({ status: 'failed', applied: true });
 
-    // El estado NO se fusiona con 'dead': se conserva porque lo consumen el conteo de fan-in,
-    // el CHECK de la tabla, el enum del protocolo, las series del dispatcher y la consola.
+    // The state is NOT merged with 'dead': it is preserved because fan-in counting, the table
+    // CHECK, the protocol enum, dispatcher series, and the console all consume it.
     const stored = await pool.query<{ status: string; last_error: string }>(
       `SELECT status,last_error FROM deliveries WHERE id=$1`, [deliveryId]
     );
     expect(stored.rows[0]).toMatchObject({ status: 'failed' });
 
-    // Lo que cambia es que ahora existe el rastro replayable.
+    // What changes is that the replayable trail now exists.
     const deadLetter = await pool.query<{ reason: string; attempts: number; resolved_at: Date | null }>(
       `SELECT reason,attempts,resolved_at FROM dead_letters WHERE delivery_id=$1`, [deliveryId]
     );
@@ -180,7 +180,7 @@ describe('todo final de error queda replayable', () => {
       `SELECT 1 FROM dead_letters WHERE delivery_id=$1 AND resolved_at IS NOT NULL`, [deliveryId]
     )).rowCount).toBe(1);
 
-    // El candado de idempotencia sigue siendo el mismo que ya protegía a 'dead'.
+    // The idempotency lock is still the same one that already protected 'dead'.
     await expect(repository.replayDelivery(deliveryId, OPERATOR, OPERATOR_ALIAS))
       .rejects.toMatchObject({ code: 'conflict' });
   });
@@ -203,7 +203,7 @@ describe('cancelación de primera clase', () => {
     const { delivery, epoch } = await publishAndClaim(
       command(), 'Steven', 'argos', 'parent-consumer'
     );
-    // argos delega en kant: nace la rama que el padre va a esperar.
+    // argos delegates to kant: the branch the parent will wait for is born.
     await expect(repository.ackDelivery(
       delivery.delivery_id, 'Steven', 'argos',
       delegatingAck(delivery, 'parent-consumer', epoch, [{ to: 'kant', body: 'trabajá en esto' }])
@@ -224,12 +224,12 @@ describe('cancelación de primera clase', () => {
       state: 'dead',
       cancelled: true,
       cancelled_from_state: 'pending',
-      // El padre SÍ se entera: es la diferencia con el UPDATE a mano.
+      // The parent IS notified: that is the difference from the manual UPDATE.
       parent_notice: 'returned',
       replayable: true
     });
 
-    // (1) rastro replayable
+    // (1) replayable trail
     const deadLetter = await pool.query<{ reason: string }>(
       `SELECT reason FROM dead_letters WHERE delivery_id=$1 AND resolved_at IS NULL`,
       [childDeliveryId]
@@ -238,7 +238,7 @@ describe('cancelación de primera clase', () => {
     expect(deadLetter.rows[0]?.reason)
       .toBe('Cancelled by operator Steven:socrates: duplicado: ya lo hizo jarvis');
 
-    // (2) el padre recibe una entrega de respuesta con el desenlace, no silencio.
+    // (2) the parent receives a response delivery with the outcome, not silence.
     const notice = await pool.query<{ recipient_alias: string; outcome: string; text: string }>(
       `SELECT reply.recipient_alias,response.body->>'outcome' AS outcome,response.body->>'text' AS text
        FROM messages response JOIN deliveries reply ON reply.message_id=response.id
@@ -248,14 +248,14 @@ describe('cancelación de primera clase', () => {
     expect(notice.rows[0]).toMatchObject({ recipient_alias: 'argos', outcome: 'dead' });
     expect(notice.rows[0]?.text).toContain('Cancelled by operator');
 
-    // El fan-in cuenta ramas cerradas por este audit; sin él el contador queda trabado.
+    // Fan-in counts branches closed by this audit; without it the counter gets stuck.
     expect((await pool.query(
       `SELECT 1 FROM audit_events
        WHERE action='agent_output.response' AND decision='allow'
          AND metadata->>'child_delivery_id'=$1`, [childDeliveryId]
     )).rowCount).toBe(1);
 
-    // (3) auditoría propia, distinguible de un timeout.
+    // (3) its own audit, distinguishable from a timeout.
     const audit = await pool.query<{ metadata: Record<string, unknown> }>(
       `SELECT metadata FROM audit_events WHERE action='delivery.cancel' AND delivery_id=$1`,
       [childDeliveryId]
@@ -265,7 +265,7 @@ describe('cancelación de primera clase', () => {
       cancelled_from_status: 'pending', parent_notice: 'returned'
     });
 
-    // La rama cancelada sigue siendo rescatable: cancelar no es irreversible.
+    // The cancelled branch remains rescuable: cancelling is not irreversible.
     await expect(repository.replayDelivery(childDeliveryId!, OPERATOR, OPERATOR_ALIAS))
       .resolves.toMatchObject({ replayed: true });
   });
@@ -293,7 +293,7 @@ describe('cancelación de primera clase', () => {
       error_code: 'DELIVERY_CANCELLED'
     });
 
-    // Suelta el cupo del alias y no deja el vallado en pie.
+    // It releases the alias quota and does not leave the fence standing.
     const row = await pool.query<{
       status: string; claim_token: string | null; consumer_epoch: string | null;
     }>(
@@ -314,7 +314,7 @@ describe('cancelación de primera clase', () => {
     await expect(repository.cancelDelivery(deliveryId, OPERATOR, OPERATOR_ALIAS))
       .resolves.toMatchObject({ cancelled: true, cancelled_from_state: 'started' });
 
-    // El harness sigue vivo por su cuenta; su ACK final ya no puede resucitar ni pisar nada.
+    // The harness is still alive on its own; its final ACK can no longer resurrect or overwrite anything.
     await expect(repository.ackDelivery(delivery.delivery_id, 'Steven', 'argos', {
       version: '3.0', event_id: randomUUID(), status: 'done', instance_id: 'inflight-consumer',
       epoch, claim_token: delivery.claim_token, attempt: delivery.attempt, retryable: false,
@@ -343,9 +343,9 @@ describe('cancelación de primera clase', () => {
     )).rowCount).toBe(0);
   });
 
-  // Misma autorización que el replay, y por lo mismo: el `not_found` no distingue "no existe" de
-  // "no te la puedo mostrar". Una conversación entera dentro de otro tenant, sin arista de
-  // control hacia él, no es cancelable ni siquiera por un operador del hub.
+  // Same authorization as replay, and for the same reason: `not_found` does not distinguish between
+  // "it does not exist" and "I cannot show it to you". An entire conversation inside another tenant,
+  // with no control edge to it, is not cancellable even by a hub operator.
   it('no revela una entrega fuera del alcance del actor', async () => {
     const published = await repository.publish(command({
       tenant_id: 'Pablo',
@@ -362,8 +362,8 @@ describe('cancelación de primera clase', () => {
       `SELECT status FROM deliveries WHERE id=$1`, [published.delivery_ids[0]]
     )).rows[0]).toMatchObject({ status: 'pending' });
 
-    // Con la arista de control restablecida, la misma llamada sí aplica: lo que faltaba era
-    // permiso, no la entrega.
+    // With the control edge restored, the same call does apply: what was missing was permission,
+    // not the delivery.
     await pool.query(
       `UPDATE acl_edges SET allow_control=true WHERE from_tenant='Steven' AND to_tenant='Pablo'`
     );
@@ -381,7 +381,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
   }
 
   it('adopta las failed sin fila y las dead que un humano marcó a mano, sin duplicar', async () => {
-    // (a) el caso 'failed' de antes del parche: se borra la fila que el código nuevo escribe.
+    // (a) the 'failed' case from before the patch: the row that the new code writes is deleted.
     const { delivery, epoch, deliveryId: failedId } = await publishAndClaim(
       command(), 'Steven', 'argos', 'legacy-failed'
     );
@@ -389,8 +389,8 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
       delivery.delivery_id, 'Steven', 'argos',
       nonRetryableFailure(delivery, 'legacy-failed', epoch, 'OpenClaw result contained a malformed JSON object')
     );
-    // Fixture histórico anterior a 030: la producción 030 prohíbe borrar incidentes.  El trigger
-    // se deshabilita sólo en esta base descartable para recrear exactamente el estado legado.
+    // Historical fixture predating 030: production 030 forbids deleting incidents. The trigger is
+    // disabled only in this disposable database to recreate the legacy state exactly.
     await pool.query(`ALTER TABLE dead_letters DISABLE TRIGGER cauce_fence_dead_letter_030`);
     try {
       await pool.query(`DELETE FROM dead_letters WHERE delivery_id=$1`, [failedId]);
@@ -398,7 +398,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
       await pool.query(`ALTER TABLE dead_letters ENABLE TRIGGER cauce_fence_dead_letter_030`);
     }
 
-    // (b) el caso 'cancelado por zeus': UPDATE a mano, sin dead letter y sin terminal_at.
+    // (b) the 'cancelled by zeus' case: manual UPDATE, no dead letter and no terminal_at.
     const manual = await repository.publish(command());
     const manualId = manual.delivery_ids[0]!;
     await pool.query(
@@ -408,7 +408,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
        WHERE id=$1`, [manualId]
     );
 
-    // (c) una entrega sana: la migración no la puede tocar.
+    // (c) a healthy delivery: the migration cannot touch it.
     const healthy = await repository.publish(command());
     const healthyId = healthy.delivery_ids[0]!;
 
@@ -428,18 +428,18 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
       `SELECT 1 FROM dead_letters WHERE delivery_id=$1`, [healthyId]
     )).rowCount).toBe(0);
 
-    // `created_at` es cuándo murió, no cuándo corrió la migración: la fila sin `terminal_at`
-    // cae en `updated_at` (hace dos días) y no en `now()`.
+    // `created_at` is when it died, not when the migration ran: the row without `terminal_at`
+    // falls on `updated_at` (two days ago), not on `now()`.
     expect(byId.get(manualId)!.created_at.getTime())
       .toBeLessThan(Date.now() - 24 * 60 * 60 * 1000);
 
-    // Y lo único que importa: ahora se pueden rescatar.
+    // And the only thing that matters: now they can be rescued.
     await expect(repository.replayDelivery(failedId, OPERATOR, OPERATOR_ALIAS))
       .resolves.toMatchObject({ replayed: true });
     await expect(repository.replayDelivery(manualId, OPERATOR, OPERATOR_ALIAS))
       .resolves.toMatchObject({ replayed: true });
 
-    // Reaplicarla no duplica ni vuelve a auditar: la condición mira el estado, no una marca.
+    // Reapplying does not duplicate nor audit again: the condition looks at the state, not a marker.
     await runBackfill();
     expect((await pool.query(
       `SELECT 1 FROM dead_letters WHERE reason LIKE 'backfill 018 (%'`
@@ -465,7 +465,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
       rescued: 1,
       by_status: { dead: 1 }
     });
-    // `reason` es NOT NULL y `last_error` puede ser NULL: hace falta el texto de respaldo.
+    // `reason` is NOT NULL and `last_error` may be NULL: the fallback text is required.
     expect((await pool.query(
       `SELECT 1 FROM dead_letters
        WHERE reason='backfill 018 (dead): terminal error without recorded text'`

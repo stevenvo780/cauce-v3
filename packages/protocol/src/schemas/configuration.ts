@@ -80,24 +80,24 @@ export const ChainPolicyConfigMutationSchema = z.object({
     progress_relay_enabled: z.boolean().optional(),
     progress_relay_max_events: z.number().int().min(1).max(64).optional(),
     cycle_cut_enabled: z.boolean().optional(),
-    // Coalescencia de avisos de fracaso. El 0 se admite y significa "ventana nula": es el modo
-    // de desactivación gradual (deja de plegar sin borrar el histórico ya acumulado), distinto
-    // de failure_coalesce_enabled=false, que apaga la maquinaria entera.
+    // Coalescing of failure notices. 0 is allowed and means "null window": it is the soft
+    // disabling mode (stops folding without erasing the accumulated history), distinct from
+    // failure_coalesce_enabled=false, which switches the whole machinery off.
     failure_coalesce_enabled: z.boolean().optional(),
     failure_coalesce_window_seconds: z.number().int().min(0).max(86_400).optional(),
     /*
-     * LOS CINCO TOPES DE LA MIGRACIÓN 019, que el servidor ya APLICA y la consola no podía tocar.
+     * THE FIVE CAPS FROM MIGRATION 019, already APPLIED by the server and untouchable from the console.
      *
-     * `repository.ts` los lee y corta delegaciones con ellos; su única vía de cambio era un
-     * `UPDATE` crudo contra la base —la propia 019 lo documenta como el apagado de emergencia—,
-     * o sea sin revisión, sin mutación inversa que alcance el botón de deshacer, sin asiento en
-     * `audit_events` y sin quién lo hizo.
+     * `repository.ts` reads them and cuts delegations with them; their only change path was a
+     * raw `UPDATE` against the database — which 019 itself documents as the emergency kill
+     * switch — i.e. without revision, without an inverse mutation reaching the undo button,
+     * without an entry in `audit_events`, and without knowing who did it.
      *
-     * LOS RANGOS SON LOS DEL CHECK DE POSTGRES, copiados uno a uno: fanout 1-100, repeticiones de
-     * arista 1-1000, delegaciones por raíz 1-10000. Que coincidan es lo que hace que un valor
-     * fuera de rango se rechace con un mensaje que nombra el campo, en vez de estallar como un
-     * error de restricción a mitad de la transacción. En un desacuerdo MANDA EL SQL: la columna es
-     * la que no se puede mover sin migración.
+     * THE RANGES ARE THOSE OF THE POSTGRES CHECK, copied one for one: fanout 1-100, edge
+     * repeats 1-1000, delegations per root 1-10000. Matching them is what makes an out-of-range
+     * value be rejected with a message naming the field, instead of blowing up as a constraint
+     * error mid-transaction. In a disagreement THE SQL WINS: the column is what cannot move
+     * without a migration.
      */
     delegation_caps_enabled: z.boolean().optional(),
     max_fanout_per_turn: z.number().int().min(1).max(100).optional(),
@@ -122,21 +122,21 @@ export const AgentConfigMutationSchema = z.object({
     runtime_user: z.string().trim().min(1).max(64).nullable().optional(),
     home_directory: z.string().trim().min(1).max(512).nullable().optional(),
     state_directory: z.string().trim().min(1).max(512).nullable().optional(),
-    // `role_brief` es una proyección legacy de `agent_profiles.role_summary` desde la migración
-    // 028. No se acepta en esta mutación: guardarlo por el editor genérico sólo acreditaría una
-    // fila de Postgres, mientras el fichero que lee el arnés seguiría en la revisión anterior.
-    // La única escritura pública es el PUT canónico de perfil, que exige CAS y ACK del runtime.
+    // `role_brief` is a legacy projection of `agent_profiles.role_summary` from migration 028.
+    // NOT accepted in this mutation: persisting it via the generic editor would only certify a
+    // Postgres row while the file the harness reads stays on the previous revision. The only
+    // public write is the canonical profile PUT, which requires CAS and runtime ACK.
     /*
-     * El techo REAL de entregas en vuelo de este agente (columna `max_concurrent_deliveries`,
-     * migración 015). `repository.ts` lo aplica al repartir cupo, y no estaba en ninguna pantalla:
-     * su única vía de cambio era un `UPDATE` a mano.
+     * The REAL cap on in-flight deliveries for this agent (column `max_concurrent_deliveries`,
+     * migration 015). `repository.ts` applies it when allocating quota, and there was no UI
+     * for it: its only change path was a hand-rolled `UPDATE`.
      *
-     * `null` NO es «no declarado»: significa SIN TECHO, y es la salida de emergencia que la propia
-     * 015 documenta —«si este cambio estrangula a un agente que de verdad puede paralelizar (o si
-     * hay que desactivar el techo en caliente sin desplegar)»—. Por eso es `.nullable()` y no sólo
-     * `.optional()`: son dos estados distintos y colapsarlos perdería justo la salida.
+     * `null` is NOT "undeclared": it means NO CAP, the emergency escape that 015 documents
+     * — "if this change strangles an agent that can actually parallelize (or if the cap must
+     * be disabled hot without a deploy)". That is why it is `.nullable()`, not just
+     * `.optional()`: two distinct states, collapsing them would lose the escape hatch.
      *
-     * El rango 1-100 es el del CHECK `agents_max_concurrent_deliveries_sane`, copiado tal cual.
+     * The 1-100 range is the `agents_max_concurrent_deliveries_sane` CHECK, copied verbatim.
      */
     max_concurrent_deliveries: z.number().int().min(1).max(100).nullable().optional()
   }).strict().optional()

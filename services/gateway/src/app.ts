@@ -120,8 +120,8 @@ export interface GatewayRepository {
     tenantId: Tenant, alias: string, actorTenant: Tenant, actorAlias: string,
   ): Promise<Record<string, unknown> | undefined>;
   /**
-   * Lookup autorizado por identidad canónica. Opcional sólo para dobles legacy de test: las rutas
-   * tenant-qualified fallan cerradas cuando no está implementado.
+   * Lookup authorized by canonical identity. Optional only for legacy test doubles: tenant-qualified
+   * routes fail closed when it is not implemented.
    */
   authorizeAgentTarget?(
     actorTenant: Tenant,
@@ -146,9 +146,9 @@ export interface GatewayRepository {
   ): Promise<Record<string, unknown>>;
   agentChain(traceId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   /**
-   * Opcionales por la misma razón que `liveDeliveryClaims`: los dobles de test del gateway no
-   * implementan la primitiva de gate, y sin ella la ruta responde 404 en vez de romper el
-   * arranque. Las implementa `CauceRepository` desde la migración 019_delegation_discipline.
+   * Optional for the same reason as `liveDeliveryClaims`: the gateway test doubles do not
+   * implement the gate primitive, and without it the route returns 404 instead of breaking
+   * startup. Implemented by `CauceRepository` since migration 019_delegation_discipline.
    */
   listChainGates?(
     actorTenant: Tenant,
@@ -218,8 +218,8 @@ export interface GatewayRepository {
     signal?: AbortSignal,
   ): Promise<DeliveryClaimRecord[]>;
   /**
-   * Opcional sólo para dobles en modo test. Producción no arranca sin esta lectura: reconstruir
-   * claims es parte del fence de reconexión y fallar abierto multiplicaría el cupo.
+   * Optional only for doubles in test mode. Production does not start without this read:
+   * reconstructing claims is part of the reconnection fence and failing open would multiply the cap.
    */
   liveDeliveryClaims?(tenantId: Tenant, alias: string, limit?: number): Promise<readonly {
     delivery_id: string;
@@ -262,23 +262,23 @@ export interface GatewayOptions {
   leaseTtlMs?: number;
   ackDeadlineMs?: number;
   /**
-   * Techo de vida total de un intento. El gateway lo necesita porque es quien ESCRIBE el plazo
-   * en cada renovacion: sin el, `ackDelivery` seguiria empujando `ack_deadline_at` 30 min hacia
-   * adelante indefinidamente y el techo solo existiria en el reaper, o sea un tick tarde y con
-   * dos filas de observabilidad escritas por cada latido de un harness ya colgado.
+   * Total lifetime cap of an attempt. The gateway needs it because it is who WRITES the deadline
+   * on each renewal: without it, `ackDelivery` would keep pushing `ack_deadline_at` 30 min forward
+   * indefinitely and the cap would only exist in the reaper — i.e. a tick late, and with two rows
+   * of observability written for each heartbeat of an already-hung harness.
    */
   deliveryLeaseCap?: DeliveryLeaseCap;
-  /** Control de admisión por sesión. Ver `DeliveryAdmissionConfig` y `drain()`. */
+  /** Per-session admission control. See `DeliveryAdmissionConfig` and `drain()`. */
   admission?: DeliveryAdmissionConfig;
   outboxPollMs?: number;
   outboxLeaseMs?: number;
-  /** Máximo de destinatarios cuyos claims de wake pueden estar en I/O simultáneamente. */
+  /** Maximum recipients whose wake claims may be in I/O simultaneously. */
   outboxWakeConcurrency?: number;
-  /** Espera máxima del cierre por un pump que no responde; después se continúa abortado. */
+  /** Maximum wait for shutdown by an unresponsive pump; afterwards it continues aborted. */
   outboxShutdownTimeoutMs?: number;
-  /** Acumulador identity-free que el proceso puede conectar luego a su endpoint de métricas. */
+  /** Identity-free accumulator that the process can later connect to its metrics endpoint. */
   wakePumpTelemetry?: WakePumpTelemetry;
-  /** Resultados agregados, sin identidades, del journal durable de publicación de consola. */
+  /** Aggregated results, identity-free, from the durable console-publish journal. */
   consolePublishTelemetry?: ConsolePublishTelemetry;
   deliveryClaimLimit?: number;
   requireAckClaims?: boolean;
@@ -291,9 +291,9 @@ export interface GatewayOptions {
   logger?: boolean;
 }
 
-// Lote máximo por drain. Deliberadamente igual al default histórico de QueryDeliveriesSchema para
-// que este cambio no altere por sí solo cuánto se reclama: lo que cambia es que ahora el número
-// está escrito donde se usa en vez de heredarse en silencio del esquema de un endpoint HTTP.
+// Maximum drain batch. Deliberately equal to the historical default of QueryDeliveriesSchema so
+// that this change alone does not alter how much is claimed: what changes is that the number is
+// now written where it is used instead of being silently inherited from an HTTP endpoint's schema.
 const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
 const DEFAULT_WAKE_PUMP_CONCURRENCY = 4;
 const DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -335,10 +335,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const wakePumpTelemetry = options.wakePumpTelemetry ?? new WakePumpTelemetry();
   const consolePublishTelemetry = options.consolePublishTelemetry ?? new ConsolePublishTelemetry();
   const enableLegacyCandidateRoutes = options.enableLegacyCandidateRoutes !== false;
-  // Cota superior de un drain. Antes iba `undefined` y caía en el default 20 de
-  // QueryDeliveriesSchema — un 20 que nadie eligió para este camino y que nadie podía ver leyendo
-  // el gateway. El techo real por agente vive en agents.max_concurrent_deliveries y lo aplica
-  // claimDeliveries; esto es sólo el tamaño máximo de lote para un agente sin techo declarado.
+  // Upper bound of a drain. It used to be `undefined` and fall back to the default 20 from
+  // QueryDeliveriesSchema — a 20 nobody chose for this path and nobody could see by reading the
+  // gateway. The real per-agent cap lives in agents.max_concurrent_deliveries and is enforced by
+  // claimDeliveries; this is only the maximum batch size for an agent without a declared cap.
   const deliveryClaimLimit = options.deliveryClaimLimit ?? DEFAULT_DELIVERY_CLAIM_LIMIT;
   if (!Number.isInteger(deliveryClaimLimit) || deliveryClaimLimit < 1 || deliveryClaimLimit > 100) {
     throw new Error('deliveryClaimLimit must be an integer between 1 and 100');

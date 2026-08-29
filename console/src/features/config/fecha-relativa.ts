@@ -1,17 +1,17 @@
 import { UNKNOWN, timestamp } from '../../lib';
 
 /**
- * La columna «Alta» de cada tabla de `/config` repetía `1 jul 2026, 10:00:00` en cada fila, partido
- * en tres líneas por lo angosto de la celda. Veinte veces la misma fecha exacta no es información:
- * es ruido que estira la fila y esconde lo único que el operador quiere saber de un vistazo, que es
- * si la fila es de ayer o del año pasado.
+ * The "Alta" column of every `/config` table repeated `1 jul 2026, 10:00:00` on every row, split
+ * into three lines by the cell's narrow width. Twenty identical exact timestamps are not
+ * information: they are noise that stretches the row and hides the single thing the operator
+ * wants to see at a glance, which is whether the row is from yesterday or last year.
  *
- * Acá se pinta **la distancia** —«hace 53 d»— y la fecha exacta se conserva ENTERA en el `title`.
- * No se pierde ningún dato: cambia cuál de los dos está a la vista.
+ * Here we paint **the distance** — "53 d ago" — and the exact date is preserved WHOLE in the
+ * `title`. No data is lost: which of the two is at the front changes.
  *
- * Por qué no `Intl.RelativeTimeFormat` en `narrow` para todo: en castellano el narrow de *mes* y el
- * de *minuto* son los dos «m» («hace 2 m»), así que de dos meses para arriba se usa el formato largo
- * («hace 2 meses»), que no se puede confundir con nada.
+ * Why not `Intl.RelativeTimeFormat` in `narrow` for everything: in Spanish the narrow form of
+ * *month* and *minute* are both "m" ("hace 2 m"), so above two months the long form is used
+ * ("hace 2 meses"), which cannot be confused with anything.
  */
 
 const NARROW = new Intl.RelativeTimeFormat('es', { numeric: 'auto', style: 'narrow' });
@@ -22,18 +22,18 @@ const HORA = 60 * MINUTO;
 const DIA = 24 * HORA;
 
 export interface FechaRelativa {
-  /** Lo que se lee en la celda. */
+  /** What is read in the cell. */
   texto: string;
-  /** La fecha exacta, para el `title` y para el lector de pantalla. */
+  /** The exact date, for the `title` and for the screen reader. */
   absoluta: string;
-  /** El ISO original, para el `dateTime` del `<time>`. */
+  /** The original ISO, for the `<time>` element's `dateTime`. */
   iso: string;
 }
 
 /**
- * `undefined` cuando el valor no es una fecha que se pueda leer. Quien llama decide qué pintar en
- * ese caso —hoy, un `UNKNOWN` explícito—: inventar acá un «hace un rato» sería afirmar una
- * antigüedad que nadie midió.
+ * `undefined` when the value is not a date that can be read. The caller decides what to paint
+ * in that case — today, an explicit `UNKNOWN` —: inventing an "a while ago" here would be asserting
+ * an age that nobody measured.
  */
 export function fechaRelativa(valor: unknown, ahora: number = Date.now()): FechaRelativa | undefined {
   if (typeof valor !== 'string' || valor.trim() === '') return undefined;
@@ -44,15 +44,15 @@ export function fechaRelativa(valor: unknown, ahora: number = Date.now()): Fecha
   return { texto: distancia(momento - ahora), absoluta, iso: valor };
 }
 
-/** `delta` en milisegundos: negativo es pasado, positivo es futuro. */
+/** `delta` in milliseconds: negative is past, positive is future. */
 function distancia(delta: number): string {
   const magnitud = Math.abs(delta);
   const signo = Math.sign(delta) || 1;
   if (magnitud < 45_000) return NARROW.format(Math.round(delta / 1000), 'second');
   if (magnitud < HORA) return NARROW.format(signo * Math.round(magnitud / MINUTO), 'minute');
   if (magnitud < DIA) return NARROW.format(signo * Math.round(magnitud / HORA), 'hour');
-  // Hasta 60 días se cuenta en días: «hace 53 d» es más útil que «hace 2 meses» para saber si algo
-  // se dio de alta esta semana o la anterior.
+  // Up to 60 days is counted in days: "53 d ago" is more useful than "2 months ago" to know if
+  // something was registered this week or last week.
   if (magnitud < 60 * DIA) return NARROW.format(signo * Math.round(magnitud / DIA), 'day');
   if (magnitud < 365 * DIA) return LARGO.format(signo * Math.round(magnitud / (30 * DIA)), 'month');
   return LARGO.format(signo * Math.round(magnitud / (365 * DIA)), 'year');

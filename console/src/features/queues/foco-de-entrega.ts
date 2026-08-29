@@ -1,41 +1,41 @@
 import type { QueueItem } from '../../api/types';
 
 /**
- * **El enlace profundo `/queues?delivery=<uuid>` — de dónde salió y qué tenía de falso.**
+ * **The deep link `/queues?delivery=<uuid>` — where it came from and what was wrong with it.**
  *
- * El cajón de «La flota ahora» pinta, por cada entrega en vuelo, un enlace «Ver en Queues» que
- * apunta a `/queues?delivery=<uuid>` (commit `d3411de`). 
- * `QueuesPage` no leía `location.search` —el ÚNICO código de la consola que lo tocaba era
- * `LiveFleetPage`, con sus propios `agente`, `pestana` y `trace`—, así que el aterrizaje pintaba la
- * lista genérica de 200 filas, el id pedido aparecía CERO veces en `<main>` y ninguna fila quedaba
- * marcada. El enlace no llevaba a ningún sitio: llevaba a una página que se parecía a la respuesta.
+ * The "Live fleet" panel renders, for every delivery in flight, a "View in Queues" link pointing
+ * to `/queues?delivery=<uuid>` (commit `d3411de`). `QueuesPage` did not read `location.search`
+ * — the ONLY console code that touched it was `LiveFleetPage`, with its own `agente`, `pestana`
+ * and `trace` — so the landing rendered the generic list of 200 rows, the requested id appeared
+ * ZERO times in `<main>`, and no row was marked. The link went nowhere: it led to a page that
+ * looked like the answer.
  *
- * Este módulo es la parte pura de la reparación, separada de la pantalla para poder probarla por
- * tabla: qué pide la URL, qué filas corresponden y —lo que importa— cuándo el snapshot NO trae la
- * entrega pedida.
+ * This module is the pure part of the fix, separated from the view so it can be tested by
+ * table: what the URL asks for, which rows match, and — importantly — when the snapshot does
+ * NOT contain the requested delivery.
  *
- * Lo que la consola NO puede saber cuando la entrega no está.** `GET /v3/console/queues`
- * devuelve las entregas visibles ordenadas por `created_at DESC` con un `LIMIT` del servidor
- * (200 hoy) y no acepta consulta por entrega: no existe `GET /v3/console/queues/:id`. Por lo tanto
- * «no figura en este snapshot» NO distingue «ya no existe» de «es más antigua que las que caben».
- * Las dos se dicen juntas y en voz alta (`TEXTO_AUSENTE`); inventar una de las dos sería
- * exactamente la clase de mentira que esta reparación viene a quitar.
+ * What the console CANNOT know when the delivery is missing.** `GET /v3/console/queues`
+ * returns the visible deliveries ordered by `created_at DESC` with a server-side `LIMIT`
+ * (200 today) and does not accept a per-delivery query: there is no `GET /v3/console/queues/:id`.
+ * Therefore "not in this snapshot" does NOT distinguish "no longer exists" from "older than what
+ * fits". Both are said together, out loud (`TEXTO_AUSENTE`); inventing either would be exactly
+ * the kind of lie this fix comes to remove.
  */
 
 export type EstadoDelFoco = 'sin-foco' | 'encontrada' | 'ausente';
 
 export interface FocoDeEntrega {
   estado: EstadoDelFoco;
-  /** El id pedido por la URL. `undefined` sólo cuando `estado` es `sin-foco`. */
+  /** The id requested by the URL. `undefined` only when `estado` is `sin-foco`. */
   deliveryId?: string;
-  /** Lo que la tabla debe pintar. Con foco encontrado es UNA fila; con foco ausente, ninguna. */
+  /** What the table must render. With a found focus it is ONE row; with an absent focus, none. */
   filas: readonly QueueItem[];
 }
 
 /**
- * Lee `?delivery=` de una query string. Un parámetro vacío o sólo con espacios es lo mismo que no
- * pedir nada: el enlace del cajón se construye con `item.delivery_id ?? ''`, así que una entrega
- * sin id produce `/queues?delivery=` y eso NO debe filtrar la tabla a cero filas.
+ * Reads `?delivery=` from a query string. An empty parameter, or one with only whitespace, is
+ * the same as asking for nothing: the panel link is built with `item.delivery_id ?? ''`, so a
+ * delivery without an id produces `/queues?delivery=` and that MUST NOT filter to zero rows.
  */
 export function leerEntregaPedida(search: string): string | undefined {
   const pedido = new URLSearchParams(search).get('delivery')?.trim();
@@ -55,9 +55,9 @@ export function enfocarEntrega(
 }
 
 /**
- * Las palabras exactas del caso ausente. Se exportan para que la prueba las exija y para que
- * cambiarlas obligue a pasar por ella: son la única cosa que el operador lee cuando el enlace no
- * encuentra su entrega.
+ * The exact wording of the absent case. Exported so the test can require them, and so changing
+ * them forces going through it: it is the only thing the operator reads when the link does not
+ * find its delivery.
  */
 export const TEXTO_AUSENTE =
   'Esa entrega no está en esta página. Este snapshot trae sólo las entregas más recientes que tu '

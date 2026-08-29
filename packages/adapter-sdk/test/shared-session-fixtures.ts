@@ -95,7 +95,7 @@ export async function freshState(name: string): Promise<{ state: string; home: s
   return { state: directory, home, workspace };
 }
 
-/** Una entrada de transcript con la misma forma que escribe `claude` de verdad. */
+/** A transcript entry with the same shape that real `claude` writes. */
 export function userEntry(uuid: string, parentUuid: string | null, text: string, sessionId: string): string {
   return JSON.stringify({
     type: "user", uuid, parentUuid, isSidechain: false, sessionId,
@@ -117,9 +117,9 @@ export function assistantEntry(
 }
 
 /**
- * tmux simulado con la fidelidad que estas pruebas necesitan: qué comandos recibió, qué había en
- * la caja de entrada y qué se llegó a pegar. El transcript lo escribe el propio test cuando la
- * "TUI" recibe un Enter, igual que hace claude.
+ * Simulated tmux with the fidelity these tests need: which commands it received, what was in the
+ * input box, and what ended up pasted. The transcript is written by the test itself when the "TUI"
+ * receives an Enter, the same way claude does it.
  */
 export class FakeTmux implements TmuxController {
   readonly calls: string[][] = [];
@@ -133,7 +133,7 @@ export class FakeTmux implements TmuxController {
   private nextWindowNumber = 1;
   paneId = "%0";
   private nextPaneNumber = 1;
-  /** Ventanas realmente presentes en la sesión. Por defecto, la de la TUI. */
+  /** Windows actually present in the session. By default, the TUI's one. */
   windows: string[] = ["agente"];
   paneContent = "❯ ";
   panePid = "4242";
@@ -142,9 +142,9 @@ export class FakeTmux implements TmuxController {
   readonly configuredInputHooks = new Set<string>();
   private readonly waitSignals = new Set<string>();
   private readonly waiters = new Map<string, Set<(result: TmuxResult) => void>>();
-  /** Comando original del panel, usado para acreditar sesiones anteriores a los marcadores. */
+  /** Original panel command, used to accredit sessions prior to the markers. */
   paneStartCommand = "exec claude";
-  /** Panes adicionales dentro de la ventana TUI, situación que debe fallar cerrada. */
+  /** Additional panes inside the TUI window, a situation that must fail closed. */
   extraPaneCount = 0;
   failQuarantineRead = false;
   failQuarantineWrite = false;
@@ -157,10 +157,10 @@ export class FakeTmux implements TmuxController {
   failBufferInspection = false;
   newSessionFails = false;
   /**
-   * Trozo del argv del panel que hace que el proceso salga al instante.
+   * Substring of the panel argv that makes the process exit immediately.
    *
-   * Modela el caso donde `claude --continue` sin conversación previa
-   * escribe «No conversation found to continue» y sale con código 1.
+   * Models the case where `claude --continue` with no prior conversation
+   * writes "No conversation found to continue" and exits with code 1.
    */
   fatalPaneArguments: string | undefined;
   readonly buffers = new Map<string, string>();
@@ -191,7 +191,7 @@ export class FakeTmux implements TmuxController {
     return this.sessionId;
   }
 
-  /** `respawn-pane -k` conserva `%pane_id`, pero cambia proceso y vacía su input. */
+  /** `respawn-pane -k` keeps `%pane_id`, but changes the process and clears its input. */
   respawnPane(command?: string): void {
     this.panePid = String(Number(this.panePid) + 1);
     if (command !== undefined) this.paneStartCommand = command;
@@ -200,7 +200,7 @@ export class FakeTmux implements TmuxController {
     this.paneContent = "❯ ";
   }
 
-  /** Modela bytes de un cliente adjunto; `select-pane -d` los descarta. */
+  /** Models bytes from an attached client; `select-pane -d` discards them. */
   humanType(text: string): boolean {
     if (this.inputOff) return false;
     this.inputContent += text;
@@ -214,8 +214,8 @@ export class FakeTmux implements TmuxController {
       this.waiters.delete(channel);
       for (const wake of waiting) wake(ok(0));
     }
-    // Muchos doubles históricos envuelven `run` y no reenvían `control`. Resolver el waiter
-    // hermano modela el AbortController que el controller real recibe al observar la otra rama.
+    // Many historical doubles wrap `run` and do not forward `control`. Resolving the sibling
+    // waiter models the AbortController that the real controller receives on observing the other branch.
     const sibling = channel.endsWith("-accepted")
       ? `${channel.slice(0, -"accepted".length)}rejected`
       : channel.endsWith("-rejected")
@@ -421,8 +421,8 @@ export class FakeTmux implements TmuxController {
       const value = this.sessionOptions.get(option);
       return { exitCode: 0, stdout: value === undefined ? "" : `${value}\n`, stderr: "" };
     }
-    // `list-windows` es la única fuente honesta de qué ventanas hay: `display-message` cae a la
-    // ventana actual cuando la pedida no existe. El doble modela eso, no lo esquiva.
+    // `list-windows` is the only honest source of which windows exist: `display-message` falls
+    // back to the current window when the requested one does not exist. The double models this, it does not evade it.
     if (command === "list-windows") {
       const target = args[args.indexOf("-t") + 1];
       if (!this.targetExists(target)) {
@@ -484,8 +484,8 @@ export class FakeTmux implements TmuxController {
       const argv = args.at(-1) ?? "";
       if (command === "new-session") this.paneStartCommand = argv;
       if (this.fatalPaneArguments !== undefined && argv.includes(this.fatalPaneArguments)) {
-        // tmux devolvió 0: la sesión SÍ se creó. Lo que se murió fue el proceso de dentro, y con él
-        // se fue la sesión entera. `new-session` no tiene forma de contarlo.
+        // tmux returned 0: the session WAS created. What died was the process inside it, and
+        // with it the whole session went. `new-session` has no way to report it.
         this.sessionExists = false;
         this.windows = [];
       }
@@ -493,7 +493,7 @@ export class FakeTmux implements TmuxController {
         ? { exitCode: 0, stdout: `${this.sessionId}\n`, stderr: "" }
         : ok(0);
     }
-    // Matar una sesión que ya no existe no es un fallo: es el estado que se buscaba.
+    // Killing a session that no longer exists is not a failure: it is the state that was sought.
     if (command === "kill-session") {
       const targetIndex = args.indexOf("-t");
       const target = targetIndex < 0 ? undefined : args[targetIndex + 1];
@@ -518,8 +518,8 @@ export class FakeTmux implements TmuxController {
       this.inputOff = false;
       return ok(0);
     }
-    // El renombrado importa de verdad: es lo que enclavaba la sesión. El doble lo aplica sobre la
-    // lista de ventanas para que `list-windows` deje de ver la ventana vieja, igual que tmux.
+    // The renaming actually matters: it is what keyed the session. The double applies it on the
+    // window list so that `list-windows` stops seeing the old window, just like tmux does.
     if (command === "rename-window") {
       const target = args[2] ?? "";
       const from = target.slice(target.lastIndexOf(":") + 1);
@@ -530,9 +530,9 @@ export class FakeTmux implements TmuxController {
       return ok(0);
     }
     if (command === "capture-pane") {
-      // Sin sesión no hay panel que capturar, y tmux lo dice fallando. Importa: `capturePane`
-      // devuelve `undefined` y eso es lo que hace que la espera sepa distinguir "la TUI todavía
-      // está arrancando" de "acá ya no hay nadie".
+      // Without a session there is no pane to capture, and tmux reports that by failing. It
+      // matters: `capturePane` returns `undefined` and that is what lets the wait distinguish
+      // "the TUI is still booting" from "nobody is here anymore".
       const target = args[args.indexOf("-t") + 1];
       if (!this.targetExists(target)) {
         return { exitCode: 1, stdout: "", stderr: "can't find session" };
@@ -699,7 +699,7 @@ export function ambiguousTmuxResult(reason: string): TmuxResult {
   return { exitCode: null, stdout: "", stderr: reason };
 }
 
-/** Un cliente fake que sólo termina cuando su cancelación/deadline lo reapea. */
+/** A fake client that only finishes when its cancellation/deadline reaps it. */
 export function controlledTmuxHang(control?: TmuxRunControl): Promise<TmuxResult> {
   return new Promise((resolveHang) => {
     const signalAborted = (): boolean => control?.signal?.aborted === true;
@@ -756,7 +756,7 @@ export function controlledDelayedTmuxMutation(
   });
 }
 
-/** El camino de siempre. Registra si lo llamaron, que es justo lo que hay que poder afirmar. */
+/** The regular path. Records whether it was called, which is exactly what needs to be assertable. */
 export class RecordingFallback implements CommandRunner {
   calls = 0;
   constructor(private readonly stdout: string) {}

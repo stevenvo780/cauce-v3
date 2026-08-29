@@ -7,12 +7,12 @@ import {
 } from './agent-documents.js';
 
 /**
- * Muestra de hechos medidos de entorno de ejecución de arneses para pruebas de resolución de documentos.
+ * Sample of measured harness runtime facts for the document-resolution tests.
  */
-// `satisfies` y no una anotación `Record<string, …>`: con `noUncheckedIndexedAccess`, indexar un
-// `Record<string, T>` da `T | undefined`, y `MEDIDO.zeus` —que es una clave literal que está
-// escrita ahí abajo— dejaba de typecheckear en 21 sitios. Con `satisfies` se comprueba la forma
-// igual y las claves siguen siendo literales, así que no hace falta un `!` por uso.
+// `satisfies` and not a `Record<string, …>` annotation: with `noUncheckedIndexedAccess`, indexing a
+// `Record<string, T>` gives `T | undefined`, and `MEDIDO.zeus` — a literal key written below —
+// stopped typechecking in 21 places. With `satisfies` the shape is checked the same way and the
+// keys stay literal, so no `!` is needed per use.
 const MEDIDO = {
   zeus:      { harness: 'claude',   harness_bd: 'claude',   contenedor: 'ws-zeus',                home: '/home/dev',  cwd: '/workspace/cauce-v3' },
   socrates:  { harness: 'codex',    harness_bd: 'codex',    contenedor: 'ws-prizma',              home: '/home/dev',  cwd: '/workspace' },
@@ -41,10 +41,10 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   });
 
   /**
-   * El control negativo del módulo entero: para los 5 alias en los que `agents.harness_id` no
-   * coincide con el binario que corre, resolver por la base da una ruta DISTINTA. Distinta y
-   * existente, que es lo peligroso: el editor guardaría sin error en un fichero que ese agente
-   * no lee jamás.
+   * The negative control for the whole module: for the 5 aliases where `agents.harness_id` does
+   * not match the binary running, resolving through the database gives a DIFFERENT path. Different
+   * and existing, which is the dangerous part: the editor would save without error to a file
+   * that agent never reads.
    */
   it('resolver por el harness de la BD daría otra ruta en los 5 alias donde la BD miente', () => {
     const mienten = Object.entries(MEDIDO).filter(([, f]) => f.harness !== f.harness_bd);
@@ -60,15 +60,15 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   });
 
   /**
-   * atlas corre con CODEX_HOME apuntando a una subcarpeta. `~/.codex/AGENTS.md` TAMBIÉN existe y
-   * mide lo mismo (12.942 B), así que un resolutor que ignore el entorno no falla: acierta de
-   * tamaño y se equivoca de fichero.
+   * atlas runs with CODEX_HOME pointing at a subfolder. `~/.codex/AGENTS.md` ALSO exists and
+   * measures the same (12,942 B), so a resolver that ignores the environment does not fail: it
+   * gets the size right and the file wrong.
    */
   it('respeta CODEX_HOME (atlas) y CLAUDE_CONFIG_DIR', () => {
     expect(directivePath(MEDIDO.atlas)).toBe('/home/dev/.codex/cuenta-b/AGENTS.md');
-    // El control negativo es SIN la clave, no con la clave puesta a `undefined`: con
-    // `exactOptionalPropertyTypes` no son lo mismo, y el segundo ni siquiera es un valor legal
-    // de `RuntimeFacts`. Lo que se quiere medir es «los mismos hechos, pero sin CODEX_HOME».
+    // The negative control is WITHOUT the key, not with the key set to `undefined`: with
+    // `exactOptionalPropertyTypes` they are not the same, and the latter is not even a legal
+    // value of `RuntimeFacts`. What we want to measure is "the same facts, but without CODEX_HOME".
     const { harness, home, cwd } = MEDIDO.atlas;
     expect(directivePath({ harness, home, cwd })).toBe('/home/dev/.codex/AGENTS.md');
     expect(directivePath({ harness: 'claude', home: '/home/dev', claudeConfigDir: '/home/dev/.claude-steven' }))
@@ -76,7 +76,7 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   });
 
   it('dos alias en el mismo contenedor con arneses distintos no comparten fichero', () => {
-    // ws-humanizar aloja atlas (codex) y kratos (claude) con el MISMO $HOME.
+    // ws-humanizar hosts atlas (codex) and kratos (claude) with the SAME $HOME.
     expect(directivePath(MEDIDO.atlas)).not.toBe(directivePath(MEDIDO.kratos));
   });
 
@@ -97,8 +97,8 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
   });
 
   /**
-   * Las capabilities de presencia resuelven el arnés efectivo independientemente
-   * de discrepancias en la columna `agents.harness_id`.
+   * The presence capabilities resolve the effective harness independently of discrepancies
+   * in the `agents.harness_id` column.
    */
   it('las capabilities del latido aciertan donde la columna de la BD falla', () => {
     let columnaMal = 0;
@@ -238,10 +238,10 @@ describe('verifyWritablePath — falla cerrada', () => {
   });
 
   /**
-   * Control negativo que importa de verdad: en `ctrl-infra` el `.credentials.json` es un
-   * bind-mount de UN SOLO FICHERO metido dentro de un `.claude` que por lo demás es propio del
-   * contenedor. Si la directiva fuese un symlink a él, comprobar sólo el nombre pedido lo dejaría
-   * pasar. Por eso la puerta exige también el `realpath`.
+   * Negative control that really matters: in `ctrl-infra` the `.credentials.json` is a
+   * SINGLE-FILE bind-mount inserted into a `.claude` that is otherwise the container's own. If
+   * the directive were a symlink to it, checking just the requested name would let it through.
+   * Hence the gate also requires the `realpath`.
    */
   it('rechaza el symlink aunque el nombre pedido sea el correcto', () => {
     const veredicto = verifyWritablePath(

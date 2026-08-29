@@ -93,16 +93,16 @@ test("el mandato vive en un solo lugar: ni la identidad ni el contrato lo repite
   const prompt = protocolPrompt("request", undefined, context());
   const identity = prompt.slice(prompt.indexOf(IDENTITY_BEGIN), prompt.indexOf(IDENTITY_END));
 
-  // Una sola formulacion del deber. Dos, con bordes distintos, invitan a obedecer la mas floja.
+  // A single formulation of the duty. Two of them, with different edges, invite obeying the weaker one.
   assert.equal(prompt.split("Esta entrega es TU trabajo").length - 1, 1);
   assert.equal(prompt.split("Delegar es la excepción").length - 1, 1);
 
-  // La identidad describe el mundo; no manda sobre la delegacion.
+  // The identity describes the world; it does not command delegation.
   assert.doesNotMatch(identity, /Esta entrega es TU trabajo/u);
   assert.doesNotMatch(identity, /Delegá solo si/u);
   assert.doesNotMatch(identity, /Delegar es la excepción/u);
 
-  // Y el mandato en ingles del parche de prompt ya no existe en ninguna parte.
+  // And the English wording of the prompt patch no longer appears anywhere.
   assert.ok(!prompt.includes("This delivery is YOUR work"));
   assert.ok(!prompt.includes("Delegation is the exception, never the default"));
   assert.ok(!prompt.includes("Primary duty -- this outranks every mechanic below:"));
@@ -111,16 +111,16 @@ test("el mandato vive en un solo lugar: ni la identidad ni el contrato lo repite
 test("la prohibicion de esperar aparece una vez por cada lado, y no dos veces del mismo", () => {
   const prompt = protocolPrompt("request", undefined, context());
 
-  // Lado propio (identidad, castellano): que a VOS te encarguen esperar.
+  // Own side (identity, Spanish): being told by YOU to wait.
   assert.match(prompt, /si esta entrega te pide monitorear, vigilar o aguardar la respuesta de una persona, no dejes el turno abierto/u);
-  // Lado delegado (mecanica, ingles): que VOS le encargues esperar a otro.
+  // Delegated side (mechanics, English): being YOU telling another to wait.
   assert.match(prompt, /Never delegate a task that cannot terminate/u);
   assert.match(prompt, /Cauce is event-driven: an agent runs only when a delivery reaches it, nobody polls/u);
   assert.match(prompt, /"monitor X", "stay alert", "wait until the human answers"/u);
   assert.match(prompt, /dies at the ACK deadline/u);
   assert.match(prompt, /When progress depends on a person, ask once in your "reply" and finish the turn/u);
 
-  // La version en ingles del caso propio se fue: la cubre el bloque de identidad.
+  // The English version of the own case is gone: the identity block covers it.
   assert.ok(!prompt.includes("If a delivery asks YOU to monitor, watch or wait"));
 });
 
@@ -143,7 +143,7 @@ test("la mecanica se declara subordinada al deber por su nombre literal", () => 
   const prompt = protocolPrompt("request", undefined, context());
 
   assert.match(prompt, /These apply only if the DEBER PRIMARIO above already admits delegating/u);
-  // El nombre citado tiene que existir textualmente arriba, o la referencia no ancla en nada.
+  // The cited name has to exist literally above, otherwise the reference anchors to nothing.
   assert.ok(prompt.indexOf("DEBER PRIMARIO") < prompt.indexOf(DELEGATION_MECHANICS_HEADER));
 });
 
@@ -157,9 +157,9 @@ test("the narrowed reply wording still matches what the validator actually enfor
   );
   assert.equal(delegated.reply, null);
 
-  // Sigue sin valer: silencio sin delegar nada. Lo que cambio es el PRECIO. El `throw` mataba el
-  // turno entero y dejaba la entrega sin `result`, asi que el castigo por un harness que corta
-  // antes de responder se lo comia la persona que habia preguntado, no el agente.
+  // Silence without delegating is still not valid. What changed is the PRICE. The `throw` killed
+  // the whole turn and left the delivery without `result`, so the punishment for a harness that
+  // cuts off before answering was paid by the person who had asked, not by the agent.
   const mudo = validateDeliveryOutput(
     { reply: null, messages: [], notify: [], status: "done", retryable: false, artifacts: [] },
     { messageType: "request", senderAlias: "kratos", selfAlias: "iza", routingTargets },
@@ -191,11 +191,11 @@ test("el rol se imprime una vez, en la identidad, y no otra vez en el sobre de m
   const role = "Ejecucion tecnica acotada: tu producto es evidencia verificable, no opiniones.";
   const prompt = protocolPrompt("request", undefined, context({ self_role: role }));
 
-  // Una sola aparicion del texto del rol en todo el prompt.
+  // A single appearance of the role text across the whole prompt.
   assert.equal(prompt.split(role).length - 1, 1);
   assert.match(prompt, new RegExp(`Tu rol: ${role.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`, "u"));
 
-  // El bloque de metadatos no lo repite, pero conserva todo lo que si es de la entrega.
+  // The metadata block does not repeat it, but keeps everything that actually belongs to the delivery.
   const metadata = prompt.slice(
     prompt.indexOf("--- BEGIN TRUSTED DELIVERY CONTEXT ---"),
     prompt.indexOf("--- END TRUSTED DELIVERY CONTEXT ---"),
@@ -233,8 +233,8 @@ test("every invariant that was not under discussion is preserved verbatim", () =
 });
 
 /**
- * Regla de disciplina de delegación para `agent.response`: prohíbe re-delegar
- * a ramas ya abiertas en `already_returned` o `still_pending`.
+ * Delegation discipline rule for `agent.response`: it forbids re-delegating to
+ * branches already opened in `already_returned` or `still_pending`.
  */
 test("una agent.response trae la regla que prohibe re-pinguear las ramas ya abiertas", () => {
   const response = protocolPrompt("request", undefined, context({ message_type: "agent.response" }));
@@ -242,15 +242,15 @@ test("una agent.response trae la regla que prohibe re-pinguear las ramas ya abie
   assert.match(response, /- For an "agent\.response" delivery, finish the original task supplied by the SDK/u);
   assert.match(response, /closes ONE branch of a fan-out you already opened; it never reopens the round/u);
   assert.match(response, /never re-send this task to an alias in already_returned or still_pending/u);
-  // Y el permiso para una cadena de trabajo real de varios pasos NO se retira: la prohibición es
-  // de duplicar, no de delegar. Un "nunca delegues desde un response" rompería trabajo válido.
+  // The permission for a genuine multi-step work chain is NOT withdrawn: the prohibition is against
+  // duplication, not delegation. A "never delegate from a response" would break valid work.
   assert.match(response, /admissible only for work that is genuinely NEW/u);
   assert.ok(response.indexOf(PRIMARY_DUTY_HEADER) < response.indexOf('- For an "agent.response" delivery'));
 });
 
 /**
- * Las reglas de continuación sólo pesan en una continuación. Iban en el bloque fijo de TODA
- * entrega, que es el que el dueño paga ~1.000 tokens por turno sin deduplicación.
+ * Continuation rules only matter inside a continuation. They used to live in the fixed block of
+ * EVERY delivery, which the owner pays ~1,000 tokens per turn without deduplication.
  */
 test("las reglas de agent.response no viajan en las entregas que no son continuaciones", () => {
   for (const messageType of ["request", "agent.message", "agent.fanin"]) {
@@ -261,11 +261,11 @@ test("las reglas de agent.response no viajan en las entregas que no son continua
 });
 
 /**
- * El bloque de `agent.fanin` era código muerto: `AdapterEngine` sintetiza el fan-in en el SDK y
- * nunca invoca al arnés, así que esas cuatro líneas no se renderizaron nunca en producción. El
- * test que las exigía sostenía la creencia falsa de que el agente sintetiza el fan-in. Lo que
- * pedían sigue garantizado sin prompt: ver «every harness runtime bypasses providers and native
- * sessions for agent fan-in» en engine.test.ts y el rechazo de `validateDeliveryOutput`.
+ * The `agent.fanin` block was dead code: `AdapterEngine` synthesizes fan-in inside the SDK and
+ * never invokes the harness, so those four lines were never rendered in production. The test that
+ * demanded them upheld the false belief that the agent synthesizes fan-in. What they required is
+ * still guaranteed without a prompt: see "every harness runtime bypasses providers and native
+ * sessions for agent fan-in" in engine.test.ts and the rejection of `validateDeliveryOutput`.
  */
 test("no hay bloque de agent.fanin en el prompt: ese camino no llega a ningun modelo", () => {
   const fanin = protocolPrompt("request", undefined, context({ message_type: "agent.fanin" }));
@@ -281,18 +281,18 @@ test("sin contexto no hay identidad, pero el deber abre el prompt", () => {
 });
 
 test("el andamiaje sobrevive el puente de stdin: utf-8 estricto, sin controles, bajo el tope", () => {
-  // El prompt llega a un bridge Python que hace payload.decode("utf-8", errors="strict") sobre lo
-  // que el runner escribio con stdin.end(request.stdin, "utf8"). La propiedad que importa no es
-  // "es ASCII" —el role_brief viene en castellano de la base— sino que el viaje sea sin perdida.
+  // The prompt reaches a Python bridge that does payload.decode("utf-8", errors="strict") on what
+  // the runner wrote with stdin.end(request.stdin, "utf8"). The property that matters is not
+  // "it is ASCII" —role_brief comes in Spanish from the DB— but that the trip is lossless.
   const scaffolding = protocolPrompt("request", undefined, context({
     self_role: "Producción creativa y multimedia: guiones, escenas, animación y versiones.",
   }));
 
   const bytes = Buffer.from(scaffolding, "utf8");
   assert.equal(bytes.toString("utf8"), scaffolding, "el prompt tiene que ir y volver identico");
-  // MAX_INPUT_BYTES del bridge de hermes es 1 MiB y rechaza el exceso en vez de recortarlo.
+  // MAX_INPUT_BYTES for the hermes bridge is 1 MiB and rejects the excess instead of trimming it.
   assert.ok(bytes.byteLength < 1024 * 1024);
-  // El prompt se lee por lineas: ningun control mas alla del salto de linea.
+  // The prompt is read line by line: no control character beyond the newline.
   const controls = [...scaffolding].filter((character) => {
     const code = character.codePointAt(0)!;
     return character !== "\n" && (code < 0x20 || code === 0x7f);

@@ -13,13 +13,13 @@ import {
 } from './activity';
 
 /**
- * La lectura tabular de `GET /v3/console/activity`.
+ * The tabular reading of `GET /v3/console/activity`.
  *
- * Esto **era** una ruta propia ("Actividad de la flota") que leía exactamente el mismo endpoint que
- * la sala de máquinas y lo dibujaba de otra forma: dos entradas de menú, dos pollings, una sola
- * pregunta. Ahora es el panel de detalle de la sala de máquinas — el hipergrafo responde *quién le
- * habla a quién*, y esta tabla responde *cuánto lleva cada entrega y si avanza*, que es la pregunta
- * siguiente y no la misma. Se alimenta del snapshot que la página ya tiene: no vuelve a pedir nada.
+ * This **was** a route of its own ("Fleet activity") that read exactly the same endpoint as the
+ * engine room and drew it differently: two menu entries, two pollings, one single question. Now it
+ * is the engine room's detail panel — the hypergraph answers *who is talking to whom*, and this
+ * table answers *how long each delivery has been going and whether it advances*, which is the next
+ * question, not the same one. It feeds on the snapshot the page already has: it does not ask again.
  */
 
 const FLAG_ORDER: FleetActivityFlag[] = [
@@ -28,31 +28,30 @@ const FLAG_ORDER: FleetActivityFlag[] = [
 
 export interface FleetActivityTableProps {
   snapshot: FleetActivitySnapshot | undefined;
-  /** Alias resaltado en el hipergrafo, en formato `tenant/alias`. Sincroniza las dos mitades. */
+  /** Alias highlighted in the hypergraph, in `tenant/alias` format. Synchronises the two halves. */
   selectedKey?: string | null;
-  /** Claves `tenant/alias` a las que el filtro de estado acota la tabla. `null` = sin filtro. */
+  /** `tenant/alias` keys to which the state filter restricts the table. `null` = no filter. */
   onlyKeys?: Set<string> | null;
-  /** Nombre del estado filtrado, sólo para poder decirlo cuando el filtro deja la tabla vacía. */
+  /** Name of the filtered state, only to be able to say it when the filter leaves the table empty. */
   filterLabel?: string;
   /**
-   * El estado del muñeco por alias (`tenant/alias`), tal y como lo derivó la página.
+   * The doll's state per alias (`tenant/alias`), as derived by the page.
    *
-   * Es lo que impide que la fila y el chip digan cosas distintas del mismo agente: sin esto, la
-   * columna ESTADO tenía que traducir el `work_state` del servidor por su cuenta y un alias
-   * caído salía «Libre» porque no tenía trabajo. Ver `estadoDeFila`.
+   * This is what prevents the row and the chip from saying different things about the same agent:
+   * without it, the STATE column had to translate the server's `work_state` on its own and a
+   * downed alias came out "Free" because it had no work. See `estadoDeFila`.
    */
   estados?: EstadosVivos;
   onSelect?: (key: string | null) => void;
-  /** Clic en la fila: abre el cajón de ese agente sobre la misma página, sin navegar. */
+  /** Click on the row: opens that agent's drawer on the same page, without navigating. */
   onOpen?: (key: string) => void;
 }
 
 /**
- * Tabla de agentes con búsqueda por alias y detalle por entrega.
+ * Table of agents with search by alias and detail per delivery.
  *
- * La búsqueda es la razón por la que esta tabla sobrevive a la grilla de tarjetas que había antes:
- * con quince muñecos en un dibujo, encontrar a *uno* concreto por nombre es lo único que el grafo
- * hace peor que una lista.
+ * Search is the reason this table outlasts the card grid it replaced: with fifteen dolls in one
+ * drawing, finding *one* specific one by name is the only thing the graph does worse than a list.
  */
 export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabel, estados, onSelect, onOpen }: FleetActivityTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -151,11 +150,11 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
 }
 
 /**
- * Señales activas: `totals.flagged`.
+ * Active signals: `totals.flagged`.
  *
- * Se conserva aparte de los siete estados de los muñecos porque **no es la misma partición**: un
- * agente saturado Y con el ACK detenido cuenta en las dos columnas, así que esto no suma a
- * `totals.agents` y no se puede derivar del recuento por estado.
+ * Kept apart from the dolls' seven states because it is **not the same partition**: an agent that
+ * is saturated AND has a stalled ACK counts in both columns, so this does not add up to
+ * `totals.agents` and cannot be derived from the count by state.
  */
 export function FleetSignals({ snapshot }: { snapshot: FleetActivitySnapshot | undefined }) {
   const flagged = snapshot?.totals?.flagged;
@@ -176,7 +175,7 @@ export function FleetSignals({ snapshot }: { snapshot: FleetActivitySnapshot | u
   );
 }
 
-/** Las tres cosas que hay que saber para no malinterpretar la tabla. */
+/** The three things one needs to know to avoid misreading the table. */
 export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityThresholds | null | undefined }) {
   return (
     <div className="explain-grid">
@@ -206,8 +205,8 @@ export function ActivityExplainers({ thresholds }: { thresholds: FleetActivityTh
         <div>
           <strong>Umbrales del servidor</strong>
           <p>
-            {/* «Trabado», la misma palabra que el chip, el veredicto, la leyenda y esta tabla.
-                Decía «colgado», que era el rótulo viejo de la columna ESTADO. */}
+            {/* "Stalled", the same word as the chip, the verdict, the legend and this table.
+                It used to say "hung", which was the old label of the STATE column. */}
             Saturado desde {thresholds?.saturation_in_flight ?? 'un número que el servidor no informó'} en vuelo;
             trabado tras {thresholds?.stall_after_seconds ?? 'un tiempo que el servidor no informó'}
             {thresholds?.stall_after_seconds ? 's' : ''} sin ACK aplicado. La consola no inventa estos números.
@@ -233,17 +232,18 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
   onOpen?: (key: string) => void;
 }) {
   /**
-   * Titular y señales salen de DOS sitios distintos a propósito, y los dos hacen falta:
+   * Title and signals come from TWO different places on purpose, and both are needed:
    *
-   *  - el TITULAR es `estadoDeFila`, que consume el estado ya derivado por la página —el mismo
-   *    objeto que pinta el muñeco y cuenta el chip—, porque `work_state` y `LiveState` son
-   *    particiones distintas y ninguna traducción de rótulos podía hacerlas coincidir: `iza`
-   *    salía «Caído» en el chip y «Libre» en su fila.
-   *  - las SEÑALES son `resumirSenales`, que quita las que otra cosa ya visible implica: `midas`
-   *    apilaba CINCO insignias para decir «está trabado» y `jarvis` decía «Saturado» dos veces.
+   *  - the TITLE comes from `estadoDeFila`, which consumes the state already derived by the page
+   *    —the same object the doll paints and the chip counts—, because `work_state` and
+   *    `LiveState` are different partitions and no label translation could make them match: `iza`
+   *    came out "Downed" in the chip and "Free" in its row.
+   *  - the SIGNALS come from `resumirSenales`, which drops those implied by something else already
+   *    visible: `midas` stacked FIVE badges to say "it is stalled" and `jarvis` said "Saturated"
+   *    twice.
    *
-   * El titular del resumen se DESCARTA y se usa el de `estadoDeFila`: dos titulares para la
-   * misma celda serían otra vez dos palabras para un hecho.
+   * The summary's title is DISCARDED and that of `estadoDeFila` is used instead: two titles for
+   * the same cell would again be two words for one fact.
    */
   const stateLabel = estado.label;
   const stateTone = estado.tone;
@@ -254,8 +254,8 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
   const hasItems = items.length > 0;
   return (
     <>
-      {/* Pasar el puntero por la fila resalta al muñeco en el hipergrafo de arriba: es lo que ata
-          la lista al dibujo sin tener que dibujar la lista otra vez. */}
+      {/* Hovering the row highlights the doll in the hypergraph above: that is what ties the list
+          to the drawing without having to draw the list again. */}
       <tr
         data-state={estado.live ?? agent.work_state ?? 'unknown'}
         data-urgency={urgency}
@@ -271,8 +271,8 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
             <button
               type="button"
               className="row-toggle"
-              // Desplegar las entregas y abrir el cajón son dos acciones distintas sobre la misma
-              // fila: sin frenar la burbuja, un clic en la flecha haría las dos.
+              // Expanding the deliveries and opening the drawer are two different actions on the
+              // same row: without stopping the bubble, a click on the arrow would do both.
               onClick={(event) => { event.stopPropagation(); onToggle(); }}
               aria-expanded={expanded}
               aria-label={`Detalle de ${agent.alias}`}
@@ -283,10 +283,10 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
         </td>
         <td>
           <div className="identity-cell">
-            {/* Un `<tr>` con `onClick` es una acción que sólo existe para el ratón. El nombre pasa
-                a ser un botón real para que la misma acción esté en el tabulador; el clic en la
-                fila se conserva como atajo, y por eso el botón frena la burbuja (si no, un clic
-                sobre el nombre abriría el cajón dos veces). */}
+            {/* A `<tr>` with `onClick` is an action that only exists for the mouse. The name becomes
+                a real button so the same action is reachable from the keyboard; the row click is
+                kept as a shortcut, which is why the button stops the bubble (otherwise a click on
+                the name would open the drawer twice). */}
             {onOpen ? (
               <button
                 type="button"

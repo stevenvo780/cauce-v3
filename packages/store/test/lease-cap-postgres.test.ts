@@ -51,8 +51,8 @@ function ack(
 }
 
 /**
- * Deja la entrega en 'started' con el harness declarando que arrancó de verdad, que es el
- * estado exacto desde el que una entrega puede volverse inmortal.
+ * Leaves the delivery in 'started' with the harness declaring it really started, which is the
+ * exact state from which a delivery can become immortal.
  */
 async function claimAndStart(
   epoch: number,
@@ -85,7 +85,7 @@ async function deliveryRow(id: string): Promise<{
   return row;
 }
 
-/** Envejece el ANCLA del techo, no el plazo: es lo que separa este guarda del de ACK vencido. */
+/** Ages the cap ANCHOR, not the deadline: that is what separates this guard from the ACK-expired one. */
 async function ageExecutionStart(id: string, ms: number): Promise<void> {
   await pool.query(
     `UPDATE deliveries
@@ -120,16 +120,16 @@ afterAll(async () => {
 
 describe('techo de vida total de una entrega', () => {
   /**
-   * EL CASO DEL INCIDENTE. La garra está PERFECTAMENTE VIVA —plazo dentro de una hora, renovado
-   * recién— y sin embargo la entrega lleva horas colgada. Antes de este parche el reaper ni
-   * siquiera la miraba: su WHERE sólo pregunta por plazos vencidos.
+   * THE INCIDENT CASE. The lease is PERFECTLY ALIVE —deadline within an hour, just renewed—
+   * and yet the delivery has been hanging for hours. Before this patch the reaper did not even
+   * look at it: its WHERE only asks about expired deadlines.
    */
   it('mata una entrega cuya garra sigue viva pero superó el techo, con motivo propio', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
     await repository.publish(command({ text: 'harness colgado que sigue latiendo' }));
     const claimed = await claimAndStart(lease.epoch!);
 
-    // 17,36 h fue lo medido en producción para la entrega de janus. El techo por defecto son 12 h.
+    // 17.36 h was what was measured in production for janus's delivery. The default cap is 12 h.
     await ageExecutionStart(claimed.delivery_id, 17 * 60 * 60_000);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour',
@@ -139,15 +139,15 @@ describe('techo de vida total de una entrega', () => {
     expect((await deliveryRow(claimed.delivery_id)).ack_deadline_at!.getTime())
       .toBeGreaterThan(Date.now());
 
-    // staleMs enorme: ninguna garra está vencida, así que el ÚNICO camino posible es el techo.
+    // staleMs huge: no lease is expired, so the ONLY possible path is the cap.
     const swept = await repository.retryStaleDeliveries(24 * 60 * 60_000);
 
     expect(swept).toEqual({ retried: 0, dead: 1, parked: 0 });
     const row = await deliveryRow(claimed.delivery_id);
     expect(row.status).toBe('dead');
     expect(row.last_error).toContain('Lease cap exhausted');
-    // El motivo NO puede confundirse con el otro camino: "dejó de responder" y "no deja de
-    // responder" mandan al operador a lugares opuestos.
+    // The reason MUST NOT be confused with the other path: "stopped responding" and "won't stop
+    // responding" send the operator to opposite places.
     expect(row.last_error).not.toContain('ACK timeout');
 
     const dlq = await pool.query<{ reason: string }>(
@@ -171,7 +171,7 @@ describe('techo de vida total de una entrega', () => {
     await repository.publish(command({ text: 'turno legítimo de once horas' }));
     const claimed = await claimAndStart(lease.epoch!);
 
-    // Once horas: largo, pero por debajo de las 12 h del default. No debe morir.
+    // Eleven hours: long, but below the 12 h default. It must not die.
     await ageExecutionStart(claimed.delivery_id, 11 * 60 * 60_000);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour',
@@ -189,7 +189,7 @@ describe('techo de vida total de una entrega', () => {
     const leaseCap = { leaseCapMs: 60_000 };
     const claimed = await claimAndStart(lease.epoch!, leaseCap);
 
-    // Faltan 10 s para el techo, pero el plazo de ACK son 60 s: la renovación no puede darle 60.
+    // 10 s left until the cap, but the ACK deadline is 60 s: the renewal cannot give 60.
     await ageExecutionStart(claimed.delivery_id, 50_000);
     const renewed = await repository.ackDelivery(
       claimed.delivery_id, 'Isa', 'salva', ack(claimed, lease.epoch!, 'started', true),
@@ -215,8 +215,8 @@ describe('techo de vida total de una entrega', () => {
       ACK_DEADLINE_MS, leaseCap
     );
 
-    // El plazo quedó en el pasado: el reaper la recoge en el tick siguiente aunque el harness
-    // siga latiendo, y con el motivo del techo.
+    // The deadline ended up in the past: the reaper picks it up on the next tick even though the
+    // harness keeps beating, and with the cap reason.
     expect((await deliveryRow(claimed.delivery_id)).ack_deadline_at!.getTime())
       .toBeLessThanOrEqual(Date.now());
     await repository.retryStaleDeliveries(30_000, 100, leaseCap);
@@ -249,7 +249,7 @@ describe('timeout_ms por mensaje', () => {
       .toBe(300_000 + DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS);
     expect(deliveryLeaseCapMs({ timeout_ms: 24 * 60 * 60_000 }))
       .toBe(24 * 60 * 60_000 + DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS);
-    // Basura o fuera de rango: cae al default, nunca rompe.
+    // Garbage or out of range: falls back to the default, never breaks.
     expect(deliveryLeaseCapMs({ timeout_ms: 'pronto' })).toBe(DEFAULT_DELIVERY_LEASE_CAP_MS);
     expect(deliveryLeaseCapMs({ timeout_ms: -1 })).toBe(DEFAULT_DELIVERY_LEASE_CAP_MS);
     expect(deliveryLeaseCapMs({ timeout_ms: 8 * 24 * 60 * 60_000 }))
@@ -257,8 +257,8 @@ describe('timeout_ms por mensaje', () => {
   });
 
   /**
-   * El par es lo que prueba el punto: con el MISMO default y la misma edad, la entrega que
-   * declara un presupuesto corto muere y la que declara uno largo sobrevive.
+   * The pair is what proves the point: with the SAME default and the same age, the delivery that
+   * declares a short budget dies and the one that declares a long one survives.
    */
   it('el reaper respeta el timeout_ms del mensaje en vez del default', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
@@ -276,15 +276,15 @@ describe('timeout_ms por mensaje', () => {
     const cortaRow = await deliveryRow(corta.delivery_id);
     expect(cortaRow.status).toBe('dead');
     expect(cortaRow.last_error).toContain('Lease cap exhausted');
-    // El motivo lleva el techo REAL de esta entrega (60 s + 60 s de gracia), no el default.
+    // The reason carries this delivery's REAL cap (60 s + 60 s grace), not the default.
     expect(cortaRow.last_error).toContain('120000 ms');
 
     await repository.publish(command({
       text: 'tarea larga declarada', timeout_ms: 20 * 60 * 60_000
     }));
     const larga = await claimAndStart(lease.epoch!, policy);
-    // Ocho horas: por encima del default de 6 h de esta política, pero muy por debajo de las 20 h
-    // que el mensaje pidió. No debe morir.
+    // Eight hours: above the 6 h default of this policy, but well below the 20 h the message
+    // requested. It must not die.
     await ageExecutionStart(larga.delivery_id, 8 * 60 * 60_000);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour' WHERE id=$1`,
@@ -296,8 +296,8 @@ describe('timeout_ms por mensaje', () => {
   });
 
   /**
-   * `timeout_ms` viejo o corrupto no puede tumbar el tick del reaper. Es el modo de falla que ya
-   * dejó una vez a la flota con los agentes vivos y las entregas muertas.
+   * An old or corrupted `timeout_ms` must not topple the reaper tick. This is the failure mode
+   * that once left the fleet with live agents and dead deliveries.
    */
   it('sobrevive a un timeout_ms corrupto en una fila ya persistida', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
@@ -309,7 +309,7 @@ describe('timeout_ms por mensaje', () => {
     );
     await ageExecutionStart(claimed.delivery_id, 17 * 60 * 60_000);
 
-    // Cae al default de 12 h y muere por techo, sin error de conversión.
+    // It falls back to the 12 h default and dies by cap, without a conversion error.
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
     expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
   });
