@@ -170,7 +170,7 @@ async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
 
   const abrir = (pestana) => async () => {
     await pagina.goto(`${ORIGIN}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}&pestana=${pestana}`, {
-      waitUntil: 'networkidle', timeout: 30000,
+      waitUntil: 'domcontentloaded', timeout: 30000,
     });
     await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
     await pagina.locator('.agent-drawer').waitFor({ state: 'visible', timeout: 5000 });
@@ -183,29 +183,49 @@ async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
   await medir(PERFIL, abrir('perfil'));
 }
 
-async function medirTodo() {
-  const navegador = await chromium.launch();
+/**
+ * `networkidle` costs a second per route here and can never settle on its own: the console polls on
+ * a timer, so the gate would wait for a quiet network that this page never has. The layout is
+ * settled once `main` is painted and the transitions are off.
+ */
+async function medirRuta(pagina, ruta) {
+  await pagina.goto(ORIGIN + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await pagina.locator('main').waitFor({ state: 'visible', timeout: 15000 });
+  await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
+  await pagina.waitForTimeout(700);
+  return pagina.evaluate(medirEnLaPagina);
+}
+
+async function medirViewport(navegador, viewport) {
+  const contexto = await navegador.newContext({ viewport: { width: viewport, height: 1000 } });
+  const pagina = await contexto.newPage();
   const medidas = [];
   const sinMedir = [];
   try {
-    for (const viewport of VIEWPORTS) {
-      const contexto = await navegador.newContext({ viewport: { width: viewport, height: 1000 } });
-      const pagina = await contexto.newPage();
-      for (const ruta of ROUTES) {
-        await pagina.goto(ORIGIN + ruta, { waitUntil: 'networkidle', timeout: 30000 });
-        // Transitions in flight report boxes that are still moving.
-        await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
-        await pagina.waitForTimeout(700);
-        const medida = await pagina.evaluate(medirEnLaPagina);
-        medidas.push({ ruta, viewport, ...medida });
-        if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
-      }
-      await contexto.close();
+    for (const ruta of ROUTES) {
+      const t0 = Date.now();
+      medidas.push({ ruta, viewport, ...(await medirRuta(pagina, ruta)) });
+      process.stderr.write(`  ${String(viewport)}px ${ruta} ${String(Date.now() - t0)}ms\n`);
+      if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
     }
+  } finally {
+    await contexto.close();
+  }
+  return { medidas, sinMedir };
+}
+
+/** The six viewports share nothing, so they run at once: geometry is deterministic, not timed. */
+async function medirTodo() {
+  const navegador = await chromium.launch();
+  try {
+    const pasadas = await Promise.all(VIEWPORTS.map((viewport) => medirViewport(navegador, viewport)));
+    return {
+      medidas: pasadas.flatMap((pasada) => pasada.medidas),
+      sinMedir: pasadas.flatMap((pasada) => pasada.sinMedir),
+    };
   } finally {
     await navegador.close();
   }
-  return { medidas, sinMedir };
 }
 
 /**
