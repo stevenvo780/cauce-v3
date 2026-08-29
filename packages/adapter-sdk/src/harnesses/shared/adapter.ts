@@ -47,7 +47,6 @@ import {
   abortadoPorApagado,
   cancellationMessage,
   elTestigoDiceQueNoEmpezo,
-  esInterrupcionDelDuenio,
   nuncaEmpezoElTurno,
   sanitizeProcessOutput,
   sinMarcaDeArranque,
@@ -427,10 +426,17 @@ export class HarnessAdapter {
         const message = causeDetail
           ? `Harness exited with code ${result.exitCode} without structured output: ${causeDetail}`
           : "Harness exited after execution began without structured output; completion state is unknown";
+        // `PROCESS_EXIT_AMBIGUOUS` esta en AMBIGUOUS_ACK_ERROR_CODES, y el contrato del gateway
+        // rechaza esos ACK si vienen como reintentables ("Ambiguous ACK errors must not be
+        // retryable"). Marcar aqui la interrupcion del dueno como reintentable producia un marco
+        // que el gateway rechaza SIEMPRE: el adaptador lo reintentaba una vez por segundo y no
+        // volvia a consumir nada. Medido en tales el 2026-08-29: ~30 min mudo, 156 CONNECTION_ZODERROR
+        // cada 30 s, con el ACK envenenado persistido en outbox.json y delivery-transaction.json.
+        // `false` ademas es lo correcto: si no se sabe si el turno dejo efectos, no se reintenta solo.
         throw new ProcessExecutionError(
           "PROCESS_EXIT_AMBIGUOUS",
           message,
-          esInterrupcionDelDuenio(causeDetail),
+          false,
         );
       }
       throw error;
@@ -440,10 +446,11 @@ export class HarnessAdapter {
       const message = causeDetail
         ? `Harness exited with code ${result.exitCode}: ${causeDetail}`
         : "Harness exited with a non-zero status after execution began; completion state is unknown";
+      // Ver arriba: un ACK ambiguo nunca puede ser reintentable o el gateway lo rechaza en bucle.
       throw new ProcessExecutionError(
         "PROCESS_EXIT_AMBIGUOUS",
         message,
-        esInterrupcionDelDuenio(causeDetail),
+        false,
       );
     }
     const output = validateDeliveryOutput(parsed.output, {
