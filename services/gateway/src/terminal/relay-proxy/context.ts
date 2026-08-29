@@ -252,8 +252,7 @@ export function createRelayProxyContext(
       claim_lease_ttl_ms: config.claimLeaseSeconds * 1_000,
       relay_instance_id: identity.relay_instance_id,
       relay_boot_id: identity.relay_boot_id,
-      // Never persisted or logged. It only crosses the relay mTLS path and then the already
-      // authenticated browser WebSocket as part of `ready`.
+      // Never persisted or logged; only crosses relay mTLS and the authenticated browser WS (`ready`).
       resume_token: resumeToken
     };
   }
@@ -325,7 +324,14 @@ export function createRelayProxyContext(
     if (actor === undefined) return { allowed: false, reason: 'unknown_session' };
     const placements = await loadFleetPlacements(database ?? pool);
     const placement = fleetPlacement(placements, row.tenant_id, row.alias);
-    if (placement === undefined || placement.container !== row.container) {
+    if (placement === undefined) {
+      return { allowed: false, reason: 'target_placement_changed' };
+    }
+    // row.container es el ID FÍSICO de la presencia; un contenedor recreado se caza aquí.
+    const vivo = registry.resolve(row.tenant_id, row.alias);
+    const observado = vivo.status === 'online' || vivo.status === 'offline'
+      ? vivo.observation : undefined;
+    if (observado !== undefined && observado.presence.container_id !== row.container) {
       return { allowed: false, reason: 'target_placement_changed' };
     }
     const cohort = containerCohort(placements, row.tenant_id, row.alias);
