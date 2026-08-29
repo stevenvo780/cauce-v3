@@ -13,16 +13,18 @@
 .panel { margin-bottom: 18px; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: linear-gradient(145deg, rgb(16 25 42 / 96%), rgb(11 18 31 / 96%)); box-shadow: var(--shadow); }
 .panel-header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 19px; }
 .panel-header h2 { flex: none; margin: 0; font-size: var(--tipo-panel); letter-spacing: -.015em; }
-.panel-header p { flex: 1 1 auto; min-width: 0; max-width: var(--measure-prose); }
-.panel-header p { margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.5; }
+.panel-header p { flex: 1 1 auto; min-width: 0; max-width: var(--measure-prose); margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.5; }
 
 /* Card grids reflow instead of holding a column count. The track minimum has to stay at or below
    300px: a 360px viewport has 330px for one column, and anything wider forces a sideways scroll. */
 .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .metrics-grid.three { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-.metric { position: relative; min-height: 135px; overflow: hidden; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
-.metric::after { position: absolute; right: -24px; bottom: -34px; width: 90px; height: 90px; border-radius: 50%; background: rgb(122 184 255 / 8%); content: ""; }
-.metric p { margin: 0 0 16px; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.metric { min-height: 135px; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+/* The row of cards shares its rows, so a label that takes two lines lowers every label of the row
+   and no figure alone. Four rows cover the tallest card in use: label, figure, detail, footnote.
+   Two classes in the selector on purpose: with one it ties with `.metrica-filtro` and loses. */
+.metrics-grid > .metric { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; }
+.metric p { align-self: end; margin: 0 0 16px; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .metric strong { display: block; color: var(--blue); font-size: 2.1rem; line-height: 1; }
 .metric span { display: block; margin-top: 11px; color: var(--faint); font-size: var(--tipo-rotulo); }
 .metric-positive strong { color: var(--mint); }
@@ -83,9 +85,9 @@ input, select, textarea { width: 100%; margin-top: 7px; border: 1px solid var(--
 input, select { min-height: 41px; padding: 8px 10px; }
 textarea { padding: 10px; line-height: 1.5; resize: vertical; }
 input::placeholder { color: #60728e; }
-.trust-callout { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.trust-callout { display: flex; align-items: center; gap: 8px; max-width: var(--measure-prose); margin-top: 16px; color: var(--muted); font-size: var(--tipo-rotulo); }
 .trust-callout svg { color: var(--mint); }
-.notice { margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); color: #bfcee2; font-size: var(--tipo-rotulo); }
+.notice { max-width: var(--measure-prose); margin: 14px 0 0; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); color: #bfcee2; font-size: var(--tipo-rotulo); }
 .notice.success { border-color: #286353; background: var(--mint-dim); color: #a0ecd5; }
 .notice.error { border-color: #74313c; background: var(--red-dim); color: #ffb7bc; }
 /* Estado de actualización parcial. */

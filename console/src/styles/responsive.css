@@ -85,6 +85,15 @@ input, select, textarea { min-width: 0; }
   .terminal-transcript { max-height: 500px; }
 }
 
+/* --- Breakpoint: max-width 640px --- */
+/* Por debajo de este ancho el título y su acción ya no caben en la misma línea —la barra de
+   acciones más ancha mide 200px y un título necesita unos 380 para leerse—, así que la cabecera
+   se apila en vez de partir el titular en una palabra por renglón. */
+@media (max-width: 640px) {
+  .page-header { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-3); }
+  .page-actions { grid-area: auto; }
+}
+
 /* --- Breakpoint: max-width 720px --- */
 @media (max-width: 720px) {
   .auto-refresh-toggle { margin-top: 4px; }
