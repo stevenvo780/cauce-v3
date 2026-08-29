@@ -1,4 +1,4 @@
-import { MessageSquareText, ShieldCheck, X } from 'lucide-react';
+import { ShieldCheck, X } from 'lucide-react';
 import type { ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import type { TerminalSessionGrant, TerminalTargetsSnapshot } from './api';
 import { TEXTO_DOCTRINA } from './doctrina';
@@ -47,17 +47,6 @@ export function GridContainer({
   onReleaseChannel,
   onReconciliarPlazas,
 }: GridContainerProps) {
-  if (sessions.length === 0) {
-    return (
-      <div className="terminal-no-session" style={{ flex: 1 }}>
-        <span><MessageSquareText size={27} aria-hidden="true" /></span>
-        <p className="eyebrow">Ningún agente seleccionado</p>
-        <h2>Abrí una sesión desde la flota</h2>
-        <p>Cada pestaña es una vista efímera sobre mensajes y ACK del servidor. No se persiste estado de sesión en el navegador.</p>
-      </div>
-    );
-  }
-
   const visible = sessions.find((session) => session.id === activeId) ?? sessions[0];
   return (
     <div className="terminal-grid-wrapper">

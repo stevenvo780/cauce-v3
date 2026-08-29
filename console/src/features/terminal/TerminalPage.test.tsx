@@ -99,7 +99,7 @@ it('opens simultaneous-capable agent sessions and publishes through the durable 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
   expect(screen.getByText('Flota en vivo')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /plano de control/i })).toBeInTheDocument();
-  expect(screen.getByText('Ningún agente seleccionado')).toBeInTheDocument();
+  expect(await screen.findByText('Aquí no se puede espejar ninguna TUI')).toBeInTheDocument();
   for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
     expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
   }
@@ -224,6 +224,42 @@ it('derives the operator ACL from /v3/console/topology and never calls a route t
   expect(phantomCalls).toBe(0);
   expect(screen.queryByText(/Topología de acceso del tenant operador UNKNOWN/i)).not.toBeInTheDocument();
   expect(screen.queryByText(/ACL del operador/i)).not.toBeInTheDocument();
+});
+
+it('con el canal cerrado el escenario no dice que falte elegir alias: dice que no se puede espejar', async () => {
+  renderWithApi(<TerminalPage />);
+
+  expect(await screen.findByText('Aquí no se puede espejar ninguna TUI')).toBeInTheDocument();
+  expect(screen.queryByText('Ningún agente seleccionado')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /abrir la tui de/i })).not.toBeInTheDocument();
+});
+
+it('con canal y TUI el escenario ofrece abrir el alias que ya está emitiendo', async () => {
+  const user = userEvent.setup();
+  enableCapability();
+  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] })]);
+  renderWithApi(<TerminalPage />);
+
+  expect(await screen.findByText('Ningún agente seleccionado')).toBeInTheDocument();
+  await user.click(await screen.findByRole('button', { name: /abrir la tui de jarvis/i }));
+  expect(await screen.findByRole('tab', { name: /jarvis/i })).toHaveAttribute('aria-selected', 'true');
+}, 20_000);
+
+it('sin inventario de destinos NO dice que ningún alias emita: dice que no se pudo comprobar', async () => {
+  enableCapability();
+  serveTargets(null);
+  renderWithApi(<TerminalPage />);
+
+  expect(await screen.findByText('No se sabe qué alias pueden emitir su TUI')).toBeInTheDocument();
+  expect(screen.queryByText('Ningún alias está emitiendo su TUI ahora mismo')).not.toBeInTheDocument();
+});
+
+it('con inventario publicado y vacío de TUI sí dice que ninguno emite', async () => {
+  enableCapability();
+  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] })]);
+  renderWithApi(<TerminalPage />);
+
+  expect(await screen.findByText('Ningún alias está emitiendo su TUI ahora mismo')).toBeInTheDocument();
 });
 
 it('labels every alias with an explicit PTY state instead of a spinner or a bare grey button', async () => {

@@ -1,6 +1,8 @@
+import { AlertTriangle, MonitorPlay } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import { EmptyState, LoadingState } from '../../components/ui';
 import { ControlPlanePanel } from './AdapterInspector';
 import { FleetSidebar } from './FleetSidebar';
 import { GridContainer } from './GridContainer';
@@ -17,7 +19,8 @@ import {
   type TerminalTargetsSnapshot,
 } from './api';
 import { plazasColgadas, plazasOcupadas } from './plazas';
-import type { FleetAgent } from './fleet';
+import { fleetTerminalChip, type FleetAgent } from './fleet';
+import { ultimateTerminalGate, type PluginGate } from './plugin';
 import { closePtySession } from './pty-session';
 import { operatorRouteForAgent, type OperatorSession } from './session';
 import type { TerminalGrantRequestOutcome } from './types';
@@ -81,6 +84,98 @@ function terminalCapabilityUuid(): string {
     return globalThis.crypto.randomUUID();
   }
   throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
+}
+
+interface EscenarioVacioProps {
+  agents: FleetAgent[];
+  access?: ConsoleAccess;
+  capability?: TerminalCapability;
+  targets?: TerminalTargetsSnapshot;
+  loading: boolean;
+  error?: Error;
+  onOpenAgent: (agent: FleetAgent) => void;
+}
+
+interface CopiaDelEscenario {
+  tono: 'espera' | 'cerrado';
+  eyebrow: string;
+  titulo: string;
+  cuerpo: string;
+}
+
+function copiaDelEscenario(
+  gate: PluginGate,
+  targets: TerminalTargetsSnapshot | undefined,
+  emitiendo: number,
+): CopiaDelEscenario {
+  if (!gate.enabled) {
+    return {
+      tono: 'cerrado',
+      eyebrow: 'Canal cerrado',
+      titulo: 'Aquí no se puede espejar ninguna TUI',
+      cuerpo: `${gate.reason} Mientras siga así, abrir un alias muestra su feed durable y el motivo escrito, `
+        + 'nunca su terminal.',
+    };
+  }
+  if (!targets?.items) {
+    return {
+      tono: 'cerrado',
+      eyebrow: 'Inventario sin comprobar',
+      titulo: 'No se sabe qué alias pueden emitir su TUI',
+      cuerpo: 'El gateway no publicó el inventario de destinos PTY, así que ningún alias se da por disponible. '
+        + 'No es que no haya ninguno: es que no se pudo comprobar. Sincronizá y volvé a mirar.',
+    };
+  }
+  if (emitiendo === 0) {
+    return {
+      tono: 'cerrado',
+      eyebrow: 'Sin TUI que espejar',
+      titulo: 'Ningún alias está emitiendo su TUI ahora mismo',
+      cuerpo: 'El canal está abierto y el inventario llegó, pero ningún destino publica el modo harness en este '
+        + 'momento. Cada alias de la flota lleva su motivo escrito; abrí uno para leerlo entero.',
+    };
+  }
+  return {
+    tono: 'espera',
+    eyebrow: 'Escenario vacío',
+    titulo: 'Ningún agente seleccionado',
+    cuerpo: 'Este hueco es el espejo en vivo de la TUI de un agente —la sesión tmux que está corriendo ahora—, '
+      + `en solo lectura. ${String(emitiendo)} de ${String(targets.items.length)} destinos la están emitiendo: `
+      + 'elegí un alias en la flota y su terminal ocupa este espacio.',
+  };
+}
+
+function EscenarioVacio({ agents, access, capability, targets, loading, error, onOpenAgent }: EscenarioVacioProps) {
+  if (loading && agents.length === 0) {
+    return <div className="terminal-stage-empty"><LoadingState label="Leyendo la flota del servidor…" /></div>;
+  }
+  if (error && agents.length === 0) {
+    return (
+      <div className="terminal-stage-empty" data-tono="fallo" role="alert">
+        <span className="terminal-stage-icon"><AlertTriangle size={26} aria-hidden="true" /></span>
+        <p className="eyebrow">La flota no se pudo leer</p>
+        <h2>Este hueco está vacío por un fallo, no porque no haya agentes</h2>
+        <EmptyState>{error.message}</EmptyState>
+      </div>
+    );
+  }
+  const gate = ultimateTerminalGate(capability, access);
+  const emitiendo = agents.filter((agent) => fleetTerminalChip(targets?.items, agent).status === 'allowed');
+  const copia = copiaDelEscenario(gate, targets, emitiendo.length);
+  const primero: FleetAgent | undefined = emitiendo[0];
+  return (
+    <div className="terminal-stage-empty" data-tono={copia.tono}>
+      <span className="terminal-stage-icon"><MonitorPlay size={26} aria-hidden="true" /></span>
+      <p className="eyebrow">{copia.eyebrow}</p>
+      <h2>{copia.titulo}</h2>
+      <EmptyState>{copia.cuerpo}</EmptyState>
+      {primero ? (
+        <button className="button" type="button" onClick={() => { onOpenAgent(primero); }}>
+          <MonitorPlay size={16} aria-hidden="true" /> Abrir la TUI de {primero.alias}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T> {
@@ -349,29 +444,41 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
         error={fleetError}
         targets={terminalTargets}
       />
-      <GridContainer
-        sessions={liveSessions}
-        sessionTokens={sessionTokensRef.current}
-        activeId={activeId}
-        agents={agents}
-        access={access}
-        topologyAccess={topologyAccess}
-        capability={terminalCapability}
-        targets={terminalTargets}
-        grants={grants}
-        closedChannels={closedChannels}
-        onActivate={setActiveId}
-        onClose={closeSession}
-        onUpdate={updateSession}
-        onRequestGrant={requestTerminalGrant}
-        onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
-        onReleaseChannel={releaseChannel}
-        onReconciliarPlazas={(motivo) => {
-          setTopeAlcanzado(true);
-          setMotivoReconciliacionPlaza(motivo);
-          void revisarPlazas();
-        }}
-      />
+      {liveSessions.length === 0 ? (
+        <EscenarioVacio
+          agents={agents}
+          access={access}
+          capability={terminalCapability}
+          targets={terminalTargets}
+          loading={fleetLoading}
+          error={fleetError}
+          onOpenAgent={openAgent}
+        />
+      ) : (
+        <GridContainer
+          sessions={liveSessions}
+          sessionTokens={sessionTokensRef.current}
+          activeId={activeId}
+          agents={agents}
+          access={access}
+          topologyAccess={topologyAccess}
+          capability={terminalCapability}
+          targets={terminalTargets}
+          grants={grants}
+          closedChannels={closedChannels}
+          onActivate={setActiveId}
+          onClose={closeSession}
+          onUpdate={updateSession}
+          onRequestGrant={requestTerminalGrant}
+          onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
+          onReleaseChannel={releaseChannel}
+          onReconciliarPlazas={(motivo) => {
+            setTopeAlcanzado(true);
+            setMotivoReconciliacionPlaza(motivo);
+            void revisarPlazas();
+          }}
+        />
+      )}
       </div>
     </>
   );

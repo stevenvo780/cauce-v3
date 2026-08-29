@@ -46,9 +46,39 @@
  * Lo que sobrevive del bloque viejo es el reparto del carril IZQUIERDO: la lista de la flota lleva
  * alias que envuelven, así que por encima de 1343 px toma una parte del ancho de sobra en vez de
  * quedarse clavada en 236.
+ *
+ * EL RAÍL PASA DE 236 A 272 px, Y LO QUE CUESTA, EN COLUMNAS. Medido con una sesión abierta a
+ * 1920x1080, leyendo el propio banner de tamaño del espejo: con 236 px de raíl la TUI se renderiza
+ * a 172 columnas y con 272 px a 168. Son CUATRO columnas, contra un mínimo declarado de 80
+ * (`COLUMNAS_MINIMAS`, `pty-theme.ts`): la celda real mide 7,8 px, no 8. A 2560 el tope pasa de
+ * 300 a 320 px, que son otras dos columnas. A cambio dejan de partirse en dos renglones el rótulo
+ * de la cabecera, la cifra de agentes y la tira de la lista, y la ficha de estado PTY de cada
+ * agente vuelve al suelo tipográfico de la consola.
+ *
+ * Y EL ALTO SE ACOTA. Sin ninguna sesión abierta el shell no tenía tope: la rejilla se estiraba
+ * hasta el alto de los quince agentes —medido, 2.893 px— en vez de dejar que la lista, que ya lleva
+ * `overflow-y: auto`, hiciera su propio scroll. El escenario central heredaba ese alto y centraba
+ * su contenido en él, así que a 1920x1080 lo que se veía era su tercio de arriba: en blanco. Con el
+ * alto acotado a lo que sobra de la ventana, el escenario vuelve al pliegue y la lista scrollea.
  */
 @media (min-width: 1343px) {
-  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: minmax(0, clamp(236px, 12vw, 300px)) minmax(0, 1fr); }
+  .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: minmax(0, clamp(272px, 14vw, 320px)) minmax(0, 1fr); }
+}
+
+/*
+ * El tope de alto va desde 761 px, que es donde `responsive.css` deja de apilar la caja y vuelve a
+ * ser rejilla de dos pistas. `grid-template-rows: minmax(0, 1fr)` es obligatorio: sin él la única
+ * fila sigue siendo `auto` —o sea, del alto de su contenido— y la lista de la flota vuelve a
+ * desbordar la caja por dentro de su `overflow: hidden`, que es peor que desbordarla a la vista.
+ * Con una sesión abierta NO se aplica: ahí manda la cadena flex de más abajo, que le da a la caja
+ * todo lo que sobra de la ventana y no un recorte relativo a la cabecera de esta página.
+ */
+@media (min-width: 761px) {
+  .ultimate-terminal-page:not([data-tui="abierta"]) .ultimate-terminal-shell {
+    min-height: 0;
+    height: clamp(430px, calc(100dvh - 396px), 820px);
+    grid-template-rows: minmax(0, 1fr);
+  }
 }
 
 /*
@@ -61,13 +91,38 @@
 .terminal-relay-notice strong { display: block; color: var(--text); font-size: .78rem; }
 .terminal-relay-notice p { margin: 3px 0 0; font-size: .7rem; }
 
-/* Per-agent PTY state in the fleet list: always a word, never a bare grey dot. */
-.agent-pty-state { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--faint); font-size: .55rem; font-weight: 700; letter-spacing: .04em; }
+/*
+ * Per-agent PTY state in the fleet list: always a word, never a bare grey dot.
+ *
+ * Iba a `.55rem` = 8,8 px, por debajo del suelo tipográfico de 12,5 px que la consola se dio
+ * (`styles.tipografia-montada.test.tsx`). En el raíl de 272 px la ficha entera cabe a 12,5 sin
+ * partirse, así que el tamaño diminuto no compraba nada.
+ */
+.agent-pty-state { display: inline-flex; min-width: 0; align-items: center; flex: none; gap: 4px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; white-space: nowrap; }
 .agent-pty-state[data-status="allowed"] { border-color: #2b685b; background: var(--mint-dim); color: var(--mint); }
 .agent-pty-state[data-status="denied"] { border-color: #6d3038; background: var(--red-dim); color: var(--red); }
 .agent-pty-state[data-status="offline"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
 /* `no_tui`: hay PTY pero el servidor no publica el modo harness. Gris con motivo, NUNCA verde. */
 .agent-pty-state[data-status="not_installed"], .agent-pty-state[data-status="unknown"], .agent-pty-state[data-status="no_tui"] { border-color: var(--border-strong); background: var(--surface-2); }
+
+/*
+ * EL ESCENARIO CENTRAL SIN NINGUNA SESIÓN ABIERTA.
+ *
+ * Medido a 1920x1080: un rectángulo de 1.358x683 px completamente en blanco. No estaba vacío por
+ * falta de texto —el rótulo existía— sino porque el shell se estiraba con la lista de la flota
+ * hasta 2.893 px y ese texto se centraba en esa caja, o sea muy por debajo del pliegue. Con el alto
+ * acotado arriba, este bloque es lo primero que se ve, y dice cuatro cosas que antes se confundían
+ * en un mismo blanco: que no hay sesión abierta, que el canal está cerrado, que no se pudo
+ * comprobar qué alias emiten, o que la flota misma no se pudo leer.
+ */
+.terminal-stage-empty { display: flex; min-width: 0; min-height: 0; align-items: center; justify-content: center; flex-direction: column; overflow-y: auto; padding: 48px 40px 40px; text-align: center; }
+.terminal-stage-empty .eyebrow { margin: 0 0 5px; }
+.terminal-stage-empty h2 { margin: 0; font-size: var(--tipo-panel); }
+.terminal-stage-icon { display: grid; width: 54px; height: 54px; flex: none; place-items: center; margin-bottom: 14px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--blue-dim); color: var(--blue); }
+.terminal-stage-empty[data-tono="cerrado"] .terminal-stage-icon { background: var(--amber-dim); color: var(--amber); }
+.terminal-stage-empty[data-tono="fallo"] .terminal-stage-icon { background: var(--red-dim); color: var(--red); }
+.terminal-stage-empty .empty-state { max-width: 520px; margin: 13px 0 0; padding: 14px 18px; font-size: var(--tipo-rotulo); line-height: 1.6; }
+.terminal-stage-empty > .button { margin-top: 17px; }
 
 /* Channel authority, spelled out above the session. The motive is visible, not only a title. */
 .terminal-channel-state { display: flex; align-items: center; gap: 7px; margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); background: #0b1320; color: var(--muted); font-size: .62rem; }

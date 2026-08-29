@@ -1,7 +1,8 @@
-import { Bot, ChevronRight, Filter, Radio, Search, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
+import { Bot, Filter, Radio, Search, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { AdapterView } from '../../api/types';
-import { Badge, EmptyState, LoadingState, Time } from '../../components/ui';
+import { Badge, EmptyState, LoadingState } from '../../components/ui';
+import { haceCuanto } from '../../lib';
 import type { TerminalTargetsSnapshot } from './api';
 import { traducirCodigosEnTexto } from './denegaciones';
 import { adapterBreakdownText, fleetTerminalChip, filterFleetAgents, LEASE_STATE_LABEL, type FleetAgent } from './fleet';
@@ -21,6 +22,15 @@ function agentTone(state: FleetAgent['leaseState']): 'online' | 'offline' | 'unk
   return state === 'online' ? 'online' : state === 'expired' ? 'offline' : 'unknown';
 }
 
+function fichaTecnica(agent: FleetAgent, capabilities: string[]): string {
+  const expiry = agent.presence?.lease_expires_at ?? agent.presence?.lease_until;
+  return [
+    `lease ${haceCuanto(expiry) ?? 'sin dato'}`,
+    `epoch ${String(agent.presence?.epoch ?? 'sin dato')}`,
+    capabilities.length ? `capacidades: ${capabilities.join(', ')}` : 'sin capacidades informadas',
+  ].join(' · ');
+}
+
 export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loading, error, targets }: FleetSidebarProps) {
   const [tenantId, setTenantId] = useState('all');
   const [roomId, setRoomId] = useState('all');
@@ -33,20 +43,20 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
   );
   const online = agents.filter((agent) => agent.leaseState === 'online').length;
   const adapterTexto = adapterBreakdownText(adapters);
+  const filtrando = query.trim().length > 0;
 
   return (
     <aside className="terminal-fleet-sidebar" aria-label="Flota de agentes">
       <header className="terminal-fleet-head">
-        <div>
-          <p className="eyebrow">Flota en vivo</p>
+        <p className="eyebrow">Flota en vivo</p>
+        <div className="fleet-head-count">
           <h2>{agents.length} agentes</h2>
+          <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} en línea</Badge>
         </div>
-        <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} en línea</Badge>
       </header>
 
       <div className="fleet-health-strip" aria-label="Salud de los adaptadores">
-        <Bot size={15} aria-hidden="true" />
-        <span>Adaptadores</span>
+        <span><Bot size={13} aria-hidden="true" /> Adaptadores</span>
         {/* «3/6» se leía como «3 rotos»: sin reportar no es lo mismo que caído. */}
         <strong>{adapterTexto}</strong>
       </div>
@@ -84,7 +94,6 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
         {loading && agents.length === 0 ? <LoadingState label="Sincronizando la flota del servidor…" />
           : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar la flota: {error.message}</EmptyState></div>
             : visible.length === 0 ? <EmptyState>No hay agentes que coincidan con los filtros.</EmptyState> : visible.map((agent) => {
-          const expiry = agent.presence?.lease_expires_at ?? agent.presence?.lease_until;
           const capabilities = agent.presence?.capabilities ?? [];
           const pty = fleetTerminalChip(targets?.items, agent);
           return (
@@ -94,30 +103,30 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
               data-active={activeAgentId === agent.id || undefined}
               key={agent.id}
               type="button"
+              title={fichaTecnica(agent, capabilities)}
               onClick={() => { onOpenAgent(agent); }}
-              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${LEASE_STATE_LABEL[agent.leaseState]}, PTY: ${pty.label}`}
+              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${LEASE_STATE_LABEL[agent.leaseState]}, PTY: ${pty.label}, ${fichaTecnica(agent, capabilities)}`}
             >
-              <span className={`agent-presence ${agent.leaseState}`} aria-hidden="true">
-                {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
-              </span>
-              <span className="agent-copy">
-                <span className="agent-name"><strong>{agent.alias}</strong><small>{agent.tenantId}</small></span>
-                <span className="agent-lease">
-                  <Badge tone={agentTone(agent.leaseState)}>{LEASE_STATE_LABEL[agent.leaseState]}</Badge>
-                  <span>epoch {agent.presence?.epoch ?? 'sin dato'}</span>
+              <span className="agent-name">
+                <span className={`agent-presence ${agent.leaseState}`} aria-hidden="true">
+                  {agent.leaseState === 'online' ? <Wifi size={12} /> : <WifiOff size={12} />}
                 </span>
-                <span className="agent-expiry">Lease <Time value={expiry} /></span>
+                <strong>{agent.alias}</strong>
+                <small>{agent.tenantId}</small>
+                <Badge tone={agentTone(agent.leaseState)}>{LEASE_STATE_LABEL[agent.leaseState]}</Badge>
+              </span>
+              <span className="agent-meta">
                 {/* `pty.label` ya viene en castellano de `fleetTerminalChip`; lo que faltaba era
                     el MOTIVO, que llegaba con los códigos crudos del servidor dentro. */}
                 <span className="agent-pty-state" data-status={pty.status} title={traducirCodigosEnTexto(pty.reason)}>
-                  <TerminalSquare size={12} aria-hidden="true" /> {pty.label}
-                </span>
-                <span className="agent-capabilities">
-                  {capabilities.length ? capabilities.slice(0, 2).map((capability) => <span className="chip" key={capability}>{capability}</span>) : <span className="unknown">sin capacidades informadas</span>}
-                  {capabilities.length > 2 ? <span className="chip">+{capabilities.length - 2}</span> : null}
+                  <TerminalSquare size={11} aria-hidden="true" /> {pty.label}
                 </span>
               </span>
-              <ChevronRight className="agent-open-icon" size={17} aria-hidden="true" />
+              {filtrando ? (
+                <span className="agent-capabilities">
+                  {capabilities.length ? capabilities.map((capability) => <span className="chip" key={capability}>{capability}</span>) : <span className="unknown">sin capacidades informadas</span>}
+                </span>
+              ) : null}
             </button>
           );
         })}
