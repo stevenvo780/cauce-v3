@@ -4,29 +4,25 @@ Verificado contra los guards de credenciales y decodificando el vencimiento real
 access token (el guard dice "OK" si hay refreshToken, pero un refresh rechazado por el
 servidor solo se descubre al usarlo — así murió argos en silencio).
 
-## 1. URGENTE — Codex de argos/kant (ctrl-infra)
+## 1. ~~Codex de argos/kant (ctrl-infra)~~ — HECHO 29-08 17:11Z
 
-Vencido desde el **25-08**; el refresh lo rechaza el servidor (`auth_permanent`). Es la razón
-por la que argos vive en fallback a gemini.
+Login del dueño verificado (auth.json refrescado), compactación realineada a
+`codex/gpt-5.6-sol` y turno E2E ganado por codex (`working`). Nada pendiente aquí.
 
-```sh
-docker exec -it -u dev ctrl-infra codex login
-```
-
-- **NO copiar** el `auth.json` del pool compartido: el refresh token de OAuth es de un solo
-  uso; copiarlo rompe la sesión del pool. El descompartidor (`cauce-cred-descompartir`,
-  cada 10 min) aísla `~/.codex/auth.json` a propósito desde el 13-08: cada contenedor
+- Recordatorio general: **NO copiar** el `auth.json` del pool compartido (refresh de un
+  solo uso); el descompartidor aísla `~/.codex/auth.json` a propósito — cada contenedor
   necesita SU login.
-- Tras el login, avisar a zeus (o a mí) para **realinear la compactación de argos** de
-  `antigravity/gemini-3.1-pro` de vuelta a `codex/gpt-5.6-sol` (como el resto de la flota).
 
 ## 2. URGENTE — Codex de jarvis (claw)
 
 Vencido desde el **14-08** (15 días muerto en silencio; misma clase que el de argos —
 lo descubrí decodificando el JWT al preparar este fichero).
 
+El binario no está en el PATH del contenedor (vive dentro del proyecto npm de openclaw);
+comando verificado (`codex-cli 0.144.1`):
+
 ```sh
-docker exec -it -u claw claw codex login
+docker exec -it -u claw -e HOME=/home/claw claw /home/claw/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openclaw/codex/node_modules/.bin/codex login --device-auth
 ```
 
 ## 3. OPCIONAL — Antigravity cuenta B (ctrl-infra)
