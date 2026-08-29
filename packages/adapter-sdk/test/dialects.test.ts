@@ -145,10 +145,25 @@ test("plain fallback rejects non-visible, oversized and object-like malformed ou
   assert.equal(ilegible.retryable, false);
   assert.deepEqual(ilegible.messages, []);
   assert.match(ilegible.reply ?? "", /no quedo ni una linea de texto rescatable/u);
-  // A WELL-FORMED object that violates the schema is still a hard failure: there the agent
-  // declared a complete envelope and is missing fields, it is not a transport cut.
+  // CONTRACT CHANGE 2026-08-29, misma razon que la del 2026-08-05 una capa mas arriba: un sobre
+  // que OMITE el andamiaje tampoco pierde el turno. Costo cuatro turnos en un solo dia (jarvis x2
+  // por 'messages', zeus y argos por 'status'), dos de ellos delante de una persona que solo vio
+  // "Error: Structured output is missing 'messages'" y se quedo sin respuesta.
+  // El agente sigue aprendiendo: la respuesta lleva el aviso [Cauce] nombrando lo que falto.
+  const sinAndamiaje = parseFinalText('{"reply":"schema-invalid"}', "test final");
+  assert.equal(sinAndamiaje.reply?.startsWith("schema-invalid"), true);
+  assert.equal(sinAndamiaje.status, "done");
+  assert.equal(sinAndamiaje.retryable, false);
+  assert.deepEqual(sinAndamiaje.messages, []);
+  assert.match(sinAndamiaje.reply ?? "", /faltaba[^\n]*'messages'/u);
+  // Lo que NO se ablando: un campo PRESENTE pero mal formado sigue siendo fallo duro, porque eso
+  // es una violacion de contrato y no un descuido.
   assert.throws(
-    () => parseFinalText('{"reply":"schema-invalid"}', "test final"),
-    /missing 'messages'/u,
+    () => parseFinalText('{"reply":"x","messages":"no-es-lista"}', "test final"),
+    /'messages' must be an array/u,
+  );
+  assert.throws(
+    () => parseFinalText('{"reply":"x","status":"quiza"}', "test final"),
+    /'status' must be 'done' or 'failed'/u,
   );
 });

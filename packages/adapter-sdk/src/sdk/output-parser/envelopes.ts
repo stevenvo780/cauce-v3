@@ -206,8 +206,18 @@ function embeddedObjects(text: string): readonly string[] {
   return found;
 }
 
+/**
+ * Claves que acompañan a `reply` en un sobre del contrato. Detectar NO es validar: `reply` sola
+ * aparece en objetos que no son sobres, así que reconocer uno exige `reply` mas al menos una
+ * compañera. Antes esto reusaba REQUIRED_OUTPUT_KEYS y exigia las cuatro; desde que la validacion
+ * tolera que falte el andamiaje (2026-08-29), reusarla habria degradado la deteccion a "tiene
+ * reply", que es demasiado laxo para los tres sitios que la usan.
+ */
+const ENVELOPE_COMPANION_KEYS = ["messages", "status", "retryable", "notify", "artifacts"] as const;
+
 function isEnvelopeShape(value: unknown): boolean {
-  return isObject(value) && REQUIRED_OUTPUT_KEYS.every((key) => key in value);
+  if (!isObject(value) || !REQUIRED_OUTPUT_KEYS.every((key) => key in value)) return false;
+  return ENVELOPE_COMPANION_KEYS.some((key) => key in value);
 }
 
 /**
