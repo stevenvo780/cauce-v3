@@ -1,3 +1,4 @@
+import type { NotifyKind } from '@cauce/protocol';
 import type {
   Ack,
   ChainGateNotice,
@@ -67,7 +68,7 @@ export interface OutputArtifact {
 
 export type StructuredStatus = 'done' | 'failed';
 
-export type NotifyKind = 'task_complete' | 'decision_request' | 'digest' | 'alert';
+export type { NotifyKind };
 
 /**
  * Proactive egress directive. `to` is a logical handle an operator put on the
