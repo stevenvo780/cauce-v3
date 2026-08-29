@@ -23,7 +23,7 @@ import {
 } from './quotas';
 
 /**
- * Sección de consumo y saldo de cuotas por proveedor y cuenta.
+ * Consumption and quota balance section per provider and account.
  */
 export function ConsumptionSection({ quotas, config }: {
   quotas: Resource<QuotaSnapshot>;
@@ -42,7 +42,7 @@ export function ConsumptionSection({ quotas, config }: {
     () => orphans(accounts, snapshot, bindings, agents),
     [accounts, snapshot, bindings, agents],
   );
-  // `ok: false` indica que el CLI del proveedor no respondió.
+  // `ok: false` indicates that the provider's CLI did not respond.
   const failedProbes = useMemo(
     () => (snapshot?.providers ?? []).filter((provider) => provider.ok === false),
     [snapshot],
@@ -332,7 +332,7 @@ export function ConsumptionSection({ quotas, config }: {
   );
 }
 
-/** Falla dura de una de las dos mitades: dice cuál, con qué mensaje, y ofrece reintentar esa sola. */
+/** Hard failure of one of the two halves: says which, with what message, and offers to retry just that one. */
 function FailureBanner({ title, error, detail, onRetry }: {
   title: string;
   error: Error;
@@ -357,10 +357,10 @@ function CollectorRow({ collector, thresholds }: {
   thresholds: QuotaThresholds | null | undefined;
 }) {
   /*
-   * El servidor manda `stale`, pero una muestra con `stale:false` y más edad que
-   * `stale_after_seconds` tampoco es fresca: `freshness()` aplica las dos condiciones (era la
-   * lectura de la vista de licencias, más estricta que la de cuotas). Cuando no hay NI bandera NI
-   * edad no se decide nada: UNKNOWN, porque no saber no es estar fresco.
+   * The server sends `stale`, but a sample with `stale:false` and older than
+   * `stale_after_seconds` is not fresh either: `freshness()` applies both conditions (it was the
+   * licenses view's reading, stricter than the quotas one). When there is NEITHER flag NOR age
+   * nothing is decided: UNKNOWN, because not knowing is not being fresh.
    */
   const undecidable = (collector.stale === null || collector.stale === undefined)
     && (collector.age_seconds === null || collector.age_seconds === undefined);

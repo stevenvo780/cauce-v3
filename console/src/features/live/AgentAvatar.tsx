@@ -1,14 +1,14 @@
 import type { LiveState } from './agent-state';
 
 /**
- * El muñeco. Un solo SVG cuyas piezas se animan por CSS según `data-state`, en vez de siete
- * dibujos distintos: así la transición entre estados es continua (el cuerpo no salta, cambia de
- * pose) y el navegador puede interpolar. Toda la animación vive en `live.css`, que respeta
- * `prefers-reduced-motion`.
+ * The doll. A single SVG whose parts are animated by CSS via `data-state`, instead of seven
+ * distinct drawings: that way the transition between states is continuous (the body does not
+ * jump, it changes pose) and the browser can interpolate. All animation lives in `live.css`,
+ * which respects `prefers-reduced-motion`.
  *
- * La lectura tiene que funcionar SIN texto, que es el pedido: cada estado cambia a la vez el
- * color de acento, la pose del cuerpo, la forma de los ojos y qué elementos accesorios aparecen
- * (sobre entrante, burbuja de pensamiento, paquete saliente, bocadillo, señal de alarma).
+ * The read must work WITHOUT text, which is the requirement: each state changes at once the
+ * accent color, the body pose, the shape of the eyes and which accessory elements appear
+ * (incoming envelope, thought bubble, outgoing package, speech bubble, alarm signal).
  */
 
 interface EyeProps { state: LiveState }
@@ -30,11 +30,11 @@ function Eyes({ state }: EyeProps) {
       </g>
     );
   }
-  // El estado que antes se llamaba `responding` tenía acá dos ojos SONRIENDO (dos arcos hacia
-  // arriba). Era la misma mentira que el tilde verde y el festejo: la consola no sabe si la
-  // entrega cerró bien. Sin rama propia, cae en los ojos neutros del final.
+  // The state formerly called `responding` had two SMILING eyes here (two upward arches). It was
+  // the same lie as the green checkmark and the celebration: the console does not know whether
+  // the delivery closed well. Without its own branch, it falls through to the neutral eyes below.
   if (state === 'thinking') {
-    // Mirada baja y algo entrecerrada: está mirando su propio trabajo, no a vos.
+    // Lower, slightly squinted gaze: it is looking at its own work, not at you.
     return (
       <g className="av-eyes" fill="currentColor">
         <rect x="39" y="52" width="12" height="6" rx="3" />
@@ -65,42 +65,42 @@ export function AgentAvatar({ state, overloaded = false, label }: {
       aria-label={label}
       focusable="false"
     >
-      {/* Halo: late al ritmo del estado y es lo primero que se ve de reojo desde lejos. */}
+      {/* Halo: pulses to the rhythm of the state, first thing you glimpse from afar. */}
       <ellipse className="av-halo" cx="60" cy="66" rx="46" ry="46" />
 
-      {/* Sombra de apoyo: se achica cuando el muñeco salta, da peso al movimiento. */}
+      {/* Support shadow: shrinks when the doll jumps, giving weight to the movement. */}
       <ellipse className="av-shadow" cx="60" cy="120" rx="26" ry="5" />
 
       <g className="av-body">
-        {/* Antena y bombilla de señal */}
+        {/* Antenna and signal bulb */}
         <g className="av-antenna">
           <path className="av-antenna-stem" d="M60 30 L60 18" strokeWidth="3.2" strokeLinecap="round" fill="none" />
           <circle className="av-bulb" cx="60" cy="14" r="5.5" />
           <circle className="av-bulb-ring" cx="60" cy="14" r="5.5" fill="none" strokeWidth="2" />
         </g>
 
-        {/* Cabeza */}
+        {/* Head */}
         <g className="av-head">
           <rect className="av-head-shell" x="26" y="30" width="68" height="46" rx="17" />
           <rect className="av-visor" x="33" y="38" width="54" height="30" rx="12" />
           <Eyes state={state} />
         </g>
 
-        {/* Torso con luz de pecho */}
+        {/* Torso with chest light */}
         <g className="av-torso">
           <rect className="av-torso-shell" x="34" y="80" width="52" height="34" rx="14" />
           <circle className="av-core" cx="60" cy="97" r="7" />
           <circle className="av-core-ring" cx="60" cy="97" r="7" fill="none" strokeWidth="2" />
         </g>
 
-        {/* Brazos: el derecho se extiende al delegar, el izquierdo recibe. */}
+        {/* Arms: the right one extends when delegating, the left one receives. */}
         <path className="av-arm av-arm-left" d="M34 88 Q22 94 21 104" strokeWidth="6" strokeLinecap="round" fill="none" />
         <path className="av-arm av-arm-right" d="M86 88 Q98 94 99 104" strokeWidth="6" strokeLinecap="round" fill="none" />
       </g>
 
-      {/* --- Accesorios por estado. Cada uno se muestra sólo en su estado, desde CSS. --- */}
+      {/* --- Per-state accessories. Each one is shown only in its state, from CSS. --- */}
 
-      {/* recibiendo: un sobre que entra volando por la izquierda */}
+      {/* receiving: an envelope flying in from the left */}
       <g className="av-fx av-fx-incoming">
         <g className="av-envelope">
           <rect x="-9" y="-6.5" width="18" height="13" rx="2.5" />
@@ -108,14 +108,14 @@ export function AgentAvatar({ state, overloaded = false, label }: {
         </g>
       </g>
 
-      {/* pensando: tres burbujas que suben en cascada */}
+      {/* thinking: three bubbles rising in cascade */}
       <g className="av-fx av-fx-thinking">
         <circle className="av-think av-think-1" cx="92" cy="34" r="3.4" />
         <circle className="av-think av-think-2" cx="99" cy="25" r="4.6" />
         <circle className="av-think av-think-3" cx="107" cy="14" r="6" />
       </g>
 
-      {/* delegando: un paquete que sale disparado hacia la derecha */}
+      {/* delegating: a package shooting out to the right */}
       <g className="av-fx av-fx-delegating">
         <g className="av-packet">
           <rect x="-6" y="-6" width="12" height="12" rx="3" />
@@ -124,10 +124,10 @@ export function AgentAvatar({ state, overloaded = false, label }: {
         <path className="av-trail" d="M92 100 L118 92" strokeWidth="2.5" strokeLinecap="round" fill="none" />
       </g>
 
-      {/* salió de vuelo: bocadillo con puntos suspensivos. Era un TILDE, y el tilde afirmaba un
-          cierre correcto que la consola no puede ver: una entrega sale de `in_flight_items` igual
-          si cerró `done` que si se murió por deadline. Los tres puntos dicen lo que sí se sabe:
-          pasó algo, y el desenlace está pendiente. */}
+      {/* settled: speech bubble with ellipsis. It used to be a CHECKMARK, and the checkmark
+          asserted a correct closure the console cannot see: a delivery leaves `in_flight_items`
+          the same whether it closed `done` or died by deadline. The three dots say what is
+          actually known: something happened, and the outcome is still pending. */}
       <g className="av-fx av-fx-settled">
         <g className="av-bubble">
           <rect x="82" y="16" width="34" height="26" rx="9" />
@@ -140,7 +140,7 @@ export function AgentAvatar({ state, overloaded = false, label }: {
         </g>
       </g>
 
-      {/* bloqueado: triángulo de alarma latiendo sobre la cabeza */}
+      {/* blocked: alarm triangle pulsing above the head */}
       <g className="av-fx av-fx-blocked">
         <g className="av-alarm">
           <path d="M60 4 L78 34 L42 34 Z" strokeWidth="3" strokeLinejoin="round" />
@@ -149,12 +149,12 @@ export function AgentAvatar({ state, overloaded = false, label }: {
         </g>
       </g>
 
-      {/* caído: la línea plana del monitor */}
+      {/* down: the monitor's flat line */}
       <g className="av-fx av-fx-down">
         <path className="av-flatline" d="M18 122 L44 122 L50 116 L56 128 L62 122 L102 122" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
       </g>
 
-      {/* saturado: chispas sobre la antena, superpuestas a cualquier estado de trabajo */}
+      {/* overloaded: sparks above the antenna, overlaid on any working state */}
       <g className="av-fx av-fx-overloaded">
         <path className="av-spark av-spark-1" d="M44 20 L40 12" strokeWidth="2.6" strokeLinecap="round" fill="none" />
         <path className="av-spark av-spark-2" d="M76 20 L80 12" strokeWidth="2.6" strokeLinecap="round" fill="none" />

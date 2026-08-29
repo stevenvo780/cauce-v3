@@ -9,7 +9,7 @@ import {
   type Point,
 } from './hypergraph-layout';
 
-/** Topología parecida a la real: 3 tenants, un alias compartido entre dos rooms del mismo tenant. */
+/** Topology close to the real one: 3 tenants, one alias shared between two rooms of the same tenant. */
 const SNAPSHOT: TopologySnapshot = {
   observed_at: '2026-08-06T04:00:00Z',
   tenants: [
@@ -30,7 +30,7 @@ const SNAPSHOT: TopologySnapshot = {
         {
           id: 'grp.ops',
           label: 'grp.ops',
-          // `zeus` está en las dos rooms: es el caso que justifica el hipergrafo.
+          // `zeus` is in both rooms: this is the case that justifies the hypergraph.
           members: [{ alias: 'zeus', enabled: true }, { alias: 'socrates', enabled: null }],
         },
       ],
@@ -63,14 +63,14 @@ const SNAPSHOT: TopologySnapshot = {
 
 describe('layoutHypergraph', () => {
   it('es determinista: la misma entrada produce exactamente la misma salida', () => {
-    // Si esto falla, el grafo se reacomoda en cada refresco y deja de poder compararse consigo mismo.
+    // If this fails, the graph reshuffles on every refresh and can no longer be compared with itself.
     expect(layoutHypergraph(SNAPSHOT)).toEqual(layoutHypergraph(SNAPSHOT));
   });
 
   /*
-   * Estas dos afirmaciones son el arreglo de "el gráfico de bots es ilegible", escrito como
-   * condición y no como impresión. Antes se comprobaba mirando una captura, que es como se dejó
-   * pasar `#ops.infra` encima de `zeus` durante toda una revisión.
+   * These two assertions are the fix for "the bots graph is unreadable", written as a condition
+   * rather than as a screenshot review. Before it was checked by looking at a capture, which is
+   * how `#ops.infra` was allowed to sit on top of `zeus` through a whole review.
    */
   it('ningún par de nodos se pisa: se comprueban las CAJAS reales, no la distancia entre centros', () => {
     const footprint = { halfWidth: 41, top: -38, bottom: 55 };
@@ -95,7 +95,7 @@ describe('layoutHypergraph', () => {
 
     const encima: string[] = [];
     for (const edge of model.edges) {
-      // Caja generosa de la etiqueta: si con ésta no toca a nadie, con la real tampoco.
+      // Generous label box: if it does not touch anyone with this one, it will not with the real one either.
       const texto = `#${edge.roomLabel ?? 'UNKNOWN'}`;
       const halfWidth = (texto.length * 8.6) / 2 + 4;
       for (const node of model.nodes) {
@@ -104,7 +104,7 @@ describe('layoutHypergraph', () => {
           && node.y + footprint.top < edge.labelAnchor.y + 5;
         if (solapaX && solapaY) encima.push(`${texto} × ${node.alias}`);
       }
-      // Y por encima del borde superior de su propia región, que es lo que se pidió.
+      // And above the top edge of its own region, which is what was requested.
       const topeRegion = Math.min(...edge.hull.map((punto) => punto.y));
       expect(edge.labelAnchor.y, `${texto} quedó dentro de su región`).toBeLessThanOrEqual(topeRegion);
     }
@@ -140,8 +140,8 @@ describe('layoutHypergraph', () => {
     expect(miguel?.unknownMembers).toBe(1);
     expect(miguel?.members).toEqual(['janus', 'atlas']);
     expect(model.nodes.map((node) => node.alias)).not.toContain(null);
-    // 7 alias distintos: zeus aparece en dos rooms y cuenta una sola vez; el miembro sin alias de
-    // grp.miguel no genera nodo. Se listan en vez de contar para que un cambio diga QUÉ cambió.
+    // 7 distinct aliases: zeus appears in two rooms and counts once; the alias-less member of
+    // grp.miguel does not generate a node. Listed instead of counted so a change says WHAT changed.
     expect(model.nodes.map((node) => node.alias).sort()).toEqual(
       ['argos', 'atlas', 'janus', 'jarvis', 'kant', 'socrates', 'zeus'],
     );
@@ -176,8 +176,8 @@ describe('layoutHypergraph', () => {
 
   it('descarta aristas ACL que no se pueden dibujar sin inventar un tenant', () => {
     const model = layoutHypergraph(SNAPSHOT);
-    // De las 5 aristas: se dibujan 2. Fuera quedan la de tenant inexistente, el bucle sobre sí
-    // mismo y la que no declara origen. Las 5 siguen estando en la tabla de la página.
+    // Of the 5 edges: 2 are drawn. Outside remain the one for a non-existent tenant, the self-loop,
+    // and the one with no declared origin. All 5 are still on the page table.
     expect(model.arcs).toHaveLength(2);
     expect(model.arcs.map((arc) => `${arc.fromTenant}->${arc.toTenant}`)).toEqual(['Steven->Miguel', 'Miguel->Steven']);
   });
@@ -234,7 +234,7 @@ describe('geometría', () => {
       [{ x: 100, y: 100 }],
       [{ x: 100, y: 100 }, { x: 220, y: 104 }],
       [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 80 }],
-      // Casi colineales: es donde un inflado radial desde el centroide dejaría los extremos fuera.
+      // Almost collinear: this is where a radial inflate from the centroid would leave the extremes out.
       [{ x: 0, y: 0 }, { x: 100, y: 1 }, { x: 200, y: 0 }],
     ];
     for (const puntos of casos) {

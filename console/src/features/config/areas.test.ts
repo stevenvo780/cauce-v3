@@ -8,7 +8,7 @@ it('reparte las doce colecciones conocidas por área, sin perder ninguna', () =>
   const colecciones = configCollections({ revision: 1, tenants: [], rooms: [] });
   const repartidas = agruparPorArea(colecciones).flatMap((entrada) => entrada.colecciones.map((c) => c.key));
 
-  // El agrupador no es un filtro: entra lo mismo que sale.
+  // The grouper is not a filter: what goes in is what comes out.
   expect(repartidas.sort()).toEqual(colecciones.map((c) => c.key).sort());
   expect(areaDeColeccion('memberships')).toBe('espacios');
   expect(areaDeColeccion('acl_edges')).toBe('permisos');
@@ -17,10 +17,10 @@ it('reparte las doce colecciones conocidas por área, sin perder ninguna', () =>
 });
 
 /**
- * CONTROL NEGATIVO del agrupador. Lo que se está comprobando no es que «Otros» exista, sino que
- * aparece SÓLO cuando hay algo que no se supo clasificar. Si el `filter` de `agruparPorArea` se
- * borrara, la primera mitad de esta prueba seguiría pasando y la segunda fallaría: la pestaña
- * saldría siempre, vacía, y el operador aprendería a ignorarla justo antes del día en que importa.
+ * NEGATIVE CONTROL of the grouper. What is being checked is not that "Otros" exists, but that
+ * it appears ONLY when there is something unclassifiable. If the `filter` of `agruparPorArea`
+ * were deleted, the first half of this test would still pass and the second would fail: the tab
+ * would always appear empty, and the operator would learn to ignore it just before it matters.
  */
 it('una colección que la consola no conoce cae en «Otros» en vez de desaparecer, y «Otros» no sale si no hay ninguna', () => {
   const conDesconocida = agruparPorArea([vacia('tenants'), vacia('gizmos')]);
@@ -38,14 +38,14 @@ it('«Historial» sale siempre, aunque no tenga ninguna colección detrás', () 
   expect(areas[0]).toBe(AREA_POR_DEFECTO);
 });
 
-/** El informe, no un booleano: hace falta poder darle de comer un área rota y ver que la nombra. */
+/** The report, not a boolean: it must be possible to feed it a broken area and see it named. */
 export function prosaDemasiadoLarga(areas: readonly ConfigArea[]): string[] {
   const fallos: string[] = [];
   for (const area of areas) {
     if (area.descripcion.length > LARGO_DESCRIPCION) {
       fallos.push(`«${area.label}»: la descripción son ${String(area.descripcion.length)} caracteres, el tope es ${String(LARGO_DESCRIPCION)}`);
     }
-    // UNA frase. Dos puntos seguidos son dos frases, y la segunda es justo la que se relee de más.
+    // ONE sentence. Two consecutive periods are two sentences, and the second is exactly the one read one too many times.
     const frases = area.descripcion.split(/\.\s/).filter((parte) => parte.trim() !== '');
     if (frases.length > 1) fallos.push(`«${area.label}»: la descripción son ${String(frases.length)} frases, tiene que ser una`);
     if (area.detalle.trim() === '') fallos.push(`«${area.label}»: no tiene detalle plegado`);
@@ -58,9 +58,9 @@ it('la frase que se lee al entrar en cada pestaña es UNA, y cabe en 90 caracter
 });
 
 /**
- * CONTROL NEGATIVO POR MUTACIÓN. Se le da de comer al guardia el texto EXACTO que estaba
- * desplegado —194 caracteres y tres frases— y se exige que lo marque por las dos cosas. Sin esto,
- * `prosaDemasiadoLarga()` podría estar devolviendo `[]` por no mirar nada.
+ * NEGATIVE CONTROL BY MUTATION. The guard is fed the EXACT text that was deployed —194 chars
+ * and three sentences— and must flag it for both reasons. Without this, `prosaDemasiadoLarga()`
+ * could return `[]` by looking at nothing.
  */
 it('CONTROL NEGATIVO — marca la descripción que estaba desplegada (194 caracteres, tres frases)', () => {
   const desplegada: ConfigArea = {
@@ -74,15 +74,15 @@ it('CONTROL NEGATIVO — marca la descripción que estaba desplegada (194 caract
   const fallos = prosaDemasiadoLarga([desplegada]);
   expect(fallos).toContainEqual(expect.stringContaining('caracteres'));
   expect(fallos).toContainEqual(expect.stringContaining('frases'));
-  // Y un área sin nada plegado también se marca: plegar es la mitad del trato, borrar no lo es.
+  // And an area with nothing folded is also flagged: folding is half the bargain, deleting isn't.
   expect(prosaDemasiadoLarga([{ ...desplegada, descripcion: 'Corta.', detalle: '' }]))
     .toContainEqual(expect.stringContaining('no tiene detalle plegado'));
 });
 
 /**
- * Lo plegado NO puede perderse por el camino. Esta frase es la que contesta la pregunta más cara
- * de la consola —«el alias está en el registro, ¿por qué no le llega nada?»— y desaparecería sin
- * que ninguna prueba se enterara: un texto que nadie afirma es un texto que cualquiera borra.
+ * What was folded MUST not get lost on the way. This sentence is what answers the most expensive
+ * question from the console —"the alias is in the registry, why does nothing reach it?"— and it
+ * would disappear without any test noticing: a text nobody asserts is a text anyone can delete.
  */
 it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que todo empieza denegado', () => {
   const espacios = CONFIG_AREAS.find((area) => area.id === 'espacios');
@@ -94,18 +94,18 @@ it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que t
 it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot', () => {
   const agentes = CONFIG_AREAS.find((area) => area.id === 'agentes');
   expect(agentes?.descripcion).not.toMatch(/con qué programa corre/i);
-  // Y lo dice donde se lee entero, no lo calla: el detalle plegado nombra de dónde sale de verdad.
+  // And it says it where it is read in full, not kept quiet: the folded detail names where it comes from.
   expect(agentes?.detalle).toMatch(/binario en ejecución/i);
-  // CONTROL NEGATIVO: no se perdió por el camino lo que ya decía y sigue siendo cierto.
+  // NEGATIVE CONTROL: what it already said and is still true has not been lost on the way.
   expect(agentes?.detalle).toMatch(/membres/i);
 });
 
 it('«Avisos y cadena» dice que los topes de delegación se editan ACÁ, ya no que no se pueden tocar', () => {
   const avisos = CONFIG_AREAS.find((area) => area.id === 'avisos');
   expect(avisos?.detalle).toMatch(/topes de delegación|delegación/i);
-  // La confesión ya no puede estar: sería una pantalla mintiendo en la dirección contraria.
+  // The confession must no longer be there: it would be a screen lying in the opposite direction.
   expect(avisos?.detalle).not.toMatch(/no se (ven|editan)|ni se ven ni se editan|sólo se cambian por SQL/i);
   expect(avisos?.detalle).toMatch(/compuerta humana/i);
-  // CONTROL NEGATIVO: no se perdió lo que la pestaña ya explicaba y sigue siendo cierto.
+  // NEGATIVE CONTROL: what the tab already explained and is still true has not been lost.
   expect(avisos?.detalle).toMatch(/aviso proactivo/i);
 });

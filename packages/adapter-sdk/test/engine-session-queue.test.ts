@@ -14,13 +14,13 @@ import type {
 } from "../src/sdk/types.js";
 
 /**
- * P0-2 — una entrega estacionada no puede ser invisible ni inmortal.
+ * P0-2 — a parked delivery must be neither invisible nor immortal.
  *
- * Hasta 2026-07-29 `AdapterEngine` emitía el ACK 'started' y arrancaba la renovación de garra ANTES
- * de tomar el candado de sesión, así que una entrega que sólo hacía cola se declaraba en ejecución,
- * el store le sellaba `execution_started_at` y cada renovación le corría `ack_deadline_at` 30
- * minutos más: el reaper no la recogía nunca. Estas pruebas fijan las dos mitades del arreglo —
- * mientras hace cola late en 'accepted' y con techo; cuando ejecuta de verdad late en 'started'.
+ * Until 2026-07-29 `AdapterEngine` emitted the 'started' ACK and started the claim renewal BEFORE
+ * taking the session lock, so a delivery that only queued was declared in execution, the store
+ * sealed `execution_started_at` on it and every renewal bumped `ack_deadline_at` 30 minutes
+ * forward: the reaper never picked it up. These tests pin both halves of the fix — while queued,
+ * it heartbeats as 'accepted' with a ceiling; when it actually runs, it heartbeats as 'started'.
  */
 
 const root = resolve(".test-state");
@@ -39,7 +39,7 @@ const SUCCESS = JSON.stringify({
   artifacts: [],
 });
 
-/** Dos entregas del MISMO hilo de origen comparten `sessionKey`, y por lo tanto candado. */
+/** Two deliveries from the SAME origin thread share `sessionKey`, and therefore the lock. */
 function delivery(id: string): Delivery {
   const pad = id.padEnd(12, "0").slice(0, 12);
   const origin = {
@@ -76,7 +76,7 @@ function delivery(id: string): Delivery {
   };
 }
 
-/** Bloquea la ejecución hasta que la prueba la libera, para poder observar la cola. */
+/** Blocks execution until the test releases it, so the queue can be observed. */
 class GatedRunner implements CommandRunner {
   started = 0;
   private readonly releases: Array<() => void> = [];
@@ -99,7 +99,7 @@ function harnessFor(store: DurableStore, runner: CommandRunner): HarnessAdapter 
   return new HarnessAdapter({ definition: fakeDefinition, runner, store });
 }
 
-/** Simula el gateway: acepta el ACK y confirma la garra, que es lo que resetea el watchdog. */
+/** Simulates the gateway: accepts the ACK and confirms the claim, which is what resets the watchdog. */
 function confirmingPublisher(
   engine: () => AdapterEngine,
   events: DeliveryEvent[],
@@ -146,7 +146,7 @@ test("una entrega en cola late en 'accepted' y sólo pasa a 'started' cuando tom
     "la entrega en cola late para no ser recogida por el reaper",
   );
 
-  // Mientras hace cola: sigue 'accepted' y no invocó al harness. Ni un solo ACK 'started'.
+  // While queued: it stays 'accepted' and did not invoke the harness. Not a single 'started' ACK.
   assert.equal(runner.started, 1, "la segunda entrega no puede haber invocado al harness");
   assert.deepEqual(
     [...new Set(queued().map((event) => event.phase))],
@@ -156,7 +156,7 @@ test("una entrega en cola late en 'accepted' y sólo pasa a 'started' cuando tom
   assert.equal(store.getDelivery("second")?.state, "accepted");
   const heartbeatsWhileQueued = queued().length;
 
-  // Se libera la primera: recién ahí la segunda declara ejecución.
+  // The first one is released: only then does the second declare execution.
   runner.releaseAll();
   await first;
   await waitFor(() => runner.started === 2, "la segunda entrega toma el candado liberado");
@@ -231,7 +231,7 @@ test("la espera en cola tiene techo: vence RETRYABLE y sin haber declarado ejecu
   await waitFor(() => runner.started === 1, "la primera entrega toma el candado");
   const second = engine.handleDelivery(delivery("tail"));
 
-  await second; // vence sola: nadie libera el candado
+  await second; // it expires on its own: nobody releases the lock
 
   const queued = events.filter((event) => event.delivery_id === "tail");
   assert.equal(
@@ -263,7 +263,7 @@ test("un latido de cola que el gateway no aplica no es pérdida de propiedad", a
     store,
     executionIntentMode: "local-test-only",
     harness: harnessFor(store, runner),
-    // Gateway anterior a esta versión: nunca confirma el latido de cola.
+    // Gateway prior to this version: never confirms the queue heartbeat.
     publish: async (event) => { events.push(event); },
     logger: (entry) => { logs.push(entry as unknown as Record<string, unknown>); },
     claimRenewalMs: 10,
@@ -280,7 +280,7 @@ test("un latido de cola que el gateway no aplica no es pérdida de propiedad", a
     "la entrega en cola late",
   );
 
-  // Receipt 'superseded' sobre un latido de cola: sin señal, no pérdida de garra.
+  // 'superseded' receipt on a queue heartbeat: no signal, no loss of claim.
   engine.logDroppedQueueRenewal("waiter", 1);
   assert.ok(logs.some((entry) => entry.reason === "queue_renewal_not_applied"));
   assert.equal(

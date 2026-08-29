@@ -71,9 +71,9 @@ for (const prompt of ["HERMES_RC_FAILURE", "HERMES_HTTP_ERROR"] as const) {
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
-    // La marca de arranque sale ANTES de llamar a hermes, así que un fallo DE HERMES la lleva:
-    // es exactamente lo que tiene que pasar. El turno llegó a la puerta, así que el transporte
-    // no puede declararlo pre-vuelo y la entrega sigue siendo ambigua.
+    // The start marker is emitted BEFORE calling hermes, so a HERMES failure carries it: that is
+    // exactly what should happen. The turn reached the door, so the transport cannot declare it
+    // pre-flight and the delivery stays ambiguous.
     assert.equal(result.stderr, `${HARNESS_START_MARKER}\nhermes stdin bridge failed\n`);
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, /native log|upstream unavailable/u);
   });
@@ -104,10 +104,10 @@ for (const state of ["absent", "ambiguous"] as const) {
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
-    // CAMBIO DE CONTRATO (b30acaf): el stderr dice POR QUÉ falló. Antes era una línea muda
-    // idéntica para los dos estados, y desde afuera no había forma de distinguir "no encontré los
-    // módulos" de "encontré varios" sin entrar a leer el bridge. Lo que NO puede aparecer sigue
-    // siendo el prompt, y eso lo fija la aserción de abajo.
+    // CONTRACT CHANGE (b30acaf): stderr says WHY it failed. It used to be a single silent line
+    // identical for both states, and from the outside there was no way to tell "modules were not
+    // found" apart from "several were found" without going into the bridge to read it. What MUST
+    // NOT appear is still the prompt, and the assertion below pins that.
     assert.match(result.stderr, /^openclaw stdin bridge failed: /u);
     assert.match(
       result.stderr,

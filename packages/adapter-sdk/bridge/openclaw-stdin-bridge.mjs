@@ -142,11 +142,11 @@ async function main() {
   let returned;
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
-    // Desde la línea siguiente el turno PUEDE tener efectos. La marca sale acá y no antes ni
-    // después: antes mentiría (el descubrimiento de módulos todavía puede fallar sin haber
-    // tocado nada) y después dejaría un turno a medias indistinguible de uno que nunca arrancó,
-    // que es el error caro — reintentar trabajo ya pagado. Va por stderr porque stdout es el
-    // contrato estructurado. Ver HARNESS_START_MARKER en sdk/types.ts.
+    // From the next line on the turn MAY have side effects. The marker goes here and not before
+    // or after: before would lie (module discovery can still fail without touching anything) and
+    // after would leave a half-finished turn indistinguishable from one that never started, which
+    // is the expensive error — retrying work already paid for. Goes via stderr because stdout is
+    // the structured contract. See HARNESS_START_MARKER in sdk/types.ts.
     process.stderr.write("<<cauce:harness-started>>\n");
     returned = await agentCliCommand({
       message,
@@ -167,8 +167,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  // Vuelca el error completo a stderr para diagnóstico; la respuesta estructurada viaja por stdout
-  // y stderr no contamina el contrato.
+  // Dumps the full error to stderr for diagnosis; the structured response travels via stdout
+  // and stderr does not pollute the contract.
   const detail = error instanceof Error
     ? `${error.message}\n${error.stack ?? ""}`
     : String(error);

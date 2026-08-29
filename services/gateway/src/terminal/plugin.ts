@@ -79,11 +79,11 @@ export interface TerminalControlPlaneOptions {
     ): Promise<AuthorizedAgentTarget | undefined>;
   };
   /**
-   * De dónde salen los hechos medidos de cada alias (arnés, HOME, CODEX_HOME) para resolver la
-   * ruta de su manual del sitio.
+   * Where the measured facts of each alias (harness, HOME, CODEX_HOME) come from to resolve the
+   * path to its site manual.
    */
   readonly measuredFacts?: MeasuredFactsSource;
-  /** Inyectable para los tests; en producción sale de `config.relayUrl`. */
+  /** Injectable for tests; in production it comes from `config.relayUrl`. */
   readonly governanceRelay?: GovernanceRelayClient;
   /** Test seam only. Production hashes the verified TLS peer leaf directly from the socket. */
   readonly relayPeerInstanceId?: (request: FastifyRequest) => string | undefined;
@@ -285,17 +285,17 @@ export async function registerTerminalControlPlane(
     recordTransactionalTerminalAudit,
   });
   /* ------------------------------------------------------------------ */
-  /* Browser route: la DIRECTIVA de un alias                             */
+  /* Browser route: the DIRECTIVE of an alias                            */
   /* ------------------------------------------------------------------ */
 
   /**
-   * `GET /v3/console/agents/:tenant/:alias/directive` vive aquí, y no en app.ts, porque su
-   * contenido sólo existe cuando existe el plano de terminal: el texto sale del pty-agent y viaja
-   * por el terminal-relay. Con `CAUCE_TERMINAL_ENABLED` apagado no hay por dónde leer nada, y una
-   * ruta que sólo sabría contestar «no disponible» es peor que una ruta que no está.
+   * `GET /v3/console/agents/:tenant/:alias/directive` lives here, not in app.ts, because its
+   * content only exists when the terminal plane exists: the text comes from the pty-agent and
+   * travels through the terminal-relay. With `CAUCE_TERMINAL_ENABLED` off there is nowhere to
+   * read it from, and a route that would only answer "unavailable" is worse than no route at all.
    *
-   * Al colgar de `/v3/console/` hereda el gancho de seguridad de consola (Origin, Sec-Fetch-Site)
-   * que app.ts instala ANTES de este plugin, igual que el resto de rutas de navegador.
+   * By hanging off `/v3/console/` it inherits the console security hook (Origin, Sec-Fetch-Site)
+   * that app.ts installs BEFORE this plugin, like the rest of the browser routes.
    */
   const governanceProbes = createGovernanceProbes(app, {
     config,

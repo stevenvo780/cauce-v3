@@ -20,7 +20,7 @@ import {
 
 export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBase<E> {
   /**
-   * Saca el sobre del registro estructurado del harness.
+   * Extracts the envelope from the harness's structured transcript.
    */
   protected async harvest(
     request: CommandRunRequest,
@@ -276,11 +276,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
   }
 
   /**
-   * Cancela un turno ya comprometido sin liberar la cola sobre una TUI todavía ocupada.
+   * Cancels an already-committed turn without releasing the queue over a TUI still occupied.
    *
-   * Toda espera usa el plazo fijado por el evento abort. Un rename lógico se sigue por
-   * session/pane/PID; un respawn no. Si no aparece un límite terminal, la generación se marca en
-   * tmux+disco o se mata exactamente, de modo que nunca quede reutilizable a ciegas.
+   * Every wait uses the deadline set by the abort event. A logical rename is followed by
+   * session/pane/PID; a respawn is not. If no terminal boundary appears, the generation is marked
+   * in tmux+disk or killed exactly, so it never ends up blindly reusable.
    */
   protected async drainCancelledTurn(
     identity: PaneIdentity,
@@ -380,7 +380,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
     }
   }
 
-  /** Sólo un desenlace ligado al prompt/nonce de esta entrega permite reutilizar la generación. */
+  /** Only an outcome tied to this delivery's prompt/nonce makes the generation reusable. */
   protected async cancelledTranscriptBoundary(
     baseline: ReadonlyMap<string, number>,
     injected: { file: string; key: string; sessionId?: string } | undefined,

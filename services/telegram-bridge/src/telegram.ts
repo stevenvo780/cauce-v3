@@ -55,10 +55,10 @@ export function validTelegramMessageId(value: string): boolean {
 }
 
 /**
- * Identidad del mensaje que Telegram acaba de aceptar.
+ * Identity of the message Telegram has just accepted.
  *
- * Un resultado ilegible se marca como `outcomeKnown:false`: el mensaje PUDO haberse publicado, y
- * reintentarlo automáticamente duplicaría algo que la persona ya tiene en el teléfono.
+ * An unreadable result is marked as `outcomeKnown:false`: the message MAY have been published,
+ * and retrying it automatically would duplicate something the person already has on their phone.
  */
 function sentMessageId(raw: unknown, method: string): TelegramSendResult {
   let result: Record<string, unknown>;
@@ -108,12 +108,12 @@ export class TelegramHttpClient implements TelegramApi {
   }
 
   /**
-   * Un único punto de envío para JSON y para multipart.
+   * A single dispatch point for both JSON and multipart.
    *
-   * La interpretación de la respuesta —y sobre todo la distinción entre "Telegram lo rechazó" y
-   * "no sé qué pasó"— tiene que ser IDÉNTICA para los dos, o una subida ambigua se reintentaría
-   * y el humano recibiría la misma foto dos veces. Con `FormData` no se fija `content-type`
-   * a mano: lo pone `fetch` con el boundary que corresponde.
+   * Interpreting the response — and especially the distinction between "Telegram rejected it"
+   * and "I don't know what happened" — must be IDENTICAL for both, or an ambiguous upload would
+   * be retried and the human would receive the same photo twice. With `FormData` `content-type`
+   * is not set manually: `fetch` sets it with the matching boundary.
    */
   private async dispatch<T>(
     method: string,
@@ -282,7 +282,7 @@ export class TelegramHttpClient implements TelegramApi {
   }
 
   /**
-   * Sube un adjunto usando sendPhoto o sendDocument.
+   * Uploads an attachment using sendPhoto or sendDocument.
    */
   private async upload(
     method: 'sendPhoto' | 'sendDocument',
@@ -295,9 +295,9 @@ export class TelegramHttpClient implements TelegramApi {
     if (upload.bytes.length === 0) throw new TelegramApiError('Telegram upload has no bytes', false);
     const form = new FormData();
     form.append('chat_id', chatId);
-    // `new Uint8Array(buffer)` copia: es lo que hace falta para que el tipo sea `ArrayBuffer` y no
-    // `ArrayBufferLike`. Un adjunto está acotado a 10 MB, así que la copia es irrelevante al lado
-    // de la subida en sí.
+    // `new Uint8Array(buffer)` copies: that is what is needed so the type is `ArrayBuffer`, not
+    // `ArrayBufferLike`. An attachment is capped at 10 MB, so the copy is negligible next to
+    // the upload itself.
     const contenido = new Uint8Array(upload.bytes);
     form.append(field, new Blob([contenido], { type: upload.mime_type }), upload.name);
     if (upload.caption !== undefined && upload.caption.length > 0) {

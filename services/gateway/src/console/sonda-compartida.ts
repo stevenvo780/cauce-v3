@@ -5,12 +5,12 @@ import type {
 import type { RuntimeFacts } from './agent-documents.js';
 
 /**
- * Sonda compartida para la resolución y lectura de documentos de gobierno.
- * Permite desacoplar el orden de registro de las rutas de consola y el plano de control
- * de terminal, resolviendo dinámicamente la sonda disponible por petición.
+ * Shared probe for resolving and reading governance documents.
+ * Lets the order of registration of the console routes and the terminal control plane be
+ * decoupled, resolving the available probe dynamically per request.
  */
 
-/** Sonda degradada: contesta con la verdad —que nadie ha medido— en vez de lanzar. */
+/** Degraded probe: answers with the truth —that nobody measured— instead of throwing. */
 const SONDA_SIN_CANAL: AgentFactsProbe = {
   async factsFor(): Promise<{ facts: RuntimeFacts; source: FactsSource } | undefined> {
     return undefined;
@@ -46,7 +46,7 @@ const SONDA_SIN_CANAL: AgentFactsProbe = {
 };
 
 /**
- * Contenedor mutable para la sonda de hechos del agente, decorado en la instancia de Fastify.
+ * Mutable container for the agent facts probe, decorated on the Fastify instance.
  */
 export class SondaCompartida {
   private sonda: AgentFactsProbe = SONDA_SIN_CANAL;
@@ -59,17 +59,17 @@ export class SondaCompartida {
     return this.sonda;
   }
 
-  /** `true` cuando alguien instaló una sonda real. Para poder afirmarlo en una prueba. */
+  /** `true` when somebody installed a real probe. So a test can assert it. */
   get instalada(): boolean {
     return this.sonda !== SONDA_SIN_CANAL;
   }
 }
 
 /**
- * Un `AgentFactsProbe` que delega en el hueco, resolviéndolo en CADA llamada.
+ * An `AgentFactsProbe` that delegates to the slot, resolving it on EACH call.
  *
- * Es lo que se le pasa a `registerAgentDocumentRoutes`: desde su punto de vista es una sonda
- * normal, y ella no tiene que saber nada de este baile de orden de registro.
+ * This is what gets handed to `registerAgentDocumentRoutes`: from its point of view it is a
+ * normal probe, and it does not need to know about this registration-order dance.
  */
 export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
   return {
@@ -114,10 +114,10 @@ export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
 }
 
 /**
- * La decoración sobre la instancia de Fastify, declarada para TypeScript.
+ * The decoration on the Fastify instance, declared for TypeScript.
  *
- * Va en este módulo y no en el plugin de terminal porque quien la CREA es `app.ts`; el plugin sólo
- * la consume, y un tipo declarado donde se consume se desincroniza de donde se define.
+ * It lives here, not in the terminal plugin: `app.ts` is the one that CREATES it, and the plugin
+ * only consumes it — a type declared at the consumption site drifts from its definition.
  */
 declare module 'fastify' {
   interface FastifyInstance {

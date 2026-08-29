@@ -6,7 +6,7 @@ import {
   ErrorDeTopeDelArnes, TOPES_OPENCLAW, ficherosDelArnes, type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
-// Tests de verificación de consistencia en generación y actualización de ficheros de arnés.
+// Consistency verification tests for harness file generation and update.
 
 const HECHOS: HechosDelAlias = {
   permisos: { ruta: true, lectura: true, control: false, notificacion: true },
@@ -34,14 +34,14 @@ function de(ficheros: readonly FicheroGenerado[], nombre: string): FicheroGenera
   return f;
 }
 
-// ── 1. Retiro de bloques desactualizados ─────────────────────────────────────
+// ── 1. Removal of stale blocks ────────────────────────────────────────────────
 
 test("borrar un campo en la base BORRA el bloque del fichero, no lo deja rancio", () => {
   const conPerfil = ficherosDelArnes("openclaw", contexto(perfil({ purpose: "reparo Cauce" })));
   const soul = de(conPerfil, "SOUL.md");
   assert.ok(soul.texto.includes("reparo Cauce"));
 
-  // Se vacía purpose y se vuelve a generar sobre el contenido existente.
+  // purpose is emptied and we generate again over the existing content.
   const enDisco = new Map([["SOUL.md", soul.texto]]);
   const vaciado = ficherosDelArnes("openclaw", contexto(perfil({})), enDisco);
   const despues = de(vaciado, "SOUL.md");
@@ -67,7 +67,7 @@ test("CONTROL NEGATIVO: sobre un fichero que NUNCA tuvo bloque no se escribe nad
   assert.equal(de(generado, "SOUL.md").texto, manual);
 });
 
-// ── 2. MEMORY.md en el cálculo de topes ──────────────────────────────────────
+// ── 2. MEMORY.md in cap accounting ────────────────────────────────────────────
 
 test("la memoria del agente NO cuenta para el tope: no puede bloquear la siembra de los siete", () => {
   const memoriaEnorme = "recuerdo. ".repeat(20_000); // ~200.000 unidades
@@ -86,7 +86,7 @@ test("CONTROL NEGATIVO: lo que SÍ escribimos sigue sujeto al tope", () => {
   );
 });
 
-// ── 3. Guarda de pertenencia de bloque ───────────────────────────────────────
+// ── 3. Block ownership guard ──────────────────────────────────────────────────
 
 test("no se pisa el bloque de OTRO alias: aliases con home compartido", () => {
   const deKratos = ficherosDelArnes(
@@ -145,7 +145,7 @@ test("CONTROL NEGATIVO: dos alias del MISMO nombre en inquilinos distintos no se
   assert.equal(de(deSteven, "AGENTS.md").escribir, false);
 });
 
-// ── 4. Generación sin campos autorados ───────────────────────────────────────
+// ── 4. Generation without authored fields ─────────────────────────────────────
 
 test("un perfil SIN NADA autorado no escribe ningún fichero, tampoco en openclaw", () => {
   const generado = ficherosDelArnes("openclaw", contexto(perfil({})));
@@ -194,7 +194,7 @@ test("CONTROL NEGATIVO: sin herramientas declaradas TOOLS.md no se escribe, con 
   assert.ok(!tools.texto.includes("saldantia"), "congeló las cuotas dinámicas");
 });
 
-// ── 5. Medición de topes sobre texto consolidado ─────────────────────────────
+// ── 5. Cap measurement over consolidated text ─────────────────────────────────
 
 test("el tope se mide sobre el fichero ENTERO, no sólo sobre nuestro bloque", () => {
   const humano = "y".repeat(TOPES_OPENCLAW.porFichero - 500);
@@ -212,7 +212,7 @@ test("CONTROL NEGATIVO: el mismo bloque en un fichero vacío NO se pasa de tope"
   assert.equal(de(generado, "SOUL.md").escribir, true);
 });
 
-// ── 6. LA RETIRADA DEL BLOQUE, SOLA ─────────────────────────────────────────────────────────
+// ── 6. Block removal, standalone ──────────────────────────────────────────────
 
 test("sinBloqueDePerfil es idempotente y no acumula líneas en blanco", () => {
   const manual = "# Manual\n\nlo humano\n";

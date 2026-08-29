@@ -7,7 +7,7 @@ import { permissionState } from '../../lib';
 import { HistorialRol } from './HistorialRol';
 import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
-/** La fila legacy del registro para este alias, o `undefined` si no está publicada. */
+/** The legacy registry row for this alias, or `undefined` if it is not published. */
 function filaDelAgente(
   agents: Record<string, unknown>[] | null | undefined,
   tenantId: string,
@@ -21,29 +21,29 @@ export interface RoleBriefTabProps {
   tenantId: string;
   alias: string;
   /**
-   * La misma lectura versionada que usa la superficie que contiene esta proyección. La capa no
-   * vuelve a consultar `/config`: hacerlo permitiría advertir con la revisión A y mostrar la B
-   * dentro del mismo diálogo.
+   * The same versioned read used by the surface containing this projection. This layer does not
+   * re-query `/config`: doing so would allow warning with revision A and showing B in the same
+   * dialog.
    */
   configuration: {
     data?: ConfigurationSnapshot;
     error?: Error;
     loading: boolean;
   };
-  /** Cambia la pestaña del mismo cajón al editor canónico, sin abrir otra superficie de escritura. */
+  /** Switches the tab of the same drawer to the canonical editor, without opening another write surface. */
   onEditarEnPerfil: () => void;
-  /** Lleva una revisión histórica al `role_summary` del borrador canónico y abre Perfil. */
+  /** Carries a historical revision into the canonical draft `role_summary` and opens Profile. */
   onRestaurarEnPerfil: (texto: string) => void;
 }
 
 /**
- * Proyección legacy del rol, deliberadamente de sólo lectura.
+ * Legacy projection of the role, deliberately read-only.
  *
- * `agents.role_brief` dejó de ser una fuente editable: la migración 028 lo deriva de
- * `agent_profiles.role_summary`. El antiguo POST `agent/update {role_brief}` sólo acreditaba una
- * revisión genérica de base de datos; podía dejar el fichero del arnés pendiente y, aun así,
- * pintar éxito. Esta vista no ofrece ningún camino alternativo: dirige al PUT canónico de Perfil,
- * que sólo confirma éxito tras CAS, batch gobernado y `applied_revision` convergente.
+ * `agents.role_brief` is no longer an editable source: migration 028 derives it from
+ * `agent_profiles.role_summary`. The old POST `agent/update {role_brief}` only accredited a
+ * generic database revision; it could leave the harness file pending and still paint success.
+ * This view offers no alternative path: it directs to the canonical Profile PUT, which only
+ * confirms success after CAS, governed batch, and convergent `applied_revision`.
  */
 export function RoleBriefTab({
   tenantId, alias, configuration, onEditarEnPerfil, onRestaurarEnPerfil,

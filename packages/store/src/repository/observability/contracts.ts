@@ -91,12 +91,12 @@ export interface ChainPolicy {
   failureCoalesceWindowSeconds: number;
   /** False until migration 014 lands; same partial-deploy contract as visitedPathAvailable. */
   failureCoalesceAvailable: boolean;
-  /** Topes de disciplina de delegación (019). `enabled:false` = conducta previa a 019. */
+  /** Caps for delegation discipline (019). `enabled:false` = behavior prior to 019. */
   delegationCaps: DelegationCaps;
   /** False until migration 019 lands; same partial-deploy contract as visitedPathAvailable. */
   delegationCapsAvailable: boolean;
   humanGateEnabled: boolean;
-  /** False until migration 019 lands: sin la tabla no hay gates y `@human` vuelve a ser unroutable. */
+  /** False until migration 019 lands: without the table there are no gates and `@human` becomes unroutable again. */
   humanGateAvailable: boolean;
 }
 
@@ -115,11 +115,11 @@ export const disabledChainPolicy: ChainPolicy = {
 };
 
 /**
- * 'coalesced' es un retorno LEGÍTIMO, no un error: el fracaso quedó registrado y el padre ya
- * había sido avisado de esta misma causa dentro de la ventana. Se distingue de 'not_child'
- * porque sigue siendo una rama con padre, y de 'returned' porque no produjo entrega. Los dos
- * consumidores de este tipo sólo preguntan por 'not_child' (para decidir el relay al origen),
- * así que un fracaso plegado nunca se escapa hacia Telegram como si nadie lo estuviera esperando.
+ * 'coalesced' is a LEGITIMATE return, not an error: the failure was recorded and the parent had
+ * already been notified of the same cause within the window. It is distinguished from 'not_child'
+ * because it remains a branch with a parent, and from 'returned' because it produced no delivery.
+ * Both consumers of this type only ask about 'not_child' (to decide the relay to the origin),
+ * so a folded failure never leaks out to Telegram as if nobody were waiting on it.
  */
 export type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred' | 'coalesced';
 

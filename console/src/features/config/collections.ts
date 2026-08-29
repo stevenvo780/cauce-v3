@@ -1,13 +1,13 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 
 /**
- * Las colecciones de `GET /v3/console/config` (packages/store/src/configuration.ts), con el título
- * que la consola les da. El mapa fija el ORDEN y la traducción, no el alcance: una clave que el
- * servidor agregue mañana igual se publica, con su propio nombre como título.
+ * The collections of `GET /v3/console/config` (packages/store/src/configuration.ts), with the
+ * title the console gives them. The map fixes ORDER and translation, not scope: a key the
+ * server adds tomorrow is still published, with its own name as title.
  *
- * El panel de datos efectivos tenía seis entradas hardcodeadas mientras el snapshot ya traía doce,
- * así que `chain_policies` y `egress_destinations` quedaban invisibles pese a existir en el
- * servidor y ser deshacibles desde el audit trail. Derivar del snapshot cierra esa clase de bug.
+ * The effective-data panel had six hardcoded entries while the snapshot already carried twelve,
+ * so `chain_policies` and `egress_destinations` were invisible despite existing on the server
+ * and being reversible from the audit trail. Deriving from the snapshot closes that class of bug.
  */
 const COLLECTION_TITLES: Record<string, string> = {
   tenants: 'Tenants',
@@ -24,16 +24,16 @@ const COLLECTION_TITLES: Record<string, string> = {
   agent_account_bindings: 'Agent ↔ account bindings',
 };
 
-/** Claves del snapshot que no son colecciones de configuración: tienen su propio render. */
+/** Snapshot keys that are not configuration collections: they have their own render. */
 const NON_COLLECTION_KEYS = new Set(['revision', 'observed_at', 'revisions']);
 
 export interface ConfigCollection {
   key: string;
   title: string;
   /**
-   * `undefined` significa que el gateway NO publicó la clave — dato no disponible, que no es lo
-   * mismo que `[]` (cero filas conocidas). Un gateway anterior a una migración no publica su
-   * tabla, y decir "sin registros" ahí sería mentir.
+   * `undefined` means the gateway did NOT publish the key — data unavailable, which is not the
+   * same as `[]` (zero known rows). A gateway from before a migration does not publish its
+   * table, and saying "no records" there would be lying.
    */
   rows?: Record<string, unknown>[];
 }
@@ -42,8 +42,8 @@ export function configCollections(snapshot: ConfigurationSnapshot | undefined): 
   if (!snapshot) return [];
   const record = snapshot as Record<string, unknown>;
   const known = Object.keys(COLLECTION_TITLES);
-  // `Object.hasOwn` y no `in`: una clave del servidor llamada `toString` heredaría el título del
-  // prototipo y se renderizaría una función como nombre de panel.
+  // `Object.hasOwn` rather than `in`: a server key named `toString` would inherit the prototype
+  // title and a function would render as the panel name.
   const extra = Object.keys(record).filter((key) =>
     !NON_COLLECTION_KEYS.has(key) && !Object.hasOwn(COLLECTION_TITLES, key) && Array.isArray(record[key]));
   return [...known, ...extra].map((key) => {

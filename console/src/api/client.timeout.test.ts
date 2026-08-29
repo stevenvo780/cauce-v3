@@ -1,8 +1,8 @@
 import { CauceApi, ApiError, TIEMPO_MAXIMO_MS } from './client';
 
 /**
- * Verificación de timeout y cancelación de peticiones en el cliente HTTP (`CauceApi`):
- * asegura que peticiones sin respuesta sean abortadas y convertidas en un `ApiError` de tipo `timeout`.
+ * Verification of timeout and request cancellation in the HTTP client (`CauceApi`):
+ * ensures that unanswered requests are aborted and converted into an `ApiError` of type `timeout`.
  */
 
 function fetchQueNuncaContesta(): { fetcher: typeof fetch; llamadas: () => number; senales: AbortSignal[] } {
@@ -25,8 +25,8 @@ describe('el tope de espera del cliente HTTP', () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).code).toBe('timeout');
-    // El mensaje se PINTA (`ErrorState` renderiza `error.message`): tiene que estar en castellano
-    // y no puede afirmar que no haya datos, sólo que no se pudieron leer.
+    // The message is PAINTED (`ErrorState` renders `error.message`): it has to be in Spanish and
+    // must not claim there is no data, only that it could not be read.
     expect((error as ApiError).message).toContain('/v3/console/activity');
     expect((error as ApiError).message).toMatch(/no contestó en \d+ s/);
     expect((error as ApiError).message).toContain('no se pudieron leer');
@@ -34,8 +34,8 @@ describe('el tope de espera del cliente HTTP', () => {
   });
 
   it('ABORTA de verdad la petición, además de contestarle a quien esperaba', async () => {
-    // Rechazar la promesa y dejar el socket abierto contra un gateway que ya va al 10% de su CPU
-    // es sumarle trabajo a la máquina que se está muriendo. La señal viaja al `fetch`.
+    // Rejecting the promise and leaving the socket open against a gateway already at 10% CPU
+    // adds work to a machine that is already dying. The signal travels to `fetch`.
     const { fetcher, senales } = fetchQueNuncaContesta();
     const api = new CauceApi('http://localhost', fetcher, undefined, 40);
 
@@ -64,7 +64,7 @@ describe('el tope de espera del cliente HTTP', () => {
   });
 
   it('no toca las lecturas que sí llegan: ni las corta, ni les deja el reloj corriendo', async () => {
-    // CONTROL NEGATIVO del propio tope: un guardia que corta todo no sirve de guardia.
+    // NEGATIVE CONTROL of the ceiling itself: a guard that cuts everything is no guard at all.
     let senal: AbortSignal | undefined;
     const fetcher = ((_input: RequestInfo | URL, init?: RequestInit) => {
       senal = init?.signal ?? undefined;
@@ -76,14 +76,14 @@ describe('el tope de espera del cliente HTTP', () => {
 
     await expect(api.getFleetActivity()).resolves.toEqual({ agents: [] });
 
-    // El reloj se limpia en cuanto la respuesta llega: si no, cada lectura sana dejaría un
-    // temporizador de 30 s vivo y el `AbortController` abortaría una petición ya terminada.
+    // The clock is cleared as soon as the response arrives: otherwise every healthy reading would
+    // leave a 30s timer alive and the `AbortController` would abort an already-finished request.
     await new Promise((listo) => setTimeout(listo, 80));
     expect(senal?.aborted).toBe(false);
   });
 
   it('con el tope apagado vuelve a colgarse: la salida es el tope, no otra cosa que lo tape', async () => {
-    // Con timeout deshabilitado (0), la promesa permanece pendiente sin abortar.
+    // With timeout disabled (0), the promise stays pending without aborting.
     const { fetcher, senales } = fetchQueNuncaContesta();
     const api = new CauceApi('http://localhost', fetcher, undefined, 0);
 
@@ -92,14 +92,14 @@ describe('el tope de espera del cliente HTTP', () => {
 
     await new Promise((listo) => setTimeout(listo, 120));
     expect(desenlace).toBe('colgada');
-    // Y sin tope no se crea ni el controlador: no hay señal que abortar.
+    // And without a ceiling the controller is not even created: there is no signal to abort.
     expect(senales).toHaveLength(0);
   });
 
   it('el tope por defecto es un número declarado, no un valor escondido en una llamada', () => {
-    // El cartel de carga promete al operador que la espera «se corta sola a los N s» leyendo esta
-    // misma constante. Si viviera suelta dentro de `request`, la promesa y el corte podrían
-    // divergir sin que nada fallara.
+    // The loading banner promises the operator that the wait "cuts itself off at N s" by reading
+    // this very constant. If it lived loose inside `request`, the promise and the cut could
+    // diverge without anything failing.
     expect(TIEMPO_MAXIMO_MS).toBe(30_000);
   });
 });

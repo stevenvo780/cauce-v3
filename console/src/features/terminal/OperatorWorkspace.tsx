@@ -36,9 +36,9 @@ export interface OperatorWorkspaceProps {
   fleetLoading: boolean;
   fleetError?: Error;
   /**
-   * Cuántas sesiones hay abiertas. La página lo necesita para entrar en modo observación: con una
-   * sesión abierta el terminal es el contenido y los seis contadores se repliegan. La cuenta la
-   * tiene este componente, no la página.
+   * How many sessions are open. The page needs it to enter observation mode: with one open
+   * session the terminal is the content and the six counters collapse. This component owns
+   * the count, not the page.
    */
   onSesionesAbiertas?: (cantidad: number) => void;
 }
@@ -187,7 +187,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
 }
 
 export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
-  // La sesión que tiene el token CSRF en memoria: sin ella toda escritura del plano PTY vuelve 403.
+  // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
   const [activeId, setActiveId] = useState<string>();
@@ -213,7 +213,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   grantsRef.current = grants;
   const apiRef = useRef(api);
   apiRef.current = api;
-  /** Sólo la lectura más nueva puede publicar estado; la inicial y la causal pueden solaparse. */
+  /** Only the newest read may publish state; the initial and the causal ones may overlap. */
   const revisionPlazasRef = useRef(0);
 
   useEffect(() => {

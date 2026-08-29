@@ -82,15 +82,15 @@ export class ConfigurationRepository extends ConfigurationMutations {
            FROM agent_chain_policies ORDER BY id`
         ),
         this.pool.query<Record<string, unknown>>(
-          // `role_brief` sigue viajando únicamente como proyección legacy de sólo lectura. La
-          // escritura canónica ocurre en `agent_profiles` y se publica al runtime con ACK; el
-          // editor genérico rechaza cualquier intento de mutar esta columna.
+          // `role_brief` still travels only as a legacy read-only projection. The canonical write
+          // happens in `agent_profiles` and is published to the runtime with ACK; the generic
+          // editor rejects any attempt to mutate this column.
           /*
-           * `max_concurrent_deliveries` (migración 015) es el techo REAL de entregas en vuelo de
-           * un agente: `repository.ts` lo aplica al repartir cupo. No estaba en el snapshot ni en
-           * la mutación, así que sólo se podía cambiar por SQL — y la propia 015 documenta el
-           * `UPDATE ... = NULL` como la salida de emergencia cuando el techo estrangula a un
-           * agente que sí puede paralelizar. Esa salida ahora tiene pantalla.
+           * `max_concurrent_deliveries` (migration 015) is the REAL ceiling of in-flight
+           * deliveries for an agent: `repository.ts` enforces it when distributing quota. It was
+           * not in the snapshot or in the mutation, so it could only be changed via SQL — and
+           * 015 itself documents the `UPDATE ... = NULL` as the emergency exit when the ceiling
+           * strangles an agent that can actually parallelise. That exit now has a screen.
            */
           `SELECT tenant_id,alias,harness_id,display_name,enabled,
                   container_name,runtime_user,home_directory,state_directory,role_brief,
@@ -122,15 +122,15 @@ export class ConfigurationRepository extends ConfigurationMutations {
            ORDER BY tenant_id,agent_alias,priority,account_id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          // Ordena explícitamente por la columna numérica config_revisions.id para evitar ordenamiento lexicográfico sobre id::text.
+          // Orders explicitly by the numeric column config_revisions.id to avoid lexicographic ordering over id::text.
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
            FROM config_revisions WHERE $1::text IS NULL OR actor_tenant=$1
            ORDER BY config_revisions.id DESC LIMIT 100`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          // El perfil viaja en el snapshot para diagnóstico, diff y compatibilidad de lectura.
-          // Sus escrituras no pasan por el editor genérico: usan el endpoint canónico, que
-          // valida el documento completo, sincroniza el runtime y registra su ACK.
+          // The profile travels in the snapshot for diagnostics, diff and read compatibility.
+          // Its writes do not go through the generic editor: they use the canonical endpoint,
+          // which validates the full document, syncs the runtime, and records its ACK.
           `SELECT tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,
                   tools,operating_rules,created_at,updated_at
            FROM agent_profiles WHERE $1::text IS NULL OR tenant_id=$1

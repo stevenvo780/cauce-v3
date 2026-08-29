@@ -10,10 +10,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { HttpGovernanceRelayClient, parseDirectoryOutcome } from './relay-governance-client.js';
 
 /**
- * El cliente contra un terminal-relay de mentira pero un HTTPS de verdad: certificado propio,
- * verificación activada y un viaje real por el socket. Lo que se prueba es lo que este cliente
- * PONE en el cable y lo que hace con lo que le devuelven — incluido lo que le devuelven roto, que
- * es el caso que decide si el modal enseña un error honesto o un fichero inventado.
+ * The client against a fake terminal-relay but real HTTPS: own certificate, verification on,
+ * and a real trip through the socket. What is tested is what this client PUTS on the wire and
+ * what it does with what comes back — including what comes back broken, which is the case that
+ * decides whether the modal shows an honest error or an invented file.
  */
 
 const TOKEN = 'token-compartido-con-el-relay-0123456789';
@@ -51,7 +51,7 @@ function certificadoEfimero(): { cert: Buffer; key: Buffer; directory: string } 
   return { cert: readFileSync(certPath), key: readFileSync(keyPath), directory };
 }
 
-/** Un cliente apuntando al servidor de este fichero, con su CA para que verifique de verdad. */
+/** A client pointing at this file's server, with its CA so verification really happens. */
 function cliente(overrides: { timeoutMs?: number; puerto?: number } = {}): HttpGovernanceRelayClient {
   return new HttpGovernanceRelayClient({
     relayUrl: `https://127.0.0.1:${overrides.puerto ?? puerto}`,
@@ -61,7 +61,7 @@ function cliente(overrides: { timeoutMs?: number; puerto?: number } = {}): HttpG
   });
 }
 
-/** Contesta con este JSON (o con esta cadena cruda) y este código. */
+/** Replies with this JSON (or with this raw string) and this code. */
 function contestar(status: number, body: unknown): void {
   responder = (_peticion, response) => {
     const payload = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf8');
@@ -283,8 +283,8 @@ describe('lo que el cliente entiende de la respuesta', () => {
       path: RUTA, modified_at: '2026-08-24T10:00:00Z', sha: sha(CONTENIDO), content: CONTENIDO,
     });
 
-    // Rellenar `bytes` o `modified_at` con un cero y una fecha de hoy sería enseñar un fichero
-    // creíble que nadie midió. Falla cerrado.
+    // Filling `bytes` or `modified_at` with a zero and today's date would be showing a credible
+    // file nobody measured. Fail closed.
     expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
       error: 'unknown', reason: 'la lectura vino sin un tamaño creíble'
     });
@@ -332,13 +332,13 @@ describe('lo que el cliente hace cuando el transporte falla', () => {
 
     const resultado = await cliente({ timeoutMs: 150 }).readFile('Steven', 'zeus', RUTA);
 
-    // `timeout` y no `unavailable`: el relay puede estar sano y ser el pty-agent el que calla.
+    // `timeout` and not `unavailable`: the relay may be healthy and the pty-agent the silent one.
     expect(resultado).toMatchObject({ error: 'timeout' });
     expect(String((resultado as { reason: string }).reason)).toContain('timed out');
   });
 
   it('no lanza si el relay no está escuchando', async () => {
-    // Puerto sin nadie detrás: un `throw` aquí tumbaría la pantalla entera de Directiva.
+    // Port with nobody listening: a `throw` here would take down the entire Directiva screen.
     const resultado = await cliente({ puerto: 1, timeoutMs: 500 }).readFile('Steven', 'zeus', RUTA);
 
     expect(resultado).toMatchObject({ error: 'unavailable' });

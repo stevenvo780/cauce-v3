@@ -32,13 +32,13 @@ export function registerLegacyCandidateChainGateRoutes(
   options: LegacyCandidateRouteOptions,
   repository: LegacyCandidateRepository,
 ): void {
-  // Las preguntas que la flota le dejó a una persona. Es la LISTA VISIBLE que el gate promete:
-  // sin ella, sacar la espera humana del bus sólo la escondería en otro lado.
+  // The questions the fleet left for a person. This is the VISIBLE LIST the gate promises:
+  // without it, pulling the human wait out of the bus would only hide it somewhere else.
   //
-  // Sin fachada sameTenantRows, por el mismo motivo que /v3/console/chains/:traceId: el store ya
-  // aplicó la visibilidad fila por fila (tenant propio, o arista ACL con allow_read), y aplastar
-  // por tenant acá dejaría a un operador del hub sin poder contestar la pregunta de un agente de
-  // otro tenant, que es justo para lo que existe esta lista.
+  // Without a sameTenantRows facade, for the same reason as /v3/console/chains/:traceId: the store
+  // already applied visibility row by row (own tenant, or ACL edge with allow_read), and flattening
+  // by tenant here would leave a hub operator unable to answer another tenant's agent question,
+  // which is exactly what this list exists for.
   app.get<{ Querystring: { status?: string; limit?: string } }>(
     '/v3/console/chain-gates',
     async (request, reply) => {
@@ -57,8 +57,8 @@ export function registerLegacyCandidateChainGateRoutes(
     }
   );
 
-  // Contestar reanuda la rama suspendida con UNA entrega. Pide 'route' y no 'read' porque
-  // produce tráfico en el bus, igual que publicar.
+  // Answering resumes the suspended branch with ONE delivery. It asks for 'route' instead of
+  // 'read' because it produces traffic on the bus, just like publishing does.
   app.post<{ Params: { gateId: string } }>(
     '/v3/console/chain-gates/:gateId/answer',
     async (request, reply) => {

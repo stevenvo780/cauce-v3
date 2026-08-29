@@ -37,14 +37,14 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
   }
 
   /**
-   * Confirma una sesión nativa OpenClaw y publica en el MISMO rename el selector que consume la
-   * TUI de terminal.
+   * Confirms a native OpenClaw session and publishes in the SAME rename the selector consumed
+   * by the terminal TUI.
    *
-   * La entrada fuente conserva `origin` para que las herramientas operativas puedan distinguir
-   * conversaciones. El pointer fijo, en cambio, contiene sólo el identificador nativo opaco y el
-   * bit de inicialización: copiar el `conversation_id` ahí duplicaba un identificador de usuario
-   * sin que el consumidor lo necesitara. Una sola escritura evita que un reinicio deje publicada
-   * una sesión que todavía figura como no inicializada, o viceversa.
+   * The source entry keeps `origin` so operational tools can distinguish conversations. The
+   * fixed pointer, on the other hand, contains only the opaque native identifier and the init
+   * bit: copying the `conversation_id` there duplicated a user identifier the consumer did not
+   * need. A single write prevents a restart from leaving a session published that still appears
+   * uninitialized, or vice versa.
    */
   async setCanonicalOpenClawTerminalSession(
     alias: string,
@@ -77,12 +77,12 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
   }
 
   /**
-   * Repara el pointer OpenClaw bajo la lease estable del alias, antes de conectar al relay.
+   * Repairs the OpenClaw pointer under the alias's stable lease, before connecting to the relay.
    *
-   * Un pointer ya publicado es la única selección canónica y sobrevive reinicios. Para stores
-   * anteriores a este contrato sólo se adopta automáticamente una sesión humana cuando existe
-   * exactamente una; con cero o varias se deja ausente para no convertir `mtime` ni el orden del
-   * JSON en una elección de conversación inventada. El siguiente turno humano válido lo publica.
+   * A pointer already published is the only canonical selection and survives restarts. For stores
+   * before this contract, a human session is only adopted automatically when exactly one exists;
+   * with zero or several it is left absent to avoid turning `mtime` or JSON order into an
+   * invented conversation choice. The next valid human turn publishes it.
    */
   async reconcileCanonicalOpenClawTerminalSession(alias: string): Promise<boolean> {
     const pointerKey = canonicalOpenClawTerminalKey(alias);

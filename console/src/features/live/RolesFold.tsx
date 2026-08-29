@@ -5,12 +5,12 @@ import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from './role-brief';
 import { catalogoDeRoles, claveDeAlias, resumenDeRol } from './roles';
 
 /**
- * El catálogo de roles de la flota: cuántos textos distintos hay, quién comparte cada uno y quién
- * sale a trabajar sin ninguno. Son hechos de CONJUNTO, así que no caben en el cajón de un alias.
+ * The fleet's role catalog: how many distinct texts there are, who shares each one, and who goes
+ * out to work without any. These are SET facts, so they don't fit in any one alias's slot.
  *
- * El registro NO se lee acá: llega desde la página, que lo pide UNA vez para toda la vista. Es un
- * recurso global, así que una clave por alias —el patrón que tenía la pestaña Directiva— lo volvía
- * a pedir en cada muñeco y dejaba a las dos superficies sobre snapshots distintos.
+ * The registry is NOT read here: it arrives from the page, which asks for it ONCE for the whole
+ * view. It is a global resource, so a key per alias —the pattern the Directive tab used— made
+ * each widget ask again and left both surfaces on different snapshots.
  */
 
 function Portador({ clave, onAbrir }: { clave: string; onAbrir: (key: string) => void }) {

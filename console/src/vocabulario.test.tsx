@@ -1,9 +1,9 @@
 /**
- * Verificación de formato y vocabulario en vistas montadas:
- * 1. Sin marcadores JSX sin renderizar.
- * 2. Sin literales UNKNOWN visibles.
- * 3. Sin identificadores snake_case crudos en cabeceras de tabla.
- * 4. Sin fechas ISO crudas sin formatear.
+ * Format and vocabulary verification on mounted views:
+ * 1. No unrendered JSX markers.
+ * 2. No visible UNKNOWN literals.
+ * 3. No raw snake_case identifiers in table headers.
+ * 4. No unformatted raw ISO dates.
  */
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -25,17 +25,17 @@ const VISTAS = [
 ] as const;
 
 /**
- * Un componente JSX que se escapó y se está imprimiendo como texto.
+ * A JSX component that escaped and is being printed as text.
  *
- * `<Unknown value={x} />` escapado sale como `<UNKNOWN VALUE=AVAILABLE />` (el CSS lo pone en
- * mayúsculas, pero en el DOM es `<Unknown value=…`). Se busca la FORMA —un signo de menor, un
- * identificador, y una barra de cierre— y no un texto concreto, para que cace también al próximo.
+ * An escaped `<Unknown value={x} />` shows up as `<UNKNOWN VALUE=AVAILABLE />` (CSS uppercases it,
+ * but in the DOM it is `<Unknown value=…`). The search targets the SHAPE — a less-than sign, an
+ * identifier, and a closing slash — and not specific text, so it will catch the next one too.
  */
 const MARCADOR_DE_JSX = /<\s*[A-Za-z][A-Za-z0-9]*\s+[A-Za-z]+\s*=[^>]*\/>/;
 
 const FECHA_ISO_CRUDA = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
-/** `snake_case` inglés: la forma exacta de un nombre de columna de la base. */
+/** English `snake_case`: the exact shape of a database column name. */
 const IDENTIFICADOR_CRUDO = /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
 
 function textoVisible(): string {
@@ -46,8 +46,8 @@ describe.each(VISTAS)('%s dice la verdad en castellano', (nombre, Vista, titulo)
   async function montar() {
     renderWithApi(<Vista />);
     await screen.findByRole('heading', { level: 1, name: titulo }, { timeout: 5000 });
-    // Las vistas piden varias fuentes; se espera a que la primera tabla o métrica aterrice para
-    // no medir una pantalla de carga y creer que está limpia.
+    // The views request several sources; it waits for the first table or metric to land so it
+    // does not measure a loading screen and believe it is clean.
     await waitFor(() => {
       expect(textoVisible().length).toBeGreaterThan(200);
     }, { timeout: 5000 });
@@ -61,7 +61,7 @@ describe.each(VISTAS)('%s dice la verdad en castellano', (nombre, Vista, titulo)
 
   it('no le grita UNKNOWN al operador', async () => {
     await montar();
-    // La doctrina se conserva en la LÓGICA; lo que cambia es la palabra. Ver `lib.ts`.
+    // The doctrine lives in the LOGIC; what changes is the word. See `lib.ts`.
     expect(textoVisible(), `${nombre} muestra la palabra UNKNOWN`).not.toContain('UNKNOWN');
   });
 

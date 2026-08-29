@@ -5,16 +5,16 @@ import {
 } from '../src/delegation-guard.js';
 
 /**
- * Esta suite corre SIN Postgres a propósito. La regla que corta el paseo aleatorio es la parte
- * que más se va a discutir y a retocar, y tiene que poder probarse en cualquier entorno, no sólo
- * donde haya un contenedor de base. El camino durable (reservas, gates, reanudación) se prueba
- * aparte en delegation-discipline-postgres.test.ts.
+ * This suite runs WITHOUT Postgres on purpose. The rule that cuts off random-walk delegation is
+ * the part that will be discussed and tweaked the most, and must be testable in any environment,
+ * not only where there is a database container. The durable path (reservations, gates, resumption)
+ * is tested separately in delegation-discipline-postgres.test.ts.
  */
 describe('fanoutCapForTurn', () => {
   it('no acota el turno raíz, que es el único donde @all puede expandirse', () => {
-    // Medición prod 7 días: los 11 turnos con abanico 11-14 son TODOS `@all` en hop_count=1.
-    // Acotar ahí rompería el broadcast a la flota sin tocar ni una de las delegaciones que
-    // causaron la avalancha.
+    // 7-day prod measurement: the 11 turns with a fanout of 11-14 are ALL `@all` at hop_count=1.
+    // Capping there would break the broadcast to the fleet without touching any of the
+    // delegations that caused the avalanche.
     expect(fanoutCapForTurn(DEFAULT_DELEGATION_CAPS, 1)).toBeUndefined();
   });
 
@@ -28,8 +28,8 @@ describe('fanoutCapForTurn', () => {
   });
 
   it('no acota con un hop_count que no es un entero seguro', () => {
-    // hop_count llega de una correlación; safeHopCount ya lo satura, pero este guarda existe
-    // para que un valor absurdo NUNCA se convierta en un tope de cero que mate toda delegación.
+    // hop_count comes from a correlation; safeHopCount already clamps it, but this guard exists
+    // so that an absurd value NEVER becomes a zero cap that kills every delegation.
     for (const hop of [Number.NaN, 1.5, -3, Number.MAX_SAFE_INTEGER + 10]) {
       expect(fanoutCapForTurn(DEFAULT_DELEGATION_CAPS, hop)).toBeUndefined();
     }
@@ -46,8 +46,8 @@ describe('sanitizedDelegationCaps', () => {
   });
 
   it('cae al default ante un valor que apagaría la delegación entera', () => {
-    // Un cero o un negativo escrito a mano en agent_chain_policies rechazaría TODA delegación.
-    // Eso es peor que el problema que este parche arregla, así que no se obedece.
+    // A zero or a negative value hand-written into agent_chain_policies would reject EVERY
+    // delegation. That is worse than the problem this patch fixes, so it is not obeyed.
     const caps = sanitizedDelegationCaps({
       enabled: true, maxFanoutPerTurn: 0, maxEdgeRepeatsPerRoot: -1, maxDelegationsPerRoot: 1.5
     });
@@ -83,7 +83,7 @@ describe('describeDelegationRejection', () => {
       const notice = describeDelegationRejection(code, { target: 'Steven/socrates', cap: 3 });
       expect(notice.code).toBe(code);
       expect(notice.reason.length).toBeGreaterThan(20);
-      // La guía es la parte que evita el reintento ciego: sin ella el rechazo es sólo un "no".
+      // Guidance is what prevents blind retries: without it the rejection is just a "no".
       expect(notice.guidance.length).toBeGreaterThan(20);
       expect(rejectionText(notice)).toContain(notice.guidance);
     }
@@ -115,8 +115,8 @@ describe('describeDelegationRejection', () => {
 
 describe('HUMAN_GATE_TARGET', () => {
   it('no puede confundirse con un alias', () => {
-    // aliasPattern en repository.ts es /^[a-z][a-z0-9_-]{0,63}$/u: la arroba lo excluye, así que
-    // la directiva jamás puede colisionar con un alias real ni volverse ruteable por accidente.
+    // aliasPattern in repository.ts is /^[a-z][a-z0-9_-]{0,63}$/u: the @ excludes it, so the
+    // directive can never collide with a real alias nor become routable by accident.
     expect(HUMAN_GATE_TARGET.startsWith('@')).toBe(true);
     expect(/^[a-z][a-z0-9_-]{0,63}$/u.test(HUMAN_GATE_TARGET)).toBe(false);
   });
