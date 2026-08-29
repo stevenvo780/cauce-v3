@@ -11,10 +11,10 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Contrato 028 contra Postgres real.
+ * Contract 028 against real Postgres.
  *
- * No alcanza con probar el helper que recorta: esta suite cruza las tres superficies que antes
- * divergían —perfil, columna legacy/plantillas y sobre de delivery— y además ejecuta down/up.
+ * Testing the helper that trims is not enough: this suite crosses the three surfaces that
+ * previously diverged —profile, legacy/templates column and delivery envelope— and also runs down/up.
  */
 
 let database: TestDatabase;
@@ -312,8 +312,8 @@ describe('delivery context real', () => {
       { tenant_id: 'Steven', alias: 'argos', role_summary: rich }, null, ACTOR,
     );
 
-    // Daño deliberado de la proyección, con los triggers apagados sólo durante esta sentencia. El
-    // claim correcto tiene que seguir saliendo del perfil y no de esta caché.
+    // Deliberate damage to the projection, with triggers disabled only during this statement. The
+    // correct claim must still come from the profile and not from this cache.
     await pool.query('ALTER TABLE agents DISABLE TRIGGER agents_translate_legacy_role');
     try {
       await pool.query(

@@ -5,7 +5,7 @@ import type { CommandRunRequest, CommandRunResult, SafeRunnerLogger } from "./ty
 export interface ProcessRunnerOptions {
   readonly killGraceMs?: number;
   readonly maxOutputBytes?: number;
-  /** Tiempo de gracia para el cierre de tuberías tras la salida del proceso hijo. */
+  /** Grace period for closing pipes after the child process exits. */
   readonly orphanPipeGraceMs?: number;
   readonly logger?: SafeRunnerLogger;
 }
@@ -45,7 +45,7 @@ function childEnvironment(additions: Readonly<Record<string, string>> | undefine
 }
 
 /**
- * Envía la señal al grupo de procesos para asegurar la terminación de subprocesos descendientes.
+ * Sends the signal to the process group to ensure descendant subprocesses terminate.
  */
 function signalProcessGroup(
   child: ChildProcessWithoutNullStreams,
@@ -181,7 +181,7 @@ export class SpawnCommandRunner {
         });
       };
 
-      /** Programa la recolección de tuberías para el plazo más próximo. */
+      /** Schedules pipe collection for the nearest deadline. */
       const armReap = (delayMs: number): void => {
         if (settled) return;
         const deadline = Date.now() + delayMs;
@@ -193,8 +193,8 @@ export class SpawnCommandRunner {
       };
 
       /**
-       * Fuerza la terminación del grupo de procesos y destruye las tuberías si permanecen abiertas
-       * tras expirar el tiempo de gracia.
+       * Forces termination of the process group and destroys the pipes if they remain open after
+       * the grace period expires.
        */
       const reapInheritedPipes = (): void => {
         reapTimer = undefined;
@@ -212,7 +212,7 @@ export class SpawnCommandRunner {
       };
 
       /**
-       * Termina el proceso enviando SIGTERM y escalando a SIGKILL tras el tiempo de gracia.
+       * Terminates the process by sending SIGTERM and escalating to SIGKILL after the grace period.
        */
       const terminate = (reason: "timeout" | "cancel" | "output"): void => {
         if (settled) return;

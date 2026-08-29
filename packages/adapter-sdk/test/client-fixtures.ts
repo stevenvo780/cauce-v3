@@ -1,5 +1,5 @@
-// Helpers compartidos por los tests partidos de client.test.ts (Tarea 2 de opencode-minimax.md).
-// NO es test: el runner `dist/test/*.test.js` no lo recoge (no termina en .test.js).
+// Shared helpers for the split client.test.ts tests (Task 2 of opencode-minimax.md).
+// NOT a test: the `dist/test/*.test.js` runner does not pick it up (does not end in .test.js).
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";

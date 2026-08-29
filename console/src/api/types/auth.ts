@@ -3,10 +3,10 @@ export type ConsolePermission =
   | 'config.rollback' | 'dlq.resolve' | 'ultimate-terminal.connect';
 
 /**
- * `password` = el gateway pide correo y contraseña en su propio formulario (POST /v3/auth/login).
- * `redirect` = hay que mandar al navegador a /v3/auth/login (BFF OIDC). Ausente se lee como
- * `redirect`, que es como se comportaba la consola antes de que existiera el login por
- * contraseña: un gateway viejo no deja de funcionar por no conocer este campo.
+ * `password` = the gateway asks for email and password in its own form (POST /v3/auth/login).
+ * `redirect` = the browser must be sent to /v3/auth/login (BFF OIDC). Absent is read as
+ * `redirect`, which is how the console behaved before password login existed: an old gateway
+ * keeps working by not knowing this field.
  */
 export type LoginMode = 'password' | 'redirect';
 

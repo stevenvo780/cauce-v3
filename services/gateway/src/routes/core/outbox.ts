@@ -9,7 +9,7 @@ import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
 import { send, sessionFence, sessionKey } from './helpers.js';
 
-/** `Promise.allSettled`, pero con un número fijo de workers y resultados por entrada. */
+/** `Promise.allSettled`, but with a fixed number of workers and one result per entry. */
 async function allSettledBounded<T>(
   values: readonly T[],
   concurrency: number,
@@ -91,8 +91,8 @@ export function createCoreOutboxRuntime(
         .localeCompare(sessionKey(right.tenant_id, right.alias)));
     if (sortedRecipients.length === 0) return;
 
-    // Rota el primero de cada tick para que el primer alias lexicográfico no monopolice siempre
-    // el primer worker. El FIFO de eventos dentro de cada identidad lo conserva el store.
+    // Rotate the first entry each tick so the lexicographically first alias does not always
+    // monopolise the first worker. The FIFO order of events within each identity is preserved by the store.
     const offset = wakeRecipientCursor % sortedRecipients.length;
     wakeRecipientCursor = (wakeRecipientCursor + 1) % sortedRecipients.length;
     const recipients = [

@@ -7,12 +7,12 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * P0-2 — el latido de una entrega EN COLA.
+ * P0-2 — the heartbeat of a QUEUED delivery.
  *
- * El adaptador ya no manda 'started' antes de tomar el candado de sesión: mientras hace fila late
- * en 'accepted'. Estas pruebas fijan el contrato del store para ese latido: renueva el plazo de la
- * garra sin fingir ejecución, y en cuanto el adaptador deja de latir el reaper la recoge — que es
- * justamente lo que hasta ahora no pasaba nunca.
+ * The adapter no longer sends 'started' before taking the session lock: while it queues it heartbeats
+ * as 'accepted'. These tests pin the store contract for that heartbeat: it renews the claim deadline
+ * without faking execution, and as soon as the adapter stops heartbeating the reaper picks it up —
+ * which is exactly what had never happened before.
  */
 
 let database: TestDatabase;
@@ -60,8 +60,8 @@ async function deliveryRow(id: string): Promise<{
     ack_deadline_at: Date;
     execution_started_at: Date | null;
   }>(
-    // `execution_started_at` sólo existe a partir de 012_execution_started_marker.sql; en un árbol
-    // sin esa migración la columna se lee como NULL y las aserciones sobre ella siguen valiendo.
+    // `execution_started_at` only exists from 012_execution_started_marker.sql onward; in a tree
+    // without that migration the column reads as NULL and assertions about it still hold.
     `SELECT status,last_ack_rank,ack_deadline_at,
             (to_jsonb(d)->>'execution_started_at')::timestamptz AS execution_started_at
      FROM deliveries d WHERE id=$1`,
@@ -106,7 +106,7 @@ describe('queue heartbeat on an accepted delivery', () => {
     const afterAccept = await deliveryRow(deliveryId);
     expect(afterAccept.status).toBe('accepted');
 
-    // Acortar el plazo a mano simula que pasó el tiempo: si el latido no renueva, el reaper la come.
+    // Manually shortening the deadline simulates time passing: if the heartbeat does not renew it, the reaper eats it.
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()+interval '2 seconds' WHERE id=$1`, [deliveryId]
     );
@@ -119,7 +119,7 @@ describe('queue heartbeat on an accepted delivery', () => {
 
     const afterRenewal = await deliveryRow(deliveryId);
     expect(afterRenewal.ack_deadline_at.getTime()).toBeGreaterThan(shortened.ack_deadline_at.getTime());
-    // Lo que NO puede pasar: el latido de cola no promueve la fila ni inventa ejecución.
+    // What MUST NOT happen: the queue heartbeat does not promote the row or invent execution.
     expect(afterRenewal.status).toBe('accepted');
     expect(afterRenewal.last_ack_rank).toBe(1);
     expect(afterRenewal.execution_started_at).toBeNull();
@@ -139,8 +139,8 @@ describe('queue heartbeat on an accepted delivery', () => {
       );
     }
 
-    // (1) Sólo se vence el plazo de la entrega silenciosa para evaluar la expiración diferencial.
-    // (2) El barrido se ejecuta con plazo real para evaluar `ack_deadline_at` por fila.
+    // (1) Only the silent delivery's deadline is expired to evaluate differential expiration.
+    // (2) The sweep runs with a real deadline to evaluate `ack_deadline_at` per row.
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()-interval '1 second' WHERE id=$1`, [silent]
     );
@@ -148,7 +148,7 @@ describe('queue heartbeat on an accepted delivery', () => {
     const renewal = await repository.ackDelivery(
       beating, 'Isa', 'salva', ack(beatingClaim, lease.epoch!, 'accepted'), 600_000
     );
-    // Si el latido dejara de aplicarse, el test tiene que decirlo acá y no a través del conteo.
+    // If the heartbeat stopped being applied, the test has to say so here, not through the count.
     expect(renewal).toMatchObject({ status: 'accepted', applied: true });
 
     const reaped = await repository.retryStaleDeliveries(30_000, 100);
@@ -170,7 +170,7 @@ describe('queue heartbeat on an accepted delivery', () => {
     await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'started'), 30_000);
     expect((await deliveryRow(deliveryId)).status).toBe('started');
 
-    // Un latido de cola rezagado no puede degradar ni renovar una fila que ya ejecuta.
+    // A lagging queue heartbeat cannot downgrade or renew a row that is already executing.
     const late = await repository.ackDelivery(
       deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), 600_000
     );

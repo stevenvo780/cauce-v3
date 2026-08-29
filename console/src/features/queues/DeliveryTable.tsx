@@ -9,11 +9,11 @@ import { ESTADO_ENTREGA } from './estado-de-entrega';
 import { leerUltimoError } from './ultimo-error';
 
 /**
- * Estados en los que TODAVÍA no puede haber un último error, porque la entrega aún no falló.
+ * States in which there STILL cannot be a last error, because the delivery has not yet failed.
  *
- *  una entrega `pending` mostraba «UNKNOWN» en naranja bajo «Último
- * error». «Todavía no hay error» NO es un desconocido — es la única noticia buena de la fila, y
- * pintarla del color de la alarma es lo que hace que las alarmas de verdad dejen de leerse.
+ *  a `pending` delivery used to show "UNKNOWN" in orange under "Last
+ * error". "There is no error yet" is NOT an unknown — it is the only good news on the row, and
+ * painting it in the alarm color is what makes real alarms stop being read.
  */
 const SIN_FALLO_TODAVIA: ReadonlySet<string> = new Set(['pending', 'leased', 'accepted', 'started', 'done']);
 
@@ -25,12 +25,12 @@ function stateTone(state?: DeliveryState | null): 'done' | 'danger' | 'warning' 
   return 'unknown';
 }
 
-// Los dos estados finales de error son replayables: 'failed' y 'dead'.
+// The two final error states are replayable: 'failed' and 'dead'.
 const replayableStates: ReadonlySet<string> = new Set(['dead', 'failed']);
-// Cancelar aplica a lo que todavía está vivo: pendiente, en backoff o en manos de un adaptador.
+// Cancel applies to what is still alive: pending, in backoff, or in the adapter's hands.
 const cancellableStates: ReadonlySet<string> = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
 
-/** Explicación de cada acción antes de confirmar. */
+/** Explanation of each action before confirmation. */
 export const EXPLICACION_REPLAY =
   'Replay vuelve a encolar esta entrega: el adaptador del destinatario la recibe otra vez y puede '
   + 'volver a ejecutar lo que pida. No duplica el mensaje original ni borra la fila de dead letters.';
@@ -61,7 +61,7 @@ function removeId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet
 }
 
 /**
- * Tabla de entregas y control de replay/cancel de mensajes en cola.
+ * Delivery table and replay/cancel control for queued messages.
  */
 export function DeliveryTable({
   rows, canReplay, canCancel, onChanged, snapshotVersion, empty, caption, resaltada,
@@ -76,9 +76,9 @@ export function DeliveryTable({
   empty?: string;
   caption?: string;
   /**
-   * Entrega a la que llegó un enlace profundo (`/queues?delivery=`). La fila se marca con
-   * `aria-current="true"` además de la clase: filtrar la tabla a una sola fila deja al lector de
-   * pantalla sin forma de saber que ESA es la que se pidió, porque «una sola fila» no se anuncia.
+   * Delivery reached by a deep link (`/queues?delivery=`). The row is marked with
+   * `aria-current="true"` beyond the class: filtering the table to a single row leaves the
+   * screen reader no way to know THIS one is requested, since "a single row" is not announced.
    */
   resaltada?: string;
 }) {
@@ -121,9 +121,9 @@ export function DeliveryTable({
       setNotice(`Replay encolado para ${compactId(deliveryId)}`);
       void onChanged().catch(() => undefined);
     } catch (error) {
-      // Un error de red o un 2xx truncado puede ocurrir DESPUES del commit. Replay no tiene una
-      // clave que el browser pueda reutilizar sin riesgo, asi que no se reintenta a ciegas: se
-      // relee la fila y se declara el resultado incierto.
+      // A network error or a truncated 2xx can occur AFTER the commit. Replay has no key the
+      // browser can safely reuse, so the retry is not done blindly: we reread the row and
+      // declare the outcome uncertain.
       const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
       setNotice(`Resultado incierto del reinyectado: ${detail}. Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`);
       const verified = await rereadAfterUncertain(deliveryId);
@@ -146,8 +146,8 @@ export function DeliveryTable({
       setNotice(`Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`);
       void onChanged().catch(() => undefined);
     } catch (error) {
-      // Cancelar tambien puede haber confirmado antes de perder su respuesta. La unica autoridad
-      // segura es la relectura; repetir el POST sin verla podria competir con el nuevo estado.
+      // Cancel may also have confirmed before losing its response. The only safe authority is the
+      // reread; reissuing the POST without it could race the new state.
       const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
       setNotice(`Resultado incierto de la cancelación: ${detail}. Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`);
       const verified = await rereadAfterUncertain(deliveryId);
@@ -173,9 +173,9 @@ export function DeliveryTable({
       {notice ? <p className="notice" role="status">{notice}</p> : null}
 
       {/*
-        La confirmación vive ARRIBA de la tabla y no dentro de la celda: en el teléfono la columna
-        de acción está fuera de pantalla —hay que arrastrar la tabla en horizontal para llegar—, y
-        una pregunta que aparece donde no se ve es una pregunta que nadie contesta.
+        The confirmation lives ABOVE the table, not inside the cell: on the phone the action column
+        is off-screen —you have to drag the table horizontally to reach it—, and a question appearing
+        where it cannot be seen is a question nobody answers.
       */}
       {pendiente ? (
         <div className="confirmacion-de-entrega" role="alertdialog" aria-label={`Confirmar ${pendiente.accion}`}>
@@ -224,16 +224,16 @@ export function DeliveryTable({
                   <td data-label="Delivery"><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
                   <td data-label="Destino"><strong><Unknown value={item.recipient_alias} /></strong><small className="subline"><Unknown value={item.tenant_id} /></small></td>
                   <td data-label="Carril"><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
-                  {/* El estado se dice en castellano (`ESTADO_ENTREGA`), igual que el resto de la
-                      pantalla. Un valor que esta consola no conoce NO se inventa: sale UNKNOWN y el
-                      `title=` dice qué mandó el servidor. */}
+                  {/* The status label is shown in Spanish (`ESTADO_ENTREGA`), like the rest of the
+                      screen. A value this console does not know is NOT invented: UNKNOWN is shown
+                      and the `title=` says what the server sent. */}
                   <td data-label="Estado"><Badge tone={stateTone(state)}><Unknown
                     value={state ? ESTADO_ENTREGA[state] : undefined}
                     motivo={item.state ? `El servidor mandó un estado que esta consola no conoce: ${item.state}` : undefined}
                   /></Badge></td>
                   <td data-label="Intentos"><Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} /></td>
                   <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
-                  {/* «Sin error» no es UNKNOWN; SIN_FALLO_TODAVIA cubre entregas que aún no han fallado. */}
+                  {/* "No error" is not UNKNOWN; SIN_FALLO_TODAVIA covers deliveries that have not yet failed. */}
                   <td data-label="Último error" className="error-copy">
                     {error.clase === 'texto' ? error.texto
                       : error.clase === 'sin-error' ? <span className="sin-error">sin error</span>

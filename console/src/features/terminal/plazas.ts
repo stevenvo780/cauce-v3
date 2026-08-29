@@ -1,26 +1,26 @@
 /**
- * Criterio de conciliación de plazas ocupadas por sesiones PTY del operador.
- * Permite identificar sesiones activas y liberar sesiones huérfanas frente al tope maxSessionsPerOperator.
+ * Slot reconciliation criterion for PTY operator sessions.
+ * Identifies active sessions and frees orphan ones against the maxSessionsPerOperator cap.
  */
 import type { TerminalSessionListItem } from './api';
 
 /**
- * Proyección del `openPredicate` del gateway (`services/gateway/src/terminal/plugin.ts`):
+ * Projection of the gateway's `openPredicate` (`services/gateway/src/terminal/plugin.ts`):
  *
  *   closed_at IS NULL AND revoked_at IS NULL
  *   AND ((consumed_at IS NULL AND expires_at > now())
  *        OR (consumed_at IS NOT NULL AND consumed_at + ttl > now()))
  *
- * PostgreSQL evalúa la expresión ENTERA con su reloj y el gateway proyecta `state: closed` cuando
- * ya no ocupa. El navegador no vuelve a comparar `expires_at` con `Date.now()`: un portátil con
- * el reloj adelantado ocultaría precisamente la sesión que bloquea al operador. La fecha queda
- * sólo para explicar aproximadamente cuánto falta.
+ * PostgreSQL evaluates the WHOLE expression with its own clock, and the gateway projects
+ * `state: closed` when it no longer occupies. The browser does not re-compare `expires_at`
+ * against `Date.now()`: a laptop with an advanced clock would hide precisely the session that
+ * is blocking the operator. The date is only kept to roughly explain how much is left.
  */
 export function ocupaPlaza(item: TerminalSessionListItem): boolean {
   return item.state !== 'closed';
 }
 
-/** Las sesiones que hoy le están gastando plazas a este operador, de la más reciente a la más vieja. */
+/** Sessions currently consuming slots for this operator, from most recent to oldest. */
 export function plazasOcupadas(
   items: readonly TerminalSessionListItem[],
 ): TerminalSessionListItem[] {
@@ -30,8 +30,8 @@ export function plazasOcupadas(
 }
 
 /**
- * Las que ocupan plaza y NO tiene a la vista esta pestaña: son las colgadas, las que hay que poder
- * cerrar a mano. `conocidas` son los `session_id` de los grants que este workspace sí gobierna.
+ * Those that occupy a slot and are NOT visible to this tab: the hung ones, the ones that must
+ * be closeable by hand. `conocidas` are the `session_id`s of the grants this workspace does govern.
  */
 export function plazasColgadas(
   items: readonly TerminalSessionListItem[],
@@ -41,7 +41,7 @@ export function plazasColgadas(
   return plazasOcupadas(items).filter((item) => !propias.has(item.session_id));
 }
 
-/** Minutos que le quedan a una sesión antes de soltar la plaza sola. Para no mentir con «se libera ya». */
+/** Minutes left before a session releases its slot on its own. So as not to lie with "released now". */
 export function minutosParaLiberar(item: TerminalSessionListItem, ahora: number = Date.now()): number {
   const vence = Date.parse(item.expires_at);
   if (!Number.isFinite(vence)) return 0;

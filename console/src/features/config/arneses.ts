@@ -1,83 +1,84 @@
 /**
- * Mapeo de cómo interactúa cada arnés con sus ficheros de configuración y rol declarado.
+ * Map of how each harness interacts with its configuration files and declared role.
  */
 
 export interface ArnesReal {
-  /** El mismo identificador que `HarnessKind` en services/gateway/src/console/agent-documents/catalog.ts:4, más `hermes`. */
+  /** The same identifier as `HarnessKind` in services/gateway/src/console/agent-documents/catalog.ts:4, plus `hermes`. */
   id: string;
   label: string;
-  /** Dónde lee su directiva, con la ruta exacta. Cadena vacía = no lee ninguna. */
+  /** Where it reads its directive, with the exact path. Empty string = reads none. */
   directiva: string;
-  /** Por qué esa ruta es así, en una frase. Es lo que evita que alguien la «arregle» a mano. */
+  /** Why that path is the way it is, in one sentence. This is what prevents someone from "fixing" it by hand. */
   detalle: string;
   /**
-   * Siempre `false`, y por eso es un literal y no un booleano suelto: hoy NINGÚN documento de
-   * arnés se escribe desde «Ajustes y altas», ni siquiera los que el gateway declara editables —
-   * ésos se editan desde el cajón del bot, con hechos medidos dentro del contenedor.
+   * Always `false`, and that is why it is a literal and not a bare boolean: today NO harness
+   * document is written from "Settings and enrollments", not even those the gateway declares
+   * editable — those are edited from the bot drawer, with facts measured inside the container.
    */
   editableDesdeAjustes: false;
-  /** Dónde SÍ se toca. Un «no se puede acá» sin destino deja al operador sin salida. */
+  /** Where it IS touched. A "you cannot do that here" without a destination leaves the operator stranded. */
   dondeSeToca: string;
 }
 
 /**
- * El juego cerrado. `hermes` está aunque no tenga documento, y es a propósito: media flota lo usó y
- * su dueño necesita leer «este bot no lee ningún fichero de instrucciones» en vez de no encontrarlo.
+ * The closed set. `hermes` is here even though it has no document, on purpose: half the fleet used it,
+ * and its owner needs to read "this bot does not read any instructions file" instead of not finding it.
  */
 export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'claude',
     label: 'Claude Code',
     directiva: '<HOME>/.claude/CLAUDE.md',
-    detalle: 'Si el proceso lleva `CLAUDE_CONFIG_DIR`, el fichero se mueve con él — y ese ajuste '
-      + 'arrastra también el `.claude.json` de los MCP, no sólo el manual.',
+    detalle: 'If the process carries `CLAUDE_CONFIG_DIR`, the file moves with it — and that setting '
+      + 'also drags the MCP `.claude.json` along, not just the manual.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'Desde el cajón del bot en «La flota ahora», y sólo cuando el pty-agent midió el '
-      + 'entorno del proceso dentro del contenedor.',
+    dondeSeToca: 'From the bot drawer in "The fleet now", and only when the pty-agent measured the '
+      + "process's environment inside the container.",
   },
   {
     id: 'codex',
     label: 'Codex',
     directiva: '<HOME>/.codex/AGENTS.md',
-    detalle: 'Si el proceso lleva `CODEX_HOME`, la directiva es la de ESA carpeta. Hay alias con las '
-      + 'dos, del mismo tamaño, y la de `~/.codex` es la que abriría un resolutor ingenuo.',
+    detalle: 'If the process carries `CODEX_HOME`, the directive is the one in THAT folder. There '
+      + 'are aliases with both, of the same size, and the one in `~/.codex` is what a naive resolver '
+      + 'would open.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'Desde el cajón del bot en «La flota ahora», con el entorno del proceso medido. Su '
-      + '`config.toml` queda de sólo lectura: un TOML mal formado deja al bot sin arrancar.',
+    dondeSeToca: 'From the bot drawer in "The fleet now", with the process environment measured. Its '
+      + '`config.toml` stays read-only: a malformed TOML prevents the bot from starting.',
   },
   {
     id: 'openclaw',
     label: 'OpenClaw',
-    directiva: '<HOME>/.openclaw/openclaw.json → campo `agents`',
-    detalle: 'No es un fichero de instrucciones: es un campo de su JSON de configuración, el mismo '
-      + 'documento que lleva `auth` y `secrets`. Servirlo entero sería una fuga, así que hay que '
-      + 'proyectarlo campo a campo y todavía no está hecho.',
+    directiva: '<HOME>/.openclaw/openclaw.json → field `agents`',
+    detalle: 'It is not an instructions file: it is a field in its configuration JSON, the same '
+      + 'document that carries `auth` and `secrets`. Serving it whole would be a leak, so it has to '
+      + 'be projected field by field, and that is not done yet.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'Hoy por ninguna pantalla: ni acá ni en el cajón del bot. Se edita a mano dentro '
-      + 'del contenedor hasta que exista la proyección campo a campo.',
+    dondeSeToca: 'Today through no screen: neither here nor in the bot drawer. It is edited by hand '
+      + 'inside the container until the field-by-field projection exists.',
   },
   {
     id: 'hermes',
     label: 'Hermes',
     directiva: '',
-    detalle: 'El gateway no le resuelve ninguno: cae al `default` de `resolveAgentDocuments` y '
-      + 'devuelve lista vacía (services/gateway/src/console/agent-documents/catalog.ts:317). Lo único que le llega delante de su contrato '
-      + 'es el rol declarado.',
+    detalle: 'The gateway does not resolve any for it: it falls back to the `default` of '
+      + '`resolveAgentDocuments` and returns an empty list (services/gateway/src/console/agent-documents/catalog.ts:317). The only '
+      + 'thing it receives ahead of its contract is the declared role.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'No hay documento que tocar. Su identidad se le da con el rol declarado, y ése se '
-      + 'escribe en la pestaña «Perfil» del bot en «La flota ahora».',
+    dondeSeToca: 'No document to touch. Its identity is given with the declared role, and that is '
+      + 'written in the bot\'s "Profile" tab in "The fleet now".',
   },
 ];
 
 /**
- * El cierre del panel: dónde se escribe de verdad el rol declarado, y por qué le vale a los cuatro
- * arneses por igual: no lo lee el arnés de un fichero suyo, lo antepone Cauce dentro del sobre.
+ * The closing of the panel: where the declared role is really written, and why this works for all
+ * four harnesses alike: it is not read from any of the bot's files, Cauce prepends it in the envelope.
  */
 export const DONDE_SE_ESCRIBE_EL_ROL_DECLARADO =
-  'El rol declarado tampoco sale de esta pantalla: `agents.role_brief` es una proyección de sólo '
-  + 'lectura y el editor genérico rechaza mutarla. Se redacta en la pestaña «Perfil» del bot en «La '
-  + 'flota ahora», sobre `agent_profiles.role_summary`, y desde ahí le llega a los cuatro arneses '
-  + 'por igual porque no vive en ningún fichero del bot: lo lee el servidor al entregar '
-  + '(`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215), viaja en el sobre como '
-  + '`self_role` y el adaptador lo antepone al contrato. Por eso un bot sin directiva propia '
-  + '—hermes— igual recibe identidad.';
+  'The declared role does not come from this screen either: `agents.role_brief` is a read-only '
+  + 'projection and the generic editor refuses to mutate it. It is drafted in the bot\'s "Profile" '
+  + 'tab in "The fleet now", on top of `agent_profiles.role_summary`, and from there it reaches all '
+  + 'four harnesses alike because it does not live in any of the bot\'s files: the server reads it '
+  + 'on delivery (`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215), it travels in '
+  + 'the envelope as `self_role`, and the adapter prepends it to the contract. That is why a bot '
+  + 'without its own directive —hermes— still receives an identity.';

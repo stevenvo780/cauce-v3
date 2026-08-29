@@ -19,12 +19,12 @@ test('una respuesta de texto que empieza con un bloque de codigo NO se reinterpr
   assert.match(String(salida.reply), /ls -la/u);
 });
 
-// Antes un objeto truncado era fallo duro aunque el
-// `reply` estuviera completo, y eso costaba el turno ENTERO: a Steven le llegó dos veces seguidas
-// "contained a malformed JSON object" de jarvis, perdiendo minutos de trabajo y una respuesta que
-// el agente ya había escrito. Ahora, si el reply se puede rescatar, se entrega y se descartan los
-// campos accesorios (que en un sobre cortado no son confiables). Sigue siendo fallo duro cuando no
-// hay reply rescatable: en ese caso queda un resultado `failed` legible, sin delegaciones.
+// Before, a truncated object was a hard failure even if the
+// `reply` was complete, and that cost the ENTIRE turn: Steven got "contained a malformed JSON object"
+// from jarvis twice in a row, losing minutes of work and a reply the
+// agent had already written. Now, if the reply can be rescued, it is delivered and the accessory
+// fields (which are not trustworthy in a cut envelope) are discarded. It stays a hard failure
+// when there is no rescuable reply: that case leaves a readable `failed` result, with no delegations.
 test('un objeto truncado dentro de la valla entrega el reply rescatado, no un fallo', () => {
   assert.equal(parseFinalText('```json\n{"reply":"a\n```', 'OpenClaw').reply, 'a');
 });
@@ -35,17 +35,17 @@ test('el camino sin valla no cambia', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2026-08-05: a Steven le llegó dos veces seguidas "OpenClaw result contained a malformed JSON
-// object" de jarvis. El turno entero se perdía —minutos de trabajo y la respuesta YA escrita—
-// porque el sobre se cortaba en un campo ACCESORIO, después del reply. La respuesta es el trabajo:
-// ningún campo accesorio mal formado puede costar un turno.
+// 2026-08-05: Steven got "OpenClaw result contained a malformed JSON
+// object" from jarvis twice in a row. The whole turn was lost —minutes of work and the reply ALREADY written—
+// because the envelope was cut on an ACCESSORY field, after the reply. The reply is the work:
+// no malformed accessory field can cost a turn.
 // ---------------------------------------------------------------------------
 
 test("un sobre truncado DESPUES del reply entrega igual la respuesta", () => {
   const truncado = '{"reply":"Ya revisé el bridge y está sano.","messages":[{"to":"argos","bo';
   const salida = parseFinalText(truncado, "OpenClaw");
   assert.equal(salida.reply, "Ya revisé el bridge y está sano.");
-  // Los accesorios de un sobre truncado NO son confiables: se descartan a propósito.
+  // The accessories of a truncated envelope are NOT trustworthy: they are discarded on purpose.
   assert.deepEqual(salida.messages, []);
   assert.equal(salida.status, "done");
 });

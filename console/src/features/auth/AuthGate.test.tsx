@@ -16,7 +16,7 @@ it('sin sesión no se renderiza NADA de la consola, sólo la pantalla de login',
     'href',
     'http://localhost/v3/auth/login',
   );
-  // La garantía que importa: la navegación y el contenido de la consola no existen en el DOM.
+  // The guarantee that matters: the navigation and the console content do not exist in the DOM.
   expect(screen.queryByRole('navigation', { name: /principal/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /^cuentas de ia$/i })).not.toBeInTheDocument();
 });
@@ -69,7 +69,7 @@ it('cerrar sesión vuelve a preguntarle al servidor y devuelve a la pantalla de 
 
   await user.click(await screen.findByRole('button', { name: /cerrar sesión/i }));
 
-  // No se cree su propio optimismo: el estado sale de volver a leer /v3/auth/session.
+  // Do not trust its own optimism: the state comes from re-reading /v3/auth/session.
   expect(await screen.findByRole('link', { name: /iniciar sesión/i })).toBeInTheDocument();
   expect(screen.queryByRole('navigation', { name: /principal/i })).not.toBeInTheDocument();
 });
@@ -96,24 +96,24 @@ it('en modo contraseña muestra el formulario y entra con las credenciales corre
   await user.type(screen.getByLabelText(/contraseña/i), 'la-mala');
   await user.click(screen.getByRole('button', { name: /iniciar sesión/i }));
 
-  // Credenciales equivocadas: el mensaje sale DENTRO del formulario y la consola no aparece.
+  // Wrong credentials: the message appears INSIDE the form and the console does not show up.
   expect(await screen.findByRole('alert')).toHaveTextContent(/correo o contraseña incorrectos/i);
   expect(screen.queryByRole('navigation', { name: /principal/i })).not.toBeInTheDocument();
 
   await user.type(screen.getByLabelText(/contraseña/i), 'la-buena');
   await user.click(screen.getByRole('button', { name: /iniciar sesión/i }));
 
-  // El estado no sale del POST: sale de volver a preguntarle a /v3/auth/session.
+  // The state does not come from the POST: it comes from re-asking /v3/auth/session.
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
-  // La identidad de la barra superior es la PERSONA, no el tenant: nombre y correo, juntos.
+  // The identity in the top bar is the PERSON, not the tenant: name and email, together.
   const badge = screen.getByRole('button', { name: /cerrar sesión/i }).closest('.auth-state');
   expect(within(badge as HTMLElement).getByText('Steven')).toBeInTheDocument();
   expect(within(badge as HTMLElement).getByText('steven@elenxos.com')).toBeInTheDocument();
 });
 
 it('cuando el gateway no expone el BFF deja pasar pero lo declara a los gritos', async () => {
-  // Es el caso REAL de producción hoy (CAUCE_AUTH_PROVIDER=mtls). Bloquear dejaría la consola
-  // inservible; dibujar un candado sería mentir. Se pasa, con el aviso permanente.
+  // This is the REAL production case today (CAUCE_AUTH_PROVIDER=mtls). Blocking would render the
+  // console unusable; drawing a padlock would be lying. It passes through, with the permanent notice.
   server.use(http.get(SESSION, () => HttpResponse.json({ error: 'not_found' }, { status: 404 })));
   renderWithApi(<App />);
 

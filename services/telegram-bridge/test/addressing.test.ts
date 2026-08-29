@@ -36,9 +36,9 @@ function policy(overrides: Partial<TelegramChatPolicy> = {}): TelegramChatPolicy
   return { ...GROUP, ...overrides };
 }
 
-// exactOptionalPropertyTypes prohibe pasar undefined explicito a una clave opcional, y varios
-// casos necesitan justamente eso para probar la ausencia del campo (un mensaje sin autor, uno
-// sin texto pero con caption). El helper acepta el undefined y lo borra antes de construir.
+// exactOptionalPropertyTypes forbids passing an explicit undefined to an optional key, and several
+// cases need exactly that to test the absence of the field (a message without an author, one
+// without text but with a caption). The helper accepts undefined and removes it before constructing.
 type MessageOverrides = { [K in keyof TelegramMessage]?: TelegramMessage[K] | undefined };
 
 function message(overrides: MessageOverrides = {}): TelegramMessage {

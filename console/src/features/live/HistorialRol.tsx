@@ -8,18 +8,18 @@ import {
 } from './historial-rol';
 
 /**
- * Diario de la proyección legacy del rol y puente seguro hacia el perfil canónico.
+ * Legacy role projection journal and a safe bridge to the canonical profile.
  *
- * Este componente no escribe. Una restauración sólo copia `previous_brief` al `role_summary` del
- * borrador de Perfil. El operador lo revisa allí y el único guardado disponible es el PUT
- * canónico con CAS, lote gobernado y ACK del runtime. Así se conserva el historial útil sin
- * reabrir el antiguo `agent.update {role_brief}`.
+ * This component does not write. A restore only copies `previous_brief` into the `role_summary`
+ * of the Profile draft. The operator reviews it there and the only save available is the
+ * canonical PUT with CAS, governed batch and runtime ACK. This preserves the useful history
+ * without reopening the old `agent.update {role_brief}`.
  */
 
 export interface HistorialRolProps {
   tenantId: string;
   alias: string;
-  /** Ausente sin `config.write`: el diario se lee igual y sólo desaparece la carga del borrador. */
+  /** Absent without `config.write`: the journal is still read; only the draft loading disappears. */
   onRestaurar?: (texto: string) => void;
 }
 
@@ -34,8 +34,8 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
     return <p className="muted">Leyendo el diario del rol…</p>;
   }
 
-  // Un fallo de red NO es «no publicado»: `getRoleBriefHistory` ya bajó el 404 a `publicado:false`,
-  // así que lo que llega acá es un fallo de verdad y se dice como tal.
+  // A network failure is NOT "not published": `getRoleBriefHistory` already lowered the 404 to
+  // `publicado:false`, so what reaches here is a real failure and is reported as such.
   if (historial.error && !historial.data) {
     return (
       <EmptyState>
@@ -71,8 +71,8 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
     <div className="historial-rol">
       <p className="notice" role="note">{AVISO_DE_PROFUNDIDAD}</p>
 
-      {/* Se dice UNA vez arriba y no en cada fila: repetir «no consta quién» catorce veces
-          convierte un dato importante en ruido que se deja de leer. */}
+      {/* It is said ONCE at the top and not on every row: repeating "no consta quién" fourteen times
+          turns an important datum into noise that stops being read. */}
       <p className="historial-nota-actor">
         El diario dice qué cambió y cuándo. Las revisiones antiguas pueden no decir quién: si las
         columnas de autor llegan vacías se muestra <strong>«no consta quién»</strong>, sin atribuir

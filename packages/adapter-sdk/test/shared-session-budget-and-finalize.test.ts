@@ -21,7 +21,7 @@ import {
 const immediate = (): Promise<void> => Promise.resolve();
 
 // ---------------------------------------------------------------------------
-// El presupuesto de un turno proviene de la entrega configurada, no de límites implícitos.
+// A turn's budget comes from the configured delivery, not from implicit limits.
 // ---------------------------------------------------------------------------
 
 test("sin recorte explicito, el turno usa el presupuesto de la entrega", () => {
@@ -43,7 +43,7 @@ test("un recorte explicito acota, y solo hacia abajo", () => {
 });
 
 // ---------------------------------------------------------------------------
-// El corte por correlación libera la sesión si un pegado no aparece en el registro.
+// The correlation cut releases the session if a paste never appears in the transcript.
 // ---------------------------------------------------------------------------
 
 test("un pegado que nunca aparece en el registro suelta la sesion en vez de retenerla", async () => {
@@ -51,7 +51,7 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   const tmux = new FakeTmux();
   tmux.sessionName = "cauce-zeus";
   const fallback = new RecordingFallback("{}");
-  // El pegado se pierde: la TUI NUNCA escribe la entrada en el transcript.
+  // The paste is lost: the TUI NEVER writes the entry into the transcript.
   tmux.onSubmit = async () => {};
 
   const runner = new PasteSessionRunner({
@@ -66,17 +66,16 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
     settleMs: 0,
     pollMs: 1,
     readyTimeoutMs: 30,
-    // Presupuesto enorme (como las 24 h reales), corte de correlación corto.
+    // Huge budget (like the real 24 h), short correlation cut.
     turnTimeoutMs: 60 * 60_000,
     correlationTimeoutMs: 20,
-    // Desde `fix/fusion-turnos-20260806` soltar un pegado perdido exige DOS cosas: que venza el
-    // plazo de correlación Y que el registro lleve `quietTimeoutMs` sin crecer. Recortar sólo el
-    // primero ya no acorta nada: el silencio se quedaba en su default de 5 min y este test tardaba
-    // 300 s de reloj —medido: 300003 ms, el 90 % de toda la suite de adapter-sdk— y bajo carga
-    // arrastraba a dos tests de `engine-session-queue` a `cancelledByParent`.
-    //
-    // En producción NO cambia nada y por eso alcanza con calibrar el test: con los defaults los dos
-    // plazos arrancan juntos en t0 y vencen juntos a los 5 min, que es lo que este test comprueba.
+    // Since `fix/fusion-turnos-20260806`, releasing a lost paste requires TWO things: the
+    // correlation deadline must expire AND the transcript must go `quietTimeoutMs` without
+    // growing. Trimming only the first one no longer shortens anything: the silence stayed at
+    // its 5 min default and this test took 300 s of clock time —measured: 300003 ms, 90% of the
+    // whole adapter-sdk suite— and under load dragged two `engine-session-queue` tests into
+    // `cancelledByParent`. Nothing changes in production, so recalibrating the test is enough:
+    // with the defaults the two deadlines start together at t0 and expire together at 5 min.
     quietTimeoutMs: 20,
   });
 
@@ -89,10 +88,10 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
     signal: new AbortController().signal,
   });
 
-  // Suelta la sesión como AMBIGUO...
+  // Releases the session as AMBIGUOUS...
   assert.equal(outcome.timedOut, true);
   assert.equal(outcome.harnessStarted, undefined);
-  // ...y NO lo re-ejecuta por el camino de respaldo: si el pegado sí había entrado, correría dos veces.
+  // ...and does NOT re-run it through the fallback path: if the paste had actually entered, it would run twice.
   assert.equal(fallback.calls, 0);
   assert.match(outcome.stderr, /correlated boundary.*cuarentena/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
@@ -161,11 +160,11 @@ test("el timeout general con turno correlacionado bloquea la generación hasta u
 });
 
 // ---------------------------------------------------------------------------
-// Una compactación con referencias no lineales no debe impedir cosechar la respuesta final.
+// A compaction with non-linear references must not prevent harvesting the final response.
 // ---------------------------------------------------------------------------
 
 test("una compactacion con la cadena rota no deja la respuesta sin cosechar", () => {
-  // Reproduce la forma exacta: user inyectado -> compactacion -> respuesta, con el ciclo.
+  // Reproduces the exact shape: injected user -> compaction -> response, with the cycle.
   const entries = [
     { type: "user", uuid: "u-inyectado", message: { role: "user", content: "pedido del bus" } },
     { type: "system", subtype: "compact_boundary", uuid: "b-boundary", parentUuid: null, logicalParentUuid: "x-adelante" },
@@ -185,7 +184,7 @@ test("una compactacion con la cadena rota no deja la respuesta sin cosechar", ()
 });
 
 test("sin compactacion de por medio se sigue exigiendo descendencia real", () => {
-  // Lo que tecleo el dueño en paralelo NO desciende de nuestra entrada y no debe cosecharse.
+  // What the owner types in parallel does NOT descend from our entry and must not be harvested.
   const entries = [
     { type: "user", uuid: "u-inyectado", message: { role: "user", content: "pedido del bus" } },
     { type: "user", uuid: "u-del-dueno", message: { role: "user", content: "otra cosa" } },

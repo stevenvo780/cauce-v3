@@ -8,7 +8,7 @@ import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-sessi
 import type { SharedSessionSpec } from "../shared-session/session.js";
 
 /**
- * CLI para inspeccionar y asegurar el estado de la sesión compartida.
+ * CLI to inspect and ensure the state of the shared session.
  */
 
 interface Options {

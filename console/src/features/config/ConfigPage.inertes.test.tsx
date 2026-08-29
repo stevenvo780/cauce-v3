@@ -82,7 +82,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
 
     // The column's accessible name starts with the label and continues with the entire reason (it
     // goes in `sr-only` on purpose). It is anchored to the start: without `^`, "Contenedor" also
-    // matches the "Carpeta personal" column, whose reason says "medido dentro del contenedor".
+    // matches the "Carpeta personal" column, whose reason says "measured inside the container".
     const registro = panelDe(/agent registry/i);
     for (const rotulo of ['Harness', 'Carpeta personal', 'state_directory']) {
       const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });

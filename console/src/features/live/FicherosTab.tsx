@@ -12,7 +12,7 @@ import {
 } from './ficheros';
 
 /**
- * Editor y visualizador de ficheros de configuración que gobiernan a un agente.
+ * Editor and viewer for the configuration files that govern an agent.
  */
 
 export interface FicherosTabProps {
@@ -146,9 +146,9 @@ function FilaDeFichero(
         </button>
       ) : <div className="ficheros-cabecera">{cabecera}</div>}
 
-      {/* La razón se enseña SIEMPRE que exista, esté la fila abierta o no. Un candado sin
-          explicación es justo lo que hace que alguien pida por Telegram que le desbloqueen algo
-          que está bloqueado a propósito. */}
+      {/* The reason is shown WHENEVER it exists, whether or not the row is open. A lock without an
+          explanation is exactly what makes someone ask over Telegram to have something unlocked
+          that is locked on purpose. */}
       {reason ? <p className="ficheros-razon">{reason}</p> : null}
 
       {abierto && readable
@@ -160,7 +160,7 @@ function FilaDeFichero(
   );
 }
 
-/** Un GET explícito sin superficie de mutación. Nunca renderiza Guardar ni llama PUT. */
+/** An explicit GET with no mutation surface. Never renders Save and never calls PUT. */
 function Visor({ item, tenantId, alias }: {
   item: AgentDocumentItem; tenantId: string; alias: string;
 }) {
@@ -298,9 +298,9 @@ function Editor({ item, tenantId, alias, canWrite }: {
     setGuardando(true);
     setFallo(undefined);
     try {
-      // La huella de lo que se abrió viaja SIEMPRE. Es lo que hace que dos personas con esta
-      // pantalla abierta no se pisen en silencio: si el fichero cambió, el servidor contesta 409
-      // y no escribe, en vez de dejar que gane el último en pulsar.
+      // The fingerprint of the opened file always travels with the save. It is what keeps two people
+      // who have this screen open from silently clobbering each other: if the file changed, the
+      // server answers 409 and does not write, instead of letting the last to click win.
       const resultado = await api.putAgentDocumentContent(
         tenantId, alias, item.kind, borrador, servido.sha,
       );
@@ -407,12 +407,12 @@ function Editor({ item, tenantId, alias, canWrite }: {
 }
 
 /**
- * El hueco, dicho en castellano llano y en la propia vista.
+ * The gap, stated in plain language and right in this view.
  *
- * Está aquí porque la alternativa es peor: sin este párrafo, un `mcp` que sale con candado se lee
- * como «la consola aún no llega ahí» cuando en realidad es una decisión medida y firme. Y lo que
- * de verdad falta —el canal hasta el disco— no se ve por ningún lado, así que parecería que el
- * editor está roto en vez de incompleto.
+ * It lives here because the alternative is worse: without this paragraph, an `mcp` that shows up
+ * with a lock reads as "the console does not reach there yet" when in fact it is a measured and
+ * firm decision. And what is truly missing —the channel to the disk— is not visible anywhere,
+ * so the editor would look broken instead of incomplete.
  */
 function HuecoDeclarado() {
   return (

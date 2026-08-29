@@ -1,33 +1,33 @@
 /**
- * Lo que el servidor publica del cuerpo de un mensaje (`left(body,240)`).
+ * What the server publishes of a message body (`left(body,240)`).
  *
- * Define la longitud máxima de previsualización y cómo se detecta si un texto viene cortado,
- * permitiendo validar la constante contra la consulta SQL en pruebas unitarias.
+ * Defines the maximum preview length and how a truncated text is detected, so the constant can
+ * be validated against the SQL query in unit tests.
  */
 
-/** El `left(COALESCE(m.body->>'text',...),240)` de `CauceRepository.listMessages`. */
+/** The `left(COALESCE(m.body->>'text',...),240)` of `CauceRepository.listMessages`. */
 export const CARACTERES_DE_PREVISUALIZACION = 240;
 
 /**
- * ¿Este `body_preview` viene cortado por el servidor?
+ * Is this `body_preview` truncated by the server?
  *
- * Se responde por el LARGO, que es la única señal que el endpoint da: no hay bandera, no hay
- * `body_chars`, y `left()` no deja marca. Un cuerpo de exactamente 240 caracteres se marca como
- * recortado sin serlo, y eso es deliberado: el error caro es el otro —presentar como completo lo
- * que no lo está—, y el texto que se pinta dice «puede estar recortado», no «está recortado».
+ * Answered by LENGTH, the only signal the endpoint gives: there is no flag, no `body_chars`,
+ * and `left()` leaves no mark. A body of exactly 240 characters is marked as truncated without
+ * being so — deliberate: the costly error is the other one (presenting as complete what is
+ * not), and the rendered text says "may be truncated", not "is truncated".
  */
 export function previsualizacionRecortada(preview: string | null | undefined): boolean {
   return typeof preview === 'string' && preview.length >= CARACTERES_DE_PREVISUALIZACION;
 }
 
 /**
- * El cuerpo entero, sacado de lo que devuelve `GET /v3/console/messages/:messageId`.
+ * The full body, taken from what `GET /v3/console/messages/:messageId` returns.
  *
- * `messages.body` es `jsonb` y lo que hay dentro depende de quién publicó: los adaptadores usan
- * `text`, los encargos usan `prompt`, y hay filas con otra forma. Se prueban las dos claves
- * conocidas y, si no está ninguna, se devuelve el JSON tal cual en vez de un vacío: un cuerpo con
- * una forma que la consola no conoce sigue siendo el cuerpo, y esconderlo sería el mismo defecto
- * en versión nueva.
+ * `messages.body` is `jsonb` and what is inside depends on who published: adapters use `text`,
+ * jobs use `prompt`, and some rows have another shape. Both known keys are tried and, if neither
+ * is present, the JSON is returned as-is rather than as an empty string: a body whose shape
+ * the console does not know is still the body, and hiding it would be the same defect in a new
+ * version.
  */
 export function textoDelCuerpo(body: unknown): string | undefined {
   if (typeof body === 'string') return body;

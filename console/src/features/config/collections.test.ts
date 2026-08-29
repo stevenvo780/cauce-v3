@@ -11,8 +11,8 @@ it('publica las colecciones que el snapshot trae, no una lista fija de seis', ()
     revisions: [{ id: '7' }],
   });
 
-  // `revision`, `observed_at` y el audit trail no son colecciones de configuración: tienen su
-  // propio panel y no deben aparecer como tarjetas de datos efectivos.
+  // `revision`, `observed_at` and the audit trail are not configuration collections: they have
+  // their own panel and must not appear as cards of effective data.
   expect(collections.map((collection) => collection.key)).toEqual([
     'tenants', 'rooms', 'memberships', 'acl_edges', 'harness_definitions', 'role_policies',
     'chain_policies', 'egress_destinations', 'agents', 'provider_accounts',
@@ -29,9 +29,9 @@ it('distingue una clave ausente de una lista vacía', () => {
   const collections = configCollections({ revision: 1, tenants: [], rooms: [{ id: 'grp.steven' }] });
   const byKey = new Map(collections.map((collection) => [collection.key, collection]));
 
-  // Cero filas conocidas.
+  // Zero known rows.
   expect(byKey.get('tenants')?.rows).toEqual([]);
-  // El gateway no publicó la clave: dato no disponible, que no es lo mismo que cero filas.
+  // The gateway did not publish the key: data unavailable, which is not the same as zero rows.
   expect(byKey.get('chain_policies')?.rows).toBeUndefined();
   expect(byKey.get('agents')?.rows).toBeUndefined();
 });
@@ -43,7 +43,7 @@ it('muestra una colección que el servidor agregue sin que la consola la conozca
 
   const extra = collections.find((collection) => collection.key === 'future_widgets');
   expect(extra).toMatchObject({ title: 'future_widgets', rows: [{ id: 'nuevo' }] });
-  // Las claves nuevas van al final, después de las conocidas y en el orden del servidor.
+  // New keys go at the end, after the known ones and in the server's order.
   expect(collections[collections.length - 1]?.key).toBe('future_widgets');
 });
 

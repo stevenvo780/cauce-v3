@@ -12,8 +12,8 @@ export const agentFaninInstruction =
 const aliasPattern = /^[a-z][a-z0-9_-]{0,63}$/u;
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 export const maxProgressSummaryBytes = 1_024;
-/** agentResponseText ya recorta el diagnóstico a 2 000 caracteres; esto acota la reescritura
- *  agregada, que se le suma encima, para que un cubo muy vivo no engorde el cuerpo sin techo. */
+/** agentResponseText already clips the diagnostic to 2 000 chars; this caps the aggregate rewrite,
+ *  which is added on top, so a very busy bucket cannot bloat the body without a ceiling. */
 export const maxAgentResponseTextBytes = 4 * 1_024;
 export const progressRelayCappedText =
   'La cadena sigue en curso; dejo de enviar avances y aviso cuando termine.';
@@ -41,11 +41,11 @@ export function opaqueNodeId(deliveryId: string): string {
 }
 
 /**
- * `kind` separa el espacio de nombres del aviso tardío del normal. Hace falta porque
- * `messages_request_actor_idx` es UNIQUE(tenant_id, actor_alias, request_id) y la clave de
- * idempotencia del outbox del aviso al padre también se deriva de acá: un rescate del MISMO
- * intento que el reaper ya avisó chocaría con la fila vieja y abortaría la transacción entera
- * del ACK. El valor por defecto reproduce el hash anterior byte por byte.
+ * `kind` separates the namespace of the late notice from the normal one. It is needed because
+ * `messages_request_actor_idx` is UNIQUE(tenant_id, actor_alias, request_id) and the idempotency
+ * key of the parent's outbox notice is also derived from here: a rescue of the SAME attempt that
+ * the reaper already announced would clash with the old row and abort the whole ACK transaction.
+ * The default value reproduces the previous hash byte for byte.
  */
 export function agentResponseRequestId(
   deliveryId: string,
@@ -135,12 +135,12 @@ export interface FailureNoticeReservation {
   noticeId: string;
   emit: boolean;
   totalFailures: number;
-  /** Cuántos de esos fracasos nunca produjeron una entrega propia. */
+  /** How many of those failures never produced their own delivery. */
   coalescedFailures: number;
   windowStartedAt: string;
   lastNoticeMessageId: string | null;
   lastNoticeDeliveryId: string | null;
-  /** Texto del aviso en pie sin la cláusula agregada; la base para reescribirlo. */
+  /** Text of the standing notice without the aggregated clause; the base to rewrite it. */
   lastNoticeBaseText: string | null;
   signature: string;
 }

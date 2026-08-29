@@ -1,7 +1,7 @@
 import type { ConfigCollection } from './collections';
 
 /**
- * Organización y agrupamiento de colecciones de configuración en pestañas.
+ * Organization and grouping of configuration collections into tabs.
  */
 
 export type ConfigAreaId =
@@ -9,23 +9,23 @@ export type ConfigAreaId =
 
 export interface ConfigArea {
   id: ConfigAreaId;
-  /** Lo que se lee en la pestaña. Lenguaje de negocio, no nombre de tabla. */
+  /** What is read on the tab. Business language, not a table name. */
   label: string;
-  /** Frase de ~90 caracteres visible bajo la pestaña activa. */
+  /** Sentence of ~90 characters visible under the active tab. */
   descripcion: string;
   /**
-   * El resto, plegado en un `<details>` CERRADO. Plegado y no borrado: acá está lo que explica
-   * por qué la pestaña importa —de dónde saca el enrutado la flota, que todo empieza denegado—, y
-   * eso es la diferencia entre entender la pantalla y no entenderla. Lo que no hace falta es
-   * releerlo en cada visita.
+   * The rest, folded into a CLOSED `<details>`. Folded, not deleted: here is what explains why
+   * the tab matters —where the fleet's routing comes from, that everything starts denied—, and
+   * that is the difference between understanding the screen and not understanding it. What
+   * isn't needed is re-reading it on every visit.
    */
   detalle: string;
 }
 
 /**
- * El orden de las pestañas es el orden en que se monta una flota: primero el espacio (quién existe
- * y dónde habla), después quién puede hablarle a quién, después qué hace cada bot, y al final el
- * historial para deshacer. No es alfabético a propósito.
+ * The order of the tabs is the order in which a fleet is set up: first the space (who exists
+ * and where it speaks), then who can speak to whom, then what each bot does, and finally the
+ * history to undo. It's not alphabetical on purpose.
  */
 export const CONFIG_AREAS: readonly ConfigArea[] = [
   {
@@ -89,12 +89,12 @@ const AREA_POR_COLECCION: Record<string, ConfigAreaId> = {
   egress_destinations: 'avisos',
 };
 
-/** La pestaña que se abre al entrar. La primera pregunta de un operador es «quién hay». */
+/** The tab that opens on entry. An operator's first question is "who's there". */
 export const AREA_POR_DEFECTO: ConfigAreaId = 'espacios';
 
 export function areaDeColeccion(key: string): ConfigAreaId {
-  // `Object.hasOwn` y no `?.`: una colección del servidor llamada `toString` heredaría un valor del
-  // prototipo y acabaría clasificada en una pestaña que no existe.
+  // `Object.hasOwn` and not `?.`: a server collection named `toString` would inherit a value from
+  // the prototype and end up classified into a tab that doesn't exist.
   return Object.hasOwn(AREA_POR_COLECCION, key) ? AREA_POR_COLECCION[key] : 'otros';
 }
 
@@ -104,12 +104,12 @@ export interface AreaConColecciones {
 }
 
 /**
- * Las pestañas a pintar, en orden, con lo que va dentro de cada una.
+ * The tabs to render, in order, with what goes inside each one.
  *
- * «Historial» sale siempre aunque no tenga colecciones asignadas: su contenido no es una tabla
- * del snapshot. «Otros» sale SÓLO si el servidor publicó algo que no sabemos clasificar —
- * una pestaña vacía y permanente enseña a ignorarla, y el día que aparezca una colección nueva
- * nadie la va a mirar.
+ * "Historial" is always shown even when it has no collections assigned: its content is not a
+ * table from the snapshot. "Otros" is shown ONLY if the server published something we don't
+ * know how to classify — an empty permanent tab teaches you to ignore it, and the day a new
+ * collection shows up nobody will look at it.
  */
 export function agruparPorArea(colecciones: readonly ConfigCollection[]): AreaConColecciones[] {
   const porArea = new Map<ConfigAreaId, ConfigCollection[]>();

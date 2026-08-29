@@ -81,7 +81,7 @@ after(async () => {
 });
 
 /* --------------------------------------------------------------------------- *
- * Lo que Miguel pidió
+ * What Miguel asked for
  * --------------------------------------------------------------------------- */
 
 test("un PNG en file:// sale como data: y los bytes decodificados son idénticos al original", async () => {
@@ -145,7 +145,7 @@ test("una extensión desconocida cae en application/octet-stream, y el media_typ
 });
 
 /* --------------------------------------------------------------------------- *
- * Los topes
+ * The caps
  * --------------------------------------------------------------------------- */
 
 test("un fichero de 11 MB no se convierte y la respuesta sale igual, con el artifact intacto", async () => {
@@ -222,13 +222,13 @@ test("un data: que ya venía hecho no se toca, y gasta cupo igual que una subida
   const output = await inlineLocalArtifacts(entrada);
 
   assert.deepEqual(output.artifacts.slice(0, 4), entrada.artifacts.slice(0, 4));
-  // El quinto no se convierte: el puente sólo sube 4 por respuesta y convertirlo sería trabajo
-  // tirado que además engorda el ACK.
+  // The fifth is not converted: the bridge only uploads 4 per response and converting it would be
+  // wasted work that also bloats the ACK.
   assert.equal(output.artifacts[4]?.uri, path);
 });
 
 /* --------------------------------------------------------------------------- *
- * Lo que NO se toca y lo que NO se lee
+ * What is NOT touched and what is NOT read
  * --------------------------------------------------------------------------- */
 
 test("un https:// no se toca: descargarlo es problema del puente, y el puente no lo hace a propósito", async () => {
@@ -293,7 +293,7 @@ test("un FIFO no se convierte y, sobre todo, no deja el turno colgado", async ()
   try {
     execFileSync("mkfifo", [fifo]);
   } catch {
-    return; // Sin mkfifo en este entorno no hay nada que probar.
+    return; // Without mkfifo in this environment there is nothing to test.
   }
   const entrada = envelope([{ name: "tuberia", uri: fifo }]);
   const output = await Promise.race([
@@ -342,7 +342,7 @@ test("un sha256 declarado que SÍ coincide se convierte, y uno ausente se calcul
 });
 
 /* --------------------------------------------------------------------------- *
- * CONTROL NEGATIVO: el mismo PNG, las dos ramas, medido en el ACK
+ * NEGATIVE CONTROL: the same PNG, both branches, measured in the ACK
  * --------------------------------------------------------------------------- */
 
 class StdoutRunner implements CommandRunner {
@@ -395,10 +395,10 @@ function delivery(id: string): Delivery {
 }
 
 /**
- * Dos ramas sobre el MISMO sobre y el MISMO PNG:
- *   - vieja: lo que el parser deja, que es literalmente lo que el motor publicaba antes de este
- *     cambio (`emit("done", …, { output })` con ese mismo objeto). Llega `file://` al ACK.
- *   - nueva: el sobre atravesando el motor entero. Llega `data:image/png;base64,…`.
+ * Two branches over the SAME envelope and the SAME PNG:
+ *   - old: what the parser leaves, which is literally what the engine published before this
+ *     change (`emit("done", …, { output })` with that same object). `file://` reaches the ACK.
+ *   - new: the envelope going through the whole engine. `data:image/png;base64,…` reaches it.
  */
 test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora llega como data:", async () => {
   const path = await fileWith("hoja-ruta-ack.png", PNG_BYTES);
@@ -411,13 +411,13 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
     artifacts: [{ name: "hoja_ruta_domiciliario.png", uri, media_type: "image/png" }],
   });
 
-  // RAMA VIEJA.
+  // OLD BRANCH.
   const antes = fakeDefinition.parse(stdout).output;
   assert.equal(antes.artifacts[0]?.uri, uri);
   assert.match(antes.artifacts[0]?.uri ?? "", /^file:\/\//u);
   assert.equal(antes.artifacts[0]?.uri.startsWith("data:"), false);
 
-  // RAMA NUEVA.
+  // NEW BRANCH.
   const state = resolve(".test-state", "artifact-inliner-ack");
   await rm(state, { recursive: true, force: true });
   const store = await DurableStore.open(state);
@@ -441,7 +441,7 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
   assert.deepEqual(decodeDataUri(enviado.uri), PNG_BYTES);
   assert.equal(enviado.name, "hoja_ruta_domiciliario.png");
   assert.equal(enviado.media_type, "image/png");
-  // Y el trabajo —la respuesta— sale igual.
+  // And the work —the reply— goes out just the same.
   assert.equal(done.output?.reply, "acá va la hoja de ruta");
   assert.equal(store.getDelivery("miguel-1")?.state, "done");
 });

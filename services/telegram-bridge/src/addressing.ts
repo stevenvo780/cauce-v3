@@ -154,8 +154,8 @@ function scanEntities(
   scan: MentionScan
 ): void {
   if (typeof text !== 'string' || !Array.isArray(entities)) return;
-  // Array.isArray degrada un `readonly T[]` a `any[]`, así que se reafirma el tipo declarado.
-  // El contenido sigue siendo dato de red no confiable y cada campo se valida abajo igual.
+  // Array.isArray degrades a `readonly T[]` to `any[]`, so the declared type is reasserted.
+  // The content is still untrusted network data and every field is validated below anyway.
   for (const entity of entities as readonly TelegramEntity[]) {
     if (scan.scanned >= MAX_SCANNED_ENTITIES || scan.inspected >= MAX_INSPECTED_ENTITIES) return;
     const rawEntity = entity as unknown;

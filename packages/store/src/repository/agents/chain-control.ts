@@ -14,13 +14,13 @@ export type { AgentOutputRejectionCode } from './chain-control/policy.js';
 
 export abstract class AgentChainControlRepository extends AgentChainMaterializationRepository {
   /**
-   * La LISTA VISIBLE de preguntas pendientes a una persona.
+   * The VISIBLE list of pending questions to a person.
    *
-   * Es la contrapartida del gate: desacoplar la espera humana del bus para exponer
-   * un listado consultable y gestionable por operadores o agentes autorizados.
+   * It is the counterpart of the gate: decoupling the human wait from the bus so a queryable,
+   * manageable listing is available to operators or authorized agents.
    *
-   * Devuelve los abiertos primero y luego los resueltos recientes, para que la lista sirva
-   * también como acuse de "esto ya se contestó".
+   * Open entries come first, then recently resolved ones, so the list also serves as an
+   * acknowledgment of "this was already answered".
    */
   async listChainGates(
     actorTenant: Tenant,
@@ -59,14 +59,14 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
   }
 
   /**
-   * El humano contesta y la cadena se reanuda.
+   * The human answers and the chain resumes.
    *
-   * Emite EXACTAMENTE UNA entrega, hacia el agente que preguntó, con la correlación de la rama
-   * suspendida restaurada: misma raíz, mismo trace, mismo presupuesto de saltos y mismo camino
-   * visitado. Por eso reanudar no arranca una cadena nueva ni recupera combustible ya gastado.
+   * Emits EXACTLY ONE delivery, toward the agent that asked, with the suspended branch's
+   * correlation restored: same root, same trace, same hop budget, and same visited path. That is
+   * why resuming does not start a new chain, nor recover fuel already spent.
    *
-   * `FOR UPDATE` sobre la fila del gate es el otro lado del `FOR SHARE` que toma
-   * `materializeAgentOutputs`: contestar y delegar sobre la misma raíz no se pueden cruzar.
+   * `FOR UPDATE` on the gate row is the other side of the `FOR SHARE` taken by
+   * `materializeAgentOutputs`: answering and delegating on the same root cannot cross each other.
    */
   async answerChainGate(
     gateId: string,
@@ -120,9 +120,9 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
         throw new StoreError('invalid_actor', 'the agent that opened the gate has no routable room');
       }
       const gateCorrelation = objectRecord(row.correlation) ?? {};
-      // Se resta un salto a propósito. La correlación guardada es la que habría llevado el HIJO
-      // de esta rama; la reanudación no baja un nivel, vuelve al MISMO agente. Sin la resta,
-      // cada gate le comería un salto al presupuesto de la cadena.
+      // One hop is subtracted on purpose. The stored correlation is what the CHILD of this branch
+      // would have carried; resuming does not step down a level, it returns to the SAME agent.
+      // Without the subtraction, each gate would burn one hop from the chain budget.
       const storedHop = typeof gateCorrelation.hop_count === 'number'
         && Number.isSafeInteger(gateCorrelation.hop_count)
         ? gateCorrelation.hop_count
@@ -210,8 +210,8 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
   }
 
   /**
-   * Cierra un gate sin reanudar nada. Es la válvula para una pregunta que ya no tiene sentido:
-   * sin esto, un gate mal abierto dejaría su raíz suspendida para siempre.
+   * Closes a gate without resuming anything. It is the release valve for a question that no
+   * longer makes sense: without it, a poorly opened gate would leave its root suspended forever.
    */
   async cancelChainGate(
     gateId: string,

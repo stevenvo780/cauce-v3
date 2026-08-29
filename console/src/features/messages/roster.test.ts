@@ -4,7 +4,7 @@ import { aliasDeLosMensajes, construirRosterDeMensajeria, fueraDeLaTopologia, mo
 
 const enElFuturo = new Date(Date.now() + 60_000).toISOString();
 
-/** Topología mínima: UNA sala con UN miembro. `gaia` no está por ningún lado. */
+/** Minimal topology: ONE room with ONE member. `gaia` is not anywhere. */
 function topologiaConSoloArgos(): TopologySnapshot {
   return {
     tenants: [{
@@ -18,7 +18,7 @@ function presenciaDeArgos(): SystemStatus {
   return { presence: [{ tenant_id: 'Steven', alias: 'argos', epoch: 3, lease_expires_at: enElFuturo }] };
 }
 
-/** Un mensaje del operador `kant` con UNA entrega para `Steven:gaia`. */
+/** A message from operator `kant` with ONE delivery for `Steven:gaia`. */
 function mensajeParaGaia(): MessagePage {
   return {
     items: [{

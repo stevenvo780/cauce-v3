@@ -3,10 +3,10 @@ import type { EntradaPortada } from './landing';
 import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
 
 /**
- * Una flota sana, leída entera. Es el CONTROL NEGATIVO de todo este fichero: si `resumenPortada`
- * devolviera alertas acá, cada prueba positiva de abajo sería indistinguible de un detector que
- * dispara siempre, y la portada estaría gritando en falso — que es peor que no avisar, porque tapa
- * el fallo real.
+ * A healthy fleet, read end to end. This is the NEGATIVE CONTROL of this whole file: if
+ * `resumenPortada` returned alerts here, every positive test below would be indistinguishable
+ * from a detector that always fires, and the landing would be crying wolf — which is worse than
+ * not warning at all, because it hides the real failure.
  */
 function flotaSana(): EntradaPortada {
   return {
@@ -105,7 +105,7 @@ describe('cada regla dispara sobre su propio campo', () => {
     expect(agotada?.detalle).toContain('codex');
     expect(aviso?.tono).toBe('warning');
     expect(aviso?.detalle).toContain('claude');
-    // El proveedor sano no aparece en ninguna de las dos.
+    // The healthy provider does not appear in either.
     expect(agotada?.detalle).not.toContain('gemini');
     expect(aviso?.detalle).not.toContain('gemini');
   });
@@ -138,7 +138,7 @@ describe('lo que no se leyó no se afirma', () => {
     const entrada = flotaSana();
     entrada.quotas = undefined;
     const resumen = resumenPortada(entrada);
-    // El punto entero: cero alertas y AUN ASÍ prohibido tranquilizar.
+    // The whole point: zero alerts and STILL forbidden to reassure.
     expect(resumen.alertas).toEqual([]);
     expect(resumen.fuentesAusentes).toEqual(['Consumo de cuotas']);
     expect(puedeDecirSinIncidencias(resumen)).toBe(false);
@@ -179,13 +179,13 @@ describe('agruparAlertas — una fila por vista, no una por hallazgo', () => {
     });
     const grupos = agruparAlertas(resumen.alertas);
 
-    // Siete hallazgos, TRES destinos: /queues, /live y /accounts.
+    // Seven findings, THREE destinations: /queues, /live and /accounts.
     expect(resumen.alertas.length).toBe(7);
     expect(grupos.map((grupo) => grupo.ruta)).toEqual(['/queues', '/live', '/accounts']);
-    // Ni uno se pierde por el camino.
+    // Not one is lost on the way.
     expect(grupos.flatMap((grupo) => grupo.alertas).map((alerta) => alerta.id).sort())
       .toEqual(resumen.alertas.map((alerta) => alerta.id).sort());
-    // Y el grupo hereda el PEOR tono de los suyos: un `warning` no puede tapar un `danger`.
+    // And the group inherits the WORST tone of its members: a `warning` cannot hide a `danger`.
     expect(grupos.find((grupo) => grupo.ruta === '/accounts')?.tono).toBe('danger');
   });
 
@@ -218,7 +218,7 @@ describe('ninguna alerta imprime la ruta del endpoint en su texto visible', () =
     for (const alerta of resumen.alertas) {
       expect(alerta.titulo, `${alerta.id}.titulo`).not.toMatch(/GET \/v3\//);
       expect(alerta.detalle, `${alerta.id}.detalle`).not.toMatch(/GET \/v3\//);
-      // Pero la fuente NO se pierde: sigue habiendo con qué contrastar el número.
+      // But the source is NOT lost: there is still something to cross-check the number against.
       expect(alerta.fuente, `${alerta.id}.fuente`).toMatch(/^GET \/v3\/console\//);
     }
   });

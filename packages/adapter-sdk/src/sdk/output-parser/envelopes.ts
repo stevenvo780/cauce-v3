@@ -79,7 +79,7 @@ export function nativeFailureDetail(value: JsonObject): string | undefined {
   return undefined;
 }
 
-/** Claude Code: `is_error` y los `subtype` de la familia `error*` del evento `result`. */
+/** Claude Code: `is_error` and the `subtype` values of the `error*` family of the `result` event. */
 export function claudeFailureDetail(value: JsonObject): string | undefined {
   const subtype = typeof value.subtype === "string" ? value.subtype : undefined;
   const failedSubtype = subtype !== undefined && (subtype === "error" || subtype.startsWith("error_"));
@@ -91,7 +91,7 @@ export function claudeFailureDetail(value: JsonObject): string | undefined {
   return nativeFailureDetail(value);
 }
 
-/** Codex `exec --json`: `turn.failed`, `error` y los ítems de tipo `error`. */
+/** Codex `exec --json`: `turn.failed`, `error` and the items of type `error`. */
 export function codexEventFailureDetail(event: JsonObject): string | undefined {
   if (event.type === "turn.failed") {
     return failureText(event.error) ?? failureText(event.message) ?? "turn.failed";

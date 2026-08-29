@@ -10,7 +10,7 @@ import { NO_APLICA, compactId, safeOriginRelayState } from '../../lib';
 import { AuditPanel } from '../audit/AuditPanel';
 import { onNavClick } from '../../router';
 
-/** Los estados durables del egress, en castellano. `sent` se decide aparte: exige `sent_at`. */
+/** The durable egress states, in Spanish. `sent` is decided separately: it requires `sent_at`. */
 const ESTADO_RELAY: Readonly<Record<string, string>> = {
   pending: 'EN ESPERA',
   processing: 'EN CURSO',
@@ -25,7 +25,7 @@ const TABS = [
 ];
 
 /**
- * Vista unificada de señales de observabilidad, relays al origen y auditoría de eventos.
+ * Unified view of observability signals, origin relays and event audit.
  */
 export function ObservabilityPage() {
   const api = useApi();
@@ -109,8 +109,8 @@ export function ObservabilityPage() {
                           ? <small className="subline">mensaje <span className="mono">{compactId(item.message_id)}</span></small>
                           : null}
                       </td>
-                      {/* `sent` sin `sent_at` NO es una ausencia de dato: es una contradicción del servidor, y
-                          decirle «sin dato» la escondería. Se nombra lo que pasa. */}
+                      {/* `sent` without `sent_at` is NOT a missing data point: it is a server contradiction,
+                          and saying "no data" would hide it. What happens is named. */}
                       <td>
                         <Badge tone={tone}>{actuallySent ? 'ENVIADO' : state === 'sent' ? 'DICE ENVIADO, SIN HORA' : <Unknown value={ESTADO_RELAY[state ?? ''] ?? state} />}</Badge>
                       </td>

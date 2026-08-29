@@ -116,9 +116,9 @@ export function OperationalDlqPanel() {
     error?: string;
   }>();
   /**
-   * Cada primera pagina inaugura una generacion. Un `loadMore` de la anterior no puede anexar
-   * filas ni reemplazar el cursor de la nueva aunque su respuesta llegue tarde. El ref de vuelo
-   * cierra ademas la ventana entre dos clicks del mismo tick, antes de que React pinte
+   * Each first page opens a generation. A `loadMore` from the previous one cannot append rows
+   * nor replace the cursor of the new one even if its response arrives late. The in-flight ref
+   * also closes the window between two clicks of the same tick, before React paints
    * `loadingMore=true`.
    */
   const paginationGeneration = useRef(0);
@@ -128,14 +128,14 @@ export function OperationalDlqPanel() {
   firstPageRef.current = resource.data;
 
   /*
-   * La primera página ya es un snapshot completo: filas, `truncated` y cursor llegaron juntos.
-   * Antes las filas se renderizaban directamente desde `resource.data`, pero el cursor se copiaba
-   * a otro estado en un efecto. React confirmaba por eso un frame imposible: la fila ya estaba en
-   * pantalla y "Cargar más" todavía no, aunque esa misma respuesta declaraba que quedaban páginas.
+   * The first page is already a complete snapshot: rows, `truncated` and cursor arrived together.
+   * Before, rows were rendered directly from `resource.data`, but the cursor was copied to another
+   * state in an effect. React therefore committed an impossible frame: the row was already on
+   * screen and "Load more" was not yet, even though that same response declared pages remained.
    *
-   * Sólo las páginas ADICIONALES viven en estado local. Ese estado se cerca por identidad contra
-   * la primera página que amplía; una primera página nueva vuelve a ser visible completa en su
-   * primer commit y una respuesta vieja no puede mezclarse con ella.
+   * Only ADDITIONAL pages live in local state. That state is fenced by identity against the first
+   * page it extends; a new first page becomes fully visible again in its first commit and an old
+   * response cannot be mixed into it.
    */
   const currentPagination = pagination?.source === resource.data ? pagination : undefined;
   const firstPageCursor = pageCursor(resource.data?.nextCursor);
@@ -157,8 +157,8 @@ export function OperationalDlqPanel() {
   }, []);
 
   const reloadFirstPage = useCallback(async () => {
-    // Se invalida al INICIAR el refresh. Esperar a que llegue la nueva primera pagina dejaria una
-    // ventana en la que la pagina vieja aun puede ganar la carrera y contaminar la vista.
+    // Invalidated when the refresh STARTS. Waiting for the new first page to arrive would leave a
+    // window in which the old page can still win the race and contaminate the view.
     invalidatePagination();
     return resource.reload();
   }, [invalidatePagination, resource]);

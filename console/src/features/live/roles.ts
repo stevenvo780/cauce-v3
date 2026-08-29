@@ -8,18 +8,18 @@ export interface AliasConRol {
 
 export interface RolCatalogado {
   texto: string;
-  /** Puntos de código: lo que mide `char_length` en Postgres y el CHECK de la columna. */
+  /** Code points: what `char_length` measures in Postgres and the column's CHECK. */
   puntos: number;
-  /** Unidades UTF-16: lo que mide `z.string().max()` en el adaptador que corre hoy. */
+  /** UTF-16 units: what `z.string().max()` measures in the adapter running today. */
   utf16: number;
-  /** `true` si se pasa del tope en CUALQUIERA de las dos unidades. */
+  /** `true` if it exceeds the cap in EITHER unit. */
   pasado: boolean;
   portadores: AliasConRol[];
 }
 
 export interface CatalogoDeRoles {
   roles: RolCatalogado[];
-  /** Alias registrados sin rol declarado. `null` y `''` son lo mismo acá: no hay preámbulo. */
+  /** Registered aliases with no declared role. `null` and `''` are the same here: no preamble. */
   sinRol: AliasConRol[];
   todos: AliasConRol[];
 }
@@ -38,8 +38,8 @@ export function claveDeAlias(entrada: AliasConRol): string {
 }
 
 /**
- * Agrupa el registro por rol declarado, RECORTANDO el texto antes: el store recorta y recién
- * después guarda, así que dos briefs que sólo difieren en un salto de línea final son el mismo rol.
+ * Groups the registry by declared role, TRIMMING the text first: the store trims and only
+ * then persists, so two briefs that differ only in a trailing newline are the same role.
  */
 export function catalogoDeRoles(agentes: readonly Record<string, unknown>[] | null | undefined): CatalogoDeRoles {
   if (!agentes) return { roles: [], sinRol: [], todos: [] };
@@ -64,14 +64,14 @@ export function catalogoDeRoles(agentes: readonly Record<string, unknown>[] | nu
     const utf16 = texto.length;
     return { texto, puntos, utf16, pasado: puntos > ROLE_BRIEF_MAX || utf16 > ROLE_BRIEF_MAX, portadores };
   });
-  // Los más extendidos primero; empate por texto para que el orden sea estable entre dos lecturas.
+  // Widest first; tie-break by text so the order is stable across two reads.
   roles.sort((a, b) => b.portadores.length - a.portadores.length || a.texto.localeCompare(b.texto));
   return { roles, sinRol, todos };
 }
 
 /**
- * Nombre corto para reconocer el rol en una lista, sacado de su propio texto. NO es un nombre
- * guardado —en pantalla se dice así—: buscarlo en la base no daría nada.
+ * Short name to recognize the role in a list, taken from its own text. NOT a stored name
+ * —it's only what the UI calls it—: searching for it in the database would return nothing.
  */
 export function resumenDeRol(texto: string): string {
   const primeraLinea = texto.split('\n', 1)[0]?.trim() ?? '';

@@ -24,7 +24,7 @@ describe('red de seguridad contra el volcado de la salida estructurada', () => {
     expect(unwrapStructuredEnvelope(crudo)).toBe('Confirmado el encuadre.');
   });
 
-  /* --- Lo que NO se debe tocar: publicar de más es feo, tragarse una respuesta es peor --- */
+  /* --- What must NOT be touched: publishing too much is ugly, swallowing a reply is worse --- */
 
   it('no toca un mensaje que sólo CITA un JSON y sigue hablando', () => {
     const texto = 'El adaptador devolvió {"reply":"x","status":"done"} y por eso falló el parseo. Revisalo.';

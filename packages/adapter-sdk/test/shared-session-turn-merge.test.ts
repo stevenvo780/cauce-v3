@@ -796,7 +796,7 @@ test("el rescate rechaza sobres sin nonce o con el nonce de otra entrega", () =>
 });
 
 test("la línea de estado de una TUI generando se distingue del texto de la conversación", () => {
-  // claude la dibuja justo ENCIMA de la caja; codex, justo debajo. Las dos cuentan.
+  // claude draws it just ABOVE the box; codex, just below. Both count.
   assert.equal(turnInFlight("✻ Herding… (esc to interrupt · ctrl+t to hide todos)\n❯ "), true);
   assert.equal(turnInFlight("› \nEsc to interrupt\n"), true);
   assert.equal(turnInFlight("❯ "), false);

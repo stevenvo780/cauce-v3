@@ -96,16 +96,16 @@ function command(): PublishMessage {
 }
 
 /*
- * P0 reproducido: un ACK cuyo claim_token+attempt siguen vigentes pero cuya identidad ya no es
- * la dueña del claim (acks.ts:~140) cerraba el socket con un 'error' sin correlación en vez de
- * responder 'ack_result'/ownership_lost como ya hace `staleTerminalReplay`. El outbox durable del
- * adaptador reenviaba el mismo ACK sin fin: rechazo -> cierre -> reconexión -> mismo ACK.
+ * P0 reproduced: an ACK whose claim_token+attempt are still valid but whose identity is no
+ * longer the owner of the claim (acks.ts:~140) used to close the socket with an uncorrelated
+ * 'error' instead of replying 'ack_result'/ownership_lost the way `staleTerminalReplay`
+ * already does. The adapter's durable outbox kept resending the same ACK forever.
  *
- * `second` nunca reclama esta entrega con `claimDeliveries`: sólo la conoce por rehidratación
- * (lectura del claim aún vivo, que no toca `consumer_epoch`). La fila sigue diciendo que la
- * época 1 es la dueña; `second`, ya autenticado en época 2, no tiene forma de saberlo. Es
- * exactamente la forma de un ACK reenviado desde el outbox: la identidad que lo firma está
- * legítimamente conectada, sólo que ya no es la dueña de registro de ESTE claim.
+ * `second` never claims this delivery with `claimDeliveries`: it only knows it via rehydration
+ * (reading the still-live claim, which does not touch `consumer_epoch`). The row still says
+ * epoch 1 is the owner; `second`, already authenticated on epoch 2, has no way to know. That is
+ * exactly the shape of an ACK replayed from the outbox: the identity signing it is legitimately
+ * connected, it just is not the registered owner of THIS claim.
  */
 it('answers a live claim with a foreign identity as a correlated ownership_lost, not a socket-closing fence', async () => {
   const repository = new CauceRepository(pool);
@@ -126,8 +126,8 @@ it('answers a live claim with a foreign identity as a correlated ownership_lost,
   expect(await first.next()).toMatchObject({ type: 'hello_ack', epoch: 1 });
   const delivery = DeliveryEnvelopeSchema.parse(await first.next());
 
-  // La conexión se cae sin soltar el lease (partición de red, no un cierre limpio). El claim de
-  // la entrega no se toca: sólo el derecho a reanudar bajo la misma época se apaga con el tiempo.
+  // The connection drops without releasing the lease (network partition, not a clean close). The
+  // delivery's claim is not touched: only the right to resume under the same epoch fades with time.
   const firstClosed = new Promise<void>((resolveClose) => first.socket.once('close', () => { resolveClose(); }));
   first.socket.terminate();
   await firstClosed;
@@ -162,8 +162,8 @@ it('answers a live claim with a foreign identity as a correlated ownership_lost,
     receipt: 'ownership_lost',
   });
 
-  // El receipt correlacionado hizo su trabajo sin un 4401: la conexión sigue tan usable como
-  // antes de mandar el ACK ajeno.
+  // The correlated receipt did its job without a 4401: the connection is still as usable as
+  // before the foreign ACK was sent.
   expect(second.socket.readyState).toBe(WebSocket.OPEN);
   const heartbeatAck = new Promise<Record<string, unknown>>((resolve) => {
     second.socket.once('message', (data) => {
@@ -173,7 +173,7 @@ it('answers a live claim with a foreign identity as a correlated ownership_lost,
   second.socket.send(JSON.stringify({ type: 'heartbeat', instance_id: 'stable-argos-runtime', epoch: 2 }));
   await expect(heartbeatAck).resolves.toMatchObject({ type: 'heartbeat_ack' });
 
-  // Nada del fencing en la base cambió: sigue 'leased', sigue siendo el claim de la época 1.
+  // Nothing of the fencing in the database changed: still 'leased', still the epoch-1 claim.
   const row = await pool.query<{
     status: string; consumer_instance_id: string; consumer_epoch: string; claim_token: string;
   }>(

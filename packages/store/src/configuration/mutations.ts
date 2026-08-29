@@ -48,10 +48,10 @@ export abstract class ConfigurationMutations {
       max_edge_repeats_per_root: number; max_delegations_per_root: number;
       human_gate_enabled: boolean;
     }>(
-      // Los cinco topes van en este SELECT o el DESHACER los borra: `oldValue` es literalmente el
-      // cuerpo de la mutación inversa, así que una columna que no se lea aquí vuelve como ausente
-      // y el `update` de deshacer la deja en su valor por defecto. Deshacer un cambio de umbral y
-      // que se muevan OTROS cuatro es peor que no tener el botón.
+      // All five ceilings go in this SELECT or ROLLBACK drops them: `oldValue` is literally the
+      // body of the inverse mutation, so a column not read here comes back absent and the
+      // rollback `update` leaves it at its default. Rolling back a threshold change and moving
+      // the OTHER four is worse than not having the button at all.
       `SELECT progress_relay_enabled,progress_relay_max_events,cycle_cut_enabled,
               failure_coalesce_enabled,failure_coalesce_window_seconds,
               delegation_caps_enabled,max_fanout_per_turn,max_edge_repeats_per_root,
@@ -455,10 +455,10 @@ export abstract class ConfigurationMutations {
       home_directory: string | null; state_directory: string | null; role_brief: string | null;
       max_concurrent_deliveries: number | null;
     }>(
-      // Va en este SELECT o el DESHACER lo borra: `oldValue` es el cuerpo de la inversa, y una
-      // columna ausente vuelve como no declarada. `NULL` aquí SIGNIFICA algo —«sin techo», la
-      // salida de emergencia de la 015—, así que perderlo al deshacer no deja el valor por
-      // defecto: le pone techo a un agente que alguien había destechado a propósito.
+      // Goes in this SELECT or ROLLBACK drops it: `oldValue` is the body of the inverse, and an
+      // absent column comes back as undeclared. `NULL` here MEANS something — "no ceiling", the
+      // emergency exit of migration 015 — so losing it on rollback does not leave the default
+      // value: it puts a ceiling on an agent someone had deliberately uncapped.
       `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,
               state_directory,role_brief,max_concurrent_deliveries
        FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
@@ -474,10 +474,10 @@ export abstract class ConfigurationMutations {
           value.enabled ?? false, value.container_name ?? null, value.runtime_user ?? null,
           value.home_directory ?? null, value.state_directory ?? null, null,
           /*
-           * `undefined` (no declarado) cae al DEFAULT 2 de la columna, que es lo que reciben hoy
-           * los quince alias vivos. `null` DECLARADO es otra cosa: significa «sin techo», la
-           * salida de emergencia de la migración 015. Distinguirlos importa — colapsarlos dejaría
-           * sin techo a todo agente que se cree sin nombrar el campo.
+           * `undefined` (undeclared) falls back to the column DEFAULT 2, which is what the fifteen
+           * live aliases receive today. A DECLARED `null` is something else: it means "no ceiling",
+           * the emergency exit of migration 015. Distinguishing them matters — collapsing them
+           * would leave uncapped every agent created without naming the field.
            */
           has(value, 'max_concurrent_deliveries')
             ? value.max_concurrent_deliveries as number | null

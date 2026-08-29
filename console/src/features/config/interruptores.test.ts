@@ -18,8 +18,8 @@ it('arma la mutación de un permiso con SÓLO el campo que cambia y la direcció
     resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Miguel',
     value: { allow_route: false },
   });
-  // El store hace merge campo por campo: mandar sólo `allow_route` no pisa el `allow_read` que
-  // otro operador acaba de cambiar en la misma arista.
+  // The store merges field by field: sending only `allow_route` does not clobber the `allow_read`
+  // another operator just changed on the same edge.
   expect(Object.keys(interruptor?.mutation.value as object)).toEqual(['allow_route']);
 });
 
@@ -31,8 +31,8 @@ it('el apagado propone encender, y al revés', () => {
 });
 
 it('el aria-label nombra la FILA y el permiso, no sólo el permiso', () => {
-  // Veinticuatro controles que sólo dicen «Ruta» son veinticuatro controles indistinguibles para
-  // quien no ve la tabla.
+  // Twenty-four controls that only say "Route" are twenty-four indistinguishable controls to
+  // anyone not looking at the table.
   expect(interruptorDeFila('acl_edges', arista, 'allow_route', 0)?.aria)
     .toBe('Ruta en la arista Steven → Miguel');
   expect(interruptorDeFila('memberships', membresia, 'enabled', 0)?.aria)
@@ -40,8 +40,8 @@ it('el aria-label nombra la FILA y el permiso, no sólo el permiso', () => {
 });
 
 it('no ofrece interruptor cuando el valor no es booleano', () => {
-  // No se puede escribir «el contrario» de un valor que no se conoce: antes que apagar algo por
-  // suponer que estaba encendido, la celda se queda como dato de sólo lectura.
+  // You cannot write "the opposite" of a value you do not know: instead of turning something off
+  // by assuming it was on, the cell stays as read-only data.
   expect(interruptorDeFila('acl_edges', { ...arista, allow_read: null }, 'allow_read', 0)).toBeUndefined();
   expect(interruptorDeFila('tenants', { id: 'Isa', enabled: 'sí' }, 'enabled', 0)).toBeUndefined();
 });
@@ -52,8 +52,8 @@ it('no ofrece interruptor cuando la fila no trae la identidad que la mutación n
 });
 
 it('no conmuta lo que no está declarado conmutable, aunque sea booleano', () => {
-  // `is_hub` es booleano y el esquema lo acepta, pero mover el hub de una flota no es una
-  // operación de un clic al lado de «Habilitado».
+  // `is_hub` is boolean and the schema accepts it, but moving the hub of a fleet is not a
+  // one-click operation next to "Enabled".
   expect(esCampoConmutable('tenants', 'is_hub')).toBe(false);
   expect(interruptorDeFila('tenants', { id: 'Steven', is_hub: true, enabled: true }, 'is_hub', 0))
     .toBeUndefined();
@@ -62,8 +62,8 @@ it('no conmuta lo que no está declarado conmutable, aunque sea booleano', () =>
 });
 
 it('la ÚNICA confirmación que queda es quitar Control; concederlo no confirma nada', () => {
-  // Confirmar veinte veces seguidas no protege: enseña a apretar «Confirmar» sin leer, y el día
-  // que aparece el que importa ya nadie lo lee.
+  // Confirming twenty times in a row does not protect: it teaches people to mash "Confirm" without
+  // reading, and the day the one that matters shows up nobody reads it anymore.
   const quitar = interruptorDeFila('acl_edges', { ...arista, allow_control: true }, 'allow_control', 0);
   expect(quitar?.confirmar).toMatch(/no vas a poder devolvértelo desde acá/i);
 
@@ -77,7 +77,7 @@ it('cada permiso explica en castellano qué concede: la cabecera ya no es el nom
   expect(explicacionDeCampo('acl_edges', 'allow_control')).toMatch(/ESCRIBA sobre el de la derecha/);
   expect(explicacionDeCampo('acl_edges', 'allow_route')).toMatch(/MANDE mensajes/);
   expect(explicacionDeCampo('memberships', 'enabled')).toMatch(/no recibe/);
-  // Un campo que esta consola no sabe explicar no inventa una explicación.
+  // A field this console does not know how to explain does not invent an explanation.
   expect(explicacionDeCampo('acl_edges', 'created_at')).toBeUndefined();
   expect(explicacionDeCampo('provider_accounts', 'enabled')).toBeUndefined();
 });

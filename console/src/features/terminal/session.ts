@@ -8,9 +8,9 @@ export interface OperatorSession {
   sourceRoomId: string;
   openedAt: string;
   mode: 'transcript' | 'pty';
-  /** Canal PTY pedido para esta pestaña: `harness` es la TUI viva, `shell` es una shell nueva. */
+  /** PTY channel requested for this tab: `harness` is the live TUI, `shell` is a fresh shell. */
   channelMode?: string;
-  /** La apertura automática de la TUI se intenta UNA vez por pestaña; un 403 no se reintenta en bucle. */
+  /** TUI auto-open is attempted ONCE per tab; a 403 is not retried in a loop. */
   liveTuiAttempted?: boolean;
 }
 
@@ -154,12 +154,12 @@ export const PTY_REASON_MIN_LENGTH = 8;
 export const PTY_REASON_MAX_LENGTH = 280;
 
 /**
- * Motivo de una observación de TUI en solo lectura.
+ * Justification for a read-only TUI observation.
  *
- * Mirar la pantalla que el agente ya está pintando no es lo mismo que abrirle una shell: no se
- * le pide al operador que escriba una justificación a mano para mirar. Pero la fila de auditoría
- * NO queda vacía ni mentida: dice exactamente qué se abrió, sobre quién, y que fue automático.
- * Una shell (`shell`) sigue exigiendo motivo escrito a mano, porque escribe.
+ * Watching the screen an agent is already drawing is not the same as opening a shell: the
+ * operator is not asked to handwrite a justification just to look. But the audit row does NOT
+ * stay empty or lied-about: it states exactly what was opened, on whom, and that it was
+ * automatic. A shell (`shell`) still requires a handwritten justification, because it writes.
  */
 export function liveTuiReason(alias: string): string {
   return `Observacion automatica de la TUI en vivo de ${alias} (solo lectura) desde Ultimate Terminal.`;
@@ -191,5 +191,5 @@ export function formatCountdown(seconds: number | undefined): string {
   return `${String(minutes)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-// La traducción de denegaciones PTY se centraliza en denegaciones.ts.
+// PTY denial translations live centrally in denegaciones.ts.
 

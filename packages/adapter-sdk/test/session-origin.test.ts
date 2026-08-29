@@ -13,15 +13,15 @@ import type {
 } from "../src/sdk/types.js";
 
 /**
- * De qué conversación salió cada sesión, escrito al lado del `native_id`.
+ * Which conversation each session came from, written next to the `native_id`.
  *
- * El defecto que arregla: la clave de sesión es un sha256, o sea irreversible, y el valor
- * guardaba sólo `{native_id, initialized}`. Un alias openclaw con 14 conversaciones las mostraba
- * todas iguales —"sin origen"— y `cauce <alias>` abría una cualquiera mientras el cartel
- * afirmaba que era la misma que el bus. Esa afirmación no se podía comprobar; ahora sí.
+ * The bug it fixes: the session key is a sha256 — that is, irreversible — and the value only
+ * stored `{native_id, initialized}`. An openclaw alias with 14 conversations showed them all
+ * as identical —"no origin"— and `cauce <alias>` opened any of them while the label claimed it
+ * was the same one as the bus. That claim could not be verified; now it can.
  *
- * Estas pruebas van por el camino REAL (`AdapterEngine.handleDelivery` → `HarnessAdapter` →
- * `DurableStore`), no llamando a la función privada: lo que se fija es lo que termina en disco.
+ * These tests go through the REAL path (`AdapterEngine.handleDelivery` → `HarnessAdapter` →
+ * `DurableStore`), not by calling the private function: what is pinned is what ends up on disk.
  */
 
 const root = resolve(".test-state");
@@ -68,7 +68,7 @@ function base(id: string): Omit<Delivery, "origin" | "authenticated_context"> {
   };
 }
 
-/** Lo que manda el puente de Telegram: DM privado del dueño. */
+/** What the Telegram bridge sends: a private DM of the owner. */
 function telegramDelivery(id: string): Delivery {
   const origin = () => ({
     adapter: "telegram",
@@ -85,7 +85,7 @@ function telegramDelivery(id: string): Delivery {
   };
 }
 
-/** Publicación de consola por mTLS: sin ruta de retorno, la conversación es el actor. */
+/** Console publish by mTLS: with no return path, the conversation is the actor. */
 function consoleDelivery(id: string): Delivery {
   return {
     ...base(id),
@@ -93,7 +93,7 @@ function consoleDelivery(id: string): Delivery {
   };
 }
 
-/** Una entrega sin canal: no hay conversación que nombrar, y no se inventa ninguna. */
+/** A delivery with no channel: there is no conversation to name, and none is invented. */
 function sinCanalDelivery(id: string): Delivery {
   return { ...base(id) };
 }

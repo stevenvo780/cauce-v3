@@ -67,7 +67,7 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
   expect(entries[0]).toHaveTextContent('"id":"Beta"');
   expect(entries[1]).toHaveTextContent(/^en cola/);
   expect(entries[2]).toHaveTextContent(/^en cola/);
-  // El harness no depende del tenant: su mutación sigue siendo la que el servidor aceptó.
+  // The harness does not depend on the tenant: its mutation stays the one the server accepted.
   expect(entries[3]).toHaveTextContent(/^aplicado/);
   expect(screen.getByLabelText(/mutación pendiente del wizard/i)).toHaveTextContent('"id": "Beta"');
   expect(screen.getByRole('button', { name: /previsualizar paso/i })).toBeEnabled();
@@ -155,8 +155,8 @@ it('no deja avanzar con un alias que el protocolo rechaza', async () => {
 
 it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO llegó', async () => {
   const user = userEvent.setup();
-  // El wizard era el único de los cuatro caminos de escritura que ignoraba `outcome.recarga`:
-  // cantaba «aplicado en revisión 2» aunque el GET posterior hubiera muerto con un 500.
+  // The wizard was the only one of the four write paths that ignored `outcome.recarga`: it sang
+  // "applied at revision 2" even though the subsequent GET had died with a 500.
   renderWizard((call) => call.dryRun ? accept(call) : {
     ok: true,
     result: { applied: true, dry_run: false, revision: 2, summary: 'mock' },
@@ -169,35 +169,35 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   const aviso = await screen.findByText(/tenant aplicado en revisión 2/i);
   expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó \(config store caído\)/i);
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
-  // Ni verde ni rojo: se aplicó, pero lo que se ve abajo puede estar vencido.
+  // Neither green nor red: it was applied, but what shows below may be stale.
   expect(aviso).toHaveClass('notice', 'parcial');
 });
 
 /**
- * **El paso de harness dejó de ofrecer «Command».**
+ * **The harness step stopped offering "Command".**
  *
- * `harness_definitions.command` no lo lee nadie: `listAdapters` ni siquiera lo selecciona
- * (packages/store/src/repository/agents.ts:278) y el adaptador toma su orden de su propia tabla compilada
- * (packages/adapter-sdk/src/harnesses/index.ts:12) o del `harness_command` de su fichero local
- * (packages/adapter-sdk/src/bin/config.ts:179). Un campo de formulario que escribe una columna que
- * nadie obedece es la promesa exacta que este trabajo vino a retirar.
+ * Nobody reads `harness_definitions.command`: `listAdapters` does not even select it
+ * (packages/store/src/repository/agents.ts:278) and the adapter takes its command from its own
+ * compiled table (packages/adapter-sdk/src/harnesses/index.ts:12) or from the `harness_command`
+ * of its local config file (packages/adapter-sdk/src/bin/config.ts:179). A form field that writes
+ * to a column nobody obeys is exactly the promise this work came to retire.
  *
- * No se pierde capacidad: el esquema del protocolo lo sigue aceptando y el editor de mutaciones
- * crudas de «Historial y JSON» lo sigue admitiendo. Lo que se retira es la INVITACIÓN.
+ * No capability is lost: the protocol schema still accepts it and the raw mutation editor under
+ * "History and JSON" still admits it. What is being retired is the INVITATION.
  */
 it('no ofrece «Command» en el paso de harness, porque esa columna no la lee nadie', async () => {
   const user = userEvent.setup();
   renderWizard();
   await user.click(screen.getByRole('button', { name: /4\. harness/i }));
 
-  // `/^command/i` y no `/^command$/i`: el rótulo llevaba una pista pegada («opcional, null si queda
-  // vacío»), así que su nombre accesible NUNCA fue exactamente «Command» y el aserto anclado al
-  // final habría pasado con el campo todavía en pantalla. Se comprobó: con la versión anclada, esta
-  // prueba quedaba verde ANTES de quitar nada.
+  // `/^command/i` rather than `/^command$/i`: the label carried an attached hint ("opcional, null
+  // si queda vacío"), so its accessible name was NEVER exactly "Command" and the end-anchored
+  // assertion would have passed with the field still on screen. Verified: with the anchored
+  // version this test stayed green BEFORE removing anything.
   expect(screen.queryByLabelText(/^command/i)).not.toBeInTheDocument();
 
-  // CONTROL NEGATIVO: el paso sigue entero. Si quitar el campo hubiera vaciado la pantalla, esto
-  // se pondría rojo en vez de dejar pasar un «no está» que en realidad es «no hay nada».
+  // NEGATIVE CONTROL: the step stays whole. If removing the field had emptied the screen, this
+  // would go red instead of letting through a "not there" that is really "nothing here".
   expect(screen.getByLabelText(/^harness id$/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/^display name$/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/capabilities/i)).toBeInTheDocument();
@@ -213,9 +213,9 @@ it('la mutación del harness no lleva la clave `command`', async () => {
   expect(harness?.resource).toBe('harness');
   const value = (harness as { value?: Record<string, unknown> }).value ?? {};
   expect(Object.hasOwn(value, 'command'), 'la clave inerte volvió a viajar').toBe(false);
-  // CONTROL NEGATIVO: las claves que SÍ tienen lector siguen viajando. `capabilities` y `enabled`
-  // los lee `listAdapters` (packages/store/src/repository/agents.ts:278) para decidir el estado del
-  // arnés; borrarlos de paso habría sido perder capacidad real.
+  // NEGATIVE CONTROL: the keys that DO have a reader keep travelling. `listAdapters` reads
+  // `capabilities` and `enabled` (packages/store/src/repository/agents.ts:278) to decide the
+  // harness state; deleting them along the way would have been losing real capability.
   expect(Object.hasOwn(value, 'display_name')).toBe(true);
   expect(Object.hasOwn(value, 'capabilities')).toBe(true);
   expect(Object.hasOwn(value, 'enabled')).toBe(true);

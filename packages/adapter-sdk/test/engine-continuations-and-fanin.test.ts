@@ -409,11 +409,11 @@ test("an uncorrelated agent response cannot recover a retained local prompt", as
 });
 
 /**
- * El rebote al remitente no se materializa, pero el turno SOBREVIVE, de punta a punta y no solo
- * en el validador. Antes esto salia `phase:"failed"` con `AGENT_MESSAGE_PING_PONG` y sin
- * `output`: la entrega moria sin `result` y el trabajo no llegaba a nadie. Medido en 48 h
- * (2026-08-04/05): 5 turnos asi en argos, jarvis, hegel, janus y midas; el de midas llevaba una
- * lista de 11 prospectos ya hecha.
+ * The bounce to the sender is not materialised, but the turn SURVIVES, end-to-end and not only
+ * in the validator. Previously this produced `phase:"failed"` with `AGENT_MESSAGE_PING_PONG`
+ * and no `output`: the delivery died without `result` and the work reached nobody. Measured in
+ * 48 h (2026-08-04/05): 5 turns like this in argos, jarvis, hegel, janus and midas; the one
+ * in midas was carrying a list of 11 prospects already drafted.
  */
 test("an internal agent cannot send any message back to its sender", async () => {
   const runner = new ControlledRunner();
@@ -436,7 +436,7 @@ test("an internal agent cannot send any message back to its sender", async () =>
   assert.equal(terminal?.phase, "done");
   assert.equal(terminal?.error, undefined);
   assert.deepEqual(terminal?.output?.messages, [], "el rebote no se manda");
-  // El cuerpo iba al mismo destinatario que el reply, asi que llega igual, y con el motivo.
+  // The body went to the same recipient as the reply, so it arrives the same way, and with the reason.
   assert.match(terminal?.output?.reply ?? "", /a differently worded follow-up/u);
   assert.match(terminal?.output?.reply ?? "", /\[Cauce\].*"seneca"/su);
 });

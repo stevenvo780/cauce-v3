@@ -137,13 +137,13 @@ const rootlessCheck = spawnSync("python3", [digestScript, "--rootless", "--check
 assert.equal(rootlessCheck.status, 0, `${rootlessCheck.stdout} ${rootlessCheck.stderr}`);
 const rootless = path.join(ops, "generated/container-systemd/rootless");
 /*
- * El número de units NO se escribe a mano. Estuvo clavado en 14 y el registro creció a 15 al dar
- * de alta a `heraclito`: la prueba se puso roja por el motivo equivocado —«14 !== 15»— cuando lo
- * que de verdad pasaba es que a un alias registrado le faltaba su unidad. Un número a mano
- * confunde «alguien añadió un alias» con «alguien se olvidó de generar», que son lo contrario.
+ * The number of units is NOT hard-coded. It was pinned at 14 and the registry grew to 15 when
+ * `heraclito` was added: the test went red for the wrong reason —"14 !== 15"— when what was
+ * really happening was that a registered alias was missing its unit. A hard-coded number
+ * confuses "someone added an alias" with "someone forgot to generate", which are opposites.
  *
- * Atado al registro, la prueba sigue cazando lo que importa —una unit que falta— y deja de pedir
- * que se la edite cada vez que la flota crece.
+ * Tied to the registry, the test keeps catching what matters —a missing unit— and stops asking
+ * to be edited every time the fleet grows.
  */
 const aliasRegistrados = Object.keys(
   JSON.parse(await readFile(path.join(ops, "container-aliases.json"), "utf8")).aliases,

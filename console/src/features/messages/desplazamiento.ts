@@ -1,13 +1,13 @@
 /**
- * Utilidades para el control de desplazamiento automático y anclaje al final del hilo de mensajes.
+ * Utilities for automatic scroll control and anchoring to the end of the message thread.
  */
 
 /**
- * Cuánto puede faltar para el final y seguir contando como «está mirando el final».
+ * How far from the end still counts as "watching the end".
  *
- * No es cero: un hilo con imágenes o fuentes que terminan de cargar mueve el fondo unos píxeles, y
- * con margen cero el operador quedaría «despegado» sin haber tocado nada — y entonces los mensajes
- * nuevos dejarían de seguirlo. 80 px es menos que una burbuja, así que nunca tapa un mensaje.
+ * Not zero: a thread with images or fonts that finish loading shifts the background a few pixels,
+ * and with zero margin the operator would end up "detached" without having touched anything — new
+ * messages then stop following. 80 px is less than one bubble, so it never covers a message.
  */
 export const MARGEN_PEGADO = 80;
 
@@ -17,19 +17,19 @@ export interface CajaDesplazable {
   clientHeight: number;
 }
 
-/** ¿El operador está mirando el final del hilo? De esto depende si los mensajes nuevos lo siguen. */
+/** Is the operator watching the end of the thread? Whether new messages follow them depends on this. */
 export function estaPegadoAlFinal(caja: CajaDesplazable): boolean {
   return caja.scrollHeight - caja.scrollTop - caja.clientHeight <= MARGEN_PEGADO;
 }
 
 /**
- * Lleva la caja al final.
+ * Moves the box to the end.
  *
- * Usa `scrollTo` cuando existe y cae a `scrollTop` cuando no: `Element.prototype.scrollTo` no
- * está implementado en jsdom, y una prueba que espiara sólo `scrollTop` no distinguiría «no se
- * llamó» de «se llamó y jsdom lo ignoró» —jsdom no tiene layout, así que `scrollHeight` es 0 y el
- * asignador queda en 0 pase lo que pase—. Con el `scrollTo` de por medio la prueba puede exigir
- * el EFECTO: a qué caja y con qué destino.
+ * Uses `scrollTo` when available and falls back to `scrollTop` when not: `Element.prototype.scrollTo`
+ * is not implemented in jsdom, and a test that only spies on `scrollTop` would not distinguish
+ * "not called" from "called and jsdom ignored it" — jsdom has no layout, so `scrollHeight` is 0
+ * and the assignment stays at 0 no matter what. With `scrollTo` in between the test can assert
+ * the EFFECT: which box and to which destination.
  */
 export function irAlFinal(caja: HTMLElement, suave = false): void {
   const destino = caja.scrollHeight;

@@ -4,9 +4,9 @@ import type { ConsoleAccess, DeliveryView } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, permissionState, safeDeliveryState } from '../../lib';
 
-// 'failed' es tan replayable como 'dead': los dos son finales de error y desde este parche los
-// dos dejan fila en `dead_letters`. Cuál de los dos toca lo decidía `ack.retryable`, o sea el
-// propio agente que falló, y eso no tiene por qué decidir si un humano puede rescatar el trabajo.
+// 'failed' is as replayable as 'dead': both are error finals, and from this patch both leave a row
+// in `dead_letters`. Which of the two applied was decided by `ack.retryable`, i.e. the failing agent
+// itself, and that has no business deciding whether a human can rescue the work.
 const replayableStates: ReadonlySet<string> = new Set(['dead', 'failed']);
 const cancellableStates: ReadonlySet<string> = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
 

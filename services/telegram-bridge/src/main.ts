@@ -44,9 +44,9 @@ function selected(configs: readonly TelegramAliasConfig[]): TelegramAliasConfig[
 }
 
 /**
- * Se lee ANTES de abrir el pool: una URL mal escrita mata el proceso en el arranque en vez de
- * descubrirse recién cuando alguien manda una nota de voz. Ausente = transcripción apagada, que es
- * el comportamiento que el puente tuvo siempre.
+ * Read BEFORE opening the pool: a malformed URL kills the process at startup instead of being
+ * discovered only when someone sends a voice note. Absent = transcription off, which is the
+ * behaviour the bridge has always had.
  */
 const transcription = transcriptionConfig();
 console.error(JSON.stringify({

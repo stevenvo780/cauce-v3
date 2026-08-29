@@ -3,10 +3,10 @@ import type { TenantNode } from '../../../api/types';
 import { EmptyState, Unknown } from '../../../components/ui';
 
 /**
- * Las salas y sus miembros, tal cual las informa el control plane.
+ * Rooms and their members, as reported by the control plane.
  *
- * Utilizado en el desplegable «Permisos y salas» de «La flota ahora», alimentado del
- * recurso `live-topology`.
+ * Used in the "Permissions and rooms" dropdown of "The fleet now", fed from the
+ * `live-topology` resource.
  */
 export function TenantCards({ tenants }: { tenants: readonly TenantNode[] }) {
   if (tenants.length === 0) return <EmptyState>

@@ -12,7 +12,7 @@ import {
 } from './health.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 
-/** Pool que responde a consultas básicas para pruebas de sonda. */
+/** Pool that responds to basic queries for probe tests. */
 const answeringPool = {
   query: async () => ({ rows: [{ ssl: true }], rowCount: 1 }),
 } as unknown as DatabasePool;
@@ -485,7 +485,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     });
     expect((await app.inject({ method: 'GET', url: '/health/ready' })).statusCode).toBe(200);
 
-    // Simula caída del listener de datos.
+    // Simulates data listener failure.
     await new Promise<void>((resolve) => dataListener!.close(() => resolve()));
     expect(await answeringPool.query('SELECT 1')).toBeTruthy();
 
@@ -712,7 +712,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('is actually wired in main.ts, not just available', async () => {
-    // Verifica que la sonda de salud esté correctamente integrada en main.ts.
+    // Verifies that the health probe is correctly wired into main.ts.
     const main = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
     expect(main).toMatch(/buildLoopbackHealthProbe\(\{[\s\S]*?dataApp: app[\s\S]*?\}\)/u);
     expect(main).toMatch(/wakePumpTelemetry[\s\S]*?health\.listen\(\{ host: '0\.0\.0\.0'/u);

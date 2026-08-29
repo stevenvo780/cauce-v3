@@ -29,11 +29,11 @@ function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSe
 }
 
 /**
- * Componente de renderizado de transcripción e historial de conversación de terminal.
+ * Rendering component for the terminal transcript and conversation history.
  */
 export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
   items: TranscriptItem[];
-  /** Id del mensaje elegido. `undefined` significa NINGUNO; nunca «todos». */
+  /** Id of the selected message. `undefined` means NONE; never "all". */
   selectedMessageId?: string;
   onSelectItem: (item: TranscriptItem) => void;
 }) {
@@ -72,8 +72,8 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
               </header>
               <p>{message.body_preview ?? 'Contenido no incluido por el servidor.'}{recortado ? '…' : null}</p>
               {/*
-                El corte se ROTULA. El servidor manda `left(body,240)` y sin esta línea la burbuja
-                presentaba un mensaje cortado a mitad de palabra con la misma cara que uno entero.
+                The truncation is LABELED. The server sends `left(body,240)` and without this line
+                the bubble showed a message cut mid-word with the same look as a full one.
               */}
               {recortado ? (
                 <p className="transcript-truncado">
@@ -92,9 +92,9 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
                 <DeliveryProgress delivery={delivery} onSelect={() => { onSelectItem(item); }} />
               ) : (
                 /*
-                 * Antes esto era un `<span>` inerte: la mitad del hilo —todo lo que el agente
-                 * escribió— no se podía seleccionar, y clicarlo no cambiaba el detalle. Ahora es
-                 * el mismo botón que la fila de entrega, con el mismo efecto.
+                 * Before this was an inert `<span>`: half the thread —everything the agent wrote—
+                 * could not be selected, and clicking it did not change the detail. Now it is the
+                 * same button as the delivery row, with the same effect.
                  */
                 <button
                   className="transcript-output-note"

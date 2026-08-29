@@ -17,7 +17,7 @@ export interface RegistryMutationRunner {
   notice?: RegistryNotice;
   preview?: string;
   expectedRevision?: number;
-  /** true sólo si el servidor ya validó en dry-run ESTA mutación exacta. */
+  /** true only if the server has already validated THIS exact mutation in a dry-run. */
   isValidated: (mutation: ConfigMutation) => boolean;
   run: (mutation: ConfigMutation, dryRun: boolean) => Promise<boolean>;
   clear: () => void;
@@ -28,10 +28,10 @@ function key(mutation: ConfigMutation): string {
 }
 
 /**
- * Único camino de escritura de las pantallas del pool: `changeConfiguration()`, dry-run primero y
- * apply después, exactamente como ConfigPage. El apply queda deshabilitado hasta que el servidor
- * validó la mutación EXACTA que se va a aplicar; cualquier edición del formulario invalida el
- * dry-run anterior porque cambia la clave.
+ * The only write path for the pool screens: `changeConfiguration()`, dry-run first and apply
+ * after, exactly like ConfigPage. Apply stays disabled until the server has validated the EXACT
+ * mutation that is about to be applied; any form edit invalidates the previous dry-run because
+ * it changes the key.
  */
 export function useRegistryMutation(options: {
   config: Resource<ConfigurationSnapshot>;
@@ -47,8 +47,8 @@ export function useRegistryMutation(options: {
 
   const canWrite = permissionState(options.access.data, 'config.write') === 'allowed';
   const snapshotRevision = typeof options.config.data?.revision === 'number' ? options.config.data.revision : undefined;
-  // Igual que ConfigPage: la recarga del snapshot es asíncrona, así que hasta que alcanza la
-  // revisión que devolvió el último apply, esa revisión es la única esperada verdadera.
+  // Like ConfigPage: the snapshot reload is async, so until it catches up to the revision returned
+  // by the last apply, that revision is the only expected value.
   const expectedRevision = chainedRevision !== undefined
     && (snapshotRevision === undefined || snapshotRevision < chainedRevision)
     ? chainedRevision

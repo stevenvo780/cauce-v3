@@ -42,9 +42,9 @@ type FormState =
   | { kind: 'edit'; edit: AccountEdit };
 
 /**
- * Un update de cuenta reescribe label, shared_with_pool y enabled a la vez. Si el snapshot no trae
- * alguno de los dos booleanos no hay estado actual que preservar, y mandar un valor inventado
- * cambiaría en silencio algo que el operador no decidió.
+ * An account update rewrites label, shared_with_pool and enabled at once. If the snapshot does
+ * not carry one of the two booleans there is no current state to preserve, and sending an
+ * invented value would silently change something the operator did not decide.
  */
 function editBlocker(account: ProviderAccount): string | undefined {
   if (account.sharedWithPool === null || account.enabled === null) {
@@ -63,8 +63,8 @@ function editFrom(account: ProviderAccount, patch: Partial<AccountEdit> = {}): A
   };
 }
 
-/** Los campos del pagador no son "vacío": o son visibles, o el servidor los anuló, o el gateway
- *  ni los publica. Los tres casos se dicen con todas las letras. */
+/** The payer fields are not "empty": either they are visible, or the server redacted them, or
+ *  the gateway does not even publish them. All three cases are spelled out in plain words. */
 function PayerScoped({ account, children }: { account: ProviderAccount; children: ReactNode }) {
   if (account.payerFields === 'absent') {
     return <span className="unknown">No publicado por el gateway</span>;
@@ -78,7 +78,7 @@ function PayerScoped({ account, children }: { account: ProviderAccount; children
 }
 
 /**
- * Inventario y gestión de cuentas de proveedores de IA y estado de consumo.
+ * Inventory and management of AI provider accounts and consumption state.
  */
 export function AccountsInventory({ config, access, quotas }: {
   config: Resource<ConfigurationSnapshot>;

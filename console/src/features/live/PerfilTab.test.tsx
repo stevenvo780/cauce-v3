@@ -278,11 +278,11 @@ it('ACK de disco sin adopción de TUI queda pendiente y no dice aplicado', async
 });
 
 /**
- * EL DESTINO DE CADA CAMPO.
+ * THE DESTINATION OF EACH FIELD.
  *
- * El defecto que arreglan: la etiqueta decía «SOUL.md en openclaw» a un alias cuyo arnés es
- * `claude` y cuyo único fichero es `CLAUDE.md`. Un rótulo que nombra un fichero que nadie va a
- * escribir es peor que no poner rótulo: el operador cree saber dónde acaba lo que escribe.
+ * The bug they fix: the label said "SOUL.md en openclaw" to an alias whose harness is
+ * `claude` and whose only file is `CLAUDE.md`. A label that names a file nobody will write is
+ * worse than no label at all: the operator believes they know where what they write ends up.
  */
 function rotuloDe(titulo: RegExp): string {
   const caja = screen.getByLabelText(titulo);

@@ -17,7 +17,7 @@ export class ApiError extends Error {
   }
 }
 
-/** 409 confiable y acotado: hay un efecto previo exacto que debe cerrarse antes de publicar otro. */
+/** Reliable and bounded 409: there is a prior exact effect that must be closed before publishing another. */
 export class PublishIntentReconciliationError extends ApiError {
   constructor(readonly reconciliation: PreparePublishIntentReconciliation) {
     super('Hay una publicación durable anterior que requiere reconciliación.', 409,
@@ -26,7 +26,7 @@ export class PublishIntentReconciliationError extends ApiError {
   }
 }
 
-/** 410 exacto: el servidor cerró la reserva y demostró que nunca hubo efecto. */
+/** Exact 410: the server closed the reservation and demonstrated there was never an effect. */
 export class PublishIntentExpiredError extends ApiError {
   constructor(readonly expiration: PublishIntentExpired) {
     super(
@@ -38,7 +38,7 @@ export class PublishIntentExpiredError extends ApiError {
   }
 }
 
-/** 429 exacto: el servidor preservó el journal pero no admite otra reserva todavía. */
+/** Exact 429: the server preserved the journal but does not yet admit another reservation. */
 export class PublishIntentRateLimitedError extends ApiError {
   constructor(readonly rateLimit: PreparePublishIntentRateLimited) {
     super(
@@ -128,7 +128,7 @@ export interface RequestOptions {
 }
 
 /**
- * Tiempo máximo de espera para peticiones HTTP antes de abortar por timeout.
+ * Maximum wait time for HTTP requests before aborting on timeout.
  */
 export const TIEMPO_MAXIMO_MS = 30_000;
 

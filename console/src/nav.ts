@@ -14,19 +14,19 @@ import {
 } from './router';
 
 /**
- * Definición centralizada de entradas del menú principal de la consola.
+ * Centralized definition of the console main menu entries.
  */
 export interface NavEntry {
   id: string;
   label: string;
   icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  /** La pregunta que responde la vista. Sólo lo usa la portada. */
+  /** The question the view answers. Only the front page uses it. */
   que: string;
 }
 
 /**
- * Entradas de navegación principal con rótulo visible. Las rutas ocultas viven en `App.tsx`.
- * Cada `id` debe existir en `PAGES` y no puede ser clave de `ROUTE_ALIASES`.
+ * Main navigation entries with a visible label. Hidden routes live in `App.tsx`.
+ * Each `id` must exist in `PAGES` and cannot be a key of `ROUTE_ALIASES`.
  */
 export const NAV_ENTRIES: NavEntry[] = [
   { id: '', label: 'Portada', icon: LayoutDashboard, que: 'El resumen de conjunto: flota, colas, cuotas y lo que exige atención.' },
@@ -40,7 +40,7 @@ export const NAV_ENTRIES: NavEntry[] = [
 ];
 
 /**
- * Hook para determinar la disponibilidad y permisos de cada ruta de navegación.
+ * Hook to determine the availability and permissions of each navigation route.
  */
 export function useNavAvailability(): (id: string) => NavEntryAvailability {
   const api = useApi();

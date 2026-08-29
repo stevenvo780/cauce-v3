@@ -4,11 +4,11 @@ import type { QuotaSampleRequest } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from './index.js';
 
 /**
- * `recordQuotaSample` tiene que rechazar un schema_version que esta versión del gateway no
- * entiende ANTES de tocar la base: mapear un formato desconocido a ciegas es exactamente cómo
- * una muestra mal leída dispara la auto-pausa de una suscripción sana. Se prueba con un pool
- * "trampa" que revienta si alguien lo usa (ni .connect() ni .query()), para que el test falle
- * fuerte si el chequeo alguna vez se corre DESPUÉS de empezar la transacción en vez de antes.
+ * `recordQuotaSample` must reject a schema_version that this gateway version does not understand
+ * BEFORE touching the database: blindly mapping an unknown format is exactly how a misread sample
+ * triggers the auto-pause of a healthy subscription. It is tested with a "trap" pool that blows up
+ * if anyone uses it (neither .connect() nor .query()), so the test fails loud if the check ever
+ * runs AFTER starting the transaction instead of before.
  */
 function trapPool(): DatabasePool {
   return {
@@ -52,8 +52,8 @@ describe('CauceRepository.recordQuotaSample -- guarda de schema_version', () => 
   it('un schema_version soportado (2) pasa la guarda de versión y sigue de largo hacia la base', async () => {
     const pool = trapPool();
     const repository = new CauceRepository(pool);
-    // No nos importa el resultado (la conexión va a fallar a propósito); sólo que la guarda de
-    // versión no sea lo que corta la ejecución para un schema_version conocido.
+    // We do not care about the result (the connection will fail on purpose); only that the
+    // version guard is not what aborts the execution for a known schema_version.
     await expect(
       repository.recordQuotaSample('Steven', 'quota-collector', sample({ schema_version: 2 }))
     ).rejects.not.toMatchObject({ code: 'invalid_input' });

@@ -285,16 +285,16 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Quién es la persona, en orden de autoridad.
+ * Who the person is, in order of authority.
  *
- * 1. `actor.operator_id`, si el proveedor de autenticación lo estableció. Es el caso del login
- *    por contraseña de la consola: sale del JWT verificado y de la fila de `console_users`, o
- *    sea del servidor. Cuando existe, GANA y la cabecera ni se mira — no hace falta que el
- *    correo esté en `CAUCE_TERMINAL_OPERATORS`, porque tener sesión ya es la inscripción.
- * 2. La cabecera `CAUCE_TERMINAL_OPERATOR_HEADER`, sólo desde el canal `console` y sólo con un
- *    valor inscripto en `CAUCE_TERMINAL_OPERATORS`.
- * 3. Sin ninguna de las dos, la sesión queda sin atribuir y `attributionAllows` la encierra en
- *    su propio tenant.
+ * 1. `actor.operator_id`, if the auth provider set it. This is the console password login case:
+ *    it comes from the verified JWT and the `console_users` row, i.e. from the server. When it
+ *    exists, it WINS and the header is not even read — the address does not need to be in
+ *    `CAUCE_TERMINAL_OPERATORS`, because having a session is already enrollment.
+ * 2. The `CAUCE_TERMINAL_OPERATOR_HEADER` header, only from the `console` channel and only with a
+ *    value enrolled in `CAUCE_TERMINAL_OPERATORS`.
+ * 3. With neither, the session remains unattributed and `attributionAllows` confines it to its
+ *    own tenant.
  */
 export function resolveOperator(
   request: FastifyRequest, actor: Principal, config: TerminalConfig

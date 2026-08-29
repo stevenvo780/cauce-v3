@@ -219,8 +219,8 @@ export class AgentConnection {
   }
 
   /**
-   * Envía el perfil como una sola transacción. Los DATA van en el mismo orden que `entries`, y el
-   * agente no preflighta ni toca disco hasta haber recibido/verificado todos sus digests.
+   * Sends the profile as a single transaction. The DATAs arrive in the same order as `entries`,
+   * and the agent preflights nothing and touches no disk until all their digests are verified.
    */
   sendGovernanceWriteBatch(requestId: string, entries: readonly AgentGovernanceBatchEntry[]): boolean {
     if (!this.supportsGovernanceWriteBatch) return false;
@@ -281,7 +281,7 @@ export class AgentConnection {
     return this.writeBatch(frames);
   }
 
-  /** Respuesta técnica ya validada; el tag separado mantiene STDIN fuera de los viewers. */
+  /** Technical response already validated; the separate tag keeps STDIN out of the viewers. */
   sendTerminalResponse(sessionId: string, data: Buffer): boolean {
     const frames: Buffer[] = [];
     for (let offset = 0; offset < data.byteLength; offset += MAX_DATA_BYTES) {
@@ -318,8 +318,8 @@ export class AgentConnection {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.ping);
-    // Las lecturas en vuelo se avisan igual que las sesiones: si no, se quedan esperando hasta
-    // que venza su temporizador y el que pregunta ve «tardó» donde lo que pasó fue «se cayó».
+    // In-flight reads are notified the same way as sessions: otherwise they keep waiting until
+    // their timer expires and the requester sees "it was slow" where what happened was "it fell".
     const handlers = [...this.sessions.values(), ...this.reads.values(), ...this.writes.values()];
     this.sessions.clear();
     this.reads.clear();
@@ -451,9 +451,9 @@ export class AgentConnection {
   ): void {
     const handlers = this.reads.get(requestId);
     if (!handlers) {
-      // Un id inventado o una lectura abandonada por timeout no compromete las PTY. En cambio,
-      // DATA después de un cierre terminal contradice el orden TCP acreditado: la conexión queda
-      // degradada y se cierra, en vez de aceptar éxito y tirar silenciosamente la evidencia.
+      // A made-up id or a read abandoned by timeout does not compromise the PTYs. DATA after a
+      // terminal close, on the other hand, contradicts the attested TCP order: the connection is
+      // degraded and closed, rather than accepting success and silently discarding the evidence.
       if (frame === 'data' && this.terminalReads.has(requestId)) {
         this.destroy('read_data_after_terminal');
         throw new FramingError('READ_DATA after terminal read frame');
@@ -469,7 +469,7 @@ export class AgentConnection {
 
   private dispatchWrite(requestId: string, apply: (handlers: AgentWriteHandlers) => void): void {
     const handlers = this.writes.get(requestId);
-    // ACK tardío después de timeout/cancelación: se descarta sin afectar las PTY multiplexadas.
+    // Late ACK after timeout/cancellation: discarded without affecting the multiplexed PTYs.
     if (!handlers) return;
     try {
       apply(handlers);
@@ -490,9 +490,9 @@ export class AgentConnection {
   }
 
   /**
-   * Node acepta la trama que hace que `write()` devuelva false; sólo las siguientes esperan
-   * `drain`. La cola propia está acotada para que un browser que pega más rápido que el TLS no
-   * convierta al relay en almacenamiento. No se pausa nunca el lado legible del socket.
+   * Node accepts the frame that makes `write()` return false; only the following ones wait for
+   * `drain`. The own queue is bounded so a browser that hits faster than TLS does not turn the
+   * relay into storage. The readable side of the socket is never paused.
    */
   private write(frame: Buffer): boolean {
     if (this.closed || this.socket.destroyed) return false;
@@ -530,7 +530,7 @@ export class AgentConnection {
     return true;
   }
 
-  /** Preflight de una transacción: nunca deja media escritura en la cola propia acotada. */
+  /** Transaction preflight: never leaves half a write in the bounded own queue. */
   private writeBatch(frames: readonly Buffer[]): boolean {
     if (this.closed || this.socket.destroyed) return false;
     const total = frames.reduce((bytes, frame) => bytes + frame.byteLength, 0);

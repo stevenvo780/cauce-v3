@@ -4,19 +4,19 @@ import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { safeCapabilityState } from '../../lib';
 
 /**
- * Lo que era la vista **"Adapters"**, ahora plegado dentro de la portada.
+ * What used to be the **"Adapters"** view, now folded into the landing page.
  *
- * `GET /v3/console/adapters` no lista agentes: lista **tipos de arnés** —el cruce de
- * `harness_definitions` con la presencia—, o sea seis filas que casi nunca cambian. Eso no
- * justificaba una entrada de menú de nivel uno junto a "Queues" o "La flota ahora": era un dato de
- * referencia, no una vista de trabajo. La API se queda intacta (la piden también "Ultimate
- * Terminal" y el detalle de un bot); lo que se retira es la ruta propia.
+ * `GET /v3/console/adapters` does not list agents: it lists **harness types** —the join of
+ * `harness_definitions` with presence—, i.e. six rows that almost never change. That did not
+ * justify a top-level menu entry next to "Queues" or "The fleet right now": it was a reference
+ * datum, not a working view. The API stays untouched (it is also requested by "Ultimate
+ * Terminal" and by a bot's detail view); what gets dropped is the standalone route.
  *
- * Se pliega en un `<details>` cerrado por defecto: presente y a un clic, sin gastar el espacio de
- * arriba que la portada le debe a las alertas.
+ * It folds into a `<details>` collapsed by default: present and one click away, without spending
+ * the top-of-page space the landing owes to alerts.
  */
 
-/** El estado del arnés, en castellano: era el valor crudo del campo `state` de la API. */
+/** The harness state, in Spanish: it used to be the raw value of the API's `state` field. */
 const ESTADO_ARNES: Readonly<Record<string, string | undefined>> = {
   available: 'Disponible',
   degraded: 'Degradado',

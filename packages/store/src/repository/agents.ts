@@ -204,13 +204,13 @@ export abstract class AgentsRepository extends DeliveriesRepository {
 
 
   /**
-   * La proyección corta del rol CANÓNICO del alias que reclama.
+   * Short projection of the CANONICAL role of the claiming alias.
    *
-   * Devuelve `undefined` —y no una cadena vacía ni un texto por defecto— cuando la fila no existe o
-   * Desde la migración 028 `agent_profiles.role_summary` es la única fuente autorada. Esta lectura
-   * deriva `self_role` directamente de ella —trim + 1.200 puntos de código— y NO confía en la
-   * proyección legacy de `agents.role_brief`. Así el saludo, el fichero y cada entrega observan la
-   * misma revisión, incluso si una imagen antigua o una consulta manual dejó la caché dañada.
+   * Returns `undefined` —and not an empty string nor a default text— when the row does not exist or
+   * Since migration 028, `agent_profiles.role_summary` is the only authored source. This read
+   * derives `self_role` directly from it —trim + 1,200 code points— and does NOT trust the legacy
+   * `agents.role_brief` projection. So the greeting, the file and every delivery observe the same
+   * revision, even if an old image or a manual query left the cache corrupted.
    */
   protected override async selfRoleFromProfile(
     client: DatabaseClient,

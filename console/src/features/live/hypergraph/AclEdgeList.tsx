@@ -3,11 +3,11 @@ import type { AclEdge } from '../../../api/types';
 import { Badge, EmptyState, Unknown } from '../../../components/ui';
 
 /**
- * Las aristas ACL entre clientes: quién PUEDE hablarle a quién.
+ * The ACL edges between clients: who CAN talk to whom.
  *
- * El vacío no significa "todos pueden": los cruces que nadie declaró quedan denegados por defecto
- * en el backend, y por eso el estado vacío lo dice con esas palabras en vez de dejar una lista en
- * blanco que se leería como "sin restricciones".
+ * The empty state does not mean "everyone can": crossings nobody declared are denied by default
+ * in the backend, so the empty state spells that out instead of leaving a blank list that would
+ * be read as "no restrictions".
  */
 export function AclEdgeList({ edges }: { edges: readonly AclEdge[] }) {
   if (edges.length === 0) return <EmptyState>El servidor no informó ninguna arista de permisos. No es «nadie puede hablar con nadie»: es que no se pudo leer la política.</EmptyState>;

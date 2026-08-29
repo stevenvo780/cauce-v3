@@ -31,11 +31,11 @@ interface GovernanceProbeContext {
 }
 
 /**
- * El cliente hacia el terminal-relay, o uno que explica por qué no hay ninguno.
+ * The client toward the terminal-relay, or one that explains why none exists.
  *
- * El material TLS se lee AQUÍ, al registrar el plugin, y no en la primera lectura: un fichero de
- * certificado que no se puede leer tiene que matar el arranque, no descubrirse cuando un operador
- * abre el modal.
+ * The TLS material is read HERE, when registering the plugin, and not on the first read: a
+ * certificate file that cannot be read has to kill startup, not be discovered when an operator
+ * opens the modal.
  */
 async function buildGovernanceRelay(config: TerminalConfig): Promise<GovernanceRelayClient> {
   if (config.relayUrl === undefined) {
@@ -70,7 +70,7 @@ export function createGovernanceProbes(
   return {
     buildRelay: () => buildGovernanceRelay(config),
     register: (relayGovernance) => {
-      // Presencia real que el pty-agent publica. Inyectable para tests.
+      // Real presence that the pty-agent publishes. Injectable for tests.
       const measuredFacts: MeasuredFactsSource = runtimeOptions.measuredFacts ?? hechosDelRegistro(registry);
 
       async function authorizeDirective(
@@ -79,7 +79,7 @@ export function createGovernanceProbes(
       ): Promise<{ tenant_id: string; alias: string } | undefined> {
         const request = raw as FastifyRequest;
         const actor = await principal(request);
-        // Mismo permiso y visibilidad canónica que perfiles, documentos y listAgents: tenant propio o arista allow_read.
+        // Same permission and canonical visibility as profiles, documents and listAgents: own tenant or allow_read edge.
         requirePermission(actor, 'read');
         const target = await repository.authorizeAgentTarget(
           actor.tenant_id, actor.alias, requested.tenant_id, requested.alias, 'read',
@@ -87,18 +87,18 @@ export function createGovernanceProbes(
         return target === undefined ? undefined : { tenant_id: target.tenant_id, alias: target.alias };
       }
 
-      // Encapsulado en su propio ámbito para poder darle un manejador de errores: la ruta de directiva
-      // no atrapa nada por dentro, así que sin esto un `AuthError` saldría como 500 y un operador sin
-      // sesión vería «error interno» en vez de «no estás autenticado».
+      // Encapsulated in its own scope so it can be given an error handler: the directive route
+      // catches nothing internally, so without this an `AuthError` would surface as a 500 and an
+      // operator without a session would see "internal error" instead of "not authenticated".
       const sondaReal = new TerminalRelayFactsProbe(measuredFacts, relayGovernance);
 
       /*
-       * SE INSTALA LA SONDA EN EL HUECO que `app.ts` dejó, para que las rutas de documentos —montadas
-       * antes que este plugin, con el resto de `/v3/console`— dejen de contestar «no hay canal».
+       * THE PROBE IS INSTALLED IN THE SLOT that `app.ts` left, so the document routes —mounted
+       * before this plugin, alongside the rest of `/v3/console`— stop replying "no channel".
        *
-       * `app.sondaDeDocumentos` es opcional a propósito: los tests montan este plugin sobre instancias
-       * de Fastify que no pasaron por `buildGateway`, y ahí no hay hueco que rellenar. No tenerlo no
-       * es un fallo, es que ese gateway no sirve la consola.
+       * `app.sondaDeDocumentos` is optional on purpose: tests mount this plugin on Fastify
+       * instances that did not go through `buildGateway`, and there is no slot to fill there. Not
+       * having it is not a failure; it means that gateway does not serve the console.
        */
       app.sondaDeDocumentos?.instalar(sondaReal);
 

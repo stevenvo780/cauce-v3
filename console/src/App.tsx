@@ -93,13 +93,13 @@ const routes: Route[] = [
   { id: 'ayuda', label: '', icon: Boxes, component: PAGES.ayuda },
 ];
 
-/** Entradas visibles en la barra lateral de navegación. */
+/** Entries visible in the navigation sidebar. */
 const MENU = routes.filter((route) => route.label !== '');
 
-/** Redirecciones de rutas obsoletas o consolidadas hacia sus vistas canónicas. */
-/* Rutas que aceptan segmentos detrás del id, con su aridad exacta. Una vista que navega a una
-   subruta no declarada aquí acaba en «Ruta no encontrada», y ningún test lo ve: los suyos afirman
-   sobre `pathname`, que cambia igual cuando el destino no existe. */
+/** Redirects of obsolete or consolidated routes to their canonical views. */
+/* Routes that accept segments past the id, with their exact arity. A view that navigates to a
+   subroute not declared here ends up at "Route not found", and no test catches it: theirs assert
+   on `pathname`, which looks the same when the destination does not exist. */
 const SUBDETALLES: Partial<Record<string, number>> = { fleet: 2, messages: 2 };
 
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
@@ -114,13 +114,13 @@ const ROUTE_ALIASES: Partial<Record<string, string>> = {
   help: 'ayuda',
 };
 
-/** Tablas de rutas y alias exportadas para verificación de navegación e invariantes en tests. */
+/** Route and alias tables exported for navigation verification and invariant tests. */
 export const ROUTE_TABLE: readonly Readonly<Route>[] = routes;
 export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES as Record<string, string>;
 
 /**
- * Una URL que la consola no declara no se convierte silenciosamente en una vista válida. Conservar
- * la dirección permite corregir un marcador o reportar el enlace exacto que quedó obsoleto.
+ * A URL the console does not declare does not silently become a valid view. Preserving the
+ * address lets us fix a bookmark or report the exact link that became obsolete.
  */
 function RouteNotFound({ path }: { path: string }) {
   return (
@@ -143,15 +143,15 @@ function RouteNotFound({ path }: { path: string }) {
 
 interface RouteMatch {
   id: string;
-  /** Segmentos posteriores al id de ruta, ej. `#/fleet/:tenant/:alias` → ['tenant', 'alias']. */
+  /** Segments past the route id, e.g. `#/fleet/:tenant/:alias` → ['tenant', 'alias']. */
   params: string[];
-  /** Id tal como venía en la URL cuando era un alias retirado; `undefined` si la ruta es canónica. */
+  /** Id as it appeared in the URL when it was a removed alias; `undefined` if the route is canonical. */
   aliasedFrom?: string;
-  /** Dirección original que no corresponde a ninguna vista declarada. */
+  /** Original address that does not match any declared view. */
   notFoundPath?: string;
 }
 
-/** Snapshot crudo para useSyncExternalStore: debe ser un primitivo estable, no un objeto recién creado. */
+/** Raw snapshot for useSyncExternalStore: must be a stable primitive, not a freshly-created object. */
 function currentPath(): string {
   return window.location.pathname.replace(/^\//, '');
 }
@@ -184,13 +184,13 @@ function subscribe(callback: () => void): () => void {
   return () => { window.removeEventListener('popstate', callback); };
 }
 
-/** Riel (78px, sólo iconos) o barra completa (248px, con rótulos). */
+/** Rail (78px, icons only) or full bar (248px, with labels). */
 type SidebarState = 'rail' | 'expanded';
 
 const SIDEBAR_PREFERENCE_KEY = 'cauce.console.sidebar';
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
 const NAV_ID = 'nav-principal';
-/** Cortes de `responsive.css`: la ventana impone el riel, y por debajo la barra se va abajo. */
+/** Breakpoints from `responsive.css`: the viewport forces the rail, and below that the bar moves below. */
 const RAIL_VIEWPORT = '(max-width: 1100px)';
 const BOTTOM_BAR_VIEWPORT = '(max-width: 760px)';
 const CONSOLE_TITLE = 'Cauce V3 Console';
@@ -231,7 +231,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const [preference, setPreference] = useState<SidebarState>(readSidebarPreference);
   const mainRef = useRef<HTMLElement>(null);
   const routeMounted = useRef(false);
-  // Con la barra abajo no hay riel; entre 761 y 1100 lo impone la ventana y la elección no manda.
+  // With the bottom bar there is no rail; between 761 and 1100 the viewport decides and the choice has no say.
   const rail = !bottomBar && (narrowViewport || preference === 'rail');
   const collapsible = !narrowViewport;
 
@@ -246,7 +246,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code !== 'KeyB' || !event.altKey || !event.shiftKey) return;
       if (event.ctrlKey || event.metaKey) return;
-      // Quien está escribiendo —o el terminal, que entrega Alt+… al shell— se queda sus teclas.
+      // Whoever is typing —or the terminal, which passes Alt+… to the shell— keeps its keys.
       const target = event.target;
       if (target instanceof Element
         && target.closest('input, textarea, select, [contenteditable="true"], .xterm')) return;
@@ -263,7 +263,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   }, [aliasedFrom, routeId]);
 
   const Page = route?.component;
-  // Sub-detalle /fleet/:tenant/:alias reutiliza el workspace de terminal.
+  // Sub-detail /fleet/:tenant/:alias reuses the terminal workspace.
   const requestedSegment = path.split('/').filter(Boolean).map(decodeSegment)[0] ?? '';
   const fleetAgentTarget = !notFoundPath && requestedSegment === 'fleet' && params.length === 2
     ? { tenantId: params[0], alias: params[1] }
@@ -276,7 +276,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   }, [viewTitle]);
 
   useEffect(() => {
-    // El primer pintado no roba el foco: sólo se anuncia el cambio de ruta.
+    // The first paint does not steal focus: only the route change is announced.
     if (!routeMounted.current) { routeMounted.current = true; return; }
     mainRef.current?.focus();
   }, [routeId, notFoundPath, fleetAgentAlias]);
@@ -318,7 +318,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
                     aria-current={!notFoundPath && route?.id === item.id ? 'page' : undefined}
                     aria-disabled={disponible.disabled ? true : undefined}
                     className={disponible.disabled ? 'nav-inerte' : undefined}
-                    // En riel el CSS oculta el rótulo: sin `aria-label` el enlace se queda anónimo.
+                    // On the rail, CSS hides the label: without `aria-label` the link is left anonymous.
                     aria-label={item.label}
                     title={disponible.reason ?? (rail ? item.label : undefined)}
                   >

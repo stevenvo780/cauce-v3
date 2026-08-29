@@ -312,8 +312,8 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
 
       const row = await deliveryRow(claimed.delivery_id);
       expect(row.status).toBe('dead');
-      // Con presupuesto de sobra: lo que mata es la ambigüedad con ejecución, no el agotamiento.
-      // Un PROCESS_EXIT_PREFLIGHT en este mismo punto habría quedado en 'retry'.
+      // With budget to spare: what kills is ambiguity with execution, not exhaustion. A
+      // PROCESS_EXIT_PREFLIGHT at this same point would have stayed in 'retry'.
       expect(row.attempt).toBeLessThan(3);
     });
 
@@ -364,7 +364,7 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
         error_code: code
       }).success).toBe(true);
     }
-    // Y el candado del otro lado sigue puesto: un ambiguo NO puede declararse reintentable.
+    // And the lock on the other side is still on: an ambiguous code CANNOT declare itself retryable.
     expect(AckSchema.safeParse({
       version: '3.0',
       event_id: randomUUID(),

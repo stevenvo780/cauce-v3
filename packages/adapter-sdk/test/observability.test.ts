@@ -17,8 +17,8 @@ import type {
   DeliveryEvent,
 } from "../src/sdk/types.js";
 
-// Under `.test-state/`, which is the ignored path every other suite uses; the old
-// sibling directory was not covered by .gitignore and showed up as untracked noise.
+// Under `.test-state/`, which is the ignored path every other suite uses; the old sibling
+// directory was not covered by .gitignore and showed up as untracked noise.
 const root = resolve(".test-state/observability");
 
 async function storeFor(name: string): Promise<DurableStore> {
@@ -196,9 +196,9 @@ const WIRE_MAPPED_EVENT_FIELDS = new Set<string>([
   "duplicate",
   "claim_renewal",
   "origin",
-  // Este SÍ viaja: `sendEvent` lo mapea al campo opcional `execution_started` del ACK, que es
-  // la marca de "el harness arrancó de verdad" con la que el reaper decide si reintentar
-  // cuesta una corrida paga.
+  // This one DOES travel: `sendEvent` maps it to the optional `execution_started` field of the ACK,
+  // which is the marker of "the harness really started" used by the reaper to decide whether
+  // retrying costs a paid run.
   "execution_started",
 ]);
 

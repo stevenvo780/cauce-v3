@@ -6,7 +6,7 @@ import { SpaceWizard } from './SpaceWizard';
 import './toggles.css';
 
 /**
- * Formulario unificado para alta de espacios (rápida o guiada).
+ * Unified form for space creation (quick or guided).
  */
 
 type ModoDeAlta = 'rapida' | 'guiada';

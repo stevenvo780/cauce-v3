@@ -17,7 +17,7 @@ const TABS = [
 ];
 
 /**
- * Vista unificada de gestión de cuentas de IA, cuotas de consumo y asignaciones.
+ * Unified view for managing AI accounts, consumption quotas and assignments.
  */
 export function AccountsPage() {
   const api = useApi();
@@ -47,9 +47,9 @@ export function AccountsPage() {
   if (quotas.loading && !quotas.data && config.loading && !config.data) {
     return <LoadingState label="Leyendo cuentas, cuotas y asignaciones…" />;
   }
-  // Pantalla completa de error sólo si se cayeron las DOS fuentes: con una viva, la vista se dibuja
-  // y cada mitad declara su propia falla, que es más información que un cartel único — y sobre
-  // todo, el registro se sigue pudiendo escribir con el recolector caído.
+  // Full error screen only when BOTH sources are down: with one alive, the view renders and each
+  // half declares its own failure, which is more information than a single banner — and above
+  // all, the registry can still be written while the collector is down.
   if (quotas.error && !quotas.data && config.error && !config.data) {
     return <ErrorState error={config.error} onRetry={reloadAll} />;
   }
@@ -76,10 +76,10 @@ export function AccountsPage() {
 
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Cuentas y cuotas" />
 
-    {/* Los tres paneles se montan siempre y el inactivo se oculta con `hidden`: dos de los tres
-        llevan formularios con dry-run, y desmontarlos tiraría lo que el operador estaba escribiendo
-        cada vez que se asoma a otra pestaña. Ninguno pide datos propios —las tres fuentes viven en
-        esta página—, así que montarlos no cuesta una petición. */}
+    {/* All three panels are always mounted and the inactive one is hidden with `hidden`: two of
+        the three carry dry-run forms, and unmounting them would discard whatever the operator
+        was typing every time they peek at another tab. None fetches its own data — the three
+        sources live in this page — so mounting them does not cost a request. */}
     <ViewTabPanel id="consumo" hidden={tab !== 'consumo'}>
       <ConsumptionSection quotas={quotas} config={config} />
     </ViewTabPanel>

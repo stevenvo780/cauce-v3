@@ -3,18 +3,18 @@ import { Panel } from '../../components/ui';
 import { ARNESES_REALES, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO } from './arneses';
 
 /**
- * **Qué lee cada arnés de verdad**, encima del registro de bots.
+ * **What each harness actually reads**, on top of the bot registry.
  *
- * Va acá y no en un documento porque la pregunta se hace ACÁ: el operador entra a «Agentes y
- * cuentas», ve una columna «Harness» con un valor escrito y deduce —razonablemente— que de ahí sale
- * el programa que corre el bot y que cambiándola cambia algo. No sale, y no cambia nada: el arnés
- * real se deduce del binario en ejecución, y esa columna se equivocaba en 5 de los 14 alias el
- * 23-ago-2026.
+ * Lives here and not in a document because the question is asked HERE: the operator opens
+ * "Agentes y cuentas" (Agents and accounts), sees a "Harness" column with a written value and
+ * reasonably concludes the bot's program comes from there, and that changing it changes something.
+ * It does not, and nothing changes: the real harness is deduced from the running binary, and that
+ * column was wrong for 5 of the 14 aliases.
  *
- * Lo que este panel hace es contestar la pregunta siguiente, que es la útil: si no es esa columna,
- * ¿dónde se toca lo que el bot lee? La respuesta es distinta en los cuatro arneses y en ninguno de
- * los cuatro es esta pantalla, tampoco para el rol declarado, que Cauce antepone él mismo y por eso
- * funciona hasta con el arnés que no lee ningún fichero.
+ * What this panel does is answer the next question, which is the useful one: if it is not that
+ * column, where does one touch what the bot reads? The answer is different for each of the four
+ * harnesses, and for none of the four is it this screen — not even for the declared role, which
+ * Cauce prepends on its own, which is why it works even with the harness that reads no file.
  */
 export function ArnesesPanel() {
   return (
@@ -29,9 +29,9 @@ export function ArnesesPanel() {
               <h3>{arnes.label}</h3>
               <code className="arnes-id">{arnes.id}</code>
             </header>
-            {/* La ruta es el dato que se viene a buscar, así que va primero y en monoespaciada.
-                Cuando no hay ninguna se DICE con letras: una fila en blanco se lee como «no lo
-                sabemos», que es lo contrario de lo que pasa con hermes. */}
+            {/* The path is the piece of data the visitor came for, so it goes first and in
+                monospace. When none is set, it is SAID in letters: an empty row reads as "we
+                don't know", which is the opposite of what happens with hermes. */}
             {arnes.directiva === '' ? (
               <p className="arnes-ruta arnes-ruta-vacia">
                 <Slash size={14} aria-hidden="true" />
@@ -50,8 +50,8 @@ export function ArnesesPanel() {
           </li>
         ))}
       </ul>
-      {/* El cierre: dónde se escribe el rol declarado, que acá tampoco. Un panel que sólo dice
-          «acá no» manda al operador a otra pantalla sin decirle a cuál. */}
+      {/* The close: where the declared role is written, which here also is not. A panel that only
+          says "not here" sends the operator to another screen without saying which one. */}
       <p className="notice arnes-gobierna" role="note">{DONDE_SE_ESCRIBE_EL_ROL_DECLARADO}</p>
     </Panel>
   );

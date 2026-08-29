@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Provisiona o verifica el runtime Hermes fijado para un alias, sin copiar credenciales.
+# Provisions or verifies the pinned Hermes runtime for an alias, without copying credentials.
 #
-# La fuente y el venv ejecutables viven bajo /opt, root-owned y sin bits de escritura. Los tres
-# aliases de ws-humanizar comparten UID: alojar código importable bajo su `.local` permitiría que
-# cualquiera de ellos persistiera un módulo untracked o sustituyera el venv entre el preflight y
-# el turno. Sólo el perfil del alias vive en `.local` persistente y queda user-owned; autenticarlo
-# es un gate separado y nunca se resuelve copiando `.env`, tokens o sesiones de otro runtime.
+# The executable source and venv live under /opt, root-owned and without write bits. The three
+# ws-humanizar aliases share UID: hosting importable code under their `.local` would let any of
+# them persist an untracked module or replace the venv between preflight and turn. The alias
+# profile is the only thing in the persistent `.local`, user-owned; authenticating it is a
+# separate gate, never resolved by copying `.env`, tokens or sessions from another runtime.
 
 set -euo pipefail
 
@@ -122,8 +122,8 @@ if [[ $mode == provision ]]; then
     || { printf 'provision-hermes-runtime: otro proceso posee el lock del alias\n' >&2; exit 73; }
 fi
 
-# El perfil es el único árbol mutable. Se crea y valida bajo el propio UID para que ningún path
-# controlado por ese UID se recorra con privilegios root.
+# The profile is the only mutable tree. It is created and validated under the alias's own UID so
+# that no path controlled by that UID is traversed with root privileges.
 docker exec -i --user "$container_user" "$container_id" /usr/bin/python3 -c '
 import os, pathlib, stat, sys
 mode, home, alias = sys.argv[1:]
@@ -139,8 +139,8 @@ if details.st_uid != os.geteuid() or stat.S_IMODE(details.st_mode) != 0o700:
 ' "$mode" "$container_home" "$alias_name" >/dev/null \
   || { printf 'provision-hermes-runtime: perfil Hermes inseguro o ausente\n' >&2; exit 78; }
 
-# Código y venv se construyen como root en un anchor de /opt que el UID compartido no puede
-# renombrar. uv se copia primero y sus bytes se comparan con el digest versionado antes de ejecutar.
+# Source and venv are built as root on a /opt anchor that the shared UID cannot rename. uv is
+# copied first and its bytes are compared against the versioned digest before being executed.
 docker exec -i --user 0 "$container_id" sh -s -- \
   "$mode" "$container_home" "$alias_name" "$repository" "$source_commit" "$package_version" \
   "$runtime_root" "$runtime_id" "$uv_version" "$uv_target" "$uv_sha256" "$uv_lock_sha256" \
@@ -518,7 +518,7 @@ docker exec -i --user 0 "$container_id" /usr/bin/python3 - \
   < "$runtime_verifier" >/dev/null \
   || { printf 'provision-hermes-runtime: verificación del runtime inmutable falló\n' >&2; exit 78; }
 
-# La prueba de import se repite bajo el UID real y con el perfil persistente, sin modelo ni red.
+# The import check is repeated under the real UID and with the persistent profile, no model or net.
 docker exec -i --user "$container_user" "$container_id" sh -c \
   'set -eu; cd "$1"; HERMES_HOME="$2" PYTHONDONTWRITEBYTECODE=1 "$3" -c '\''import hermes_cli.oneshot'\''' \
   sh "$runtime_root/$alias_name/$runtime_id/source" \

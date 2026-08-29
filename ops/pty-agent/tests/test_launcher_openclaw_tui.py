@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""La TUI nativa de OpenClaw, derivada DENTRO del contenedor y solo si de verdad esta.
+"""OpenClaw's native TUI, derived INSIDE the container and only if it actually is.
 
-POR QUE HACE FALTA OTRA DERIVACION
-----------------------------------
-La TUI que hoy emiten 7 alias es el panel tmux de la SESION COMPARTIDA, y la sesion compartida
-existe solo para `claude` y `codex` (`SharedSessionHarness = Extract<HarnessId, "claude" |
-"codex">`). Los alias `openclaw` y `hermes` no la tienen, no levantan `cauce-<alias>` en tmux, y
-por eso `derive_harness_command` devuelve vacio para siempre y la consola dice «Sin TUI que
-emitir». No es una linea de configuracion que falte: es estructural.
+WHY ANOTHER DERIVATION IS NEEDED
+--------------------------------
+The TUI emitted today by 7 aliases is the tmux panel of the SHARED SESSION, and the shared session
+only exists for `claude` and `codex` (`SharedSessionHarness = Extract<HarnessId, "claude" |
+"codex">`). The `openclaw` and `hermes` aliases do not have it; they do not start `cauce-<alias>`
+in tmux, and that is why `derive_harness_command` always returns empty and the console says "No TUI
+to emit". It is not a missing configuration line: it is structural.
 
-OpenClaw si trae una TUI propia (`openclaw tui --session <key>`), y es un CLIENTE del gateway que
-ese alias ya corre. O sea que no hace falta tmux, ni una imagen nueva, ni un proceso supervisado
-mas: se lanza en el pty del agente como cualquier otro `harness_command`.
+OpenClaw does ship its own TUI (`openclaw tui --session <key>`), and it is a CLIENT of the gateway
+that this alias already runs. So there is no need for tmux, a new image, or another supervised
+process: it is launched in the agent's pty like any other `harness_command`.
 
-LO QUE ESTA PRUEBA EXIGE, Y POR QUE CADA COSA
----------------------------------------------
-Todo se mide DENTRO del contenedor y como el usuario del alias, y cualquier duda deja al alias
-sin modo `harness` (que es como esta hoy). En concreto:
+WHAT THIS TEST REQUIRES, AND WHY EACH THING
+------------------------------------------
+Everything is measured INSIDE the container, as the alias user, and any doubt leaves the alias
+without a `harness` mode (as it is today). Specifically:
 
-  * `node` con ruta ABSOLUTA. El envoltorio `openclaw` re-ejecuta y deja su argv en «openclaw» a
-    secas —por eso el supervisor del gateway tampoco lo usa—, asi que se invoca la entrada real.
-  * La entrada de openclaw tiene que EXISTIR.
-  * La version instalada tiene que tener el subcomando `tui` y aceptar `--session`. Se le pregunta
-    al binario, no a la memoria: openclaw se actualiza solo y el dia que cambie el flag, esto deja
-    de anunciar la TUI en vez de anunciar una pantalla vacia.
-  * La sesion NO se elige al arrancar: el bundle lleva el state directory confiable y el agente
-    resuelve su pointer durable en cada OPEN.
+  * `node` with an ABSOLUTE path. The `openclaw` wrapper re-executes and leaves its argv as just
+    "openclaw" —that is why the gateway supervisor does not use it either—, so the real entry is invoked.
+  * The openclaw entry MUST EXIST.
+  * The installed version MUST have the `tui` subcommand and accept `--session`. The binary is
+    asked, not memory: openclaw self-updates, and the day the flag changes, this stops advertising
+    the TUI instead of advertising an empty screen.
+  * The session is NOT chosen at start: the bundle carries the trusted state directory and the
+    agent resolves its durable pointer on every OPEN.
 
-Cada caso positivo va con su CONTROL NEGATIVO, porque el fallo caro aca no es quedarse sin TUI:
-es ANUNCIAR una que abre en negro. Eso manda al operador a mirar una pantalla vacia y a creer que
-el agente esta colgado.
+Each positive case is paired with a NEGATIVE CONTROL, because the costly failure here is not
+losing the TUI: it is ADVERTISING one that opens black. That sends the operator to look at an
+empty screen and believe the agent is stuck.
 """
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ fi
 
 
 def _function_source(name: str) -> str:
-    """La funcion tal como esta HOY en el lanzador desplegable, no una copia pegada aca."""
+    """The function as it stands TODAY in the deployable launcher, not a copy pasted here."""
     text = LAUNCHER.read_text(encoding="utf-8")
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + len("\n}\n")
@@ -94,7 +94,7 @@ def _fake_docker(
     entry_present: bool = True,
     tui_help: str | None = "Usage: openclaw tui [--session <key>] [--history-limit <n>]",
 ) -> pathlib.Path:
-    """Un `docker` que sabe contestar exactamente las tres sondas de capacidad."""
+    """A `docker` that knows how to answer exactly the three capability probes."""
     script = tmp / "docker"
     body = ["#!/usr/bin/env bash", 'args="$*"']
 
@@ -211,7 +211,7 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
         self.assertNotIn("printf", source)
 
 class DerivedOpenClawArgvTest(unittest.TestCase):
-    """El bundle lleva un resolver, nunca el native id congelado."""
+    """The bundle carries a resolver, never the frozen native id."""
 
     def test_the_launcher_builds_a_dynamic_resolver_without_a_session_key(self) -> None:
         text = LAUNCHER.read_text(encoding="utf-8")
@@ -255,11 +255,11 @@ class DerivedOpenClawArgvTest(unittest.TestCase):
 
 
 class TmuxStillWinsTest(unittest.TestCase):
-    """Los 7 alias que hoy emiten su panel tmux no pueden cambiar de camino.
+    """The 7 aliases that emit their tmux panel today cannot change paths.
 
-    La derivacion de openclaw es un RESPALDO: solo corre cuando no hay sesion tmux. Si se
-    invirtiera el orden, un alias con sesion compartida dejaria de emitir el panel que el humano
-    esta mirando y pasaria a emitir otra cosa.
+    The openclaw derivation is a BACKUP: it only runs when there is no tmux session. If the order
+    were inverted, an alias with a shared session would stop emitting the panel the human is
+    watching and start emitting something else.
     """
 
     def test_the_openclaw_probe_runs_only_after_tmux_fails(self) -> None:

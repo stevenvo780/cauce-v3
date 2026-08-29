@@ -422,7 +422,7 @@ test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausen
   tmux.sessionExists = true;
   tmux.sessionOptions.set("@cauce_alias", "kratos");
   tmux.sessionOptions.set("@cauce_harness", "claude");
-  // La sesión responde a has-session pero el panel no existe: la TUI se murió dentro.
+  // The session answers has-session but the pane does not exist: the TUI died inside.
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
     if (args[0] === "list-panes") return { exitCode: 0, stdout: "", stderr: "" };
@@ -441,17 +441,17 @@ test("una sesion viva sin panel de TUI se reporta como tui_absent, no como ausen
 });
 
 test("la ventana de la TUI que no existe NO se confunde con otra ventana de la sesión", async () => {
-  // Si la ventana no existe en la sesión tmux, se debe detectar y degradar limpiamente
-  // enumerando con `list-windows` y comparando por igualdad exacta.
+  // If the window does not exist in the tmux session, it must be detected and degraded cleanly
+  // by enumerating with `list-windows` and comparing for exact equality.
   const { state, home, workspace } = await freshState("ventana-fantasma");
   const tmux = new FakeTmux();
   tmux.sessionExists = true;
   tmux.sessionOptions.set("@cauce_alias", "kratos");
   tmux.sessionOptions.set("@cauce_harness", "claude");
-  tmux.windows = ["servidor"]; // la ventana `agente` se murió al nacer
+  tmux.windows = ["servidor"]; // the `agente` window died at birth
   const originalRun = tmux.run.bind(tmux);
   tmux.run = async (args, stdin): Promise<TmuxResult> => {
-    // El tmux real MIENTE acá: responde por otra ventana en vez de fallar.
+    // The real tmux LIES here: it answers for another window instead of failing.
     if (args[0] === "display-message" && args[1] === "-p") {
       return { exitCode: 0, stdout: "14667\n", stderr: "" };
     }
@@ -463,7 +463,7 @@ test("la ventana de la TUI que no existe NO se confunde con otra ventana de la s
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
-  // Cayó al camino de siempre y lo dijo, en vez de creerse el PID prestado.
+  // It fell through to the usual path and said so, instead of believing the borrowed PID.
   assert.equal(fallback.calls, 1);
   assert.ok((output.reply ?? "").includes("tui_absent"));
   assert.equal((await readDegradations(state))[0]?.reason, "tui_absent");

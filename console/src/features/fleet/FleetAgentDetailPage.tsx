@@ -4,7 +4,7 @@ import { useApi } from '../../api/context';
 import { onNavClick } from '../../router';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
-// Regla del encargo: la lógica de fleet/leases vive en features/terminal; se reutiliza, no se duplica.
+// Brief rule: fleet/leases logic lives in features/terminal; it is reused, not duplicated.
 import { buildFleetAgents, fleetAgentId } from '../terminal/fleet';
 import { listTerminalTargets } from '../terminal/api';
 import { OperatorWorkspace } from '../terminal/OperatorWorkspace';
@@ -15,10 +15,10 @@ interface FleetAgentDetailPageProps {
 }
 
 /**
- * Detalle de un bot en /fleet/:tenant/:alias. No construye una vista propia de
- * sesión/ACK/PTY: delega en OperatorWorkspace (Terminal), acotado a un único agente,
- * para reusar exactamente el mismo AckInspector, PtyTerminal y ultimateTerminalGate
- * ya verificados en Ultimate Terminal.
+ * Detail of a bot at /fleet/:tenant/:alias. Does not build its own session/ACK/PTY view:
+ * it delegates to OperatorWorkspace (Terminal), scoped to a single agent, in order to reuse
+ * exactly the same AckInspector, PtyTerminal and ultimateTerminalGate already verified in
+ * Ultimate Terminal.
  */
 export function FleetAgentDetailPage({ tenantId, alias }: FleetAgentDetailPageProps) {
   const api = useApi();

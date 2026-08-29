@@ -237,8 +237,8 @@ test("a duplicate started frame holds once its exact remote intent receipt exist
 test("out-of-order event receipts correlate by full event identity", async () => {
   const context = await setup("engine-event-correlation");
   await context.engine.handleDelivery(delivery("event-correlation"));
-  // El tercer evento es la marca `execution_started`; correlaciona por identidad completa como
-  // cualquier otro y no altera el orden de los demás.
+  // The third event is the `execution_started` mark; it correlates by full identity like any
+  // other and does not alter the order of the rest.
   const [accepted, started, executionStarted, done] = context.store.pendingEvents();
   assert.ok(accepted && started && executionStarted && done);
   assert.equal(executionStarted.execution_started, true);
@@ -255,13 +255,13 @@ test("out-of-order event receipts correlate by full event identity", async () =>
 });
 
 /**
- * Antes esto separaba por `delivery.tenant_id`, que
- * es el tenant del EMISOR: la misma persona, en el mismo chat, hablándole al mismo agente, caía
- * en sesiones distintas según qué agente publicara la entrega. Esa separación no era una
- * frontera — el test de abajo ("trusted bridge tenant…") exige lo contrario para la misma
- * conversación — y era una de las causas del síntoma "se duplican las instancias".
+ * Previously this separated by `delivery.tenant_id`, which is the SENDER's tenant: the same
+ * person, in the same chat, talking to the same agent, landed in different sessions depending
+ * on which agent published the delivery. That separation was not a boundary — the test below
+ * ("trusted bridge tenant...") requires the opposite for the same conversation — and was one
+ * of the causes of the "instances duplicate" symptom.
  *
- * Lo que sigue protegiendo, que es la razón por la que existe: dos conversaciones autenticadas
- * distintas (dos humanos, dos chats) jamás comparten sesión aunque traigan la misma etiqueta
- * `session_key` en el cuerpo, que es un campo NO confiable.
+ * What it still protects, which is the reason it exists: two distinct authenticated
+ * conversations (two humans, two chats) never share a session even when they bring the same
+ * `session_key` label in the body, which is an untrusted field.
  */

@@ -96,7 +96,7 @@ export function terminalChannelGate(
   };
 }
 
-/** Igual que `terminalChannelGate`, pero para la TUI viva del agente (modo `harness`). */
+/** Same as `terminalChannelGate`, but for the agent's live TUI (`harness` mode). */
 export interface LiveTuiGate {
   enabled: boolean;
   status: LiveTuiStatus | 'blocked';
@@ -105,9 +105,9 @@ export interface LiveTuiGate {
 }
 
 /**
- * Puerta completa de la TUI en vivo: la puerta del plugin (RBAC + capability + endpoint
- * same-origin), la autoridad por destino Y que el servidor publique el modo `harness`.
- * Cualquier eslabón que no sea un permiso explícito deja la TUI cerrada, con su motivo.
+ * Full gate for the live TUI: the plugin gate (RBAC + capability + same-origin endpoint),
+ * the per-target authority AND that the server publishes `harness` mode.
+ * Any link that is not an explicit permission keeps the TUI closed, with its reason.
  */
 export function liveTuiGate(
   capability: TerminalCapability | undefined,

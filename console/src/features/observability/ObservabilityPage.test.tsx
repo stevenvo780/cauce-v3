@@ -20,7 +20,7 @@ const relay = {
   created_at: '2026-08-06T10:00:00.000Z', sent_at: '2026-08-06T10:00:03.000Z',
 };
 
-/** El snapshot de observabilidad trae un relay AJENO: la vista no debe dibujarlo nunca. */
+/** The observability snapshot brings a FOREIGN relay: the view must never draw it. */
 function observability(overrides: Record<string, unknown> = {}) {
   server.use(http.get('*/v3/console/observability', () => HttpResponse.json({
     observed_at: '2026-08-06T10:00:05.000Z',
@@ -120,7 +120,7 @@ it('si fallan los relays, las señales siguen en pantalla y la falla se declara'
   expect(screen.getByText('En línea')).toBeInTheDocument();
 });
 
-/** Eventos de auditoría cruzables contra el relay de arriba por su `trace_id`. */
+/** Audit events cross-referenceable against the relay above by its `trace_id`. */
 function audit(items: Record<string, unknown>[]) {
   server.use(http.get('*/v3/console/audit', () => HttpResponse.json({ items })));
 }
@@ -165,10 +165,10 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   expect(texto).toContain('Steven');
   expect(texto).toContain('req-7f3c');
   expect(texto).toContain('trace-4c8f');
-  // El contador «N visibles de M» del buscador.
+  // The "N visible of M" counter of the search box.
   expect(eventos.querySelector('.panel-subtitle, p')?.textContent ?? texto).toBeTruthy();
   expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();
-  // Y el buscador sigue filtrando sobre los seis campos.
+  // And the search box keeps filtering over the six fields.
   await user.type(screen.getByRole('searchbox'), 'kant');
   expect(screen.getByText('1 visibles de 2')).toBeInTheDocument();
 });

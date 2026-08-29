@@ -183,9 +183,9 @@ test("a queued serialized session keeps renewing its claim, in 'accepted', befor
   const first = context.engine.handleDelivery(firstInput);
   await context.runner.waitForCalls(1);
   const second = context.engine.handleDelivery(secondInput);
-  // La entrega encolada tiene que seguir renovando su garra —si no, el reaper se la lleva a mitad
-  // de la fila— pero renovando en 'accepted'. Antes esta prueba esperaba dos ACK 'started', que era
-  // el defecto escrito como aserción: declaraba ejecución sin haber tomado el candado.
+  // The queued delivery has to keep renewing its claim —otherwise the reaper takes it away in the
+  // middle of the queue— but renewing in 'accepted'. Before, this test expected two 'started' ACKs,
+  // which was the defect written as an assertion: it declared execution without holding the lock.
   const renewalDeadline = Date.now() + 5_000;
   while (context.events.filter(
     (event) => event.delivery_id === secondInput.delivery_id
@@ -231,9 +231,9 @@ test("outbox removes events only after relay ACK", async () => {
   const context = await setup("engine-ack");
   await context.engine.handleDelivery(delivery("ack-1"));
   const pending = context.store.pendingEvents();
-  // accepted + started + started(execution_started) + done. El tercero es la marca de arranque
-  // real del harness, que es durable como cualquier otro evento: si el socket está caído cuando
-  // el harness arranca, se despacha al reconectar y la base igual se entera de que ya se pagó.
+  // accepted + started + started(execution_started) + done. The third is the mark of the harness's
+  // real start, which is durable like any other event: if the socket is down when the harness
+  // starts, it is dispatched on reconnect and the database still learns that it was already paid.
   assert.equal(pending.length, 4);
   const first = pending[0];
   assert.ok(first);

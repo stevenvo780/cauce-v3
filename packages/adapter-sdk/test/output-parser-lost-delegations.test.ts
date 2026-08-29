@@ -3,18 +3,18 @@ import test from "node:test";
 import { parseClaudeOutput, parseFinalText, parseOpenClawOutput } from "../src/sdk/output-parser.js";
 
 /**
- * BUG 2 — el fallback a texto plano se tragaba el sobre del contrato y con él las delegaciones.
+ * BUG 2 — the plain-text fallback swallowed the contract envelope and, with it, the delegations.
  *
- * Los dos casos de abajo son transcripciones reales de producción (tabla `messages`, 2026-07-29):
- * el modelo antepone una frase al sobre, `JSON.parse` falla sobre el texto entero, el texto no
- * empieza con `{` y todo cae al fallback: `messages` desaparece y el JSON crudo se publica en el
- * chat. 160 respuestas así .
+ * The two cases below are real production transcripts (`messages` table, 2026-07-29): the model
+ * prefixes a sentence before the envelope, `JSON.parse` fails on the whole text, the text does not
+ * start with `{`, and everything falls into the fallback: `messages` vanishes and the raw JSON is
+ * published into the chat. 160 replies like that.
  */
 
 const DELEGATION = "argos: verificá el diagnóstico contra el journal de kant antes de cerrar.";
 
 test("un sobre precedido de una frase conserva las delegaciones en vez de tragárselas", () => {
-  // Caso real de `janus` (2026-07-29 08:45): prosa + sobre en la misma respuesta.
+  // Real case from `janus` (2026-07-29 08:45): prose + envelope in the same reply.
   const crudo = [
     "Recibido. Encaja perfecto con lo que ya había hecho: nunca arranqué el encargo.",
     "",
@@ -32,12 +32,12 @@ test("un sobre precedido de una frase conserva las delegaciones en vez de tragá
   assert.deepEqual(salida.messages, [{ to: "argos", body: DELEGATION }]);
   assert.equal(salida.status, "done");
   assert.equal(salida.reply, "Recibido el STAND DOWN. Confirmo: nunca empecé ese encargo.");
-  // Y de paso deja de publicarse el volcado crudo del contrato como si fuera la respuesta.
+  // And, along the way, the raw contract dump stops being published as if it were the reply.
   assert.equal(String(salida.reply).includes('"messages"'), false);
 });
 
 test("un sobre en una valla con prosa alrededor tampoco pierde la delegación", () => {
-  // Caso real de `zeus` (2026-07-29 05:42): "Delivering the answer to argos" y el sobre en valla.
+  // Real case from `zeus` (2026-07-29 05:42): "Delivering the answer to argos" and the envelope in a fence.
   const crudo = [
     "Full diagnosis complete. Delivering the answer to argos and unblocking kant.",
     "",
@@ -93,7 +93,7 @@ test("el texto sin sobre alguno sigue cayendo al fallback de siempre", () => {
   assert.deepEqual(salida.messages, []);
   assert.equal(salida.status, "done");
 
-  // Un JSON que no es el sobre del contrato tampoco se reinterpreta.
+  // A JSON blob that is not the contract envelope is not reinterpreted either.
   const conJsonAjeno = parseFinalText('El healthcheck devolvió {"ok":true,"latency_ms":12}.', "Hermes result");
   assert.match(String(conJsonAjeno.reply), /healthcheck/u);
   assert.deepEqual(conJsonAjeno.messages, []);

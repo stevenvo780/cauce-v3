@@ -55,10 +55,10 @@ test("harness prompt receives authenticated origin context", async () => {
 });
 
 test("el rol declarado llega entero al harness aunque mida 1300 unidades UTF-16", async () => {
-  // El caso exacto que dejaba sordo al alias: 1200 PUNTOS DE CÓDIGO y 1300 unidades UTF-16. La
-  // base lo acepta (`char_length`=1200), así que el adaptador tiene que poder recibirlo y pasarlo
-  // al harness sin recortarlo: recortarlo acá sería inventarle al agente un rol distinto del que
-  // el operador guardó por la pantalla.
+  // The exact case that left the alias deaf: 1200 CODE POINTS and 1300 UTF-16 units. The
+  // database accepts it (`char_length`=1200), so the adapter must be able to receive it and pass
+  // it to the harness without trimming it: trimming here would invent a role for the agent
+  // different from what the operator saved through the screen.
   const brief = `${"a".repeat(1100)}${"\u{1F389}".repeat(100)}`;
   assert.equal([...brief].length, 1200);
   assert.equal(brief.length, 1300);
@@ -70,24 +70,24 @@ test("el rol declarado llega entero al harness aunque mida 1300 unidades UTF-16"
 });
 
 test("el rol se recorta por puntos de código: nunca sale un surrogate suelto al harness", async () => {
-  // 1199 letras + un emoji = 1200 puntos de código y 1201 unidades UTF-16. El `slice(0, 1200)`
-  // que había acá indexaba UTF-16 y partía el par suplente por la mitad; el surrogate alto suelto
-  // que quedaba no tiene representación en UTF-8 y viajaba a stdin del harness como U+FFFD. El
-  // agente leía su propio rol terminado en un carácter roto.
+  // 1199 letters + one emoji = 1200 code points and 1201 UTF-16 units. The `slice(0, 1200)`
+  // that used to be here indexed UTF-16 and split the surrogate pair in half; the lone high
+  // surrogate it left has no UTF-8 representation and travelled to the harness stdin as U+FFFD.
+  // The agent read its own role ending in a broken character.
   const justo = `${"a".repeat(1199)}\u{1F389}`;
   assert.equal([...justo].length, 1200);
   assert.equal(justo.length, 1201);
-  // CONTROL NEGATIVO: la línea vieja, ejecutada tal cual, SÍ rompe el emoji. Sin esto la aserción
-  // de abajo pasaría con cualquier implementación.
+  // NEGATIVE CONTROL: the old line, run as is, DOES break the emoji. Without this, the
+  // assertion below would pass with any implementation.
   assert.ok(Buffer.from(justo.slice(0, 1200), "utf8").toString("utf8").includes("�"));
 
   const context = await setup("engine-self-role-surrogate");
   await context.engine.handleDelivery({ ...delivery("self-role-surrogate"), self_role: justo });
   const prompt = context.runner.requests[0]?.stdin ?? "";
-  // El efecto medido donde duele: `Tu rol:` no va por JSON.stringify (que escaparía el surrogate
-  // suelto como \udXXX y lo escondería), sino como texto crudo. Serializarlo a UTF-8 y volver es
-  // exactamente lo que le pasa al cruzar a stdin del proceso del harness, y un surrogate suelto
-  // no sobrevive ese viaje: vuelve como U+FFFD.
+  // The measured effect where it hurts: `Tu rol:` does not go through JSON.stringify (which would
+  // escape the lone surrogate as \udXXX and hide it), but as raw text. Serialising to UTF-8 and
+  // back is exactly what happens when crossing to the harness process stdin, and a lone surrogate
+  // does not survive that trip: it comes back as U+FFFD.
   const ida_y_vuelta = Buffer.from(prompt, "utf8").toString("utf8");
   assert.ok(!ida_y_vuelta.includes("�"), "el harness recibió un carácter de reemplazo");
   assert.equal(ida_y_vuelta, prompt);
@@ -95,8 +95,8 @@ test("el rol se recorta por puntos de código: nunca sale un surrogate suelto al
 });
 
 test("un rol pasado de largo se recorta en el borde de un punto de código, no dentro", async () => {
-  // El SDK no asume que el único emisor sea un store de esta versión, así que el recorte defensivo
-  // sigue existiendo — pero ahora cae entre puntos de código.
+  // The SDK does not assume the only sender is a store of this version, so the defensive trim
+  // still exists — but now it lands between code points.
   const pasado = `${"a".repeat(1199)}\u{1F389}\u{1F389}`;
   const context = await setup("engine-self-role-clamp");
   await context.engine.handleDelivery({ ...delivery("self-role-clamp"), self_role: pasado });

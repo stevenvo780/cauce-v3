@@ -17,7 +17,7 @@ import type { TerminalCapability } from '../../api/types';
 export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
 
 /**
- * Causa identificada de no disponibilidad del relay de terminales.
+ * Identified cause of the terminals relay being unavailable.
  */
 export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso' | 'sin-comprobar';
 
@@ -25,22 +25,22 @@ export interface TerminalRelayState {
   status: TerminalRelayStatus;
   /** Operator-facing, one-line explanation. Always set once `status` leaves `checking`. */
   reason: string;
-  /** Siempre presente cuando `status` es `unavailable`; nunca en los otros dos. */
+  /** Always present when `status` is `unavailable`; never in the other two. */
   cause?: TerminalRelayCause;
 }
 
 export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no está desplegado en este stack.';
 
 /**
- * Mismo reparto de palabras que `CONFIG_SIN_CONTROL_REASON` en `router.ts`, y a propósito:
- * es el mismo permiso, negado por el mismo gate. Dos redacciones distintas para la misma negativa
- * le harían creer al operador que son dos problemas.
+ * Same wording split as `CONFIG_SIN_CONTROL_REASON` in `router.ts`, on purpose:
+ * it is the same permission, denied by the same gate. Two different rewordings of the same denial
+ * would make the operator think they are two problems.
  */
 export const TERMINAL_RELAY_SIN_PERMISO_REASON =
   'Tu cuenta no tiene permiso de control sobre esta flota: la terminal de agentes es del dueño del bus. '
   + 'El relay puede estar perfectamente desplegado; lo que falta es el permiso.';
 
-/** El gateway contestó, pero no consiguió alcanzar su upstream PTY. */
+/** The gateway replied, but could not reach its PTY upstream. */
 const UPSTREAM_INALCANZABLE = [502, 503, 504];
 
 export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar el canal PTY';
@@ -80,12 +80,12 @@ export function deriveTerminalRelayState(
   if (error) {
     const status = error instanceof ApiError ? error.status : undefined;
     const detail = error instanceof Error && error.message ? error.message : undefined;
-    // El 403 es del RBAC y NO dice nada sobre si el relay está desplegado: el gate corre antes.
+    // A 403 is RBAC and says NOTHING about whether the relay is deployed: the gate runs first.
     if (status === 403) {
       return { status: 'unavailable', cause: 'sin-permiso', reason: TERMINAL_RELAY_SIN_PERMISO_REASON };
     }
-    // Sólo 404/501 acreditan ausencia. Un 502/503/504 o un error sin status apenas dicen que la
-    // medición no llegó al relay; rotularlos como despliegue ausente sería inventar topología.
+    // Only 404/501 certify absence. A 502/503/504 or an error without status only say the
+    // probe did not reach the relay; labeling them as deployment absent would be inventing topology.
     if (status !== 404 && status !== 501) {
       return {
         status: 'unavailable',

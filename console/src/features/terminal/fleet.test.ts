@@ -175,7 +175,7 @@ it('keeps tenants that differ only by case as distinct identities', () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* TUI en vivo                                                                */
+/* Live TUI                                                                   */
 /* -------------------------------------------------------------------------- */
 
 const zeus = { id: 'Steven:zeus', tenantId: 'Steven', alias: 'zeus', roomIds: [], roomMembership: {}, leaseState: 'online' as const };
@@ -184,7 +184,7 @@ it('sólo declara TUI en vivo cuando el servidor publica el modo harness', () =>
   expect(resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })], zeus))
     .toMatchObject({ status: 'available' });
 
-  // CONTROL NEGATIVO: mismo destino, autorizado y online, pero sin el modo. No hay TUI.
+  // NEGATIVE CONTROL: same destination, authorised and online, but without the mode. There is no TUI.
   const sinTui = resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell'] })], zeus);
   expect(sinTui.status).toBe('no_tui');
   expect(sinTui.reason).toMatch(/no publica el modo harness/i);

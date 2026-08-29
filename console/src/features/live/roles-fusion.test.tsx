@@ -12,7 +12,7 @@ function RolesFoldConfigurado({ onAbrirPerfil }: { onAbrirPerfil: (key: string) 
 }
 
 /**
- * Las cuatro capacidades que la pantalla «Roles de agente» aportaba y que ningún otro sitio tenía.
+ * The four capabilities the "Agent roles" screen contributed that no other site had.
  */
 
 it('el medidor del campo enseña las DOS unidades y bloquea el rol que dejaría SORDO al alias', () => {

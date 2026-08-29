@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { construirRespuestaDegradada } from './console/agent-directive.routes.js';
 
 /**
- * Verifica que la respuesta degradada de `/directive` reporte `medido: false`
- * explícitamente cuando no se dispone de hechos medidos del contenedor.
+ * Verifies that the degraded response from `/directive` reports `medido: false`
+ * explicitly when no measured facts are available for the container.
  */
 
 describe('la respuesta degradada de /directive dice que no midió', () => {
   it('sin hechos medidos: NO medida, y explica por qué', () => {
     const r = construirRespuestaDegradada(undefined);
     expect(r).toBeDefined();
-    expect(r!.publicado).toBe(true); // la ruta SÍ existe: eso no es lo que está en duda
+    expect(r!.publicado).toBe(true); // the route DOES exist: that is not what is in doubt
     expect(r!.medido).toBe(false);
     expect(r!.files).toBeNull();
     expect(r!.memory).toEqual({
@@ -35,17 +35,17 @@ describe('la respuesta degradada de /directive dice que no midió', () => {
   });
 
   it('CONTROL NEGATIVO: «measured» no produce respuesta degradada', () => {
-    // Si esto devolviera algo, la ruta estaría degradando el único caso bueno y las capas 2 y 3
-    // no se llenarían nunca, dijera lo que dijera el resto del código.
+    // If this returned something, the route would be degrading the only good case and layers 2 and 3
+    // would never fill in, no matter what the rest of the code said.
     expect(construirRespuestaDegradada('measured')).toBeUndefined();
   });
 });
 
 /*
- * La capa 3 tenía el MISMO defecto que la capa 2, en otro sitio: cuando el listado de memoria
- * fallaba, la ruta devolvía `{total: 0, entries: []}`, y ese cero llegaba a la pantalla como
- * «miró y este alias no tiene memoria escrita». El contrato nuevo conserva el motivo mediante
- * el discriminante `error`; `null` sólo queda como compatibilidad con gateways anteriores.
+ * Layer 3 had the SAME defect as layer 2, just elsewhere: when the memory listing
+ * failed, the route returned `{total: 0, entries: []}`, and that zero reached the screen as
+ * "looked and this alias has no written memory". The new contract preserves the reason via
+ * the `error` discriminant; `null` only stays as backward compatibility with older gateways.
  */
 describe('la memoria que no se pudo listar es un fallo discriminado, no un índice de cero', () => {
   it('el índice vacío y la ausencia de índice NO son el mismo valor', async () => {
@@ -54,7 +54,7 @@ describe('la memoria que no se pudo listar es un fallo discriminado, no un índi
     expect(codigo!.memory).toMatchObject({ error: 'unavailable', root: null });
     expect(codigo!.memory).not.toHaveProperty('total');
     expect(codigo!.memory).not.toHaveProperty('entries');
-    // Control negativo: un índice de cero legítimo sigue siendo representable y no tiene error.
+    // Negative control: a legitimate zero index is still representable and carries no error.
     const indiceRealVacio = { root: '/home/dev/.claude/projects', total: 0, truncated: false, entries: [] };
     expect(indiceRealVacio).not.toHaveProperty('error');
     expect(indiceRealVacio.total).toBe(0);

@@ -27,7 +27,7 @@ export interface DeliveryRow {
   ack_deadline_at: Date | null;
 }
 
-/** Qué pasó con el aviso al origen cuando se rescató un resultado tardío. */
+/** What happened with the notice to the origin when a late result was rescued. */
 export type LateRelayDisposition = 'skipped' | 'inserted' | 'rewritten' | 'corrected';
 
 /** Privacy-bounded operational DLQ row.  No message, delivery, outbox or provider id is exposed. */
@@ -91,12 +91,12 @@ export interface ChainPolicy {
   failureCoalesceWindowSeconds: number;
   /** False until migration 014 lands; same partial-deploy contract as visitedPathAvailable. */
   failureCoalesceAvailable: boolean;
-  /** Topes de disciplina de delegación (019). `enabled:false` = conducta previa a 019. */
+  /** Caps for delegation discipline (019). `enabled:false` = behavior prior to 019. */
   delegationCaps: DelegationCaps;
   /** False until migration 019 lands; same partial-deploy contract as visitedPathAvailable. */
   delegationCapsAvailable: boolean;
   humanGateEnabled: boolean;
-  /** False until migration 019 lands: sin la tabla no hay gates y `@human` vuelve a ser unroutable. */
+  /** False until migration 019 lands: without the table there are no gates and `@human` becomes unroutable again. */
   humanGateAvailable: boolean;
 }
 
@@ -115,11 +115,11 @@ export const disabledChainPolicy: ChainPolicy = {
 };
 
 /**
- * 'coalesced' es un retorno LEGÍTIMO, no un error: el fracaso quedó registrado y el padre ya
- * había sido avisado de esta misma causa dentro de la ventana. Se distingue de 'not_child'
- * porque sigue siendo una rama con padre, y de 'returned' porque no produjo entrega. Los dos
- * consumidores de este tipo sólo preguntan por 'not_child' (para decidir el relay al origen),
- * así que un fracaso plegado nunca se escapa hacia Telegram como si nadie lo estuviera esperando.
+ * 'coalesced' is a LEGITIMATE return, not an error: the failure was recorded and the parent had
+ * already been notified of the same cause within the window. It is distinguished from 'not_child'
+ * because it remains a branch with a parent, and from 'returned' because it produced no delivery.
+ * Both consumers of this type only ask about 'not_child' (to decide the relay to the origin),
+ * so a folded failure never leaks out to Telegram as if nobody were waiting on it.
  */
 export type AgentResponseDisposition = 'not_child' | 'returned' | 'denied' | 'deferred' | 'coalesced';
 
@@ -132,23 +132,23 @@ export interface AgentFaninDisposition {
 export type ChainSilenceClosureReason = 'settled_without_fanin' | 'idle_timeout';
 
 export interface ChainSilenceSweepOptions {
-  /** Sin avance durante este plazo Y con trabajo abierto todavía: se cierra por vencimiento. */
+  /** No progress during this window AND still-open work: closed by timeout. */
   idleMs?: number;
-  /** Cadena ya quieta (nada puede volver a moverla): gracia corta antes de cerrar. */
+  /** Chain already idle (nothing can move it again): a short grace before closing. */
   settledGraceMs?: number;
-  /** Ventana de rastreo. Una raíz más vieja que esto ya no se avisa nunca. */
+  /** Tracking window. A root older than this is never notified. */
   maxAgeMs?: number;
-  /** Techo duro de raíces tocadas por barrido. */
+  /** Hard ceiling of roots touched per sweep. */
   limit?: number;
 }
 
 export interface ChainSilenceSweepResult {
-  /** Raíces candidatas leídas en este barrido. */
+  /** Candidate roots read in this sweep. */
   scanned: number;
-  /** Raíces destrabadas: el fan-in real quedó agendado y el humano recibirá la síntesis. */
+  /** Roots unblocked: the real fan-in got scheduled and the human will receive the synthesis. */
   faninRecovered: number;
-  /** Raíces cerradas con un aviso agregado al origen. Nunca más de una por raíz. */
+  /** Roots closed with an aggregated notice to the origin. Never more than one per root. */
   notified: number;
-  /** Raíces salteadas (otro proceso las tenía tomadas, o su cierre falló y se reintentará). */
+  /** Roots skipped (another process held them, or their close failed and will be retried). */
   skipped: number;
 }

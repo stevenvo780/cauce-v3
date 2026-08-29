@@ -66,13 +66,13 @@ function PildorasDeCola({ salud }: { salud?: SaludDeCola }) {
 }
 
 /**
- * La columna izquierda del mensajero: quién es cada agente y CÓMO VA SU COLA.
+ * The left column of the messenger: who each agent is and HOW ITS QUEUE IS DOING.
  *
- * No reutiliza `FleetSidebar` (Ultimate Terminal) a propósito: aquella lista está construida
- * alrededor del estado del canal PTY —«PTY desconocido» en cada fila, capabilities, salud de
- * adapters— que acá es ruido puro, y tocarla para condicionarlo habría puesto en riesgo las 20
- * pruebas de TerminalPage sin ganar nada. Lo que sí se reutiliza es la LÓGICA, que es donde
- * estaría la duplicación cara: `buildFleetAgents` y `filterFleetAgents` son los mismos.
+ * Does not reuse `FleetSidebar` (Ultimate Terminal) on purpose: that list is built around the
+ * PTY channel state — "PTY unknown" on every row, capabilities, adapter health — which here
+ * is pure noise, and conditioning it would have put the 20 TerminalPage tests at risk without
+ * gaining anything. What IS reused is the LOGIC, where the costly duplication would live:
+ * `buildFleetAgents` and `filterFleetAgents` are the same.
  */
 export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, error }: AgentRosterProps) {
   const [tenantId, setTenantId] = useState('all');
@@ -83,8 +83,8 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
     [agents, query, salud, tenantId],
   );
   const online = agents.filter((agent) => agent.leaseState === 'online').length;
-  // Cuántos alias del roster no viven en ninguna sala declarada. Se dice en pantalla: si sube
-  // tras un alta o una baja, alguien tocó una sola de las dos tablas y se nota el mismo día.
+  // How many roster aliases live in no declared room. Surfaced on screen: if the count rises
+  // after an onboarding or removal, someone touched only one of the two tables and it shows the same day.
   const sueltos = agents.filter(fueraDeLaTopologia).length;
 
   return (

@@ -3,15 +3,15 @@ import { join } from "node:path";
 import type { SharedSessionDegradation } from "./types.js";
 
 /**
- * Registro persistente de eventos de degradación de la sesión compartida.
+ * Persistent log of shared-session degradation events.
  */
 
 export const DEGRADATION_LOG_NAME = "shared-session.log";
 
-/** Cantidad por defecto de entradas devueltas en la lectura. */
+/** Default number of entries returned on read. */
 const DEFAULT_TAIL = 5;
 
-/** Techo de lectura para que un log crecido no se cargue entero en memoria. */
+/** Read cap so that a grown log is not loaded whole into memory. */
 const MAX_READ_BYTES = 256 * 1024;
 
 export interface DegradationRecord extends SharedSessionDegradation {
@@ -24,10 +24,10 @@ export function degradationLogPath(stateDirectory: string): string {
 }
 
 /**
- * Nunca propaga un fallo de escritura.
+ * Never propagates a write failure.
  *
- * Un turno que ya se respondió no se puede perder porque el disco no aceptó una línea de
- * telemetría. El aviso ya viajó por otras dos vías (el panel y el propio "reply").
+ * A turn that has already been answered cannot be lost because the disk did not accept a line of
+ * telemetry. The notice already travelled by two other paths (the panel and the "reply" itself).
  */
 export async function recordDegradation(
   stateDirectory: string,
@@ -39,7 +39,7 @@ export async function recordDegradation(
       mode: 0o600,
     });
   } catch {
-    // Ver el comentario de arriba.
+    // See the comment above.
   }
 }
 

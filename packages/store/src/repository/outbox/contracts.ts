@@ -31,10 +31,10 @@ export interface ClaimedOutboxEvent extends OutboxEvent {
 }
 
 /**
- * Destinatario conectado que puede recibir un wake durable en este instante.
+ * Connected recipient that can receive a durable wake at this instant.
  *
- * El par completo es intencional: los alias no son globales y filtrar sólo por alias permite que
- * una sesión de otro tenant reclame (y queme) el wake de un destinatario desconectado.
+ * The full pair is intentional: aliases are not global, and filtering only by alias would let a
+ * session from another tenant claim (and burn) the wake of an offline recipient.
  */
 export interface WakeOutboxRecipient {
   readonly tenant_id: Tenant;

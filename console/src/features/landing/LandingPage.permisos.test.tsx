@@ -8,9 +8,9 @@ import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
 
 /**
- * Verificación de navegación en la portada:
- * comprueba que el menú lateral sea la única superficie de navegación primaria
- * y no se dupliquen paneles de atajos redundantes.
+ * Landing navigation verification:
+ * asserts the side menu is the only primary navigation surface and that no redundant
+ * shortcuts panels are duplicated.
  */
 
 const SIN_CONFIG = http.get('http://localhost/v3/console/access', () =>
@@ -19,7 +19,7 @@ const SIN_CONFIG = http.get('http://localhost/v3/console/access', () =>
     observed_at: new Date().toISOString(),
   }));
 
-/** Los rótulos del menú, menos la portada: lo que NO puede aparecer dos veces en la pantalla. */
+/** The menu labels, minus the landing: what MUST NOT appear twice on screen. */
 const ROTULOS = NAV_ENTRIES.filter((entrada) => entrada.id !== '').map((entrada) => entrada.label);
 
 it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola» ya no existe', async () => {
@@ -29,14 +29,14 @@ it('la portada NO vuelve a dibujar el menú: el bloque «el resto de la consola�
   await screen.findByRole('heading', { level: 1, name: /cauce en una pantalla/i });
   expect(screen.queryByRole('list', { name: /el resto de la consola/i })).not.toBeInTheDocument();
 
-  // La portada espera a que se asienten sus cuatro fuentes antes de publicar alertas. El fixture
-  // demora `/status` a propósito; sin esperar un hallazgo acreditado, esta invariante podía mirar
-  // el frame de carga y pasar aunque el frame definitivo volviera a copiar los rótulos del menú.
+  // The landing waits for its four sources to settle before publishing alerts. The fixture
+  // intentionally delays `/status`; without waiting for a credited finding, this invariant could
+  // look at the loading frame and pass even if the final frame redrew the menu labels.
   const alertas = screen.getByRole('region', { name: /lo que exige atención/i });
   await within(alertas).findByText(/entrega muerta en la dlq/i);
 
-  // Y ningún rótulo del menú aparece como enlace FUERA de la barra: si alguien reintroduce la
-  // lista con otro `aria-label`, esto la encuentra igual.
+  // And no menu label appears as a link OUTSIDE the bar: if someone reintroduces the list with
+  // another `aria-label`, this catches it anyway.
   const nav = await screen.findByRole('navigation', { name: /principal/i });
   for (const rotulo of ROTULOS) {
     const enlaces = screen.queryAllByRole('link', { name: new RegExp(`^${rotulo}`, 'i') })
@@ -60,8 +60,8 @@ it('la barra lateral SIGUE negando /config a quien no lo puede abrir, con el mot
 });
 
 it('control negativo: con el permiso puesto, esa misma entrada sí navega', async () => {
-  // Sin esto, inutilizar la entrada SIEMPRE también pasaría la prueba de arriba, y el menú
-  // quedaría roto para el operador que sí tiene el permiso.
+  // Without this, disabling the entry ALWAYS would also pass the test above, and the menu would
+  // be broken for the operator who does have the permission.
   window.history.pushState({}, '', '/');
   renderWithApi(<App />);
 

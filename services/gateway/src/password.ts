@@ -2,9 +2,9 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 
 /**
- * Derivación y verificación de contraseñas de la consola usando scrypt (RFC 7914).
- * Utiliza formato compatible con PHC string format:
- *   $scrypt$n=32768,r=8,p=1$<sal base64>$<derivado base64>
+ * Console password derivation and verification using scrypt (RFC 7914).
+ * Uses a format compatible with the PHC string format:
+ *   $scrypt$n=32768,r=8,p=1$<base64 salt>$<base64 derived>
  */
 
 const scryptAsync = promisify(scrypt) as (
@@ -12,18 +12,18 @@ const scryptAsync = promisify(scrypt) as (
   options: { N: number; r: number; p: number; maxmem: number }
 ) => Promise<Buffer>;
 
-/** N=2^15 con r=8 son ~33 MB por verificación: caro para una GPU, imperceptible en un login. */
+/** N=2^15 with r=8 is ~33 MB per verification: costly for a GPU, imperceptible on a login. */
 export const DEFAULT_SCRYPT_COST = 32_768;
 export const DEFAULT_SCRYPT_BLOCK_SIZE = 8;
 export const DEFAULT_SCRYPT_PARALLELISM = 1;
 const KEY_LENGTH = 32;
 const SALT_LENGTH = 16;
-/** Techo de memoria explícito: el default de Node (32 MB) queda por debajo de N=2^15, r=8. */
+/** Explicit memory ceiling: Node's default (32 MB) falls below N=2^15, r=8. */
 const MAX_MEMORY = 96 * 1024 * 1024;
 
 /**
- * Una contraseña sin techo es un vector de agotamiento: scrypt trabaja sobre lo que le den y el
- * login no está autenticado. 1024 caracteres son de sobra para cualquier frase de paso real.
+ * An unbounded password is an exhaustion vector: scrypt works on whatever it is given and the
+ * login is not authenticated. 1024 characters are more than enough for any real passphrase.
  */
 export const MAX_PASSWORD_LENGTH = 1_024;
 export const MIN_PASSWORD_LENGTH = 12;
@@ -43,7 +43,7 @@ function assertPasswordShape(password: string): void {
   }
 }
 
-/** Sólo se aplica al ALTA. Verificar nunca exige longitud mínima: rompería cuentas viejas. */
+/** Only applied at CREATION. Verification never enforces a minimum length: it would break old accounts. */
 export function assertPasswordPolicy(password: string): void {
   assertPasswordShape(password);
   if (password.length < MIN_PASSWORD_LENGTH) {
@@ -84,7 +84,7 @@ function positiveInteger(value: string | undefined, name: string, maximum: numbe
 
 export function parsePasswordHash(encoded: string): ParsedHash {
   const parts = encoded.split('$');
-  // ['', 'scrypt', 'n=..,r=..,p=..', '<sal>', '<derivado>']
+  // ['', 'scrypt', 'n=..,r=..,p=..', '<salt>', '<derived>']
   if (parts.length !== 5 || parts[0] !== '' || parts[1] !== 'scrypt') {
     throw new Error('hash de contraseña con formato desconocido');
   }
@@ -107,9 +107,9 @@ export function parsePasswordHash(encoded: string): ParsedHash {
 }
 
 /**
- * Nunca lanza por una contraseña equivocada ni por un hash ilegible: devuelve `false`. Un throw
- * distinguible desde afuera sería un oráculo — la diferencia entre "esa cuenta no existe" y "esa
- * contraseña está mal" se vería en la forma del error aunque el mensaje fuera el mismo.
+ * Never throws for a wrong password or an unreadable hash: returns `false`. A distinguishable
+ * throw from the outside would be an oracle — the difference between "that account does not
+ * exist" and "that password is wrong" would show in the error shape, even with the same message.
  */
 export async function verifyPassword(encoded: string, password: string): Promise<boolean> {
   if (typeof password !== 'string' || password.length === 0 || password.length > MAX_PASSWORD_LENGTH) {
@@ -133,10 +133,10 @@ export async function verifyPassword(encoded: string, password: string): Promise
 }
 
 /**
- * Hash señuelo contra el que se verifica cuando el correo NO existe.
+ * Decoy hash against which verification runs when the email does NOT exist.
  *
- * Sin esto, un correo desconocido contesta en microsegundos y uno conocido en ~100 ms: el mensaje
- * de error sería idéntico y la enumeración de usuarios funcionaría igual, midiendo el reloj. Se
- * deriva de una contraseña aleatoria que nadie conoce, así que jamás puede verificar.
+ * Without this, an unknown email responds in microseconds and a known one in ~100 ms: the error
+ * message would be identical and user enumeration would still work, by measuring the clock. It
+ * is derived from a random password nobody knows, so it can never verify.
  */
 export const DECOY_PASSWORD_HASH_PROMISE: Promise<string> = hashPassword(randomBytes(32).toString('base64'));

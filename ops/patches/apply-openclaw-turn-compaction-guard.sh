@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Aplica ops/patches/openclaw-turn-compaction-guard.mjs sobre uno o varios objetivos.
+# Applies ops/patches/openclaw-turn-compaction-guard.mjs to one or more targets.
 #
-#   apply-openclaw-turn-compaction-guard.sh claw claw-miguel      # por docker exec
-#   apply-openclaw-turn-compaction-guard.sh --local               # sobre esta máquina
-#   OPENCLAW_DIST=/otra/ruta.js apply-openclaw-turn-compaction-guard.sh --local
+#   apply-openclaw-turn-compaction-guard.sh claw claw-miguel      # via docker exec
+#   apply-openclaw-turn-compaction-guard.sh --local               # on this machine
+#   OPENCLAW_DIST=/other/path.js apply-openclaw-turn-compaction-guard.sh --local
 #
-# No reinicia nada: openclaw carga el bundle al arrancar. Ver ops/patches/README.md.
+# It does not restart anything: openclaw loads the bundle at startup. See ops/patches/README.md.
 set -euo pipefail
 
 PATCHES=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -17,8 +17,8 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
-# Cada objetivo se reporta por separado y un fallo no detiene al resto: un parche a medias en la
-# flota es peor que ninguno, porque el síntoma aparece en unos alias y en otros no.
+# Each target is reported separately and a failure does not halt the rest: a half-applied patch
+# across the fleet is worse than none, because the symptom shows up in some aliases and not others.
 estado=0
 for objetivo in "$@"; do
   if [[ "$objetivo" == "--local" ]]; then
@@ -30,8 +30,8 @@ for objetivo in "$@"; do
     fi
     continue
   fi
-  # El script viaja por stdin y se ejecuta con el node del contenedor: es el único intérprete que
-  # con seguridad está ahí, porque es el que corre openclaw.
+  # The script travels over stdin and runs with the container's node: it is the only interpreter
+  # that is certainly there, because it is the one running openclaw.
   if resultado=$(docker exec -i -e "OPENCLAW_DIST=$DIST" "$objetivo" \
       node --input-type=module - < "$SCRIPT" 2>&1); then
     printf '%s: %s\n' "$objetivo" "$resultado"

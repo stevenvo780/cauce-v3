@@ -101,19 +101,19 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
   }
 
   /**
-   * Actividad en vuelo de toda la flota visible para el actor, agregada por alias. Es la mitad
-   * "qué está trabajando cada agente ahora" del panel pedido; la otra mitad (consumo de cuota)
-   * vive en quotaSnapshot() con su propio observed_at porque las dos frescuras son
-   * incomparables -- ésta es de hace milisegundos, la de cuota es una muestra fuera de banda de
-   * hace minutos.
+   * In-flight activity of the entire fleet visible to the actor, aggregated by alias. It is
+   * the "what is each agent working on now" half of the requested panel; the other half (quota
+   * consumption) lives in quotaSnapshot() with its own observed_at because the two freshnesses
+   * are incomparable -- this one is from milliseconds ago, the quota one is an out-of-band
+   * sample from minutes ago.
    *
-   * Self-contained como topology()/listAgents(): valida el permiso acá mismo, así que la ruta
-   * sólo necesita el chequeo de rol+permiso sobre el Principal (requireOperatorPermission).
+   * Self-contained like topology()/listAgents(): it validates the permission here itself, so
+   * the route only needs the role+permission check on the Principal (requireOperatorPermission).
    *
-   * FLEET_ACTIVITY_QUERY es sólo lectura, sin locks y sin funciones de ventana a propósito
-   * (ver el comentario en fleet-activity.ts): un panel quiere una foto, no una que congele el
-   * despacho mientras la saca, y Postgres rechaza al parsear cualquier combinación de
-   * FOR SHARE/FOR UPDATE con funciones de ventana.
+   * FLEET_ACTIVITY_QUERY is read-only, with no locks and no window functions on purpose
+   * (see the comment in fleet-activity.ts): a panel wants a snapshot, not one that freezes
+   * dispatch while taking it, and Postgres rejects parsing any combination of FOR SHARE/FOR
+   * UPDATE with window functions.
    */
   async fleetActivity(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
@@ -123,12 +123,12 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     ]);
 
     const agents = result.rows.map((row) => {
-      // lease_online sale de `(lease.lease_until > now())`: NULL cuando el LEFT JOIN no
-      // encontró ninguna fila de lease (nunca se conectó), no cuando el lease está vencido.
+      // lease_online comes from `(lease.lease_until > now())`: NULL when the LEFT JOIN found
+      // no lease row (never connected), not when the lease is expired.
       const leaseOnline = row.lease_online === null || row.lease_online === undefined
         ? null : row.lease_online === true;
-      // NULL acá es "ningún ACK aplicado dentro de la ventana de búsqueda", la señal MÁS grave;
-      // Number(null) daría 0 y lo pintaría como recién ackeado, exactamente al revés.
+      // NULL here is "no ACK applied within the search window", the MOST serious signal;
+      // Number(null) would yield 0 and paint it as just acked, exactly backwards.
       const secondsSinceLastAck = row.seconds_since_last_ack === null || row.seconds_since_last_ack === undefined
         ? null : Number(row.seconds_since_last_ack);
       const inFlight = Number(row.in_flight ?? 0);
@@ -151,8 +151,8 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         presence: {
           online: leaseOnline,
           instance_id: row.instance_id ?? null,
-          // bigint: el driver de pg lo devuelve como string; el resto de este archivo ya
-          // convierte epoch de la misma forma (ver acquireLease/heartbeat más arriba).
+          // bigint: the pg driver returns it as a string; the rest of this file already
+          // converts epoch the same way (see acquireLease/heartbeat above).
           epoch: row.epoch === null || row.epoch === undefined ? null : Number(row.epoch),
           last_heartbeat_at: row.last_heartbeat_at ?? null,
           lease_until: row.lease_until ?? null
@@ -176,9 +176,9 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         acks_recent: Number(row.acks_recent ?? 0),
         in_flight_items_truncated: row.in_flight_items_truncated === true,
         in_flight_items: Array.isArray(row.in_flight_items) ? row.in_flight_items : [],
-        // Las salas del alias, ya resueltas por el SQL. `[]` es un valor legítimo -- registrado y
-        // sin sala -- y la consola lo dibuja igual; no se colapsa a null ni se omite el campo,
-        // porque "no tiene sala" y "el servidor no informa salas" se renderizan distinto.
+        // The alias's rooms, already resolved by the SQL. `[]` is a legitimate value -- registered
+        // and without rooms -- and the console renders it the same; not collapsed to null
+        // nor is the field omitted, because "has no rooms" and "the server reports no rooms" render differently.
         rooms: Array.isArray(row.rooms) ? (row.rooms as string[]) : []
       };
     });
@@ -205,11 +205,11 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
   }
 
   /**
-   * Inventario DLQ operativo sin payloads ni ids externos. La base aplica control multi-tenant y
-   * liga el cursor opaco a la identidad del operador; cambiar actor o reutilizar un cursor de otro
-   * scope falla cerrado. No es una firma: un actor autorizado sólo puede alterar navegación dentro
-   * de su scope. El orden keyset es estable ante reaperturas porque usa el
-   * `created_at` inmutable de la carta, más target e id como desempates.
+   * Operational DLQ inventory without payloads or external ids. The database applies multi-tenant
+   * control and ties the opaque cursor to the operator's identity; changing actor or reusing a
+   * cursor from another scope fails closed. It is not a signature: an authorized actor can only
+   * alter navigation within its scope. The keyset order is stable across reopens because it
+   * uses the letter's immutable `created_at`, plus target and id as tiebreakers.
    */
   async listOperationalDlq(
     actorTenant: Tenant,
@@ -283,7 +283,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
               )))
        ORDER BY d.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
-    // `failed` cuenta como dead letter porque ya tiene fila reproducible y debe figurar en el total.
+    // `failed` counts as dead letter because it already has a reproducible row and must appear in the total.
     const counts = result.rows.reduce<{ pending: number; retrying: number; dead: number }>((value, row) => {
       if (row.state === 'retry') value.retrying += 1;
       if (row.state === 'dead' || row.state === 'failed') value.dead += 1;
@@ -291,7 +291,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       return value;
     }, { pending: 0, retrying: 0, dead: 0 });
 
-    // Conteo total agregado con los mismos filtros de visibilidad que el listado.
+    // Total aggregate count with the same visibility filters as the listing.
     const totales = await this.pool.query<{ pending: string; retrying: string; dead: string; total: string }>(
       `SELECT count(*) FILTER (WHERE d.status IN ('pending','leased','accepted','started')) AS pending,
               count(*) FILTER (WHERE d.status = 'retry') AS retrying,
@@ -313,8 +313,8 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       retrying: Number(fila?.retrying ?? 0),
       dead: Number(fila?.dead ?? 0),
     };
-    // «Recortada» se decide comparando con el total, no con `items.length === limit`: si hubiera
-    // exactamente `limit` entregas, esa comprobación diría que falta algo cuando no falta nada.
+    // "Truncated" is decided by comparing with the total, not with `items.length === limit`: if there
+    // were exactly `limit` deliveries, that check would say something is missing when nothing is.
     const muestra_recortada = Number(fila?.total ?? 0) > result.rows.length;
 
     return {

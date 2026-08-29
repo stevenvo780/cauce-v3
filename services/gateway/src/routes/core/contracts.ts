@@ -42,26 +42,26 @@ export interface CoreRoutePhases {
   registerRuntimeRoutes(agentProfiles: AgentProfileRepository): Promise<void>;
 }
 /**
- * Una garra viva de la sesión. Además del par (attempt, claim_token) que ya fenceaba los ACKs,
- * conserva la correlación exacta del ACK y hasta cuándo sigue viva. La capacidad ya no se decide
- * en RAM: PostgreSQL la comparte durablemente entre HTTP, WebSocket, reconexiones y gateways.
+ * A live claim of the session. In addition to the (attempt, claim_token) pair that already fenced
+ * ACKs, it preserves the exact ACK correlation and how long it stays alive. Capacity is no longer
+ * decided in RAM: PostgreSQL shares it durably across HTTP, WebSocket, reconnections and gateways.
  */
 export interface SessionClaim {
   readonly attempt: GatewayAck['attempt'];
   readonly claim_token: GatewayAck['claim_token'];
   /**
-   * Instante en que la garra deja de ocupar cupo. Arranca en el `ack_deadline_at` que puso la
-   * base y se corre con cada ACK 'started' aplicado, que es exactamente lo que hace el store.
+   * Moment when the claim stops occupying a slot. It starts at the `ack_deadline_at` set by the
+   * database and moves forward with each applied 'started' ACK, which is exactly what the store does.
    */
   admissionExpiresAtMs: number;
-  /**
-   * La garra se reconstruyó desde la base al conectar, no la entregó esta sesión.
+/**
+   * The claim was rebuilt from the database on connect, not delivered by this session.
    *
-   * Cambia UNA cosa y es importante: no se usa para fencear ACKs. Una garra rehidratada puede
-   * ser de otra época o de otro intento —justamente lo que hace falta contar para el cupo— y si
-   * se la tratara como expectativa de ACK, un ACK viejo del adaptador dejaría de correlacionar
-   * y se llevaría un 'fenced' con cierre de socket, donde hoy recibe `ownership_lost` y sigue
-   * vivo. Para eso la base ya es la autoridad.
+   * It changes ONE thing and it's important: it is not used to fence ACKs. A rehydrated claim
+   * can be from another epoch or another attempt —exactly what needs to be counted for the
+   * slot— and if treated as an ACK expectation, an old ACK from the adapter would stop
+   * correlating and would take a 'fenced' with socket close, where today it receives
+   * `ownership_lost` and stays alive. For that the database is already the authority.
    */
   readonly rehydrated?: true;
 }
@@ -75,20 +75,20 @@ export interface Session {
   /** Rotated by PostgreSQL on every hello, including a same-instance/same-epoch resume. */
   connectionToken: string;
   abort: AbortController;
-  /** Un wake que llegó mientras drenábamos. Se atiende al terminar, nunca se pierde. */
+  /** A wake that arrived while we were draining. It is served at the end, never lost. */
   drainAgain: boolean;
-  /** Promesa compartida por todos los wakes que se pliegan sobre el mismo drenaje. */
+  /** Promise shared by all wakes that fold onto the same drain. */
   drainPromise: Promise<boolean> | undefined;
   renewableDeliveryClaims: boolean;
   /**
-   * El adaptador declaró entender la disciplina de delegación, así que `ack_result` puede llevar
-   * `delegation_rejections` y `chain_gate`. Sin la capability esos campos NO se emiten: el
-   * adaptador viejo valida el frame con `.strict()` y, cuando el esquema lo rechaza, no descarta
-   * el frame — falla la cola entera de la conexión y se lleva puesto todo lo que tenía en vuelo.
+   * The adapter declared understanding the delegation discipline, so `ack_result` may carry
+   * `delegation_rejections` and `chain_gate`. Without the capability those fields are NOT emitted:
+   * the old adapter validates the frame with `.strict()` and, when the schema rejects it, doesn't
+   * discard the frame — it fails the entire connection queue and takes everything it had in flight.
    */
   delegationFeedback: boolean;
   claims: Map<string, SessionClaim>;
   recentClaims: Map<string, SessionClaim>;
-  /** Re-drenaje programado al primer vencimiento de garra. Ver `scheduleExpiryDrain`. */
+  /** Re-drain scheduled at the first claim expiration. See `scheduleExpiryDrain`. */
   expiryTimer: NodeJS.Timeout | undefined;
 }

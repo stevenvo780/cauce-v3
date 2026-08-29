@@ -14,8 +14,8 @@ it('abre con el ratón tras el retraso y expone role="tooltip"', async () => {
 });
 
 it('abre CON EL FOCO DE TECLADO, no sólo con el ratón', async () => {
-  // La vista se recorre con Tab. Un globo que sólo responde al puntero deja fuera la mitad de las
-  // explicaciones justo para quien más las necesita, y era el defecto de usar `title` a secas.
+  // The view is traversed with Tab. A tooltip that only responds to the pointer leaves out half
+  // of the explanations precisely for those who need them most, which was the bug of using `title` alone.
   const user = userEvent.setup();
   render(<Tooltip label="ack_deadline_at ya pasó"><span>Vencidas</span></Tooltip>);
 
@@ -46,8 +46,8 @@ it('cierra con Esc sin tener que mover el ratón', async () => {
 });
 
 it('no toma foco propio cuando envuelve un control que ya es enfocable', async () => {
-  // Dos paradas de tabulador para un solo chip es peor accesibilidad, no mejor: el envoltorio se
-  // apoya en que el `focus` del botón burbujea hasta él.
+  // Two tab stops for a single chip is worse accessibility, not better: the wrapper relies on the
+  // button's `focus` bubbling up to it.
   const user = userEvent.setup();
   render(
     <Tooltip focusable={false} label="Conectado, con lease vigente y nada en vuelo.">

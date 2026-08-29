@@ -15,37 +15,37 @@ export const FRAME_TAGS = {
   STDIN: 0x20,
   STDOUT: 0x21,
   RESIZE: 0x22,
-  /** DA/DSR generado por el emulador; nunca teclado o paste humano. */
+  /** DA/DSR produced by the emulator; never human keyboard or paste. */
   TERMINAL_RESPONSE: 0x23,
-  /** Crédito de salida por sesión: no pausa el socket multiplexado del agente. */
+  /** Per-session output credit: does not pause the agent's multiplexed socket. */
   PAUSE_OUTPUT: 0x24,
   RESUME_OUTPUT: 0x25,
   CLOSE: 0x30,
   CLOSED: 0x31,
   PING: 0x40,
   PONG: 0x41,
-  // Lectura de ficheros de gobierno. Es una transacción suelta, no una sesión, así que no reusa
-  // OPEN. Añadirlos aquí es lo que impide que la respuesta del agente sea un `unknown frame tag`:
-  // el decodificador trata un tag desconocido como violación y tira la conexión ENTERA, con
-  // todas las terminales abiertas encima.
+  // Governance file reads. A standalone transaction, not a session, so it does not reuse OPEN.
+  // Listing them here is what stops the agent's reply from being an `unknown frame tag`: the
+  // decoder treats an unknown tag as a violation and drops the ENTIRE connection, with every
+  // open terminal on top.
   READ: 0x50,
   READ_OK: 0x51,
   READ_ERR: 0x52,
   READ_DATA: 0x53,
-  /** Escritura gobernada v1. Sólo se envía si el hello anuncia `write_governance_v1`. */
+  /** Governed write v1. Sent only if the hello advertises `write_governance_v1`. */
   WRITE: 0x54,
   WRITE_DATA: 0x55,
   WRITE_OK: 0x56,
   WRITE_ERR: 0x57,
-  /** Libera una escritura incompleta cuando vence/cierra su petición HTTP. */
+  /** Releases an incomplete write when its HTTP request expires or closes. */
   WRITE_CANCEL: 0x58,
-  /** Perfil multi-fichero: una transacción, preflight total y rollback en el agente. */
+  /** Multi-file profile: one transaction, full preflight, and rollback on the agent. */
   WRITE_BATCH: 0x59,
   WRITE_BATCH_DATA: 0x5a,
   WRITE_BATCH_OK: 0x5b,
   WRITE_BATCH_ERR: 0x5c,
   WRITE_BATCH_CANCEL: 0x5d,
-  /** Cierre inequívoco de una lectura exitosa; READ_ERR ya es terminal por sí mismo. */
+  /** Unambiguous close of a successful read; READ_ERR is already terminal on its own. */
   READ_DONE: 0x5e
 } as const;
 

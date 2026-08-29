@@ -382,18 +382,18 @@ describe('operator attribution', () => {
   });
 
   it('an authenticated operator_id beats the proxy header, which is fixed to "steven" for everyone', () => {
-    // Caddy y nginx inyectan `X-Cauce-Operator: steven` FIJO delante del gateway, así que
-    // mientras la cabecera mandara, `audit_events` decía `steven` entrara quien entrara. Con el
-    // login por contraseña el operador sale del JWT ya verificado: la cabecera ni se mira, y no
-    // hace falta que el correo esté inscripto en CAUCE_TERMINAL_OPERATORS.
+    // Caddy and nginx inject `X-Cauce-Operator: steven` FIXED in front of the gateway, so
+    // while the header ruled, `audit_events` recorded `steven` no matter who entered. With
+    // password login the operator comes from the already-verified JWT: the header is not even
+    // consulted, and the email does not need to be enrolled in CAUCE_TERMINAL_OPERATORS.
     const config = terminalConfig({ operators: new Set(['steven']) });
     const logged = consolePrincipal({ operator_id: 'miguel@elenxos.com' });
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, config))
       .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
-    // Sin operadores inscriptos la cabecera no atribuye a nadie, pero la sesión sí.
+    // Without enrolled operators the header attributes nobody, but the session still does.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, terminalConfig()))
       .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
-    // Y un principal sin identidad humana sigue exactamente como hoy: manda la cabecera.
+    // A principal without a human identity behaves exactly as today: the header rules.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), consolePrincipal(), config))
       .toEqual({ operator_id: 'steven', attributed: true });
   });

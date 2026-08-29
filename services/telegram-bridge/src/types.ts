@@ -6,7 +6,7 @@ export interface TelegramFile {
   file_size?: number;
   mime_type?: string;
   file_name?: string;
-  /** Segundos. Sólo lo mandan voice/audio/video/video_note. */
+  /** Seconds. Only voice/audio/video/video_note send it. */
   duration?: number;
 }
 
@@ -103,19 +103,19 @@ export interface TelegramSendOptions {
   reply_to_message_id?: string;
   message_thread_id?: string;
   /**
-   * `html` hace que Telegram renderice negritas, código y citas en vez de mostrar el marcado
-   * crudo. Ausente = texto plano, que es como se comportó siempre este puente.
+   * `html` makes Telegram render bold, code and quotes instead of showing the raw markup.
+   * Absent = plain text, which is how this bridge has always behaved.
    */
   parse_mode?: 'html';
 }
 
-/** Un archivo listo para subir. Los bytes ya están validados por `planArtifacts`. */
+/** A file ready to upload. Bytes are already validated by `planArtifacts`. */
 export interface TelegramUpload {
   readonly kind: 'photo' | 'document';
   readonly name: string;
   readonly mime_type: string;
   readonly bytes: Buffer;
-  /** Texto corto que Telegram muestra debajo del archivo. */
+  /** Short text that Telegram shows below the file. */
   readonly caption?: string;
 }
 
@@ -126,13 +126,13 @@ export interface TelegramApi {
   downloadFile(filePath: string, maxBytes: number): Promise<Buffer>;
   sendText(chatId: string, text: string, options?: TelegramSendOptions): Promise<TelegramSendResult>;
   /**
-   * Subida de bytes. OPCIONALES a propósito.
+   * Byte uploads. OPTIONAL on purpose.
    *
-   * El invariante de este servicio es que un adjunto no puede costar el texto: si una
-   * implementación de `TelegramApi` no sabe subir archivos, el egreso lo detecta y manda en su
-   * lugar una línea explicando por qué no fue, en vez de romper la entrega. Declararlos
-   * obligatorios haría que ese fallo se manifestara como un error de tipo en compilación y como
-   * una excepción en ejecución, que es exactamente lo contrario de lo que hace falta acá.
+   * The invariant of this service is that an attachment cannot cost the text: if a
+   * `TelegramApi` implementation does not know how to upload files, egress detects it and sends a
+   * line explaining why it did not happen, instead of breaking the delivery. Declaring them
+   * required would make that failure surface as a compile-time type error and a runtime
+   * exception, which is exactly the opposite of what is needed here.
    */
   sendPhoto?(chatId: string, upload: TelegramUpload, options?: TelegramSendOptions): Promise<TelegramSendResult>;
   sendDocument?(chatId: string, upload: TelegramUpload, options?: TelegramSendOptions): Promise<TelegramSendResult>;
@@ -335,13 +335,13 @@ export type BridgeMetric =
   | 'group_config_degraded'
   | 'egress_sent' | 'egress_retry' | 'egress_dead' | 'egress_ambiguous' | 'egress_fenced'
   | 'egress_loop_error'
-  // Telegram rechazó el HTML y el mensaje salió en texto plano. Si este contador sube, la
-  // conversión de markdown está generando algo que Telegram no acepta y hay que mirarla.
+  // Telegram rejected the HTML and the message went out as plain text. If this counter climbs,
+  // the markdown conversion is producing something Telegram will not accept and must be looked at.
   | 'egress_format_downgraded'
-  // Adjuntos. `uploaded` son bytes que llegaron al chat; `listed` son artifacts que sólo se
-  // pudieron nombrar (enlace o ruta del agente); `upload_failed` es una subida que Telegram
-  // rechazó y terminó como línea de texto. Si `listed` es alto y `uploaded` cero, los agentes
-  // siguen devolviendo rutas en vez de bytes y el trabajo no está terminado.
+  // Attachments. `uploaded` are bytes that reached the chat; `listed` are artifacts that could
+  // only be named (link or agent path); `upload_failed` is an upload Telegram rejected and that
+  // ended up as a text line. If `listed` is high and `uploaded` is zero, agents are still
+  // returning paths instead of bytes and the work is not done.
   | 'egress_attachment_uploaded' | 'egress_attachment_listed' | 'egress_attachment_upload_failed'
-  // Se redactó al menos un secreto en un mensaje entrante antes de persistirlo.
+  // At least one secret was redacted in an incoming message before persisting it.
   | 'ingress_secret_redacted';

@@ -1,16 +1,16 @@
 import type { StructuredOutput } from "../sdk/types.js";
 import type { SharedSessionDegradation, SharedSessionHarness } from "./types.js";
 
-/** Marca literal de aviso de degradación de la sesión compartida. */
+/** Literal marker for the shared session degradation notice. */
 export const DEGRADED_MARK = "⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA";
 
-/** Marca del aviso de contexto perdido. La sesión funcionó; la memoria no. */
+/** Marker for the lost-context notice. The session worked; the memory did not. */
 export const RESET_MARK = "⚠ CAUCE — LA TERMINAL SE REINICIÓ";
 
-/** Marca de aviso de contexto modificado o compactado en la terminal. */
+/** Marker for a notice about modified or compacted terminal context. */
 export const CONTEXT_MARK = "⚠ CAUCE — EL CONTEXTO DE LA TERMINAL CAMBIÓ";
 
-/** Marca de aviso para turnos fusionados con una ejecución concurrente en la terminal. */
+/** Marker for turns merged with a concurrent execution in the terminal. */
 export const MERGED_MARK = "⚠ CAUCE — EL TURNO SE FUNDIÓ CON OTRO EN CURSO";
 
 const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> = {
@@ -29,7 +29,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   turn_merged: "el panel estaba ocupado y la terminal fundió este pedido con el turno en curso",
 };
 
-/** Mensajes explicativos según el tipo de cambio de contexto en la terminal. */
+/** Explanatory messages by type of terminal context change. */
 const CONTEXT_NOTICE: Readonly<Record<string, { readonly mark: string; readonly consequence: string }>> = {
   context_reset: {
     mark: RESET_MARK,
@@ -59,7 +59,7 @@ const CONTEXT_NOTICE: Readonly<Record<string, { readonly mark: string; readonly 
   },
 };
 
-/** Genera el aviso de degradación o cambio de contexto para incluir en la respuesta. */
+/** Builds the degradation or context-change notice to include in the response. */
 export function degradationNotice(
   alias: string,
   harness: SharedSessionHarness,
@@ -95,7 +95,7 @@ export function degradationNotice(
   ].join("\n");
 }
 
-/** Antepone el aviso de degradación o advertencia al campo reply de la salida estructurada. */
+/** Prepends the degradation or warning notice to the reply field of the structured output. */
 export function annotateDegraded(output: StructuredOutput, notice: string): StructuredOutput {
   const body = output.reply === null || output.reply.trim().length === 0
     ? notice

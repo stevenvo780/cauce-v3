@@ -12,7 +12,7 @@ export function writeOutput(entry: PtyEntry, data: ArrayBuffer | string): void {
   entry.terminal.write(typeof data === 'string' ? data : entry.decoder.decode(data, { stream: true }));
 }
 
-/** Finaliza el estado incremental: un último code point incompleto no desaparece en silencio. */
+/** Finalizes the incremental state: a last incomplete code point does not vanish silently. */
 export function finishOutput(entry: PtyEntry): void {
   if (entry.outputFinished) return;
   entry.outputFinished = true;

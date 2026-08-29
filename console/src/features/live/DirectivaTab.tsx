@@ -7,7 +7,7 @@ import { primerasLineas } from './directiva';
 import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 
 /**
- * Pestaña de resumen de directiva y rol declarado de un agente en el cajón lateral.
+ * Tab for summarizing an agent's declared directive and role in the side drawer.
  */
 
 export interface DirectivaTabProps {
@@ -20,12 +20,12 @@ export interface DirectivaTabProps {
 }
 
 /**
- * Los tres desenlaces de buscar un alias en el registro, que NO son el mismo hecho.
+ * The three outcomes of looking up an alias in the registry, which are NOT the same fact.
  *
- * `sin-registro` = este gateway no publica la lista de agentes. `sin-fila` = la publica y este
- * alias no está en ella —apareció por entregas o por lease—. `fila` = está, con o sin texto. Los
- * tres se resolvían antes con un `undefined` y por eso `zeus`, que no tiene fila, se leía igual
- * que un alias con el rol en blanco: dos cosas distintas con la misma cara.
+ * `sin-registro` = this gateway does not publish the agent list. `sin-fila` = it does and this
+ * alias is not in it — it appeared via deliveries or via lease. `fila` = it is there, with or
+ * without text. All three used to resolve to `undefined`, which is why `zeus`, which has no row,
+ * was read the same way as an alias with a blank role: two different things with the same face.
  */
 type Registro =
   | { estado: 'sin-registro' }
@@ -47,13 +47,13 @@ export function DirectivaTab({
   const abridor = useRef<HTMLButtonElement>(null);
 
   const registro = buscarEnRegistro(config.data, tenantId, alias);
-  // La columna legacy es una proyección de sólo lectura; ningún borrador alternativo la pisa.
+  // The legacy column is a read-only projection; no alternative draft overwrites it.
   const texto = registro.estado === 'fila' ? registro.brief : '';
   const lineas = primerasLineas(texto, 2);
   const largo = contarRoleBrief(texto);
   const tono = tonoRoleBrief(largo);
-  // El contador sólo se pinta sobre una lectura que ocurrió: «0 / 1200» encima de un GET que
-  // falló, o de un alias que ni siquiera está en el registro, es una cifra inventada.
+  // The counter is only painted over a reading that happened: "0 / 1200" over a GET that failed,
+  // or over an alias that is not even in the registry, is an invented figure.
   const hayRol = registro.estado === 'fila';
 
   return (
@@ -61,8 +61,8 @@ export function DirectivaTab({
       <p className="directiva-resumen-rotulo">Rol declarado de {alias}</p>
 
       {registro.estado === 'sin-registro' ? (
-        /* Sin snapshot no hay rol que resumir. El botón sigue estando: el diálogo explica el fallo
-           con las palabras del servidor, que es más de lo que cabe acá. */
+        /* Without a snapshot there is no role to summarize. The button still exists: the dialog
+           explains the failure using the server's words, which is more than fits here. */
         <p className="directiva-resumen-vacio">
           {config.loading && !config.data
             ? 'Leyendo el rol declarado desde la configuración versionada…'
@@ -111,8 +111,8 @@ export function DirectivaTab({
           onCerrar={() => {
             setAbierto(false);
             /*
-             * La columna legacy es de sólo lectura. Se relee al cerrar para no conservar una
-             * proyección vieja después de que Perfil haya aplicado una revisión canónica.
+             * The legacy column is read-only. It is re-read on close to avoid keeping a stale
+             * projection after Perfil has applied a canonical revision.
              */
             void config.reload();
           }}

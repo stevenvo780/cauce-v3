@@ -12,7 +12,7 @@ import { QueuesPage } from './QueuesPage';
  * Integration tests for management, filtering and actions on delivery queues.
  */
 
-/** 38 filas con la misma proporción que producción: 7 en revisión, 31 terminadas bien. */
+/** 38 rows in the same proportion as production: 7 under review, 31 completed cleanly. */
 function snapshotComoProduccion(): { observed_at: string; pending: number; retrying: number; dead: number; items: QueueItem[] } {
   const items: QueueItem[] = [];
   for (let indice = 0; indice < 31; indice += 1) {
@@ -45,7 +45,7 @@ function filasDeLaTabla(): HTMLElement[] {
 afterEach(() => { window.history.pushState({}, '', '/'); });
 
 // ---------------------------------------------------------------------------------------------
-// 1. LAS 7 QUE IMPORTAN
+// 1. THE 7 THAT MATTER
 // ---------------------------------------------------------------------------------------------
 
 describe('llegar a las entregas que hay que revisar', () => {
@@ -124,7 +124,7 @@ describe('llegar a las entregas que hay que revisar', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// 2. EL COLOR EQUIVOCADO
+// 2. THE WRONG COLOR
 // ---------------------------------------------------------------------------------------------
 
 describe('la columna «Último error»', () => {
@@ -166,7 +166,7 @@ describe('la columna «Último error»', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// 3. REINYECTAR A LA FLOTA SIN PREGUNTAR
+// 3. REINJECTING INTO THE FLEET WITHOUT ASKING
 // ---------------------------------------------------------------------------------------------
 
 const MUERTA: QueueItem = {

@@ -18,20 +18,20 @@ Salida: una linea por credencial + codigo de salida 1 si hay algo MUERTO o URGEN
 """
 import json, subprocess, datetime, sys
 
-# (contenedor, ruta dentro del contenedor, etiqueta)
+# (container, path inside the container, label)
 OBJETIVOS = [
-    # Claude (todos los contenedores de la flota que viven en ESTE host, el VPS).
-    # ws-isa/salva vive en kratos y este host no tiene SSH hacia alla: lo mide kratos y lo
-    # EMPUJA (ver bloque REMOTO mas abajo). No borrar su fila: borrarla fue justamente
-    # lo que dejo a salva sin vigilancia y sin que nada lo dijera.
+    # Claude (all fleet containers that live in THIS host, the VPS).
+    # ws-isa/salva lives on kratos and this host has no SSH to it: kratos measures it and
+    # PUSHES it (see REMOTE block below). Don't remove its row: removing it was exactly
+    # what left salva without monitoring and without anyone saying so.
     ("claw",                   "/home/claw/.claude/.credentials.json", "claude/jarvis"),
     ("claw-miguel",            "/home/claw/.claude/.credentials.json", "claude/janus"),
     ("claw-iza",               "/home/claw/.claude/.credentials.json", "claude/iza"),
     ("ws-zeus",                "/home/dev/.claude/.credentials.json",  "claude/zeus"),
-    # claude/socrates RETIRADA del inventario (28-08-2026): socrates corre codex (BD, reconciliación
-    # b93f087d) y su credencial Claude en ws-prizma está MUERTA sin refreshToken desde antes del 21-08;
-    # 334 corridas en rojo fijo dejaban ciego el aviso de COMPARTIDAS. Si socrates vuelve a claude,
-    # re-añadir la fila. La credencial en sí NO se tocó (regla del dueño).
+    # claude/socrates RETIRED from the inventory (28-08-2026): socrates runs codex (DB, reconciliation
+    # b93f087d) and its Claude credential on ws-prizma has been DEAD without refreshToken since before
+    # 21-08; 334 runs in solid red blinded the SHARED alert. If socrates returns to claude,
+    # re-add the row. The credential itself was NOT touched (owner's rule).
     ("ws-humanizar",           "/home/dev/.claude/.credentials.json",  "claude/kratos+atlas"),
     ("ctrl-infra",             "/home/dev/.claude/.credentials.json",  "claude/argos+kant"),
     ("agv2-jhon-hegel-oc",     "/home/claw/.claude/.credentials.json", "claude/hegel"),
@@ -84,14 +84,14 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
         ts = exp/1000 if exp > 1e11 else exp
         horas = (datetime.datetime.fromtimestamp(ts, datetime.timezone.utc) - ahora).total_seconds()/3600
 
-    # Un access token vencido NO es un problema: mientras haya refreshToken, el CLI lo renueva
-    # solo. salva lleva 5 dias "vencido" y contesta entregas sin fallar una. Alarmar por eso seria
-    # un guardia que grita todos los dias, y a un guardia que grita nadie le hace caso.
-    # Lo unico que de verdad mata a un agente es quedarse SIN refreshToken.
-    # No todo lo que no tiene refreshToken esta muerto. `claude setup-token` emite un token LARGO
-    # (1 anio) que a proposito no trae refreshToken: no hay nada que renovar. Marcarlo MUERTO es un
-    # falso positivo caro, porque empuja a un humano a rehacer un login que no hacia falta. Lo que
-    # de verdad mata es no tener refreshToken Y tener el access vencido o por vencer.
+    # An EXPIRED access token is NOT a problem: as long as there's a refreshToken, the CLI renews
+    # it on its own. salva has been "expired" for 5 days and answers deliveries without failing
+    # once. Alarming over that would be a guard that screams every day, and nobody listens to a
+    # guard that screams. The only thing that really kills an agent is running OUT of refreshToken.
+    # Not everything without a refreshToken is dead. The `claude setup-token` emits a LONG token
+    # (1 year) that intentionally doesn't include refreshToken: there's nothing to renew. Marking
+    # it DEAD is an expensive false positive, because it pushes a human to redo a login that
+    # wasn't needed. What really kills is having no refreshToken AND an expired or about-to-expire access.
     if huella is None and horas is not None and horas > 720:
         estado = "TOKEN-LARGO"
         detalle = "token largo sin refreshToken (setup-token): vence en %.0f dias" % (horas / 24)
@@ -107,10 +107,10 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
         por_huella.setdefault(huella, []).append(etiqueta)
     filas.append((huella or "SIN-RT", etiqueta, contenedor, estado, detalle))
 
-# ---- alias que NO viven en este host ------------------------------------------------------
-# salva corre en kratos. El VPS no tiene SSH hacia kratos, pero kratos SI hacia el VPS, asi que
-# kratos mide y empuja aca su resultado. Si el empuje se corta, la fila sale STALE y cuenta como
-# problema: un alias que deja de medirse no puede volver a pasar por "todo bien" en silencio.
+# ---- aliases that do NOT live in this host -------------------------------------------------
+# salva runs on kratos. The VPS has no SSH to kratos, but kratos DOES have SSH to the VPS, so
+# kratos measures and pushes its result here. If the push stops, the row shows STALE and counts
+# as a problem: an alias that stops being measured can't quietly slip back into "everything's fine".
 REMOTO = "/var/lib/cauce-v3/cred-guard-kratos.json"
 MAX_EDAD_MIN = 60
 try:

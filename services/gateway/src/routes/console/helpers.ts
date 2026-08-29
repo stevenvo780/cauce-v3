@@ -193,8 +193,8 @@ export function validatedConfigurationReceipt(
     && inverse.success
     && (expectedMutation === undefined || isDeepStrictEqual(mutation.data, expectedMutation));
   if (!exact) {
-    // La escritura pudo confirmar antes de que una capa incompatible truncara su recibo. La
-    // respuesta no refleja campos crudos del store y obliga al cliente a releer la revisión.
+    // The write may have committed before an incompatible layer truncated its receipt. The
+    // response reflects no raw fields from the store and forces the client to re-read the revision.
     throw new StoreError('conflict', 'configuration change did not return an exact durable receipt');
   }
   return {

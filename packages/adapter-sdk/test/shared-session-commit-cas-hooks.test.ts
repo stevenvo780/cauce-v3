@@ -94,7 +94,7 @@ test("input humano entre la revalidación de identidad y el paste se preserva", 
   let injectedRace = false;
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
     const response = await originalRun(args, stdin, control);
-    // La segunda precondición ya acreditó pane/PID/nombres, pero aún no capturó la caja.
+    // The second precondition already attested pane/PID/names, but has not yet captured the box.
     if (!injectedRace && tmux.buffers.size > 0
       && args[0] === "if-shell" && args[4]?.includes("#{pane_input_off}")) {
       injectedRace = true;
@@ -139,7 +139,7 @@ test("la barrera descarta input humano después de la última captura y antes de
     if (args[0] === "load-buffer" && stdin !== "CAUCE_BUFFER_SCRUBBED") bufferLoaded = true;
     if (!raceAttempted && bufferLoaded && args[0] === "capture-pane") {
       raceAttempted = true;
-      // Esta es exactamente la ventana R4: la foto ya volvió y el if-shell aún no empezó.
+      // This is exactly the R4 window: the snapshot has already returned and the if-shell has not yet started.
       humanAccepted = tmux.humanType("HUMAN_RACE");
     }
     return response;

@@ -58,10 +58,10 @@ export function registerCoreRuntimeHttpRoutes(
   });
 
   /**
-   * Reclamo por HTTP. Es el otro punto por donde se puede vaciar la cola de un agente. El cliente
-   * sólo elige un máximo de lote: las capacidades general y humana viajan por separado y el store
-   * descuenta bajo lock todas las garras vivas del alias. Así dos polls, un socket y otro gateway
-   * comparten el mismo presupuesto aunque este endpoint sea sin estado.
+   * Claim over HTTP. It is the other point through which an agent's queue can be drained.
+   * The client only picks a maximum batch size: the general and human capabilities travel
+   * separately and the store subtracts under lock all of the alias's live claws. So two polls,
+   * one socket and another gateway share the same budget even though this endpoint is stateless.
    */
   const queryHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
     try {
@@ -137,10 +137,9 @@ export function registerCoreRuntimeHttpRoutes(
       const result = await repository.ackDelivery(
         deliveryId, actor.tenant_id, actor.alias, ack, ackDeadlineMs, deliveryLeaseCap
       );
-      // Un ACK por HTTP libera capacidad igual que uno por WebSocket. Si el mismo alias tiene un
-      // socket vivo, hay que despertarlo: si no, la capacidad que este ACK liberó queda sin usar
-      // hasta el próximo mensaje publicado. No se espera el drenaje para no atar la respuesta HTTP
-      // a una ronda de reclamo.
+      // An HTTP ACK frees capacity just like one over WebSocket. If the same alias has a live
+      // socket, wake it up: otherwise the capacity this ACK freed sits unused until the next
+      // published message. Drain is not awaited so the HTTP response is not tied to a claim round.
       if (RELEASES_CAPACITY.has(result.status)) {
         const active = sessions.get(sessionKey(actor.tenant_id, actor.alias));
         if (active) void drain(active).catch((error: unknown) => app.log.error(error));

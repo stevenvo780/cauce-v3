@@ -144,18 +144,18 @@ describe('Telegram egress text extraction', () => {
     expect(telegramTextChunks({ result: { text: envelope } })).toEqual(['texto humano']);
     expect(telegramTextChunks({ result: { output: { reply: envelope } } })).toEqual(['texto humano']);
 
-    // Sobre sin texto humano utilizable: no se publica nada, en vez del JSON crudo.
+    // Envelope without usable human text: nothing is published, instead of the raw JSON.
     expect(telegramTextChunks({
       result: { text: JSON.stringify({ reply: '', messages: [], status: 'done', retryable: false, artifacts: [] }) }
     })).toEqual([]);
 
-    // Con valla markdown alrededor, que es como suele llegar.
+    // With a markdown fence around it, which is how it usually arrives.
     expect(telegramTextChunks({ result: { text: '```json\n' + envelope + '\n```' } }))
       .toEqual(['texto humano']);
 
-    // Un JSON que NO es un sobre del contrato se sigue tratando como texto: no inventamos reglas.
+    // A JSON that is NOT a contract envelope is still treated as text: we do not invent rules.
     expect(telegramTextChunks({ result: { text: '{"foo":1}' } })).toEqual(['{"foo":1}']);
-    // Y el texto humano que casualmente empieza con llave tampoco se toca.
+    // And human text that happens to start with a brace is left alone.
     expect(telegramTextChunks({ result: { text: '{no es json' } })).toEqual(['{no es json']);
   });
 });
@@ -250,7 +250,7 @@ describe('Telegram durable polling (core)', () => {
     expect(published).toHaveLength(1);
     expect(published[0]?.body.attachments_v1).toBeUndefined();
     expect(published[0]?.body.prompt).toMatch(/mirá esto[\s\S]*adjunto descartado/u);
-    // Lo que de verdad se estaba perdiendo: el cursor.
+    // What was actually being lost: the cursor.
     expect(repository.next).toBe(9);
   });
 

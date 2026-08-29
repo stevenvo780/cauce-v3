@@ -33,8 +33,8 @@ describe('gateway delivery admission configuration', () => {
   });
 
   it('allows a zero general budget as long as the human reserve survives', () => {
-    // Configuración legítima para un asistente puro: no toma trabajo entre agentes, pero su
-    // dueño lo sigue teniendo disponible siempre.
+    // Legitimate configuration for a pure assistant: it takes no inter-agent work, but its owner
+    // keeps it available at all times.
     expect(configuredDeliveryAdmission({
       CAUCE_MAX_INFLIGHT_DELIVERIES: '0',
       CAUCE_HUMAN_RESERVED_DELIVERIES: '2',
@@ -42,8 +42,8 @@ describe('gateway delivery admission configuration', () => {
   });
 
   it('refuses a configuration where no delivery could ever be claimed', () => {
-    // Un adaptador conectado que nunca recibe nada se ve idéntico a uno roto, y distinguir
-    // esos dos casos ya costó una semana. Tiene que reventar al arrancar.
+    // A connected adapter that never receives anything looks identical to a broken one, and
+    // distinguishing the two cases already cost a week. It must blow up at startup.
     expect(() => configuredDeliveryAdmission({
       CAUCE_MAX_INFLIGHT_DELIVERIES: '0',
       CAUCE_HUMAN_RESERVED_DELIVERIES: '0',

@@ -281,7 +281,7 @@ describe('attachment transport contract', () => {
     expect(PublishMessageSchema.safeParse({ ...publishBase, body: { attachments_v1: [invalid] } }).success).toBe(false);
   });
 
-  // Valida que se admitan variantes MIME válidas para adjuntos de texto, markdown y csv.
+  // Validate that valid MIME variants are accepted for text, markdown, and csv attachments.
   it.each([
     { mime_type: 'text/markdown', name: 'notas.md' },
     { mime_type: 'text/x-markdown', name: 'notas.md' },

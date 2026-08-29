@@ -118,23 +118,23 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 }
 
 /**
- * Juego de caracteres y cotas de los tres campos de `SessionOrigin`.
+ * Character set and size caps for the three fields of `SessionOrigin`.
  *
- * El tope importa por una razón concreta y no por prolijidad: `validateSessionsFile` admite
- * hasta 4096 entradas y `readSessionsSecure` rechaza el fichero entero pasado 1 MiB. Un origen
- * sin cota multiplicado por 4096 entradas empuja contra ese techo, y pasarse NO degrada: deja
- * al alias sin ninguna sesión con INVALID_SESSIONS_FILE.
+ * The cap matters for a concrete reason and not for tidiness: `validateSessionsFile` admits up
+ * to 4096 entries and `readSessionsSecure` rejects the whole file past 1 MiB. An uncapped origin
+ * multiplied by 4096 entries pushes against that ceiling, and going past it does NOT degrade:
+ * it leaves the alias without any session under INVALID_SESSIONS_FILE.
  */
 const SESSION_ORIGIN_FIELD = /^[A-Za-z0-9._:@+-]{1,128}$/u;
 
 /**
- * Un origen con forma inesperada se DESCARTA; no invalida el fichero.
+ * An origin with an unexpected shape is DROPPED; it does not invalidate the file.
  *
- * Es deliberadamente asimétrico con el resto del validador, que es estricto y tira. La razón es
- * la consecuencia: `native_id` es lo único de lo que depende reanudar una conversación, así que
- * ahí una forma rara es corrupción y hay que parar. `origin` es una etiqueta para el humano;
- * perderla degrada a "sin origen" —que es la respuesta honesta que el lector ya sabe dar— y
- * tirar por ella convertiría un metadato cosmético en una caída del alias.
+ * This is deliberately asymmetric with the rest of the validator, which is strict and throws.
+ * The reason is the consequence: `native_id` is the only thing resuming a conversation depends
+ * on, so an odd shape there is corruption and must stop. `origin` is a label for the human;
+ * losing it degrades to "no origin" — which is the honest answer the reader already knows how
+ * to give — and throwing on it would turn a cosmetic piece of metadata into an alias outage.
  */
 export function sanitizeSessionOrigin(value: unknown): SessionOrigin | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;

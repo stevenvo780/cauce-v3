@@ -6,13 +6,13 @@ import { transcriptDirectoryIn } from "./session.js";
 import type { ResumeSpec, SharedSessionHarness } from "./types.js";
 
 /**
- * Detección y configuración de reanudación de sesiones de conversación previa en la TUI.
+ * Detection and configuration of previous conversation session resumption in the TUI.
  */
 
-/** Límite de rollouts a inspeccionar para comprobar conversaciones reanudables. */
+/** Cap on rollouts to inspect when checking for resumable conversations. */
 const MAX_ROLLOUTS_INSPECTED = 200;
 
-/** Límite de bytes a leer para extraer la cabecera `session_meta` de un rollout. */
+/** Cap on bytes to read when extracting the `session_meta` header from a rollout. */
 const HEADER_READ_LIMIT_BYTES = 256 * 1024;
 
 export function sharedSessionResume(
@@ -31,7 +31,7 @@ export function sharedSessionResume(
     };
 }
 
-/** Comprueba si Codex tiene una sesión interactiva previa reanudable para el workspace indicado. */
+/** Checks whether Codex has a previous interactive session that is resumable for the given workspace. */
 export async function codexHasPreviousConversation(
   codexHome: string,
   workspace: string,
@@ -47,7 +47,7 @@ export async function codexHasPreviousConversation(
   return false;
 }
 
-/** Comprueba si Claude tiene una conversación previa en el directorio de transcripts del workspace. */
+/** Checks whether Claude has a previous conversation in the workspace transcripts directory. */
 export async function claudeHasPreviousConversation(
   configDirectory: string,
   workspace: string,
@@ -71,7 +71,7 @@ export async function claudeHasPreviousConversation(
   return false;
 }
 
-/** Los rollouts del árbol, de más nuevo a más viejo por su nombre (que es cronológico). */
+/** The tree's rollouts, newest to oldest by their name (which is chronological). */
 async function rolloutsByRecency(directory: string): Promise<readonly string[]> {
   try {
     const names = await readdir(directory, { recursive: true });
@@ -84,7 +84,7 @@ async function rolloutsByRecency(directory: string): Promise<readonly string[]> 
   }
 }
 
-/** El `session_meta` del rollout: sólo la primera línea, y con un tope de lectura. */
+/** The rollout's `session_meta`: only the first line, and with a read cap. */
 async function rolloutHeader(
   file: string,
 ): Promise<{ source?: unknown; cwd?: unknown } | undefined> {

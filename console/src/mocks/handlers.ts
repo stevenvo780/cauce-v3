@@ -33,7 +33,7 @@ export const handlers = [
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
   http.get('*/v3/console/quotas', () => HttpResponse.json(mockQuotas())),
-  // La cadena por trace: el endpoint existía en el gateway y no tenía un solo consumidor.
+  // The per-trace chain endpoint existed in the gateway and did not have a single consumer.
   http.get('*/v3/console/chains/:traceId', ({ params }) => HttpResponse.json(mockChain(String(params.traceId)))),
   http.get('*/v3/console/messages', () => HttpResponse.json(mockMessages())),
   http.post('*/v3/console/publish-intents', async ({ request }) => {
@@ -110,9 +110,9 @@ export const handlers = [
     chain_policies: [{
       id: 'default', progress_relay_enabled: true, progress_relay_max_events: 8,
       cycle_cut_enabled: true, failure_coalesce_enabled: true, failure_coalesce_window_seconds: 900,
-      // Los cinco topes de la 019, con los valores por defecto que declara la migración: el
-      // simulador tiene que traer las MISMAS columnas que el servidor o la pantalla se
-      // desarrolla contra una forma que en producción no existe.
+      // The five caps from 019, with the defaults declared by the migration: the simulator must
+      // bring back the SAME columns as the server, or the UI is developed against a shape that
+      // does not exist in production.
       delegation_caps_enabled: true, max_fanout_per_turn: 6, max_edge_repeats_per_root: 3,
       max_delegations_per_root: 64, human_gate_enabled: true,
     }],
@@ -328,9 +328,9 @@ export const handlers = [
     items: [],
   })),
   /*
-   * Las sesiones de terminal del operador. La consola las lee para poder CERRAR las que quedaron
-   * colgadas: sin este manejador cada prueba de la vista escupía «intercepted a request without a
-   * matching request handler» y la trampa que este listado destraba quedaba sin cubrir.
+   * The operator's terminal sessions. The console reads them so it can CLOSE the ones left
+   * hanging: without this handler, every test of the view spat out "intercepted a request
+   * without a matching request handler" and the trap this listing unblocked went uncovered.
    */
   http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
   http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),

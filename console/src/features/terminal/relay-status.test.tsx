@@ -123,7 +123,7 @@ describe('deriveTerminalRelayState', () => {
       },
     );
 
-    /** CONTROL NEGATIVO: sólo los estados que acreditan ausencia dicen «no desplegado». */
+    /** NEGATIVE CONTROL: only states that prove absence say "no desplegado". */
     it.each([404, 501])('con %s la causa sigue siendo no-desplegado', (status) => {
       expect(deriveTerminalRelayState(undefined, new ApiError('x', status)).cause).toBe('no-desplegado');
     });

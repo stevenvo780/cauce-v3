@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Respaldo fuera de sitio hacia la torre (kratos) y de ahi a Drive (rclone del propio kratos).
-# Cubre: dumps de BD (/var/backups/cauce-v3) y /etc/cauce-v3 (pki+secrets, tar 0600).
-# La VPS es el centro de mando; la torre y Drive son el seguro contra el RAID 0.
+# Off-site backup to the tower (kratos) and from there to Drive (rclone on kratos itself).
+# Covers: DB dumps (/var/backups/cauce-v3) and /etc/cauce-v3 (pki+secrets, tar 0600).
+# The VPS is the command centre; the tower and Drive are the insurance against RAID 0.
 set -euo pipefail
 
 DESTINO="kratos"

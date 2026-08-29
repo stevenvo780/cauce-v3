@@ -1,5 +1,5 @@
-// G9: todo directorio versionado de primer/segundo nivel debe casar con alguna fila de la tabla
-// de sectores de ordenes/00-PROTOCOLO.md — codigo sin dueño es la puerta de las colisiones.
+// G9: every versioned first/second-level directory must match a row of the sector table in
+// ordenes/00-PROTOCOLO.md — ownerless code is the gateway to collisions.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -24,11 +24,11 @@ const ficheros = execSync('git ls-files', { cwd: root, encoding: 'utf8' }).split
 const dirs = new Set();
 for (const f of ficheros) {
   const partes = f.split('/');
-  if (partes.length < 2) continue; // ficheros sueltos de raiz: del integrador por convenio
+  if (partes.length < 2) continue; // loose files at the root: integrator's by convention
   dirs.add(partes[0]);
   if (partes.length > 2) dirs.add(partes[0] + '/' + partes[1]);
 }
-// zonas que la tabla cubre por convenio global, no por fila propia
+// zones the table covers by global convention, not by their own row
 const EXENTOS = new Set(['docs', 'ordenes', 'plan-reestructura', 'tests', 'deploy', '.github', '.claude']);
 
 const huerfanos = [...dirs].filter((d) => !EXENTOS.has(d.split('/')[0]) && !cubierto(d)).sort();

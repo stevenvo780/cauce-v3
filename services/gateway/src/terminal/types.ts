@@ -36,28 +36,28 @@ export interface AgentPresence {
   readonly runtime_user: string;
   readonly runtime_uid: number;
   readonly harness: string;
-  /** Marca del launcher: harness/home provienen del proceso real, no del bundle declarado. */
+  /** Launcher mark: harness/home come from the real process, not from the declared bundle. */
   readonly runtime_facts_observed?: boolean;
   /**
-   * El `$HOME` del alias dentro de su contenedor, medido por el agente que corre ahí.
+   * The alias `$HOME` inside its container, measured by the agent running there.
    *
-   * OPCIONAL: un pty-agent anterior a esta versión no lo manda, y exigirlo tiraría su presencia
-   * entera —`parseAgentPresence` lanza y `registry.observe` pierde al alias—, o sea que desplegar
-   * el gateway antes que el agente dejaría terminales caídas por toda la flota. Es la misma
-   * lección que el comentario de `features` en el propio agente.
+   * OPTIONAL: a pty-agent older than this version does not send it, and requiring it would drop
+   * its entire presence — `parseAgentPresence` throws and `registry.observe` loses the alias —,
+   * meaning deploying the gateway before the agent would leave terminals down across the fleet.
+   * Same lesson as the `features` comment on the agent itself.
    *
-   * `undefined` significa «este agente no lo dice», que NO es lo mismo que «no tiene»: la vía de
-   * documentos sigue contestando «no medido», igual que antes.
+   * `undefined` means "this agent does not report it", which is NOT the same as "it has none":
+   * the documents path still answers "not measured", the same as before.
    */
   readonly home?: string;
-  /** Directorios efectivos del proceso del arnés; opcionales para compatibilidad durante rollout. */
+  /** Effective directories of the harness process; optional for compatibility during rollout. */
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
   readonly cwd?: string;
   readonly workspace_root?: string;
   readonly project_root?: string;
-  /** Proyección cerrada de config.toml; ausente si es legacy, no-Codex o malformada. */
+  /** Closed projection of config.toml; absent if legacy, non-Codex, or malformed. */
   readonly project_doc_max_bytes?: number;
   readonly project_doc_fallback_filenames?: readonly string[];
   readonly modes: readonly string[];

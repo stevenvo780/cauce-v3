@@ -36,7 +36,7 @@ it('requests replay from the API and reports the accepted action', async () => {
  * intent: how many rows remain, which is highlighted, and what is read when the requested
  * delivery is not in the snapshot.
  */
-describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
+describe('/queues?delivery= — the deep link landing', () => {
   const tresEntregas = {
     observed_at: '2026-08-22T12:00:00.000Z', pending: 1, retrying: 1, dead: 1,
     items: [
@@ -62,7 +62,7 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
     expect(filas).toHaveLength(1);
     expect(filas[0]).toHaveAttribute('aria-current', 'true');
     expect(within(filas[0]).getByText('kant')).toBeInTheDocument();
-    // El id COMPLETO, no el compactado: es lo que el operador compara contra el enlace que trajo.
+    // The FULL id, not the compact one: that is what the operator compares against the link that brought them here.
     expect(screen.getByText('22222222-2222-4222-8222-222222222222')).toBeInTheDocument();
     expect(screen.getByText(/Filtrado a la entrega/)).toBeInTheDocument();
   });

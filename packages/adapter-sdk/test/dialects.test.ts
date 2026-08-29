@@ -135,18 +135,18 @@ test("OpenClaw bounds result/output wrapper traversal", () => {
 test("plain fallback rejects non-visible, oversized and object-like malformed output", () => {
   assert.throws(() => parseFinalText("  ", "test final"), /visible text/u);
   assert.throws(() => parseFinalText("x".repeat(MAX_FINAL_TEXT_BYTES + 1), "test final"), /limit/u);
-  // CAMBIO DE CONTRATO 2026-08-05: un sobre truncado con `reply` completo ya NO se pierde entero,
-  // se entrega la respuesta (ver fence.test.ts). Perder el turno costaba minutos de trabajo del
-  // agente por un campo accesorio cortado. Un sobre truncado SIN reply rescatable conserva el
-  // diagnostico como resultado `failed`, pero nunca materializa sus campos accesorios.
+  // CONTRACT CHANGE 2026-08-05: a truncated envelope with a complete `reply` is NO LONGER lost
+  // entirely, the response is delivered (see fence.test.ts). Losing the turn cost the agent
+  // minutes of work for a single truncated accessory field. A truncated envelope WITHOUT a
+  // salvageable reply keeps the diagnosis as a `failed` result, but never materializes its accessory fields.
   assert.equal(parseFinalText('{"reply":"truncated"', "test final").reply, "truncated");
   const ilegible = parseFinalText('{"messages":[', "test final");
   assert.equal(ilegible.status, "failed");
   assert.equal(ilegible.retryable, false);
   assert.deepEqual(ilegible.messages, []);
   assert.match(ilegible.reply ?? "", /no quedo ni una linea de texto rescatable/u);
-  // Un objeto BIEN formado pero que incumple el esquema sigue siendo fallo duro: ahí el agente
-  // declaró un sobre completo y le faltan campos, no es un corte de transporte.
+  // A WELL-FORMED object that violates the schema is still a hard failure: there the agent
+  // declared a complete envelope and is missing fields, it is not a transport cut.
   assert.throws(
     () => parseFinalText('{"reply":"schema-invalid"}', "test final"),
     /missing 'messages'/u,

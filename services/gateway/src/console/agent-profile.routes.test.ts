@@ -8,11 +8,11 @@ import {
 } from './agent-profile.routes.js';
 
 /**
- * LA VISTA PREVIA DEL PERFIL, probada por donde puede MENTIR.
+ * THE PROFILE PREVIEW, tested where it can LIE.
  *
- * El valor de esta ruta no es devolver JSON: es que lo que enseña sea, byte a byte, lo que va a
- * quedar escrito en el contenedor. Todo lo que se prueba acá defiende esa propiedad, más las dos
- * cosas que la ruta no puede saber y tiene que decir en vez de callarse.
+ * The value of this route is not returning JSON: it is that what it shows is, byte for byte,
+ * what will end up written in the container. Everything tested here defends that property,
+ * plus the two things the route cannot know and must say instead of keeping silent.
  */
 
 const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
@@ -88,8 +88,8 @@ describe('qué ficheros le tocan a cada arnés', () => {
 describe('el reparto de openclaw pone cada cara donde toca', () => {
   it('el propósito va a SOUL.md y el rol a IDENTITY.md, y NO al revés', async () => {
     /*
-     * No es orden: es la diferencia entre enseñarle a un modelo quién es y enseñarle qué hace.
-     * Un `SOUL.md` que hable de tareas le enseña que su identidad son sus tareas.
+     * It is not order: it is the difference between teaching a model who it is and what it does.
+     * A `SOUL.md` that talks about tasks teaches it that its identity is its tasks.
      */
     abierto = await servidor(contexto({
       purpose: 'existo para reparar Cauce', role_summary: 'médico de la flota'
@@ -115,8 +115,8 @@ describe('el reparto de openclaw pone cada cara donde toca', () => {
 
   it('MEMORY.md y HEARTBEAT.md son DEL AGENTE: no reciben nada nuestro', async () => {
     /*
-     * Pisarlos es borrarle la memoria a un compañero, y desde dentro del contenedor no hay marcha
-     * atrás. La política tiene que viajar en la respuesta para que la pantalla lo pueda decir.
+     * Overwriting them means erasing a colleague's memory, and from inside the container there
+     * is no way back. The policy has to travel in the response so the screen can say it.
      */
     abierto = await servidor(contexto({
       purpose: 'p', role_summary: 'r', human_brief: 'h', tools: ['ssh'], operating_rules: ['no tocar credenciales']
@@ -132,10 +132,10 @@ describe('el reparto de openclaw pone cada cara donde toca', () => {
   });
 
   it('la vista previa no congela permisos ni destinos dinámicos dentro del perfil autorado', async () => {
-    /*
-     * Revocar un permiso o cambiar un destino no cambia la revisión del perfil autorado. Si esta
-     * vista los materializara, el disco podría seguir afirmando un poder que ya fue revocado.
-     */
+/*
+    * Revoking a permission or changing a destination does not change the authored profile
+    * revision. If this view materialised them, the disk could keep asserting a power already revoked.
+    */
     abierto = await servidor(contexto({ purpose: 'x', responsibilities: ['reparar Cauce'] }, 'openclaw'));
     const ficheros = (await abierto.inject({
       method: 'GET', url: RUTA
@@ -150,9 +150,9 @@ describe('el reparto de openclaw pone cada cara donde toca', () => {
 describe('lo que la ruta NO sabe, lo dice', () => {
   it('declara que la vista previa se compuso sobre fichero vacío', async () => {
     /*
-     * El gateway no lee el disco del contenedor. Decir «así queda el fichero» sobre una medición
-     * que no se hizo es la clase de mentira que cuesta un despliegue: alguien mira la vista previa,
-     * no ve su manual escrito a mano, y concluye que se lo borraron.
+     * The gateway does not read the container disk. Saying "this is how the file ends up" on a
+     * measurement that was not taken is the kind of lie that costs a deployment: someone looks
+     * at the preview, does not see their hand-written manual, and concludes it was erased.
      */
     abierto = await servidor(contexto({ purpose: 'x' }, 'claude'));
     expect((await abierto.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>().base)
@@ -179,7 +179,7 @@ describe('lo que la ruta NO sabe, lo dice', () => {
 
 describe('los topes del arnés se contestan con los dos números, no con un 500', () => {
   it('un openclaw pasado de tope devuelve 422 diciendo QUÉ fichero y cuánto mide', async () => {
-    // «No entra» sobre siete ficheros no le dice a nadie qué recortar.
+    // "It does not fit" over seven files tells nobody what to trim.
     abierto = await servidor(contexto({ purpose: 'x'.repeat(60_001) }, 'openclaw'));
     const res = await abierto.inject({ method: 'GET', url: RUTA });
     expect(res.statusCode).toBe(422);

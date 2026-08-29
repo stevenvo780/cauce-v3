@@ -1,11 +1,11 @@
 /**
- * La frase de doctrina de la vista del terminal.
+ * The terminal view doctrine sentence.
  *
- * Vive en su propio módulo porque se escribe en DOS sitios y tiene que decir lo mismo en los dos:
- * el pie de la rejilla (`.terminal-doctrine`), que es donde se lee mientras se elige a quién abrir,
- * y el desplegable «Estado de la flota» de la cabecera, que es donde queda alcanzable cuando ese
- * pie se repliega para devolverle su alto al terminal. Copiada a mano en los dos sitios, el día que
- * cambie una va a quedar la otra contando la versión vieja de lo que la consola promete no hacer.
+ * It lives in its own module because it is written in TWO places and has to say the same in both:
+ * the grid footer (`.terminal-doctrine`) is where it is read while picking who to open, and the
+ * "Fleet status" dropdown in the header is where it stays reachable when that footer folds away to
+ * give the terminal back its height. Hand-copied in both places, the day one changes the other keeps
+ * telling the old version of what the console promises not to do.
  */
 export const TEXTO_DOCTRINA =
   'Cliente de transporte: no crea workers remotos, no ejecuta adapters y no persiste sesiones.';

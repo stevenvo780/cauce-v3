@@ -2,20 +2,20 @@ import type { DeliveryState, QueueItem } from '../../api/types';
 import { safeDeliveryState } from '../../lib';
 
 /**
- * Agrupación de estados de colas para filtrado y fijación del conjunto de estados de cada grupo.
- * Mantiene la correspondencia entre las métricas de cabecera y el filtrado de entregas.
+ * Grouping of queue states for filtering and for pinning the set of states of each group.
+ * Keeps the correspondence between the header metrics and the delivery filtering.
  */
 
 export type GrupoDeEstado = 'todas' | 'revision' | 'retry' | 'pendientes';
 
 /**
- * `revision` incluye `failed` además de `dead`, y no es un detalle.
+ * `revision` includes `failed` alongside `dead`, and that is not a detail.
  *
- * `failed` TAMBIÉN deja fila en `dead_letters` y `replayDelivery` la acepta: el propio contador
- * `dead` del servidor la suma (`queueSnapshot`, packages/store). Un grupo «requieren revisión» que
- * mostrara sólo `dead` escondería exactamente las mismas 197 entregas que el botón de replay ya
- * había dejado de esconder, y el operador llegaría a un filtro que le dice que no hay nada que
- * hacer mientras el rescate está disponible.
+ * `failed` ALSO leaves a row in `dead_letters` and `replayDelivery` accepts it: the server's own
+ * `dead` counter sums it (`queueSnapshot`, packages/store). A "require review" group showing only
+ * `dead` would hide exactly the same 197 deliveries the replay button had stopped hiding, and the
+ * operator would land on a filter that tells them there is nothing to do while rescue is
+ * available.
  */
 export const ESTADOS_DEL_GRUPO: Record<Exclude<GrupoDeEstado, 'todas'>, ReadonlySet<DeliveryState>> = {
   revision: new Set<DeliveryState>(['dead', 'failed']),
@@ -32,7 +32,7 @@ export const ROTULO_DEL_GRUPO: Record<GrupoDeEstado, string> = {
 
 export interface FiltroDeColas {
   grupo: GrupoDeEstado;
-  /** Texto libre contra alias, tenant, delivery id, message id y último error. */
+  /** Free text against alias, tenant, delivery id, message id and last error. */
   texto: string;
 }
 
@@ -49,9 +49,9 @@ export function filtrarEntregas(items: readonly QueueItem[], filtro: FiltroDeCol
   return items.filter((item) => {
     if (filtro.grupo !== 'todas') {
       const estado = safeDeliveryState(item.state);
-      // Un estado que la consola no reconoce NO entra en ningún grupo concreto: meterlo en
-      // «pendientes» o en «revisión» sería adivinar, y adivinar acá manda a un operador a
-      // reinyectar algo que no sabe qué es.
+      // A state the console does not recognize does NOT enter any specific group: putting it in
+      // "pendientes" or "revision" would be guessing, and guessing here sends an operator to
+      // re-inject something they cannot identify.
       if (estado === undefined || !ESTADOS_DEL_GRUPO[filtro.grupo].has(estado)) return false;
     }
     return coincideElTexto(item, filtro.texto);
@@ -59,13 +59,13 @@ export function filtrarEntregas(items: readonly QueueItem[], filtro: FiltroDeCol
 }
 
 /**
- * Cuántas filas hay en cada grupo DENTRO del snapshot que se está mirando.
+ * How many rows each group has WITHIN the snapshot being watched.
  *
- * No se reusan `snapshot.pending/retrying/dead` para esto: esos tres los calcula el servidor sobre
- * lo mismo, pero son cifras del snapshot entero y acá hace falta el conteo de lo que la tabla
- * puede mostrar. Cuando coinciden, coinciden; cuando no, la diferencia es información —significa
- * que el `LIMIT` del servidor recortó— y taparla con la cifra del servidor sería pintar un filtro
- * que promete filas que no están.
+ * `snapshot.pending/retrying/dead` are not reused here: the server computes those three over the
+ * same data, but they are numbers over the whole snapshot, and here we need the count of what
+ * the table can actually show. When they match, they match; when they do not, the difference is
+ * information —it means the server's `LIMIT` truncated it— and covering it with the server's
+ * number would paint a filter that promises rows that are not there.
  */
 export function contarPorGrupo(items: readonly QueueItem[]): Record<GrupoDeEstado, number> {
   return {

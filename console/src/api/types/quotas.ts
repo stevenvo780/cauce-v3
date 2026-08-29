@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------------------------
-// GET /v3/console/quotas — última muestra de cuota por (host, proveedor, grupo, ventana), más
-// sparkline de 24h. Ver features/quotas para agrupar por family (antigravity) y elegir la peor
-// ventana de un grupo colapsado.
+// GET /v3/console/quotas — latest quota sample by (host, provider, group, window), plus a 24h
+// sparkline. See features/quotas to group by family (antigravity) and pick the worst window of a
+// collapsed group.
 
 export type QuotaSeverity = 'ok' | 'warn' | 'critical' | 'exhausted' | 'unknown';
 
@@ -35,7 +35,7 @@ export interface QuotaWindow {
 export interface QuotaGroup {
   group_key?: string | null;
   limit_id?: string | null;
-  /** Ninguno de los dos viaja salvo que el actor sea el pagador — misma regla que getAgent(). */
+  /** Neither one is sent unless the actor is the payer — same rule as getAgent(). */
   account_id?: string | null;
   account_label?: string | null;
   account_provider?: string | null;
@@ -50,7 +50,7 @@ export interface QuotaGroup {
 export interface QuotaProviderReport {
   host?: string | null;
   provider?: string | null;
-  /** ok=false con groups=[] es información ("el CLI dejó de responder"), no ausencia de dato. */
+  /** ok=false with groups=[] is information ("the CLI stopped responding"), not absent data. */
   ok?: boolean | null;
   available?: boolean | null;
   kind?: string | null;
@@ -72,7 +72,7 @@ export interface QuotaCollector {
   collector_alias?: string | null;
   captured_at?: string | null;
   received_at?: string | null;
-  /** Frescura real: medida contra received_at (reloj del servidor), no captured_at. */
+  /** Real freshness: measured against received_at (server clock), not captured_at. */
   age_seconds?: number | null;
   stale?: boolean | null;
   schema_version?: number | null;
@@ -97,7 +97,7 @@ export interface QuotaPausedAccount {
   payer_tenant_id?: string | null;
   paused_until?: string | null;
   paused_reason?: string | null;
-  /** false: pausada a mano por un operador; el recolector nunca debe pisar esa pausa. */
+  /** false: paused manually by an operator; the collector must never overwrite that pause. */
   automatic?: boolean | null;
 }
 

@@ -7,14 +7,14 @@ import {
 } from "../src/harnesses/contexto-fijo.js";
 
 /*
- * LA SIEMBRA, y las dos veces que tiene que negarse.
+ * THE SEEDING, and the two times it has to refuse.
  *
- * Sin siembra el sello no coincide nunca y el recorte del sobre no ocurre jamás en producción:
- * todo el trabajo quedaría en una prueba verde y una flota pagando 8.000 caracteres por entrega.
+ * Without seeding the stamp never matches and the envelope trim never happens in production:
+ * all the work would be a green test and a fleet paying 8,000 characters per delivery.
  *
- * Pero sembrar es escribir en el fichero de otro, y hay dos casos donde escribir hace daño:
- *   1. El fichero es de un alias que comparte `$HOME` (kratos/atlas: mismo inodo, medido).
- *   2. El interruptor está apagado — mientras no se haya decidido encenderlo, no se toca nada.
+ * But seeding means writing into someone else's file, and there are two cases where writing
+ * causes damage: (1) the file belongs to an alias that shares `$HOME` (kratos/atlas: same
+ * inode, measured); (2) the switch is off — until turning it on has been decided, nothing is touched.
  */
 
 function io(inicial: string | undefined, habilitado = true) {
@@ -53,10 +53,10 @@ test("sobre un fichero con texto humano, siembra SIN tocar lo humano", () => {
 
 test("si el contrato cambia, la siembra se niega en vez de pisar a ciegas", () => {
   /*
-   * Desde dentro del contenedor no se puede distinguir «el contrato cambió» de «este fichero es
-   * de otro alias». El daño de las dos opciones NO es simétrico: pisar de más deja a dos alias
-   * oscilando entre dos identidades en cada turno; pisar de menos sólo cuesta un sobre entero,
-   * que es exactamente lo de hoy. Ante la duda, no se pisa.
+   * From inside the container one cannot tell "the contract changed" apart from "this file
+   * belongs to another alias". The damage of the two options is NOT symmetric: overwriting
+   * too much leaves two aliases oscillating between two identities each turn; overwriting too
+   * little only costs one whole envelope, which is exactly today's state. When in doubt, do not overwrite.
    */
   const { estado, io: puerto } = io(conBloqueGestionado("", "CONTRATO VIEJO"));
   assert.equal(sembrarContextoFijo("/x/CLAUDE.md", FIJO, puerto), "ocupado-por-otro-alias");
@@ -71,7 +71,7 @@ test("sembrar dos veces seguidas no escribe dos veces", () => {
   assert.equal(estado.escrituras, 1, "reescribió un fichero que ya estaba al día");
 });
 
-// ── CONTROLES NEGATIVOS ─────────────────────────────────────────────────────────────────────
+// ── NEGATIVE CONTROLS ─────────────────────────────────────────────────────────────────────
 
 test("CONTROL NEGATIVO: apagado, no escribe NADA", () => {
   const { estado, io: puerto } = io("# Manual\n", false);
@@ -99,9 +99,9 @@ test("CONTROL NEGATIVO: si el disco no deja escribir, lo dice y no rompe el turn
 
 test("CONTROL NEGATIVO: el que siembra es el mismo que resume, o el sello no serviría", () => {
   /*
-   * Esta es la propiedad de la que cuelga todo: lo que se escribe tiene que ser BYTE A BYTE lo
-   * que después se resume. Si alguien embelleciera el bloque al escribirlo, el sello no
-   * coincidiría nunca y el sobre iría entero para siempre — sin dar ningún error.
+   * This is the property everything hangs from: what is written must be BYTE FOR BYTE what is
+   * later resumed. If anyone beautified the block while writing it, the stamp would never
+   * match and the envelope would go whole forever — without giving any error.
    */
   const { estado, io: puerto } = io(undefined);
   sembrarContextoFijo("/x/CLAUDE.md", FIJO, puerto);

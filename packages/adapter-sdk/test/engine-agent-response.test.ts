@@ -45,16 +45,16 @@ test("un 'done' sin reply ni delegacion falla, pero deja texto que la persona pu
   await context.engine.handleDelivery(input);
   const terminal = context.events.at(-1);
   assert.equal(terminal?.phase, "failed");
-  // Antes el codigo era MISSING_FINAL_REPLY y el evento viajaba SIN `output`. Eso dejaba
-  // `deliveries.result` en NULL y `agentResponseText` sin nada que leer: el remitente recibia
-  // silencio.  las cuatro preguntas de Miguel a janus del 27-jul quedaron
-  // asi, `failed` con `result` NULL y sin respuesta posterior.
+  // The code used to be MISSING_FINAL_REPLY and the event travelled WITHOUT `output`. That left
+  // `deliveries.result` as NULL and `agentResponseText` with nothing to read: the sender received
+  // silence.  the four questions from Miguel to janus on 27-jul stayed
+  // like that, `failed` with `result` NULL and no follow-up.
   assert.equal(terminal?.error?.code, "HARNESS_REPORTED_FAILURE");
   assert.equal(terminal?.error?.retryable, false);
   assert.equal(context.store.getDelivery(input.delivery_id)?.state, "failed");
   assert.equal(context.events.some((event) => event.phase === "done"), false);
-  // Lo que hace que esto le sirva a un humano: el evento terminal LLEVA output con texto, que es
-  // de donde `agentResponseText` (packages/store) saca el cuerpo del mensaje de vuelta.
+  // What makes this useful for a human: the terminal event CARRIES output with text, which is
+  // where `agentResponseText` (packages/store) pulls the body of the reply message from.
   assert.equal(terminal?.output?.status, "failed");
   assert.match(terminal?.output?.reply ?? "", /Volve a preguntarme/u);
 });

@@ -9,9 +9,9 @@ import { hechosDelRegistro } from '../terminal/hechos-del-registro.js';
 import { AgentRegistry, parseAgentPresence } from '../terminal/registry.js';
 
 /**
- * La ruta se levanta de verdad y se le pega con `app.inject`. No es un test del objeto que
- * devuelve una función: es el efecto de un GET sobre un fastify vivo, que es lo único que prueba
- * que la ruta existe, que responde y que el cuerpo sale como se espera.
+ * The route is actually stood up and hit with `app.inject`. Not a test of whatever object a
+ * function returns: it is the effect of a GET on a live fastify, which is the only thing that
+ * proves the route exists, that it responds, and that the body comes out as expected.
  */
 
 const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
@@ -25,8 +25,8 @@ function probe(entradas: Record<string, { facts: RuntimeFacts; source: FactsSour
     async factsFor(tenantId, alias) {
       return entradas[`${tenantId}:${alias}`];
     },
-    // Esta ruta es el INVENTARIO: dice qué fichero es cada cosa y dónde vive, nunca su contenido.
-    // El doble los rechaza para que un día en que la ruta empiece a leer, el test lo note.
+    // This route is the INVENTORY: it says which file is what and where it lives, never its content.
+    // The doubles reject it so the day this route starts reading, the test notices.
     async readGovernanceDocument() {
       return { error: 'unavailable', reason: 'el inventario no lee contenido' };
     },
@@ -82,9 +82,9 @@ describe('GET tenant-qualified del mapa de documentos', () => {
   });
 
   /**
-   * Control negativo del diseño entero: si los hechos vienen del registro, NADA sale editable, y
-   * el aviso viaja en el cuerpo. Un campo que parece editable y guarda en el fichero equivocado
-   * es peor que no tener editor.
+   * Negative control of the whole design: if the facts come from the registry, NOTHING comes out
+   * editable, and the warning travels in the body. A field that looks editable and writes to the
+   * wrong file is worse than not having an editor.
    */
   it('sin medición nada es editable y el aviso viaja en el cuerpo', async () => {
     vivo = servidor({
@@ -99,7 +99,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
     expect(body.caveat).toMatch(/5 de los 14/);
     expect(body.items.every((d) => !d.readable)).toBe(true);
     expect(body.items.every((d) => !d.editable)).toBe(true);
-    // Y encima la ruta que da la BD es la equivocada: kant corre claude.js, no codex.
+    // On top of that, the path the DB gives is the wrong one: kant runs claude.js, not codex.
     expect(body.items.find((d) => d.kind === 'directive')?.path).toBe('/home/stev/.codex/AGENTS.md');
   });
 
@@ -193,7 +193,7 @@ describe('contenido y escritura tenant-qualified', () => {
     }, [parseAgentPresence({
       tenant_id: 'Steven', alias: 'zeus', container_id: 'ws-zeus', generation: '1',
       image_id: 'img', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
-      // Incluso con roots plausibles del bundle, sin observación explícita no son autoridad.
+      // Even with plausible roots from the bundle, without explicit observation they are not authority.
       home: '/home/dev', claude_config_dir: '/home/dev/.claude',
       modes: ['shell', 'harness'], connected_since: '2026-08-26T00:00:00.000Z',
     })]);

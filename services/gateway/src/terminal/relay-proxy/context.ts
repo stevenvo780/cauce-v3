@@ -327,7 +327,7 @@ export function createRelayProxyContext(
     if (placement === undefined) {
       return { allowed: false, reason: 'target_placement_changed' };
     }
-    // row.container es el ID FÍSICO de la presencia; un contenedor recreado se caza aquí.
+    // row.container is the PHYSICAL ID of the presence; a recreated container is caught here.
     const vivo = registry.resolve(row.tenant_id, row.alias);
     const observado = vivo.status === 'online' || vivo.status === 'offline'
       ? vivo.observation : undefined;

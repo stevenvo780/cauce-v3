@@ -16,11 +16,11 @@ export function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
 }
 
 /**
- * Coloca las etiquetas (salas y tenants) sobre el borde de arriba de su región y las corre hacia
- * arriba hasta que dejan de pisar un nodo o a otra etiqueta.
+ * Places the labels (rooms and tenants) on the top edge of their region and shifts them upward
+ * until they no longer overlap a node or another label.
  *
- * Determinista: el orden de colocación es fijo (de arriba abajo, desempatando por clave), así que
- * dos corridas con la misma topología colocan las mismas etiquetas en los mismos píxeles.
+ * Deterministic: the placement order is fixed (top to bottom, tie-broken by key), so two runs
+ * with the same topology place the same labels at the same pixels.
  */
 export function placeLabels(
   requests: { key: string; text: string; anchor: Point; charWidth: number; lineHeight: number }[],
@@ -46,9 +46,9 @@ export function placeLabels(
     let best: Point = { ...request.anchor };
     let bestScore = Number.POSITIVE_INFINITY;
 
-    // Candidatos: primero subir en escalones sobre el borde; después, correrse a los lados —cada
-    // vez más lejos— a esas mismas alturas. Nunca hacia abajo: abajo está la región, y ahí es
-    // justamente donde están los muñecos que la etiqueta no puede pisar.
+    // Candidates: first step upward along the edge; then slide sideways —each time further—
+    // at those same heights. Never downward: the region is below, and that is exactly where the
+    // figures sit, which the label must not overlap.
     const paso = request.lineHeight + 3;
     const candidates: Point[] = [];
     for (let step = 0; step <= 9; step += 1) candidates.push({ x: request.anchor.x, y: request.anchor.y - step * paso });
@@ -63,8 +63,8 @@ export function placeLabels(
       }
     }
 
-    // `obstacles` acumula los nodos Y las etiquetas ya colocadas: por eso una etiqueta no puede
-    // caer sobre otra, sin llevar dos listas separadas.
+    // `obstacles` accumulates BOTH the nodes and the already-placed labels: that is how a label
+    // cannot land on another without carrying two separate lists.
     for (const candidate of candidates) {
       const y = Math.max(limitTop, candidate.y);
       const rect: LabelRect = { x: candidate.x, y, halfWidth, top, bottom };
@@ -85,12 +85,12 @@ export function placeLabels(
 }
 
 /**
- * El texto de la etiqueta de una arista ACL.
+ * The text of an ACL edge label.
  *
- * Vive acá y no en el componente porque el layout necesita su **ancho** para poder repartir las
- * etiquetas sin que se pisen. Si el componente escribiera otro texto, el reparto estaría hecho
- * sobre una medida que no corresponde y volverían los solapamientos, esta vez sin que se note por
- * qué.
+ * It lives here and not in the component because the layout needs its **width** to spread the
+ * labels without overlap. If the component wrote different text, the spread would run on a
+ * measurement that does not match, and the overlaps would return — this time without anyone
+ * noticing why.
  */
 export function aclCaption(arc: {
   enabled?: boolean | null;

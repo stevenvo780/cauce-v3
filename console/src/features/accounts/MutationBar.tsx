@@ -3,19 +3,19 @@ import type { ConfigMutation } from '../../api/types';
 import type { RegistryMutationRunner } from './use-registry-mutation';
 
 /**
- * Barra de escritura compartida por los dos formularios del pool: dry-run primero, apply después, y
- * el apply deshabilitado hasta que el servidor validó la mutación exacta que está en pantalla.
+ * Shared write bar for both pool forms: dry-run first, apply after, with apply disabled until
+ * the server has validated the exact mutation currently shown.
  *
- * Desde que el inventario y la matriz viven en la MISMA vista hay dos barras en pantalla a la vez,
- * con botones de texto idéntico. Por eso los botones van dentro de un `role="group"` nombrado con
- * `previewLabel`: sin eso, "Previsualizar (dry-run)" es ambiguo para un lector de pantalla, para el
- * teclado y para los tests — y previsualizar el formulario equivocado manda una mutación que el
- * operador no pidió.
+ * Because the inventory and the matrix live in the SAME view, there are two bars on screen at
+ * once, with identically worded buttons. That is why the buttons sit inside a `role="group"`
+ * named with `previewLabel`: without it, "Previsualizar (dry-run)" is ambiguous to a screen
+ * reader, to the keyboard, and to the tests — and previewing the wrong form sends a mutation the
+ * operator never asked for.
  */
 export function MutationBar({ runner, mutation, invalid, previewLabel }: {
   runner: RegistryMutationRunner;
   mutation?: ConfigMutation;
-  /** Motivo por el que la mutación todavía no se puede enviar (validación local). */
+  /** Reason why the mutation cannot be submitted yet (local validation). */
   invalid?: string;
   previewLabel: string;
 }) {
@@ -32,8 +32,8 @@ export function MutationBar({ runner, mutation, invalid, previewLabel }: {
         <Save size={16} aria-hidden="true" />Aplicar
       </button>
     </div>
-    {/* Guía de formulario, no un rechazo del servidor: `note` evita que el lector de pantalla la
-        anuncie como alerta apenas carga la pantalla, y deja `alert` para lo que el servidor negó. */}
+    {/* Form guidance, not a server rejection: `note` keeps the screen reader from announcing it
+        as an alert the moment the page loads, and leaves `alert` for what the server denied. */}
     {invalid ? <p className="notice" role="note">{invalid}</p> : null}
     {runner.preview ? <pre className="config-preview" aria-label={`Dry-run de ${previewLabel}`}>{runner.preview}</pre> : null}
     {runner.notice ? <p

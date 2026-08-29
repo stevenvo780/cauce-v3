@@ -120,14 +120,14 @@ export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], fi
 }
 
 /**
- * Desglose de adaptadores disponibles, con fallo o sin reporte,
- * evitando interpretar estados no reportados como fallos confirmados.
+ * Breakdown of adapters available, failing, or unreported,
+ * avoiding interpreting unreported states as confirmed failures.
  */
 export interface AdapterBreakdown {
   disponibles: number;
-  /** `degraded` + `unavailable`: el servidor SÍ reportó, y reportó un problema. */
+  /** `degraded` + `unavailable`: the server DID report, and reported a problem. */
   conFallo: number;
-  /** `unknown`, ausente o malformado: no hay dato, que no es lo mismo que un fallo. */
+  /** `unknown`, absent or malformed: no data, which is not the same as a failure. */
   sinReportar: number;
   total: number;
 }
@@ -138,7 +138,7 @@ export function adapterBreakdown(adapters: AdapterView[]): AdapterBreakdown {
   return { disponibles, conFallo, sinReportar: adapters.length - disponibles - conFallo, total: adapters.length };
 }
 
-/** Texto del contador: cuenta cada grupo por su nombre y no inventa una fracción. */
+/** Counter text: counts each group by name and doesn't invent a fraction. */
 export function adapterBreakdownText(adapters: AdapterView[]): string {
   const { disponibles, conFallo, sinReportar, total } = adapterBreakdown(adapters);
   if (total === 0) return 'UNKNOWN';
@@ -149,7 +149,7 @@ export function adapterBreakdownText(adapters: AdapterView[]): string {
   ].filter(Boolean).join(' · ');
 }
 
-/** Estado de un adaptador en palabras del operador. `unknown` NO se dice «no disponible». */
+/** State of an adapter in the operator's words. `unknown` is NOT said "unavailable". */
 export const ADAPTER_STATE_LABELS: Readonly<Record<'available' | 'degraded' | 'unavailable' | 'unknown', string>> = {
   available: 'Disponible',
   degraded: 'Degradado',
@@ -167,12 +167,12 @@ export function terminalTargetMatchesAgent(targetLabel: unknown, agent: FleetAge
 }
 
 /**
- * El estado del lease, con las MISMAS palabras que `/live`.
+ * The lease state, with the SAME words as `/live`.
  *
- * Se pintaba el valor crudo del campo —`online` / `expired` / `unknown`, en inglés y en
- * mayúsculas por CSS— en las insignias del listado de flota y de la cabecera de sesión. Es el
- * mismo hecho que en «La flota ahora» se llama «Conectado» y «Caído»: dos vistas del mismo
- * producto no pueden llamarlo distinto. Ver `presenceBadge` en `../activity/activity.ts`.
+ * The raw field value was painted —`online` / `expired` / `unknown`, in English and in
+ * uppercase by CSS— on the badges of the fleet list and the session header. It is the same
+ * fact that "The fleet now" calls "Connected" and "Down": two views of the same product can't
+ * call it differently. See `presenceBadge` in `../activity/activity.ts`.
  */
 export const LEASE_STATE_LABEL: Readonly<Record<LeaseState, string>> = {
   online: 'Conectado',
@@ -255,23 +255,23 @@ export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefin
 }
 
 /* -------------------------------------------------------------------------- */
-/* TUI en vivo                                                                */
+/* Live TUI                                                                   */
 /* -------------------------------------------------------------------------- */
 
 /**
- * El modo `harness` del agente PTY se conecta a la TUI activa del agente (sesión tmux).
- * Si no está configurado HARNESS_COMMAND o no hay grant, se degrada a modo shell.
+ * The PTY agent's `harness` mode connects to the agent's active TUI (tmux session).
+ * If HARNESS_COMMAND is not set or there is no grant, it degrades to shell mode.
  */
 export const LIVE_TUI_MODE = 'harness';
 
-/** Modo de shell nueva. Escribe: sigue exigiendo motivo escrito a mano. */
+/** New shell mode. Writes: still requires a hand-written reason. */
 export const SHELL_MODE = 'shell';
 
 export type LiveTuiStatus = 'available' | 'no_tui' | 'blocked' | 'unknown';
 
 export interface LiveTuiResolution {
   status: LiveTuiStatus;
-  /** Siempre poblado: un botón gris sin motivo es lo mismo que no decir nada. */
+  /** Always populated: a grey button without a reason is the same as saying nothing. */
   reason: string;
   target?: TerminalTarget;
 }
@@ -284,8 +284,8 @@ export const LIVE_TUI_LABELS: Readonly<Record<LiveTuiStatus, string>> = {
 };
 
 /**
- * ¿Puede este alias emitir su TUI? Se apoya en la misma autoridad por destino que el resto del
- * plano PTY y agrega una sola pregunta: ¿el servidor publicó el modo `harness` para él?
+ * Can this alias emit its TUI? It leans on the same per-destination authority as the rest of the
+ * PTY plane and adds just one question: did the server publish the `harness` mode for it?
  */
 export function resolveLiveTui(targets: TerminalTarget[] | null | undefined, agent: FleetAgent): LiveTuiResolution {
   const base = resolveTerminalTarget(targets, agent);
@@ -308,7 +308,7 @@ export function resolveLiveTui(targets: TerminalTarget[] | null | undefined, age
   };
 }
 
-/** Cuántos destinos pueden emitir su TUI. Inventario ausente sigue siendo UNKNOWN. */
+/** How many destinations can emit their TUI. Absent inventory remains UNKNOWN. */
 export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined): number | undefined {
   return targets
     ? targets.filter((target) => target.authorized && target.pty_state === 'online' && target.modes.includes(LIVE_TUI_MODE)).length
@@ -316,17 +316,17 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
 }
 
 /* -------------------------------------------------------------------------- */
-/* El chip de la lista de flota                                               */
+/* The fleet list chip                                                        */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Estado y motivo visual del chip de terminal: indica si el destino tiene TUI viva disponible
- * o si degrada a modo shell/desconectado con su motivo correspondiente.
+ * State and visual reason of the terminal chip: indicates whether the destination has live TUI
+ * available or degrades to shell/offline mode with its corresponding reason.
  */
 export interface FleetTerminalChip {
   status: TerminalAccessStatus | 'no_tui';
   label: string;
-  /** Siempre poblado: un chip sin motivo es exactamente el defecto que esto arregla. */
+  /** Always populated: a chip without a reason is exactly the bug this fixes. */
   reason: string;
 }
 

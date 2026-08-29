@@ -17,26 +17,26 @@ import {
 export interface SharedSessionSpec {
   readonly alias: string;
   readonly harness: SharedSessionHarness;
-  /** Directorio de trabajo de la TUI. Es también lo que determina el directorio de transcripts. */
+  /** Working directory of the TUI. It is also what determines the transcripts directory. */
   readonly workspace: string;
-  /** Binario del harness. Se separa para poder apuntarlo a un doble en las pruebas. */
+  /** Harness binary. Split out so tests can point it at a double. */
   readonly command?: string;
   /**
-   * Variables de entorno aplicadas en el comando de arranque del panel (`env K=V ...`).
+   * Environment variables applied to the panel startup command (`env K=V ...`).
    */
   readonly environment?: Readonly<Record<string, string>>;
-  /** Especificación de reanudación de conversación previa si existe. Ver `ResumeSpec`. */
+  /** Resume specification for a previous conversation if any. See `ResumeSpec`. */
   readonly resume?: ResumeSpec;
 }
 
 export type EnsureFailure =
   | "session_absent"
   | "tui_absent"
-  /** El nombre exacto de la sesion y el alias grabado en ella no coinciden. */
+  /** The session's exact name and the alias recorded inside it do not match. */
   | "session_alias_mismatch"
-  /** La sesion pertenece a otro harness; reutilizarla mezclaria dos conversaciones. */
+  /** The session belongs to another harness; reusing it would mix two conversations. */
   | "session_harness_mismatch"
-  /** Una sesion legacy no dio evidencia suficiente para poder marcar alias+harness. */
+  /** A legacy session did not give enough evidence to mark alias+harness. */
   | "session_identity_unverified";
 
 export const SESSION_ALIAS_OPTION = "@cauce_alias";
@@ -54,12 +54,12 @@ type IdentityResult =
   | { readonly ok: false; readonly cancelled: true };
 
 /**
- * Acredita que una sesion EXISTENTE corresponde al alias y al harness pedidos.
+ * Vouches that an EXISTING session corresponds to the alias and harness requested.
  *
- * Las opciones privadas son el testigo canonico. Para la flota que ya estaba viva antes de que
- * existieran, el nombre de sesion acredita el alias (se consulto con target exacto `=...`) y el
- * comando original del panel acredita el harness. Solo entonces se escriben ambos marcadores.
- * Nada de este camino mata, renombra ni reinicia una sesion incompatible.
+ * Private options are the canonical witness. For the fleet that was already alive before
+ * they existed, the session name vouches for the alias (queried with the exact `=...` target)
+ * and the original pane command vouches for the harness. Only then are both markers written.
+ * None of this path kills, renames or restarts an incompatible session.
  */
 export async function verifyExistingSessionIdentity(
   tmux: TmuxController,
@@ -187,11 +187,11 @@ async function existingHarnessPane(
 }
 
 /**
- * Inferencia estrecha para sesiones anteriores a los marcadores.
+ * Narrow inference for sessions predating the markers.
  *
- * Se acepta el binario canonico del harness o el `command` explicitamente configurado para ese
- * mismo harness. La presencia ejecutable del harness opuesto vuelve la evidencia ambigua y falla
- * cerrado. El comando observado nunca se incluye en errores: puede contener argumentos privados.
+ * Either the canonical harness binary or the explicitly configured `command` for that harness
+ * is accepted. A runnable opposite harness makes the evidence ambiguous and fails closed. The
+ * observed command is never included in errors: it may contain private arguments.
  */
 export function paneCommandMatches(spec: SharedSessionSpec, command: string): boolean {
   const expected = executableName(spec.command ?? spec.harness);

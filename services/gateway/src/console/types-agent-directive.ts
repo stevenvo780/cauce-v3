@@ -1,18 +1,18 @@
 export interface AgentDirectiveFile {
   path?: string | null;
-  /** 'user' = ~/.claude/CLAUDE.md; 'workspace' = ~/CLAUDE.md o /workspace/CLAUDE.md. */
+  /** 'user' = ~/.claude/CLAUDE.md; 'workspace' = ~/CLAUDE.md or /workspace/CLAUDE.md. */
   scope?: 'user' | 'workspace' | null;
-  /** Orden de carga efectivo, de menor a mayor. */
+  /** Effective load order, lowest to highest. */
   precedence?: number | null;
-  /** SHA-256 real; permite detectar contenido duplicado entre niveles sin comparar texto truncado. */
+  /** Real SHA-256; lets duplicate content across levels be detected without comparing truncated text. */
   sha?: string | null;
   bytes?: number | null;
   modified_at?: string | null;
-  /** El texto del fichero. Puede estar truncado a MAX_DOCUMENT_BYTES (256 KB). */
+  /** The file text. May be truncated to MAX_DOCUMENT_BYTES (256 KB). */
   text?: string | null;
-  /** true si `text` fue recortado. */
+  /** true if `text` was trimmed. */
   truncated?: boolean | null;
-  /** Un fallo distinto de not_found conserva su discriminante; no se presenta como ausencia. */
+  /** A failure other than not_found keeps its discriminant; it is not surfaced as absence. */
   error?:
     | 'permission_denied' | 'invalid_path' | 'symlink_detected' | 'too_large'
     | 'timeout' | 'cancelled' | 'busy' | 'unavailable' | 'unknown' | null;
@@ -21,9 +21,9 @@ export interface AgentDirectiveFile {
 
 export interface AgentMemoryIndexAvailable {
   root?: string | null;
-  /** Total exacto; null significa que sólo se conoce `observed_at_least`. */
+  /** Exact total; null means only `observed_at_least` is known. */
   total?: number | null;
-  /** Límite inferior medido, incluso cuando el barrido fue cortado. */
+  /** Measured lower bound, even when the sweep was cut off. */
   observed_at_least?: number | null;
   truncated?: boolean | null;
   entries?: Array<{
@@ -47,25 +47,25 @@ export interface AgentMemoryIndexUnavailable {
   reason: string;
 }
 
-/** `error` es el discriminante: un fallo de medición nunca vuelve a convertirse en `null`. */
+/** `error` is the discriminant: a measurement failure never reverts to `null`. */
 export type AgentMemoryIndex = AgentMemoryIndexAvailable | AgentMemoryIndexUnavailable;
 
 export interface AgentDirective {
   /**
-   * false = este gateway no publica el endpoint (404).
-   * true = sí publica, pero los ficheros pueden estar vacíos si no se pudieron leer.
+   * false = this gateway does not publish the endpoint (404).
+   * true = it does publish, but the files may be empty if they could not be read.
    */
   publicado: boolean;
-  /** Indica si la lectura se ejecutó contra el contenedor con hechos de entorno medidos. */
+  /** Whether the read was performed against the container with measured environment facts. */
   medido?: boolean;
-  /** Por qué no se pudo leer, cuando `publicado` es false. */
+  /** Why the read could not be performed, when `publicado` is false. */
   motivo?: string;
   observed_at?: string | null;
   container_id?: string | null;
   files?: AgentDirectiveFile[] | null;
-  /** Codex aplica precedencia; Claude expone únicamente su orden de carga. */
+  /** Codex applies precedence; Claude only exposes its load order. */
   manual_order?: 'codex_precedence' | 'claude_load_order' | 'workspace_only' | null;
-  /** Esta ruta mide manuales estándar; no afirma que cubra todas las fuentes de contexto del arnés. */
+  /** This path measures standard manuals; it does not claim to cover all the harness's context sources. */
   context_coverage?: 'standard_manuals' | null;
   context_limitations?: string[] | null;
   memory?: AgentMemoryIndex | null;

@@ -88,7 +88,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   onRequestGrant: RequestTerminalGrant;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
-  /** Un rechazo dejó incierto el estado de plazas: se relee el inventario antes de actuar. */
+  /** A rejection left the seat state uncertain: the inventory is reread before acting. */
   onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
 }) {
   const api = useApi();
@@ -103,7 +103,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [showInspector, setShowInspector] = useState(false);
-  /** Panel que ya intentó abrir su TUI sola. Es por panel y no se reintenta. */
+  /** Panel that already tried to open its TUI on its own. It is per panel and is not retried. */
   const autoOpenedRef = useRef<string>(undefined);
   /**
    * Synchronous fence for the POST. React state cannot provide this guarantee: auto-open and a
@@ -122,7 +122,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const liveSession = { ...session, agent: currentAgent };
   const grant = grants[liveSession.id] as TerminalSessionGrant | undefined;
   const ptyChannelLive = liveSession.mode === 'pty' && grant !== undefined && !closedChannels[liveSession.id];
-  /** El terminal está a la vista y pintando: lo accesorio deja de robarle alto. */
+  /** The terminal is on screen and painting: secondary pieces stop stealing its height. */
   const mostrandoTui = ptyChannelLive;
 
   const channelSessionId = grant ? grant.session_id : undefined;
@@ -181,7 +181,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const requestChannelRef = useRef(requestChannel);
   requestChannelRef.current = requestChannel;
 
-  /** Apertura automática de TUI viva al seleccionar el panel si está disponible. */
+  /** Automatic opening of the live TUI when the panel is selected and it is available. */
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;

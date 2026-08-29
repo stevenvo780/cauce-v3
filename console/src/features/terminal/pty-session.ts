@@ -67,7 +67,7 @@ function publish(entry: PtyEntry, patch: Partial<PtySessionView>): void {
   for (const listener of listeners.get(entry.id) ?? []) listener();
 }
 
-/** ¿La vista está mirando el final del búfer, o el operador subió a leer? */
+/** Is the view watching the bottom of the buffer, or did the operator scroll up to read? */
 function alFinal(entry: PtyEntry): boolean {
   try {
     const buffer = entry.terminal.buffer.active;
@@ -207,7 +207,7 @@ export function ensurePtySession(options: PtySessionOptions): void {
   );
 }
 
-/** Vuelve al final y reengancha el seguimiento. Lo llama el botón «volver al final» de la vista. */
+/** Returns to the bottom and reattaches the follow. Called by the view's "return to bottom" button. */
 export function ptySessionVolverAlFinal(sessionId: string): void {
   const entry = entries.get(sessionId);
   if (!entry) return;
@@ -215,7 +215,7 @@ export function ptySessionVolverAlFinal(sessionId: string): void {
   try {
     entry.terminal.scrollToBottom();
   } catch {
-    // Sin renderer
+    // No renderer
   }
   publish(entry, { seguirAlFinal: true });
 }

@@ -77,9 +77,9 @@ export function persistCloseSpool(path: string | undefined, spooledReports: Map<
     closeSync(descriptor);
   }
   renameSync(temporary, path);
-  // fsync del fichero temporal hace durable su contenido, pero no la entrada creada por
-  // rename(2). Sin sincronizar el directorio, un corte de energía puede devolver el spool a
-  // su nombre/versión anterior y resucitar una plaza fantasma después del restart.
+  // fsync of the temporary file makes its content durable, but not the directory entry created
+  // by rename(2). Without syncing the directory, a power cut can return the spool to its
+  // previous name/version and resurrect a phantom slot after restart.
   const directoryDescriptor = openSync(dirname(path), 'r');
   try {
     fsyncSync(directoryDescriptor);

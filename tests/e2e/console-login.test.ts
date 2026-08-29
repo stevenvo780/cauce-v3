@@ -17,7 +17,7 @@ const execute = promisify(execFile);
  * HTTP, real PostgreSQL, and the account provisioned through THE SAME path production uses
  * (`pnpm console:user` / `console-user-cli.ts`), never an in-memory double.
  *
- * THE BASE IS "DEV-ISOLATED" BY CONSTRUCTION: `startTestDatabase()` (`tests/helpers/postgres.ts`)
+ * THE DATABASE IS "DEV-ISOLATED" BY CONSTRUCTION: `startTestDatabase()` (`tests/helpers/postgres.ts`)
  * spins up its OWN `postgres:16-alpine` container via testcontainers — host, port, user and
  * password generated at random (`randomUUID()`) for THIS run, migrated from zero and destroyed in
  * `afterAll`. No production `DATABASE_URL` or any persistent environment is involved in this

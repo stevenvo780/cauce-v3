@@ -69,14 +69,14 @@ test("sin resolutor el hijo se lanza SIN env añadido: comportamiento de hoy int
     signal: new AbortController().signal,
   });
 
-  // `undefined`, no `{}`: el runner no debe recibir siquiera la clave, para que el
-  // comportamiento sea idéntico byte a byte al de antes de este parche.
+  // `undefined`, not `{}`: the runner must not even receive the key, so the
+  // behavior is byte-for-byte identical to before this patch.
   assert.equal(runner.requests[0]?.env, undefined);
 });
 
 test("si el resolutor falla se sigue despachando sin override, no se cae la ejecución", async () => {
-  // Quedarse sin despachar porque no se pudo consultar QUÉ cuenta usar sería cambiar un problema
-  // de costos por una caída.
+  // Skipping dispatch because we could not ask WHICH account to use would swap a cost problem
+  // for an outage.
   const runner = new RecordingRunner();
   const adapter = new HarnessAdapter({
     definition: HARNESS_DEFINITIONS.claude,

@@ -3,23 +3,23 @@ import { Tooltip } from '../../components/ui';
 import type { Verdict, VerdictCulprit } from './agent-state';
 
 /**
- * La banda de veredicto: lo primero que se lee de la página, y lo único que se lee si sólo hay
- * tres segundos.
+ * The verdict band: the first thing read on the page, and the only thing read if there are
+ * only three seconds.
  *
- * Lo que había acá era una fila de cinco `Metric` cuyos rótulos eran, literalmente,
- * `leased + accepted + started` y `ack_deadline_at ya pasó`. Eso son cinco números en jerga de
- * base de datos y CERO respuestas: para saber si hay que hacer algo había que sumarlos de cabeza
- * y saber qué significa cada uno. La queja del dueño —"demasiadas vistas, poco claras"— empieza
- * exactamente ahí.
+ * What used to be here was a row of five `Metric`s whose labels were, literally,
+ * `leased + accepted + started` and `ack_deadline_at ya pasó`. Those are five numbers in
+ * database jargon and ZERO answers: to know whether something has to be done, one had to add
+ * them up in their head and know what each one means. The owner's complaint —"too many views,
+ * not clear enough"— starts exactly there.
  *
- * Las cifras no desaparecen: bajan una línea, en texto y con su definición del servidor a un
- * tooltip de distancia. Lo que cambia es la jerarquía. Primero la frase, después el número.
+ * The figures do not disappear: they drop one line, in prose and with their server definition a
+ * tooltip away. What changes is the hierarchy. First the sentence, then the number.
  */
 
 export interface FleetVerdictProps {
   verdict: Verdict;
   totals: FleetActivityTotals | null | undefined;
-  /** Clic en un chip de culpable: enfoca a ese agente en el mapa y en la tabla. */
+  /** Click on a culprit chip: focuses that agent on the map and on the table. */
   onCulprit?: (culprit: VerdictCulprit) => void;
 }
 
@@ -35,8 +35,8 @@ export function FleetVerdict({ verdict, totals, onCulprit }: FleetVerdictProps) 
       <div className="fleet-verdict-main">
         <span className="fleet-verdict-light" role="img" aria-label={TONE_LABEL[verdict.tone]} />
         <div>
-          {/* `aria-live` educado: la banda se repinta cada cuatro segundos y anunciar cada
-              refresco a gritos sería ruido. Sólo importa cuando la FRASE cambia. */}
+          {/* `aria-live` educated: the band repaints every four seconds and announcing every refresh
+              would be noise. It only matters when the SENTENCE changes. */}
           <p className="fleet-verdict-phrase" aria-live="polite">{verdict.frase}</p>
           <p className="fleet-verdict-support">{verdict.apoyo}</p>
           {verdict.culpables.length > 0 ? (
@@ -57,11 +57,11 @@ export function FleetVerdict({ verdict, totals, onCulprit }: FleetVerdictProps) 
       </div>
 
       {/*
-        Las tres cifras, en texto corrido y con la definición EXACTA del servidor en el tooltip.
-        Estaban en tarjetas grandes que competían con el veredicto por la misma atención, y su
-        rótulo era la expresión SQL que las produce. Ahora el rótulo es castellano y la expresión
-        —que sigue haciendo falta, porque es contra lo que se contrasta un número dudoso— vive
-        donde no estorba.
+        The three figures, in running prose and with the EXACT server definition in the tooltip.
+        They were in big cards that competed with the verdict for the same attention, and their
+        label was the SQL expression that produces them. Now the label is English and the
+        expression —which is still needed, because it is what a doubtful number is checked
+        against— lives where it does not get in the way.
       */}
       <p className="fleet-verdict-counts">
         <Tooltip label={<><strong>En vuelo</strong> es lo que los agentes ya tomaron: entregas en estado <code>leased</code>, <code>accepted</code> o <code>started</code>. Cuenta trabajo tomado, no trabajo que avance.</>}>
@@ -81,11 +81,11 @@ export function FleetVerdict({ verdict, totals, onCulprit }: FleetVerdictProps) 
 }
 
 /**
- * Un total ausente se dice, no se rellena con cero.
+ * An absent total is stated, not filled with zero.
  *
- * "El servidor no informó cuántas hay en vuelo" y "hay cero en vuelo" son afirmaciones distintas,
- * y en esta pantalla la segunda es tranquilizadora. Confundirlas es cómo un panel acaba
- * asegurando que todo está bien porque no midió nada.
+ * "The server did not report how many are in flight" and "there are zero in flight" are
+ * different claims, and on this screen the second is reassuring. Confusing them is how a
+ * dashboard ends up assuring everything is fine because it measured nothing.
  */
 function cifra(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? String(value) : '—';

@@ -412,7 +412,7 @@ export class FleetReadModel {
   }
 }
 
-/** PostgreSQL devuelve bigint como texto. Un contador inválido degrada el tool, no su verdad. */
+/** PostgreSQL returns bigint as text. An invalid counter degrades the tool, not its truth. */
 function nonNegativeCount(value: string | number, label: string): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {

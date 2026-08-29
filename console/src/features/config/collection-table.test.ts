@@ -11,8 +11,8 @@ it('ordena las columnas conocidas y no inventa las que el servidor no publica', 
   const filas = [{ tenant_id: 'Miguel', room_id: 'grp.miguel', alias: 'janus', role: 'agent', enabled: true }];
   expect(columnasDe('memberships', filas).map((columna) => columna.clave))
     .toEqual(['tenant_id', 'room_id', 'alias', 'role', 'enabled']);
-  // `created_at` no está en ninguna fila: una columna entera de UNKNOWN no es un dato faltante,
-  // es una columna que este gateway no tiene.
+  // `created_at` is not in any row: an entire UNKNOWN column isn't a missing data point, it's a
+  // column this gateway doesn't have.
   expect(columnasDe('memberships', filas).some((columna) => columna.clave === 'created_at')).toBe(false);
 });
 
@@ -27,8 +27,8 @@ it('deriva la tabla de una colección sin forma conocida a partir de las propias
 });
 
 /*
- * Los toggles de `enabled` y de los tres permisos de una arista dejaron de ser botones de texto en
- * una columna «Acciones»: son interruptores, y sus mutaciones se prueban en `interruptores.test.ts`.
+ * The toggles for `enabled` and for the three permissions of an edge stopped being text buttons
+ * in an "Actions" column: they are switches, and their mutations are tested in `interruptores.test.ts`.
  */
 
 it('funde «Desde» y «Hacia» en una sola columna de arista, que se lee de un golpe', () => {
@@ -39,7 +39,7 @@ it('funde «Desde» y «Hacia» en una sola columna de arista, que se lee de un 
 });
 
 it('no funde una arista a medias: sin los dos extremos se siguen viendo las columnas del servidor', () => {
-  // «Steven → » sin saber hacia dónde sería peor que dos columnas separadas.
+  // "Steven → " without knowing toward where would be worse than two separate columns.
   const filas = [{ from_tenant: 'Steven', enabled: true }];
   expect(columnasDe('acl_edges', filas).map((columna) => columna.clave)).toEqual(['from_tenant', 'enabled']);
   expect(identidadFundida('acl_edges', filas[0])).toBeUndefined();
@@ -55,7 +55,7 @@ it('arma el cambio de rol y rechaza lo que el gateway rechazaría igual', () => 
     resource: 'membership', action: 'update', tenant_id: 'Miguel', room_id: 'grp.miguel',
     alias: 'janus', value: { role: 'operator' },
   });
-  // Mismo rol: no es un cambio, y gastaría una revisión del audit trail para nada.
+  // Same role: it's not a change, and would waste an audit trail review for nothing.
   expect(accionDeRol(membership, 'agent')).toBeUndefined();
   expect(accionDeRol(membership, 'Operador Jefe')).toBeUndefined();
 });
@@ -63,8 +63,8 @@ it('arma el cambio de rol y rechaza lo que el gateway rechazaría igual', () => 
 it('ofrece los roles de role_policies sin esconder el que la fila ya tiene', () => {
   const politicas = [{ role: 'operator' }, { role: 'agent' }];
   expect(rolesDisponibles(politicas, 'agent')).toEqual(['agent', 'operator']);
-  // Un rol huérfano —sin política— se sigue ofreciendo: esconderlo haría que el selector mintiera
-  // sobre lo que la fila dice.
+  // An orphan role —without a policy— keeps being offered: hiding it would make the selector
+  // lie about what the row says.
   expect(rolesDisponibles(politicas, 'legado')).toEqual(['agent', 'legado', 'operator']);
   expect(rolesDisponibles(undefined, undefined)).toEqual([]);
 });
@@ -76,27 +76,27 @@ it('identifica la fila por su clave primaria y sólo cae al índice si le falta 
 });
 
 
-/* --- Columnas de números ----------------------------------------------------------------------
+/* --- Number columns ---------------------------------------------------------------------------
  *
- * Una columna de números alineada a la izquierda obliga a comparar magnitudes contando dígitos:
- * `8` y `120` empiezan en el mismo píxel y el que PARECE más grande es el que tiene más
- * caracteres. `/config` tiene unas cuantas —`max_per_hour`, `contact_ttl_days`, `priority`— y
- * todas se leen para comparar.
+ * A left-aligned number column forces you to compare magnitudes by counting digits: `8` and
+ * `120` start at the same pixel and the one that LOOKS bigger is the one with more characters.
+ * `/config` has a few —`max_per_hour`, `contact_ttl_days`, `priority`— and they are all read
+ * for comparison.
  */
 it('reconoce una columna de números y no se deja engañar por lo que sólo se le parece', () => {
   expect(columnaNumerica([{ n: 1 }, { n: 120 }], 'n')).toBe(true);
-  // Los nulos y las claves ausentes no desmienten nada: sigue siendo la columna de un número.
+  // Nulls and missing keys don't disprove anything: it's still a number column.
   expect(columnaNumerica([{ n: 1 }, { n: null }, {}], 'n')).toBe(true);
 
-  // Un booleano NO es un número aunque se le parezca desde lejos, y una columna mixta alineada a
-  // la derecha se lee PEOR que a la izquierda: «12» y «sin límite» dejan de compartir margen.
+  // A boolean is NOT a number even if it looks similar from afar, and a mixed column aligned
+  // right reads WORSE than left-aligned: "12" and "no limit" stop sharing the margin.
   expect(columnaNumerica([{ n: true }, { n: false }], 'n')).toBe(false);
   expect(columnaNumerica([{ n: 1 }, { n: 'sin límite' }], 'n')).toBe(false);
   expect(columnaNumerica([{ n: '12' }], 'n')).toBe(false);
   expect(columnaNumerica([{ n: Number.NaN }], 'n')).toBe(false);
 
-  // Y sin ningún número no hay columna numérica: si no, una tabla vacía alinearía todo a la
-  // derecha y una columna de puros `null` se leería como si tuviera cifras.
+  // And without any number there's no number column: otherwise, an empty table would align
+  // everything right and a column of all `null` would read as if it had figures.
   expect(columnaNumerica([], 'n')).toBe(false);
   expect(columnaNumerica([{ n: null }, {}], 'n')).toBe(false);
 });

@@ -1,44 +1,44 @@
 /**
- * Las reglas del tope del rol declarado (`agents.role_brief`), fuera del componente.
+ * The limits of the declared role cap (`agents.role_brief`), outside the component.
  *
- * Viven en su propio módulo por una razón mecánica y una de fondo. La mecánica: exportar
- * constantes y funciones desde un fichero de componentes rompe el fast refresh de Vite y
- * `npm run lint` corre con `--max-warnings 0`, así que el editor no compilaba en CI por dos
- * avisos de `react-refresh/only-export-components`. La de fondo: el tope no es cosa de la
- * pantalla —es el mismo número que el CHECK de la base y el esquema del protocolo— y tenerlo
- * aparte deja claro que la pantalla lo OBEDECE, no lo define.
+ * They live in their own module for one mechanical and one substantive reason. Mechanical:
+ * exporting constants and functions from a component file breaks Vite's fast refresh and
+ * `npm run lint` runs with `--max-warnings 0`, so the editor wouldn't compile in CI because of
+ * two `react-refresh/only-export-components` warnings. Substantive: the cap isn't the screen's
+ * business —it's the same number as the database CHECK and the protocol schema— and keeping it
+ * separate makes clear that the screen OBEYS it, not defines it.
  */
 
 /**
- * El tope NO es cosmético: el CHECK de la migración 020 y `self_role` del protocolo coinciden en
- * 1200, y pasarse deja al alias SORDO —el sobre se rechaza contra el esquema y el agente deja de
- * recibir— sin que aparezca ningún error a la vista. Por eso el contador avisa ANTES del borde y
- * el botón se apaga: es el único aviso que va a existir.
+ * The cap is NOT cosmetic: the CHECK in migration 020 and the protocol's `self_role` both hit
+ * 1200, and going over leaves the alias DEAF —the envelope is rejected against the schema and
+ * the agent stops receiving— without any visible error. That's why the counter warns BEFORE
+ * the limit and the button turns off: it's the only warning that will exist.
  *
- * Es un ESPEJO a mano de `ROLE_BRIEF_MAX_CODE_POINTS` (packages/protocol/src/schemas.ts), que es
- * donde vive el número para las capas que sí pueden importarlo. La consola no depende de
- * `@cauce/protocol` —se compila sola, contra el gateway por HTTP— así que copiarlo es la única
- * opción; si aquel cambia, este cambia en el mismo lote. La unidad tiene que seguir siendo el
- * PUNTO DE CÓDIGO: ver `contarRoleBrief()` acá abajo.
+ * It is a hand-mirrored copy of `ROLE_BRIEF_MAX_CODE_POINTS` (packages/protocol/src/schemas.ts),
+ * which is where the number lives for the layers that can import it. The console does not depend
+ * on `@cauce/protocol` —it builds alone, against the gateway over HTTP— so copying it is the
+ * only option; if that one changes, this one changes in the same batch. The unit must remain the
+ * CODE POINT: see `contarRoleBrief()` below.
  */
 export const ROLE_BRIEF_MAX = 1200;
 
-/** A cuántos caracteres del tope se empieza a avisar, antes de que sea tarde. */
+/** How many characters before the cap to start warning, before it's too late. */
 export const ROLE_BRIEF_CERCA = 120;
 
 /**
- * Cuenta lo MISMO que va a contar el servidor, y por eso recorta antes de medir.
+ * Counts the SAME thing the server will count, and that's why it trims before measuring.
  *
- * Dos decisiones, las dos copiadas de `normalizeRoleBrief` (packages/store/src/configuration.ts):
+ * Two decisions, both copied from `normalizeRoleBrief` (packages/store/src/configuration.ts):
  *
- * 1. Se recorta primero (`trim()`), porque el store recorta y RECIÉN DESPUÉS mide. Contando el
- *    texto crudo, pegar un `.md` que termina en salto de línea bloqueaba acá un guardado que el
- *    servidor habría aceptado sin chistar —y la pantalla no explicaba por qué, porque el salto
- *    de línea no se ve—. Un contador que no mide lo que mide el que decide es un contador que
- *    miente.
- * 2. Se cuentan PUNTOS DE CÓDIGO, igual que `char_length` de Postgres. `String.length` cuenta
- *    unidades UTF-16, así que un brief con emojis se declararía pasado de largo cuando la base
- *    lo acepta —o al revés, según dónde cayera el corte—.
+ * 1. Trim first (`trim()`), because the store trims and ONLY THEN measures. Counting the raw
+ *    text, pasting a `.md` that ends in a newline blocked here a save the server would have
+ *    accepted without complaint —and the screen didn't explain why, because the newline isn't
+ *    visible—. A counter that doesn't measure what the one that decides measures is a counter
+ *    that lies.
+ * 2. Count CODE POINTS, same as Postgres's `char_length`. `String.length` counts UTF-16 units,
+ *    so a brief with emojis would be declared over the limit when the database accepts it —or
+ *    the other way around, depending on where the cutoff fell—.
  */
 export function contarRoleBrief(text: string): number {
   return Array.from(text.trim()).length;
@@ -52,9 +52,9 @@ export function tonoRoleBrief(largo: number): RoleBriefTono {
 }
 
 /**
- * Guarda de compatibilidad con runtime: los adaptadores en ejecución validan longitud
- * UTF-16 con `z.string().max(1200)`. Para evitar que un brief con emojis supere el límite UTF-16
- * al ser procesado por el adaptador, se valida contra el más estricto entre UTF-16 y puntos de código.
+ * Compatibility guard with runtime: adapters in execution validate UTF-16 length with
+ * `z.string().max(1200)`. To prevent a brief with emojis from exceeding the UTF-16 limit when
+ * processed by the adapter, it is validated against the stricter of UTF-16 and code points.
  */
 export function bloqueoPorRuntimeDesplegado(text: string): string | undefined {
   const recortado = text.trim();

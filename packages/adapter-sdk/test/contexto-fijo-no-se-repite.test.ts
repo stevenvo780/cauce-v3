@@ -14,8 +14,8 @@ import {
 } from "../src/harnesses/shared.js";
 
 /**
- * Verifica que la información fija no vuelva a inyectarse innecesariamente entre mensajes
- * cuando el fichero del arnés ya la contiene, y que se mantenga completa en caso contrario.
+ * Verifies the fixed information is not re-injected unnecessarily between messages when the
+ * harness file already contains it, and that it stays complete otherwise.
  */
 
 function contexto(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {
@@ -46,7 +46,7 @@ const ORIGEN = {
 
 const PEDIDO = "Revisa el gateway.";
 
-/** El sello que tendría un fichero sembrado y al día para ESTE alias. */
+/** The seal a seeded and up-to-date file would have for THIS alias. */
 function selloAlDia(ctx: HarnessRequestContext) {
   return { version: VERSION_CONTEXTO_FIJO, sha256: resumirContextoFijo(textoFijoDelSobre(ctx)) };
 }
@@ -58,7 +58,7 @@ test("con el fichero al día, el texto fijo NO viaja en el sobre", () => {
   assert.ok(!sobre.includes(PRIMARY_DUTY_HEADER), "el DEBER PRIMARIO se repitió teniéndolo el fichero");
   assert.ok(!sobre.includes("Delegation mechanics"), "las mecánicas de delegación se repitieron");
   assert.ok(!sobre.includes("Protocol invariants:"), "las invariantes se repitieron");
-  // Lo dinámico SÍ tiene que seguir viajando: es lo único que cambia de un turno a otro.
+  // The dynamic part MUST keep traveling: it is the only thing that changes from turn to turn.
   assert.ok(sobre.includes("--- BEGIN TRUSTED DELIVERY CONTEXT ---"), "la metadata de la entrega desapareció");
   assert.ok(sobre.includes(PEDIDO), "el pedido desapareció");
   assert.match(sobre, /contexto Cauce v/u, "no quedó la referencia al contrato ya cargado");
@@ -75,7 +75,7 @@ test("el recorte se NOTA en el tamaño, que es lo que motiva todo esto", () => {
   );
 });
 
-// ── CONTROLES NEGATIVOS: conseguir el recorte por accidente tiene que ser imposible ──────────
+// ── NEGATIVE CONTROLS: getting the trim by accident must be impossible ──────────────
 
 test("CONTROL NEGATIVO: sin sello, el sobre va ENTERO", () => {
   const sobre = protocolPrompt(PEDIDO, ORIGEN, contexto());
@@ -99,10 +99,10 @@ test("CONTROL NEGATIVO: con una versión vieja del contrato, el sobre va ENTERO"
 
 test("CONTROL NEGATIVO: el sello de OTRO alias no sirve para éste", () => {
   /*
-   * Esto no es teórico: `kratos` y `atlas` comparten $HOME y su `AGENTS.md` es el MISMO inodo
-   * (medido: 12.942 bytes en los dos el 24-ago-2026). Si el sello no dependiera del alias, el
-   * fichero de uno acreditaría el contrato del otro y `atlas` se quedaría con la identidad de
-   * `kratos` sin que nada fallara.
+   * This is not theoretical: `kratos` and `atlas` share $HOME and their `AGENTS.md` is the SAME
+   * inode (measured: 12,942 bytes in both on 24-aug-2026). If the seal did not depend on the
+   * alias, the file of one would accredit the contract of the other and `atlas` would end up
+   * with the identity of `kratos` without anything failing.
    */
   const deKratos = contexto({ self_alias: "kratos", self_role: "Sos dev de Miguel." });
   const deAtlas = contexto({ self_alias: "atlas", self_role: "Sos dev de Miguel." });
@@ -126,6 +126,6 @@ test("elFicheroYaLoDice sólo dice que sí con el texto exacto", () => {
   const ctx = contexto();
   const fijo = textoFijoDelSobre(ctx);
   assert.equal(elFicheroYaLoDice(selloAlDia(ctx), fijo), true);
-  // Un solo carácter de diferencia basta para que no valga.
+  // A single character of difference is enough to make it not match.
   assert.equal(elFicheroYaLoDice(selloAlDia(ctx), `${fijo} `), false);
 });

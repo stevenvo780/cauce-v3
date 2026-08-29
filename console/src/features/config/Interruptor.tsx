@@ -8,13 +8,13 @@ import type { Interruptor } from './interruptores';
 import type { ControlDeInterruptores, FalloDeInterruptor } from './use-interruptores';
 
 /**
- * **El interruptor.** Un `<input type="checkbox" role="switch">` de verdad, no un `<div>` pintado:
- * lo alcanza el tabulador, se activa con la barra espaciadora, un lector de pantalla lo anuncia como
- * «interruptor, activado» y el navegador ya sabe hacer todo eso sin una línea de JavaScript.
+ * **The switch.** A real `<input type="checkbox" role="switch">`, not a painted `<div>`: tab
+ * reaches it, the spacebar toggles it, a screen reader announces it as "switch, on/off", and the
+ * browser already knows how to do all of that without a single line of JavaScript.
  *
- * El `aria-label` nombra la fila y el permiso correspondiente para accesibilidad.
+ * The `aria-label` names the row and the corresponding permission for accessibility.
  *
- * `aria-busy` mientras la escritura vuela.
+ * `aria-busy` while the write is in flight.
  */
 export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: {
   interruptor: Interruptor;
@@ -26,11 +26,11 @@ export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: 
   const enVuelo = control.enVuelo(interruptor.clave);
   const fallo = control.fallo(interruptor.clave);
   const nodo = useRef<HTMLInputElement>(null);
-  // Se pulsó ESTE control teniendo el foco, y hay que devolvérselo cuando la escritura termine.
+  // THIS control was clicked while holding focus, and focus must be given back when the write ends.
   const devolverElFoco = useRef(false);
   const volaba = useRef(false);
 
-  /** Devuelve el foco al interruptor cuando concluye la escritura en vuelo. */
+  /** Returns focus to the switch when the in-flight write finishes. */
   useEffect(() => {
     if (volaba.current && !enVuelo && devolverElFoco.current) {
       devolverElFoco.current = false;
@@ -56,19 +56,19 @@ export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: 
         control.pulsar(interruptor);
       }}
     />
-    {/* El estado en palabras, además de en el dibujo: el color por sí solo no es un dato, y
-        «encendido/apagado» es lo que hay que poder leer sin interpretar un tono de verde. */}
+    {/* The state in words, in addition to the drawing: color alone is not data, and
+        "on/off" is what must be readable without interpreting a shade of green. */}
     <span className="interruptor-estado" aria-hidden="true">{valor ? 'sí' : 'no'}</span>
   </span>;
 }
 
 /**
- * Cabecera de columna con tooltip informativo o indicador de campo inerte.
+ * Column header with informative tooltip or inert-field indicator.
  */
 export function CabeceraConAyuda({ etiqueta, explicacion, inerte }: {
   etiqueta: string;
   explicacion?: string;
-  /** Por qué esta columna no tiene efecto. Ver `campos-inertes.ts`. */
+  /** Why this column has no effect. See `campos-inertes.ts`. */
   inerte?: string;
 }) {
   const ayuda = inerte ?? explicacion;
@@ -85,10 +85,10 @@ export function CabeceraConAyuda({ etiqueta, explicacion, inerte }: {
 }
 
 /**
- * Lo que salió mal en UN interruptor, pegado a su fila y con el motivo **del servidor**.
+ * What went wrong on ONE switch, attached to its row and carrying the reason **from the server**.
  *
- * Va en su propia `<tr>` justo debajo de la fila que falló y no en un cartel al pie de la tabla:
- * con diecinueve membresías, un aviso al final no dice cuál de las diecinueve se rechazó.
+ * Goes on its own `<tr>` just below the row that failed, not in a banner at the foot of the table:
+ * with nineteen memberships, a notice at the end does not say which of the nineteen got rejected.
  */
 export function FilaDeFallo({ fallo, columnas, control, busy }: {
   fallo: FalloDeInterruptor;
@@ -114,11 +114,11 @@ export function FilaDeFallo({ fallo, columnas, control, busy }: {
 }
 
 /**
- * **La única confirmación que queda en la pantalla**: quitar el permiso de Control.
+ * **The only confirmation left on screen**: removing the Control permission.
  *
- * Ver `interruptores.ts` para el porqué. Se pinta junto a la tabla que la pidió, con el sujeto
- * escrito, y no como un `window.confirm` que el navegador dibuja fuera de contexto y sin decir
- * sobre qué fila se está preguntando.
+ * See `interruptores.ts` for the why. It renders next to the table that asked for it, with the
+ * subject spelled out, not as a `window.confirm` the browser paints out of context and without
+ * saying which row it is asking about.
  */
 export function ConfirmarQuitarControl({ control, busy }: {
   control: ControlDeInterruptores;
@@ -127,8 +127,9 @@ export function ConfirmarQuitarControl({ control, busy }: {
   const pedida = control.confirmacion;
   if (!pedida) return null;
   return <div className="interruptor-confirmacion" role="group" aria-label="Confirmar quitar el permiso de Control">
-    {/* El icono y el texto son DOS hijos de un flex; sin envolver el texto en un solo `<span>`, el
-        título y el cuerpo se reparten como dos columnas y el título queda en una tira de 90 px. */}
+    {/* The icon and the text are TWO children of a flex; without wrapping the text in a single
+        `<span>`, the title and the body split across two columns and the title is squashed into a
+        90 px strip. */}
     <p>
       <AlertTriangle size={15} aria-hidden="true" />
       <span><strong>{pedida.interruptor.descripcion}.</strong> {pedida.texto}</span>
@@ -145,7 +146,7 @@ export function ConfirmarQuitarControl({ control, busy }: {
 }
 
 /**
- * Renderiza una fecha relativa accesible, con la fecha ISO exacta en dateTime y title.
+ * Renders an accessible relative date, with the exact ISO date in dateTime and title.
  */
 export function FechaRelativa({ value }: { value: unknown }) {
   const relativa = fechaRelativa(value);

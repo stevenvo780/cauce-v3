@@ -3,17 +3,17 @@ import type { AgentConnection } from './agent-leg.js';
 import { logEvent } from './log.js';
 
 /**
- * Lectura de un fichero de gobierno dentro del contenedor de un alias.
+ * Reading of a governance file inside an alias's container.
  *
- * El relay transporta la lectura de forma acotada en memoria y tiempo,
- * validando que la respuesta corresponda al alias y ruta solicitados.
+ * The relay transports the read in a bounded way in memory and time,
+ * validating that the response matches the requested alias and path.
  */
 
-/** Tope de lo que se acumula en memoria. Coincide con `MAX_DOCUMENT_BYTES` del pty-agent. */
+/** Cap on what is accumulated in memory. Matches `MAX_DOCUMENT_BYTES` in the pty-agent. */
 export const MAX_GOVERNANCE_BYTES = 256 * 1024;
 /**
- * A 65.500 B por trama, 256 KB entran en 5. Se admiten 8 por holgura: más tramas anunciadas que
- * eso no es un documento grande, es un agente diciendo algo que no cuadra con su propio tope.
+ * At 65,500 B per frame, 256 KB fit in 5. We allow 8 for slack: more announced frames than
+ * that isn't a large document, it's an agent saying something that doesn't match its own cap.
  */
 const MAX_GOVERNANCE_CHUNKS = 8;
 
@@ -28,11 +28,11 @@ const READ_CODES: readonly GovernanceReadCode[] = [
 
 export interface GovernanceFileRead {
   readonly path: string;
-  /** Tamaño REAL del fichero, aunque `content` venga recortado. */
+  /** REAL size of the file, even when `content` is truncated. */
   readonly bytes: number;
   readonly truncated: boolean;
   readonly modified_at: string;
-  /** SHA-256 de los bytes reales; en agentes viejos se deriva del contenido no truncado. */
+  /** SHA-256 of the actual bytes; in older agents it is derived from the untruncated content. */
   readonly sha: string;
   readonly content: string;
 }
@@ -44,7 +44,7 @@ export interface GovernanceReadFailure {
 
 export type FileReadOutcome = GovernanceFileRead | GovernanceReadFailure;
 
-/** El índice de directorio sólo transporta metadata; nunca bytes de los ficheros. */
+/** The directory index only transports metadata; never the bytes of the files. */
 export interface GovernanceDirectoryEntry {
   readonly path: string;
   readonly bytes: number;
@@ -52,11 +52,11 @@ export interface GovernanceDirectoryEntry {
 }
 
 export interface GovernanceDirectoryRead {
-  /** Ruta absoluta que el agente acreditó como raíz del barrido. */
+  /** Absolute path the agent authenticated as the root of the sweep. */
   readonly path: string;
-  /** Total exacto sólo si el barrido acabó; null cuando el cap dejó un límite inferior. */
+  /** Exact total only if the sweep finished; null when the cap left a lower bound. */
   readonly total: number | null;
-  /** Cantidad realmente observada, incluso cuando no se conoce el total exacto. */
+  /** Amount actually observed, even when the exact total is unknown. */
   readonly observed_at_least: number;
   readonly truncated: boolean;
   readonly entries: readonly GovernanceDirectoryEntry[];
@@ -64,7 +64,7 @@ export interface GovernanceDirectoryRead {
 
 export type DirectoryReadOutcome = GovernanceDirectoryRead | GovernanceReadFailure;
 
-/** Es el mismo techo que usa el pty-agent al construir su índice. */
+/** It's the same ceiling the pty-agent uses when building its index. */
 export const MAX_GOVERNANCE_DIRECTORY_ENTRIES = 200;
 const MAX_GOVERNANCE_PATH_BYTES = 4_096;
 const MAX_GOVERNANCE_DATE_BYTES = 64;
@@ -132,12 +132,12 @@ function validIsoDate(value: unknown): value is string {
     && date.getUTCSeconds() === Number(match[6]);
 }
 
-/** Un código que no reconocemos es `unknown`, nunca se propaga tal cual. */
+/** A code we don't recognize is `unknown`, never propagated as-is. */
 function normalizeCode(value: string): GovernanceReadCode {
   return READ_CODES.includes(value as GovernanceReadCode) ? (value as GovernanceReadCode) : 'unknown';
 }
 
-/** La misma derivación cerrada que hacen gateway y pty-agent, pero desde el HELLO medido. */
+/** The same closed derivation gateway and pty-agent make, but from the measured HELLO. */
 function memoryRootForAgent(connection: AgentConnection): string | undefined {
   const home = connection.hello.home?.replace(/\/+$/u, '');
   let candidate: string | undefined;
@@ -165,8 +165,8 @@ export async function requestFileRead(
   if (!connection.alive) {
     return { error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' };
   }
-  // La conexión la busca quien llama. Si lo que vuelve no es del alias pedido, esto es una fuga
-  // entre inquilinos, no un fallo de lectura: se corta aquí y no se pregunta nada.
+// The connection is looked up by the caller. If what comes back is not from the requested
+    // alias, this is a leak between tenants, not a read failure: cut it off here without asking anything.
   if (connection.hello.tenant_id !== tenantId || connection.hello.alias !== alias) {
     return { error: 'permission_denied', reason: 'la conexión no es la de ese alias' };
   }
@@ -206,7 +206,7 @@ export async function requestFileRead(
         return;
       }
       const receivedSha = createHash('sha256').update(raw).digest('hex');
-      // Si no está truncado, la huella declarada tiene que describir exactamente lo que llegó.
+      // If not truncated, the declared digest must describe exactly what arrived.
       if (!metadata.truncated && metadata.sha !== '' && metadata.sha !== receivedSha) {
         finish({ error: 'unknown', reason: 'la huella de lectura no coincide con los datos recibidos' });
         return;
@@ -235,7 +235,7 @@ export async function requestFileRead(
           finish({ error: 'unknown', reason: 'el agente contestó sin los metadatos de la lectura' });
           return;
         }
-        // Contestar por otra ruta sería servir un fichero que nadie pidió.
+        // Answering for a different path would mean serving a file nobody asked for.
         if (answered !== path) {
           finish({ error: 'unknown', reason: 'el agente contestó por una ruta distinta de la pedida' });
           return;
@@ -249,8 +249,8 @@ export async function requestFileRead(
           finish({ error: 'unknown', reason: 'el agente contestó con una huella inválida' });
           return;
         }
-        // Compatibilidad de lectura: un agente pre-write no mandaba `sha`. Para un documento no
-        // truncado se completa al final desde sus bytes; el marcador temporal se sustituye allí.
+        // Read compatibility: a pre-write agent didn't send `sha`. For a non-truncated document
+        // it is completed at the end from its bytes; the temporary marker is replaced there.
         metadata = {
           path: answered,
           bytes,
@@ -263,8 +263,8 @@ export async function requestFileRead(
       },
       onReadData(chunk) {
         accumulated += chunk.byteLength;
-        // El tope se comprueba ANTES de guardar: si no, un agente que ignore su propio límite
-        // llena la memoria del relay antes de que nadie cuente las tramas.
+        // The cap is checked BEFORE storing: otherwise, an agent that ignores its own limit
+        // fills the relay's memory before anyone counts the frames.
         if (accumulated > MAX_GOVERNANCE_BYTES) {
           finish({ error: 'too_large', reason: 'el agente mandó más bytes de los que esta vía sirve' });
           return;
@@ -274,8 +274,8 @@ export async function requestFileRead(
         complete();
       },
       onReadDone() {
-        // Un fichero termina por el conteo exacto anunciado en READ_OK. Si DONE encuentra todavía
-        // vivo el handler, faltaron tramas y la conexión contradijo su propio contrato.
+        // A file ends by the exact count announced in READ_OK. If DONE still finds the handler
+        // alive, frames are missing and the connection contradicted its own contract.
         finish({ error: 'unknown', reason: 'el agente cerró la lectura antes de mandar todos los datos' }, true);
         connection.destroy('read_done_before_file_complete');
       },
@@ -302,8 +302,8 @@ export async function requestFileRead(
 }
 
 /**
- * Pide un índice de memoria. A diferencia de `requestFileRead`, un READ_DATA es siempre una
- * violación: el índice completo tiene que vivir en el único READ_OK acotado del protocolo.
+ * Requests a memory index. Unlike `requestFileRead`, a READ_DATA is always a violation: the
+ * complete index must live in the single bounded READ_OK of the protocol.
  */
 export async function requestDirectoryRead(
   connection: AgentConnection,

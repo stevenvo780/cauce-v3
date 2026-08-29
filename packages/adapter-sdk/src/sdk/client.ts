@@ -67,7 +67,7 @@ interface SendDeadline {
 }
 
 /*
- * Mapeo de claves de `AdapterCapabilities` a cadenas de capability del frame hello.
+ * Mapping of `AdapterCapabilities` keys to capability strings in the hello frame.
  */
 const CAPABILITY_ENCODERS = {
   protocol_version: (value) => [`protocol.${value.protocol_version}`],
@@ -248,8 +248,8 @@ export class AdapterClient {
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
           /*
-           * Sincroniza el perfil recibido en `hello_ack` antes de iniciar heartbeat, outbox y recuperación.
-           * Ocurre tras `activateEpoch` para asegurar que el runtime aplica la identidad antes de procesar entregas.
+           * Syncs the profile received in `hello_ack` before starting heartbeat, outbox and recovery.
+           * Happens after `activateEpoch` to ensure the runtime applies the identity before processing deliveries.
            */
           this.sembrarPerfil(frame);
           this.backoff.reset();
@@ -273,8 +273,8 @@ export class AdapterClient {
   }
 
   /**
-   * Escribe el perfil recibido en el saludo en los ficheros del arnés o falla la conexión.
-   * `CAUCE_SEMBRAR_PERFIL=0` desactiva la sincronización.
+   * Writes the profile received in the greeting into the harness files or fails the connection.
+   * `CAUCE_SEMBRAR_PERFIL=0` disables the sync.
    */
   private sembrarPerfil(frame: Extract<ServerFrame, { type: 'hello_ack' }>): void {
     const perfil = frame.agent_profile;
@@ -610,7 +610,7 @@ export class AdapterClient {
   }
 }
 
-/** Sólo un lote completo, un no-op comprobado o una retirada explícita permiten consumir. */
+/** Only a full batch, a checked no-op, or an explicit withdrawal allow consuming. */
 export function siembraAplicada(resultado: ResultadoDeLaSiembra): boolean {
   if (resultado.estado === 'apagado' || resultado.estado === 'sin-ficheros') return true;
   if (resultado.estado !== 'hecho') return false;

@@ -8,7 +8,7 @@ import { createId } from '../lib';
  * The console had **none**: where something needed explaining it used `title`, which is the
  * only thing worse than not explaining — it cannot be styled, it does not appear on tab focus,
  * it takes a long second to show up, and inside an `<svg>` it cannot even be read with the
- * keyboard. The owner's complaint ("sin tooltips, poco claras") is about the entire view, so
+ * keyboard. The owner's complaint ("no tooltips, unclear") is about the entire view, so
  * this must serve all three at once: a word in a paragraph, a column header, and a puppet
  * drawn in SVG.
  *

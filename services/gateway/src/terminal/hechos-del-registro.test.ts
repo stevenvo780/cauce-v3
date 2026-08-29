@@ -21,7 +21,7 @@ const RELAY_REBOOT = {
 } as const;
 
 /**
- * Pruebas unitarias para la extracción de hechos medidos a partir de la presencia del agente.
+ * Unit tests for extracting measured facts from the agent presence.
  */
 
 function presencia(extra: Record<string, unknown> = {}) {
@@ -72,7 +72,7 @@ describe('los hechos salen de lo que el agente publica', () => {
     'E2E relay→parser→registry→facts→paths conserva $camel',
     async ({ harness, extra, camel, path, home = '/home/dev' }) => {
       const registry = new AgentRegistry();
-      /* La forma de entrada es exactamente la JSON snake_case que publica terminal-relay. */
+      /* The input shape is exactly the JSON snake_case that terminal-relay publishes. */
       registry.observe(RELAY, [parseAgentPresence(presencia({ harness, home, ...extra }))]);
       const measured = await hechosDelRegistro(registry).factsFor('Steven', 'zeus');
 
@@ -220,8 +220,8 @@ describe('lo que se NIEGA a contestar', () => {
 
   it('un agente VIEJO, que no publica `home`, no da hechos — no se deduce', async () => {
     /*
-     * Deducir `home` o `harness` de valores por defecto o columnas estáticas arriesga
-     * servir rutas incorrectas. Si el agente no publica `home`, no se devuelven hechos.
+     * Inferring `home` or `harness` from defaults or static columns risks serving wrong
+     * paths. If the agent does not publish `home`, no facts are returned.
      */
     const registry = new AgentRegistry();
     registry.observe(RELAY, [presencia({ home: undefined })]);
@@ -235,7 +235,7 @@ describe('lo que se NIEGA a contestar', () => {
   });
 
   it('un arnés que esta vía no sabe resolver no da hechos, aunque el `home` esté', async () => {
-    // Son dos ausencias distintas y ninguna autoriza a inventar la otra.
+    // Two distinct absences, and neither authorizes inventing the other.
     const registry = new AgentRegistry();
     registry.observe(RELAY, [presencia({ harness: 'algo-que-no-conozco' })]);
     expect(await hechosDelRegistro(registry).factsFor('Steven', 'zeus')).toBeUndefined();
@@ -249,9 +249,9 @@ describe('lo que se NIEGA a contestar', () => {
 
   it('una medición VIEJA no vale: el contenedor pudo recrearse con otro $HOME', async () => {
     /*
-     * `stale` cuenta como no medido. Recrear un contenedor es una operación normal en esta flota y
-     * puede cambiar el `$HOME`; servir la ruta de antes sería afirmar sobre un proceso que ya no
-     * existe. La ventana la decide `AGENT_STALE_AFTER_MS` del registro, no este módulo.
+     * `stale` counts as not measured. Recreating a container is routine in this fleet and can
+     * change `$HOME`; serving the old path would be claiming about a process that no longer
+     * exists. The window is decided by `AGENT_STALE_AFTER_MS` in the registry, not this module.
      */
     const registry = new AgentRegistry();
     const hace = Date.now() - 24 * 60 * 60 * 1000;
@@ -262,7 +262,7 @@ describe('lo que se NIEGA a contestar', () => {
   });
 
   it('CONTROL NEGATIVO: recién reportado NO está viejo, o esta pieza no serviría nunca', async () => {
-    // Sin esto, una implementación que devolviera `undefined` siempre pasaría las cinco de arriba.
+    // Without this, an implementation that returned `undefined` would always pass the five above.
     const registry = new AgentRegistry();
     registry.observe(RELAY, [presencia()]);
     expect(await hechosDelRegistro(registry).factsFor('Steven', 'zeus')).toBeDefined();
@@ -280,7 +280,7 @@ describe('lo que se NIEGA a contestar', () => {
     const fuente = hechosDelRegistro(registry);
     expect((await fuente.factsFor('Steven', 'zeus'))?.facts.home).toBe('/home/dev');
     expect((await fuente.factsFor('Steven', 'argos'))?.facts.home).toBe('/home/argos');
-    // Y un alias del mismo nombre en OTRO inquilino es otro agente.
+    // And an alias with the same name in ANOTHER tenant is a different agent.
     expect(await fuente.factsFor('Miguel', 'zeus')).toBeUndefined();
   });
 });
@@ -288,11 +288,11 @@ describe('lo que se NIEGA a contestar', () => {
 describe('la presencia acepta el `home` sin exigirlo', () => {
   it('un agente viejo NO tira su propia presencia por no mandarlo', async () => {
     /*
-     * Ésta es la que evita el incidente de despliegue. `parseAgentPresence` lanza cuando un campo
-     * obligatorio falta, y `registry.observe` recibe el array ya mapeado: una excepción ahí tira
-     * la presencia de TODOS los alias del informe, no sólo la del que va viejo. Desplegar el
-     * gateway antes que el agente dejaría terminales caídas por toda la flota — la misma lección
-     * que el comentario de `features` en el propio pty-agent.
+     * This is the one that avoids the deployment incident. `parseAgentPresence` throws when a
+     * required field is missing, and `registry.observe` receives the already-mapped array: an
+     * exception there drops the presence of EVERY alias in the report, not just the stale one.
+     * Deploying the gateway before the agent would leave terminals down across the fleet — the
+     * same lesson the `features` comment inside the pty-agent itself carries.
      */
     const registry = new AgentRegistry();
     expect(() => registry.observe(RELAY, [presencia({ home: undefined })])).not.toThrow();

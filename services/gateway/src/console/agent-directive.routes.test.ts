@@ -11,7 +11,7 @@ import type { AgentDirective } from './types-agent-directive.js';
 import { memoryRootForHarness, registerAgentDirectiveRoutes } from './agent-directive.routes.js';
 
 /**
- * Mock probe para tests. Devuelve contenido pre-grabado o errores controlados.
+ * Mock probe for tests. Returns pre-recorded content or controlled errors.
  */
 interface MockProbeEntry {
   facts: RuntimeFacts;
@@ -224,7 +224,7 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
 
   it('sin hechos medidos devuelve publicado: false', async () => {
     vivo = servidor({
-      probe: mockProbe({}), // Vacío — sin mediciones
+      probe: mockProbe({}), // Empty — no measurements
     });
 
     const res = await vivo.inject({
@@ -284,7 +284,7 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
             projectRoot: '/workspace/repo', cwd: '/workspace/repo',
           },
           documents: {
-            // Contraejemplo: existe en el mount, pero está por encima de projectRoot y no gobierna.
+            // Counterexample: it exists in the mount, but it is above projectRoot and does not govern.
             '/workspace/CLAUDE.md': {
               text: '# ajeno\n', bytes: 8, truncated: false,
               modified_at: '2026-08-26T00:00:00Z', sha: 'a'.repeat(64),
@@ -462,8 +462,8 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
           facts: { harness: 'openclaw', home: '/home/dev', openclawWorkspace: workspace },
           documents: {
             [`${workspace}/AGENTS.md`]: {
-              text: gran_contenido.slice(0, 256 * 1024), // Recortado a 256 KB
-              bytes: gran_contenido.length, // Pero el tamaño real es 300 KB
+              text: gran_contenido.slice(0, 256 * 1024), // Trimmed to 256 KB
+              bytes: gran_contenido.length, // But the real size is 300 KB
               truncated: true,
               modified_at: '2026-08-24T10:00:00Z',
               sha: 'c'.repeat(64),

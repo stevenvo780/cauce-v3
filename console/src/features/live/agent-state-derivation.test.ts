@@ -261,7 +261,7 @@ describe('grosorDe', () => {
 // ================================================================================================
 
 describe('D1 · atribución de quién pidió el trabajo', () => {
-  // `origin` se copia byte a byte en cada salto (packages/protocol/src/schemas.ts).
+  // `origin` is copied byte for byte at every hop (packages/protocol/src/schemas.ts).
   const cadenaHeredada = snapshot([
     agent({ tenant_id: 'Steven', alias: 'zeus' }),
     agent({

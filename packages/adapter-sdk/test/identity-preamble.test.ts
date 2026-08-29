@@ -111,7 +111,7 @@ test("sin role_brief se emite la identidad pero nunca un rol inventado", async (
 test("sin contexto de entrega no hay identidad, pero el deber primario sigue", async () => {
   const stdin = await stdinFor("identity-sin-contexto", HARNESS_DEFINITIONS.claude, undefined);
   assert.ok(!stdin.includes(IDENTITY_BEGIN));
-  // El deber no depende del alias: una entrega sin contexto sigue siendo trabajo de quien la corre.
+  // The duty does not depend on the alias: a delivery without context is still the work of its runner.
   assert.ok(stdin.includes(PRIMARY_DUTY_HEADER));
   assert.match(stdin, /Return exactly one structured result/u);
 });
@@ -123,20 +123,20 @@ test("la identidad describe el mundo del agente y deja el mandato al deber prima
     stdin.indexOf(IDENTITY_END) + IDENTITY_END.length,
   );
 
-  // Lo que sí es identidad: cómo funciona Cauce, los límites de autoridad, a quién escalar.
+  // What identity IS: how Cauce works, the limits of authority, whom to escalate to.
   assert.match(identity, /Entre entregas no existís/u);
   assert.match(identity, /no dejes el turno abierto/u);
   assert.match(identity, /Comunicación no es autorización/u);
   assert.match(identity, /escalá a zeus con el error textual crudo/u);
 
-  // Lo que NO es identidad: el mandato. Vive una sola vez, en el deber primario.
+  // What identity is NOT: the mandate. It lives only once, in the primary duty.
   assert.doesNotMatch(identity, /Esta entrega es TU trabajo/u);
   assert.doesNotMatch(identity, /Delegar es la excepción/u);
   assert.match(stdin, /Esta entrega es TU trabajo/u);
 });
 
 test("un role_brief con tildes sobrevive el viaje por stdin hasta el harness", async () => {
-  // El bridge de hermes decodifica stdin con utf-8 estricto; el rol viene en castellano de la base.
+  // The hermes bridge decodes stdin with strict utf-8; the role comes in Spanish from the database.
   const stdin = await stdinFor("identity-tildes", HARNESS_DEFINITIONS.hermes, {
     ...baseContext,
     self_role: "Verificación independiente y read-only: auditás, contrastás y emitís un veredicto.",

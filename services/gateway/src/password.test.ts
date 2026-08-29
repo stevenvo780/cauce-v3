@@ -10,8 +10,8 @@ describe('derivación de contraseñas', () => {
     const first = await hashPassword('contraseña-de-prueba-larga', FAST);
     const second = await hashPassword('contraseña-de-prueba-larga', FAST);
     expect(first).not.toContain('contraseña-de-prueba-larga');
-    // Sales distintas: dos personas con la misma contraseña no comparten fila, y una tabla
-    // arcoíris precalculada no sirve para ninguna de las dos.
+    // Different salts: two people with the same password do not share a row, and a precomputed
+    // rainbow table serves neither of them.
     expect(first).not.toBe(second);
     expect(first.startsWith('$scrypt$n=1024,r=8,p=1$')).toBe(true);
   });

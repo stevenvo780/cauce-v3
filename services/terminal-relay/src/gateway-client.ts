@@ -87,7 +87,7 @@ export interface AgentPresence {
   readonly runtime_uid: number;
   readonly harness: string;
   readonly runtime_facts_observed?: boolean;
-  /** `HOME` del arnés. Opcional para retrocompatibilidad. */
+  /** The harness `HOME`. Optional for backward compatibility. */
   readonly home?: string;
   readonly codex_home?: string;
   readonly claude_config_dir?: string;
@@ -128,9 +128,9 @@ export interface HttpsTerminalGatewayClientOptions {
   /** Optional PEM bundle for gateways issued by a private CA; otherwise the system store. */
   readonly ca?: Buffer;
   /**
-   * Identidad de cliente para el handshake TLS. Un gateway en modo mTLS pide certificado a todo el
-   * que se conecta, incluidas las rutas /v3/terminal/relay/* que ya se autentican con el token
-   * compartido: sin certificado el handshake muere antes de que el token llegue a leerse.
+   * Client identity for the TLS handshake. A gateway in mTLS mode asks for a certificate from
+   * everyone who connects, including the /v3/terminal/relay/* routes that already authenticate with
+   * the shared token: without a certificate the handshake dies before the token can be read.
    */
   readonly clientCert: Buffer;
   readonly clientKey: Buffer;
