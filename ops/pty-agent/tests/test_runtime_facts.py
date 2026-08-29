@@ -14,6 +14,7 @@ import uuid
 
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 LAUNCHER = AGENT_DIR / "cauce-pty-launcher.sh"
+REPO = AGENT_DIR.parents[1]
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
@@ -50,6 +51,7 @@ docker_control() {
 }
 alias_name=$TEST_ALIAS
 container_generation=$TEST_GENERATION
+adapter_generation=$TEST_GENERATION
 state_directory=$TEST_STATE
 container_home=$TEST_HOME
 harness=$TEST_HARNESS
@@ -335,6 +337,34 @@ class RuntimeFactsTest(unittest.TestCase):
         self._spawn_adapter({"CODEX_HOME": str(codex_home)}, cwd=first)
         self._spawn_adapter({"CODEX_HOME": str(codex_home)}, cwd=second)
         self.assertEqual(self._measured("codex"), {})
+
+
+class AdapterGenerationParityTest(unittest.TestCase):
+    """Measurement matches the adapter by the generation the SUPERVISOR stamps, not the ticket one.
+
+    The launcher's own generation is a 32-char prefix over three `|`-joined fields; the supervisor's
+    is the full digest over four NUL-joined fields. Comparing them never matched, so every
+    measurement was empty and profile writes answered 503 for every alias.
+    """
+
+    def test_launcher_recomputes_the_supervisor_generation_formula(self) -> None:
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        supervisor = (REPO / "ops/scripts/container-adapter-supervisor.sh").read_text(encoding="utf-8")
+        # The supervisor's formula, verbatim, is the one the launcher must reproduce.
+        formula = """printf '%s\\0%s\\0%s\\0%s'"""
+        self.assertIn(formula, supervisor, "supervisor generation formula moved")
+        self.assertIn(formula, launcher, "launcher must recompute the supervisor generation formula")
+        # And the measurement must pass THAT value, never the launcher's own ticket generation.
+        self.assertIn('CAUCE_PTY_MEASURE_GENERATION=$adapter_generation', launcher)
+        self.assertNotIn('CAUCE_PTY_MEASURE_GENERATION=$container_generation', launcher)
+
+    def test_the_two_generations_are_computed_from_the_same_container_facts(self) -> None:
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        # Both digests read id/started/restart from the same inspect; only the adapter form adds the
+        # init start time. A launcher that stopped tracking either field could not rebuild the match.
+        self.assertIn('container_started=$started', launcher)
+        self.assertIn('container_restart=$restart', launcher)
+        self.assertIn('/proc/1/stat', launcher)
 
 
 class RuntimeFactsBundleValidationTest(unittest.TestCase):
