@@ -139,7 +139,9 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
       restrictedUrl.username = role;
       restrictedUrl.password = password;
       restrictedPool = createPool(restrictedUrl.href, { max: 1 });
-      await expect(restrictedPool.query('SELECT 1')).resolves.toBeTruthy();
+      const restrictedResult = await restrictedPool.query('SELECT 1');
+      expect(restrictedResult).toMatchObject({ rowCount: 1 });
+      expect(restrictedResult.rows).toBeDefined();
       await expect(probeConsolePublishIntentPath(restrictedPool))
         .rejects.toThrow(/schema-037 console publish intent/u);
 

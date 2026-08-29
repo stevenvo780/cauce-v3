@@ -104,6 +104,6 @@ describe('el catálogo vuelve a como lo dejaron las migraciones', () => {
     await resetTestDatabase(pool);
     const segunda = await huella();
     expect(segunda).toBe(primera);
-    expect(primera).toBeTruthy();
+    expect(primera).toMatch(/^[0-9a-f]{32}$/);
   }, 120_000);
 });
