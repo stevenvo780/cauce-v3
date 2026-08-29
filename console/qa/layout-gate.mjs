@@ -62,7 +62,7 @@ function esperar(ms) {
   return new Promise((cumplir) => setTimeout(cumplir, ms));
 }
 
-async function esperarServidor(intentos = 60) {
+async function esperarServidor(salida, intentos = 60) {
   for (let i = 0; i < intentos; i += 1) {
     try {
       const respuesta = await fetch(ORIGIN);
@@ -70,7 +70,9 @@ async function esperarServidor(intentos = 60) {
     } catch { /* el servidor todavía no escucha */ }
     await esperar(500);
   }
-  throw new Error(`the console did not answer at ${ORIGIN}`);
+  // Swallowing the server's own output turns "it never started" into a bare timeout on the first
+  // navigation, which reads like a broken page instead of a missing server.
+  throw new Error(`the console did not answer at ${ORIGIN}\n${salida() || '(the dev server printed nothing)'}`);
 }
 
 /**
@@ -283,15 +285,20 @@ function imprimirTabla(medidas) {
 }
 
 async function principal() {
-  const servidor = spawn('pnpm', ['exec', 'vite', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const servidor = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: CONSOLE_ROOT,
     env: { ...process.env, VITE_USE_MOCKS: 'true' },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let registro = '';
+  const anotar = (trozo) => { registro = (registro + String(trozo)).slice(-2000); };
+  servidor.stdout.on('data', anotar);
+  servidor.stderr.on('data', anotar);
+  servidor.on('error', (fallo) => { anotar(`spawn failed: ${fallo.message}\n`); });
   let medidas;
   let sinMedir;
   try {
-    await esperarServidor();
+    await esperarServidor(() => registro);
     ({ medidas, sinMedir } = await medirTodo());
   } finally {
     servidor.kill('SIGTERM');

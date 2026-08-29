@@ -8,7 +8,7 @@
     "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 8.15
+    "pantallasMaximas": 8.19
   },
   "760": {
     "huecoMaximo": 0,
@@ -19,7 +19,7 @@
     "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 5.5
+    "pantallasMaximas": 5.19
   },
   "1100": {
     "huecoMaximo": 0,
@@ -30,7 +30,7 @@
     "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 4.37
+    "pantallasMaximas": 4.23
   },
   "1440": {
     "huecoMaximo": 0,
@@ -41,7 +41,7 @@
     "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 3.89
+    "pantallasMaximas": 3.91
   },
   "1920": {
     "huecoMaximo": 0,
@@ -52,7 +52,7 @@
     "recorteMaximoQue": "div.table-wrap",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 3.9
+    "pantallasMaximas": 3.94
   },
   "2560": {
     "huecoMaximo": 272,
@@ -63,6 +63,6 @@
     "recorteMaximoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 3.73
+    "pantallasMaximas": 3.59
   }
 }
