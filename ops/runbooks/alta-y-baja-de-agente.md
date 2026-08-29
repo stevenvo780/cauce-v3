@@ -17,8 +17,9 @@ La base de datos PostgreSQL (`agents` + `memberships`) es la **ÚNICA fuente de 
    ```sh
    export CAUCE_CLIENT_CA_CERT=/etc/cauce-v3/pki/ca.crt
    export CAUCE_CLIENT_CA_KEY=/etc/cauce-v3/pki/ca.key
-   export CAUCE_PTY_MASTER_FILE=/etc/cauce-v3/secrets/pty_master.key
+   export CAUCE_PTY_MASTER_FILE=/etc/cauce-v3/secrets/terminal-ticket.key
    ```
+   > El master del plano PTY es el **mismo secreto del gateway** (secreto compose `terminal_ticket_key` en `deploy/compose.yaml`). La ruta canónica sale de `CAUCE_TERMINAL_TICKET_KEY_PATH` en `/etc/cauce-v3/prod.env` — verificarla ahí, no inventarla.
 2. **Acceso a PostgreSQL**: conexión activa con permisos de inserción y actualización sobre las tablas `agents` y `memberships`.
 3. **Herramientas requeridas**: `python3`, `openssl`, `flock`, `systemctl`, `docker`.
 
@@ -160,7 +161,44 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
 
 ---
 
-### Paso 6: Verificación de Efecto Real
+### Paso 6: Alta del Plano PTY (Terminal)
+
+El aprovisionamiento del Paso 5 solo cubre la pieza 3 (`alias-key.hex`); el resto del plano PTY se completa a mano:
+
+1. **Certificado mTLS del canal PTY (`CN=pty-<alias>`)**:
+   - Emitir con OpenSSL firmado por la CA raíz (`/etc/cauce-v3/pki/ca.crt` + `ca.key`, con `-CAserial /etc/cauce-v3/pki/ca.srl`).
+   - Parámetros: RSA 4096, validez 365 días, extensiones `extendedKeyUsage = clientAuth`, `basicConstraints = critical,CA:FALSE`, `keyUsage = critical,digitalSignature,keyEncipherment`.
+   - Destino: `~stev/.config/cauce-v3/pty-pki/<alias>/{client.crt,client.key,ca.crt}` en modo `0600` cada uno, propiedad `stev` (el `alias-key.hex` del Paso 5 vive en el mismo directorio en `0400`).
+
+2. **Registrar la identidad en el relay**:
+   - Huella: `openssl x509 -in client.crt -noout -fingerprint -sha256`, sin dos puntos y en MAYÚSCULAS.
+   - Añadir la entrada al array `agents` de `/etc/cauce-v3/terminal/pty_agent_identities.json`: objetos `{ tenant_id, alias, fingerprint_sha256, expires_at }` bajo `{"version": 1, "agents": [...]}`, con `expires_at` en ISO-8601 UTC (p. ej. `2027-08-29T20:21:02Z`).
+   - El relay relee el archivo **por conexión**: no requiere reinicio.
+
+3. **Archivo de entorno del launcher**: crear `~stev/.config/cauce-v3/pty/<alias>.env` en modo `0600`:
+   ```
+   RELAY_HOST=100.64.0.6
+   RELAY_PORT=8445
+   PKI_DIR=/home/stev/.config/cauce-v3/pty-pki/<alias>
+   ALIAS_KEY_FILE=/home/stev/.config/cauce-v3/pty-pki/<alias>/alias-key.hex
+   ```
+
+4. **Drop-in de release y arranque del unit**:
+   - Crear `~stev/.config/systemd/user/cauce-v3-pty@<alias>.service.d/20-cauce-release.conf` con SOLO dos líneas `Environment=` (`CAUCE_PTY_OPS_ROOT` y `CAUCE_PTY_AGENT_VERSION`) apuntando al release vigente content-addressed de `~stev/.local/share/cauce-v3/pty-releases/`.
+   - **Prohibido añadir `ExecStart` al drop-in**: la plantilla `cauce-v3-pty@.service` ya pasa `%i` como alias; un `ExecStart` clonado con el alias literal de otro conf arranca el launcher con el alias equivocado (exit 73 `another PTY launcher owns alias X`).
+   - Activar:
+     ```sh
+     # [no ejecutable en verificación]
+     systemctl --user daemon-reload
+     systemctl --user enable --now cauce-v3-pty@<alias>.service
+     ```
+
+5. **Verificación**: el journal del unit (`journalctl --user -u cauce-v3-pty@<alias>.service`) debe decir `relay accepted alias=<alias> modes=shell,harness`.
+   - Para harness `openclaw`, el modo `harness` exige además el puntero canónico `openclaw:<alias>:shared:<alias>` en el `sessions.json` del adaptador; lo publica el primer turno humano válido (hasta entonces el journal dirá solo `modes=shell`).
+
+---
+
+### Paso 7: Verificación de Efecto Real
 
 1. **Instalar e Iniciar la Unidad Systemd**:
    ```sh

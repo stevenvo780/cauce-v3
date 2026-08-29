@@ -386,10 +386,36 @@ class RolloutPtyTest(unittest.TestCase):
         temporary, worker, _ = self.worker("server")
         self.addCleanup(temporary.cleanup)
         release = worker.release_path(self.bundle.release_sha)
-        body = worker._selector("zeus", self.bundle.release_sha, release).decode()
+        body = worker._selector(self.bundle.release_sha, release).decode()
         self.assertIn("cauce-v3-pty@", worker._unit("zeus"))
         self.assertNotIn("cauce-v3-container", body)
         self.assertNotIn("adapter", body.lower())
+
+    def test_selector_is_alias_neutral_environment_only_without_execstart(self) -> None:
+        """A conf cloned to another alias must work as-is: no ExecStart, no alias name."""
+        temporary, worker, _ = self.worker("server")
+        self.addCleanup(temporary.cleanup)
+        release = worker.release_path(self.bundle.release_sha)
+        body = worker._selector(self.bundle.release_sha, release).decode()
+        self.assertNotIn("ExecStart", body)
+        directives = [line for line in body.splitlines() if line and not line.startswith("#")]
+        self.assertEqual(directives, [
+            "[Service]",
+            f"Environment=CAUCE_PTY_OPS_ROOT={release}",
+            f"Environment=CAUCE_PTY_AGENT_VERSION={self.bundle.release_sha}",
+        ])
+        neutral = body.replace(str(release), "")
+        for alias in sorted(self.fleet.aliases):
+            self.assertNotIn(alias, neutral, f"el conf del release menciona el alias {alias}")
+
+    def test_unit_template_execstart_honours_ops_root_and_instance(self) -> None:
+        """With no ExecStart in the drop-in, the template must resolve the launcher itself."""
+        text = (AGENT_ROOT / "systemd/cauce-v3-pty@.service").read_text(encoding="utf-8")
+        exec_lines = [line for line in text.splitlines() if line.startswith("ExecStart=")]
+        self.assertEqual(len(exec_lines), 1, "el template debe declarar exactamente un ExecStart")
+        self.assertIn("${CAUCE_PTY_OPS_ROOT}", exec_lines[0].replace("$$", "$"))
+        self.assertIn("%i", exec_lines[0])
+        self.assertIn("cauce-pty-launcher.sh", exec_lines[0])
 
 
 if __name__ == "__main__":

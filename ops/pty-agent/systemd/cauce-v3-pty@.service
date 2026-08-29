@@ -16,7 +16,11 @@ Environment=CAUCE_PTY_OPS_ROOT=%h/.local/share/cauce-v3/ops
 Environment=CAUCE_PTY_CONFIG_ROOT=%h/.config/cauce-v3/pty
 Environment=CAUCE_PTY_PKI_ROOT=%h/.config/cauce-v3/pty-pki
 Environment=CAUCE_PTY_LOCK_ROOT=%t/cauce-v3
-ExecStart=%h/.local/share/cauce-v3/ops/pty-agent/cauce-pty-launcher.sh %i
+# systemd cannot expand a variable in the program position, so a fixed /bin/sh execs the
+# launcher out of CAUCE_PTY_OPS_ROOT. Release drop-ins override ONLY that Environment line,
+# never ExecStart: an ExecStart override bakes in a literal alias, so a cloned conf would
+# start the launcher with the wrong alias (exit 73) — confs must stay alias-neutral.
+ExecStart=/bin/sh -c 'exec "$${CAUCE_PTY_OPS_ROOT}/pty-agent/cauce-pty-launcher.sh" "$$1"' cauce-pty-launcher %i
 Restart=always
 RestartSec=5
 # 2 (bad config) and 78 (root runtime identity / unusable bundle) are permanent: restarting cannot
