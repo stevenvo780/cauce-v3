@@ -307,10 +307,12 @@ export function ConfigPage() {
       return;
     }
     setAvisoDeAccion(undefined);
+    // Limpiar `pendiente` ANTES del await: la guarda de arriba ya validó la revisión, y dejarlo vivo
+    // mientras `change()` espera la relectura hace que la subida de revisión (1→2) lo pinte como
+    // «vencido» —un alert rojo «otro operador cambió la config»— en una escritura que SÍ se aplicó.
+    setPendiente(undefined);
     // `directo`: these buttons don't preview anything, so a 409 cannot redirect to "back to preview".
     const outcome = await change(accion.mutation, false, 'directo');
-    // The confirmed mutation has already traveled (or been rejected): either way, it is no longer pending. Retrying it as-is after a 409 would collide again with the stale revision.
-    setPendiente(undefined);
     if (!outcome.ok) {
       setAvisoDeAccion({
         coleccion, tone: 'error', revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),

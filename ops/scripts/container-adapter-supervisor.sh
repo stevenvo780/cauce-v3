@@ -907,18 +907,17 @@ start_adapter() {
     environment+=('TERM=xterm-256color')
   fi
   # HERE is where the per-alias configuration is exported: inside the `environment` array, which is
-  # the one that travels whole to the `/usr/bin/env -i` of the `docker exec` line below. Placed after
-  # the shared-session block on purpose: the TUI panel inherits this same environment, so the adapter and
-  # the owner's terminal resolve the SAME directory (`harnessConfigDirectory` in
-  # packages/adapter-sdk/src/shared-session/config.ts reads exactly this variable). Exporting it in only
-  # one of the two would give two conversations with two identities.
-  #
-  # OFF BY DEFAULT. Without `CONFIG_POR_ALIAS=1` in the alias's .env, nothing is exported and behavior is
-  # byte-for-byte today's. It is turned on per alias because the files must be copied FIRST
-  # (ops/scripts/aplicar-separacion-config.sh): turning the variable on pointing at an empty directory leaves
-  # the alias without an identity and, for claude, without a single MCP — and without any error.
+  # Travels whole to the `/usr/bin/env -i` below. After the shared-session block on purpose: the TUI
+  # panel inherits this env, so adapter and owner terminal resolve the SAME dir (harnessConfigDirectory
+  # in packages/adapter-sdk/src/shared-session/config.ts). OFF BY DEFAULT: without CONFIG_POR_ALIAS=1
+  # nothing is exported. Turned on per alias AFTER copying the files (aplicar-separacion-config.sh):
+  # switching it on over an empty dir leaves the alias without identity —and claude without MCP— silently.
   if [[ -v CONFIG[CONFIG_POR_ALIAS] ]]; then
     environment+=("$(config_por_alias_variable "$harness")=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name")")
+  elif [[ ( $harness == claude || $harness == codex ) && ! -v CONFIG[CREDENTIAL_HOME] ]]; then
+    # Sin aislar, claude/codex usan su default pero no EXPORTAN la var, y la medicion de
+    # runtime_facts del pty-agent (escanea /proc por el perfil observado) no la ve → perfil en 503.
+    [[ $harness == claude ]] && environment+=("CLAUDE_CONFIG_DIR=$container_home/.claude") || environment+=("CODEX_HOME=$container_home/.codex")
   fi
   if [[ $harness == hermes ]]; then
     environment+=("HERMES_HOME=${CONFIG[HERMES_HOME]}" "HERMES_INFERENCE_MODEL=${CONFIG[HERMES_INFERENCE_MODEL]}")
