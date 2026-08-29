@@ -215,11 +215,9 @@ export const NotifyKindSchema = z.enum(NOTIFY_KINDS);
 export const EgressHandleSchema = z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/);
 export const MAX_NOTIFY_BODY_BYTES = 4_096;
 
-/**
- * The cap is BYTES and the store measures bytes. As a plain `.max()` the schema counted UTF-16
- * units instead, so an accented body between the two counts passed the wire and died later against
- * `body_too_large`: one limit rejecting at a different size on each layer.
- */
+/* The cap is BYTES and the store measures bytes: as a plain `.max()` the schema counted UTF-16
+   units, so an accented body between the two counts passed the wire and died later against
+   `body_too_large` — one limit rejecting at a different size on each layer. */
 const NotifyBodySchema = z.string().min(1).refine(
   (body) => Buffer.byteLength(body, 'utf8') <= MAX_NOTIFY_BODY_BYTES,
   { message: `notify body must not exceed ${String(MAX_NOTIFY_BODY_BYTES)} bytes` },

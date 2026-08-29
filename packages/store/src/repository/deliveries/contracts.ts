@@ -123,7 +123,6 @@ const maxNotifyDirectives = 4;
 export const maxNotifyBodyBytes = MAX_NOTIFY_BODY_BYTES;
 const maxNotifyAggregateBytes = 8 * 1024;
 export const notifyKinds = new Set<string>(NOTIFY_KINDS);
-/** The handle an operator created, judged by the same schema the public notify surface applies. */
 export function isEgressHandle(value: string): boolean {
   return EgressHandleSchema.safeParse(value).success;
 }
