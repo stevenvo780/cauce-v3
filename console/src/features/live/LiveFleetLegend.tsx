@@ -1,19 +1,25 @@
-import type { FleetActivitySnapshot, TopologySnapshot } from '../../api/types';
+import type { ConfigurationSnapshot, FleetActivitySnapshot, TopologySnapshot } from '../../api/types';
+import type { Resource } from '../../api/use-resource';
 import { AclEdgeList } from './hypergraph/AclEdgeList';
 import { TenantCards } from './hypergraph/TenantCards';
 import { ActivityExplainers, FleetSignals } from './FleetActivityTable';
+import { RolesFold } from './RolesFold';
 import { LIVE_STATES, LIVE_STATE_META, STATE_ACCENT } from './agent-state';
 
 export interface LiveFleetLegendProps {
   snapshot: FleetActivitySnapshot | undefined;
   topologiaEnAlcance: TopologySnapshot | undefined;
   resumenDePermisos: string;
+  configuracion: Resource<ConfigurationSnapshot>;
+  onAbrirPerfil: (key: string) => void;
 }
 
 export function LiveFleetLegend({
   snapshot,
   topologiaEnAlcance,
   resumenDePermisos,
+  configuracion,
+  onAbrirPerfil,
 }: LiveFleetLegendProps) {
   return (
     <>
@@ -27,6 +33,8 @@ export function LiveFleetLegend({
         <TenantCards tenants={topologiaEnAlcance?.tenants ?? []} />
         <AclEdgeList edges={topologiaEnAlcance?.acl_edges ?? []} />
       </details>
+
+      <RolesFold configuracion={configuracion} onAbrirPerfil={onAbrirPerfil} />
 
       <details className="live-fold">
         <summary>Cómo se lee un muñeco, y cómo leer los números</summary>

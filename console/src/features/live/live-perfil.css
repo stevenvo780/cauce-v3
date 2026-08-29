@@ -57,6 +57,9 @@
 .perfil-cuenta { justify-self: end; font-size: var(--tipo-apunte); color: var(--muted); }
 .perfil-cuenta-fuera { color: var(--danger, #d64545); font-weight: 600; }
 
+.perfil-tramo { justify-self: end; text-align: right; font-size: var(--tipo-apunte); color: var(--muted); }
+.perfil-tramo-fuera { color: var(--danger, #d64545); font-weight: 600; }
+
 .perfil-fuera { margin: 0; padding-left: 18px; font-size: var(--tipo-apunte); color: var(--danger, #d64545); line-height: 1.5; }
 
 .perfil-aviso { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: var(--tipo-apunte); line-height: 1.5; }

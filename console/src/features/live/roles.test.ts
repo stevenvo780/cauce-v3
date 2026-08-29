@@ -22,12 +22,8 @@ it('agrupa por rol a los bots que llevan el MISMO texto, aunque difieran en espa
   expect(catalogo.todos).toHaveLength(5);
 });
 
-/**
- * CONTROL NEGATIVO del medidor de dos unidades — es el fallo que deja un alias SORDO sin dar ningún
- * error. Si `utf16` se calculara con la misma cuenta que `puntos` (o al revés), este rol se
- * declararía dentro del tope, la consola ofrecería aplicarlo a otro bot, la base lo aceptaría… y el
- * adaptador que corre hoy rechazaría cada sobre de ese alias en silencio.
- */
+// CONTROL NEGATIVO del medidor: si `utf16` se calculara igual que `puntos`, este rol se declararía
+// dentro del tope y el adaptador desplegado rechazaría cada sobre en silencio.
 it('mide el rol en las DOS unidades y lo declara pasado cuando cualquiera de las dos se pasa', () => {
   // 1150 puntos de código, pero cada emoji ocupa dos unidades UTF-16: 1150 vs 2300.
   const conEmojis = '🙂'.repeat(1150);
@@ -47,8 +43,8 @@ it('mide el rol en las DOS unidades y lo declara pasado cuando cualquiera de las
 });
 
 it('no inventa un catálogo cuando el gateway no publica el registro de agentes', () => {
-  // Clave ausente no es lista vacía: las dos dan cero roles, pero la pantalla las distingue mirando
-  // el snapshot, no este resultado.
+  // Clave ausente no es lista vacía: las dos dan cero roles y la pantalla las distingue mirando el
+  // snapshot, no este resultado.
   expect(catalogoDeRoles(undefined)).toEqual({ roles: [], sinRol: [], todos: [] });
   expect(catalogoDeRoles(null)).toEqual({ roles: [], sinRol: [], todos: [] });
   // Una fila sin alias utilizable no identifica a ningún bot y no entra en el catálogo.

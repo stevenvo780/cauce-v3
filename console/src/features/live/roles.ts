@@ -1,9 +1,5 @@
 import { ROLE_BRIEF_MAX, contarRoleBrief } from './role-brief';
 
-/**
- * Catálogo y agrupación de roles de agente derivados del rol declarado en la configuración.
- */
-
 export interface AliasConRol {
   tenantId: string;
   alias: string;
@@ -11,7 +7,6 @@ export interface AliasConRol {
 }
 
 export interface RolCatalogado {
-  /** Clave estable para React y para comparar: el texto ya recortado. */
   texto: string;
   /** Puntos de código: lo que mide `char_length` en Postgres y el CHECK de la columna. */
   puntos: number;
@@ -19,7 +14,6 @@ export interface RolCatalogado {
   utf16: number;
   /** `true` si se pasa del tope en CUALQUIERA de las dos unidades. */
   pasado: boolean;
-  /** Quiénes lo llevan puesto ahora mismo. */
   portadores: AliasConRol[];
 }
 
@@ -27,7 +21,6 @@ export interface CatalogoDeRoles {
   roles: RolCatalogado[];
   /** Alias registrados sin rol declarado. `null` y `''` son lo mismo acá: no hay preámbulo. */
   sinRol: AliasConRol[];
-  /** Alias del registro, con o sin rol, para poder ofrecer a quién asignarle uno. */
   todos: AliasConRol[];
 }
 
@@ -45,12 +38,8 @@ export function claveDeAlias(entrada: AliasConRol): string {
 }
 
 /**
- * Agrupa el registro de agentes por rol declarado.
- *
- * El texto se RECORTA antes de agrupar, por la misma razón por la que el contador recorta antes de
- * medir: el store recorta y recién después guarda, así que dos briefs que sólo se diferencian en un
- * salto de línea final son literalmente el mismo rol para el servidor. Agruparlos aparte mostraría
- * dos roles idénticos y llevaría a «arreglar» una diferencia que no existe.
+ * Agrupa el registro por rol declarado, RECORTANDO el texto antes: el store recorta y recién
+ * después guarda, así que dos briefs que sólo difieren en un salto de línea final son el mismo rol.
  */
 export function catalogoDeRoles(agentes: readonly Record<string, unknown>[] | null | undefined): CatalogoDeRoles {
   if (!agentes) return { roles: [], sinRol: [], todos: [] };
@@ -75,18 +64,14 @@ export function catalogoDeRoles(agentes: readonly Record<string, unknown>[] | nu
     const utf16 = texto.length;
     return { texto, puntos, utf16, pasado: puntos > ROLE_BRIEF_MAX || utf16 > ROLE_BRIEF_MAX, portadores };
   });
-  // Los roles más extendidos primero: son los que describen a la flota. Empate por texto para que
-  // el orden sea estable entre dos lecturas del mismo snapshot.
+  // Los más extendidos primero; empate por texto para que el orden sea estable entre dos lecturas.
   roles.sort((a, b) => b.portadores.length - a.portadores.length || a.texto.localeCompare(b.texto));
   return { roles, sinRol, todos };
 }
 
 /**
- * Un nombre corto para reconocer el rol en una lista, sacado de su propio texto.
- *
- * NO es el nombre del rol: es un resumen. Se dice así en pantalla, con esas palabras, porque un
- * título que parece un nombre guardado y no lo es sería la peor de las dos opciones — el operador
- * lo buscaría en la base y no estaría.
+ * Nombre corto para reconocer el rol en una lista, sacado de su propio texto. NO es un nombre
+ * guardado —en pantalla se dice así—: buscarlo en la base no daría nada.
  */
 export function resumenDeRol(texto: string): string {
   const primeraLinea = texto.split('\n', 1)[0]?.trim() ?? '';

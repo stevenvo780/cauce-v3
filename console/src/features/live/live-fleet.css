@@ -270,6 +270,31 @@ tr[data-highlighted='true'] > td {
 .live-legend-lead { margin: 0 0 14px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .live-legend-lead strong { color: var(--text); }
 
+.rol-catalogo { list-style: none; padding: 0; display: grid; gap: 10px; }
+.rol-catalogo > li {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.rol-medida { font-size: var(--tipo-apunte); color: var(--muted); }
+.rol-medida[data-fuera='si'] { color: var(--danger, #d64545); font-weight: 600; }
+.rol-portadores { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.rol-portador {
+  padding: 2px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.rol-portador:hover { background: var(--surface-3); }
+.rol-sin-rol { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
+.rol-sin-rol strong { color: var(--text); }
+
 .live-legend-swatch {
   flex: none;
   width: 14px;

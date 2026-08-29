@@ -53,6 +53,7 @@ export function LiveFleetPage() {
   const api = useApi();
   const activity = useResource('live-fleet-activity', () => api.getFleetActivity());
   const topology = useResource('live-topology', () => api.getTopology());
+  const configuracion = useResource('live-configuracion', () => api.getConfiguration());
   const [intervalMs, setIntervalMs] = useState(4000);
   const [selected, setSelected] = useState<string>();
   const [hovered, setHovered] = useState<string>();
@@ -391,6 +392,8 @@ export function LiveFleetPage() {
           snapshot={snapshot}
           topologiaEnAlcance={topologiaEnAlcance}
           resumenDePermisos={resumenDePermisos}
+          configuracion={configuracion}
+          onAbrirPerfil={(key) => { abrirCajon(key, 'perfil'); }}
         />
       </div>
 
@@ -398,6 +401,7 @@ export function LiveFleetPage() {
         <AgentDrawer
           view={detail}
           tab={drawer.tab}
+          configuracion={configuracion}
           borradorPerfil={borradoresPerfil[drawer.key]}
           onBorradorPerfil={(campos) => { setBorradoresPerfil((actuales) => {
             if (campos === undefined) {

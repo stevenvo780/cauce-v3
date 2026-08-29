@@ -1,8 +1,8 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useApi } from '../../api/context';
-import { useResource } from '../../api/use-resource';
-import type { AgentPerfilCampos, FleetActivityItem } from '../../api/types';
+import { useResource, type Resource } from '../../api/use-resource';
+import type { AgentPerfilCampos, ConfigurationSnapshot, FleetActivityItem } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
@@ -58,6 +58,7 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
 export interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
+  configuracion: Resource<ConfigurationSnapshot>;
   /** The only editable draft is the canonical profile; the `role_brief` projection is read-only. */
   borradorPerfil?: Partial<AgentPerfilCampos>;
   onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
@@ -66,7 +67,7 @@ export interface AgentDrawerProps {
 }
 
 export function AgentDrawer({
-  view, tab, borradorPerfil, onBorradorPerfil,
+  view, tab, configuracion, borradorPerfil, onBorradorPerfil,
   onTab, onClose,
 }: AgentDrawerProps) {
   // Esc closes from anywhere. A panel that can only be closed with the little X forces you to hunt
@@ -124,6 +125,7 @@ export function AgentDrawer({
             key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}
+            configuracion={configuracion}
             onEditarEnPerfil={() => { onTab('perfil'); }}
             onEditarEnFicheros={() => { onTab('ficheros'); }}
             onRestaurarEnPerfil={(texto) => {

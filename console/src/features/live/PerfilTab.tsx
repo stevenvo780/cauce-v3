@@ -6,6 +6,7 @@ import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { EmptyState, Unknown } from '../../components/ui';
 import { permissionState } from '../../lib';
+import { MedidorDeRol } from './MedidorDeRol';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, ETIQUETAS, camposQueNoEntran, camposVigentes, contarUnidades,
   destinosDelArnes, esPerfilAplicado, hayCambios, lineasALista, listaALineas, motivoSinDestino,
@@ -285,6 +286,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               <span className={`perfil-cuenta${tope !== undefined && medido > tope ? ' perfil-cuenta-fuera' : ''}`}>
                 {medido} / {tope ?? '—'}
               </span>
+              {campo === 'role_summary' ? <MedidorDeRol texto={valor} /> : null}
             </label>
           );
         })}

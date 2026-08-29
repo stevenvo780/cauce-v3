@@ -1,8 +1,7 @@
 import { Maximize2 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { useResource } from '../../api/use-resource';
+import type { Resource } from '../../api/use-resource';
 import { DirectivaModal } from './DirectivaModal';
 import { primerasLineas } from './directiva';
 import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
@@ -14,6 +13,7 @@ import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
 export interface DirectivaTabProps {
   tenantId: string;
   alias: string;
+  configuracion: Resource<ConfigurationSnapshot>;
   onEditarEnPerfil: () => void;
   onEditarEnFicheros: () => void;
   onRestaurarEnPerfil: (texto: string) => void;
@@ -41,10 +41,8 @@ function buscarEnRegistro(snapshot: ConfigurationSnapshot | undefined, tenantId:
 }
 
 export function DirectivaTab({
-  tenantId, alias, onEditarEnPerfil, onEditarEnFicheros, onRestaurarEnPerfil,
+  tenantId, alias, configuracion: config, onEditarEnPerfil, onEditarEnFicheros, onRestaurarEnPerfil,
 }: DirectivaTabProps) {
-  const api = useApi();
-  const config = useResource(`directiva-config-${tenantId}-${alias}`, () => api.getConfiguration());
   const [abierto, setAbierto] = useState(false);
   const abridor = useRef<HTMLButtonElement>(null);
 
