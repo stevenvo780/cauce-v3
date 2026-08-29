@@ -309,4 +309,25 @@
   }
 }
 
+/* Row actions: one line, not a stack. Four full-width pills wrapping one under the other made
+   every inventory row as tall as four buttons. */
+.row-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
 
+.row-actions .button.small.icon-action {
+  padding: 6px 8px;
+}
+
+/* The direction that takes something away —deshabilitar, despublicar— is not a neutral button. */
+.row-actions .button.small.icon-action.is-undo {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.row-actions .button.small.icon-action.is-undo:hover:not(:disabled) {
+  border-color: var(--amber);
+  background-color: var(--amber-dim);
+}

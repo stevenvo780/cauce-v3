@@ -293,11 +293,38 @@ it('🔴 CONTROL NEGATIVO: con el recolector caído el saldo dice «?», nunca u
   const fila = cell.closest('tr');
   expect(fila).not.toBeNull();
   if (fila) {
-    // Plan y Consumo: los dos en interrogante. Un `0%` acá se leería como «esta cuenta está agotada»,
+    // Consumo declara que no hay muestra. Un `0%` acá se leería como «esta cuenta está agotada»,
     // que es una afirmación sobre un dato que no llegó.
-    expect(within(fila).getAllByText('?').length).toBeGreaterThanOrEqual(2);
+    expect(within(fila).getByLabelText('sin muestra')).toBeInTheDocument();
     expect(fila.textContent).not.toMatch(/\d+%/);
     expect(fila.textContent).not.toMatch(/libre/);
+  }
+});
+
+it('la sonda caída sí grita en ámbar: el gris es sólo para la cuenta que el recolector no mira', async () => {
+  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({
+    observed_at: '2026-08-22T10:00:00.000Z',
+    thresholds: { stale_after_seconds: 900, warn_remaining_percent: 25, critical_remaining_percent: 10 },
+    collectors: [{ host: 'kratos', received_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, stale: false }],
+    providers: [{
+      host: 'kratos', provider: 'codex', ok: false, available: false, plan: 'pro',
+      note: 'el CLI no respondió', observed_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, severity: 'ok',
+      groups: [{ group_key: 'codex', account_id: 'codex-steven', min_remaining_percent: null, severity: null, windows: [] }],
+    }],
+    unbound_groups: [], paused_accounts: [],
+  })));
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  const inventario = await openInventory(user);
+  const fila = (await inventario.findByText('codex-steven')).closest('tr');
+  expect(fila).not.toBeNull();
+  if (fila) {
+    const interrogante = within(fila).getByText('?');
+    expect(interrogante).toHaveClass('unknown');
+    expect(interrogante.getAttribute('title')).toMatch(/sonda caída/i);
+    expect(within(fila).queryByLabelText('sin muestra')).not.toBeInTheDocument();
   }
 });
 
@@ -327,7 +354,7 @@ it('con el recolector VIVO la misma columna sí trae el número: el «?» no es 
   const fila = cell.closest('tr');
   expect(fila).not.toBeNull();
   if (fila) {
-    expect(within(fila).getByText('pro')).toBeInTheDocument();
+    expect(within(fila).getByText(/plan pro/)).toBeInTheDocument();
     expect(within(fila).getByText('42% libre')).toBeInTheDocument();
   }
 });

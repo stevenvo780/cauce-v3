@@ -158,6 +158,7 @@ export interface AccountConsumption {
   reason?: string; // if available=false, why there is no data
   /** Present only when `available` is false. See `ConsumptionScope`. */
   scope?: ConsumptionScope;
+  probeDown?: boolean;
   plan: string | null;
   windows: WindowSummary[];
 }
@@ -225,6 +226,7 @@ export function accountConsumption(
         ? `Sonda caída: ${note}. No se muestra ningún porcentaje.`
         : 'Sonda caída: el recolector reportó ok=false para este proveedor. No se muestra ningún porcentaje.',
       scope: 'account',
+      probeDown: true,
       plan: relevantProviders[0]?.plan ?? null,
       windows: [],
     };

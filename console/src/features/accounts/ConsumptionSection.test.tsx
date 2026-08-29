@@ -146,13 +146,19 @@ it('es UNA sola vista con las tres mitades: consumo, inventario y asignaciones',
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   expect(panel('Proveedores')).toBeInTheDocument();
 
-  // All eight metrics from the quota views coexist: none got lost in the merge.
+  // The six top-level counts from the quota views coexist: none got lost in the merge.
   for (const label of [
     'Cuentas registradas', 'Con datos de cuota', 'Agentes', 'Recolectores conectados',
-    'Proveedores', 'Peor remanente', 'Suscripciones pausadas', 'Grupos sin cuenta atada',
+    'Proveedores', 'Peor remanente',
   ]) {
     expect(within(metrics()).getByText(label)).toBeInTheDocument();
   }
+  // Paused subscriptions and unbound groups already own the panel that lists them, not a card.
+  for (const label of ['Suscripciones pausadas', 'Grupos sin cuenta atada']) {
+    expect(within(metrics()).queryByText(label)).not.toBeInTheDocument();
+  }
+  expect(panel('Suscripciones pausadas')).toHaveTextContent('Codex Pro (principal)');
+  expect(within(panel('Hallazgos')).getByText('Grupos sin cuenta atada')).toBeInTheDocument();
 
   await openTab(user, 'Inventario');
   expect(panel('Inventario de cuentas')).toBeInTheDocument();

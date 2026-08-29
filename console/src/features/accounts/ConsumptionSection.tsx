@@ -81,6 +81,21 @@ export function ConsumptionSection({ quotas, config }: {
     (account) => !orphanedItems.accountsWithoutQuotas.some((orphan) => orphan.id === account.id),
   ).length;
   const accountsWithoutQuotas = quotasDown ? [] : orphanedItems.accountsWithoutQuotas;
+  const quotaCoverageTone = quotasDown || configDown || totalAccounts === 0
+    ? 'neutral'
+    : isCollectorAbsent || failedProbes.length > 0 || accountsWithQuota < totalAccounts
+      ? 'warning'
+      : 'positive';
+  const collectorsTone = quotasDown
+    ? 'neutral'
+    : collectors.length === 0
+      ? 'danger'
+      : staleCollectors.length > 0 ? 'warning' : 'positive';
+  const worstTone = worstRemaining === null
+    ? 'neutral'
+    : worstRemaining <= (thresholds?.critical_remaining_percent ?? 10)
+      ? 'danger'
+      : worstRemaining <= (thresholds?.warn_remaining_percent ?? 25) ? 'warning' : 'positive';
   const hasFindings = accountsWithoutQuotas.length > 0
     || unbound.length > 0
     || orphanedItems.agentsWithoutBindings.length > 0;
@@ -146,35 +161,35 @@ export function ConsumptionSection({ quotas, config }: {
         <Metric
           label="Con datos de cuota"
           value={isCollectorAbsent || quotasDown || configDown ? null : accountsWithQuota}
-          tone={isCollectorAbsent || failedProbes.length > 0 ? 'warning' : 'positive'}
+          tone={quotaCoverageTone}
           detail={quotasDown
             ? 'no se pudo leer el consumo'
             : isCollectorAbsent
               ? 'sin recolector activo'
               : failedProbes.length > 0
                 ? `${String(failedProbes.length)} ${failedProbes.length === 1 ? 'sonda caída' : 'sondas caídas'}: sus cuentas van en ?`
-                : 'el recolector las conoce'}
+                : `cuentas del inventario que el recolector reporta, de ${String(totalAccounts)}`}
         />
         <Metric label="Agentes" value={configDown ? null : totalAgents} detail="total de alias registrados" />
         <Metric
           label="Recolectores conectados"
           value={quotasDown ? null : collectors.length}
-          tone={isCollectorAbsent ? 'danger' : 'positive'}
+          tone={collectorsTone}
           detail={isCollectorAbsent
             ? 'crítico: sin datos de cuota'
-            : collectors.length > 0
-              ? `reportando desde ${collectors.map((collector) => collector.host ?? UNKNOWN).join(', ')}`
-              : 'sin respuesta del endpoint'}
+            : collectors.length === 0
+              ? 'sin respuesta del endpoint'
+              : staleCollectors.length > 0
+                ? `${String(staleCollectors.length)} de ${String(collectors.length)} con la muestra fuera de plazo`
+                : `reportando desde ${collectors.map((collector) => collector.host ?? UNKNOWN).join(', ')}`}
         />
-        <Metric label="Proveedores" value={quotasDown ? null : providers.length} detail="claude, codex, antigravity, opencode…" />
+        <Metric label="Proveedores" value={quotasDown ? null : providers.length} detail="proveedores presentes en la última muestra" />
         <Metric
           label="Peor remanente"
           value={worstRemaining === null ? null : `${String(worstRemaining)}%`}
-          tone={worstRemaining !== null && worstRemaining <= (thresholds?.critical_remaining_percent ?? 10) ? 'danger' : 'neutral'}
-          detail="el proveedor con menos saldo"
+          tone={worstTone}
+          detail="saldo del proveedor que menos tiene"
         />
-        <Metric label="Suscripciones pausadas" value={quotasDown ? null : paused.length} tone={paused.length ? 'warning' : 'neutral'} detail="por cuota agotada o a mano" />
-        <Metric label="Grupos sin cuenta atada" value={quotasDown ? null : unbound.length} tone={unbound.length ? 'warning' : 'neutral'} detail="muestra guardada, no puede pausar nada" />
       </div>
 
       <Panel title="Recolectores" subtitle="La frescura se mide contra la hora en que el servidor RECIBIÓ la muestra, no contra la hora que declara el recolector: el reloj del recolector puede estar corrido.">

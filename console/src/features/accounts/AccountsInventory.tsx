@@ -1,4 +1,6 @@
-import { ChevronDown, ChevronRight, CreditCard, EyeOff, KeyRound, PencilLine, Plus, Share2 } from 'lucide-react';
+import {
+  ChevronDown, ChevronRight, CreditCard, EyeOff, KeyRound, Lock, PencilLine, Plus, Power, PowerOff, Share2,
+} from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigurationSnapshot, ConsoleAccess, QuotaSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
@@ -6,6 +8,7 @@ import {
   Badge, EmptyState, Metric, Panel, PermissionBadge, Unknown, Time,
 } from '../../components/ui';
 import { AccountRoutingDetail } from './AccountRoutingDetail';
+import './licenses.css';
 import { accountConsumption, type AccountConsumption } from './licenses';
 import { MutationBar } from './MutationBar';
 import {
@@ -149,15 +152,15 @@ export function AccountsInventory({ config, access, quotas }: {
       Una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no
       vive en la base: <code>credential_ref</code> es siempre un locator y el servidor no lo
       devuelve, ni siquiera a quien paga. El saldo de cada cuenta ya no está en otra vista: está en
-      las columnas Plan y Consumo, y el desglose por ventana en la pestaña «Consumo».
+      la columna Consumo, y el desglose por ventana en la pestaña «Consumo».
     </p>
     <PermissionBadge access={access.data} permission="config.write" />
 
     <div className="metrics-grid">
       <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'el servidor no publica el inventario de cuentas'} />
-      <Metric label="Publicadas al pool" value={pooled} tone="positive" detail="quien paga consintió prestarlas" />
-      <Metric label="Habilitadas" value={enabled} detail="una cuenta nueva nace deshabilitada" />
-      <Metric label="Pagadas por otro tenant" value={foreign} tone="warning" detail={actorTenant ? `pagador ≠ ${actorTenant}` : 'el servidor no informó el tenant del actor'} />
+      <Metric label="Publicadas al pool" value={pooled} detail="cuentas que su pagador prestó al pool" />
+      <Metric label="Habilitadas" value={enabled} detail="cuentas que el despacho puede usar" />
+      <Metric label="Pagadas por otro tenant" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={actorTenant ? `cuentas cuyo pagador no es ${actorTenant}` : 'el servidor no informó el tenant del actor'} />
     </div>
 
     <Panel title="Inventario de cuentas" subtitle="Datos efectivos del servidor. No hay borrado duro desde esta pantalla: una cuenta se retira deshabilitándola.">
@@ -172,7 +175,7 @@ export function AccountsInventory({ config, access, quotas }: {
               <caption className="sr-only">Inventario de cuentas de proveedores de IA</caption>
               <thead><tr>
                 <th>Cuenta</th><th>Proveedor</th><th>Etiqueta</th><th>Paga</th><th>Pool</th>
-                <th>Estado</th><th>Plan</th><th>Consumo</th><th>Id externo</th><th>Tipo de locator</th>
+                <th>Estado</th><th>Consumo</th><th>Id externo</th><th>Tipo de locator</th>
                 <th>Actualizada</th><th>Acciones</th>
               </tr></thead>
               <tbody>
@@ -195,31 +198,35 @@ export function AccountsInventory({ config, access, quotas }: {
                   <td>{account.enabled === null
                     ? <Badge tone="unknown">SIN DATO</Badge>
                     : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
-                  {/* Plan y Consumo salen de `GET /v3/console/quotas`, que puede estar caído sin
-                      que eso impida editar el registro: por eso dicen «?» en vez de tumbar la
-                      pestaña. Un porcentaje inventado sería peor que un interrogante. */}
-                  <td>{consumption.plan ? <span className="mono">{consumption.plan}</span> : <span className="unknown">?</span>}</td>
                   <td><AccountUsage consumption={consumption} /></td>
                   <td><PayerScoped account={account}><span className="mono"><Unknown value={account.externalAccountId} /></span></PayerScoped></td>
                   <td><PayerScoped account={account}><span className="mono"><Unknown value={account.credentialRefKind} /></span></PayerScoped></td>
                   <td><Time value={account.updatedAt} /></td>
-                  <td><span className="config-actions">
-                    <button className="button small" type="button" aria-expanded={detailOpen} onClick={() => { toggleDetail(account.id); }} aria-label={`Detalle de ruteo de ${account.id}`}>
-                      {detailOpen ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}Detalle
-                    </button>
-                    <button className="button small" type="button" onClick={() => { editAccount(account); }}>
-                      <PencilLine size={14} aria-hidden="true" />Editar
-                    </button>
-                    <button className="button small" type="button" onClick={() => { editAccount(account, { enabled: account.enabled !== true }); }}>
-                      {account.enabled === true ? 'Deshabilitar' : 'Habilitar'}
-                    </button>
-                    <button className="button small" type="button" onClick={() => { editAccount(account, { sharedWithPool: account.sharedWithPool !== true }); }}>
-                      <Share2 size={14} aria-hidden="true" />{account.sharedWithPool === true ? 'Despublicar' : 'Publicar'}
-                    </button>
+                  <td><span className="row-actions">
+                    <RowAction label={`Detalle de ruteo de ${account.id}`} expanded={detailOpen} onClick={() => { toggleDetail(account.id); }}>
+                      {detailOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+                    </RowAction>
+                    <RowAction label={`Editar «${account.id}»`} onClick={() => { editAccount(account); }}>
+                      <PencilLine size={15} aria-hidden="true" />
+                    </RowAction>
+                    <RowAction
+                      label={account.enabled === true ? `Deshabilitar «${account.id}»` : `Habilitar «${account.id}»`}
+                      undoes={account.enabled === true}
+                      onClick={() => { editAccount(account, { enabled: account.enabled !== true }); }}
+                    >
+                      {account.enabled === true ? <PowerOff size={15} aria-hidden="true" /> : <Power size={15} aria-hidden="true" />}
+                    </RowAction>
+                    <RowAction
+                      label={account.sharedWithPool === true ? `Despublicar «${account.id}» del pool` : `Publicar «${account.id}» al pool`}
+                      undoes={account.sharedWithPool === true}
+                      onClick={() => { editAccount(account, { sharedWithPool: account.sharedWithPool !== true }); }}
+                    >
+                      {account.sharedWithPool === true ? <Lock size={15} aria-hidden="true" /> : <Share2 size={15} aria-hidden="true" />}
+                    </RowAction>
                   </span></td>
                 </tr>,
                   ...(detailOpen ? [<tr key={`${account.id}-detalle`} className="account-detail-row">
-                    <td colSpan={12}>
+                    <td colSpan={11}>
                       <AccountRoutingDetail accountId={account.id} quotas={quotas.data} config={config.data} />
                     </td>
                   </tr>] : []),
@@ -287,20 +294,46 @@ export function AccountsInventory({ config, access, quotas }: {
 }
 
 /**
- * El consumo de una cuenta, en el ancho de una celda.
- *
- * Es lo que la vista `/quotas` decía por cuenta, comprimido para que quepa junto al inventario: el
- * peor remanente entre sus ventanas y cuántas ventanas hay. El desglose completo —cada ventana con
- * su `reset_in`, su severidad y el histórico de 24 h— sigue estando entero en la pestaña «Consumo»;
- * acá no se resume para reemplazarlo sino para que la fila diga si hay que ir a mirarlo.
- *
- * `remaining_percent` puede ser un número o la cadena `"?"` (dato caduco o ausente). Los dos casos
- * se dicen distinto: `?` NO es cero, y una cuenta sin muestra no se pinta como una cuenta agotada.
- * El motivo, cuando es de esta cuenta y no de toda la muestra, está en el «Detalle».
+ * A row action in the width of an icon: the accessible name carries the verb and the account, and
+ * `undoes` tints the direction that takes something away. No click here writes anything —it fills
+ * the edit form below, which still goes through its dry-run before applying. */
+function RowAction({ label, onClick, expanded, undoes = false, children }: {
+  label: string;
+  onClick: () => void;
+  expanded?: boolean;
+  undoes?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      className={undoes ? 'button small icon-action is-undo' : 'button small icon-action'}
+      type="button"
+      title={label}
+      aria-label={label}
+      aria-expanded={expanded}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The consumption of an account in the width of a cell: worst remaining across its windows, how
+ * many windows, and the plan when the provider declares one. Amber is kept for a fault —a probe
+ * that answered `ok: false`, or a sample whose percentages are unusable. An account the collector
+ * simply does not watch gets a grey dash: painting an expected absence amber on every row is what
+ * stops amber from meaning anything.
  */
 function AccountUsage({ consumption }: { consumption: AccountConsumption }) {
+  const plan = consumption.plan ? `plan ${consumption.plan}` : null;
   if (!consumption.available || consumption.windows.length === 0) {
-    return <span className="unknown" title={consumption.reason ?? undefined}>?</span>;
+    return <span>
+      {consumption.probeDown
+        ? <span className="unknown" title={consumption.reason}>?</span>
+        : <span className="muted" title={consumption.reason} aria-label="sin muestra">—</span>}
+      {plan ? <small className="subline">{plan}</small> : null}
+    </span>;
   }
   const numeric = consumption.windows
     .map((window) => window.remaining_percent)
@@ -309,10 +342,11 @@ function AccountUsage({ consumption }: { consumption: AccountConsumption }) {
     return <span className="unknown" title="Ninguna ventana trajo un porcentaje utilizable">?</span>;
   }
   const worst = Math.min(...numeric);
+  const windows = `${String(consumption.windows.length)} ${consumption.windows.length === 1 ? 'ventana' : 'ventanas'}`;
   return (
     <span>
       <Badge tone={worst <= 10 ? 'danger' : worst <= 25 ? 'warning' : 'online'}>{worst}% libre</Badge>
-      <small className="subline">{consumption.windows.length} {consumption.windows.length === 1 ? 'ventana' : 'ventanas'}</small>
+      <small className="subline">{plan ? `${windows} · ${plan}` : windows}</small>
     </span>
   );
 }
