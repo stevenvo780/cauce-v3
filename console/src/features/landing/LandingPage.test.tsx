@@ -39,7 +39,7 @@ it('resume la consola entera: flota, colas y cuotas, con los números PRIMERO', 
   expect(numeros).not.toBeNull();
   if (numeros) {
     // `compareDocumentPosition` with FOLLOWING = the numbers are before the band.
-    expect(numeros.compareDocumentPosition(banda) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(numeros.compareDocumentPosition(banda) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   }
 });
 

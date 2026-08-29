@@ -31,7 +31,9 @@ it('ata el globo al disparador con aria-describedby', async () => {
   const globo = await screen.findByRole('tooltip');
   const disparador = screen.getByText('Cifra').closest('.tooltip-anchor');
   expect(disparador).toHaveAttribute('aria-describedby', globo.id);
-  expect(globo.id).toBeTruthy();
+  // UUID v4 emitido por `crypto.randomUUID` (vía `createId('tooltip')`): prefijo `tooltip-`
+  // seguido de 8-4-4-4-12 hex con la marca `4` en la 3ª sección y `[89ab]` en la 4ª.
+  expect(globo.id).toMatch(/^tooltip-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
 
 it('cierra con Esc sin tener que mover el ratón', async () => {

@@ -170,7 +170,7 @@ describe('el mapa', () => {
     await screen.findByLabelText('Veredicto de la flota');
 
     await waitFor(() => {
-      expect(document.querySelector('[data-agent-key="Miguel/gaia"]')).toBeTruthy();
+      expect(document.querySelector('[data-agent-key="Miguel/gaia"]')?.getAttribute('data-agent-key')).toBe('Miguel/gaia');
     });
     // Y con su estado real, no con uno inventado: el registro dice deshabilitado.
     expect(document.querySelector('[data-agent-key="Miguel/gaia"]'))
@@ -309,7 +309,8 @@ describe('el mapa', () => {
     // warning that actually matters goes unnoticed.
     act(() => { nodos[0].focus(); });
     const globo = await screen.findByRole('tooltip');
-    expect(globo.textContent).toBeTruthy();
+    expect(globo.textContent.trim().length).toBeGreaterThan(0);
+    expect(globo.textContent).not.toMatch(/^\s*$/);
 
     await user.keyboard('{Escape}');
     // The map balloon closes when it loses focus; Esc dismisses it the same way without trace.
@@ -374,7 +375,9 @@ describe('el cajón', () => {
     const cajon = await screen.findByRole('complementary', { name: /detalle de zeus/i });
     expect(within(cajon).getByRole('heading', { level: 2, name: 'zeus' })).toBeInTheDocument();
     // The map did NOT disappear: we did not navigate anywhere.
-    expect(document.querySelector('.lhg-svg')).toBeTruthy();
+    const svg = document.querySelector('.lhg-svg');
+    expect(svg).not.toBeNull();
+    expect(svg?.tagName.toLowerCase()).toBe('svg');
     expect(window.location.pathname).toBe('/live');
     expect(window.location.search).toContain('agente=Steven%2Fzeus');
     expect(window.location.search).toContain('pestana=ahora');
