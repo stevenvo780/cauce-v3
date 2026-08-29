@@ -62,7 +62,7 @@ function historial(hilo: HTMLElement): HTMLElement {
 }
 
 function notaQueDice(hilo: HTMLElement, texto: RegExp): boolean {
-  return within(hilo).getAllByRole('note').some((nota) => texto.test(nota.textContent ?? ''));
+  return within(hilo).getAllByRole('note').some((nota) => texto.test(nota.textContent));
 }
 
 it('lista a los agentes con el estado de su cola al lado del nombre', async () => {

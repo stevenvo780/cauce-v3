@@ -411,7 +411,7 @@ export function ConversationPane({
                       <Unknown
                         value={rotuloDeEstado(safeDeliveryState(entrega.status))}
                         motivo={entrega.status && !safeDeliveryState(entrega.status)
-                          ? `El servidor mandó un estado que esta consola no conoce: ${String(entrega.status)}`
+                          ? `El servidor mandó un estado que esta consola no conoce: ${entrega.status}`
                           : undefined}
                       />
                     </Badge>

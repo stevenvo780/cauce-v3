@@ -162,7 +162,7 @@ function EscenarioVacio({ agents, access, capability, targets, loading, error, o
   const gate = ultimateTerminalGate(capability, access);
   const emitiendo = agents.filter((agent) => fleetTerminalChip(targets?.items, agent).status === 'allowed');
   const copia = copiaDelEscenario(gate, targets, emitiendo.length);
-  const primero: FleetAgent | undefined = emitiendo[0];
+  const primero = emitiendo.at(0);
   return (
     <div className="terminal-stage-empty" data-tono={copia.tono}>
       <span className="terminal-stage-icon"><MonitorPlay size={26} aria-hidden="true" /></span>
