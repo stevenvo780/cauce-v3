@@ -61,6 +61,10 @@ function historial(hilo: HTMLElement): HTMLElement {
   return caja;
 }
 
+function notaQueDice(hilo: HTMLElement, texto: RegExp): boolean {
+  return within(hilo).getAllByRole('note').some((nota) => texto.test(nota.textContent ?? ''));
+}
+
 it('lista a los agentes con el estado de su cola al lado del nombre', async () => {
   renderWithApi(<MessagesPage />);
 
@@ -68,11 +72,14 @@ it('lista a los agentes con el estado de su cola al lado del nombre', async () =
   // From the /v3/console/activity fixture: argos has 1 queued and 1 in flight.
   expect(within(argos).getByText('1 en cola')).toBeInTheDocument();
   expect(within(argos).getByText('1 en curso')).toBeInTheDocument();
-  // And from /v3/console/queues: the only dead delivery belongs to Miguel:kratos, not argos.
-  expect(within(argos).getByText('0 muertas')).toBeInTheDocument();
+  // From /v3/console/queues: the only dead delivery is Miguel:kratos'. A known zero is no longer written down —the healthy row shrinks— so the attribution is checked by who gets flagged.
+  expect(argos).toHaveAttribute('data-cola', 'breve');
+  expect(argos).not.toHaveAttribute('data-attention');
+  expect(within(argos).queryByText('0 muertas')).not.toBeInTheDocument();
 
   const kratos = await screen.findByRole('button', { name: /conversación con kratos,/i });
   expect(within(kratos).getByText('1 muertas')).toBeInTheDocument();
+  expect(kratos).toHaveAttribute('data-attention', 'true');
 }, 20_000);
 
 /**
@@ -411,7 +418,8 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
   expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
-  expect(within(hilo).getByRole('note')).toHaveTextContent(/registro de agentes y en NINGUNA sala/i);
+  expect(notaQueDice(hilo, /registro de agentes y en NINGUNA sala/i)).toBe(true);
+  expect(notaQueDice(hilo, /El servidor no informa el lease de gaia/i)).toBe(true);
 }, 25_000);
 
 it('con el registro caído, el hilo sigue existiendo porque el propio feed lo sostiene', async () => {
@@ -423,7 +431,7 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
   await user.click(fila);
   const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
   expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
-  expect(within(hilo).getByRole('note')).toHaveTextContent(/sólo porque el servidor publicó mensajes suyos/i);
+  expect(notaQueDice(hilo, /sólo porque el servidor publicó mensajes suyos/i)).toBe(true);
 }, 25_000);
 
 /**
@@ -476,7 +484,7 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
     return el;
   };
   expect(within(campo('Room')).getByText('grp.steven')).toBeInTheDocument();
-  expect(within(campo('Lane')).getByText('interactive')).toBeInTheDocument();
+  expect(within(campo('Carril')).getByText('interactive')).toBeInTheDocument();
   expect(within(campo('Actor verificado')).getByText('kant')).toBeInTheDocument();
   expect(within(campo('Tenant de origen')).getByText('Steven')).toBeInTheDocument();
   expect(within(campo('Tenant destino')).getByText('Steven')).toBeInTheDocument();
@@ -487,7 +495,7 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   // And the sibling delivery of the fan-out, with its recipient and its status.
   const fanout = within(hilo).getByRole('region', { name: /entregas hermanas/i });
   expect(within(fanout).getByText('Steven:jarvis')).toBeInTheDocument();
-  expect(within(fanout).getByText('failed')).toBeInTheDocument();
+  expect(within(fanout).getByText('FALLÓ')).toBeInTheDocument();
 }, 25_000);
 
 /**
@@ -514,7 +522,7 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
   renderWithApi(<MessagesPage />);
 
   const hilo = await abrirConversacion(user, 'argos');
-  await user.selectOptions(within(hilo).getByLabelText(/^lane$/i), 'batch');
+  await user.selectOptions(within(hilo).getByLabelText(/^carril$/i), 'batch');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexá el informe');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 

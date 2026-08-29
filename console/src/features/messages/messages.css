@@ -81,9 +81,32 @@
 .messenger-presence.expired { background: var(--red-dim); color: var(--red); }
 
 .messenger-agent-copy { display: grid; min-width: 0; gap: 6px; }
-.messenger-agent-name { display: flex; align-items: baseline; gap: 7px; }
+.messenger-agent-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; }
 .messenger-agent-name strong { font-size: var(--tipo-rotulo); }
 .messenger-agent-name small { color: var(--faint); font-size: var(--tipo-apunte); }
+
+/*
+ * FILA SANA: UNA SOLA LÍNEA.
+ *
+ * Las tres pastillas se pintaban siempre, y para la mayoría decían «0 en cola / 0 en curso /
+ * 0 muertas»: dos renglones por agente para no decir nada. Medido a 1920x1080 con los 15 alias
+ * de la flota, entraban 6 sin desplazar. Acá la fila cuyas cuatro cifras están LEÍDAS y sin
+ * sangre se encoge a la línea del nombre y sólo escribe lo que no es cero.
+ *
+ * Lo que NO se encoge —y es la razón de que la regla viva en `fila-de-agente.ts` y no acá— es la
+ * fila con una cifra que el servidor no informó: un UNKNOWN abreviado es un UNKNOWN escondido, o
+ * sea el mismo cero falso que esta vista existe para no cometer.
+ */
+.messenger-agent[data-cola="breve"] { padding: 8px 10px; }
+.messenger-agent[data-cola="breve"] .messenger-presence { width: 24px; height: 24px; }
+.messenger-agent[data-cola="breve"] .messenger-presence svg { width: 14px; height: 14px; }
+
+.messenger-cola-breve { display: flex; flex-wrap: wrap; margin-left: auto; gap: 4px 7px; }
+.messenger-cifra-viva, .messenger-cola-limpia { color: var(--faint); font-size: var(--tipo-apunte); white-space: nowrap; }
+.messenger-cifra-viva[data-kind="pending"] { color: var(--muted); }
+/* Separador de adorno: sin él «1 en cola 1 en curso» se lee como una sola frase. */
+.messenger-cifra-viva + .messenger-cifra-viva::before { margin-right: 7px; color: var(--border-strong); content: "·"; }
+.messenger-cola-limpia { border-bottom: 1px dotted currentcolor; cursor: help; }
 
 .messenger-queue-pills { display: flex; flex-wrap: wrap; gap: 4px; }
 

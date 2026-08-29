@@ -186,7 +186,7 @@ describe('/queues en el teléfono', () => {
    */
   it('la hoja lee los mismos `data-label` que la tabla escribe', () => {
     const tabla = readFileSync(resolve(process.cwd(), 'src/features/queues/DeliveryTable.tsx'), 'utf8');
-    for (const rotulo of ['Delivery', 'Destino', 'Lane', 'Estado', 'Intentos', 'Disponible', 'Último error', 'Acción']) {
+    for (const rotulo of ['Delivery', 'Destino', 'Carril', 'Estado', 'Intentos', 'Disponible', 'Último error', 'Acción']) {
       expect(tabla, `falta data-label="${rotulo}" en DeliveryTable`).toContain(`data-label="${rotulo}"`);
     }
     expect(QUEUES_CSS).toContain('content: attr(data-label)');

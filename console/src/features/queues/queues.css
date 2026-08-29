@@ -20,7 +20,19 @@
 .metrica-filtro:disabled { cursor: not-allowed; opacity: .6; }
 .metrica-en-pagina { color: var(--amber) !important; font-size: var(--tipo-apunte) !important; }
 
-.queues-ayuda { margin: -6px 0 18px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
+/*
+ * Los dos permisos de la vista, en una sola fila y con el mismo aspecto. `.permission-line` trae
+ * un margen negativo pensado para colgar del título: acá lo pone la fila, una vez.
+ */
+.queues-permisos { display: flex; flex-wrap: wrap; gap: 9px; margin: -12px 0 18px; }
+.queues-permisos .permission-line { margin: 0; }
+
+/*
+ * La explicación de Replay y Cancelar es lo último que se lee antes de reencolar o cancelar una
+ * entrega, y a 1920 ocupaba el ancho entero: ~200 caracteres por renglón, el triple de lo legible.
+ * `--measure-prose` es la misma medida que ya acota la prosa del resto de la consola.
+ */
+.queues-ayuda { max-width: var(--measure-prose); margin: 12px 0 16px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .queues-ayuda strong { color: var(--text); }
 
 /* ---------------------------------------------------------------------------- el filtro */
@@ -109,7 +121,6 @@
    */
   .metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .metricas-de-cola .metric { min-height: 0; padding: 12px 10px; }
-  .metricas-de-cola .metric::after { display: none; }
   .metricas-de-cola .metric p { margin-bottom: 8px; font-size: var(--tipo-apunte); letter-spacing: .02em; }
   .metricas-de-cola .metric strong { font-size: 1.5rem; }
   .metricas-de-cola .metric span { margin-top: 5px; font-size: var(--tipo-apunte); }

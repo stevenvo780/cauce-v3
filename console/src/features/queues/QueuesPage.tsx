@@ -2,7 +2,9 @@ import { Search } from 'lucide-react';
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton, Time } from '../../components/ui';
+import {
+  ErrorState, LoadingState, PageHeader, Panel, PermissionBadge, RefreshButton, Time, ViewTabPanel, ViewTabs,
+} from '../../components/ui';
 import { compactId, display, permissionState } from '../../lib';
 import { DeliveryTable, EXPLICACION_CANCEL, EXPLICACION_REPLAY } from './DeliveryTable';
 import { OperationalDlqPanel } from './OperationalDlqPanel';
@@ -12,14 +14,24 @@ import {
 } from './filtro-de-colas';
 import './queues.css';
 
-/**
- * Vista de control y rescate de entregas en colas, reintentos y dead letter queue.
- */
+/* Dos tablas de OCHO columnas: lado a lado se llevarían la columna «Estado» fuera de pantalla —el
+   defecto que `queues.css` documenta para el teléfono— y apiladas la segunda vivía bajo el pliegue
+   a 1080. Con pestañas cada una conserva el ancho entero. Siguen MONTADAS (`hidden`, no
+   desmontaje) porque el panel DLQ lleva un formulario con la nota del operador. */
+const PESTANAS = [
+  { id: 'entregas', label: 'Entregas' },
+  { id: 'dlq', label: 'DLQ operativo' },
+] as const;
+
+type Pestana = (typeof PESTANAS)[number]['id'];
+
+/** Vista de control y rescate de entregas en colas, reintentos y dead letter queue. */
 export function QueuesPage() {
   const api = useApi();
   const resource = useResource('queues', () => api.getQueues());
   const access = useResource('console-access', () => api.getConsoleAccess());
   const [filtro, setFiltro] = useState(FILTRO_VACIO);
+  const [pestana, setPestana] = useState<Pestana>('entregas');
   /**
    * `useSyncExternalStore` y no una lectura suelta: `App` se re-renderiza cuando cambia el
    * *pathname*, y llegar acá desde otro `?delivery=` NO lo cambia. Sin suscribirse a `popstate`,
@@ -49,19 +61,26 @@ export function QueuesPage() {
 
   function elegirGrupo(grupo: GrupoDeEstado) {
     setFiltro((previo) => ({ ...previo, grupo: previo.grupo === grupo ? 'todas' : grupo }));
+    // Las tarjetas filtran la tabla de entregas: desde la otra pestaña filtrarían algo invisible.
+    setPestana('entregas');
   }
 
   return (
     <>
-      <PageHeader eyebrow="Delivery control" title="Colas y DLQ operativo" description="Las entregas y los incidentes causales son fuentes distintas. Replay/cancel operan entregas; cerrar un incidente DLQ registra una decisión sin volver a ejecutar ni reenviar nada." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
-      <PermissionBadge access={access.data} permission="delivery.replay" />
+      <PageHeader eyebrow="Control de entregas" title="Colas y DLQ operativo" description="Las entregas y los incidentes causales son fuentes distintas. Replay/cancel operan entregas; cerrar un incidente DLQ registra una decisión sin volver a ejecutar ni reenviar nada." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
+
+      {/* Los dos permisos que manda esta pantalla, juntos y con el mismo aspecto: uno colgaba del
+          título y el otro aparecía suelto entre paneles, como si fueran cosas distintas. */}
+      <div className="queues-permisos">
+        <PermissionBadge access={access.data} permission="delivery.replay" />
+        <PermissionBadge access={access.data} permission="dlq.resolve" />
+      </div>
 
       {/*
         Las tarjetas son BOTONES. El número sigue siendo el del servidor —`snapshot.pending`,
         `retrying`, `dead`, calculados sobre el mismo snapshot— y debajo va, cuando difieren,
         cuántas filas de ese grupo caben en esta página: la diferencia significa que el `LIMIT` del
-        servidor recortó, y taparla prometería filas que no están.
-      */}
+        servidor recortó, y taparla prometería filas que no están. */}
       <div className="metrics-grid three metricas-de-cola" role="group" aria-label="Filtrar por estado">
         <TarjetaFiltro
           etiqueta="Pendientes" valor={snapshot?.pending} tono="neutral" detalle="disponibles o claimed"
@@ -80,81 +99,87 @@ export function QueuesPage() {
         />
       </div>
 
-      {/* Qué hace cada botón, ANTES de apretarlo. Las dos frases son las mismas que repite la
-          confirmación, importadas del propio componente para que no puedan divergir. */}
-      <p className="queues-ayuda">
-        <strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos
-        piden confirmación antes de salir al servidor.
-      </p>
+      <ViewTabs tabs={PESTANAS} active={pestana} onSelect={setPestana} label="Colas y DLQ operativo" />
 
-      {/* El id pedido se escribe COMPLETO, no compactado: es lo que el operador tiene que poder
-          comparar contra el que traía en el enlace, y `compactId` le come el medio. */}
-      {foco.estado === 'encontrada' ? (
-        <p className="notice" role="status">
-          Filtrado a la entrega <span className="mono">{foco.deliveryId}</span> ({compactId(foco.deliveryId)}), la
-          que venías siguiendo desde «La flota ahora».{' '}
-          <button type="button" className="button small secondary" onClick={quitarElFoco}>Ver todas las entregas</button>
-        </p>
-      ) : null}
-      {foco.estado === 'ausente' ? (
-        <p className="notice error" role="alert">
-          {TEXTO_AUSENTE} Pedida: <span className="mono">{foco.deliveryId}</span>.{' '}
-          <button type="button" className="button small secondary" onClick={quitarElFoco}>Ver todas las entregas</button>
-        </p>
-      ) : null}
+      <ViewTabPanel id="entregas" hidden={pestana !== 'entregas'}>
+        {/* El `observed_at` se volcaba tal cual —«2026-08-23T02:02:29.830Z»— y era uno de los tres
+            formatos de fecha que convivían en el producto. Ahora pasa por el mismo `<Time>` que el
+            resto: relativa a la vista, exacta en el `title=`. */}
+        <Panel title="Entregas" subtitle={undefined}>
+          <p className="observation-line">Leído del servidor: <Time value={snapshot?.observed_at} relativo /></p>
 
-      {/* El `observed_at` se volcaba tal cual —«2026-08-23T02:02:29.830Z»— y era uno de los tres
-          formatos de fecha que convivían en el producto. Ahora pasa por el mismo `<Time>` que el
-          resto: relativa a la vista, exacta en el `title=`. */}
-      <Panel title="Entregas" subtitle={undefined}>
-        <p className="observation-line">Leído del servidor: <Time value={snapshot?.observed_at} relativo /></p>
-        {conFoco ? null : (
-          <div className="queues-filtros">
-            <label className="queues-busqueda">
-              <Search size={15} aria-hidden="true" />
-              <span className="sr-only">Buscar entrega</span>
-              <input
-                type="search"
-                value={filtro.texto}
-                placeholder="Alias, tenant, delivery id, message id o texto del error"
-                onChange={(evento) => { setFiltro((previo) => ({ ...previo, texto: evento.target.value })); }}
-              />
-            </label>
-            <p className="queues-conteo" role="status">
-              {filas.length === items.length
-                ? `${String(items.length)} entregas en este snapshot.`
-                : `${String(filas.length)} de ${String(items.length)} entregas · ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` que dicen «${filtro.texto.trim()}»` : ''}.`}
-              {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
-                <>{' '}<button type="button" className="button small secondary" onClick={() => { setFiltro(FILTRO_VACIO); }}>Quitar el filtro</button></>
-              ) : null}
-            </p>
-          </div>
-        )}
-        <DeliveryTable
-          rows={filas}
-          resaltada={foco.deliveryId}
-          canReplay={permissionState(access.data, 'delivery.replay') === 'allowed'}
-          canCancel={permissionState(access.data, 'delivery.cancel') === 'allowed'}
-          onChanged={resource.reload}
-          snapshotVersion={snapshot?.observed_at}
-          empty={foco.estado === 'ausente'
-            ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
-            : filas.length === 0 && items.length > 0
-              ? `Ninguna de las ${String(items.length)} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
-              : 'No hay deliveries informadas.'}
-        />
-      </Panel>
-
-      <PermissionBadge access={access.data} permission="dlq.resolve" />
-      {dlqAccess === 'allowed' ? <OperationalDlqPanel /> : (
-        <Panel title="DLQ operativo" subtitle="La reconciliación causal está separada de replay y cancelación de entregas.">
-          <p className="notice">
-            {dlqAccess === 'denied'
-              ? 'Tu sesión no tiene control operativo para leer o cerrar incidentes DLQ.'
-              : 'Cauce todavía no publicó un permiso verificable para el DLQ operativo; no se presume acceso.'}
+          {/* Qué hace cada botón, ANTES de apretarlo, y acotado a la medida de lectura de la consola:
+              a 1920 ocupaba el ancho entero, unos 200 caracteres por renglón. Las dos frases son las
+              mismas que repite la confirmación, importadas del componente para que no diverjan. */}
+          <p className="queues-ayuda">
+            <strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos
+            piden confirmación antes de salir al servidor.
           </p>
+
+          {/* El id pedido se escribe COMPLETO, no compactado: es lo que el operador tiene que poder
+              comparar contra el que traía en el enlace, y `compactId` le come el medio. */}
+          {foco.estado === 'encontrada' ? (
+            <p className="notice" role="status">
+              Filtrado a la entrega <span className="mono">{foco.deliveryId}</span> ({compactId(foco.deliveryId)}), la
+              que venías siguiendo desde «La flota ahora».{' '}
+              <button type="button" className="button small secondary" onClick={quitarElFoco}>Ver todas las entregas</button>
+            </p>
+          ) : null}
+          {foco.estado === 'ausente' ? (
+            <p className="notice error" role="alert">
+              {TEXTO_AUSENTE} Pedida: <span className="mono">{foco.deliveryId}</span>.{' '}
+              <button type="button" className="button small secondary" onClick={quitarElFoco}>Ver todas las entregas</button>
+            </p>
+          ) : null}
+          {conFoco ? null : (
+            <div className="queues-filtros">
+              <label className="queues-busqueda">
+                <Search size={15} aria-hidden="true" />
+                <span className="sr-only">Buscar entrega</span>
+                <input
+                  type="search"
+                  value={filtro.texto}
+                  placeholder="Alias, tenant, delivery id, message id o texto del error"
+                  onChange={(evento) => { setFiltro((previo) => ({ ...previo, texto: evento.target.value })); }}
+                />
+              </label>
+              <p className="queues-conteo" role="status">
+                {filas.length === items.length
+                  ? `${String(items.length)} entregas en este snapshot.`
+                  : `${String(filas.length)} de ${String(items.length)} entregas · ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` que dicen «${filtro.texto.trim()}»` : ''}.`}
+                {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
+                  <>{' '}<button type="button" className="button small secondary" onClick={() => { setFiltro(FILTRO_VACIO); }}>Quitar el filtro</button></>
+                ) : null}
+              </p>
+            </div>
+          )}
+          <DeliveryTable
+            rows={filas}
+            resaltada={foco.deliveryId}
+            canReplay={permissionState(access.data, 'delivery.replay') === 'allowed'}
+            canCancel={permissionState(access.data, 'delivery.cancel') === 'allowed'}
+            onChanged={resource.reload}
+            snapshotVersion={snapshot?.observed_at}
+            empty={foco.estado === 'ausente'
+              ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
+              : filas.length === 0 && items.length > 0
+                ? `Ninguna de las ${String(items.length)} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
+                : 'No hay deliveries informadas.'}
+          />
         </Panel>
-      )}
+      </ViewTabPanel>
+
+      <ViewTabPanel id="dlq" hidden={pestana !== 'dlq'}>
+        {dlqAccess === 'allowed' ? <OperationalDlqPanel /> : (
+          <Panel title="DLQ operativo" subtitle="La reconciliación causal está separada de replay y cancelación de entregas.">
+            <p className="notice">
+              {dlqAccess === 'denied'
+                ? 'Tu sesión no tiene control operativo para leer o cerrar incidentes DLQ.'
+                : 'Cauce todavía no publicó un permiso verificable para el DLQ operativo; no se presume acceso.'}
+            </p>
+          </Panel>
+        )}
+      </ViewTabPanel>
     </>
   );
 }
@@ -194,8 +219,7 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
       {/*
         La cifra de arriba la calcula el SERVIDOR sobre todo lo que ve; la de acá es cuántas filas
         de ese grupo trae esta página. Sólo se escribe cuando NO coinciden, y entonces dice el
-        porqué: el `LIMIT` del snapshot dejó fuera al resto.
-      */}
+        porqué: el `LIMIT` del snapshot dejó fuera al resto. */}
       {String(enPagina) !== cifra ? (
         <span
           className="metrica-en-pagina"

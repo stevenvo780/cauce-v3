@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent, FleetActivitySnapshot, QueueItem, QueueSnapshot } from '../../api/types';
 import type { FleetAgent } from '../terminal/fleet';
+import { cifrasVivas, formaDeLaCola } from './fila-de-agente';
 import {
   colaNecesitaAtencion,
   LIMITE_COLA,
@@ -168,5 +169,35 @@ describe('textoDeCifra', () => {
     expect(textoDeCifra(undefined)).toBe('UNKNOWN');
     expect(textoDeCifra(0)).toBe('0');
     expect(textoDeCifra(41)).toBe('41');
+  });
+});
+
+describe('formaDeLaCola', () => {
+  const leida = { pendientes: 0, enCurso: 0, reintentos: 0, muertas: 0, muertasTruncadas: false };
+
+  it('abrevia la fila leída entera y sin sangre', () => {
+    expect(formaDeLaCola(leida)).toBe('breve');
+    expect(formaDeLaCola({ ...leida, pendientes: 8, enCurso: 2 })).toBe('breve');
+  });
+
+  it('NO abrevia lo que sangra: muertas o reintentos mandan la fila entera', () => {
+    expect(formaDeLaCola({ ...leida, muertas: 1 })).toBe('detallada');
+    expect(formaDeLaCola({ ...leida, reintentos: 3 })).toBe('detallada');
+  });
+
+  it('NO abrevia un UNKNOWN: una cifra que el servidor no informó no se esconde', () => {
+    expect(formaDeLaCola(undefined)).toBe('detallada');
+    expect(formaDeLaCola({ ...leida, pendientes: undefined })).toBe('detallada');
+    expect(formaDeLaCola({ ...leida, enCurso: undefined })).toBe('detallada');
+    expect(formaDeLaCola({ ...leida, reintentos: undefined })).toBe('detallada');
+    expect(formaDeLaCola({ ...leida, muertas: undefined })).toBe('detallada');
+  });
+
+  it('la línea breve sólo escribe lo que no es cero', () => {
+    expect(cifrasVivas(leida)).toEqual([]);
+    expect(cifrasVivas({ ...leida, pendientes: 3, enCurso: 0 }))
+      .toEqual([{ kind: 'pending', texto: '3 en cola' }]);
+    expect(cifrasVivas({ ...leida, pendientes: 1, enCurso: 2 }).map((cifra) => cifra.texto))
+      .toEqual(['1 en cola', '2 en curso']);
   });
 });

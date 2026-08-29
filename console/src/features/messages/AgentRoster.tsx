@@ -2,6 +2,7 @@ import { DoorClosed, Filter, Inbox, Search, Wifi, WifiOff } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
 import { filterFleetAgents } from '../terminal/fleet';
+import { cifrasVivas, formaDeLaCola, ROTULO_DE_LEASE } from './fila-de-agente';
 import { colaNecesitaAtencion, ordenarPorSaludDeCola, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
@@ -14,11 +15,27 @@ interface AgentRosterProps {
   error?: Error;
 }
 
+/** The one line a clean queue is worth: only what is above zero, or the word for clean AND read. */
+function ColaBreve({ salud }: { salud?: SaludDeCola }) {
+  const vivas = cifrasVivas(salud);
+  return (
+    <span className="messenger-cola-breve">
+      {vivas.length === 0 ? (
+        <span
+          className="messenger-cola-limpia"
+          title="0 en cola, 0 en curso, 0 en reintento y 0 muertas: las cuatro cifras leídas, ninguna UNKNOWN."
+        >sin cola</span>
+      ) : vivas.map((cifra) => (
+        <span className="messenger-cifra-viva" key={cifra.kind} data-kind={cifra.kind}>{cifra.texto}</span>
+      ))}
+    </span>
+  );
+}
+
 /**
- * Las tres cifras que un roster de mensajería no tiene y esta vista sí. Cada una lleva su
- * `title` con la fuente exacta: el operador tiene que poder saber de dónde salió el número sin
- * salir de la pantalla, porque la mitad de los defectos de esta consola fueron números correctos
- * leídos como si midieran otra cosa.
+ * The whole reading, chip by chip, for the row that earns a second line. Each chip carries its
+ * exact source in the `title`: half the defects of this console were correct numbers read as if
+ * they measured something else.
  */
 function PildorasDeCola({ salud }: { salud?: SaludDeCola }) {
   const muertas = salud?.muertas;
@@ -77,7 +94,7 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
           <p className="eyebrow">Conversaciones</p>
           <h2>{agents.length} agentes</h2>
         </div>
-        <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} online</Badge>
+        <Badge tone={online > 0 ? 'online' : agents.length ? 'warning' : 'unknown'}>{online} en línea</Badge>
       </header>
 
       <div className="messenger-roster-filters">
@@ -114,35 +131,40 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
         {loading && agents.length === 0 ? <LoadingState label="Sincronizando la flota del servidor…" />
           : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar la flota: {error.message}</EmptyState></div>
             : visibles.length === 0 ? <EmptyState>Ningún agente coincide con el filtro.</EmptyState>
-              : visibles.map((agent) => (
-                <button
-                  className="messenger-agent"
-                  key={agent.id}
-                  type="button"
-                  data-state={agent.leaseState}
-                  data-active={activeAgentId === agent.id || undefined}
-                  data-attention={colaNecesitaAtencion(salud[agent.id]) || undefined}
-                  onClick={() => { onSelect(agent); }}
-                  aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${agent.leaseState}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
-                  aria-current={activeAgentId === agent.id ? 'true' : undefined}
-                >
-                  <span className={`messenger-presence ${agent.leaseState}`} aria-hidden="true">
-                    {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
-                  </span>
-                  <span className="messenger-agent-copy">
-                    <span className="messenger-agent-name">
-                      <strong>{agent.alias}</strong>
-                      <small>{agent.tenantId}</small>
-                      {fueraDeLaTopologia(agent) ? (
-                        <span className="messenger-loose-tag" title={motivoDeAgenteSuelto(agent)}>
-                          <DoorClosed size={11} aria-hidden="true" /> sin sala
-                        </span>
-                      ) : null}
+              : visibles.map((agent) => {
+                const forma = formaDeLaCola(salud[agent.id]);
+                return (
+                  <button
+                    className="messenger-agent"
+                    key={agent.id}
+                    type="button"
+                    data-state={agent.leaseState}
+                    data-cola={forma}
+                    data-active={activeAgentId === agent.id || undefined}
+                    data-attention={colaNecesitaAtencion(salud[agent.id]) || undefined}
+                    onClick={() => { onSelect(agent); }}
+                    aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${ROTULO_DE_LEASE[agent.leaseState]}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
+                    aria-current={activeAgentId === agent.id ? 'true' : undefined}
+                  >
+                    <span className={`messenger-presence ${agent.leaseState}`} aria-hidden="true">
+                      {agent.leaseState === 'online' ? <Wifi size={15} /> : <WifiOff size={15} />}
                     </span>
-                    <PildorasDeCola salud={salud[agent.id]} />
-                  </span>
-                </button>
-              ))}
+                    <span className="messenger-agent-copy">
+                      <span className="messenger-agent-name">
+                        <strong>{agent.alias}</strong>
+                        <small>{agent.tenantId}</small>
+                        {fueraDeLaTopologia(agent) ? (
+                          <span className="messenger-loose-tag" title={motivoDeAgenteSuelto(agent)}>
+                            <DoorClosed size={11} aria-hidden="true" /> sin sala
+                          </span>
+                        ) : null}
+                        {forma === 'breve' ? <ColaBreve salud={salud[agent.id]} /> : null}
+                      </span>
+                      {forma === 'breve' ? null : <PildorasDeCola salud={salud[agent.id]} />}
+                    </span>
+                  </button>
+                );
+              })}
       </div>
     </aside>
   );

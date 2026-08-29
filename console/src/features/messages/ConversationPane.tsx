@@ -5,6 +5,7 @@ import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
+import { rotuloDeEstado } from '../queues/estado-de-entrega';
 import { onNavClick } from '../../router';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { fleetAgentId } from '../terminal/fleet';
@@ -12,6 +13,7 @@ import { transcriptForSession, type OperatorRoute, type OperatorSession, type Tr
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { publishDurably } from './durable-publish';
+import { ROTULO_DE_LEASE } from './fila-de-agente';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
@@ -74,6 +76,16 @@ export function ConversationPane({
     ? roomElegido
     : route.sourceRoomIds[0] ?? '';
   const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen);
+  /*
+   * The lease warning is a WARNING, not a hint about what to write. It lived in the textarea's
+   * `placeholder`, so it erased itself at the first keystroke —exactly when it starts to matter—
+   * and no screen reader announced it as anything. `note` and not `alert` for the same reason
+   * `MutationBar` uses it: this is derived in the browser, not a refusal from the server.
+   */
+  const avisoDeLease = agent.leaseState === 'online' ? undefined
+    : agent.leaseState === 'expired'
+      ? `El lease de ${agent.alias} está vencido: Cauce encola el mensaje igual y se lo entrega cuando el agente vuelva a reclamar.`
+      : `El servidor no informa el lease de ${agent.alias} (sin dato, que no es lo mismo que vencido): Cauce encola el mensaje igual.`;
   // The ITEM is selected, not the loose delivery: the detail has to be able to say the room, the lane, the actor and the trace of the MESSAGE, and those fields do not live in the delivery.
   const elegidoPorElOperador = hilo.find((item) => (
     mensajeElegido != null && item.message.message_id === mensajeElegido
@@ -254,7 +266,7 @@ export function ConversationPane({
             <h2>{agent.alias}</h2>
             <p className="eyebrow">{agent.tenantId} · epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
           </div>
-          <Badge tone={agent.leaseState === 'online' ? 'online' : agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{agent.leaseState}</Badge>
+          <Badge tone={agent.leaseState === 'online' ? 'online' : agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{ROTULO_DE_LEASE[agent.leaseState]}</Badge>
         </div>
         <div className="messenger-thread-actions">
           <a
@@ -366,7 +378,7 @@ export function ConversationPane({
 
           <dl className="messenger-message-meta">
             <div><dt>Room</dt><dd><Unknown value={mensajeSeleccionado.room_id} /></dd></div>
-            <div><dt>Lane</dt><dd><Unknown value={safeJobLane(mensajeSeleccionado.lane)} /></dd></div>
+            <div><dt>Carril</dt><dd><Unknown value={safeJobLane(mensajeSeleccionado.lane)} /></dd></div>
             <div><dt>Actor verificado</dt><dd><Unknown value={mensajeSeleccionado.actor_alias} /></dd></div>
             <div><dt>Tenant de origen</dt><dd><Unknown value={mensajeSeleccionado.tenant_id} /></dd></div>
             <div><dt>Publicado</dt><dd><Time value={mensajeSeleccionado.created_at} /></dd></div>
@@ -396,7 +408,12 @@ export function ConversationPane({
                     <Badge tone={safeDeliveryState(entrega.status) === 'done' ? 'done'
                       : safeDeliveryState(entrega.status) === 'failed' || safeDeliveryState(entrega.status) === 'dead' ? 'danger'
                         : entrega.status ? 'running' : 'unknown'}>
-                      <Unknown value={safeDeliveryState(entrega.status)} />
+                      <Unknown
+                        value={rotuloDeEstado(safeDeliveryState(entrega.status))}
+                        motivo={entrega.status && !safeDeliveryState(entrega.status)
+                          ? `El servidor mandó un estado que esta consola no conoce: ${String(entrega.status)}`
+                          : undefined}
+                      />
                     </Badge>
                     <span className="mono">{compactId(entrega.delivery_id)}</span>
                     <span>intento {entrega.attempt ?? 'UNKNOWN'}</span>
@@ -422,19 +439,22 @@ export function ConversationPane({
         ) : (
           <p className="messenger-room-fixed">Room de origen: <span className="mono">{roomOrigen || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
         )}
-        <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Lane
+        <label className="messenger-lane-select" htmlFor={`messenger-lane-${agent.id}`}>Carril
           <span className="room-select-wrap">
             <select
               id={`messenger-lane-${agent.id}`}
               value={lane}
               onChange={(event) => { setLane(event.target.value === 'batch' ? 'batch' : 'interactive'); }}
             >
-              <option value="interactive">Interactive · prioridad 10</option>
-              <option value="batch">Batch · prioridad 0</option>
+              {/* El rótulo es castellano; el VALOR se escribe como lo publica el protocolo, que es
+                  lo que el operador va a cruzar contra `lane=` en el log del servidor. */}
+              <option value="interactive">interactive · prioridad 10</option>
+              <option value="batch">batch · prioridad 0</option>
             </select>
             <ChevronDown size={14} aria-hidden="true" />
           </span>
         </label>
+        {avisoDeLease ? <p className="notice parcial" role="note">{avisoDeLease}</p> : null}
         <textarea
           id={`messenger-input-${agent.id}`}
           value={draft}
@@ -442,7 +462,7 @@ export function ConversationPane({
           onKeyDown={teclaDelCompositor}
           rows={3}
           maxLength={8_000}
-          placeholder={agent.leaseState === 'online' ? 'Escribí un mensaje…' : 'El agente no tiene lease vigente; Cauce puede encolar el mensaje igual.'}
+          placeholder="Escribí un mensaje…"
           disabled={!puedeEnviar || enviando}
         />
         <div className="composer-footer">

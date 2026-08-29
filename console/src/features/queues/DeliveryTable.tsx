@@ -5,21 +5,8 @@ import type { DeliveryState, QueueItem } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { exactCancelReceipt, exactReplayReceipt } from './delivery-receipts';
+import { ESTADO_ENTREGA } from './estado-de-entrega';
 import { leerUltimoError } from './ultimo-error';
-
-/**
- * Los ocho estados de una entrega, en castellano.
- */
-const ESTADO_ENTREGA: Readonly<Record<DeliveryState, string>> = {
-  pending: 'PENDIENTE',
-  leased: 'TOMADA',
-  accepted: 'ACEPTADA',
-  started: 'EN CURSO',
-  done: 'HECHA',
-  failed: 'FALLÓ',
-  retry: 'EN REINTENTO',
-  dead: 'MUERTA',
-};
 
 /**
  * Estados en los que TODAVÍA no puede haber un último error, porque la entrega aún no falló.
@@ -216,7 +203,7 @@ export function DeliveryTable({
         <div className="table-wrap">
           <table className="tabla-entregas">
             <caption className="sr-only">{caption ?? 'Colas, retries y dead letters'}</caption>
-            <thead><tr><th>Delivery</th><th>Destino</th><th>Lane</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
+            <thead><tr><th>Delivery</th><th>Destino</th><th>Carril</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
             <tbody>
               {rows.map((item, index) => {
                 const state = safeDeliveryState(item.state);
@@ -236,7 +223,7 @@ export function DeliveryTable({
                 >
                   <td data-label="Delivery"><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
                   <td data-label="Destino"><strong><Unknown value={item.recipient_alias} /></strong><small className="subline"><Unknown value={item.tenant_id} /></small></td>
-                  <td data-label="Lane"><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
+                  <td data-label="Carril"><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
                   {/* El estado se dice en castellano (`ESTADO_ENTREGA`), igual que el resto de la
                       pantalla. Un valor que esta consola no conoce NO se inventa: sale UNKNOWN y el
                       `title=` dice qué mandó el servidor. */}
