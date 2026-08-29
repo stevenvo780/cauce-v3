@@ -27,14 +27,14 @@ import type {
 } from "../src/sdk/types.js";
 
 /**
- * El egreso de adjuntos, medido por su EFECTO: qué `uri` sale de verdad hacia el bus.
+ * Attachment egress, measured by its EFFECT: which `uri` actually leaves toward the bus.
  *
- * El caso que originó esta suite es literal de producción (2026-08-22): 12 artifacts salientes en
- * 7 días, CERO como `data:`, los 12 con `status = sent`. Miguel, cliente, no técnico: «me envía es
- * un dato adjunto pero no lo logro ver».
+ * The case that originated this suite is literal production (2026-08-22): 12 outgoing artifacts in
+ * 7 days, ZERO as `data:`, all 12 with `status = sent`. Miguel, the client, non-technical:
+ * "it sends me an attached datum but I cannot see it".
  */
 
-/** PNG real de 1x1, el mismo que reconoce el sniff de firmas del puente. */
+/** Real 1x1 PNG, the same one the bridge signature sniffer recognises. */
 const PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const PNG_BYTES = Buffer.from(PNG_BASE64, "base64");
@@ -93,17 +93,17 @@ test("un PNG en file:// sale como data: y los bytes decodificados son idénticos
 
   const salida = firstUri(output);
   assert.match(salida, /^data:image\/png;base64,/u);
-  // El efecto, no el nombre de la función: los bytes que viajan son EL fichero.
+  // The effect, not the function name: the bytes that travel are THE file.
   assert.deepEqual(decodeDataUri(salida), PNG_BYTES);
   assert.equal(output.artifacts[0]?.media_type, "image/png");
   assert.equal(output.artifacts[0]?.sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
-  // El resto de la respuesta no se toca.
+  // The rest of the response is left untouched.
   assert.equal(output.reply, "listo, te dejo la hoja de ruta");
   assert.equal(output.status, "done");
 });
 
 test("la ruta absoluta suelta de Miguel, sin file://, también se convierte", async () => {
-  // Caso REAL del outbox: `/home/claw/clawd/_tmp_hoja_ruta/hoja_ruta_domiciliario.png | image/png`.
+  // Real outbox case: `/home/claw/clawd/_tmp_hoja_ruta/hoja_ruta_domiciliario.png | image/png`.
   const directory = join(await workspace(), "_tmp_hoja_ruta");
   await mkdir(directory, { recursive: true });
   const path = join(directory, "hoja_ruta_domiciliario.png");
@@ -137,7 +137,7 @@ test("una extensión desconocida cae en application/octet-stream, y el media_typ
   ]));
   assert.match(firstUri(declarado), /^data:application\/pdf;base64,/u);
 
-  // Un media_type que rompería la cabecera del data: URI se descarta y se deduce.
+  // A media_type that would break the data: URI header is discarded and inferred instead.
   const sucio = await inlineLocalArtifacts(envelope([
     { name: "cosa.zzz", uri: raro, media_type: "image/png;base64,AAAA" },
   ]));
@@ -182,7 +182,7 @@ test("el techo agregado por respuesta corta en el segundo adjunto, y el segundo 
   const output = await inlineLocalArtifacts(entrada);
 
   assert.match(firstUri(output), /^data:application\/octet-stream;base64,/u);
-  // 6 MB + 6 MB pasan el tope por adjunto pero no el agregado (10 MB, el mismo que la ingesta).
+  // 6 MB + 6 MB pass the per-attachment cap but not the aggregate cap (10 MB, same as ingestion).
   assert.deepEqual(output.artifacts[1], entrada.artifacts[1]);
 });
 
@@ -203,7 +203,7 @@ test("veinte artifacts: se convierten los primeros N y el resto queda como estab
       assert.match(artifact.uri, /^data:image\/png;base64,/u);
       continue;
     }
-    // El resto queda EXACTAMENTE como estaba: el puente lo explica en el pie del mensaje.
+    // The rest is left EXACTLY as it was: the bridge explains it in the message footer.
     assert.deepEqual(artifact, entrada.artifacts[index]);
   }
 });

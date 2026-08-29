@@ -17,23 +17,23 @@ export interface LeaseResult {
 
 export interface DeliveryAdmission {
   /**
-   * Capacidad general DURABLE del consumidor, compartida por HTTP, WebSocket, reconexiones e
-   * instancias de gateway. Si se omite, manda `agents.max_concurrent_deliveries`.
+   * General DURABLE consumer capacity, shared by HTTP, WebSocket, reconnects and gateway
+   * instances. If omitted, `agents.max_concurrent_deliveries` applies.
    */
   readonly generalCapacity?: number;
   /**
-   * Capacidad ADICIONAL durable que sólo puede ocupar prioridad autenticada de persona. No es un
-   * cupo nuevo por llamada: se descuentan todas las garras vivas del alias bajo el mismo lock.
+   * Additional DURABLE capacity that only authenticated person-priority can occupy. It is not a
+   * new quota per call: every live claw of the alias under the same lock is deducted from it.
    */
   readonly humanReservedCapacity?: number;
-  /** Techo TOTAL de filas devueltas por esta llamada; `limit + reserva` si se omite. */
+  /** Total CAP of rows returned by this call; `limit + reserve` if omitted. */
   readonly maxClaims?: number;
   /** Runtime gate: reject aliases absent from the durable agent inventory. */
   readonly requireDeclaredCapacity?: boolean;
   /**
-   * Cuántos reclamos humanos seguidos antes de dejar pasar un trabajo no humano. Evita que una
-   * ráfaga de mensajes humanos mate de hambre al trabajo de máquina. Por defecto toma el
-   * mismo valor que `interactiveBurst` (3), que es el que ya usaba la alternancia de carriles.
+   * How many human claims in a row before letting non-human work through. Prevents a burst of
+   * human messages from starving machine work. Defaults to the same value as `interactiveBurst`
+   * (3), which is what the lane alternation already used.
    */
   readonly humanBurst?: number;
 }
@@ -44,19 +44,19 @@ export interface LiveDeliveryClaim {
   readonly attempt: number;
   readonly claim_token: string;
   readonly ack_deadline_at: string;
-  /** Hecho derivado de prioridad trusted-at-ingress, nunca del body controlado por el productor. */
+  /** Fact derived from trusted-at-ingress priority, never from the producer-controlled body. */
   readonly human_originated: boolean;
 }
 
 
 /**
- * Alias del esquema del frame: impide que store y adaptador diverjan en campos.
+ * Frame-schema alias: prevents store and adapter from diverging on fields.
  */
 export type DelegationRejection = DelegationRejectionNotice;
 export type DelegationMaterialization = DelegationMaterializationNotice;
 export interface LateResultRow {
   late_result_at: Date | null;
-  /** Momento de cancelación manual por operador; previene rescate tardío si está presente. */
+  /** Moment of manual cancellation by the operator; prevents late rescue if present. */
   cancelled_at: Date | null;
 }
 export type LateClaimProvenance = 'current' | 'applied' | 'observed' | 'none';
@@ -65,30 +65,30 @@ export interface AckResult {
   status: DeliveryState;
   applied: boolean;
   receipt: 'applied' | 'duplicate' | 'superseded' | 'ownership_lost';
-  /** Presente sólo cuando alguna salida `messages` no se convirtió en entrega. */
+  /** Present only when some `messages` output did not become a delivery. */
   delegation_rejections?: DelegationRejection[];
-  /** Salidas materializadas con la identidad exacta de la entrega hija; nunca incluye bodies. */
+  /** Outputs materialised with the exact identity of the child delivery; never includes bodies. */
   delegation_materializations?: DelegationMaterialization[];
   /**
-   * La rama quedó suspendida esperando a una persona; hay un gate abierto que la reanudará.
+   * The branch was suspended waiting on a person; an open gate will resume it.
    *
-   * El tipo sale del esquema del frame a propósito: los dos campos que siguen VIAJAN al adaptador
-   * dentro de `ack_result`, así que cambiarles la forma acá sin cambiar el esquema allá tiene que
-   * romper el build. Eso es precisamente lo que no pasó cuando se agregaron.
+   * The type comes from the frame schema on purpose: the two fields below TRAVEL to the adapter
+   * inside `ack_result`, so changing their shape here without changing the schema there must
+   * break the build. That is precisely what did not happen when they were added.
    */
   chain_gate?: ChainGateNotice;
 }
 export interface AgentOutputOutcome {
   materialized: number;
   /**
-   * La rama abrió un gate humano: NO debe devolver su respuesta hacia arriba, porque no terminó
-   * — está esperando. Es la diferencia entre "suspendida" y "fallada", y es lo que evita que un
-   * gate se convierta en una entrega muerta.
+   * The branch opened a human gate: it must NOT return its response upward, because it did not
+   * finish — it is waiting. It is the difference between "suspended" and "failed", and it is what
+   * stops a gate from becoming a dead delivery.
    */
   suspended: boolean;
   rejections: DelegationRejection[];
   materializations: DelegationMaterialization[];
-  /** El gate vigente de la raíz, si esta materialización se topó con uno o abrió uno. */
+  /** The root's active gate, if this materialisation ran into one or opened one. */
   gate?: OpenChainGate;
 }
 export interface OpenChainGate {

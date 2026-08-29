@@ -95,8 +95,8 @@ async function setChainPolicy(cycleCutEnabled: boolean): Promise<void> {
   );
 }
 
-// `insertAgentOutputRejection` no escribe target_tenant/target_alias, así que una fila
-// rechazada los tiene en NULL y hay que identificarla por (source_alias, output_index).
+// `insertAgentOutputRejection` does not write target_tenant/target_alias, so a rejected row has
+// them as NULL and must be identified by (source_alias, output_index).
 async function materializations(): Promise<Array<{
   source_alias: string;
   target_alias: string | null;
@@ -127,21 +127,21 @@ async function materializations(): Promise<Array<{
 }
 
 /**
- * Reproduce EXACTAMENTE la fila que se midió en producción:
+ * Reproduces EXACTLY the row measured in production:
  * `hop_count=N | vp_len=1 | corr_has_hop=t | corr_has_vp=f`.
  *
- * Migración 008 declara `visited_path text[] NOT NULL DEFAULT '{}'`, así que toda fila
- * anterior a 008 —y toda fila escrita durante un despliegue parcial con
- * `visitedPathAvailable=false`— vale '{}' sin ser NULL. Vaciar la columna es entonces la
- * simulación fiel de una fila heredada, no una mutilación inventada; sigue la misma técnica
- * que el test ya existente que hace `UPDATE agent_output_materializations SET hop_budget=...`
- * para simular un presupuesto durable envenenado.
+ * Migration 008 declares `visited_path text[] NOT NULL DEFAULT '{}'`, so every row from before
+ * 008 —and every row written during a partial deploy with `visitedPathAvailable=false`— is '{}'
+ * rather than NULL. Emptying the column is therefore a faithful simulation of a legacy row, not
+ * an invented mutilation; it follows the same technique as the existing test that does
+ * `UPDATE agent_output_materializations SET hop_budget=...` to simulate a poisoned durable
+ * budget.
  */
 async function blankDurableVisitedPath(): Promise<void> {
   await pool.query(`UPDATE agent_output_materializations SET visited_path='{}'`);
 }
 
-/** Una cadena que ya estaba en vuelo cuando entró esta imagen: el cuerpo no trae el campo. */
+/** A chain already in flight when this image came in: the body does not carry the field. */
 async function stripVisitedPathFromBodies(): Promise<void> {
   await pool.query(
     `UPDATE messages
@@ -172,10 +172,10 @@ afterAll(async () => {
   await database.container.stop();
 });
 
-// El borde de vuelta apunta siempre a un alias que está DOS saltos atrás, nunca al emisor
-// inmediato: un borde hacia el emisor inmediato ya lo rechaza incondicionalmente el guarda de
-// ping-pong como 'unroutable_alias', que taparía a 'cycle_detected' y volvería intesteable la
-// política. Sólo una revisita más atrás en el camino ejercita este guarda.
+// The back edge always points to an alias TWO hops back, never to the immediate emitter: an edge
+// toward the immediate emitter is already rejected unconditionally by the ping-pong guard as
+// 'unroutable_alias', which would mask 'cycle_detected' and leave the policy untestable. Only a
+// revisit further back along the path actually exercises this guard.
 describe('respaldo del camino visitado', () => {
   it('escribe el camino visitado en la correlación del cuerpo', async () => {
     const argos = await consumer('Steven', 'argos');
@@ -186,12 +186,12 @@ describe('respaldo del camino visitado', () => {
     const child = await nextDelivery(socrates);
     await ackWith(socrates, child, [{ to: 'jarvis', body: 'más profundo' }]);
 
-    // Sin esto el respaldo no tendría de dónde leer: es el `corr_has_vp=f` medido en prod.
+    // Without this the fallback would have nothing to read: the `corr_has_vp=f` measured in prod.
     expect((await materializations()).map((row) => row.correlation_visited_path)).toEqual([
       ['Steven/argos'],
       ['Steven/argos', 'Steven/socrates']
     ]);
-    // Y viaja en el cuerpo del mensaje, que es lo que lee el respaldo en el ACK.
+    // And it travels in the message body, which is what the fallback reads in the ACK.
     expect((await nextDelivery(await consumer('Steven', 'jarvis')))
       .body.correlation).toMatchObject({
       visited_path: ['Steven/argos', 'Steven/socrates']
@@ -218,15 +218,15 @@ describe('respaldo del camino visitado', () => {
     ]);
 
     const rows = await materializations();
-    // Sin el respaldo el camino se reinicia en ['Steven/jarvis'] (vp_len=1), 'Steven/argos'
-    // nunca aparece y este borde se materializa: el guarda está encendido pero CIEGO.
+    // Without the fallback the path resets to ['Steven/jarvis'] (vp_len=1), 'Steven/argos'
+    // never appears and this edge gets materialized: the guard is on but BLIND.
     expect(rows.filter((row) => row.status === 'rejected')).toEqual([expect.objectContaining({
       source_alias: 'jarvis',
       output_index: 0,
       rejection_code: 'cycle_detected',
       hop_count: 3
     })]);
-    // El hermano legítimo de la MISMA tanda sigue pasando: el corte es por destino, no por ACK.
+    // The legitimate sibling from the SAME batch still passes: the cut is by destination, not by ACK.
     expect(rows.find((row) => row.target_alias === 'seneca')).toMatchObject({
       status: 'materialized'
     });
@@ -264,7 +264,7 @@ describe('respaldo del camino visitado', () => {
 
     await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: '1' }]);
     await ackWith(socrates, await nextDelivery(socrates), [{ to: 'jarvis', body: '2' }]);
-    // El camino heredado se pierde a mitad de la cadena, como en una fila vieja.
+    // The inherited path is lost halfway down the chain, as in a legacy row.
     await blankDurableVisitedPath();
     await ackWith(jarvis, await nextDelivery(jarvis), [{ to: 'seneca', body: '3' }]);
     await ackWith(seneca, await nextDelivery(seneca), [{ to: 'midas', body: '4' }]);
@@ -280,15 +280,9 @@ describe('respaldo del camino visitado', () => {
     ]);
   });
 
-  // El falso positivo que más preocupa: un coordinador que delega, recibe el retorno y vuelve
-  // a delegar en un alias que YA usó. El camino sólo guarda ANTEPASADOS (la rama que va de la
-  // raíz al nodo actual), nunca los hermanos ni los hijos ya cerrados, así que repetir un
-  // alias en otra rama es legítimo y no se corta.
-  //
-  // El retorno lo manda jarvis, no seneca, a propósito: volver a delegar en el que ACABA de
-  // responder ya lo bloquea incondicionalmente el guarda de ping-pong como 'unroutable_alias'
-  // (`internalAgentDelivery && targetAlias === row.actor_alias`), y eso taparía lo que se
-  // quiere medir acá, que es la decisión del guarda de ciclo.
+  // Reusing an alias on another branch is legitimate: path only stores ANCESTORS, never siblings.
+  // The reply is sent by jarvis on purpose: delegating back to the one that just replied
+  // is blocked by the ping-pong guard as 'unroutable_alias', which would mask cycle detection.
   it('deja al coordinador volver a delegar en un alias que ya usó tras el retorno', async () => {
     await setChainPolicy(true);
     const argos = await consumer('Steven', 'argos');
@@ -298,7 +292,7 @@ describe('respaldo del camino visitado', () => {
     await repository.publish(command());
     await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'coordinar' }]);
 
-    // socrates abre dos ramas y después recibe el retorno de una de ellas.
+    // socrates opens two branches and then receives the reply from one of them.
     await ackWith(socrates, await nextDelivery(socrates), [
       { to: 'seneca', body: 'primera vuelta' },
       { to: 'jarvis', body: 'rama hermana' }
@@ -310,14 +304,14 @@ describe('respaldo del camino visitado', () => {
     const continuation = await nextDelivery(
       socrates, (item) => item.body.type === 'agent.response'
     );
-    // Vuelve a delegar en seneca, que YA aparece en el árbol como rama hermana.
+    // Delegates again to seneca, which ALREADY appears in the tree as a sibling branch.
     await ackWith(socrates, continuation, [{ to: 'seneca', body: 'segunda vuelta' }]);
 
     const rows = await materializations();
     expect(rows.filter((row) => row.rejection_code === 'cycle_detected')).toEqual([]);
     expect(rows.filter((row) => row.target_alias === 'seneca').map((row) => row.status))
       .toEqual(['materialized', 'materialized']);
-    // El camino de la continuación son los antepasados de socrates, NO sus ramas hermanas.
+    // The continuation path is the ancestors of socrates, NOT its sibling branches.
     const second = rows.filter((row) => row.target_alias === 'seneca').at(-1);
     expect(second?.visited_path).toEqual(['Steven/argos', 'Steven/socrates']);
     expect(seneca.alias).toBe('seneca');
@@ -337,8 +331,8 @@ describe('respaldo del camino visitado', () => {
 
     await ackWith(jarvis, await nextDelivery(jarvis), [{ to: 'argos', body: 'borde de vuelta' }]);
 
-    // Sin ninguna de las dos fuentes el guarda no puede ver el ciclo, y NO corta. El despliegue
-    // no puede inventar cortes sobre cadenas que ya estaban en vuelo; se cura en el salto nuevo.
+    // With neither source the guard cannot see the cycle, and does NOT cut. A deploy cannot invent
+    // cuts over chains that were already in flight; it heals at the next hop.
     const backEdge = (await materializations())
       .find((row) => row.source_alias === 'jarvis' && row.target_alias === 'argos');
     expect(backEdge).toMatchObject({ status: 'materialized', visited_path: ['Steven/jarvis'] });

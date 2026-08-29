@@ -8,8 +8,8 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 /**
- * Política de reintentos: R1 (código de pre-vuelo), R3 (no quemar intentos contra un alias sin
- * adaptador) y R6 (toda muerte deja rastro auditable).
+ * Retry policy: R1 (preflight code), R3 (do not burn attempts against an adapter-less alias),
+ * and R6 (every death leaves an auditable trail).
  */
 
 let database: TestDatabase;
@@ -66,12 +66,12 @@ async function deliveryRow(id: string): Promise<{
 }
 
 /**
- * Gasta los `max_attempts` con reclamos REALES, no tocando el contador.
+ * Spends the `max_attempts` with REAL claims, without touching the counter.
  *
- * Cada vuelta es un ciclo completo del sistema: el adaptador reclama, no ACKea, el reaper vence
- * la garra y la devuelve a `retry` con espera. Lo único que se adelanta a mano es esa espera
- * (`available_at`), que es planificación y no estado del trabajo: si se falsificara `attempt` el
- * test dejaría de probar el camino que importa.
+ * Each round is a full system cycle: the adapter claims, does not ACK, the reaper expires the
+ * claim and returns it to `retry` with a wait. The only thing advanced by hand is that wait
+ * (`available_at`), which is planning and not work state: if `attempt` were forged, the test
+ * would stop exercising the path that matters.
  */
 async function burnAttempts(epoch: number, times: number): Promise<string> {
   let deliveryId = '';
@@ -82,7 +82,7 @@ async function burnAttempts(epoch: number, times: number): Promise<string> {
     if (!claimed) throw new Error(`expected a claimed delivery on round ${round + 1}`);
     deliveryId = claimed.delivery_id;
     if (round + 1 < times) {
-      // staleMs=0 vence toda garra en vuelo: es el barrido del reaper, no un atajo.
+      // staleMs=0 expires every in-flight claim: it is the reaper's sweep, not a shortcut.
       await repository.retryStaleDeliveries(0, 100);
       await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [deliveryId]);
     }
@@ -112,14 +112,14 @@ afterAll(async () => {
   if (database?.container) await database.container.stop();
 });
 
-describe('R3 — no se queman intentos contra un alias sin adaptador', () => {
+describe('R3 — no attempts are burned against an adapter-less alias', () => {
   it('aparca la entrega y le devuelve el intento cuando no hay ningún consumidor conectado', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('trabajo para un alias que se cayó'));
     const deliveryId = await burnAttempts(lease.epoch!, 3);
     expect((await deliveryRow(deliveryId)).attempt).toBe(3);
 
-    // El adaptador se va: a partir de acá no hay nadie del otro lado.
+    // The adapter leaves: from here on there is nobody on the other side.
     await repository.releaseLease('Isa', 'salva', CONSUMER, lease.epoch!);
 
     const swept = await repository.retryStaleDeliveries(0, 100);
@@ -128,11 +128,11 @@ describe('R3 — no se queman intentos contra un alias sin adaptador', () => {
     const row = await deliveryRow(deliveryId);
     expect(row.status).toBe('pending');
     expect(row.terminal_at).toBeNull();
-    // El intento vuelve: nadie lo ejecutó, así que no fue un intento.
+    // The attempt comes back: nobody executed it, so it was not an attempt.
     expect(row.attempt).toBe(2);
     expect(row.last_error).toContain('no adapter connected');
 
-    // Aparcar NO es morir: no hay dead letter.
+    // Parking is NOT dying: there is no dead letter.
     const dlq = await pool.query('SELECT 1 FROM dead_letters WHERE delivery_id=$1', [deliveryId]);
     expect(dlq.rowCount).toBe(0);
 
@@ -185,7 +185,7 @@ describe('R3 — no se queman intentos contra un alias sin adaptador', () => {
   });
 });
 
-describe('R6 — ninguna muerte de entrega queda sin rastro', () => {
+describe('R6 — no delivery death goes unaudited', () => {
   it('la rama de intentos agotados escribe audit_events', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('tres intentos contra un adaptador vivo'));
@@ -240,7 +240,7 @@ describe('R6 — ninguna muerte de entrega queda sin rastro', () => {
   });
 });
 
-describe('R1 — un código de pre-vuelo vuelve al circuito de reintento', () => {
+describe('R1 — a preflight code returns to the retry circuit', () => {
   it('el ACK de pre-vuelo deja la entrega en retry, no en dead', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('codex reventó parseando su config.toml'));
@@ -267,23 +267,23 @@ describe('R1 — un código de pre-vuelo vuelve al circuito de reintento', () =>
   });
 
   /**
-   * Este era el contraste de R1: "un código de pre-vuelo vuelve al reintento, uno AMBIGUO no".
-   * Se escribió afirmando `dead` a secas porque en ese momento un ambiguo moría siempre en el
-   * intento 1. `merge/ambiguo-a-main` cambió esa regla a propósito y con medición de prod: un
-   * ambiguo sólo mata si consta que ALGO corrió (`execution_started_at`); de 652 muertes
-   * ambiguas con intentos disponibles, 445 nunca habían arrancado.
+   * This was R1's contrast: "a preflight code returns to retry, an AMBIGUOUS one does not".
+   * It was written asserting bare `dead` because at the time an ambiguous always died on attempt
+   * 1. `merge/ambiguo-a-main` changed that rule on purpose and with production measurement: an
+   * ambiguous only kills if `execution_started_at` is set; of 652 ambiguous deaths with attempts
+   * available, 445 had never started.
    *
-   * Lo que R1 quería proteger NO era el `dead` literal: era que un código ambiguo no se
-   * confundiera con uno de pre-vuelo, que sí es retryable por sí solo. Esa distinción sigue
-   * viva y es lo que se comprueba acá, ahora en sus dos mitades:
+   * What R1 meant to protect was NOT the literal `dead`: it was that an ambiguous code not be
+   * mistaken for a preflight one, which IS retryable on its own. That distinction still stands
+   * and is what is checked here, now in its two halves:
    *
-   *  - con la marca de ejecución, el ambiguo muere en el primer intento y con presupuesto
-   *    intacto — un pre-vuelo, en la misma situación, reintentaría;
-   *  - sin la marca reintenta, pero queda auditado aparte (`ambiguous_without_execution`), que
-   *    es lo que impide que se lo lea como un reintento de pre-vuelo cualquiera.
+   *  - with the execution mark, the ambiguous dies on attempt 1 and with the budget intact —
+   *    a preflight, in the same situation, would retry;
+   *  - without the mark it retries, but is audited separately (`ambiguous_without_execution`),
+   *    which prevents it from being read as just another preflight retry.
    *
-   * Si alguien colapsara los ambiguos dentro de la clase retryable, la primera mitad falla.
-   * El caso completo vive en packages/store/test/ambiguous-without-execution-postgres.test.ts.
+   * If someone collapses ambiguous codes into the retryable class, the first half fails.
+   * The full case lives in packages/store/test/ambiguous-without-execution-postgres.test.ts.
    */
   it('un código AMBIGUO no es un pre-vuelo: muere en el primer intento si llegó a ejecutar',
     async () => {
@@ -294,8 +294,8 @@ describe('R1 — un código de pre-vuelo vuelve al circuito de reintento', () =>
       );
       if (!claimed) throw new Error('expected a claimed delivery');
 
-      // El harness arrancó de verdad: reserva tomada y proceso invocado. Esta es la marca que
-      // separa "no sabemos si hizo algo" de "no hizo nada".
+      // The harness actually started: lease taken and process invoked. This is the mark that
+      // separates "we don't know whether it did something" from "it did nothing".
       await repository.ackDelivery(
         claimed.delivery_id, 'Isa', 'salva',
         ack(claimed, lease.epoch!, 'started', { execution_started: true }), ACK_DEADLINE_MS
@@ -326,7 +326,7 @@ describe('R1 — un código de pre-vuelo vuelve al circuito de reintento', () =>
       );
       if (!claimed) throw new Error('expected a claimed delivery');
 
-      // Sin ACK de `execution_started`: el proceso murió antes de invocar nada.
+      // Without an `execution_started` ACK: the process died before invoking anything.
       await repository.ackDelivery(
         claimed.delivery_id, 'Isa', 'salva',
         ack(claimed, lease.epoch!, 'failed', {
@@ -339,8 +339,8 @@ describe('R1 — un código de pre-vuelo vuelve al circuito de reintento', () =>
       const row = await deliveryRow(claimed.delivery_id);
       expect(row.status).toBe('retry');
       expect(row.terminal_at).toBeNull();
-      // El rastro que lo distingue de un reintento de pre-vuelo: son diagnósticos opuestos
-      // sobre el mismo código de error y el operador tiene que poder separarlos de un vistazo.
+      // The trail that distinguishes it from a preflight retry: opposite diagnoses over the same
+      // error code, and the operator must be able to tell them apart at a glance.
       const audit = await pool.query<{ metadata: Record<string, unknown> }>(
         `SELECT metadata FROM audit_events
           WHERE delivery_id=$1 AND action='delivery.ack'

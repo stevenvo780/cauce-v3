@@ -40,8 +40,8 @@ test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuest
   };
   await context.engine.handleDelivery(input);
 
-  // Lo que importa: el harness SE INVOCA. Antes esto reventaba con INVALID_DELIVERY y la
-  // persona que mandaba la foto no recibia absolutamente nada.
+  // What matters: the harness IS INVOKED. Before this it blew up with INVALID_DELIVERY and the
+  // person sending the photo got absolutely nothing back.
   assert.equal(context.runner.requests.length, 1);
   assert.notEqual(context.events.at(-1)?.error?.code, "INVALID_DELIVERY");
 
@@ -92,13 +92,13 @@ test("materializa attachments_v1 para el harness, verifica contenido y limpia el
 });
 
 /**
- * La ENTREGA tiene que aceptar los mismos textos que la INGESTA.
+ * DELIVERY must accept the same text formats as INGEST.
  *
- * `SUPPORTED_MIME` es un allowlist propio de este paquete, sin relacion con el enum del protocolo.
- * Mientras solo conocia `.txt`, ampliar el protocolo movia el fallo de la ingesta a aca: el .md
- * entraba al bus, se guardaba, y al entregarlo `materializeAttachments` tiraba `INVALID_ATTACHMENT`
- * NO reintentable, que termina en `finishError` ANTES de invocar al harness. El agente no veia el
- * archivo Y TAMPOCO el texto del humano.
+ * `SUPPORTED_MIME` is an allowlist owned by this package, unrelated to the protocol enum. While
+ * it only knew `.txt`, broadening the protocol moved the failure from ingest to here: the .md
+ * entered the bus, was stored, and on delivery `materializeAttachments` threw `INVALID_ATTACHMENT`
+ * (non-retryable), ending in `finishError` BEFORE invoking the harness. The agent saw neither
+ * the file NOR the human's text.
  */
 test("los textos que la ingesta acepta tambien se materializan en la entrega", async () => {
   const casos: readonly (readonly [string, string])[] = [
@@ -146,15 +146,14 @@ test("un cuerpo realmente vacio sigue siendo rechazado", async () => {
 });
 
 /**
- * DEFECTO B,  el `agent.fanin` llegaba con
- * las cuatro respuestas adentro y el coordinador escribía igual FALTA para tres de las cuatro.
- * La causa no era desatención: cada `agent.response` abre un turno propio que traía el pedido
- * original y UNA rama, sin ninguna noticia de las hermanas. Con esto el turno trae el estado del
- * abanico completo, calculado del inbox local, así que la última rama puede consolidar aunque el
- * arnés no tenga memoria ninguna.
+ * DEFECT B — `agent.fanin` arrived with all four responses inside and the coordinator still wrote
+ * FALTA for three of the four. The cause was not inattention: every `agent.response` opens its
+ * own turn carrying the original request and ONE branch, with no notice of the siblings. With
+ * this, the turn carries the full fan-out state, computed from the local inbox, so the last
+ * branch can consolidate even when the harness has no memory at all.
  *
- * Y es también la mitad de DEFECTO A: `still_pending` es la respuesta a la pregunta que hacía
- * re-pinguear ("¿a quién le falta contestarme?") sin gastar una entrega en preguntarla.
+ * It is also half of DEFECT A: `still_pending` answers the question that caused re-pinging
+ * ("who is still left to reply to me?") without spending a delivery asking it.
  */
 test("cada agent.response de un abanico llega con el estado de sus ramas hermanas", async () => {
   const runner = new ControlledRunner();
@@ -212,13 +211,13 @@ test("cada agent.response de un abanico llega con el estado de sus ramas hermana
   const first = runner.requests[1]?.stdin ?? "";
   const second = runner.requests[2]?.stdin ?? "";
 
-  // La primera rama ya sabe que la otra está abierta: re-pinguearla es duplicar, no avanzar.
+  // The first branch already knows the other is still open: re-pinging duplicates work, not progress.
   assert.match(first, /"delegated_to":\["socrates","seneca"\]/u);
   assert.match(first, /"this_branch":"socrates"/u);
   assert.match(first, /"already_returned":\[\]/u);
   assert.match(first, /"still_pending":\["seneca"\]/u);
 
-  // La última rama llega con el agregado adentro y sin nada pendiente que pueda leerse como falta.
+  // The last branch arrives with the aggregate inside and nothing pending that could read as missing.
   assert.match(second, /"this_branch":"seneca"/u);
   assert.match(second, /"still_pending":\[\]/u);
   assert.match(
@@ -373,7 +372,7 @@ test("two materialized outputs to one alias close only by their exact child deli
   assert.match(secondPrompt, /"output_index":0/u);
 });
 
-/** Una delegación de una sola rama no tiene nada que consolidar: el prompt queda como estaba. */
+/** A single-branch delegation has nothing to consolidate: the prompt stays as it was. */
 test("un abanico de una sola rama no paga el bloque de branch_progress", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({
@@ -411,19 +410,19 @@ test("un abanico de una sola rama no paga el bloque de branch_progress", async (
 
   const prompt = runner.requests[1]?.stdin ?? "";
   assert.match(prompt, /agent_response_continuation/u);
-  // La clave del JSON y la instrucción que la acompaña; la palabra suelta no sirve como prueba,
-  // porque el contrato de toda `agent.response` la nombra en prosa aunque no haya bloque.
+  // The JSON key plus the instruction that goes with it; the standalone word is not proof, because
+  // the contract of every `agent.response` mentions it in prose even when the block is absent.
   assert.ok(!prompt.includes('"branch_progress"'));
   assert.ok(!prompt.includes("branch_progress is this adapter's own local record"));
 });
 
 /**
- * Sin `origin` la conversación se derivaba del ACTOR, y para el tráfico entre agentes el actor no
- * es una conversación: es una RAMA. Un abanico de cuatro volvía como cuatro sesiones nativas
- * aisladas y cuatro candados FIFO independientes, así que ningún turno veía a los demás y encima
- * podían correr a la vez. Se colapsa hasta el tenant del par: ni más (una sesión por cadena no
- * tiene cota y `sessions.json` se invalida a las 4096 entradas, sin poda) ni menos (una sesión
- * única mezclaría el trabajo de dos tenants en un mismo transcript).
+ * Without `origin` the conversation was derived from the ACTOR, and for agent-to-agent traffic
+ * the actor is not a conversation: it is a BRANCH. A fan-out of four came back as four isolated
+ * native sessions and four independent FIFO locks, so no turn saw the others and they could even
+ * run in parallel. It collapses to the pair's tenant: no more (one session per chain has no cap
+ * and `sessions.json` invalidates at 4096 entries, with no pruning) and no less (a single session
+ * would mix two tenants' work in the same transcript).
  */
 test("sin origin, el carril de agentes es uno por tenant y no uno por remitente", async () => {
   const context = await setup("engine-agent-lane-session");
@@ -458,11 +457,11 @@ test("sin origin, el carril de agentes es uno por tenant y no uno por remitente"
   const seneca = sessionOf(context.runner, 2);
   const atlas = sessionOf(context.runner, 3);
 
-  // Dos ramas del mismo tenant comparten sesión: por eso la última puede ver a la anterior, y por
-  // eso el candado FIFO las serializa en vez de dejarlas correr en paralelo.
+  // Two branches of the same tenant share the session: that is why the last one can see the
+  // previous one, and why the FIFO lock serializes them instead of letting them run in parallel.
   assert.equal(seneca, socrates);
-  // Pero el trabajo de otro tenant no entra en ese transcript.
+  // But the work of another tenant does not enter that transcript.
   assert.notEqual(atlas, socrates);
-  // Y la conversación de la persona sigue siendo suya, en su propio carril.
+  // And the person's own conversation stays theirs, in its own lane.
   assert.notEqual(human, socrates);
 });

@@ -70,8 +70,8 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     const relationship = parent.rows[0];
     if (!relationship) return 'not_child';
 
-    // Verifica que el agente destinatario tenga exactamente una membresía habilitada en su sala.
-    // Se cuenta con rowCount para compatibilidad con FOR SHARE.
+    // Verify the recipient agent has exactly one enabled membership in its room.
+    // Counted via rowCount for compatibility with FOR SHARE.
     const sourceMembership = await client.query<{ room_id: string }>(
       `SELECT membership.room_id
        FROM memberships membership
@@ -146,9 +146,9 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     // it decides which raw branch evidence its own synthesis already covers.
     const childDeliveryId = responseToDeliveryId ?? row.id;
 
-    // Coalescencia de fracasos. Todo lo de arriba (parentesco, membresías, ACL inversa) ya se
-    // verificó: se pliega un aviso que el padre TENÍA derecho a recibir, nunca uno denegado,
-    // así que la coalescencia no puede tapar un problema de autorización.
+    // Failure coalescing. Everything above (kinship, memberships, reverse ACL) was already
+    // verified: the notice being folded is one the parent HAD the right to receive, never a denied
+    // one, so coalescing cannot hide an authorization problem.
     const reservation = outcome === 'done'
       ? undefined
       : await this.reserveFailureNotice(
@@ -172,9 +172,9 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
       child_delivery_id: childDeliveryId,
       hop_count: relationship.hop_count,
       hop_budget: relationship.hop_budget,
-      // El padre necesita poder pasar del aviso al detalle sin adivinar. Con notice_id resuelve
-      // agent_failure_notice_events; total_failures y coalesced_failures le dicen
-      // cuánto NO le llegó como entrega.
+      // The parent must be able to move from notice to detail without guessing. With notice_id it
+      // resolves agent_failure_notice_events; total_failures and coalesced_failures tell it how
+      // much did NOT reach it as a delivery.
       ...(reservation === undefined ? {} : {
         failure_coalescing: {
           notice_id: reservation.noticeId,
@@ -185,8 +185,8 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
           coalesced_failures: reservation.coalescedFailures
         }
       }),
-      // El padre ya recibió un aviso de fallo por esta misma rama. Esto le dice, sin que tenga
-      // que inferirlo del texto, que lo que está leyendo lo reemplaza.
+      // The parent already received a failure notice for this same branch. This tells it, without
+      // having to infer it from the text, that what it is reading replaces it.
       ...(late === undefined ? {} : {
         late_result: {
           superseded_outcome: late.previousStatus,
@@ -213,8 +213,8 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
           correlation
       },
       origin: row.origin ?? null,
-        // Mismo criterio que materializeAgentOutputs: el retorno de una delegación es tráfico
-        // entre agentes, no la conversación de la persona. Va al carril de fondo.
+        // Same criterion as materializeAgentOutputs: the return of a delegation is traffic
+        // between agents, not the person's conversation. It goes to the background lane.
       lane: 'batch',
         // Cap agent-return priority so old machine traffic cannot compete with new human traffic.
       priority: clampAgentPriority(row.priority),
@@ -249,10 +249,10 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
        ) VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)`,
       [
         relationship.source_tenant,
-        // Mismo espacio de nombres que `requestId`: el aviso tardío del MISMO intento tiene que
-        // poder convivir con la fila que ya escribió el aviso de muerte. Este INSERT no lleva
-        // `ON CONFLICT`, así que una colisión no sería un duplicado silencioso sino el aborto de
-        // la transacción entera del ACK.
+        // Same namespace as `requestId`: the late notice of the SAME attempt must be able to
+        // coexist with the row that already wrote the death notice. This INSERT carries no
+        // `ON CONFLICT`, so a collision would not be a silent duplicate but the abort of the
+        // whole ACK transaction.
         `${late === undefined ? 'agent-response' : 'agent-response-late'}:${row.id}:${attempt}`,
         requestId,
         responseMessageId,
@@ -346,14 +346,14 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     errorCode: string | undefined
   ): Promise<FailureNoticeReservation | undefined> {
     if (!policy.failureCoalesceEnabled || policy.failureCoalesceWindowSeconds < 1) return undefined;
-    // Sin raíz declarada por el store, la vuelta del padre sigue siendo un agrupador válido: es
-    // el turno concreto que abrió estas ramas. Nunca se deja de coalescer por falta de raíz.
+    // Without a root declared by the store, the parent's return is still a valid grouper: it is
+    // the concrete turn that opened those branches. Coalescing is never skipped for lack of root.
     const root = this.relationshipRoot(relationship) ?? relationship.source_message_id;
     if (!uuidPattern.test(root)) return undefined;
     const signature = failureSignature(outcome, error, errorCode);
 
-    // Reintento del MISMO ACK: la clave (entrega, intento) del libro mayor ya está tomada, así
-    // que este fracaso ya se contó. No se vuelve a mover ningún contador ni se emite de nuevo.
+    // Retry of the SAME ACK: the (delivery, attempt) key of the ledger is already taken, so this
+    // failure was already counted. No counter is moved again and nothing is re-emitted.
     const claimed = await client.query(
       `INSERT INTO agent_failure_notice_events(
          ack_delivery_id,ack_attempt,child_delivery_id,child_tenant,child_alias,outcome,error,error_code
@@ -398,17 +398,17 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     const windowStartedAt = bucket.window_started_at instanceof Date
       ? bucket.window_started_at.toISOString()
       : String(bucket.window_started_at);
-    // Plegar contra un aviso que no existe sería silencio, no coalescencia: si por lo que fuera
-    // el cubo no tiene un mensaje anterior al que apuntar, este fracaso viaja.
+    // Folding against a notice that does not exist would be silence, not coalescing: if for any
+    // reason the bucket has no earlier message to point at, this failure travels.
     const emit = bucket.last_failure_emitted === true || bucket.last_notice_message_id === null;
     return {
       noticeId: bucket.id,
       emit,
       totalFailures: bucket.total_failures,
-      // Cuántos fracasos de este cubo NUNCA viajaron con entrega propia. Vale tanto al emitir
-      // (los que quedaron mudos en la ventana que se acaba de cerrar) como al plegar (esos más
-      // el de ahora), porque es una resta contra las entregas realmente producidas y no un
-      // contador aparte que pudiera desincronizarse.
+      // How many failures from this bucket NEVER traveled with their own delivery. Holds both on
+      // emit (those left silent in the window that just closed) and on fold (those plus the
+      // current one), because it is a subtraction against the deliveries actually produced and
+      // not a separate counter that could drift.
       coalescedFailures: Math.max(0, bucket.total_failures - bucket.notices_emitted),
       windowStartedAt,
       lastNoticeMessageId: bucket.last_notice_message_id,
@@ -449,8 +449,8 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
         row.recipient_tenant,
         row.recipient_alias,
         row.request_id,
-        // El mensaje del aviso agregado que cubre este fracaso: es lo que hace que el resumen de
-        // fan-in muestre el texto agregado para esta rama en vez de una celda vacía.
+        // The aggregated notice message covering this failure: it is what makes the fan-in
+        // summary show the aggregated text for this branch instead of an empty cell.
         reservation.lastNoticeMessageId,
         row.id,
         row.trace_id,

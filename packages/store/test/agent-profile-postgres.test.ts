@@ -4,17 +4,17 @@ import { AgentProfileRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 /**
- * Validación de perfiles de agente en PostgreSQL:
+ * Validation of agent profiles in PostgreSQL:
  *
- * Garantiza consistencia en unidades de medición de longitud de cadenas
- * entre la base de datos y la normalización en TypeScript (`normalizeAgentProfile`).
+ * Guarantees consistency in string-length measurement units between the database and the
+ * TypeScript normalization (`normalizeAgentProfile`).
  */
 
 let database: TestDatabase;
 let pool: DatabasePool;
 let repository: AgentProfileRepository;
 
-/** Un emoji fuera del BMP: 1 punto de código para `char_length`, 2 unidades para `String.length`. */
+/** An emoji outside the BMP: 1 code point for `char_length`, 2 units for `String.length`. */
 const ASTRAL = '\u{1F389}';
 const ACTOR = { tenant_id: 'Steven', alias: 'kant' } as const;
 
@@ -45,19 +45,19 @@ afterAll(async () => {
   if (database?.container) await database.container.stop();
 });
 
-describe('la migración 026 está aplicada de verdad', () => {
+describe('migration 026 is actually applied', () => {
   it('creó la tabla, la clave primaria y la clave foránea a agents', async () => {
     const columns = await pool.query<{ column_name: string; is_nullable: string }>(
       `SELECT column_name,is_nullable FROM information_schema.columns
        WHERE table_name='agent_profiles' ORDER BY ordinal_position`
     );
     /*
-     * La lista es ORDENADA y EXACTA a propósito: una columna que se añada sin tocar el compilador
-     * es un campo editable sin lector, que es el defecto que toda esta tabla vino a cerrar.
+     * The list is ORDERED and EXACT on purpose: a column added without touching the compiler is
+     * an editable field without a reader — exactly the defect this whole table exists to close.
      *
-     * `human_brief` va en la posición 7 —entre `restrictions` y `tools`— porque ahí la puso la
-     * 026: el orden de las columnas cuenta el orden de LECTURA del fichero (quién sos, qué te
-     * toca, con quién tratás, con qué contás), y `USER.md` de openclaw se lee después del rol.
+     * `human_brief` sits at position 7 —between `restrictions` and `tools`— because that is where
+     * 026 placed it: the column order reflects the READ order of the file (who you are, what you
+     * handle, who you deal with, what you have), and openclaw's `USER.md` is read after the role.
      */
     expect(columns.rows.map((row) => row.column_name)).toEqual([
       'tenant_id', 'alias', 'purpose', 'role_summary', 'responsibilities',
@@ -79,7 +79,7 @@ describe('la migración 026 está aplicada de verdad', () => {
   });
 });
 
-describe('cauce_utf16_units: la base cuenta lo MISMO que String.length de Node', () => {
+describe('cauce_utf16_units: the database counts the SAME as Node\'s String.length', () => {
   it.each([
     'abc', 'ñañ', ASTRAL, `a${ASTRAL}b`, ASTRAL.repeat(37), 'sin nada raro', '👨‍👩‍👧‍👦'
   ])('coincide sobre %j', async (texto) => {
@@ -91,7 +91,7 @@ describe('cauce_utf16_units: la base cuenta lo MISMO que String.length de Node',
   });
 
   /**
-   * CONTROL NEGATIVO de la unidad: `char_length` no coincide con `cauce_utf16_units` fuera del BMP.
+   * NEGATIVE CONTROL on the unit: `char_length` does not match `cauce_utf16_units` outside the BMP.
    */
   it('control negativo: char_length y cauce_utf16_units DIFIEREN fuera del BMP', async () => {
     const texto = ASTRAL.repeat(10);
@@ -105,7 +105,7 @@ describe('cauce_utf16_units: la base cuenta lo MISMO que String.length de Node',
   });
 });
 
-describe('los CHECK de la base rechazan lo mismo que la guarda de TypeScript', () => {
+describe('the database CHECKs reject the same things as the TypeScript guard', () => {
   async function insertRaw(column: string, value: unknown): Promise<void> {
     await pool.query(
       `INSERT INTO agent_profiles(tenant_id,alias,${column}) VALUES ('Steven','zeus',$1)`,
@@ -118,8 +118,8 @@ describe('los CHECK de la base rechazan lo mismo que la guarda de TypeScript', (
       .rejects.toMatchObject({ constraint: 'agent_profiles_purpose_len' });
   });
 
-  /** CONTROL NEGATIVO: exactamente en el tope, la base lo acepta. */
-  it('control negativo: un propósito EXACTAMENTE en el tope entra', async () => {
+  /** NEGATIVE CONTROL: exactly at the cap, the database accepts it. */
+  it('negative control: a purpose EXACTLY at the cap is accepted', async () => {
     await insertRaw('purpose', 'a'.repeat(AGENT_PROFILE_LIMITS.purpose));
     const stored = await pool.query<{ purpose: string }>(
       `SELECT purpose FROM agent_profiles WHERE alias='zeus'`
@@ -128,8 +128,8 @@ describe('los CHECK de la base rechazan lo mismo que la guarda de TypeScript', (
   });
 
   /**
-   * EL CASO QUE DEJÓ SORDO A UN ALIAS, ahora del lado correcto: un texto de 2.000 PUNTOS DE
-   * CÓDIGO en emojis mide 4.000 unidades UTF-16. Un CHECK escrito con `char_length` lo aceptaría.
+   * THE CASE THAT LEFT AN ALIAS DEAF, now from the right side: a 2,000 CODE-POINT emoji string
+   * measures 4,000 UTF-16 units. A CHECK written with `char_length` would accept it.
    */
   it('rechaza un propósito que cabe en puntos de código pero NO en unidades UTF-16', async () => {
     const texto = ASTRAL.repeat(AGENT_PROFILE_LIMITS.purpose);
@@ -145,8 +145,8 @@ describe('los CHECK de la base rechazan lo mismo que la guarda de TypeScript', (
       .rejects.toMatchObject({ constraint: 'agent_profiles_tools_items' });
   });
 
-  /** CONTROL NEGATIVO del tope por elemento. */
-  it('control negativo: un elemento EXACTAMENTE en el tope entra', async () => {
+  /** NEGATIVE CONTROL on the per-item cap. */
+  it('negative control: an item EXACTLY at the cap is accepted', async () => {
     await insertRaw('tools', ['a'.repeat(AGENT_PROFILE_LIMITS.item)]);
     const stored = await pool.query<{ tools: string[] }>(
       `SELECT tools FROM agent_profiles WHERE alias='zeus'`
@@ -165,8 +165,8 @@ describe('los CHECK de la base rechazan lo mismo que la guarda de TypeScript', (
       .rejects.toMatchObject({ constraint: 'agent_profiles_tools_count' });
   });
 
-  /** CONTROL NEGATIVO de la cardinalidad. */
-  it('control negativo: EXACTAMENTE el número de elementos admitido entra', async () => {
+  /** NEGATIVE CONTROL on cardinality. */
+  it('negative control: EXACTLY the allowed number of items is accepted', async () => {
     const justos = Array.from({ length: AGENT_PROFILE_LIMITS.items }, (_, i) => `t${i}`);
     await insertRaw('tools', justos);
     const stored = await pool.query<{ tools: string[] }>(
@@ -184,8 +184,8 @@ describe('los CHECK de la base rechazan lo mismo que la guarda de TypeScript', (
     )).rejects.toMatchObject({ constraint: 'agent_profiles_budget' });
   });
 
-  /** CONTROL NEGATIVO del presupuesto total: justo en el presupuesto entra. */
-  it('control negativo: un perfil EXACTAMENTE en el presupuesto total entra', async () => {
+  /** NEGATIVE CONTROL on the total budget: exactly at the budget it is accepted. */
+  it('negative control: a profile EXACTLY at the total budget is accepted', async () => {
     const cuantos = AGENT_PROFILE_LIMITS.total / AGENT_PROFILE_LIMITS.item;
     const relleno = Array.from({ length: cuantos }, () => 'a'.repeat(AGENT_PROFILE_LIMITS.item));
     await insertRaw('responsibilities', relleno);
@@ -418,13 +418,13 @@ describe('AgentProfileRepository', () => {
 });
 
 /**
- * LOS HECHOS DERIVADOS: permisos, cuotas, arnés y destinos.
+ * THE DERIVED FACTS: permissions, quotas, harness, and destinations.
  *
- * No se guardan en `agent_profiles` a propósito, así que la única forma de comprobarlos es contra
- * las tablas de verdad. Lo que estas pruebas fijan es que se leen FRESCOS: revocar un permiso en
- * `role_policies` tiene que cambiar el fichero que se genere después, sin tocar el perfil.
+ * They are intentionally NOT stored in `agent_profiles`, so the only way to verify them is
+ * against the real tables. What these tests pin down is that they are read FRESH: revoking a
+ * permission in `role_policies` must change the generated file, without touching the profile.
  */
-describe('hechos derivados del alias', () => {
+describe('derived facts of the alias', () => {
   async function darSala(alias: string, role: string, room = 'grp.steven'): Promise<void> {
     await pool.query(
       `INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
@@ -439,10 +439,10 @@ describe('hechos derivados del alias', () => {
   });
 
   /*
-   * Se crea un rol PROPIO en vez de usar `operator`. No es ceremonia: `role_policies` es una tabla
-   * de catálogo que `resetTestDatabase()` NO trunca, así que sus valores son los que haya dejado la
-   * última suite que los tocara — medido: la 003 siembra `operator(route,read,control)` y en la base
-   * compartida llega con los tres en falso. Una prueba que dependa de eso mide el residuo de otra.
+   * A DEDICATED role is created instead of using `operator`. Not ceremony: `role_policies` is a
+   * catalog table that `resetTestDatabase()` does NOT truncate — measured: migration 003 seeds
+   * `operator(route,read,control)` and the shared DB arrives with all three false. Relying on
+   * that measures another's residue.
    */
   it('los permisos son la UNIÓN de todas las salas del alias, no la de una', async () => {
     await pool.query(
@@ -461,7 +461,7 @@ describe('hechos derivados del alias', () => {
     expect(hechos.permisos.control).toBe(true);
   });
 
-  /** CONTROL NEGATIVO: una membresía DESHABILITADA no puede conceder nada. */
+  /** NEGATIVE CONTROL: a DISABLED membership cannot grant anything. */
   it('control negativo: una membresía deshabilitada no concede permiso', async () => {
     await darSala('zeus', 'agent');
     await pool.query(`UPDATE memberships SET enabled=false WHERE alias='zeus'`);
@@ -486,9 +486,9 @@ describe('hechos derivados del alias', () => {
   });
 
   it('notificar exige rol Y destino aprobado: con rol pero sin destino es NO', async () => {
-    // `agent_notify` NO lo siembra ninguna migración: la 009 sólo lo NOMBRA en un comentario, como
-    // el rol que un operador crearía. En la base compartida existía porque lo dejó otra suite, y
-    // dar eso por supuesto es medir el residuo ajeno — en una base limpia la FK lo rechaza.
+    // `agent_notify` is NOT seeded by any migration: 009 only NAMES it in a comment, as the role an
+    // operator would create. In the shared database it existed because another suite left it —
+    // assuming that is measuring someone else's residue; in a clean DB the FK rejects it.
     await pool.query(
       `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
        VALUES ('perfil_notify',true,true,false,true)
@@ -506,7 +506,7 @@ describe('hechos derivados del alias', () => {
     expect(conDestino.hechos.permisos.notificacion).toBe(true);
   });
 
-  /** CONTROL NEGATIVO simétrico: con destino pero sin el permiso del rol, tambien es NO. */
+  /** Symmetric NEGATIVE CONTROL: with a destination but no `allow_notify` on the role, also NO. */
   it('control negativo: con destino pero sin allow_notify en el rol, es NO', async () => {
     await darSala('zeus', 'agent');
     await pool.query(
@@ -540,10 +540,10 @@ describe('hechos derivados del alias', () => {
   });
 
   /**
-   * CONTROL NEGATIVO Y EL QUE MÁS IMPORTA: el perfil se escribe en un fichero DENTRO del
-   * contenedor y se le enseña al modelo. Un localizador de credencial que entre acá termina en el
-   * contexto de un LLM y en los transcripts. Que no esté no se afirma leyendo el código: se mide
-   * sobre el objeto entero, serializado.
+   * NEGATIVE CONTROL — and the most important one: the profile is written to a file INSIDE the
+   * container and shown to the model. Any credential locator that leaks here ends up in the LLM
+   * context and in transcripts. Its absence is not asserted by reading the code: it is measured
+   * against the whole object, serialized.
    */
   it('control negativo: NINGÚN localizador de credencial sale en los hechos', async () => {
     await darSala('zeus', 'agent');
@@ -608,11 +608,11 @@ describe('hechos derivados del alias', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del acoplamiento entre ruta y destinos, que descubrió esta prueba: sin permiso
-   * de ruta la lista TIENE que venir vacía. La consulta de ACL responde «quién es alcanzable» sin
-   * mirar si el que pregunta puede rutear, así que un alias sin permiso veía la flota entera. Un
-   * agente al que se le enseñan doce destinos que no puede usar, los intenta — y gasta el turno en
-   * una entrega que la base rechaza.
+   * NEGATIVE CONTROL on the coupling between routing and destinations, which this test uncovered:
+   * without routing permission the list MUST come back empty. The ACL query answers "who is
+   * reachable" without checking whether the asker is allowed to route, so an alias without that
+   * permission used to see the whole fleet. An agent that is shown twelve destinations it cannot
+   * use will try them — and burn the turn on a delivery the database rejects.
    */
   it('control negativo: sin permiso de ruta la lista de destinos viene vacía', async () => {
     await pool.query(

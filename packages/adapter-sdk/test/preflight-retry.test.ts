@@ -20,15 +20,15 @@ import {
 } from "../src/harnesses/shared.js";
 
 /**
- * R1 y R2 de la política de reintentos.
+ * R1 and R2 of the retry policy.
  *
- * Lo que estos tests defienden NO es «reintentar más». Es la distinción entre «no hizo nada» y
- * «no sabemos si hizo algo», y por eso la mitad de los casos de acá afirman que una entrega
- * AMBIGUA sigue sin reintentarse. Un test que sólo comprobara los reintentos nuevos dejaría
- * pasar la regresión que de verdad importa: duplicar un trabajo que ya tuvo efectos.
+ * What these tests defend is NOT "retry more". It is the distinction between "did nothing"
+ * and "we do not know if it did anything", which is why half the cases here assert that an
+ * AMBIGUOUS delivery is still not retried. A test that only checked the new retries would
+ * let through the regression that really matters: duplicating work that already had effects.
  *
- * Los fallos de «pre-vuelo» (sin salida estructurada y sin efectos) se clasifican con
- * `retryable=true` sólo cuando se puede garantizar que el proceso no comenzó su ejecución.
+ * "Pre-flight" failures (no structured output and no effects) are classified with
+ * `retryable=true` only when it can be guaranteed the process did not begin its execution.
  */
 
 const stateRoot = resolve(".test-state");
@@ -76,8 +76,8 @@ async function ejecutar(
 /* ------------------------------------------------------------------ R1 ---- */
 
 test("R1: el testigo del transporte prueba que el turno nunca empezó y la entrega se reintenta", async () => {
-  // codex declara `stdout-first-byte`: su modo `--json` escribe su primer evento de hilo antes
-  // de cualquier llamada al modelo. Cero bytes = el CLI se rindió arrancando.
+  // codex declares `stdout-first-byte`: its `--json` mode writes its first thread event before
+  // any model call. Zero bytes = the CLI gave up starting.
   const error = await ejecutar(
     HARNESS_DEFINITIONS.codex,
     fixedRunner({ stdout: "", stderr: "", harnessStarted: false }),
@@ -88,8 +88,8 @@ test("R1: el testigo del transporte prueba que el turno nunca empezó y la entre
 });
 
 test("R1: un diagnóstico de arranque del CLI basta aunque el transporte no atestigüe", async () => {
-  // claude no tiene testigo declarado (`--print --output-format json` sólo escribe al final),
-  // pero el propio CLI dice que se rindió antes de abrir el turno.
+  // claude has no declared witness (`--print --output-format json` only writes at the end), but
+  // the CLI itself says it gave up before opening the turn.
   const error = await ejecutar(
     HARNESS_DEFINITIONS.claude,
     fixedRunner({ stdout: "", stderr: "Error: Session ID 7f3a is already in use.\n" }),
@@ -100,9 +100,9 @@ test("R1: un diagnóstico de arranque del CLI basta aunque el transporte no ates
 });
 
 test("R1 NO reintenta una entrega que alcanzó a producir efectos: hubo salida por stdout", async () => {
-  // El caso que la regla no puede romper. El harness escribió por el canal del turno —aunque
-  // `parse` no lo entienda— así que hubo turno: pudo llamar al modelo, escribir archivos o
-  // mandar un correo. Reintentarlo duplicaría esos efectos.
+  // The case the rule cannot break. The harness wrote over the turn channel —even if `parse`
+  // does not understand it— so there was a turn: it could have called the model, written files,
+  // or sent an email. Retrying would duplicate those effects.
   const error = await ejecutar(
     HARNESS_DEFINITIONS.codex,
     fixedRunner({
@@ -117,8 +117,8 @@ test("R1 NO reintenta una entrega que alcanzó a producir efectos: hubo salida p
 });
 
 test("R1 NO reintenta un derrumbe a mitad de turno sin salida ni diagnóstico de arranque", async () => {
-  // stdout vacío, salida por su propio pie, pero el stderr no dice «no pude arrancar»: dice que
-  // se cayó. Indistinguible de un turno que trabajó veinte minutos y murió antes de imprimir.
+  // Empty stdout, exit on its own, but stderr does not say "I could not start": it says it
+  // crashed. Indistinguishable from a turn that worked for twenty minutes and died before print.
   const error = await ejecutar(
     HARNESS_DEFINITIONS.claude,
     fixedRunner({
@@ -166,8 +166,8 @@ test("el diagnóstico de arranque es una lista blanca: lo que no coincide sigue 
     "FATAL ERROR: JavaScript heap out of memory",
     "thread 'main' panicked at src/main.rs:42",
     "Killed",
-    // Fuera de la lista A PROPÓSITO: un proveedor se agota a mitad de turno con este mismo
-    // texto, después de que el agente ya tuvo efectos. Cuesta 26 entregas medidas y las paga.
+    // Outside the whitelist ON PURPOSE: a provider runs out mid-turn with this same text, after
+    // the agent has already had effects. It costs 26 measured deliveries and it pays them.
     "hermes -z: agent failed: Codex provider quota exhausted",
     "hermes -z: agent failed: No usable credentials found for provider codex",
     "",
@@ -180,9 +180,9 @@ test("el diagnóstico de arranque es una lista blanca: lo que no coincide sigue 
 /* ------------------------------------------------------------------ R2 ---- */
 
 /**
- * Aborta DURANTE la ejecución, que es cuando ocurre de verdad: `engine.stop()` aborta todos los
- * controllers en vuelo. Abortar antes de llamar a `execute` no sirve para probar esto — el
- * adaptador corta en su propia guarda y el transporte nunca llega a opinar.
+ * Aborts DURING execution, which is when it really happens: `engine.stop()` aborts every
+ * in-flight controller. Aborting before calling `execute` is no good for testing this — the
+ * adapter cuts in its own guard and the transport never gets to weigh in.
  */
 function runnerQueAborta(
   controller: AbortController,
@@ -258,9 +258,9 @@ test("R2 NO se aplica a otras causas de cancelación: sólo el apagado es infrae
 /* -------------------------------------------------- testigo y transporte -- */
 
 test("el testigo declarado viaja hasta el transporte, y sólo el de este harness", async () => {
-  // El transporte se queda con la petición y falla: lo que se mide es lo que le LLEGA, no el
-  // resultado. Así cada harness se ejercita con su propio `parse` sin fabricar una salida
-  // distinta por cada formato.
+  // The transport keeps the request and fails: what is measured is what ARRIVES to it, not the
+  // result. So each harness is exercised with its own `parse` without fabricating a different
+  // output per format.
   const capturados: CommandRunRequest[] = [];
   const runner: CommandRunner = {
     run: async (request) => {
@@ -331,7 +331,7 @@ test("el runner de procesos atestigua el primer byte y avisa una sola vez", asyn
   });
   assert.equal(conMarca.harnessStarted, true);
 
-  // Sin testigo declarado el transporte no opina, y `undefined` nunca habilita el pre-vuelo.
+  // Without a declared witness the transport has no opinion, and `undefined` never enables pre-flight.
   const sinTestigo = await runner.run({
     command: process.execPath,
     args: ["-e", "process.exit(1)"],
@@ -345,10 +345,10 @@ test("el runner de procesos atestigua el primer byte y avisa una sola vez", asyn
 });
 
 test("un transporte que NO ve bytes nunca atestigua, aunque el harness declare testigo", async () => {
-  // El agujero que este test cierra: `codex` declara testigo, pero por sesión compartida el
-  // transporte cosecha un panel de tmux y no ve un solo byte del harness. Si el motor le
-  // creyera al harness y no al transporte, dejaría de sellar `execution_started_at` y un turno
-  // de media hora que pierde su ACK final se volvería a pagar entero.
+  // The gap this test closes: `codex` declares a witness, but under a shared session the
+  // transport harvests a tmux panel and never sees a single byte from the harness. If the
+  // engine trusted the harness over the transport, it would stop sealing `execution_started_at`
+  // and a half-hour turn that loses its final ACK would have to be paid for again.
   const cosechador: CommandRunner = {
     run: async () => ({
       stdout: "", stderr: "", exitCode: 1, signal: null, timedOut: false, cancelled: false,

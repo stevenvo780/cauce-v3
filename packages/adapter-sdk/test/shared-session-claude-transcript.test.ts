@@ -20,7 +20,7 @@ import {
 } from "./shared-session-fixtures.js";
 
 // ---------------------------------------------------------------------------
-// 1. El bus sigue produciendo el sobre, y lo hace a través de la TUI real.
+// 1. The bus keeps producing the envelope, and it does so through the real TUI.
 // ---------------------------------------------------------------------------
 
 test("el turno del bus produce el sobre completo cosechado del transcript", async () => {
@@ -36,7 +36,7 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
   tmux.onSubmit = async (text) => {
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, head, text, sessionId)}\n`);
-    // El modelo responde envuelto en vallado Markdown, como se midió en la TUI de verdad.
+    // The model replies wrapped in Markdown fencing, as measured on the real TUI.
     await appendFile(
       file,
       `${assistantEntry(randomUUID(), userUuid, "```json\n" + envelopeText("desde la TUI") + "\n```", sessionId)}\n`,
@@ -50,7 +50,7 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
   assert.equal(output.reply, "desde la TUI");
   assert.equal(output.status, "done");
   assert.deepEqual(output.messages, []);
-  // El sobre salió de la sesión compartida, no del camino de siempre.
+  // The envelope came out of the shared session, not the usual path.
   assert.equal(fallback.calls, 0);
   assert.equal(tmux.submittedCount, 1);
   for (const call of tmux.calls.filter((entry) =>
@@ -59,13 +59,13 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
     const target = call[call.indexOf("-t") + 1];
     assert.equal(target, "%0", `operación no exacta: ${call.join(" ")}`);
   }
-  // Y sin ningún aviso pegado: el turno sí pasó por la terminal.
+  // And no notice pasted: the turn did go through the terminal.
   assert.ok(!(output.reply ?? "").includes(DEGRADED_MARK));
   assert.deepEqual(await readDegradations(state), []);
 });
 
 // ---------------------------------------------------------------------------
-// 2. La TUI del dueño NO tiene que hablar el contrato del bus.
+// 2. The owner's TUI does NOT need to speak the bus contract.
 // ---------------------------------------------------------------------------
 
 test("los turnos en prosa del dueño conviven con el sobre del bus", async () => {
@@ -74,7 +74,7 @@ test("los turnos en prosa del dueño conviven con el sobre del bus", async () =>
   const sessionId = randomUUID();
   const file = join(directory, `${sessionId}.jsonl`);
 
-  // Conversación previa del dueño: preguntas y respuestas en prosa, sin una sola llave.
+  // Owner's prior conversation: questions and answers in prose, not a single brace.
   let head = randomUUID();
   await appendFile(file, `${userEntry(head, null, "que tal vas?", sessionId)}\n`);
   const proseAnswer = randomUUID();
@@ -93,14 +93,14 @@ test("los turnos en prosa del dueño conviven con el sobre del bus", async () =>
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
-  // La prosa del dueño no rompió nada y no se coló como resultado del bus.
+  // The owner's prose broke nothing and did not sneak in as a bus result.
   assert.equal(output.reply, "respuesta del bus");
   assert.equal(fallback.calls, 0);
 });
 
 // ---------------------------------------------------------------------------
-// 3. Los dos ven el MISMO contexto: una sola rama, y se verifica la descendencia.
-//    Esta es la prueba de regresión exacta de por qué la salida (a) quedó descartada.
+// 3. They both see the SAME context: a single branch, and descendancy is verified.
+//    This is the exact regression test for why output (a) was discarded.
 // ---------------------------------------------------------------------------
 
 test("no se cosecha una respuesta de una rama hermana", async () => {
@@ -114,12 +114,12 @@ test("no se cosecha una respuesta de una rama hermana", async () => {
   const tmux = new FakeTmux();
   const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {
-    // Rama HERMANA: cuelga del mismo padre que nuestro turno, exactamente como pasaba con
-    // `--print --resume` corriendo en paralelo a la TUI. No debe cosecharse jamás.
+    // SIBLING branch: hangs from the same parent as our turn, exactly as happened with
+    // `--print --resume` running in parallel to the TUI. It must never be harvested.
     const sibling = randomUUID();
     await appendFile(file, `${userEntry(sibling, shared, "otro pedido", sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), sibling, envelopeText("RAMA HERMANA"), sessionId)}\n`);
-    // Nuestra rama, colgando de la cabeza de la propia TUI.
+    // Our branch, hanging from the TUI's own head.
     const mine = randomUUID();
     await appendFile(file, `${userEntry(mine, shared, text, sessionId)}\n`);
     await appendFile(file, `${assistantEntry(randomUUID(), mine, envelopeText("MI RAMA"), sessionId)}\n`);
@@ -145,7 +145,7 @@ test("el turno del bus cuelga de la cabeza viva de la TUI, no de la raiz", async
   let injectedParent: string | undefined;
   const tmux = new FakeTmux();
   tmux.onSubmit = async (text) => {
-    // La TUI encadena desde su cabeza en memoria: eso es lo que da UNA sola rama.
+    // The TUI chains from its in-memory head: that is what gives ONE single branch.
     injectedParent = head;
     const userUuid = randomUUID();
     await appendFile(file, `${userEntry(userUuid, head, text, sessionId)}\n`);
@@ -161,7 +161,7 @@ test("el turno del bus cuelga de la cabeza viva de la TUI, no de la raiz", async
 });
 
 // ---------------------------------------------------------------------------
-// 4. Escrituras simultáneas: el bus NUNCA escribe encima del dueño.
+// 4. Simultaneous writes: the bus NEVER writes over the owner.
 // ---------------------------------------------------------------------------
 
 test("con la caja ocupada el bus espera y no pega nada", async () => {
@@ -177,9 +177,9 @@ test("con la caja ocupada el bus espera y no pega nada", async () => {
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
     if (args[0] === "capture-pane") {
       releases += 1;
-      // El dueño suelta la línea al tercer sondeo.
+      // The owner releases the line on the third poll.
       if (releases >= 3) tmux.paneContent = "❯ ";
-      // Antes de soltarla no se pudo haber pegado nada.
+      // Before releasing it, nothing could have been pasted.
       if (releases < 3) assert.equal(tmux.pasted, undefined);
     }
     return originalRun(args, stdin);
@@ -210,10 +210,10 @@ test("una caja que nunca se libera degrada con aviso y sin inyectar", async () =
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   const output = await execute(adapter);
 
-  // Nunca se tocó la caja del dueño.
+  // The owner's box was never touched.
   assert.equal(tmux.pasted, undefined);
   assert.equal(tmux.submittedCount, 0);
-  // Se respondió, pero DICIÉNDOLO.
+  // It did respond, but SAYING SO.
   assert.equal(fallback.calls, 1);
   assert.ok((output.reply ?? "").includes(DEGRADED_MARK));
   assert.ok((output.reply ?? "").includes("input_busy"));
@@ -221,7 +221,7 @@ test("una caja que nunca se libera degrada con aviso y sin inyectar", async () =
 });
 
 // ---------------------------------------------------------------------------
-// 5. El mecanismo caído SE AVISA. Es donde murió el intento anterior.
+// 5. The broken mechanism IS REPORTED. That is where the previous attempt died.
 // ---------------------------------------------------------------------------
 
 test("sin sesion compartida se responde igual pero el aviso viaja en el reply", async () => {
@@ -242,19 +242,19 @@ test("sin sesion compartida se responde igual pero el aviso viaja en el reply", 
   assert.ok(reply.includes("cauce kratos"), "tiene que decir como restablecerlo");
   assert.ok(reply.includes("respuesta clasica"), "la respuesta real no se pierde");
 
-  // Y queda registrado de forma durable, que es lo que `cauce <alias>` muestra al entrar.
+  // And it stays recorded durably, which is what `cauce <alias>` shows on entry.
   const records = await readDegradations(state);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.reason, "session_absent");
   assert.equal(records[0]?.alias, "kratos");
   assert.equal(records[0]?.fellBack, true);
 
-  // No existe un `$N` acreditado al cual avisar. Apuntar por nombre acá abriría una carrera:
-  // una sesión homónima creada después del preflight recibiría un aviso que no le pertenece.
-  // El aviso durable del reply/registro de arriba es la única superficie segura en este caso.
+  // There is no credited `$N` to notify. Pointing by name here would open a race: a homonymous
+  // session created after the preflight would receive a notice that does not belong to it.
+  // The durable notice in the reply/record above is the only safe surface in this case.
   assert.equal(tmux.used("display-message"), false);
   assert.equal(tmux.used("set-option"), false);
-  // Pero SIN renombrar la ventana. Ver la prueba de enclavamiento de más abajo.
+  // But WITHOUT renaming the window. See the locking test below.
   assert.equal(tmux.used("rename-window"), false);
 });
 
@@ -276,7 +276,7 @@ test("una TUI reiniciada avisa aunque el turno si pase por la terminal", async (
   const adapter = await adapterFor(runner, state, "kratos", "claude");
   await execute(adapter);
 
-  // claude se auto-actualiza y se relanza: el panel pasa a ser otro proceso.
+  // claude self-updates and relaunches: the panel becomes another process.
   tmux.panePid = "9999";
   const second = await execute(adapter, "segundo");
 

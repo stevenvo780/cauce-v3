@@ -191,10 +191,10 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
 
 
   /**
-   * Las capacidades son durables y descuentan garras vivas bajo lock; `maxClaims` sólo limita el lote.
-   * La clase humana nace de prioridad autenticada, nunca del body.
-   * `delivery_lane_fairness` acota rachas humanas y cede tras `humanBurst`.
-   * La cesión espera un reclamo, nunca la duración de otra tarea.
+   * Capacities are durable and deduct live claws under lock; `maxClaims` only limits the batch.
+   * The human class is born from authenticated priority, never from the body.
+   * `delivery_lane_fairness` caps human streaks and yields after `humanBurst`.
+   * The yield waits for a claim, never for another task's duration.
    */
   async claimDeliveries(
     tenantId: Tenant,
@@ -240,9 +240,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       const capabilities = lease.rows[0]?.capabilities;
       const includeRoutingTargets = Array.isArray(capabilities)
         && capabilities.includes('routing_targets_v1');
-      // Mismo criterio de compatibilidad que routing_targets: DeliveryEnvelopeSchema es .strict(),
-      // así que un adaptador de una imagen anterior rechazaría el sobre entero al ver un campo que
-      // no conoce y se quedaría sin consumir NINGUNA entrega. Sólo se manda a quien lo declaró.
+// Same compatibility criterion as routing_targets: DeliveryEnvelopeSchema is .strict(), so an
+// adapter from an older image would reject the whole envelope when seeing a field it does not
+// know and stop consuming ANY delivery. It is only sent to whoever declared it.
       const includeSelfRole = Array.isArray(capabilities)
         && capabilities.includes('agent_identity_v1');
       const includeProfileRuntimeContract = Array.isArray(capabilities)
@@ -256,8 +256,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         `SELECT interactive_streak FROM delivery_lane_fairness
          WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenantId, alias]
       );
-      // La columna durable cuenta rachas humanas; el lane se hereda en cada salto y no separa
-      // cadenas de agentes.
+// The durable column counts human streaks; the lane is inherited at every hop and does not
+// split agent chains.
       let humanStreak = fairness.rows[0]?.interactive_streak ?? 0;
       const claimedRows: DeliveryRow[] = [];
 
@@ -308,9 +308,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         throw new StoreError('conflict', 'delivery consumer capacity is invalid');
       }
 
-      // Una persona ocupa primero la reserva. Sólo el excedente humano consume capacidad
-      // general. La fila de fairness serializa este conteo con todo claim concurrente del alias,
-      // así que HTTP, WebSocket, reconexión y varios gateways comparten el mismo presupuesto.
+// A person occupies the reservation first. Only the human surplus consumes general capacity.
+// The fairness row serialises this count with every concurrent claim of the alias, so HTTP,
+// WebSocket, reconnections and multiple gateways share the same budget.
       const reservedInFlight = Math.min(humanInFlight, humanReservedCapacity);
       const generalInFlight = inFlight - reservedInFlight;
       const effectiveGeneralCapacity = generalCapacity === undefined
@@ -328,9 +328,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       );
 
       /**
-       * Reclama una entrega por prioridad trusted-at-ingress con SKIP LOCKED.
-       * El intento directo usa `deliveries_claim_idx` y evita sondeos `EXISTS` repetidos.
-       * Devuelve `undefined` si no queda una fila disponible de esa clase.
+       * Claims one delivery by trusted-at-ingress priority with SKIP LOCKED.
+       * The direct attempt uses `deliveries_claim_idx` and avoids repeated `EXISTS` probes.
+       * Returns `undefined` when no row of that class remains available.
        */
       const claimOne = async (humanOriginated: boolean): Promise<DeliveryRow | undefined> => {
         const claimed = await client.query<DeliveryRow>(
@@ -362,9 +362,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         const humanSlotFree = humanReservedRemaining > 0 || generalRemaining > 0;
         const agentSlotFree = generalRemaining > 0;
         if (!humanSlotFree && !agentSlotFree) break;
-        // Tras `humanBurst` victorias humanas se cede un turno al trabajo no humano.
+        // After `humanBurst` human wins, one turn is yielded to non-human work.
         const yieldTurn = humanSlotFree && agentSlotFree && humanStreak >= humanBurst;
-        // `true` es humano; las máquinas nunca ocupan la reserva.
+        // `true` is human; machines never occupy the reservation.
         const order: boolean[] = !agentSlotFree
           ? [true]
           : yieldTurn ? [false, true] : [true, false];
@@ -378,18 +378,18 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
             claimedHuman = humanOriginated;
             break;
           }
-          // Una cesión sin trabajo reinicia la racha para no repetir el intento vacío.
+          // A yield with no work resets the streak so the empty attempt is not repeated.
           if (!humanOriginated && yieldTurn) yieldedToNobody = true;
         }
-        // Sin fila de ninguna clase, la cola está vacía o bloqueada por otro worker.
+        // Without a row of either class, the queue is empty or locked by another worker.
         if (row === undefined) break;
 
         claimedRows.push(row);
         if (claimedHuman) {
           if (humanReservedRemaining > 0) humanReservedRemaining -= 1;
           else generalRemaining -= 1;
-          // El contador durable se satura en el umbral cuando ninguna máquina disputa el turno.
-          // Así no crece sin techo durante una ráfaga humana.
+// The durable counter saturates at the threshold when no machine contests the turn. So it
+// does not grow unbounded during a human burst.
           humanStreak = yieldedToNobody ? 1 : Math.min(humanBurst, humanStreak + 1);
         } else {
           generalRemaining -= 1;
@@ -403,8 +403,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       const routingTargets = includeRoutingTargets
         ? await this.routingTargets(client, tenantId, alias)
         : undefined;
-      // El rol pertenece al alias que reclama: una lectura transaccional sirve todo el lote
-      // e impide adjuntar el rol de otro alias.
+// The role belongs to the alias that claims it: a transactional read serves the whole batch
+// and prevents attaching another alias's role.
       const selfRole = includeSelfRole && claimedRows.length > 0
         ? await this.selfRoleFromProfile(client, tenantId, alias)
         : undefined;
@@ -451,11 +451,11 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
 
 
   /**
-   * Garras que aún ocupan la ventana de ACK de un alias.
-   * Se cuentan por `(tenant, alias)`, no por instancia o época: una garra anterior viva consume cupo.
-   * Así una reconexión no reinicia la capacidad durable.
-   * Es una foto sin locks; el reclamo real revalida bajo lock y evita contención con el reaper.
-   * El llamador sólo usa la foto para decidir cuánto pedir.
+   * Claws still occupying an alias's ACK window.
+   * Counted by `(tenant, alias)`, not by instance or epoch: a live older claw consumes budget.
+   * So a reconnection does not reset durable capacity.
+   * It is a snapshot without locks; the real claim re-validates under lock and avoids contention
+   * with the reaper. The caller only uses the snapshot to decide how much to ask for.
    */
   async liveDeliveryClaims(
     tenantId: Tenant,

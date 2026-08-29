@@ -17,11 +17,11 @@ export interface PathVerdict {
   readonly reason?: string;
 }
 /**
- * ÚNICA puerta que puede consultar el camino de escritura. Falla cerrada.
+ * The ONLY gate that may consult the write path. Fails closed.
  *
- * `resolved` es lo que el agente ve tras seguir los enlaces (`realpath`). Se exige porque un
- * `CLAUDE.md` que sea un symlink a `~/.claude/.credentials.json` pasaría cualquier comprobación
- * hecha sólo sobre el nombre pedido.
+ * `resolved` is what the agent sees after following links (`realpath`). It is required because a
+ * `CLAUDE.md` that is a symlink to `~/.claude/.credentials.json` would pass any check done on the
+ * requested name alone.
  */
 export function verifyWritablePath(
   facts: RuntimeFacts,
@@ -48,15 +48,15 @@ export function verifyWritablePath(
     }
   }
 
-  // Tras seguir los enlaces la ruta tiene que seguir siendo la misma. Un `realpath` distinto
-  // significa symlink, y un symlink es exactamente el vector que la lista negra no ve.
+  // After following links, the path must remain the same. A different `realpath` means symlink,
+  // and a symlink is exactly the vector the blacklist does not see.
   if (resolved !== requested) {
     return { allowed: false, reason: 'la ruta es un enlace; se escribe el fichero, no el enlace' };
   }
   return { allowed: true };
 }
 
-/** Puerta separada para el lote de perfil. No habilita settings/openclaw.json ni rutas del UI. */
+/** Separate gate for the profile batch. It does not unlock settings/openclaw.json or UI paths. */
 export function verifyWritableProfilePath(
   facts: RuntimeFacts,
   requested: string,
@@ -86,15 +86,15 @@ export function verifyWritableProfilePath(
 }
 
 /**
- * Límite máximo de tamaño permitido para lectura y escritura de documentos de gobierno (256 KB).
+ * Maximum size allowed for reading and writing governance documents (256 KB).
  */
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
 
 /**
- * Nombres que esta vía SÍ sirve. Es una lista blanca, no una negra: el modal de Directiva enseña
- * el manual del sitio y nada más. `settings.json` y `config.toml` salen en el inventario de
- * `resolveAgentDocuments` porque hay que poder verlos y editarlos, pero por el canal de LECTURA
- * del pty-agent no viajan — y el propio pty-agent los rechaza aunque el gateway los pida.
+ * Names this route DOES serve. It is a whitelist, not a blacklist: the Directive modal shows the
+ * site manual and nothing else. `settings.json` and `config.toml` appear in the inventory from
+ * `resolveAgentDocuments` because they must be viewable and editable, but they do NOT travel on
+ * the pty-agent READ channel — and the pty-agent itself rejects them even if the gateway asks.
  */
 export const READ_ALLOWED_BASENAMES: readonly string[] = [
   'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'AGENTS.override.md',
@@ -102,21 +102,21 @@ export const READ_ALLOWED_BASENAMES: readonly string[] = [
 const PROFILE_READ_BASENAMES: readonly string[] = [...FICHEROS_OPENCLAW, ...READ_ALLOWED_BASENAMES];
 
 /**
- * ÚNICA puerta del camino de LECTURA, hermana de `verifyWritablePath`. Falla cerrada.
+ * The ONLY gate on the READ path, sibling of `verifyWritablePath`. Fails closed.
  *
- * Repite a propósito comprobaciones que el pty-agent vuelve a hacer por su cuenta
- * (`_validate_read_path`). No es duplicación por descuido: son dos defensas independientes, y un
- * fallo en una sola no debe bastar para servir una credencial. Lo que el gateway NO puede hacer
- * desde aquí es seguir enlaces —el fichero vive en otra máquina, dentro de otro contenedor—, así
- * que el `realpath` lo comprueba el agente y sólo el agente.
+ * It deliberately repeats checks that the pty-agent performs on its own
+ * (`_validate_read_path`). This is not careless duplication: they are two independent defenses,
+ * and a single failure on either one must not be enough to serve a credential. What the gateway
+ * CANNOT do from here is follow links — the file lives in another machine, inside another
+ * container — so `realpath` is checked by the agent and only by the agent.
  */
 export function verifyReadablePath(facts: RuntimeFacts, requested: string): PathVerdict {
   if (!requested.startsWith('/')) return { allowed: false, reason: 'la ruta tiene que ser absoluta' };
   if (requested.includes('\0')) return { allowed: false, reason: 'la ruta lleva un byte nulo' };
   if (requested.length > 4096) return { allowed: false, reason: 'la ruta es demasiado larga' };
 
-  // Se exige forma canónica en vez de normalizar. Normalizar es justo donde aparecen las
-  // diferencias entre lo que valida el gateway y lo que abre el agente.
+  // Canonical form is required, not normalization. Normalization is exactly where the gap between
+  // what the gateway validates and what the agent opens appears.
   const segments = requested.split('/');
   if (segments.includes('..') || segments.includes('.') || segments.slice(1).includes('')) {
     return { allowed: false, reason: 'la ruta no está en forma canónica' };
@@ -141,8 +141,8 @@ export function verifyReadablePath(facts: RuntimeFacts, requested: string): Path
     };
   }
 
-  // El juego CERRADO manda: la ruta tiene que ser una de las que se derivan de hechos medidos.
-  // El navegador manda un alias, nunca una ruta, y esto lo vuelve a exigir aquí abajo.
+  // The CLOSED set rules: the path must be one of those derived from measured facts. The browser
+  // sends an alias, never a path, and this reasserts that here.
   if (!resolveAgentDocuments(facts).some((doc) => doc.path === requested)
       && !profilePath && !effectiveManual) {
     return { allowed: false, reason: 'la ruta no es la de ningún documento de ese alias' };
@@ -151,16 +151,16 @@ export function verifyReadablePath(facts: RuntimeFacts, requested: string): Path
 }
 
 /**
- * Decide si una fila del inventario tiene contenido servible por la ruta `:kind/content`.
+ * Decides whether an inventory row has content that can be served via the `:kind/content` route.
  *
- * `editable` no sirve para tomar esta decisión: los manuales de proyecto y los ficheros que
- * componen el perfil OpenClaw se pueden inspeccionar, pero sus escrituras pasan por otras reglas
- * (o por el lote canónico de Perfil). A la inversa, que una fila exista en el inventario tampoco
- * la vuelve legible: `settings.json`, `config.toml`, directorios y configuraciones con secretos se
- * enumeran para explicar dónde viven, pero nunca se abren desde el navegador.
+ * `editable` is not enough for this decision: project manuals and the files making up the OpenClaw
+ * profile can be inspected, but their writes go through other rules (or the canonical Profile
+ * batch). Conversely, the mere existence of a row in the inventory does not make it readable:
+ * `settings.json`, `config.toml`, directories and configs with secrets are listed to explain
+ * where they live, but they are never opened from the browser.
  *
- * La categoría sólo acota la intención. La autoridad final sigue siendo `verifyReadablePath`,
- * que exige una ruta absoluta y canónica dentro del juego cerrado derivado de hechos medidos.
+ * The category only narrows the intent. The final authority is still `verifyReadablePath`, which
+ * demands an absolute, canonical path inside the closed set derived from measured facts.
  */
 export function verifyReadableDocument(facts: RuntimeFacts, document: AgentDocument): PathVerdict {
   const profilePath = profileDocumentPaths(facts).includes(document.path);

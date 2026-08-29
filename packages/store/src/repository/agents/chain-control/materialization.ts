@@ -300,9 +300,9 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         code: AgentOutputRejectionCode,
         extra: { target?: string; cap?: number; question?: string; gateId?: string } = {}
       ): Promise<void> => {
-        // Recortado UNA vez, y el mismo valor va al texto y al campo: `reason` incrusta el
-        // destino, así que dejar el crudo en el texto y recortar sólo el campo movería el
-        // problema de largo de un lado al otro del mismo frame.
+        // Trimmed ONCE, and the same value goes both to the text and the field: `reason` embeds
+        // the destination, so leaving the raw value in the text and trimming only the field would
+        // move the length problem from one side of the same frame to the other.
         const boundedTarget = boundedRejectionTarget(targetAlias);
         const notice = describeDelegationRejection(code, {
           hopCount,
@@ -321,14 +321,14 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         );
       };
 
-      // La cadena está esperando a una persona: no sale nada hacia ningún agente.
+      // The chain is waiting on a human: nothing flows out to any agent.
       if (activeGate !== undefined) {
         await reject('chain_gated', { question: activeGate.question, gateId: activeGate.id });
         continue;
       }
-      // `@human` no es un alias: es una pregunta. Deja de ser una entrega imposible de completar
-      // y pasa a ser una fila con estado. Sólo cuando la primitiva existe y está encendida; si
-      // no, cae al camino de siempre y termina en 'unroutable_alias', como hoy.
+        // `@human` is not an alias: it is a question. It stops being a delivery that cannot
+        // complete and becomes a row with state. Only when the primitive exists and is enabled;
+        // otherwise it falls back to the old path and ends in 'unroutable_alias', as before.
       if (output === gateDirective && targetAlias === HUMAN_GATE_TARGET && body !== undefined
         && rootMessageId !== undefined) {
         const gate = await this.openHumanGate(client, row, ack, output.index, {
@@ -354,8 +354,8 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         await reject('unroutable_alias');
         continue;
       }
-      // Tope de ABANICO por nodo, no sólo de profundidad. Se cuenta sobre lo MATERIALIZADO, así
-      // que un turno cuyas salidas se rechazan por otra causa no gasta abanico.
+        // FAN-OUT cap per node, not only by depth. It counts over what was MATERIALIZED, so a
+        // turn whose outputs are rejected for another reason does not spend fan-out.
       if (!rejection && fanoutCap !== undefined && materialized >= fanoutCap) {
         await reject('fanout_exceeded', { cap: fanoutCap });
         continue;
@@ -410,13 +410,13 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         await reject('cycle_detected', { target: targetNode });
         continue;
       }
-      // Reserva de cupo. Va DESPUÉS de resolver el destino y ANTES de escribir nada: un rechazo
-      // por forma o por ruta no debe gastar combustible de la cadena.
+      // Quota reservation. It runs AFTER resolving the destination and BEFORE writing anything:
+      // a rejection for shape or route must not spend chain fuel.
       //
-      // El orden importa. Primero la raíz (una sola fila, el candado que ya toma el relay de
-      // progreso), después la arista. Si la arista no entra, el combustible de la raíz se
-      // DEVUELVE en la misma transacción: si no, un destino saturado iría drenando el
-      // presupuesto de toda la cadena sin producir una sola entrega.
+      // The order matters. The root first (a single row, the lock the progress relay already
+      // takes), then the edge. If the edge does not fit, the root fuel is RETURNED in the same
+      // transaction: otherwise a saturated destination would drain the whole chain's budget
+      // without producing a single delivery.
       if (policy.delegationCaps.enabled && policy.delegationCapsAvailable
         && rootMessageId !== undefined) {
         const rootReserved = await this.reserveRootDelegation(
@@ -546,7 +546,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     };
   }
 
-  /** El gate abierto de una raíz, si lo hay. `FOR SHARE` es el interlock contra `answerChainGate`. */
+  /** The open gate of a root, if any. `FOR SHARE` is the interlock against `answerChainGate`. */
   private async openChainGateFor(
     client: DatabaseClient,
     rootMessageId: string | undefined
@@ -560,18 +560,18 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     return gate.rows[0];
   }
 
-  /**
-   * Convierte una pregunta a una persona en una FILA, no en una entrega.
-   *
-   * Devuelve `undefined` cuando otra rama de la misma raíz ganó la carrera y ya dejó un gate
-   * abierto: el índice único parcial `agent_chain_gates_open_root_idx` es lo que garantiza que
-   * la pregunta salga UNA sola vez, y el `ON CONFLICT DO NOTHING` lo convierte en un no-op en
-   * vez de en una violación que abortaría la transacción del ACK.
-   *
-   * La pregunta se relaya al canal humano por `adapter_outbox` reusando la forma de acuse no
-   * terminal que el bridge ya implementa (misma que insertProgressRelay), así que no hay orden
-   * de despliegue entre store y bridge.
-   */
+    /**
+     * Turns a question to a human into a ROW, not a delivery.
+     *
+     * Returns `undefined` when another branch of the same root won the race and left an open
+     * gate: the partial unique index `agent_chain_gates_open_root_idx` is what guarantees the
+     * question goes out ONCE, and `ON CONFLICT DO NOTHING` makes it a no-op rather than a
+     * violation aborting the ACK transaction.
+     *
+     * The question is relayed to the human channel via `adapter_outbox` reusing the non-terminal
+     * ack shape the bridge already implements (same as insertProgressRelay), so there is no
+     * deployment ordering between store and bridge.
+     */
   private async openHumanGate(
     client: DatabaseClient,
     row: DeliveryRow,
@@ -594,8 +594,8 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     );
     const gateId = inserted.rows[0]?.id;
     if (gateId === undefined) {
-      // Perdió la carrera (otro gate abierto de la misma raíz) o es un ACK repetido del mismo
-      // output. En los dos casos el gate vigente es el que manda.
+      // Lost the race (another open gate from the same root) or it is a repeated ACK for the
+      // same output. In both cases the current gate is what rules.
       const current = await this.openChainGateFor(client, input.rootMessageId);
       return current;
     }
@@ -653,13 +653,13 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     return { id: gateId, question };
   }
 
-  /**
-   * Reserva una delegación del combustible de la raíz.
-   *
-   * La reserva ES el UPDATE condicional: si el `WHERE delegations < cap` no se cumple no vuelve
-   * ninguna fila y el contador NO avanza, así que un rechazo no consume presupuesto y dos ACK
-   * concurrentes de la misma cadena serializan sobre la fila en vez de pasarse de largo.
-   */
+    /**
+     * Reserves one delegation from the root's fuel.
+     *
+     * The reservation IS the conditional UPDATE: when `WHERE delegations < cap` does not hold
+     * no row comes back and the counter does NOT advance. A rejection does not consume budget,
+     * and two concurrent ACKs of the same chain serialize on the row instead of racing past.
+     */
   private async reserveRootDelegation(
     client: DatabaseClient,
     rootMessageId: string,
@@ -678,7 +678,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     return reserved.rowCount === 1;
   }
 
-  /** Devuelve el combustible tomado cuando el paso siguiente de la reserva no entró. */
+  /** Returns the fuel taken when the next step of the reservation did not fit. */
   private async releaseRootDelegation(
     client: DatabaseClient,
     rootMessageId: string
@@ -728,9 +728,9 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     notice?: RejectionNotice,
     target?: string,
   ): Promise<void> {
-    // El motivo legible entra en la correlación de la fila, no en una columna nueva: así el
-    // read-model de la cadena y cualquier lectura forense lo encuentran sin migración extra, y
-    // la fila sigue sin guardar el cuerpo (sólo su hash), que es la regla de esta tabla.
+    // The human-readable reason goes into the row's correlation, not a new column: that way
+    // the chain's read model and any forensic reader find it without an extra migration, and the
+    // row still does not store the body (only its hash), which is the rule of this table.
     const rejectionCorrelation = notice === undefined
       ? correlation
       : {

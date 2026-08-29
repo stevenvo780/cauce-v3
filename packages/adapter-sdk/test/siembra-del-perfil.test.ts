@@ -17,15 +17,15 @@ import {
 } from "../src/context/siembra-del-perfil.js";
 
 /**
- * LA PIEZA QUE TOCA EL DISCO DE VERDAD.
+ * THE PIECE THAT TOUCHES THE REAL DISK.
  *
- * Todo lo anterior componía texto. Esto lo escribe dentro del contenedor de un agente que está
- * trabajando, así que lo que se prueba aquí no es «sale el texto correcto» —eso ya está probado en
- * el protocolo— sino las tres cosas que hacen daño si se tuercen:
+ * Everything above composed text. This one writes inside the container of an agent that is
+ * working, so what is tested here is not "the right text comes out" — that is already proven in
+ * the protocol — but the three things that hurt when they go wrong:
  *
- *   · escribir cuando NO había que escribir (pisar a un compañero, o al que escribió una persona),
- *   · escribir en el sitio equivocado (el `$HOME` de otro, o el directorio de otro alias),
- *   · tumbar el saludo por no poder escribir, dejando a un alias sordo por un fichero.
+ *   · writing when there was no need (overwriting a teammate or a person's own writing),
+ *   · writing in the wrong place (someone else's `$HOME` or another alias's directory),
+ *   · breaking the greeting by being unable to write, leaving an alias deaf because of one file.
  */
 
 const HECHOS: HechosDelAlias = {
@@ -47,7 +47,7 @@ function contexto(parcial: Partial<AgentProfile> = {}, alias = "zeus"): Contexto
   };
 }
 
-/** Un disco de mentira que además CUENTA las escrituras: «no se escribió» es media prueba. */
+/** A fake disk that also COUNTS writes: "nothing was written" is half a test. */
 function disco(inicial: Record<string, string> = {}) {
   const ficheros = new Map(Object.entries(inicial));
   const escrituras: string[] = [];
@@ -65,13 +65,13 @@ function disco(inicial: Record<string, string> = {}) {
 
 const ENTORNO = { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "/home/dev/.claude-zeus" };
 
-// ── DÓNDE SE ESCRIBE ────────────────────────────────────────────────────────────────────────
+// ── WHERE WRITES GO ───────────────────────────────────────────────────────────────────────────
 
 test("CLAUDE_CONFIG_DIR gana sobre $HOME: es cómo dos alias del mismo contenedor se separan", () => {
   /*
-   * No es una preferencia: es el mecanismo. Una prueba mía se puso roja por leer mi `CLAUDE.md` de
-   * verdad justamente por no respetarlo, y en producción ignorarlo significaría que dos alias del
-   * mismo contenedor se escriben encima el perfil en cada conexión.
+   * This is not a preference: it is the mechanism. One of my tests turned red by reading my real
+   * `CLAUDE.md` precisely because it was not honored, and in production ignoring it would mean
+   * two aliases in the same container overwriting each other's profile on every connection.
    */
   assert.equal(directorioDelArnes("claude", ENTORNO), "/home/dev/.claude-zeus");
   assert.equal(directorioDelArnes("claude", { HOME: "/home/dev" }), "/home/dev/.claude");
@@ -81,10 +81,10 @@ test("codex mira CODEX_HOME, y openclaw NO adivina su espacio de trabajo", () =>
   assert.equal(directorioDelArnes("codex", { HOME: "/h", CODEX_HOME: "/otro" }), "/otro");
   assert.equal(directorioDelArnes("codex", { HOME: "/h" }), "/h/.codex");
   /*
-   * El espacio de trabajo de un openclaw NO es su `$HOME`. Sin `CAUCE_OPENCLAW_WORKSPACE` no se
-   * adivina: sembrar siete Markdown en el sitio equivocado es peor que no sembrar, porque el
-   * agente no los lee y en cambio quedan siete ficheros huérfanos que el siguiente que mire va a
-   * creer que son los buenos.
+   * An openclaw workspace is NOT its `$HOME`. Without `CAUCE_OPENCLAW_WORKSPACE` it is not
+   * guessed: seeding seven Markdown files in the wrong place is worse than not seeding, because
+   * the agent does not read them and instead seven orphan files are left that the next person
+   * will mistake for the real ones.
    */
   assert.equal(directorioDelArnes("openclaw", { HOME: "/h" }), undefined);
   assert.equal(directorioDelArnes("openclaw", { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" }), "/ws");
@@ -119,13 +119,13 @@ test("dos alias con HOME compartido y homes de arnés distintos no se contaminan
   assert.doesNotMatch(atlas, /soy kratos/u);
 });
 
-// ── EL INTERRUPTOR ──────────────────────────────────────────────────────────────────────────
+// ── THE SWITCH ───────────────────────────────────────────────────────────────────────────────
 
 test("APAGADO no escribe NADA, y lo dice", () => {
   /*
-   * Está apagado por defecto a propósito: esto escribe dentro del contenedor de quince agentes que
-   * están trabajando. Encenderlo es una decisión con fecha y con alguien mirando, no un efecto
-   * secundario de desplegar una versión.
+   * It is off by default on purpose: this writes inside the containers of fifteen agents that
+   * are working. Turning it on is a dated, watched decision, not a side effect of deploying a
+   * version.
    */
   const d = disco();
   const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "el médico" }), {
@@ -147,7 +147,7 @@ test("encendido, escribe el fichero del arnés en su sitio", () => {
   assert.ok(bloqueDePerfil(escrito) !== undefined, "no quedó un bloque legible");
 });
 
-// ── LO QUE NO SE PISA ───────────────────────────────────────────────────────────────────────
+// ── WHAT IS NOT OVERWRITTEN ──────────────────────────────────────────────────────────────────
 
 test("lo que escribió una persona se conserva BYTE A BYTE", () => {
   const manual = "# Manual de zeus\n\nEsto lo escribió una persona.\n";
@@ -176,9 +176,9 @@ test("un CLAUDE.md legacy con CRLF sigue por la siembra default-off", () => {
 
 test("segunda conexión con el mismo perfil: NO se reescribe el fichero", () => {
   /*
-   * Un alias se reconecta muchas veces al día. Si cada saludo reescribiera el fichero, quince
-   * contenedores estarían tocando el disco sin cambiar nada — y peor, cualquier vigía que mire
-   * `mtime` vería actividad constante donde no la hay.
+   * An alias reconnects many times a day. If every greeting rewrote the file, fifteen containers
+   * would be touching the disk without changing anything — and worse, any watcher looking at
+   * `mtime` would see constant activity where there is none.
    */
   const d = disco();
   const opciones = { habilitado: true, disco: d.puerto, entorno: ENTORNO };
@@ -280,9 +280,9 @@ test("un fichero OpenClaw vacío pero ausente también es drift revisionado", ()
 
 test("el bloque de OTRO alias no se pisa, y el parte lo dice con esas palabras", () => {
   /*
-   * `kratos` y `atlas` comparten `$HOME` y su `AGENTS.md` es el MISMO inodo (12.942 bytes en los
-   * dos, medido). Que el parte distinga «ya estaba» de «ocupado por otro alias» no es cosmética:
-   * son las dos únicas explicaciones de un alias sin perfil, y llevan a sitios opuestos.
+   * `kratos` and `atlas` share `$HOME` and their `AGENTS.md` is the SAME inode (12,942 bytes in
+   * both, measured). Having the report distinguish "already there" from "occupied by another
+   * alias" is not cosmetic — those are the only two explanations, leading to opposite places.
    */
   const d = disco();
   const opciones = { habilitado: true, disco: d.puerto, entorno: { HOME: "/h", CODEX_HOME: "/compartido" } };
@@ -317,12 +317,12 @@ test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera 
   }
 });
 
-// ── LO QUE NO PUEDE TUMBAR EL SALUDO ────────────────────────────────────────────────────────
+// ── WHAT MUST NOT BREAK THE GREETING ────────────────────────────────────────────────────────
 
 test("si el disco no deja escribir, lo dice y NO lanza", () => {
   /*
-   * Ésta es la propiedad de la que depende que un fichero no deje a un alias sordo. El llamador es
-   * el manejador del `hello_ack`: una excepción aquí corta el saludo y el agente no recibe NADA.
+   * This property is what stops one file from leaving an alias deaf: the caller is the
+   * `hello_ack` handler and an exception here cuts the greeting — the agent receives NOTHING.
    */
   const puerto: DiscoDelArnes = {
     leer: () => undefined,
@@ -476,8 +476,8 @@ test("el preflight del lote falla antes de modificar el primer destino", (t) => 
 
 test("un tope superado NO escribe NINGUNO de los siete", () => {
   /*
-   * Una persona a medias —cuatro ficheros al día y tres no— se contradice a sí misma, y el modelo
-   * no tiene forma de saber cuál creer. Es preferible no escribir nada y decirlo.
+   * A half-finished person — four files today and three not — contradicts itself, and the model
+   * has no way of knowing which to believe. Better to write nothing and say so.
    */
   const d = disco();
   const resultado = sembrarPerfilDelArnes("openclaw", contexto({ purpose: "x".repeat(60_001) }), {
@@ -507,12 +507,12 @@ test("un arnés soportado sin home absoluto falla distinto de uno sin ficheros",
   assert.match(resumenDeLaSiembra(resultado), /no tiene un directorio absoluto medido/u);
 });
 
-// ── EL PARTE ────────────────────────────────────────────────────────────────────────────────
+// ── THE REPORT ───────────────────────────────────────────────────────────────────────────────
 
 test("el resumen nunca lleva el CONTENIDO del fichero", () => {
   /*
-   * El parte va al registro, y el registro se lee, se copia y a veces se pega en un chat. El perfil
-   * de un alias puede nombrar a su humano y describir cómo tratarlo. Sólo nombres y estados.
+   * The report goes to the log, and the log is read, copied and sometimes pasted into a chat.
+   * An alias's profile may name its human and how to treat them — only names and statuses.
    */
   const d = disco();
   const resultado = sembrarPerfilDelArnes(
@@ -525,8 +525,8 @@ test("el resumen nunca lleva el CONTENIDO del fichero", () => {
 });
 
 test("el resumen distingue apagado de no-se-pudo", () => {
-  // Un silencio no distingue «el interruptor está apagado» de «no se pudo escribir», y son las dos
-  // respuestas a la misma pregunta: por qué este alias no tiene su perfil.
+  // Silence does not distinguish "the switch is off" from "could not write", and they are the two
+  // answers to the same question: why this alias does not have its profile.
   const d = disco();
   const apagado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
     habilitado: false, disco: d.puerto, entorno: ENTORNO,

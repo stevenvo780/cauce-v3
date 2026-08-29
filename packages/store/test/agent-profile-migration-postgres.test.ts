@@ -4,19 +4,19 @@ import { applyMigrations, type DatabasePool } from '../src/index.js';
 import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 /**
- * LA MIGRACIÓN 026, APLICADA DE VERDAD: arriba, abajo y arriba otra vez.
+ * MIGRATION 026, REALLY APPLIED: up, down and up again.
  *
- * Una migración leída no es una migración probada. Ésta se aplica contra un Postgres real, se
- * REVIERTE con su `down/`, y se vuelve a aplicar — que es lo único que demuestra que el `down/`
- * es reversa de algo y no un fichero que nadie corrió nunca.
+ * A migration that has been read has not been tested. This one is applied against a real
+ * Postgres, REVERTED with its `down/`, and applied again — which is the only thing that proves
+ * the `down/` is the reverse of something and not a file nobody ever ran.
  *
- * Además prueba la SIEMBRA, que no se puede ver de otra forma: `applyMigrations` corre las 23
- * migraciones de una sentada sobre una base vacía, así que cuando 026 se aplica por primera vez no
- * hay ningún `agents.role_brief` que copiar. El único modo de ver la siembra funcionando es bajar
- * 026, poner briefs, y volver a subirla. Eso es exactamente lo que pasará en producción, donde la
- * tabla `agents` lleva quince filas con su rol escrito.
+ * It also tests the SEED, which cannot be observed any other way: `applyMigrations` runs all 23
+ * migrations in one shot against an empty database, so when 026 is applied for the first time
+ * there is no `agents.role_brief` to copy. The only way to see the seeding work is to revert
+ * 026, set briefs, and re-apply it. That is exactly what will happen in production, where the
+ * `agents` table carries fifteen rows with their role written.
  *
- * NO USA `resetTestDatabase`: este fichero manipula el ESQUEMA, no las filas.
+ * DOES NOT USE `resetTestDatabase`: this file manipulates the SCHEMA, not the rows.
  */
 
 let database: TestDatabase;
@@ -75,8 +75,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  // Dejar el esquema ARRIBA pase lo que pase: los otros ficheros de la suite comparten esta base
-  // y encontrarla a medio migrar les rompería por un motivo que no es el suyo.
+    // Leave the schema UP no matter what: the other files in the suite share this database,
+    // and finding it half-migrated would break them for a reason that is not theirs.
   try {
     if (pool) await applyMigrations(pool);
   } finally {
@@ -123,7 +123,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
        VALUES ('Steven','argos','claude','argos',false,'  PMO: perseguir lo pendiente.  ')
        ON CONFLICT (tenant_id,alias) DO UPDATE SET role_brief=EXCLUDED.role_brief`
     );
-    // Un alias SIN role_brief no puede acabar con una fila de perfil vacía.
+    // An alias WITHOUT role_brief must not end up with an empty profile row.
     await pool.query(
       `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,role_brief)
        VALUES ('Steven','mudo','claude','mudo',false,NULL)
@@ -161,23 +161,23 @@ describe('026 arriba, abajo y arriba otra vez', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del ORDEN del `down/`, y la razón MEDIDA de que ese orden sea el correcto.
+   * NEGATIVE CONTROL on the ORDER of the `down/`, and the MEASURED reason that order is right.
    *
-   * La primera versión de este test daba por supuesto —y el comentario del `down/` lo afirmaba—
-   * que Postgres NO registra la dependencia entre un CHECK y la función que invoca, y que por eso
-   * bajar la función antes que la tabla la dejaría viva y envenenada. ES FALSO, y lo dijo esta
-   * prueba la primera vez que se corrió: PostgreSQL 16 SÍ registra esa dependencia en `pg_depend`
-   * y RECHAZA el `DROP FUNCTION` con `2BP01` (dependent_objects_still_exist), incluso con
-   * `IF EXISTS`, que sólo perdona que la función no exista y no que tenga dependientes.
+   * The first version of this test assumed —and the `down/` comment asserted— that Postgres does
+   * NOT record the dependency between a CHECK and the function it invokes, and that is why
+   * dropping the function before the table would leave it alive and poisoned. THAT IS FALSE, and
+   * this test proved it the first time it ran: PostgreSQL 16 DOES record that dependency in
+   * `pg_depend` and REJECTS the `DROP FUNCTION` with `2BP01` (dependent_objects_still_exist),
+   * even with `IF EXISTS`, which only forgives the function not existing, not having dependents.
    *
-   * O sea que el orden del `down/` no lo sostiene la disciplina de quien lo escribió: lo sostiene
-   * la base, que se niega. Lo que este test protege es que siga siendo así — si una versión futura
-   * dejara de registrar la dependencia, el `DROP` pasaría, este test se pondría rojo, y el orden
-   * del `down/` volvería a depender de que alguien se acuerde.
+   * So the `down/` order is not upheld by the discipline of its author: the database upholds it
+   * by refusing. What this test guards is that it stays that way — if a future version stopped
+   * recording the dependency, the `DROP` would pass, this test would turn red, and the `down/`
+   * order would depend again on someone remembering.
    */
   it('control negativo: la base RECHAZA soltar la función mientras la tabla la use', async () => {
     expect(await tableExists('agent_profiles')).toBe(true);
-    // El orden EQUIVOCADO, el que el down/ evita. La base no lo permite.
+    // The WRONG order, the one the down/ avoids. The database does not allow it.
     await expect(pool.query('DROP FUNCTION IF EXISTS cauce_utf16_units(text)'))
       .rejects.toMatchObject({ code: '2BP01' });
     await expect(pool.query('DROP FUNCTION IF EXISTS cauce_text_items_ok(text[], integer)'))
@@ -185,7 +185,7 @@ describe('026 arriba, abajo y arriba otra vez', () => {
     expect(await functionExists('cauce_utf16_units')).toBe(true);
     expect(await functionExists('cauce_text_items_ok')).toBe(true);
 
-    // Y el orden CORRECTO —el del down/— sí funciona, entero y en una sola pasada.
+    // And the CORRECT order —the down/'s one— does work, whole and in a single pass.
     await downProfileDependentsIfApplied();
     await runSql(downPath);
     expect(await tableExists('agent_profiles')).toBe(false);

@@ -25,10 +25,10 @@ import {
 } from "./shared-session-fixtures.js";
 
 // ---------------------------------------------------------------------------
-// Casos de prueba de compactación de conversación y límites de contexto.
+// Conversation compaction and context-limit test cases.
 // ---------------------------------------------------------------------------
 
-/** Una compactación real, con la forma exacta que escribe claude 2.1.220. */
+/** A real compaction, with the exact shape that claude 2.1.220 writes. */
 function boundaryEntry(
   uuid: string,
   logicalParentUuid: string,
@@ -51,12 +51,12 @@ function parseEntries(...lines: readonly string[]): readonly TranscriptEntry[] {
 }
 
 test("la cosecha atraviesa una compactación a mitad de turno", () => {
-  // El fallo medido: una compactación CORTA la cadena de padres —el `compact_boundary` trae
-  // `parentUuid: null` y la continuidad sólo vive en `logicalParentUuid`— y además REEMITE el
-  // segmento preservado con los MISMOS uuid recolgados del resumen (1.873 uuid repetidos en un
-  // transcript real de 13.976 entradas). Con cualquiera de las dos cosas sin tratar,
-  // `findFinalAssistant` devuelve `undefined`: el runner no cosecha nunca, agota una hora de
-  // presupuesto y entrega AMBIGUO. El agente contestó y el dueño ve una entrega muerta.
+  // The measured failure: a compaction BREAKS the parent chain —`compact_boundary` carries
+  // `parentUuid: null` and continuity lives only in `logicalParentUuid`— and it RE-EMITS the
+  // preserved segment with the SAME uuids recollated from the summary (1,873 uuids repeated in a
+  // real 13,976-entry transcript). With either untreated, `findFinalAssistant` returns
+  // `undefined`: the runner never harvests, burns an hour of budget, and delivers AMBIGUOUS.
+  // The agent answered and the owner sees a dead delivery.
   const inj = "11111111-1111-4111-8111-111111111111";
   const a1 = "22222222-2222-4222-8222-222222222222";
   const leaf = "33333333-3333-4333-8333-333333333333";
@@ -71,7 +71,7 @@ test("la cosecha atraviesa una compactación a mitad de turno", () => {
     userEntry(leaf, a1, "resultado de la herramienta", sid),
     boundaryEntry(boundary, leaf, "auto", 767_812, 12_269),
     userEntry(summary, boundary, "resumen de la conversación", sid),
-    // La copia REEMITIDA del segmento preservado: mismo uuid, otro padre.
+    // The RE-EMITTED copy of the preserved segment: same uuid, a different parent.
     userEntry(leaf, summary, "resultado de la herramienta", sid),
     assistantEntry(final, summary, envelopeText("tras compactar"), sid),
   );
@@ -80,7 +80,7 @@ test("la cosecha atraviesa una compactación a mitad de turno", () => {
   assert.notEqual(answer, undefined);
   assert.ok((answer?.text ?? "").includes("tras compactar"));
 
-  // Y las dos piezas por separado, para que se vea qué sostiene qué.
+  // And the two pieces separately, so it is clear what supports what.
   const byUuid = indexByUuid(entries);
   assert.equal(byUuid.get(leaf)?.parentUuid, a1, "el índice se queda con la PRIMERA aparición");
   assert.equal(descendsFrom(byUuid, entries[6]!, inj), true);
@@ -116,16 +116,16 @@ test("una compactación durante el turno se cosecha Y se avisa con sus cifras", 
   const output = await execute(adapter);
 
   const reply = output.reply ?? "";
-  // 1. La entrega NO se pierde.
+  // 1. The delivery is NOT lost.
   assert.ok(reply.includes("respondido tras compactar"));
   assert.equal(fallback.calls, 0, "compactar no es motivo para caer al camino viejo");
-  // 2. Y el remitente se entera de que la memoria ya no es la que cree, con las cifras del evento.
+  // 2. And the sender learns that memory is no longer what they think, with the event's figures.
   assert.ok(reply.includes(CONTEXT_MARK));
   assert.ok(reply.includes("context_compacted"));
   assert.ok(reply.includes("auto"));
   assert.ok(reply.includes("767812"), "las cifras las trae el propio evento");
   assert.ok(reply.includes("12269"));
-  // 3. Y el dueño también, en su panel, sin teñirlo de rojo (no es una caída).
+  // 3. And so does the owner, in their panel, without painting it red (this is not a crash).
   assert.ok(tmux.calls.some((call) =>
     call[0] === "display-message" && call.some((part) => part.includes("context_compacted"))));
   assert.equal(
@@ -139,10 +139,10 @@ test("una compactación durante el turno se cosecha Y se avisa con sus cifras", 
 });
 
 test("un /clear del dueño se dice en la respuesta en vez de mentir", async () => {
-  // Medido: `/clear` cierra el `.jsonl` y abre otro con sessionId nuevo, sin marcar el viejo y SIN
-  // reiniciar el proceso (`pane_pid` idéntico), así que el heurístico de PID no lo ve jamás. La
-  // cosecha seguía funcionando perfecta: el bus entregaba una respuesta impecable producida por un
-  // contexto vacío, con cero señal en ninguna superficie.
+  // Measured: `/clear` closes the `.jsonl` and opens another with a new sessionId, without
+  // marking the old one and WITHOUT restarting the process (identical `pane_pid`), so the PID
+  // heuristic never sees it. The harvest kept working perfectly: the bus delivered a flawless
+  // reply produced by an empty context, with zero signal on any surface.
   const { state, home, workspace } = await freshState("clear");
   const directory = transcriptDirectory(home, workspace);
   const primera = randomUUID();
@@ -163,7 +163,7 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
   const first = await execute(adapter);
   assert.ok(!(first.reply ?? "").includes(CONTEXT_MARK), "el primer turno no puede avisar de nada");
 
-  // El dueño teclea /clear: fichero nuevo, sessionId nuevo, MISMO proceso en el panel.
+  // The owner types /clear: new file, new sessionId, the SAME process in the panel.
   sessionId = segunda;
   const second = await execute(adapter, "segundo pedido");
 
@@ -179,8 +179,9 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
 });
 
 test("resucitar la sesión no puede parecer una sesión compartida de siempre", async () => {
-  // Medido: borrada la sesión entera, la entrega creó una TUI nueva, contestó en 75,9 s con
-  // `exitCode 0` y CERO avisos. `ensure` ya devolvía `created:true` y el runner lo descartaba.
+  // Measured: with the whole session deleted, the delivery created a new TUI, answered in 75.9 s
+  // with `exitCode 0` and ZERO warnings. `ensure` already returned `created:true` and the runner
+  // dropped it.
   const { state, home, workspace } = await freshState("resurreccion");
   const directory = transcriptDirectory(home, workspace);
   const sessionId = randomUUID();
@@ -211,7 +212,7 @@ test("resucitar la sesión no puede parecer una sesión compartida de siempre", 
 test("un diálogo abierto no se confunde con una línea a medio escribir", async () => {
   const { state, home, workspace } = await freshState("modal");
   const tmux = new FakeTmux();
-  // El diálogo real de confianza de carpeta, tal como lo dibuja claude 2.1.220.
+  // The real folder-trust dialog, exactly as claude 2.1.220 renders it.
   tmux.paneContent = "Quick safety check\n❯ 1. Yes, I trust this folder";
   const fallback = new RecordingFallback(JSON.stringify({ result: envelopeText("por el camino viejo") }));
 
@@ -228,11 +229,10 @@ test("un diálogo abierto no se confunde con una línea a medio escribir", async
 });
 
 test("una degradación NO deja la sesión enclavada para siempre", async () => {
-  // El defecto más grave que encontró el diagnóstico 2, verificado de punta a punta: al degradar,
-  // la versión anterior renombraba la ventana a `⚠ CAUCE-DEGRADADO`; `tuiTarget()` la busca por
-  // nombre, así que a partir de ahí TODAS las entregas degradaban `tui_absent` en 0,2 s, para
-  // siempre, con la TUI viva y sana delante, y diciéndole al dueño la mentira «la sesión existe
-  // pero no tiene panel de TUI».
+  // The worst defect diagnosed finding #2, verified end to end: on degrading, the previous build
+  // renamed the window to `⚠ CAUCE-DEGRADADO`; `tuiTarget()` looks it up by name, so from then
+  // on EVERY delivery degraded `tui_absent` in 0.2 s, forever, with the healthy TUI right in
+  // front, telling the owner the lie "the session exists but has no TUI panel".
   const { state, home, workspace } = await freshState("enclavada");
   const directory = transcriptDirectory(home, workspace);
   const sessionId = randomUUID();
@@ -253,7 +253,7 @@ test("una degradación NO deja la sesión enclavada para siempre", async () => {
   assert.ok((degraded.reply ?? "").includes(DEGRADED_MARK));
   assert.deepEqual(tmux.windows, ["agente"], "la ventana conserva su identidad");
 
-  // El dueño suelta la caja: el turno siguiente tiene que volver a la terminal.
+  // The owner releases the box: the next turn has to come back to the terminal.
   tmux.paneContent = "❯ ";
   const recovered = await execute(adapter, "segundo");
   assert.ok((recovered.reply ?? "").includes("de vuelta en la terminal"));
@@ -267,7 +267,7 @@ test("una sesión ya enclavada por el build viejo se repara sola", async () => {
   const file = join(directory, `${sessionId}.jsonl`);
 
   const tmux = new FakeTmux();
-  // Como quedan hoy las sesiones que ya degradaron con la versión que renombraba.
+  // What the sessions that already degraded with the renaming version look like today.
   tmux.windows = ["⚠ CAUCE-DEGRADADO"];
   const fallback = new RecordingFallback("{}");
   tmux.onSubmit = async (text) => {

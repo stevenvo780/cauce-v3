@@ -10,12 +10,12 @@ import { hashPassword } from './password.js';
 import { LoginThrottle, PasswordAuthProvider } from './password-auth.js';
 
 /**
- * Todo lo que se afirma acá se afirma sobre el EFECTO: la cabecera `Set-Cookie` real, el código
- * de estado real y el cuerpo real de la respuesta. Nada se da por bueno porque el tipo compile.
+ * Everything asserted here is asserted on the EFFECT: the real `Set-Cookie` header, the real
+ * status code and the real response body. Nothing is taken as good just because the type compiles.
  */
 
-// scrypt con el costo de producción tarda ~100 ms por verificación; en los tests el parámetro
-// viaja dentro del hash, así que bajarlo NO cambia el código que se está probando.
+// scrypt at production cost takes ~100 ms per verification; in tests the parameter travels
+// inside the hash, so lowering it does NOT change the code being tested.
 const TEST_SCRYPT = { cost: 1_024, blockSize: 8, parallelism: 1 };
 const PASSWORD = 'una-frase-de-paso-larga';
 
@@ -91,7 +91,7 @@ async function makeUser(overrides: Partial<ConsoleUser> = {}): Promise<ConsoleUs
   };
 }
 
-/** Doble del mTLS de los agentes: no mira cookies, devuelve siempre el mismo principal. */
+/** Double of the agents' mTLS: it ignores cookies and always returns the same principal. */
 class StubAgentProvider implements AuthProvider {
   readonly name = 'stub-mtls';
   readonly mode = 'production' as const;
@@ -114,9 +114,9 @@ class StubAgentProvider implements AuthProvider {
 }
 
 /**
- * Doble del certificado de cliente del PROXY de la consola, tal como está provisionado en
- * producción: `Steven:kant`, `channel: console`, rol `operator`. nginx lo presenta en TODO lo que
- * proxea, así que sin la puerta del canal un navegador sin sesión entra como operador.
+ * Double of the console PROXY client certificate, as provisioned in production: `Steven:kant`,
+ * `channel: console`, `operator` role. nginx presents it on EVERYTHING it proxies, so without
+ * the channel gate a browser without a session enters as operator.
  */
 class StubConsoleProxyProvider implements AuthProvider {
   readonly name = 'stub-console-proxy';
@@ -321,7 +321,7 @@ describe('login por contraseña de la consola', () => {
       expect(rawCookie).toContain('SameSite=Strict');
       expect(rawCookie).toContain('Path=/');
       const cookie = cookieFrom(login.headers);
-      // El token va SÓLO en la cookie: si apareciera en el cuerpo, un XSS se lo llevaría.
+      // The token goes ONLY in the cookie: if it appeared in the body, an XSS would carry it away.
       expect(JSON.stringify(login.json())).not.toContain(cookie.split('=')[1]!.slice(0, 24));
       expect(login.json()).toMatchObject({
         authenticated: true, login_mode: 'password', subject: 'steven@elenxos.com', name: 'Steven'
@@ -364,8 +364,8 @@ describe('login por contraseña de la consola', () => {
         expect(response.statusCode).toBe(401);
         expect(response.headers['set-cookie']).toBeUndefined();
       }
-      // La igualdad literal es la garantía: si mañana alguien agrega "usuario no encontrado",
-      // este test se cae. El mensaje no puede ser un directorio de quién tiene cuenta.
+      // Literal equality is the guarantee: if someone tomorrow adds "user not found", this test
+      // breaks. The message cannot be a directory of who has an account.
       expect(unknownEmail.body).toBe(wrongPassword.body);
       expect(disabled.body).toBe(wrongPassword.body);
       expect(wrongPassword.json()).toEqual({
@@ -402,7 +402,7 @@ describe('login por contraseña de la consola', () => {
       test.users.put(await makeUser({ active: false }));
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(401);
 
-      // Y la otra mitad: cuenta viva, pero contraseña cambiada DESPUÉS de emitir el token.
+      // And the other half: active account, but password changed AFTER issuing the token.
       test.users.put(await makeUser({ password_changed_at: Date.UTC(2026, 7, 6, 13, 0, 0) }));
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(401);
     } finally {
@@ -441,12 +441,12 @@ describe('login por contraseña de la consola', () => {
       expect(api.statusCode).toBe(200);
       expect(fallback.calls).toBeGreaterThan(0);
 
-      // Un POST de agente NO puede quedar atrapado por el guardia CSRF de la consola: llega a
-      // enrutarse (404 de ruta inexistente), no muere en 401/403 antes de tocar el router.
+      // An agent POST must NOT be trapped by the console's CSRF guard: it reaches routing
+      // (404 for unknown route), not dying in 401/403 before touching the router.
       const write = await test.app.inject({ method: 'POST', url: '/v3/inexistente' });
       expect(write.statusCode).toBe(404);
 
-      // Y con cookie de consola, el mismo POST sí pasa por el guardia.
+      // And with a console cookie, the same POST does pass through the guard.
       const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
       const guarded = await test.app.inject({
         method: 'POST', url: '/v3/inexistente', headers: { cookie, origin: 'http://localhost' }
@@ -458,29 +458,29 @@ describe('login por contraseña de la consola', () => {
   });
 
   it('el certificado del PROXY de la consola no reemplaza a una sesión: sin cookie, 401', async () => {
-    // Las rutas de consola exigen sesión de usuario autenticada con cookie,
-    // rechazando accesos anónimos aunque provengan del proxy TLS.
+    // Console routes require an authenticated user session with a cookie,
+    // rejecting anonymous accesses even when they come from the TLS proxy.
     const fallback = new StubConsoleProxyProvider();
     const test = await fixture({ fallback });
     try {
       const anonymous = await test.app.inject({ method: 'GET', url: '/v3/status' });
       expect(anonymous.statusCode).toBe(401);
-      // Se consultó al fallback: la puerta está DESPUÉS de resolver la identidad de máquina.
+      // The fallback was consulted: the gate sits AFTER resolving the machine identity.
       expect(fallback.calls).toBeGreaterThan(0);
 
-      // Y en toda la superficie de consola, no sólo en la portada. `/v3/console/activity` es el
-      // endpoint con el que se midió el agujero.
+      // And across the whole console surface, not only on the front page. `/v3/console/activity`
+      // is the endpoint where the hole was measured.
       for (const url of ['/v3/console/activity', '/v3/console/audit', '/v3/console/queues']) {
         const leak = await test.app.inject({ method: 'GET', url });
         expect(leak.statusCode, url).toBe(401);
       }
 
-      // Y la pantalla de login sigue siendo alcanzable, o no habría forma de entrar.
+      // And the login screen must remain reachable, otherwise there is no way to log in.
       const session = await test.app.inject({ method: 'GET', url: '/v3/auth/session' });
       expect(session.statusCode).toBe(200);
       expect(session.json()).toMatchObject({ authenticated: false, login_mode: 'password' });
 
-      // Con sesión, el mismo endpoint contesta.
+      // With a session, the same endpoint answers.
       const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
       const authenticated = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
       expect(authenticated.statusCode).toBe(200);
@@ -490,16 +490,16 @@ describe('login por contraseña de la consola', () => {
   });
 
   it('el mismo certificado del proxy SÍ entra al bus: la puerta es la ruta, no el canal', async () => {
-    // La autenticación por sesión aplica a las rutas de consola, no a las operaciones del bus.
+    // Session-based auth applies to console routes, not to bus operations.
     const fallback = new StubConsoleProxyProvider();
     const test = await fixture({ fallback });
     try {
-      // La superficie de bus no muere en la autenticación: el request LLEGA al router. Un 404 de
-      // ruta inexistente prueba que pasó la puerta; un 401 probaría que no.
+      // The bus surface does not die at authentication: the request REACHES the router. A 404
+      // for an unknown route proves it passed the gate; a 401 would prove it did not.
       const bus = await test.app.inject({ method: 'POST', url: '/v3/inexistente' });
       expect(bus.statusCode).toBe(404);
 
-      // Y el principal que sale del fallback es el de máquina, con su `control` intacto.
+      // And the principal coming out of the fallback is the machine one, with its `control` intact.
       const machine = await test.provider.authenticateHttp({
         url: '/v3/messages', headers: {}
       } as unknown as FastifyRequest);
@@ -507,7 +507,7 @@ describe('login por contraseña de la consola', () => {
       expect(machine.permissions).toContain('control');
       expect(machine.permissions).toContain('route');
 
-      // La otra mitad, en el mismo test y con el MISMO principal: la consola sigue cerrada.
+      // The other half, in the same test and with the SAME principal: the console stays closed.
       await expect(test.provider.authenticateHttp({
         url: '/v3/console/activity', headers: {}
       } as unknown as FastifyRequest)).rejects.toThrow(AuthError);
@@ -517,9 +517,9 @@ describe('login por contraseña de la consola', () => {
   });
 
   it('cerrar la puerta de la consola NO cierra la de los agentes: el adaptador sigue entrando', async () => {
-    // La otra mitad del arreglo, y la que importa no romper: el mismo request sin cookie, con un
-    // principal de canal `adapter`, tiene que seguir pasando. Si esto se rompe, la flota se queda
-    // muda (los adaptadores y el recolector de cuotas entran por su propio certificado).
+    // The other half of the fix, and the one we must not break: the same request without a
+    // cookie, with an `adapter` channel principal, must keep passing. If this breaks, the fleet
+    // goes mute (adapters and the quota collector enter with their own certificate).
     const fallback = new StubAgentProvider();
     const test = await fixture({ fallback });
     try {
