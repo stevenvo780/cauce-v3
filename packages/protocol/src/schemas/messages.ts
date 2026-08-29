@@ -155,12 +155,6 @@ export function isSystemGateProbeBody(body: unknown): body is SystemGateProbeBod
   return SystemGateProbeBodySchema.safeParse(body).success;
 }
 
-/** Types that must never consume the admission quota reserved for human messages. */
-export const NON_HUMAN_DELIVERY_MESSAGE_TYPES = [
-  ...AGENT_TO_AGENT_MESSAGE_TYPES,
-  SYSTEM_GATE_PROBE_MESSAGE_TYPE,
-] as const;
-
 /** Reserved internal message types that clients cannot publish directly. */
 export const RESERVED_INTERNAL_MESSAGE_TYPES = [
   ...AGENT_TO_AGENT_MESSAGE_TYPES,
@@ -222,6 +216,16 @@ export const EgressHandleSchema = z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/);
 export const MAX_NOTIFY_BODY_BYTES = 4_096;
 
 /**
+ * The cap is BYTES and the store measures bytes. As a plain `.max()` the schema counted UTF-16
+ * units instead, so an accented body between the two counts passed the wire and died later against
+ * `body_too_large`: one limit rejecting at a different size on each layer.
+ */
+const NotifyBodySchema = z.string().min(1).refine(
+  (body) => Buffer.byteLength(body, 'utf8') <= MAX_NOTIFY_BODY_BYTES,
+  { message: `notify body must not exceed ${String(MAX_NOTIFY_BODY_BYTES)} bytes` },
+);
+
+/**
  * Public proactive-egress payload. Like AuthenticatedPublishSchema it deliberately
  * has no actor, tenant, session, channel, origin or conversation_id: the only
  * destination a caller can express is a handle that is already on the allowlist.
@@ -229,7 +233,7 @@ export const MAX_NOTIFY_BODY_BYTES = 4_096;
 export const NotifyRequestSchema = z.object({
   destination: EgressHandleSchema,
   kind: NotifyKindSchema,
-  body: z.string().min(1).max(MAX_NOTIFY_BODY_BYTES),
+  body: NotifyBodySchema,
   idempotency_key: z.string().min(1).max(200),
   dry_run: z.boolean().default(false)
 }).strict();
