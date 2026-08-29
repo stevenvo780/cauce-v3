@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { statusOf } from './auth-session';
 import type { ConsoleAuthState } from '../../api/types';
 
-const autenticado: ConsoleAuthState = { authenticated: true } as ConsoleAuthState;
-const noAutenticado: ConsoleAuthState = { authenticated: false } as ConsoleAuthState;
-const nulo: ConsoleAuthState = { authenticated: null } as ConsoleAuthState;
+const autenticado: ConsoleAuthState = { authenticated: true };
+const noAutenticado: ConsoleAuthState = { authenticated: false };
+const nulo: ConsoleAuthState = { authenticated: null };
 const error = new Error('gateway 500');
 
 describe('statusOf', () => {

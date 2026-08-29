@@ -187,7 +187,6 @@ function subscribe(callback: () => void): () => void {
 /** Rail (78px, icons only) or full bar (248px, with labels). */
 type SidebarState = 'rail' | 'expanded';
 
-const SIDEBAR_PREFERENCE_KEY = 'cauce.console.sidebar';
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
 const NAV_ID = 'nav-principal';
 /** Breakpoints from `responsive.css`: the viewport forces the rail, and below that the bar moves below. */
@@ -195,18 +194,6 @@ const RAIL_VIEWPORT = '(max-width: 1100px)';
 const BOTTOM_BAR_VIEWPORT = '(max-width: 760px)';
 const CONSOLE_TITLE = 'Cauce V3 Console';
 const NOT_FOUND_TITLE = 'Ruta no encontrada';
-
-function readSidebarPreference(): SidebarState {
-  try {
-    return window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'rail' ? 'rail' : 'expanded';
-  } catch { return 'expanded'; }
-}
-
-function writeSidebarPreference(state: SidebarState): void {
-  try {
-    window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, state);
-  } catch { /* almacenamiento denegado: la elección dura lo que la pestaña */ }
-}
 
 function useMediaQuery(query: string): boolean {
   const subscribeToQuery = useCallback((onChange: () => void) => {
@@ -228,7 +215,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const route = routes.find((candidate) => candidate.id === routeId);
   const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
-  const [preference, setPreference] = useState<SidebarState>(readSidebarPreference);
+  const [preference, setPreference] = useState<SidebarState>('expanded');
   const mainRef = useRef<HTMLElement>(null);
   const routeMounted = useRef(false);
   // With the bottom bar there is no rail; between 761 and 1100 the viewport decides and the choice has no say.
@@ -236,10 +223,8 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const collapsible = !narrowViewport;
 
   const toggleSidebar = useCallback(() => {
-    const next: SidebarState = preference === 'rail' ? 'expanded' : 'rail';
-    setPreference(next);
-    writeSidebarPreference(next);
-  }, [preference]);
+    setPreference((prev) => (prev === 'rail' ? 'expanded' : 'rail'));
+  }, []);
 
   useEffect(() => {
     if (!collapsible) return;

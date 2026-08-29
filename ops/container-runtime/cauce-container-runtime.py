@@ -387,6 +387,19 @@ def signal_pidfd(pid_fd: int, process_signal: signal.Signals) -> None:
         signal.pidfd_send_signal(pid_fd, process_signal)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        try:
+            with open(f"/proc/self/fdinfo/{pid_fd}", "r", encoding="utf-8") as s:
+                tpid = next((int(w[1]) for line in s if (w := line.split()) and w[0] == "Pid:"), 0)
+            if tpid > 1 and (fpid := os.fork()) == 0:
+                uid = os.stat(f"/proc/{tpid}").st_uid
+                os.setresuid(uid, uid, uid)
+                signal.pidfd_send_signal(pid_fd, process_signal)
+                os._exit(0)
+            elif tpid > 1:
+                os.waitpid(fpid, 0)
+        except Exception:
+            pass
 
 
 def pidfd_matches_starttime(pid: int, pid_fd: int, starttime: int) -> bool:
@@ -401,36 +414,28 @@ def pidfd_matches_starttime(pid: int, pid_fd: int, starttime: int) -> bool:
 def group_members(pgid: int) -> list[int]:
     members: list[int] = []
     for name in os.listdir("/proc"):
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        try:
-            if proc_stat(pid)["pgid"] == pgid:
-                members.append(pid)
-        except (ProcessLookupError, PermissionError, ValueError):
-            continue
+        if name.isdigit():
+            try:
+                if proc_stat(int(name))["pgid"] == pgid:
+                    members.append(int(name))
+            except (ProcessLookupError, PermissionError, ValueError):
+                pass
     return sorted(members)
 
 
 def descendants(root_pid: int) -> list[int]:
     parent_to_children: dict[int, list[int]] = {}
     for name in os.listdir("/proc"):
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        try:
-            parent = int(proc_stat(pid)["ppid"])
-        except (ProcessLookupError, PermissionError, ValueError):
-            continue
-        parent_to_children.setdefault(parent, []).append(pid)
-    found: list[int] = []
-    pending = list(parent_to_children.get(root_pid, []))
+        if name.isdigit():
+            try:
+                parent_to_children.setdefault(int(proc_stat(int(name))["ppid"]), []).append(int(name))
+            except (ProcessLookupError, PermissionError, ValueError):
+                pass
+    found, pending = [], list(parent_to_children.get(root_pid, []))
     while pending:
-        pid = pending.pop()
-        if pid in found:
-            continue
-        found.append(pid)
-        pending.extend(parent_to_children.get(pid, []))
+        if (pid := pending.pop()) not in found:
+            found.append(pid)
+            pending.extend(parent_to_children.get(pid, []))
     return sorted(found)
 
 
@@ -444,35 +449,28 @@ def selected_environment(pid: int) -> dict[str, str]:
     selected: dict[str, str] = {}
     wanted = set(IDENTITY_ENV_KEYS)
     for item in raw.split(b"\0"):
-        if b"=" not in item:
-            continue
-        key, value = item.split(b"=", 1)
-        decoded_key = key.decode("utf-8", "strict")
-        if decoded_key in wanted:
-            selected[decoded_key] = value.decode("utf-8", "strict")
+        if b"=" in item:
+            k, v = item.split(b"=", 1)
+            dk = k.decode("utf-8", "strict")
+            if dk in wanted:
+                selected[dk] = v.decode("utf-8", "strict")
     return selected
 
 
 def alias_generation_pids(alias: str, generation: str, state_directory: str, *, exclude: set[int] | None = None) -> list[int]:
     # Environment is forgeable by any same-UID process. Matches are therefore used
     # only to detect ambiguous/untracked processes and force exit 78; they are never
-    # signal targets. Scoping by state keeps distinct alias instances separate.
-    skip = set(exclude or ())
+    # trusted to establish a positive identity or authorize execution.
+    skip = exclude or set()
     matches: list[int] = []
     for name in os.listdir("/proc"):
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        if pid <= 1 or pid in skip:
-            continue
-        try:
-            environment = selected_environment(pid)
-        except (ProcessLookupError, PermissionError, UnicodeDecodeError, OSError):
-            continue
-        if environment.get("CAUCE_ALIAS") == alias \
-                and environment.get("CAUCE_CONTAINER_GENERATION") == generation \
-                and environment.get("CAUCE_STATE_DIR") == state_directory:
-            matches.append(pid)
+        if name.isdigit() and (pid := int(name)) > 1 and pid not in skip:
+            try:
+                env = selected_environment(pid)
+                if env.get("CAUCE_ALIAS") == alias and env.get("CAUCE_CONTAINER_GENERATION") == generation and env.get("CAUCE_STATE_DIR") == state_directory:
+                    matches.append(pid)
+            except (ProcessLookupError, PermissionError, UnicodeDecodeError, OSError):
+                pass
     return sorted(matches)
 
 
