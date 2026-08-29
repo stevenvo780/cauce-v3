@@ -63,8 +63,8 @@ function AdapterInspector({ adapters, access, capability }: ControlPlaneProps) {
 }
 
 /**
- * Modal of the whole shell: `inert` on `.app-shell` is what actually switches the background
- * off for the pointer, the tab key and the screen reader alike. Same shape as
+ * Modal covering the whole shell: `inert` on `.app-shell` is what actually switches the
+ * background off for the pointer, the tab key and the screen reader alike. Same shape as
  * `features/config/CollectionTable.tsx`, on purpose — one dialog behaviour in the console.
  */
 function ControlPlaneDialog({ onCerrar, ...contenido }: ControlPlaneProps & { onCerrar: () => void }) {
@@ -93,7 +93,7 @@ function ControlPlaneDialog({ onCerrar, ...contenido }: ControlPlaneProps & { on
       className="terminal-inspector-fondo"
       onMouseDown={(evento) => {
         if (evento.target !== evento.currentTarget) return;
-        // Without this, the backdrop takes the focus on mouse-up and it is not returned to the control.
+        // Without this, the backdrop takes focus on mouse-up and it is not returned to the control.
         evento.preventDefault();
         onCerrar();
       }}

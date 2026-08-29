@@ -122,7 +122,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const liveSession = { ...session, agent: currentAgent };
   const grant = grants[liveSession.id] as TerminalSessionGrant | undefined;
   const ptyChannelLive = liveSession.mode === 'pty' && grant !== undefined && !closedChannels[liveSession.id];
-  /** El terminal está a la vista y pintando: lo accesorio deja de robarle alto. */
+  /** The terminal is on screen and painting: secondary pieces stop stealing its height. */
   const mostrandoTui = ptyChannelLive;
 
   const channelSessionId = grant ? grant.session_id : undefined;
@@ -181,7 +181,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const requestChannelRef = useRef(requestChannel);
   requestChannelRef.current = requestChannel;
 
-  /** Apertura automática de TUI viva al seleccionar el panel si está disponible. */
+  /** Automatic opening of the live TUI when the panel is selected and it is available. */
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;

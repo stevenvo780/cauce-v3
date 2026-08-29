@@ -36,7 +36,7 @@ it('requests replay from the API and reports the accepted action', async () => {
  * intent: how many rows remain, which is highlighted, and what is read when the requested
  * delivery is not in the snapshot.
  */
-describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
+describe('/queues?delivery= — the deep link landing', () => {
   const tresEntregas = {
     observed_at: '2026-08-22T12:00:00.000Z', pending: 1, retrying: 1, dead: 1,
     items: [
