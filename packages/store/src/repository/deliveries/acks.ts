@@ -138,8 +138,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           receipt: 'ownership_lost',
         };
       }
-      // A live claim's foreign identity falls through to the correlated ownership_lost below;
-      // only a dead claim fences (P0 re-applied: the ES→EN wave overwrote it once, 29-08).
+      // Live-claim foreign identity → correlated ownership_lost below; only a dead claim fences.
       if (row.claim_token === ack.claim_token && row.attempt === ack.attempt && !row.claim_live &&
           (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
         throw new StoreError('fenced', 'ACK identity does not own this delivery claim');

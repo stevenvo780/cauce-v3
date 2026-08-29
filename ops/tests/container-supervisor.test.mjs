@@ -85,12 +85,18 @@ function bundleDigestFor(pathname) {
 
 async function writeConfig(alias, extra = [], overrides = {}, omit = []) {
   const values = {
-    BUNDLE_RELEASE: "release-1", BUNDLE_SHA256: bundleDigest, PKI_DIR: `${pkiRoot}/${alias}`,
-    RELAY_URL: "wss://gateway.example.invalid/v3/ws", EXPECTED_IMAGE_ID: imageId,
-    EXPECTED_LABEL_KEY: labelKey, EXPECTED_LABEL_VALUE: labelValue,
-    MOUNT_TYPE: "bind", MOUNT_SOURCE: aliasMount[alias],
-    MOUNT_NAME: "cauce-state", MOUNT_DESTINATION: aliasState[alias], MOUNT_RW: "1",
-    DEFAULT_TIMEOUT_MS: "120000", CAUCE_SEMBRAR_PERFIL: "0",
+    BUNDLE_RELEASE: "release-1",
+    BUNDLE_SHA256: bundleDigest,
+    PKI_DIR: `${pkiRoot}/${alias}`,
+    RELAY_URL: "wss://gateway.example.invalid/v3/ws",
+    EXPECTED_IMAGE_ID: imageId,
+    EXPECTED_LABEL_KEY: labelKey,
+    EXPECTED_LABEL_VALUE: labelValue,
+    MOUNT_TYPE: "bind",
+    MOUNT_SOURCE: `${mountSourceRoot}/${alias}`,
+    MOUNT_DESTINATION: aliasMount[alias],
+    MOUNT_RW: "true",
+    CAUCE_SEMBRAR_PERFIL: "1",
     ...(alias === "kant" || alias === "atlas" || alias === "kratos" ? { CONFIG_POR_ALIAS: "1" } : {}),
     ...(alias === "zeus" || alias === "kratos" ? { EXPECTED_CLI_VERSION: "2.1.220" } : {}),
     ...(alias === "argos" ? { OPENCLAW_WORKSPACE: "/home/dev/clawd" } : {}),
@@ -652,6 +658,16 @@ try {
     argv[0] === "exec" && argv.includes("bash") && argv.some((value) => value.includes("required_ver=\"2.1.220\"")));
   assert(claudeVersionProbe, "Claude version probe must use the alias-specific exact pin");
   process.stdout.write("claude version: alias-specific exact pin required and probed\n");
+
+  // claude/codex sin aislar exportan su CONFIG_DIR por defecto para que la medición de runtime_facts
+  // (y la escritura de perfil desde la consola) los vea. zeus es claude sin aislar: default $HOME/.claude.
+  await clearLog();
+  result = runSupervisor("start", "zeus", await dockerState("zeus"));
+  assert.equal(result.status, 0, result.stderr);
+  const zeusFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=zeus"));
+  assert(zeusFinal?.argv.includes("CLAUDE_CONFIG_DIR=/home/dev/.claude"),
+    "claude sin aislar exporta su CLAUDE_CONFIG_DIR por defecto para que runtime_facts lo mida");
+  process.stdout.write("claude/codex sin aislar: CONFIG_DIR por defecto exportado para runtime_facts\n");
 
   // OpenClaw's mandatory persistent path is its workspace, not a CLI-version pin; a plain
   // start with no per-alias config-directory switch must still succeed under cli transport.
