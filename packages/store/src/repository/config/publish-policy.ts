@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type {
   ConsolePublishIntentRateLimited, PublishMessage, Tenant
 } from '@cauce/protocol';
-import { SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
+import { RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
 import { objectRecord } from '../outbox.js';
@@ -21,12 +21,7 @@ export function canonicallyEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
-export const reservedInternalMessageTypes = new Set([
-  'agent.message',
-  'agent.response',
-  'agent.fanin',
-  'agent.notify'
-]);
+export const reservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
 
 export function sha256(value: unknown): string {
   const encoded = typeof value === 'string' ? value : JSON.stringify(canonical(value)) ?? 'undefined';
