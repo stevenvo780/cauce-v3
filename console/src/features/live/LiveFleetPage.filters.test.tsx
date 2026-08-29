@@ -138,8 +138,10 @@ describe('the Client selector', () => {
     await screen.findByLabelText('Veredicto de la flota');
     await elegirCliente(user, 'Miguel');
 
-    const descripcion = await screen.findByText(/Los 4 alias de Miguel/);
-    expect(descripcion).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Qué es «La flota ahora»/ }));
+    const ayuda = await screen.findByRole('dialog');
+    expect(within(ayuda).getByText(/Los 4 alias de Miguel/)).toBeInTheDocument();
+    await user.keyboard('{Escape}');
     await waitFor(() => { expect(dibujados().every((key) => key.startsWith('Miguel/'))).toBe(true); });
   });
 

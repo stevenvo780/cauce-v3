@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { ErrorState, LoadingState, PageHeader, RefreshButton, ViewTabPanel, ViewTabs } from '../../components/ui';
+import { ErrorState, LoadingState, PageHeader, PermissionBadge, RefreshButton, ViewTabPanel, ViewTabs } from '../../components/ui';
 import { ConsumptionSection } from './ConsumptionSection';
 import { AccountsInventory } from './AccountsInventory';
 import { AssignmentMatrix } from './AssignmentMatrix';
@@ -59,6 +59,13 @@ export function AccountsPage() {
       eyebrow="Pool de suscripciones"
       title="Cuentas y cuotas"
       description="Qué cuentas de IA existen, cuánto saldo les queda y quién las usa, en una sola vista. El inventario y el ruteo se leen y se escriben contra la configuración; el saldo sale de la última corrida del recolector externo y tiene su propia frescura. Si el recolector está caído, el inventario se sigue leyendo y editando, y el saldo se declara desconocido en vez de cero."
+      notes={
+        <>
+          <p><strong>Consumo:</strong> no es un dato en vivo del bus, es la última corrida del recolector externo que interroga a los CLIs de claude, codex, antigravity y opencode en kratos y en los contenedores de agente, con su propia frescura, independiente de la actividad.</p>
+          <p><strong>Inventario:</strong> una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no vive en la base: <code>credential_ref</code> es siempre un locator y el servidor no lo devuelve, ni siquiera a quien paga. El saldo de cada cuenta está en la columna Consumo, y el desglose por ventana en la pestaña «Consumo».</p>
+          <PermissionBadge access={access.data} permission="config.write" />
+        </>
+      }
       actions={<RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} />}
     />
 

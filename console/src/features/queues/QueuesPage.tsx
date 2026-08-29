@@ -67,14 +67,21 @@ export function QueuesPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Control de entregas" title="Colas y DLQ operativo" description="Las entregas y los incidentes causales son fuentes distintas. Replay/cancel operan entregas; cerrar un incidente DLQ registra una decisión sin volver a ejecutar ni reenviar nada." actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />} />
-
-      {/* Los dos permisos que manda esta pantalla, juntos y con el mismo aspecto: uno colgaba del
-          título y el otro aparecía suelto entre paneles, como si fueran cosas distintas. */}
-      <div className="queues-permisos">
-        <PermissionBadge access={access.data} permission="delivery.replay" />
-        <PermissionBadge access={access.data} permission="dlq.resolve" />
-      </div>
+      <PageHeader
+        eyebrow="Control de entregas"
+        title="Colas y DLQ operativo"
+        description="Las entregas y los incidentes causales son fuentes distintas. Replay/cancel operan entregas; cerrar un incidente DLQ registra una decisión sin volver a ejecutar ni reenviar nada."
+        notes={
+          <>
+            <p><strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos piden confirmación antes de salir al servidor.</p>
+            <div className="queues-permisos">
+              <PermissionBadge access={access.data} permission="delivery.replay" />
+              <PermissionBadge access={access.data} permission="dlq.resolve" />
+            </div>
+          </>
+        }
+        actions={<RefreshButton onClick={resource.reload} loading={resource.loading} />}
+      />
 
       {/*
         Las tarjetas son BOTONES. El número sigue siendo el del servidor —`snapshot.pending`,
@@ -107,14 +114,6 @@ export function QueuesPage() {
             resto: relativa a la vista, exacta en el `title=`. */}
         <Panel title="Entregas" subtitle={undefined}>
           <p className="observation-line">Leído del servidor: <Time value={snapshot?.observed_at} relativo /></p>
-
-          {/* Qué hace cada botón, ANTES de apretarlo, y acotado a la medida de lectura de la consola:
-              a 1920 ocupaba el ancho entero, unos 200 caracteres por renglón. Las dos frases son las
-              mismas que repite la confirmación, importadas del componente para que no diverjan. */}
-          <p className="queues-ayuda">
-            <strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos
-            piden confirmación antes de salir al servidor.
-          </p>
 
           {/* El id pedido se escribe COMPLETO, no compactado: es lo que el operador tiene que poder
               comparar contra el que traía en el enlace, y `compactId` le come el medio. */}

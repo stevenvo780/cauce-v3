@@ -24,16 +24,8 @@
  * Los dos permisos de la vista, en una sola fila y con el mismo aspecto. `.permission-line` trae
  * un margen negativo pensado para colgar del título: acá lo pone la fila, una vez.
  */
-.queues-permisos { display: flex; flex-wrap: wrap; gap: 9px; margin: -12px 0 18px; }
+.queues-permisos { display: flex; flex-wrap: wrap; gap: 9px; margin: 0; }
 .queues-permisos .permission-line { margin: 0; }
-
-/*
- * La explicación de Replay y Cancelar es lo último que se lee antes de reencolar o cancelar una
- * entrega, y a 1920 ocupaba el ancho entero: ~200 caracteres por renglón, el triple de lo legible.
- * `--measure-prose` es la misma medida que ya acota la prosa del resto de la consola.
- */
-.queues-ayuda { max-width: var(--measure-prose); margin: 12px 0 16px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
-.queues-ayuda strong { color: var(--text); }
 
 /* ---------------------------------------------------------------------------- el filtro */
 

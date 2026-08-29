@@ -455,12 +455,9 @@
  *   no movía el scroll (scrollTop 0 antes y después del clic).
  *
  * Con una sesión abierta la página entra en modo observación: el terminal es el contenido, no un
- * recuadro al final de una ficha técnica. Lo que se repliega (la descripción de la página, los
- * seis contadores) vuelve entero al cerrar la sesión.
+ * recuadro al final de una ficha técnica. Lo que se repliega (los seis contadores) vuelve entero
+ * al cerrar la sesión.
  * ============================================================================================= */
-
-/* El explicador de la vista se lee una vez; mientras mirás una TUI es alto robado al terminal. */
-.ultimate-terminal-page[data-tui="abierta"] .page-description { display: none; }
 
 /* ============================================================================================= *
  * EL ALTO. «El terminal se queda con 408 px de 1080», midió Steven en producción; en esta rama,

@@ -151,9 +151,9 @@ export function MessagesPage() {
         eyebrow="Mensajería durable"
         title="Mensajes"
         description="Una conversación por agente, con el estado de su cola al lado del nombre y un salto directo a su terminal. El actor, el tenant de origen y el canal siguen siendo autoridad del servidor."
+        notes={<PermissionBadge access={accesoVerificado} permission="message.publish" />}
         actions={<RefreshButton onClick={sincronizar} loading={messages.loading && !messages.data} />}
       />
-      <PermissionBadge access={accesoVerificado} permission="message.publish" />
 
       {/*
         `data-conversacion` es para la hoja de estilo, no para la lógica: en pantalla estrecha el

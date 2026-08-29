@@ -5,7 +5,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigurationSnapshot, ConsoleAccess, QuotaSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import {
-  Badge, EmptyState, Metric, Panel, PermissionBadge, Unknown, Time,
+  Badge, EmptyState, Metric, Panel, Unknown, Time,
 } from '../../components/ui';
 import { AccountRoutingDetail } from './AccountRoutingDetail';
 import './licenses.css';
@@ -148,14 +148,6 @@ export function AccountsInventory({ config, access, quotas }: {
   }
 
   return <>
-    <p className="page-description">
-      Una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no
-      vive en la base: <code>credential_ref</code> es siempre un locator y el servidor no lo
-      devuelve, ni siquiera a quien paga. El saldo de cada cuenta ya no está en otra vista: está en
-      la columna Consumo, y el desglose por ventana en la pestaña «Consumo».
-    </p>
-    <PermissionBadge access={access.data} permission="config.write" />
-
     <div className="metrics-grid">
       <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'el servidor no publica el inventario de cuentas'} />
       <Metric label="Publicadas al pool" value={pooled} detail="cuentas que su pagador prestó al pool" />

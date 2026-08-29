@@ -102,12 +102,6 @@ export function ConsumptionSection({ quotas, config }: {
 
   return (
     <>
-      <p className="page-description">
-        El consumo no es un dato en vivo del bus: es la última corrida del recolector externo
-        que interroga a los CLIs de claude, codex, antigravity y opencode en kratos y en los contenedores
-        de agente, con su propia frescura, independiente de la actividad.
-      </p>
-
       {quotasDown ? (
         <FailureBanner
           title="No se pudo leer el consumo."

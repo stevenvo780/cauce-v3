@@ -210,12 +210,16 @@ describe('la confirmación antes de mover trabajo de la flota', () => {
     expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
   }, 20_000);
 
-  it('🔴 la explicación de qué hace Replay está en la página ANTES de apretar nada', async () => {
+  it('🔴 la explicación de qué hace Replay se puede leer sin apretar nada', async () => {
+    const user = userEvent.setup();
     servidorConLas38();
     renderWithApi(<QueuesPage />);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
-    expect(screen.getByText(/vuelve a encolar esta entrega/i)).toBeInTheDocument();
-    expect(screen.getByText(/queda en dead letters y se puede replayar/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Qué es «Colas y DLQ operativo»/ }));
+    const ayuda = await screen.findByRole('dialog');
+
+    expect(within(ayuda).getByText(/vuelve a encolar esta entrega/i)).toBeInTheDocument();
+    expect(within(ayuda).getByText(/queda en dead letters y se puede replayar/i)).toBeInTheDocument();
   }, 20_000);
 });

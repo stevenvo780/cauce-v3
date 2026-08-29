@@ -3,25 +3,30 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { TIEMPO_MAXIMO_MS } from '../api/client';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
+import { PageHelp } from './PageHelp';
 
 // Re-export so the rest of the console keeps importing its visual vocabulary from a single place.
 export { FloatingTooltip, Tooltip, TOOLTIP_DELAY_MS } from './Tooltip';
+export { PageHelp } from './PageHelp';
 export type { FloatingTooltipProps, TooltipPlacement, TooltipProps } from './Tooltip';
 
-export function PageHeader({ eyebrow, title, description, actions }: {
+export function PageHeader({ eyebrow, title, description, notes, actions }: {
   eyebrow: string;
   title: string;
   description: string;
+  notes?: ReactNode;
   actions?: ReactNode;
 }) {
   return (
     <header className="page-header">
       <div className="page-title">
         <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
+        <div className="page-title-fila">
+          <h1>{title}</h1>
+          <PageHelp title={title} description={description}>{notes}</PageHelp>
+        </div>
       </div>
       {actions ? <div className="page-actions">{actions}</div> : null}
-      <p className="page-description">{description}</p>
     </header>
   );
 }

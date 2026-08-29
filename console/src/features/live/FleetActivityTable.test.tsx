@@ -1,4 +1,5 @@
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { LiveFleetPage } from './LiveFleetPage';
 import { server } from '../../mocks/server';
@@ -76,9 +77,11 @@ it('renders agents from GET /v3/console/activity, sorted with the most urgent fi
   const dataRows = rows.filter((row) => within(row).queryAllByRole('cell').length > 0);
   expect(dataRows[0].textContent).toMatch(/midas/i);
 
-  // The count of visible aliases now lives in the header description, not on a card labelled with
-  // the SQL expression that produces it.
-  expect(screen.getByText(/Los 3 alias que podés ver/)).toBeInTheDocument();
+  // The count of visible aliases is stated in the view's help, not on a card labelled with the SQL
+  // expression that produces it.
+  await userEvent.click(screen.getByRole('button', { name: /Qué es «La flota ahora»/ }));
+  expect(within(await screen.findByRole('dialog')).getByText(/Los 3 alias que podés ver/)).toBeInTheDocument();
+  await userEvent.keyboard('{Escape}');
   // And the figures moved down to the verdict's text line, in Spanish. The server definition
   // ("leased + accepted + started") is still available: it is in the tooltip.
   expect(screen.getByText(/en vuelo$/)).toHaveTextContent('50 en vuelo');
