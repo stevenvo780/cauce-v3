@@ -1,7 +1,7 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 import { Badge, EmptyState, Panel } from '../../components/ui';
 import { ROLE_BRIEF_MAX, bloqueoPorRuntimeDesplegado } from '../live/role-brief';
-import { catalogoDeRoles, claveDeAlias, resumenDeRol, type RolCatalogado } from './roles';
+import { catalogoDeRoles, claveDeAlias, resumenDeRol, type RolCatalogado } from '../live/roles';
 import { plural } from '../../lib';
 
 /**
