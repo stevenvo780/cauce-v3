@@ -1,7 +1,7 @@
 import { DeliveryAcksRepository } from './deliveries/acks.js';
 
 export {
-  handlePattern,
+  isEgressHandle,
   maxAgentOutputMessages,
   maxNotifyBodyBytes,
   notifyKinds,
