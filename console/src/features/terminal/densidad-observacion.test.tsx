@@ -77,7 +77,7 @@ describe('la página del terminal con una sesión abierta', () => {
       if (!nodo) throw new Error('los contadores no se replegaron en ningún desplegable');
       return nodo as HTMLDetailsElement;
     });
-    // Empieza cerrado: mientras se mira una TUI, ese alto es del terminal.
+    // Starts closed: while a TUI is being watched, that height belongs to the terminal.
     expect(plegado.open).toBe(false);
     // And the control says what is inside: a nameless fold is a lost datum.
     expect(within(plegado).getByText(/estado de la flota/i)).toBeInTheDocument();

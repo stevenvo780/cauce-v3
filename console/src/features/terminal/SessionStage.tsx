@@ -88,7 +88,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   onRequestGrant: RequestTerminalGrant;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
-  /** Un rechazo dejó incierto el estado de plazas: se relee el inventario antes de actuar. */
+  /** A rejection left the seat state uncertain: the inventory is reread before acting. */
   onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
 }) {
   const api = useApi();
@@ -103,7 +103,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const [closingChannel, setClosingChannel] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [showInspector, setShowInspector] = useState(false);
-  /** Panel que ya intentó abrir su TUI sola. Es por panel y no se reintenta. */
+  /** Panel that already tried to open its TUI on its own. It is per panel and is not retried. */
   const autoOpenedRef = useRef<string>(undefined);
   /**
    * Synchronous fence for the POST. React state cannot provide this guarantee: auto-open and a

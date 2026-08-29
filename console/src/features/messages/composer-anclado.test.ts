@@ -189,7 +189,7 @@ export function defectosDelCompositorEnEscritorio(mensajes: string): string[] {
     }
   }
 
-  // Un panel acotado sin `overflow: hidden` desborda por abajo y el pie se va igual.
+  // A bounded panel without `overflow: hidden` overflows at the bottom and its footer goes with it.
   if (valor(declaraciones(ancho, '.messenger-thread'), 'overflow') !== 'hidden') {
     defectos.push('.messenger-thread no recorta: el contenido desborda el panel acotado y el compositor se va con él');
   }

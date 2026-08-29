@@ -10,7 +10,7 @@ import { abreDeclarandoIdentidad, avisosDeCapas, girosDeAutonomia, totalDeMemori
  * "permission" and "prohibition" are words a legitimate manual uses all the time.
  */
 
-/** El brief real de un alias de la flota, con la forma que tienen los 14 en producción. */
+/** The real brief of a fleet alias, in the shape the 14 of them have in production. */
 const BRIEF_REAL = 'Sos kant, el hub de coordinacion de la flota. AUTONOMIA: decidí y actuá vos. '
   + 'Pedí permiso SOLO si hay dinero o algo legal de por medio.';
 

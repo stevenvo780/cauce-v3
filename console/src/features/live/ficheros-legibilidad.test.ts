@@ -71,7 +71,7 @@ describe('los avisos del editor de ficheros se leen en los dos temas', () => {
     expect(claro).not.toContain('.fuera');
   });
 
-  /** Las llaves anidadas no pueden cortar el bloque antes de tiempo. */
+  /** Nested braces cannot cut the block short. */
   it('el extractor sobrevive a reglas anidadas dentro del bloque', () => {
     const hoja = '@media (prefers-color-scheme: light) { .a { color: blue; } .b { color: green; } }\n.despues { color: red; }';
     const claro = bloquesDeModoClaro(hoja);

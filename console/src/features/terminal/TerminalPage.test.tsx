@@ -567,7 +567,7 @@ it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegad
   expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
 }, 20_000);
 
-/** El control positivo del caso anterior: un 501 SÍ significa que no está desplegado. */
+/** The positive control of the previous case: a 501 DOES mean it is not deployed. */
 it('con un 501 sigue diciendo, con el título de siempre, que el canal no está en este stack', async () => {
   server.use(http.get('http://localhost/v3/console/terminal/capability', () => new HttpResponse(null, { status: 501 })));
   renderWithApi(<TerminalPage />);

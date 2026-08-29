@@ -62,7 +62,7 @@ describe('/queues?delivery= — el aterrizaje del enlace profundo', () => {
     expect(filas).toHaveLength(1);
     expect(filas[0]).toHaveAttribute('aria-current', 'true');
     expect(within(filas[0]).getByText('kant')).toBeInTheDocument();
-    // El id COMPLETO, no el compactado: es lo que el operador compara contra el enlace que trajo.
+    // The FULL id, not the compact one: that is what the operator compares against the link that brought them here.
     expect(screen.getByText('22222222-2222-4222-8222-222222222222')).toBeInTheDocument();
     expect(screen.getByText(/Filtrado a la entrega/)).toBeInTheDocument();
   });

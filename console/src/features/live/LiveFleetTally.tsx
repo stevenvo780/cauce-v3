@@ -4,7 +4,7 @@ import { LIVE_STATE_META, STATE_ACCENT, type LiveState } from './agent-state';
 import type { Deriva } from './deriva';
 
 /**
- * Orden de la cinta de triage: de lo que exige acción a lo que no.
+ * Order of the triage strip: from what demands action to what does not.
  */
 const TALLY_ORDER: readonly LiveState[] = [
   'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',

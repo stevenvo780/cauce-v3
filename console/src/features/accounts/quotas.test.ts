@@ -58,7 +58,7 @@ describe('groupWindowsByFamily', () => {
     const groups = groupWindowsByFamily(windows);
     expect(groups).toHaveLength(1);
     expect(groups[0].collapsible).toBe(true);
-    // La ventana peor del grupo colapsado manda el resumen visible por defecto.
+    // The worst window of the collapsed group drives the visible summary by default.
     expect(groups[0].worst.window_key).toBe('gemini-3-flash-preview');
   });
 });

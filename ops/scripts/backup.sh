@@ -9,7 +9,7 @@ if [ -z "${DATABASE_URL:-}" ] && [ -n "${DATABASE_URL_FILE:-}" ]; then
   export DATABASE_URL
 fi
 : "${DATABASE_URL:?DATABASE_URL or DATABASE_URL_FILE must be set outside version control}"
-# shellcheck disable=SC1007  # CDPATH= vacio a proposito: cd sin interferencia
+# shellcheck disable=SC1007  # CDPATH= empty on purpose: cd with no interference
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BACKUP_DIR=${BACKUP_DIR:-"$ROOT/backups"}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
