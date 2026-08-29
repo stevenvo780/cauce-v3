@@ -95,9 +95,9 @@ export abstract class OriginRelayRepository extends JobsRepository {
       );
       return 'inserted';
     }
-    // El aviso de muerte que ya escribió el reaper (o el ACK terminal anterior) se toma bajo
-    // lock: o lo alcanzamos antes de que el dispatcher lo reclame, o esperamos a que lo
-    // reclame y entonces sabemos con certeza que la persona lo va a ver.
+    // The death notice already written by the reaper (or the prior terminal ACK) is taken under
+    // lock: either we reach it before the dispatcher claims it, or we wait for it to be claimed and
+    // then we know for sure the person will see it.
     const prior = await client.query<{ id: string; status: string }>(
       `SELECT id,status FROM adapter_outbox
        WHERE tenant_id=$1 AND adapter=$2 AND idempotency_key=$3 FOR UPDATE`,
@@ -105,8 +105,8 @@ export abstract class OriginRelayRepository extends JobsRepository {
     );
     const priorStatus = prior.rows[0]?.status;
     if (priorStatus === 'pending' || priorStatus === 'failed') {
-      // Nadie lo mandó todavía: se reescribe en el lugar y la persona recibe UN mensaje, el
-      // correcto. Sin encabezado de corrección, porque no hay nada que corregir para ella.
+      // Nobody has sent it yet: it is rewritten in place and the person gets ONE message, the right
+      // one. Without a correction header, because there is nothing to correct for them.
       await client.query(
         `UPDATE adapter_outbox
          SET payload=$2::jsonb,status='pending',available_at=now(),attempts=0,last_error=NULL,
@@ -127,7 +127,7 @@ export abstract class OriginRelayRepository extends JobsRepository {
       );
       return 'inserted';
     }
-    // Ya salió o está saliendo. Va un mensaje nuevo, con la respuesta precedida del aviso.
+    // Already sent or being sent. A new message goes, with the response preceded by the notice.
     await client.query(
       `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
        VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)

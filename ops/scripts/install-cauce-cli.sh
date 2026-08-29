@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Instala los binarios de `ops/cli/` en ~/.local/bin, guardando la versión anterior.
+# Installs the `ops/cli/` binaries in ~/.local/bin, saving the previous version.
 #
-# El CLI del dueño vivió catorce meses sólo en su home, sin git: nadie podía revisarlo, nadie podía
-# revertirlo y cualquiera podía pisarlo. Ahora la fuente está en el repo y esto es lo único que
-# escribe en el home.
+# The owner's CLI lived fourteen months only in their home, without git: nobody could review it,
+# nobody could revert it and anyone could stomp on it. Now the source is in the repo and this is
+# the only thing that writes to the home.
 #
-# Son dos piezas:
-#   cauce           en la TORRE. Habla con docker y con los tmux de los contenedores.
-#   cauce-panel     en la TORRE. Vuelca el panel de un alias; es la única prueba de que un turno
-#                   pasó por el arnés. Devuelve rc=3 en openclaw, que no tiene panel tmux.
+# Two pieces:
+#   cauce           on the TOWER. Speaks with docker and with the containers' tmux.
+#   cauce-panel     on the TOWER. Dumps an alias panel; it is the only proof a turn went through
+#                   the harness. Returns rc=3 on openclaw, which has no tmux panel.
 set -euo pipefail
 
 CLI_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/cli
 BIN=${1:-$HOME/.local/bin}
 
-instalar() {  # $1=fuente en el repo  $2=nombre destino
+instalar() {  # $1=source in the repo  $2=destination name
   local source="$CLI_DIR/$1" target="$BIN/$2" backup
   [ -f "$source" ] || { printf 'no encuentro la fuente: %s\n' "$source" >&2; return 1; }
   bash -n "$source" || { printf '%s no pasa la comprobación de sintaxis\n' "$1" >&2; return 1; }

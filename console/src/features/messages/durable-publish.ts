@@ -21,7 +21,7 @@ export interface DurablePublishOutcome {
   journalStatus: 'confirmed' | 'pending' | 'rejected';
 }
 
-/** Sólo los resultados cuyo efecto puede haberse confirmado admiten un retry exacto inmediato. */
+/** Only outcomes whose effect may already have been confirmed admit an immediate exact retry. */
 function uncertainPublishOutcome(cause: unknown): boolean {
   if (!(cause instanceof ApiError)) return true;
   return cause.code === 'timeout'
@@ -31,7 +31,7 @@ function uncertainPublishOutcome(cause: unknown): boolean {
     || cause.status >= 500;
 }
 
-/** Confirm no crea el efecto publicado: un 409 acá es un rechazo definitivo, no ambigüedad. */
+/** Confirm does not create the published effect: a 409 here is a definitive rejection, not ambiguity. */
 function uncertainConfirmOutcome(cause: unknown): boolean {
   if (!(cause instanceof ApiError)) return true;
   return cause.code === 'timeout'
@@ -58,11 +58,11 @@ function exactReconciliationReceipt(
 }
 
 /**
- * Publica con una intención preparada en PostgreSQL, nunca con estado durable del navegador.
+ * Publishes with an intent prepared in PostgreSQL, never with durable state from the browser.
  *
- * Un retry de prepare dentro del mismo submit reutiliza el nonce. Tras una recarga, el servidor
- * sólo reconcilia un EFECTO ya committed: una reserva vacía no se confunde con otro envío humano.
- * La confirmación abre la posibilidad de enviar deliberadamente otro mensaje idéntico.
+ * A prepare retry within the same submit reuses the nonce. After reload, the server only
+ * reconciles an EFFECT already committed: an empty reservation is not mistaken for a human
+ * submission. Confirmation opens the way to deliberately send another identical message.
  */
 export async function publishDurably({
   api,
@@ -179,8 +179,8 @@ export async function publishDurably({
         await confirmExact();
         journalStatus = 'confirmed';
       } catch (retryError) {
-        // El efecto ya tiene recibo exacto. Mantener el journal abierto falla cerrado: una nueva
-        // intención igual primero recuperará este efecto y no podrá duplicarlo en silencio.
+        // Effect has an exact receipt: keep the journal open and fail closed — an identical intent
+        // will recover this effect first and cannot duplicate silently.
         journalStatus = uncertainConfirmOutcome(retryError) ? 'pending' : 'rejected';
       }
     } else {

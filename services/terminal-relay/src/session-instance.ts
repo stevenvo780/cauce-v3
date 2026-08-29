@@ -132,8 +132,8 @@ export class TerminalSession {
       this.terminate(CLOSE_CODES.revoked, 'claim_lease_expired');
       return;
     }
-    // El browser pudo cerrar entre el consume y este listener. Como el evento ya pasó, el estado
-    // es la única señal: no se abre un PTY huérfano y `terminate` reporta el cierre idempotente.
+    // The browser may have closed between the consume and this listener. State is the only
+    // signal (the event already fired): no orphan PTY opens, and `terminate` reports idempotent.
     if (socket.readyState !== WS_OPEN) {
       this.terminate(CLOSE_CODES.normal, 'browser_closed');
       return;
@@ -383,8 +383,8 @@ export class TerminalSession {
         return;
       }
       if (message.type === 'ping') {
-        // En shell la inactividad sigue significando «sin actividad humana». En un visor no puede
-        // haber teclado: el ping demuestra que el browser sigue presente sin abrir STDIN.
+        // In a shell, idleness still means "no human activity". A viewer has no keyboard: the ping
+        // proves the browser is still present without opening STDIN.
         if (this.grant.mode === 'harness') this.resetIdle();
         return;
       }
@@ -395,8 +395,8 @@ export class TerminalSession {
         return;
       }
       if (message.type === 'terminal_response') {
-        // El parser ya validó DA/DSR. Aun así el modo es una segunda frontera: un shell interactivo
-        // usa STDIN normal; este canal existe exclusivamente para el viewer harness.
+        // The parser already validated DA/DSR. Still, mode is a second boundary: an interactive shell
+        // uses normal STDIN; this channel exists exclusively for the harness viewer.
         if (this.grant.mode !== 'harness') {
           this.terminate(CLOSE_CODES.protocol_error, 'terminal_response_forbidden');
           return;
@@ -453,8 +453,8 @@ export class TerminalSession {
     this.bytesOut += data.byteLength;
     this.windowBytes += data.byteLength;
     this.rememberScrollback(data);
-    // Un harness es una vista: salida real también es actividad, aunque el emulador no tenga que
-    // responder nada. Un shell conserva la semántica estricta de input humano.
+    // A harness is a viewer: real output also counts as activity, even if the emulator has nothing
+    // to reply. A shell keeps the strict semantics of human input.
     if (this.grant.mode === 'harness') this.resetIdle();
     const socket = this.socket;
     if (socket?.readyState !== WS_OPEN) return;
@@ -517,8 +517,8 @@ export class TerminalSession {
   private applyBackpressure(): void {
     const socket = this.socket;
     if (socket === undefined || socket.bufferedAmount <= BACKPRESSURE_HIGH_BYTES || this.drainTimer !== undefined) return;
-    // Un agente viejo no conoce estos tags. Se cierra únicamente el consumidor lento: pausar su
-    // TLS multiplexado congelaría PONG, lecturas y todas las demás sesiones.
+    // An old agent does not know these tags. Only the slow consumer is closed: pausing its
+    // multiplexed TLS would freeze PONG, reads and every other session.
     if (!this.agent.supportsSessionOutputFlowControl
       || !this.agent.pauseSessionOutput(this.sessionId)) {
       this.terminate(CLOSE_CODES.slow_consumer, 'slow_browser');

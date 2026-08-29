@@ -53,7 +53,7 @@ export async function readQuarantineMarker(path: string): Promise<
   }
 }
 
-/** Escritura atómica, privada y sincronizada: nunca guarda texto de la entrega. */
+/** Atomic, private, synced write: never stores delivery text. */
 async function persistQuarantineMarker(target: string, identity: PaneIdentity): Promise<boolean> {
   const directory = dirname(target);
   const temporary = join(
@@ -92,7 +92,7 @@ export function pendingQuarantinePreparationPath(pendingPath: string, attemptTok
   return `${pendingPath.slice(0, -".pending".length)}.${attemptToken}.arming`;
 }
 
-/** Sólo reconoce artefactos que el protocolo garantiza anteriores a cualquier paste. */
+/** Only recognises artefacts that the protocol guarantees predate any paste. */
 function isPendingQuarantinePreparationArtifact(base: string, name: string): boolean {
   const token = "[a-f0-9]{64}";
   if (name.startsWith(`${base}.`) && name.endsWith(".arming")) {
@@ -106,11 +106,11 @@ function isPendingQuarantinePreparationArtifact(base: string, name: string): boo
 }
 
 /**
- * Publica una preparación ya durable sin reemplazar otro intento.
+ * Publishes an already-durable preparation without replacing another attempt.
  *
- * `link` es el CAS de nombre que falta en `rename`: EEXIST conserva byte a byte el destino ajeno.
- * El hard-link se sincroniza antes de retirar la fase arming. Si el proceso cae antes del link sólo
- * queda una preparación ignorable; después del link queda un pending conservador y recuperable.
+ * `link` is the name CAS missing from `rename`: EEXIST preserves the foreign destination byte
+ * for byte. The hard-link is synced before the arming phase is removed: a crash before the link
+ * leaves only an ignorable preparation, and after it a recoverable pending remains.
  */
 async function commitPreparedQuarantineMarker(
   preparedPath: string,
@@ -162,7 +162,7 @@ async function clearPendingQuarantineFile(path: string): Promise<boolean> {
   }
 }
 
-/** Implementación de producción: escritura atómica+fsync y lectura fail-closed. */
+/** Production implementation: atomic+fsync write and fail-closed read. */
 export const fileQuarantinePersistence: QuarantinePersistence = {
   inspect: fileQuarantineState,
   persist: persistQuarantineMarker,

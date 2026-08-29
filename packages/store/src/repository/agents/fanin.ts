@@ -13,13 +13,13 @@ export { chainNode };
 
 export abstract class AgentFaninRepository extends AgentFaninMaterializationRepository {
   /**
-   * El detalle que el aviso agregado promete. Sin este método coalescer sería perder
-   * información: el padre lee "se plegaron N avisos idénticos, notice_id=X" y con X llega acá,
-   * a la causa cruda de cada uno de los N, con su entrega y su intento.
+   * The detail that the aggregated notice promises. Without this method coalescing would be
+   * losing information: the parent reads "N identical notices were folded, notice_id=X" and
+   * with X it lands here —the raw cause of each of the N, with its delivery and its attempt.
    *
-   * Default-deny igual que el resto de los read-models: sólo el padre al que iba dirigido el
-   * aviso, el propio hijo que falló, o un operador de un tenant hub. Un cubo de fracasos nombra
-   * dos tenants (padre e hijo), así que dejarlo abierto filtraría topología cross-tenant.
+   * Default-deny as the rest of the read-models: only the parent the notice was addressed to,
+   * the child that failed, or an operator of a hub tenant. A failure bucket names two tenants
+   * (parent and child), so leaving it open would leak cross-tenant topology.
    */
   async failureNoticeDetail(
     noticeId: string,

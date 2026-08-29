@@ -31,8 +31,8 @@ const [cert, key, clientCa, agentCa] = await Promise.all([
   readFile(config.agentCaFile)
 ]);
 
-// La identidad mTLS hacia el gateway es parte del fence multi-relay. Se lee al arrancar para que
-// el proceso falle antes de publicar readiness si el certificado no existe o no se puede derivar.
+// mTLS identity towards the gateway is part of the multi-relay fence. Read at startup so the
+// process fails before publishing readiness if the certificate is missing or cannot be derived.
 const [gatewayClientCert, gatewayClientKey] = await Promise.all([
   readFile(config.gatewayClientCertFile),
   readFile(config.gatewayClientKeyFile)
@@ -105,10 +105,10 @@ const browser = new BrowserLeg({
   sessions
 });
 const healthServer = createRelayHealthServer(healthState);
-// La lectura de gobierno comparte el listener del lado navegador: es HTTP normal, no un WebSocket,
-// así que convive con `BrowserLeg` (que sólo escucha `upgrade`) sin pisarle nada. El token es el
-// MISMO fichero con el que el relay se autentica contra el gateway, sólo que en el sentido
-// contrario, y se lee en cada llamada para que rotarlo no obligue a reiniciar.
+// Governance reads share the browser-side listener: it is regular HTTP, not a WebSocket, so it
+// coexists with `BrowserLeg` (which only listens on `upgrade`) without colliding. The token is
+// the SAME file the relay uses to authenticate against the gateway, just in the opposite
+// direction, and it is read on each call so rotating it does not force a restart.
 setupGovernanceRelay({
   server: browserServer,
   agents,

@@ -16,7 +16,7 @@ interface PtyTerminalProps {
   sessionId: string;
   /** Single-use, 30 s grant. It is held in memory only and never persisted. */
   ticket: string;
-  /** Observación de la TUI del agente: no se manda una sola tecla por este canal. */
+  /** Read-only observation of the agent's TUI: not a single keystroke is sent over this channel. */
   readOnly?: boolean;
   onClosed?: (view: PtySessionView) => void;
   /** A new channel needs a new session: that re-runs authorisation and audit server-side. */
@@ -35,11 +35,11 @@ const STATE_LABELS: Readonly<Record<PtySessionView['state'], string>> = {
  * The component owns no terminal state: it lends a wrapper and the session manager reparents
  * the live node into it. Unmounting hides the terminal, it does not kill the session.
  *
- * El orden de las capas importa y antes estaba mal.** Los avisos del relay (`pty-notices`) y
- * el error de renderer iban ENTRE la barra de estado y el terminal, así que cada aviso que llegaba
- * empujaba el terminal hacia abajo unos píxeles y el texto que estabas leyendo se movía. Ahora el
- * terminal ocupa el hueco (`flex: 1`) y todo lo accesorio va debajo, con alto acotado: lo que se
- * mueve es lo secundario, no lo que estás leyendo.
+ * The layer order matters and it was wrong before.** The relay notices (`pty-notices`) and the
+ * renderer error sat BETWEEN the status bar and the terminal, so every arriving notice pushed
+ * the terminal down a few pixels and the text you were reading moved. Now the terminal fills
+ * the gap (`flex: 1`) and everything accessory goes below, with a bounded height: what moves
+ * is the secondary, not what you are reading.
  */
 export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly, onClosed, onRequestNewSession }: PtyTerminalProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -84,12 +84,12 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
         ) : null}
       </div>
       {/*
-        EL ESPEJO ESTRECHO NO PUEDE CALLARSE. El agente PTY se engancha a la tmux del alias con
-        `attach-session -r -f ignore-size`: la ventana remota conserva SU ancho pase lo que pase
-        (y menos mal — redimensionar la tmux de un agente que está trabajando sería tocarle el
-        escritorio). Si acá caben menos columnas que allá, lo que sobra por la derecha no se ve.
-        Medido a 360x800 antes de esto: `"tenan`, `"socr`, `mes` — líneas partidas contra el borde,
-        sin barra de desplazamiento y sin una palabra que lo dijera. Eso es una vista que miente.
+        THE NARROW MIRROR MUST NOT GO SILENT. The PTY agent hooks into the alias's tmux with
+        `attach-session -r -f ignore-size`: the remote window keeps ITS width no matter what
+        (and good thing — resizing the tmux of an agent that is working would be touching its
+        desktop). If fewer columns fit here than there, what overflows to the right is not seen.
+        Measured at 360x800 before this: `"tenan`, `"socr`, `mes` — lines cut against the edge,
+        no scrollbar and not a word saying so. That is a view that lies.
       */}
       {view.columnas !== undefined && view.columnas < PTY_COLUMNAS_MINIMAS ? (
         <p

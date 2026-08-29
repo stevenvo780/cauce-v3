@@ -6,7 +6,7 @@ import { sharedSessionResume } from "./resume.js";
 import { isSharedSessionHarness, type SharedSessionHarness } from "./types.js";
 
 /**
- * Configuración de la sesión compartida a partir de variables de entorno.
+ * Shared session configuration from environment variables.
  */
 
 export interface SharedSessionConfig {
@@ -16,10 +16,10 @@ export interface SharedSessionConfig {
   readonly home: string;
   readonly stateDirectory: string;
   /**
-   * Dónde vive la configuración del harness y de donde cuelga su registro.
+   * Where the harness configuration lives and where its registry hangs from.
    */
   readonly configDirectory: string;
-  /** Lo que la TUI tiene que ver en su entorno, lo cree quien lo cree. */
+  /** What the TUI must see in its environment, whoever creates it. */
   readonly paneEnvironment: Readonly<Record<string, string>>;
 }
 
@@ -29,7 +29,7 @@ export const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
 const DEFAULT_WORKSPACE = "/workspace";
 
 /**
- * Resuelve el directorio de configuración del harness (`CODEX_HOME` o `CLAUDE_CONFIG_DIR`).
+ * Resolves the harness configuration directory (`CODEX_HOME` or `CLAUDE_CONFIG_DIR`).
  */
 export function harnessConfigDirectory(
   harness: SharedSessionHarness,
@@ -46,7 +46,7 @@ export function harnessConfigDirectory(
 }
 
 /**
- * Genera el mapa de variables de entorno mínimas para el panel tmux de la TUI.
+ * Generates the minimal environment-variable map for the TUI's tmux pane.
  */
 export function sharedSessionPaneEnvironment(
   harness: SharedSessionHarness,
@@ -58,7 +58,7 @@ export function sharedSessionPaneEnvironment(
 }
 
 /**
- * Construye la especificación `SharedSessionSpec` para el arranque de la sesión por CLI.
+ * Builds the `SharedSessionSpec` for CLI-driven session bootstrap.
  */
 export function cliSharedSessionSpec(
   harness: SharedSessionHarness,
@@ -78,7 +78,7 @@ export function cliSharedSessionSpec(
 }
 
 /**
- * Carga y valida la configuración de sesión compartida desde el entorno.
+ * Loads and validates the shared session configuration from the environment.
  */
 export function loadSharedSessionConfig(
   harnessId: HarnessId,

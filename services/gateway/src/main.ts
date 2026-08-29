@@ -49,7 +49,7 @@ async function optionalTextFile(path: string | undefined): Promise<string | unde
 }
 
 /**
- * Lee la clave de firma del JWT de consola (soporta raw bytes, hex o base64).
+ * Reads the console JWT signing key (accepts raw bytes, hex, or base64).
  */
 async function readSigningKey(path: string): Promise<Buffer> {
   const raw = await readFile(path);
@@ -67,7 +67,7 @@ async function readSigningKey(path: string): Promise<Buffer> {
 }
 
 /**
- * Configura el proveedor de autenticación fallback para peticiones sin cookie de sesión.
+ * Configures the fallback auth provider for requests without a session cookie.
  */
 async function configuredPasswordFallback(): Promise<AuthProvider | undefined> {
   const selected = process.env.CAUCE_CONSOLE_PASSWORD_FALLBACK ?? 'mtls';
@@ -104,8 +104,8 @@ async function configuredAuthProvider(pool: DatabasePool): Promise<AuthProvider>
       sessionTtlMs: ttlSeconds * 1_000,
       ...(fallback === undefined ? {} : { fallback })
     });
-    // Falla el arranque si la migración 023 no corrió: una consola que muestra el login y
-    // devuelve 500 al primer intento es peor que una que no arranca.
+    // Fail boot if migration 023 did not run: a console that shows the login and returns 500
+    // on the first attempt is worse than one that refuses to start.
     await provider.ready();
     return provider;
   }
@@ -178,10 +178,10 @@ async function configuredHttps(authProvider: AuthProvider): Promise<{
 }
 
 /**
- * mTLS puede estar directo o DEBAJO del login por contraseña (que sólo atiende lo que trae
- * cookie y delega el resto). El listener necesita `requestCert` en los dos casos: si sólo se
- * mirara la clase de arriba, encender el login humano apagaría en silencio el certificado de
- * cliente y los agentes se quedarían afuera. Ese es exactamente el "no rompas el mTLS".
+ * mTLS can be direct OR behind the password login (which only handles requests with a cookie
+ * and delegates the rest). The listener needs `requestCert` in both cases: if only the type
+ * above were checked, turning the human login on would silently switch off the client
+ * certificate and agents would be locked out. That is exactly the "do not break mTLS" rule.
  */
 function usesMtls(provider: AuthProvider): boolean {
   if (provider instanceof MtlsAuthProvider) return true;

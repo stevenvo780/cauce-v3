@@ -15,7 +15,7 @@ import {
 export const MAX_ATTACHMENT_BYTES = 10_000_000;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
-/** Tipos MIME admitidos para adjuntos en mensajes de la plataforma. */
+/** MIME types accepted for attachments in platform messages. */
 export const ATTACHMENT_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
   'text/markdown', 'text/x-markdown', 'text/csv',
@@ -49,7 +49,7 @@ export const AttachmentContentSchema = z.object({
     .refine((value) => value.length % 4 === 0, 'attachment content is not valid base64')
 }).strict().superRefine((attachment, context) => {
   const extension = (/\.[^.]+$/u.exec(attachment.name.toLowerCase()))?.[0];
-  // Mapeo de tipo MIME a extensiones admitidas y categoría (image | document).
+  // Maps MIME type to the accepted extensions and the category (image | document).
   const expected = new Map<string, readonly [readonly string[], 'image' | 'document']>([
     ['image/jpeg', [['.jpg'], 'image']], ['image/png', [['.png'], 'image']],
     ['image/webp', [['.webp'], 'image']], ['application/pdf', [['.pdf'], 'document']],
@@ -79,13 +79,13 @@ export const AttachmentsV1Schema = z.array(AttachmentContentSchema)
     }
   });
 
-/** Límite superior de timeout para un mensaje individual (7 días). */
+/** Upper bound on the timeout for an individual message (7 days). */
 export const MAX_MESSAGE_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 
-/** Presupuesto de ejecución otorgado a un mensaje individual en milisegundos. */
+/** Execution budget granted to an individual message, in milliseconds. */
 export const MessageTimeoutMsSchema = z.number().int().positive().max(MAX_MESSAGE_TIMEOUT_MS);
 
-/** Lee y valida body.timeout_ms de forma segura; devuelve undefined si es inválido o ausente. */
+/** Safely reads and validates body.timeout_ms; returns undefined if it is invalid or absent. */
 export function messageTimeoutMs(body: unknown): number | undefined {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
   const parsed = MessageTimeoutMsSchema.safeParse((body as Record<string, unknown>).timeout_ms);
@@ -131,8 +131,8 @@ export const PublishMessageSchema = z.object({
 }).strict();
 
 /**
- * Tipos de `body.type` asignados a mensajes originados entre agentes:
- * `agent.message`, `agent.response` y `agent.fanin`.
+ * `body.type` values used for agent-to-agent messages:
+ * `agent.message`, `agent.response`, and `agent.fanin`.
  */
 export const AGENT_TO_AGENT_MESSAGE_TYPES = [
   'agent.message',
@@ -140,9 +140,9 @@ export const AGENT_TO_AGENT_MESSAGE_TYPES = [
   'agent.fanin'
 ] as const;
 
-/** Sonda operativa reservada para validación de la pasarela. */
+/** Operational probe reserved for gateway validation. */
 export const SYSTEM_GATE_PROBE_MESSAGE_TYPE = 'system.gate.probe' as const;
-/** Principals técnicos cerrados: nunca son destinos ni aparecen en routing_targets. */
+/** Closed technical principals: never destinations and never appearing in routing_targets. */
 export const SYSTEM_PRINCIPAL_ALIASES = ['gate-probe', 'quota-collector'] as const;
 export const SystemGateProbeBodySchema = z.object({
   type: z.literal(SYSTEM_GATE_PROBE_MESSAGE_TYPE),
@@ -155,13 +155,13 @@ export function isSystemGateProbeBody(body: unknown): body is SystemGateProbeBod
   return SystemGateProbeBodySchema.safeParse(body).success;
 }
 
-/** Tipos que nunca deben gastar la reserva de admisión destinada a mensajes humanos. */
+/** Types that must never consume the admission quota reserved for human messages. */
 export const NON_HUMAN_DELIVERY_MESSAGE_TYPES = [
   ...AGENT_TO_AGENT_MESSAGE_TYPES,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 ] as const;
 
-/** Tipos de mensaje internos reservados que no pueden publicarse directamente por clientes. */
+/** Reserved internal message types that clients cannot publish directly. */
 export const RESERVED_INTERNAL_MESSAGE_TYPES = [
   ...AGENT_TO_AGENT_MESSAGE_TYPES,
   'agent.notify'
@@ -170,7 +170,7 @@ export const RESERVED_INTERNAL_MESSAGE_TYPES = [
 const ReservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
 const AgentToAgentMessageTypes = new Set<string>(AGENT_TO_AGENT_MESSAGE_TYPES);
 
-/** Identifica si el cuerpo del mensaje corresponde a comunicación entre agentes. */
+/** Whether the message body corresponds to agent-to-agent communication. */
 export function isAgentToAgentBody(body: unknown): boolean {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return false;
   const type = (body as Record<string, unknown>).type;

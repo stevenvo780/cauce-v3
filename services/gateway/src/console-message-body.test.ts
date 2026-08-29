@@ -5,7 +5,7 @@ import { buildGateway, type GatewayRepository } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
 
 /**
- * Pruebas para la obtención del cuerpo de mensaje completo en `GET /v3/console/messages/:messageId`.
+ * Tests for retrieving the full message body in `GET /v3/console/messages/:messageId`.
  */
 
 const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
@@ -20,7 +20,7 @@ const MENSAJE = {
   room_id: 'grp.steven',
   actor_alias: 'kant',
   lane: 'interactive',
-  // El cuerpo ENTERO, mucho más largo que los 240 que publica la lista.
+  // The FULL body, much longer than the 240 the list publishes.
   body: { text: `${'a'.repeat(600)} el dominio real es stevenvallejo.com` },
   created_at: '2026-08-23T02:02:52.000Z',
   deliveries: [
@@ -64,15 +64,15 @@ describe('GET /v3/console/messages/:messageId', () => {
     const cuerpo: { body?: { text?: string } } = respuesta.json();
     expect(cuerpo.body?.text).toBe(MENSAJE.body.text);
     expect(cuerpo.body?.text?.length).toBeGreaterThan(240);
-    // El id y el actor llegan tal cual del store: la ruta no inventa identidad.
+    // The id and the actor come straight from the store: the route does not invent identity.
     expect(getMessage).toHaveBeenCalledWith(MENSAJE.id, 'Steven', 'kant');
   });
 
   /**
-   * CONTROL NEGATIVO de la visibilidad. `visibleMessage` es la misma criba que ya aplica la lista:
-   * si la ruta la olvidara, publicaría el cuerpo entero de mensajes de otros a cualquiera con
-   * permiso de lectura — que es exactamente el agujero que la lista blanca del borde vino a tapar,
-   * reabierto un nivel más adentro.
+   * NEGATIVE CONTROL of visibility. `visibleMessage` is the same filter the list already applies:
+   * if the route forgot it, it would publish the full body of other people's messages to anyone
+   * with read permission — which is exactly the hole the edge allowlist came to plug, reopened
+   * one level further in.
    */
   it('a quien no participa del mensaje le responde 404, no el cuerpo', async () => {
     const { app } = await gateway();
@@ -83,8 +83,8 @@ describe('GET /v3/console/messages/:messageId', () => {
   });
 
   /**
-   * La otra mitad de `visibleMessage`: al destinatario se le da SU entrega y no el fan-out entero.
-   * Sin esto, argos vería a quién más fue el mensaje leyendo el detalle de su propia conversación.
+   * The other half of `visibleMessage`: the recipient gets THEIR delivery, not the whole fan-out.
+   * Without this, argos would see who else got the message by reading their own conversation detail.
    */
   it('al destinatario le recorta las entregas ajenas del mismo publish', async () => {
     const { app } = await gateway();

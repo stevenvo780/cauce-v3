@@ -25,11 +25,11 @@ export interface TerminalRelayConfig {
   readonly gatewayUrl: string;
   readonly tokenFile: string;
   /**
-   * Identidad de cliente con la que el relay habla al gateway. El token compartido autentica en la
-   * capa de aplicación, pero un gateway con `CAUCE_AUTH_PROVIDER=mtls` exige certificado de cliente
-   * en el propio handshake TLS: sin esto, presencia y revalidación de autorización mueren con
-   * "tlsv13 alert certificate required" y toda sesión se corta al vencer la gracia. También es la
-   * raíz criptográfica de `relay_instance_id`, por lo que no hay un modo sin este material.
+   * Client identity the relay uses to talk to the gateway. The shared token authenticates at the
+   * application layer, but a gateway with `CAUCE_AUTH_PROVIDER=mtls` demands a client certificate
+   * in the TLS handshake itself: without this, presence and authorization recheck die with
+   * "tlsv13 alert certificate required" and every session cuts off when grace expires. It is also
+   * the cryptographic root of `relay_instance_id`, so there is no mode without this material.
    */
   readonly gatewayClientCertFile: string;
   readonly gatewayClientKeyFile: string;

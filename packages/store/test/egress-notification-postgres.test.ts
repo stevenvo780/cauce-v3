@@ -632,11 +632,11 @@ describe('proactive egress refuses ambiguous and malformed outputs', () => {
     await createDestination();
     await seedPriorContact();
     const { delivery, epoch } = await claim(command(), 'Steven', 'argos', 'argos-1');
-    // Para que el DESENLACE sea desconocido primero tiene que HABER ejecución: `execution_started`
-    // es lo que dice que el harness fue invocado. Un ambiguo sin esa marca ya no es terminal —se
-    // reintenta, porque nada corrió— y entonces no hay turno terminal donde materializar
-    // notificaciones. Lo que este test fija sigue intacto: cuando el trabajo pudo haber pasado, el
-    // aviso al humano queda DENEGADO en vez de salir diciendo "creo que terminé".
+    // For the OUTCOME to be unknown, execution must have HAPPENED first: `execution_started` is
+    // what says the harness was invoked. An ambiguous one without that mark is no longer terminal
+    // —it is retried, because nothing ran— so there is no terminal turn where to materialize
+    // notifications. What this test pins down is unchanged: when the work may have run, the notice
+    // to the human stays DENIED instead of going out saying "I think I finished".
     await repository.ackDelivery(
       delivery.delivery_id, 'Steven', 'argos',
       ackWith(delivery, 'argos-1', epoch, {}, { status: 'started', execution_started: true })

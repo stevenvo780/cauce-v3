@@ -1,7 +1,7 @@
 import type { DatabasePool } from '@cauce/store';
 
 /**
- * Almacén y acceso a la tabla `console_users`.
+ * Storage and access for the `console_users` table.
  */
 
 export type ConsoleUserRole = 'operator' | 'reader';
@@ -15,7 +15,7 @@ export interface ConsoleUser {
   readonly alias: string;
   readonly active: boolean;
   readonly password_hash: string;
-  /** Epoch ms. Todo JWT emitido antes de esta marca deja de valer. */
+  /** Epoch ms. Any JWT issued before this marker is no longer valid. */
   readonly password_changed_at: number;
 }
 
@@ -26,7 +26,7 @@ export interface ConsoleUserStore {
   recordLogin(id: string, at: Date): Promise<void>;
 }
 
-/** Normalización única y compartida de correos electrónicos. */
+/** Single, shared email normalization. */
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -71,8 +71,8 @@ export class PostgresConsoleUserStore implements ConsoleUserStore {
   }
 
   /**
-   * Busca usuario por correo normalizado, incluyendo cuentas inactivas para permitir
-   * que el proveedor gestione el flujo de error de forma uniforme.
+   * Looks up a user by the normalized email, including inactive accounts so the
+   * provider can handle the error flow in a uniform way.
    */
   async findByEmail(email: string): Promise<ConsoleUser | undefined> {
     const result = await this.pool.query<ConsoleUserRow>(
@@ -82,8 +82,8 @@ export class PostgresConsoleUserStore implements ConsoleUserStore {
   }
 
   async findById(id: string): Promise<ConsoleUser | undefined> {
-    // El id sale del `sub` de un JWT ya verificado, pero si no es un uuid PostgreSQL aborta la
-    // consulta con 22P02 y eso sería un 500 en vez de un 401. Se filtra antes.
+    // The id comes from the `sub` of an already-verified JWT, but if it is not a uuid PostgreSQL
+    // aborts the query with 22P02 and that would be a 500 instead of a 401. It is filtered first.
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return undefined;
     const result = await this.pool.query<ConsoleUserRow>(
       `SELECT ${COLUMNS} FROM console_users WHERE id=$1::uuid`, [id]
@@ -91,13 +91,13 @@ export class PostgresConsoleUserStore implements ConsoleUserStore {
     return result.rows[0] === undefined ? undefined : toUser(result.rows[0]);
   }
 
-  /** Best-effort: un fallo escribiendo la marca de último ingreso no puede tumbar el login. */
+  /** Best-effort: a failure writing the last-login marker must not bring down the login. */
   async recordLogin(id: string, at: Date): Promise<void> {
     await this.pool.query('UPDATE console_users SET last_login_at=$2 WHERE id=$1::uuid', [id, at]);
   }
 }
 
-/** Store en memoria para los tests del proveedor. No se usa en producción. */
+/** In-memory store for the provider's tests. Not used in production. */
 export class MemoryConsoleUserStore implements ConsoleUserStore {
   private readonly users = new Map<string, ConsoleUser>();
 

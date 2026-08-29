@@ -1,7 +1,7 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 
 /**
- * Información sobre capas de configuración de agentes pendientes de integración.
+ * Information about pending agent configuration layers awaiting integration.
  */
 
 export interface CapaPendiente {
@@ -37,22 +37,22 @@ export const CAPAS_PENDIENTES: CapaPendiente[] = [
   },
 ];
 
-/** Dónde vive de verdad la configuración de un alias, según lo que el registro DECLARA. */
+/** Where an alias's configuration really lives, according to what the registry DECLARES. */
 export interface UbicacionDeclarada {
   contenedor?: string;
   home?: string;
 }
 
 /**
- * El contenedor y el `$HOME` que el registro declara para un alias.
+ * The container and `$HOME` that the registry declares for an alias.
  *
- * Sale del snapshot de configuración que esta pestaña YA lee, así que no cuesta ni una petición
- * más. Sirve para que el hueco sea accionable: «no se puede editar desde acá» es una queja, y
- * «no se puede editar desde acá, y vive en ws-kant:/home/dev» es una instrucción.
+ * It comes from the configuration snapshot this tab ALREADY reads, so it does not cost a single
+ * extra request. It makes the gap actionable: "cannot be edited from here" is a complaint, and
+ * "cannot be edited from here, and lives at ws-kant:/home/dev" is an instruction.
  *
- * Devuelve las claves sólo si están: un `home_directory` ausente es UNKNOWN, y rellenarlo con un
- * valor por defecto plausible —`/home/dev`, que es el de casi todos— mandaría a alguien a mirar el
- * fichero equivocado justamente en el alias que se sale de la norma.
+ * Returns the keys only if they are present: a missing `home_directory` is UNKNOWN, and filling it
+ * with a plausible default —`/home/dev`, which fits almost all of them— would send someone to look
+ * at the wrong file precisely on the alias that breaks the rule.
  */
 export function ubicacionDeclarada(
   snapshot: ConfigurationSnapshot | undefined,

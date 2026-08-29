@@ -3,10 +3,10 @@ import type { DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 /**
- * Aislamiento de tablas de catálogo en pruebas.
+ * Catalog table isolation in tests.
  *
- * Verifica que `resetTestDatabase()` restaure las tablas de catálogo a su estado semilla
- * para prevenir fugas de estado entre suites de prueba.
+ * Verifies that `resetTestDatabase()` restores catalog tables to their seed state
+ * to prevent state leaks between test suites.
  */
 
 let database: TestDatabase;
@@ -34,7 +34,7 @@ describe('el catálogo vuelve a como lo dejaron las migraciones', () => {
     expect(antes.rows[0]?.allow_route).toBe(true);
     expect(antes.rows[0]?.allow_control).toBe(true);
 
-    // Esto es exactamente lo que hace más de una suite del repo.
+    // This is exactly what more than one suite in the repo does.
     await pool.query(`UPDATE role_policies SET allow_route=false, allow_control=false WHERE role='operator'`);
 
     await resetTestDatabase(pool);
@@ -48,8 +48,8 @@ describe('el catálogo vuelve a como lo dejaron las migraciones', () => {
 
   it('un rol inventado por una suite NO sobrevive al reset', async () => {
     /*
-     * `agent_notify` es el caso real: ninguna migración lo crea, así que su presencia sólo puede
-     * venir de otra suite. Una prueba que dependa de él pasa o falla según quién corrió antes.
+     * `agent_notify` is the real case: no migration creates it, so its presence can only
+     * come from another suite. A test that depends on it passes or fails depending on who ran before.
      */
     await pool.query(
       `INSERT INTO role_policies(role, allow_route, allow_read, allow_control)
@@ -73,13 +73,13 @@ describe('el catálogo vuelve a como lo dejaron las migraciones', () => {
     expect(despues.rows[0]?.n).toBe(antes.rows[0]?.n);
   }, 120_000);
 
-  // ── CONTROL NEGATIVO ──────────────────────────────────────────────────────────────────────
+  // ── NEGATIVE CONTROL ──────────────────────────────────────────────────────────────────────
 
   it('CONTROL NEGATIVO: el reset NO borra el escenario, sólo lo devuelve a su sitio', async () => {
     /*
-     * Sin esto, «restaurar» podría implementarse vaciando las tablas y la prueba de arriba
-     * seguiría verde: cero filas también es «no sobrevivió». Aquí se exige que el escenario
-     * SIGA existiendo, que es lo que toda suite necesita para poder correr.
+     * Without this, "restore" could be implemented by emptying the tables and the test above
+     * would stay green: zero rows is also "did not survive". Here we require that the scenario
+     * KEEPS existing, which is what every suite needs to run.
      */
     const t = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM tenants`);
     const m = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM memberships`);

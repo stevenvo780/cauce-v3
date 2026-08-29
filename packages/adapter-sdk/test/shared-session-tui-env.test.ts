@@ -18,13 +18,13 @@ import { FakeTmux, freshState } from "./shared-session-fixtures.js";
 const immediate = (): Promise<void> => Promise.resolve();
 
 // ---------------------------------------------------------------------------
-// El entorno del panel: el mismo lo cree quien lo cree.
+// Pane environment: the same no matter who creates it.
 // ---------------------------------------------------------------------------
 
 test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => {
-  // El servidor tmux se queda con el entorno del PRIMER cliente que lo crea y DESCARTA el de los
-  // siguientes (medido en ws-prizma con un socket aislado). Por eso el entorno viaja en el ARGV del
-  // panel y por eso los dos creadores tienen que sacarlo del mismo sitio.
+  // The tmux server keeps the environment of the FIRST client that creates it and DROPS that of
+  // subsequent ones (measured on ws-prizma with an isolated socket). That is why the environment
+  // travels in the pane's ARGV and why both creators have to pull it from the same place.
   const environment = { HOME: "/home/dev" } as NodeJS.ProcessEnv;
   const adapter = loadSharedSessionConfig("codex", "socrates", "/estado", {
     ...environment, CAUCE_SHARED_SESSION: "1",
@@ -33,7 +33,7 @@ test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => 
   assert.deepEqual(adapter?.paneEnvironment, { CODEX_HOME: "/home/dev/.codex" });
   assert.deepEqual(cli.environment, adapter?.paneEnvironment);
 
-  // claude usa su propia variable, y es la MISMA con la que se resuelven los transcripts.
+  // claude uses its own variable, and it is the SAME one used to resolve transcripts.
   const claude = loadSharedSessionConfig("claude", "kratos", "/estado", {
     ...environment, CAUCE_SHARED_SESSION: "1",
   });
@@ -44,7 +44,7 @@ test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => 
     transcriptDirectory("/home/dev", "/workspace"),
   );
 
-  // Un valor declarado manda sobre el defecto; uno relativo es un error, no un apaño silencioso.
+  // A declared value wins over the default; a relative one is an error, not a silent workaround.
   assert.deepEqual(
     sharedSessionPaneEnvironment("codex", "/home/dev", { CODEX_HOME: "/datos/codex" }),
     { CODEX_HOME: "/datos/codex" },
@@ -55,11 +55,11 @@ test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => 
 test("el entorno se escapa y entra en el argv del panel", async () => {
   const prefix = paneEnvironmentPrefix({ CODEX_HOME: "/home/dev/.codex" });
   assert.deepEqual(prefix, { ok: true, prefix: "env CODEX_HOME='/home/dev/.codex' " });
-  // Un valor con comilla no puede salirse a la línea de comandos.
+  // A value containing a quote cannot escape into the command line.
   const raro = paneEnvironmentPrefix({ CLAUDE_CONFIG_DIR: "/tmp/x'; rm -rf /" });
   assert.equal(raro.ok, true);
   assert.equal(raro.ok && raro.prefix.includes("'\\''"), true);
-  // Y un nombre inválido falla DICIÉNDOLO, en vez de arrancar la TUI con menos entorno del pedido.
+  // And an invalid name fails BY SAYING SO, instead of launching the TUI with less environment than requested.
   assert.equal(paneEnvironmentPrefix({ "MAL NOMBRE": "x" }).ok, false);
 
   const { home, workspace } = await freshState("entorno-argv");
@@ -81,7 +81,7 @@ test("el entorno se escapa y entra en el argv del panel", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Identidad de la sesion: el nombre solo no acredita qué harness vive adentro.
+// Session identity: the name alone does not attest which harness lives inside.
 // ---------------------------------------------------------------------------
 
 test("una sesion legacy correcta se infiere una vez y queda marcada alias+harness", async () => {

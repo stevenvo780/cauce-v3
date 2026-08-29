@@ -1,9 +1,9 @@
 /**
- * Transcripción de audio contra un servicio compatible con la API de OpenAI.
+ * Audio transcription against an OpenAI-API-compatible service.
  */
 
 export interface TranscriptionConfig {
-  /** Origen del servicio, sin la ruta: `http://host:8000/v1`. */
+  /** Service origin, without the path: `http://host:8000/v1`. */
   readonly baseUrl: string;
   readonly model: string;
   readonly language: string;
@@ -16,7 +16,7 @@ export interface TranscriptionOutcome {
   readonly error?: string;
 }
 
-/** Techo del texto que se acepta de vuelta: es entrada no confiable, aunque venga de casa. */
+/** Cap on the text accepted back: it is untrusted input, even when it comes from home. */
 const MAX_TRANSCRIPT_CHARS = 8_000;
 
 export function transcriptionConfig(
@@ -60,10 +60,10 @@ export function transcriptionConfig(
   };
 }
 
-/** Marcas bidi e invisibles: permiten disfrazar texto dentro del prompt del harness. */
+/** Bidi and invisible marks: they allow disguising text inside the harness prompt. */
 const INVISIBLES = /[\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/gu;
 
-/** Controles, salvo el salto de linea, que el reconocedor si puede devolver legitimamente. */
+/** Controls, except line break, that the recognizer can legitimately return. */
 function replaceControls(value: string): string {
   return Array.from(value, (character) => {
     const codePoint = character.codePointAt(0);
@@ -93,7 +93,7 @@ export async function transcribeAudio(
   fetcher: typeof fetch = fetch
 ): Promise<TranscriptionOutcome> {
   const formulario = new FormData();
-  // `new Uint8Array(...)` y no el Buffer pelado: un Buffer de Node no es un BlobPart válido en TS.
+  // `new Uint8Array(...)` and not the raw Buffer: a Node Buffer is not a valid BlobPart in TS.
   formulario.append('file', new Blob([new Uint8Array(payload)], { type: mimeType }), filename);
   formulario.append('model', config.model);
   formulario.append('language', config.language);

@@ -82,10 +82,10 @@ def final_value(captured: str, returned):
 
 def main() -> int:
     prompt = read_prompt()
-    # Hermes contiene imports absolutos legacy (por ejemplo `from utils import ...`). El proceso
-    # corre dentro del workspace del agente, donde un `utils/` ajeno puede eclipsar silenciosamente
-    # al módulo del runtime. El supervisor acredita un checkout Git exacto y pasa su ruta no
-    # secreta; ponerla primero reproduce la resolución soportada por el CLI oficial.
+    # Hermes contains legacy absolute imports (for example `from utils import ...`). The process
+    # runs inside the agent's workspace, where an external `utils/` can silently shadow
+    # the runtime module. The supervisor accredits an exact Git checkout and passes its non-secret
+    # path; putting it first reproduces the resolution supported by the official CLI.
     source_value = os.environ.get("CAUCE_HERMES_SOURCE_DIR")
     runtime_value = os.environ.get("CAUCE_HERMES_RUNTIME_DIR")
     if (source_value is None) != (runtime_value is None):
@@ -109,11 +109,11 @@ def main() -> int:
         sys.path.insert(0, str(source_dir))
     from hermes_cli.oneshot import run_oneshot
 
-    # Desde la linea siguiente el turno PUEDE tener efectos. La marca sale aqui y no antes ni
-    # despues: antes mentiria (leer el prompt e importar hermes todavia puede fallar sin haber
-    # tocado nada) y despues dejaria un turno a medias indistinguible de uno que nunca arranco,
-    # que es el error caro -- reintentar trabajo ya pagado. Va por stderr porque stdout es el
-    # contrato estructurado. Ver HARNESS_START_MARKER en sdk/types.ts.
+    # From the next line onward the turn MAY have effects. The marker is emitted here and not
+    # earlier or later: earlier would lie (reading the prompt and importing hermes can still fail
+    # without having touched anything), and later would leave a half-done turn indistinguishable
+    # from one that never started — the expensive error: retrying already-paid work. It goes to
+    # stderr because stdout is the structured contract. See HARNESS_START_MARKER in sdk/types.ts.
     sys.stderr.write("<<cauce:harness-started>>\n")
     sys.stderr.flush()
 

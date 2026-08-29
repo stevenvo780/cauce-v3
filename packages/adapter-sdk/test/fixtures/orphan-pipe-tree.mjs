@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Reproduce el caso real: el harness deja un NIETO con stdout/stderr heredados y SALE.
+ * Reproduces the real case: the harness leaves a GRANDCHILD with inherited stdout/stderr and EXITS.
  *
- * Es lo que hace cualquier CLI que arranca un servidor MCP, un watcher o un puente y no lo
- * desconecta de sus descriptores. El hijo directo muere, pero la tubería que lee el runner sigue
- * abierta del otro lado, así que `close` no llega nunca.
+ * This is what any CLI does that starts an MCP server, watcher or bridge and does not
+ * disconnect it from its descriptors. The direct child dies, but the pipe the runner reads stays
+ * open on the other end, so `close` never arrives.
  *
- * argv: <marcador> <salida-final> <ms-que-vive-el-nieto> <ms-antes-de-escribir-el-marcador>
- * El nieto escribe el marcador sólo si NADIE lo mató: es la prueba de que la cosecha alcanzó a
- * los descendientes y no sólo al pid del hijo.
+ * argv: <marker> <final-output> <ms-grandchild-lives> <ms-before-writing-marker>
+ * The grandchild writes the marker only if NOBODY killed it: this is the proof that the harvest
+ * reached the descendants and not only the child's pid.
  */
 import { spawn } from "node:child_process";
 import process from "node:process";
@@ -28,7 +28,7 @@ const grandchild = spawn(
     + `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'alive'), ${markerMs});`
     + `setTimeout(() => process.exit(0), ${holdMs});`,
   ],
-  // Hereda NUESTRAS tuberías: es exactamente lo que mantiene abierto el extremo del runner.
+  // Inherits OUR pipes: this is exactly what keeps the runner's end open.
   { stdio: ["ignore", "inherit", "inherit"] },
 );
 grandchild.unref();

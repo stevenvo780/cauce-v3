@@ -5,10 +5,10 @@ import {
 } from './fleet-activity.js';
 
 /**
- * Los cuatro casos vienen del ejemplo real del contrato de GET /v3/console/activity (kant,
- * midas, atlas, salva): son el vector de regresión contra el que se validó la heurística antes
- * de escribir una sola línea de SQL, así que se fijan acá tal cual para que un cambio futuro no
- * pueda romper silenciosamente el diagnóstico que motivó todo el panel.
+ * The four cases come from the real example in the GET /v3/console/activity contract (kant,
+ * midas, atlas, salva): they are the regression vector against which the heuristic was validated
+ * before a single line of SQL was written, so they are pinned here as-is so a future change
+ * cannot silently break the diagnosis that motivated the whole panel.
  */
 describe('agentWorkState', () => {
   it('kant: trabajando sano -- en vuelo, ACKs recientes, sin overdue', () => {
@@ -79,10 +79,10 @@ describe('agentWorkState', () => {
 });
 
 /**
- * Contrato de no-fuga para GET /v3/console/activity, verificable SIN Postgres: el texto del SQL
- * es la única fuente de verdad de qué columnas viajan, así que basta con inspeccionarlo. No
- * reemplaza un test de integración (que en esta máquina no puede correr), pero sí impide que
- * alguien agregue "d.result" o "m.body" a esta consulta sin que un test se dé cuenta.
+ * No-leak contract for GET /v3/console/activity, verifiable WITHOUT Postgres: the SQL text is
+ * the single source of truth of which columns travel, so it is enough to inspect it. It does not
+ * replace an integration test (which cannot run on this machine), but it does prevent someone
+ * from adding "d.result" or "m.body" to this query without a test noticing.
  */
 describe('FLEET_ACTIVITY_QUERY contract', () => {
   it('nunca selecciona cuerpos de mensajes, resultados de entrega ni el conversation_id de origen', () => {

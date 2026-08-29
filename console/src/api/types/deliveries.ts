@@ -42,12 +42,12 @@ export interface MessageView {
 }
 
 /**
- * `GET /v3/console/messages/:messageId` — el mensaje entero, con el cuerpo SIN recortar.
+ * `GET /v3/console/messages/:messageId` — the whole message, with the body UNTRUNCATED.
  *
- * `body` es `jsonb` en la base y su forma depende de quién publicó (`text` en los adaptadores,
- * `prompt` en los encargos, y filas con otra forma). Se tipa como `unknown` a propósito: la
- * consola lo interpreta en `features/terminal/cuerpo-del-mensaje.ts` y ahí está escrito qué hace
- * cuando la forma no es ninguna de las conocidas.
+ * `body` is `jsonb` in the database and its shape depends on who published (`text` in adapters,
+ * `prompt` in commissions, and rows with another shape). It is typed as `unknown` on purpose: the
+ * console interprets it in `features/terminal/cuerpo-del-mensaje.ts` and what it does when the
+ * shape is none of the known ones is documented there.
  */
 export interface MessageDetail {
   id?: string | null;
@@ -78,7 +78,7 @@ export interface PublishMessageInput {
 export type PublishIntentSemantics = Omit<PublishMessageInput, 'idempotency_key'>;
 
 export interface PreparePublishIntentInput extends PublishIntentSemantics {
-  /** UUIDv4 efímero por submit deliberado; nunca se persiste en el navegador. */
+  /** Ephemeral UUIDv4 per deliberate submit; never persisted in the browser. */
   intent_nonce: string;
 }
 
@@ -186,7 +186,7 @@ export interface CancelResult {
   cancelled_from_state?: DeliveryState | null;
   parent_notice?: 'not_child' | 'returned' | 'denied' | 'deferred' | 'coalesced' | null;
   origin_relayed?: boolean | null;
-  /** Siempre true: cancelar deja fila en `dead_letters`, o sea sigue siendo replayable. */
+  /** Always true: cancel leaves the row in `dead_letters`, so it is still replayable. */
   replayable?: boolean | null;
 }
 

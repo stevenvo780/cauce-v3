@@ -20,9 +20,9 @@ export function configuredAckDeadlineMs(
 }
 
 /**
- * Techo de vida total de un intento de entrega.
- * Gateway y dispatcher comparten esta configuración para sincronizar
- * la expiración por lease cap y evitar discrepancias en la renovación de entregas.
+ * Total lifetime cap of a delivery attempt.
+ * Gateway and dispatcher share this configuration to synchronize
+ * lease-cap expiration and avoid discrepancies in delivery renewals.
  */
 export function configuredDeliveryLeaseCap(
   environment: NodeJS.ProcessEnv = process.env,
@@ -48,21 +48,21 @@ export function configuredDeliveryLeaseCap(
 }
 
 /**
- * Límite predeterminado de entregas en vuelo concurrentes permitidas por adaptador.
- * Mantiene un límite conservador para evitar timeouts acumulativos en colas locales.
+ * Default cap on concurrent in-flight deliveries per adapter.
+ * Keeps a conservative cap to avoid accumulating timeouts in local queues.
  */
 export const DEFAULT_MAX_INFLIGHT_DELIVERIES = 2;
 
 /**
- * Cupo reservado adicional para entregas que no son de tipo agente-a-agente (tráfico humano),
- * evitando que tareas de larga duración bloqueen interacciones interactivas.
+ * Additional reserved slot for non agent-to-agent deliveries (human traffic),
+ * so long-running tasks do not block interactive traffic.
  */
 export const DEFAULT_HUMAN_RESERVED_DELIVERIES = 2;
 
 export interface DeliveryAdmissionConfig {
-  /** Cupo general: lo ocupa cualquier entrega, incluida la de trabajo entre agentes. */
+  /** General slot: any delivery can take it, including agent-to-agent work. */
   readonly maxInflightDeliveries: number;
-  /** Cupo extra que sólo puede ocupar tráfico humano. */
+  /** Extra slot only human traffic can take. */
   readonly humanReservedDeliveries: number;
 }
 
@@ -81,7 +81,7 @@ export function validateDeliveryAdmission(value: DeliveryAdmissionConfig): Deliv
   if (!Number.isSafeInteger(value.humanReservedDeliveries) || value.humanReservedDeliveries < 0) {
     throw new Error('CAUCE_HUMAN_RESERVED_DELIVERIES must be a non-negative integer');
   }
-  // Al menos un cupo de admisión debe ser mayor a cero para permitir el reclamo de entregas.
+  // At least one admission slot must be greater than zero to allow claiming deliveries.
   if (value.maxInflightDeliveries + value.humanReservedDeliveries < 1) {
     throw new Error(
       'CAUCE_MAX_INFLIGHT_DELIVERIES and CAUCE_HUMAN_RESERVED_DELIVERIES cannot both be zero',

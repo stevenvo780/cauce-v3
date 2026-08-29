@@ -4,15 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Guardia estática de sintaxis SQL:
+ * Static SQL-syntax guard:
  *
- * Valida que no se combinen cláusulas de bloqueo (`FOR SHARE` / `FOR UPDATE`)
- * con funciones de ventana, lo cual es inválido en PostgreSQL.
+ * Validates that locking clauses (`FOR SHARE` / `FOR UPDATE`) are not combined with window
+ * functions, which is invalid in PostgreSQL.
  */
 
 const SOURCE_DIR = fileURLToPath(new URL('../src', import.meta.url));
 
-/** Los literales de plantilla que contienen SQL, uno por bloque de backticks. */
+/** Template literals that contain SQL, one per backtick block. */
 function sqlLiterals(source: string): string[] {
   return [...source.matchAll(/`([^`]*)`/g)]
     .map((match) => match[1] ?? '')
@@ -20,7 +20,7 @@ function sqlLiterals(source: string): string[] {
 }
 
 function sourceFiles(dir: string = SOURCE_DIR): string[] {
-  // Recursivo: el SQL vive tambien en src/repository/** desde la modularizacion.
+  // Recursive: SQL also lives under src/repository/** since the modularization.
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const ruta = join(dir, entry.name);
     if (entry.isDirectory()) return sourceFiles(ruta);
@@ -36,7 +36,7 @@ describe('cláusulas de bloqueo y funciones de ventana', () => {
       const source = readFileSync(file, 'utf8');
       for (const literal of sqlLiterals(source)) {
         const bloquea = /\bFOR\s+(SHARE|UPDATE|KEY\s+SHARE|NO\s+KEY\s+UPDATE)\b/i.test(literal);
-        // `OVER (` sólo aparece en funciones de ventana; `OVER` como palabra suelta no existe en SQL.
+        // `OVER (` only appears in window functions; `OVER` as a standalone word does not exist in SQL.
         const ventana = /\bOVER\s*\(/i.test(literal);
         if (bloquea && ventana) {
           const primeraLinea = literal.trim().split('\n')[0] ?? '';
