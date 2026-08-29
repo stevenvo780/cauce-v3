@@ -13,7 +13,10 @@ Login del dueño verificado (auth.json refrescado), compactación realineada a
   solo uso); el descompartidor aísla `~/.codex/auth.json` a propósito — cada contenedor
   necesita SU login.
 
-## 2. URGENTE — Codex de jarvis (claw)
+## 2. ~~Codex de jarvis (claw)~~ — HECHO 29-08 17:39Z
+
+Login del dueño verificado (JWT vence 08-09) y turno E2E forzado a codex ganado
+(`success`, `working`). Nada pendiente aquí.
 
 Vencido desde el **14-08** (15 días muerto en silencio; misma clase que el de argos —
 lo descubrí decodificando el JWT al preparar este fichero).
@@ -25,7 +28,9 @@ comando verificado (`codex-cli 0.144.1`):
 docker exec -it -u claw -e HOME=/home/claw claw /home/claw/.openclaw/npm/projects/openclaw-codex-8902d781d4/node_modules/@openclaw/codex/node_modules/.bin/codex login --device-auth
 ```
 
-## 3. OPCIONAL — Antigravity cuenta B (ctrl-infra)
+## 3. ~~Antigravity cuenta B (ctrl-infra)~~ — HECHO 29-08
+
+El shim la reporta `account_b_ready: true`: los modelos `@b` ya se anuncian y reparten carga.
 
 El shim la tiene configurada (`AGY_HOME_B=/home/dev/agy-cuenta-b`) pero la sesión no
 existe (`account_b_ready: false`). Solo si quieres repartir carga de gemini en 2 cuentas;
