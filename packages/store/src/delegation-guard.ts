@@ -1,5 +1,5 @@
 /**
- * Evaluación de límites y disciplina de delegación entre agentes.
+ * Limits and discipline evaluation for agent-to-agent delegation.
  */
 
 import {
@@ -8,25 +8,25 @@ import {
 } from '@cauce/protocol';
 
 /**
- * Códigos de rechazo aplicables a intentos de delegación entre agentes.
+ * Rejection codes applicable to attempts at agent-to-agent delegation.
  */
 export type DelegationRejectionCode = ProtocolDelegationRejectionCode;
 
-/** Directiva reservada: pedirle algo a una persona NO es delegar en un agente. */
+/** Reserved directive: asking a person for something is NOT delegating to an agent. */
 export const HUMAN_GATE_TARGET = '@human';
 
 export interface DelegationCaps {
-  /** Interruptor maestro: apagado, `materializeAgentOutputs` se comporta como antes de 019. */
+  /** Master switch: off, `materializeAgentOutputs` behaves as before 019. */
   enabled: boolean;
-  /** Abanico máximo por TURNO INTERNO. No aplica al turno raíz (ver `fanoutCapForTurn`). */
+  /** Maximum fanout per INTERNAL TURN. Does not apply to the root turn (see `fanoutCapForTurn`). */
   maxFanoutPerTurn: number;
-  /** Cuántas veces puede recorrerse la MISMA arista (emisor -> destino) dentro de una raíz. */
+  /** How many times the SAME edge (sender -> target) may be traversed within one root. */
   maxEdgeRepeatsPerRoot: number;
-  /** Combustible total de la raíz: delegaciones materializadas de toda la cadena. */
+  /** Total fuel for the root: delegations materialized across the whole chain. */
   maxDelegationsPerRoot: number;
 }
 
-/** Mismos valores que los DEFAULT de la migración 019. */
+/** Same values as the DEFAULTS in migration 019. */
 export const DEFAULT_DELEGATION_CAPS: DelegationCaps = {
   enabled: true,
   maxFanoutPerTurn: 6,
@@ -40,7 +40,7 @@ export const DISABLED_DELEGATION_CAPS: DelegationCaps = {
 };
 
 /**
- * Normaliza y acota los límites de delegación leídos de configuración o base de datos.
+ * Normalizes and bounds the delegation limits read from configuration or the database.
  */
 export function sanitizedDelegationCaps(value: Partial<Record<keyof DelegationCaps, unknown>>): DelegationCaps {
   const integer = (raw: unknown, fallback: number, min: number, max: number): number =>
@@ -60,7 +60,7 @@ export function sanitizedDelegationCaps(value: Partial<Record<keyof DelegationCa
 }
 
 /**
- * Devuelve el tope de abanico aplicable al turno según el nivel de saltos (hopCount >= 2).
+ * Returns the fanout cap applicable to the turn depending on the hop level (hopCount >= 2).
  */
 export function fanoutCapForTurn(caps: DelegationCaps, hopCount: number): number | undefined {
   if (!caps.enabled) return undefined;
@@ -69,7 +69,7 @@ export function fanoutCapForTurn(caps: DelegationCaps, hopCount: number): number
 }
 
 /**
- * Recorta el identificador de destino de un rechazo al límite máximo admitido por el protocolo.
+ * Trims a rejection's target identifier to the maximum size admitted by the protocol.
  */
 export function boundedRejectionTarget(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
@@ -78,26 +78,26 @@ export function boundedRejectionTarget(value: string | undefined): string | unde
 }
 
 export interface RejectionContext {
-  /** `tenant/alias` del destino, cuando se llegó a resolver. */
+  /** `tenant/alias` of the target, if it was resolved. */
   target?: string;
   hopCount?: number;
   hopBudget?: number;
   cap?: number;
-  /** Pregunta del gate abierto, para que el rechazo diga qué está esperando la cadena. */
+  /** Question of the open gate, so the rejection says what the chain is waiting on. */
   question?: string;
   gateId?: string;
 }
 
 export interface RejectionNotice {
   code: DelegationRejectionCode;
-  /** Qué pasó, en una oración. */
+  /** What happened, in one sentence. */
   reason: string;
-  /** Qué hacer en vez de reintentar. Esta es la parte que evita el reintento ciego. */
+  /** What to do instead of retrying. This is the part that prevents blind retries. */
   guidance: string;
 }
 
 /**
- * Genera el aviso estructurado de rechazo con motivo y orientación correctiva.
+ * Generates the structured rejection notice with reason and corrective guidance.
  */
 export function describeDelegationRejection(
   code: DelegationRejectionCode,
@@ -187,7 +187,7 @@ export function describeDelegationRejection(
   }
 }
 
-/** Texto plano de un rechazo, para audit y para el cuerpo de un relay. */
+/** Plain-text rejection, for audit and for a relay body. */
 export function rejectionText(notice: RejectionNotice): string {
   return `${notice.reason} ${notice.guidance}`;
 }

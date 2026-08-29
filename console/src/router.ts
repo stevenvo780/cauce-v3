@@ -2,8 +2,8 @@ import type { MouseEvent } from 'react';
 import type { TerminalRelayState } from './features/terminal/relay-status';
 
 /**
- * Navega sin recargar la página. `pushState` no dispara `popstate` por sí solo, así que hay
- * que emitirlo a mano para que el router —que se suscribe a `popstate`— se entere del cambio.
+ * Navigates without reloading the page. `pushState` does not trigger `popstate` on its own, so we
+ * must dispatch it by hand so the router —which subscribes to `popstate`— notices the change.
  */
 export function navigate(path: string): void {
   if (window.location.pathname === path) return;
@@ -12,9 +12,9 @@ export function navigate(path: string): void {
 }
 
 /**
- * Reemplaza la entrada actual del historial en vez de apilar una nueva. Es lo que corresponde para
- * una ruta retirada que redirige a su heredera: con `pushState` el botón "atrás" volvería a la ruta
- * muerta, que redirige de nuevo hacia adelante, y el operador quedaría atrapado sin poder salir.
+ * Replaces the current history entry instead of stacking a new one. This is what fits a retired
+ * route that redirects to its heir: with `pushState`, the "back" button would return to the dead
+ * route, which redirects forward again, and the operator would get stuck unable to leave.
  */
 export function redirect(path: string): void {
   if (window.location.pathname === path) return;
@@ -23,13 +23,13 @@ export function redirect(path: string): void {
 }
 
 /**
- * Los enlaces conservan su `href` real para que sigan funcionando el clic del medio, ctrl+clic,
- * "abrir en pestaña nueva" y el menú contextual. Solo se intercepta el clic izquierdo limpio,
- * que es el único que debería quedarse dentro de la aplicación.
+ * Links keep their real `href` so middle-click, ctrl+click, "open in new tab" and the context
+ * menu continue to work. Only the plain left-click is intercepted, because that is the only one
+ * that should stay inside the app.
  *
- * `disabledReason`: si está presente, la entrada está deshabilitada (ver
- * `terminalNavAvailability` más abajo) y el clic no debe navegar bajo ninguna circunstancia —
- * ni siquiera con un modificador — porque el destino no tiene nada real detrás.
+ * `disabledReason`: if present, the entry is disabled (see `terminalNavAvailability` below) and
+ * the click must not navigate under any circumstance — not even with a modifier — because the
+ * destination has nothing real behind it.
  */
 export function onNavClick(event: MouseEvent<HTMLAnchorElement>, path: string, disabledReason?: string): void {
   if (event.defaultPrevented) return;
@@ -43,18 +43,18 @@ export function onNavClick(event: MouseEvent<HTMLAnchorElement>, path: string, d
   navigate(path);
 }
 
-/** Cómo debe presentarse una entrada de menú cuya disponibilidad depende de un backend opcional. */
+/** How a menu entry whose availability depends on an optional backend should be presented. */
 export interface NavEntryAvailability {
-  /** `true`: no renderizar la entrada. */
+  /** `true`: do not render the entry. */
   hidden: boolean;
-  /** `true`: renderizarla inerte (sin navegar) con `reason` como explicación. */
+  /** `true`: render it inert (without navigating) with `reason` as the explanation. */
   disabled: boolean;
-  /** Motivo de una sola línea, presente siempre que `disabled` sea `true`. */
+  /** Single-line reason, present whenever `disabled` is `true`. */
   reason?: string;
 }
 
 /**
- * Determina la disponibilidad en navegación para la entrada de terminal según el estado del relay.
+ * Determines the navigation availability for the terminal entry based on the relay's state.
  */
 export function terminalNavAvailability(relay: TerminalRelayState): NavEntryAvailability {
   if (relay.status !== 'unavailable') return { hidden: false, disabled: false };
@@ -68,7 +68,7 @@ export const CONFIG_WRITE_NO_ACREDITADO_REASON =
   'No se pudo acreditar config.write; la vista permanece disponible en solo lectura y no permite cambios ni restauraciones.';
 
 /**
- * Determina la disponibilidad en navegación para la entrada de configuración según permisos de control.
+ * Determines the navigation availability for the configuration entry based on control permissions.
  */
 export function configNavAvailability(state: 'allowed' | 'denied' | 'unknown'): NavEntryAvailability {
   if (state !== 'denied') return { hidden: false, disabled: false };

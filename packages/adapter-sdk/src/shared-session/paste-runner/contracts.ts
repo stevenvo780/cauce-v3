@@ -9,68 +9,68 @@ import type {
 
 export interface PasteSessionOptions<E> {
   readonly alias: string;
-  /** Qué TUI corre en el panel. Determina el binario de la sesión compartida. */
+  /** Which TUI runs in the pane. It determines the shared session binary. */
   readonly harness: SharedSessionHarness;
-  /** Directorio de trabajo de la TUI. */
+  /** Working directory of the TUI. */
   readonly workspace: string;
-  /** Lector de transcript del harness para obtener los sobres estructurados. */
+  /** Harness transcript reader to obtain the structured envelopes. */
   readonly transcript: TranscriptReader<E>;
-  /** Variables de entorno fijadas al crear el panel. */
+  /** Environment variables set when creating the pane. */
   readonly environment?: Readonly<Record<string, string>>;
   readonly tmux: TmuxController;
-  /** Runner de respaldo utilizado cuando la sesión compartida se degrada. */
+  /** Backup runner used when the shared session degrades. */
   readonly fallback: CommandRunner;
   readonly sleep: (ms: number) => Promise<void>;
-  /** Cuánto se espera a que la caja de entrada quede libre antes de degradar. */
+  /** How long to wait for the input box to free up before degrading. */
   readonly acquireTimeoutMs?: number;
   /**
-   * Recorte opcional del turno inyectado por debajo de `request.timeoutMs`.
-   * Si vence el plazo, el estado de ejecución se reporta como ambiguo sin reintento automático.
+   * Optional trimming of the turn injected below `request.timeoutMs`.
+   * If the deadline passes, the execution state is reported as ambiguous without automatic retry.
    */
   readonly turnTimeoutMs?: number;
-  /** Espera terminal máxima tras interrumpir un turno cancelado antes de poner el pane en cuarentena. */
+  /** Maximum terminal wait after interrupting a cancelled turn before quarantining the pane. */
   readonly cancelDrainTimeoutMs?: number;
-  /** Marca durable de cuarentena; producción la ubica dentro del state directory del alias. */
+  /** Durable quarantine marker; production places it inside the alias's state directory. */
   readonly quarantineFile?: string;
-  /** Presupuesto acotado para cada operación de cuarentena. */
+  /** Bounded budget for each quarantine operation. */
   readonly quarantineOperationTimeoutMs?: number;
-  /** Persistencia inyectable para acreditar fallos y bloqueos de disco en pruebas. */
+  /** Injectable persistence to attest failures and disk locks in tests. */
   readonly quarantinePersistence?: QuarantinePersistence;
-  /** Tiempo de espera entre el pegado y el envío de Enter. */
+  /** Wait time between the paste and the Enter submission. */
   readonly settleMs?: number;
-  /** Tiempo de espera para que la TUI registre el turno pegado. */
+  /** Wait time for the TUI to register the pasted turn. */
   readonly injectTimeoutMs?: number;
-  /** Tiempo límite para correlacionar el pegado. */
+  /** Deadline for correlating the paste. */
   readonly correlationTimeoutMs?: number;
-  /** Tiempo de inactividad para considerar perdido un pegado sin correlacionar. */
+  /** Idle time to consider a paste lost without correlation. */
   readonly quietTimeoutMs?: number;
-  /** Techo absoluto de la espera por un turno fundido. */
+  /** Absolute cap on the wait for a merged turn. */
   readonly mergedGraceMs?: number;
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;
-  /** Cómo se reanuda la conversación si es necesario recrear el panel. Ver `ResumeSpec`. */
+  /** How to resume the conversation if the pane needs to be recreated. See `ResumeSpec`. */
   readonly resume?: ResumeSpec;
   readonly onDegradation?: (degradation: SharedSessionDegradation) => void;
-  /** Notificación de incidencias durante la inicialización o reanudación. */
+  /** Notification of incidents during initialization or resume. */
   readonly onNotice?: (detail: string) => void;
 }
 
 export interface CommittedRunResult {
   readonly result: CommandRunResult;
-  /** Transcript correlacionado o desaparición/cambio exacto: ya es seguro retirar pending. */
+  /** Correlated transcript or exact disappearance/change: it's already safe to withdraw pending. */
   readonly terminalBoundary: boolean;
 }
 
 export type FileQuarantineState = "current" | "stale" | "absent" | "unreadable";
 
-/** Operaciones mínimas de la barrera durable, separadas para poder probar I/O colgado. */
+/** Minimal operations of the durable barrier, split apart to be able to test hung I/O. */
 export interface QuarantinePersistence {
   readonly inspect: (path: string, identity: PaneIdentity) => Promise<FileQuarantineState>;
   readonly persist: (path: string, identity: PaneIdentity) => Promise<boolean>;
   /**
-   * Publica una preparación pre-paste mediante CAS de nombre: nunca reemplaza un pending que ya
-   * exista. El llamador no abandona esta frontera atómica; sólo se pega después de `true`.
+   * Publishes a pre-paste preparation via name CAS: it never replaces an existing pending. The
+   * caller does not leave this atomic boundary; pasting only happens after `true`.
    */
   readonly commitPrepared: (
     preparedPath: string,

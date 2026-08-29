@@ -27,7 +27,7 @@ export interface DeliveryRow {
   ack_deadline_at: Date | null;
 }
 
-/** Qué pasó con el aviso al origen cuando se rescató un resultado tardío. */
+/** What happened with the notice to the origin when a late result was rescued. */
 export type LateRelayDisposition = 'skipped' | 'inserted' | 'rewritten' | 'corrected';
 
 /** Privacy-bounded operational DLQ row.  No message, delivery, outbox or provider id is exposed. */
@@ -132,23 +132,23 @@ export interface AgentFaninDisposition {
 export type ChainSilenceClosureReason = 'settled_without_fanin' | 'idle_timeout';
 
 export interface ChainSilenceSweepOptions {
-  /** Sin avance durante este plazo Y con trabajo abierto todavía: se cierra por vencimiento. */
+  /** No progress during this window AND still-open work: closed by timeout. */
   idleMs?: number;
-  /** Cadena ya quieta (nada puede volver a moverla): gracia corta antes de cerrar. */
+  /** Chain already idle (nothing can move it again): a short grace before closing. */
   settledGraceMs?: number;
-  /** Ventana de rastreo. Una raíz más vieja que esto ya no se avisa nunca. */
+  /** Tracking window. A root older than this is never notified. */
   maxAgeMs?: number;
-  /** Techo duro de raíces tocadas por barrido. */
+  /** Hard ceiling of roots touched per sweep. */
   limit?: number;
 }
 
 export interface ChainSilenceSweepResult {
-  /** Raíces candidatas leídas en este barrido. */
+  /** Candidate roots read in this sweep. */
   scanned: number;
-  /** Raíces destrabadas: el fan-in real quedó agendado y el humano recibirá la síntesis. */
+  /** Roots unblocked: the real fan-in got scheduled and the human will receive the synthesis. */
   faninRecovered: number;
-  /** Raíces cerradas con un aviso agregado al origen. Nunca más de una por raíz. */
+  /** Roots closed with an aggregated notice to the origin. Never more than one per root. */
   notified: number;
-  /** Raíces salteadas (otro proceso las tenía tomadas, o su cierre falló y se reintentará). */
+  /** Roots skipped (another process held them, or their close failed and will be retried). */
   skipped: number;
 }

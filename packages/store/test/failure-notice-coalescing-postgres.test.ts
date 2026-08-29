@@ -1,8 +1,8 @@
 /**
- * Coalescencia de avisos de fracaso en delegaciones:
+ * Coalescing of failure notices across delegations:
  *
- * Agrupa notificaciones de fallo redundantes hacia el nodo padre preservando
- * el recuento agregado y el detalle causal de cada fallo.
+ * Groups redundant failure notifications to the parent node preserving the aggregate count
+ * and the causal detail of each failure.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -60,7 +60,7 @@ async function nextDelivery(target: Consumer): Promise<DeliveryEnvelope> {
   return delivery;
 }
 
-/** ACK terminal en `done`, con delegaciones. */
+/** Terminal `done` ACK, with delegations. */
 async function ackDone(
   target: Consumer, delivery: DeliveryEnvelope, messages: unknown[], reply: string | null = 'listo'
 ): Promise<void> {
@@ -79,7 +79,7 @@ async function ackDone(
   expect(result.applied).toBe(true);
 }
 
-/** ACK terminal en `failed` no reintentable: exactamente lo que produce el aviso al padre. */
+/** Terminal non-retryable `failed` ACK: exactly what the notice to the parent produces. */
 async function ackFailed(
   target: Consumer, delivery: DeliveryEnvelope, error: string, errorCode: string
 ): Promise<void> {
@@ -108,7 +108,7 @@ async function setCoalescing(enabled: boolean, windowSeconds = 900): Promise<voi
   );
 }
 
-/** Las entregas de aviso que el padre recibiría de verdad: una fila = un mensaje en su cola. */
+/** The notice deliveries the parent would actually receive: one row = one message in its queue. */
 async function noticesTo(alias: string): Promise<Array<{ text: string; delivery_id: string }>> {
   return (await pool.query<{ text: string; delivery_id: string }>(
     `SELECT message.body->>'text' AS text,delivery.id AS delivery_id
@@ -134,9 +134,9 @@ async function buckets(): Promise<Array<{
 }
 
 /**
- * Escenario del incidente en miniatura: argos manda un pedido a kant, kant abre `branches`
- * ramas hacia socrates, y todas mueren. Todas comparten (padre=kant, hijo=socrates, raíz), que
- * es exactamente la clave de coalescencia.
+ * Miniature incident scenario: argos sends a request to kant, kant opens `branches` branches
+ * toward socrates, and all die. They all share (parent=kant, child=socrates, root), which is
+ * exactly the coalescence key.
  */
 async function fanoutThatDies(
   branches: number,
@@ -189,7 +189,7 @@ describe('coalescencia de avisos de fracaso', () => {
 
     await fanoutThatDies(5, sameCause);
 
-    // Lo único que cambia respecto de producción es el número: cinco ramas muertas, cinco avisos.
+    // The only thing that changes relative to production is the number: five dead branches, five notices.
     const notices = await noticesTo('kant');
     expect(notices).toHaveLength(1);
 
@@ -214,12 +214,12 @@ describe('coalescencia de avisos de fracaso', () => {
     await fanoutThatDies(5, sameCause);
 
     const notice = (await noticesTo('kant'))[0];
-    // Sigue empezando con la frase de siempre: un coordinador que la busca no se rompe.
+    // It still starts with the same phrase: a coordinator looking for it doesn't break.
     expect(notice?.text).toContain('socrates could not complete the delegated request');
-    // Y ahora además dice lo que el padre no va a ver llegar.
+    // And now it also says what the parent will not see arrive.
     expect(notice?.text).toContain('5 failures with this same cause from socrates');
     expect(notice?.text).toContain('4 of them were coalesced into this notice instead of being delivered');
-    // Y dice dónde está el resto, con el identificador exacto: el aviso no es un callejón.
+    // And it says where the rest is, with the exact identifier: the notice is not a dead end.
     expect(notice?.text).toContain('agent_failure_notice_events where notice_id=');
   });
 
@@ -231,16 +231,16 @@ describe('coalescencia de avisos de fracaso', () => {
     const detail = await repository.failureNoticeDetail(bucketId, 'Steven', 'kant');
 
     const failures = detail.failures as Array<Record<string, unknown>>;
-    // Los cinco fracasos siguen existiendo uno por uno, con su causa cruda.
+    // The five failures still exist one by one, with their raw cause.
     expect(failures).toHaveLength(5);
     expect(failures.filter((failure) => failure.coalesced === false)).toHaveLength(1);
     expect(failures.filter((failure) => failure.coalesced === true)).toHaveLength(4);
     expect(failures.every((failure) => failure.error === sameCause[0]!.error)).toBe(true);
     expect(failures.every((failure) => failure.error_code === sameCause[0]!.code)).toBe(true);
     expect(failures.every((failure) => failure.child_alias === 'socrates')).toBe(true);
-    // Cada uno nombra la entrega concreta del hijo que murió: se puede ir de acá al replay.
+    // Each one names the specific child delivery that died: you can go from here to replay.
     expect(new Set(failures.map((failure) => failure.child_delivery_id)).size).toBe(5);
-    // Y cada uno nombra el aviso bajo el cual el padre lo encuentra.
+    // And each one names the notice under which the parent finds it.
     expect(new Set(failures.map((failure) => failure.notice_message_id)).size).toBe(1);
 
     const summary = detail.notice as Record<string, unknown>;
@@ -254,16 +254,16 @@ describe('coalescencia de avisos de fracaso', () => {
     await fanoutThatDies(3, sameCause);
     const bucketId = (await buckets())[0]!.id;
 
-    // `salva` vive en otro tenant no-hub: no puede enumerar cadenas ajenas.
+    // `salva` lives in another non-hub tenant: it cannot enumerate other chains.
     await expect(repository.failureNoticeDetail(bucketId, 'Isa', 'salva')).rejects.toThrow();
-    // El hijo sí puede: es su propio fracaso.
+    // The child can: it's its own failure.
     await expect(repository.failureNoticeDetail(bucketId, 'Steven', 'socrates')).resolves.toBeTruthy();
   });
 
   it('NO pliega dos causas distintas: un problema nuevo nunca queda detrás de uno viejo', async () => {
     await setCoalescing(true);
 
-    // Misma rama, mismo hijo, misma raíz: sólo cambia el porqué.
+    // Same branch, same child, same root: only the why changes.
     await fanoutThatDies(4, [
       { error: 'harness exited before producing a reply', code: 'PROCESS_EXIT' },
       { error: 'harness exited before producing a reply', code: 'PROCESS_EXIT' },
@@ -271,8 +271,8 @@ describe('coalescencia de avisos de fracaso', () => {
       { error: 'no credential available for the provider', code: 'AUTH_EXPIRED' }
     ]);
 
-    // Dos causas -> dos cubos -> dos avisos. Cuatro fracasos, no cuatro entregas, pero tampoco
-    // una sola que hubiera escondido AUTH_EXPIRED detrás de PROCESS_EXIT.
+    // Two causes -> two buckets -> two notices. Four failures, not four deliveries, but also
+    // not a single one that would have hidden AUTH_EXPIRED behind PROCESS_EXIT.
     const rows = await buckets();
     expect(rows).toHaveLength(2);
     expect(rows.map((bucket) => bucket.total_failures)).toEqual([2, 2]);
@@ -288,25 +288,25 @@ describe('coalescencia de avisos de fracaso', () => {
     const socrates = await consumer('Steven', 'socrates');
     await repository.publish(command());
     const root = await nextDelivery(kant);
-    // Cinco ramas de la MISMA cadena hacia el MISMO hijo: un solo cubo para las cinco.
+    // Five branches of the SAME chain toward the SAME child: one bucket for all five.
     await ackDone(
       kant, root, Array.from({ length: 5 }, (_, index) => ({ to: 'socrates', body: `rama ${index}` }))
     );
     const children = await claimAll(socrates, 5);
     expect(children).toHaveLength(5);
 
-    // Primera ráfaga: 1 aviso + 2 plegados.
+    // First burst: 1 notice + 2 folded.
     for (const child of children.slice(0, 3)) {
       await ackFailed(socrates, child, sameCause[0]!.error, sameCause[0]!.code);
     }
     expect(await noticesTo('kant')).toHaveLength(1);
 
-    // Envejecer la ventana es la única forma honesta de probar el borde sin dormir 15 minutos:
-    // se mueve el reloj del cubo, no el del test.
+    // Aging the window is the only honest way to test the edge without sleeping 15 minutes:
+    // the bucket's clock moves, not the test's.
     await pool.query(`UPDATE agent_failure_notices SET window_expires_at=now()-interval '1 second'`);
 
-    // Segunda ráfaga, ya fuera de la ventana: el padre vuelve a enterarse. Que la tormenta siga
-    // ardiendo tiene que llegarle; lo que no puede es llegarle una vez por muerte.
+    // Second burst, already outside the window: the parent learns again. That the storm keeps
+    // burning must reach it; what it can't is to reach it once per death.
     for (const child of children.slice(3)) {
       await ackFailed(socrates, child, sameCause[0]!.error, sameCause[0]!.code);
     }
@@ -316,8 +316,8 @@ describe('coalescencia de avisos de fracaso', () => {
     expect(bucket?.total_failures).toBe(5);
     const notices = await noticesTo('kant');
     expect(notices).toHaveLength(2);
-    // Contabilidad completa entre los dos avisos: 5 fracasos, 2 entregas, 3 que nunca viajaron
-    // solos (el 2.º y el 3.º de la primera ráfaga, y el 5.º de la segunda). Ninguno se perdió.
+    // Full accounting across the two notices: 5 failures, 2 deliveries, 3 that never traveled
+    // alone (the 2nd and 3rd of the first burst, and the 5th of the second). None got lost.
     expect(notices[0]?.text).toContain('3 failures with this same cause from socrates');
     expect(notices[0]?.text).toContain('2 of them were coalesced into this notice');
     expect(notices[1]?.text).toContain('5 failures with this same cause from socrates');
@@ -329,9 +329,9 @@ describe('coalescencia de avisos de fracaso', () => {
 
     await fanoutThatDies(3, sameCause);
 
-    // materializeAgentFanin cuenta audit_events 'agent_output.response' por child_delivery_id.
-    // Si plegar dejara de escribirlos, la cadena esperaría para siempre una respuesta que ya
-    // nunca va a llegar: la tormenta de avisos se habría cambiado por un cuelgue silencioso.
+    // materializeAgentFanin counts audit_events 'agent_output.response' by child_delivery_id.
+    // If folding stopped writing them, the chain would wait forever for a response that will
+    // never come: the notice storm would have been swapped for a silent hang.
     const recorded = await pool.query<{ child_delivery_id: string; coalesced: boolean | null }>(
       `SELECT metadata->>'child_delivery_id' AS child_delivery_id,
               (metadata->>'coalesced')::boolean AS coalesced
@@ -372,8 +372,8 @@ describe('failureSignature', () => {
     const second = failureSignature(
       'dead', 'ACK timeout on attempt 11 for delivery 0f9e8d7c-6b5a-4321-8f0e-9d8c7b6a5f4e', undefined
     );
-    // Sin este enmascarado la coalescencia no habría plegado NADA en el incidente: cada aviso
-    // llevaba un id de entrega distinto.
+    // Without this masking coalescence would have folded NOTHING in the incident: each notice
+    // carried a different delivery id.
     expect(first).toBe(second);
   });
 

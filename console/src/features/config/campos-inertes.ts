@@ -1,16 +1,16 @@
 /**
- * Catálogo de campos mostrados en `/config` que no tienen efecto en la ejecución del sistema.
+ * Catalog of fields shown on `/config` that have no effect on the system's execution.
  */
 
-/** Lo que se lee junto al rótulo de la columna. Corto: comparte celda con la cabecera. */
+/** What reads next to the column's label. Short: shares a cell with the header. */
 export const MARCA_INERTE = 'sin efecto';
 
 /**
- * Colección → campo → por qué no tiene efecto, con la cita que lo prueba.
+ * Collection → field → why it has no effect, with the citation that proves it.
  *
- * Las citas son `ruta:línea` del árbol de este repositorio y están verificadas una a una: la prueba
- * exige que cada motivo lleve por lo menos una, porque un «esto no sirve» sin cita es justo la clase
- * de afirmación que este trabajo existe para no repetir.
+ * The citations are `path:line` from this repository's tree and are verified one by one: the test
+ * requires that every reason carry at least one, because a "this is useless" without a citation is
+ * exactly the kind of claim this work exists to avoid repeating.
  */
 export const CAMPOS_INERTES: Record<string, Record<string, string>> = {
   agents: {
@@ -43,10 +43,10 @@ export const CAMPOS_INERTES: Record<string, Record<string, string>> = {
 };
 
 /**
- * Por qué ese campo de esa colección no tiene efecto, o `undefined` si sí lo tiene.
+ * Why that field of that collection has no effect, or `undefined` if it actually does.
  *
- * `Object.hasOwn` y no `?.` en los dos escalones: una colección o un campo que el servidor llamara
- * `toString` heredaría un valor del prototipo y la tabla acabaría pintando una función como motivo.
+ * `Object.hasOwn` rather than `?.` at the two steps: a collection or field the server happened to
+ * name `toString` would inherit a prototype value and the table would end up painting a function as the reason.
  */
 export function motivoInerte(coleccion: string, campo: string): string | undefined {
   if (!Object.hasOwn(CAMPOS_INERTES, coleccion)) return undefined;
@@ -55,14 +55,14 @@ export function motivoInerte(coleccion: string, campo: string): string | undefin
 }
 
 /**
- * Cuáles de las columnas QUE SE ESTÁN PINTANDO son inertes, en el orden en que se piden.
+ * Which of the columns CURRENTLY BEING PAINTED are inert, in the order they were requested.
  *
- * Pregunta por COLUMNA y no por colección, y esa diferencia se pagó mirando la pantalla: el
- * aviso «algunas columnas van marcadas sin efecto» salía encima de «Harness definitions» aunque ahí
- * no hubiera ni una marcada, porque el gateway de las pruebas publica esa colección con la forma
- * del endpoint de adaptadores y sin `command`. Un cartel que anuncia algo que no está es el mismo
- * defecto que este catálogo vino a corregir, cometido por el corrector. Preguntando por las claves
- * presentes, el aviso aparece y desaparece con lo que hay.
+ * It asks by COLUMN, not by collection, and that difference was paid for by looking at the
+ * screen: the "some columns are marked as no effect" notice appeared above "Harness definitions"
+ * even though none there was marked, because the test gateway publishes that collection shaped
+ * like the adapters endpoint and without `command`. A banner that announces something that is not
+ * there is the same defect this catalog came to fix, committed by the fixer. Asking about the
+ * present keys makes the notice appear and disappear with what is actually there.
  */
 export function columnasInertesDe(coleccion: string, claves: readonly string[]): string[] {
   return claves.filter((clave) => motivoInerte(coleccion, clave) !== undefined);

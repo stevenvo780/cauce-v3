@@ -1,6 +1,6 @@
-// Helpers compartidos por los tests partidos de engine.test.ts (Tarea 2 de opencode-minimax.md).
-// Este fichero NO es test: lo recoge el compilador (tsconfig: rootDir "." -> dist/test/engine-fixtures.js)
-// pero NO el runner `dist/test/*.test.js`. Todos los simbolos son exportados para reutilizacion.
+// Helpers shared by the split tests of engine.test.ts (Task 2 of opencode-minimax.md).
+// This file is NOT a test: the compiler picks it up (tsconfig: rootDir "." -> dist/test/engine-fixtures.js)
+// but the `dist/test/*.test.js` runner does NOT. All symbols are exported for reuse.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, readFile, rm } from "node:fs/promises";
@@ -207,14 +207,14 @@ export async function setup(
   return { store, runner, events, engine };
 }
 
-/** Sesión nativa que el harness recibió en la ejecución `index`. */
+/** Native session the harness received in execution `index`. */
 export function sessionOf(runner: ControlledRunner, index: number): string {
   const value = runner.requests[index]?.args.at(-1);
   assert.ok(value, `la ejecución ${index} no llegó al harness`);
   return value;
 }
 
-/** Conversación autenticada: lo que un puente publica junto al mensaje. */
+/** Authenticated conversation: what a bridge publishes alongside the message. */
 export function conversation(options: {
   adapter?: string;
   channel?: string;
@@ -240,8 +240,8 @@ export function conversation(options: {
 }
 
 /**
- * Publicación sin ruta de retorno: consola, adaptador, herramientas de ops. `origin` se quita de
- * verdad (no se pisa con `undefined`) porque el proyecto compila con `exactOptionalPropertyTypes`.
+ * Publication without return route: console, adapter, ops tooling. `origin` is actually removed
+ * (not overwritten with `undefined`) because the project compiles with `exactOptionalPropertyTypes`.
  */
 export function originless(
   base: Delivery,
@@ -276,19 +276,19 @@ export async function setupSessionConcurrency(name: string, claimRenewalMs?: num
 }
 
 /**
- * Espera a que una entrega quede ESTACIONADA en el candado de sesion.
+ * Waits for a delivery to be PARKED at the session lock.
  *
- * Antes esto esperaba a que la entrega encolada llegara al estado "started". Ese era justamente el
- * defecto: el motor declaraba ejecucion antes de tomar el candado, asi que una entrega que solo
- * hacia fila se veia igual que una trabajando y renovaba su garra para siempre. Ahora la entrega en
- * cola se queda en "accepted" y late en esa misma fase, asi que la senal correcta de "ya esta
- * haciendo fila" es su ACK 'accepted' durable.
+ * Previously this waited for the queued delivery to reach the "started" state. That was exactly
+ * the bug: the engine declared execution before taking the lock, so a delivery just queued
+ * looked the same as one working and renewed its claim forever. Now the queued delivery stays
+ * in "accepted" and idles in that same phase, so the correct signal for "it's already queued"
+ * is its durable 'accepted' ACK.
  */
 export async function waitForQueued(store: DurableStore, deliveryId: string): Promise<void> {
-  // El latido de cola es la unica senal que prueba que la entrega YA esta estacionada en el
-  // candado: se emite desde `awaitSessionTurn`, despues de que el motor registre su AbortController.
-  // Esperar solo el estado "accepted" seria una carrera — ese estado se alcanza antes, y un
-  // `cancel()`/`stop()` disparado en esa ventana no encontraria nada que abortar.
+  // The queue heartbeat is the only signal that proves the delivery IS already parked at the
+  // lock: it's emitted from `awaitSessionTurn`, after the engine registers its AbortController.
+  // Waiting only for the "accepted" state would be a race — that state is reached earlier, and
+  // a `cancel()`/`stop()` triggered in that window would find nothing to abort.
   const parked = (): boolean => store.getDelivery(deliveryId)?.state === "accepted"
     && store.pendingEvents().some((event) => (
       event.delivery_id === deliveryId

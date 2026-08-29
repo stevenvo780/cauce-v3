@@ -3,26 +3,26 @@ import { leaseExpiry, leaseState } from '../../lib';
 import { buildFleetAgents, fleetAgentId, type FleetAgent } from '../terminal/fleet';
 
 /**
- * De DÓNDE salió cada fila del roster. Se guarda por agente porque la pantalla tiene que poder
- * decirlo: «este alias está en el registro pero en ninguna sala» es un dato operativo, y
- * esconderlo fue exactamente el defecto que costó el día de `gaia`.
+ * WHERE each row of the roster came from. It's kept per agent because the screen has to be able
+ * to say it: "this alias is in the registry but in no room" is an operational fact, and hiding it
+ * was exactly the bug that cost the day of `gaia`.
  */
 export type OrigenDeAgente = 'topologia' | 'presencia' | 'registro' | 'mensajes';
 
 export interface AgenteDeMensajeria extends FleetAgent {
   origenes: OrigenDeAgente[];
-  /** Mensajes de la ventana del servidor donde el alias es emisor o destinatario. */
+  /** Messages from the server's window where the alias is sender or recipient. */
   mensajesVisibles: number;
   /**
-   * `GET /v3/console/activity` → `registered`. `undefined` = el servidor no lo informa, que NO
-   * es lo mismo que «no está en el registro».
+   * `GET /v3/console/activity` → `registered`. `undefined` = the server doesn't report it, which
+   * is NOT the same as "not in the registry".
    */
   registrado?: boolean;
 }
 
 /**
- * Construye el roster de mensajería agregando las cuatro fuentes:
- * topología (memberships), presencia, registro de actividad y mensajes observados.
+ * Builds the messaging roster aggregating the four sources:
+ * topology (memberships), presence, activity registry, and observed messages.
  */
 export function construirRosterDeMensajeria(entrada: {
   status?: SystemStatus;
@@ -51,8 +51,8 @@ export function construirRosterDeMensajeria(entrada: {
       });
       continue;
     }
-    // La presencia de `/activity` es la MISMA del servidor, leída por otro endpoint: se copia,
-    // no se fabrica. Si no viene, el alias queda en lease UNKNOWN, que es la verdad.
+    // The presence from `/activity` is the SAME one from the server, read by another endpoint:
+    // it's copied, not fabricated. If it doesn't come, the alias stays in UNKNOWN lease, which is the truth.
     const presence: PresenceLease | undefined = fila.presence
       ? { ...fila.presence, tenant_id: fila.tenant_id, alias: fila.alias }
       : undefined;
@@ -104,14 +104,14 @@ export function construirRosterDeMensajeria(entrada: {
 }
 
 /**
- * Un alias del que hay historia pero al que la consola no le puede escribir sin más: ni sala, ni
- * registro que lo confirme. La fila se dibuja igual y se rotula; lo que NO se hace es esconderla.
+ * An alias with history but one the console can't just write to: neither room nor registry
+ * confirming it. The row is still drawn and labeled; what's NOT done is hiding it.
  */
 export function fueraDeLaTopologia(agente: AgenteDeMensajeria): boolean {
   return agente.roomIds.length === 0;
 }
 
-/** Qué decir en la fila cuando el alias no vive en ninguna sala declarada. */
+/** What to say in the row when the alias doesn't live in any declared room. */
 export function motivoDeAgenteSuelto(agente: AgenteDeMensajeria): string | undefined {
   if (!fueraDeLaTopologia(agente)) return undefined;
   if (agente.registrado === false) {
@@ -134,10 +134,10 @@ interface AliasConMensajes {
 }
 
 /**
- * Los dos extremos de cada mensaje visible: el emisor (`tenant_id` + `actor_alias`) y cada
- * destinatario (`recipient_tenant` + `recipient_alias`). Es EXACTAMENTE el mismo par que
- * `transcriptForSession` usa para decidir si un mensaje pertenece a un hilo, así que ningún
- * mensaje puede quedar sin fila donde caer.
+ * The two endpoints of each visible message: the sender (`tenant_id` + `actor_alias`) and each
+ * recipient (`recipient_tenant` + `recipient_alias`). It is EXACTLY the same pair that
+ * `transcriptForSession` uses to decide whether a message belongs to a thread, so no message
+ * can end up without a row to land on.
  */
 export function aliasDeLosMensajes(page: MessagePage | undefined): Map<string, AliasConMensajes> {
   const encontrados = new Map<string, AliasConMensajes>();

@@ -1,25 +1,25 @@
 /**
- * BANCO DE PRUEBAS DE LA TERMINAL: lo que hace falta para que `/terminal` llegue a PINTAR un PTY
- * sin un backend detrás.
+ * TERMINAL TEST HARNESS: what's needed for `/terminal` to actually PAINT a PTY without a
+ * backend behind it.
  *
- * Por qué existe. Los defectos caros de esta vista son de GEOMETRÍA —cuántas filas y columnas
- * acaba teniendo la PTY, si el hueco crece con la ventana, cuánto ancho de pantalla se
- * desperdicia—, y ninguno de ellos es visible en jsdom, que no tiene layout. Medirlos exige un
- * Chrome de verdad con la vista REAL. Pero `npm run dev:mock` llegaba hasta la puerta y no la
- * cruzaba: `capability` respondía `available:false`, no había handler de `targets` ni de `POST
- * sessions`, y sin ticket `PtyTerminal` no se monta nunca. O sea que lo único que no se podía
- * mirar era justo lo que había que medir.
+ * Why it exists. The costly defects of this view are about GEOMETRY —how many rows and columns
+ * the PTY ends up with, whether the gap grows with the window, how much screen width is wasted—,
+ * and none of them are visible in jsdom, which has no layout. Measuring them requires a real
+ * Chrome with the REAL view. But `npm run dev:mock` got to the door and didn't cross it:
+ * `capability` answered `available:false`, there was no handler for `targets` or `POST sessions`,
+ * and without a ticket `PtyTerminal` never mounts. So the only thing you couldn't look at was
+ * exactly what needed to be measured.
  *
- * Estos manejadores viven APARTE de `handlers.ts` a propósito: `handlers.ts` lo comparte
- * `mocks/server.ts`, que es el que usa vitest con `onUnhandledRequest: 'error'`. Meter aquí un
- * `capability.available = true` cambiaría lo que ven las pruebas de la vista, que hoy afirman lo
- * contrario. Esto se enchufa SÓLO en `mocks/browser.ts`, o sea sólo bajo `VITE_USE_MOCKS=true`.
+ * These handlers live APART from `handlers.ts` on purpose: `handlers.ts` is shared by
+ * `mocks/server.ts`, which is what vitest uses with `onUnhandledRequest: 'error'`. Putting a
+ * `capability.available = true` here would change what view tests see, which today assert the
+ * opposite. This plugs in ONLY into `mocks/browser.ts`, i.e., only under `VITE_USE_MOCKS=true`.
  *
- * No es un simulador del relay: no valida el ticket, no firma nada y no autoriza nada. Es un
- * decorado que responde lo justo para que la geometría se pueda medir.
+ * It is not a relay simulator: it doesn't validate the ticket, doesn't sign anything, and
+ * doesn't authorize anything. It's a stage set that responds just enough so geometry can be measured.
  */
 import { http, HttpResponse } from 'msw';
-/* La constante, no una copia del literal: es exactamente la copia lo que estaba mal (ver abajo). */
+/* The constant, not a copy of the literal: that copy is exactly what was wrong (see below). */
 import { LIVE_TUI_MODE } from '../features/terminal/fleet';
 import { mockTerminalGrant } from './terminal-ticket';
 
@@ -50,12 +50,12 @@ export const terminalDemoHandlers = [
       harness: 'claude-code',
       shares_container_with: [],
       /*
-       * Acá decía `'live-tui'`, y el cliente busca `'harness'` (`LIVE_TUI_MODE`, en `fleet.ts`).
-       * O sea que el banco de pruebas publicaba un modo que la consola no reconoce: el botón «TUI»
-       * salía DESHABILITADO, el contador decía «EMITEN SU TUI 0 / 1» y el único modo que se podía
-       * abrir era una shell nueva. Justo el modo que esta vista existe para dar —mirar en solo
-       * lectura la TUI que el agente ya tiene pintada— no se probaba nunca, ni a mano ni con el
-       * arnés. Se descubrió midiendo: la sonda pedía TUI y no montaba nada.
+       * This used to say `'live-tui'`, and the client looks for `'harness'` (`LIVE_TUI_MODE`, in
+       * `fleet.ts`). That is, the test harness published a mode the console doesn't recognize:
+       * the "TUI" button was DISABLED, the counter said "EMIT THEIR TUI 0 / 1", and the only
+       * mode you could open was a new shell. Exactly the mode this view exists to give —read-only
+       * viewing of the TUI the agent already has painted— was never tested, neither by hand nor
+       * with the harness. It was discovered by measuring: the probe asked for TUI and mounted nothing.
        */
       modes: ['shell', LIVE_TUI_MODE],
       pty_state: 'online',
@@ -89,10 +89,10 @@ export const terminalDemoHandlers = [
 ];
 
 /**
- * El otro extremo del canal. MSW no intercepta este WebSocket: se sustituye la clase global, que
- * es el mismo camino que usan las pruebas (`pty-socket-stub.ts`). Habla el framing real —texto es
- * control, binario es salida— y escupe una parrilla de columnas numeradas, que es lo que permite
- * VER de un vistazo cuántas columnas entran y si el reajuste llegó.
+ * The other end of the channel. MSW does not intercept this WebSocket: the global class is
+ * replaced, which is the same path the tests use (`pty-socket-stub.ts`). It speaks the real
+ * framing —text is control, binary is output— and spits out a grid of numbered columns, which
+ * is what lets you SEE at a glance how many columns fit and whether the resize arrived.
  */
 export function instalarPtyDeMentira(): void {
   const Original = globalThis.WebSocket;
@@ -107,7 +107,7 @@ export function instalarPtyDeMentira(): void {
     onmessage: ((e: MessageEvent) => void) | null = null;
     onclose: ((e: CloseEvent) => void) | null = null;
     onerror: ((e: Event) => void) | null = null;
-    /** Última geometría que el cliente declaró: la lee el arnés de medición. */
+    /** Last geometry the client declared: the measurement harness reads it. */
     static ultimaGeometria: { cols: number; rows: number } | null = null;
     static tramasResize = 0;
 
@@ -156,9 +156,9 @@ export function instalarPtyDeMentira(): void {
     }
   }
   /*
-   * Sólo se secuestra el canal PTY. Vite abre SU propio WebSocket para el HMR y la consola abre
-   * el suyo; sustituir la clase entera dejaba al servidor de desarrollo sin recarga y —peor— sin
-   * una sola señal de que eso había pasado.
+   * Only the PTY channel is hijacked. Vite opens its own WebSocket for HMR and the console
+   * opens its own; replacing the entire class left the dev server without reload and —worse—
+   * without a single signal that it had happened.
    */
   const Fachada = new Proxy(Original, {
     construct(objetivo, argumentos: [string, ...unknown[]]): WebSocket {

@@ -47,7 +47,7 @@ function ack(
   };
 }
 
-/** Una entrega en 'started' más `renewals` latidos encima, que es la mezcla real de la tabla. */
+/** One delivery in 'started' plus `renewals` heartbeats on top —the real mix in the table. */
 async function deliveryWithRenewals(epoch: number, renewals: number): Promise<DeliveryEnvelope> {
   await repository.publish(command());
   const [claimed] = await repository.claimDeliveries(
@@ -106,15 +106,15 @@ describe('retención por tipo de la observabilidad', () => {
     await deliveryWithRenewals(lease.epoch!, 3);
 
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks WHERE renewal`)).toBe(3);
-    // accepted + el primer started: son transiciones de estado y valen para siempre.
+    // accepted + the first started: they are state transitions and last forever.
     expect(await count(
       `SELECT count(*)::text AS n FROM delivery_acks WHERE NOT renewal`
     )).toBe(2);
   });
 
   /**
-   * EL PUNTO DEL PARCHE. Con la MISMA edad, los latidos se van y las transiciones se quedan.
-   * Borrar por edad a secas se llevaría las cinco filas o ninguna.
+   * THE POINT OF THE PATCH. With the SAME age, heartbeats go and transitions stay.
+   * Plain age-based deletion would take all five rows or none.
    */
   it('borra los latidos viejos y conserva las transiciones de la misma edad', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
@@ -175,20 +175,20 @@ describe('retención por tipo de la observabilidad', () => {
   });
 
   /**
-   * La ventana larga sí se lleva las transiciones. Es lo que recupera el backlog de filas
-   * anteriores a la migración, que no se pueden reclasificar como latidos.
+   * The long window does take the transitions too. It is what recovers the backlog of pre-migration
+   * rows that cannot be reclassified as heartbeats.
    */
   it('la ventana general también se lleva las transiciones cuando ya son muy viejas', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
     await deliveryWithRenewals(lease.epoch!, 2);
     await ageEverything('40 days');
 
-    // accepted + el primer started + los 2 latidos.
+    // accepted + the first started + the 2 heartbeats.
     const pruned = await repository.pruneObservability();
     expect(pruned.ack_renewals + pruned.acks).toBe(4);
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks`)).toBe(0);
-    // De `audit_events` sólo se va la telemetría de la lista blanca; `message.publish` y
-    // compañía sobreviven porque no son un log, son estado.
+    // From `audit_events` only the whitelist telemetry is removed; `message.publish` and company
+    // survive because they are not a log, they are state.
     expect(await count(
       `SELECT count(*)::text AS n FROM audit_events WHERE action='delivery.ack'`
     )).toBe(0);
@@ -198,8 +198,8 @@ describe('retención por tipo de la observabilidad', () => {
   });
 
   /**
-   * Nunca hay un DELETE ilimitado sobre una base viva: el primer barrido de un backlog grande se
-   * lleva un lote y vuelve en el tick siguiente.
+   * There is never an unbounded DELETE on a live database: the first sweep over a large backlog
+   * takes one batch and comes back on the next tick.
    */
   it('acota cada barrido al tamaño de lote configurado', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
@@ -214,10 +214,10 @@ describe('retención por tipo de la observabilidad', () => {
   });
 
   /**
-   * `audit_events` NO es un log: es estado del que dependen guardas de corrección. Un DELETE por
-   * edad a secas rompería el candado de idempotencia del replay (un dead letter reencolado a los
-   * 31 días se clonaría dos veces) y la marca de confianza de la cadena agente-a-agente, en
-   * silencio y con semanas de retraso. Por eso la poda es una lista BLANCA.
+   * `audit_events` is NOT a log: it is state on which correctness guards depend. A plain
+   * age-based DELETE would break the replay idempotency lock (a dead letter reenqueued after 31
+   * days would be cloned twice) and the agent-to-agent chain's trust mark, silently and with
+   * weeks of delay. That is why pruning is a WHITELIST.
    */
   it('nunca borra los audit_events de los que dependen las guardas, por viejos que sean', async () => {
     const messageId = randomUUID();
@@ -236,7 +236,7 @@ describe('retención por tipo de la observabilidad', () => {
 
     const pruned = await repository.pruneObservability();
 
-    // Sólo se fue la telemetría, aunque las cuatro filas tienen la misma edad.
+    // Only the telemetry left, even though the four rows have the same age.
     expect(pruned.audit_events).toBe(1);
     const survivors = await pool.query<{ action: string }>(
       `SELECT action FROM audit_events ORDER BY action`

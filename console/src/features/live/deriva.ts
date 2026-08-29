@@ -2,30 +2,30 @@ import type { TopologySnapshot } from '../../api/types';
 import type { LiveAgentView } from './agent-state';
 
 /**
- * Medición de deriva bidireccional entre el registro de agentes (`activity.agents`)
- * y la topología de salas y membresías (`topology.memberships`).
+ * Bidirectional drift measurement between the agents registry (`activity.agents`)
+ * and the rooms/memberships topology (`topology.memberships`).
  *
- * El registro se discrimina por el flag `unregistered`/`registered` provisto por el servidor.
+ * The registry is discriminated by the `unregistered`/`registered` flag provided by the server.
  */
 export interface Deriva {
   /**
-   * Membresía HABILITADA cuyo alias no tiene fila en el registro de agentes. El caso
-   * `quota-collector`: un principal de operador que vive así a propósito.
+   * ENABLED membership whose alias has no row in the agents registry. The case `quota-collector`:
+   * an operator principal that lives like that on purpose.
    */
   sinRegistro: number;
   /**
-   * Alias del registro sin una sola membresía habilitada. El caso `gaia`. Se dibuja igual —en el
-   * recuadro «sin sala»— pero hasta ahora no se contaba en ninguna parte.
+   * Registry alias without a single enabled membership. The case `gaia`. It is drawn the same way
+   * —in the "no room" box— but so far was not counted anywhere.
    */
   sinSala: number;
-  /** La diferencia simétrica: `sinRegistro + sinSala`. Los dos conjuntos son disjuntos. */
+  /** The symmetric difference: `sinRegistro + sinSala`. The two sets are disjoint. */
   total: number;
 }
 
 /**
- * `enabled === false` es una BAJA que alguien dio a propósito y que la base conserva porque el
- * historial de mensajes la referencia. No es deriva, y contarla convertiría cada retiro correcto
- * en una alarma permanente. `undefined` sí cuenta: el servidor no la declaró deshabilitada.
+ * `enabled === false` is a REMOVAL that someone performed on purpose and that the database keeps
+ * because the message history references it. It is not drift, and counting it would turn every
+ * correct removal into a permanent alarm. `undefined` does count: the server did not mark it disabled.
  */
 function membresiasHabilitadas(topology: TopologySnapshot | undefined): Set<string> {
   const claves = new Set<string>();
@@ -41,19 +41,19 @@ function membresiasHabilitadas(topology: TopologySnapshot | undefined): Set<stri
   return claves;
 }
 
-/** `true` sólo cuando el participante tiene fila propia en `agents`. Ver el bloque de arriba. */
+/** `true` only when the participant has its own row in `agents`. See the block above. */
 function estaEnElRegistro(view: LiveAgentView): boolean {
   if (view.flags.includes('unregistered')) return false;
   return view.agent.registered !== false;
 }
 
 /**
- * La diferencia simétrica entre las membresías habilitadas y el registro de agentes.
+ * The symmetric difference between the enabled memberships and the agents registry.
  *
- * `views` tiene que venir YA acotado al cliente elegido cuando hay filtro, igual que `topology`:
- * medir un conjunto recortado contra otro entero convierte cada alias de otro cliente en deriva
- * inventada. Es la razón por la que esta función no filtra nada por su cuenta — no sabe qué se
- * está mirando— y por la que recibe los dos lados ya recortados.
+ * `views` must already be restricted to the selected tenant when a filter is active, the same as
+ * `topology`: measuring a trimmed set against a whole one turns every alias of another tenant
+ * into invented drift. That is why this function does not filter anything on its own — it does
+ * not know what is being watched — and why it receives both sides already trimmed.
  */
 export function derivaDelRegistro(
   views: readonly LiveAgentView[],

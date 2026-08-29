@@ -40,18 +40,18 @@ function agentKeyOf(tenantId: string, alias: string): string {
 }
 
 /**
- * **Mitad de escritura del ruteo**, dentro de "Cuentas de IA". 
- * `/assignments` ("Matriz agente × cuenta"), y era la tercera vista de la consola que dibujaba el
- * mismo inventario de cuentas: sus COLUMNAS son exactamente las FILAS de la tabla de arriba, salían
- * del mismo `GET /v3/console/config` y se escribían por el mismo `POST /v3/console/config/changes`.
- * Dos rutas para leer un snapshot y escribirlo con el mismo pipeline eran dos pollings y dos
- * entradas de menú del mismo hecho.
+ * **Half of the routing writes**, within "AI Accounts". 
+ * `/assignments` ("Agent × Account matrix"), and was the third view of the console that drew the
+ * same account inventory: its COLUMNS are exactly the ROWS of the table above, came from the same
+ * `GET /v3/console/config`, and were written through the same `POST /v3/console/config/changes`.
+ * Two routes to read a snapshot and write it through the same pipeline were two pollings and two
+ * menu entries for the same thing.
  *
- * `config` y `access` llegan **por props, no por `useResource` propio**: `useResource` no comparte
- * caché entre componentes, así que montar esto con sus propias lecturas volvería a pedir
- * `/v3/console/config` y `/v3/console/access` una segunda vez en la misma pantalla — que es
- * exactamente el defecto que la fusión viene a cerrar. El runner de mutación SÍ es propio: hay dos
- * formularios independientes en la vista y el dry-run de uno no puede habilitar el apply del otro.
+ * `config` and `access` arrive **via props, not through a local `useResource`**: `useResource`
+ * does not share cache between components, so mounting this with its own reads would re-fetch
+ * `/v3/console/config` and `/v3/console/access` a second time on the same screen — exactly the
+ * defect the merge comes to close. The mutation runner IS its own: the view has two independent
+ * forms, and one dry-run must not enable the other's apply.
  */
 export function AssignmentMatrix({ config, access }: {
   config: Resource<ConfigurationSnapshot>;
@@ -103,9 +103,9 @@ export function AssignmentMatrix({ config, access }: {
   }
 
   const [selectedTenant, selectedAlias] = assignment.agentKey.split('/');
-  // `Number('')` y `Number('   ')` valen 0, y 0 es una prioridad válida — además de la más alta.
-  // Sin este guard, vaciar el campo no pedía un valor: despachaba `priority: 0` en silencio y el
-  // alias pasaba a intentar esa cuenta primero. Un 0 escrito a propósito sigue siendo válido.
+  // `Number('')` and `Number('   ')` both equal 0, and 0 is a valid priority — the highest one, in fact.
+  // Without this guard, clearing the field did not ask for a value: it silently dispatched
+  // `priority: 0` and the alias went on to try that account first. A 0 written on purpose stays valid.
   const priorityText = assignment.priority.trim();
   const priorityNumber = priorityText === '' ? Number.NaN : Number(priorityText);
   const priorityValid = Number.isInteger(priorityNumber) && priorityNumber >= 0 && priorityNumber <= 32_767;

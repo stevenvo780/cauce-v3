@@ -24,17 +24,17 @@ import {
   verifyWritableProfilePath
 } from './path-policy.js';
 
-/** Lo que el pty-agent devuelve tras leer, ya acumulado por el terminal-relay. */
+/** What the pty-agent returns after reading, already accumulated by the terminal-relay. */
 export interface RelayFileRead {
   readonly path: string;
-  /** Tamaño REAL del fichero, aunque `content` venga recortado. */
+  /** REAL size of the file, even if `content` arrives truncated. */
   readonly bytes: number;
   readonly truncated: boolean;
   readonly modified_at: string;
   readonly sha: string;
   readonly content: string;
 }
-/** Forma interna del índice del relay: todavía usa rutas absolutas acreditadas por el agente. */
+/** Internal shape of the relay index: still uses absolute paths vouched for by the agent. */
 export interface RelayDirectoryRead {
   readonly path: string;
   readonly total: number | null;
@@ -61,8 +61,8 @@ export interface RelayFileWriteBatch {
 export type GovernanceWriteError = GovernanceReadError | { readonly error: 'conflict'; readonly reason: string };
 
 /**
- * Lo poco que el gateway necesita del terminal-relay. Se declara aquí, y no se importa del
- * paquete del relay, porque son dos procesos en dos máquinas: lo que los une es este contrato.
+ * The little the gateway needs from the terminal-relay. It is declared here, and not imported
+ * from the relay package, because they are two processes on two machines: this contract binds them.
  */
 export interface GovernanceRelayClient {
   readFile(
@@ -71,14 +71,14 @@ export interface GovernanceRelayClient {
     path: string,
     signal?: AbortSignal,
   ): Promise<RelayFileRead | GovernanceReadError>;
-  /** Ausente sólo en implementaciones legacy; nunca se sustituye por un índice vacío. */
+  /** Missing only in legacy implementations; never replaced with an empty index. */
   listDirectory?(
     tenantId: string,
     alias: string,
     path: string,
     signal?: AbortSignal,
   ): Promise<RelayDirectoryRead | GovernanceReadError>;
-  /** Ausente en dobles/clientes antiguos; la sonda falla honesta y no afirma aplicación. */
+  /** Missing in legacy doubles/clients; the probe fails honestly and does not claim application. */
   writeFile?(
     tenantId: string,
     alias: string,
@@ -93,13 +93,13 @@ export interface GovernanceRelayClient {
   ): Promise<RelayFileWriteBatch | GovernanceWriteError>;
 }
 
-/** De dónde salen los hechos medidos. Se inyecta para no atar el probe al almacén. */
+/** Where measured facts come from. Injected so the probe is not tied to the store. */
 export interface MeasuredFactsSource {
   factsFor(tenantId: string, alias: string): Promise<{ facts: RuntimeFacts; source: FactsSource } | undefined>;
 }
 
 /**
- * AgentFactsProbe respaldado por terminal-relay y pty-agent.
+ * AgentFactsProbe backed by terminal-relay and pty-agent.
  */
 export class TerminalRelayFactsProbe implements AgentFactsProbe {
   private readonly facts: MeasuredFactsSource;
@@ -130,7 +130,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
     try {
       answer = await this.relay.readFile(tenantId, alias, path, signal);
     } catch (error) {
-      // Que el relay reviente no puede tumbar la pantalla entera: se cuenta como lectura fallida.
+      // The relay blowing up cannot take down the whole screen: it is counted as a failed read.
       return { error: 'unknown', reason: `la lectura falló: ${error instanceof Error ? error.message : 'sin detalle'}` };
     }
     if ('error' in answer) return answer;
@@ -144,9 +144,9 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
       return { error: 'unknown', reason: 'la respuesta no trae una huella SHA-256 válida' };
     }
 
-    // OJO con las unidades: `MAX_DOCUMENT_BYTES` son BYTES y `string.length` son unidades UTF-16.
-    // Compararlos directamente deja pasar de largo cualquier documento con acentos, que aquí los
-    // hay en todos. Se mide con `byteLength` y se recorta sobre el buffer.
+    // WATCH OUT with the units: `MAX_DOCUMENT_BYTES` is BYTES, while `string.length` is UTF-16
+    // units. Comparing them directly lets through any document with accented characters, which
+    // are abundant here. We measure with `byteLength` and truncate on the buffer.
     const size = Buffer.byteLength(answer.content, 'utf8');
     if (!answer.truncated && size !== answer.bytes) {
       return { error: 'unknown', reason: 'el tamaño de la lectura no coincide con su contenido' };
@@ -410,7 +410,7 @@ function validMemoryTimestamp(value: unknown): value is string {
     && date.getUTCSeconds() === Number(match[6]);
 }
 
-/** `verifyWritablePath` exige kind: lo deriva sólo del mismo juego cerrado que produjo la ruta. */
+/** `verifyWritablePath` requires kind: it derives it from the same closed set that produced the path. */
 function documentForPathKind(facts: RuntimeFacts, path: string): DocumentKind | undefined {
   return resolveAgentDocuments(facts).find((document) => document.path === path)?.kind;
 }

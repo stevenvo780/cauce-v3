@@ -1,16 +1,16 @@
 import type { ConfigMutation } from '../../api/types';
 
 /**
- * Alta de un recurso de configuración con un FORMULARIO, en vez de obligar al operador a tipear la
- * mutación a mano en JSON.
+ * Onboarding of a config resource via a FORM, instead of forcing the operator to type the mutation
+ * by hand in JSON.
  *
- * Se cubren los cuatro recursos que se dan de alta a diario —membership y acl_edge primero, que son
- * los que más se usan, y después tenant y room—. El resto sigue teniendo el editor crudo abajo:
- * mejor cuatro formularios que funcionen que doce a medias.
+ * The four resources that get onboarded daily are covered —membership and acl_edge first, since
+ * they are the most used, then tenant and room—. Everything else still has the raw editor below:
+ * better four working forms than twelve half-baked ones.
  *
- * Las validaciones son las MISMAS expresiones que `packages/protocol/src/schemas.ts`, copiadas a
- * propósito: acá sólo sirven para no mandar al operador a un 400 seguro. La autoridad sigue siendo
- * el zod del gateway más el RBAC de `authorizeMutation`; esta pantalla no decide nada.
+ * The validations are the SAME expressions as in `packages/protocol/src/schemas.ts`, copied on
+ * purpose: here they only serve to keep the operator from being sent into a guaranteed 400. The
+ * authority remains the gateway's zod plus `authorizeMutation`'s RBAC; this screen decides nothing.
  */
 
 export type RecursoAlta = 'membership' | 'acl_edge' | 'tenant' | 'room';
@@ -24,7 +24,7 @@ export const TITULOS_ALTA: Record<RecursoAlta, string> = {
   room: 'Room',
 };
 
-// TenantSchema y AliasSchema de packages/protocol/src/schemas.ts.
+// TenantSchema and AliasSchema from packages/protocol/src/schemas.ts.
 const TENANT = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 
@@ -50,9 +50,9 @@ export const BORRADOR_VACIO: BorradorAlta = {
 };
 
 /**
- * Primer motivo por el que el alta NO se puede mandar, o `undefined` si el borrador pasa. Devuelve
- * el motivo y no un booleano porque un botón deshabilitado sin explicación deja al operador
- * adivinando cuál de los seis campos está mal.
+ * First reason the onboarding CANNOT be sent, or `undefined` if the draft passes. It returns
+ * the reason rather than a boolean because a disabled button without an explanation leaves the
+ * operator guessing which of the six fields is wrong.
  */
 export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): string | undefined {
   if (recurso === 'tenant') {
@@ -78,16 +78,16 @@ export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): strin
   }
   if (!TENANT.test(borrador.desde.trim())) return 'El tenant de origen debe empezar con letra (máx. 64 caracteres).';
   if (!TENANT.test(borrador.hacia.trim())) return 'El tenant de destino debe empezar con letra (máx. 64 caracteres).';
-  // El store rechaza la arista a sí mismo con un 409; avisarlo acá ahorra el viaje.
+  // The store rejects an edge to itself with a 409; warning here saves the round trip.
   return borrador.desde.trim() === borrador.hacia.trim()
     ? 'Una arista de un tenant hacia sí mismo está prohibida en el servidor: elegí dos tenants distintos.'
     : undefined;
 }
 
 /**
- * La mutación exacta que se va a enviar. Se muestra en pantalla antes de aplicar: el operador tiene
- * que poder ver lo que firma, sobre todo en las aristas ACL, donde el default es DENY y un tilde de
- * más abre un cruce entre tenants.
+ * The exact mutation that will be sent. Shown on screen before applying: the operator must be
+ * able to see what they sign, especially on ACL edges, where the default is DENY and a single
+ * extra check opens a cross-tenant channel.
  */
 export function mutacionDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): ConfigMutation {
   const tenantId = borrador.tenantId.trim();

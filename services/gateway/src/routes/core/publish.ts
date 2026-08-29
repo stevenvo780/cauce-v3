@@ -107,13 +107,13 @@ export function registerCorePublishRoutes(
     } catch (error) { replyError(reply, error); }
   });
 
-  // Ingesta de muestras de cuota del recolector fuera de banda. Va fuera de /v3/console/
-  // para permitir llamadas autenticadas de servicios de máquina sin cabecera Origin de navegador.
+  // Out-of-band quota-sample ingestion from the collector. Lives outside /v3/console/ so machine
+  // services can call it with an authenticated request but no browser Origin header.
   //
-  // Permiso: mismo par que POST /v3/console/jobs -- requireOperatorPermission sobre el Principal
-  // (rol derivado del certificado) MÁS assertPermission contra role_policies (la fuente de verdad
-  // en la base). recordQuotaSample() en sí no se autochequea, así que sin este segundo chequeo acá
-  // un agente con permiso 'control' mal otorgado podría pausar suscripciones de toda la flota.
+  // Permission: same pair as POST /v3/console/jobs -- requireOperatorPermission on the Principal
+  // (role derived from the certificate) PLUS assertPermission against role_policies (the source of
+  // truth in the database). recordQuotaSample() does not self-check, so without this second check
+  // an agent with a wrongly granted 'control' permission could pause subscriptions for the fleet.
   app.post('/v3/quotas/samples', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
@@ -125,16 +125,16 @@ export function registerCorePublishRoutes(
     } catch (error) { replyError(reply, error); }
   });
 
-  // Selección de cuenta del PROPIO alias (el sistema rotativo de cuentas). Vive fuera de
-  // /v3/console/ por la misma razón que /v3/quotas/samples: la llama un adaptador con certificado
-  // de cliente, y createConsoleSecurityHook rechaza todo lo que no traiga un Origin same-origin,
-  // que un demonio jamás manda.
+  // Account selection for the alias ITSELF (the rotating-account system). Lives outside
+  // /v3/console/ for the same reason as /v3/quotas/samples: it is called by an adapter holding a
+  // client certificate, and createConsoleSecurityHook rejects anything that does not bring a
+  // same-origin Origin, which a daemon never sends.
   //
-  // El sujeto NO es un parámetro: sale del certificado. Un alias resuelve su propia cuenta y
-  // ninguna otra, así que el permiso que hace falta es 'route' (el que ya tiene todo adaptador
-  // que despacha) y no 'control'. Pedir 'control' acá habría obligado a darle a cada agente el
-  // mismo permiso que pausa suscripciones de toda la flota, que es justo lo contrario de lo que
-  // esta ruta necesita.
+  // The subject is NOT a parameter: it comes from the certificate. An alias resolves its own
+  // account and no other, so the permission needed here is 'route' (which every dispatching
+  // adapter already has) rather than 'control'. Asking for 'control' here would have forced
+  // giving every agent the same permission that pauses subscriptions for the entire fleet, which
+  // is exactly the opposite of what this route needs.
   app.get('/v3/accounts/selection', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);

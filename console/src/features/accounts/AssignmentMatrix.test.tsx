@@ -6,7 +6,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
 /**
- * Pruebas de asignación de cuentas de IA integradas dentro de AccountsPage.
+ * AI account assignment tests integrated inside AccountsPage.
  */
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
@@ -48,19 +48,19 @@ function recordChanges(sink: ChangeRequest[]) {
 }
 
 /**
- * Las dos barras de escritura de la vista tienen botones con el mismo texto. Se distinguen por el
- * `role="group"` que las nombra: sin eso, `getByRole('button', { name: /previsualizar/i })`
- * encontraría dos, y previsualizar el formulario equivocado manda una mutación que nadie pidió.
+ * The two write bars in the view have buttons with the same text. They are distinguished by the
+ * `role="group"` that names them: without it, `getByRole('button', { name: /previsualizar/i })`
+ * would find two, and previewing the wrong form sends a mutation nobody asked for.
  */
 function assignmentActions() {
   return within(screen.getByRole('group', { name: /acciones de asignación/i }));
 }
 
 /**
- * . El panel
- * inactivo se monta pero va con `hidden`, así que sale del árbol de accesibilidad y `getByRole` NO
- * lo encuentra: la prueba tiene que abrir la pestaña igual que el operador. Eso es a propósito —
- * una prueba que encontrara la matriz sin abrirla estaría verde con la pestaña rota.
+ * The inactive panel is mounted but rendered with `hidden`, so it leaves the accessibility tree
+ * and `getByRole` does NOT find it: the test has to open the tab the same way the operator does.
+ * That is on purpose — a test that found the matrix without opening it would be green with a
+ * broken tab.
  */
 async function openMatrix(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
@@ -76,7 +76,7 @@ it('la matriz vive DENTRO de «Cuentas y cuotas», sin segunda ruta y sin segund
   expect(headings).toHaveLength(1);
   expect(headings[0]).toHaveTextContent(/cuentas y cuotas/i);
 
-  // Las tres mitades, en la misma pantalla y a un clic: consumo, inventario y techo por alias.
+  // The three halves, on the same screen and one click away: consumption, inventory, and ceiling per alias.
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
   expect(screen.getByRole('heading', { name: /inventario de cuentas/i })).toBeInTheDocument();
 
@@ -159,10 +159,10 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  // Se deja el alta de cuenta lista para enviarse, pero se previsualiza la ASIGNACIÓN.
-  // Y de paso queda fijado que cambiar de pestaña NO tira lo escrito en el otro formulario: los
-  // paneles se montan siempre y el inactivo va con `hidden`. Si alguien los volviera a montar
-  // condicionalmente, el `expect` del final vería un dry-run de alta vacío.
+  // Account onboarding is left ready to send, but the ASSIGNMENT is previewed. And along the way
+  // it is pinned that switching tabs does NOT discard what was written in the other form: panels
+  // are always mounted and the inactive one comes with `hidden`. Re-mounting them conditionally
+  // would let the final `expect` see an empty onboarding dry-run.
   await user.click(await screen.findByRole('tab', { name: 'Inventario' }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
@@ -176,7 +176,7 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
   const accountActions = within(screen.getByRole('group', { name: /acciones de alta de cuenta/i }));
   expect(accountActions.getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
-  // Y lo escrito antes de irse a la otra pestaña sigue ahí: el panel se ocultó, no se desmontó.
+  // And what was written before going to the other tab is still there: the panel hid, did not unmount.
   expect(screen.getByLabelText(/id externo de la suscripción/i)).toHaveValue('org-9f21');
 });
 
@@ -208,8 +208,8 @@ it('no convierte una prioridad vacía en 0, que es la más alta', async () => {
 
   await openMatrix(user);
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
-  // `Number('')` es 0 y 0 pasaba `Number.isInteger(n) && n >= 0`: vaciar el campo armaba
-  // silenciosamente la prioridad más alta en vez de pedir un valor.
+  // `Number('')` is 0 and 0 passed `Number.isInteger(n) && n >= 0`: clearing the field silently
+  // assembled the highest priority instead of asking for a value.
   await user.clear(screen.getByLabelText(/prioridad/i));
 
   expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
@@ -277,7 +277,7 @@ it('lee el snapshot UNA sola vez para las dos mitades', async () => {
 
   await openMatrix(user);
   await screen.findByRole('heading', { name: /techo por alias/i });
-  // Antes de la fusión eran dos rutas con su propio `useResource`, que no comparte caché: montar
-  // las dos mitades pedía `/v3/console/config` dos veces. Ahora la matriz lo recibe por props.
+  // Before the merge there were two routes with their own `useResource`, which does not share
+  // cache: mounting both halves requested `/v3/console/config` twice. The matrix now receives it via props.
   expect(configReads).toBe(1);
 });

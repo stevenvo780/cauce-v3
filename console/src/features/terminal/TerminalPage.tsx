@@ -23,9 +23,9 @@ function useRefreshInterval(reload: () => void, milliseconds: number, loading: b
 export function TerminalPage() {
   const api = useApi();
   /**
-   * Con una sesión abierta la página entra en modo observación: el terminal se queda con el alto
-   * y los seis contadores se repliegan a una tira. Sin esto el terminal empezaba en y=856 sobre
-   * una ventana de 900 —44 px visibles— y en el móvil, en y=1.952: fuera de la pantalla entera.
+   * With an open session the page enters observation mode: the terminal keeps the height and the
+   * six counters collapse into a single strip. Without this the terminal started at y=856 on a
+   * 900-px window —44 px visible— and on mobile, at y=1952: off the entire screen.
    */
   const [sesionesAbiertas, setSesionesAbiertas] = useState(0);
   const status = useResource('ultimate-terminal-status', () => api.getStatus());
@@ -60,8 +60,8 @@ export function TerminalPage() {
     : fleetError && agents.length === 0
       ? 'Operación privilegiada · no se pudo leer la flota'
       : `Operación privilegiada · ${String(agents.length)} agentes`;
-  // El relay PTY es opt-in por stack (ver 0a1d0e3): ausencia, permiso y medición inconclusa tienen
-  // un aviso propio y explícito, en vez de sumarse como un "PTY: Bad Gateway" sin clasificación.
+  // The PTY relay is opt-in per stack (see 0a1d0e3): absence, permission and inconclusive measurement
+  // each get their own explicit notice, rather than summing up as an unclassified "PTY: Bad Gateway".
   const relay = deriveTerminalRelayState(capability.data, capability.error);
   const relayUnavailable = relay.status === 'unavailable';
   const failures = [
@@ -69,8 +69,8 @@ export function TerminalPage() {
     topology.error ? `Salas: ${topology.error.message}` : undefined,
     adapters.error ? `Adaptadores: ${adapters.error.message}` : undefined,
     access.error ? `Permisos: ${access.error.message}` : undefined,
-    // El inventario de targets depende de la misma consulta; si el aviso del relay ya explica su
-    // fallo, no lo duplicamos con el mismo error técnico.
+    // The targets inventory depends on the same query; if the relay's notice already explains its
+    // failure, we do not duplicate it with the same technical error.
     targets.error && !relayUnavailable ? `Destinos PTY: ${targets.error.message}` : undefined,
   ].filter((value): value is string => Boolean(value));
 
@@ -84,25 +84,25 @@ export function TerminalPage() {
   }
 
   /*
-   * ═══ MODO OBSERVACIÓN: LO QUE SE MIRA ANTES DE ABRIR NO OCUPA ALTO MIENTRAS SE MIRA UNA TUI ═══
+   * ═══ OBSERVATION MODE: WHAT YOU CHECK BEFORE OPENING TAKES NO HEIGHT WHILE A TUI IS OPEN ═══
    *
-   * Los seis contadores contestan una sola pregunta, y es de ANTES: «¿puedo abrir una terminal, y
-   * de quién?». Ninguno habla del alias que estás mirando y ninguno cambia mientras lo mirás. Con
-   * una sesión abierta pasan a un desplegable que vive en la fila de la cabecera —o sea que cuesta
-   * CERO renglones— y vuelven enteros de un clic. MEDIDO a 1920x1080 antes de esto: la tira se
-   * llevaba 40 px más 10 de margen, y el pie de doctrina otros 30, sobre un terminal que se quedaba
-   * con el 54,1 % de la ventana.
+   * The six counters answer a single question, and a BEFORE-the-fact one: "can I open a terminal,
+   * and whose?". None talks about the alias you are watching and none changes while you watch it.
+   * With an open session they move to a disclosure living in the header row —cost: ZERO rows—
+   * and come back whole with a click. MEASURED at 1920x1080 before this: the strip took 40 px
+   * plus 10 of margin, and the doctrine footer another 30, on a terminal left with 54.1% of the
+   * window.
    *
-   * Sin ninguna sesión abierta NO se pliega nada: ahí esos seis datos son justamente lo que se vino
-   * a leer. Lo comprueba `densidad-observacion.test.tsx`, con su control negativo.
+   * With no open session NOTHING collapses: those six pieces of data are exactly what the operator
+   * came to read. `densidad-observacion.test.tsx` checks this, with its negative control.
    */
   const observando = sesionesAbiertas > 0;
   const contadores = (
     <div className="terminal-overview" aria-label="Estado de la terminal de agentes">
       <article><span className="overview-icon online"><Wifi size={17} aria-hidden="true" /></span><div><small>Leases vigentes</small><strong>{online} / {agents.length || 'sin dato'}</strong></div><Badge tone={online ? 'online' : agents.length ? 'warning' : 'unknown'}>LIVE</Badge></article>
       {/*
-        «3 / 6» se leía como «3 rotos». Son 3 disponibles y 3 que no reportaron estado, que no
-        es lo mismo: el contador ahora cuenta cada grupo por su nombre.
+        "3 / 6" used to read as "3 broken". It is 3 available and 3 that did not report state,
+        which is not the same thing: the counter now labels each group by its own name.
       */}
       <article><span className="overview-icon"><RadioTower size={17} aria-hidden="true" /></span><div><small>Adaptadores</small><strong>{adapters.data?.items ? adapterBreakdownText(adapterItems) : 'sin dato'}</strong></div><Badge tone={adapterCuenta.conFallo ? 'warning' : adapterCuenta.disponibles ? 'info' : 'unknown'}>SERVER</Badge></article>
       <article><span className="overview-icon"><ShieldCheck size={17} aria-hidden="true" /></span><div><small>Tu permiso</small><strong>{connectState === 'allowed' ? 'CONCEDIDO' : connectState === 'denied' ? 'DENEGADO' : 'SIN DATO'}</strong></div><Badge tone={connectState === 'allowed' ? 'online' : connectState === 'denied' ? 'danger' : 'unknown'}>RBAC</Badge></article>
@@ -123,9 +123,9 @@ export function TerminalPage() {
             {observando ? (
               <details className="terminal-resumen">
                 {/*
-                  El rótulo lleva la cifra que de verdad se mira de reojo —leases vigentes— para que
-                  el desplegable cerrado no sea un botón mudo: se abre cuando hace falta el detalle,
-                  no para averiguar si pasa algo.
+                  The label carries the figure you actually glance at —active leases— so the closed
+                  disclosure is not a mute button: it opens when the detail is needed, not to find
+                  out whether something is happening.
                 */}
                 <summary title="Los seis contadores de la flota y la doctrina de la vista. Se repliegan mientras mirás una TUI porque no cambian mientras la mirás.">
                   <Wifi size={14} aria-hidden="true" />
@@ -135,7 +135,7 @@ export function TerminalPage() {
                 </summary>
                 <div className="terminal-resumen-panel">
                   {contadores}
-                  {/* La misma constante que el pie de la rejilla, que en este modo se repliega. */}
+                  {/* Same constant as the grid footer, which in this mode collapses. */}
                   <p className="terminal-resumen-doctrina"><ShieldCheck size={13} aria-hidden="true" /> {TEXTO_DOCTRINA}</p>
                 </div>
               </details>
@@ -150,9 +150,9 @@ export function TerminalPage() {
       {relayUnavailable ? (
         <div className="terminal-relay-notice" role="status">
           <TerminalSquare size={17} aria-hidden="true" />
-          {/* El TÍTULO también tiene que decir la verdad: con un 403 el canal existe y lo que falta
-              es el permiso, así que «no disponible en este stack» era la misma mentira que el
-              cuerpo. Ver `TerminalRelayCause` en relay-status.ts. */}
+          {/* The TITLE must tell the truth too: with a 403 the channel exists and what is missing is
+              the permission, so "not available in this stack" was the same lie as the body. See
+              `TerminalRelayCause` in relay-status.ts. */}
           <div>
             <strong>{relay.cause === 'sin-permiso'
               ? 'La terminal de agentes requiere permiso de control'

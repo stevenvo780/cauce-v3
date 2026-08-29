@@ -3,10 +3,10 @@ import test from "node:test";
 import { validateDeliveryOutput, validateStructuredOutput } from "../src/sdk/output-parser.js";
 
 /**
- * Un mensaje en `messages` dirigido al remitente no debe invalidar el turno completo.
+ * A message in `messages` addressed to the sender must not invalidate the whole turn.
  *
- * El envío accidental hacia el remitente se descarta con aviso técnico en el parser,
- * permitiendo que el resto del resultado (`reply`, otras delegaciones) sobreviva.
+ * The accidental send to the sender is discarded with a technical notice in the parser,
+ * letting the rest of the output (`reply`, other delegations) survive.
  */
 
 const ROUTING_TARGETS = [
@@ -14,7 +14,7 @@ const ROUTING_TARGETS = [
   { tenant_id: "Pablo", alias: "seneca", online: true },
 ] as const;
 
-/** El contexto real del caso: jarvis atiende un `agent.response` que le mandó seneca. */
+/** The real context of the case: jarvis is handling an `agent.response` sent by seneca. */
 function contexto(): Parameters<typeof validateDeliveryOutput>[1] {
   return {
     messageType: "agent.response",
@@ -36,7 +36,7 @@ function salida(overrides: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-// (a) El caso que costaba el turno: reply de verdad + un `messages` al remitente.
+// (a) The case that used to cost the turn: a real reply + one `messages` to the sender.
 test("un mensaje al remitente se descarta y el reply sobrevive", () => {
   const output = validateDeliveryOutput(
     validateStructuredOutput(salida({
@@ -46,20 +46,20 @@ test("un mensaje al remitente se descarta y el reply sobrevive", () => {
     contexto(),
   );
 
-  // Lo que antes NO pasaba: el turno vive.
+  // What did NOT happen before: the turn survives.
   assert.equal(output.status, "done");
   assert.equal(output.retryable, false);
   assert.match(output.reply ?? "", /lista de 11 prospectos, con dominio/u);
 
-  // El accesorio mal dirigido se fue, y dejó rastro con el motivo y el destino.
+  // The misrouted accessory is gone, leaving a trace with the reason and destination.
   assert.deepEqual(output.messages, []);
   assert.match(output.reply ?? "", /\[Cauce\]/u);
   assert.match(output.reply ?? "", /seneca/u);
   assert.match(output.reply ?? "", /reply/u);
 });
 
-// (a-bis) El entregable no se pierde ni cuando vivía SOLO dentro del mensaje mal dirigido:
-// el destinatario del `reply` es exactamente el mismo remitente, así que se pliega ahí.
+// (a-bis) The deliverable is not lost even when it lived ONLY inside the misrouted message:
+// the `reply`'s recipient is exactly the same sender, so it folds there.
 test("si el trabajo vivia solo en el mensaje al remitente, se pliega en el reply", () => {
   const output = validateDeliveryOutput(
     validateStructuredOutput(salida({
@@ -74,7 +74,7 @@ test("si el trabajo vivia solo en el mensaje al remitente, se pliega en el reply
   assert.match(output.reply ?? "", /PROSPECTO-1 acme\.com; PROSPECTO-2 globex\.com/u);
 });
 
-// (b) Una delegación legítima a un TERCERO no se toca.
+// (b) A legitimate delegation to a THIRD party is left untouched.
 test("una delegacion a un tercero legitimo queda intacta", () => {
   const entrada = validateStructuredOutput(salida({
     reply: "Delego la verificación y te aviso.",
@@ -88,7 +88,7 @@ test("una delegacion a un tercero legitimo queda intacta", () => {
   assert.doesNotMatch(output.reply ?? "", /\[Cauce\]/u);
 });
 
-// (b-bis) Mezcla: se descarta SOLO el del remitente; el del tercero viaja.
+// (b-bis) Mix: ONLY the sender's is discarded; the third party's travels.
 test("con remitente y tercero mezclados solo se descarta el del remitente", () => {
   const output = validateDeliveryOutput(
     validateStructuredOutput(salida({
@@ -107,7 +107,7 @@ test("con remitente y tercero mezclados solo se descarta el del remitente", () =
   assert.match(output.reply ?? "", /\[Cauce\]/u);
 });
 
-// (c) El caso sano: nada que descartar, nada que tocar.
+// (c) The healthy case: nothing to discard, nothing to touch.
 test("el turno sano no cambia en nada", () => {
   const entrada = validateStructuredOutput(salida({ reply: "Listo, sin delegaciones." }));
   const output = validateDeliveryOutput(entrada, contexto());
@@ -118,9 +118,9 @@ test("el turno sano no cambia en nada", () => {
 });
 
 /**
- * El resto del contrato de destinos NO se ablanda: un tercero desconocido, ambiguo, fuera de
- * línea o el propio alias siguen siendo error duro. Lo único que cambia de precio es el rebote al
- * remitente, que tiene un canal correcto y evidente al que caer.
+ * The rest of the destinations contract is NOT softened: an unknown third party, ambiguous,
+ * offline, or the alias itself remain hard errors. The only price change is the bounce to the
+ * sender, which has a correct and obvious channel to fall into.
  */
 test("los demas destinos invalidos siguen siendo error duro", () => {
   for (const destino of ["jarvis", "vulcano"]) {

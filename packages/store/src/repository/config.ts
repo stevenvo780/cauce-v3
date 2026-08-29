@@ -11,7 +11,7 @@ export * from './config/publish-policy.js';
 
 export type AgentTargetPermission = 'read' | 'control';
 
-/** Registro mínimo del alias que quedó autorizado por su identidad canónica. */
+/** Minimal record of the alias authorized by its canonical identity. */
 export interface AuthorizedAgentTarget {
   readonly tenant_id: Tenant;
   readonly alias: string;
@@ -69,12 +69,12 @@ export abstract class ConfigRepository extends OutboxRepository {
   }
 
   /**
-   * Autoriza un actor contra UN destino canónico `(tenant, alias)` y devuelve esa misma fila.
+   * Authorizes an actor against ONE canonical target `(tenant, alias)` and returns that same row.
    *
-   * No acepta sólo `alias`: el mismo nombre puede existir en varios tenants y elegir el primero
-   * por orden convierte una URL en una fuga entre clientes. Primero se exige el permiso efectivo
-   * del actor; después, para otro tenant, la arista ACL del MISMO permiso. Cualquier ausencia deja
-   * el resultado en `undefined`, igual para «no existe» y «no lo puedes ver».
+   * It does not accept `alias` alone: the same name may exist in several tenants, and picking the
+   * first one by order turns a URL into a cross-tenant leak. First the actor's effective permission
+   * is required; then, for another tenant, the ACL edge for the SAME permission. Any absence leaves
+   * the result as `undefined`, same for "does not exist" and "you cannot see it".
    */
   async authorizeAgentTarget(
     actorTenant: Tenant,
@@ -241,24 +241,24 @@ export abstract class ConfigRepository extends OutboxRepository {
   }
 
   /**
-   * Qué suscripción gasta el alias en su próxima ejecución (GET /v3/accounts/selection).
+   * Which subscription the alias spends on its next execution (GET /v3/accounts/selection).
    *
-   * `actorTenant`/`actorAlias` son la identidad mTLS AUTENTICADA y son TAMBIÉN el sujeto de la
-   * consulta: no hay parámetro para preguntar por otro alias. Es deliberado y es la mitad de la
-   * seguridad de esta ruta — la respuesta incluye el `credential_ref` de la cuenta, y aunque sea
-   * un locator y no un secreto, decirle a un agente dónde busca su credencial OTRO agente es
-   * exactamente el tipo de dato que no tiene por qué cruzar. Un alias sólo resuelve lo suyo.
+   * `actorTenant`/`actorAlias` are the AUTHENTICATED mTLS identity and are ALSO the subject of
+   * the query: there is no parameter to ask about another alias. It is deliberate and it is half
+   * of this route's security — the response includes the account's `credential_ref`, and even though
+   * it is a locator rather than a secret, telling one agent where ANOTHER agent looks up its
+   * credential is exactly the kind of data that has no reason to cross over. An alias only resolves
+   * its own.
    *
-   * Nótese la diferencia con `getConfiguration()`, que NUNCA devuelve `credential_ref` ni a su
-   * pagador (ver configuration.ts): aquello alimenta un navegador, esto alimenta al adaptador que
-   * corre en el host que ya tiene el material montado. La migración 010 lo dice al describir el
-   * locator: "the borrower receives a reference it can only dereference on a host that already
-   * holds the material".
+   * Note the difference with `getConfiguration()`, which NEVER returns `credential_ref`, not even
+   * to its payer (see configuration.ts): that one feeds a browser; this one feeds the adapter
+   * running on the host that already has the material mounted. Migration 010 says so when
+   * describing the locator: "the borrower receives a reference it can only dereference on a host
+   * that already holds the material".
    */
   async selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection> {
-    // Mismo juego de caracteres que el CHECK de `provider_accounts.provider`. Se valida acá y no
-    // sólo en la ruta para que ningún llamador futuro pueda meter una cadena arbitraria en el
-    // parámetro de la consulta.
+    // Same character set as the CHECK on `provider_accounts.provider`. Validated here, not just
+    // at the route, so no future caller can slip an arbitrary string into the query parameter.
     if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(provider)) {
       throw new StoreError('invalid_input', `invalid provider name: ${provider}`);
     }

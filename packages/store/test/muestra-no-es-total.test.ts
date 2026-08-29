@@ -4,10 +4,10 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 /**
- * Distinción entre métricas muestreadas por ventana y totales globales de la base.
+ * Distinction between window-sampled metrics and global database totals.
  *
- * Verifica que `queueSnapshot()` reporte claramente el universo de conteo para evitar
- * ambigüedad entre métricas acotadas por ventana/permisos y métricas globales del sistema.
+ * Verifies that `queueSnapshot()` clearly reports the counting universe to avoid ambiguity
+ * between window/permission-bounded metrics and global system metrics.
  */
 
 let database: TestDatabase;
@@ -30,10 +30,9 @@ beforeEach(async () => {
 });
 
 /*
- * `resetTestDatabase()` NO vacía `tenants`, `rooms`, `memberships` ni `acl_edges`: esos salen de
- * la semilla de las migraciones y son el escenario compartido de todas las suites. Sembrar aquí
- * los míos habría chocado con esa semilla; lo que hago es asegurarme de que está encendida, igual
- * que el resto de las pruebas del store.
+ * `resetTestDatabase()` does NOT empty `tenants`, `rooms`, `memberships`, or `acl_edges`: those
+ * come from the migration seed and are the shared scenario for all suites. Seeding mine here would
+ * have collided with that seed; what I do is make sure it's enabled, like the rest of the store tests.
  */
 async function sembrarFlota(): Promise<void> {
   await pool.query(`
@@ -45,12 +44,12 @@ async function sembrarFlota(): Promise<void> {
 }
 
 /**
- * Mete `cuantas` entregas muertas para `Steven:argos`.
+ * Inserts `cuantas` dead deliveries for `Steven:argos`.
  *
- * Publica por el camino REAL del repositorio y después marca la entrega como muerta. Sembrar con
- * `INSERT` a mano fue mi primer intento y falló: inventé una columna `idempotency_key` en
- * `messages` que no existe —vive en el comando, no en la tabla—. Un fixture escrito a mano se
- * desincroniza del esquema sin avisar; publicar de verdad no puede.
+ * Publishes through the repository's REAL path and then marks the delivery as dead. Seeding with
+ * a manual `INSERT` was my first attempt and it failed: I invented an `idempotency_key` column in
+ * `messages` that doesn't exist —it lives in the command, not in the table—. A hand-written
+ * fixture goes out of sync with the schema without warning; real publishing can't.
  */
 async function sembrarMuertas(cuantas: number, tenant = 'Steven', room = 'grp.steven', emisor = 'kant', destino = 'argos'): Promise<void> {
   for (let i = 0; i < cuantas; i += 1) {
@@ -77,7 +76,7 @@ async function sembrarMuertas(cuantas: number, tenant = 'Steven', room = 'grp.st
 describe('la muestra de colas no se puede confundir con el total', () => {
   it('declara el total REAL además del contado en la ventana', async () => {
     await sembrarFlota();
-    // 12 muertas, pero la ventana se pide de 5: la cifra de la ventana NO puede pasar por total.
+    // 12 dead, but the window is asked for 5: the window's figure CANNOT pass as total.
     await sembrarMuertas(12);
 
     const snapshot = await repository.queueSnapshot('Steven', 'kant', 5) as {
@@ -86,12 +85,12 @@ describe('la muestra de colas no se puede confundir con el total', () => {
 
     expect(snapshot.items.length).toBe(5);
     expect(snapshot.dead).toBeLessThanOrEqual(5);
-    // Lo que hoy no existe y es todo el punto: el total de verdad, dicho aparte.
+    // What doesn't exist today and is the whole point: the real total, said separately.
     expect(snapshot.totals?.dead).toBe(12);
     expect(snapshot.muestra_recortada).toBe(true);
   }, 120_000);
 
-  // ── CONTROL NEGATIVO ──────────────────────────────────────────────────────────────────────
+  // ── NEGATIVE CONTROL ──────────────────────────────────────────────────────────────────────────
 
   it('CONTROL NEGATIVO: cuando la ventana alcanza, NO se declara recortada y los números coinciden', async () => {
     await sembrarFlota();
@@ -108,12 +107,12 @@ describe('la muestra de colas no se puede confundir con el total', () => {
 
   it('CONTROL NEGATIVO: el total respeta lo que el actor puede ver, no es un COUNT global', async () => {
     /*
-     * Si el total saliera de un `COUNT(*)` sin filtro, un operador de un cliente vería las
-     * entregas muertas de otro. La cifra global tiene su sitio —`/v3/status`— y no es ésta.
+     * If the total came from an unfiltered `COUNT(*)`, an operator from one client would see the
+     * dead deliveries of another. The global figure has its place —`/v3/status`— and it's not this one.
      */
     await sembrarFlota();
     await sembrarMuertas(4);
-    // Y una muerta de OTRO cliente, que Steven no tiene por qué contar.
+    // And one dead delivery from ANOTHER client, which Steven has no reason to count.
     await sembrarMuertas(1, 'Miguel', 'grp.miguel', 'janus', 'janus');
 
     const snapshot = await repository.queueSnapshot('Steven', 'kant', 200) as { totals?: { dead: number } };

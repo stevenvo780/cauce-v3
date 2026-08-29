@@ -5,15 +5,15 @@ import {
 import { CAMPOS_CONMUTABLES, esCampoConmutable } from './interruptores';
 
 /**
- * **El catálogo de campos que la pantalla enseña pero NADIE OBEDECE.**
+ * **The catalog of fields the screen shows but NOBODY OBEYS.**
  *
- * Lo que se audita acá no es una opinión: cada motivo tiene que citar la `ruta:línea` del lector
- * —o de su ausencia— que lo justifica. Un «esto no sirve» sin cita es exactamente la clase de
- * afirmación que este trabajo existe para no volver a hacer.
+ * What is audited here isn't an opinion: every reason must cite the `path:line` of the reader
+ * —or its absence— that justifies it. A "this is useless" without a citation is exactly the kind
+ * of claim this work exists to not make again.
  *
- * Y la guarda que más importa es la de al revés: **un campo con interruptor NO puede estar marcado
- * como inerte**. Un interruptor dice «esto lo podés cambiar y va a pasar algo»; marcarlo inerte
- * sería la consola contradiciéndose a sí misma en la misma celda.
+ * And the most important guard is the reverse one: **a field with a switch CANNOT be marked
+ * as inert**. A switch says "you can change this and something will happen"; marking it inert
+ * would be the console contradicting itself in the same cell.
  */
 
 describe('el catálogo de campos inertes', () => {
@@ -37,11 +37,11 @@ describe('el catálogo de campos inertes', () => {
   });
 
   /**
-   * CONTROL NEGATIVO del aserto de arriba: los campos de `agents` que SÍ tienen lector no pueden
-   * estar en el catálogo. `role_brief` lo lee `selfRoleFromProfile()` (packages/store/src/repository/agents.ts:215)
-   * y de ahí sale la línea «Tu rol:» del sobre; `display_name` y `enabled` los lee `listAgents`
-   * (packages/store/src/repository/agents.ts:321) y `agentDeploymentStatus` (packages/store/src/repository/observability/helpers.ts:7). Marcarlos inertes borraría capacidad real de la
-   * pantalla, que es el defecto opuesto y igual de caro.
+   * NEGATIVE CONTROL of the assertion above: the fields in `agents` that DO have a reader cannot
+   * be in the catalog. `role_brief` is read by `selfRoleFromProfile()` (packages/store/src/repository/agents.ts:215),
+   * and `display_name` and `enabled` are read by `listAgents` (packages/store/src/repository/agents.ts:321)
+   * and `agentDeploymentStatus` (packages/store/src/repository/observability/helpers.ts:7). Marking
+   * them inert would erase real capability from the screen, which is the opposite, equally costly defect.
    */
   it('NO marca los campos de `agents` que sí tienen lector', () => {
     expect(motivoInerte('agents', 'role_brief')).toBeUndefined();
@@ -51,14 +51,14 @@ describe('el catálogo de campos inertes', () => {
     expect(motivoInerte('agents', 'runtime_user')).toBeUndefined();
   });
 
-  /** CONTROL NEGATIVO: `capabilities` y `enabled` de un harness los lee `listAdapters` (packages/store/src/repository/agents.ts:278). */
+  /** NEGATIVE CONTROL: a harness's `capabilities` and `enabled` are read by `listAdapters` (packages/store/src/repository/agents.ts:278). */
   it('NO marca los campos de `harness_definitions` que sí tienen lector', () => {
     expect(motivoInerte('harness_definitions', 'capabilities')).toBeUndefined();
     expect(motivoInerte('harness_definitions', 'enabled')).toBeUndefined();
     expect(motivoInerte('harness_definitions', 'display_name')).toBeUndefined();
   });
 
-  /** CONTROL NEGATIVO: una colección entera que no tiene nada inerte. */
+  /** NEGATIVE CONTROL: an entire collection that has nothing inert. */
   it('NO marca nada en las colecciones de permisos', () => {
     expect(motivoInerte('acl_edges', 'allow_route')).toBeUndefined();
     expect(motivoInerte('role_policies', 'allow_notify')).toBeUndefined();
@@ -68,8 +68,8 @@ describe('el catálogo de campos inertes', () => {
   });
 
   /**
-   * `Object.hasOwn` y no `?.`: una colección del servidor llamada `toString` heredaría un valor del
-   * prototipo y la tabla pintaría una función como motivo.
+   * `Object.hasOwn`, not `?.`: a server collection named `toString` would inherit a value from
+   * the prototype and the table would render a function as the reason.
    */
   it('no hereda nada del prototipo', () => {
     expect(motivoInerte('toString', 'toString')).toBeUndefined();
@@ -111,7 +111,7 @@ describe('la guarda: ningún campo con interruptor puede estar marcado como iner
 });
 
 /**
- * **El aviso de la tabla se decide por las columnas QUE HAY, no por la colección.**
+ * **The table's notice is decided by the columns IT HAS, not by the collection.**
  */
 describe('las columnas inertes que de verdad se están pintando', () => {
   it('devuelve sólo las que la tabla trae, en el orden en que se piden', () => {
@@ -120,13 +120,13 @@ describe('las columnas inertes que de verdad se están pintando', () => {
   });
 
   /**
-   * CONTROL NEGATIVO: la colección tiene campos inertes en el catálogo, pero ESTE gateway no
-   * publica ninguno de ellos. Sin este caso el aviso volvería a salir sobre una tabla limpia.
+   * NEGATIVE CONTROL: the collection has inert fields in the catalog, but THIS gateway does not
+   * publish any of them. Without this case the notice would show again over a clean table.
    */
   it('devuelve vacío cuando la tabla no trae ninguna de las columnas inertes', () => {
     expect(columnasInertesDe('harness_definitions', ['id', 'display_name', 'capabilities', 'enabled']))
       .toEqual([]);
-    // Y con `command` presente sí la devuelve: la diferencia es la columna, no la colección.
+    // And with `command` present it does return it: the difference is the column, not the collection.
     expect(columnasInertesDe('harness_definitions', ['id', 'command'])).toEqual(['command']);
   });
 });

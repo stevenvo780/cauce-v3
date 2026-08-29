@@ -7,10 +7,10 @@ import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 
 /**
- * Repositorio de lectura, persistencia y contexto de perfiles de agentes (agent_profiles).
+ * Repository for reading, persistence, and context of agent profiles (agent_profiles).
  */
 
-/** Las columnas, en el orden de la tabla. Una sola copia para el SELECT y para el RETURNING. */
+/** The columns, in table order. A single copy for the SELECT and for the RETURNING. */
 const profileColumns =
   'tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules,revision,applied_revision';
 
@@ -29,18 +29,18 @@ interface ProfileRow {
 }
 
 /**
- * Representa el perfil almacenado de un agente junto con metadatos de presencia y versión.
+ * Represents the stored profile of an agent together with presence and version metadata.
  */
 export interface StoredAgentProfile {
   readonly perfil: AgentProfile;
   readonly exists: boolean;
-  /** NULL si la fila no existe. */
+  /** NULL if the row doesn't exist. */
   readonly revision: number | null;
-  /** Última revisión acreditada por runtime; null si nunca fue acreditada. */
+  /** Last revision acknowledged by runtime; null if never acknowledged. */
   readonly applied_revision: number | null;
 }
 
-/** Resultado de una fila que Postgres acaba de devolver; conserva los literales útiles al CAS. */
+/** Result of a row Postgres just returned; preserves the literals useful for CAS. */
 export interface PersistedAgentProfile extends StoredAgentProfile {
   readonly exists: true;
   readonly revision: number;
@@ -49,7 +49,7 @@ export interface PersistedAgentProfile extends StoredAgentProfile {
 export interface StoredAgentContext {
   readonly contexto: ContextoDeAlias;
   readonly exists: boolean;
-  /** Estado durable del alias; false también cuando la identidad canónica no existe. */
+  /** Durable state of the alias; false also when the canonical identity doesn't exist. */
   readonly agent_enabled: boolean;
   readonly revision: number | null;
   readonly applied_revision: number | null;
@@ -62,7 +62,7 @@ export interface AgentProfileAuditActor {
   readonly alias: string;
 }
 
-/** Fallo de dominio para mutaciones concurrentes o inválidas de perfiles. */
+/** Domain failure for concurrent or invalid profile mutations. */
 export class AgentProfileMutationError extends Error {
   constructor(
     readonly code: AgentProfileMutationErrorCode,
@@ -93,7 +93,7 @@ function stored(row: ProfileRow): PersistedAgentProfile {
 }
 
 /**
- * Convierte una fila de la base de datos al tipo `AgentProfile`.
+ * Converts a database row to the `AgentProfile` type.
  */
 function toProfile(row: ProfileRow): AgentProfile {
   return {
@@ -113,13 +113,13 @@ export class AgentProfileRepository {
   constructor(private readonly pool: DatabasePool) {}
 
   /**
-   * Obtiene el perfil de un alias; devuelve un perfil vacío si no existe fila.
+   * Gets an alias's profile; returns an empty profile if no row exists.
    */
   async read(tenantId: string, alias: string): Promise<AgentProfile> {
     return (await this.readWithPresence(tenantId, alias)).perfil;
   }
 
-  /** La lectura exacta que conserva si Postgres devolvió una fila, incluso si estaba vacía. */
+  /** The exact read that preserves whether Postgres returned a row, even if it was empty. */
   async readWithPresence(tenantId: string, alias: string): Promise<StoredAgentProfile> {
     const result = await this.pool.query<ProfileRow>(
       `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2`,
@@ -135,7 +135,7 @@ export class AgentProfileRepository {
   }
 
   /**
-   * Reemplazo optimista de perfil validando la revisión esperada.
+   * Optimistic profile replacement validating the expected revision.
    */
   async replace(
     input: AgentProfile | Record<string, unknown>,
@@ -193,11 +193,11 @@ export class AgentProfileRepository {
   }
 
   /**
-   * Registra el ACK de una revisión incluso si ya nació otra deseada.
+   * Records the ACK of a revision even if another desired one was already born.
    *
-   * Esa carrera no es éxito para el primer escritor, pero el dato sigue siendo verdadero: el
-   * runtime llegó a la revisión N y la base ya desea N+1. Conservar N permite mostrar «pendiente»
-   * y reintentar. Un ACK tardío nunca hace retroceder un `applied_revision` mayor.
+   * That race is not a success for the first writer, but the data is still true: the runtime
+   * reached revision N and the database already desires N+1. Keeping N allows showing "pending"
+   * and retrying. A late ACK never rolls back a larger `applied_revision`.
    */
   async markApplied(
     tenantId: string,
@@ -266,7 +266,7 @@ export class AgentProfileRepository {
     }
   }
 
-  /** Auditoría sanitizada y atómica con el cambio: nunca incluye el cuerpo autorado del perfil. */
+  /** Sanitized and atomic audit with the change: never includes the authored profile body. */
   private async audit(
     client: DatabaseClient,
     actor: AgentProfileAuditActor,
@@ -281,13 +281,13 @@ export class AgentProfileRepository {
   }
 
   /**
-   * Obtiene el contexto consolidado de un alias: perfil autorado y hechos derivados.
+   * Gets the consolidated context of an alias: authored profile and derived facts.
    */
   async readContext(tenantId: string, alias: string): Promise<ContextoDeAlias> {
     return (await this.readContextWithPresence(tenantId, alias)).contexto;
   }
 
-  /** El contexto compilable más la presencia REAL de la fila autorada. */
+  /** The compilable context plus the REAL presence of the authored row. */
   async readContextWithPresence(tenantId: string, alias: string): Promise<StoredAgentContext> {
     const [perfilGuardado, permisos, cuotas, arnes, destinos] = await Promise.all([
       this.readWithPresence(tenantId, alias),
@@ -359,7 +359,7 @@ export class AgentProfileRepository {
 }
 
 /**
- * Consulta de permisos efectivos de un alias consolidando todas sus membresías en salas habilitadas.
+ * Query for an alias's effective permissions consolidating all its memberships in enabled rooms.
  */
 const PERMISOS_SQL = `
   SELECT COALESCE(bool_or(policy.allow_route),false)   AS ruta,
@@ -374,7 +374,7 @@ const PERMISOS_SQL = `
      AND tenant.enabled AND room.enabled`;
 
 /**
- * Consulta de cuentas y límites asociados a un alias a través de bindings y techos de enrutamiento.
+ * Query for accounts and limits associated with an alias through bindings and routing ceilings.
  */
 const CUOTAS_SQL = `
   SELECT account.provider, binding.account_id, account.label,
@@ -397,7 +397,7 @@ const CUOTAS_SQL = `
    ORDER BY binding.priority ASC, binding.account_id ASC`;
 
 /**
- * Consulta de alias destinatarios alcanzables por permisos y topología de red.
+ * Query for recipient aliases reachable by permissions and network topology.
  */
 const DESTINOS_SQL = `
   SELECT membership.alias
@@ -420,7 +420,7 @@ const DESTINOS_SQL = `
    GROUP BY membership.alias
    ORDER BY membership.alias`;
 
-/** El límite legible de una ventana de cuota. `undefined` cuando no hay observación fresca. */
+/** The readable limit of a quota window. `undefined` when there is no fresh observation. */
 function limiteLegible(
   restante: string | number | null, ventana: string | null
 ): string | undefined {

@@ -7,16 +7,16 @@ import { HarnessStrip } from './HarnessStrip';
 import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
 
 /**
- * **La portada.** Lo que se ve al entrar a la consola, y lo único que hace falta leer para saber
- * si hay que hacer algo.
+ * **The landing page.** What you see when entering the console, and the only thing worth reading
+ * to know whether there is anything to do.
  *
- * Dos decisiones que NO son de estilo:
+ * Two decisions that are NOT stylistic:
  *
- * 1. **La portada resume; `/live` sigue siendo la vista viva.** No se duplica el hipergrafo ni la
- *    tabla de agentes: acá van los totales y el enlace.
- * 2. **Una fuente que no contestó NO se pinta como "todo bien".** `resumenPortada()` separa "no
- *    hay incidencias" de "no lo pude leer", y la banda de arriba sólo dice *sin incidencias*
- *    cuando llegaron las cuatro lecturas.
+ * 1. **The landing summarizes; `/live` remains the live view.** The hypergraph and the agent
+ *    table are not duplicated here: totals and the link go here.
+ * 2. **A source that did not answer is NOT painted as "all clear".** `resumenPortada()` separates
+ *    "no incidents" from "I could not read it", and the top banner only says *no incidents* when
+ *    all four reads have arrived.
  */
 
 export function LandingPage() {
@@ -37,10 +37,10 @@ export function LandingPage() {
 
   const cargando = status.loading || queues.loading || quotas.loading || activity.loading || adapters.loading;
   /**
-   * Una lectura que TODAVÍA no volvió no es una lectura que falló. Sin esta distinción, la banda
-   * anuncia "4 fuentes no contestaron" durante el primer parpadeo de cada carga: un aviso grave
-   * que se dispara siempre y que, a fuerza de repetirse en falso, deja de leerse justo cuando es
-   * verdad. La banda espera a que las cuatro se asienten —con dato o con error— y recién ahí opina.
+   * A read that has NOT yet returned is not a read that failed. Without this distinction, the
+   * banner announces "4 sources did not answer" on the first blink of every load: a serious
+   * warning that fires every time and, by repeating falsely, stops being read exactly when it
+   * is true. The banner waits for all four to settle —with data or with error— before speaking.
    */
   const asentadas = [status, queues, quotas, activity]
     .every((recurso) => recurso.data !== undefined || recurso.error !== undefined);
@@ -78,8 +78,8 @@ export function LandingPage() {
           </p>
         ) : null}
 
-        {/* Una fila por VISTA, no una por hallazgo: cuatro avisos que se resuelven en «La flota
-            ahora» eran cuatro bandas idénticas con cuatro enlaces al mismo sitio. */}
+        {/* One row per VIEW, not one per finding: four alerts resolved under "The fleet now"
+            were four identical bands with four links to the same place. */}
         {asentadas ? agruparAlertas(resumen.alertas).map((grupo) => (
           <p className="landing-alerta" data-tono={grupo.tono} key={grupo.ruta}>
             <AlertTriangle size={18} aria-hidden="true" />
@@ -94,8 +94,8 @@ export function LandingPage() {
               ) : (
                 <small>
                   {grupo.alertas.map((alerta, indice) => (
-                    // La ruta del endpoint va al `title=`: hace falta para contrastar un número
-                    // dudoso, y no hace falta para nada más.
+                    // The endpoint route goes to the `title=`: it is needed to cross-check a doubtful
+                    // number, and is not needed for anything else.
                     <span key={alerta.id}>
                       {indice > 0 ? <span aria-hidden="true"> · </span> : null}
                       <span title={`${alerta.detalle} · ${alerta.fuente}`}>{alerta.titulo}</span>
@@ -104,10 +104,10 @@ export function LandingPage() {
                 </small>
               )}
             </span>
-            {/* El destino ya está en el contexto de la alerta. Repetir acá el rótulo literal de
-                la barra convertía estos CTA en una segunda copia parcial del menú. El nombre
-                accesible conserva el destino y añade la acción, para que en una lista de enlaces
-                siga siendo inequívoco sin volver a llamarse igual que la entrada de navegación. */}
+            {/* The destination is already in the alert context. Repeating the literal nav label
+                here turned these CTAs into a second partial copy of the menu. The accessible name
+                keeps the destination and adds the action, so in a link list it stays unambiguous
+                without repeating the same name as the navigation entry. */}
             <a
               href={grupo.ruta}
               aria-label={`Revisar ${grupo.alertas.length === 1 ? 'alerta' : 'alertas'} en ${grupo.rutaLabel}`}
