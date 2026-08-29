@@ -13,8 +13,10 @@ import type { ConsoleAuthState } from '../../api/types';
 export type GateStatus = 'checking' | 'in' | 'out' | 'unmanaged' | 'error';
 
 export function statusOf(state: ConsoleAuthState | undefined, error: Error | undefined): GateStatus {
-  if (error) return 'error';
-  if (!state) return 'checking';
+  // Fail-closed solo en la comprobación INICIAL: una sesión establecida no se cae por un error
+  // transitorio de la revalidación de fondo (eso desmontaba la consola). El vencimiento real llega
+  // como authenticated:false (200) y ese sí va al login.
+  if (!state) return error ? 'error' : 'checking';
   if (state.authenticated === null) return 'unmanaged';
   return state.authenticated ? 'in' : 'out';
 }

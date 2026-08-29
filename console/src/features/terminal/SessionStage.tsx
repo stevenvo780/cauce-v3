@@ -185,10 +185,12 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   useEffect(() => {
     if (!liveTui.enabled) return;
     if (autoOpenedRef.current === liveSession.id) return;
+    // Guardián durable: sobrevive al remonte del panel al cambiar de pestaña (autoOpenedRef no).
+    if (liveSession.liveTuiAttempted) return;
     if (liveSession.id in grants || liveSession.id in closedChannels) return;
     autoOpenedRef.current = liveSession.id;
     void requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
-  }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveTui.enabled]);
+  }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled]);
 
   async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();

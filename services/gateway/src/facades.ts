@@ -66,7 +66,8 @@ export function visibleQueue(value: Row, principal: Principal): Row {
     : [];
   const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((result, row) => {
     if (row.state === 'retry') result.retrying += 1;
-    else if (row.state === 'dead') result.dead += 1;
+    // `failed` cuenta como dead letter, igual que el store, la tabla y Mensajes (antes se omitía).
+    else if (row.state === 'dead' || row.state === 'failed') result.dead += 1;
     else if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) result.pending += 1;
     return result;
   }, { pending: 0, retrying: 0, dead: 0 });
