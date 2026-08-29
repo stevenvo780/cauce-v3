@@ -171,8 +171,8 @@ export function validatedPublishReceipt(
       // across those generated transport values and remains the causal proof for that branch.
       || (parsed.data.duplicate === false
         && (parsed.data.request_id !== command.request_id || parsed.data.trace_id !== command.trace_id))) {
-    // Igual que DLQ/replay/cancel: el commit pudo ocurrir. Un 409 obliga a conciliar por lectura
-    // y nunca acredita con un 2xx una respuesta truncada, duplicada o de otra versión del store.
+    // Same as DLQ/replay/cancel: the commit may have happened. A 409 forces reconciliation by read
+    // and never credits a 2xx for a truncated, duplicate, or different-store-version response.
     throw new StoreError('conflict', 'publish did not return an exact durable receipt');
   }
   return parsed.data;

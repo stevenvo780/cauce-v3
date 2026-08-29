@@ -421,8 +421,8 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
   const identity = await paneIdentity(tmux, tmux.paneId);
   assert.ok(identity);
 
-  // Simula un crash/runner ajeno en la fase anterior al commit. Su correlation y token no son los
-  // del intento vencido: debe ser ignorable, pero jamás borrado por una compensación amplia.
+  // Simulates a foreign crash/runner in the phase before commit. Its correlation and token are not
+  // those of the expired attempt: it must be ignorable, but never erased by a wide compensation.
   const foreignArming = `${quarantineFile}.${"a".repeat(64)}.${"b".repeat(64)}.arming`;
   assert.equal(await fileQuarantinePersistence.persist(foreignArming, identity), true);
   const foreignBytes = await readFile(foreignArming, "utf8");
@@ -471,8 +471,8 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
     "el timeout nunca publica el nombre que significa paste posible",
   );
 
-  // La operación no cooperativa realmente termina tarde y escribe a disco; su continuación causal
-  // retira sólo SU preparación. El arming de otro token sobrevive byte a byte.
+  // The non-cooperative operation really does finish late and write to disk; its causal continuation
+  // withdraws only ITS preparation. The arming of another token survives byte for byte.
   await new Promise((resolveWait) => setTimeout(resolveWait, 140));
   assert.equal(latePreparationPublished, true);
   assert.deepEqual(

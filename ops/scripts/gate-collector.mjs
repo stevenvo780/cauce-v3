@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Captura read-only y coherente de los gates de cutover de Cauce V3.
+ * Read-only and coherent capture of Cauce V3 cutover gates.
  *
- * Un round-trip no se acredita por una variable ambiental. Para post-cutover/canary, un probe
- * mTLS publica una entrega y deja evidencia efímera 0600; este colector comprueba en PostgreSQL
- * que ESA entrega terminó con ACK aplicado por la misma lease/epoch que sigue viva.
+ * A round-trip is not credited by an environment variable. For post-cutover/canary, an mTLS probe
+ * publishes a delivery and leaves ephemeral 0600 evidence; this collector verifies in PostgreSQL
+ * that THIS delivery ended with ACK applied by the same lease/epoch that is still alive.
  */
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';

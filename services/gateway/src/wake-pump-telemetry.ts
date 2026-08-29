@@ -19,8 +19,8 @@ export interface WakePumpTelemetrySnapshot {
 }
 
 /**
- * Estado agregado y pull-friendly del pump. Deliberadamente no acepta labels ni identidades:
- * puede exponerse como métrica sin filtrar tenants, aliases, IDs de evento o tokens de claim.
+ * Aggregate, pull-friendly state of the pump. Deliberately takes no labels or identities: it can
+ * be exposed as a metric without leaking tenants, aliases, event IDs or claim tokens.
  */
 export class WakePumpTelemetry {
   private state: WakePumpTelemetrySnapshot['state'] = 'idle';

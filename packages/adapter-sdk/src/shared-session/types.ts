@@ -1,7 +1,7 @@
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
 /**
- * Harnesses compatibles con el mecanismo de sesión compartida.
+ * Harnesses compatible with the shared session mechanism.
  */
 export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex">;
 
@@ -119,7 +119,7 @@ export function isSharedSessionRunner(runner: CommandRunner): runner is SharedSe
   return typeof (runner as Partial<SharedSessionRunner>).takeDegradation === "function";
 }
 
-/** Nombre canónico de la sesión tmux para un alias dado. */
+/** Canonical name of the tmux session for a given alias. */
 export function sessionName(alias: string): string {
   return `cauce-${alias}`;
 }
@@ -135,11 +135,11 @@ export interface ResumeSpec {
 }
 
 /**
- * Socket tmux dedicado para Cauce.
+ * Dedicated tmux socket for Cauce.
  */
 export const TMUX_SOCKET = "cauce";
 
-/** Ventana donde vive la TUI del harness. */
+/** Window where the harness TUI lives. */
 export const TUI_WINDOW = "agente";
 
 /** Legacy window name used in previous versions. */

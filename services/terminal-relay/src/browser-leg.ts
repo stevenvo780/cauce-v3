@@ -428,8 +428,8 @@ export class BrowserLeg {
     } catch (error) {
       logEvent('terminal_relay_attach_failed', { session_id: attach.session_id, error: errorLabel(error) });
       if (socket.readyState === WS_OPEN) socket.close(CLOSE_CODES.internal_error, 'internal_error');
-      // `/close` es idempotente en gateway. Si el manager ya alcanzó a reportar, no duplica la
-      // auditoría; si lanzó antes de tomar ownership, libera la plaza que `consume` ocupó.
+      // `/close` is idempotent in the gateway. If the manager already reported, no duplicate
+      // audit; if it threw before taking ownership, it frees the slot `consume` occupied.
       reportAbandonedClaim('attach_failed');
     } finally {
       if (needsReservation) this.pendingClaimAttaches.delete(attach.session_id);

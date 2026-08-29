@@ -63,7 +63,7 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
     if isinstance(exp, (int, float)):
         ts = exp / 1000 if exp > 1e11 else exp
         horas = (datetime.datetime.fromtimestamp(ts, datetime.timezone.utc) - ahora).total_seconds() / 3600
-    # Mismo criterio que el guard del VPS: lo unico que MATA es quedarse sin refreshToken.
+    # Same criterion as the VPS guard: the only thing that KILLS is running out of refreshToken.
     if huella is None:
         estado, detalle, problema = "MUERTO", "sin refreshToken: no puede renovar, muere al vencer el access", True
         problemas += 1
@@ -85,7 +85,7 @@ os.chmod(LOCAL, 0o644)
 for f in filas:
     print("%-9s %-24s %-14s %-8s %s" % (f["huella"], f["etiqueta"], f["contenedor"], f["estado"], f["detalle"]))
 
-# El empuje es parte del trabajo: si no llega al VPS, el guard de alla lo dara por STALE (a proposito).
+# The push is part of the job: if it does not reach the VPS, the guard over there will mark it STALE (on purpose).
 r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "vps",
                     "mkdir -p /var/lib/cauce-v3 && cat > /var/lib/cauce-v3/cred-guard-kratos.json.tmp "
                     "&& mv /var/lib/cauce-v3/cred-guard-kratos.json.tmp /var/lib/cauce-v3/cred-guard-kratos.json"],
@@ -94,6 +94,6 @@ if r.returncode != 0:
     print("EMPUJE AL VPS FALLO: %s" % (r.stderr or "").strip()[:120], file=sys.stderr)
     sys.exit(1)
 print("empujado a %s" % DESTINO_REMOTO)
-# Fallar aca significa exactamente una cosa: no se pudo medir o no se pudo empujar.
-# De los "problemas" de credencial alarma el guard del VPS, que ve la flota entera.
+# Failing here means exactly one thing: it could not be measured or pushed.
+# The VPS guard, which sees the whole fleet, raises the alarm on credential "problems".
 sys.exit(0)

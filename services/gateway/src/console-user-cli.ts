@@ -4,7 +4,7 @@ import { normalizeEmail } from './console-users.js';
 import { assertPasswordPolicy, hashPassword } from './password.js';
 
 /**
- * CLI para alta, cambio de contraseña y baja de usuarios de la consola.
+ * CLI to provision, change password and deactivate console users.
  *
  *   pnpm console:user --email user@example.com --name "User" --role operator --alias kant
  *   pnpm console:user --email user@example.com --deactivate
@@ -52,14 +52,14 @@ function parseArguments(argv: readonly string[]): Options {
     email,
     name: (values.get('name') ?? email.split('@')[0]!).trim(),
     role,
-    // Identidad predeterminada de Cauce para la consola.
+    // Default Cauce identity for the console.
     tenant: values.get('tenant') ?? 'Steven',
     alias,
     deactivate
   };
 }
 
-/** Pregunta sin eco. Falla si no hay TTY: pedir una contraseña a un pipe la dejaría en un log. */
+/** Prompt without echo. Fails if there is no TTY: asking a pipe for a password would leave it in a log. */
 async function promptPassword(label: string): Promise<string> {
   if (!process.stdin.isTTY) {
     throw new Error('sin TTY: pasá la contraseña en CAUCE_CONSOLE_USER_PASSWORD');
@@ -68,7 +68,7 @@ async function promptPassword(label: string): Promise<string> {
   const output = process.stdout;
   const original = output.write.bind(output);
   process.stdout.write(`${label}: `);
-  // El eco se apaga escribiendo nada mientras readline "repite" lo tecleado.
+  // Echo is disabled by writing nothing while readline "repeats" what is being typed.
   (output as unknown as { write: (chunk: string) => boolean }).write = () => true;
   try {
     return await new Promise<string>((resolve) => { rl.question('', resolve); });

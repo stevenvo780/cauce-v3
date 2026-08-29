@@ -8,8 +8,8 @@ import { server } from './mocks/server';
 it('provides basic accessible landmarks and identity guidance', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
-  // La consola ya no se pinta antes de saber quién sos: hasta que /v3/auth/session contesta sólo
-  // existe la pantalla de verificación, así que los landmarks aparecen después del await.
+  // The console no longer renders before knowing who you are: until /v3/auth/session responds
+  // only the verification screen exists, so the landmarks appear after the await.
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');

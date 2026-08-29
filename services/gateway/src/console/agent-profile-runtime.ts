@@ -111,10 +111,10 @@ export async function prepareAgentProfileRuntime(
       );
     }
     /*
-     * MEMORY/HEARTBEAT son del agente y pueden crecer por encima del tope de transporte. Para
-     * preservarlos no necesitamos traer sus bytes: basta acreditar presencia, SHA y tamaño. El
-     * nombre entra en `existing` con un marcador vacío para que el generador puro sepa que existe
-     * y emita `solo-si-falta`; ese prefijo truncado nunca se compone ni se vuelve a escribir.
+     * MEMORY/HEARTBEAT belong to the agent and may grow beyond the transport cap. To preserve
+     * them we do not need to bring their bytes: attesting presence, SHA and size is enough. The
+     * name enters `existing` with an empty marker so the pure generator knows it exists and
+     * emits `only-if-missing`; that truncated prefix is never composed nor written back.
      */
     existing.set(name, read.truncated ? '' : read.text);
     observed.set(name, { sha: read.sha, bytes: read.bytes });

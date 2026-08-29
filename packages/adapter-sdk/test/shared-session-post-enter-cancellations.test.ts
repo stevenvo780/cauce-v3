@@ -230,7 +230,7 @@ test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su 
   assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
   assert.match(await readFile(quarantineFile, "utf8"), /^\$0:@0:%0:4242\n$/u);
 
-  // Nueva instancia: no conserva `locallyQuarantined`; sólo la evidencia durable puede bloquearla.
+  // New instance: does not keep `locallyQuarantined`; only the durable evidence can block it.
   const restartedRunner = claudeRunner({
     alias: "kratos", home, workspace, tmux, fallback, quarantineFile,
   });
@@ -321,8 +321,8 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
     /^\$0:@0:%0:4242\n$/u,
   );
 
-  // Simula reinicio del runner y pérdida de la redundancia tmux. Sólo queda el pending real de
-  // disco, escrito ANTES del paste; la persistencia de prueba ya no participa en esta instancia.
+  // Simulates a runner restart and the loss of tmux redundancy. Only the real on-disk pending
+  // remains, written BEFORE the paste; the test persistence no longer participates in this instance.
   postPaste = false;
   tmux.sessionOptions.delete("@cauce_quarantined_pane");
   const restartedRunner = claudeRunner({

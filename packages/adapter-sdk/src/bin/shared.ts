@@ -41,8 +41,8 @@ function commandOverride(
 }
 
 /**
- * Verifica que el script del puente contenga la marca de inicio antes de habilitar `stderr-marker`.
- * Si el puente no contiene la marca o no se puede leer, desactiva el testigo de inicio.
+ * Verifies that the bridge script contains the start marker before enabling `stderr-marker`.
+ * If the bridge does not contain the marker or cannot be read, disables the start witness.
  */
 function definitionWithVerifiedBridge(
   definition: HarnessDefinition,
@@ -123,7 +123,7 @@ function operationalLogger(alias: string): AdapterLogger {
 }
 
 /**
- * Envuelve el runner base con el runner de sesión compartida cuando está configurada.
+ * Wraps the base runner with the shared-session runner when configured.
  */
 function sharedSessionRunner(
   shared: SharedSessionConfig,
@@ -266,7 +266,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
 }
 
 /**
- * Emite la causa de fallo fatal a stderr (sanitizada) y finaliza el proceso con código 1.
+ * Emits the fatal failure cause to stderr (sanitized) and exits the process with code 1.
  */
 export function reportFatal(error: unknown): never {
   const code = error instanceof Error && "code" in error ? String(error.code) : "ADAPTER_FATAL";

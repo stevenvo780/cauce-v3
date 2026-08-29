@@ -39,8 +39,8 @@ function validIdempotencyKey(value: unknown): value is string {
 }
 
 /**
- * Acepta el publish sólo cuando el 202 acredita el mensaje y TODAS sus entregas durables.
- * El store conserva el journal de intención: el navegador no persiste claves, cuerpos ni auth.
+ * Accepts the publish only when the 202 certifies the message AND ALL its durable deliveries.
+ * The store keeps the intent journal: the browser does not persist keys, bodies or auth.
  */
 export function exactPublishReceipt(
   value: unknown,
@@ -73,7 +73,7 @@ export function exactPublishReceipt(
   return new Set(result.delivery_ids).size === result.delivery_ids.length;
 }
 
-/** Valida el contrato estricto que prepara o recupera una intención durable del servidor. */
+/** Validates the strict contract that prepares or recovers a durable intent from the server. */
 export function exactPreparedPublishIntent(
   value: unknown,
   expectedDeliveries: number,
@@ -90,7 +90,7 @@ export function exactPreparedPublishIntent(
     );
 }
 
-/** Valida que la confirmación corresponde exactamente al recibo que acaba de aceptar la UI. */
+/** Validates that the confirmation matches exactly the receipt the UI just accepted. */
 export function exactConfirmedPublishIntent(
   value: unknown,
   receipt: DurablePublishReceipt,

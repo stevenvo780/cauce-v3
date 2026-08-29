@@ -104,18 +104,18 @@ export type ClientMessage =
   | { readonly type: 'resize'; readonly cols: number; readonly rows: number }
   | { readonly type: 'ping' };
 
-/** Juego cerrado que xterm 5.5 emite para DA/DSR; cualquier otra secuencia falla cerrada. */
+/** Closed set that xterm 5.5 emits for DA/DSR; any other sequence fails closed. */
 export const MAX_TERMINAL_RESPONSE_BYTES = 256;
 const PRIMARY_DA = '\x1b[?1;2c';
 const SECONDARY_DA = '\x1b[>0;276;0c';
 const STATUS_DSR = '\x1b[0n';
 
-/** Un entero finito de verdad: descarta NaN, Infinity, decimales y cualquier cosa que no sea número. */
+/** A truly finite integer: rejects NaN, Infinity, decimals and anything that is not a number. */
 function isEnteroFinito(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value);
 }
 
-/** Lleva `valor` al rango [minimo, maximo] en vez de rechazarlo. */
+/** Clamps `value` to the [minimum, maximum] range instead of rejecting it. */
 function acotar(valor: number, minimo: number, maximo: number): number {
   return Math.min(maximo, Math.max(minimo, valor));
 }
@@ -144,7 +144,7 @@ function cursorResponseLength(data: string): number {
   return end + 1;
 }
 
-/** Enteros fuera de rango se acotan igual en attach y resize; otros tipos son protocolo inválido. */
+/** Out-of-range integers are clamped the same in attach and resize; other types are invalid protocol. */
 export function clampTerminalGeometry(
   cols: unknown,
   rows: unknown
@@ -211,7 +211,7 @@ export function parseClientMessage(data: RawData, isBinary: boolean): ClientMess
       : undefined;
   }
   if (source.type === 'resize') {
-    // Un resize fuera de rango se acota. Lo que no es un número entero es un mensaje inválido.
+    // An out-of-range resize is clamped. Anything that is not an integer is an invalid message.
     const geometry = clampTerminalGeometry(source.cols, source.rows);
     return geometry === undefined ? undefined : { type: 'resize', ...geometry };
   }

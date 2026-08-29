@@ -35,8 +35,8 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
 }
 
 /**
- * Códigos de error de pre-vuelo: indican que el harness falló antes de iniciar la ejecución del turno.
- * Permiten reintentar la entrega manteniendo la semántica at-most-once.
+ * Pre-flight error codes: indicate the harness failed before starting turn execution.
+ * They allow retrying the delivery while preserving at-most-once semantics.
  */
 export const PREFLIGHT_ACK_ERROR_CODES = [
   'PROCESS_EXIT_PREFLIGHT',
@@ -54,15 +54,15 @@ function assertPreflightCodesAreNotAmbiguous(): void {
 }
 assertPreflightCodesAreNotAmbiguous();
 
-/** Tope del rol declarado por alias (`agents.role_brief`), medido en puntos de código UTF-32. */
+/** Cap on the per-alias declared role (`agents.role_brief`), measured in UTF-32 code points. */
 export const ROLE_BRIEF_MAX_CODE_POINTS = 1200;
 
-/** Largo de un texto en puntos de código. */
+/** Length of a text in code points. */
 export function countCodePoints(text: string): number {
   return [...text].length;
 }
 
-/** Recorta un texto a ROLE_BRIEF_MAX_CODE_POINTS puntos de código sin dividir pares suplentes. */
+/** Truncates a text to ROLE_BRIEF_MAX_CODE_POINTS code points without splitting surrogate pairs. */
 export function clampToRoleBriefLimit(text: string): string {
   const codePoints = [...text];
   return codePoints.length <= ROLE_BRIEF_MAX_CODE_POINTS
