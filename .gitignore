@@ -74,3 +74,6 @@ Thumbs.db
 # credenciales operativas de la flota — ignorar contenido, rastrear solo el README
 ops/private/credentials/**
 !ops/private/credentials/README.md
+
+# Volcados del MCP de Playwright (logs y snapshots de una sesion de navegador).
+.playwright-mcp/
