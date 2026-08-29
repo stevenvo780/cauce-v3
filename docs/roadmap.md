@@ -143,3 +143,27 @@ Base de suites toda verde (consola 1383, gateway 472, relay 186, bridge 259): lo
 - **«Errores de cuotas»**: cred-guard en verde (problemas=0, credenciales OK); lo que el dueño vio era la cascada de los turnos comidos por la compactación. El workflow de auditoría barre la tabla de cuotas de consumo por si además hay ventanas agotadas.
 - **Patrón recurrente** (3 alias en 2 días): cualquier renovación de TUI/limpieza deja mapeos fantasma en sessions.json. El arreglo de raíz sería que el adaptador tratara «sesión nativa inexistente» como «crear una nueva» en vez de morir 3 veces — candidato a fix en adapter-sdk (decisión con zeus).
 - **Verificación post-reparación (15:40Z)**: 16/16 muertas revividas y consumidas (argos 8 done con el parche cargado, atlas 4 done, zeus procesando su cola en serie), journals limpios en los tres. iza queda en `modes=shell` con facts sin medir: no tiene TUI de openclaw viva (condición del agente, no bug) — re-medir su PTY cuando alguien abra su TUI.
+
+## Cierre del incidente del uso intensivo (29-08, auditoría con workflow + reparaciones de la tarde)
+
+La auditoría (3 barridos Sonnet + síntesis Opus) corrigió el cuadro y destapó lo que seguía roto:
+
+- **Argos NUNCA murió**: contestó a las 14:53 y a las 15:23. El «silencio» era la latencia del fan-in, que espera a que TODAS las ramas terminen — y una rama con harness roto quema sus 3 intentos (10–19 min). Además argos le dijo al dueño que jarvis/kant/socrates/zeus «no recibieron la pregunta»: FALSO — el aviso de `fanout_exceeded` no le dice que esa arista ya se recorrió en el mismo root y él lo malinterpretó.
+- **Lo que seguía roto a las 15:35 (bucle cada ~8 s) — reparado**:
+  1. **Credencial Codex propia de argos vencida desde el 25-08** (el descompartidor la aisló el 13-08 y nadie re-logueó; refresh rechazado, `auth_permanent`). **SOLO EL DUEÑO**: `docker exec -it -u dev ctrl-infra codex login`. NO copiar el auth.json del pool: el refresh de OAuth es de un solo uso.
+  2. **Shim agy con E2BIG**: pasaba el prompt por argv; con >200 KB revienta y el 2º fallback muere. Parcheado a stream-json por stdin (backup `.bak-fable-20260829` en ctrl-infra); probado con 300 KB → 200 OK en 28 s. Regla: si se actualiza el shim/agy, verificar que `--input-format stream-json` siga aceptando `{"event":"user",...}`.
+  3. **compaction.model de argos** apuntaba a `anthropic/claude-sonnet-5` (irresoluble: los modelos claude-cli no sirven para compactar; zeus alineó la flota a codex el 29-08 02:22 y dejó fuera a argos). Puesto en `antigravity/gemini-3.1-pro` (su codex está muerto hasta el login); **realinear a `codex/gpt-5.6-sol` tras el login del dueño**. openclaw recarga esta config en caliente.
+  4. **Verificado E2E**: turno de prueba vía `openclaw agent --agent main` → `livenessState: working`, ganador antigravity/gemini-3.1-pro.
+- **Cuotas**: el recolector estaba MUERTO desde el 28-08 16:02Z — corría ad hoc en kratos (nunca fue unidad) y el reinicio de kratos (28-08 14:15 local) se lo llevó; la consola pintaba la última muestra como si fuera fresca. Reinstalado como unidad systemd de usuario (runbook quota-collector.md) + arreglos: el script emitía `groups[]` anidado que el esquema rechaza (400) → ventanas planas (commit 759f1d41); `ai-usage` ya no existe → puente `ops/scripts/ai-live-to-usage.py` sobre cauce-ai-live; bindings reescritos a la forma `{"bindings":[...]}` que el colector parsea (la vieja by_email/by_group no la parseaba nadie; queda en .bak). Verificado: 202, 9 ventanas, todas con account_id.
+- **heraclito sin tmux**: instalado en caliente en agv2-jhon-heraclito-oc (sus carteles «spawn tmux ENOENT» contaminaban los fan-in). PENDIENTE: añadirlo a la imagen de esa familia — en caliente se pierde al recrear.
+- **El gateway se redesplegó a las 15:07Z EN MEDIO de la ventana** (tumbó los 12 adaptadores a la vez y se llevó los logs json-file de la primera mitad).
+
+**Decisiones de diseño para zeus (de la síntesis, no arregladas a ciegas):**
+1. Fan-in: tratar errores de harness NO reintentables (sesión inexistente, no rollout, auth_permanent) como terminales al PRIMER intento — recorta 10-19 min de silencio a segundos.
+2. Primer salto sin tope de abanico está bien (el «pregúntale a todos» es legítimo), pero endurecer la REPETICIÓN de arista en el mismo root (el 2º abanico duplicó 6 preguntas en 101 s).
+3. El rechazo `fanout_exceeded` debe decir «esa arista ya se recorrió en este root» cuando es el caso (evita que el agente le mienta al dueño).
+4. Carteles de diagnóstico del harness por canal aparte del reply (hoy entran al fan-in como texto del agente).
+5. DLQ: clasificar por firma de error («No conversation found», «no rollout found») → safe_retry con hilo nuevo; hoy 17 muertas quedaron sin tipificar y hubo que revivirlas a mano.
+6. No redesplegar el runtime con cadenas humanas abiertas (el dispatcher sabe cuántas raíces hay en vuelo) + persistir logs del runtime fuera del json-file del contenedor.
+7. cred-guard: el estado «OK con access vencido» ocultó la muerte de argos, pero OJO con el contraejemplo salva (5 días «vencido» y funcionando: el CLI renueva al usar). La señal honesta sería una renovación real de prueba, no la fecha — diseñar con calma.
+8. adapter codex: ante `-32600 no rollout found`, caer a thread/new en el mismo intento (atlas revivió al instante justo porque el replay le dio hilo nuevo).
