@@ -14,10 +14,10 @@ import {
 } from './filtro-de-colas';
 import './queues.css';
 
-/* Dos tablas de OCHO columnas: lado a lado se llevarían la columna «Estado» fuera de pantalla —el
-   defecto que `queues.css` documenta para el teléfono— y apiladas la segunda vivía bajo el pliegue
-   a 1080. Con pestañas cada una conserva el ancho entero. Siguen MONTADAS (`hidden`, no
-   desmontaje) porque el panel DLQ lleva un formulario con la nota del operador. */
+/* Two tables of EIGHT columns: side by side they would push the "Estado" column off-screen —the
+   flaw `queues.css` documents for the phone— and stacked, the second one lived below the fold
+   at 1080. With tabs each keeps the full width. They stay MOUNTED (`hidden`, not unmounted)
+   because the DLQ panel holds a form with the operator's note. */
 const PESTANAS = [
   { id: 'entregas', label: 'Entregas' },
   { id: 'dlq', label: 'DLQ operativo' },
@@ -25,7 +25,7 @@ const PESTANAS = [
 
 type Pestana = (typeof PESTANAS)[number]['id'];
 
-/** Vista de control y rescate de entregas en colas, reintentos y dead letter queue. */
+/** Control and rescue view of deliveries in queues, retries and dead letter queue. */
 export function QueuesPage() {
   const api = useApi();
   const resource = useResource('queues', () => api.getQueues());
@@ -33,11 +33,11 @@ export function QueuesPage() {
   const [filtro, setFiltro] = useState(FILTRO_VACIO);
   const [pestana, setPestana] = useState<Pestana>('entregas');
   /**
-   * `useSyncExternalStore` y no una lectura suelta: `App` se re-renderiza cuando cambia el
-   * *pathname*, y llegar acá desde otro `?delivery=` NO lo cambia. Sin suscribirse a `popstate`,
-   * el segundo enlace profundo seguido dejaría la pantalla mostrando la entrega del primero.
-   * El snapshot es un string, o sea un primitivo estable: devolver un objeto nuevo en cada
-   * lectura haría bucle infinito.
+   * `useSyncExternalStore` and not a loose read: `App` re-renders when the *pathname* changes,
+   * and arriving here from another `?delivery=` does NOT change it. Without subscribing to
+   * `popstate`, a second deep link in a row would leave the screen showing the delivery from
+   * the first one. The snapshot is a string, i.e. a stable primitive: returning a fresh object
+   * on each read would cause an infinite loop.
    */
   const search = useSyncExternalStore(suscribirseAlHistorial, () => window.location.search, () => '');
   const pedida = leerEntregaPedida(search);
@@ -51,17 +51,17 @@ export function QueuesPage() {
   const snapshot = resource.data;
   const foco = enfocarEntrega(items, pedida);
   /*
-   * El enlace profundo GANA sobre el filtro. Si se combinaran, un `?delivery=` de una entrega en
-   * `done` mientras el filtro está en «revisión» daría cero filas y el aviso «filtrado a la
-   * entrega» sobre una tabla vacía: el operador vería que la consola encontró su entrega y a la
-   * vez que no está. Con foco, el filtro se apaga y se dice que se apagó.
+   * The deep link WINS over the filter. If combined, a `?delivery=` for a delivery in `done`
+   * while the filter is on "review" would yield zero rows and the "filtered to delivery"
+   * notice over an empty table: the operator would see the console found their delivery and
+   * at the same time that it isn't there. With focus, the filter turns off and the UI says so.
    */
   const conFoco = foco.estado !== 'sin-foco';
   const filas = conFoco ? foco.filas : filtrarEntregas(items, filtro);
 
   function elegirGrupo(grupo: GrupoDeEstado) {
     setFiltro((previo) => ({ ...previo, grupo: previo.grupo === grupo ? 'todas' : grupo }));
-    // Las tarjetas filtran la tabla de entregas: desde la otra pestaña filtrarían algo invisible.
+    // The cards filter the deliveries table: from the other tab they would filter something invisible.
     setPestana('entregas');
   }
 
@@ -84,10 +84,10 @@ export function QueuesPage() {
       />
 
       {/*
-        Las tarjetas son BOTONES. El número sigue siendo el del servidor —`snapshot.pending`,
-        `retrying`, `dead`, calculados sobre el mismo snapshot— y debajo va, cuando difieren,
-        cuántas filas de ese grupo caben en esta página: la diferencia significa que el `LIMIT` del
-        servidor recortó, y taparla prometería filas que no están. */}
+        The cards are BUTTONS. The number is still the server's —`snapshot.pending`,
+        `retrying`, `dead`, computed on the same snapshot— and below it goes, when they differ,
+        how many rows of that group fit on this page: the difference means the server's `LIMIT`
+        truncated, and hiding it would promise rows that aren't there. */}
       <div className="metrics-grid three metricas-de-cola" role="group" aria-label="Filtrar por estado">
         <TarjetaFiltro
           etiqueta="Pendientes" valor={snapshot?.pending} tono="neutral" detalle="disponibles o claimed"
@@ -109,14 +109,14 @@ export function QueuesPage() {
       <ViewTabs tabs={PESTANAS} active={pestana} onSelect={setPestana} label="Colas y DLQ operativo" />
 
       <ViewTabPanel id="entregas" hidden={pestana !== 'entregas'}>
-        {/* El `observed_at` se volcaba tal cual —«2026-08-23T02:02:29.830Z»— y era uno de los tres
-            formatos de fecha que convivían en el producto. Ahora pasa por el mismo `<Time>` que el
-            resto: relativa a la vista, exacta en el `title=`. */}
+        {/* `observed_at` was dumped as-is —"2026-08-23T02:02:29.830Z"— and it was one of three
+            date formats that coexisted in the product. Now it goes through the same `<Time>` as
+            the rest: relative to the view, exact in `title=`. */}
         <Panel title="Entregas" subtitle={undefined}>
           <p className="observation-line">Leído del servidor: <Time value={snapshot?.observed_at} relativo /></p>
 
-          {/* El id pedido se escribe COMPLETO, no compactado: es lo que el operador tiene que poder
-              comparar contra el que traía en el enlace, y `compactId` le come el medio. */}
+          {/* The requested id is written IN FULL, not compacted: it's what the operator has to be
+              able to compare against the one in the link, and `compactId` eats the middle. */}
           {foco.estado === 'encontrada' ? (
             <p className="notice" role="status">
               Filtrado a la entrega <span className="mono">{foco.deliveryId}</span> ({compactId(foco.deliveryId)}), la
@@ -184,12 +184,12 @@ export function QueuesPage() {
 }
 
 /**
- * Una de las tres tarjetas de arriba, ahora pulsable.
+ * One of the three cards above, now pressable.
  *
- * No reusa `<Metric>` porque `Metric` es un `<article>` y esto tiene que ser un `<button>` de
- * verdad: un `div` con `onClick` no se alcanza con el teclado, no se anuncia como control y no
- * puede llevar `aria-pressed`. La clase `.metric` sí se reusa —el aspecto es el mismo a propósito,
- * lo único que cambia es que ahora lleva a algún sitio.
+ * Does not reuse `<Metric>` because `Metric` is an `<article>` and this has to be a real
+ * `<button>`: a `div` with `onClick` isn't reachable by keyboard, isn't announced as a control
+ * and can't carry `aria-pressed`. The `.metric` class IS reused —the look is the same on
+ * purpose; the only thing that changes is that it now leads somewhere.
  */
 function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina, bloqueado, onElegir }: {
   etiqueta: string;
@@ -216,9 +216,9 @@ function TarjetaFiltro({ etiqueta, valor, tono, detalle, grupo, activo, enPagina
       <strong>{cifra}</strong>
       <span>{detalle}</span>
       {/*
-        La cifra de arriba la calcula el SERVIDOR sobre todo lo que ve; la de acá es cuántas filas
-        de ese grupo trae esta página. Sólo se escribe cuando NO coinciden, y entonces dice el
-        porqué: el `LIMIT` del snapshot dejó fuera al resto. */}
+        The number above is computed by the SERVER over everything it sees; this one is how many
+        rows of that group fit on this page. It's only shown when they DON'T match, and then it
+        says why: the snapshot's `LIMIT` left the rest out. */}
       {String(enPagina) !== cifra ? (
         <span
           className="metrica-en-pagina"
@@ -235,13 +235,13 @@ function suscribirseAlHistorial(callback: () => void): () => void {
 }
 
 /**
- * Quita `?delivery=` y avisa a quien escucha `popstate`.
+ * Removes `?delivery=` and notifies whoever listens to `popstate`.
  *
- * No usa `redirect()` de `router.ts` a propósito: esa función compara `location.pathname`
- * contra el destino y acá el pathname NO cambia —sigue siendo `/queues`—, así que se saldría por
- * el `return` temprano y el filtro quedaría puesto con un botón que parece funcionar. Es
- * `replaceState` y no `pushState` por lo mismo que el cajón de la flota: quitar un filtro no es un
- * sitio nuevo al que el botón "atrás" deba volver.
+ * It doesn't use `redirect()` from `router.ts` on purpose: that function compares
+ * `location.pathname` against the destination and here the pathname does NOT change —it stays
+ * `/queues`—, so it would bail out at the early `return` and the filter would stay set with a
+ * button that looks like it works. It's `replaceState` and not `pushState` for the same reason
+ * as the fleet drawer: removing a filter isn't a new place the "back" button should return to.
  */
 function quitarElFoco(): void {
   const url = new URL(window.location.href);

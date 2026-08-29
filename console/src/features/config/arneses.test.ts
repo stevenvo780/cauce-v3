@@ -4,18 +4,18 @@ import {
 } from './arneses';
 
 /**
- * **La tabla de cómo funciona cada arnés DE VERDAD.**
+ * **The table of how each harness REALLY works.**
  *
- * Existe porque «Ajustes y altas» ofrecía tocar `agents.harness_id` como si de esa columna saliera
- * el programa que corre el bot, y no sale de ahí (ver `campos-inertes.ts`). La pregunta que el
- * operador tiene delante —«¿dónde se cambia lo que este bot lee?»— sólo se puede contestar por
- * arnés, y la respuesta es distinta en los cuatro.
+ * It exists because "Settings and enrollments" offered touching `agents.harness_id` as if the
+ * program the bot runs came from that column, and it does not (see `campos-inertes.ts`). The
+ * question the operator has in front of them —"where is what this bot reads changed?"— can only
+ * be answered per harness, and the answer is different for all four.
  *
- * El juego es CERRADO y sale de `resolveAgentDocuments()`
- * (services/gateway/src/console/agent-documents/catalog.ts:317): claude, codex y openclaw tienen documento
- * resuelto; todo lo demás —hermes incluido— cae al `default` y devuelve lista vacía. Si el gateway
- * aprende un arnés nuevo, esta prueba se pone roja y obliga a decidir qué se enseña, en vez de
- * dejar una fila muda.
+ * The set is CLOSED and comes from `resolveAgentDocuments()`
+ * (services/gateway/src/console/agent-documents/catalog.ts:317): claude, codex and openclaw have a
+ * resolved document; everything else —hermes included— falls back to `default` and returns an
+ * empty list. If the gateway learns a new harness, this test turns red and forces a decision on
+ * what gets shown, instead of leaving a silent row.
  */
 
 const JUEGO_CERRADO = ['claude', 'codex', 'openclaw', 'hermes'] as const;
@@ -31,8 +31,8 @@ describe('la tabla de arneses reales', () => {
     for (const arnes of ARNESES_REALES) {
       expect(arnes.label.trim().length, `${arnes.id} no tiene rótulo`).toBeGreaterThan(0);
       expect(arnes.detalle.trim().length, `${arnes.id} no explica su ruta`).toBeGreaterThan(0);
-      // La ruta vacía es un dato, no un hueco: significa «no lee ninguno», y lo comprueba el aserto
-      // de hermes de más abajo. Lo que no puede pasar es que una ruta declarada esté a medias.
+      // The empty path is data, not a gap: it means "reads none", and that is checked by the
+      // hermes assertion below. What cannot happen is a declared path that is only half there.
       if (arnes.directiva !== '') expect(arnes.directiva.trim()).toBe(arnes.directiva);
     }
   });
@@ -42,8 +42,8 @@ describe('la tabla de arneses reales', () => {
   });
 
   /**
-   * Lo importante de toda la tabla: NINGUNO de esos ficheros se toca desde «Ajustes y altas».
-   * Prometer lo contrario mandaría a un operador a buscar acá un editor que vive en otra pantalla.
+   * The key thing about the whole table: NONE of those files are touched from "Settings and enrollments".
+   * Promising otherwise would send an operator looking here for an editor that lives on another screen.
    */
   it('ninguna fila se declara editable desde esta pantalla, y todas dicen dónde sí se toca', () => {
     for (const arnes of ARNESES_REALES) {

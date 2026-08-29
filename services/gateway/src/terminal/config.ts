@@ -18,16 +18,16 @@ export interface TerminalConfig {
   readonly wsPath: string;
   /** HKDF master secret; per-alias keys are derived from it, it never leaves this process. */
   readonly ticketKey: Buffer;
-  /** Token de autenticación compartido entre gateway y terminal-relay. */
+  /** Authentication token shared between gateway and terminal-relay. */
   readonly relayToken: string;
   /** Authenticated relay mTLS leaf digests allowed to publish presence or own a session. */
   readonly relayInstanceIds: ReadonlySet<string>;
-  /** Origen HTTPS del terminal-relay para solicitudes de lectura de gobierno. */
+  /** HTTPS origin of the terminal-relay for governance read requests. */
   readonly relayUrl?: string;
-  /** Material de cliente mTLS para autenticación contra el listener del relay. */
+  /** mTLS client material for authenticating against the relay listener. */
   readonly relayClientCertFile?: string;
   readonly relayClientKeyFile?: string;
-  /** CA que firma el certificado de servidor del relay, si no está en el almacén del sistema. */
+  /** CA that signs the relay server certificate, if not in the system trust store. */
   readonly relayCaFile?: string;
   readonly grantsFile: string;
   readonly ticketTtlSeconds: number;
@@ -82,9 +82,9 @@ function relayInstanceIds(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
 }
 
 /**
- * Mismo criterio que el relay aplica a la URL del gateway: origen HTTPS y sin credenciales dentro.
- * Una URL con usuario y contraseña sería un secreto viviendo en una variable de entorno que se
- * copia en logs y en `docker inspect`.
+ * Same criterion the relay applies to the gateway URL: HTTPS origin and no credentials inside.
+ * A URL with username and password would be a secret living in an environment variable that
+ * gets copied into logs and `docker inspect`.
  */
 function relayUrl(value: string | undefined): string | undefined {
   if (value === undefined || value.trim().length === 0) return undefined;
@@ -95,7 +95,7 @@ function relayUrl(value: string | undefined): string | undefined {
   return url.origin;
 }
 
-/** Ausente y vacío son lo mismo aquí: una variable puesta a '' es una variable sin poner. */
+/** Absent and empty are the same here: a variable set to '' is an unset variable. */
 function optionalPath(value: string | undefined): string | undefined {
   return value === undefined || value.trim().length === 0 ? undefined : value.trim();
 }
@@ -122,8 +122,8 @@ export async function loadTerminalConfig(
     environment.CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR, DEFAULT_MAX_SESSIONS_PER_OPERATOR, 64,
     'CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR'
   );
-  // Los tres opcionales de la vía de lectura se expanden condicionalmente: con
-  // `exactOptionalPropertyTypes`, un `relayUrl: undefined` explícito NO es lo mismo que ausente.
+  // The three read-path optionals are spread conditionally: with `exactOptionalPropertyTypes`,
+  // an explicit `relayUrl: undefined` is NOT the same as absent.
   const readUrl = relayUrl(environment.CAUCE_TERMINAL_RELAY_URL);
   const relayClientCertFile = optionalPath(environment.CAUCE_TERMINAL_RELAY_CLIENT_CERT_FILE);
   const relayClientKeyFile = optionalPath(environment.CAUCE_TERMINAL_RELAY_CLIENT_KEY_FILE);

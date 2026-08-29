@@ -1,17 +1,17 @@
 /**
- * Heurística y consultas de actividad de flota para GET /v3/console/activity.
+ * Fleet activity heuristics and queries for GET /v3/console/activity.
  */
 
 export interface FleetActivityThresholds {
-  /** A partir de cuántas entregas en vuelo un agente se considera saturado. */
+  /** How many in-flight deliveries make an agent be considered saturated. */
   saturation_in_flight: number;
-  /** Segundos sin un ACK aplicado a partir de los cuales se considera detenido. */
+  /** Seconds without an applied ACK after which an agent is considered stalled. */
   stall_after_seconds: number;
-  /** Ventana de segundos para considerar un ACK como reciente. */
+  /** Seconds window within which an ACK counts as recent. */
   ack_recent_seconds: number;
-  /** Ventana de búsqueda hacia atrás del último ACK aplicado. */
+  /** Look-back window in seconds for the last applied ACK. */
   ack_lookback_seconds: number;
-  /** Tope de entregas en vuelo detalladas por alias en in_flight_items. */
+  /** Cap of in-flight deliveries detailed per alias in in_flight_items. */
   items_per_agent: number;
 }
 
@@ -32,15 +32,15 @@ export const FLEET_ACTIVITY_FLAGS = [
 ] as const;
 export type FleetActivityFlag = (typeof FLEET_ACTIVITY_FLAGS)[number];
 
-/** Entrada mínima necesaria para evaluar el estado de actividad de un agente. */
+/** Minimum input needed to evaluate an agent's activity state. */
 export interface FleetActivityWorkStateInput {
   registered: boolean;
   in_flight: number;
   queued: number;
   overdue_in_flight: number;
-  /** Segundos transcurridos desde el último ACK aplicado, o null si no se registró en la ventana. */
+  /** Seconds since the last applied ACK, or null if none was recorded within the window. */
   seconds_since_last_ack: number | null;
-  /** true = lease vigente, false = lease vencido, null = sin lease registrado. */
+  /** true = lease in force, false = lease expired, null = no lease recorded. */
   lease_online: boolean | null;
 }
 
@@ -50,8 +50,8 @@ export interface FleetActivityWorkStateResult {
 }
 
 /**
- * Calcula el estado de trabajo primario y los flags de diagnóstico asociados.
- * Precedencia del badge: stalled > saturated > working > queued > idle.
+ * Computes the primary work state and the associated diagnostic flags.
+ * Badge precedence: stalled > saturated > working > queued > idle.
  */
 export function agentWorkState(
   row: FleetActivityWorkStateInput,
@@ -84,7 +84,7 @@ export function agentWorkState(
 }
 
 /**
- * Consulta de agregación de actividad de flota para GET /v3/console/activity.
+ * Fleet activity aggregation query for GET /v3/console/activity.
  */
 export const FLEET_ACTIVITY_QUERY = `
 WITH visible_tenants AS (

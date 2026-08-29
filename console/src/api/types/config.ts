@@ -1,13 +1,13 @@
 export type ConfigResource =
   | 'tenant' | 'room' | 'membership' | 'acl_edge' | 'harness' | 'role_policy'
-  /** Singleton hub-only de visibilidad de cadena: sólo admite `update` sobre el id `default`. */
+  /** Singleton hub-only of chain visibility: it only allows `update` over the id `default`. */
   | 'chain_policy'
-  /** Allowlist de egress proactivo: es configuración versionada, no dato de runtime. */
+  /** Allowlist of proactive egress: it is versioned configuration, not runtime data. */
   | 'egress_destination';
 /**
- * Recursos del registro de agentes y del pool de suscripciones (migración
- * `packages/store/migrations/010_agent_account_registry.sql`). Son hub-only: `authorizeMutation`
- * no los agregó a la lista de self-service, así que un tenant no-hub recibe 403.
+ * Resources of the agent registry and of the subscription pool (migration
+ * `packages/store/migrations/010_agent_account_registry.sql`). They are hub-only:
+ * `authorizeMutation` did not add them to the self-service list, so a non-hub tenant gets 403.
  */
 export type RegistryConfigResource =
   | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
@@ -37,26 +37,26 @@ export interface ConfigurationSnapshot {
   acl_edges?: Record<string, unknown>[] | null;
   harness_definitions?: Record<string, unknown>[] | null;
   role_policies?: Record<string, unknown>[] | null;
-  /** Singleton `default` de la política de visibilidad de cadena (migración 008). */
+  /** `default` singleton of the chain visibility policy (migration 008). */
   chain_policies?: Record<string, unknown>[] | null;
-  /** Allowlist de egress proactivo (migración 009). */
+  /** Allowlist of proactive egress (migration 009). */
   egress_destinations?: Record<string, unknown>[] | null;
   /**
-   * Registro de agentes y pool de cuentas. Las cuatro claves son opcionales a propósito: un
-   * gateway anterior a la migración 010 no las publica, y eso NO es lo mismo que una lista vacía.
-   * La UI distingue "clave ausente" (dato no disponible) de "lista vacía" (cero filas conocidas).
+   * Agent registry and account pool. The four keys are optional on purpose: a gateway older
+   * than migration 010 does not publish them, and that is NOT the same as an empty list. The
+   * UI distinguishes "key absent" (data not available) from "empty list" (zero known rows).
    *
-   * Cada fila de `agents` trae `role_brief` únicamente como proyección legacy de sólo lectura de
-   * `agent_profiles.role_summary`. La consola nunca la escribe: el PUT canónico de Perfil hace
-   * CAS, materializa el runtime y sólo después acredita `applied_revision`.
+   * Each `agents` row carries `role_brief` only as a legacy read-only projection of
+   * `agent_profiles.role_summary`. The console never writes it: the canonical Profile PUT
+   * does CAS, materializes the runtime, and only then credits `applied_revision`.
    */
   agents?: Record<string, unknown>[] | null;
-  /** `credential_ref` nunca viaja acá; `external_account_id` y `credential_ref_kind` los anula el
-   *  servidor para una cuenta que paga otro tenant. */
+  /** `credential_ref` never travels here; `external_account_id` and `credential_ref_kind` are
+   *  nulled by the server for an account paid by another tenant. */
   provider_accounts?: Record<string, unknown>[] | null;
   alias_routing_ceiling?: Record<string, unknown>[] | null;
   agent_account_bindings?: Record<string, unknown>[] | null;
-  /** Copia diagnóstica de sólo lectura; las escrituras usan la API canónica de Perfil. */
+  /** Diagnostic read-only copy; writes use the canonical Profile API. */
   agent_profiles?: Record<string, unknown>[] | null;
   revisions?: ConfigRevision[] | null;
 }

@@ -1,12 +1,12 @@
 /**
- * Constantes y centinelas para la representación de valores ausentes o no aplicables en la interfaz.
+ * Constants and sentinels for representing absent or not-applicable values in the UI.
  */
 export const UNKNOWN = 'sin dato';
 
-/** «Este dato aún no toca», que NO es lo mismo que «no lo sé». */
+/** "This datum is not yet due", which is NOT the same as "I don't know it". */
 export const TODAVIA_NO = 'todavía no';
 
-/** «No aplica a esta fila». Guión, nunca vacío: una celda vacía no distingue de un fallo de render. */
+/** "Not applicable to this row". Em dash, never empty: an empty cell is indistinguishable from a render failure. */
 export const NO_APLICA = '—';
 
 import type {
@@ -29,7 +29,7 @@ export function display(value: unknown): string {
 }
 
 /**
- * Formatea fechas para visualización compacta y legible en español.
+ * Formats dates for compact, Spanish-readable display.
  */
 export function timestamp(value: unknown): string {
   const date = fecha(value);
@@ -40,7 +40,7 @@ export function timestamp(value: unknown): string {
   }).format(date);
 }
 
-/** La misma fecha al segundo y con zona, para el `title=`. Nunca es lo que se lee de un vistazo. */
+/** The same date down to the second and with timezone, for `title=`. Never what is read at a glance. */
 export function timestampExacto(value: unknown): string {
   const date = fecha(value);
   if (!date) return UNKNOWN;
@@ -50,7 +50,7 @@ export function timestampExacto(value: unknown): string {
   }).format(date);
 }
 
-/** `Date` válido o `undefined`. Un texto vacío o ilegible NO es una fecha. */
+/** A valid `Date` or `undefined`. An empty or unreadable string is NOT a date. */
 export function fecha(value: unknown): Date | undefined {
   if (typeof value !== 'string' || value.trim() === '') return undefined;
   const date = new Date(value);
@@ -58,8 +58,8 @@ export function fecha(value: unknown): Date | undefined {
 }
 
 /**
- * «hace 3 min» / «en 2 h». Donde la pregunta es *cuánto hace*, un reloj de pared obliga a restar
- * de cabeza. Devuelve `undefined` —no una mentira— cuando no hay fecha legible.
+ * "3 min ago" / "in 2 h". Where the question is *how long ago*, a wall clock forces a mental
+ * subtraction. Returns `undefined` — not a lie — when there is no readable date.
  */
 export function haceCuanto(value: unknown, now = Date.now()): string | undefined {
   const date = fecha(value);
@@ -85,10 +85,10 @@ export function leaseExpiry(record: { lease_expires_at?: string | null; lease_un
 }
 
 /**
- * Formatea una duración en segundos como "1h 4m", "3m 12s" o "12s". Negativos (deadlines
- * vencidos, resets ya pasados) se muestran con signo en vez de invertirse en silencio: decidir
- * qué significa "vencido" queda para quien llama, no para este formateador genérico. Usado por
- * activity (antigüedad en vuelo) y quotas (tiempo a reset).
+ * Formats a duration in seconds as "1h 4m", "3m 12s", or "12s". Negatives (expired deadlines,
+ * past resets) are shown with a sign rather than silently flipped: deciding what "expired"
+ * means is left to the caller, not this generic formatter. Used by activity (in-flight age)
+ * and quotas (time to reset).
  */
 export function formatDurationSeconds(seconds: unknown): string {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return UNKNOWN;

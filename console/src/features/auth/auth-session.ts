@@ -3,12 +3,12 @@ import { useApi } from '../../api/context';
 import type { ConsoleAuthState } from '../../api/types';
 
 /**
- * Estado de la puerta, derivado SIEMPRE de lo que dijo el servidor:
- *  - `checking`  todavía no contestó `/v3/auth/session`.
- *  - `in`        hay sesión.
- *  - `out`       no hay sesión: se muestra el login y nada más.
- *  - `unmanaged` el gateway no expone el BFF (hoy: `CAUCE_AUTH_PROVIDER=mtls`).
- *  - `error`     no se pudo preguntar. NO es lo mismo que "no autorizado": se falla cerrado.
+ * Gate state, ALWAYS derived from what the server said:
+ *  - `checking`  has not answered `/v3/auth/session` yet.
+ *  - `in`        there is a session.
+ *  - `out`       there is no session: the login is shown and nothing else.
+ *  - `unmanaged` the gateway does not expose the BFF (today: `CAUCE_AUTH_PROVIDER=mtls`).
+ *  - `error`     could not ask. NOT the same as "not authorized": it fails closed.
  */
 export type GateStatus = 'checking' | 'in' | 'out' | 'unmanaged' | 'error';
 
@@ -19,7 +19,7 @@ export function statusOf(state: ConsoleAuthState | undefined, error: Error | und
   return state.authenticated ? 'in' : 'out';
 }
 
-/** Cada cuánto se revalida la sesión contra el servidor, para que un vencimiento se note. */
+/** How often the session is revalidated against the server, so an expiration is noticed. */
 export const REVALIDATE_MS = 60_000;
 
 export interface AuthGateState {
@@ -51,8 +51,8 @@ export function useAuthGate(): AuthGateState {
   useEffect(() => {
     let active = true;
     void check();
-    // Revalidación periódica y al volver a la pestaña: una sesión vencida tiene que notarse sin
-    // esperar a que el operador toque algo que escriba.
+    // Periodic revalidation and on tab focus: an expired session must be noticed without
+    // waiting for the operator to touch something that writes.
     const timer = window.setInterval(() => { if (active) void check(); }, REVALIDATE_MS);
     const onFocus = () => { if (active) void check(); };
     window.addEventListener('focus', onFocus);
@@ -64,10 +64,10 @@ export function useAuthGate(): AuthGateState {
   }, [check]);
 
   /**
-   * Login por contraseña. Igual que el logout: no se cree su propio optimismo — tras el POST
-   * vuelve a preguntarle al servidor quién es. Un fallo de credenciales NO se guarda en `error`
-   * (eso pintaría la pantalla de "no se pudo verificar la sesión", que es otra cosa): se
-   * propaga a quien llamó para que lo muestre dentro del formulario.
+   * Password login. Same as logout: do not assume its own optimism — after the POST it asks
+   * the server again who it is. A credential failure is NOT saved into `error` (that would paint
+   * the screen "could not verify the session", which is something else): it is propagated to the
+   * caller so they can show it inside the form.
    */
   const login = useCallback(async (email: string, password: string) => {
     setBusy(true);
@@ -83,7 +83,7 @@ export function useAuthGate(): AuthGateState {
     setBusy(true);
     try {
       await api.logout();
-      // No se asume el resultado del POST: se vuelve a preguntar al servidor quién soy.
+      // The POST result is not assumed: the server is asked again who I am.
       await check();
     } catch (cause) {
       setError(cause instanceof Error ? cause : new Error('No se pudo cerrar la sesión'));

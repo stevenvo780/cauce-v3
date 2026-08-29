@@ -7,9 +7,9 @@ import {
 } from './agent-documents.js';
 
 /**
- * Camino de LECTURA del modal de Directiva. Lo que se prueba aquí es sobre todo lo que NO se lee:
- * la puerta se abre para dos nombres y se cierra para todo lo demás, incluida cualquier ruta que
- * no salga de hechos medidos.
+ * READ path of the Directive modal. What is tested here is mostly what is NOT read: the gate
+ * opens for two names and closes for everything else, including any path that does not come
+ * from measured facts.
  */
 
 const CLAUDE: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
@@ -58,7 +58,7 @@ describe('verifyReadablePath abre para el manual del sitio', () => {
   it('sigue el CLAUDE_CONFIG_DIR en vez del home', () => {
     const facts: RuntimeFacts = { ...CLAUDE, claudeConfigDir: '/home/dev/.claude-b' };
     expect(verifyReadablePath(facts, '/home/dev/.claude-b/CLAUDE.md')).toEqual({ allowed: true });
-    // Y el de por defecto deja de valer: existe en disco, pero ese agente NO lo lee.
+    // And the default one stops being valid: it exists on disk, but this agent does NOT read it.
     expect(verifyReadablePath(facts, RUTA_CLAUDE).allowed).toBe(false);
   });
 
@@ -92,8 +92,8 @@ describe('verifyReadablePath abre para el manual del sitio', () => {
 
 describe('verifyReadablePath se cierra para todo lo demás', () => {
   it('no sirve credenciales aunque estén en el juego cerrado', () => {
-    // `.claude.json` SÍ sale de `resolveAgentDocuments` (es la fila de MCP), así que esta es la
-    // comprobación que de verdad lo para.
+    // `.claude.json` DOES come out of `resolveAgentDocuments` (it is the MCP row), so this is the
+    // check that actually stops it.
     const verdict = verifyReadablePath(CLAUDE, '/home/dev/.claude.json');
     expect(verdict.allowed).toBe(false);
     expect(verdict.reason).toContain('no se sirve nunca');
@@ -125,7 +125,7 @@ describe('verifyReadablePath se cierra para todo lo demás', () => {
   });
 
   it('rechaza una ruta que no es de ningún documento de ese alias', () => {
-    // El nombre está permitido y la forma es correcta: lo único que la para es el juego cerrado.
+    // The name is allowed and the shape is correct: the only thing stopping it is the closed set.
     const verdict = verifyReadablePath(CLAUDE, '/etc/CLAUDE.md');
     expect(verdict.allowed).toBe(false);
     expect(verdict.reason).toContain('no es la de ningún documento');
@@ -175,7 +175,7 @@ describe('TerminalRelayFactsProbe.readGovernanceDocument', () => {
     const result = await probe.readGovernanceDocument('/home/dev/.claude.json', CLAUDE, 'Steven', 'zeus');
 
     expect(result).toMatchObject({ error: 'invalid_path' });
-    // Lo importante: la petición no llegó a salir del gateway.
+    // The important thing: the request never left the gateway.
     expect(readFile).not.toHaveBeenCalled();
   });
 
@@ -223,8 +223,8 @@ describe('TerminalRelayFactsProbe.readGovernanceDocument', () => {
   });
 
   it('recorta por BYTES, no por unidades UTF-16', async () => {
-    // 200.000 «á» son 200.000 caracteres —por debajo del tope si se cuenta mal— pero 400.000
-    // bytes. Comparar `content.length` con `MAX_DOCUMENT_BYTES` dejaría pasar el doble.
+    // 200,000 "á" are 200,000 characters — below the cap if miscounted — but 400,000 bytes.
+    // Comparing `content.length` to `MAX_DOCUMENT_BYTES` would let twice as much through.
     const gordo = 'á'.repeat(200_000);
     expect(gordo.length).toBeLessThan(MAX_DOCUMENT_BYTES);
     expect(Buffer.byteLength(gordo, 'utf8')).toBeGreaterThan(MAX_DOCUMENT_BYTES);

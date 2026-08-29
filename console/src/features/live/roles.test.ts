@@ -6,7 +6,7 @@ const agente = (alias: string, role_brief: unknown) =>
 it('agrupa por rol a los bots que llevan el MISMO texto, aunque difieran en espacios de sobra', () => {
   const catalogo = catalogoDeRoles([
     agente('zeus', 'Sos el orquestador de la flota.'),
-    // El store recorta antes de guardar, así que para el servidor estos dos son el mismo rol.
+    // The store trims before saving, so for the server these two are the same role.
     agente('kant', '  Sos el orquestador de la flota.\n'),
     agente('argos', 'Sos el que persigue lo pendiente.'),
     agente('iza', null),
