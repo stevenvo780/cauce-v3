@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Publica una única entrega de gate por mTLS y deja sólo correlación efímera 0600. */
+/** Publishes a single gate delivery over mTLS and leaves only ephemeral 0600 correlation. */
 import { randomBytes, randomUUID } from 'node:crypto';
 import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:https';

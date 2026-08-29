@@ -86,7 +86,7 @@ describe('redacción de secretos en la ingesta', () => {
     expect(redactSecrets(pem).value).toBe('[secreto-redactado] (llave privada)');
   });
 
-  /* ---------------- Lo que NO se toca: un falso positivo es PEOR ---------------- */
+  /* ---------------- What is NOT touched: a false positive is WORSE ---------------- */
 
   it('no toca una URL normal, ni con puerto, ni con dos puntos en la ruta', () => {
     for (const texto of [
@@ -132,7 +132,7 @@ describe('redacción de secretos en la ingesta', () => {
     expect(redactSecrets(texto).value).toBe(texto);
   });
 
-  /* ---------------- Cuerpo completo ---------------- */
+  /* ---------------- Full body ---------------- */
 
   it('el recorrido profundo no toca los bytes de un adjunto', () => {
     const cuerpo = {

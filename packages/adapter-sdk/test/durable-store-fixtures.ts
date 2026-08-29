@@ -1,5 +1,5 @@
-// Helpers compartidos por los tests partidos de durable-store.test.ts (Tarea 2 de opencode-minimax.md).
-// NO es test: el runner `dist/test/*.test.js` no lo recoge.
+// Shared helpers for the split durable-store.test.ts tests (Task 2 of opencode-minimax.md).
+// NOT a test: the `dist/test/*.test.js` runner does not pick it up.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmod, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";

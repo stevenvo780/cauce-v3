@@ -38,7 +38,7 @@ describe('markdown a HTML de Telegram', () => {
     expect(markdownToTelegramHtml('[malo](javascript:alert(1))')).not.toContain('<a ');
   });
 
-  /* --- Lo que hace que Telegram NO rechace el mensaje --- */
+  /* --- What makes Telegram NOT reject the message --- */
 
   it('escapa los caracteres que romperían el HTML', () => {
     expect(markdownToTelegramHtml('a < b && c > d')).toBe('a &lt; b &amp;&amp; c &gt; d');

@@ -163,7 +163,7 @@ export class SessionManager implements SessionManagerDelegate {
     ]);
   }
 
-  /** Cierra la fila de un ticket consumido que no alcanzó a convertirse en `TerminalSession`. */
+  /** Closes the row of a consumed ticket that never got to become a `TerminalSession`. */
   reportConsumedClose(sessionId: string, reason: string, grant: TerminalSessionGrant): void {
     const report: SessionCloseReport = {
       reason,

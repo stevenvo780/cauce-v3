@@ -347,7 +347,7 @@ describe('per-agent delivery concurrency cap', () => {
   });
 
   it('still honours a caller limit below the cap', async () => {
-    // El techo acota, no reemplaza. Un llamador que pide menos sigue recibiendo menos.
+    // The cap bounds, it does not replace. A caller that asks for less still gets less.
     await declareAgent('Steven', 'argos', 5);
     await publishMany(9);
     const argos = await consumer('Steven', 'argos');

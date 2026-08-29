@@ -63,8 +63,8 @@ function collect(
 }
 
 /**
- * Convierte el resumen JSON allowlisted del audit log en una frase para el operador.
- * React conserva el escape HTML; esta función sólo decide texto y nunca devuelve markup.
+ * Turns the allowlisted JSON summary of the audit log into a sentence for the operator.
+ * React preserves the HTML escape; this function only decides text and never returns markup.
  */
 export function readableAuditSummary(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string' || value.trim() === '') return undefined;

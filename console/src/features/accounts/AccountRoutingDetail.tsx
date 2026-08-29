@@ -7,9 +7,9 @@ import {
 } from './licenses';
 
 /**
- * Ficha de ruteo y consumo desplegable para una cuenta:
- * presenta plan, motivo de inactividad, agentes asignados y techo de ruteo.
- * El motivo de consumo se muestra sólo cuando su alcance es `account`.
+ * Expandable routing and consumption card for an account:
+ * shows plan, inactivity reason, assigned agents and routing ceiling.
+ * The consumption reason is only shown when its scope is `account`.
  */
 export function AccountRoutingDetail({ accountId, quotas, config }: {
   accountId: string;
