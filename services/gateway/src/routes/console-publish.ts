@@ -74,7 +74,7 @@ export function registerConsolePublishIntentRoutes(
         ),
       );
       consolePublishTelemetry.record({ operation: 'prepare', result: result.state });
-      return reply.code(200).send(result);
+      return await reply.code(200).send(result);
     } catch (error) {
       if (error instanceof PublishIntentReconciliationRequired) {
         consolePublishTelemetry.record({ operation: 'prepare', result: 'reconciliation_required' });
@@ -110,7 +110,7 @@ export function registerConsolePublishIntentRoutes(
         ),
       );
       consolePublishTelemetry.record({ operation: 'confirm', result: 'confirmed' });
-      return reply.code(200).send(result);
+      return await reply.code(200).send(result);
     } catch (error) {
       consolePublishTelemetry.record({ operation: 'confirm', result: 'error' });
       replyError(reply, error);

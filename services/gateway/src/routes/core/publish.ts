@@ -39,7 +39,7 @@ export function registerCorePublishRoutes(
         const recipient = command.recipients[0];
         if (command.room_id !== 'grp.steven' || command.recipients.length !== 1 ||
             command.lane !== 'interactive' || command.priority !== -100 ||
-            command.idempotency_key !== `gate:${recipient?.tenant_id}:${recipient?.alias}:${probeBody.nonce}`) {
+            command.idempotency_key !== `gate:${String(recipient?.tenant_id)}:${String(recipient?.alias)}:${probeBody.nonce}`) {
           throw new Error('system gate probe payload is not canonical');
         }
       }
@@ -67,7 +67,7 @@ export function registerCorePublishRoutes(
       if (consolePublish) {
         consolePublishTelemetry.record({ operation: 'publish', result: 'committed' });
       }
-      return reply.code(202).send(receipt);
+      return await reply.code(202).send(receipt);
     } catch (error) {
       if (error instanceof PublishIntentExpiredError) {
         if (consolePublish) {
@@ -94,7 +94,7 @@ export function registerCorePublishRoutes(
       const command = NotifyRequestSchema.parse(request.body);
       const verdict = await repository.enqueueNotification(actor.tenant_id, actor.alias, command);
       if (verdict.decision === 'denied') {
-        return reply.code(403).send({
+        return await reply.code(403).send({
           error: 'forbidden',
           message: 'proactive egress was denied by policy',
           notification_id: verdict.notification_id,
@@ -103,7 +103,7 @@ export function registerCorePublishRoutes(
           duplicate: verdict.duplicate
         });
       }
-      return reply.code(202).send(verdict);
+      return await reply.code(202).send(verdict);
     } catch (error) { replyError(reply, error); }
   });
 
@@ -121,7 +121,7 @@ export function registerCorePublishRoutes(
       await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
       const sample = QuotaSampleRequestSchema.parse(request.body);
       const result = await repository.recordQuotaSample(actor.tenant_id, actor.alias, sample);
-      return reply.code(202).send(result);
+      return await reply.code(202).send(result);
     } catch (error) { replyError(reply, error); }
   });
 
@@ -142,7 +142,7 @@ export function registerCorePublishRoutes(
       await repository.assertPermission(actor.tenant_id, actor.alias, 'route');
       const provider = (request.query as { provider?: unknown } | undefined)?.provider;
       if (typeof provider !== 'string') {
-        return reply.code(400).send({ error: 'invalid_input', message: 'provider query parameter is required' });
+        return await reply.code(400).send({ error: 'invalid_input', message: 'provider query parameter is required' });
       }
       return await repository.selectAccount(actor.tenant_id, actor.alias, provider);
     } catch (error) { replyError(reply, error); }

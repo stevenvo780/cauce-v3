@@ -14,7 +14,7 @@ interface GatewayHealthRouteOptions {
 interface GatewayHealthRepository {
   assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
-  listPresence(actorTenant: Tenant, actorAlias: string): Promise<Array<Record<string, unknown>>>;
+  listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;
 }
 
 export function registerGatewayHealthRoutes(

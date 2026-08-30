@@ -88,7 +88,7 @@ function routedPriority(
       && lane === 'interactive',
   });
   if (decision.reason === 'agent_ceiling') {
-    request.log?.warn?.({
+    request.log.warn({
       event: 'publish_priority_clamped',
       tenant_id: actor.tenant_id,
       alias: actor.alias,
@@ -97,7 +97,7 @@ function routedPriority(
       applied: decision.applied
     }, 'agent priority clamped to the agent band');
   } else if (decision.reason === 'human_entry_floor') {
-    request.log?.info?.({
+    request.log.info({
       event: 'publish_priority_human_floor',
       tenant_id: actor.tenant_id,
       alias: actor.alias,
@@ -169,7 +169,7 @@ export function validatedPublishReceipt(
       // A fresh insert must carry the exact request/trace generated for this invocation. An
       // idempotent duplicate intentionally carries the original pair; request_hash is stable
       // across those generated transport values and remains the causal proof for that branch.
-      || (parsed.data.duplicate === false
+      || (!parsed.data.duplicate
         && (parsed.data.request_id !== command.request_id || parsed.data.trace_id !== command.trace_id))) {
     // Same as DLQ/replay/cancel: the commit may have happened. A 409 forces reconciliation by read
     // and never credits a 2xx for a truncated, duplicate, or different-store-version response.

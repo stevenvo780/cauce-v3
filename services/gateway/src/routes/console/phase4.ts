@@ -28,7 +28,7 @@ export function registerConsoleRoutesPhase4(
       const result = await repository.applyConfigurationChange(
         actor.tenant_id, actor.alias, change.mutation, change.dry_run, change.expected_revision
       );
-      return reply.code(change.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
+      return await reply.code(change.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
         result, change.dry_run, null, change.mutation,
       ));
     } catch (error) { replyError(reply, error); }
@@ -44,7 +44,7 @@ export function registerConsoleRoutesPhase4(
       const result = await repository.rollbackConfiguration(
         actor.tenant_id, actor.alias, revisionId, rollback.dry_run, rollback.expected_revision
       );
-      return reply.code(rollback.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
+      return await reply.code(rollback.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
         result, rollback.dry_run, revisionId,
       ));
     } catch (error) { replyError(reply, error); }
@@ -70,7 +70,7 @@ export function registerConsoleRoutesPhase4(
       requireOperatorPermission(actor, 'control');
       await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
       if (options.terminalCapability?.available === true) return options.terminalCapability;
-      return reply.code(501).send({ available: false, reason: 'PTY backend capability is not configured' });
+      return await reply.code(501).send({ available: false, reason: 'PTY backend capability is not configured' });
     } catch (error) { replyError(reply, error); }
   });
 }
