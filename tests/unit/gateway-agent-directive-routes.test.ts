@@ -34,9 +34,9 @@ interface ProbeStub {
 
 function probeConComportamiento(): {
   probe: ProbeStub;
-  factsForCalls: Array<{ tenantId: string; alias: string }>;
-  readCalls: Array<{ path: string; tenantId: string; alias: string }>;
-  listCalls: Array<{ root: string; tenantId: string; alias: string }>;
+  factsForCalls: { tenantId: string; alias: string }[];
+  readCalls: { path: string; tenantId: string; alias: string }[];
+  listCalls: { root: string; tenantId: string; alias: string }[];
   responderFacts(facts: RuntimeFacts, source?: FactsSource): void;
   responderRead(contenido: GovernanceDocumentContent | GovernanceReadError): void;
   responderList(contenido: MemoryDirectoryListing | GovernanceReadError): void;
@@ -54,9 +54,9 @@ function probeConComportamiento(): {
     error: 'not_found',
     reason: 'sin memoria',
   });
-  const factsForCalls: Array<{ tenantId: string; alias: string }> = [];
-  const readCalls: Array<{ path: string; tenantId: string; alias: string }> = [];
-  const listCalls: Array<{ root: string; tenantId: string; alias: string }> = [];
+  const factsForCalls: { tenantId: string; alias: string }[] = [];
+  const readCalls: { path: string; tenantId: string; alias: string }[] = [];
+  const listCalls: { root: string; tenantId: string; alias: string }[] = [];
   return {
     probe: {
       async factsFor(tenantId, alias) {

@@ -57,7 +57,7 @@ interface FakeHandles {
   readonly captured: () => CapturedCall | undefined;
   readonly triggerTimeout: () => void;
   readonly triggerRequestError: (err: Error) => void;
-  readonly reqOnCalls: () => ReadonlyArray<readonly unknown[]>;
+  readonly reqOnCalls: () => readonly (readonly unknown[])[];
 }
 
 interface ResponseOptions {
@@ -72,12 +72,12 @@ function prepararRespuesta(opts: ResponseOptions = {}): FakeHandles {
   const transportError = opts.error;
 
   const resListeners: {
-    data: Array<(chunk: Buffer) => void>;
-    end: Array<() => void>;
-    error: Array<(err: Error) => void>;
+    data: ((chunk: Buffer) => void)[];
+    end: (() => void)[];
+    error: ((err: Error) => void)[];
   } = { data: [], end: [], error: [] };
 
-  const reqListeners: { error: Array<(err: Error) => void> } = { error: [] };
+  const reqListeners: { error: ((err: Error) => void)[] } = { error: [] };
   let lastUrl: unknown;
   let lastOptions: Record<string, unknown> | undefined;
 
@@ -204,9 +204,9 @@ describe('constantes y opciones que el cliente pasa a https.request', () => {
 
     const captured = handles.captured();
     expect(captured).toBeDefined();
-    expect(captured?.options['ca']).toBe(ca);
-    expect(captured?.options['cert']).toBe(cert);
-    expect(captured?.options['key']).toBe(key);
+    expect(captured?.options.ca).toBe(ca);
+    expect(captured?.options.cert).toBe(cert);
+    expect(captured?.options.key).toBe(key);
   });
 
   it('omite ca/cert/key cuando no se pasa material mTLS (no los manda como undefined)', async () => {
@@ -230,7 +230,7 @@ describe('constantes y opciones que el cliente pasa a https.request', () => {
     await cliente.readFile('Steven', 'zeus', RUTA, controller.signal);
 
     const captured = handles.captured();
-    expect(captured?.options['signal']).toBe(controller.signal);
+    expect(captured?.options.signal).toBe(controller.signal);
   });
 
   it('omite signal cuando no se pasa AbortSignal', async () => {
@@ -248,9 +248,9 @@ describe('constantes y opciones que el cliente pasa a https.request', () => {
 
     await cliente.readFile('Steven', 'zeus', RUTA);
 
-    const headers = handles.captured()?.options['headers'] as Record<string, string>;
-    expect(headers['authorization']).toBe(`Bearer ${TOKEN}`);
-    expect(headers['accept']).toBe('application/json');
+    const headers = handles.captured()?.options.headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headers.accept).toBe('application/json');
     expect(headers['content-type']).toBe('application/json');
     const payload = Buffer.from(JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: RUTA }), 'utf8');
     expect(Number(headers['content-length'])).toBe(payload.byteLength);
@@ -787,7 +787,7 @@ describe('writeFiles (lote): camino feliz y shape', () => {
     expect(resultado).toEqual({ files: [{ path: memory, operation: 'unchanged', sha: before, bytes: 123 }] });
     const writeCall = httpsRequest.mock.results[0]?.value as { write: ReturnType<typeof vi.fn> };
     const payload = writeCall.write.mock.calls[0]?.[0] as Buffer;
-    const enviado = JSON.parse(payload.toString('utf8')) as { files: Array<Record<string, unknown>> };
+    const enviado = JSON.parse(payload.toString('utf8')) as { files: Record<string, unknown>[] };
     expect(enviado.files[0]).not.toHaveProperty('content_base64');
     expect(enviado.files[0]).toMatchObject({
       mode: 'verify', path: memory, precondition: { state: 'present', sha256: before },

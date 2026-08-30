@@ -174,15 +174,15 @@ describe('AgentRegistry.observe / accepts / resolve / state / snapshot', () => {
 
   it('observe rechaza identidades de relay mal formadas', () => {
     const registry = new AgentRegistry();
-    expect(() => registry.observe({ relay_instance_id: 'short', relay_boot_id: RELAY.relay_boot_id }, []))
+    expect(() => { registry.observe({ relay_instance_id: 'short', relay_boot_id: RELAY.relay_boot_id }, []); })
       .toThrow(/identity is invalid/);
-    expect(() => registry.observe({ relay_instance_id: RELAY.relay_instance_id, relay_boot_id: 'not-a-uuid' }, []))
+    expect(() => { registry.observe({ relay_instance_id: RELAY.relay_instance_id, relay_boot_id: 'not-a-uuid' }, []); })
       .toThrow(/identity is invalid/);
   });
 
   it('observe rechaza duplicados dentro del mismo snapshot', () => {
     const registry = new AgentRegistry();
-    expect(() => registry.observe(RELAY, [presencia(), presencia()])).toThrow(/duplicate alias/);
+    expect(() => { registry.observe(RELAY, [presencia(), presencia()]); }).toThrow(/duplicate alias/);
   });
 
   it('observe acepta el mismo relay con boot_id nuevo cuando el dueño anterior quedó stale', () => {
@@ -198,7 +198,7 @@ describe('AgentRegistry.observe / accepts / resolve / state / snapshot', () => {
     const registry = new AgentRegistry();
     const now = Date.now();
     registry.observe(RELAY, [presencia()], now);
-    expect(() => registry.observe(RELAY_REBOOT, [presencia()], now + 1)).toThrow(RelayBootConflictError);
+    expect(() => { registry.observe(RELAY_REBOOT, [presencia()], now + 1); }).toThrow(RelayBootConflictError);
   });
 
   it('resolve devuelve "unknown" antes del primer observe y "not_installed" para alias ausente', () => {

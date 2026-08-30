@@ -104,7 +104,7 @@ describe('recordTerminalAudit', () => {
 
   it('relanza el error cuando metadata no es JSON-serializable (referencia circular)', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
-    type Cyclic = { name: string; self?: unknown };
+    interface Cyclic { name: string; self?: unknown }
     const cycle: Cyclic = { name: 'cycle' };
     cycle.self = cycle;
     await expect(recordTerminalAudit(poolCon(query), {

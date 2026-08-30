@@ -703,7 +703,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     expect(body.reason).toBe('agent_offline');
     // La envelope HTTP del deny de deny() solo emite error+reason; el routing_state es
     // metadata del audit row, no del response body. Lo verificamos sobre la query capturada.
-    const queries = (pool as unknown as { __queries: Array<{ text: string; values: unknown[] }> }).__queries;
+    const queries = (pool as unknown as { __queries: { text: string; values: unknown[] }[] }).__queries;
     const audit = queries.find((entry) => entry.text.includes('INSERT INTO audit_events'));
     expect(audit).toBeDefined();
     const metadata = JSON.parse(audit!.values[5] as string) as { routing_state?: string; pty_state?: string };
@@ -742,7 +742,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
       method: 'GET', url: '/v3/console/terminal/sessions'
     });
     expect(response.statusCode).toBe(200);
-    const body: { items: Array<{ state: string; session_id: string }> } = response.json();
+    const body: { items: { state: string; session_id: string }[] } = response.json();
     expect(body.items).toHaveLength(1);
     expect(body.items[0]!.state).toBe('issued');
   });
@@ -765,7 +765,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
       method: 'GET', url: '/v3/console/terminal/sessions'
     });
     expect(response.statusCode).toBe(200);
-    const body: { items: Array<{ state: string }> } = response.json();
+    const body: { items: { state: string }[] } = response.json();
     expect(body.items[0]!.state).toBe('active');
     // sessionExpiry fue consultado para una sesión consumida
     expect(sessionExpiry).toHaveBeenCalledWith(row);
@@ -787,7 +787,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
       method: 'GET', url: '/v3/console/terminal/sessions'
     });
     expect(response.statusCode).toBe(200);
-    const body: { items: Array<{ state: string }> } = response.json();
+    const body: { items: { state: string }[] } = response.json();
     expect(body.items[0]!.state).toBe('closed');
   });
 
@@ -798,7 +798,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
       method: 'GET', url: '/v3/console/terminal/sessions'
     });
     expect(response.statusCode).toBe(200);
-    const recorded = (pool as unknown as { __queries: Array<{ text: string; values: unknown[] }> }).__queries;
+    const recorded = (pool as unknown as { __queries: { text: string; values: unknown[] }[] }).__queries;
     expect(recorded).toHaveLength(1);
     const text = recorded[0]!.text;
     // Predicate de operator: AND de operator_id=$1 con (atribuido O console_subject=$N)
@@ -1316,9 +1316,9 @@ interface FleetPlacementRow {
 function stubFleetPool(
   placements: readonly FleetPlacementRow[],
   options: { selectList?: readonly TerminalSessionRow[] } = {}
-): DatabasePool & { __queries: Array<{ text: string; values: unknown[] }> } {
+): DatabasePool & { __queries: { text: string; values: unknown[] }[] } {
   const selectList = options.selectList ?? [];
-  const queries: Array<{ text: string; values: unknown[] }> = [];
+  const queries: { text: string; values: unknown[] }[] = [];
   const pool = {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
       queries.push({ text, values });
