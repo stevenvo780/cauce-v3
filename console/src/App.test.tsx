@@ -14,6 +14,7 @@ it('provides basic accessible landmarks and identity guidance', async () => {
   expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
   expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
   expect(await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(screen.getByRole('main')).not.toHaveFocus();
   expect(screen.getByText(/Cookie HttpOnly esperada/i)).toBeInTheDocument();
   expect(await screen.findByText('Steven:kant')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
@@ -132,6 +133,7 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
 
   expect(window.location.pathname).toBe('/queues');
   expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq operativo/i }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(screen.getByRole('main')).toHaveFocus();
 });
 
 it('conserva el href real que permite abrir una ruta en otra pestaña', async () => {

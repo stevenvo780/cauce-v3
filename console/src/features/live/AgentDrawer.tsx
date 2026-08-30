@@ -1,11 +1,12 @@
 import { ExternalLink, X } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useApi } from '../../api/context';
 import { useResource, type Resource } from '../../api/use-resource';
 import type {
   AgentDocumentKind, AgentPerfilCampos, ConfigurationSnapshot, FleetActivityItem,
 } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
 import { AgentAvatar } from './AgentAvatar';
@@ -74,6 +75,36 @@ export function AgentDrawer({
   view, tab, configuracion, borradorPerfil, onBorradorPerfil,
   borradoresFicheros, onBorradorFichero, onTab, onClose,
 }: AgentDrawerProps) {
+  const cajon = useRef<HTMLElement>(null);
+  const cerrar = useRef<HTMLButtonElement>(null);
+  const pestanas = useRef<(HTMLButtonElement | null)[]>([]);
+  const focoDeVuelta = useRef<HTMLElement | null>(
+    typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+
+  useEffect(() => {
+    const pagina = cajon.current?.closest('.live-page');
+    const contenido = pagina?.parentElement?.id === 'main-content' ? pagina.parentElement : null;
+    const superficies = new Set<Element>(
+      document.querySelectorAll('.skip-link, .sidebar, .topbar, .live-main'),
+    );
+    if (contenido && pagina) {
+      for (const hermano of contenido.children) {
+        if (hermano !== pagina) superficies.add(hermano);
+      }
+    }
+    const inertizadas = [...superficies].filter((superficie) => !superficie.hasAttribute('inert'));
+    const devolverFocoA = focoDeVuelta.current;
+    for (const superficie of inertizadas) superficie.setAttribute('inert', '');
+    cerrar.current?.focus();
+    return () => {
+      for (const superficie of inertizadas) superficie.removeAttribute('inert');
+      if (devolverFocoA?.isConnected) devolverFocoA.focus({ preventScroll: true });
+    };
+  }, []);
+
   // Esc closes from anywhere. A panel that can only be closed with the little X forces you to hunt
   // for it with the mouse each time, and this drawer is opened and closed many times in a row when triaging.
   useEffect(() => {
@@ -82,13 +113,29 @@ export function AgentDrawer({
     return () => { document.removeEventListener('keydown', alPulsar); };
   }, [onClose]);
 
+  const atraparFoco = useFocusTrap(cajon);
+  const moverPestana = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    let siguiente: number | undefined;
+    if (event.key === 'ArrowRight') siguiente = (index + 1) % DRAWER_TABS.length;
+    if (event.key === 'ArrowLeft') siguiente = (index - 1 + DRAWER_TABS.length) % DRAWER_TABS.length;
+    if (event.key === 'Home') siguiente = 0;
+    if (event.key === 'End') siguiente = DRAWER_TABS.length - 1;
+    if (siguiente === undefined) return;
+    event.preventDefault();
+    onTab(DRAWER_TABS[siguiente].id);
+    pestanas.current[siguiente]?.focus();
+  };
+
   const meta = LIVE_STATE_META[view.state];
 
   return (
     <aside
       className="agent-drawer"
-      role="complementary"
+      role="dialog"
+      aria-modal="true"
       aria-label={`Detalle de ${view.alias}`}
+      ref={cajon}
+      onKeyDown={atraparFoco}
     >
       <header className="agent-drawer-head">
         <div className="agent-drawer-identity">
@@ -98,27 +145,37 @@ export function AgentDrawer({
             <p className="muted">{view.tenantId}{view.displayName ? ` · ${view.displayName}` : ''}</p>
           </div>
         </div>
-        <button type="button" className="button small secondary" onClick={onClose} aria-label="Cerrar el detalle">
+        <button ref={cerrar} type="button" className="button small secondary" onClick={onClose} aria-label="Cerrar el detalle">
           <X size={15} aria-hidden="true" />
         </button>
       </header>
 
       <div className="agent-drawer-tabs" role="tablist" aria-label="Secciones del detalle">
-        {DRAWER_TABS.map((entry) => (
+        {DRAWER_TABS.map((entry, index) => (
           <button
             key={entry.id}
+            id={`agent-drawer-tab-${entry.id}`}
             type="button"
             role="tab"
             aria-selected={tab === entry.id}
+            aria-controls="agent-drawer-panel"
+            tabIndex={tab === entry.id ? 0 : -1}
             className="agent-drawer-tab"
             onClick={() => { onTab(entry.id); }}
+            onKeyDown={(event) => { moverPestana(event, index); }}
+            ref={(element) => { pestanas.current[index] = element; }}
           >
             {entry.label}
           </button>
         ))}
       </div>
 
-      <div className="agent-drawer-body" role="tabpanel">
+      <div
+        className="agent-drawer-body"
+        id="agent-drawer-panel"
+        role="tabpanel"
+        aria-labelledby={`agent-drawer-tab-${tab}`}
+      >
         {tab === 'ahora' ? <TabAhora view={view} /> : null}
         {tab === 'conexion' ? <TabConexion view={view} /> : null}
         {tab === 'entregas' ? <TabEntregas view={view} /> : null}

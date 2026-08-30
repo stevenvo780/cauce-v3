@@ -58,7 +58,7 @@ async function abrirFicherosDe(alias: string) {
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: new RegExp(alias, 'i') }));
-  const cajon = await screen.findByRole('complementary', { name: new RegExp(`detalle de ${alias}`, 'i') });
+  const cajon = await screen.findByRole('dialog', { name: new RegExp(`detalle de ${alias}`, 'i') });
   await user.click(within(cajon).getByRole('tab', { name: 'Ficheros' }));
   return { user, cajon };
 }
@@ -133,13 +133,13 @@ it('cada alias tiene su propio borrador: cambiar de agente no lo mezcla ni lo pi
   await escribirBorrador(user, cajon);
 
   await user.click(screen.getByRole('row', { name: /zeus/i }));
-  const cajonZeus = await screen.findByRole('complementary', { name: /detalle de zeus/i });
+  const cajonZeus = await screen.findByRole('dialog', { name: /detalle de zeus/i });
   await user.click(within(cajonZeus).getByRole('tab', { name: 'Ficheros' }));
   await user.click(await within(cajonZeus).findByText('CLAUDE.md (manual del sitio)'));
   expect(await within(cajonZeus).findByLabelText(/Contenido de CLAUDE\.md/i)).toHaveValue('# el de zeus\n');
 
   await user.click(screen.getByRole('row', { name: /kant/i }));
-  const cajonKant = await screen.findByRole('complementary', { name: /detalle de kant/i });
+  const cajonKant = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajonKant).getByRole('tab', { name: 'Ficheros' }));
   await user.click(await within(cajonKant).findByText('CLAUDE.md (manual del sitio)'));
   expect(await within(cajonKant).findByLabelText(/Contenido de CLAUDE\.md/i))

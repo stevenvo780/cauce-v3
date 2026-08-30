@@ -372,7 +372,14 @@ describe('el cajón', () => {
     const fila = await screen.findByRole('row', { name: /zeus/i });
     await user.click(fila);
 
-    const cajon = await screen.findByRole('complementary', { name: /detalle de zeus/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
+    expect(cajon).toHaveAttribute('aria-modal', 'true');
+    for (const pestana of within(cajon).getAllByRole('tab')) {
+      const panelId = pestana.getAttribute('aria-controls');
+      expect(panelId).toBe('agent-drawer-panel');
+      if (panelId === null) throw new Error('La pestaña no declara aria-controls');
+      expect(document.getElementById(panelId)).toBeInTheDocument();
+    }
     expect(within(cajon).getByRole('heading', { level: 2, name: 'zeus' })).toBeInTheDocument();
     // The map did NOT disappear: we did not navigate anywhere.
     const svg = document.querySelector('.lhg-svg');
@@ -390,7 +397,7 @@ describe('el cajón', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await user.click(await screen.findByRole('row', { name: /kant/i }));
-    const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Conexión' }));
 
     expect(within(cajon).getByText('Epoch')).toBeInTheDocument();
@@ -418,22 +425,97 @@ describe('el cajón', () => {
     expect(boton).toHaveFocus();
     await user.keyboard('{Enter}');
 
-    expect(await screen.findByRole('complementary', { name: /detalle de zeus/i })).toBeInTheDocument();
+    const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
+    expect(within(cajon).getByRole('button', { name: 'Cerrar el detalle' })).toHaveFocus();
+    expect(document.querySelector('.live-main')).toHaveAttribute('inert');
   });
 
-  it('cierra con Esc y limpia el enlace profundo', async () => {
+  it('aísla todas las superficies externas y restaura sólo las que el cajón inertizó', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(
+      <>
+        <a className="skip-link" data-testid="superficie-skip" href="#main-content">Saltar</a>
+        <aside className="sidebar" data-testid="superficie-sidebar" />
+        <header className="topbar" data-testid="superficie-preinerte" />
+        <main id="main-content">
+          <section data-testid="superficie-banner">Autenticación no gestionada</section>
+          <LiveFleetPage />
+          <section data-testid="superficie-hermana">Aviso adicional</section>
+        </main>
+      </>,
+    );
+    const preinerte = screen.getByTestId('superficie-preinerte');
+    preinerte.setAttribute('inert', '');
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await user.click(await screen.findByRole('row', { name: /zeus/i }));
+    const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
+    const fondoLive = document.querySelector('.live-main');
+
+    expect(cajon).not.toHaveAttribute('inert');
+    expect(fondoLive).toHaveAttribute('inert');
+    for (const testId of [
+      'superficie-skip', 'superficie-sidebar', 'superficie-preinerte',
+      'superficie-banner', 'superficie-hermana',
+    ]) expect(screen.getByTestId(testId)).toHaveAttribute('inert');
+
+    await user.click(within(cajon).getByRole('button', { name: 'Cerrar el detalle' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /detalle de zeus/i })).not.toBeInTheDocument();
+    });
+
+    expect(fondoLive).not.toHaveAttribute('inert');
+    for (const testId of [
+      'superficie-skip', 'superficie-sidebar', 'superficie-banner', 'superficie-hermana',
+    ]) expect(screen.getByTestId(testId)).not.toHaveAttribute('inert');
+    expect(preinerte).toHaveAttribute('inert');
+  });
+
+  it('cierra con Esc, limpia el enlace profundo y devuelve el foco al control que lo abrió', async () => {
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
 
     await screen.findByLabelText('Veredicto de la flota');
-    await user.click(await screen.findByRole('row', { name: /zeus/i }));
-    await screen.findByRole('complementary', { name: /detalle de zeus/i });
+    const fila = await screen.findByRole('row', { name: /zeus/i });
+    const boton = within(fila).getByRole('button', { name: 'Zeus' });
+    boton.focus();
+    await user.keyboard('{Enter}');
+    await screen.findByRole('dialog', { name: /detalle de zeus/i });
 
     await user.keyboard('{Escape}');
 
-    await waitFor(() => { expect(screen.queryByRole('complementary')).not.toBeInTheDocument(); });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /detalle de zeus/i })).not.toBeInTheDocument();
+    });
     expect(window.location.search).not.toContain('agente=');
+    expect(document.querySelector('.live-main')).not.toHaveAttribute('inert');
+    expect(boton).toHaveFocus();
+  });
+
+  it('mantiene el tabulador dentro del cajón y permite recorrer sus pestañas con flechas', async () => {
+    const user = userEvent.setup();
+    conActividad(mockActivity());
+    renderWithApi(<LiveFleetPage />);
+
+    await screen.findByLabelText('Veredicto de la flota');
+    await user.click(within(await screen.findByRole('row', { name: /zeus/i })).getByRole('button', { name: 'Zeus' }));
+    const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
+    const cerrar = within(cajon).getByRole('button', { name: 'Cerrar el detalle' });
+    const ahora = within(cajon).getByRole('tab', { name: 'Ahora' });
+    const conexion = within(cajon).getByRole('tab', { name: 'Conexión' });
+
+    await user.tab({ shift: true });
+    expect(within(cajon).getByRole('link', { name: /abrir la terminal/i })).toHaveFocus();
+    ahora.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(conexion).toHaveFocus();
+    expect(conexion).toHaveAttribute('aria-selected', 'true');
+    expect(ahora).toHaveAttribute('tabindex', '-1');
+    cerrar.focus();
+    await user.tab({ shift: true });
+    expect(within(cajon).getByRole('link', { name: /abrir la terminal/i })).toHaveFocus();
   });
 
   it('reabre el agente que venía en la URL: el enlace se puede pegar en un chat', async () => {
@@ -441,7 +523,7 @@ describe('el cajón', () => {
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
 
-    const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
     expect(within(cajon).getByRole('tab', { name: 'Entregas' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -455,7 +537,7 @@ describe('el cajón', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await user.click(await screen.findByRole('row', { name: /zeus/i }));
-    const cajon = await screen.findByRole('complementary', { name: /detalle de zeus/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
 
     expect(within(cajon).getByRole('link', { name: /ver en queues/i })).toBeInTheDocument();
@@ -471,7 +553,7 @@ describe('el cajón', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await user.click(await screen.findByRole('row', { name: /zeus/i }));
-    const cajon = await screen.findByRole('complementary', { name: /detalle de zeus/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de zeus/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
 
     expect(within(cajon).queryByText(/body|preview|cuerpo del mensaje/i)).not.toBeInTheDocument();

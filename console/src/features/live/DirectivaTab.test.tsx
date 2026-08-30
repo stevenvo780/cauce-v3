@@ -35,7 +35,7 @@ async function abrirPestanaDeKant() {
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   return { user, cajon };
 }
@@ -69,7 +69,7 @@ it('la pestaña deja en el cajón sólo el resumen del rol; las capas están det
 
   // And not a single layer inside the drawer while the dialog has not been opened.
   expect(within(cajon).queryByLabelText('Capa 2: manual del sitio')).not.toBeInTheDocument();
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
 });
 
 it('la directiva rotula las TRES capas por su fin, no sólo por su nombre técnico', async () => {

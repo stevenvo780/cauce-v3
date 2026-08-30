@@ -222,7 +222,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
   const [preference, setPreference] = useState<SidebarState>('expanded');
   const mainRef = useRef<HTMLElement>(null);
-  const routeMounted = useRef(false);
+  const focusedRoute = useRef<string | null>(null);
   // With the bottom bar there is no rail; between 761 and 1100 the viewport decides and the choice has no say.
   const rail = !bottomBar && (narrowViewport || preference === 'rail');
   const collapsible = !narrowViewport;
@@ -273,8 +273,11 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
 
   useEffect(() => {
     // The first paint does not steal focus: only the route change is announced.
-    if (!routeMounted.current) { routeMounted.current = true; return; }
-    mainRef.current?.focus();
+    const key = `${routeId}\u0000${notFoundPath ?? ''}\u0000${fleetAgentAlias ?? ''}`;
+    if (focusedRoute.current === null) { focusedRoute.current = key; return; }
+    if (focusedRoute.current === key) return;
+    focusedRoute.current = key;
+    mainRef.current?.focus({ preventScroll: true });
   }, [routeId, notFoundPath, fleetAgentAlias]);
 
   return (

@@ -61,7 +61,7 @@ beforeEach(() => {
 async function abrirPerfilDeKant() {
   const user = userEvent.setup();
   renderWithApi(<div className="app-shell"><LiveFleetPage /></div>);
-  const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await within(cajon).findByText(/Le llega al agente/i);
   return { user, cajon };
 }

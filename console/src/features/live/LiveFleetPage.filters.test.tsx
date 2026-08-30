@@ -31,7 +31,7 @@ describe('who asked for each request', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await user.click(await screen.findByRole('row', { name: /kant/i }));
-    const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
 
     // The three deliveries for this agent come from other fleet agents: none is a human request.
@@ -47,7 +47,7 @@ describe('who asked for each request', () => {
 
     await screen.findByLabelText('Veredicto de la flota');
     await user.click(await screen.findByRole('row', { name: /hegel/i }));
-    const cajon = await screen.findByRole('complementary', { name: /detalle de hegel/i });
+    const cajon = await screen.findByRole('dialog', { name: /detalle de hegel/i });
     await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
 
     expect(within(cajon).getByText(/una persona, por telegram/i)).toBeInTheDocument();

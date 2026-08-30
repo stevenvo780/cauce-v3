@@ -36,7 +36,7 @@ async function abrir() {
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   const boton = await within(cajon).findByRole('button', { name: /abrir directiva completa/i });
   await user.click(boton);
@@ -56,7 +56,7 @@ it('el foco entra al diálogo al abrir y vuelve al botón que lo abrió al cerra
   expect(dialogo.contains(document.activeElement)).toBe(true);
 
   await user.click(within(dialogo).getByRole('button', { name: /cerrar la directiva/i }));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
   expect(document.activeElement).toBe(boton);
 }, 25_000);
 
@@ -66,7 +66,7 @@ it('desde la capa manual abre directamente el editor real de ficheros del mismo 
     name: /editar claude\.md \/ agents\.md/i,
   }));
 
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
   expect(within(cajon).getByRole('tab', { name: 'Ficheros' })).toHaveAttribute('aria-selected', 'true');
   expect(await within(cajon).findByText('CLAUDE.md (manual del sitio)')).toBeInTheDocument();
 }, 25_000);
@@ -79,21 +79,21 @@ it('desde la capa manual abre directamente el editor real de ficheros del mismo 
 it('Escape cierra el diálogo y deja el cajón abierto', async () => {
   const { user } = await abrir();
   await user.keyboard('{Escape}');
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByRole('complementary', { name: /detalle de kant/i })).toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: /detalle de kant/i })).toBeInTheDocument();
 }, 25_000);
 
 it('un clic en el velo cierra; un clic dentro del diálogo no', async () => {
   const { user, dialogo } = await abrir();
   await user.click(within(dialogo).getByText('Directiva de kant'));
-  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: /directiva de kant/i })).toBeInTheDocument();
 
   const velo = dialogo.parentElement;
   expect(velo).not.toBeNull();
   if (!velo) throw new Error('dialogo.parentElement is missing');
   expect(velo).toHaveClass('directiva-modal-fondo');
   await user.click(velo);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
 }, 25_000);
 
 /**

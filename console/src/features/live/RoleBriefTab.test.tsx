@@ -16,7 +16,7 @@ async function abrirProyeccionDeKant() {
   renderWithApi(<LiveFleetPage />);
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('complementary', { name: /detalle de kant/i });
+  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
   await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
