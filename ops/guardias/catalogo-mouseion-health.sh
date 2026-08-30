@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Vigila cada 24 h las URLs del catalogo Mouseion y avisa al dueno cuando alguna deja de dar 200.
 #
-# Un agente no puede "vigilar" (Cauce es por eventos); un temporizador si. El aviso sale por
-# /v3/egress/notifications con el cert mTLS del alias, como ops/guardias/cauce-attach.
+# Un agente no puede "vigilar" (Cauce es por eventos); un temporizador si.
 #
 #   --dry-run   valida destino y permiso contra el gateway SIN escribirle a nadie
 #   --list      imprime lo que vigilaria y sale
@@ -110,7 +109,6 @@ fi
 # Avisa SOLO si hay alguna rota que no estuviera en el aviso anterior: que el conjunto se ENCOJA
 # no es noticia, y repetir un subconjunto es ruido con forma de alarma.
 NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | sort | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
-printf '%s\n' "${ROTAS[@]}" | sort > "$ESTADO" 2>/dev/null || true
 if [ -z "$NUEVAS" ]; then
   echo "sin novedades respecto del aviso anterior: no aviso"
   exit 1
@@ -119,6 +117,13 @@ fi
 HUELLA="$(printf '%s\n' "${ROTAS[@]}" | sort | sha256sum | cut -c1-12)"
 CUERPO="$(printf 'Catalogo Mouseion: %d de %d productos NO responden.\n\n%s\n\nMedido %s. Detalle e historico en %s del VPS.' \
   "${#ROTAS[@]}" "$TOTAL" "$(printf '%s\n' "${ROTAS[@]}" | head -6 | sed 's/^/  /')" "$SELLO" "$INFORME")"
-avisar "$CUERPO" "catalogo-health:$(date -u +%Y-%m-%d):$HUELLA" \
-  || por_el_bus "$CUERPO" "catalogo-health-bus:$(date -u +%Y-%m-%d):$HUELLA"
+# El estado se apunta SOLO si el aviso salio: apuntarlo antes convierte un aviso fallido en una
+# caida muda para siempre, que es justo el fallo que este vigia existe para evitar.
+if avisar "$CUERPO" "catalogo-health:$(date -u +%Y-%m-%d):$HUELLA" \
+   || por_el_bus "$CUERPO" "catalogo-health-bus:$(date -u +%Y-%m-%d):$HUELLA"; then
+  printf '%s\n' "${ROTAS[@]}" | sort > "$ESTADO" \
+    || echo "no pude guardar el estado en $ESTADO: la proxima corrida volvera a avisar" >&2
+else
+  echo "el aviso NO salio por ningun camino: dejo el estado intacto para reintentarlo" >&2
+fi
 exit 1
