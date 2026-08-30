@@ -13,15 +13,14 @@ import { Buffer } from 'node:buffer';
 import { vi } from 'vitest';
 
 /**
- * Tests hermeticos para `services/gateway/src/console/relay-governance-client.ts`.
+ * Hermetic tests for `services/gateway/src/console/relay-governance-client.ts`.
  *
- * El cliente HTTPS del gateway hacia el terminal-relay hoy estaba a 0 % en el coverage de
- * vitest: el test de integration real (openssl + TLS) corre en otra suite y v8 no
- * instrumenta el codigo que se ejercita alli. Esta suite reemplaza `node:https` por un
- * `vi.fn()` para verificar, en aislamiento y rapido, lo que el cliente pone en el cable
- * (URL, headers, body, opciones de mTLS, AbortSignal, timeout) y como tipa cada respuesta
- * que el relay puede devolver (2xx happy, 4xx auth, 5xx relay muerto, body truncado, JSON
- * invalido, ACK parcial).
+ * The gateway HTTPS client to the terminal-relay was at 0% vitest coverage: the real
+ * integration test (openssl + TLS) runs in another suite and v8 does not instrument the
+ * code exercised there. This suite replaces `node:https` with a `vi.fn()` to verify, in
+ * isolation and quickly, what the client puts on the wire (URL, headers, body, mTLS
+ * options, AbortSignal, timeout) and how it types each response the relay may return
+ * (2xx happy, 4xx auth, 5xx dead relay, truncated body, invalid JSON, partial ACK).
  */
 
 let httpsRequestMock: ReturnType<typeof vi.fn<(...args: unknown[]) => unknown>> | undefined;
@@ -43,9 +42,9 @@ export const MEMORY_ROOT = '/home/dev/.claude/projects';
 export const CONTENIDO = '# Manual\n';
 
 export function sha256(text: string): string {
-  // SHA-256 deterministico sin tirar de node:crypto: el cliente solo verifica el patron /^[0-9a-f]{64}$/.
-  // Para los tests alcanza con 64 chars hex; los que importan el contenido real usan '# Manual\n' y
-  // la longitud del prefijo no afecta al shape que valida el cliente.
+  // Deterministic SHA-256 without node:crypto: the client only verifies the /^[0-9a-f]{64}$/ pattern.
+  // For the tests, 64 hex chars suffice; tests that care about real content use '# Manual\n', and
+  // the prefix length does not affect the shape the client validates.
   let h1 = 0xdeadbeef ^ 0;
   let h2 = 0x41c6ce57 ^ 0;
   for (const byte of Buffer.from(text, 'utf8')) {

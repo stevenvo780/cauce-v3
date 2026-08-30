@@ -89,7 +89,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
       tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw',
       tenant_name: 'Steven', alias_kind: 'claude', status: 'enabled'
     }));
-    // El SELECT contra `agents` devuelve [] → loadFleetPlacements devuelve []
+    // SELECT against `agents` returns [] → loadFleetPlacements returns []
     const pool = stubFleetPool([]);
     ctx = buildContext({ pool, repository: { authorizeAgentTarget } });
     const response = await ctx.app.inject({
@@ -134,7 +134,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     const pool = stubFleetPool([
       { tenant_id: 'Miguel', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw' }
     ]);
-    // Sin operator_id: el resolveOperator del plugin devuelve unattributed.
+    // Without operator_id: the plugin's resolveOperator returns unattributed.
     ctx = buildContext({
       pool,
       repository: { authorizeAgentTarget },
@@ -176,8 +176,8 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
   });
 
   it('responde 403 no_routing_authority con motivo cuando cohortRoutingAuthority rechaza', async () => {
-    // Vi.mock a nivel de módulo requiere hoisting; usamos una variante del stub de pool
-    // que NO devuelve rooms, simulando un fleet sin salas compartidas.
+    // vi.mock at module level requires hoisting; we use a pool-stub variant that does NOT
+    // return rooms, simulating a fleet without shared rooms.
     const authorizeAgentTarget = vi.fn<(a: string, b: string, t: string) => Promise<{
       tenant_id: string; alias: string; container: string; runtime_user: string;
       tenant_name: string; alias_kind: string; status: string;
@@ -190,7 +190,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
         if (text.includes('FROM agents')) {
           return { rows: [{ tenant_id: 'Steven', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw' }], rowCount: 1 };
         }
-        // Sin rooms: cohortRoutingAuthority cae a no_shared_room / actor_not_routable
+        // Without rooms: cohortRoutingAuthority falls back to no_shared_room / actor_not_routable
         if (text.includes("'actor'::text AS side")) {
           return { rows: [], rowCount: 0 };
         }
@@ -211,7 +211,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     const body: { error?: string; reason?: string } = response.json();
     expect(body.error).toBe('forbidden');
     expect(body.reason).toBe('no_routing_authority');
-    // El motivo exacto de la authority queda en metadata del audit row.
+    // The exact authority reason lives in the audit row metadata.
     const queries = (noRoomsPool as unknown as { query: ReturnType<typeof vi.fn> }).query.mock.calls;
     const auditCall = queries.find((call) => (call[0] as string).includes('INSERT INTO audit_events'));
     expect(auditCall).toBeDefined();
@@ -260,7 +260,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     const pool = stubFleetPool([
       { tenant_id: 'Steven', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw' }
     ]);
-    // Registry vacío: resolve devuelve { status: 'unknown' }
+    // Empty registry: resolve returns { status: 'unknown' }
     ctx = buildContext({ pool, repository: { authorizeAgentTarget } });
     const response = await ctx.app.inject({
       method: 'POST',
@@ -283,7 +283,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
       { tenant_id: 'Steven', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw' }
     ]);
     const registry = new AgentRegistry();
-    // El alias está online pero SOLO en modo 'shell'; pedimos 'harness'.
+    // The alias is online but only in 'shell' mode; we request 'harness'.
     registry.observe({
       relay_instance_id: RELAY_INSTANCE_ID,
       relay_boot_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -315,7 +315,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     ]);
     const registry = new AgentRegistry();
     const now = Date.now();
-    // Dos relays frescos publican el mismo alias → resolve devuelve 'ambiguous'
+    // Two fresh relays publish the same alias → resolve returns 'ambiguous'
     registry.observe(
       { relay_instance_id: 'a'.repeat(64), relay_boot_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
       [{
@@ -344,8 +344,8 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     const body: { error?: string; reason?: string; routing_state?: string; pty_state?: string } = response.json();
     expect(body.error).toBe('conflict');
     expect(body.reason).toBe('agent_offline');
-    // La envelope HTTP del deny de deny() solo emite error+reason; el routing_state es
-    // metadata del audit row, no del response body. Lo verificamos sobre la query capturada.
+    // The HTTP envelope of deny()'s deny only emits error+reason; routing_state is
+    // metadata of the audit row, not the response body. We verify it against the captured query.
     const queries = (pool as unknown as { __queries: { text: string; values: unknown[] }[] }).__queries;
     const audit = queries.find((entry) => entry.text.includes('INSERT INTO audit_events'));
     expect(audit).toBeDefined();
@@ -361,8 +361,8 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
   afterEach(async () => { await ctx.close(); });
 
   it('emite 201 con ticket, websocket_path y owner_generation cuando la admisión es ok', async () => {
-    // issuedAt debe caer dentro de MAX_TERMINAL_CLOCK_SKEW_MS (5s) del reloj del gateway.
-    // Construimos una ventana centrada en `Date.now()` para que el skew check pase.
+    // issuedAt must fall within MAX_TERMINAL_CLOCK_SKEW_MS (5s) of the gateway clock.
+    // Build a window centered on `Date.now()` so the skew check passes.
     const now = Date.now();
     const issuedAt = new Date(now);
     const expiresAt = new Date(now + 30_000);
@@ -373,8 +373,8 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
       consumed_at: null,
       browser_owner_generation: '1'
     });
-    // Capturamos el sessionId generado por `randomUUID()` desde los args de la INSERT para
-    // devolverlo como RETURNING id — el orquestador lo compara con `sessionId` y rechaza si difiere.
+    // Capture the sessionId generated by `randomUUID()` from the INSERT args to return it
+    // as RETURNING id — the orchestrator compares it with `sessionId` and rejects if it differs.
     let capturedSessionId: string | undefined;
     const admissionClient: DatabaseClient = {
       query: vi.fn(async (text: string, values: unknown[] = []) => {
@@ -383,7 +383,7 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
         if (text.includes('FROM terminal_sessions WHERE request_id')) return { rows: [], rowCount: 0 };
         if (text.includes('WITH decision AS MATERIALIZED')) {
           // Args: [operatorId, container, ttl, maxSessions, sessionId, attributed, subject, ...]
-          // El sessionId está en posición $5 (5to parámetro posicional).
+          // sessionId is at position $5 (5th positional parameter).
           const sessionIdIndex = text.indexOf('$5');
           if (sessionIdIndex >= 0 && typeof values[4] === 'string') capturedSessionId = values[4];
           return { rows: [{ reason: 'ok', id: capturedSessionId ?? UUID_OK }], rowCount: 1 };
@@ -435,7 +435,7 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
     } = response.json();
     expect(body.session_id).toBe(capturedSessionId);
     expect(body.ticket).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
-    // websocket_path: helper terminalRelayWebsocketPath produce este formato con el relay_instance_id
+    // websocket_path: the terminalRelayWebsocketPath helper produces this shape with the relay_instance_id
     expect(body.websocket_path).toBe(`/v3/console/terminal/relays/${RELAY_INSTANCE_ID}/ws`);
     expect(body.ttl_seconds).toBe(30);
     expect(body.ttl_seconds).toBe(Math.floor((expiresAt.getTime() - issuedAt.getTime()) / 1_000));
@@ -444,18 +444,18 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
     expect(body.target.tenant_id).toBe('Steven');
     expect(body.target.alias).toBe('jarvis');
     expect(body.target.container).toBe('claw');
-    // admissionClient.release se llamó exactamente una vez (contrato de pool.connect).
+    // admissionClient.release was called exactly once (pool.connect contract).
     const releasedTimes = (admissionClient.release as unknown as { mock: { calls: unknown[][] } }).mock.calls.length;
     expect(releasedTimes).toBe(1);
   });
 
   it('emite 201 con receipt_recovered=true cuando el INSERT es un retry exacto del request_id', async () => {
-    // El camino de receipt_recovered requiere que el SELECT del request_id devuelva una fila
-    // cuyos digests coincidan con el body — una fabricación consistente del material canónico
-    // escaparía al scope de esta ronda. Aquí validamos la rama opuesta: cuando hay un row
-    // previo pero su request_sha256 NO coincide con el body, el orquestador NO emite receipt_recovered
-    // y termina en 409 conflict (container_busy) — no inserta, no recicla. Esto cubre el branch
-    // `previous !== undefined && !exactPrevious` que de otro modo queda sin ejercitar.
+    // The receipt_recovered path requires the SELECT of the request_id to return a row whose
+    // digests match the body — crafting canonical material consistently is beyond this round.
+    // Here we validate the opposite branch: when a previous row exists but its request_sha256
+    // does NOT match the body, the orchestrator does NOT emit receipt_recovered and ends in
+    // 409 conflict (container_busy) — no insert, no recycling. This covers the
+    // `previous !== undefined && !exactPrevious` branch that would otherwise stay unexercised.
     const now = Date.now();
     const issuedAt = new Date(now);
     const expiresAt = new Date(now + 30_000);
@@ -515,14 +515,14 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
       url: '/v3/console/terminal/sessions',
       payload: validSessionBody()
     });
-    // request_id ya consumido por una sesión previa con distinto digest → 409 conflict.
+    // request_id already consumed by a previous session with a different digest → 409 conflict.
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: 'conflict' });
   });
 
   it('emite 503 terminal_clock_skew cuando clock_timestamp() está fuera del skew permitido', async () => {
-    // El gateway y PostgreSQL NO están sincronizados → el orquestador lanza TerminalClockSkewError
-    // y el plugin replyError lo traduce a 503 con envelope `terminal_clock_skew`.
+    // Gateway and PostgreSQL are NOT in sync → the orchestrator throws TerminalClockSkewError
+    // and the plugin's replyError translates it to 503 with envelope `terminal_clock_skew`.
     const oneHourOff = new Date(Date.now() - 60 * 60 * 1000);
     const admissionClient: DatabaseClient = {
       query: vi.fn(async (text: string) => {
@@ -569,7 +569,7 @@ describe('POST /v3/console/terminal/sessions: camino feliz con transacción mock
       error: 'terminal_clock_skew',
       message: 'terminal issuance is unavailable until gateway and PostgreSQL clocks agree'
     });
-    // TerminalClockSkewError es una clase dedicada del módulo bajo prueba.
+    // TerminalClockSkewError is a dedicated class of the module under test.
   });
 
   it('emite 409 conflict (container_busy) cuando la admission CTE devuelve container_busy', async () => {

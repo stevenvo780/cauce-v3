@@ -167,7 +167,7 @@ describe('PostgresConsoleUserStore.findByEmail', () => {
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('WHERE email_normalized=$1');
-    // Normalizado: lowercase + trim. NO se manda el email crudo en MAYÚSCULAS.
+    // Normalized: lowercase + trim. The raw email is NOT sent in UPPERCASE.
     expect(params[0]).toBe('kant@example.com');
     expect(params[0]).not.toBe('  KANT@Example.COM ');
   });
@@ -303,8 +303,8 @@ describe('MemoryConsoleUserStore', () => {
     const store = new MemoryConsoleUserStore();
 
     await expect(store.ready()).resolves.toBeUndefined();
-    // `MemoryConsoleUserStore.recordLogin` es deliberadamente un no-op (no-track): los argumentos
-    // del contrato del store se ignoran a propósito, los tests del provider lo ejercen aparte.
+    // `MemoryConsoleUserStore.recordLogin` is deliberately a no-op (no-track): the
+    // store-contract arguments are ignored on purpose; the provider tests exercise it separately.
     await expect((store as unknown as { recordLogin: () => Promise<void> }).recordLogin()).resolves.toBeUndefined();
   });
 });

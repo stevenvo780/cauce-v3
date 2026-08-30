@@ -25,9 +25,9 @@ describe('TerminalClockSkewError (clase exportada)', () => {
 
 describe('TerminalClockSkewError: integración con replyError', () => {
   it('la superficie de error custom se distingue de un Error genérico en la captura', () => {
-    // Garantía contractual para el `replyError` del plugin: cuando el orquestador lanza
-    // TerminalClockSkewError, el handler NO lo confunde con un 400 genérico porque tiene
-    // su propio branch. Aquí solo verificamos que instanceof funciona contra Error.
+    // Contractual guarantee for the plugin's `replyError`: when the orchestrator throws
+    // TerminalClockSkewError, the handler does NOT confuse it with a generic 400 because
+    // it has its own branch. Here we only verify instanceof works against Error.
     const err: unknown = new TerminalClockSkewError();
     expect(err instanceof Error).toBe(true);
     expect(err instanceof TerminalClockSkewError).toBe(true);

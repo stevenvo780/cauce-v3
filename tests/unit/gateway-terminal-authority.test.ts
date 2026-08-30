@@ -185,10 +185,10 @@ describe('GrantStore: archivo de grants rotable', () => {
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
     const cohort = containerCohort(PLACEMENTS, 'Steven', 'jarvis');
     expect(await store.allowsCohort('steven', cohort, 'shell', 1_500)).toBe(false);
-    // Dentro del minuto solo se loguea una vez.
+    // Within the minute, it only logs once.
     expect(await store.grants(30_000)).toEqual([]);
     expect(warnings).toHaveLength(1);
-    // Un minuto después se loguea otra vez.
+    // A minute later, it logs again.
     expect(await store.grants(120_000)).toEqual([]);
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('missing.json');
@@ -210,9 +210,9 @@ describe('GrantStore: archivo de grants rotable', () => {
     const store = new GrantStore(grantsPath);
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
     await writeFile(grantsPath, JSON.stringify({ version: 1, grants: [] }));
-    // Dentro del cache el anterior sigue válido.
+    // Inside the cache, the previous one still holds.
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_500)).toBe(true);
-    // Pasado el cache la puerta se cierra sin reinicio.
+    // Past the cache, the gate closes without a restart.
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 2_100)).toBe(false);
   });
 
@@ -316,7 +316,7 @@ describe('routingAuthority: replica del publish path', () => {
 
 describe('cohortRoutingAuthority: SET RULE sobre containers compartidos', () => {
   it('niega el container entero si un solo miembro del cohort no es ruteable', async () => {
-    // iza y kratos son ruteables, atlas no: el cohort check debe fallar cerrado.
+    // iza and kratos are routable, atlas is not: the cohort check must fail closed.
     const partial = pool({
       'Steven:kant': ['grp.steven'],
       'Miguel:iza': ['grp.miguel'],
@@ -352,7 +352,7 @@ describe('resolveOperator: identidad humana del operador', () => {
     const logged = consolePrincipal({ operator_id: 'miguel@elenxos.com' });
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, config))
       .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
-    // Aunque nadie esté matriculado en operadores, el principal con operator_id sigue atribuido.
+    // Even with nobody enrolled in operators, the principal with operator_id stays attributed.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, terminalConfig()))
       .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
   });

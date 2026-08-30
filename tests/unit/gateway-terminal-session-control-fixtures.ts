@@ -19,23 +19,22 @@ import type { TerminalSessionRow } from '../../services/gateway/src/terminal/typ
 import { StoreError } from '@cauce/store';
 
 /**
- * Tests herméticos del orquestador del plano terminal.
+ * Hermetic tests for the terminal-plane orchestrator.
  *
- * `registerTerminalSessionControl` registra cuatro rutas (POST/GET sessions, POST owner,
- * DELETE session) y depende de pool Postgres, AgentRegistry, GrantStore, repositorio
- * de autorización, validadores y helpers de auditoría. Esta suite ataca solo la superficie
- * que NO necesita tocar Postgres real ni WebSocket:
+ * `registerTerminalSessionControl` registers four routes (POST/GET sessions, POST owner,
+ * DELETE session) and depends on Postgres pool, AgentRegistry, GrantStore, authorization
+ * repository, validators and audit helpers. This suite targets only the surface that does
+ * NOT require real Postgres or WebSocket:
  *
- *   - Constante exportada `TerminalClockSkewError` (clase de error custom).
- *   - Pre-validación de las cuatro rutas: shape, regex, atributos y errores del orquestador
- *     ANTES de abrir transacción.
- *   - Lógica pura de los helpers (`sessionState`, `terminalRelayWebsocketPath`,
+ *   - Exported constant `TerminalClockSkewError` (custom error class).
+ *   - Pre-validation of the four routes: shape, regex, attributes and orchestrator errors
+ *     BEFORE opening a transaction.
+ *   - Pure logic of the helpers (`sessionState`, `terminalRelayWebsocketPath`,
  *     `terminalAdmissionRequestSha256`, `ticketTtlSeconds`, `operatorLockIdentity`,
- *     `operatorScopePredicate`) que se ejerce a través de respuestas y queries
- *     capturadas por mocks.
+ *     `operatorScopePredicate`) exercised through mock-captured responses and queries.
  *
- * Los caminos que SI requieren `pool.connect()` (BEGIN/SELECT/UPDATE/COMMIT real) y los
- * INSERT INTO terminal_sessions quedan fuera de cobertura; esa pieza se prueba en
+ * Paths that DO require `pool.connect()` (real BEGIN/SELECT/UPDATE/COMMIT) and the
+ * INSERT INTO terminal_sessions are out of scope here; those are covered by
  * integration/e2e.
  */
 
@@ -304,13 +303,13 @@ export interface FleetPlacementRow {
 }
 
 /**
- * Pool stub con tres comportamientos configurables:
- *  - SELECT contra `agents` (loadFleetPlacements) devuelve `placements` mapeados al shape
- *    de la query real (`container_name`).
- *  - SELECT contra `terminal_sessions` (GET /sessions) devuelve `selectList.rows`.
- *  - SELECT contra `memberships` (routingAuthority) devuelve una sala compartida
- *    `grp.steven` para que cohortRoutingAuthority apruebe el camino same-tenant.
- *  - Cualquier otra query devuelve [] sin lanzar (no rompe el camino happy).
+ * Pool stub with three configurable behaviors:
+ *  - SELECT against `agents` (loadFleetPlacements) returns `placements` mapped to the
+ *    real query shape (`container_name`).
+ *  - SELECT against `terminal_sessions` (GET /sessions) returns `selectList.rows`.
+ *  - SELECT against `memberships` (routingAuthority) returns a shared `grp.steven` room
+ *    so cohortRoutingAuthority approves the same-tenant path.
+ *  - Any other query returns [] without throwing (does not break the happy path).
  */
 export function stubFleetPool(
   placements: readonly FleetPlacementRow[],

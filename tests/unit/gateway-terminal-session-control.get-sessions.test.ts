@@ -56,7 +56,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     expect(response.statusCode).toBe(200);
     const body: { items: { state: string }[] } = response.json();
     expect(body.items[0]?.state).toBe('active');
-    // sessionExpiry fue consultado para una sesión consumida
+    // sessionExpiry was consulted for a consumed session
     expect(sessionExpiry).toHaveBeenCalledWith(row);
   });
 
@@ -90,15 +90,15 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     const recorded = (pool as unknown as { __queries: { text: string; values: unknown[] }[] }).__queries;
     expect(recorded).toHaveLength(1);
     const text = recorded[0]?.text ?? '';
-    // Predicate de operator: AND de operator_id=$1 con (atribuido O console_subject=$N)
+    // Operator predicate: AND of operator_id=$1 with (attributed OR console_subject=$N)
     expect(text).toMatch(/operator_id=\$1/);
     expect(text).toMatch(/\$3::boolean OR console_subject=\$4/);
-    // Predicate open: closed_at IS NULL AND revoked_at IS NULL
+    // Open predicate: closed_at IS NULL AND revoked_at IS NULL
     expect(text).toMatch(/closed_at IS NULL AND revoked_at IS NULL/);
-    // Orden: abiertas primero
+    // Order: open ones first
     expect(text).toMatch(/ORDER BY occupies_slot DESC, issued_at DESC/u);
     expect(text).toMatch(/LIMIT 100/u);
-    // Valores: operator_id, ttlSeconds, attributed (boolean), console_subject
+    // Values: operator_id, ttlSeconds, attributed (boolean), console_subject
     const recordedValues = recorded[0]?.values;
     expect(recordedValues).toEqual(['steven-kant', 30, true, 'Steven:kant']);
   });

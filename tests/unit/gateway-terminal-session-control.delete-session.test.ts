@@ -69,7 +69,7 @@ describe('DELETE /v3/console/terminal/sessions/:sid: pre-validación', () => {
     const releasedClient: DatabaseClient = {
       query: vi.fn(async (text: string) => {
         if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
-        // UPDATE vacío + SELECT settled: false
+        // Empty UPDATE + SELECT settled: false
         if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [], rowCount: 0 };
         if (text.includes('SELECT EXISTS')) return { rows: [{ settled: false }], rowCount: 1 };
         return { rows: [], rowCount: 0 };
