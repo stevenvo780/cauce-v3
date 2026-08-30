@@ -295,7 +295,8 @@ test("el andamiaje sobrevive el puente de stdin: utf-8 estricto, sin controles, 
   // The prompt is read line by line: no control character beyond the newline.
   // eslint-disable-next-line @typescript-eslint/no-misused-spread -- control characters must be detected by code point, not UTF-16 unit
   const controls = [...scaffolding].filter((character) => {
-    const code = character.codePointAt(0)!;
+    const code = character.codePointAt(0);
+    assert.ok(code !== undefined, "codePointAt returned undefined");
     return character !== "\n" && (code < 0x20 || code === 0x7f);
   });
   assert.deepEqual(controls, []);

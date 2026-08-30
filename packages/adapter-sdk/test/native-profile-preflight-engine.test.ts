@@ -445,11 +445,15 @@ test("a real openclaw engine turn emits adoption for all seven native documents"
     publishExecutionIntent: async () => { executionIntents += 1; },
   });
   await engine.activateEpoch(1);
-  const documents = paths.map((path, index) => ({
-    name: FICHEROS_OPENCLAW[index]!,
-    path,
-    sha: createHash("sha256").update(readFileSync(path, "utf8"), "utf8").digest("hex"),
-  }));
+  const documents = paths.map((path, index) => {
+    const name = FICHEROS_OPENCLAW[index];
+    assert.ok(name, "FICHEROS_OPENCLAW is short for the paths");
+    return {
+      name,
+      path,
+      sha: createHash("sha256").update(readFileSync(path, "utf8"), "utf8").digest("hex"),
+    };
+  });
   await engine.handleDelivery({
     ...delivery("native-openclaw-adoption"),
     recipient_alias: "argos",

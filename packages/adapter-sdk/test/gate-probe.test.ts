@@ -84,7 +84,8 @@ test('system.gate.probe ACKs the real claim without model, session, reply, messa
     assert.equal(context.runner.calls, 0);
     assert.equal(context.harness.reservations, 0);
     assert.deepEqual(context.events.map((event) => event.phase), ['accepted', 'done']);
-    const terminal = context.events[1]!;
+    const terminal = context.events[1];
+    assert.ok(terminal, "no terminal event captured");
     assert.deepEqual(
       { attempt: terminal.attempt, claim_token: terminal.claim_token, epoch: terminal.epoch },
       { attempt: delivery.attempt, claim_token: delivery.claim_token, epoch: delivery.epoch },

@@ -621,8 +621,10 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     writeFileSync(path, scenario.file, "utf8");
     const bytesBeforePreflight = readFileSync(path, "utf8");
     const currentContract = contract(11, [path]);
+    const firstDocument = currentContract.documents[0];
+    assert.ok(firstDocument, "el contrato no tiene documentos");
     const selectedBySha = scenario.mutateContract
-      ? { ...currentContract, documents: [{ ...currentContract.documents[0]!, sha: "f".repeat(64) }] }
+      ? { ...currentContract, documents: [{ ...firstDocument, sha: "f".repeat(64) }] }
       : currentContract;
     const selected = scenario.mutateGeneration
       ? { ...selectedBySha, generation: "another-runtime" }

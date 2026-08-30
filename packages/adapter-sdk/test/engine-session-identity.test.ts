@@ -126,11 +126,13 @@ test("bridge tenant no longer splits one conversation in two", async () => {
 test("the conversation, not the delivery tenant, keeps cross-tenant agent responses in one shared agent-lane session", async () => {
   const context = await setup("engine-agent-response-session");
   const root = delivery("agent-response-session-a");
+  assert.ok(root.origin, "delivery without origin");
+  assert.ok(root.authenticated_context, "delivery without authenticated_context");
   const trustedOrigin = {
-    ...root.origin!,
+    ...root.origin,
     metadata: { bridge_alias: "jarvis", bridge_tenant: "Steven" },
   };
-  const rootContext = root.authenticated_context!;
+  const rootContext = root.authenticated_context;
   const request: Delivery = {
     ...root,
     actor_alias: "jarvis",
