@@ -91,7 +91,8 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
       kind: 'directive', category: 'manual', path: '/home/dev/AGENTS.md', editable: true,
     })]);
     expect(effectiveManualPaths(facts).map(({ path }) => path)).toEqual(['/home/dev/AGENTS.md']);
-    const document = documentForKind(facts, 'directive')!;
+    const document = documentForKind(facts, 'directive')
+      ?? expect.unreachable('Hermes directive document is missing');
     expect(verifyReadableDocument(facts, document)).toEqual({ allowed: true });
     expect(verifyWritablePath(facts, 'directive', document.path)).toEqual({ allowed: true });
   });
@@ -257,11 +258,12 @@ describe('verifyWritablePath — falla cerrada', () => {
   });
 
   it('config.toml de codex es de sólo lectura y lo dice', () => {
-    const doc = documentForKind(MEDIDO.socrates, 'tools');
-    expect(doc?.path).toBe('/home/dev/.codex/config.toml');
-    expect(doc?.editable).toBe(false);
-    expect(doc?.reason).toMatch(/TOML|MCP/);
-    expect(verifyWritablePath(MEDIDO.socrates, 'tools', doc!.path).allowed).toBe(false);
+    const doc = documentForKind(MEDIDO.socrates, 'tools')
+      ?? expect.unreachable('Codex tools document is missing');
+    expect(doc.path).toBe('/home/dev/.codex/config.toml');
+    expect(doc.editable).toBe(false);
+    expect(doc.reason).toMatch(/TOML|MCP/);
+    expect(verifyWritablePath(MEDIDO.socrates, 'tools', doc.path).allowed).toBe(false);
   });
 
   it('openclaw separa perfil, manual, memoria y configuración sensible sin exponerla', () => {
@@ -279,7 +281,8 @@ describe('verifyWritablePath — falla cerrada', () => {
     expect(docs.every((d) => !d.editable)).toBe(true);
     expect(docs.find((doc) => doc.kind === 'configuration')?.reason).toMatch(/secrets/);
     expect(verifyWritablePath(
-      MEDIDO.jarvis, 'directive', documentForKind(MEDIDO.jarvis, 'directive')!.path,
+      MEDIDO.jarvis, 'directive', documentForKind(MEDIDO.jarvis, 'directive')?.path
+        ?? expect.unreachable('OpenClaw directive document is missing'),
     ).allowed).toBe(false);
   });
 
@@ -288,17 +291,19 @@ describe('verifyWritablePath — falla cerrada', () => {
   });
 
   it('los MCP de claude no se sirven: viven con el OAuth', () => {
-    const mcp = documentForKind(zeus, 'mcp');
-    expect(mcp?.path).toBe('/home/dev/.claude.json');
-    expect(mcp?.editable).toBe(false);
-    expect(verifyWritablePath(zeus, 'mcp', mcp!.path).allowed).toBe(false);
+    const mcp = documentForKind(zeus, 'mcp')
+      ?? expect.unreachable('Claude MCP document is missing');
+    expect(mcp.path).toBe('/home/dev/.claude.json');
+    expect(mcp.editable).toBe(false);
+    expect(verifyWritablePath(zeus, 'mcp', mcp.path).allowed).toBe(false);
   });
 
   it('settings.json se muestra con el aviso de hooks pero no se edita sin validacion estructural', () => {
-    const doc = documentForKind(zeus, 'tools');
-    expect(doc?.editable).toBe(false);
-    expect(doc?.warning).toMatch(/hooks/);
-    expect(verifyWritablePath(zeus, 'tools', doc!.path).allowed).toBe(false);
+    const doc = documentForKind(zeus, 'tools')
+      ?? expect.unreachable('Claude tools document is missing');
+    expect(doc.editable).toBe(false);
+    expect(doc.warning).toMatch(/hooks/);
+    expect(verifyWritablePath(zeus, 'tools', doc.path).allowed).toBe(false);
   });
 
   it('ningún documento resuelto cae nunca en la lista negra', () => {
@@ -306,7 +311,7 @@ describe('verifyWritablePath — falla cerrada', () => {
       for (const doc of resolveAgentDocuments(facts)) {
         if (!doc.editable) continue;
         const base = doc.path.slice(doc.path.lastIndexOf('/') + 1);
-        expect(NEVER_SERVE_BASENAMES, `${doc.path}`).not.toContain(base);
+        expect(NEVER_SERVE_BASENAMES, doc.path).not.toContain(base);
       }
     }
   });
@@ -319,7 +324,8 @@ describe('verifyWritablePath — falla cerrada', () => {
 
 describe('lectura y escritura son capacidades independientes', () => {
   it('un manual global es legible y editable', () => {
-    const doc = documentForKind(MEDIDO.zeus, 'directive')!;
+    const doc = documentForKind(MEDIDO.zeus, 'directive')
+      ?? expect.unreachable('Claude directive document is missing');
     expect(verifyReadableDocument(MEDIDO.zeus, doc)).toEqual({ allowed: true });
     expect(verifyWritablePath(MEDIDO.zeus, 'directive', doc.path)).toEqual({ allowed: true });
   });
@@ -340,11 +346,13 @@ describe('lectura y escritura son capacidades independientes', () => {
       [MEDIDO.socrates, ['tools', 'prompts']],
     ] as const) {
       for (const kind of kinds) {
-        const doc = documentForKind(facts, kind)!;
+        const doc = documentForKind(facts, kind)
+          ?? expect.unreachable(`Missing ${kind} document`);
         expect(verifyReadableDocument(facts, doc).allowed, doc.path).toBe(false);
       }
     }
-    const sensitive = documentForKind(MEDIDO.jarvis, 'configuration')!;
+    const sensitive = documentForKind(MEDIDO.jarvis, 'configuration')
+      ?? expect.unreachable('OpenClaw configuration document is missing');
     expect(verifyReadableDocument(MEDIDO.jarvis, sensitive).allowed).toBe(false);
   });
 });

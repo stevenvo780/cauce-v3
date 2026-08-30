@@ -40,11 +40,11 @@ export interface RelayDirectoryRead {
   readonly total: number | null;
   readonly observed_at_least: number;
   readonly truncated: boolean;
-  readonly entries: ReadonlyArray<{
+  readonly entries: readonly {
     readonly path: string;
     readonly bytes: number;
     readonly modified_at: string;
-  }>;
+  }[];
 }
 
 export interface RelayFileWrite {
@@ -386,7 +386,7 @@ function canonicalRelativeMemoryPath(value: string): boolean {
 }
 
 function hasMemoryControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });

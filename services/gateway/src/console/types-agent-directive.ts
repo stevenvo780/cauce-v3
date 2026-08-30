@@ -26,11 +26,11 @@ export interface AgentMemoryIndexAvailable {
   /** Measured lower bound, even when the sweep was cut off. */
   observed_at_least?: number | null;
   truncated?: boolean | null;
-  entries?: Array<{
+  entries?: {
     path?: string | null;
     bytes?: number | null;
     modified_at?: string | null;
-  }> | null;
+  }[] | null;
   error?: never;
   reason?: never;
 }

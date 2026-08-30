@@ -62,7 +62,7 @@ function stringField(source: Record<string, unknown>, name: string): string | un
 }
 
 function hasControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });
@@ -189,7 +189,7 @@ export function parseDirectoryOutcome(body: string): RelayDirectoryRead | Govern
 
   const root = source.path;
   const paths = new Set<string>();
-  const entries: Array<RelayDirectoryRead['entries'][number]> = [];
+  const entries: RelayDirectoryRead['entries'][number][] = [];
   for (const rawEntry of source.entries) {
     if (rawEntry === null || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
       return { error: 'unknown', reason: 'el índice contiene una entrada inválida' };
@@ -365,7 +365,7 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
     }
     if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
     }
     return parseReadOutcome(result.body);
   }
@@ -396,7 +396,7 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
     }
     if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
     }
     return parseDirectoryOutcome(result.body);
   }
@@ -431,7 +431,7 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
     }
     if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
     }
     return parseWriteOutcome(result.body);
   }
@@ -469,7 +469,7 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
     }
     if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${result.status}` };
+      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
     }
     return parseWriteBatchOutcome(result.body);
   }

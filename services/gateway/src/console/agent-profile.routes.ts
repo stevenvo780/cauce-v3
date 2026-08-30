@@ -233,7 +233,7 @@ function esTopeSuperado(error: unknown): error is Error & { fichero: string; med
 
 /** The same count as the Postgres CHECK and `String.length`. See `measureStrictestUnits`. */
 function unidades(texto: string): number {
-  return Math.max([...texto].length, texto.length);
+  return Math.max(Array.from(texto).length, texto.length);
 }
 
 function adoptionMatches(
@@ -241,9 +241,8 @@ function adoptionMatches(
   revision: number | null,
   verification: ProfileRuntimeVerification | undefined,
 ): adoption is ProfileRuntimeAdoptionAck {
-  if (adoption === undefined || revision === null || verification === undefined
-    || verification.state !== 'current' || verification.generation === null
-    || adoption.evidence !== 'adapter_delivery' || adoption.revision !== revision
+  if (revision === null || verification?.state !== 'current' || verification.generation === null
+    || adoption?.revision !== revision
     || adoption.generation !== verification.generation
     || !Number.isFinite(Date.parse(adoption.adopted_at))
     || adoption.documents.length !== verification.documents.length) return false;
@@ -252,15 +251,15 @@ function adoptionMatches(
   ]));
   for (const document of adoption.documents) {
     const wanted = expected.get(document.name);
-    if (wanted === undefined || wanted.path !== document.path || wanted.sha !== document.sha) return false;
+    if (wanted?.path !== document.path || wanted.sha !== document.sha) return false;
     expected.delete(document.name);
   }
   return expected.size === 0;
 }
 
 export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProfileDeps): void {
-  type CanonicalParams = { tenantId: string; alias: string };
-  type LegacyParams = { alias: string };
+  interface CanonicalParams { tenantId: string; alias: string }
+  interface LegacyParams { alias: string }
 
   async function responder(
     request: FastifyRequest<{ Params: CanonicalParams | LegacyParams }>,
@@ -282,7 +281,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       const tenantId = tenantResult.data;
       const alias = aliasResult.data;
       const target = await deps.authorizeTarget(actor, tenantId, alias, 'read', legacySameTenant);
-      if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+      if (target?.tenant_id !== tenantId || target.alias !== alias) {
         return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
       }
 
@@ -313,7 +312,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         }
       }
       const harness = prepared?.harness ?? contexto.hechos.arnes.harness;
-      const nombres = nombresDelArnes(harness ?? '');
+      const nombres = nombresDelArnes(harness);
       const revisionCoincide = lectura.revision !== null
         && lectura.applied_revision === lectura.revision;
       let adoption: ProfileRuntimeAdoptionAck | undefined;
@@ -376,7 +375,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
             const normalized = contexto.perfil.role_summary.trim();
             return normalized.length === 0 ? null : clampToRoleBriefLimit(normalized);
           })(),
-        harness: harness ?? null,
+        harness,
         perfil: contexto.perfil,
         hechos: contexto.hechos,
         limites: AGENT_PROFILE_LIMITS,
@@ -388,9 +387,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         const respuesta: RespuestaDelPerfil = {
           ...comun,
           ficheros: [],
-          aviso: harness === null || harness === undefined
-            ? 'El registro no dice qué arnés corre este alias, así que no se puede saber qué fichero lee.'
-            : `Cauce no sabe qué fichero de contexto lee el arnés «${harness}». Los que sabe escribir son claude, codex y openclaw.`
+          aviso: `Cauce no sabe qué fichero de contexto lee el arnés «${harness}». Los que sabe escribir son claude, codex y openclaw.`
         };
         return respuesta;
       }
@@ -403,7 +400,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
          */
         const generados = prepared?.preview
           ?? ficherosDelArnes(
-            harness ?? '', contexto, new Map(),
+            harness, contexto, new Map(),
             lectura.revision === null ? {} : { revision: lectura.revision },
           ).map((fichero) => ({
             nombre: fichero.nombre,
@@ -464,7 +461,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     if (generation === null) return false;
     for (const ack of acknowledgements) {
       const document = expected.get(ack.name);
-      if (document === undefined || document.path !== ack.path || !expected.delete(ack.name)
+      if (document?.path !== ack.path || !expected.delete(ack.name)
         || !ack.path.startsWith('/') || !SHA256.test(ack.sha)
         || ack.sha !== document.expected_sha || ack.bytes !== document.expected_bytes
         || !Number.isSafeInteger(ack.bytes) || ack.bytes < 0
@@ -487,7 +484,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const alias = aliasResult.data;
     const actor = await deps.authorize(request, 'control');
     const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
-    if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+    if (target?.tenant_id !== tenantId || target.alias !== alias) {
       return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
     }
     if (target.enabled !== true) {

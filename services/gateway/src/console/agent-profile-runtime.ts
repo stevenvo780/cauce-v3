@@ -38,7 +38,7 @@ function basename(path: string): string {
 }
 
 function units(text: string): number {
-  return Math.max([...text].length, text.length);
+  return Math.max(Array.from(text).length, text.length);
 }
 
 function isAgentOwnedDocument(harness: string, name: string): boolean {
@@ -76,7 +76,7 @@ export async function prepareAgentProfileRuntime(
   contexto: ContextoDeAlias,
 ): Promise<ProfileRuntimePreflight> {
   const measured = await probe.factsFor(tenantId, alias);
-  if (measured === undefined || measured.source !== 'measured') {
+  if (measured?.source !== 'measured') {
     throw new ProfileRuntimeError('unavailable', 'el runtime no publicó hechos medidos del alias');
   }
   const harness = measured.facts.harness;
@@ -91,12 +91,19 @@ export async function prepareAgentProfileRuntime(
   if (pathByName.size !== names.length || names.some((name) => !pathByName.has(name))) {
     throw new ProfileRuntimeError('invalid_path', 'los hechos medidos no resolvieron el juego exacto del perfil');
   }
+  const pathForName = (name: string): string => {
+    const path = pathByName.get(name);
+    if (path === undefined) {
+      throw new ProfileRuntimeError('invalid_path', 'los hechos medidos no resolvieron el juego exacto del perfil');
+    }
+    return path;
+  };
 
   const existing = new Map<string, string>();
   const observed = new Map<string, { sha: string; bytes: number }>();
   const preconditions = new Map<string, GovernanceWritePrecondition>();
   for (const name of names) {
-    const path = pathByName.get(name)!;
+    const path = pathForName(name);
     const read = await probe.readGovernanceDocument(path, measured.facts, tenantId, alias);
     if ('error' in read) {
       if (read.error === 'not_found') {
@@ -168,7 +175,7 @@ export async function prepareAgentProfileRuntime(
     const evidence: ProfileRuntimeDocumentEvidence[] = [];
     const preview: FicheroDeLaVistaPrevia[] = [];
     for (const file of generated) {
-      const path = pathByName.get(file.nombre)!;
+      const path = pathForName(file.nombre);
       const precondition = preconditions.get(file.nombre) ?? { state: 'absent' as const };
       const preservedFile = file.politica === 'solo-si-falta' && existing.has(file.nombre);
       const expectedSha = preservedFile && precondition.state === 'present'
@@ -249,7 +256,7 @@ export async function prepareAgentProfileRuntime(
         }
         const ackByName = new Map<string, GovernanceBatchWriteAck>();
         for (const file of generated) {
-          const path = pathByName.get(file.nombre)!;
+          const path = pathForName(file.nombre);
           const ack = byPath.get(path);
           const preservedFile = file.politica === 'solo-si-falta' && existing.has(file.nombre);
           const precondition = preconditions.get(file.nombre);
@@ -257,7 +264,7 @@ export async function prepareAgentProfileRuntime(
             ? precondition.sha256
             : hash(file.texto);
           const expectedBytes = preservedFile ? undefined : Buffer.byteLength(file.texto, 'utf8');
-          if (ack === undefined || ack.sha === null || ack.sha !== expectedSha
+          if (typeof ack?.sha !== 'string' || ack.sha !== expectedSha
             || (expectedBytes !== undefined && ack.bytes !== expectedBytes)
             || (preservedFile && ack.operation !== 'unchanged')) {
             throw new ProfileRuntimeError('invalid_ack', `${file.nombre} no trajo SHA/bytes acreditables`);
@@ -266,7 +273,7 @@ export async function prepareAgentProfileRuntime(
         }
 
         const after = await probe.factsFor(tenantId, alias);
-        if (!sameRuntimeIdentity(measured, after)) {
+        if (after === undefined || !sameRuntimeIdentity(measured, after)) {
           throw new ProfileRuntimeError(
             'conflict', 'la generación o las rutas medidas cambiaron durante la aplicación del perfil',
           );
@@ -275,7 +282,7 @@ export async function prepareAgentProfileRuntime(
         const acknowledgements: ProfileRuntimeAck[] = [];
         for (const document of evidence) {
           const readBack = await probe.readGovernanceDocument(
-            document.path, after!.facts, tenantId, alias,
+            document.path, after.facts, tenantId, alias,
           );
           const mayBeTruncated = stateByName.get(document.name) === 'preserved';
           if ('error' in readBack || (readBack.truncated && !mayBeTruncated)
@@ -286,7 +293,7 @@ export async function prepareAgentProfileRuntime(
             );
           }
           const ack = ackByName.get(document.name);
-          if (ack === undefined || ack.sha === null) {
+          if (typeof ack?.sha !== 'string') {
             throw new ProfileRuntimeError('invalid_ack', `${document.name} perdió su ACK correlacionado`);
           }
           acknowledgements.push({
@@ -296,7 +303,7 @@ export async function prepareAgentProfileRuntime(
             sha: readBack.sha,
             bytes: readBack.bytes,
             generation,
-            container_id: after!.facts.containerId ?? null,
+            container_id: after.facts.containerId ?? null,
           });
         }
         return acknowledgements;

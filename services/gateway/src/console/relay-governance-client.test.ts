@@ -54,7 +54,7 @@ function certificadoEfimero(): { cert: Buffer; key: Buffer; directory: string } 
 /** A client pointing at this file's server, with its CA so verification really happens. */
 function cliente(overrides: { timeoutMs?: number; puerto?: number } = {}): HttpGovernanceRelayClient {
   return new HttpGovernanceRelayClient({
-    relayUrl: `https://127.0.0.1:${overrides.puerto ?? puerto}`,
+    relayUrl: `https://127.0.0.1:${String(overrides.puerto ?? puerto)}`,
     token: TOKEN,
     ca: tls.cert,
     ...(overrides.timeoutMs === undefined ? {} : { timeoutMs: overrides.timeoutMs })
@@ -100,7 +100,7 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
-  await new Promise<void>((resolve) => servidor.close(() => resolve()));
+  await new Promise<void>((resolve) => servidor.close(() => { resolve(); }));
   rmSync(tls.directory, { recursive: true, force: true });
 });
 
@@ -193,7 +193,7 @@ describe('índice de directorio', () => {
       total: 201,
       truncated: true,
       entries: Array.from({ length: 201 }, (_, index) => ({
-        path: `${MEMORY_ROOT}/${index}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
+        path: `${MEMORY_ROOT}/${String(index)}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
       })),
     })))).toHaveProperty('error');
     expect(parseDirectoryOutcome(JSON.stringify(listing({ total: 0 })))).toHaveProperty('error');
@@ -334,7 +334,7 @@ describe('lo que el cliente hace cuando el transporte falla', () => {
 
     // `timeout` and not `unavailable`: the relay may be healthy and the pty-agent the silent one.
     expect(resultado).toMatchObject({ error: 'timeout' });
-    expect(String((resultado as { reason: string }).reason)).toContain('timed out');
+    expect((resultado as { reason: string }).reason).toContain('timed out');
   });
 
   it('no lanza si el relay no está escuchando', async () => {
@@ -342,7 +342,7 @@ describe('lo que el cliente hace cuando el transporte falla', () => {
     const resultado = await cliente({ puerto: 1, timeoutMs: 500 }).readFile('Steven', 'zeus', RUTA);
 
     expect(resultado).toMatchObject({ error: 'unavailable' });
-    expect(String((resultado as { reason: string }).reason)).toContain('no se pudo hablar con el terminal-relay');
+    expect((resultado as { reason: string }).reason).toContain('no se pudo hablar con el terminal-relay');
   });
 
   it('corta una respuesta que se pasa del tope en vez de acumularla', async () => {
@@ -462,7 +462,7 @@ describe('escritura gobernada', () => {
       { path: memory, operation: 'unchanged', sha: before, bytes: 123 },
     ] });
     const enviado = JSON.parse(recibidas[0]?.body ?? '') as {
-      files: Array<Record<string, unknown>>;
+      files: Record<string, unknown>[];
     };
     expect(enviado).toMatchObject({ files: [{
       mode: 'verify', path: memory, precondition: { state: 'present', sha256: before },

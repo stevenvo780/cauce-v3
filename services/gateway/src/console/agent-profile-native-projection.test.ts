@@ -94,8 +94,9 @@ function liveRuntime(harness: 'claude' | 'openclaw'): {
     ? ['/home/dev/.claude/CLAUDE.md']
     : FICHEROS_OPENCLAW.map((name) => `${workspace}/${name}`);
   const disk = new Map<string, string>();
-  if (harness === 'claude') disk.set(paths[0]!, '# Human manual\n');
-  else {
+  if (harness === 'claude') {
+    disk.set(paths[0] ?? expect.unreachable('Claude runtime path is missing'), '# Human manual\n');
+  } else {
     disk.set(`${workspace}/MEMORY.md`, 'PRIVATE MEMORY\n');
     disk.set(`${workspace}/HEARTBEAT.md`, 'PRIVATE HEARTBEAT\n');
   }
@@ -206,16 +207,17 @@ describe('native profile publishing saga', () => {
         },
         recordRuntimeExpectation: async (_tenant, _alias, expectedRevision, verification) => {
           for (const document of verification.documents) {
-            const text = runtime.disk.get(document.path);
-            expect(text, document.path).toBeDefined();
-            expect(document.expected_sha).toBe(sha(text!));
-            expect(document.expected_bytes).toBe(Buffer.byteLength(text!, 'utf8'));
+            const text = runtime.disk.get(document.path)
+              ?? expect.unreachable(`Runtime document is missing: ${document.path}`);
+            expect(document.expected_sha).toBe(sha(text));
+            expect(document.expected_bytes).toBe(Buffer.byteLength(text, 'utf8'));
           }
           expectations.set(expectedRevision, {
             key: verificationKey(expectedRevision, verification),
             contract: {
               revision: expectedRevision,
-              generation: verification.generation!,
+              generation: verification.generation
+                ?? expect.unreachable('Runtime verification generation is missing'),
               documents: verification.documents.map((document) => ({
                 name: document.name,
                 path: document.path,
@@ -256,10 +258,10 @@ describe('native profile publishing saga', () => {
       await app.ready();
       try {
         const supplyExactAdoption = (expectedRevision: number): void => {
-          const expectation = expectations.get(expectedRevision);
-          expect(expectation).toBeDefined();
+          const expectation = expectations.get(expectedRevision)
+            ?? expect.unreachable('Runtime expectation is missing');
           runtimeAdoption = profileRuntimeAdoptionFor(
-            expectation!.contract,
+            expectation.contract,
             runtime.paths.flatMap((path) => {
               const text = runtime.disk.get(path);
               return text === undefined ? [] : [{ path, sha256: sha(text) }];
@@ -323,8 +325,9 @@ describe('native profile publishing saga', () => {
         expect(expectations.get(3)?.contract.documents.map((document) => document.name))
           .toEqual(harness === 'claude' ? ['CLAUDE.md'] : FICHEROS_OPENCLAW);
 
+        const firstPath = runtime.paths[0] ?? expect.unreachable('Primary runtime path is missing');
         if (harness === 'claude') {
-          const text = runtime.disk.get(runtime.paths[0]!) ?? '';
+          const text = runtime.disk.get(firstPath) ?? '';
           expect(text).toContain(marcaDeRevisionDelPerfil(3));
           expect(text).not.toContain(marcaDeRevisionDelPerfil(2));
           expect(bloqueDePerfil(text)).toContain('gamma');
@@ -332,7 +335,7 @@ describe('native profile publishing saga', () => {
           expect(runtime.paths.map((path) => runtime.disk.get(path))).not.toEqual(revisionTwoBytes);
         } else {
           for (const name of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'AGENTS.md', 'TOOLS.md']) {
-            const text = runtime.disk.get(`${runtime.paths[0]!.slice(0, runtime.paths[0]!.lastIndexOf('/'))}/${name}`) ?? '';
+            const text = runtime.disk.get(`${firstPath.slice(0, firstPath.lastIndexOf('/'))}/${name}`) ?? '';
             const block = bloqueDePerfil(text) ?? '';
             expect(block).toContain('gamma');
             expect(block).not.toContain('beta');
@@ -343,8 +346,10 @@ describe('native profile publishing saga', () => {
               expect(text).not.toContain('CAUCE:REVISION-PERFIL');
             }
           }
-          expect(runtime.disk.get(runtime.paths[3]!)).toBe('PRIVATE MEMORY\n');
-          expect(runtime.disk.get(runtime.paths[4]!)).toBe('PRIVATE HEARTBEAT\n');
+          expect(runtime.disk.get(runtime.paths[3]
+            ?? expect.unreachable('OpenClaw memory path is missing'))).toBe('PRIVATE MEMORY\n');
+          expect(runtime.disk.get(runtime.paths[4]
+            ?? expect.unreachable('OpenClaw heartbeat path is missing'))).toBe('PRIVATE HEARTBEAT\n');
         }
       } finally {
         await app.close();

@@ -31,14 +31,14 @@ function mockProbe(entries: Record<string, MockProbeEntry>): AgentFactsProbe {
       if (!entry) {
         return { error: 'not_found', reason: 'alias no encontrado' };
       }
-      return entry.documents[path] || {
+      return entry.documents[path] ?? {
         error: 'not_found',
         reason: `${path} no está disponible`,
       };
     },
     async listMemoryDirectory(memoryRoot, facts, tenantId, alias) {
       const entry = entries[`${tenantId}:${alias}`];
-      if (!entry || !entry.memory) {
+      if (!entry?.memory) {
         return { error: 'not_found', reason: 'sin memoria' };
       }
       return entry.memory;
@@ -428,12 +428,12 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
         readGovernanceDocument: async (_path, _facts, _tenant, _alias, signal) => {
           reads += 1;
           if (signal !== undefined) signals.push(signal);
-          return new Promise<GovernanceDocumentContent>(() => {});
+          return new Promise<GovernanceDocumentContent>(() => { return; });
         },
         listMemoryDirectory: async (_root, _facts, _tenant, _alias, signal) => {
           lists += 1;
           if (signal !== undefined) signals.push(signal);
-          return new Promise<MemoryDirectoryListing>(() => {});
+          return new Promise<MemoryDirectoryListing>(() => { return; });
         },
       },
     });

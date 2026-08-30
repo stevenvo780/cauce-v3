@@ -215,10 +215,10 @@ describe('contenido y escritura tenant-qualified', () => {
   });
 
   const FACTS: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
-  const NO_MEDIDO_CASES: ReadonlyArray<readonly [
+  const NO_MEDIDO_CASES: readonly (readonly [
     string,
     { facts: RuntimeFacts; source: FactsSource } | undefined,
-  ]> = [
+  ])[] = [
     ['ausente', undefined],
     ['registry', { facts: FACTS, source: 'registry' }],
     ['database', { facts: FACTS, source: 'database' }],
