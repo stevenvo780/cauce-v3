@@ -60,9 +60,7 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
     assert.equal(target, "%0", `operación no exacta: ${call.join(" ")}`);
   }
   // And no notice pasted: the turn did go through the terminal.
-  const reply = output.reply;
-  assert.ok(reply);
-  assert.ok(!reply.includes(DEGRADED_MARK));
+  assert.ok(!output.reply.includes(DEGRADED_MARK));
   assert.deepEqual(await readDegradations(state), []);
 });
 

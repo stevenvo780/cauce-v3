@@ -140,8 +140,7 @@ test("a receipt cannot release the harness while its transport send never settle
     const record = context.store.getDelivery(input.delivery_id);
     assert.ok(record);
     assert.equal(record.error?.code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- asserting the same non-nullish property twice across separate frames
-    assert.equal(record.error?.retryable, true);
+    assert.ok(record.error.retryable, "the failure must be marked retryable");
     assert.ok(context.store.pendingEvents().some((event) => (
       event.delivery_id === input.delivery_id && event.phase === "failed"
     )), "the retryable failure must remain durable when the connection cannot flush it");

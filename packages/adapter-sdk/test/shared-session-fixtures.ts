@@ -638,8 +638,7 @@ export class FakeTmux implements TmuxController {
       const target = args[args.indexOf("-t") + 1];
       const name = args[args.indexOf("-b") + 1];
       const value = name === undefined ? undefined : this.buffers.get(name);
-      if (!this.targetExists(target) || value === undefined) return ok(1);
-      if (name === undefined) return ok(1);
+      if (!this.targetExists(target) || value === undefined || name === undefined) return ok(1);
       if (this.inputOff) {
         if (args.includes("-d")) this.buffers.delete(name);
         return ok(0);

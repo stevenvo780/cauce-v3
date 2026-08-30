@@ -582,9 +582,7 @@ test("el turno que sí abre turno propio se cosecha por ascendencia y sin aviso"
   assert.equal(output.reply, "desde la TUI");
   assert.equal(fallback.calls, 0);
   // No notices: the correlation worked as usual.
-  const reply = output.reply;
-  assert.ok(reply);
-  assert.ok(!reply.includes(MERGED_MARK));
+  assert.ok(!output.reply.includes(MERGED_MARK));
 });
 
 test("claude ignora el sobre headless de otro fichero y rescata sólo su nonce", async () => {
