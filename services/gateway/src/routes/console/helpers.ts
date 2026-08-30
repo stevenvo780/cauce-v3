@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
-  ConfigMutationSchema, type ConfigMutation, type ProfileRuntimeContract,
+  ConfigMutationSchema, esFicheroDelAgente,
+  type ConfigMutation, type ProfileRuntimeContract,
 } from '@cauce/protocol';
 import {
   StoreError, type OperationalDlqResolutionRequest,
@@ -212,16 +213,17 @@ export function runtimeContractFromVerification(
   revision: number,
   verification: ProfileRuntimeVerification,
 ): ProfileRuntimeContract {
+  const documentos = verification.documents.filter((document) => !esFicheroDelAgente(document.name));
   if (verification.state !== 'current' || verification.generation === null
-    || verification.documents.length === 0
-    || verification.documents.some((document) => !document.current
+    || documentos.length === 0
+    || documentos.some((document) => !document.current
       || document.observed_sha !== document.expected_sha)) {
     throw new Error('runtime profile expectation requires an exact current verification');
   }
   return {
     revision,
     generation: verification.generation,
-    documents: verification.documents.map((document) => ({
+    documents: documentos.map((document) => ({
       name: document.name,
       path: document.path,
       sha: document.expected_sha,

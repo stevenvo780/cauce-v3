@@ -37,13 +37,25 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
   }
 
   /**
-   * Confirms a native OpenClaw session and publishes in the SAME rename the selector consumed
-   * by the terminal TUI.
+   * Olvida el puntero a una sesion nativa que el arnes ya no encuentra.
    *
-   * The source entry keeps `origin` so operational tools can distinguish conversations. The
-   * fixed pointer, on the other hand, contains only the opaque native identifier and the init
-   * bit: copying the `conversation_id` there duplicated a user identifier the consumer did not
-   * need. A single write prevents a restart from leaving a session published that still appears
+   * No es limpieza: es la unica salida del bucle. Un `native_id` muerto hace que cada reintento
+   * reproduzca el mismo fallo de arranque, y como es reintentable el adaptador lo repite sin fin.
+   */
+  async forgetSession(key: string): Promise<boolean> {
+    return this.serialized(async () => {
+      if (this.sessions.sessions[key] === undefined) return false;
+      const resto: Record<string, SessionRecord> = { ...this.sessions.sessions };
+      delete resto[key];
+      const next = validateSessionsFile({ version: 1, sessions: resto });
+      await this.atomicWrite("sessions.json", next);
+      this.sessions = next;
+      return true;
+    });
+  }
+
+  /**
+   *
    * uninitialized, or vice versa.
    */
   async setCanonicalOpenClawTerminalSession(

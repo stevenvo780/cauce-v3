@@ -62,7 +62,12 @@ export function parseJson(text: string, context: string): unknown {
   }
 }
 
-export const REQUIRED_OUTPUT_KEYS = ["reply", "messages", "status", "retryable"] as const;
+/**
+ * Solo `reply` es obligatoria: es el trabajo del turno. `messages`, `status` y `retryable` son
+ */
+export const REQUIRED_OUTPUT_KEYS = ["reply"] as const;
+/** Andamiaje que se normaliza cuando falta, registrando el aviso para que el agente lo aprenda. */
+export const NORMALIZED_WHEN_ABSENT = ["messages", "status", "retryable"] as const;
 /** Cap on the embedded envelope scan; two are enough to declare ambiguity. */
 export const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;
 
@@ -106,11 +111,6 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
   });
 }
 
-/**
- * `notify` is deliberately absent from requiredKeys(): every live agent emits the five
- * mandatory keys and must keep validating unchanged. An output without it normalizes to an
- * empty list, which produces exactly zero rows downstream.
- */
 function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; descartes: readonly string[] } {
   // Malformed notify directives are discarded while recording the notice, without aborting the turn.
   const descartes: string[] = [];
@@ -189,31 +189,40 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   if (value.reply !== null && typeof value.reply !== "string") {
     throw new MalformedOutputError("'reply' must be a string or null");
   }
-  if (value.status !== "done" && value.status !== "failed") {
+  // Ausencias del andamiaje: se normalizan y se listan. Presencias mal formadas siguen fallando.
+  const ausentes = NORMALIZED_WHEN_ABSENT.filter((key) => !(key in value));
+  const status = value.status === undefined ? "done" : value.status;
+  if (status !== "done" && status !== "failed") {
     throw new MalformedOutputError("'status' must be 'done' or 'failed'");
   }
-  if (typeof value.retryable !== "boolean") {
+  const retryable = value.retryable === undefined ? false : value.retryable;
+  if (typeof retryable !== "boolean") {
     throw new MalformedOutputError("'retryable' must be a boolean");
   }
   const notificaciones = value.notify === undefined
     ? { directives: [] as readonly NotifyDirective[], descartes: [] as readonly string[] }
     : parseNotify(value.notify);
   // The agent must learn what was discarded, or it will repeat the same error every turn.
-  const aviso = notificaciones.descartes.length === 0
-    ? ""
-    : `\n\n[Cauce] ${notificaciones.descartes.join(". ")}.`;
+  const notas = [...notificaciones.descartes];
+  if (ausentes.length > 0) {
+    notas.push(
+      `faltaba ${ausentes.map((key) => `'${key}'`).join(", ")} en el sobre; se normalizo para no `
+      + "perder el turno, pero el sobre tiene que llevar los siete campos",
+    );
+  }
+  const aviso = notas.length === 0 ? "" : `\n\n[Cauce] ${notas.join(". ")}.`;
   return {
     reply: aviso === ""
       ? value.reply
       : `${value.reply === null || value.reply.trim() === "" ? "(sin respuesta)" : value.reply}${aviso}`,
-    messages: parseMessages(value.messages),
+    messages: value.messages === undefined ? [] : parseMessages(value.messages),
     notify: notificaciones.directives,
-    status: value.status,
+    status,
     // `retryable` has no meaning after a successful terminal result. Native
     // models occasionally emit the redundant contradictory pair
     // `{status:"done", retryable:true}`; canonicalize that one pair without
     // re-executing or weakening validation of the field's type.
-    retryable: value.status === "done" ? false : value.retryable,
+    retryable: status === "done" ? false : retryable,
     artifacts: parseArtifacts(value.artifacts),
   };
 }
@@ -253,8 +262,6 @@ function descartarReboteAlRemitente(
 }
 
 /**
- * Enforces the semantic result contract once trusted delivery context is
- * available. Dialect parsers intentionally remain context-free; the harness
  * adapter calls this before accepting a parsed result.
  */
 export function validateDeliveryOutput(

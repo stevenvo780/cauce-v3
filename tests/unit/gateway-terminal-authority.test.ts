@@ -14,6 +14,19 @@ import type { TerminalConfig } from '../../services/gateway/src/terminal/config.
 import { UNATTRIBUTED_OPERATOR, type FleetPlacement } from '../../services/gateway/src/terminal/types.js';
 
 /**
+ * Estrecha un opcional sin `!` ni `as`.
+ *
+ * Las dos reglas del preset se contradicen sobre un `T | undefined`: `no-non-null-assertion`
+ * prohibe el `!` y `non-nullable-type-assertion-style` exige el `!` en lugar del `as`. La salida
+ * no es elegir una, es no aseverar: si el valor falta, la prueba falla diciendo QUE falto, en vez
+ * de reventar con «cannot read property of undefined».
+ */
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
+
+/**
  * Tests herméticos para `services/gateway/src/terminal/authority.ts`.
  *
  * El módulo cubre las cuatro entradas de autorización del plano terminal: la registry en vivo
@@ -146,8 +159,7 @@ describe('fleetPlacement / fleetIdentity / fleetIdentityLabel / containerCohort'
   });
 
   it('fleetIdentity y fleetIdentityLabel exponen el par (tenant, alias) sin filtrar runtime', () => {
-    const placement = fleetPlacement(PLACEMENTS, 'Miguel', 'iza');
-    if (!placement) throw new Error('placement unexpectedly undefined');
+    const placement = exigir(fleetPlacement(PLACEMENTS, 'Miguel', 'iza'), 'la colocación de Miguel/iza');
     expect(fleetIdentity(placement)).toEqual({ tenant_id: 'Miguel', alias: 'iza' });
     expect(fleetIdentityLabel(fleetIdentity(placement))).toBe('Miguel:iza');
   });
@@ -185,10 +197,10 @@ describe('GrantStore: archivo de grants rotable', () => {
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
     const cohort = containerCohort(PLACEMENTS, 'Steven', 'jarvis');
     expect(await store.allowsCohort('steven', cohort, 'shell', 1_500)).toBe(false);
-    // Within the minute, it only logs once.
+    // Dentro del minuto solo se loguea una vez.
     expect(await store.grants(30_000)).toEqual([]);
     expect(warnings).toHaveLength(1);
-    // A minute later, it logs again.
+    // Un minuto después se loguea otra vez.
     expect(await store.grants(120_000)).toEqual([]);
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toContain('missing.json');
@@ -210,9 +222,9 @@ describe('GrantStore: archivo de grants rotable', () => {
     const store = new GrantStore(grantsPath);
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
     await writeFile(grantsPath, JSON.stringify({ version: 1, grants: [] }));
-    // Inside the cache, the previous one still holds.
+    // Dentro del cache el anterior sigue válido.
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_500)).toBe(true);
-    // Past the cache, the gate closes without a restart.
+    // Pasado el cache la puerta se cierra sin reinicio.
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 2_100)).toBe(false);
   });
 
@@ -316,7 +328,7 @@ describe('routingAuthority: replica del publish path', () => {
 
 describe('cohortRoutingAuthority: SET RULE sobre containers compartidos', () => {
   it('niega el container entero si un solo miembro del cohort no es ruteable', async () => {
-    // iza and kratos are routable, atlas is not: the cohort check must fail closed.
+    // iza y kratos son ruteables, atlas no: el cohort check debe fallar cerrado.
     const partial = pool({
       'Steven:kant': ['grp.steven'],
       'Miguel:iza': ['grp.miguel'],
@@ -352,7 +364,7 @@ describe('resolveOperator: identidad humana del operador', () => {
     const logged = consolePrincipal({ operator_id: 'miguel@elenxos.com' });
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, config))
       .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
-    // Even with nobody enrolled in operators, the principal with operator_id stays attributed.
+    // Aunque nadie esté matriculado en operadores, el principal con operator_id sigue atribuido.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, terminalConfig()))
       .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
   });

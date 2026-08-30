@@ -215,6 +215,8 @@ html.directiva-modal-abierta .agent-drawer-body { overflow: hidden; }
 .historial-entrada-detalle { margin: 0; color: var(--muted); font-size: var(--tipo-apunte); }
 .historial-entrada-plantilla { margin: 0; color: var(--amber, #d08700); font-size: var(--tipo-apunte); }
 
+.historial-paginacion { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+
 .historial-entrada-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .historial-entrada-ayuda { color: var(--faint); font-size: var(--tipo-apunte); }
 

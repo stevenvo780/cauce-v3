@@ -8,6 +8,19 @@ import {
 } from '../../services/gateway/src/terminal/audit.js';
 
 /**
+ * Estrecha un opcional sin `!` ni `as`.
+ *
+ * Las dos reglas del preset se contradicen sobre un `T | undefined`: `no-non-null-assertion`
+ * prohibe el `!` y `non-nullable-type-assertion-style` exige el `!` en lugar del `as`. La salida
+ * no es elegir una, es no aseverar: si el valor falta, la prueba falla diciendo QUE falto, en vez
+ * de reventar con «cannot read property of undefined».
+ */
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
+
+/**
  * Hermetic tests for `services/gateway/src/terminal/audit.ts`.
  *
  * The audit module has exactly one moving part: the INSERT into `audit_events`.
@@ -41,8 +54,7 @@ describe('recordTerminalAudit', () => {
     };
     await recordTerminalAudit(pool, entry);
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(query.mock.calls[0], 'una llamada registrada');
     const [sql, params] = call as [string, readonly unknown[]];
     expect(sql).toMatch(QUERY_PATTERN);
     expect(sql).toContain('tenant_id, actor_alias, action, decision, trace_id, metadata');
@@ -65,9 +77,7 @@ describe('recordTerminalAudit', () => {
       decision: 'deny',
       metadata: { reason: 'ticket_expired' }
     });
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as readonly unknown[];
+    const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
     expect(params[4]).toBeNull();
     expect(params[3]).toBe('deny');
   });
@@ -81,9 +91,7 @@ describe('recordTerminalAudit', () => {
       decision: 'info',
       metadata: {}
     });
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as readonly unknown[];
+    const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
     expect(params[5]).toBe('{}');
     expect(JSON.parse(params[5] as string)).toEqual({});
   });
@@ -103,15 +111,16 @@ describe('recordTerminalAudit', () => {
       trace_id: 'trace-nested',
       metadata: nested
     });
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as readonly unknown[];
+    const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
     expect(JSON.parse(params[5] as string)).toEqual(nested);
   });
 
   it('relanza el error cuando metadata no es JSON-serializable (referencia circular)', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
-    const cycle: Record<string, unknown> = { name: 'cycle' };
+    // Extiende `Record<string, unknown>` a proposito: se asigna a un `Readonly<Record<string,
+    // unknown>>` y una interfaz sin indice no es asignable ahi.
+    interface Cyclic extends Record<string, unknown> { name: string; self?: unknown }
+    const cycle: Cyclic = { name: 'cycle' };
     cycle.self = cycle;
     await expect(recordTerminalAudit(poolCon(query), {
       tenant_id: 'Isa',

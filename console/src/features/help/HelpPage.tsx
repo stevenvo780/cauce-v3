@@ -90,6 +90,9 @@ export function HelpPage() {
           <h2>Atajos de teclado y navegación</h2>
           <div style={{ display: 'grid', gap: '12px', marginTop: '12px' }}>
             <div>
+              <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>: Pliega y despliega la barra lateral.
+            </div>
+            <div>
               <kbd>Esc</kbd>: Cierra modales activos, cajones de detalle de agente e inspectores.
             </div>
             <div>

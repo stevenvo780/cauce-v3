@@ -8,6 +8,19 @@ import {
 } from '../../services/gateway/src/console-users.js';
 
 /**
+ * Estrecha un opcional sin `!` ni `as`.
+ *
+ * Las dos reglas del preset se contradicen sobre un `T | undefined`: `no-non-null-assertion`
+ * prohibe el `!` y `non-nullable-type-assertion-style` exige el `!` en lugar del `as`. La salida
+ * no es elegir una, es no aseverar: si el valor falta, la prueba falla diciendo QUE falto, en vez
+ * de reventar con «cannot read property of undefined».
+ */
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
+
+/**
  * Tests for `services/gateway/src/console-users.ts`.
  *
  * The file was sitting at 0 % in vitest. Two surfaces are covered here:
@@ -162,12 +175,11 @@ describe('PostgresConsoleUserStore.findByEmail', () => {
     await store.findByEmail('  KANT@Example.COM ');
 
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(query.mock.calls[0], 'una llamada registrada');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('WHERE email_normalized=$1');
-    // Normalized: lowercase + trim. The raw email is NOT sent in UPPERCASE.
+    // Normalizado: lowercase + trim. NO se manda el email crudo en MAYÚSCULAS.
     expect(params[0]).toBe('kant@example.com');
     expect(params[0]).not.toBe('  KANT@Example.COM ');
   });
@@ -183,8 +195,7 @@ describe('PostgresConsoleUserStore.findById', () => {
 
     expect(user?.id).toBe(VALID_UUID);
     expect(user?.email).toBe('kant@example.com');
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(query.mock.calls[0], 'una llamada registrada');
     expect(String(call[0])).toContain('WHERE id=$1::uuid');
   });
 
@@ -202,9 +213,7 @@ describe('PostgresConsoleUserStore.findById', () => {
 
     expect(await store.findById('00000000-0000-4000-8000-000000000099')).toBeUndefined();
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    expect(call[1]).toEqual(['00000000-0000-4000-8000-000000000099']);
+    expect(exigir(query.mock.calls[0], 'una llamada registrada')[1]).toEqual(['00000000-0000-4000-8000-000000000099']);
   });
 
   it('fila presente con role desconocido: la conversión a ConsoleUser lanza', async () => {
@@ -225,8 +234,7 @@ describe('PostgresConsoleUserStore.recordLogin', () => {
     await store.recordLogin(VALID_UUID, at);
 
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(query.mock.calls[0], 'una llamada registrada');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('UPDATE console_users');
@@ -253,9 +261,7 @@ describe('PostgresConsoleUserStore.ready', () => {
     await store.ready();
 
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    expect(String(call[0])).toContain('SELECT id FROM console_users LIMIT 0');
+    expect(String(exigir(query.mock.calls[0], 'una llamada registrada')[0])).toContain('SELECT id FROM console_users LIMIT 0');
   });
 });
 
@@ -303,8 +309,8 @@ describe('MemoryConsoleUserStore', () => {
     const store = new MemoryConsoleUserStore();
 
     await expect(store.ready()).resolves.toBeUndefined();
-    // `MemoryConsoleUserStore.recordLogin` is deliberately a no-op (no-track): the
-    // store-contract arguments are ignored on purpose; the provider tests exercise it separately.
+    // `MemoryConsoleUserStore.recordLogin` es deliberadamente un no-op (no-track): los argumentos
+    // del contrato del store se ignoran a propósito, los tests del provider lo ejercen aparte.
     await expect((store as unknown as { recordLogin: () => Promise<void> }).recordLogin()).resolves.toBeUndefined();
   });
 });

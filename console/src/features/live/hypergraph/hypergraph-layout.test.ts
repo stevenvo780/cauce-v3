@@ -67,11 +67,8 @@ describe('layoutHypergraph', () => {
     expect(layoutHypergraph(SNAPSHOT)).toEqual(layoutHypergraph(SNAPSHOT));
   });
 
-  /*
-   * These two assertions are the fix for "the bots graph is unreadable", written as a condition
-   * rather than as a screenshot review. Before it was checked by looking at a capture, which is
-   * how `#ops.infra` was allowed to sit on top of `zeus` through a whole review.
-   */
+  /* These two assertions are the fix for "the bots graph is unreadable", written as a condition instead of as a
+   * screenshot review: that is how `#ops.infra` sat on top of `zeus` through a whole review. */
   it('ningún par de nodos se pisa: se comprueban las CAJAS reales, no la distancia entre centros', () => {
     const footprint = { halfWidth: 41, top: -38, bottom: 55 };
     const model = layoutHypergraph(SNAPSHOT, { width: 1520, height: 950, padding: 52, footprint, labelBand: 30 });
@@ -117,6 +114,54 @@ describe('layoutHypergraph', () => {
     expect(zeus).toHaveLength(1);
     expect(zeus[0].edges).toHaveLength(2);
     expect(zeus[0].edges).toEqual(expect.arrayContaining(['Steven/grp.steven', 'Steven/grp.ops']));
+  });
+
+  it('el mismo alias en dos tenants son DOS nodos, no uno colgado de las salas de ambos', () => {
+    // Fusing by alias drew one figure inside the rooms of both clients, and mixed the two `enabled` into one.
+    const model = layoutHypergraph({
+      tenants: [
+        { id: 'Steven', rooms: [{ id: 'grp.steven', members: [{ alias: 'claude', enabled: true }] }] },
+        { id: 'Miguel', rooms: [{ id: 'grp.miguel', members: [{ alias: 'claude', enabled: false }] }] },
+      ],
+    });
+
+    const claudes = model.nodes.filter((node) => node.alias === 'claude');
+    expect(claudes).toHaveLength(2);
+    expect(new Set(claudes.map((node) => node.key)).size).toBe(2);
+    expect(claudes.map((node) => [node.tenants, node.edges, node.enabled])).toEqual(
+      expect.arrayContaining([
+        [['Steven'], ['Steven/grp.steven'], true],
+        [['Miguel'], ['Miguel/grp.miguel'], false],
+      ]),
+    );
+    expect(claudes[0].x !== claudes[1].x || claudes[0].y !== claudes[1].y).toBe(true);
+  });
+
+  it('cada región contiene sólo a los miembros de SU tenant, aunque el alias se repita', () => {
+    const footprint = { halfWidth: 41, top: -38, bottom: 55 };
+    const model = layoutHypergraph({
+      tenants: [
+        { id: 'Steven', rooms: [{ id: 'grp.steven', members: [{ alias: 'claude' }, { alias: 'zeus' }] }] },
+        { id: 'Miguel', rooms: [{ id: 'grp.miguel', members: [{ alias: 'claude' }, { alias: 'kratos' }] }] },
+      ],
+    }, { width: 1520, height: 950, padding: 52, footprint, labelBand: 30 });
+
+    for (const edge of model.edges) {
+      const own = model.nodes.filter((node) => node.tenants[0] === edge.tenantId);
+      const foreign = model.nodes.filter((node) => node.tenants[0] !== edge.tenantId);
+      for (const node of own) {
+        expect(
+          pointInPolygon({ x: node.x, y: node.y }, edge.hull),
+          `la sala ${edge.key} deja fuera a su propio miembro ${node.key}`,
+        ).toBe(true);
+      }
+      for (const node of foreign) {
+        expect(
+          pointInPolygon({ x: node.x, y: node.y }, edge.hull),
+          `la sala ${edge.key} se traga a ${node.key}, que es de otro tenant`,
+        ).toBe(false);
+      }
+    }
   });
 
   it('cada región contiene realmente a todos sus miembros', () => {

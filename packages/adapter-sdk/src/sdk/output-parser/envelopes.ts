@@ -61,8 +61,6 @@ function hasErrorPayload(value: unknown): boolean {
 }
 
 /**
- * Failure signal in a native wrapper object. The contract envelope is EXPLICITLY left out: its
- * `status:"failed"` is already validated by `validateStructuredOutput`, and confusing it with a
  * native `status` would let it through the mill twice.
  */
 export function nativeFailureDetail(value: JsonObject): string | undefined {
@@ -206,8 +204,11 @@ function embeddedObjects(text: string): readonly string[] {
   return found;
 }
 
+const ENVELOPE_COMPANION_KEYS = ["messages", "status", "retryable", "notify", "artifacts"] as const;
+
 function isEnvelopeShape(value: unknown): boolean {
-  return isObject(value) && REQUIRED_OUTPUT_KEYS.every((key) => key in value);
+  if (!isObject(value) || !REQUIRED_OUTPUT_KEYS.every((key) => key in value)) return false;
+  return ENVELOPE_COMPANION_KEYS.some((key) => key in value);
 }
 
 /**

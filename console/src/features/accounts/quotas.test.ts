@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { QuotaGroup, QuotaProviderReport, QuotaWindow } from '../../api/types';
 import {
-  buildQuotaRows, formatResetIn, formatUnits, groupWindowsByFamily, isAgeStale, severityRank,
-  sortProvidersBySeverity, worstWindow,
+  balanceSeverity, buildQuotaRows, formatPercent, formatResetIn, formatUnits, groupWindowsByFamily,
+  isAgeStale, severityMetricTone, severityRank, sortProvidersBySeverity, worstWindow,
 } from './quotas';
 
 function window(overrides: Partial<QuotaWindow>): QuotaWindow {
@@ -126,5 +126,56 @@ describe('formatUnits', () => {
 
   it('renders used/limit when the provider reports real units (opencode)', () => {
     expect(formatUnits(0, 12)).toBe('0 / 12');
+  });
+});
+
+describe('balanceSeverity', () => {
+  const thresholds = { warn_remaining_percent: 25, critical_remaining_percent: 10 };
+
+  it('respeta la severidad del servidor: una ventana rate-limited informa 100 % libre y AGOTADO a la vez', () => {
+    expect(balanceSeverity(100, 'exhausted', thresholds)).toBe('exhausted');
+  });
+
+  it('usa el mismo `<` que el servidor en los bordes exactos: con `<=` la misma cuenta cambiaba de color entre pestañas', () => {
+    expect(balanceSeverity(25, null, thresholds)).toBe('ok');
+    expect(balanceSeverity(24.9, null, thresholds)).toBe('warn');
+    expect(balanceSeverity(10, null, thresholds)).toBe('warn');
+    expect(balanceSeverity(9.9, null, thresholds)).toBe('critical');
+  });
+
+  it('0 % es agotado, no meramente crítico', () => {
+    expect(balanceSeverity(0, null, thresholds)).toBe('exhausted');
+  });
+
+  it('sin porcentaje no supone salud: queda en SIN DATO', () => {
+    expect(balanceSeverity(null, null, thresholds)).toBe('unknown');
+    expect(balanceSeverity(Number.NaN, null, thresholds)).toBe('unknown');
+  });
+
+  it('sin umbrales del servidor cae en los mismos que trae la migración', () => {
+    expect(balanceSeverity(25, null, null)).toBe('ok');
+    expect(balanceSeverity(9.9, null, null)).toBe('critical');
+  });
+});
+
+describe('severityMetricTone', () => {
+  it('agotado y crítico gritan en rojo; sin dato no se pinta de verde', () => {
+    expect(severityMetricTone('exhausted')).toBe('danger');
+    expect(severityMetricTone('critical')).toBe('danger');
+    expect(severityMetricTone('warn')).toBe('warning');
+    expect(severityMetricTone('ok')).toBe('positive');
+    expect(severityMetricTone('unknown')).toBe('neutral');
+  });
+});
+
+describe('formatPercent', () => {
+  it('corta en un decimal el 33.333333333333336 que publican los recolectores', () => {
+    expect(formatPercent(100 / 3)).toBe('33.3%');
+    expect(formatPercent(66.66666666666667)).toBe('66.7%');
+  });
+
+  it('no le agrega decimales a un entero', () => {
+    expect(formatPercent(42)).toBe('42%');
+    expect(formatPercent(0)).toBe('0%');
   });
 });

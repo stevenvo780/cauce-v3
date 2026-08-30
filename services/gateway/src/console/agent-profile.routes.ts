@@ -156,7 +156,6 @@ export interface FicheroDeLaVistaPrevia {
   readonly texto: string;
   /**
    * Units of the text, in the same count used by the Postgres CHECK and the openclaw
-   * ceilings. It is measured on the server to guarantee consistency with the database.
    */
   readonly unidades: number;
 }
@@ -212,10 +211,7 @@ export interface PerfilAplicado {
 }
 
 /**
- * A breached ceiling is NOT a 500: it is a response with the file and the two numbers.
  *
- * `ficherosDelArnes` throws `ErrorDeTopeDelArnes` before returning anything when an openclaw
- * file —or the sum of the seven— exceeds what that harness declares. Throwing is fine:
  * writing a person halfway is worse than not writing them. But the operator needs to know
  * WHICH one to trim, and a 500 with "internal error" does not tell them.
  */
@@ -480,7 +476,14 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const alias = aliasResult.data;
     const actor = await deps.authorize(request, 'control');
     const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
-    if (target?.tenant_id !== tenantId || target.alias !== alias) {
+    if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+      const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
+      if (visible && visible.tenant_id === tenantId && visible.alias === alias) {
+        return reply.code(403).send({
+          error: 'forbidden',
+          message: `el actor puede leer ${tenantId}/${alias} pero no tiene permiso de control sobre él`,
+        });
+      }
       return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
     }
     if (target.enabled !== true) {

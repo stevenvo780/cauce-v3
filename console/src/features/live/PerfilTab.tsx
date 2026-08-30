@@ -9,7 +9,8 @@ import { permissionState } from '../../lib';
 import { MedidorDeRol } from './MedidorDeRol';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, ETIQUETAS, camposQueNoEntran, camposVigentes, contarUnidades,
-  destinosDelArnes, esPerfilAplicado, hayCambios, lineasALista, listaALineas, motivoSinDestino,
+  destinosDelArnes, entradasDeLista, esPerfilAplicado, hayCambios, lineasCrudas, listaALineas,
+  motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil,
   type CampoDelPerfil, type DestinoDelCampo,
 } from './perfil';
@@ -117,7 +118,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   }
 
   function editarLista(campo: (typeof CAMPOS_DE_LISTA)[number], texto: string) {
-    onBorrador({ ...borrador, [campo]: lineasALista(texto) });
+    onBorrador({ ...borrador, [campo]: lineasCrudas(texto) });
   }
 
   async function guardar() {
@@ -293,6 +294,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
 
         {CAMPOS_DE_LISTA.map((campo) => {
           const items = campos[campo];
+          const entradas = entradasDeLista(items).length;
           return (
             <label key={campo} className="perfil-campo">
               <span className="perfil-campo-titulo">{ETIQUETAS[campo].titulo}</span>
@@ -304,8 +306,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
                   || runtimeNoVerificado || !runtimeActual}
                 onChange={(event) => { editarLista(campo, event.target.value); }}
               />
-              <span className={`perfil-cuenta${items.length > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
-                {items.length} {items.length === 1 ? 'entrada' : 'entradas'} / {perfil.data?.limites?.items ?? '—'}
+              <span className={`perfil-cuenta${entradas > (perfil.data?.limites?.items ?? Infinity) ? ' perfil-cuenta-fuera' : ''}`}>
+                {entradas} {entradas === 1 ? 'entrada' : 'entradas'} / {perfil.data?.limites?.items ?? '—'}
               </span>
             </label>
           );

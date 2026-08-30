@@ -573,7 +573,6 @@ export function registerTerminalSessionControl(
       const consoleSubject = subjectFor(actor);
       const result = await pool.query<TerminalSessionRow & { occupies_slot: boolean }>(
         // The endpoint is the operator's escape hatch for slots that remain open after a tab
-        // disappears. History can be arbitrarily large; sorting only by issued_at allowed 100
         // newer closed rows to push a still-open session out of the bounded response. Open rows
         // therefore come first, using the exact same predicate as admission.
         `SELECT terminal_sessions.*, (${openPredicate(2)}) AS occupies_slot
@@ -603,6 +602,14 @@ export function registerTerminalSessionControl(
     try {
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
+      // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
+      // mismo que escondia el permiso ausente detras de un 404 en el perfil.
+      try {
+        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
+      } catch {
+        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
+        return;
+      }
       const operator = resolveOperator(request, actor, config);
       const consoleSubject = subjectFor(actor);
       if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
@@ -683,6 +690,14 @@ export function registerTerminalSessionControl(
     try {
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
+      // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
+      // mismo que escondia el permiso ausente detras de un 404 en el perfil.
+      try {
+        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
+      } catch {
+        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
+        return;
+      }
       const operator = resolveOperator(request, actor, config);
       const consoleSubject = subjectFor(actor);
       if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');

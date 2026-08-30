@@ -2,10 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 
 /**
- * Tests for `services/gateway/src/console-user-cli.ts`.
+ * Estrecha un opcional sin `!` ni `as`.
  *
- * The file is a CLI entry point with NO exported symbols: every binding in it is
- * module-local and the whole script runs as side effects at import time. The CLI
+ * Las dos reglas del preset se contradicen sobre un `T | undefined`: `no-non-null-assertion`
+ * prohibe el `!` y `non-nullable-type-assertion-style` exige el `!` en lugar del `as`. La salida
+ * no es elegir una, es no aseverar: si el valor falta, la prueba falla diciendo QUE falto, en vez
+ * de reventar con «cannot read property of undefined».
+ */
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
+
+/**
+ *
  *   1. validates `DATABASE_URL`;
  *   2. parses `process.argv.slice(2)` with its private `parseArguments`;
  *   3. connects to Postgres through `createPool` from `@cauce/store`;
@@ -103,19 +113,19 @@ function buildFakeReadlineFactory(answers: readonly string[]): () => {
       cb(answer);
     },
     close() {
-      // No-op; the module invokes it from its `finally`.
+      // No-op; el módulo lo invoca en su `finally`.
     },
   });
 }
 
 function enableTty(answers: readonly string[]): void {
-  // `process.stdin.isTTY` is set by the Node runtime based on how the process was started.
-  // In CI it is usually `undefined`; we force it to `true` so promptPassword does not bail.
+  // `process.stdin.isTTY` lo setea el runtime de Node según cómo se arrancó el proceso.
+  // En CI suele ser `undefined`; lo forzamos a `true` para que promptPassword no se niegue.
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
   const createInterface = vi.fn().mockImplementation(buildFakeReadlineFactory(answers));
   vi.doMock('node:readline', () => ({ createInterface }));
-  // Avoid a test leaving process.stdout.write pointing to the module's no-op
-  // and contaminating the next one — `process.stdout` is shared.
+  // Evita que un test se quede con process.stdout.write apuntando al no-op del módulo
+  // y contamine al siguiente — `process.stdout` es compartido.
   Object.defineProperty(process.stdout, 'write', {
     configurable: true,
     writable: true,
@@ -155,7 +165,7 @@ describe('parseArguments — validaciones que tiran ANTES de tocar la base', () 
   });
 
   it('--alias que no cumple la regex [a-z][a-z0-9_-]{1,63}: rechaza', async () => {
-    // Uppercase is not allowed.
+    // Mayúsculas no están permitidas.
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'Kant'];
 
     await expect(importCli()).rejects.toThrow(/--alias inválido/);
@@ -181,7 +191,7 @@ describe('parseArguments — validaciones que tiran ANTES de tocar la base', () 
   });
 
   it('flag sin valor al final del argv (sin compañero): rechaza', async () => {
-    // No value after --email — `--email` is the last element.
+    // Después del --email no hay valor — `--email` es el último elemento.
     process.argv = ['node', 'console-user-cli.js', '--email'];
 
     await expect(importCli()).rejects.toThrow(/falta el valor de --email/);
@@ -205,10 +215,9 @@ describe('parseArguments — última gana con flags duplicados', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
     const params = call[1] as unknown[];
-    // Raw email: the second wins. Normalized: the second wins.
+    // Email crudo: el segundo gana. Normalizado: el segundo gana.
     expect(params[0]).toBe('segundo@example.com');
     expect(params[1]).toBe('segundo@example.com');
   });
@@ -230,23 +239,22 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('INSERT INTO console_users');
     expect(sql).toContain('ON CONFLICT (email_normalized) DO UPDATE SET');
-    // position 0 = raw email (trim), position 1 = email_normalized (lower+trim)
+    // posición 0 = email crudo (trim), posición 1 = email_normalizado (lower+trim)
     expect(params[0]).toBe('User@Example.com'.trim());
     expect(params[1]).toBe('user@example.com');
-    // position 2 = password hash, from the deterministic mock
+    // posición 2 = hash de la contraseña, viene del mock determinista
     expect(params[2]).toBe('MOCKED-SCYPT-HASH');
-    // position 3..6 = name, role, tenant, alias
+    // posición 3..6 = name, role, tenant, alias
     expect(params[3]).toBe('A');
     expect(params[4]).toBe('operator');
     expect(params[5]).toBe('Steven');
     expect(params[6]).toBe('kant');
-    // pool.end is called in the finally block
+    // pool.end se llama en el finally
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 
@@ -262,25 +270,21 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
     await importCli();
 
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as unknown[];
+    const params = exigir(stub.query.mock.calls[0], 'una llamada registrada')[1] as unknown[];
     expect(params[4]).toBe('reader');
   });
 
   it('valores por defecto: sin --name deriva del local-part; sin --alias usa kant; sin --tenant usa Steven; sin --role usa operator', async () => {
     const row = { id: '00000000-0000-4000-8000-000000000003', created_at: new Date(0), updated_at: new Date(0) };
     stub.query.mockResolvedValueOnce({ rows: [row], rowCount: 1 });
-    // Only --email: the rest must come from defaults.
+    // Solo --email: el resto debe salir por default.
     process.argv = ['node', 'console-user-cli.js', '--email', 'kant@example.com'];
 
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as unknown[];
-    expect(params[3]).toBe('kant'); // name was derived from the local-part
+    const params = exigir(stub.query.mock.calls[0], 'una llamada registrada')[1] as unknown[];
+    expect(params[3]).toBe('kant'); // name derivó del local-part
     expect(params[4]).toBe('operator'); // role default
     expect(params[5]).toBe('Steven'); // tenant default
     expect(params[6]).toBe('kant'); // alias default
@@ -297,9 +301,7 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
     await importCli();
 
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as unknown[];
+    const params = exigir(stub.query.mock.calls[0], 'una llamada registrada')[1] as unknown[];
     expect(params[0]).toBe('kant@example.com');
     expect(params[1]).toBe('kant@example.com');
   });
@@ -313,8 +315,8 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    // The module already logs to stdout; the important assertion is that the INSERT ran
-    // and the pool closed.
+    // El módulo ya loggea por stdout; el assert importante es que el INSERT corrió
+    // y el pool se cerró.
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 });
@@ -327,13 +329,12 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
+    const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('UPDATE console_users SET active=false');
     expect(sql).toContain('RETURNING email, active');
-    // Only the normalized email is sent as a parameter in this branch.
+    // Sólo se manda el email normalizado como parámetro en este branch.
     expect(params).toEqual(['a@b.c']);
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
@@ -350,7 +351,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
     process.argv = ['node', 'console-user-cli.js', '--email', 'fantasma@example.com', '--deactivate'];
 
     await expect(importCli()).rejects.toThrow(/no existe una cuenta de consola para fantasma@example.com/);
-    // The finally block still closes the pool.
+    // Aún así el finally cierra el pool.
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 
@@ -377,7 +378,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
 
 describe('lectura interactiva de la contraseña (promptPassword + readPassword)', () => {
   it('sin TTY: el módulo falla con "pasá la contraseña en CAUCE_CONSOLE_USER_PASSWORD"', async () => {
-    // Without env, without TTY → must bail with the specific error message.
+    // Sin env, sin TTY → debe colgarse del mensaje de error específico.
     Reflect.deleteProperty(process.env, 'CAUCE_CONSOLE_USER_PASSWORD');
     Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
@@ -397,10 +398,8 @@ describe('lectura interactiva de la contraseña (promptPassword + readPassword)'
 
     await importCli();
 
-    const call = stub.query.mock.calls[0];
-    if (!call) throw new Error('query was not called');
-    const params = call[1] as unknown[];
-    // The module calls hashPassword(...) and stores the result at position $3 of the INSERT.
+    const params = exigir(stub.query.mock.calls[0], 'una llamada registrada')[1] as unknown[];
+    // El módulo llama a hashPassword(...) y guarda el resultado en la posición $3 del INSERT.
     expect(params[2]).toBe('MOCKED-SCYPT-HASH');
   });
 

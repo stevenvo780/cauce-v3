@@ -438,14 +438,18 @@ class ManagerWorker:
             fail("alias invalido")
         return f"cauce-v3-pty@{alias}.service"
 
-    def _selector(self, alias: str, release_sha: str, release: pathlib.Path) -> bytes:
+    def _selector(self, release_sha: str, release: pathlib.Path) -> bytes:
+        """Release drop-in: ONLY Environment lines, never ExecStart and never an alias.
+
+        The unit template already execs the launcher out of CAUCE_PTY_OPS_ROOT with %i,
+        so the same conf works for every alias and cloning one cannot start the launcher
+        with the wrong alias (exit 73).
+        """
         return (
             "# Gestionado por rollout-pty.py; no contiene credenciales.\n"
             "[Service]\n"
             f"Environment=CAUCE_PTY_OPS_ROOT={release}\n"
             f"Environment=CAUCE_PTY_AGENT_VERSION={release_sha}\n"
-            "ExecStart=\n"
-            f"ExecStart={release}/pty-agent/cauce-pty-launcher.sh {alias}\n"
         ).encode()
 
     def _state(self, unit: str) -> tuple[bool, bool]:
@@ -629,7 +633,7 @@ class ManagerWorker:
             except BlockingIOError:
                 fail(f"otro rollout PTY opera sobre {alias}")
             selector = self._selector_path(alias)
-            expected_selector = self._selector(alias, release_sha, release)
+            expected_selector = self._selector(release_sha, release)
             enabled, active = self._state(self._unit(alias))
             if (
                 selector.exists()

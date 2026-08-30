@@ -1,6 +1,16 @@
-/**
- * Audio transcription against an OpenAI-API-compatible service.
- */
+/** Transcripcion de audio contra un servicio compatible con la API de OpenAI. */
+import { logJsonLine } from './ingress-body.js';
+
+/** Cuanto del cuerpo de error del servicio se conserva para el registro. */
+const MAX_ERROR_BODY_CHARS = 500;
+
+async function causaDelServicio(respuesta: { text(): Promise<string> }): Promise<string> {
+  try {
+    return (await respuesta.text()).replace(/\s+/gu, ' ').trim().slice(0, MAX_ERROR_BODY_CHARS);
+  } catch {
+    return '';
+  }
+}
 
 export interface TranscriptionConfig {
   /** Service origin, without the path: `http://host:8000/v1`. */
@@ -109,6 +119,13 @@ export async function transcribeAudio(
       signal: control.signal
     });
     if (!respuesta.ok) {
+      logJsonLine({
+        event: 'telegram_transcription_failed',
+        status: respuesta.status,
+        model: config.model,
+        bytes: payload.length,
+        cause: await causaDelServicio(respuesta),
+      });
       return { error: `el servicio de transcripción respondió ${String(respuesta.status)}` };
     }
     const cuerpo: unknown = await respuesta.json();
@@ -120,6 +137,13 @@ export async function transcribeAudio(
     const causa = error instanceof Error && error.name === 'AbortError'
       ? `no respondió en ${String(Math.round(config.timeoutMs / 1_000))} s`
       : 'no está accesible';
+    logJsonLine({
+      event: 'telegram_transcription_failed',
+      status: null,
+      model: config.model,
+      bytes: payload.length,
+      cause: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, MAX_ERROR_BODY_CHARS) : '',
+    });
     return { error: `el servicio de transcripción ${causa}` };
   } finally {
     clearTimeout(reloj);

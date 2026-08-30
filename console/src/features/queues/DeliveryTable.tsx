@@ -9,11 +9,8 @@ import { ESTADO_ENTREGA } from './estado-de-entrega';
 import { leerUltimoError } from './ultimo-error';
 
 /**
- * States in which there STILL cannot be a last error, because the delivery has not yet failed.
- *
- *  a `pending` delivery used to show "UNKNOWN" in orange under "Last
- * error". "There is no error yet" is NOT an unknown — it is the only good news on the row, and
- * painting it in the alarm color is what makes real alarms stop being read.
+ * States in which there STILL cannot be a last error. "No error yet" is NOT an unknown: painting
+ * it in the alarm colour is what makes real alarms stop being read.
  */
 const SIN_FALLO_TODAVIA: ReadonlySet<string> = new Set(['pending', 'leased', 'accepted', 'started', 'done']);
 
@@ -61,8 +58,23 @@ function removeId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet
 }
 
 /**
- * Delivery table and replay/cancel control for queued messages.
+ * Notices are indexed BY DELIVERY: with one shared notice, acting on a second row erased the
+ * outcome of the first, including "uncertain, reread before deciding".
  */
+function withNotice(current: ReadonlyMap<string, string>, deliveryId: string, text: string): ReadonlyMap<string, string> {
+  const next = new Map(current);
+  next.set(deliveryId, text);
+  return next;
+}
+
+function withoutNotice(current: ReadonlyMap<string, string>, deliveryId: string): ReadonlyMap<string, string> {
+  if (!current.has(deliveryId)) return current;
+  const next = new Map(current);
+  next.delete(deliveryId);
+  return next;
+}
+
+/** Delivery table and replay/cancel control for queued messages. */
 export function DeliveryTable({
   rows, canReplay, canCancel, onChanged, snapshotVersion, empty, caption, resaltada,
 }: {
@@ -86,7 +98,7 @@ export function DeliveryTable({
   const [replaying, setReplaying] = useState<ReadonlySet<string>>(() => new Set());
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(() => new Set());
   const [uncertain, setUncertain] = useState<ReadonlySet<string>>(() => new Set());
-  const [notice, setNotice] = useState<string>();
+  const [notices, setNotices] = useState<ReadonlyMap<string, string>>(() => new Map());
   const previousSnapshotVersion = useRef(snapshotVersion);
   const [pendiente, setPendiente] = useState<Pendiente>();
 
@@ -112,24 +124,25 @@ export function DeliveryTable({
 
   async function replay(deliveryId: string) {
     setReplaying((current) => addId(current, deliveryId));
-    setNotice(undefined);
+    setNotices((current) => withoutNotice(current, deliveryId));
     try {
       const result = await api.replayDelivery(deliveryId);
       if (!exactReplayReceipt(result, deliveryId)) {
         throw new Error('el gateway no devolvió un recibo durable exacto del replay');
       }
-      setNotice(`Replay encolado para ${compactId(deliveryId)}`);
+      setNotices((current) => withNotice(current, deliveryId, `Replay encolado para ${compactId(deliveryId)}`));
       void onChanged().catch(() => undefined);
     } catch (error) {
       // A network error or a truncated 2xx can occur AFTER the commit. Replay has no key the
       // browser can safely reuse, so the retry is not done blindly: we reread the row and
       // declare the outcome uncertain.
       const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
-      setNotice(`Resultado incierto del reinyectado: ${detail}. Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`);
+      const encabezado = `Resultado incierto del reinyectado de ${compactId(deliveryId)}: ${detail}.`;
+      setNotices((current) => withNotice(current, deliveryId, `${encabezado} Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`));
       const verified = await rereadAfterUncertain(deliveryId);
-      setNotice(`Resultado incierto del reinyectado: ${detail}. ${verified
+      setNotices((current) => withNotice(current, deliveryId, `${encabezado} ${verified
         ? 'La cola ya se releyó; revisá el estado antes de decidir otra acción.'
-        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`);
+        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`));
     } finally {
       setReplaying((current) => removeId(current, deliveryId));
     }
@@ -137,23 +150,24 @@ export function DeliveryTable({
 
   async function cancel(deliveryId: string) {
     setCancelling((current) => addId(current, deliveryId));
-    setNotice(undefined);
+    setNotices((current) => withoutNotice(current, deliveryId));
     try {
       const result = await api.cancelDelivery(deliveryId);
       if (!exactCancelReceipt(result, deliveryId)) {
         throw new Error('el gateway no devolvió un recibo durable exacto de la cancelación');
       }
-      setNotice(`Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`);
+      setNotices((current) => withNotice(current, deliveryId, `Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`));
       void onChanged().catch(() => undefined);
     } catch (error) {
       // Cancel may also have confirmed before losing its response. The only safe authority is the
       // reread; reissuing the POST without it could race the new state.
       const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
-      setNotice(`Resultado incierto de la cancelación: ${detail}. Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`);
+      const encabezado = `Resultado incierto de la cancelación de ${compactId(deliveryId)}: ${detail}.`;
+      setNotices((current) => withNotice(current, deliveryId, `${encabezado} Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`));
       const verified = await rereadAfterUncertain(deliveryId);
-      setNotice(`Resultado incierto de la cancelación: ${detail}. ${verified
+      setNotices((current) => withNotice(current, deliveryId, `${encabezado} ${verified
         ? 'La cola ya se releyó; revisá el estado antes de decidir otra acción.'
-        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`);
+        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`));
     } finally {
       setCancelling((current) => removeId(current, deliveryId));
     }
@@ -170,7 +184,11 @@ export function DeliveryTable({
 
   return (
     <>
-      {notice ? <p className="notice" role="status">{notice}</p> : null}
+      {/* One line per delivery acted on, and each one names its own: the phone stacks the table and
+          the action column is not where an operator looks for the outcome of what they just did. */}
+      {[...notices].map(([deliveryId, texto]) => (
+        <p className="notice" role="status" key={deliveryId}>{texto}</p>
+      ))}
 
       {/*
         The confirmation lives ABOVE the table, not inside the cell: on the phone the action column

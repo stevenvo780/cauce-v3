@@ -83,21 +83,21 @@ def test_dry_run_normalizes_realistic_fixture():
     assert set(providers) == {'claude', 'codex', 'antigravity', 'opencode'}
 
     # El caso que motivo el contrato: codex tiene que separarse en dos grupos por limitId, no
-    # aplastarse a un numero (uno esta agotado, el otro libre).
-    codex_groups = {g['group_key']: g for g in providers['codex']['groups']}
-    assert set(codex_groups) == {'codex', 'codex_bengalfox'}
-    assert codex_groups['codex']['account_id'] == 'codex-pro-steven'
-    assert codex_groups['codex']['windows'][0]['used_percent'] == 100.0
-    assert codex_groups['codex']['windows'][0]['status'] == 'rate-limited'
-    assert codex_groups['codex_bengalfox']['account_id'] is None, 'grupo sin entrada en bindings queda sin atar'
-    assert 'sin binding' in codex_groups['codex_bengalfox']['binding_note']
+    # aplastarse a un numero (uno esta agotado, el otro libre). El grupo viaja por ventana.
+    codex_windows = {w['group_key']: w for w in providers['codex']['windows']}
+    assert set(codex_windows) == {'codex', 'codex_bengalfox'}
+    assert codex_windows['codex']['account_id'] == 'codex-pro-steven'
+    assert codex_windows['codex']['used_percent'] == 100.0
+    assert codex_windows['codex']['status'] == 'rate-limited'
+    assert codex_windows['codex_bengalfox']['account_id'] is None, 'grupo sin entrada en bindings queda sin atar'
+    assert 'sin binding' in codex_windows['codex_bengalfox']['binding_note']
 
-    claude_groups = {g['group_key']: g for g in providers['claude']['groups']}
-    assert set(claude_groups) == {'default'}
-    assert len(claude_groups['default']['windows']) == 2
-    assert claude_groups['default']['account_id'] == 'claude-steven-max'
+    claude_windows = providers['claude']['windows']
+    assert {w['group_key'] for w in claude_windows} == {'default'}
+    assert len(claude_windows) == 2
+    assert claude_windows[0]['account_id'] == 'claude-steven-max'
 
-    opencode_window = providers['opencode']['groups'][0]['windows'][0]
+    opencode_window = providers['opencode']['windows'][0]
     assert opencode_window['used_units'] == 0
     assert opencode_window['limit_units'] == 12
     print('✓ normaliza el fixture realista (codex se separa por grupo, claude/opencode quedan en default)')
@@ -125,7 +125,7 @@ def test_malformed_provider_and_windows_without_numbers_dont_crash():
         assert providers['claude']['ok'] is False
         assert 'no es un objeto' in providers['claude']['note']
         assert providers['codex']['ok'] is True, 'el proveedor sigue reportandose ok, solo pierde la ventana rota'
-        assert providers['codex']['groups'] == [], 'la ventana sin usedPercent/remainingPercent/usedUnits se descarta'
+        assert providers['codex']['windows'] == [], 'la ventana sin usedPercent/remainingPercent/usedUnits se descarta'
         assert 'descartada' in providers['codex']['note']
     finally:
         os.unlink(path)

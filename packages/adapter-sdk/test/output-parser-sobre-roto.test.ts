@@ -3,10 +3,6 @@ import { test } from 'node:test';
 import { parseFinalText } from '../src/sdk/output-parser.js';
 
 // ---------------------------------------------------------------------------
-// MEASURED BUG: `argos` lost 4 ENTIRE turns on 2026-08-15 (and 5 on 31-jul) with
-// `last_error = "OpenClaw result contained a malformed JSON object"` and `deliveries.result = NULL`.
-// All four were `agent.response` deliveries: the agent did the work, wrote the reply, and the
-// parser discarded it COMPLETELY. It was the only alias in the fleet with that error in 7 days.
 //
 // THE CAUSE, with the raw output of all four turns in front of us, IS ONE SINGLE CHARACTER: the
 // separator between key and value arrived as `>` instead of `:`. All four envelopes start literally
@@ -22,11 +18,7 @@ import { parseFinalText } from '../src/sdk/output-parser.js';
 // which requires the literal `:`. It also only covered the envelope truncated AFTER an intact
 // `reply`; the parser was run case by case over the other broken envelope shapes (not from
 // memory) and 20 more died in that same `throw`. They are all below, each with its own literal
-// measured example.
 //
-// Guiding principle: THE REPLY IS THE WORK. No malformed accessory field may cost an entire turn;
-// the bad part is discarded and the turn stays alive.
-// ---------------------------------------------------------------------------
 
 const SOBRE = '"messages":[],"status":"done","retryable":false,"artifacts":[]';
 
@@ -254,10 +246,21 @@ test('un reply vacio o solo con espacios cae al piso, no al throw', () => {
 
 // --- What does NOT change ----------------------------------------------------------------------
 
-test('un objeto BIEN formado que incumple el esquema sigue siendo fallo duro', () => {
-  // Here the agent declared a COMPLETE envelope and fields are missing: it is not a transport cut,
-  // it is a broken contract, and softening it would hide agents that never learn the format.
-  assert.throws(() => parseFinalText('{"reply":"hola"}', 'X'), /missing 'messages'/u);
+test('un sobre sin andamiaje entrega el turno Y le ensena al agente', () => {
+  // El temor que justificaba el fallo duro era «ablandarlo oculta agentes que nunca aprenden el
+  // formato». Se atiende sin perder el turno: se normaliza la ausencia Y se inyecta el aviso en la
+  const salida = parseFinalText('{"reply":"hola"}', 'X');
+  assert.equal(salida.status, 'done');
+  assert.deepEqual(salida.messages, []);
+  assert.match(String(salida.reply), /^hola/u);
+  assert.match(String(salida.reply), /faltaba/u);
+  assert.match(String(salida.reply), /los siete campos/u);
+});
+
+test('un campo PRESENTE pero mal formado sigue siendo fallo duro', () => {
+  // Aca si hay violacion de contrato, no descuido: el agente declaro el campo y lo declaro mal.
+  assert.throws(() => parseFinalText('{"reply":"hola","retryable":"si"}', 'X'), /'retryable' must be a boolean/u);
+  assert.throws(() => parseFinalText('{"reply":"hola","messages":{}}', 'X'), /'messages' must be an array/u);
 });
 
 test('una respuesta en prosa sigue siendo una respuesta en prosa', () => {

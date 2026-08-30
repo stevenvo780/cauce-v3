@@ -15,20 +15,14 @@ import { HARNESS_START_MARKER } from "../src/sdk/types.js";
 import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
 import {
   esDiagnosticoDeArranque,
+  esSesionNativaInexistente,
   nuncaEmpezoElTurno,
   sinMarcaDeArranque,
 } from "../src/harnesses/shared.js";
 
 /**
- * R1 and R2 of the retry policy.
  *
- * What these tests defend is NOT "retry more". It is the distinction between "did nothing"
- * and "we do not know if it did anything", which is why half the cases here assert that an
- * AMBIGUOUS delivery is still not retried. A test that only checked the new retries would
- * let through the regression that really matters: duplicating work that already had effects.
  *
- * "Pre-flight" failures (no structured output and no effects) are classified with
- * `retryable=true` only when it can be guaranteed the process did not begin its execution.
  */
 
 const stateRoot = resolve(".test-state");
@@ -167,13 +161,95 @@ test("el diagnóstico de arranque es una lista blanca: lo que no coincide sigue 
     "thread 'main' panicked at src/main.rs:42",
     "Killed",
     // Outside the whitelist ON PURPOSE: a provider runs out mid-turn with this same text, after
-    // the agent has already had effects. It costs 26 measured deliveries and it pays them.
     "hermes -z: agent failed: Codex provider quota exhausted",
     "hermes -z: agent failed: No usable credentials found for provider codex",
     "",
     undefined,
   ]) {
     assert.equal(esDiagnosticoDeArranque(enMedio), false, String(enMedio));
+  }
+});
+
+/* ------------------------------------------------- R1b: sesión fantasma ---- */
+
+/**
+ * The pointer to a native session the harness no longer finds has to be FORGOTTEN.
+ *
+ * Without this, R1 becomes a trap of its own making: the failure is retryable, the retry resumes
+ */
+test("R1b: la sesión nativa que ya no existe se OLVIDA, para que el reintento no repita el mismo fallo", async () => {
+  const store = await freshStore("r1b-fantasma");
+  const clave = "claude:shared:kratos";
+  await store.setSession(clave, { native_id: "f7649225-0000-4000-8000-000000000000", initialized: true });
+  const adapter = new HarnessAdapter({
+    definition: HARNESS_DEFINITIONS.claude,
+    runner: fixedRunner({
+      stdout: "",
+      stderr: "No conversation found with session ID: f7649225-0000-4000-8000-000000000000\n",
+    }),
+    store,
+  });
+
+  await assert.rejects(
+    adapter.execute({
+      prompt: "hacé el trabajo",
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+      sessionKey: "shared:kratos",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AdapterError);
+      assert.equal(error.code, "PROCESS_EXIT_PREFLIGHT");
+      assert.equal(error.retryable, true);
+      return true;
+    },
+  );
+  assert.equal(store.getSession(clave), undefined, "el puntero muerto sobrevivió al fallo");
+});
+
+test("R1b NO olvida una sesión que SÍ existe y la tiene otro: eso se resuelve esperando, no abandonando el hilo", async () => {
+  // The negative control. `already in use` is also a start-up diagnostic and is also retried, but
+  // the conversation is ALIVE: forgetting it would open a new one and lose the thread.
+  const store = await freshStore("r1b-en-uso");
+  const clave = "claude:shared:kratos";
+  const guardada = { native_id: "7f3a0000-0000-4000-8000-000000000000", initialized: true };
+  await store.setSession(clave, guardada);
+  const adapter = new HarnessAdapter({
+    definition: HARNESS_DEFINITIONS.claude,
+    runner: fixedRunner({ stdout: "", stderr: "Error: Session ID 7f3a is already in use.\n" }),
+    store,
+  });
+
+  await adapter.execute({
+    prompt: "hacé el trabajo",
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+    sessionKey: "shared:kratos",
+  }).catch(() => undefined);
+  assert.deepEqual(store.getSession(clave), guardada);
+});
+
+test("el olvido de sesión es una lista blanca más estrecha que el diagnóstico de arranque", () => {
+  for (const inexistente of [
+    "No conversation found with session ID: 019",
+    "no rollout found for thread 019",
+  ]) {
+    assert.equal(esSesionNativaInexistente(inexistente), true, inexistente);
+    // Everything that is forgettable is, first, a start-up diagnostic.
+    assert.equal(esDiagnosticoDeArranque(inexistente), true, inexistente);
+  }
+  for (const conservar of [
+    // The conversation exists and someone else holds it.
+    "Error: Session ID 7f3a-11 is already in use.",
+    // These say nothing about the session; forgetting it would lose the thread for an unrelated cause.
+    "Error loading config.toml: unknown variant `writes`",
+    "/bin/sh: 1: codex: command not found",
+    "Error: thread/resume: thread/resume failed: connection reset by peer",
+    "TypeError: Cannot read properties of undefined",
+    "",
+    undefined,
+  ]) {
+    assert.equal(esSesionNativaInexistente(conservar), false, String(conservar));
   }
 });
 
@@ -258,9 +334,6 @@ test("R2 NO se aplica a otras causas de cancelación: sólo el apagado es infrae
 /* -------------------------------------------------- testigo y transporte -- */
 
 test("el testigo declarado viaja hasta el transporte, y sólo el de este harness", async () => {
-  // The transport keeps the request and fails: what is measured is what ARRIVES to it, not the
-  // result. So each harness is exercised with its own `parse` without fabricating a different
-  // output per format.
   const capturados: CommandRunRequest[] = [];
   const runner: CommandRunner = {
     run: async (request) => {

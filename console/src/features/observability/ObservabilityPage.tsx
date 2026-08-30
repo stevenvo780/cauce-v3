@@ -6,7 +6,7 @@ import {
   Badge, Desplazable, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time,
   Unknown, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
-import { NO_APLICA, compactId, safeOriginRelayState } from '../../lib';
+import { compactId, safeOriginRelayState } from '../../lib';
 import { AuditPanel } from '../audit/AuditPanel';
 import { onNavClick } from '../../router';
 
@@ -27,11 +27,11 @@ const TABS = [
 /**
  * Unified view of observability signals, origin relays and event audit.
  */
-export function ObservabilityPage() {
+export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab }) {
   const api = useApi();
   const resource = useResource('observability', () => api.getObservability());
   const relays = useResource('origin-relays', () => api.listOriginRelays());
-  const [tab, setTab] = useState<Tab>('senales');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [auditQuery, setAuditQuery] = useState('');
 
   function reloadAll() {
@@ -116,7 +116,10 @@ export function ObservabilityPage() {
                       </td>
                       <td><Unknown value={item.attempts} /></td>
                       <td><Time value={item.created_at} relativo /></td>
-                      <td>{actuallySent ? <Time value={item.sent_at} relativo /> : <span className="muted" title="El servidor no informó hora de envío para este relay.">{NO_APLICA}</span>}</td>
+                      {/* The dash is decorative for the listener: `Unknown` is what announces the phrase. */}
+                      <td>{actuallySent
+                        ? <Time value={item.sent_at} relativo />
+                        : <Unknown value={null} ausente="no-aplica" motivo="El servidor no informó hora de envío para este relay." />}</td>
                       <td>
                         {typeof traceId === 'string' && traceId.length > 0
                           ? <button className="button small" type="button" onClick={() => { investigate(traceId); }} aria-label={`Ver la auditoría del trace ${traceId}`}>

@@ -135,6 +135,8 @@ validate_channel_material() {
 container_id=''
 container_image=''
 container_generation=''
+container_started=''
+container_restart=''
 
 read_generation() {
   local output id image started restart running extra digest
@@ -153,6 +155,24 @@ read_generation() {
   container_id=$id
   container_image=$image
   container_generation=${digest:0:32}
+  container_started=$started
+  container_restart=$restart
+}
+
+# The supervisor stamps CAUCE_CONTAINER_GENERATION with ITS formula (NUL-joined, four fields with the
+# container init start time, full digest); the measurement matches the adapter by that exact value.
+# Reusing this launcher's own 32-char ticket generation never matched, so every measurement came back
+# empty and profile writes answered 503 for every alias. Both are kept: the ticket one is protocol.
+adapter_generation=''
+read_adapter_generation() {
+  local init_starttime digest
+  init_starttime=$(docker_control exec "$container_id" /usr/bin/python3 -c \
+    'raw=open("/proc/1/stat",encoding="utf-8").read(); fields=raw[raw.rfind(")")+2:].split(); print(fields[19])' 2>/dev/null) || return 1
+  [[ $init_starttime =~ ^[0-9]+$ ]] || return 1
+  digest=$(printf '%s\0%s\0%s\0%s' "$container_id" "$container_started" "$container_restart" "$init_starttime" | sha256sum)
+  digest=${digest%% *}
+  [[ $digest =~ ^[a-f0-9]{64}$ ]] || return 1
+  adapter_generation=$digest
 }
 
 runtime_uid=''
@@ -401,7 +421,7 @@ measure_adapter_runtime_facts() {
   local measured
   local -a measurement_environment=(
     --env "CAUCE_PTY_MEASURE_ALIAS=$alias_name"
-    --env "CAUCE_PTY_MEASURE_GENERATION=$container_generation"
+    --env "CAUCE_PTY_MEASURE_GENERATION=$adapter_generation"
     --env "CAUCE_PTY_MEASURE_STATE=$state_directory"
     --env "CAUCE_PTY_MEASURE_HOME=$container_home"
     --env "CAUCE_PTY_MEASURE_HARNESS=$harness"
@@ -668,7 +688,8 @@ publish_bundle() {
     fi
   fi
   # Runtime facts enrich presence/governance but are not a precondition for terminal transport.
-  # The measurement function returns `{}` on zero, ambiguous, or unsafe adapter evidence.
+  # Zero/ambiguous evidence -- or an unreadable adapter generation -- degrades to `{}`, never a stop.
+  read_adapter_generation || adapter_generation=''
   runtime_facts=$(measure_adapter_runtime_facts)
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"

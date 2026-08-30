@@ -31,6 +31,7 @@ import {
   anchorEdges,
   arcBetween,
   collect,
+  nodeKey,
   relax,
   separate,
 } from './layout-nodes';
@@ -38,6 +39,7 @@ import {
 export {
   NODE_FOOTPRINT,
   centroidOf,
+  closedSmoothPath,
   convexHull,
   footprintsOverlap,
   hashString,
@@ -52,28 +54,40 @@ export {
 
 export {
   aclCaption,
+  placeLabels,
   rectsOverlap,
   type LabelRect,
 } from './layout-labels';
 
 export {
+  DEFAULTS,
   SEP,
+  anchorEdges,
+  arcBetween,
   collect,
   edgeKey,
+  nodeKey,
   relax,
   separate,
   type RawEdge,
   type RawNode,
 } from './layout-nodes';
 
-/** An alias. Exists only once even if it belongs to several rooms or tenants. */
-interface HyperNode {
+/**
+ * An agent: the pair (tenant, alias). Exists only once even if it belongs to several rooms of its tenant.
+ *
+ * The same alias under two tenants gives TWO nodes, because they are two agents: fusing them drew one figure
+ * hanging from rooms of both tenants and mixed their `enabled`.
+ */
+export interface HyperNode {
+  /** `nodeKey(tenantId, alias)`: the identity, unique across the whole drawing. */
+  key: string;
   alias: string;
   /** Label to display. `null` when the backend did not report an alias (shown as UNKNOWN). */
   label: string | null;
   /** `null` = the backend did not report it. It is not assumed enabled. */
   enabled: boolean | null;
-  /** Tenant ids where it appears. More than one = the alias crosses tenants. */
+  /** The single tenant this node belongs to, as a list: an alias never crosses tenants any more. */
   tenants: string[];
   /** Keys of the hyperedges (rooms) that contain it. */
   edges: string[];
@@ -82,7 +96,7 @@ interface HyperNode {
 }
 
 /** A room: the hyperedge itself. */
-interface HyperEdge {
+export interface HyperEdge {
   key: string;
   tenantId: string;
   tenantLabel: string | null;
@@ -115,7 +129,7 @@ interface HyperEdge {
 }
 
 /** An ACL edge between tenants: this one IS binary and directed. */
-interface AclArc {
+export interface AclArc {
   key: string;
   fromTenant: string;
   toTenant: string;
@@ -139,7 +153,7 @@ interface AclArc {
   angle: number;
 }
 
-interface TenantBlob {
+export interface TenantBlob {
   id: string;
   label: string | null;
   centroid: Point;
@@ -215,7 +229,7 @@ export function layoutHypergraph(
   // Relaxation leaves a *tendency* to not overlap; this guarantees it. It runs before computing the envelopes so regions are drawn on the final positions and still contain their members.
   const box = settings.footprint;
   separate(
-    nodeList.map((node) => node.alias),
+    nodeList.map((node) => node.key),
     positions,
     box,
     {
@@ -226,18 +240,19 @@ export function layoutHypergraph(
     },
   );
 
-  for (const [alias, point] of positions) positions.set(alias, { x: round(point.x), y: round(point.y) });
+  for (const [key, point] of positions) positions.set(key, { x: round(point.x), y: round(point.y) });
 
   const tenantOrder: string[] = [];
   for (const edge of rawEdges) if (!tenantOrder.includes(edge.tenantId)) tenantOrder.push(edge.tenantId);
 
   const nodes: HyperNode[] = nodeList.map((node) => {
-    const position = positions.get(node.alias) ?? { x: settings.width / 2, y: settings.height / 2 };
+    const position = positions.get(node.key) ?? { x: settings.width / 2, y: settings.height / 2 };
     return {
+      key: node.key,
       alias: node.alias,
       label: node.label,
       enabled: node.enabled,
-      tenants: [...node.tenants],
+      tenants: [node.tenantId],
       edges: node.edges,
       x: position.x,
       y: position.y,
@@ -246,8 +261,10 @@ export function layoutHypergraph(
 
   const emptyEdges: string[] = [];
   const edges: HyperEdge[] = rawEdges.map((edge) => {
+    // A member is resolved within its OWN tenant: the same alias in another tenant is another node, in
+    // another region, and looking it up by alias alone dragged that stranger into this envelope.
     const memberPoints = edge.members
-      .map((alias) => positions.get(alias))
+      .map((alias) => positions.get(nodeKey(edge.tenantId, alias)))
       .filter((point): point is Point => Boolean(point));
 
     if (memberPoints.length === 0) emptyEdges.push(edge.key);

@@ -41,7 +41,7 @@
   color: var(--text);
   cursor: pointer;
   text-align: left;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
 .ficheros-rotulo { font-size: var(--tipo-rotulo); font-weight: 600; }
@@ -65,6 +65,16 @@
   letter-spacing: .04em;
   text-transform: uppercase;
 }
+.ficheros-borrador {
+  padding: 2px 7px;
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  color: var(--amber);
+  font-size: var(--tipo-apunte);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .ficheros-modo-entero { color: var(--mint); }
 .ficheros-modo-proyectado { color: var(--amber); }
 .ficheros-modo-solo-lectura { color: var(--faint); }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Post-deploy smoke for Cauce V3: verifies real effects, not green buttons.
 # Exits 0 only if all pass. Can be run standalone anytime.
 set -uo pipefail
 CONSOLE="${CAUCE_CONSOLE_URL:-https://100.64.0.11:8444}"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PG=(docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tA -c)
 fallo=0
 
@@ -17,9 +17,14 @@ for c in gateway dispatcher terminal-relay telegram-bridge console; do
   if [ "$st" = "healthy" ]; then echo "OK  $c healthy"; else echo "ROJO $c: $st"; fallo=1; fi
 done
 
-# 3) Schema at 037
+#
+# Ahora la expectativa se lee del directorio de migraciones: no puede quedarse atras.
+ESPERADA="$(ls "$REPO_DIR/packages/store/migrations"/[0-9]*.sql 2>/dev/null | xargs -r -n1 basename | sort | tail -1)"
 ver="$("${PG[@]}" "SELECT max(version) FROM schema_migrations" 2>/dev/null)"
-if [ "${ver:0:3}" = "037" ]; then echo "OK  esquema $ver"; else echo "ROJO esquema en '$ver' (esperaba 037_*)"; fallo=1; fi
+if [ -z "$ESPERADA" ]; then
+  echo "ROJO esquema: no pude leer las migraciones del repo para saber que esperar"; fallo=1
+elif [ "$ver" = "$ESPERADA" ]; then echo "OK  esquema $ver"
+else echo "ROJO esquema en '$ver' (el repo declara '$ESPERADA')"; fallo=1; fi
 
 # 4) Fleet alive: >=8 leases with fresh heartbeat (<60s)
 # The fleet reconnects after `up`, so give it up to 2 minutes before calling it red.

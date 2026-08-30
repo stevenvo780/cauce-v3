@@ -50,11 +50,28 @@ import * as systemApi from './client/system-client';
 import * as messagingApi from './client/messaging-client';
 import * as agentApi from './client/agent-client';
 
+/**
+ * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
+ * error cards inside a shell that no longer has a session behind it. The gate polls every 60 s, so
+ * the operator could spend a full minute clicking on a console that can no longer write anything.
+ * The client cannot decide the session — only the server does — so it announces the fact and the
+ * gate revalidates against `/v3/auth/session` right away.
+ */
+type UnauthorizedListener = () => void;
+
+/**
+ * The auth endpoints are excluded from the announcement: `/v3/auth/session` answering 401 would
+ * make the listener ask it again in a loop, and a 401 from `/v3/auth/login` is a wrong password,
+ * not an expired session.
+ */
+const AUTH_PATH = '/v3/auth/';
+
 export class CauceApi {
   private readonly baseUrl: string;
   private csrfToken: string | undefined;
   private bffSessionSupported: boolean | null = null;
   private readonly developmentIdentity?: { tenant: string; alias: string };
+  private readonly unauthorizedListeners = new Set<UnauthorizedListener>();
 
   constructor(
     baseUrl = import.meta.env.VITE_CAUCE_API_BASE ?? '',
@@ -139,13 +156,29 @@ export class CauceApi {
     if (response === undefined) throw new Error('la petición terminó sin respuesta HTTP');
 
     if (!response.ok) {
-      if (response.status === 401) this.csrfToken = undefined;
+      if (response.status === 401) {
+        this.csrfToken = undefined;
+        if (!path.startsWith(AUTH_PATH)) this.announceUnauthorized();
+      }
       const mapped = mapError?.(response.status, body);
       if (mapped !== undefined) throw mapped;
       const detail = errorBody(body);
       throw new ApiError(detail.message ?? (response.statusText || 'API request failed'), response.status, detail.error);
     }
     return body as T;
+  }
+
+  /**
+   * Subscribes to the 401s. Returns the unsubscription: a listener that outlives its component
+   * would revalidate on behalf of a gate that is no longer mounted.
+   */
+  onUnauthorized(listener: UnauthorizedListener): () => void {
+    this.unauthorizedListeners.add(listener);
+    return () => { this.unauthorizedListeners.delete(listener); };
+  }
+
+  private announceUnauthorized(): void {
+    for (const listener of [...this.unauthorizedListeners]) listener();
   }
 
   async csrfForMutation(): Promise<string | undefined> {

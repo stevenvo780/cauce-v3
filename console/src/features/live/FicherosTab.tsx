@@ -11,16 +11,23 @@ import {
   modoDeDocumento,
 } from './ficheros';
 
-/**
- * Editor and viewer for the configuration files that govern an agent.
- */
+/** Editor and viewer for the configuration files that govern an agent. */
+
+export interface BorradorDeFichero {
+  texto: string;
+  /** SHA of the read it was born from: it is what still travels on save, so CAS keeps working. */
+  shaBase: string | null;
+}
 
 interface FicherosTabProps {
   tenantId: string;
   alias: string;
+  /** Outside the component and indexed by kind: tab, file and fold all unmount the editor. */
+  borradores?: Partial<Record<AgentDocumentKind, BorradorDeFichero>>;
+  onBorrador: (kind: AgentDocumentKind, borrador: BorradorDeFichero | undefined) => void;
 }
 
-export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
+export function FicherosTab({ tenantId, alias, borradores, onBorrador }: FicherosTabProps) {
   const api = useApi();
   const mapa = useResource(
     `ficheros-${tenantId}-${alias}`, () => api.getAgentDocuments(tenantId, alias),
@@ -83,6 +90,8 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
               alias={alias}
               canWrite={canWrite}
               abierto={abierto === item.kind}
+              borrador={borradores?.[item.kind]}
+              onBorrador={(nuevo) => { onBorrador(item.kind, nuevo); }}
               onAbrir={() => { setAbierto(abierto === item.kind ? undefined : item.kind); }}
             />
           ))}
@@ -104,13 +113,15 @@ export function FicherosTab({ tenantId, alias }: FicherosTabProps) {
 }
 
 function FilaDeFichero(
-  { item, tenantId, alias, canWrite, abierto, onAbrir }:
+  { item, tenantId, alias, canWrite, abierto, borrador, onBorrador, onAbrir }:
   {
     item: AgentDocumentItem;
     tenantId: string;
     alias: string;
     canWrite: boolean;
     abierto: boolean;
+    borrador: BorradorDeFichero | undefined;
+    onBorrador: (borrador: BorradorDeFichero | undefined) => void;
     onAbrir: () => void;
   },
 ) {
@@ -131,6 +142,9 @@ function FilaDeFichero(
             ? 'editable'
             : 'visor · sólo lectura'}
       </span>
+      {borrador === undefined ? null : (
+        <span className="ficheros-borrador">borrador sin guardar</span>
+      )}
     </>
   );
   return (
@@ -153,7 +167,12 @@ function FilaDeFichero(
 
       {abierto && readable
         ? item.editable
-          ? <Editor item={item} tenantId={tenantId} alias={alias} canWrite={canWrite} />
+          ? (
+            <Editor
+              item={item} tenantId={tenantId} alias={alias} canWrite={canWrite}
+              borrador={borrador} onBorrador={onBorrador}
+            />
+            )
           : <Visor item={item} tenantId={tenantId} alias={alias} />
         : null}
     </li>
@@ -239,13 +258,14 @@ function Visor({ item, tenantId, alias }: {
   );
 }
 
-function Editor({ item, tenantId, alias, canWrite }: {
+function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
   item: AgentDocumentItem; tenantId: string; alias: string; canWrite: boolean;
+  borrador: BorradorDeFichero | undefined;
+  onBorrador: (borrador: BorradorDeFichero | undefined) => void;
 }) {
   const api = useApi();
   const [cargando, setCargando] = useState(true);
   const [servido, setServido] = useState<AgentDocumentContent | undefined>(undefined);
-  const [borrador, setBorrador] = useState('');
   const [fallo, setFallo] = useState<{ titulo: string; detalle: string } | undefined>(undefined);
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState<string | undefined>(undefined);
@@ -255,9 +275,7 @@ function Editor({ item, tenantId, alias, canWrite }: {
     setFallo(undefined);
     setGuardado(undefined);
     try {
-      const cuerpo = await api.getAgentDocumentContent(tenantId, alias, item.kind);
-      setServido(cuerpo);
-      setBorrador(cuerpo.content);
+      setServido(await api.getAgentDocumentContent(tenantId, alias, item.kind));
     } catch (error) {
       const status = error instanceof ApiError ? error.status : undefined;
       const explicado = explicarFallo(status, error instanceof Error ? error.message : undefined);
@@ -269,6 +287,8 @@ function Editor({ item, tenantId, alias, canWrite }: {
   }, [api, tenantId, alias, item.kind]);
 
   useEffect(() => { void cargar(); }, [cargar]);
+
+  const texto = borrador?.texto ?? servido?.content ?? '';
 
   const guardar = useCallback(async () => {
     if (!servido) return;
@@ -298,14 +318,13 @@ function Editor({ item, tenantId, alias, canWrite }: {
     setGuardando(true);
     setFallo(undefined);
     try {
-      // The fingerprint of the opened file always travels with the save. It is what keeps two people
-      // who have this screen open from silently clobbering each other: if the file changed, the
-      // server answers 409 and does not write, instead of letting the last to click win.
+      // The fingerprint of the READ THIS TEXT WAS BORN FROM travels with the save: if the file
+      // changed meanwhile the server answers 409 instead of letting the last to click win.
       const resultado = await api.putAgentDocumentContent(
-        tenantId, alias, item.kind, borrador, servido.sha,
+        tenantId, alias, item.kind, texto, borrador ? borrador.shaBase : servido.sha,
       );
       if (!esAckAplicado(resultado) || resultado.path !== servido.path
-        || resultado.bytes !== new TextEncoder().encode(borrador).byteLength) {
+        || resultado.bytes !== new TextEncoder().encode(texto).byteLength) {
         setFallo({
           titulo: 'El servidor no confirmó la aplicación',
           detalle: mensajeDeGuardado(resultado),
@@ -313,9 +332,10 @@ function Editor({ item, tenantId, alias, canWrite }: {
         return;
       }
       setServido({
-        ...servido, content: borrador, sha: resultado.sha, bytes: resultado.bytes,
+        ...servido, content: texto, sha: resultado.sha, bytes: resultado.bytes,
         exists: true, truncated: false, editable: true,
       });
+      onBorrador(undefined);
       setGuardado(mensajeDeGuardado(resultado));
     } catch (error) {
       const status = error instanceof ApiError ? error.status : undefined;
@@ -329,7 +349,7 @@ function Editor({ item, tenantId, alias, canWrite }: {
     } finally {
       setGuardando(false);
     }
-  }, [api, tenantId, alias, item.kind, borrador, servido, canWrite]);
+  }, [api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, onBorrador]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
 
@@ -345,7 +365,7 @@ function Editor({ item, tenantId, alias, canWrite }: {
   if (!servido) return null;
 
   const avisoGuardar = avisoAntesDeGuardar(item);
-  const sucio = hayCambios(servido.content, borrador);
+  const sucio = hayCambios(servido.content, texto);
 
   return (
     <div className="ficheros-editor">
@@ -372,13 +392,16 @@ function Editor({ item, tenantId, alias, canWrite }: {
       <textarea
         className="ficheros-texto"
         aria-label={`Contenido de ${item.label}`}
-        value={borrador}
+        value={texto}
         spellCheck={false}
         rows={18}
         readOnly={!canWrite || !servido.editable || servido.truncated}
         aria-readonly={!canWrite || !servido.editable || servido.truncated}
         onChange={(event) => {
-          setBorrador(event.target.value);
+          const escrito = event.target.value;
+          onBorrador(escrito === servido.content
+            ? undefined
+            : { texto: escrito, shaBase: borrador ? borrador.shaBase : servido.sha });
           setGuardado(undefined);
         }}
       />
@@ -389,7 +412,12 @@ function Editor({ item, tenantId, alias, canWrite }: {
         </span>
         {fallo ? <span className="ficheros-fallo-linea">{fallo.titulo}: {fallo.detalle}</span> : null}
         {guardado ? <span className="ficheros-ok">{guardado}</span> : null}
-        <button type="button" className="button small secondary" onClick={() => void cargar()} disabled={guardando}>
+        <button
+          type="button"
+          className="button small secondary"
+          disabled={guardando}
+          onClick={() => { onBorrador(undefined); void cargar(); }}
+        >
           Descartar y releer
         </button>
         <button

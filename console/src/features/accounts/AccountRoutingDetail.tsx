@@ -47,9 +47,13 @@ export function AccountRoutingDetail({ accountId, quotas, config }: {
           ? <span className="unknown">Ningún alias la tiene asignada.</span>
           : <ul className="assignments-list">
             {assignments.map((assignment, index) => (
-              <li key={`${assignment.alias ?? 'unknown'}-${String(index)}`} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
+              <li key={`${assignment.tenant_id ?? 'unknown'}/${assignment.alias ?? 'unknown'}-${String(index)}`} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
                 <div className="assignment-header">
-                  <span className="agent-alias mono">{assignment.alias ?? '?'}</span>
+                  {/* Qualified by tenant: the same alias exists under more than one client, and the bare
+                      alias did not say which of them has the account. */}
+                  <span className="agent-alias mono">
+                    {assignment.tenant_id ? `${assignment.tenant_id}/${assignment.alias ?? '?'}` : assignment.alias ?? '?'}
+                  </span>
                   <span className="agent-display">{assignment.display_name ?? '—'}</span>
                   {assignment.isPrimary && <Badge tone="online">PRIMARIA</Badge>}
                   {!assignment.enabled && <Badge tone="offline">INACTIVO</Badge>}

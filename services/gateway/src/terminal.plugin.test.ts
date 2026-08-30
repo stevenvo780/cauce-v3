@@ -17,11 +17,6 @@ import {
 } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence, type TerminalSessionRow } from './terminal/types.js';
 
-/**
- * Control-plane behaviour end to end over app.inject, with the same console security hook
- * app.ts installs in production. The database is a substitute: these tests are about the
- * decisions and the audit trail, not about PostgreSQL.
- */
 
 const ORIGIN = 'https://consola.elenxos.com';
 const RELAY_TOKEN = 'relay-token-that-is-long-enough-0123456789';
@@ -1160,6 +1155,25 @@ describe('terminal control plane', () => {
     const response = await openSession({});
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: 'forbidden', reason: 'control_permission_required' });
+  });
+
+  it('revocar y robar un terminal pasan por la puerta de la BD, no solo por la de la sesion', async () => {
+    // `requireOperatorPermission` mira la SESION; quien concede `control` es la base. Sin esta
+    // comprobacion ambas rutas llegaban al CAS y contestaban 409, nunca 403.
+    await report([presence()]);
+    const abierta = (await openSession({})).json<{ session_id: string }>();
+    controlPermission = () => Promise.reject(new Error('principal lacks control permission'));
+    const prohibido = { error: 'forbidden', reason: 'control_permission_required' };
+    const sid = abierta.session_id;
+    const credencial = { owner_token: 'x'.repeat(43), request_id: randomUUID() };
+    for (const [method, url, payload] of [
+      ['POST', `/v3/console/terminal/sessions/${sid}/owner`, { expected_owner_generation: 1, ...credencial }],
+      ['DELETE', `/v3/console/terminal/sessions/${sid}`, { owner_generation: 1, ...credencial }],
+    ] as const) {
+      const res = await app.inject({ method, url, headers: { origin: ORIGIN }, payload });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual(prohibido);
+    }
   });
 
   it('caps concurrent sessions per operator', async () => {

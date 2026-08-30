@@ -6,6 +6,12 @@ import { TelegramApiError } from '../src/telegram.js';
 import type { TelegramApi, TelegramMessage, TelegramRemoteFile } from '../src/types.js';
 import type { TranscriptionConfig } from '../src/transcription.js';
 
+/** Estrecha un opcional sin `!` ni `as`: si falta, la prueba dice QUE falto. */
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
+
 const CONFIG: TranscriptionConfig = {
   baseUrl: 'http://claw-audio:8000/v1',
   model: 'deepdml/faster-whisper-large-v3-turbo-ct2',
@@ -86,7 +92,6 @@ describe('transcripción de notas de voz', () => {
     expect(peticion?.body.get('model')).toBe('deepdml/faster-whisper-large-v3-turbo-ct2');
     expect(peticion?.body.get('language')).toBe('es');
     expect(peticion?.body.get('response_format')).toBe('json');
-    // The filename comes from the magic, not from what the user declared.
     expect((peticion?.body.get('file') as File | undefined)?.name).toBe('voz.ogg');
   });
 
@@ -146,6 +151,31 @@ describe('transcripción de notas de voz', () => {
       async () => ({ transcript: 'no debería llegar acá' })
     );
     expect(resultado.error).toMatch(/no parece audio/u);
+  });
+
+  it('un 500 deja la causa REAL en el registro, y no la manda al chat', async () => {
+    const lineas: string[] = [];
+    const registrar = console.error.bind(console);
+    console.error = (...partes: unknown[]): void => { lineas.push(partes.map(String).join(' ')); };
+    let resultado;
+    try {
+      resultado = await prepareTelegramVoice(
+        message({ voice: VOICE }), voiceApi(), CONFIG,
+        async (payload, filename, mime, config) => transcribeAudio(payload, filename, mime, config, async () =>
+          new Response('RuntimeError: CUDA failed with error out of memory', { status: 500 }))
+      );
+    } finally {
+      console.error = registrar;
+    }
+
+    expect(resultado.error).toMatch(/respondió 500/u);
+    expect(resultado.error).not.toMatch(/CUDA/u);
+
+    const registro = lineas.find((linea) => linea.includes('telegram_transcription_failed'));
+    expect(registro, 'el fallo de transcripción no dejó ninguna línea de registro').toBeDefined();
+    const evento = JSON.parse(exigir(registro, 'la línea de registro del fallo')) as { status: number; cause: string };
+    expect(evento.status).toBe(500);
+    expect(evento.cause).toMatch(/CUDA failed with error out of memory/u);
   });
 
   it('recorta y limpia lo que devuelve el servicio: es entrada no confiable', async () => {

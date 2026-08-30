@@ -16,6 +16,19 @@ import {
 } from '../../services/gateway/src/terminal/config.js';
 
 /**
+ * Estrecha un opcional sin `!` ni `as`.
+ *
+ * Las dos reglas del preset se contradicen sobre un `T | undefined`: `no-non-null-assertion`
+ * prohibe el `!` y `non-nullable-type-assertion-style` exige el `!` en lugar del `as`. La salida
+ * no es elegir una, es no aseverar: si el valor falta, la prueba falla diciendo QUE falto, en vez
+ * de reventar con «cannot read property of undefined».
+ */
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
+
+/**
  * Hermetic tests for `services/gateway/src/terminal/config.ts`.
  *
  * The module does three things at boot:
@@ -132,8 +145,7 @@ describe('loadTerminalConfig', () => {
   });
 
   it('carga la configuración canónica cuando todos los env vars están presentes', async () => {
-    const config = await loadTerminalConfig(baseEnv());
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig(baseEnv()), 'una configuración de terminal');
     expect(config.wsPath).toBe(DEFAULT_TERMINAL_WS_PATH);
     expect(config.ticketKey.byteLength).toBe(32);
     expect(config.relayToken).toBe('a'.repeat(40));
@@ -167,8 +179,7 @@ describe('loadTerminalConfig', () => {
     putFile('/etc/cauce/relay.token', 'short\n');
     await expect(loadTerminalConfig(baseEnv())).rejects.toThrow(/at least 32 characters/);
     putFile('/etc/cauce/relay.token', '   ' + 'x'.repeat(40));
-    const config = await loadTerminalConfig(baseEnv());
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig(baseEnv()), 'una configuración de terminal');
     expect(config.relayToken).toBe('x'.repeat(40));
   });
 
@@ -179,12 +190,10 @@ describe('loadTerminalConfig', () => {
 
   it('acepta el ticket key como 64 hex chars y como base64 de 32 bytes', async () => {
     putFile('/etc/cauce/ticket.key', 'c'.repeat(64));
-    const fromHex = await loadTerminalConfig(baseEnv());
-    if (!fromHex) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const fromHex = exigir(await loadTerminalConfig(baseEnv()), 'una configuración de terminal');
     expect(fromHex.ticketKey.byteLength).toBe(32);
     putFile('/etc/cauce/ticket.key', Buffer.from(Buffer.alloc(32, 9)).toString('base64'));
-    const fromBase64 = await loadTerminalConfig(baseEnv());
-    if (!fromBase64) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const fromBase64 = exigir(await loadTerminalConfig(baseEnv()), 'una configuración de terminal');
     expect(fromBase64.ticketKey.byteLength).toBe(32);
   });
 
@@ -198,8 +207,7 @@ describe('loadTerminalConfig', () => {
       .rejects.toThrow(/CAUCE_TERMINAL_OPERATOR_HEADER is invalid/);
     await expect(loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_OPERATOR_HEADER: 'x.op' }))
       .rejects.toThrow(/CAUCE_TERMINAL_OPERATOR_HEADER is invalid/);
-    const config = await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_OPERATOR_HEADER: 'X-Custom' });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_OPERATOR_HEADER: 'X-Custom' }), 'una configuración de terminal');
     expect(config.operatorHeader).toBe('x-custom');
   });
 
@@ -208,8 +216,7 @@ describe('loadTerminalConfig', () => {
       await expect(loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: value }))
         .rejects.toThrow(/MAX_SESSIONS_PER_OPERATOR/);
     }
-    const config = await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: '4' });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR: '4' }), 'una configuración de terminal');
     expect(config.maxSessionsPerOperator).toBe(4);
   });
 
@@ -220,12 +227,11 @@ describe('loadTerminalConfig', () => {
       .rejects.toThrow(/TICKET_TTL_SECONDS/);
     await expect(loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_SESSION_TTL_SECONDS: '3601' }))
       .rejects.toThrow(/SESSION_TTL_SECONDS/);
-    const config = await loadTerminalConfig({
+    const config = exigir(await loadTerminalConfig({
       ...baseEnv(),
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: '60',
       CAUCE_TERMINAL_SESSION_TTL_SECONDS: '1800'
-    });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    }), 'una configuración de terminal');
     expect(config.ticketTtlSeconds).toBe(60);
     expect(config.sessionTtlSeconds).toBe(1800);
   });
@@ -235,11 +241,9 @@ describe('loadTerminalConfig', () => {
       .rejects.toThrow(/CLAIM_LEASE_SECONDS/);
     await expect(loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '301' }))
       .rejects.toThrow(/CLAIM_LEASE_SECONDS/);
-    const config = await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '131' });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '131' }), 'una configuración de terminal');
     expect(config.claimLeaseSeconds).toBe(131);
-    const configMax = await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '300' });
-    if (!configMax) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const configMax = exigir(await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '300' }), 'una configuración de terminal');
     expect(configMax.claimLeaseSeconds).toBe(300);
   });
 
@@ -260,11 +264,10 @@ describe('loadTerminalConfig', () => {
 
   it('acepta la forma plural con varios ids separados por coma', async () => {
     const second = 'b'.repeat(64);
-    const config = await loadTerminalConfig({
+    const config = exigir(await loadTerminalConfig({
       ...baseEnv(),
       CAUCE_TERMINAL_RELAY_INSTANCE_IDS: `${RELAY_INSTANCE}, ${second}`
-    });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    }), 'una configuración de terminal');
     expect([...config.relayInstanceIds].sort()).toEqual([RELAY_INSTANCE, second].sort());
   });
 
@@ -273,30 +276,27 @@ describe('loadTerminalConfig', () => {
       .rejects.toThrow(/credential-free HTTPS origin/);
     await expect(loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_RELAY_URL: 'https://user:pw@relay' }))
       .rejects.toThrow(/credential-free HTTPS origin/);
-    const config = await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_RELAY_URL: 'https://relay.local:8443/' });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig({ ...baseEnv(), CAUCE_TERMINAL_RELAY_URL: 'https://relay.local:8443/' }), 'una configuración de terminal');
     expect(config.relayUrl).toBe('https://relay.local:8443');
   });
 
   it('trata ausente y string vacío como equivalentes para los paths opcionales', async () => {
-    const config = await loadTerminalConfig({
+    const config = exigir(await loadTerminalConfig({
       ...baseEnv(),
       CAUCE_TERMINAL_RELAY_CLIENT_CERT_FILE: '   ',
       CAUCE_TERMINAL_RELAY_CLIENT_KEY_FILE: '/etc/cauce/client.key',
       CAUCE_TERMINAL_RELAY_CA_FILE: ''
-    });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    }), 'una configuración de terminal');
     expect(config.relayClientCertFile).toBeUndefined();
     expect(config.relayClientKeyFile).toBe('/etc/cauce/client.key');
     expect(config.relayCaFile).toBeUndefined();
   });
 
   it('parsea la lista de operators como trimmed split y dedupea duplicados', async () => {
-    const config = await loadTerminalConfig({
+    const config = exigir(await loadTerminalConfig({
       ...baseEnv(),
       CAUCE_TERMINAL_OPERATORS: ' alice , bob ,, alice '
-    });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    }), 'una configuración de terminal');
     expect([...config.operators].sort()).toEqual(['alice', 'bob']);
   });
 
@@ -306,8 +306,7 @@ describe('loadTerminalConfig', () => {
     process.env.CAUCE_TERMINAL_RELAY_TOKEN_FILE = '/etc/cauce/relay.token';
     process.env.CAUCE_TERMINAL_RELAY_INSTANCE_ID = RELAY_INSTANCE;
     putFile('/etc/cauce/relay.token', 'z'.repeat(40));
-    const config = await loadTerminalConfig();
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig(), 'una configuración de terminal');
     expect(config.relayToken).toBe('z'.repeat(40));
   });
 
@@ -317,12 +316,11 @@ describe('loadTerminalConfig', () => {
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: '60',
       CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '50'
     })).rejects.toThrow(/CLAIM_LEASE_SECONDS/);
-    const config = await loadTerminalConfig({
+    const config = exigir(await loadTerminalConfig({
       ...baseEnv(),
       CAUCE_TERMINAL_TICKET_TTL_SECONDS: '60',
       CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '150'
-    });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    }), 'una configuración de terminal');
     expect(config.ticketTtlSeconds).toBe(60);
     expect(config.claimLeaseSeconds).toBe(150);
   });
@@ -335,8 +333,7 @@ describe('loadTerminalConfig', () => {
 
 describe('terminalCapabilityAnnouncement', () => {
   it('anuncia el plugin con el wsPath de la config y los capabilities correctos', async () => {
-    const config = await loadTerminalConfig(baseEnv());
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    const config = exigir(await loadTerminalConfig(baseEnv()), 'una configuración de terminal');
     expect(terminalCapabilityAnnouncement(config)).toEqual({
       available: true,
       plugin_id: 'ultimate-terminal.client',
@@ -347,11 +344,10 @@ describe('terminalCapabilityAnnouncement', () => {
   });
 
   it('refleja un wsPath personalizado cuando la env lo overridea', async () => {
-    const config = await loadTerminalConfig({
+    const config = exigir(await loadTerminalConfig({
       ...baseEnv(),
       CAUCE_TERMINAL_WS_PATH: '/custom/ws'
-    });
-    if (!config) throw new Error('loadTerminalConfig unexpectedly returned undefined');
+    }), 'una configuración de terminal');
     const announcement = terminalCapabilityAnnouncement(config);
     expect(announcement.websocket_path).toBe('/custom/ws');
   });

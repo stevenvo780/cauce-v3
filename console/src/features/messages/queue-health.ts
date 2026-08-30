@@ -20,11 +20,8 @@ export const LIMITE_MENSAJES = 100;
 export const LIMITE_COLA = 200;
 
 /**
- * How ONE agent's queue is doing.
- *
- * All counts are optional on purpose: `undefined` means "the source does not report it" (UNKNOWN) and is
- * NEVER collapsed to 0. A fake 0 here paints as healthy exactly the agent you need to look at — that is
- * the failure this view exists to avoid committing.
+ * How ONE agent's queue is doing. Every count is optional on purpose: `undefined` is UNKNOWN and is
+ * NEVER collapsed to 0, which would paint as healthy exactly the agent to look at.
  */
 export interface SaludDeCola {
   /** Deliveries queued and not yet picked up (`/activity` → `queued`). */
@@ -90,9 +87,12 @@ export function saludDeColaPorAgente(
   const filas = queues?.items;
   if (!Array.isArray(filas)) return Object.fromEntries(mapa);
 
-  // The ceiling is hit EXACTLY at the limit: with 200 rows there is no way to know whether there were 200
-  // or 4,000, so from there on every derived count is a floor.
-  const truncado = filas.length >= LIMITE_COLA;
+  // `muestra_recortada` is decided against the total `COUNT`, so the server's word wins over
+  // counting rows: the heuristic marks a floor on a complete page of exactly 200, and breaks the
+  // day the ceiling stops being 200. Without the flag it is still the only thing available.
+  const truncado = typeof queues?.muestra_recortada === 'boolean'
+    ? queues.muestra_recortada
+    : filas.length >= LIMITE_COLA;
   for (const fila of filas) {
     if (!fila.tenant_id || !fila.recipient_alias) continue;
     const salud = entrada(mapa, fleetAgentId(fila.tenant_id, fila.recipient_alias));

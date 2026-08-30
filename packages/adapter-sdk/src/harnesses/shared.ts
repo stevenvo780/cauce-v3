@@ -4,6 +4,7 @@ export {
   elTestigoDiceQueNoEmpezo,
   esDiagnosticoDeArranque,
   esInterrupcionDelDuenio,
+  esSesionNativaInexistente,
   executionError,
   nuncaEmpezoElTurno,
   sanitizeProcessOutput,

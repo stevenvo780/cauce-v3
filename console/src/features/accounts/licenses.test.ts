@@ -139,6 +139,35 @@ describe('accountAssignments', () => {
     expect(result[0].enabled).toBe(false);
   });
 
+  /*
+   * The fleet repeats aliases across clients (`claude` lives under more than one). Crossing binding against
+   * agent by alias alone showed the account as assigned to the homonym of ANOTHER client: a wrong container
+   * name, a wrong display name, and no way to tell from the screen.
+   */
+  it('cruza por tenant y alias: con el alias repetido no trae al agente del otro cliente', () => {
+    const homonimos: Agent[] = [
+      {
+        tenant_id: 'Steven', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Steven',
+        enabled: true, container_name: 'claw-steven-claude',
+      },
+      {
+        tenant_id: 'Miguel', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Miguel',
+        enabled: true, container_name: 'claw-miguel-claude',
+      },
+    ];
+    // The binding is the FIRST agent's, so an index by alias alone —where the last one registered wins— brings
+    // back the other client's homonym. Otherwise this would pass by accident.
+    const bindings: AgentAccountBinding[] = [
+      { tenant_id: 'Steven', agent_alias: 'claude', account_id: 'claude-max', priority: 0, enabled: true },
+    ];
+
+    const result = accountAssignments('claude-max', bindings, homonimos);
+    expect(result).toHaveLength(1);
+    expect(result[0].tenant_id).toBe('Steven');
+    expect(result[0].display_name).toBe('Claude de Steven');
+    expect(result[0].container_name).toBe('claw-steven-claude');
+  });
+
   it('incluye container_name del agente', () => {
     const bindings: AgentAccountBinding[] = [
       {
@@ -299,6 +328,42 @@ describe('orphans', () => {
     const result = orphans(accounts, quotas, bindings, agents);
     expect(result.agentsWithoutBindings).toHaveLength(1);
     expect(result.agentsWithoutBindings[0].alias).toBe('orphan');
+  });
+});
+
+describe('orphans, con el alias repetido entre clientes', () => {
+  const quotas: QuotaSnapshot = {
+    observed_at: null, thresholds: null, collectors: [], providers: [],
+    unbound_groups: [], paused_accounts: [],
+  };
+  const agents: Agent[] = [
+    {
+      tenant_id: 'Steven', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Steven',
+      enabled: true, container_name: 'claw-steven-claude',
+    },
+    {
+      tenant_id: 'Miguel', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Miguel',
+      enabled: true, container_name: 'claw-miguel-claude',
+    },
+  ];
+
+  it('el binding de un cliente no tapa al homónimo del otro, que sí está huérfano', () => {
+    const bindings: AgentAccountBinding[] = [
+      { tenant_id: 'Steven', agent_alias: 'claude', account_id: 'claude-max', priority: 0, enabled: true },
+    ];
+
+    const result = orphans([], quotas, bindings, agents);
+    expect(result.agentsWithoutBindings.map((agent) => agent.tenant_id)).toEqual(['Miguel']);
+  });
+
+  it('con los dos atados, ninguno queda como huérfano', () => {
+    // Negative control: without it, a version that reported everyone as an orphan would pass the test above.
+    const bindings: AgentAccountBinding[] = [
+      { tenant_id: 'Miguel', agent_alias: 'claude', account_id: 'claude-max', priority: 0, enabled: true },
+      { tenant_id: 'Steven', agent_alias: 'claude', account_id: 'claude-max', priority: 1, enabled: true },
+    ];
+
+    expect(orphans([], quotas, bindings, agents).agentsWithoutBindings).toEqual([]);
   });
 });
 

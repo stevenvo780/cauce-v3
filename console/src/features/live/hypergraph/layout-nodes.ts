@@ -18,18 +18,20 @@ export const DEFAULTS = {
   labelBand: 34,
 } as const;
 
-/**
- * Separator for compound keys.
- *
- * Components are escaped with `encodeURIComponent`, which encodes the slash as `%2F`: this way two different
- * pairs cannot produce the same key (tenant `a` + room `b/c` does not collide with tenant `a/b` + room `c`). A
- * **visible** separator is chosen on purpose: a control character inside the source makes `grep` classify the
- * file as binary and stop finding it.
- */
+/** Separator for compound keys. Components are escaped with `encodeURIComponent`, which encodes the slash as
+ *  `%2F`, so two different pairs cannot produce the same key. It is **visible** on purpose: a control character
+ *  in the source makes `grep` classify the file as binary and stop finding it. */
 export const SEP = '/';
 
 export function edgeKey(tenantId: string, roomId: string): string {
   return `${encodeURIComponent(tenantId)}${SEP}${encodeURIComponent(roomId)}`;
+}
+
+/** Identity of a node: the PAIR (tenant, alias), never the alias alone. Two tenants can name an agent the same
+ *  way and they are two different agents; indexing by alias fused them into a single figure hanging from rooms
+ *  of both tenants, a membership the backend never reported. */
+export function nodeKey(tenantId: string, alias: string): string {
+  return `${encodeURIComponent(tenantId)}${SEP}${encodeURIComponent(alias)}`;
 }
 
 export interface RawEdge {
@@ -42,11 +44,13 @@ export interface RawEdge {
 }
 
 export interface RawNode {
+  /** `nodeKey(tenantId, alias)`. Unique per drawn figure. */
+  key: string;
+  tenantId: string;
   alias: string;
   label: string | null;
   /** `false` wins over `true`: if some membership declares it disabled, it is shown that way. */
   enabled: boolean | null;
-  tenants: Set<string>;
   edges: string[];
 }
 
@@ -77,19 +81,20 @@ export function collect(tenants: TenantNode[]): { nodes: Map<string, RawNode>; e
           return;
         }
         if (!members.includes(alias)) members.push(alias);
-        const existing = nodes.get(alias);
+        const identity = nodeKey(tenantId, alias);
+        const existing = nodes.get(identity);
         if (existing) {
-          existing.tenants.add(tenantId);
           if (!existing.edges.includes(key)) existing.edges.push(key);
           // A disabled membership in any room is enough to mark it: that is the safe reading.
           if (member.enabled === false) existing.enabled = false;
           else if (existing.enabled === null && member.enabled === true) existing.enabled = true;
         } else {
-          nodes.set(alias, {
+          nodes.set(identity, {
+            key: identity,
+            tenantId,
             alias,
             label: alias,
             enabled: member.enabled ?? null,
-            tenants: new Set([tenantId]),
             edges: [key],
           });
         }
@@ -130,11 +135,11 @@ export function relax(
   for (const node of nodes) {
     const incident = node.edges.map((key) => anchors.get(key)).filter((point): point is Point => Boolean(point));
     const base = incident.length > 0 ? centroidOf(incident) : { x: options.width / 2, y: options.height / 2 };
-    // The initial offset prevents two aliases with the same memberships from being born overlapped
+    // The initial offset prevents two nodes with the same memberships from being born overlapped
     // (repulsion alone cannot separate them if they start at the exact same point).
-    const angle = jitter(node.alias, 1) * Math.PI * 2;
-    const radius = 6 + jitter(node.alias, 2) * 26;
-    positions.set(node.alias, { x: base.x + Math.cos(angle) * radius, y: base.y + Math.sin(angle) * radius });
+    const angle = jitter(node.key, 1) * Math.PI * 2;
+    const radius = 6 + jitter(node.key, 2) * 26;
+    positions.set(node.key, { x: base.x + Math.cos(angle) * radius, y: base.y + Math.sin(angle) * radius });
   }
 
   const minimum = options.nodeSpacing;
@@ -143,7 +148,7 @@ export function relax(
 
     // Attraction towards the anchor of each incident hyperedge.
     for (const node of nodes) {
-      const position = positions.get(node.alias);
+      const position = positions.get(node.key);
       if (!position) continue;
       const targets = node.edges
         .map((key) => anchors.get(key))
@@ -157,15 +162,15 @@ export function relax(
     // Repulsion between too-close nodes.
     for (let i = 0; i < nodes.length; i += 1) {
       for (let j = i + 1; j < nodes.length; j += 1) {
-        const a = positions.get(nodes[i].alias);
-        const b = positions.get(nodes[j].alias);
+        const a = positions.get(nodes[i].key);
+        const b = positions.get(nodes[j].key);
         if (!a || !b) continue;
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let distance = Math.hypot(dx, dy);
         if (distance < 1e-6) {
           // Exact tie: they are separated by a direction derived from the aliases, not at random.
-          const angle = jitter(`${nodes[i].alias}|${nodes[j].alias}`, 3) * Math.PI * 2;
+          const angle = jitter(`${nodes[i].key}|${nodes[j].key}`, 3) * Math.PI * 2;
           dx = Math.cos(angle);
           dy = Math.sin(angle);
           distance = 1e-6;
@@ -186,7 +191,7 @@ export function relax(
     // room labels: a node stuck to the top edge would leave no room to write `#room`.
     const box = options.footprint;
     for (const node of nodes) {
-      const position = positions.get(node.alias);
+      const position = positions.get(node.key);
       if (!position) continue;
       position.x = Math.min(options.width - options.padding - box.halfWidth, Math.max(options.padding + box.halfWidth, position.x));
       position.y = Math.min(options.height - options.padding - box.bottom, Math.max(options.padding + options.labelBand - box.top, position.y));
@@ -196,8 +201,8 @@ export function relax(
   // Final rounding: keeps the SVG readable and makes two identical runs identical byte for byte.
   const result = new Map<string, Point>();
   for (const node of nodes) {
-    const position = positions.get(node.alias);
-    if (position) result.set(node.alias, { x: round(position.x), y: round(position.y) });
+    const position = positions.get(node.key);
+    if (position) result.set(node.key, { x: round(position.x), y: round(position.y) });
   }
   void edgeById;
   return result;
@@ -236,7 +241,7 @@ export function separate(
         let dy = b.y - a.y;
         if (Math.abs(dx) >= width || Math.abs(dy) >= height) continue;
         touched = true;
-        // Exact tie: broken by a hash of the aliases, never at random — the layout must be reproducible
+        // Exact tie: broken by a hash of the node keys, never at random — the layout must be reproducible
         // across refreshes or the operator loses sight of the agent they were tracking.
         if (dx === 0 && dy === 0) {
           const angle = jitter(`${order[i]}|${order[j]}`, 7) * Math.PI * 2;
@@ -258,8 +263,8 @@ export function separate(
     }
     // Containment after each pass: if a push took someone out of the canvas, they go back in and the next
     // pass distributes the difference towards the other side.
-    for (const alias of order) {
-      const point = positions.get(alias);
+    for (const key of order) {
+      const point = positions.get(key);
       if (!point) continue;
       point.x = Math.min(bounds.maxX, Math.max(bounds.minX, point.x));
       point.y = Math.min(bounds.maxY, Math.max(bounds.minY, point.y));
@@ -267,8 +272,8 @@ export function separate(
     if (!touched) return true;
   }
 
-  return !order.some((alias, i) => order.slice(i + 1).some((other) => {
-    const a = positions.get(alias);
+  return !order.some((key, i) => order.slice(i + 1).some((other) => {
+    const a = positions.get(key);
     const b = positions.get(other);
     return a && b ? footprintsOverlap(a, b, box) : false;
   }));

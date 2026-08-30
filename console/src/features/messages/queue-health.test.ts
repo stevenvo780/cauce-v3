@@ -101,11 +101,7 @@ describe('saludDeColaPorAgente', () => {
     expect(salud['Steven:argos'].muertas).toBeUndefined();
   });
 
-  /**
-   * NEGATIVE CONTROL of the truncation. `queueSnapshot()` truncates at 200 rows and counts ON
-   * them, so above the ceiling any count is a floor. With 199 rows the flag must be off: if it
-   * were always on, the warning would distinguish nothing and be noise.
-   */
+  // NEGATIVE CONTROL of the truncation: with 199 rows the flag must be off, or it distinguishes nothing.
   it(`marca truncado exactamente al llegar al techo de ${String(LIMITE_COLA)} filas`, () => {
     const fila = (indice: number, state: QueueItem['state']) => filaDeCola({
       delivery_id: `d-${String(indice)}`, tenant_id: 'Steven', recipient_alias: 'argos', state,
@@ -115,6 +111,20 @@ describe('saludDeColaPorAgente', () => {
 
     expect(saludDeColaPorAgente(undefined, cola(alTecho))['Steven:argos'].muertasTruncadas).toBe(true);
     expect(saludDeColaPorAgente(undefined, cola(debajo))['Steven:argos'].muertasTruncadas).toBe(false);
+  });
+
+  // Exact where the row count guesses: a complete page of exactly 200 used to be announced as a floor.
+  it('cuando el servidor declara el recorte, su palabra manda sobre el conteo de filas', () => {
+    const fila = (indice: number, state: QueueItem['state']) => filaDeCola({
+      delivery_id: `d-${String(indice)}`, tenant_id: 'Steven', recipient_alias: 'argos', state,
+    });
+    const alTecho = Array.from({ length: LIMITE_COLA }, (_, indice) => fila(indice, indice === 0 ? 'dead' : 'pending'));
+
+    const completa = { ...cola(alTecho), muestra_recortada: false };
+    expect(saludDeColaPorAgente(undefined, completa)['Steven:argos'].muertasTruncadas).toBe(false);
+
+    const recortada = { ...cola([fila(0, 'dead')]), muestra_recortada: true };
+    expect(saludDeColaPorAgente(undefined, recortada)['Steven:argos'].muertasTruncadas).toBe(true);
   });
 
   it('ignora filas y agentes sin identidad utilizable en vez de crear claves basura', () => {
