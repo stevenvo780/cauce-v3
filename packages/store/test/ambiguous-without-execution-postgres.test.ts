@@ -120,8 +120,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('an ambiguous failure is judged by whether execution ever started', () => {
@@ -210,7 +210,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
       const [claimed] = await repository.claimDeliveries(
         'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
-      if (!claimed) throw new Error(`expected a claimed delivery on attempt ${attempt}`);
+      if (!claimed) throw new Error(`expected a claimed delivery on attempt ${String(attempt)}`);
       const row = await deliveryRow(deliveryId);
       expect(row.attempt).toBe(attempt);
       expect(row.execution_started_at).toBeNull();

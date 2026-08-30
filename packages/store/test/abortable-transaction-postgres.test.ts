@@ -23,9 +23,9 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await observer?.query(`DROP TABLE IF EXISTS abortable_transaction_probe`);
-  await observer?.end();
-  await database?.container.stop();
+  await observer.query(`DROP TABLE IF EXISTS abortable_transaction_probe`);
+  await observer.end();
+  await database.container.stop();
 });
 
 async function waitUntil(check: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {

@@ -24,8 +24,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 beforeEach(async () => {
@@ -169,7 +169,7 @@ describe('migration 030 lifecycle', () => {
       await writer.query('COMMIT');
       await expect(upgrading).rejects.toThrow(/refuses inconsistent causal DLQ\/effect evidence/u);
     } finally {
-      if (!upSettled) await writer.query('ROLLBACK').catch(() => undefined);
+      await writer.query('ROLLBACK').catch(() => undefined);
       writer.release();
     }
     expect((await pool.query<{ exists: boolean }>(
@@ -259,7 +259,7 @@ describe('migration 030 lifecycle', () => {
       await expect(writing).resolves.toBeDefined();
       await expect(downgrading).rejects.toThrow(/cannot downgrade schema 030/u);
     } finally {
-      if (!writerSettled || !downSettled) await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.query('ROLLBACK').catch(() => undefined);
       blocker.release();
     }
     expect((await pool.query<{ count: string }>(

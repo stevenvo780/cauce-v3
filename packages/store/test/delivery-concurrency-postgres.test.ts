@@ -87,7 +87,7 @@ async function declareAgent(
 
 async function publishMany(count: number): Promise<void> {
   for (let index = 0; index < count; index += 1) {
-    await repository.publish(command({ body: { text: `work ${index}` } }));
+    await repository.publish(command({ body: { text: `work ${String(index)}` } }));
   }
 }
 
@@ -216,7 +216,7 @@ describe('per-agent delivery concurrency cap', () => {
       expect(claimed).toHaveLength(1);
       expect(await statusCounts('argos')).toEqual({ leased: 1, pending: 1 });
     } finally {
-      if (!settled) await configuration.query('ROLLBACK').catch(() => undefined);
+      await configuration.query('ROLLBACK').catch(() => undefined);
       configuration.release();
     }
   });

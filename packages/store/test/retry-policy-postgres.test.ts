@@ -79,7 +79,7 @@ async function burnAttempts(epoch: number, times: number): Promise<string> {
     const [claimed] = await repository.claimDeliveries(
       'Isa', 'salva', CONSUMER, epoch, 1, ACK_DEADLINE_MS
     );
-    if (!claimed) throw new Error(`expected a claimed delivery on round ${round + 1}`);
+    if (!claimed) throw new Error(`expected a claimed delivery on round ${String(round + 1)}`);
     deliveryId = claimed.delivery_id;
     if (round + 1 < times) {
       // staleMs=0 expires every in-flight claim: it is the reaper's sweep, not a shortcut.
@@ -108,8 +108,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('R3 — no attempts are burned against an adapter-less alias', () => {

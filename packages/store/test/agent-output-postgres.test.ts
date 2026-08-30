@@ -244,8 +244,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('transactional StructuredOutput.messages materialization', () => {
@@ -475,9 +475,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       expect(finalClaims).toHaveLength(1);
       expect(finalClaims[0]?.event_id).toBe(seeded.finalId);
       expect(manualResult.status).toBe('rejected');
-      const rejection = manualResult.status === 'rejected'
-        ? manualResult.reason as unknown
-        : undefined;
+      const rejection = manualResult.reason as unknown;
       expect(rejection).toBeInstanceOf(Error);
       if (rejection instanceof Error) {
         expect(rejection.message).toBe(
@@ -1442,7 +1440,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     expect((await pool.query(
       `SELECT 1 FROM adapter_outbox
        WHERE idempotency_key=$1`,
-      [`agent-output:${delivery.delivery_id}:${delivery.attempt}:0`]
+      [`agent-output:${delivery.delivery_id}:${String(delivery.attempt)}:0`]
     )).rowCount).toBe(1);
   });
 
@@ -1469,7 +1467,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     expect((await pool.query(`SELECT 1 FROM delivery_acks WHERE applied`)).rowCount).toBe(1);
     expect((await pool.query(
       `SELECT 1 FROM adapter_outbox WHERE idempotency_key=$1`,
-      [`agent-output:${delivery.delivery_id}:${delivery.attempt}:0`]
+      [`agent-output:${delivery.delivery_id}:${String(delivery.attempt)}:0`]
     )).rowCount).toBe(1);
   });
 
@@ -1840,7 +1838,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       await repository.acquireLease(
         target.tenant_id,
         target.alias,
-        `bounded-all-${index}-${randomUUID()}`,
+        `bounded-all-${String(index)}-${randomUUID()}`,
         [],
         30_000
       );

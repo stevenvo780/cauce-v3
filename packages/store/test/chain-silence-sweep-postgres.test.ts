@@ -187,8 +187,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 /**
@@ -301,7 +301,7 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
     const published = await repository.publish(telegramCommand('chat-abanico'));
     const fanout = Array.from({ length: 100 }, (_, index) => ({
       to: index % 2 === 0 ? 'socrates' : 'jarvis',
-      body: `rama ${index}`
+      body: `rama ${String(index)}`
     }));
     await ackWith(argos, await nextDelivery(argos), fanout);
     expect((await pool.query(
@@ -643,7 +643,7 @@ describe('cómo se lee el aviso', () => {
     const argos = await consumer('Steven', 'argos');
     const published = await repository.publish(telegramCommand('chat-muestra'));
     await ackWith(argos, await nextDelivery(argos), Array.from({ length: 7 }, (_, index) => ({
-      to: index % 2 === 0 ? 'socrates' : 'jarvis', body: `rama ${index}`
+      to: index % 2 === 0 ? 'socrates' : 'jarvis', body: `rama ${String(index)}`
     })));
     await pool.query(
       `UPDATE deliveries SET status='dead',terminal_at=now(),updated_at=now(),

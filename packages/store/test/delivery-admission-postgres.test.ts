@@ -231,7 +231,7 @@ describe('claim admission with a reserve for humans', () => {
 
   it('serves the human delivery first even when it was queued last', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-2', [], 30_000);
-    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${index}`);
+    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${String(index)}`);
     await repository.publish(command({ body: { text: 'llegué última' } }));
 
     const [first] = await repository.claimDeliveries(
@@ -243,9 +243,9 @@ describe('claim admission with a reserve for humans', () => {
 
   it('yields one turn to agent work after the configured human burst', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-3', [], 30_000);
-    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${index}`);
+    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${String(index)}`);
     for (let index = 0; index < 4; index += 1) {
-      await repository.publish(command({ body: { text: `humano ${index}` } }));
+      await repository.publish(command({ body: { text: `humano ${String(index)}` } }));
     }
 
     const claimed = await repository.claimDeliveries(

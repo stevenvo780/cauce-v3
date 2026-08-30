@@ -202,8 +202,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('receipt durable de materialización', () => {
@@ -748,7 +748,7 @@ describe('el rechazo es legible', () => {
     const rejection = result.delegation_rejections?.[0];
     expect(rejection?.target).toBe('jarvis');
     expect(rejection?.guidance).toEqual(expect.any(String));
-    expect(rejection?.guidance?.length ?? 0).toBeGreaterThan(0);
+    expect(rejection?.guidance.length ?? 0).toBeGreaterThan(0);
   }, 120_000);
 
   it('omite rechazos vacíos pero informa la materialización exacta del ACK sano', async () => {

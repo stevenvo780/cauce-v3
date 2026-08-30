@@ -78,10 +78,10 @@ afterAll(async () => {
     // Leave the schema UP no matter what: the other files in the suite share this database,
     // and finding it half-migrated would break them for a reason that is not theirs.
   try {
-    if (pool) await applyMigrations(pool);
+    await applyMigrations(pool);
   } finally {
-    if (pool) await pool.end();
-    if (database?.container) await database.container.stop();
+    await pool.end();
+    await database.container.stop();
   }
 });
 

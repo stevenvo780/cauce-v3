@@ -57,7 +57,7 @@ function failedAck(delivery: DeliveryEnvelope, epoch: number): Ack {
     claim_token: delivery.claim_token,
     attempt: delivery.attempt,
     retryable: true,
-    error: `attempt ${delivery.attempt} exhausted`
+    error: `attempt ${String(delivery.attempt)} exhausted`
   };
 }
 
@@ -67,7 +67,7 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_00
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
+  throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
 
 beforeAll(async () => {
@@ -90,8 +90,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('transactional manual delivery replay', () => {
@@ -109,7 +109,7 @@ describe('transactional manual delivery replay', () => {
           'Isa', 'salva', 'replay-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
         );
         expect(claimed).toMatchObject({ delivery_id: originalDeliveryId, attempt });
-        if (!claimed) throw new Error(`expected delivery attempt ${attempt}`);
+        if (!claimed) throw new Error(`expected delivery attempt ${String(attempt)}`);
         terminalClaim = claimed;
         if (attempt === 3) {
           await expect(durableStore.accept(claimed as Delivery, new Date().toISOString()))

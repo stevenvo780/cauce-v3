@@ -269,7 +269,7 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
     // The old notice stays intact: the person already read it and rewriting it would lie to the log.
     expect(relays[0]).toMatchObject({ status: 'sent', outcome: 'dead' });
     expect(relays[1]).toMatchObject({
-      idempotency_key: `relay-late:${delivery.delivery_id}:${delivery.attempt}`,
+      idempotency_key: `relay-late:${delivery.delivery_id}:${String(delivery.attempt)}`,
       status: 'pending',
       outcome: 'done',
       late_result: true
@@ -667,7 +667,7 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
     expect(responses.rows[1]?.outcome).toBe('done');
     expect(responses.rows[1]?.text).toContain('[late result]');
     expect(responses.rows[1]?.text).toContain('supersedes the earlier notice');
-    expect(responses.rows[1]?.text?.endsWith('sí lo hice, acá está')).toBe(true);
+    expect(responses.rows[1]?.text.endsWith('sí lo hice, acá está')).toBe(true);
     expect(responses.rows[1]?.late).toMatchObject({ superseded_outcome: 'dead' });
 
     // And rescuing a branch does NOT send the relay to the human: the parent closes the chain.

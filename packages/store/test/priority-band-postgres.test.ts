@@ -82,7 +82,7 @@ async function priorityOf(messageId: string): Promise<number> {
   );
   const priority = row.rows[0]?.priority;
   if (priority === undefined) throw new Error(`message ${messageId} does not exist`);
-  return Number(priority);
+  return priority;
 }
 
 async function lease(tenant: Tenant, alias: string, instanceId: string): Promise<number> {
@@ -117,9 +117,9 @@ describe('human band ordering', () => {
     // Three agent-band messages first, so arrival order alone would put the person last.
     for (let index = 0; index < 3; index += 1) {
       await repository.publish(command({
-        body: { type: 'adapter.work', text: `machine ${index}` },
+        body: { type: 'adapter.work', text: `machine ${String(index)}` },
         priority: AGENT_PRIORITY_CEILING,
-        authenticated_context: { session_id: `machine-${index}`, channel: 'adapter' }
+        authenticated_context: { session_id: `machine-${String(index)}`, channel: 'adapter' }
       }));
     }
     const person = await repository.publish(command({ body: { type: 'telegram.message', text: 'the owner' } }));

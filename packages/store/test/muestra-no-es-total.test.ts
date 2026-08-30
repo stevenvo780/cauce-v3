@@ -61,7 +61,7 @@ async function sembrarMuertas(cuantas: number, tenant = 'Steven', room = 'grp.st
       room_id: room,
       actor_alias: emisor,
       recipients: [{ tenant_id: tenant, alias: destino }],
-      body: { text: `muerta ${i}` },
+      body: { text: `muerta ${String(i)}` },
       idempotency_key: randomUUID(),
       lane: 'batch',
       priority: 0,

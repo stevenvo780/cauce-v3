@@ -127,8 +127,8 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('migration 037 bounded console publish-intent journal indexes', () => {

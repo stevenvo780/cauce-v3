@@ -60,8 +60,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 beforeEach(async () => {
@@ -166,13 +166,13 @@ async function seedEffect(
          CASE WHEN $6 IN ('sending','sent','ambiguous') THEN now() ELSE NULL END,
          CASE WHEN $8 THEN now() ELSE NULL END)`,
       [
-        `${fixture.outboxId}:${index}`,
+        `${fixture.outboxId}:${String(index)}`,
         fixture.outboxId,
         index,
         count,
         options.hash ?? String(index + 1).repeat(64).slice(0, 64),
         state,
-        options.provider === undefined ? (state === 'sent' ? `provider-${index}` : null) : options.provider,
+        options.provider === undefined ? (state === 'sent' ? `provider-${String(index)}` : null) : options.provider,
         options.sentAt ?? state === 'sent',
       ],
     );
@@ -342,7 +342,7 @@ describe('causal DLQ reconciliation', () => {
       await writer.query('ROLLBACK');
       await expect(applying).resolves.toMatchObject({ recoveredSentCount: 1 });
     } finally {
-      if (!applySettled) await writer.query('ROLLBACK').catch(() => undefined);
+      await writer.query('ROLLBACK').catch(() => undefined);
       writer.release();
     }
     await expect(pool.query(
@@ -1176,7 +1176,7 @@ describe('operator-only DLQ transitions', () => {
       await revoker.query('COMMIT');
       await expect(resolving).rejects.toThrow(/outside actor control scope/u);
     } finally {
-      if (!settled) await revoker.query('ROLLBACK').catch(() => undefined);
+      await revoker.query('ROLLBACK').catch(() => undefined);
       revoker.release();
     }
     expect((await pool.query<{ resolved: boolean }>(
@@ -1230,7 +1230,7 @@ describe('operator-only DLQ transitions', () => {
       await revoker.query('COMMIT');
       await expect(resolving).rejects.toThrow(/lacks control permission/u);
     } finally {
-      if (!settled) await revoker.query('ROLLBACK').catch(() => undefined);
+      await revoker.query('ROLLBACK').catch(() => undefined);
       revoker.release();
     }
     expect((await pool.query<{ resolved: boolean }>(
@@ -1350,7 +1350,7 @@ describe('operator-only DLQ transitions', () => {
     ]);
     expect(second).toMatchObject({ total: 2, truncated: false, nextCursor: null });
     expect(new Set(
-      [...first.items, ...second.items].map((item) => `${String(item.target)}:${item.id}`),
+      [...first.items, ...second.items].map((item) => `${item.target}:${item.id}`),
     ).size).toBe(2);
 
     await expect(pool.query(

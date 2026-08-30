@@ -25,8 +25,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 async function message(tenant: string, room: string, actor: string): Promise<string> {
@@ -104,7 +104,7 @@ describe('participant-aware audit keyset pagination', () => {
 
     const second = await repository.listAudit('Steven', 'kant', {
       limit: 2,
-      before: String((first as { next_cursor: string }).next_cursor),
+      before: (first as { next_cursor: string }).next_cursor,
     });
     expect(second).toEqual({
       items: [

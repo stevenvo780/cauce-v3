@@ -715,7 +715,7 @@ describe('durable console publish intents', () => {
 
   it('bounds churn at 32 by expiring only the oldest reservation without an effect', async () => {
     const inputs = Array.from({ length: 40 }, (_, index) => intent({
-      body: { text: `bounded meaning ${index}` },
+      body: { text: `bounded meaning ${String(index)}` },
     }));
     const prepared = [];
     for (const input of inputs) prepared.push(await prepare(input));

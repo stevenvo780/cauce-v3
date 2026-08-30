@@ -81,10 +81,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   try {
-    if (pool) await ensureUp();
+    await ensureUp();
   } finally {
-    if (pool) await pool.end();
-    if (database?.container) await database.container.stop();
+    await pool.end();
+    await database.container.stop();
   }
 });
 
@@ -193,7 +193,7 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
         WHERE agent.tenant_id='Steven' AND agent.alias='rollback_safe'`,
     );
     expect(state.rows[0]?.role_summary).toBe(rich);
-    expect([...requireValue(state.rows[0], 'state.rows').role_brief]).toHaveLength(1_200);
+    expect(Array.from(requireValue(state.rows[0], 'state.rows').role_brief)).toHaveLength(1_200);
     expect(state.rows[0]?.role_brief.endsWith('🎉')).toBe(true);
 
     await applyMigrations(pool);
@@ -343,7 +343,7 @@ describe('delivery context real', () => {
     );
 
     expect(delivery).toBeDefined();
-    expect([...(delivery?.self_role ?? '')]).toHaveLength(1_200);
+    expect(Array.from(delivery?.self_role ?? '')).toHaveLength(1_200);
     expect(delivery?.self_role?.endsWith('🎉')).toBe(true);
     expect(delivery?.self_role).not.toBe('caché dañada');
     expect((await profiles.readContext('Steven', 'argos')).perfil.role_summary).toBe(rich);

@@ -149,7 +149,7 @@ async function fanoutThatDies(
   const root = await nextDelivery(kant);
   await ackDone(
     kant, root,
-    Array.from({ length: branches }, (_, index) => ({ to: 'socrates', body: `rama ${index}` }))
+    Array.from({ length: branches }, (_, index) => ({ to: 'socrates', body: `rama ${String(index)}` }))
   );
   const children = await claimAll(socrates, branches);
   expect(children).toHaveLength(branches);
@@ -178,8 +178,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('coalescencia de avisos de fracaso', () => {
@@ -296,7 +296,7 @@ describe('coalescencia de avisos de fracaso', () => {
     const root = await nextDelivery(kant);
     // Five branches of the SAME chain toward the SAME child: one bucket for all five.
     await ackDone(
-      kant, root, Array.from({ length: 5 }, (_, index) => ({ to: 'socrates', body: `rama ${index}` }))
+      kant, root, Array.from({ length: 5 }, (_, index) => ({ to: 'socrates', body: `rama ${String(index)}` }))
     );
     const children = await claimAll(socrates, 5);
     expect(children).toHaveLength(5);
