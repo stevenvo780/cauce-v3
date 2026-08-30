@@ -67,10 +67,10 @@ def leer(contenedor, ruta):
             ["docker", "exec", contenedor, "python3", "-c", LECTOR, ruta],
             capture_output=True, text=True, timeout=25)
         if salida.returncode != 0:
-            return {"error": (salida.stderr or "").strip()[:60] or "rc=%d" % salida.returncode}
+            return {"error": (salida.stderr or "").strip()[:60] or f"rc={salida.returncode}"}
         return json.loads(salida.stdout.strip().splitlines()[-1])
     except Exception as e:
-        return {"error": "%s: %s" % (type(e).__name__, str(e)[:50])}
+        return {"error": f"{type(e).__name__}: {str(e)[:50]}"}
 
 ahora = datetime.datetime.now(datetime.timezone.utc)
 filas, por_huella, problemas = [], {}, 0
@@ -97,15 +97,15 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
     # wasn't needed. What really kills is having no refreshToken AND an expired or about-to-expire access.
     if huella is None and horas is not None and horas > 720:
         estado = "TOKEN-LARGO"
-        detalle = "token largo sin refreshToken (setup-token): vence en %.0f dias" % (horas / 24)
+        detalle = f"token largo sin refreshToken (setup-token): vence en {(horas / 24):.0f} dias"
     elif huella is None:
         estado, problemas = "MUERTO", problemas + 1
         detalle = "sin refreshToken y access %s: no puede renovar" % (
-            "VENCIDO hace %.0f h" % -horas if horas is not None and horas < 0
-            else ("vence en %.1f h" % horas if horas is not None else "sin fecha"))
+            f"VENCIDO hace {-horas:.0f} h" if horas is not None and horas < 0
+            else (f"vence en {horas:.1f} h" if horas is not None else "sin fecha"))
     else:
         estado = "OK"
-        detalle = ("vence en %.1f h" % horas) if horas is not None else (d.get("last_refresh") or "")
+        detalle = (f"vence en {horas:.1f} h") if horas is not None else (d.get("last_refresh") or "")
     if huella:
         por_huella.setdefault(huella, []).append(etiqueta)
     filas.append((huella or "SIN-RT", etiqueta, contenedor, estado, detalle))
@@ -124,7 +124,7 @@ try:
         estado, detalle = f.get("estado", "?"), f.get("detalle", "")
         if edad > MAX_EDAD_MIN:
             estado = "STALE"
-            detalle = "medicion de %s con %.0f min de atraso: dejo de empujar" % (doc.get("host", "?"), edad)
+            detalle = f"medicion de {doc.get('host', '?')} con {edad:.0f} min de atraso: dejo de empujar"
             problemas += 1
         elif f.get("problema"):
             problemas += 1
@@ -135,21 +135,21 @@ try:
 except FileNotFoundError:
     problemas += 1
     filas.append(("?", "claude/salva", "ws-isa@kratos", "SIN DATOS",
-                  "kratos nunca empujo %s: salva esta SIN VIGILANCIA" % REMOTO))
+                  f"kratos nunca empujo {REMOTO}: salva esta SIN VIGILANCIA"))
 except Exception as e:
     problemas += 1
     filas.append(("?", "claude/salva", "ws-isa@kratos", "ILEGIBLE",
-                  "%s: %s" % (type(e).__name__, str(e)[:60])))
+                  f"{type(e).__name__}: {str(e)[:60]}"))
 
-print("== credenciales de la flota == %s UTC" % ahora.strftime("%Y-%m-%d %H:%M"))
+print(f"== credenciales de la flota == {ahora.strftime('%Y-%m-%d %H:%M')} UTC")
 for huella, etiqueta, contenedor, estado, detalle in filas:
-    print("%-9s %-24s %-14s %-8s %s" % (huella, etiqueta, contenedor, estado, detalle))
+    print(f"{huella:<9} {etiqueta:<24} {contenedor:<14} {estado:<8} {detalle}")
 
 compartidas = {h: v for h, v in por_huella.items() if len(v) > 1}
 if compartidas:
     print("\n== COMPARTIDAS (se van a pisar al rotar) ==")
     for huella, quienes in compartidas.items():
-        print("  %s -> %s" % (huella, ", ".join(quienes)))
+        print(f"  {huella} -> {', '.join(quienes)}")
 
-print("\nproblemas=%d compartidas=%d" % (problemas, len(compartidas)))
+print(f"\nproblemas={problemas} compartidas={len(compartidas)}")
 sys.exit(1 if problemas else 0)

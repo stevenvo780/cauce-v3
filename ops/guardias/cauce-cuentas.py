@@ -54,9 +54,9 @@ def listar(_args: argparse.Namespace) -> int:
     for c in cuentas:
         estado = "activa" if c[2] == "t" else "DESACTIVADA"
         if c[3]:
-            estado += " (pausada: %s)" % c[3][:40]
-        print("  %-22s %-8s %-12s %s" % (c[0], c[1], estado, c[5]))
-        print("  %-22s %s" % ("", c[6][:88]))
+            estado += f" (pausada: {c[3][:40]})"
+        print(f"  {c[0]:<22} {c[1]:<8} {estado:<12} {c[5]}")
+        print(f"  {'':<22} {c[6][:88]}")
 
     ligados = consulta(
         "select b.account_id, b.agent_alias, b.priority, b.enabled "
@@ -67,8 +67,8 @@ def listar(_args: argparse.Namespace) -> int:
     for l in ligados:
         if l[0] != actual:
             actual = l[0]
-            print("  %s:" % actual)
-        print("     p%-3s %-10s %s" % (l[2], l[1], "" if l[3] == "t" else "(deshabilitado)"))
+            print(f"  {actual}:")
+        print(f"     p{l[2]:<3} {l[1]:<10} {'' if l[3] == 't' else '(deshabilitado)'}")
 
     sin_respaldo = consulta(
         "select b.agent_alias, count(*) from agent_account_bindings b where b.enabled "
@@ -91,18 +91,18 @@ def verificar(_args: argparse.Namespace) -> int:
     else:
         print("PELIGRO: el mismo archivo registrado en varias cuentas —")
         for c in choques:
-            print("  %s  <- %s" % (c[0], c[2]))
+            print(f"  {c[0]}  <- {c[2]}")
     return 1 if choques else 0
 
 
 def alta(args: argparse.Namespace) -> int:
     consulta(
         "insert into provider_accounts (id, provider, external_account_id, payer_tenant_id, label,"
-        " credential_ref_kind, credential_ref, shared_with_pool, enabled) values (%s,%s,%s,%s,%s,'file',%s,false,true)"
+        " credential_ref_kind, credential_ref, shared_with_pool, enabled) values "
+        f"({escapa(args.id)},{escapa(args.proveedor)},{escapa(args.id)},{escapa(args.tenant)},"
+        f"{escapa(args.etiqueta)},'file',{escapa(args.archivo)},false,true)"
         " on conflict (id) do update set label=excluded.label, credential_ref=excluded.credential_ref,"
         " enabled=true, updated_at=now();"
-        % (escapa(args.id), escapa(args.proveedor), escapa(args.id), escapa(args.tenant),
-           escapa(args.etiqueta), escapa(args.archivo))
     )
     print("cuenta registrada:", args.id, "->", args.archivo)
     return 0
@@ -112,34 +112,32 @@ def ligar(args: argparse.Namespace) -> int:
     """Bind an alias to an account. The ceiling first, because the binding references it."""
     consulta(
         "insert into alias_routing_ceiling (tenant_id, alias, account_id, account_payer_tenant, created_by_tenant)"
-        " select p.payer_tenant_id, %s, p.id, p.payer_tenant_id, p.payer_tenant_id from provider_accounts p"
-        " where p.id=%s on conflict do nothing;"
-        % (escapa(args.alias), escapa(args.cuenta))
+        f" select p.payer_tenant_id, {escapa(args.alias)}, p.id, p.payer_tenant_id, p.payer_tenant_id"
+        f" from provider_accounts p where p.id={escapa(args.cuenta)} on conflict do nothing;"
     )
     consulta(
         "insert into agent_account_bindings (tenant_id, agent_alias, account_id, priority, enabled)"
-        " select c.tenant_id, c.alias, c.account_id, %d, true from alias_routing_ceiling c"
-        " where c.alias=%s and c.account_id=%s"
+        f" select c.tenant_id, c.alias, c.account_id, {args.prioridad}, true from alias_routing_ceiling c"
+        f" where c.alias={escapa(args.alias)} and c.account_id={escapa(args.cuenta)}"
         " on conflict (tenant_id, agent_alias, account_id) do update set priority=excluded.priority,"
         " enabled=true, updated_at=now();"
-        % (args.prioridad, escapa(args.alias), escapa(args.cuenta))
     )
-    print("ligado: %s -> %s (prioridad %d)" % (args.alias, args.cuenta, args.prioridad))
+    print(f"ligado: {args.alias} -> {args.cuenta} (prioridad {args.prioridad})")
     return 0
 
 
 def pausar(args: argparse.Namespace) -> int:
     consulta(
-        "update provider_accounts set paused_until=now()+interval '%d hours', paused_reason=%s,"
-        " updated_at=now() where id=%s;" % (args.horas, escapa(args.motivo), escapa(args.id))
+        f"update provider_accounts set paused_until=now()+interval '{args.horas} hours',"
+        f" paused_reason={escapa(args.motivo)}, updated_at=now() where id={escapa(args.id)};"
     )
-    print("pausada %s por %d h: %s" % (args.id, args.horas, args.motivo))
+    print(f"pausada {args.id} por {args.horas} h: {args.motivo}")
     return 0
 
 
 def baja(args: argparse.Namespace) -> int:
     """Disable = never delete: the billing history of who got charged is untouched."""
-    consulta("update provider_accounts set enabled=false, updated_at=now() where id=%s;" % escapa(args.id))
+    consulta(f"update provider_accounts set enabled=false, updated_at=now() where id={escapa(args.id)};")
     print("cuenta deshabilitada (no borrada):", args.id)
     return 0
 

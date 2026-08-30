@@ -93,19 +93,19 @@ class FakeSh:
             pid = int(comando.rsplit(" ", 1)[1])
             self.alive.discard(pid)
             return 0, "", ""
-        if comando.startswith("docker exec %s ps -eo pid,args" % CONTENEDOR):
+        if comando.startswith(f"docker exec {CONTENEDOR} ps -eo pid,args"):
             return 0, self.ps_contenedor, ""
-        if comando.startswith("docker exec %s test -d /proc/" % CONTENEDOR):
+        if comando.startswith(f"docker exec {CONTENEDOR} test -d /proc/"):
             pid = int(comando.rsplit("/", 1)[1])
             return (0, "", "") if pid in self.alive_contenedor else (1, "", "")
-        if comando.startswith("docker exec %s kill -TERM " % CONTENEDOR) or \
-           comando.startswith("docker exec %s kill -KILL " % CONTENEDOR):
+        if comando.startswith(f"docker exec {CONTENEDOR} kill -TERM ") or \
+           comando.startswith(f"docker exec {CONTENEDOR} kill -KILL "):
             pid = int(comando.rsplit(" ", 1)[1])
             self.alive_contenedor.discard(pid)
             return 0, "", ""
         if comando == "sleep 10" or comando == "sleep 5" or comando == "sleep 20":
             return 0, "", ""
-        raise AssertionError("unexpected command issued: %r" % (comando,))
+        raise AssertionError(f"unexpected command issued: {comando!r}")
 
     def kill_calls(self):
         return [c for h, c in self.calls if "kill -" in c]
@@ -162,8 +162,8 @@ class TestMatarPorPid(unittest.TestCase):
         container instead, by a PID read from the container's own process table."""
         ps_contenedor = "\n".join([
             "  1 /usr/bin/python3 /control/cauce-container-runtime.py run --alias kratos x",
-            "%4d node /opt/cauce-v3-adapter/kratos/releases/rel1/packages/adapter-sdk/dist/"
-            "bridge/hermes-stdin-bridge.py --alias kratos" % PID_INTERNO_PUENTE,
+            f"{PID_INTERNO_PUENTE:4d} node /opt/cauce-v3-adapter/kratos/releases/rel1/packages/adapter-sdk/dist/"
+            "bridge/hermes-stdin-bridge.py --alias kratos",
         ])
         fake = FakeSh({PID_CLIENTE: CMD_CLIENTE}, ps_contenedor=ps_contenedor)
         with mock.patch.object(MODULE, "sh", fake):
@@ -173,11 +173,11 @@ class TestMatarPorPid(unittest.TestCase):
         # The host PID (the client) was never signaled.
         self.assertIn(PID_CLIENTE, fake.alive)
         for _, comando in fake.calls:
-            self.assertNotIn("kill -TERM %d" % PID_CLIENTE, comando)
-            self.assertNotIn("kill -KILL %d" % PID_CLIENTE, comando)
+            self.assertNotIn(f"kill -TERM {PID_CLIENTE}", comando)
+            self.assertNotIn(f"kill -KILL {PID_CLIENTE}", comando)
         # The in-container bridge PID was, via `docker exec ... kill`.
         self.assertNotIn(PID_INTERNO_PUENTE, fake.alive_contenedor)
-        dentro = [c for _, c in fake.calls if c.startswith("docker exec %s kill" % CONTENEDOR)]
+        dentro = [c for _, c in fake.calls if c.startswith(f"docker exec {CONTENEDOR} kill")]
         self.assertTrue(dentro)
         self.assertTrue(all(str(PID_INTERNO_PUENTE) in c for c in dentro))
 
@@ -187,9 +187,9 @@ class TestMatarPorPid(unittest.TestCase):
         appears first in `ps` -- here that would be atlas, the WRONG one for a kratos repair."""
         ps_contenedor = "\n".join([
             "  1 /usr/bin/python3 /control/cauce-container-runtime.py run --alias kratos x",
-            "%4d %s" % (PID_INTERNO_PUENTE_VECINO, CMD_PUENTE_VECINO),
-            "%4d node /opt/cauce-v3-adapter/kratos/releases/rel1/packages/adapter-sdk/dist/"
-            "bridge/hermes-stdin-bridge.py --alias kratos" % PID_INTERNO_PUENTE,
+            f"{PID_INTERNO_PUENTE_VECINO:4d} {CMD_PUENTE_VECINO}",
+            f"{PID_INTERNO_PUENTE:4d} node /opt/cauce-v3-adapter/kratos/releases/rel1/packages/adapter-sdk/dist/"
+            "bridge/hermes-stdin-bridge.py --alias kratos",
         ])
         fake = FakeSh({PID_CLIENTE: CMD_CLIENTE}, ps_contenedor=ps_contenedor)
         with mock.patch.object(MODULE, "sh", fake):
@@ -199,7 +199,7 @@ class TestMatarPorPid(unittest.TestCase):
         self.assertNotIn(PID_INTERNO_PUENTE, fake.alive_contenedor)
         self.assertIn(PID_INTERNO_PUENTE_VECINO, fake.alive_contenedor,
                      "the neighbor alias's bridge was killed instead of kratos's")
-        dentro = [c for _, c in fake.calls if c.startswith("docker exec %s kill" % CONTENEDOR)]
+        dentro = [c for _, c in fake.calls if c.startswith(f"docker exec {CONTENEDOR} kill")]
         self.assertTrue(all(str(PID_INTERNO_PUENTE_VECINO) not in c for c in dentro))
 
 

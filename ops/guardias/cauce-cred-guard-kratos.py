@@ -44,10 +44,10 @@ def leer(contenedor, ruta):
         s = subprocess.run(["docker", "exec", contenedor, "python3", "-c", LECTOR, ruta],
                            capture_output=True, text=True, timeout=25)
         if s.returncode != 0:
-            return {"error": (s.stderr or "").strip()[:60] or "rc=%d" % s.returncode}
+            return {"error": (s.stderr or "").strip()[:60] or f"rc={s.returncode}"}
         return json.loads(s.stdout.strip().splitlines()[-1])
     except Exception as e:
-        return {"error": "%s: %s" % (type(e).__name__, str(e)[:50])}
+        return {"error": f"{type(e).__name__}: {str(e)[:50]}"}
 
 
 ahora = datetime.datetime.now(datetime.timezone.utc)
@@ -74,7 +74,7 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
         problemas += 1
     else:
         estado, problema = "OK", False
-        detalle = ("vence en %.1f h" % horas) if horas is not None else (d.get("last_refresh") or "")
+        detalle = (f"vence en {horas:.1f} h") if horas is not None else (d.get("last_refresh") or "")
     filas.append({"huella": huella or "SIN-RT", "etiqueta": etiqueta, "contenedor": contenedor,
                   "estado": estado, "detalle": detalle, "problema": problema})
 
@@ -88,7 +88,7 @@ os.replace(tmp, LOCAL)
 os.chmod(LOCAL, 0o644)
 
 for f in filas:
-    print("%-9s %-24s %-14s %-8s %s" % (f["huella"], f["etiqueta"], f["contenedor"], f["estado"], f["detalle"]))
+    print(f"{f['huella']:<9} {f['etiqueta']:<24} {f['contenedor']:<14} {f['estado']:<8} {f['detalle']}")
 
 # The push is part of the job: if it does not reach the VPS, the guard over there will mark it STALE (on purpose).
 r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "vps",
@@ -96,9 +96,9 @@ r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "vp
                     "&& mv /var/lib/cauce-v3/cred-guard-kratos.json.tmp /var/lib/cauce-v3/cred-guard-kratos.json"],
                    stdin=open(LOCAL, "rb"), capture_output=True, text=True, timeout=60)
 if r.returncode != 0:
-    print("EMPUJE AL VPS FALLO: %s" % (r.stderr or "").strip()[:120], file=sys.stderr)
+    print(f"EMPUJE AL VPS FALLO: {(r.stderr or '').strip()[:120]}", file=sys.stderr)
     sys.exit(1)
-print("empujado a %s" % DESTINO_REMOTO)
+print(f"empujado a {DESTINO_REMOTO}")
 # Failing here means exactly one thing: it could not be measured or pushed.
 # The VPS guard, which sees the whole fleet, raises the alarm on credential "problems".
 sys.exit(0)
