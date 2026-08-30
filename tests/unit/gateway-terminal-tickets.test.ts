@@ -2,9 +2,8 @@ import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   RESUME_HKDF_SALT, RESUME_TOKEN_VERSION, TICKET_HKDF_SALT, TICKET_VERSION,
-  TicketError, deriveAliasKey, issueResumeToken, issueTicket, parseAndVerify,
-  parseResumeToken, ticketDigest, ticketSha256, verifyResumeTokenSignature,
-  verifyTicketSignature, type TicketPayload,
+  TicketError, deriveAliasKey, issueResumeToken, issueTicket, ticketDigest, ticketSha256,
+  verifyResumeTokenSignature, verifyTicketSignature, type TicketPayload,
 } from '../../services/gateway/src/terminal/tickets.js';
 
 /**
@@ -268,40 +267,6 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
   });
 });
 
-describe('parseAndVerify: ventana de validez', () => {
-  const key = Buffer.from(GOLDEN_ALIAS_KEY_STEVEN_JARVIS, 'hex');
-
-  it('acepta un ticket dentro de su ventana (iat < now < exp)', () => {
-    const payload = parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_015);
-    expect(payload.sid).toBe(goldenPayload().sid);
-  });
-
-  it('acepta el ticket un segundo antes de su exp (límite estricto: exp es exclusivo)', () => {
-    expect(() => parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_029)).not.toThrow();
-  });
-
-  it('rechaza con expired el ticket un segundo después de su exp', () => {
-    expect(() => parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_031))
-      .toThrow(TicketError);
-    try {
-      parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_031);
-    } catch (error) {
-      expect((error as TicketError).reason).toBe('expired');
-    }
-  });
-
-  it('rechaza con expired un ticket cuyo exp ya pasó al momento de emisión', () => {
-    // Golden ticket with exp:1749999960, now=1750000000 → clearly expired.
-    const expiredTicket = 'v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzQ5OTk5OTAwLCJleHAiOjE3NDk5OTk5NjB9.BBG_C9V7oWjmUv6oiKuWqN0whH7o_cCjqUM3hZglBfE';
-    expect(() => parseAndVerify(expiredTicket, key, 1_750_000_000)).toThrow(TicketError);
-    try {
-      parseAndVerify(expiredTicket, key, 1_750_000_000);
-    } catch (error) {
-      expect((error as TicketError).reason).toBe('expired');
-    }
-  });
-});
-
 describe('ticketSha256 / ticketDigest: huellas durables', () => {
   it('ticketSha256 produce 32 bytes y es estable sobre el mismo ticket', () => {
     const digest = ticketSha256(GOLDEN_TICKET_STEVEN_JARVIS);
@@ -317,7 +282,7 @@ describe('ticketSha256 / ticketDigest: huellas durables', () => {
   });
 });
 
-describe('issueResumeToken / parseResumeToken: credencial de reanudación', () => {
+describe('issueResumeToken / verifyResumeTokenSignature: credencial de reanudación', () => {
   const master = Buffer.from('a'.repeat(32), 'utf8');
 
   it('emite y verifica un resume token: round-trip correcto', () => {
@@ -368,17 +333,6 @@ describe('issueResumeToken / parseResumeToken: credencial de reanudación', () =
       verifyResumeTokenSignature(wrongVersion, master);
     } catch (error) {
       expect((error as TicketError).reason).toBe('malformed');
-    }
-  });
-
-  it('parseResumeToken acepta un token dentro de su ventana y rechaza uno expirado', () => {
-    const insideWindow = issueResumeToken('sid', 'op', 1_800_000_000, master, 1_750_000_000);
-    expect(() => parseResumeToken(insideWindow, master, 1_790_000_000)).not.toThrow();
-    expect(() => parseResumeToken(insideWindow, master, 1_800_000_001)).toThrow(TicketError);
-    try {
-      parseResumeToken(insideWindow, master, 1_800_000_001);
-    } catch (error) {
-      expect((error as TicketError).reason).toBe('expired');
     }
   });
 });

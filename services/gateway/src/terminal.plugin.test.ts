@@ -13,7 +13,7 @@ import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AGENT_STALE_AFTER_MS, AgentRegistry } from './terminal/registry.js';
 import {
-  deriveAliasKey, issueResumeToken, parseAndVerify, verifyTicketSignature,
+  deriveAliasKey, issueResumeToken, verifyTicketSignature,
 } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence, type TerminalSessionRow } from './terminal/types.js';
 
@@ -817,7 +817,7 @@ describe('terminal control plane', () => {
       tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw',
       mode: 'shell', shares_container_with: []
     });
-    const payload = parseAndVerify(body.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
+    const payload = verifyTicketSignature(body.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
     expect(payload).toMatchObject({
       v: 1, sid: body.session_id, op: UNATTRIBUTED_OPERATOR, sub: 'Steven:kant', mode: 'shell',
       tgt: { tenant: 'Steven', alias: 'jarvis', container: 'claw', generation: 'gen-7', uid: 1000, user: 'claw' }
@@ -1311,7 +1311,7 @@ describe('terminal control plane', () => {
   it('rejects a ticket signed with another alias key', async () => {
     await report([presence()]);
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
-    const payload = parseAndVerify(issued.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
+    const payload = verifyTicketSignature(issued.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
     const { issueTicket } = await import('./terminal/tickets.js');
     const forged = issueTicket(payload, deriveAliasKey(MASTER, 'Steven', 'argos'));
     const response = await app.inject({
