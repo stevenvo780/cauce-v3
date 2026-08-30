@@ -1,4 +1,4 @@
-import type { DeliveryState, Tenant } from '@cauce/protocol';
+import type { DeliveryState, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/prefer-optional-chain: "error" */
 import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
 import {
@@ -47,7 +47,7 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
     );
     const row = notice.rows[0];
     // Absence and invisibility share one error to avoid a cross-tenant enumeration oracle.
-    if (!row || row.visible !== true) throw new StoreError('not_found', 'failure notice was not found');
+    if (!row || row.visible !== true) throw new StoreError('not_found', 'failure notice was not found'); // eslint-disable-line @typescript-eslint/prefer-optional-chain -- Missing and invisible PostgreSQL rows share one response.
     const { visible: _visible, ...summary } = row;
     void _visible;
     const events = await this.pool.query<Record<string, unknown>>(

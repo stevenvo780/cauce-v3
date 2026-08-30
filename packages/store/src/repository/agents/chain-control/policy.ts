@@ -3,7 +3,7 @@ import {
   DelegationRejectionSchema,
   MAX_DELEGATION_FEEDBACK_ITEMS,
   type Tenant
-} from '@cauce/protocol';
+} from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
 import {
   DISABLED_DELEGATION_CAPS,
@@ -85,7 +85,9 @@ export interface AgentOutputLineage {
 }
 
 export function agentOutputRequestId(deliveryId: string, attempt: number, outputIndex: number): string {
-  return hashToUuidV7(`agent-output:${deliveryId}:${attempt}:${outputIndex}`);
+  return hashToUuidV7(
+    `agent-output:${deliveryId}:${String(attempt)}:${String(outputIndex)}`
+  );
 }
 
 export abstract class AgentChainPolicyRepository extends AgentFaninRepository {
@@ -182,11 +184,11 @@ export abstract class AgentChainPolicyRepository extends AgentFaninRepository {
       ? Number(row.failure_coalesce_window_seconds)
       : 0;
     return {
-      progressRelayEnabled: row.progress_relay_enabled === true,
+      progressRelayEnabled: row.progress_relay_enabled === true, // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Malformed PostgreSQL flags fail closed.
       progressRelayMaxEvents: Number.isSafeInteger(row.progress_relay_max_events)
         ? row.progress_relay_max_events
         : 0,
-      cycleCutEnabled: row.cycle_cut_enabled === true && visitedPathAvailable,
+      cycleCutEnabled: row.cycle_cut_enabled === true && visitedPathAvailable, // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Malformed PostgreSQL flags fail closed.
       visitedPathAvailable,
       failureCoalesceEnabled: failureCoalesceAvailable && row.failure_coalesce_enabled === true,
       // A saturated ceiling, never a raw value: the CHECK on the column is NOT VALID, so a row

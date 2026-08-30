@@ -1,4 +1,4 @@
-import { clampAgentPriority, type DeliveryState, type Tenant } from '@cauce/protocol';
+import { clampAgentPriority, type DeliveryState, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
 import { postgresTextSafe } from '../../deliveries.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
@@ -218,7 +218,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
       lane: 'batch',
         // Cap agent-return priority so old machine traffic cannot compete with new human traffic.
       priority: clampAgentPriority(row.priority),
-      authSessionId: row.auth_session_id ?? `delivery:${row.id}:attempt:${attempt}`,
+      authSessionId: row.auth_session_id ?? `delivery:${row.id}:attempt:${String(attempt)}`,
       authChannel: row.auth_channel ?? row.origin?.channel ?? 'agent-response',
     });
     const responseMessageId = message.rows[0]?.id;
@@ -253,7 +253,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
         // coexist with the row that already wrote the death notice. This INSERT carries no
         // `ON CONFLICT`, so a collision would not be a silent duplicate but the abort of the
         // whole ACK transaction.
-        `${late === undefined ? 'agent-response' : 'agent-response-late'}:${row.id}:${attempt}`,
+        `${late === undefined ? 'agent-response' : 'agent-response-late'}:${row.id}:${String(attempt)}`,
         requestId,
         responseMessageId,
         responseDeliveryId,
@@ -310,7 +310,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
       await this.insertProgressRelay(
         client, row, attempt, policy, this.relationshipRoot(relationship), 'returned',
         `${row.recipient_alias} respondió a ${relationship.source_alias};`
-        + ` quedan ${openSiblings} rama(s) en curso.`
+        + ` quedan ${String(openSiblings)} rama(s) en curso.`
       );
     }
     return 'returned';
@@ -397,10 +397,10 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     if (!bucket) return undefined;
     const windowStartedAt = bucket.window_started_at instanceof Date
       ? bucket.window_started_at.toISOString()
-      : String(bucket.window_started_at);
+      : bucket.window_started_at;
     // Folding against a notice that does not exist would be silence, not coalescing: if for any
     // reason the bucket has no earlier message to point at, this failure travels.
-    const emit = bucket.last_failure_emitted === true || bucket.last_notice_message_id === null;
+    const emit = bucket.last_failure_emitted === true || bucket.last_notice_message_id === null; // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Malformed PostgreSQL flags fail closed.
     return {
       noticeId: bucket.id,
       emit,

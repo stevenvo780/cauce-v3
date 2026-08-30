@@ -185,7 +185,7 @@ export abstract class AgentsRepository extends DeliveriesRepository {
 
 
 
-  async listPresence(actorTenant?: Tenant, actorAlias?: string): Promise<Array<Record<string, unknown>>> {
+  async listPresence(actorTenant?: Tenant, actorAlias?: string): Promise<Record<string, unknown>[]> {
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT tenant_id,alias,instance_id,epoch,capabilities,last_heartbeat_at,lease_until,
                (lease_until > now()) AS online

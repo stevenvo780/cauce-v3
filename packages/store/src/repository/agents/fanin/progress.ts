@@ -26,7 +26,7 @@ export abstract class AgentProgressRepository extends AgentsRepository {
     summary: string
   ): Promise<void> {
     if (!policy.progressRelayEnabled || policy.progressRelayMaxEvents < 1) return;
-    if (!row.origin || row.origin.adapter !== 'telegram') return;
+    if (row.origin?.adapter !== 'telegram') return;
     if (rootMessageId === undefined || !visibleText(summary)) return;
     if (stage !== 'denied' && isDelegatedSubAgentTurn(row)) return;
     await client.query(
@@ -46,7 +46,7 @@ export abstract class AgentProgressRepository extends AgentsRepository {
     const relayStage: AgentChainProgressStage = capped ? 'capped' : stage;
     const idempotencyKey = capped
       ? `relay-progress-capped:${rootMessageId}`
-      : `relay-progress:${row.id}:${attempt}:${stage}`;
+      : `relay-progress:${row.id}:${String(attempt)}:${stage}`;
     const text = capped
       ? progressRelayCappedText
       : truncateUtf8(summary, maxProgressSummaryBytes).value;
