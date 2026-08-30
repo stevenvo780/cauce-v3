@@ -276,7 +276,6 @@ test(
       const initial = await exactTmuxPaneState(base, identity.paneId);
       const acquired = await acquirePaneInputBarrier(base, identity, "2".repeat(64));
       assert.equal(acquired.state, "acquired");
-      if (acquired.state !== "acquired") return;
       const fenced = await exactTmuxPaneState(base, identity.paneId);
       const hostile = `select-pane -e -t ${identity.paneId}`
         + ` ; paste-buffer -b ${buffer} -t ${identity.paneId} -p`

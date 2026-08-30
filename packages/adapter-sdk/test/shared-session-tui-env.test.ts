@@ -31,14 +31,14 @@ test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => 
   });
   const cli = cliSharedSessionSpec("codex", "socrates", "/workspace", "/home/dev", environment);
   assert.deepEqual(adapter?.paneEnvironment, { CODEX_HOME: "/home/dev/.codex" });
-  assert.deepEqual(cli.environment, adapter?.paneEnvironment);
+  assert.deepEqual(cli.environment, adapter.paneEnvironment);
 
   // claude uses its own variable, and it is the SAME one used to resolve transcripts.
   const claude = loadSharedSessionConfig("claude", "kratos", "/estado", {
     ...environment, CAUCE_SHARED_SESSION: "1",
   });
   assert.deepEqual(claude?.paneEnvironment, { CLAUDE_CONFIG_DIR: "/home/dev/.claude" });
-  assert.equal(claude?.configDirectory, "/home/dev/.claude");
+  assert.equal(claude.configDirectory, "/home/dev/.claude");
   assert.equal(
     transcriptDirectoryIn(claude.configDirectory, "/workspace"),
     transcriptDirectory("/home/dev", "/workspace"),

@@ -22,12 +22,10 @@ test("pending durable outbox is replayed after hello_ack", async () => {
   const running = context.client.run(stop.signal);
   await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
   const ack = connection.sent.find((frame) => frame.type === "ack");
-  assert.equal(ack?.type, "ack");
-  if (ack?.type === "ack") {
-    assert.equal(ack.event_id, event.event_id);
-    assert.equal(ack.attempt, event.attempt);
-    assert.equal(ack.claim_token, event.claim_token);
-  }
+  assert.ok(ack, "no se envió ningún ACK");
+  assert.equal(ack.event_id, event.event_id);
+  assert.equal(ack.attempt, event.attempt);
+  assert.equal(ack.claim_token, event.claim_token);
   stop.abort();
   await running;
 });
@@ -55,12 +53,10 @@ test("structured adapter errors are propagated on the ACK without changing retry
   const running = context.client.run(stop.signal);
   await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
   const ack = connection.sent.find((frame) => frame.type === "ack");
-  assert.equal(ack?.type, "ack");
-  if (ack?.type === "ack") {
-    assert.equal(ack.error_code, event.error?.code);
-    assert.equal(ack.error, event.error?.message);
-    assert.equal(ack.retryable, false);
-  }
+  assert.ok(ack, "no se envió ningún ACK");
+  assert.equal(ack.error_code, event.error?.code);
+  assert.equal(ack.error, event.error?.message);
+  assert.equal(ack.retryable, false);
   stop.abort();
   await running;
 });

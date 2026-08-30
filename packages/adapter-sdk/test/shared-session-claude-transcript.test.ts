@@ -246,8 +246,8 @@ test("sin sesion compartida se responde igual pero el aviso viaja en el reply", 
   const records = await readDegradations(state);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.reason, "session_absent");
-  assert.equal(records[0]?.alias, "kratos");
-  assert.equal(records[0]?.fellBack, true);
+  assert.equal(records[0].alias, "kratos");
+  assert.equal(records[0].fellBack, true);
 
   // There is no credited `$N` to notify. Pointing by name here would open a race: a homonymous
   // session created after the preflight would receive a notice that does not belong to it.

@@ -134,8 +134,8 @@ test("restart prunes a terminal retained delegation request older than 24 hours"
   const reopened = await DurableStore.open(directory);
   const pruned = reopened.getDelivery(retainedDelivery.delivery_id);
   assert.equal(pruned?.state, "done");
-  assert.equal(pruned?.request, undefined);
-  assert.deepEqual(pruned?.output, delegatedOutput);
+  assert.equal(pruned.request, undefined);
+  assert.deepEqual(pruned.output, delegatedOutput);
 
   const inbox = JSON.parse(await readFile(resolve(directory, "inbox.json"), "utf8")) as {
     deliveries: Record<string, { request?: unknown }>;

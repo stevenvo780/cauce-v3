@@ -383,5 +383,6 @@ test("control negativo: recortar no parte nunca un par suplente", () => {
   const breve = rolBreveDelPerfil(conEmojis) ?? "";
   assert.ok(countCodePoints(breve) <= ROLE_BRIEF_MAX_CODE_POINTS);
   assert.ok(!breve.includes("�"), "quedó un surrogate suelto");
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread -- the assertion is the spread: code points, not UTF-16 units
   assert.equal([...breve].every((c) => c === "\u{1F389}"), true);
 });

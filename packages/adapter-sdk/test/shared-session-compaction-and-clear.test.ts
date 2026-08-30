@@ -135,7 +135,7 @@ test("una compactación durante el turno se cosecha Y se avisa con sus cifras", 
   );
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "context_compacted");
-  assert.equal(records[0]?.fellBack, false);
+  assert.equal(records[0].fellBack, false);
 });
 
 test("un /clear del dueño se dice en la respuesta en vez de mentir", async () => {
@@ -175,7 +175,7 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
   assert.equal(tmux.panePid, "4242", "sin reinicio de proceso: el PID no delata nada");
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "context_cleared");
-  assert.equal(records[0]?.fellBack, false);
+  assert.equal(records[0].fellBack, false);
 });
 
 test("resucitar la sesión no puede parecer una sesión compartida de siempre", async () => {

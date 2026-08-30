@@ -48,8 +48,8 @@ test("a rejected exact renewal aborts the active harness before another attempt 
     const renewal = connection.sent.find(
       (frame) => frame.type === "ack" && frame.event_id === renewalEvent.event_id,
     );
-    assert.equal(renewal?.type, "ack");
-    if (renewal?.type !== "ack") throw new Error("expected a renewal ACK");
+    assert.ok(renewal, "expected a renewal ACK");
+    if (renewal.type !== "ack") throw new Error("expected a renewal ACK");
 
     connection.push({
       type: "ack_result",

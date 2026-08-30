@@ -174,7 +174,7 @@ test("restart completes a lifecycle transaction after either target-file crash b
       ));
       assert.equal(record?.state, "accepted");
       assert.ok(event);
-      assert.equal(record?.lifecycle_event_ids?.accepted, event.event_id);
+      assert.equal(record.lifecycle_event_ids?.accepted, event.event_id);
     });
   }
 });
@@ -306,7 +306,7 @@ test("legacy split state reconstructs one terminal event and does not loop after
   assert.equal(migrated.pendingEvents().length, 1);
   const recovered = migrated.pendingEvents()[0];
   assert.equal(recovered?.phase, "done");
-  assert.deepEqual(recovered?.output, completedOutput);
+  assert.deepEqual(recovered.output, completedOutput);
   assert.ok(recovered);
   await migrated.acknowledge(recovered);
 

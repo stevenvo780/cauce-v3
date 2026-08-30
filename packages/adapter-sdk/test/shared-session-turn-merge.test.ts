@@ -768,7 +768,7 @@ test("el sobre se localiza sin ascendencia, y un mensaje intermedio no cuenta", 
   ] as TranscriptEntry[];
   const found = findEnvelopeTurn(entries, correlationId);
   assert.equal(found?.text, envelopeText("el entregable", correlationId));
-  assert.equal(found?.sessionId, sessionId);
+  assert.equal(found.sessionId, sessionId);
 
   // A subagent writes to the same file and cannot count as the turn's envelope.
   const sidechain = [{

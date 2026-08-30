@@ -188,7 +188,7 @@ test("OpenClaw mueve el pointer estable a la conversación humana real sin colap
   await engine.handleDelivery(consoleDelivery("oc-console"));
   const second = store.getSession(pointerKey);
   assert.ok(second);
-  assert.notEqual(second.native_id, first?.native_id, "el pointer cambia de conversación nativa");
+  assert.notEqual(second.native_id, first.native_id, "el pointer cambia de conversación nativa");
   assert.deepEqual(Object.keys(second).sort(), ["initialized", "native_id"]);
   const persisted = JSON.parse(
     await readFile(resolve(root, nombre, "sessions.json"), "utf8"),

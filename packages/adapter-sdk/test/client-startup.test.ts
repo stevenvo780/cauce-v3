@@ -54,16 +54,14 @@ test("connect retries then sends the real harness capabilities in hello", async 
   await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
   const hello = connection.sent.find((frame) => frame.type === "hello");
   assert.equal(connector.calls, 2);
-  assert.equal(hello?.type, "hello");
-  if (hello?.type === "hello") {
-    assert.equal(hello.alias, "agent_reconnect");
-    assert.equal(hello.instance_id, "instance-reconnect");
-    assert.deepEqual(hello.capabilities, capabilityStrings(fakeDefinition.capabilities));
-    assert.equal(hello.capabilities.includes("harness.fake"), true);
-    assert.equal(hello.capabilities.includes("agent_profile_v1"), true);
-    assert.equal(hello.capabilities.includes("agent_profile_adoption_v1"), true);
-    assert.equal(hello.capabilities.includes("attachments_v1"), true);
-  }
+  assert.ok(hello, "no se envió ningún HELLO");
+  assert.equal(hello.alias, "agent_reconnect");
+  assert.equal(hello.instance_id, "instance-reconnect");
+  assert.deepEqual(hello.capabilities, capabilityStrings(fakeDefinition.capabilities));
+  assert.equal(hello.capabilities.includes("harness.fake"), true);
+  assert.equal(hello.capabilities.includes("agent_profile_v1"), true);
+  assert.equal(hello.capabilities.includes("agent_profile_adoption_v1"), true);
+  assert.equal(hello.capabilities.includes("attachments_v1"), true);
   stop.abort();
   await running;
 });

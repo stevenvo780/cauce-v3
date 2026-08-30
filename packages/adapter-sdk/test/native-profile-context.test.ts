@@ -285,7 +285,7 @@ test("claude projects the fixed contract and sends only pointer, metadata, and r
   assert.match(finalFile, /PROFILE-NATIVE-CLAUDE/u);
   assert.match(finalFile, new RegExp(PRIMARY_DUTY_HEADER, "u"));
   assert.equal(measured?.documents.length, 1);
-  assert.equal(measured?.documents[0]?.sha256, hash(finalFile));
+  assert.equal(measured.documents[0]?.sha256, hash(finalFile));
   assert.equal(profileAdoptionFor({
     ...delivery("nativefirst"),
     recipient_alias: "zeus",
@@ -432,10 +432,10 @@ test("openclaw proves seven files without exposing memory, heartbeat, or profile
   });
 
   assert.deepEqual(measured?.documents.map((document) => basename(document.path)), FICHEROS_OPENCLAW);
-  for (const document of measured?.documents ?? []) {
+  for (const document of measured.documents ?? []) {
     assert.equal(document.sha256, hash(readFileSync(document.path, "utf8")));
   }
-  assert.doesNotMatch(measured?.text ?? "", /PRIVATE-(?:MEMORY|HEARTBEAT)/u);
+  assert.doesNotMatch(measured.text ?? "", /PRIVATE-(?:MEMORY|HEARTBEAT)/u);
   const stdin = requests[0]?.stdin ?? "";
   assert.doesNotMatch(stdin, /PRIVATE-|PROFILE-(?:SOUL|IDENTITY|USER|AGENTS|TOOLS)/u);
   assert.doesNotMatch(stdin, /BEGIN TRUSTED RUNTIME PROFILE/u);

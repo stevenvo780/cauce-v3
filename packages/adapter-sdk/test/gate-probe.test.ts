@@ -94,8 +94,8 @@ test('system.gate.probe ACKs the real claim without model, session, reply, messa
     });
     const durable = context.store.getDelivery(delivery.delivery_id);
     assert.equal(durable?.state, 'done');
-    assert.equal(durable?.request, undefined);
-    assert.deepEqual(durable?.output, terminal.output);
+    assert.equal(durable.request, undefined);
+    assert.deepEqual(durable.output, terminal.output);
     assert.deepEqual(context.logs, [], 'reserved probes must not print body or identifiers');
   } finally {
     await rm(context.directory, { recursive: true, force: true });

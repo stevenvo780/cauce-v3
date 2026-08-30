@@ -182,7 +182,7 @@ test("una compactacion con la cadena rota no deja la respuesta sin cosechar", ()
 
   const encontrada = findFinalAssistant(entries, "u-inyectado");
   assert.ok(encontrada !== undefined, "la respuesta posterior a una compactacion tiene que cosecharse");
-  assert.equal(encontrada?.text, "la respuesta de verdad");
+  assert.equal(encontrada.text, "la respuesta de verdad");
 });
 
 test("sin compactacion de por medio se sigue exigiendo descendencia real", () => {

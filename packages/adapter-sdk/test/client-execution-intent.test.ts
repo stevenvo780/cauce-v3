@@ -106,11 +106,9 @@ test("an unconfirmed execution intent times out before invoking the harness", as
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
     ));
     assert.equal(runner.calls, 0);
-    assert.equal(failed?.type, "ack");
-    if (failed?.type === "ack") {
-      assert.equal(failed.error_code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
-      assert.equal(failed.retryable, true);
-    }
+    assert.ok(failed, "expected an ACK frame");
+    assert.equal(failed.error_code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
+    assert.equal(failed.retryable, true);
   } finally {
     stop.abort();
     await running;
@@ -139,8 +137,10 @@ test("a receipt cannot release the harness while its transport send never settle
     assert.equal(runner.calls, 0, "a remote receipt does not prove the local send completed");
     assert.ok(connection.closeCalls > 0, "the poisoned transport must be closed before reconnect");
     const record = context.store.getDelivery(input.delivery_id);
-    assert.equal(record?.error?.code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
-    assert.equal(record?.error?.retryable, true);
+    assert.ok(record);
+    assert.equal(record.error?.code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- asserting the same non-nullish property twice across separate frames
+    assert.equal(record.error?.retryable, true);
     assert.ok(context.store.pendingEvents().some((event) => (
       event.delivery_id === input.delivery_id && event.phase === "failed"
     )), "the retryable failure must remain durable when the connection cannot flush it");

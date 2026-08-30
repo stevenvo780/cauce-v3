@@ -96,7 +96,7 @@ test("un PNG en file:// sale como data: y los bytes decodificados son idénticos
   // The effect, not the function name: the bytes that travel are THE file.
   assert.deepEqual(decodeDataUri(salida), PNG_BYTES);
   assert.equal(output.artifacts[0]?.media_type, "image/png");
-  assert.equal(output.artifacts[0]?.sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
+  assert.equal(output.artifacts[0].sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
   // The rest of the response is left untouched.
   assert.equal(output.reply, "listo, te dejo la hoja de ruta");
   assert.equal(output.status, "done");
@@ -414,8 +414,8 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
   // OLD BRANCH.
   const antes = fakeDefinition.parse(stdout).output;
   assert.equal(antes.artifacts[0]?.uri, uri);
-  assert.match(antes.artifacts[0]?.uri ?? "", /^file:\/\//u);
-  assert.equal(antes.artifacts[0]?.uri.startsWith("data:"), false);
+  assert.match(antes.artifacts[0].uri ?? "", /^file:\/\//u);
+  assert.equal(antes.artifacts[0].uri.startsWith("data:"), false);
 
   // NEW BRANCH.
   const state = resolve(".test-state", "artifact-inliner-ack");
@@ -442,7 +442,7 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
   assert.equal(enviado.name, "hoja_ruta_domiciliario.png");
   assert.equal(enviado.media_type, "image/png");
   // And the work —the reply— goes out just the same.
-  assert.equal(done.output?.reply, "acá va la hoja de ruta");
+  assert.equal(done.output.reply, "acá va la hoja de ruta");
   assert.equal(store.getDelivery("miguel-1")?.state, "done");
 });
 
@@ -473,6 +473,6 @@ test("un adjunto ilegible no le cuesta el turno a nadie: el ACK sale igual, con 
   const done = events.find((event) => event.phase === "done");
   assert.ok(done, "un adjunto ilegible se llevó puesto el turno");
   assert.equal(done.output?.reply, "no pude generar el pantallazo, pero acá va el informe");
-  assert.equal(done.output?.artifacts[0]?.uri.startsWith("file://"), true);
+  assert.equal(done.output.artifacts[0]?.uri.startsWith("file://"), true);
   assert.equal(store.getDelivery("miguel-2")?.state, "done");
 });

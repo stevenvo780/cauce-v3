@@ -29,14 +29,14 @@ test("un 'done' sin reply ni delegacion falla, pero deja texto que la persona pu
   // `deliveries.result` as NULL and `agentResponseText` with nothing to read: the sender received
   // silence.  the four questions from Miguel to janus on 27-jul stayed
   // like that, `failed` with `result` NULL and no follow-up.
-  assert.equal(terminal?.error?.code, "HARNESS_REPORTED_FAILURE");
-  assert.equal(terminal?.error?.retryable, false);
+  assert.equal(terminal.error?.code, "HARNESS_REPORTED_FAILURE");
+  assert.equal(terminal.error?.retryable, false);
   assert.equal(context.store.getDelivery(input.delivery_id)?.state, "failed");
   assert.equal(context.events.some((event) => event.phase === "done"), false);
   // What makes this useful for a human: the terminal event CARRIES output with text, which is
   // where `agentResponseText` (packages/store) pulls the body of the reply message from.
-  assert.equal(terminal?.output?.status, "failed");
-  assert.match(terminal?.output?.reply ?? "", /Volve a preguntarme/u);
+  assert.equal(terminal.output?.status, "failed");
+  assert.match(terminal.output?.reply ?? "", /Volve a preguntarme/u);
 });
 
 test("reply null remains valid when an agent response delegates to a different agent", async () => {
@@ -59,8 +59,8 @@ test("reply null remains valid when an agent response delegates to a different a
   await context.engine.handleDelivery(input);
   const terminal = context.events.at(-1);
   assert.equal(terminal?.phase, "done");
-  assert.equal(terminal?.output?.reply, null);
-  assert.equal(terminal?.output?.messages[0]?.to, "socrates");
+  assert.equal(terminal.output?.reply, null);
+  assert.equal(terminal.output?.messages[0]?.to, "socrates");
 });
 
 test("stale delivery epoch is rejected and never reaches a harness", async () => {
@@ -69,8 +69,8 @@ test("stale delivery epoch is rejected and never reaches a harness", async () =>
   await context.engine.handleDelivery(delivery("stale-1", 1));
   assert.equal(context.runner.calls, 0);
   assert.equal(context.events[0]?.phase, "failed");
-  assert.equal(context.events[0]?.error?.code, "STALE_EPOCH");
-  assert.equal(context.events[0]?.epoch, 2);
+  assert.equal(context.events[0].error?.code, "STALE_EPOCH");
+  assert.equal(context.events[0].epoch, 2);
 });
 
 test("relay cancellation aborts the injected runner and emits failed", async () => {
@@ -118,8 +118,8 @@ test("ambiguous execution timeout is terminal and a higher attempt is never run 
   await engine.handleDelivery(first);
   const failed = events.at(-1);
   assert.equal(failed?.phase, "failed");
-  assert.equal(failed?.error?.code, "EXECUTION_TIMEOUT_AMBIGUOUS");
-  assert.equal(failed?.error?.retryable, false);
+  assert.equal(failed.error?.code, "EXECUTION_TIMEOUT_AMBIGUOUS");
+  assert.equal(failed.error?.retryable, false);
 
   await engine.handleDelivery(delivery("ambiguous-timeout", 1, 2));
   assert.equal(runner.calls, 1);

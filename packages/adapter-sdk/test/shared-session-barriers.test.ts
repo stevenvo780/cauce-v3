@@ -57,7 +57,7 @@ test("las formas exhaustivas de ocupación rechazada son busy y no mutan input n
     assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), previousToken, scenario.name);
     assert.equal(tmux.calls.some((call) => call[0] === "select-pane"), false, scenario.name);
     assert.equal(
-      tmux.calls.some((call) => ["display-message", "list-panes", "run-shell"].includes(call[0]!)),
+      tmux.calls.some((call) => call[0] !== undefined && ["display-message", "list-panes", "run-shell"].includes(call[0])),
       false,
       `${scenario.name}: toda negativa y sus probes deben ser hookless`,
     );
@@ -99,9 +99,7 @@ test("una postcondición exacta acredita la barrera aunque se pierda el exit sta
   assert.equal(lostStatus, true);
   assert.equal(tmux.inputOff, true);
   assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), "b".repeat(64));
-  if (acquired.state === "acquired") {
-    assert.equal(await releasePaneInputBarrier(tmux, acquired.barrier), "applied");
-  }
+  assert.equal(await releasePaneInputBarrier(tmux, acquired.barrier), "applied");
 });
 
 test("copy-mode en el runner degrada sin liberar barrera inexistente ni terminar al humano", async () => {
@@ -200,7 +198,6 @@ test(
       const token = "a".repeat(64);
       const acquired = await acquirePaneInputBarrier(base, identity, token);
       assert.equal(acquired.state, "acquired");
-      if (acquired.state !== "acquired") return;
 
       let loaded = false;
       let raced = false;
@@ -400,7 +397,6 @@ test("la mutación atómica rechaza respawn-pane después del probe y antes de E
   const pasteTmux = new FakeTmux();
   const acquired = await acquirePaneInputBarrier(pasteTmux, identity, "c".repeat(64));
   assert.equal(acquired.state, "acquired");
-  if (acquired.state !== "acquired") return;
   const originalPasteRun = pasteTmux.run.bind(pasteTmux);
   let swappedPaste = false;
   pasteTmux.run = async (args, stdin, control): Promise<TmuxResult> => {
