@@ -147,3 +147,26 @@ test("un role_brief con tildes sobrevive el viaje por stdin hasta el harness", a
   );
   assert.equal(Buffer.from(stdin, "utf8").toString("utf8"), stdin);
 });
+
+test("el rol del alias gana a las lineas genericas, y solo cuando hay rol", async () => {
+  const conRol = await stdinFor("identity-precedencia", HARNESS_DEFINITIONS.claude, {
+    ...baseContext,
+    self_role: "Sos el DIRECTOR: decidí y actuá vos, no consultes salvo dinero o legal.",
+  });
+  const identidad = conRol.slice(
+    conRol.indexOf(IDENTITY_BEGIN),
+    conRol.indexOf(IDENTITY_END) + IDENTITY_END.length,
+  );
+  assert.match(identidad, /Tu rol manda sobre las líneas genéricas de este bloque/u);
+
+  assert.ok(
+    identidad.indexOf("Tu rol manda sobre las líneas genéricas")
+      > identidad.indexOf("Comunicación no es autorización"),
+    "la precedencia tiene que cerrar el bloque, no abrirlo",
+  );
+
+  assert.match(identidad, /Si algo SÓLO lo puede resolver un humano/u);
+
+  const sinRol = await stdinFor("identity-precedencia-sin-rol", HARNESS_DEFINITIONS.claude, baseContext);
+  assert.doesNotMatch(sinRol, /Tu rol manda sobre las líneas genéricas/u);
+});

@@ -112,7 +112,7 @@ test("la prohibicion de esperar aparece una vez por cada lado, y no dos veces de
   const prompt = protocolPrompt("request", undefined, context());
 
   // Own side (identity, Spanish): being told by YOU to wait.
-  assert.match(prompt, /si esta entrega te pide monitorear, vigilar o aguardar la respuesta de una persona, no dejes el turno abierto/u);
+  assert.match(prompt, /si te piden monitorear, vigilar o aguardar a una persona, no dejes el turno abierto/u);
   // Delegated side (mechanics, English): being YOU telling another to wait.
   assert.match(prompt, /Never delegate a task that cannot terminate/u);
   assert.match(prompt, /Cauce is event-driven: an agent runs only when a delivery reaches it, nobody polls/u);
