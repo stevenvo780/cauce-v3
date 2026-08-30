@@ -16,7 +16,7 @@ import {
 /**
  * Centralized definition of the console main menu entries.
  */
-export interface NavEntry {
+interface NavEntry {
   id: string;
   label: string;
   icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;

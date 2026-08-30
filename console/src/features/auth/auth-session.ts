@@ -22,7 +22,7 @@ export function statusOf(state: ConsoleAuthState | undefined, error: Error | und
 }
 
 /** How often the session is revalidated against the server, so an expiration is noticed. */
-export const REVALIDATE_MS = 60_000;
+const REVALIDATE_MS = 60_000;
 
 export interface AuthGateState {
   state?: ConsoleAuthState;
