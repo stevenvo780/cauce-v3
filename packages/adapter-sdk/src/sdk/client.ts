@@ -52,6 +52,11 @@ function validateIdentity(config: AdapterConfig): void {
 
 type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
 
+/** Public JavaScript harnesses may supply non-literal capability values at runtime. */
+function matchesCapability(value: unknown, expected: string | boolean): boolean {
+  return value === expected;
+}
+
 interface ExecutionIntentWaiter {
   readonly deliveryId: string;
   readonly attempt: number;
@@ -70,62 +75,32 @@ interface SendDeadline {
 const CAPABILITY_ENCODERS = {
   protocol_version: (value) => [`protocol.${value.protocol_version}`],
   harness: (value) => [`harness.${value.harness}`],
-  structured_output: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.structured_output === true ? ['structured-output'] : [],
-  stdin_prompt: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.stdin_prompt === true ? ['stdin-prompt'] : [],
-  durable_inbox: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.durable_inbox === true ? ['durable-inbox'] : [],
-  durable_outbox: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.durable_outbox === true ? ['durable-outbox'] : [],
-  idempotent_delivery: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.idempotent_delivery === true ? ['idempotent-delivery'] : [],
-  heartbeat: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.heartbeat === true ? ['heartbeat'] : [],
-  cancellation: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Public JavaScript harnesses can violate literal capability types.
-    value.cancellation === 'process_group' ? ['cancellation.process-group'] : [],
-  fencing_epoch: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.fencing_epoch === true ? ['fencing-epoch'] : [],
-  origin_relay: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.origin_relay === true ? ['origin-relay'] : [],
-  attempt_scoped_delivery: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.attempt_scoped_delivery === true ? ['attempt-scoped-delivery'] : [],
-  event_id_correlation: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.event_id_correlation === true ? ['event-id-correlation'] : [],
-  claim_token_correlation: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.claim_token_correlation === true ? ['claim-token-correlation'] : [],
-  authenticated_session_scope: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.authenticated_session_scope === true ? ['authenticated-session-scope'] : [],
-  routing_targets_v1: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.routing_targets_v1 === true ? ['routing_targets_v1'] : [],
-  attachments_v1: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
-    value.attachments_v1 === true ? ['attachments_v1'] : [],
-  native_image_input_v1: (value) => value.native_image_input_v1 === true
-    ? ['native_image_input_v1']
-    : [],
-  native_document_input_v1: (value) => value.native_document_input_v1 === true
-    ? ['native_document_input_v1']
-    : [],
-  persistent_sessions: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can supply a non-boolean capability value.
-    value.persistent_sessions === true ? ['persistent-sessions'] : [],
-  loopback_api: (value) => value.loopback_api === true ? ['loopback-api'] : [],
-  stable_alias_sessions: (value) => value.stable_alias_sessions === true
-    ? ['stable-alias-sessions']
-    : [],
-  api_cancellation: (value) => value.api_cancellation === 'abort_signal'
-    ? ['api-cancellation.abort-signal']
-    : [],
-  renewable_delivery_claims_v1: (value) => value.renewable_delivery_claims_v1 === true
-    ? ['renewable_delivery_claims_v1']
-    : [],
-  delegation_feedback_v1: (value) => value.delegation_feedback_v1 === true
-    ? ['delegation_feedback_v1']
-    : [],
-  agent_identity_v1: (value) => value.agent_identity_v1 === true ? ['agent_identity_v1'] : [],
-  agent_profile_v1: (value) => value.agent_profile_v1 === true ? ['agent_profile_v1'] : [],
-  agent_profile_adoption_v1: (value) => value.agent_profile_adoption_v1 === true
-    ? ['agent_profile_adoption_v1']
-    : [],
+  structured_output: (value) => matchesCapability(value.structured_output, true) ? ['structured-output'] : [],
+  stdin_prompt: (value) => matchesCapability(value.stdin_prompt, true) ? ['stdin-prompt'] : [],
+  durable_inbox: (value) => matchesCapability(value.durable_inbox, true) ? ['durable-inbox'] : [],
+  durable_outbox: (value) => matchesCapability(value.durable_outbox, true) ? ['durable-outbox'] : [],
+  idempotent_delivery: (value) => matchesCapability(value.idempotent_delivery, true) ? ['idempotent-delivery'] : [],
+  heartbeat: (value) => matchesCapability(value.heartbeat, true) ? ['heartbeat'] : [],
+  cancellation: (value) => matchesCapability(value.cancellation, 'process_group') ? ['cancellation.process-group'] : [],
+  fencing_epoch: (value) => matchesCapability(value.fencing_epoch, true) ? ['fencing-epoch'] : [],
+  origin_relay: (value) => matchesCapability(value.origin_relay, true) ? ['origin-relay'] : [],
+  attempt_scoped_delivery: (value) => matchesCapability(value.attempt_scoped_delivery, true) ? ['attempt-scoped-delivery'] : [],
+  event_id_correlation: (value) => matchesCapability(value.event_id_correlation, true) ? ['event-id-correlation'] : [],
+  claim_token_correlation: (value) => matchesCapability(value.claim_token_correlation, true) ? ['claim-token-correlation'] : [],
+  authenticated_session_scope: (value) => matchesCapability(value.authenticated_session_scope, true) ? ['authenticated-session-scope'] : [],
+  routing_targets_v1: (value) => matchesCapability(value.routing_targets_v1, true) ? ['routing_targets_v1'] : [],
+  attachments_v1: (value) => matchesCapability(value.attachments_v1, true) ? ['attachments_v1'] : [],
+  native_image_input_v1: (value) => matchesCapability(value.native_image_input_v1, true) ? ['native_image_input_v1'] : [],
+  native_document_input_v1: (value) => matchesCapability(value.native_document_input_v1, true) ? ['native_document_input_v1'] : [],
+  persistent_sessions: (value) => matchesCapability(value.persistent_sessions, true) ? ['persistent-sessions'] : [],
+  loopback_api: (value) => matchesCapability(value.loopback_api, true) ? ['loopback-api'] : [],
+  stable_alias_sessions: (value) => matchesCapability(value.stable_alias_sessions, true) ? ['stable-alias-sessions'] : [],
+  api_cancellation: (value) => matchesCapability(value.api_cancellation, 'abort_signal') ? ['api-cancellation.abort-signal'] : [],
+  renewable_delivery_claims_v1: (value) => matchesCapability(value.renewable_delivery_claims_v1, true) ? ['renewable_delivery_claims_v1'] : [],
+  delegation_feedback_v1: (value) => matchesCapability(value.delegation_feedback_v1, true) ? ['delegation_feedback_v1'] : [],
+  agent_identity_v1: (value) => matchesCapability(value.agent_identity_v1, true) ? ['agent_identity_v1'] : [],
+  agent_profile_v1: (value) => matchesCapability(value.agent_profile_v1, true) ? ['agent_profile_v1'] : [],
+  agent_profile_adoption_v1: (value) => matchesCapability(value.agent_profile_adoption_v1, true) ? ['agent_profile_adoption_v1'] : [],
 } satisfies Record<keyof AdapterCapabilities, CapabilityEncoder>;
 
 export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
