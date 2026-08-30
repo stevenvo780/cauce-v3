@@ -22,7 +22,6 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-// These are guaranteed by the checks above, but TypeScript needs reassurance
 const ensuredTenantId: string = tenantId;
 const ensuredDatabaseUrl: string = databaseUrl;
 

@@ -394,7 +394,7 @@ export class AgentConnection {
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_DATA) {
-      // Mismo prefijo de 36 bytes que STDOUT, pero lo que lleva es el `request_id`.
+      // Same 36-byte prefix as STDOUT, but it carries the `request_id`.
       const data = decodeDataFrame(frame.payload);
       this.dispatchRead(data.sessionId, 'data', (handlers) => { handlers.onReadData(data.data); });
       return;
