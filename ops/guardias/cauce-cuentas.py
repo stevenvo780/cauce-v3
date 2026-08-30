@@ -64,11 +64,11 @@ def listar(_args: argparse.Namespace) -> int:
     )
     print("\n== QUIEN USA CADA UNA (por prioridad; 0 es la preferida) ==")
     actual = None
-    for l in ligados:
-        if l[0] != actual:
-            actual = l[0]
+    for fila in ligados:
+        if fila[0] != actual:
+            actual = fila[0]
             print(f"  {actual}:")
-        print(f"     p{l[2]:<3} {l[1]:<10} {'' if l[3] == 't' else '(deshabilitado)'}")
+        print(f"     p{fila[2]:<3} {fila[1]:<10} {'' if fila[3] == 't' else '(deshabilitado)'}")
 
     sin_respaldo = consulta(
         "select b.agent_alias, count(*) from agent_account_bindings b where b.enabled "

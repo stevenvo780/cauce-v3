@@ -85,7 +85,7 @@ def list_backups():
 
     print(f"{'Backup file':<50} {'Date':<12} {'Size':>10}")
     print("-" * 75)
-    for fname, date_dir, fpath, size, mtime in backups:
+    for fname, date_dir, _fpath, size, _mtime in backups:
         print(f"{fname:<50} {date_dir:<12} {size:>10}")
 
 

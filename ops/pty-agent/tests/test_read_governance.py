@@ -84,7 +84,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_test_home_is_canonical(self) -> None:
         """Asserts that the test environment's temp directory is canonical.
-        
+
         If this test fails, it explains why other tests might have raised symlink_detected
         due to the test home directory itself not being canonical in the runner environment.
         """

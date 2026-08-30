@@ -166,8 +166,7 @@ class ProcessTransport(Transport):
         process = subprocess.run(
             argv,
             input=payload,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=180,
             check=False,
         )

@@ -77,8 +77,12 @@ filas, por_huella, problemas = [], {}, 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:
     d = leer(contenedor, ruta)
-    if d.get("falta"):   filas.append(("-", etiqueta, contenedor, "NO EXISTE", "")); continue
-    if d.get("error"):   filas.append(("?", etiqueta, contenedor, "ILEGIBLE", d["error"])); continue
+    if d.get("falta"):
+        filas.append(("-", etiqueta, contenedor, "NO EXISTE", ""))
+        continue
+    if d.get("error"):
+        filas.append(("?", etiqueta, contenedor, "ILEGIBLE", d["error"]))
+        continue
 
     huella = d.get("huella")
     horas = None

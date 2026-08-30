@@ -64,7 +64,7 @@ def test_reap_children_function():
     _parent_pid = os.getpid()
     zombie_pids = []
 
-    for i in range(2):
+    for _i in range(2):
         proc = subprocess.Popen(
             ["python3", "-c", "import sys; sys.exit(0)"],
             stdout=subprocess.DEVNULL,

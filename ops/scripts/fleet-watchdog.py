@@ -105,7 +105,7 @@ def parse_psql_rows(output: str) -> list[dict[str, str]]:
     for line in lines[1:]:
         values = line.split('|')
         if len(values) == len(header):
-            rows.append(dict(zip(header, values)))
+            rows.append(dict(zip(header, values, strict=False)))
     return rows
 
 
