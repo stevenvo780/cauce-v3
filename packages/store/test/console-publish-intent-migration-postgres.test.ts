@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { DatabasePool } from '../src/index.js';
+import { applyMigrations, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
@@ -9,6 +9,8 @@ import {
 const version = '037_console_publish_intent_indexes.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
 const downPath = new URL(`../migrations/down/${version}`, import.meta.url);
+const version038 = '038_cauce_text_items_ok_search_path.sql';
+const down038Path = new URL(`../migrations/down/${version038}`, import.meta.url);
 const indexNames = [
   'audit_events_console_publish_key_037_idx',
   'audit_events_console_publish_nonce_037_idx',
@@ -20,6 +22,7 @@ let database: TestDatabase;
 let pool: DatabasePool;
 let up: string;
 let down: string;
+let down038: string;
 
 async function existingIndexes(): Promise<string[]> {
   const result = await pool.query<{ indexname: string }>(
@@ -44,6 +47,19 @@ async function ensureUp(): Promise<void> {
        source_origin=EXCLUDED.source_origin`,
     [version, createHash('sha256').update(up).digest('hex')],
   );
+}
+
+async function migrationApplied(migrationVersion: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1 FROM schema_migrations WHERE version=$1`, [migrationVersion],
+  );
+  return result.rowCount === 1;
+}
+
+async function removeLatestTextItemsSearchPath(): Promise<void> {
+  if (!await migrationApplied(version038)) return;
+  await pool.query(down038);
+  await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version038]);
 }
 
 async function seedScaleHistory(): Promise<void> {
@@ -107,9 +123,10 @@ async function explainWithGenericPlan(
 }
 
 beforeAll(async () => {
-  [up, down] = await Promise.all([
+  [up, down, down038] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
+    readFile(down038Path, 'utf8'),
   ]);
   database = await startTestDatabase();
   pool = database.pool;
@@ -118,12 +135,14 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeLatestTextItemsSearchPath();
   await ensureUp();
 });
 
 afterEach(async () => {
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await ensureUp();
+  await applyMigrations(pool);
 });
 
 afterAll(async () => {
