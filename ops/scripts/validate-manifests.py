@@ -9,5 +9,5 @@ try:
     manifests = load_manifests(root)
 except (OSError, ValueError, ManifestError) as error:
     print(f"manifest validation failed: {error}", file=sys.stderr)
-    raise SystemExit(1)
+    raise SystemExit(1) from None
 print(f"manifest validation passed: {len(manifests)} exact aliases")

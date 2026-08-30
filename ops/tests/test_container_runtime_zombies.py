@@ -126,7 +126,7 @@ def test_can_reap_true_safety():
         reap_children()
         print("✓ test_can_reap_true_safety: reap_children() executed safely")
     except Exception as e:
-        raise AssertionError(f"reap_children() raised exception: {e}")
+        raise AssertionError(f"reap_children() raised exception: {e}") from e
 
     # The key invariant: process.wait() should still work on the Popen object
     # (though it may get a timeout if the process was already reaped)

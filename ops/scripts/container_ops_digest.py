@@ -195,4 +195,4 @@ if __name__ == "__main__":
             print(value)
     except (OSError, ValueError) as error:
         print(f"container operational digest failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

@@ -2148,7 +2148,7 @@ class PtyAgent:
         try:
             details = os.stat(segment, dir_fd=directory, follow_symlinks=False)
         except OSError:
-            raise error
+            raise
         if stat.S_ISLNK(details.st_mode):
             raise ReadSymlinkError(segment) from None
         if not stat.S_ISDIR(details.st_mode):
@@ -2162,7 +2162,7 @@ class PtyAgent:
             child = os.open(segment, flags, dir_fd=directory)
         except OSError as error:
             PtyAgent._classify_directory_open_error(directory, segment, error)
-            raise AssertionError("directory open classifier returned")
+            raise AssertionError("directory open classifier returned") from error
         if not stat.S_ISDIR(os.fstat(child).st_mode):
             os.close(child)
             raise ReadPathTypeError(segment)

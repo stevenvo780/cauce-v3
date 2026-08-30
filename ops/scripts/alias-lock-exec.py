@@ -86,9 +86,9 @@ def open_root_directory(root: pathlib.Path, *, create: bool) -> int:
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                     dir_fd=current_fd,
                 )
-            except FileNotFoundError:
+            except FileNotFoundError as err:
                 if not create:
-                    raise LockError("lock root is absent")
+                    raise LockError("lock root is absent") from err
                 try:
                     mkdir_private_at(component, current_fd)
                     created = True

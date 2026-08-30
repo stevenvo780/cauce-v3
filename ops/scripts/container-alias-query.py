@@ -15,5 +15,5 @@ try:
     entry = load_container_aliases(root)[alias]
 except (KeyError, OSError, ValueError, ContainerAliasError) as error:
     print(f"container alias lookup failed: {error}", file=sys.stderr)
-    raise SystemExit(2)
+    raise SystemExit(2) from None
 print("\t".join(entry[field] for field in FIELDS))

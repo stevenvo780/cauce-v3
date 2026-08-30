@@ -440,4 +440,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, PinError) as error:
         print(f"container release pin failed: {error}", file=sys.stderr)
-        raise SystemExit(78)
+        raise SystemExit(78) from None

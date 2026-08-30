@@ -58,10 +58,10 @@ def run_psql(database_url: str, query: str) -> str:
         if result.returncode != 0:
             raise ValueError(f'psql failed: {result.stderr.strip()}')
         return result.stdout
-    except FileNotFoundError:
-        raise ValueError('psql not found (PostgreSQL client not installed)')
-    except subprocess.TimeoutExpired:
-        raise ValueError('psql query timed out')
+    except FileNotFoundError as err:
+        raise ValueError('psql not found (PostgreSQL client not installed)') from err
+    except subprocess.TimeoutExpired as err:
+        raise ValueError('psql query timed out') from err
 
 
 def load_state(state_file: str) -> dict[str, Any]:

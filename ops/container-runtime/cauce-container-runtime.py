@@ -89,9 +89,9 @@ def open_directory(path: str, *, create_below: str | None = None, uid: int | Non
             traversed.append(component)
             try:
                 following = os.open(component, flags, dir_fd=current)
-            except FileNotFoundError:
+            except FileNotFoundError as err:
                 if create_components is None or len(traversed) <= len(create_components):
-                    raise PermanentError("required state mount path does not exist")
+                    raise PermanentError("required state mount path does not exist") from err
                 try:
                     os.mkdir(component, mode=0o700, dir_fd=current)
                     following = os.open(component, flags, dir_fd=current)
@@ -1472,10 +1472,10 @@ def stop_adapter(args: argparse.Namespace) -> None:
         # Inaccessibility cannot be treated as absence: neither metadata nor a
         # held lock can be inspected, so stopped state is not provable.
         raise
-    except PermanentError:
+    except PermanentError as err:
         # No usable control directory for this generation. Prove nothing survives.
         if alias_generation_pids(args.alias, args.generation, args.state, exclude={os.getpid()}):
-            raise PermanentError("untracked processes still carry this alias generation; nothing was signalled")
+            raise PermanentError("untracked processes still carry this alias generation; nothing was signalled") from err
         return
     try:
         document, _ = read_metadata(control_fd)
