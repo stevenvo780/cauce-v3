@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { decodeJsonFrame } from './framing.js';
 import type { TerminalMode } from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
+import { hasControlCharacter, integerField, stringField } from './validation.js';
 
 export const AGENT_PING_INTERVAL_MS = 10_000;
 export const AGENT_PONG_TIMEOUT_MS = 45_000;
@@ -126,16 +127,6 @@ export function normalizedFingerprint(value: string): string {
   return value.replace(/:/g, '').toUpperCase();
 }
 
-export function stringField(source: Record<string, unknown>, name: string): string | undefined {
-  const value = source[name];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-export function integerField(source: Record<string, unknown>, name: string): number | undefined {
-  const value = source[name];
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
-}
-
 function modesField(source: Record<string, unknown>): readonly TerminalMode[] | undefined {
   const value: unknown = source.modes;
   if (!Array.isArray(value) || value.length === 0) return undefined;
@@ -169,10 +160,7 @@ const CODEX_NEVER_SERVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 function validCodexFallbackFilename(value: string): boolean {
   const normalized = value.toLowerCase();
   return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
-    && !value.includes('..') && !Array.from(value).some((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code <= 0x1f || code === 0x7f;
-    })
+    && !value.includes('..') && !hasControlCharacter(value)
     && !CODEX_NEVER_SERVE_BASENAMES.has(normalized)
     && !CODEX_NEVER_SERVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }

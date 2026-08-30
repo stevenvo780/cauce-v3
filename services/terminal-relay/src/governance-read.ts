@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { AgentConnection } from './agent-leg.js';
 import { logEvent } from './log.js';
+import { hasControlCharacter, integerField, stringField } from './validation.js';
 
 /**
  * Reading of a governance file inside an alias's container.
@@ -80,26 +81,9 @@ const DIRECTORY_SENSITIVE_BASENAMES = new Set([
 ]);
 const DIRECTORY_SENSITIVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 
-function stringField(source: Record<string, unknown>, name: string): string | undefined {
-  const value = source[name];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function integerField(source: Record<string, unknown>, name: string): number | undefined {
-  const value = source[name];
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
-}
-
 function hasExactKeys(source: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(source).sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
-}
-
-function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 0x1f || code === 0x7f;
-  });
 }
 
 function canonicalAbsolutePath(value: unknown): value is string {

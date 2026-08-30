@@ -10,6 +10,7 @@ import {
   type GovernanceWriteBatchOutcome, type GovernanceWritePrecondition,
 } from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
+import { hasControlCharacter } from './validation.js';
 
 /**
  * `POST /v3/terminal/relay/read|write` — mTLS gates from the gateway to the governed disk.
@@ -89,13 +90,6 @@ function authorized(header: unknown, expected: string): boolean {
   const authorization = typeof header === 'string' ? header : undefined;
   if (!authorization?.startsWith('Bearer ')) return false;
   return timingSafeEqual(digest(authorization.slice(7)), digest(expected));
-}
-
-function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 0x1f || code === 0x7f;
-  });
 }
 
 /**

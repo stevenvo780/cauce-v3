@@ -18,14 +18,13 @@ import {
   MAX_AGENT_WRITE_QUEUE_BYTES,
   MAX_TERMINAL_READ_TOMBSTONES,
   agentKey,
-  integerField,
-  stringField,
   type AgentGovernanceBatchEntry,
   type AgentHello,
   type AgentReadHandlers,
   type AgentSessionHandlers,
   type AgentWriteHandlers,
 } from './agent-hello.js';
+import { integerField, stringField } from './validation.js';
 
 /** One live agent socket. Frame routing to sessions lives here so the leg stays a registry. */
 export class AgentConnection {
