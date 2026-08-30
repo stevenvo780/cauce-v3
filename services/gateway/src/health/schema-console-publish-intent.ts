@@ -11,12 +11,7 @@ interface ConsolePublishIntentSchemaProbeRow {
 const consolePublishIntentMigrationSha256 =
   '0daeb89c224e940600562ab162fba03c4facd4cb0b80b65f20feedc02b33f281';
 
-/**
- * Proves schema-037's four bounded journal lookup paths from PostgreSQL catalogs. A matching
- * relation name is insufficient: access method, keys and expressions, ordering/null semantics,
- * predicate, validity and the atomic source ledger all have to match. The probe reads four
- * catalog rows under tight timeouts; it neither scans journal history nor mutates durable state.
- */
+/** Proves the exact schema-037 journal indexes and atomic source ledger without reading history. */
 export async function probeConsolePublishIntentPath(pool: DatabasePool): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
@@ -123,8 +118,8 @@ export async function probeConsolePublishIntentPath(pool: DatabasePool): Promise
       [consolePublishIntentMigrationSha256],
     );
     const contract = schema.rows[0];
-    if (contract?.migration_ledger_exact !== true || !contract.indexes_exact
-        || !contract.journal_permissions) {
+    /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
+    if (contract?.migration_ledger_exact !== true || contract.indexes_exact !== true || contract.journal_permissions !== true) {
       throw new Error('gateway schema-037 console publish intent contract is unavailable');
     }
   });

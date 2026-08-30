@@ -8,11 +8,7 @@ interface DeliveryAdmissionSchemaProbeRow {
   readonly claim_permissions: boolean;
 }
 
-/**
- * Proves the read/lock/mutation authority and schema used by `claimDeliveries` without observing
- * an alias or changing a row. NULL sentinels cannot match durable identities; PostgreSQL still
- * parses and authorizes every capacity, live-claim and fairness column on the hot path.
- */
+/** Proves the schema and authority used by `claimDeliveries` without observing an identity. */
 export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
@@ -73,11 +69,8 @@ export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<vo
            AS claim_permissions`,
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true
-        || !contract.capacity_column_exact
-        || !contract.capacity_constraint_valid
-        || !contract.inflight_index_valid
-        || !contract.claim_permissions) {
+    /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
+    if (contract?.migration_applied !== true || contract.capacity_column_exact !== true || contract.capacity_constraint_valid !== true || contract.inflight_index_valid !== true || contract.claim_permissions !== true) {
       throw new Error('gateway schema-015 delivery admission contract is unavailable');
     }
     await client.query(
@@ -178,9 +171,8 @@ export async function probeWakePath(pool: DatabasePool): Promise<void> {
            AS claim_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true
-        || !contract.connection_token_exact
-        || !contract.claim_permissions) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
+    if (contract?.migration_applied !== true || contract.connection_token_exact !== true || contract.claim_permissions !== true) {
       throw new Error('gateway wake schema-031 claim contract is unavailable');
     }
     // This is the read-only half of claimWakeOutbox's fenced claim. A NULL recipient cannot match

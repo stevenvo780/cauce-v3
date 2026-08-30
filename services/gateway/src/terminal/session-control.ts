@@ -120,11 +120,7 @@ function ticketTtlSeconds(row: Pick<TerminalSessionRow, 'issued_at' | 'expires_a
   return seconds;
 }
 
-/**
- * The legacy pseudo-operator is shared by every basic-auth console session. It is not an
- * identity, so its quota/list/revoke namespace must additionally include the authenticated
- * certificate subject. Named operators remain intentionally shared across their own sessions.
- */
+/** Scopes the shared legacy operator by certificate subject; named operators retain shared state. */
 function operatorLockIdentity(operator: ResolvedOperator, consoleSubject: string): string {
   return operator.attributed
     ? operator.operator_id
@@ -594,7 +590,8 @@ export function registerTerminalSessionControl(
           mode: row.mode,
           opened_at: row.issued_at.toISOString(),
           expires_at: (sessionExpiry(row) ?? row.expires_at).toISOString(),
-          state: sessionState(row, row.occupies_slot),
+          /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; only literal true can occupy an operator slot.
+          state: sessionState(row, row.occupies_slot === true),
           request_id: row.request_id,
           owner_generation: browserOwnerGeneration(row.browser_owner_generation),
         }))

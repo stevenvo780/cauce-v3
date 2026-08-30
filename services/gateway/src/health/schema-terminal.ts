@@ -8,11 +8,7 @@ interface TerminalClaimSchemaProbeRow {
   readonly audit_permissions: boolean;
 }
 
-/**
- * Validates schema-032 and the exact digest+epoch+live-lease CAS predicate without observing a
- * session or changing/renewing a lease. NULL cannot match the NOT NULL session id, while
- * PostgreSQL still resolves every critical column, comparison and effective privilege.
- */
+/** Validates schema-032 and its exact fenced CAS predicate without observing a session. */
 export async function probeTerminalClaimPath(pool: DatabasePool): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
@@ -69,9 +65,8 @@ export async function probeTerminalClaimPath(pool: DatabasePool): Promise<void> 
            ),false) AS audit_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || !contract.columns_exact
-        || !contract.constraint_exact || !contract.claim_permissions
-        || !contract.audit_permissions) {
+    /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
+    if (contract?.migration_applied !== true || contract.columns_exact !== true || contract.constraint_exact !== true || contract.claim_permissions !== true || contract.audit_permissions !== true) {
       throw new Error('gateway terminal schema-032 claim contract is unavailable');
     }
     await client.query(
@@ -181,9 +176,8 @@ export async function probeTerminalBrowserOwnerPath(pool: DatabasePool): Promise
            ),false) AS audit_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || !contract.columns_exact
-        || !contract.constraint_exact || !contract.request_index_exact
-        || !contract.mutation_permissions || !contract.audit_permissions) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
+    if (contract?.migration_applied !== true || contract.columns_exact !== true || contract.constraint_exact !== true || contract.request_index_exact !== true || contract.mutation_permissions !== true || contract.audit_permissions !== true) {
       throw new Error('gateway terminal schema-033 browser owner contract is unavailable');
     }
     await client.query(
@@ -259,8 +253,8 @@ export async function probeTerminalRelayInstancePath(pool: DatabasePool): Promis
            AS mutation_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || !contract.columns_exact
-        || !contract.constraint_exact || !contract.mutation_permissions) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
+    if (contract?.migration_applied !== true || contract.columns_exact !== true || contract.constraint_exact !== true || contract.mutation_permissions !== true) {
       throw new Error('gateway terminal schema-034 relay instance contract is unavailable');
     }
     await client.query(
