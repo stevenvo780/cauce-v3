@@ -11,6 +11,11 @@ export default tseslint.config(
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
     rules: {
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: false }],
+      '@typescript-eslint/no-floating-promises': ['error', {
+        allowForKnownSafeCalls: [
+          { from: 'package', package: 'node:test', name: ['test', 'describe', 'it', 'before', 'after', 'beforeEach', 'afterEach'] }
+        ]
+      }],
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }]
     }
