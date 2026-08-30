@@ -52,8 +52,8 @@ test("el andamiaje FIJO del sobre no crece sin que nadie se entere", () => {
   const andamiaje = medirAndamiaje();
   assert.ok(
     andamiaje <= TOPE_ANDAMIAJE_FIJO,
-    `El texto fijo que viaja en CADA entrega mide ${andamiaje} caracteres y el tope es ` +
-      `${TOPE_ANDAMIAJE_FIJO}. Si lo subiste a propósito, subí el tope en el mismo commit y ` +
+    `El texto fijo que viaja en CADA entrega mide ${String(andamiaje)} caracteres y el tope es ` +
+      `${String(TOPE_ANDAMIAJE_FIJO)}. Si lo subiste a propósito, subí el tope en el mismo commit y ` +
       `explicá por qué ese texto tiene que ir en cada turno en vez de en el fichero del arnés.`,
   );
 });
@@ -66,7 +66,7 @@ test("el sobre completo, con rol al tope y 13 destinos, no crece sin que nadie s
   );
   assert.ok(
     sobre.length <= TOPE_SOBRE_COMPLETO,
-    `El sobre mide ${sobre.length} caracteres y el tope es ${TOPE_SOBRE_COMPLETO}.`,
+    `El sobre mide ${String(sobre.length)} caracteres y el tope es ${String(TOPE_SOBRE_COMPLETO)}.`,
   );
 });
 
@@ -77,7 +77,7 @@ test("el sobre completo, con rol al tope y 13 destinos, no crece sin que nadie s
  */
 test("CONTROL NEGATIVO: el medidor reacciona, no devuelve siempre lo mismo", () => {
   const andamiaje = medirAndamiaje();
-  assert.ok(andamiaje > 5_000, `el andamiaje medido (${andamiaje}) es sospechosamente chico: ¿mide algo?`);
+  assert.ok(andamiaje > 5_000, `el andamiaje medido (${String(andamiaje)}) es sospechosamente chico: ¿mide algo?`);
 
   const corto = protocolPrompt("hola", ORIGEN, contextoReal());
   const largo = protocolPrompt("hola".repeat(500), ORIGEN, contextoReal());
@@ -93,6 +93,6 @@ test("la proporción andamiaje/pedido queda escrita, para poder verla bajar", ()
   const ratio = Math.round((sobre.length - pedido.length) / pedido.length);
   assert.ok(
     ratio <= 170,
-    `Por cada carácter de trabajo real viajan ${ratio} de andamiaje.`,
+    `Por cada carácter de trabajo real viajan ${String(ratio)} de andamiaje.`,
   );
 });

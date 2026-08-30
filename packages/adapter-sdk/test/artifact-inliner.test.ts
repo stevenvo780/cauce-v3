@@ -189,9 +189,9 @@ test("el techo agregado por respuesta corta en el segundo adjunto, y el segundo 
 test("veinte artifacts: se convierten los primeros N y el resto queda como estaba, sin excepción", async () => {
   const paths: string[] = [];
   for (let index = 0; index < 20; index += 1) {
-    paths.push(await fileWith(`lote-${index}.png`, PNG_BYTES));
+    paths.push(await fileWith(`lote-${String(index)}.png`, PNG_BYTES));
   }
-  const entrada = envelope(paths.map((path, index) => ({ name: `lote-${index}.png`, uri: path })));
+  const entrada = envelope(paths.map((path, index) => ({ name: `lote-${String(index)}.png`, uri: path })));
 
   const output = await inlineLocalArtifacts(entrada);
 

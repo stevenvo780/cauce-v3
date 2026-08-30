@@ -60,7 +60,7 @@ export async function exactTmuxPaneStateViaList(tmux: TmuxController, paneId: st
   assert.equal(state.exitCode, 0, state.stderr);
   const rows = state.stdout.split(/\r?\n/u).filter((row) => row !== "");
   assert.equal(rows.length, 1, `debe existir exactamente ${paneId}`);
-  return `${rows[0]}\n`;
+  return `${String(rows[0])}\n`;
 }
 
 export const ENVELOPE = {
@@ -173,13 +173,13 @@ export class FakeTmux implements TmuxController {
 
   replaceSession(options?: { alias?: string; harness?: "claude" | "codex" }): string {
     this.sessionExists = true;
-    this.sessionId = `$${this.nextSessionNumber}`;
+    this.sessionId = `$${String(this.nextSessionNumber)}`;
     this.nextSessionNumber += 1;
     this.windows = ["agente"];
     this.panePid = String(Number(this.panePid) + 1);
-    this.windowId = `@${this.nextWindowNumber}`;
+    this.windowId = `@${String(this.nextWindowNumber)}`;
     this.nextWindowNumber += 1;
-    this.paneId = `%${this.nextPaneNumber}`;
+    this.paneId = `%${String(this.nextPaneNumber)}`;
     this.nextPaneNumber += 1;
     this.inputContent = "";
     this.pasted = undefined;
@@ -435,7 +435,7 @@ export class FakeTmux implements TmuxController {
         if (!this.sessionExists) return { exitCode: 0, stdout: "", stderr: "" };
         const paneIds = [this.paneId];
         for (let index = 0; index < this.extraPaneCount; index += 1) {
-          paneIds.push(`%${900 + index}`);
+          paneIds.push(`%${String(900 + index)}`);
         }
         return { exitCode: 0, stdout: `${paneIds.join("\n")}\n`, stderr: "" };
       }
@@ -449,8 +449,8 @@ export class FakeTmux implements TmuxController {
           + `\t${this.panePid}\t0\t${this.paneStartCommand}`,
       ];
       for (let index = 0; index < this.extraPaneCount; index += 1) {
-        rows.push(`${this.sessionId}\t${this.sessionName}\t${this.windowId}\t${window}\t%${900 + index}`
-          + `\t${9000 + index}\t0\t${this.paneStartCommand}`);
+        rows.push(`${this.sessionId}\t${this.sessionName}\t${this.windowId}\t${window}\t%${String(900 + index)}`
+          + `\t${String(9000 + index)}\t0\t${this.paneStartCommand}`);
       }
       return { exitCode: 0, stdout: `${rows.join("\n")}\n`, stderr: "" };
     }
@@ -465,11 +465,11 @@ export class FakeTmux implements TmuxController {
         this.sessionName = args[sessionIndex + 1] ?? this.sessionName;
       }
       if (command === "new-session") {
-        this.sessionId = `$${this.nextSessionNumber}`;
+        this.sessionId = `$${String(this.nextSessionNumber)}`;
         this.nextSessionNumber += 1;
-        this.windowId = `@${this.nextWindowNumber}`;
+        this.windowId = `@${String(this.nextWindowNumber)}`;
         this.nextWindowNumber += 1;
-        this.paneId = `%${this.nextPaneNumber}`;
+        this.paneId = `%${String(this.nextPaneNumber)}`;
         this.nextPaneNumber += 1;
         this.inputContent = "";
         this.pasted = undefined;
@@ -539,7 +539,7 @@ export class FakeTmux implements TmuxController {
       }
       const rendered = this.inputContent === ""
         ? this.paneContent
-        : `${this.paneContent}\n[Pasted text #1 +${this.inputContent.split("\n").length} lines]\n❯ `;
+        : `${this.paneContent}\n[Pasted text #1 +${String(this.inputContent.split("\n").length)} lines]\n❯ `;
       return { exitCode: 0, stdout: rendered, stderr: "" };
     }
     if (command === "display-message" && args[1] === "-p"

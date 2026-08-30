@@ -116,7 +116,7 @@ test("con el CLAUDE.md sembrado, el adaptador NO le manda el bloque fijo al arn�
     assert.ok(!stdin.includes(PRIMARY_DUTY_HEADER), "el bloque fijo viajó igual teniéndolo el fichero");
     assert.match(stdin, /contexto Cauce v/u, "no quedó la referencia al contrato ya cargado");
     assert.ok(stdin.includes("Revisa el gateway."), "se perdió el pedido");
-    assert.ok(stdin.length < 3_000, `el sobre midió ${stdin.length}: no se recortó`);
+    assert.ok(stdin.length < 3_000, `el sobre midió ${String(stdin.length)}: no se recortó`);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -129,7 +129,7 @@ test("CONTROL NEGATIVO: sin fichero sembrado, el adaptador manda el sobre ENTERO
   try {
     const stdin = await correrUnTurno(home, "zeus");
     assert.ok(stdin.includes(PRIMARY_DUTY_HEADER), "se recortó sin que el fichero dijera nada");
-    assert.ok(stdin.length > 5_000, `el sobre midió ${stdin.length}: parece recortado`);
+    assert.ok(stdin.length > 5_000, `el sobre midió ${String(stdin.length)}: parece recortado`);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

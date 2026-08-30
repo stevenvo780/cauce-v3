@@ -140,7 +140,7 @@ test(
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-shared-commit-"));
     const output = join(scratch, "submitted.txt");
-    const socket = `cauce-test-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-test-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket, { ...process.env, CAUCE_TEST_OUTPUT: output });
     const session = "commit";
     try {
@@ -196,7 +196,7 @@ test(
 test(
   "tmux real: copy-mode rechaza la adquisición como busy y conserva vivo el pane humano",
   async () => {
-    const socket = `cauce-copy-mode-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-copy-mode-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const session = "copy-mode";
     const tmux = new CliTmux(socket);
     try {

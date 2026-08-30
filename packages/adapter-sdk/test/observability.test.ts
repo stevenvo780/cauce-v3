@@ -28,7 +28,7 @@ async function storeFor(name: string): Promise<DurableStore> {
 }
 
 function claimToken(attempt: number, variant = 0): string {
-  return `20000000-0000-4000-${8000 + variant}-${String(attempt).padStart(12, "0")}`;
+  return `20000000-0000-4000-${String(8000 + variant)}-${String(attempt).padStart(12, "0")}`;
 }
 
 function delivery(id: string, epoch = 1, attempt = 1, claim = claimToken(attempt)): Delivery {

@@ -257,14 +257,14 @@ test("el rol compuesto declara si cabe en self_role, y lo dice midiendo", () => 
   const corto = componerBloqueDePerfil(perfil(), hechos());
   assert.ok(
     countCodePoints(corto) <= ROLE_BRIEF_MAX_CODE_POINTS,
-    `un perfil típico deberia caber en self_role; mide ${countCodePoints(corto)}`,
+    `un perfil típico deberia caber en self_role; mide ${String(countCodePoints(corto))}`,
   );
 });
 
 test("control negativo: un perfil que llena el presupuesto NO cabe en self_role", () => {
   const enorme = componerBloqueDePerfil(
     perfil({
-      responsibilities: Array.from({ length: 20 }, (_, i) => `${"r".repeat(999)}${i}`),
+      responsibilities: Array.from({ length: 20 }, (_, i) => `${"r".repeat(999)}${String(i)}`),
     }),
     hechos(),
   );

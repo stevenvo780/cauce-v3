@@ -537,8 +537,8 @@ test("@all expansion is bounded by aggregate UTF-8 bytes", () => {
   });
   const exactPeerCount = MAX_EXPANDED_RELAY_AGGREGATE_BYTES / MAX_RELAY_BODY_BYTES;
   const targets = Array.from({ length: exactPeerCount + 1 }, (_, index) => ({
-    tenant_id: `tenant-${index}`,
-    alias: `peer${index}`,
+    tenant_id: `tenant-${String(index)}`,
+    alias: `peer${String(index)}`,
     online: true,
   }));
 

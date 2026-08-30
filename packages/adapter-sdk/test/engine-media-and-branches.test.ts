@@ -96,9 +96,9 @@ test("los textos que la ingesta acepta tambien se materializan en la entrega", a
   const payload = Buffer.from("# informe\nuna linea\n", "utf8");
   for (const [indice, [name, mime]] of casos.entries()) {
     const runner = new ControlledRunner();
-    const context = await setup(`engine-texto-${indice}`, runner);
+    const context = await setup(`engine-texto-${String(indice)}`, runner);
     const input: Delivery = {
-      ...delivery(`media-texto-${indice}`),
+      ...delivery(`media-texto-${String(indice)}`),
       body: {
         type: "telegram.message",
         attachments_v1: [{

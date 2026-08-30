@@ -26,7 +26,7 @@ export async function optionalFile(path: string): Promise<string | undefined> {
 }
 
 export function claimToken(attempt: number, variant = 0): string {
-  return `20000000-0000-4000-${8000 + variant}-${String(attempt).padStart(12, "0")}`;
+  return `20000000-0000-4000-${String(8000 + variant)}-${String(attempt).padStart(12, "0")}`;
 }
 
 export function delivery(id: string, epoch = 1, attempt = 1, claim = claimToken(attempt)): Delivery {
@@ -198,7 +198,7 @@ export async function setup(
 /** Native session the harness received in execution `index`. */
 export function sessionOf(runner: ControlledRunner, index: number): string {
   const value = runner.requests[index]?.args.at(-1);
-  assert.ok(value, `la ejecución ${index} no llegó al harness`);
+  assert.ok(value, `la ejecución ${String(index)} no llegó al harness`);
   return value;
 }
 

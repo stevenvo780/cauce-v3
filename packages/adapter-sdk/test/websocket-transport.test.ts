@@ -56,7 +56,7 @@ test("bearer token and development headers reload safely on reconnect", async ()
       ...(request.headers["x-cauce-alias"] === undefined ? {} : { alias: String(request.headers["x-cauce-alias"]) }),
     });
   });
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${address.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(address.port)}`, {
     environment: "test",
     bearerTokenFile: tokenFile,
     developmentIdentity: { tenant_id: "Steven", alias: "kant" },
@@ -122,7 +122,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   assert.ok(address && typeof address === "object");
   const accepted = once(server, "connection");
   const entries: AdapterLog[] = [];
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${address.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(address.port)}`, {
     environment: "test",
     alias: "argos",
     logger: (entry) => { entries.push(entry); },
@@ -262,7 +262,7 @@ async function frameServer(): Promise<{
 test("the delegation feedback fields are part of the ack_result frame contract", async () => {
   const server = await frameServer();
   const entries: AdapterLog[] = [];
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${server.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(server.port)}`, {
     environment: "test",
     alias: "zeus",
     logger: (entry) => { entries.push(entry); },
@@ -315,7 +315,7 @@ test("the delegation feedback fields are part of the ack_result frame contract",
 test("a frame outside the schema is dropped and the queue keeps serving the next one", async () => {
   const server = await frameServer();
   const entries: AdapterLog[] = [];
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${server.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(server.port)}`, {
     environment: "test",
     alias: "zeus",
     logger: (entry) => { entries.push(entry); },

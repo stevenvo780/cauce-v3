@@ -37,7 +37,7 @@ function sleep(ms: number): Promise<void> {
 async function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, fail) => {
-    timer = setTimeout(() => { fail(new Error(`${what}: la entrega quedó colgada más de ${ms} ms`)); }, ms);
+    timer = setTimeout(() => { fail(new Error(`${what}: la entrega quedó colgada más de ${String(ms)} ms`)); }, ms);
   });
   try {
     return await Promise.race([work, deadline]);

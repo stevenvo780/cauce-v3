@@ -129,7 +129,7 @@ test("un DM de Telegram queda etiquetado con su canal y su chat", async () => {
   const sesiones = await corre("origen-telegram", telegramDelivery("tg-1"));
   const claves = Object.keys(sesiones);
   assert.equal(claves.length, 1);
-  assert.ok(claves[0]!.startsWith("fake:jarvis:auth-v3:"), `clave inesperada: ${claves[0]}`);
+  assert.ok(claves[0]!.startsWith("fake:jarvis:auth-v3:"), `clave inesperada: ${String(claves[0])}`);
   assert.deepEqual((sesiones[claves[0]!] as Record<string, unknown>).origin, {
     adapter: "telegram",
     channel: "telegram",

@@ -174,7 +174,7 @@ test("una ventana TUI con más de un pane falla cerrada sin elegir el activo", a
 test(
   "tmux real: un respawn con otro comando invalida una sesión marcada",
   async () => {
-    const socket = `cauce-identity-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-identity-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([

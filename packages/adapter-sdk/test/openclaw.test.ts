@@ -62,7 +62,7 @@ async function setupServer(): Promise<{
   const address = server.address();
   assert.ok(address && typeof address === "object");
   return {
-    endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+    endpoint: `http://127.0.0.1:${String(address.port)}/v1/chat/completions`,
     requests,
     close: async () => new Promise<void>((resolveClose) => server.close(() => { resolveClose(); })),
   };

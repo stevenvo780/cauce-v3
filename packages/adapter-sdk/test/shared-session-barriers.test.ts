@@ -169,7 +169,7 @@ test(
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-input-barrier-"));
     const output = join(scratch, "lines.txt");
-    const socket = `cauce-race-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-race-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const session = "barrier";
     const base = new CliTmux(socket, { ...process.env, CAUCE_TEST_OUTPUT: output });
     let client: ReturnType<typeof spawn> | undefined;
@@ -251,7 +251,7 @@ test(
 test(
   "tmux real: token ajeno rechaza adquisición sin alterar modo, input, identidad ni opción",
   async () => {
-    const socket = `cauce-foreign-token-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-foreign-token-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([
@@ -323,7 +323,7 @@ test(
 test(
   "tmux real: mutación con identidad anterior preserva exactamente el pane respawnado",
   async () => {
-    const socket = `cauce-replacement-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-replacement-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([
