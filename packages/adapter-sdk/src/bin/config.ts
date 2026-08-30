@@ -201,9 +201,9 @@ function bridgeEnvironment(harnessId: HarnessId): Pick<CliRuntimeConfig, "harnes
     : harnessId === "openclaw"
       ? process.env.CAUCE_OPENCLAW_BRIDGE
       : undefined;
-  if (bridge !== undefined && bridge.length === 0) throw new Error("Harness bridge path must be non-empty");
+  if (bridge?.length === 0) throw new Error("Harness bridge path must be non-empty");
   const hermesPython = harnessId === "hermes" ? process.env.CAUCE_HERMES_PYTHON : undefined;
-  if (hermesPython !== undefined && hermesPython.length === 0) {
+  if (hermesPython?.length === 0) {
     throw new Error("CAUCE_HERMES_PYTHON must be non-empty");
   }
   return {
@@ -224,8 +224,17 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     throw new Error("CAUCE_DEV_AUTH is forbidden in production");
   }
   const tlsValues = [process.env.CAUCE_TLS_CERT_FILE, process.env.CAUCE_TLS_KEY_FILE, process.env.CAUCE_TLS_CA_FILE];
-  if (tlsValues.some((value) => value !== undefined) && tlsValues.some((value) => value === undefined)) {
-    throw new Error("CAUCE_TLS_CERT_FILE, CAUCE_TLS_KEY_FILE and CAUCE_TLS_CA_FILE must be configured together");
+  let mutualTls: NonNullable<CliRuntimeConfig["mutualTls"]> | undefined;
+  if (tlsValues.some((value) => value !== undefined)) {
+    const [certFile, keyFile, caFile] = tlsValues;
+    if (certFile === undefined || keyFile === undefined || caFile === undefined) {
+      throw new Error("CAUCE_TLS_CERT_FILE, CAUCE_TLS_KEY_FILE and CAUCE_TLS_CA_FILE must be configured together");
+    }
+    mutualTls = {
+      certFile: resolve(certFile),
+      keyFile: resolve(keyFile),
+      caFile: resolve(caFile),
+    };
   }
   const transport = process.env.CAUCE_OPENCLAW_TRANSPORT ?? "cli";
   if (transport !== "cli" && transport !== "api") throw new Error("CAUCE_OPENCLAW_TRANSPORT must be cli or api");
@@ -257,13 +266,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
       defaultTimeoutMs(),
     ),
     ...(process.env.CAUCE_TOKEN_FILE === undefined ? {} : { bearerTokenFile: resolve(process.env.CAUCE_TOKEN_FILE) }),
-    ...(tlsValues[0] === undefined ? {} : {
-      mutualTls: {
-        certFile: resolve(tlsValues[0]),
-        keyFile: resolve(tlsValues[1]!),
-        caFile: resolve(tlsValues[2]!),
-      },
-    }),
+    ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,
     ...(process.env.CAUCE_HARNESS_COMMAND === undefined ? {} : { harnessCommand: process.env.CAUCE_HARNESS_COMMAND }),
     ...bridgeEnvironment(harnessId),

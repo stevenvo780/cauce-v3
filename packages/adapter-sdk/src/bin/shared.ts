@@ -61,7 +61,7 @@ function definitionWithVerifiedBridge(
         return undefined;
       }
     })();
-  if (contents !== undefined && contents.includes(witness.marker)) return definition;
+  if (contents?.includes(witness.marker)) return definition;
   logger({
     event: "harness_start_witness_disabled",
     harness: definition.id,
@@ -186,13 +186,20 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
       ? { deferSessions: true }
       : {},
   );
-  const baseRunner = harnessId === "openclaw" && runtime.openClaw?.transport === "api"
-    ? new OpenClawApiRunner({
-      endpoint: runtime.openClaw.apiUrl!,
-      tokenFile: runtime.openClaw.tokenFile!,
+  let baseRunner: CommandRunner;
+  if (harnessId === "openclaw" && runtime.openClaw?.transport === "api") {
+    const { apiUrl, tokenFile } = runtime.openClaw;
+    if (apiUrl === undefined || tokenFile === undefined) {
+      throw new Error("OpenClaw API transport requires CAUCE_OPENCLAW_API_URL and CAUCE_OPENCLAW_TOKEN_FILE");
+    }
+    baseRunner = new OpenClawApiRunner({
+      endpoint: apiUrl,
+      tokenFile,
       ...(runtime.openClaw.agentTarget === undefined ? {} : { agentTarget: runtime.openClaw.agentTarget }),
-    })
-    : new SpawnCommandRunner();
+    });
+  } else {
+    baseRunner = new SpawnCommandRunner();
+  }
   const logger = operationalLogger(runtime.alias);
   const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
   const runner = shared === undefined
@@ -254,7 +261,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   });
 
   const shutdown = new AbortController();
-  const stop = (): void => shutdown.abort(new Error("shutdown"));
+  const stop = (): void => { shutdown.abort(new Error("shutdown")); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {

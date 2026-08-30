@@ -31,12 +31,12 @@ async function waitForSessionTurn(previous: Promise<void>, signal: AbortSignal):
       signal.removeEventListener("abort", onAbort);
       callback();
     };
-    const onAbort = (): void => settle(() => rejectWait(abortReason(signal)));
+    const onAbort = (): void => { settle(() => { rejectWait(abortReason(signal)); }); };
     signal.addEventListener("abort", onAbort, { once: true });
     void previous.then(
-      () => settle(resolveWait),
-      () => settle(resolveWait),
+      () => { settle(resolveWait); },
+      () => { settle(resolveWait); },
     );
   });
-  if (signal.aborted) throw abortReason(signal);
+  if (signal.aborted) throw abortReason(signal); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while the previous reservation is pending.
 }

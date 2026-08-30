@@ -76,7 +76,7 @@ export function rutaDelContextoFijo(
   environment: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
   const absoluta = (valor: string | undefined): string | undefined =>
-    valor && valor.startsWith("/") ? valor : undefined;
+    valor?.startsWith("/") ? valor : undefined;
   if (harness === "claude") {
     return `${absoluta(environment.CLAUDE_CONFIG_DIR) ?? `${home}/.claude`}/CLAUDE.md`;
   }
