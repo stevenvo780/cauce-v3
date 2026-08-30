@@ -123,8 +123,8 @@ export async function probeConsolePublishIntentPath(pool: DatabasePool): Promise
       [consolePublishIntentMigrationSha256],
     );
     const contract = schema.rows[0];
-    if (contract?.migration_ledger_exact !== true || contract.indexes_exact !== true
-        || contract.journal_permissions !== true) {
+    if (contract?.migration_ledger_exact !== true || !contract.indexes_exact
+        || !contract.journal_permissions) {
       throw new Error('gateway schema-037 console publish intent contract is unavailable');
     }
   });

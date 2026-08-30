@@ -12,7 +12,6 @@ import {
 } from './health.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 
-/** Pool that responds to basic queries for probe tests. */
 const answeringPool = {
   query: async () => ({ rows: [{ ssl: true }], rowCount: 1 }),
 } as unknown as DatabasePool;
@@ -20,14 +19,16 @@ const answeringPool = {
 let dataListener: Server | undefined;
 
 afterEach(async () => {
-  if (dataListener) await new Promise<void>((resolve) => dataListener!.close(() => resolve()));
+  const listener = dataListener;
+  if (listener) await new Promise<void>((resolve) => listener.close(() => { resolve(); }));
   dataListener = undefined;
 });
 
 async function listeningDataApp(): Promise<{ server: Server }> {
-  dataListener = createServer(() => undefined);
-  await new Promise<void>((resolve) => dataListener!.listen(0, '127.0.0.1', resolve));
-  return { server: dataListener };
+  const server = createServer(() => undefined);
+  dataListener = server;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { server };
 }
 
 describe('gateway readiness stops lying about the listener the agents actually use', () => {
@@ -47,7 +48,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeAckPath(pool);
 
-    expect(query.mock.calls.map(([sql]) => String(sql))).toEqual([
+    expect(query.mock.calls.map(([sql]) => sql)).toEqual([
       'BEGIN',
       "SET LOCAL lock_timeout='1000ms'",
       "SET LOCAL statement_timeout='2000ms'",
@@ -78,7 +79,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeDeliveryAdmissionPath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -113,7 +114,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await expect(probeDeliveryAdmissionPath(pool)).rejects.toThrow(/schema-015 delivery admission/u);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls.at(-1)).toBe('ROLLBACK');
     expect(calls.some((sql) => sql.includes('WITH requested'))).toBe(false);
   });
@@ -138,7 +139,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeWakePath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -172,7 +173,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await expect(probeWakePath(pool)).rejects.toThrow(/schema-031 claim contract/u);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls.at(-1)).toBe('ROLLBACK');
     expect(calls.some((sql) => sql.includes('WITH requested'))).toBe(false);
   });
@@ -198,7 +199,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeTerminalClaimPath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -233,7 +234,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await expect(probeTerminalClaimPath(pool)).rejects.toThrow(/schema-032 claim contract/u);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls.at(-1)).toBe('ROLLBACK');
     expect(calls.some((sql) => sql.includes('WITH requested'))).toBe(false);
   });
@@ -260,7 +261,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeTerminalBrowserOwnerPath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -295,7 +296,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
 
     await expect(probeTerminalBrowserOwnerPath(pool)).rejects.toThrow(/schema-033 browser owner/u);
-    expect(query.mock.calls.map(([sql]) => String(sql)).at(-1)).toBe('ROLLBACK');
+    expect(query.mock.calls.map(([sql]) => sql).at(-1)).toBe('ROLLBACK');
   });
 
   it('probes schema-034 relay instance and UUIDv4 process fencing read-only', async () => {
@@ -319,7 +320,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeTerminalRelayInstancePath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -361,7 +362,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeProfileRuntimePath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -396,7 +397,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
     const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
 
     await expect(probeProfileRuntimePath(pool)).rejects.toThrow(/schema-035 profile runtime/u);
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls.at(-1)).toBe('ROLLBACK');
     expect(calls.some((sql) => sql.includes('AS documents_contract'))).toBe(false);
   });
@@ -423,7 +424,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await probeConsolePublishIntentPath(pool);
 
-    const calls = query.mock.calls.map(([sql]) => String(sql));
+    const calls = query.mock.calls.map(([sql]) => sql);
     expect(calls).toEqual([
       'BEGIN',
       'SET TRANSACTION READ ONLY',
@@ -461,7 +462,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     await expect(probeConsolePublishIntentPath(pool))
       .rejects.toThrow(/schema-037 console publish intent/u);
-    expect(query.mock.calls.map(([sql]) => String(sql)).at(-1)).toBe('ROLLBACK');
+    expect(query.mock.calls.map(([sql]) => sql).at(-1)).toBe('ROLLBACK');
   });
 
   it('reports ready while the data listener is up', async () => {
@@ -485,8 +486,9 @@ describe('gateway readiness stops lying about the listener the agents actually u
     });
     expect((await app.inject({ method: 'GET', url: '/health/ready' })).statusCode).toBe(200);
 
-    // Simulates data listener failure.
-    await new Promise<void>((resolve) => dataListener!.close(() => resolve()));
+    const listener = dataListener;
+    if (listener === undefined) throw new Error('test data listener is unavailable');
+    await new Promise<void>((resolve) => listener.close(() => { resolve(); }));
     expect((await answeringPool.query('SELECT 1')).rowCount).toBe(1);
 
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -547,7 +549,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ status: 'not_ready', reason: 'wake_path_unavailable' });
-    expect(clientQuery.mock.calls.some(([sql]) => String(sql).includes('WITH requested'))).toBe(true);
+    expect(clientQuery.mock.calls.some(([sql]) => sql.includes('WITH requested'))).toBe(true);
     await app.close();
   });
 
@@ -712,7 +714,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
   });
 
   it('is actually wired in main.ts, not just available', async () => {
-    // Verifies that the health probe is correctly wired into main.ts.
     const main = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
     expect(main).toMatch(/buildLoopbackHealthProbe\(\{[\s\S]*?dataApp: app[\s\S]*?\}\)/u);
     expect(main).toMatch(/wakePumpTelemetry[\s\S]*?health\.listen\(\{ host: '0\.0\.0\.0'/u);
@@ -947,7 +948,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
       await expect(probeTerminalRelayInstancePath(database.pool))
         .rejects.toThrow(/schema-034 relay instance/u);
 
-      // A same-named ordinary index is not the idempotency fence promised by schema-033.
       await database.pool.query(
         `DROP INDEX terminal_sessions_request_id_idx;
          CREATE INDEX terminal_sessions_request_id_idx ON terminal_sessions(request_id)`,

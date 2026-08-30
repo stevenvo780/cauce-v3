@@ -74,10 +74,10 @@ export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<vo
     );
     const contract = schema.rows[0];
     if (contract?.migration_applied !== true
-        || contract.capacity_column_exact !== true
-        || contract.capacity_constraint_valid !== true
-        || contract.inflight_index_valid !== true
-        || contract.claim_permissions !== true) {
+        || !contract.capacity_column_exact
+        || !contract.capacity_constraint_valid
+        || !contract.inflight_index_valid
+        || !contract.claim_permissions) {
       throw new Error('gateway schema-015 delivery admission contract is unavailable');
     }
     await client.query(
@@ -179,8 +179,8 @@ export async function probeWakePath(pool: DatabasePool): Promise<void> {
     );
     const contract = schema.rows[0];
     if (contract?.migration_applied !== true
-        || contract.connection_token_exact !== true
-        || contract.claim_permissions !== true) {
+        || !contract.connection_token_exact
+        || !contract.claim_permissions) {
       throw new Error('gateway wake schema-031 claim contract is unavailable');
     }
     // This is the read-only half of claimWakeOutbox's fenced claim. A NULL recipient cannot match

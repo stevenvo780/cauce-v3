@@ -69,9 +69,9 @@ export async function probeTerminalClaimPath(pool: DatabasePool): Promise<void> 
            ),false) AS audit_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || contract.columns_exact !== true
-        || contract.constraint_exact !== true || contract.claim_permissions !== true
-        || contract.audit_permissions !== true) {
+    if (contract?.migration_applied !== true || !contract.columns_exact
+        || !contract.constraint_exact || !contract.claim_permissions
+        || !contract.audit_permissions) {
       throw new Error('gateway terminal schema-032 claim contract is unavailable');
     }
     await client.query(
@@ -181,9 +181,9 @@ export async function probeTerminalBrowserOwnerPath(pool: DatabasePool): Promise
            ),false) AS audit_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || contract.columns_exact !== true
-        || contract.constraint_exact !== true || contract.request_index_exact !== true
-        || contract.mutation_permissions !== true || contract.audit_permissions !== true) {
+    if (contract?.migration_applied !== true || !contract.columns_exact
+        || !contract.constraint_exact || !contract.request_index_exact
+        || !contract.mutation_permissions || !contract.audit_permissions) {
       throw new Error('gateway terminal schema-033 browser owner contract is unavailable');
     }
     await client.query(
@@ -259,8 +259,8 @@ export async function probeTerminalRelayInstancePath(pool: DatabasePool): Promis
            AS mutation_permissions`
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || contract.columns_exact !== true
-        || contract.constraint_exact !== true || contract.mutation_permissions !== true) {
+    if (contract?.migration_applied !== true || !contract.columns_exact
+        || !contract.constraint_exact || !contract.mutation_permissions) {
       throw new Error('gateway terminal schema-034 relay instance contract is unavailable');
     }
     await client.query(

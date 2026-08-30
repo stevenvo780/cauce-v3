@@ -91,30 +91,30 @@ export function renderWakePumpMetrics(
     '# TYPE cauce_gateway_wake_pump_state gauge',
   ];
   for (const state of wakeStates) {
-    lines.push(`cauce_gateway_wake_pump_state{state="${state}"} ${snapshot.state === state ? 1 : 0}`);
+    lines.push(`cauce_gateway_wake_pump_state{state="${state}"} ${String(snapshot.state === state ? 1 : 0)}`);
   }
   lines.push(
     '# HELP cauce_gateway_wake_pump_last_progress_timestamp_seconds Unix time of the last wake-pump progress.',
     '# TYPE cauce_gateway_wake_pump_last_progress_timestamp_seconds gauge',
-    `cauce_gateway_wake_pump_last_progress_timestamp_seconds ${(snapshot.lastProgressAtMs ?? 0) / 1_000}`,
+    `cauce_gateway_wake_pump_last_progress_timestamp_seconds ${String((snapshot.lastProgressAtMs ?? 0) / 1_000)}`,
     '# HELP cauce_gateway_wake_pump_last_success_timestamp_seconds Unix time of the last clean wake-pump cycle.',
     '# TYPE cauce_gateway_wake_pump_last_success_timestamp_seconds gauge',
-    `cauce_gateway_wake_pump_last_success_timestamp_seconds ${(snapshot.lastSuccessAtMs ?? 0) / 1_000}`,
+    `cauce_gateway_wake_pump_last_success_timestamp_seconds ${String((snapshot.lastSuccessAtMs ?? 0) / 1_000)}`,
     '# HELP cauce_gateway_wake_pump_consecutive_failures Consecutive wake-pump cycles with fenced or error outcomes.',
     '# TYPE cauce_gateway_wake_pump_consecutive_failures gauge',
-    `cauce_gateway_wake_pump_consecutive_failures ${snapshot.consecutiveFailures}`,
+    `cauce_gateway_wake_pump_consecutive_failures ${String(snapshot.consecutiveFailures)}`,
     '# HELP cauce_gateway_wake_pump_cycles_total Completed or attempted wake-pump polling cycles.',
     '# TYPE cauce_gateway_wake_pump_cycles_total counter',
-    `cauce_gateway_wake_pump_cycles_total ${metricValue(snapshot.counters.cycles, 'cycles')}`,
+    `cauce_gateway_wake_pump_cycles_total ${String(metricValue(snapshot.counters.cycles, 'cycles'))}`,
     '# HELP cauce_gateway_wake_pump_claimed_total Durable wake events claimed by the gateway.',
     '# TYPE cauce_gateway_wake_pump_claimed_total counter',
-    `cauce_gateway_wake_pump_claimed_total ${metricValue(snapshot.counters.claimed, 'claimed')}`,
+    `cauce_gateway_wake_pump_claimed_total ${String(metricValue(snapshot.counters.claimed, 'claimed'))}`,
     '# HELP cauce_gateway_wake_pump_outcomes_total Wake-pump outcomes by bounded result.',
     '# TYPE cauce_gateway_wake_pump_outcomes_total counter',
   );
   for (const result of wakeOutcomes) {
     lines.push(
-      `cauce_gateway_wake_pump_outcomes_total{result="${result}"} ${metricValue(snapshot.counters[result], result)}`
+      `cauce_gateway_wake_pump_outcomes_total{result="${result}"} ${String(metricValue(snapshot.counters[result], result))}`
     );
   }
   return `${lines.join('\n')}\n`;
@@ -139,7 +139,7 @@ export function renderConsolePublishMetrics(
   for (const event of consolePublishTelemetryVocabulary) {
     const key = `${event.operation}:${event.result}`;
     lines.push(
-      `cauce_gateway_console_publish_operations_total{operation="${event.operation}",result="${event.result}"} ${metricValue(counters[key] ?? -1, `console publish ${key}`)}`,
+      `cauce_gateway_console_publish_operations_total{operation="${event.operation}",result="${event.result}"} ${String(metricValue(counters[key] ?? -1, `console publish ${key}`))}`,
     );
   }
   return `${lines.join('\n')}\n`;
@@ -157,7 +157,7 @@ async function readiness(options: HealthOptions, reply: FastifyReply): Promise<u
         'SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()'
       );
       if (encrypted.rows[0]?.ssl !== true) {
-        return reply.code(503).send({ status: 'not_ready', reason: 'postgres_tls_required' });
+        return await reply.code(503).send({ status: 'not_ready', reason: 'postgres_tls_required' });
       }
     } catch {
       return reply.code(503).send({ status: 'not_ready', reason: 'postgres_unavailable' });

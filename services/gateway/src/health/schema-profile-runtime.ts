@@ -249,9 +249,9 @@ export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void>
       [profileDocumentsFunctionBody, profileAdoptionTriggerFunctionBody],
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || contract.columns_exact !== true
-        || contract.constraints_exact !== true || contract.functions_exact !== true
-        || contract.triggers_exact !== true || contract.mutation_permissions !== true) {
+    if (contract?.migration_applied !== true || !contract.columns_exact
+        || !contract.constraints_exact || !contract.functions_exact
+        || !contract.triggers_exact || !contract.mutation_permissions) {
       throw new Error('gateway schema-035 profile runtime contract is unavailable');
     }
     const behavior = await client.query<{ documents_contract: boolean }>(
