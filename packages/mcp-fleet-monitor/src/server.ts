@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-
+/* eslint @typescript-eslint/no-deprecated: "error" */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
@@ -28,7 +28,7 @@ const ensuredDatabaseUrl: string = databaseUrl;
 let pool: ReturnType<typeof createPool> | undefined;
 let fleetModel: FleetReadModel | undefined;
 
-// eslint-disable-next-line @typescript-eslint/no-deprecated
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- Low-level handlers preserve the advertised schema and explicit tool-error contract.
 const server = new Server(
   {
     name: 'mcp-fleet-monitor',
@@ -44,7 +44,6 @@ const server = new Server(
 /** Derived from `@cauce/protocol`'s DeliveryStateSchema; the enum the deliveries table accepts. */
 const DELIVERY_STATUSES = DeliveryStateSchema.options;
 
-// Tool descriptions
 const TOOLS = [
   {
     name: 'estado_flota',

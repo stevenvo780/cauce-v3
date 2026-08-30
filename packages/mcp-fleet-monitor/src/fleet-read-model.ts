@@ -12,15 +12,7 @@ interface AliasState {
 
 // Explicitly match the response structure
 interface EstadoFlotaResult {
-  data: {
-    alias: string;
-    lease_alive: boolean;
-    active_instance_id?: string;
-    lease_expires_at?: string;
-    epoch?: number;
-    last_activity?: string;
-    available: boolean;
-  }[];
+  data: AliasState[];
   available: boolean;
 }
 
@@ -37,17 +29,7 @@ interface DeliveryRecord {
 }
 
 interface EntregasResult {
-  data: {
-    id: string;
-    message_id: string;
-    recipient_alias: string;
-    status: string;
-    attempt: number;
-    max_attempts: number;
-    created_at: string;
-    root_message_id?: string;
-    available: boolean;
-  }[];
+  data: DeliveryRecord[];
   available: boolean;
 }
 
