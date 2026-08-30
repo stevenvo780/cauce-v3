@@ -31,7 +31,7 @@ function cleanText(value: string, maximum = MAX_TEXT): string {
   return printable.length <= maximum ? printable : `${printable.slice(0, maximum - 1).trimEnd()}…`;
 }
 
-function safeScalar(key: string, value: unknown): string | number | boolean | undefined {
+function safeScalar(value: unknown): string | number | boolean | undefined {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
   if (typeof value !== 'string') return undefined;
@@ -58,7 +58,7 @@ export function safeAuditSummary(action: unknown, metadata: unknown): string | n
 
   for (const key of SAFE_SCALARS) {
     if (Object.keys(result).length >= MAX_FIELDS) break;
-    const value = safeScalar(key, source[key]);
+    const value = safeScalar(source[key]);
     if (value !== undefined) result[key] = value;
   }
   for (const [sourceKey, countKey] of Object.entries(ARRAY_COUNTS)) {
