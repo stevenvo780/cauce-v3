@@ -309,6 +309,27 @@ export function parseWriteBatchOutcome(body: string): RelayFileWriteBatch | Gove
   return { files };
 }
 
+function relayCommunicationError(error: unknown): GovernanceReadError {
+  const message = error instanceof Error ? error.message : 'sin detalle';
+  return {
+    error: message.includes('timed out') ? 'timeout' : 'unavailable',
+    reason: `no se pudo hablar con el terminal-relay: ${message}`,
+  };
+}
+
+function parseHttpResult<T>(result: HttpResult, parser: (body: string) => T): T | GovernanceReadError {
+  if (result.overflowed) {
+    return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
+  }
+  if (result.status === 401 || result.status === 403) {
+    return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
+  }
+  if (result.status !== 200) {
+    return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
+  }
+  return parser(result.body);
+}
+
 export class HttpGovernanceRelayClient implements GovernanceRelayClient {
   private readonly relayUrl: string;
   private readonly token: string;
@@ -336,28 +357,14 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
     try {
       result = await this.send('/v3/terminal/relay/read', { tenant_id: tenantId, alias, path }, signal);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'sin detalle';
       // Expiry is distinguished from the rest because it means something different to whoever
       // is looking at the modal: the relay may be alive and it is the agent that is not responding.
       if (signal?.aborted) {
         return { error: 'cancelled', reason: 'se cerró la petición antes de terminar la lectura' };
       }
-      const timedOut = message.includes('timed out');
-      return {
-        error: timedOut ? 'timeout' : 'unavailable',
-        reason: `no se pudo hablar con el terminal-relay: ${message}`
-      };
+      return relayCommunicationError(error);
     }
-    if (result.overflowed) {
-      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
-    }
-    if (result.status === 401 || result.status === 403) {
-      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
-    }
-    if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
-    }
-    return parseReadOutcome(result.body);
+    return parseHttpResult(result, parseReadOutcome);
   }
 
   async listDirectory(
@@ -373,22 +380,9 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
       if (signal?.aborted) {
         return { error: 'cancelled', reason: 'se cerró la petición antes de terminar el índice' };
       }
-      const message = error instanceof Error ? error.message : 'sin detalle';
-      return {
-        error: message.includes('timed out') ? 'timeout' : 'unavailable',
-        reason: `no se pudo hablar con el terminal-relay: ${message}`,
-      };
+      return relayCommunicationError(error);
     }
-    if (result.overflowed) {
-      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
-    }
-    if (result.status === 401 || result.status === 403) {
-      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
-    }
-    if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
-    }
-    return parseDirectoryOutcome(result.body);
+    return parseHttpResult(result, parseDirectoryOutcome);
   }
 
   async writeFile(
@@ -408,22 +402,9 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
         precondition,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'sin detalle';
-      return {
-        error: message.includes('timed out') ? 'timeout' : 'unavailable',
-        reason: `no se pudo hablar con el terminal-relay: ${message}`,
-      };
+      return relayCommunicationError(error);
     }
-    if (result.overflowed) {
-      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
-    }
-    if (result.status === 401 || result.status === 403) {
-      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
-    }
-    if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
-    }
-    return parseWriteOutcome(result.body);
+    return parseHttpResult(result, parseWriteOutcome);
   }
 
   async writeFiles(
@@ -446,22 +427,9 @@ export class HttpGovernanceRelayClient implements GovernanceRelayClient {
         })),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'sin detalle';
-      return {
-        error: message.includes('timed out') ? 'timeout' : 'unavailable',
-        reason: `no se pudo hablar con el terminal-relay: ${message}`,
-      };
+      return relayCommunicationError(error);
     }
-    if (result.overflowed) {
-      return { error: 'too_large', reason: 'el terminal-relay mandó más de lo que esta vía acepta' };
-    }
-    if (result.status === 401 || result.status === 403) {
-      return { error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway' };
-    }
-    if (result.status !== 200) {
-      return { error: 'unavailable', reason: `el terminal-relay contestó ${String(result.status)}` };
-    }
-    return parseWriteBatchOutcome(result.body);
+    return parseHttpResult(result, parseWriteBatchOutcome);
   }
 
   private async send(

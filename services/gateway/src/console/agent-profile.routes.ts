@@ -116,7 +116,7 @@ export interface ProfileRuntimeVerification {
   readonly reason?: string;
 }
 
-export interface ProfileRuntimeAdoptionAck {
+interface ProfileRuntimeAdoptionAck {
   readonly evidence: 'adapter_delivery';
   readonly revision: number;
   readonly generation: string;
@@ -228,13 +228,18 @@ function esTopeSuperado(error: unknown): error is Error & { fichero: string; med
     && 'fichero' in error && 'medido' in error && 'tope' in error;
 }
 
+function hasAdapterDeliveryEvidence(value: unknown): boolean {
+  return value !== null && typeof value === 'object'
+    && Reflect.get(value, 'evidence') === 'adapter_delivery';
+}
+
 function adoptionMatches(
   adoption: ProfileRuntimeAdoptionAck | undefined,
   revision: number | null,
   verification: ProfileRuntimeVerification | undefined,
 ): adoption is ProfileRuntimeAdoptionAck {
   if (revision === null || verification?.state !== 'current' || verification.generation === null
-    || adoption?.revision !== revision
+    || adoption?.revision !== revision || !hasAdapterDeliveryEvidence(adoption)
     || adoption.generation !== verification.generation
     || !Number.isFinite(Date.parse(adoption.adopted_at))
     || adoption.documents.length !== verification.documents.length) return false;
@@ -350,6 +355,10 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
                 ? 'drifted'
                 : 'runtime_unverified';
 
+      const normalizedRole = contexto.perfil.role_summary === null
+        ? ''
+        : contexto.perfil.role_summary.trim();
+      const selfRole = normalizedRole.length === 0 ? null : clampToRoleBriefLimit(normalizedRole);
       const comun = {
         tenant_id: tenantId,
         alias,
@@ -361,12 +370,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         runtime_verification: prepared?.verification ?? null,
         runtime_adoption: validAdoption ?? null,
         ...(runtimeReason === undefined ? {} : { runtime_reason: runtimeReason }),
-        self_role: contexto.perfil.role_summary === null
-          ? null
-          : (() => {
-            const normalized = contexto.perfil.role_summary.trim();
-            return normalized.length === 0 ? null : clampToRoleBriefLimit(normalized);
-          })(),
+        self_role: selfRole,
         harness,
         perfil: contexto.perfil,
         hechos: contexto.hechos,
@@ -476,9 +480,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const alias = aliasResult.data;
     const actor = await deps.authorize(request, 'control');
     const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
-    if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+    if (target?.tenant_id !== tenantId || target.alias !== alias) {
       const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
-      if (visible && visible.tenant_id === tenantId && visible.alias === alias) {
+      if (visible?.tenant_id === tenantId && visible.alias === alias) {
         return reply.code(403).send({
           error: 'forbidden',
           message: `el actor puede leer ${tenantId}/${alias} pero no tiene permiso de control sobre él`,

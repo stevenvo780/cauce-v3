@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import {
-  type AgentDocument, type DocumentKind, type HarnessKind, type RuntimeFacts,
+  MAX_DOCUMENT_BYTES, type AgentDocument, type DocumentKind, type HarnessKind, type RuntimeFacts,
   documentForKind, resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
 } from './agent-documents.js';
 
@@ -292,7 +292,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     reply: FastifyReply,
     permission: 'read' | 'control',
     legacySameTenant: boolean,
-  ): Promise<{ actor: { tenant_id: string; alias: string }; target: Target } | undefined> {
+  ): Promise<Target | undefined> {
     const aliasResult = AliasSchema.safeParse(request.params.alias);
     if (!aliasResult.success) {
       await reply.code(400).send({ error: 'invalid_input', message: 'alias is invalid' });
@@ -313,15 +313,14 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       return undefined;
     }
     if (legacySameTenant) reply.header('Deprecation', 'true');
-    return { actor, target };
+    return target;
   }
 
   async function mapa(
     request: FastifyRequest<{ Params: BaseParams }>, reply: FastifyReply, legacySameTenant: boolean,
   ) {
-    const resuelto = await destino(request, reply, 'read', legacySameTenant);
-    if (!resuelto) return undefined;
-    const { target } = resuelto;
+    const target = await destino(request, reply, 'read', legacySameTenant);
+    if (!target) return undefined;
     const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
     if (medido) {
       return buildDocumentsResponse(target.tenant_id, target.alias, medido.facts, medido.source);
@@ -342,9 +341,8 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
       }
 
-      const resuelto = await destino(request, reply, 'read', legacySameTenant);
-      if (!resuelto) return undefined;
-      const { target } = resuelto;
+      const target = await destino(request, reply, 'read', legacySameTenant);
+      if (!target) return undefined;
 
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       if (medido?.source !== 'measured') {
@@ -439,9 +437,8 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         return reply.code(400).send({ error: 'invalid_input', message: 'ese tipo de documento no existe' });
       }
 
-      const resuelto = await destino(request, reply, 'control', legacySameTenant);
-      if (!resuelto) return undefined;
-      const { target } = resuelto;
+      const target = await destino(request, reply, 'control', legacySameTenant);
+      if (!target) return undefined;
       if (target.enabled !== true) {
         return reply.code(409).send({
           error: 'agent_disabled',
@@ -462,7 +459,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       if (typeof contenido !== 'string') {
         return reply.code(400).send({ error: 'invalid_input', message: '`content` tiene que ser texto' });
       }
-      if (Buffer.byteLength(contenido, 'utf8') > 256 * 1024) {
+      if (Buffer.byteLength(contenido, 'utf8') > MAX_DOCUMENT_BYTES) {
         return reply.code(413).send({ error: 'too_large', message: 'el contenido se pasa del tope de 256 KiB' });
       }
 

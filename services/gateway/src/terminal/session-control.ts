@@ -121,7 +121,6 @@ function ticketTtlSeconds(row: Pick<TerminalSessionRow, 'issued_at' | 'expires_a
   return seconds;
 }
 
-/** Scopes the shared legacy operator by certificate subject; named operators retain shared state. */
 function operatorLockIdentity(operator: ResolvedOperator, consoleSubject: string): string {
   return operator.attributed
     ? operator.operator_id
@@ -602,8 +601,6 @@ export function registerTerminalSessionControl(
     try {
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
-      // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
-      // mismo que escondia el permiso ausente detras de un 404 en el perfil.
       try {
         await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
       } catch {
@@ -690,8 +687,6 @@ export function registerTerminalSessionControl(
     try {
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
-      // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
-      // mismo que escondia el permiso ausente detras de un 404 en el perfil.
       try {
         await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
       } catch {

@@ -8,7 +8,15 @@ import {
 import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
 import { isLiteralTrue, isSignalAborted } from '../../runtime-guards.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
-import { send, sessionFence, sessionKey } from './helpers.js';
+import { isSocketOpen, send, sessionFence, sessionKey } from './helpers.js';
+
+function isExpectedWakeStatus(
+  value: unknown,
+  requested: 'sent' | 'retry',
+): value is 'sent' | 'failed' | 'dead' {
+  if (value !== 'sent' && value !== 'failed' && value !== 'dead') return false;
+  return requested === 'sent' ? value === 'sent' : value !== 'sent';
+}
 
 async function allSettledBounded<T>(
   values: readonly T[],
@@ -195,8 +203,7 @@ export function createCoreOutboxRuntime(
     if (!renewed) throw new StoreError('fenced', 'wake outbox pre-send renewal was fenced');
     if (isSignalAborted(signal) || isSignalAborted(active.abort.signal)
         || sessions.get(key) !== active
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while renewal is awaited.
-        || active.socket.readyState !== WebSocket.OPEN
+        || !isSocketOpen(active.socket)
         || !send(active.socket, {
           type: 'wake', alias: active.alias, reason: 'delivery_available'
         })) {
@@ -276,12 +283,7 @@ export function createCoreOutboxRuntime(
     if (!isLiteralTrue(result.applied)) {
       throw new StoreError('fenced', 'wake outbox ACK was fenced');
     }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Repository results are runtime data despite their interface type.
-    const validStatus = result.status === 'sent' || result.status === 'failed' || result.status === 'dead';
-    const expectedStatus = status === 'sent'
-      ? result.status === 'sent'
-      : result.status === 'failed' || result.status === 'dead';
-    if (!validStatus || !expectedStatus) {
+    if (!isExpectedWakeStatus(result.status, status)) {
       throw new StoreError('fenced', 'wake outbox ACK returned an invalid terminal status');
     }
     return result.status;

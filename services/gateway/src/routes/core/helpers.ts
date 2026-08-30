@@ -50,8 +50,12 @@ export function sessionFence(session: Session): ConnectionSessionFence {
   };
 }
 
+export function isSocketOpen(socket: WebSocket): boolean {
+  return socket.readyState === WebSocket.OPEN;
+}
+
 export function send(socket: WebSocket, message: unknown): boolean {
-  if (socket.readyState !== WebSocket.OPEN) return false;
+  if (!isSocketOpen(socket)) return false;
   try {
     socket.send(JSON.stringify(message));
     return true;

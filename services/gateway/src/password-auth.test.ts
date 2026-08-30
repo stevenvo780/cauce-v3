@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 import type { FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPublishReceipt } from '@cauce/protocol';
@@ -26,6 +25,11 @@ function fakePool(): DatabasePool {
 function fakeRepository(): {
   repository: GatewayRepository;
   publish: ReturnType<typeof vi.fn>;
+  enqueueJob: ReturnType<typeof vi.fn>;
+  applyConfigurationChange: ReturnType<typeof vi.fn>;
+  rollbackConfiguration: ReturnType<typeof vi.fn>;
+  replayDelivery: ReturnType<typeof vi.fn>;
+  cancelDelivery: ReturnType<typeof vi.fn>;
 } {
   const publish = vi.fn(async (input: Parameters<GatewayRepository['publish']>[0]) => {
     return buildPublishReceipt(input, {
@@ -36,44 +40,57 @@ function fakeRepository(): {
       trace_id: input.trace_id,
     });
   });
-  return { publish, repository: {
-    assertPrincipal: vi.fn(async () => undefined),
-    assertPermission: vi.fn(async () => undefined),
-    status: vi.fn(async () => ({ online: 1 })),
-    listPresence: vi.fn(async () => []),
-    principalAccess: vi.fn(async () => ({ roles: ['operator'], permissions: ['route', 'read', 'control'] })),
-    topology: vi.fn(async () => ({ tenants: [], acl_edges: [] })),
-    listMessages: vi.fn(async () => ({ items: [], next_cursor: null })),
-    queueSnapshot: vi.fn(async () => ({ pending: 0, retrying: 0, dead: 0, items: [] })),
-    listJobs: vi.fn(async () => ({ items: [] })),
-    enqueueJob: vi.fn(async () => 'job-no-debe-crearse'),
-    listAdapters: vi.fn(async () => ({ items: [] })),
-    fleetActivity: vi.fn(async () => ({ observed_at: new Date().toISOString(), agents: [] })),
-    quotaSnapshot: vi.fn(async () => ({ observed_at: new Date().toISOString(), providers: [] })),
-    recordQuotaSample: vi.fn(async () => ({
-      collection_id: '81111111-2222-4333-8444-555555555556',
-    })),
-    listAgents: vi.fn(async () => ({ items: [] })),
-    getAgent: vi.fn(async (alias: string) => ({ tenant_id: 'Steven', alias })),
-    getAgentByIdentity: vi.fn(async (tenantId: string, alias: string) => ({ tenant_id: tenantId, alias })),
-    listOriginRelays: vi.fn(async () => ({ items: [] })),
-    listAudit: vi.fn(async () => ({ items: [], next_cursor: null })),
-    agentChain: vi.fn(async (traceId: string) => ({
-      trace_id: traceId, nodes: [], edges: [], origin_relays: [], redacted_endpoints: 0,
-    })),
-    getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [] })),
-    applyConfigurationChange: vi.fn(async () => ({ applied: true })),
-    rollbackConfiguration: vi.fn(async () => ({ applied: true })),
-    replayDelivery: vi.fn(async () => ({ replayed: true })),
-    cancelDelivery: vi.fn(async () => ({ cancelled: true })),
+  const enqueueJob = vi.fn(async () => 'job-no-debe-crearse');
+  const applyConfigurationChange = vi.fn(async () => ({ applied: true }));
+  const rollbackConfiguration = vi.fn(async () => ({ applied: true }));
+  const replayDelivery = vi.fn(async () => ({ replayed: true }));
+  const cancelDelivery = vi.fn(async () => ({ cancelled: true }));
+  return {
     publish,
-    verifyPublishReceipt: vi.fn(async () => true),
-    claimOutbox: vi.fn(async () => []),
-    // PasswordAuthProvider is intentionally production-mode. Its repository double must therefore
-    // implement the same durable reconnect fence as production, even though these auth tests have
-    // no outstanding deliveries to recover.
-    liveDeliveryClaims: vi.fn(async () => []),
-  } as unknown as GatewayRepository };
+    enqueueJob,
+    applyConfigurationChange,
+    rollbackConfiguration,
+    replayDelivery,
+    cancelDelivery,
+    repository: {
+      assertPrincipal: vi.fn(async () => undefined),
+      assertPermission: vi.fn(async () => undefined),
+      status: vi.fn(async () => ({ online: 1 })),
+      listPresence: vi.fn(async () => []),
+      principalAccess: vi.fn(async () => ({ roles: ['operator'], permissions: ['route', 'read', 'control'] })),
+      topology: vi.fn(async () => ({ tenants: [], acl_edges: [] })),
+      listMessages: vi.fn(async () => ({ items: [], next_cursor: null })),
+      queueSnapshot: vi.fn(async () => ({ pending: 0, retrying: 0, dead: 0, items: [] })),
+      listJobs: vi.fn(async () => ({ items: [] })),
+      enqueueJob,
+      listAdapters: vi.fn(async () => ({ items: [] })),
+      fleetActivity: vi.fn(async () => ({ observed_at: new Date().toISOString(), agents: [] })),
+      quotaSnapshot: vi.fn(async () => ({ observed_at: new Date().toISOString(), providers: [] })),
+      recordQuotaSample: vi.fn(async () => ({
+        collection_id: '81111111-2222-4333-8444-555555555556',
+      })),
+      listAgents: vi.fn(async () => ({ items: [] })),
+      getAgent: vi.fn(async (alias: string) => ({ tenant_id: 'Steven', alias })),
+      getAgentByIdentity: vi.fn(async (tenantId: string, alias: string) => ({ tenant_id: tenantId, alias })),
+      listOriginRelays: vi.fn(async () => ({ items: [] })),
+      listAudit: vi.fn(async () => ({ items: [], next_cursor: null })),
+      agentChain: vi.fn(async (traceId: string) => ({
+        trace_id: traceId, nodes: [], edges: [], origin_relays: [], redacted_endpoints: 0,
+      })),
+      getConfiguration: vi.fn(async () => ({ revision: 0, tenants: [], rooms: [], memberships: [] })),
+      applyConfigurationChange,
+      rollbackConfiguration,
+      replayDelivery,
+      cancelDelivery,
+      publish,
+      verifyPublishReceipt: vi.fn(async () => true),
+      claimOutbox: vi.fn(async () => []),
+      // PasswordAuthProvider is intentionally production-mode. Its repository double must therefore
+      // implement the same durable reconnect fence as production, even though these auth tests have
+      // no outstanding deliveries to recover.
+      liveDeliveryClaims: vi.fn(async () => []),
+    } as unknown as GatewayRepository,
+  };
 }
 
 async function makeUser(overrides: Partial<ConsoleUser> = {}): Promise<ConsoleUser> {
@@ -155,18 +172,17 @@ async function fixture(options: {
     ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
     ...(options.throttle === undefined ? {} : { throttle: options.throttle })
   });
-  const { repository, publish } = fakeRepository();
+  const fake = fakeRepository();
   const app = await buildGateway({
     pool: fakePool(),
     authProvider: provider,
-    repository,
+    repository: fake.repository,
     deliveryWakeSubscriber: async () => async () => undefined
   });
   return {
     app,
     provider,
-    repository,
-    publish,
+    ...fake,
     users,
     advance(ms: number) { now += ms; },
     login(email: string, password: string) {
@@ -274,11 +290,11 @@ describe('login por contraseña de la consola', () => {
       }
 
       expect(test.publish).not.toHaveBeenCalled();
-      expect(test.repository.enqueueJob).not.toHaveBeenCalled();
-      expect(test.repository.applyConfigurationChange).not.toHaveBeenCalled();
-      expect(test.repository.rollbackConfiguration).not.toHaveBeenCalled();
-      expect(test.repository.replayDelivery).not.toHaveBeenCalled();
-      expect(test.repository.cancelDelivery).not.toHaveBeenCalled();
+      expect(test.enqueueJob).not.toHaveBeenCalled();
+      expect(test.applyConfigurationChange).not.toHaveBeenCalled();
+      expect(test.rollbackConfiguration).not.toHaveBeenCalled();
+      expect(test.replayDelivery).not.toHaveBeenCalled();
+      expect(test.cancelDelivery).not.toHaveBeenCalled();
     } finally {
       await test.app.close();
     }

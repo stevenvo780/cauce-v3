@@ -13,10 +13,9 @@ import type {
 } from './core/contracts.js';
 import {
   MAX_DRAIN_ROUNDS, MAX_REHYDRATED_CLAIMS, assertAckClaim, claimFromDelivery, connectionToken,
-  normalizeDeliveryClaim, parseAck, pruneExpiredClaims, rawDataText, rememberRecentClaim, send, sessionKey,
+  isSocketOpen, normalizeDeliveryClaim, parseAck, pruneExpiredClaims, rawDataText, rememberRecentClaim,
+  send, sessionKey,
 } from './core/helpers.js';
-
-export type { CorePublishHandler, CoreRoutePhases } from './core/contracts.js';
 
 export function createCoreRoutePhases(
   app: FastifyInstance,
@@ -285,6 +284,23 @@ export function createCoreRoutePhases(
                   app.log.error({ event, tenant_id: hello.tenant_id, alias: hello.alias });
                 }
               };
+              const rejectHeartbeat = async (error: unknown, releaseEvent: string): Promise<void> => {
+                await releaseHelloLease(releaseEvent);
+                if (error instanceof StoreError && error.code === 'fenced') {
+                  send(socket, {
+                    type: 'error', code: 'fenced',
+                    message: 'a newer hello owns this consumer connection',
+                  });
+                  socket.close(4401, 'superseded during hello');
+                  return;
+                }
+                app.log.error(error);
+                send(socket, {
+                  type: 'error', code: 'delivery_unavailable',
+                  message: 'durable delivery admission is unavailable',
+                });
+                socket.close(1011, 'delivery unavailable');
+              };
               try {
                 await repository.heartbeat(
                   hello.tenant_id,
@@ -295,21 +311,7 @@ export function createCoreRoutePhases(
                   leaseConnectionToken,
                 );
               } catch (error) {
-                await releaseHelloLease('initial_hello_fence_release_failed');
-                if (error instanceof StoreError && error.code === 'fenced') {
-                  send(socket, {
-                    type: 'error', code: 'fenced',
-                    message: 'a newer hello owns this consumer connection',
-                  });
-                  socket.close(4401, 'superseded during hello');
-                } else {
-                  app.log.error(error);
-                  send(socket, {
-                    type: 'error', code: 'delivery_unavailable',
-                    message: 'durable delivery admission is unavailable',
-                  });
-                  socket.close(1011, 'delivery unavailable');
-                }
+                await rejectHeartbeat(error, 'initial_hello_fence_release_failed');
                 return;
               }
               const key = sessionKey(hello.tenant_id, hello.alias);
@@ -381,21 +383,7 @@ export function createCoreRoutePhases(
                 );
               } catch (error) {
                 if (helloAdmissions.get(key) === helloAdmission) helloAdmissions.delete(key);
-                await releaseHelloLease('hello_fence_release_failed');
-                if (error instanceof StoreError && error.code === 'fenced') {
-                  send(socket, {
-                    type: 'error', code: 'fenced',
-                    message: 'a newer hello owns this consumer connection',
-                  });
-                  socket.close(4401, 'superseded during hello');
-                } else {
-                  app.log.error(error);
-                  send(socket, {
-                    type: 'error', code: 'delivery_unavailable',
-                    message: 'durable delivery admission is unavailable',
-                  });
-                  socket.close(1011, 'delivery unavailable');
-                }
+                await rejectHeartbeat(error, 'hello_fence_release_failed');
                 return;
               }
               // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while the heartbeat is awaited.
@@ -432,8 +420,7 @@ export function createCoreRoutePhases(
                 ...(agentProfile === undefined ? {} : { agent_profile: agentProfile })
               });
               const initialDrainReady = await drain(current);
-              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while the initial drain is awaited.
-              if (!initialDrainReady || socket.readyState !== WebSocket.OPEN) return;
+              if (!initialDrainReady || !isSocketOpen(socket)) return;
               // Hello is the durable signal to pick up wakes that stayed intact offline.
               void pumpOutbox().catch((error: unknown) => { app.log.error(error); });
               return;

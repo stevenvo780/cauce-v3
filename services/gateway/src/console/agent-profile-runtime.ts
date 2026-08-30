@@ -17,7 +17,7 @@ import type {
 type ProfileRuntimeErrorCode =
   | GovernanceReadError['error'] | 'conflict' | 'truncated' | 'unsupported_harness' | 'invalid_ack';
 
-export class ProfileRuntimeError extends Error {
+class ProfileRuntimeError extends Error {
   constructor(readonly code: ProfileRuntimeErrorCode, message: string) {
     super(message);
     this.name = 'ProfileRuntimeError';
