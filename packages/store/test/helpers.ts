@@ -1,4 +1,4 @@
-export function requireValue<T>(value: T | undefined, what: string): T {
-  if (value === undefined) throw new Error(`expected ${what}, got undefined`);
-  return value;
+export function requireValue<T>(value: T, what: string): NonNullable<T> {
+  if (value === undefined || value === null) throw new Error(`expected ${what}, got ${value === undefined ? 'undefined' : 'null'}`);
+  return value as NonNullable<T>;
 }

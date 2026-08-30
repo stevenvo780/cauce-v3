@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -115,11 +116,11 @@ describe('R3 — no attempts are burned against an adapter-less alias', () => {
   it('aparca la entrega y le devuelve el intento cuando no hay ningún consumidor conectado', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('trabajo para un alias que se cayó'));
-    const deliveryId = await burnAttempts(lease.epoch!, 3);
+    const deliveryId = await burnAttempts(requireValue(lease.epoch, 'lease.epoch'), 3);
     expect((await deliveryRow(deliveryId)).attempt).toBe(3);
 
     // The adapter leaves: from here on there is nobody on the other side.
-    await repository.releaseLease('Isa', 'salva', CONSUMER, lease.epoch!);
+    await repository.releaseLease('Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'));
 
     const swept = await repository.retryStaleDeliveries(0, 100);
 
@@ -149,7 +150,7 @@ describe('R3 — no attempts are burned against an adapter-less alias', () => {
   it('NO aparca cuando el adaptador está vivo: ahí el fallo sí es del destino y muere', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('el alias está vivo y no contesta'));
-    const deliveryId = await burnAttempts(lease.epoch!, 3);
+    const deliveryId = await burnAttempts(requireValue(lease.epoch, 'lease.epoch'), 3);
 
     const swept = await repository.retryStaleDeliveries(0, 100);
 
@@ -162,8 +163,8 @@ describe('R3 — no attempts are burned against an adapter-less alias', () => {
   it('NO aparca para siempre: pasado el horizonte de retención la entrega muere', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('encargo cuyo contexto ya venció'));
-    const deliveryId = await burnAttempts(lease.epoch!, 3);
-    await repository.releaseLease('Isa', 'salva', CONSUMER, lease.epoch!);
+    const deliveryId = await burnAttempts(requireValue(lease.epoch, 'lease.epoch'), 3);
+    await repository.releaseLease('Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'));
 
     const swept = await repository.retryStaleDeliveries(0, 100, { noConsumerParkMaxAgeMs: 1 });
 
@@ -174,8 +175,8 @@ describe('R3 — no attempts are burned against an adapter-less alias', () => {
   it('la palanca devuelve el comportamiento viejo sin redesplegar código', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('con la palanca apagada muere como antes'));
-    const deliveryId = await burnAttempts(lease.epoch!, 3);
-    await repository.releaseLease('Isa', 'salva', CONSUMER, lease.epoch!);
+    const deliveryId = await burnAttempts(requireValue(lease.epoch, 'lease.epoch'), 3);
+    await repository.releaseLease('Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'));
 
     const swept = await repository.retryStaleDeliveries(0, 100, { parkWithoutConsumer: false });
 
@@ -188,7 +189,7 @@ describe('R6 — no delivery death goes unaudited', () => {
   it('la rama de intentos agotados escribe audit_events', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('tres intentos contra un adaptador vivo'));
-    const deliveryId = await burnAttempts(lease.epoch!, 3);
+    const deliveryId = await burnAttempts(requireValue(lease.epoch, 'lease.epoch'), 3);
 
     await repository.retryStaleDeliveries(0, 100);
 
@@ -211,15 +212,15 @@ describe('R6 — no delivery death goes unaudited', () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('el harness arrancó y se perdió el ACK final'));
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
+      'Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'), 1, ACK_DEADLINE_MS
     );
     if (!claimed) throw new Error('expected a claimed delivery');
     await repository.ackDelivery(
-      claimed.delivery_id, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), ACK_DEADLINE_MS
+      claimed.delivery_id, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), ACK_DEADLINE_MS
     );
     await repository.ackDelivery(
       claimed.delivery_id, 'Isa', 'salva',
-      ack(claimed, lease.epoch!, 'started', { execution_started: true }), ACK_DEADLINE_MS
+      ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'started', { execution_started: true }), ACK_DEADLINE_MS
     );
 
     await repository.retryStaleDeliveries(0, 100);
@@ -244,14 +245,14 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
     const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
     await repository.publish(command('codex reventó parseando su config.toml'));
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
+      'Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'), 1, ACK_DEADLINE_MS
     );
     if (!claimed) throw new Error('expected a claimed delivery');
     expect(claimed.attempt).toBe(1);
 
     const applied = await repository.ackDelivery(
       claimed.delivery_id, 'Isa', 'salva',
-      ack(claimed, lease.epoch!, 'failed', {
+      ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'failed', {
         retryable: true,
         error_code: 'PROCESS_EXIT_PREFLIGHT',
         error: 'Harness exited with code 1 before beginning the turn'
@@ -289,7 +290,7 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
       const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
       await repository.publish(command('turno que pudo haber terminado'));
       const [claimed] = await repository.claimDeliveries(
-        'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
+        'Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'), 1, ACK_DEADLINE_MS
       );
       if (!claimed) throw new Error('expected a claimed delivery');
 
@@ -297,12 +298,12 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
       // separates "we don't know whether it did something" from "it did nothing".
       await repository.ackDelivery(
         claimed.delivery_id, 'Isa', 'salva',
-        ack(claimed, lease.epoch!, 'started', { execution_started: true }), ACK_DEADLINE_MS
+        ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'started', { execution_started: true }), ACK_DEADLINE_MS
       );
 
       await repository.ackDelivery(
         claimed.delivery_id, 'Isa', 'salva',
-        ack(claimed, lease.epoch!, 'failed', {
+        ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'failed', {
           error_code: 'PROCESS_EXIT_AMBIGUOUS',
           error: 'Harness exited with code 1 without structured output'
         }),
@@ -321,14 +322,14 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
       const lease = await repository.acquireLease('Isa', 'salva', CONSUMER, [], 120_000);
       await repository.publish(command('turno que nunca llegó a arrancar'));
       const [claimed] = await repository.claimDeliveries(
-        'Isa', 'salva', CONSUMER, lease.epoch!, 1, ACK_DEADLINE_MS
+        'Isa', 'salva', CONSUMER, requireValue(lease.epoch, 'lease.epoch'), 1, ACK_DEADLINE_MS
       );
       if (!claimed) throw new Error('expected a claimed delivery');
 
       // Without an `execution_started` ACK: the process died before invoking anything.
       await repository.ackDelivery(
         claimed.delivery_id, 'Isa', 'salva',
-        ack(claimed, lease.epoch!, 'failed', {
+        ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'failed', {
           error_code: 'PROCESS_EXIT_AMBIGUOUS',
           error: 'Harness exited with code 1 without structured output'
         }),

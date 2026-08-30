@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -103,7 +104,7 @@ afterAll(async () => {
 describe('retención por tipo de la observabilidad', () => {
   it('marca como renovación sólo los latidos, no la transición a started', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(lease.epoch!, 3);
+    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 3);
 
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks WHERE renewal`)).toBe(3);
     // accepted + the first started: they are state transitions and last forever.
@@ -118,7 +119,7 @@ describe('retención por tipo de la observabilidad', () => {
    */
   it('borra los latidos viejos y conserva las transiciones de la misma edad', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(lease.epoch!, 4);
+    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 4);
     await ageEverything('8 hours');
 
     const pruned = await repository.pruneObservability({
@@ -136,7 +137,7 @@ describe('retención por tipo de la observabilidad', () => {
 
   it('poda las renovaciones históricas de audit_events sin columna nueva', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(lease.epoch!, 4);
+    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 4);
     const renewalAudits = await count(
       `SELECT count(*)::text AS n FROM audit_events WHERE metadata->>'lease_renewed'='true'`
     );
@@ -163,7 +164,7 @@ describe('retención por tipo de la observabilidad', () => {
 
   it('no toca nada que siga dentro de su ventana', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(lease.epoch!, 4);
+    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 4);
     const acksBefore = await count(`SELECT count(*)::text AS n FROM delivery_acks`);
     const auditBefore = await count(`SELECT count(*)::text AS n FROM audit_events`);
     await ageEverything('2 hours');
@@ -180,7 +181,7 @@ describe('retención por tipo de la observabilidad', () => {
    */
   it('la ventana general también se lleva las transiciones cuando ya son muy viejas', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(lease.epoch!, 2);
+    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 2);
     await ageEverything('40 days');
 
     // accepted + the first started + the 2 heartbeats.
@@ -203,7 +204,7 @@ describe('retención por tipo de la observabilidad', () => {
    */
   it('acota cada barrido al tamaño de lote configurado', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(lease.epoch!, 5);
+    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 5);
     await ageEverything('8 hours');
 
     expect((await repository.pruneObservability({ batch: 2 })).ack_renewals).toBe(2);

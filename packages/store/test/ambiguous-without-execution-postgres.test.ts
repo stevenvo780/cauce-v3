@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -127,9 +128,9 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
   it('retries an ambiguity that never started executing, and consumes an attempt', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'ambiguous-worker', [], 60_000);
     const published = await repository.publish(command());
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!claimed) throw new Error('expected a claimed delivery');
 
@@ -140,7 +141,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     expect(before.execution_started_at).toBeNull();
 
     await expect(repository.ackDelivery(
-      deliveryId, 'Isa', 'salva', ambiguousFailureAck(claimed, lease.epoch!), 30_000
+      deliveryId, 'Isa', 'salva', ambiguousFailureAck(claimed, requireValue(lease.epoch, 'lease.epoch')), 30_000
     )).resolves.toMatchObject({ status: 'retry', applied: true, receipt: 'applied' });
 
     const after = await deliveryRow(deliveryId);
@@ -154,7 +155,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     // would be a free loop instead of a retry.
     await pool.query(`UPDATE deliveries SET available_at=now() WHERE id=$1`, [deliveryId]);
     const [reclaimed] = await repository.claimDeliveries(
-      'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     expect(reclaimed?.delivery_id).toBe(deliveryId);
     expect((await deliveryRow(deliveryId)).attempt).toBe(2);
@@ -163,15 +164,15 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
   it('keeps sending an ambiguity that DID start executing to dead, preserving paid work', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'ambiguous-worker', [], 60_000);
     const published = await repository.publish(command());
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!claimed) throw new Error('expected a claimed delivery');
 
     // The harness actually started: lease taken, process invoked, quota committed.
     await repository.ackDelivery(
-      deliveryId, 'Isa', 'salva', executionStartedAck(claimed, lease.epoch!), 30_000
+      deliveryId, 'Isa', 'salva', executionStartedAck(claimed, requireValue(lease.epoch, 'lease.epoch')), 30_000
     );
     const started = await deliveryRow(deliveryId);
     expect(started.execution_started_at).not.toBeNull();
@@ -179,7 +180,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     expect(started.attempt).toBeLessThan(started.max_attempts);
 
     await expect(repository.ackDelivery(
-      deliveryId, 'Isa', 'salva', ambiguousFailureAck(claimed, lease.epoch!), 30_000
+      deliveryId, 'Isa', 'salva', ambiguousFailureAck(claimed, requireValue(lease.epoch, 'lease.epoch')), 30_000
     )).resolves.toMatchObject({ status: 'dead', applied: true, receipt: 'applied' });
 
     const after = await deliveryRow(deliveryId);
@@ -199,7 +200,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
   it('still dies once max_attempts is exhausted, so there is no infinite retry loop', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'ambiguous-worker', [], 60_000);
     const published = await repository.publish(command());
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     const { max_attempts: maxAttempts } = await deliveryRow(deliveryId);
 
     // The full cycle is repeated: every round dies ambiguously WITHOUT starting. The early ones
@@ -207,7 +208,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       await pool.query(`UPDATE deliveries SET available_at=now() WHERE id=$1`, [deliveryId]);
       const [claimed] = await repository.claimDeliveries(
-        'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
+        'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       if (!claimed) throw new Error(`expected a claimed delivery on attempt ${attempt}`);
       const row = await deliveryRow(deliveryId);
@@ -215,7 +216,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
       expect(row.execution_started_at).toBeNull();
 
       const result = await repository.ackDelivery(
-        deliveryId, 'Isa', 'salva', ambiguousFailureAck(claimed, lease.epoch!), 30_000
+        deliveryId, 'Isa', 'salva', ambiguousFailureAck(claimed, requireValue(lease.epoch, 'lease.epoch')), 30_000
       );
       expect(result.status).toBe(attempt < maxAttempts ? 'retry' : 'dead');
     }
@@ -229,7 +230,7 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     // With the budget exhausted, nothing is claimable: the cap is real.
     await pool.query(`UPDATE deliveries SET available_at=now() WHERE id=$1`, [deliveryId]);
     expect(await repository.claimDeliveries(
-      'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     )).toHaveLength(0);
   });
 
@@ -250,26 +251,26 @@ describe('an ambiguous failure is judged by whether execution ever started', () 
     const lease = await repository.acquireLease('Isa', 'salva', 'ambiguous-worker', [], 60_000);
 
     for (const code of codes) {
-      const unstarted = (await repository.publish(command())).delivery_ids[0]!;
-      const startedDelivery = (await repository.publish(command())).delivery_ids[0]!;
+      const unstarted = requireValue((await repository.publish(command())).delivery_ids[0], 'delivery_ids');
+      const startedDelivery = requireValue((await repository.publish(command())).delivery_ids[0], 'delivery_ids');
       const claims = await repository.claimDeliveries(
-        'Isa', 'salva', 'ambiguous-worker', lease.epoch!, 2, 30_000
+        'Isa', 'salva', 'ambiguous-worker', requireValue(lease.epoch, 'lease.epoch'), 2, 30_000
       );
-      const unstartedClaim = claims.find((entry) => entry.delivery_id === unstarted)!;
-      const startedClaim = claims.find((entry) => entry.delivery_id === startedDelivery)!;
+      const unstartedClaim = requireValue(claims.find((entry) => entry.delivery_id === unstarted), 'value');
+      const startedClaim = requireValue(claims.find((entry) => entry.delivery_id === startedDelivery), 'value');
 
       await repository.ackDelivery(
-        startedDelivery, 'Isa', 'salva', executionStartedAck(startedClaim, lease.epoch!), 30_000
+        startedDelivery, 'Isa', 'salva', executionStartedAck(startedClaim, requireValue(lease.epoch, 'lease.epoch')), 30_000
       );
 
       expect({
         code,
         unstarted: (await repository.ackDelivery(
-          unstarted, 'Isa', 'salva', ambiguousFailureAck(unstartedClaim, lease.epoch!, code), 30_000
+          unstarted, 'Isa', 'salva', ambiguousFailureAck(unstartedClaim, requireValue(lease.epoch, 'lease.epoch'), code), 30_000
         )).status,
         started: (await repository.ackDelivery(
           startedDelivery, 'Isa', 'salva',
-          ambiguousFailureAck(startedClaim, lease.epoch!, code), 30_000
+          ambiguousFailureAck(startedClaim, requireValue(lease.epoch, 'lease.epoch'), code), 30_000
         )).status
       }).toEqual({ code, unstarted: 'retry', started: 'dead' });
     }

@@ -10,7 +10,7 @@ import {
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
-
+import { requireValue } from './helpers.js';
 let database: TestDatabase;
 let pool: DatabasePool;
 let repository: CauceRepository;
@@ -735,7 +735,7 @@ describe('durable console publish intents', () => {
     expect((await pool.query(
       `SELECT 1 FROM audit_events WHERE action='console.publish.expire'`,
     )).rowCount).toBe(8);
-    const evicted = await publishConsole(inputs[0]!, prepared[0]!.idempotency_key)
+    const evicted = await publishConsole(requireValue(inputs[0], 'inputs'), requireValue(prepared[0], 'prepared').idempotency_key)
       .catch((error: unknown) => error);
     expect(evicted).toBeInstanceOf(PublishIntentExpiredError);
     expect(evicted).toMatchObject({
@@ -743,11 +743,11 @@ describe('durable console publish intents', () => {
         version: 1,
         error: 'publish_intent_expired',
         state: 'expired',
-        idempotency_key: prepared[0]!.idempotency_key,
+        idempotency_key: requireValue(prepared[0], 'prepared').idempotency_key,
         safe_to_resubmit: true,
       },
     });
-    await expect(publishConsole(inputs.at(-1)!, prepared.at(-1)!.idempotency_key))
+    await expect(publishConsole(requireValue(inputs.at(-1), 'value'), requireValue(prepared.at(-1), 'value').idempotency_key))
       .resolves.toMatchObject({ duplicate: false });
   });
 

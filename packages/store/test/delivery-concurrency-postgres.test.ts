@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -63,7 +64,7 @@ interface Consumer {
 async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
   const instanceId = `${alias}-${randomUUID()}`;
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
-  return { tenant, alias, instanceId, epoch: lease.epoch! };
+  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 /**
@@ -163,7 +164,7 @@ describe('per-agent delivery concurrency cap', () => {
       `SELECT count(*) AS total FROM deliveries
        WHERE recipient_alias='argos' AND status='pending' AND ack_deadline_at IS NOT NULL`
     );
-    expect(Number(armed.rows[0]!.total)).toBe(0);
+    expect(Number(requireValue(armed.rows[0], 'armed.rows').total)).toBe(0);
   });
 
   it('counts what is already in flight, so repeated drains cannot stack past the cap', async () => {
@@ -232,10 +233,10 @@ describe('per-agent delivery concurrency cap', () => {
     );
     expect(claimed).toHaveLength(2);
 
-    await repository.ackDelivery(claimed[0]!.delivery_id, argos.tenant, argos.alias,
-      progressAck(argos, claimed[0]!, 'accepted'), 30_000);
-    await repository.ackDelivery(claimed[1]!.delivery_id, argos.tenant, argos.alias,
-      progressAck(argos, claimed[1]!, 'started'), 30_000);
+    await repository.ackDelivery(requireValue(claimed[0], 'claimed').delivery_id, argos.tenant, argos.alias,
+      progressAck(argos, requireValue(claimed[0], 'claimed'), 'accepted'), 30_000);
+    await repository.ackDelivery(requireValue(claimed[1], 'claimed').delivery_id, argos.tenant, argos.alias,
+      progressAck(argos, requireValue(claimed[1], 'claimed'), 'started'), 30_000);
     expect(await statusCounts('argos')).toEqual({ accepted: 1, started: 1, pending: 4 });
 
     const afterProgress = await repository.claimDeliveries(
@@ -256,7 +257,7 @@ describe('per-agent delivery concurrency cap', () => {
     expect(first).toHaveLength(2);
 
     await repository.ackDelivery(
-      first[0]!.delivery_id, argos.tenant, argos.alias, terminalAck(argos, first[0]!), 30_000
+      requireValue(first[0], 'first').delivery_id, argos.tenant, argos.alias, terminalAck(argos, requireValue(first[0], 'first')), 30_000
     );
 
     const afterOne = await repository.claimDeliveries(
@@ -265,10 +266,10 @@ describe('per-agent delivery concurrency cap', () => {
     expect(afterOne).toHaveLength(1);
 
     await repository.ackDelivery(
-      first[1]!.delivery_id, argos.tenant, argos.alias, terminalAck(argos, first[1]!), 30_000
+      requireValue(first[1], 'first').delivery_id, argos.tenant, argos.alias, terminalAck(argos, requireValue(first[1], 'first')), 30_000
     );
     await repository.ackDelivery(
-      afterOne[0]!.delivery_id, argos.tenant, argos.alias, terminalAck(argos, afterOne[0]!), 30_000
+      requireValue(afterOne[0], 'afterOne').delivery_id, argos.tenant, argos.alias, terminalAck(argos, requireValue(afterOne[0], 'afterOne')), 30_000
     );
 
     const afterTwo = await repository.claimDeliveries(
@@ -291,7 +292,7 @@ describe('per-agent delivery concurrency cap', () => {
     expect(first).toHaveLength(1);
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()-interval '1 second' WHERE id=$1`,
-      [first[0]!.delivery_id],
+      [requireValue(first[0], 'first').delivery_id],
     );
 
     // No dispatcher/reaper runs between the two claims. The expired ownership is no longer a
@@ -402,7 +403,7 @@ describe('per-agent delivery concurrency cap', () => {
 
     // Exhausts the attempts to force the 'dead' branch instead of the retry one.
     await pool.query(
-      `UPDATE deliveries SET attempt=max_attempts WHERE id=$1`, [claimed[0]!.delivery_id]
+      `UPDATE deliveries SET attempt=max_attempts WHERE id=$1`, [requireValue(claimed[0], 'claimed').delivery_id]
     );
     const reaped = await repository.retryStaleDeliveries(0, 100);
     expect(reaped.dead).toBe(1);
@@ -412,7 +413,7 @@ describe('per-agent delivery concurrency cap', () => {
        WHERE kind='wake' AND idempotency_key LIKE 'wake-dead:%'
          AND payload->>'recipient_alias'='argos'`
     );
-    expect(Number(wakes.rows[0]!.total)).toBe(1);
+    expect(Number(requireValue(wakes.rows[0], 'wakes.rows').total)).toBe(1);
 
     // And the freed slot is really claimable.
     const afterReap = await repository.claimDeliveries(

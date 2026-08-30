@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   SYSTEM_PRINCIPAL_ALIASES, type Ack, type DeliveryEnvelope, type PublishMessage, type Tenant,
@@ -46,10 +47,10 @@ async function claim(
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
   await repository.publish(input);
   const [delivery] = await repository.claimDeliveries(
-    tenant, alias, instanceId, lease.epoch!, 1, 30_000
+    tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
   );
   if (!delivery) throw new Error('expected a claimed delivery');
-  return { delivery, epoch: lease.epoch! };
+  return { delivery, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 function terminalAck(
@@ -149,7 +150,7 @@ async function seedTelegramAckAndFinal(
       published.message_id,
       deliveryId,
       input.trace_id,
-      JSON.stringify(input.authenticated_context!.origin),
+      JSON.stringify(requireValue(input.authenticated_context, 'input.authenticated_context').origin),
       JSON.stringify({
         outcome: 'done',
         result: { output: { reply: 'final', messages: [] } },
@@ -216,7 +217,7 @@ async function deadTelegramAckEffect(ackId: string): Promise<{
     [ackId, incidentEvidenceSha256],
   );
   return {
-    bridge, effectId, payloadHash, deadLetterId: incident.rows[0]!.id, incidentEvidenceSha256,
+    bridge, effectId, payloadHash, deadLetterId: requireValue(incident.rows[0], 'incident.rows').id, incidentEvidenceSha256,
   };
 }
 
@@ -578,7 +579,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
 
     const childLease = await repository.acquireLease('Steven', 'kant', 'same-tenant-target', [], 30_000);
     const [child] = await repository.claimDeliveries(
-      'Steven', 'kant', 'same-tenant-target', childLease.epoch!, 1, 30_000
+      'Steven', 'kant', 'same-tenant-target', requireValue(childLease.epoch, 'childLease.epoch'), 1, 30_000
     );
     expect(child).toMatchObject({
       actor_alias: 'argos',
@@ -599,15 +600,15 @@ describe('transactional StructuredOutput.messages materialization', () => {
     });
 
     await repository.ackDelivery(
-      child!.delivery_id,
+      requireValue(child, 'child').delivery_id,
       'Steven',
       'kant',
-      terminalAck(child!, 'same-tenant-target', childLease.epoch!, [])
+      terminalAck(requireValue(child, 'child'), 'same-tenant-target', requireValue(childLease.epoch, 'childLease.epoch'), [])
     );
     expect((await pool.query(
       `SELECT 1 FROM adapter_outbox
        WHERE kind='origin_relay' AND delivery_id=$1 AND adapter='telegram'`,
-      [child!.delivery_id]
+      [requireValue(child, 'child').delivery_id]
     )).rowCount).toBe(0);
 
     const [response] = await repository.claimDeliveries(
@@ -623,7 +624,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
         outcome: 'done',
         correlation: {
           root_message_id: delivery.message_id,
-          parent_delivery_id: child!.delivery_id,
+          parent_delivery_id: requireValue(child, 'child').delivery_id,
           response_to_delivery_id: delivery.delivery_id
         }
       },
@@ -742,7 +743,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
 
     const senecaLease = await repository.acquireLease('Pablo', 'seneca', 'seneca-cross-tenant', [], 30_000);
     const [child] = await repository.claimDeliveries(
-      'Pablo', 'seneca', 'seneca-cross-tenant', senecaLease.epoch!, 1, 30_000
+      'Pablo', 'seneca', 'seneca-cross-tenant', requireValue(senecaLease.epoch, 'senecaLease.epoch'), 1, 30_000
     );
     expect(child).toMatchObject({
       tenant_id: 'Steven',
@@ -755,7 +756,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       child.delivery_id,
       'Pablo',
       'seneca',
-      terminalAck(child, 'seneca-cross-tenant', senecaLease.epoch!, [])
+      terminalAck(child, 'seneca-cross-tenant', requireValue(senecaLease.epoch, 'senecaLease.epoch'), [])
     );
 
     const [response] = await repository.claimDeliveries(
@@ -839,7 +840,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Pablo', 'seneca', 'revoked-return-seneca', [], 30_000
     );
     const [child] = await repository.claimDeliveries(
-      'Pablo', 'seneca', 'revoked-return-seneca', senecaLease.epoch!, 1, 30_000
+      'Pablo', 'seneca', 'revoked-return-seneca', requireValue(senecaLease.epoch, 'senecaLease.epoch'), 1, 30_000
     );
     if (!child) throw new Error('expected the cross-tenant child delivery');
     await pool.query(
@@ -850,7 +851,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       child.delivery_id,
       'Pablo',
       'seneca',
-      terminalAck(child, 'revoked-return-seneca', senecaLease.epoch!, [])
+      terminalAck(child, 'revoked-return-seneca', requireValue(senecaLease.epoch, 'senecaLease.epoch'), [])
     );
 
     expect((await pool.query<{ idempotency_key: string }>(
@@ -943,14 +944,14 @@ describe('transactional StructuredOutput.messages materialization', () => {
 
     const kantLease = await repository.acquireLease('Steven', 'kant', 'nested-kant', [], 30_000);
     const [kantRequest] = await repository.claimDeliveries(
-      'Steven', 'kant', 'nested-kant', kantLease.epoch!, 1, 30_000
+      'Steven', 'kant', 'nested-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!kantRequest) throw new Error('expected the first nested request');
     await repository.ackDelivery(
       kantRequest.delivery_id,
       'Steven',
       'kant',
-      terminalAck(kantRequest, 'nested-kant', kantLease.epoch!, [
+      terminalAck(kantRequest, 'nested-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), [
         { to: 'socrates', body: 'nested leaf request' }
       ])
     );
@@ -968,18 +969,18 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'socrates', 'nested-socrates', [], 30_000
     );
     const [leaf] = await repository.claimDeliveries(
-      'Steven', 'socrates', 'nested-socrates', socratesLease.epoch!, 1, 30_000
+      'Steven', 'socrates', 'nested-socrates', requireValue(socratesLease.epoch, 'socratesLease.epoch'), 1, 30_000
     );
     if (!leaf) throw new Error('expected the nested leaf request');
     await repository.ackDelivery(
       leaf.delivery_id,
       'Steven',
       'socrates',
-      terminalAck(leaf, 'nested-socrates', socratesLease.epoch!, [])
+      terminalAck(leaf, 'nested-socrates', requireValue(socratesLease.epoch, 'socratesLease.epoch'), [])
     );
 
     const [kantResponse] = await repository.claimDeliveries(
-      'Steven', 'kant', 'nested-kant', kantLease.epoch!, 1, 30_000
+      'Steven', 'kant', 'nested-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!kantResponse) throw new Error('expected the nested response to the middle agent');
     expect(kantResponse.body).toMatchObject({
@@ -993,7 +994,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(
         kantResponse,
         'nested-kant',
-        kantLease.epoch!,
+        requireValue(kantLease.epoch, 'kantLease.epoch'),
         [],
         randomUUID(),
         'Kant reviewed the Socrates result'
@@ -1120,14 +1121,14 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Pablo', 'kant', 'nested-denied-kant', [], 30_000
     );
     const [kantRequest] = await repository.claimDeliveries(
-      'Pablo', 'kant', 'nested-denied-kant', kantLease.epoch!, 1, 30_000
+      'Pablo', 'kant', 'nested-denied-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!kantRequest) throw new Error('expected the remote nested Kant request');
     await repository.ackDelivery(
       kantRequest.delivery_id,
       'Pablo',
       'kant',
-      terminalAck(kantRequest, 'nested-denied-kant', kantLease.epoch!, [
+      terminalAck(kantRequest, 'nested-denied-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), [
         { to: 'socrates', body: 'nested leaf request before reverse ACL revocation' }
       ])
     );
@@ -1136,7 +1137,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'socrates', 'nested-denied-socrates', [], 30_000
     );
     const [leaf] = await repository.claimDeliveries(
-      'Steven', 'socrates', 'nested-denied-socrates', socratesLease.epoch!, 1, 30_000
+      'Steven', 'socrates', 'nested-denied-socrates', requireValue(socratesLease.epoch, 'socratesLease.epoch'), 1, 30_000
     );
     if (!leaf) throw new Error('expected the nested Socrates leaf request');
     await repository.ackDelivery(
@@ -1146,7 +1147,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(
         leaf,
         'nested-denied-socrates',
-        socratesLease.epoch!,
+        requireValue(socratesLease.epoch, 'socratesLease.epoch'),
         [],
         randomUUID(),
         'Socrates completed the nested work'
@@ -1154,7 +1155,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     );
 
     const [kantResponse] = await repository.claimDeliveries(
-      'Pablo', 'kant', 'nested-denied-kant', kantLease.epoch!, 1, 30_000
+      'Pablo', 'kant', 'nested-denied-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!kantResponse) throw new Error('expected the Socrates continuation at Kant');
     expect(kantResponse.body).toMatchObject({
@@ -1173,7 +1174,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(
         kantResponse,
         'nested-denied-kant',
-        kantLease.epoch!,
+        requireValue(kantLease.epoch, 'kantLease.epoch'),
         [],
         randomUUID(),
         'Kant reviewed the nested work'
@@ -1367,7 +1368,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'kant', 'forged-response-target', [], 30_000
     );
     const claimed = await repository.claimDeliveries(
-      'Steven', 'kant', 'forged-response-target', kantLease.epoch!, 2, 30_000
+      'Steven', 'kant', 'forged-response-target', requireValue(kantLease.epoch, 'kantLease.epoch'), 2, 30_000
     );
     const claimedForgedDelivery = claimed.find((delivery) => delivery.message_id === forgedMessageId);
     if (!claimedForgedDelivery) throw new Error('expected the forged delivery');
@@ -1375,7 +1376,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       claimedForgedDelivery.delivery_id,
       'Steven',
       'kant',
-      terminalAck(claimedForgedDelivery, 'forged-response-target', kantLease.epoch!, [])
+      terminalAck(claimedForgedDelivery, 'forged-response-target', requireValue(kantLease.epoch, 'kantLease.epoch'), [])
     );
 
     expect(await repository.claimDeliveries(
@@ -1538,7 +1539,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       recipients: [{ tenant_id: 'Steven', alias: 'argos' }]
     }));
     const [legacyDelivery] = await repository.claimDeliveries(
-      'Steven', 'argos', 'legacy-routing-client', legacyLease.epoch!, 1, 30_000
+      'Steven', 'argos', 'legacy-routing-client', requireValue(legacyLease.epoch, 'legacyLease.epoch'), 1, 30_000
     );
     if (!legacyDelivery) throw new Error('expected a legacy delivery');
     expect(legacyDelivery.routing_targets).toBeUndefined();
@@ -1546,10 +1547,10 @@ describe('transactional StructuredOutput.messages materialization', () => {
       legacyDelivery.delivery_id,
       'Steven',
       'argos',
-      terminalAck(legacyDelivery, 'legacy-routing-client', legacyLease.epoch!, [])
+      terminalAck(legacyDelivery, 'legacy-routing-client', requireValue(legacyLease.epoch, 'legacyLease.epoch'), [])
     );
     await repository.releaseLease(
-      'Steven', 'argos', 'legacy-routing-client', legacyLease.epoch!
+      'Steven', 'argos', 'legacy-routing-client', requireValue(legacyLease.epoch, 'legacyLease.epoch')
     );
 
     await repository.acquireLease('Steven', 'kant', 'routing-live-kant', [], 30_000);
@@ -1561,7 +1562,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       recipients: [{ tenant_id: 'Steven', alias: 'argos' }]
     }));
     const [capableDelivery] = await repository.claimDeliveries(
-      'Steven', 'argos', 'capable-routing-client', capableLease.epoch!, 1, 30_000
+      'Steven', 'argos', 'capable-routing-client', requireValue(capableLease.epoch, 'capableLease.epoch'), 1, 30_000
     );
     if (!capableDelivery) throw new Error('expected a capability-aware delivery');
     expect(capableDelivery.routing_targets?.map(
@@ -1640,7 +1641,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'socrates', 'filtered-all-socrates', [], 30_000
     );
     await repository.releaseLease(
-      'Steven', 'socrates', 'filtered-all-socrates', offlineLease.epoch!
+      'Steven', 'socrates', 'filtered-all-socrates', requireValue(offlineLease.epoch, 'offlineLease.epoch')
     );
     await repository.acquireLease('Pablo', 'seneca', 'filtered-all-seneca', [], 30_000);
     await pool.query(
@@ -1881,7 +1882,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'kant', 'sender-bounce-kant', [], 30_000
     );
     const [child] = await repository.claimDeliveries(
-      'Steven', 'kant', 'sender-bounce-kant', kantLease.epoch!, 1, 30_000
+      'Steven', 'kant', 'sender-bounce-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!child) throw new Error('expected sender-bounce child');
     expect(child).toMatchObject({
@@ -1893,7 +1894,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       child.delivery_id,
       'Steven',
       'kant',
-      terminalAck(child, 'sender-bounce-kant', kantLease.epoch!, [
+      terminalAck(child, 'sender-bounce-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), [
         { to: 'argos', body: 'malicious duplicate return' }
       ])
     );
@@ -1962,7 +1963,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'kant', 'mixed-output-kant', [], 30_000
     );
     const [child] = await repository.claimDeliveries(
-      'Steven', 'kant', 'mixed-output-kant', kantLease.epoch!, 1, 30_000
+      'Steven', 'kant', 'mixed-output-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!child) throw new Error('expected the valid mixed-output branch');
     await repository.ackDelivery(
@@ -1972,7 +1973,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       terminalAck(
         child,
         'mixed-output-kant',
-        kantLease.epoch!,
+        requireValue(kantLease.epoch, 'kantLease.epoch'),
         [],
         randomUUID(),
         'the valid branch completed'
@@ -2149,7 +2150,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       const instanceId = `fanout-${alias}`;
       const lease = await repository.acquireLease('Steven', alias, instanceId, [], 30_000);
       const [child] = await repository.claimDeliveries(
-        'Steven', alias, instanceId, lease.epoch!, 1, 30_000
+        'Steven', alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       if (!child) throw new Error(`expected fan-out child for ${alias}`);
       await repository.ackDelivery(
@@ -2159,7 +2160,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
         terminalAck(
           child,
           instanceId,
-          lease.epoch!,
+          requireValue(lease.epoch, 'lease.epoch'),
           [],
           randomUUID(),
           alias === 'kant'
@@ -2173,8 +2174,8 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'argos', 'fanout-source', root.epoch, 2, 30_000
     );
     expect(responses).toHaveLength(2);
-    const first = responses[0]!;
-    const second = responses[1]!;
+    const first = requireValue(responses[0], 'responses');
+    const second = requireValue(responses[1], 'responses');
     await repository.ackDelivery(
       second.delivery_id,
       'Steven',
@@ -2260,9 +2261,9 @@ describe('transactional StructuredOutput.messages materialization', () => {
       [`relay-root:${root.delivery.message_id}`]
     )).rows).toEqual([{ status: 'pending' }]);
     await expect(repository.ackOutbox({
-      event_id: ackClaim!.event_id,
-      attempt: ackClaim!.attempt,
-      claim_token: ackClaim!.claim_token,
+      event_id: requireValue(ackClaim, 'ackClaim').event_id,
+      attempt: requireValue(ackClaim, 'ackClaim').attempt,
+      claim_token: requireValue(ackClaim, 'ackClaim').claim_token,
       status: 'sent'
     })).resolves.toEqual({ status: 'sent', applied: true });
 
@@ -2271,23 +2272,23 @@ describe('transactional StructuredOutput.messages materialization', () => {
     );
     expect(finalClaim?.payload).toMatchObject({ outcome: 'done' });
     await expect(repository.ackOutbox({
-      event_id: finalClaim!.event_id,
-      attempt: finalClaim!.attempt,
-      claim_token: finalClaim!.claim_token,
+      event_id: requireValue(finalClaim, 'finalClaim').event_id,
+      attempt: requireValue(finalClaim, 'finalClaim').attempt,
+      claim_token: requireValue(finalClaim, 'finalClaim').claim_token,
       status: 'sent'
     })).resolves.toEqual({ status: 'sent', applied: true });
 
     await pool.query(
       `UPDATE adapter_outbox SET status='pending',sent_at=NULL,available_at=now()
        WHERE id=$1`,
-      [ackClaim!.event_id]
+      [requireValue(ackClaim, 'ackClaim').event_id]
     );
     expect(await repository.claimOutbox(
       'origin_relay', 'telegram-order-late-ack', 1, 30_000, 'telegram'
     )).toEqual([]);
     expect((await pool.query<{ status: string; last_error: string }>(
       `SELECT status,last_error FROM adapter_outbox WHERE id=$1`,
-      [ackClaim!.event_id]
+      [requireValue(ackClaim, 'ackClaim').event_id]
     )).rows).toEqual([{
       status: 'dead',
       last_error: 'Telegram acceptance ACK was superseded by a claimed or terminal final relay'
@@ -2313,14 +2314,14 @@ describe('transactional StructuredOutput.messages materialization', () => {
       const instanceId = `bounded-fanin-${alias}`;
       const lease = await repository.acquireLease('Steven', alias, instanceId, [], 30_000);
       const [child] = await repository.claimDeliveries(
-        'Steven', alias, instanceId, lease.epoch!, 1, 30_000
+        'Steven', alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       if (!child) throw new Error(`expected bounded fan-in child for ${alias}`);
       await repository.ackDelivery(
         child.delivery_id,
         'Steven',
         alias,
-        terminalAck(child, instanceId, lease.epoch!, [], randomUUID(), marker.repeat(100_000))
+        terminalAck(child, instanceId, requireValue(lease.epoch, 'lease.epoch'), [], randomUUID(), marker.repeat(100_000))
       );
     }
 
@@ -2390,14 +2391,14 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'kant', 'empty-fanin-kant', [], 30_000
     );
     const [child] = await repository.claimDeliveries(
-      'Steven', 'kant', 'empty-fanin-kant', kantLease.epoch!, 1, 30_000
+      'Steven', 'kant', 'empty-fanin-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), 1, 30_000
     );
     if (!child) throw new Error('expected the empty fan-in branch');
     await repository.ackDelivery(
       child.delivery_id,
       'Steven',
       'kant',
-      terminalAck(child, 'empty-fanin-kant', kantLease.epoch!, [])
+      terminalAck(child, 'empty-fanin-kant', requireValue(kantLease.epoch, 'kantLease.epoch'), [])
     );
     const [response] = await repository.claimDeliveries(
       'Steven', 'argos', 'empty-fanin-source', root.epoch, 1, 30_000
@@ -2524,14 +2525,14 @@ describe('transactional StructuredOutput.messages materialization', () => {
       const instanceId = `concurrent-fanout-${alias}`;
       const lease = await repository.acquireLease('Steven', alias, instanceId, [], 30_000);
       const [child] = await repository.claimDeliveries(
-        'Steven', alias, instanceId, lease.epoch!, 1, 30_000
+        'Steven', alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       if (!child) throw new Error(`expected concurrent fan-out child for ${alias}`);
       await repository.ackDelivery(
         child.delivery_id,
         'Steven',
         alias,
-        terminalAck(child, instanceId, lease.epoch!, [])
+        terminalAck(child, instanceId, requireValue(lease.epoch, 'lease.epoch'), [])
       );
     }
 
@@ -2539,8 +2540,8 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'argos', 'concurrent-fanout-source', root.epoch, 2, 30_000
     );
     expect(responses).toHaveLength(2);
-    const first = responses[0]!;
-    const second = responses[1]!;
+    const first = requireValue(responses[0], 'responses');
+    const second = requireValue(responses[1], 'responses');
 
     try {
       await pool.query(`
@@ -2654,7 +2655,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     );
     const lease = await repository.acquireLease('Steven', 'kant', 'hop-target', [], 30_000);
     const [child] = await repository.claimDeliveries(
-      'Steven', 'kant', 'hop-target', lease.epoch!, 1, 30_000
+      'Steven', 'kant', 'hop-target', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!child) throw new Error('expected the materialized child delivery');
     expect(child.message_id).toBe(materialized.rows[0]?.produced_message_id);
@@ -2662,7 +2663,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       child.delivery_id,
       'Steven',
       'kant',
-      terminalAck(child, 'hop-target', lease.epoch!, [{ to: 'argos', body: 'must stop' }])
+      terminalAck(child, 'hop-target', requireValue(lease.epoch, 'lease.epoch'), [{ to: 'argos', body: 'must stop' }])
     );
 
     expect((await pool.query(

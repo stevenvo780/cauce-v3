@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type {
   Ack, DeliveryEnvelope, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, PublishMessage,
@@ -282,7 +283,7 @@ describe('schema 035 behavioral profile adoption', () => {
     const lease = await repository.acquireLease('Steven', 'argos', instanceId, [], 30_000);
     await repository.publish(publishCommand());
     const [delivery] = await repository.claimDeliveries(
-      'Steven', 'argos', instanceId, lease.epoch!, 1, 30_000,
+      'Steven', 'argos', instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000,
     );
     expect(delivery?.profile_runtime_contract).toBeUndefined();
   });

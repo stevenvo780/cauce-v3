@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -88,12 +89,12 @@ it('does not enqueue a durable relay for a console-originated delivery', async (
       relay: [], metadata: { auth: 'console-password', user_id: randomUUID() }
     }
   }));
-  const [delivery] = await repository.claimDeliveries(tenant, alias, instanceId, lease.epoch!, 1, 30_000);
+  const [delivery] = await repository.claimDeliveries(tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
   if (!delivery) throw new Error('expected a claimed delivery');
 
   await repository.ackDelivery(
     delivery.delivery_id, tenant, alias,
-    doneAck(delivery, instanceId, lease.epoch!, 'la consola ya la lee de la base')
+    doneAck(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'la consola ya la lee de la base')
   );
 
   expect(await relayRowCount(delivery.delivery_id)).toBe(0);
@@ -107,12 +108,12 @@ it('still relays a telegram-originated delivery, proving the console guard is ad
       adapter: 'telegram', channel: 'dm', conversation_id: '42', relay: [], metadata: {}
     }
   }));
-  const [delivery] = await repository.claimDeliveries(tenant, alias, instanceId, lease.epoch!, 1, 30_000);
+  const [delivery] = await repository.claimDeliveries(tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
   if (!delivery) throw new Error('expected a claimed delivery');
 
   await repository.ackDelivery(
     delivery.delivery_id, tenant, alias,
-    doneAck(delivery, instanceId, lease.epoch!, 'esto sí tiene un puente de vuelta')
+    doneAck(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'esto sí tiene un puente de vuelta')
   );
 
   expect(await relayRowCount(delivery.delivery_id)).toBe(1);

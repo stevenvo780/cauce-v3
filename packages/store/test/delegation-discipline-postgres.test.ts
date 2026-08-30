@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
@@ -55,7 +56,7 @@ interface Consumer {
 async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
   const instanceId = `${alias}-${randomUUID()}`;
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: lease.epoch! };
+  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 async function nextDelivery(
@@ -275,9 +276,9 @@ describe('receipt durable de materialización', () => {
     // on the same terminal row, returns ownership_lost without adding ACKs or touching the
     // three materializations of the original commit.
     await repository.publish(command());
-    const epochTwoArgos: Consumer = { ...argos, epoch: epochTwoLease.epoch! };
+    const epochTwoArgos: Consumer = { ...argos, epoch: requireValue(epochTwoLease.epoch, 'epochTwoLease.epoch') };
     const otherDelivery = await nextDelivery(epochTwoArgos);
-    const before = (await pool.query<{
+    const before = requireValue((await pool.query<{
       ack_count: string;
       materialization_count: string;
       status: string;
@@ -290,7 +291,7 @@ describe('receipt durable de materialización', () => {
          delivery.status,delivery.result
        FROM deliveries delivery WHERE delivery.id=$1`,
       [root.delivery_id],
-    )).rows[0]!;
+    )).rows[0], 'rows');
     const mismatchCases: Array<{ name: string; deliveryId: string; candidate: Ack }> = [
       {
         name: 'event_id',
@@ -342,7 +343,7 @@ describe('receipt durable de materialización', () => {
       expect(fenced, mismatch.name).not.toHaveProperty('delegation_rejections');
       expect(fenced, mismatch.name).not.toHaveProperty('delegation_materializations');
     }
-    const after = (await pool.query<{
+    const after = requireValue((await pool.query<{
       ack_count: string;
       materialization_count: string;
       status: string;
@@ -355,7 +356,7 @@ describe('receipt durable de materialización', () => {
          delivery.status,delivery.result
        FROM deliveries delivery WHERE delivery.id=$1`,
       [root.delivery_id],
-    )).rows[0]!;
+    )).rows[0], 'rows');
     expect(after).toEqual(before);
   }, 180_000);
 
@@ -656,9 +657,9 @@ describe('gate resuelto -> reanuda', () => {
     await repository.publish(command());
     await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿aprobás?' }]);
 
-    const gateId = (await pool.query<{ id: string }>(
+    const gateId = requireValue((await pool.query<{ id: string }>(
       'SELECT id FROM agent_chain_gates'
-    )).rows[0]!.id;
+    )).rows[0], 'rows').id;
 
     // The visible list is the counterpart of the gate: without it the wait just changes hiding place.
     const open = await repository.listChainGates('Steven', 'kant');
@@ -693,9 +694,9 @@ describe('gate resuelto -> reanuda', () => {
     const argos = await consumer('Steven', 'argos');
     await repository.publish(command());
     await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿aprobás?' }]);
-    const gateId = (await pool.query<{ id: string }>(
+    const gateId = requireValue((await pool.query<{ id: string }>(
       'SELECT id FROM agent_chain_gates'
-    )).rows[0]!.id;
+    )).rows[0], 'rows').id;
 
     await repository.answerChainGate(gateId, 'sí', 'Steven', 'kant');
     await expect(repository.answerChainGate(gateId, 'sí otra vez', 'Steven', 'kant'))
@@ -708,9 +709,9 @@ describe('gate resuelto -> reanuda', () => {
     const argos = await consumer('Steven', 'argos');
     await repository.publish(command());
     await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿aprobás?' }]);
-    const gateId = (await pool.query<{ id: string }>(
+    const gateId = requireValue((await pool.query<{ id: string }>(
       'SELECT id FROM agent_chain_gates'
-    )).rows[0]!.id;
+    )).rows[0], 'rows').id;
 
     await repository.cancelChainGate(gateId, 'Steven', 'kant');
     expect((await deliveriesFor('argos')).length).toBe(1);

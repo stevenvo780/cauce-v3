@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
@@ -46,7 +47,7 @@ interface Consumer {
 async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
   const instanceId = `${alias}-${randomUUID()}`;
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: lease.epoch! };
+  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 async function nextDelivery(

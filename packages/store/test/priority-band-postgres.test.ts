@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   AGENT_PRIORITY_CEILING, HUMAN_CHAT_PRIORITY,
@@ -257,7 +258,7 @@ describe('lane fairness burst', () => {
     );
     await pool.query(
       `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias) VALUES($1,'Steven',$2)`,
-      [message.rows[0]!.id, alias]
+      [requireValue(message.rows[0], 'message.rows').id, alias]
     );
   }
 

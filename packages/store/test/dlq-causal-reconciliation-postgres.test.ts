@@ -6,7 +6,7 @@ import {
   startTestDatabase,
   type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
-
+import { requireValue } from './helpers.js';
 interface DeadOutboxFixture {
   outboxId: string;
   letterId: string;
@@ -78,7 +78,7 @@ async function seedMessage(tenant = 'Steven', room = 'grp.steven', actor = 'kant
      VALUES($1,$2,$3,$4,$5,'{}'::jsonb,'interactive') RETURNING id`,
     [requestId, `dlq-test-${randomUUID()}`, tenant, room, actor],
   );
-  return { messageId: result.rows[0]!.id, requestId };
+  return { messageId: requireValue(result.rows[0], 'result.rows').id, requestId };
 }
 
 async function seedDeadOutbox(options: {
@@ -115,7 +115,7 @@ async function seedDeadOutbox(options: {
        outbox_id,tenant_id,adapter,kind,reason,payload,attempts,created_at
      ) VALUES($1,'Steven',$2,$3,$4,$5::jsonb,3,COALESCE($6::timestamptz,now())) RETURNING id`,
     [
-      outbox.rows[0]!.id,
+      requireValue(outbox.rows[0], 'outbox.rows').id,
       options.adapter ?? 'telegram',
       options.kind ?? 'origin_relay',
       options.lastError ?? 'synthetic terminal failure',
@@ -124,8 +124,8 @@ async function seedDeadOutbox(options: {
     ],
   );
   return {
-    outboxId: outbox.rows[0]!.id,
-    letterId: letter.rows[0]!.id,
+    outboxId: requireValue(outbox.rows[0], 'outbox.rows').id,
+    letterId: requireValue(letter.rows[0], 'letter.rows').id,
     messageId: seeded.messageId,
     requestId: seeded.requestId,
   };
@@ -141,7 +141,7 @@ async function seedOutboxWithoutDlq(payload: Record<string, unknown>): Promise<{
        'pending',0,3) RETURNING id`,
     [randomUUID(), seeded.requestId, seeded.messageId, JSON.stringify(payload)],
   );
-  return { outboxId: outbox.rows[0]!.id };
+  return { outboxId: requireValue(outbox.rows[0], 'outbox.rows').id };
 }
 
 async function seedEffect(
@@ -190,16 +190,16 @@ async function seedEffect(
 }
 
 async function plan(): Promise<ReconciliationPlan> {
-  return (await pool.query<{ value: ReconciliationPlan }>(
+  return requireValue((await pool.query<{ value: ReconciliationPlan }>(
     `SELECT cauce_dlq_plan_030('Steven','kant') AS value`,
-  )).rows[0]!.value;
+  )).rows[0], 'rows').value;
 }
 
 async function apply(planValue: ReconciliationPlan): Promise<ReconciliationApply> {
-  return (await pool.query<{ value: ReconciliationApply }>(
+  return requireValue((await pool.query<{ value: ReconciliationApply }>(
     `SELECT cauce_dlq_apply_030('Steven','kant',$1) AS value`,
     [planValue.planSha256],
-  )).rows[0]!.value;
+  )).rows[0], 'rows').value;
 }
 
 async function seedDelivery(options: {
@@ -226,7 +226,7 @@ async function seedDelivery(options: {
       options.executionStarted ?? false,
     ],
   );
-  return result.rows[0]!.id;
+  return requireValue(result.rows[0], 'result.rows').id;
 }
 
 async function seedDeadDelivery(options: Parameters<typeof seedDelivery>[0] & {
@@ -244,7 +244,7 @@ async function seedDeadDelivery(options: Parameters<typeof seedDelivery>[0] & {
        '{}'::jsonb,3,COALESCE($3::timestamptz,now())) RETURNING id`,
     [deliveryId, requestedLetterId ?? null, createdAt ?? null],
   );
-  return { deliveryId, letterId: letter.rows[0]!.id };
+  return { deliveryId, letterId: requireValue(letter.rows[0], 'letter.rows').id };
 }
 
 describe('causal DLQ reconciliation', () => {
@@ -776,13 +776,13 @@ describe('operator-only DLQ transitions', () => {
     const replayRequestId = randomUUID();
     await seedEffect(fixture, 0, 1, 'ambiguous', { hash: 'a'.repeat(64) });
     await apply(await plan());
-    const incidentEvidence = (await pool.query<{ evidence_sha256: string }>(
+    const incidentEvidence = requireValue((await pool.query<{ evidence_sha256: string }>(
       `SELECT evidence_sha256 FROM outbox_dead_letters WHERE id=$1`, [fixture.letterId],
-    )).rows[0]!.evidence_sha256;
-    const inspected = (await pool.query<{ value: Record<string, unknown> }>(
+    )).rows[0], 'rows').evidence_sha256;
+    const inspected = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_inspect_telegram_replay_030($1,$2,'Steven','kant') AS value`,
       [fixture.letterId, incidentEvidence],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(Object.keys(inspected).sort()).toEqual([
       'evidenceSha256', 'id', 'items', 'phase', 'schemaVersion', 'suite', 'total',
     ]);
@@ -818,12 +818,12 @@ describe('operator-only DLQ transitions', () => {
       ['b'.repeat(64), randomUUID(), fixture.letterId, incidentEvidence],
     )).rejects.toThrow(/exactly one current effect/u);
 
-    const replay = (await pool.query<{ value: Record<string, unknown> }>(
+    const replay = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_manual_replay_telegram_030(
          $1,0,'ticket 42','Steven','kant',true,$2,$3,$4,0
        ) AS value`,
       ['a'.repeat(64), replayRequestId, fixture.letterId, incidentEvidence],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(replay).toMatchObject({ appliedCount: 1, duplicateRisk: true });
     expect((await pool.query<{ status: string; state: string; resolved: boolean }>(
       `SELECT outbox.status,effect.state,letter.resolved_at IS NOT NULL AS resolved
@@ -862,7 +862,7 @@ describe('operator-only DLQ transitions', () => {
        ) AS value`,
       ['a'.repeat(64), replayRequestId, fixture.letterId, incidentEvidence],
     );
-    expect(idempotentRetry.rows[0]!.value).toMatchObject({
+    expect(requireValue(idempotentRetry.rows[0], 'idempotentRetry.rows').value).toMatchObject({
       appliedCount: 0, alreadyApplied: true, replaySequence: 1,
     });
     expect((await pool.query<{ count: string }>(
@@ -878,25 +878,25 @@ describe('operator-only DLQ transitions', () => {
       ],
     )).rejects.toThrow(/incident evidence changed|current incident state|incident\/effect evidence/u);
     await apply(await plan());
-    const refreshed = (await pool.query<{
+    const refreshed = requireValue((await pool.query<{
       evidence_sha256: string;
     }>(
       `SELECT evidence_sha256 FROM outbox_dead_letters WHERE id=$1`, [fixture.letterId],
-    )).rows[0]!.evidence_sha256;
-    const refreshedInspect = (await pool.query<{ value: Record<string, unknown> }>(
+    )).rows[0], 'rows').evidence_sha256;
+    const refreshedInspect = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_inspect_telegram_replay_030($1,$2,'Steven','kant') AS value`,
       [fixture.letterId, refreshed],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(refreshedInspect).toMatchObject({
       items: [expect.objectContaining({ replayCount: 1, state: 'prepared', duplicateRisk: false })],
     });
-    const secondReplay = (await pool.query<{ value: Record<string, unknown> }>(
+    const secondReplay = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_manual_replay_telegram_030(
          $1,0,'fresh second review','Steven','kant',true,$2,$3,$4,1
        ) AS value`, [
         'a'.repeat(64), randomUUID(), fixture.letterId, refreshed,
       ],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(secondReplay).toMatchObject({ appliedCount: 1, replaySequence: 2, duplicateRisk: false });
   });
 
@@ -958,11 +958,11 @@ describe('operator-only DLQ transitions', () => {
         ],
       ),
     ]);
-    expect(calls.map((call) => call.rows[0]!.value.appliedCount).sort()).toEqual([0, 1, 1]);
-    expect(calls.map((call) => call.rows[0]!.value.alreadyApplied).sort()).toEqual([
+    expect(calls.map((call) => requireValue(call.rows[0], 'call.rows').value.appliedCount).sort()).toEqual([0, 1, 1]);
+    expect(calls.map((call) => requireValue(call.rows[0], 'call.rows').value.alreadyApplied).sort()).toEqual([
       false, false, true,
     ]);
-    expect(calls.every((call) => call.rows[0]!.value.duplicateRisk === false)).toBe(true);
+    expect(calls.every((call) => requireValue(call.rows[0], 'call.rows').value.duplicateRisk === false)).toBe(true);
 
     expect((await pool.query<{ status: string; resolved: boolean; rule: string }>(
       `SELECT outbox.status,letter.resolved_at IS NOT NULL AS resolved,
@@ -995,14 +995,14 @@ describe('operator-only DLQ transitions', () => {
     await seedEffect(fixture, 0, 2, 'ambiguous', { hash: sharedHash });
     await seedEffect(fixture, 1, 2, 'ambiguous', { hash: sharedHash });
     await apply(await plan());
-    const incidentEvidence = (await pool.query<{ evidence_sha256: string }>(
+    const incidentEvidence = requireValue((await pool.query<{ evidence_sha256: string }>(
       `SELECT evidence_sha256 FROM outbox_dead_letters WHERE id=$1`, [fixture.letterId],
-    )).rows[0]!.evidence_sha256;
+    )).rows[0], 'rows').evidence_sha256;
 
-    const inspected = (await pool.query<{ value: Record<string, unknown> }>(
+    const inspected = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_inspect_telegram_replay_030($1,$2,'Steven','kant') AS value`,
       [fixture.letterId, incidentEvidence],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(inspected).toMatchObject({
       total: 2,
       items: [
@@ -1014,12 +1014,12 @@ describe('operator-only DLQ transitions', () => {
     });
     expect(JSON.stringify(inspected)).not.toContain(fixture.outboxId);
 
-    const replay = (await pool.query<{ value: Record<string, unknown> }>(
+    const replay = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_manual_replay_telegram_030(
          $1,1,'select second identical chunk','Steven','kant',true,$2,$3,$4,0
        ) AS value`,
       [sharedHash, randomUUID(), fixture.letterId, incidentEvidence],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(replay).toMatchObject({ appliedCount: 1, replaySequence: 1 });
     expect((await pool.query<{ chunk_index: number; state: string; replay_count: number }>(
       `SELECT chunk_index,state,replay_count FROM telegram_egress_effects
@@ -1034,9 +1034,9 @@ describe('operator-only DLQ transitions', () => {
     const fixture = await seedDeadOutbox();
     await seedEffect(fixture, 0, 1, 'ambiguous', { hash: 'c'.repeat(64) });
     await apply(await plan());
-    const evidence = (await pool.query<{ evidence_sha256: string }>(
+    const evidence = requireValue((await pool.query<{ evidence_sha256: string }>(
       `SELECT evidence_sha256 FROM outbox_dead_letters WHERE id=$1`, [fixture.letterId],
-    )).rows[0]!.evidence_sha256;
+    )).rows[0], 'rows').evidence_sha256;
 
     await pool.query(
       `UPDATE memberships SET role='operator'
@@ -1051,17 +1051,17 @@ describe('operator-only DLQ transitions', () => {
        )`, [fixture.letterId, evidence],
     )).rejects.toThrow(/outside actor control scope/u);
 
-    const scopedAway = (await pool.query<{ value: SafeList }>(
+    const scopedAway = requireValue((await pool.query<{ value: SafeList }>(
       `SELECT cauce_list_dlq_030('Isa','salva',200) AS value`,
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(scopedAway.items).toEqual([]);
-    const scopedPlan = (await pool.query<{ value: ReconciliationPlan }>(
+    const scopedPlan = requireValue((await pool.query<{ value: ReconciliationPlan }>(
       `SELECT cauce_dlq_plan_030('Isa','salva') AS value`,
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(scopedPlan.material).toMatchObject({ candidateCount: 0, inventory: [] });
-    const visible = (await pool.query<{ value: SafeList }>(
+    const visible = requireValue((await pool.query<{ value: SafeList }>(
       `SELECT cauce_list_dlq_030('Steven','kant',200) AS value`,
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     const listed = visible.items.find((item) => item.id === fixture.letterId);
     expect(listed).toMatchObject({
       target: 'outbox', kind: 'origin_relay', adapter: 'telegram', disposition: 'ambiguous',
@@ -1076,12 +1076,12 @@ describe('operator-only DLQ transitions', () => {
       'resolutionRule', 'resolvedAt', 'target', 'tenantId',
     ]);
 
-    const before = (await pool.query<{ outbox: string; effect: string }>(
+    const before = requireValue((await pool.query<{ outbox: string; effect: string }>(
       `SELECT row_to_json(outbox)::text AS outbox,row_to_json(effect)::text AS effect
        FROM adapter_outbox outbox
        JOIN telegram_egress_effects effect ON effect.outbox_id=outbox.id
        WHERE outbox.id=$1`, [fixture.outboxId],
-    )).rows[0]!;
+    )).rows[0], 'rows');
     const calls = await Promise.all([
       pool.query<{ value: OperatorResolution }>(
         `SELECT cauce_resolve_dlq_without_replay_030(
@@ -1094,16 +1094,16 @@ describe('operator-only DLQ transitions', () => {
          ) AS value`, [fixture.letterId, evidence],
       ),
     ]);
-    expect(calls.map((call) => call.rows[0]!.value.alreadyApplied).sort()).toEqual([false, true]);
+    expect(calls.map((call) => requireValue(call.rows[0], 'call.rows').value.alreadyApplied).sort()).toEqual([false, true]);
 
-    const after = (await pool.query<{ outbox: string; effect: string; resolved: boolean }>(
+    const after = requireValue((await pool.query<{ outbox: string; effect: string; resolved: boolean }>(
       `SELECT row_to_json(outbox)::text AS outbox,row_to_json(effect)::text AS effect,
               letter.resolved_at IS NOT NULL AS resolved
        FROM adapter_outbox outbox
        JOIN telegram_egress_effects effect ON effect.outbox_id=outbox.id
        JOIN outbox_dead_letters letter ON letter.outbox_id=outbox.id
        WHERE outbox.id=$1`, [fixture.outboxId],
-    )).rows[0]!;
+    )).rows[0], 'rows');
     expect(after.outbox).toBe(before.outbox);
     expect(after.effect).toBe(before.effect);
     expect(after.resolved).toBe(true);
@@ -1126,11 +1126,11 @@ describe('operator-only DLQ transitions', () => {
       `UPDATE outbox_dead_letters SET disposition=$2,disposition_at=now(),evidence_sha256=$3
        WHERE id=$1`, [fixture.letterId, disposition, evidence],
     );
-    const result = (await pool.query<{ value: Record<string, unknown> }>(
+    const result = requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_resolve_dlq_without_replay_030(
          'outbox',$1,$2,'reviewed without replay','Steven','kant',$3,true
        ) AS value`, [fixture.letterId, evidence, duplicate],
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(result).toMatchObject({ appliedCount: 1, alreadyApplied: false });
     expect((await pool.query<{ status: string; resolved: boolean }>(
       `SELECT outbox.status,letter.resolved_at IS NOT NULL AS resolved
@@ -1251,9 +1251,9 @@ describe('operator-only DLQ transitions', () => {
       `UPDATE acl_edges SET enabled=true,allow_control=true
         WHERE from_tenant='Isa' AND to_tenant='Steven'`,
     );
-    const authorizedPlan = (await pool.query<{ value: ReconciliationPlan }>(
+    const authorizedPlan = requireValue((await pool.query<{ value: ReconciliationPlan }>(
       `SELECT cauce_dlq_plan_030('Isa','salva') AS value`,
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(authorizedPlan.material.candidateCount).toBe(1);
 
     await pool.query(`
@@ -1263,15 +1263,15 @@ describe('operator-only DLQ transitions', () => {
       ALTER TABLE tenants ENABLE TRIGGER tenants_hub_star_guard;
       COMMIT
     `);
-    expect((await pool.query<{ value: SafeList }>(
+    expect(requireValue((await pool.query<{ value: SafeList }>(
       `SELECT cauce_list_dlq_030('Isa','salva',200) AS value`,
-    )).rows[0]!.value.items).toEqual([]);
-    expect((await pool.query<{ value: Record<string, unknown> }>(
+    )).rows[0], 'rows').value.items).toEqual([]);
+    expect(requireValue((await pool.query<{ value: Record<string, unknown> }>(
       `SELECT cauce_dlq_inspect_030('Isa','salva') AS value`,
-    )).rows[0]!.value).toMatchObject({ inventory: [] });
-    expect((await pool.query<{ value: ReconciliationPlan }>(
+    )).rows[0], 'rows').value).toMatchObject({ inventory: [] });
+    expect(requireValue((await pool.query<{ value: ReconciliationPlan }>(
       `SELECT cauce_dlq_plan_030('Isa','salva') AS value`,
-    )).rows[0]!.value.material).toMatchObject({ candidateCount: 0, inventory: [] });
+    )).rows[0], 'rows').value.material).toMatchObject({ candidateCount: 0, inventory: [] });
     await expect(pool.query(
       `SELECT cauce_dlq_apply_030('Isa','salva',$1)`, [authorizedPlan.planSha256],
     )).rejects.toThrow(/plan is stale/u);
@@ -1302,17 +1302,17 @@ describe('operator-only DLQ transitions', () => {
     )).rows[0]?.resolved).toBe(false);
 
     await pool.query(`UPDATE tenants SET is_hub=(id='Steven') WHERE id IN ('Isa','Steven')`);
-    const enabledPlan = (await pool.query<{ value: ReconciliationPlan }>(
+    const enabledPlan = requireValue((await pool.query<{ value: ReconciliationPlan }>(
       `SELECT cauce_dlq_plan_030('Isa','salva') AS value`,
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(enabledPlan.material.inventory).not.toEqual([]);
     await pool.query(`UPDATE tenants SET enabled=false WHERE id='Steven'`);
-    expect((await pool.query<{ value: SafeList }>(
+    expect(requireValue((await pool.query<{ value: SafeList }>(
       `SELECT cauce_list_dlq_030('Isa','salva',200) AS value`,
-    )).rows[0]!.value.items).toEqual([]);
-    expect((await pool.query<{ value: ReconciliationPlan }>(
+    )).rows[0], 'rows').value.items).toEqual([]);
+    expect(requireValue((await pool.query<{ value: ReconciliationPlan }>(
       `SELECT cauce_dlq_plan_030('Isa','salva') AS value`,
-    )).rows[0]!.value.material).toMatchObject({ candidateCount: 0, inventory: [] });
+    )).rows[0], 'rows').value.material).toMatchObject({ candidateCount: 0, inventory: [] });
     await expect(pool.query(
       `SELECT cauce_dlq_apply_030('Isa','salva',$1)`, [enabledPlan.planSha256],
     )).rejects.toThrow(/plan is stale/u);
@@ -1371,9 +1371,9 @@ describe('operator-only DLQ transitions', () => {
       `UPDATE outbox_dead_letters SET evidence_sha256=$2 WHERE id=$1`,
       [unclassified.letterId, 'd'.repeat(64)],
     );
-    const safeList = (await pool.query<{ value: SafeList }>(
+    const safeList = requireValue((await pool.query<{ value: SafeList }>(
       `SELECT cauce_list_dlq_030('Steven','kant',200) AS value`,
-    )).rows[0]!.value;
+    )).rows[0], 'rows').value;
     expect(safeList.items.find((item) => item.id === unclassified.letterId)).toMatchObject({
       disposition: 'unclassified', open: true, actionable: false,
     });

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
@@ -34,7 +35,7 @@ async function message(tenant: string, room: string, actor: string): Promise<str
      VALUES($1,$2,$3,$4,$5,$6::jsonb,'interactive',0) RETURNING id`,
     [randomUUID(), `trace-${randomUUID()}`, tenant, room, actor, JSON.stringify({ text: 'private body' })],
   );
-  return result.rows[0]!.id;
+  return requireValue(result.rows[0], 'result.rows').id;
 }
 
 async function audit(values: {
@@ -53,7 +54,7 @@ async function audit(values: {
     [values.tenant, values.actor, values.action, values.decision, values.messageId ?? null,
       values.deliveryId ?? null, `trace-${randomUUID()}`, JSON.stringify(values.metadata)],
   );
-  return result.rows[0]!.id;
+  return requireValue(result.rows[0], 'result.rows').id;
 }
 
 describe('participant-aware audit keyset pagination', () => {
@@ -77,7 +78,7 @@ describe('participant-aware audit keyset pagination', () => {
     const cross = await audit({
       tenant: 'Miguel', actor: 'janus', action: 'delivery.ack', decision: 'allow',
       metadata: { ack: 'done', payload: 'CROSS_SECRET', token: 'CROSS_SECRET' },
-      deliveryId: crossDelivery.rows[0]!.id,
+      deliveryId: requireValue(crossDelivery.rows[0], 'crossDelivery.rows').id,
     });
     const room = await audit({
       tenant: 'Steven', actor: 'argos', action: 'message.route', decision: 'allow',

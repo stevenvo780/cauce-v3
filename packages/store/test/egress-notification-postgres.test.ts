@@ -5,7 +5,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
-
+import { requireValue } from './helpers.js';
 let database: TestDatabase;
 let pool: DatabasePool;
 let repository: CauceRepository;
@@ -74,9 +74,9 @@ async function claim(
 ): Promise<{ delivery: DeliveryEnvelope; epoch: number }> {
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
   await repository.publish(input);
-  const [delivery] = await repository.claimDeliveries(tenant, alias, instanceId, lease.epoch!, 1, 30_000);
+  const [delivery] = await repository.claimDeliveries(tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
   if (!delivery) throw new Error('expected a claimed delivery');
-  return { delivery, epoch: lease.epoch! };
+  return { delivery, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 function ackWith(
@@ -303,7 +303,7 @@ describe('proactive egress authorization', () => {
 
     const rows = await notifications();
     expect(rows).toHaveLength(1);
-    const notification = rows[0]!;
+    const notification = requireValue(rows[0], 'rows');
     expect(notification.decision).toBe('allowed');
     expect(notification.denial_code).toBeNull();
     expect(notification.conversation_id).toBe(CHAT_ID);
@@ -312,7 +312,7 @@ describe('proactive egress authorization', () => {
 
     const relays = await notifyRelays();
     expect(relays).toHaveLength(1);
-    const relay = relays[0]!;
+    const relay = requireValue(relays[0], 'relays');
     expect(relay.idempotency_key).toBe(`notify:${notification.id}`);
     const origin = relay.origin as Record<string, unknown>;
     expect(origin.conversation_id).toBe(CHAT_ID);
@@ -482,15 +482,15 @@ describe('proactive egress rate limits', () => {
       const instance = `${alias}-1`;
       if (!leases.has(alias)) {
         const lease = await repository.acquireLease('Steven', alias, instance, [], 30_000);
-        leases.set(alias, lease.epoch!);
+        leases.set(alias, requireValue(lease.epoch, 'lease.epoch'));
       }
       const [delivery] = await repository.claimDeliveries(
-        'Steven', alias, instance, leases.get(alias)!, 1, 30_000
+        'Steven', alias, instance, requireValue(leases.get(alias), 'value'), 1, 30_000
       );
       expect(delivery, `${alias} should have a pending delivery`).toBeDefined();
       await repository.ackDelivery(
-        delivery!.delivery_id, 'Steven', alias,
-        ackWith(delivery!, instance, leases.get(alias)!, result)
+        requireValue(delivery, 'delivery').delivery_id, 'Steven', alias,
+        ackWith(requireValue(delivery, 'delivery'), instance, requireValue(leases.get(alias), 'value'), result)
       );
       const rows = await notifications();
       return rows[rows.length - 1]?.denial_code ?? null;
@@ -581,11 +581,11 @@ describe('proactive egress does not disturb the delegation tree', () => {
       })
     );
     const lease = await repository.acquireLease('Steven', 'socrates', 'socrates-1', [], 30_000);
-    const [child] = await repository.claimDeliveries('Steven', 'socrates', 'socrates-1', lease.epoch!, 1, 30_000);
+    const [child] = await repository.claimDeliveries('Steven', 'socrates', 'socrates-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
     expect(child).toBeDefined();
     await repository.ackDelivery(
-      child!.delivery_id, 'Steven', 'socrates',
-      ackWith(child!, 'socrates-1', lease.epoch!, notifyOutput([
+      requireValue(child, 'child').delivery_id, 'Steven', 'socrates',
+      ackWith(requireValue(child, 'child'), 'socrates-1', requireValue(lease.epoch, 'lease.epoch'), notifyOutput([
         { to: 'steven.dm', kind: 'task_complete', body: 'listo, Steven' }
       ], { reply: 'trabajo terminado' }))
     );
@@ -603,7 +603,7 @@ describe('proactive egress does not disturb the delegation tree', () => {
     const ingress = telegramIngress();
     const published = await repository.publish(ingress);
     const lease = await repository.acquireLease('Steven', 'argos', 'argos-1', [], 30_000);
-    const [delivery] = await repository.claimDeliveries('Steven', 'argos', 'argos-1', lease.epoch!, 1, 30_000);
+    const [delivery] = await repository.claimDeliveries('Steven', 'argos', 'argos-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
     expect(delivery).toBeDefined();
 
     const before = await pool.query<{ id: string; status: string }>(
@@ -619,7 +619,7 @@ describe('proactive egress does not disturb the delegation tree', () => {
     await repository.claimOutbox('origin_relay', 'worker-1', 10, 30_000, 'telegram');
 
     const after = await pool.query<{ status: string }>(
-      `SELECT status FROM adapter_outbox WHERE id=$1`, [before.rows[0]!.id]
+      `SELECT status FROM adapter_outbox WHERE id=$1`, [requireValue(before.rows[0], 'before.rows').id]
     );
     expect(after.rows[0]?.status).not.toBe('dead');
     void delivery;

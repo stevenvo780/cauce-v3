@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PublishMessage } from '@cauce/protocol';
 import {
@@ -99,7 +100,7 @@ describe('connection session fencing', () => {
     expect(resumed).toMatchObject({ acquired: true, epoch: first.epoch });
     expect(resumed.connection_token).toMatch(/^[0-9a-f-]{36}$/u);
     expect(resumed.connection_token).not.toBe(first.connection_token);
-    const currentToken = resumed.connection_token!;
+    const currentToken = requireValue(resumed.connection_token, 'resumed.connection_token');
 
     await expect(repository.heartbeat(
       'Isa', 'salva', instanceId, first.epoch, 60_000, first.connection_token,
@@ -122,7 +123,7 @@ describe('connection session fencing', () => {
                  WHERE id=$1 AND status='leased' AND claim_expires_at>now()
               ) AS delivery_live
          FROM connection_leases WHERE tenant_id='Isa' AND alias='salva'`,
-      [delivery!.delivery_id],
+      [requireValue(delivery, 'delivery').delivery_id],
     )).rows[0]).toEqual({ live: true, delivery_live: true });
     await expect(repository.heartbeat(
       'Isa', 'salva', instanceId, first.epoch, 60_000, currentToken,
@@ -151,7 +152,7 @@ describe('connection session fencing', () => {
       new Set(['Pablo:midas', 'Isa:salva']),
     );
 
-    const pabloEvent = claimed.find((event) => event.tenant_id === 'Pablo')!;
+    const pabloEvent = requireValue(claimed.find((event) => event.tenant_id === 'Pablo'), 'value');
     await expect(repository.renewWakeOutbox(
       claimFence(pabloEvent, pablo),
       30_000,
@@ -182,7 +183,7 @@ describe('connection session fencing', () => {
       connection: pablo,
     })).resolves.toEqual({ status: 'failed', applied: false });
 
-    const isaEvent = claimed.find((event) => event.tenant_id === 'Isa')!;
+    const isaEvent = requireValue(claimed.find((event) => event.tenant_id === 'Isa'), 'value');
     await pool.query(
       `UPDATE adapter_outbox SET claim_expires_at=now()-interval '1 millisecond' WHERE id=$1`,
       [isaEvent.id],
@@ -213,7 +214,7 @@ describe('connection session fencing', () => {
     );
     const current: FencedWakeOutboxRecipient = {
       ...stale,
-      connection_token: resumed.connection_token!,
+      connection_token: requireValue(resumed.connection_token, 'resumed.connection_token'),
     };
     await expect(repository.claimWakeOutbox(
       'stale-gateway', [stale], 1, 30_000,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -129,7 +130,7 @@ async function deliveryRow(deliveryId: string): Promise<{
      FROM deliveries WHERE id=$1`,
     [deliveryId]
   );
-  return result.rows[0]!;
+  return requireValue(result.rows[0], 'result.rows');
 }
 
 async function relayRows(deliveryId: string): Promise<Array<{
@@ -162,13 +163,13 @@ async function killByTimeout(conversation: string): Promise<{
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
   await repository.publish(humanCommand(conversation));
   const [delivery] = await repository.claimDeliveries(
-    tenant, alias, instanceId, lease.epoch!, 1, 30_000
+    tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
   );
   if (!delivery) throw new Error('expected a claimed delivery');
-  await startExecution(delivery, instanceId, lease.epoch!);
+  await startExecution(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'));
   await expire(delivery.delivery_id);
   expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
-  return { delivery, epoch: lease.epoch!, instanceId };
+  return { delivery, epoch: requireValue(lease.epoch, 'lease.epoch'), instanceId };
 }
 
 beforeAll(async () => {
@@ -335,11 +336,11 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
     const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
     await repository.publish(humanCommand(conversation));
     const [first] = await repository.claimDeliveries(
-      tenant, alias, instanceId, lease.epoch!, 1, 30_000
+      tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!first) throw new Error('expected a first claim');
     await repository.ackDelivery(
-      first.delivery_id, tenant, alias, ack(first, instanceId, lease.epoch!, 'started')
+      first.delivery_id, tenant, alias, ack(first, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'started')
     );
     await expire(first.delivery_id);
     expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 1, dead: 0, parked: 0 });
@@ -348,11 +349,11 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
       [first.delivery_id]
     );
     const [second] = await repository.claimDeliveries(
-      tenant, alias, instanceId, lease.epoch!, 1, 30_000
+      tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!second) throw new Error('expected a second claim');
     expect(second.attempt).toBe(first.attempt + 1);
-    return { first, second, epoch: lease.epoch!, instanceId };
+    return { first, second, epoch: requireValue(lease.epoch, 'lease.epoch'), instanceId };
   }
 
   it('acepta el done del intento viejo y deja la corrida nueva sin garra', async () => {
@@ -407,11 +408,11 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
       const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
       await repository.publish(humanCommand('caso-c'));
       const [first] = await repository.claimDeliveries(
-        tenant, alias, instanceId, lease.epoch!, 1, 30_000
+        tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       if (!first) throw new Error('expected a first claim');
       await repository.ackDelivery(
-        first.delivery_id, tenant, alias, ack(first, instanceId, lease.epoch!, 'started')
+        first.delivery_id, tenant, alias, ack(first, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'started')
       );
       await expire(first.delivery_id);
       await repository.retryStaleDeliveries(30_000);
@@ -420,10 +421,10 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
         [first.delivery_id]
       );
       const [second] = await repository.claimDeliveries(
-        tenant, alias, instanceId, lease.epoch!, 1, 30_000
+        tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       if (!second) throw new Error('expected a second claim');
-      return { first, second, epoch: lease.epoch!, instanceId };
+      return { first, second, epoch: requireValue(lease.epoch, 'lease.epoch'), instanceId };
     })();
 
     // The NEW run answers first, within the deadline.
@@ -515,18 +516,18 @@ describe('qué NO se acepta tarde', () => {
     const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
     await repository.publish(humanCommand('failed-vivo'));
     const [delivery] = await repository.claimDeliveries(
-      tenant, alias, instanceId, lease.epoch!, 1, 30_000
+      tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!delivery) throw new Error('expected a claimed delivery');
     await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias, ack(delivery, instanceId, lease.epoch!, 'started')
+      delivery.delivery_id, tenant, alias, ack(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'started')
     );
     await expire(delivery.delivery_id);
     await repository.retryStaleDeliveries(30_000);
 
     const result = await repository.ackDelivery(
       delivery.delivery_id, tenant, alias,
-      ack(delivery, instanceId, lease.epoch!, 'failed', {
+      ack(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'failed', {
         result: { output: { reply: 'fracasé, pero tarde' } }, error: 'boom'
       })
     );
@@ -615,28 +616,28 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
     const parentLease = await repository.acquireLease(tenant, alias, parentInstance, [], 60_000);
     await repository.publish(humanCommand('cadena'));
     const [root] = await repository.claimDeliveries(
-      tenant, alias, parentInstance, parentLease.epoch!, 1, 30_000
+      tenant, alias, parentInstance, requireValue(parentLease.epoch, 'parentLease.epoch'), 1, 30_000
     );
     if (!root) throw new Error('expected the root delivery');
     // argos delegates to kant.
     await repository.ackDelivery(
       root.delivery_id, tenant, alias,
-      ack(root, parentInstance, parentLease.epoch!, 'done', {
+      ack(root, parentInstance, requireValue(parentLease.epoch, 'parentLease.epoch'), 'done', {
         result: { output: { reply: 'delego', messages: [{ to: 'kant', body: 'hacelo vos' }] } }
       })
     );
 
     const childLease = await repository.acquireLease(tenant, 'kant', childInstance, [], 60_000);
     const [child] = await repository.claimDeliveries(
-      tenant, 'kant', childInstance, childLease.epoch!, 1, 30_000
+      tenant, 'kant', childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 1, 30_000
     );
     if (!child) throw new Error('expected the delegated child delivery');
     await repository.ackDelivery(
-      child.delivery_id, tenant, 'kant', ack(child, childInstance, childLease.epoch!, 'started')
+      child.delivery_id, tenant, 'kant', ack(child, childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 'started')
     );
     await repository.ackDelivery(
       child.delivery_id, tenant, 'kant',
-      ack(child, childInstance, childLease.epoch!, 'started', { execution_started: true })
+      ack(child, childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 'started', { execution_started: true })
     );
     await expire(child.delivery_id);
     expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
@@ -651,7 +652,7 @@ describe('la rama de un padre que ya recibió el aviso de fallo', () => {
 
     const salvaged = await repository.ackDelivery(
       child.delivery_id, tenant, 'kant',
-      doneAck(child, childInstance, childLease.epoch!, 'sí lo hice, acá está')
+      doneAck(child, childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 'sí lo hice, acá está')
     );
     expect(salvaged).toMatchObject({ status: 'done', applied: true });
 

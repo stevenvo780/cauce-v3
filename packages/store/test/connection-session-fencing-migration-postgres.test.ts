@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { requireValue } from './helpers.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyMigrations, inspectMigrationIntegrity, type DatabasePool,
@@ -48,11 +49,11 @@ beforeEach(async () => {
   // Migration 031 can only be rolled back before any later schema. Exercise that real state.
   await pool.query('TRUNCATE TABLE terminal_sessions');
   for (let index = laterVersions.length - 1; index >= 0; index -= 1) {
-    const version = laterVersions[index]!;
+    const version = requireValue(laterVersions[index], 'laterVersions');
     const recorded = await pool.query(
       'SELECT 1 FROM schema_migrations WHERE version=$1', [version],
     );
-    if (recorded.rowCount === 1) await pool.query(laterDown[index]!);
+    if (recorded.rowCount === 1) await pool.query(requireValue(laterDown[index], 'laterDown'));
   }
 });
 
@@ -104,7 +105,7 @@ async function seedLease(alias: string): Promise<string> {
      RETURNING connection_token::text`,
     [alias],
   );
-  return result.rows[0]!.connection_token;
+  return requireValue(result.rows[0], 'result.rows').connection_token;
 }
 
 async function seedLegacyLease(alias: string): Promise<void> {
