@@ -153,6 +153,14 @@ describe('MCP fleet monitor tool surface', () => {
 
   beforeAll(async () => {
     database = await startTestDatabase();
+    /* Migrations seed tenants, rooms and memberships but NEVER an agent row: without this the
+       suite asserted a fleet nobody had written and only passed against an already-seeded base. */
+    await database.pool.query(
+      `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
+                          home_directory,state_directory)
+       VALUES($1,'kant','claude',true,'ws-kant','dev','/home/dev','/home/dev/.cauce/test')`,
+      [TENANT],
+    );
     client = new StdioMcpClient(database.url);
     await client.initialize();
     advertised = await client.listTools();
