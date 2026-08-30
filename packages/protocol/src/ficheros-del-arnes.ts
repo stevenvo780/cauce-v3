@@ -143,6 +143,23 @@ export const FICHEROS_OPENCLAW = [
   "SOUL.md", "IDENTITY.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md",
 ] as const;
 
+/**
+ * Files that belong to the AGENT, not to the authored profile.
+ *
+ * They are seeded only when missing and from then on the agent writes them. Their sha is NOT a
+ * stable fact about the profile: it changes the moment the agent writes its own memory, which is
+ * its job. That is why the adapter does not measure them and the runtime contract cannot demand
+ * them — demanding them made adoption impossible for every openclaw alias, because the expectation
+ * listed seven documents and the measurement produced five, and the match is exact by set.
+ *
+ * The two ends read THIS list. Duplicating the names is what let them drift apart.
+ */
+export const FICHEROS_DEL_AGENTE = ["MEMORY.md", "HEARTBEAT.md"] as const;
+
+export function esFicheroDelAgente(nombre: string): boolean {
+  return (FICHEROS_DEL_AGENTE as readonly string[]).includes(nombre);
+}
+
 /** Error thrown when a generated file or the total exceeds the cap configured for the harness. */
 export class ErrorDeTopeDelArnes extends Error {
   constructor(
@@ -369,7 +386,7 @@ function esDelMismoAlias(anterior: string, perfil: AgentProfile): boolean {
 
 /** MEMORY.md and HEARTBEAT.md in openclaw are managed by the agent. */
 function esDelAgente(harness: string, nombre: string): boolean {
-  return harness === "openclaw" && (nombre === "MEMORY.md" || nombre === "HEARTBEAT.md");
+  return harness === "openclaw" && esFicheroDelAgente(nombre);
 }
 
 function esFicheroCanonico(harness: string, nombre: string): boolean {

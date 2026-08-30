@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   FICHEROS_OPENCLAW,
   bloqueDePerfil,
+  esFicheroDelAgente,
   marcaDeRevisionDelPerfil,
   profileRuntimeAdoptionFor,
   type AgentProfile,
@@ -16,6 +17,7 @@ import type {
   GovernanceDocumentContent,
 } from './agent-documents.routes.js';
 import type { RuntimeFacts } from './agent-documents.js';
+import { runtimeContractFromVerification } from '../routes/console/helpers.js';
 import { prepareAgentProfileRuntime } from './agent-profile-runtime.js';
 import {
   registerAgentProfileRoutes,
@@ -351,4 +353,65 @@ describe('native profile publishing saga', () => {
       }
     },
   );
+});
+
+describe('el contrato de runtime contra la medición REAL del adaptador', () => {
+  /**
+   * El defecto que la saga de arriba no podía ver: su "adaptador" mide TODOS los ficheros, y el
+   * adaptador de verdad (`perfilVivoDelRuntime`) excluye los del agente. La expectativa listaba
+   * siete documentos, la medición producía cinco, y `profileRuntimeAdoptionFor` compara el
+   * conjunto entero. Resultado: NINGÚN alias openclaw podía adoptar su perfil, nunca.
+   *
+   * Medido en jarvis el 2026-08-30: 18 turnos cerrados después de la expectativa, los siete shas
+   * del disco idénticos a los esperados, y cero adopciones.
+   */
+  const documentos = FICHEROS_OPENCLAW.map((name) => ({
+    name,
+    path: `/home/claw/clawd/${name}`,
+    expected_sha: sha(name),
+    observed_sha: sha(name),
+    current: true,
+  }));
+  const verification = {
+    state: 'current',
+    generation: 'g-openclaw',
+    documents: documentos,
+  } as unknown as ProfileRuntimeVerification;
+
+  /** Lo que el adaptador mide de verdad: sólo los autorados. */
+  const medicionDelAdaptador = documentos
+    .filter((document) => !esFicheroDelAgente(document.name))
+    .map((document) => ({ path: document.path, sha256: document.observed_sha }));
+
+  it('excluye los ficheros del agente y la adopción de openclaw casa', () => {
+    const contract = runtimeContractFromVerification(2, verification);
+    const nombres = contract.documents.map((document) => document.name);
+    expect(nombres).not.toContain('MEMORY.md');
+    expect(nombres).not.toContain('HEARTBEAT.md');
+    expect(contract.documents).toHaveLength(medicionDelAdaptador.length);
+    expect(profileRuntimeAdoptionFor(contract, medicionDelAdaptador)?.revision).toBe(2);
+  });
+
+  it('control negativo: con los ficheros del agente dentro, la adopción es imposible', () => {
+    // Éste es el contrato que producía el gateway antes del arreglo, y el que sigue guardado para
+    // los alias openclaw ya sembrados: no casa ni con el disco intacto.
+    const contratoViejo: ProfileRuntimeContract = {
+      revision: 2,
+      generation: 'g-openclaw',
+      documents: documentos.map((document) => ({
+        name: document.name, path: document.path, sha: document.expected_sha,
+      })),
+    };
+    expect(profileRuntimeAdoptionFor(contratoViejo, medicionDelAdaptador)).toBeUndefined();
+  });
+
+  it('un arnés cuyos documentos son TODOS del agente no produce un contrato vacío', () => {
+    const soloDelAgente = {
+      state: 'current',
+      generation: 'g',
+      documents: documentos.filter((document) => esFicheroDelAgente(document.name)),
+    } as unknown as ProfileRuntimeVerification;
+    expect(() => runtimeContractFromVerification(2, soloDelAgente))
+      .toThrow(/at least one authored document/u);
+  });
 });

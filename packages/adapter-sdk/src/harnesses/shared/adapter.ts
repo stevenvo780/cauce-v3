@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { FICHEROS_OPENCLAW, bloqueDePerfil } from "@cauce/protocol";
+import { FICHEROS_OPENCLAW, bloqueDePerfil, esFicheroDelAgente } from "@cauce/protocol";
 import {
   NativeProfileContext,
   nativeProfileContextEnabled,
@@ -284,7 +284,7 @@ export class HarnessAdapter {
       if (workspace === undefined || !workspace.startsWith("/")) return undefined;
       for (const name of FICHEROS_OPENCLAW) {
         // MEMORY/HEARTBEAT belong to the agent, not an authored facet of the profile.
-        if (name !== "MEMORY.md" && name !== "HEARTBEAT.md") paths.push(`${workspace}/${name}`);
+        if (!esFicheroDelAgente(name)) paths.push(`${workspace}/${name}`);
       }
     } else {
       return undefined;

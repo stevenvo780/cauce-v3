@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
-  ConfigMutationSchema, type ConfigMutation, type ProfileRuntimeContract,
+  ConfigMutationSchema, esFicheroDelAgente,
+  type ConfigMutation, type ProfileRuntimeContract,
 } from '@cauce/protocol';
 import {
   StoreError, type OperationalDlqResolutionRequest,
@@ -218,10 +219,19 @@ export function runtimeContractFromVerification(
       || document.observed_sha !== document.expected_sha)) {
     throw new Error('runtime profile expectation requires an exact current verification');
   }
+  // Los ficheros del AGENTE (MEMORY.md, HEARTBEAT.md) no entran al contrato: el adaptador no los
+  // mide —son suyos y los reescribe— y `profileRuntimeAdoptionFor` compara el conjunto ENTERO. Con
+  // ellos dentro, la expectativa listaba siete documentos y la medicion producia cinco, asi que la
+  // adopcion era imposible para TODO alias openclaw. Medido en jarvis el 2026-08-30: 18 turnos
+  // cerrados, los siete shas del disco identicos a los esperados, y cero adopciones.
+  const documentos = verification.documents.filter((document) => !esFicheroDelAgente(document.name));
+  if (documentos.length === 0) {
+    throw new Error('runtime profile expectation requires at least one authored document');
+  }
   return {
     revision,
     generation: verification.generation,
-    documents: verification.documents.map((document) => ({
+    documents: documentos.map((document) => ({
       name: document.name,
       path: document.path,
       sha: document.expected_sha,
