@@ -12,7 +12,7 @@ import {
 
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 
-export class InvalidSessionsFileError extends Error {
+class InvalidSessionsFileError extends Error {
   readonly code = "INVALID_SESSIONS_FILE";
 
   constructor() {

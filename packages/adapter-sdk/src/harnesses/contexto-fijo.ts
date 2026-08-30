@@ -41,9 +41,7 @@ export type MotivoDeReenvio =
   | "contenido-distinto"
   | "no-hace-falta";
 
-/**
- * Diagnostic of why the fixed text was resent.
- */
+/** Diagnostic of why the fixed text was resent. */
 export function motivoDeReenvio(
   sello: SelloDeContextoFijo | undefined,
   textoFijo: string,
@@ -103,7 +101,7 @@ export {
 /**
  * Extracts the seal from content that may contain a managed block.
  */
-export function extraerSello(contenido: string): SelloDeContextoFijo | undefined {
+function extraerSello(contenido: string): SelloDeContextoFijo | undefined {
   const bloque = leerBloqueGestionado(contenido);
   if (bloque === undefined) return undefined;
   return { version: VERSION_CONTEXTO_FIJO, sha256: resumirContextoFijo(bloque) };
@@ -127,7 +125,7 @@ export function selloDesdeElDisco(
 }
 
 /** Why the file was NOT seeded. Goes to the log; the turn continues. */
-export type MotivoDeNoSembrar =
+type MotivoDeNoSembrar =
   | "sembrado"
   | "apagado"
   | "sin-ruta"

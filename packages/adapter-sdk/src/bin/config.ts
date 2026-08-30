@@ -5,7 +5,7 @@ import type { HarnessId } from "../sdk/types.js";
 type RuntimeEnvironment = "production" | "development" | "test";
 const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 
-export interface CliRuntimeConfig {
+interface CliRuntimeConfig {
   readonly tenant: string;
   readonly room: string;
   readonly alias: string;
