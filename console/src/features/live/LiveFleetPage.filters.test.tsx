@@ -211,7 +211,8 @@ describe('the Client selector', () => {
 
     const salva = await waitFor(() => {
       const nodo = document.querySelector('[data-agent-key="Isa/salva"]');
-      expect(nodo).toBeTruthy();
+      expect(nodo).not.toBeNull();
+      expect(nodo?.getAttribute('data-agent-key')).toBe('Isa/salva');
       expect(nodo?.classList.contains('is-dim')).toBe(false);
       return nodo as SVGGElement;
     });
@@ -266,7 +267,11 @@ describe('the topology is down', () => {
     falla = false;
     await user.click(screen.getAllByRole('button', { name: /reintentar la topología/i })[0]);
 
-    await waitFor(() => { expect(document.querySelector('.lhg-svg')).toBeTruthy(); });
+    await waitFor(() => {
+      const svg = document.querySelector('.lhg-svg');
+      expect(svg).not.toBeNull();
+      expect(svg?.querySelectorAll('.lhg-bot').length ?? 0).toBeGreaterThan(0);
+    });
     expect(screen.queryAllByText(/No se pudo leer la topología/)).toHaveLength(0);
   });
 
@@ -326,7 +331,10 @@ describe('prefers-reduced-motion', () => {
     // information.
     const puntos = [...document.querySelectorAll('.lhg-flow-dot')];
     expect(puntos.length).toBeGreaterThan(0);
-    expect(puntos[0].getAttribute('cx')).toBeTruthy();
+    const cx = puntos[0]?.getAttribute('cx');
+    expect(cx).not.toBeNull();
+    expect(Number(cx)).toBeGreaterThan(0);
+    expect(Number(cx)).toBeLessThanOrEqual(4096);
   });
 
   it('without the setting on, the dot does travel: that is what conveys the DIRECTION of the delegation', async () => {

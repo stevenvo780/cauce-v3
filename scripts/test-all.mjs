@@ -19,13 +19,12 @@ const SUITES = [
   'test:e2e',
 ];
 
-/**
- * Operational suites keep their own gate because the developer matrix cannot
- * assume their build artifacts or host-level tooling.
- */
+/* Kept out of the matrix: the developer machine cannot assume their tooling, and test:coverage is
+   test:unit instrumented, so running it here would repeat every unit test. */
 const SEPARATELY_GATED = new Set([
   'test:container-supervisor',
   'test:container-cutover',
+  'test:coverage',
 ]);
 
 

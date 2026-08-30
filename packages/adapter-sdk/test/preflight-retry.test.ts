@@ -21,15 +21,8 @@ import {
 } from "../src/harnesses/shared.js";
 
 /**
- * R1 and R2 of the retry policy.
  *
- * What these tests defend is NOT "retry more". It is the distinction between "did nothing"
- * and "we do not know if it did anything", which is why half the cases here assert that an
- * AMBIGUOUS delivery is still not retried. A test that only checked the new retries would
- * let through the regression that really matters: duplicating work that already had effects.
  *
- * "Pre-flight" failures (no structured output and no effects) are classified with
- * `retryable=true` only when it can be guaranteed the process did not begin its execution.
  */
 
 const stateRoot = resolve(".test-state");
@@ -168,7 +161,6 @@ test("el diagnóstico de arranque es una lista blanca: lo que no coincide sigue 
     "thread 'main' panicked at src/main.rs:42",
     "Killed",
     // Outside the whitelist ON PURPOSE: a provider runs out mid-turn with this same text, after
-    // the agent has already had effects. It costs 26 measured deliveries and it pays them.
     "hermes -z: agent failed: Codex provider quota exhausted",
     "hermes -z: agent failed: No usable credentials found for provider codex",
     "",
@@ -184,9 +176,6 @@ test("el diagnóstico de arranque es una lista blanca: lo que no coincide sigue 
  * The pointer to a native session the harness no longer finds has to be FORGOTTEN.
  *
  * Without this, R1 becomes a trap of its own making: the failure is retryable, the retry resumes
- * the same dead `native_id`, and it fails identically once a second forever. Measured on kratos on
- * 2026-08-29 and previously on zeus and atlas; the alias was recovered by deleting the entry from
- * `sessions.json` by hand. `claude:shared:<alias>` below is literally the key that was deleted.
  */
 test("R1b: la sesión nativa que ya no existe se OLVIDA, para que el reintento no repita el mismo fallo", async () => {
   const store = await freshStore("r1b-fantasma");
@@ -345,9 +334,6 @@ test("R2 NO se aplica a otras causas de cancelación: sólo el apagado es infrae
 /* -------------------------------------------------- testigo y transporte -- */
 
 test("el testigo declarado viaja hasta el transporte, y sólo el de este harness", async () => {
-  // The transport keeps the request and fails: what is measured is what ARRIVES to it, not the
-  // result. So each harness is exercised with its own `parse` without fabricating a different
-  // output per format.
   const capturados: CommandRunRequest[] = [];
   const runner: CommandRunner = {
     run: async (request) => {

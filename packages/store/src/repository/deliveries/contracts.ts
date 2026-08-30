@@ -2,7 +2,9 @@ import type {
   Ack, ChainGateNotice, DelegationMaterializationNotice, DelegationRejectionNotice,
   DeliveryEnvelope, DeliveryState, ProfileRuntimeAdoptionEvidence, Tenant,
 } from '@cauce/protocol';
-import { NOTIFY_KINDS, ProfileRuntimeAdoptionEvidenceSchema } from '@cauce/protocol';
+import {
+  EgressHandleSchema, MAX_NOTIFY_BODY_BYTES, NOTIFY_KINDS, ProfileRuntimeAdoptionEvidenceSchema,
+} from '@cauce/protocol';
 import { objectRecord, visibleText } from '../outbox.js';
 
 export interface LeaseResult {
@@ -118,10 +120,12 @@ export const maxAgentOutputMessages = 100;
 const maxAgentOutputBodyBytes = 64 * 1024;
 const maxAgentOutputAggregateBytes = 256 * 1024;
 const maxNotifyDirectives = 4;
-export const maxNotifyBodyBytes = 4 * 1024;
+export const maxNotifyBodyBytes = MAX_NOTIFY_BODY_BYTES;
 const maxNotifyAggregateBytes = 8 * 1024;
 export const notifyKinds = new Set<string>(NOTIFY_KINDS);
-export const handlePattern = /^[a-z][a-z0-9_.-]{0,63}$/u;
+export function isEgressHandle(value: string): boolean {
+  return EgressHandleSchema.safeParse(value).success;
+}
 export interface AgentOutputEntry {
   index: number;
   target: unknown;
@@ -230,7 +234,7 @@ export function agentNotifyEntries(result: Record<string, unknown> | undefined):
   if (output.notify.length > maxNotifyDirectives) return [invalid(0, undefined, undefined)];
   const entries = output.notify.map((value, index): AgentNotifyEntry => {
     const entry = objectRecord(value);
-    if (!entry || typeof entry.to !== 'string' || !handlePattern.test(entry.to)
+    if (!entry || typeof entry.to !== 'string' || !isEgressHandle(entry.to)
       || typeof entry.kind !== 'string' || !notifyKinds.has(entry.kind)
       || typeof entry.body !== 'string' || !visibleText(entry.body)) {
       return invalid(index, entry?.to, entry?.kind);

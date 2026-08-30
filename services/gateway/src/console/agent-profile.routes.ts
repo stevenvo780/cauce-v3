@@ -155,7 +155,6 @@ export interface FicheroDeLaVistaPrevia {
   readonly texto: string;
   /**
    * Units of the text, in the same count used by the Postgres CHECK and the openclaw
-   * ceilings. It is measured on the server to guarantee consistency with the database.
    */
   readonly unidades: number;
 }
@@ -211,10 +210,7 @@ export interface PerfilAplicado {
 }
 
 /**
- * A breached ceiling is NOT a 500: it is a response with the file and the two numbers.
  *
- * `ficherosDelArnes` throws `ErrorDeTopeDelArnes` before returning anything when an openclaw
- * file —or the sum of the seven— exceeds what that harness declares. Throwing is fine:
  * writing a person halfway is worse than not writing them. But the operator needs to know
  * WHICH one to trim, and a 500 with "internal error" does not tell them.
  */
@@ -492,8 +488,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       // see it": distinguishing them turns this URL into a cross-tenant existence probe. But when
       // the actor can ALREADY read this alias —its GET returns 200 on this very URL— saying so
       // protects nothing and lies about the cause: the operator gets "does not exist" for an agent
-      // they are looking at, and goes looking for the bug in the payload. Measured on 2026-08-30:
-      // eight different bodies, eight identical 404s, and the real cause was `allow_control`.
       const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
       if (visible && visible.tenant_id === tenantId && visible.alias === alias) {
         return reply.code(403).send({

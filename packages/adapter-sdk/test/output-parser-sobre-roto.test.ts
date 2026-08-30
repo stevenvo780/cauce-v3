@@ -3,10 +3,6 @@ import { test } from 'node:test';
 import { parseFinalText } from '../src/sdk/output-parser.js';
 
 // ---------------------------------------------------------------------------
-// MEASURED BUG: `argos` lost 4 ENTIRE turns on 2026-08-15 (and 5 on 31-jul) with
-// `last_error = "OpenClaw result contained a malformed JSON object"` and `deliveries.result = NULL`.
-// All four were `agent.response` deliveries: the agent did the work, wrote the reply, and the
-// parser discarded it COMPLETELY. It was the only alias in the fleet with that error in 7 days.
 //
 // THE CAUSE, with the raw output of all four turns in front of us, IS ONE SINGLE CHARACTER: the
 // separator between key and value arrived as `>` instead of `:`. All four envelopes start literally
@@ -22,11 +18,7 @@ import { parseFinalText } from '../src/sdk/output-parser.js';
 // which requires the literal `:`. It also only covered the envelope truncated AFTER an intact
 // `reply`; the parser was run case by case over the other broken envelope shapes (not from
 // memory) and 20 more died in that same `throw`. They are all below, each with its own literal
-// measured example.
 //
-// Guiding principle: THE REPLY IS THE WORK. No malformed accessory field may cost an entire turn;
-// the bad part is discarded and the turn stays alive.
-// ---------------------------------------------------------------------------
 
 const SOBRE = '"messages":[],"status":"done","retryable":false,"artifacts":[]';
 
@@ -257,8 +249,6 @@ test('un reply vacio o solo con espacios cae al piso, no al throw', () => {
 test('un sobre sin andamiaje entrega el turno Y le ensena al agente', () => {
   // El temor que justificaba el fallo duro era «ablandarlo oculta agentes que nunca aprenden el
   // formato». Se atiende sin perder el turno: se normaliza la ausencia Y se inyecta el aviso en la
-  // respuesta, asi que el agente lo ve en su propio texto. Medido 2026-08-29: cuatro turnos
-  // muertos en un dia por esto, dos delante de una persona.
   const salida = parseFinalText('{"reply":"hola"}', 'X');
   assert.equal(salida.status, 'done');
   assert.deepEqual(salida.messages, []);

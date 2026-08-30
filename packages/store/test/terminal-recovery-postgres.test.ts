@@ -214,7 +214,9 @@ describe('cancelación de primera clase', () => {
        WHERE status='materialized' AND target_alias='kant'`
     );
     const childDeliveryId = child.rows[0]?.produced_delivery_id;
-    expect(childDeliveryId).toBeTruthy();
+    expect(childDeliveryId).toEqual(
+      expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u),
+    );
 
     const cancelled = await repository.cancelDelivery(
       childDeliveryId!, OPERATOR, OPERATOR_ALIAS, 'duplicado: ya lo hizo jarvis'

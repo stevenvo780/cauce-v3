@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AGENT_PRIORITY_CEILING, buildPublishReceipt, HUMAN_CHAT_PRIORITY, isHumanPriority,
+  AGENT_PRIORITY_CEILING, buildPublishReceipt, HUMAN_CHAT_PRIORITY, HUMAN_PRIORITY_FLOOR,
   type PublishMessage,
 } from '@cauce/protocol';
 import { StoreError, type CauceRepository, type PublishResult } from '@cauce/store';
@@ -52,7 +52,7 @@ describe('Telegram ingress priority', () => {
 
     const published = repository.published[0];
     expect(published?.priority).toBe(HUMAN_CHAT_PRIORITY);
-    expect(isHumanPriority(published?.priority ?? 0)).toBe(true);
+    expect(published?.priority ?? 0).toBeGreaterThanOrEqual(HUMAN_PRIORITY_FLOOR);
     // The band is what changes. The lane, the channel and the idempotency key are the contract
     // the egress and the deduplication depend on and must not move with it.
     expect(published?.lane).toBe('interactive');
@@ -66,7 +66,7 @@ describe('Telegram ingress priority', () => {
 
     const published = repository.published[0];
     expect(published?.priority).toBe(0);
-    expect(isHumanPriority(published?.priority ?? 0)).toBe(false);
+    expect(published?.priority ?? 0).toBeLessThan(HUMAN_PRIORITY_FLOOR);
   });
 
   it('grants a band an agent cannot reach through its own publish surface', async () => {

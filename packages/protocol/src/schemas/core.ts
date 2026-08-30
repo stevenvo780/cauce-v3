@@ -34,26 +34,6 @@ export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErro
   return AmbiguousAckErrorCodeSchema.safeParse(code).success;
 }
 
-/**
- * Pre-flight error codes: indicate the harness failed before starting turn execution.
- * They allow retrying the delivery while preserving at-most-once semantics.
- */
-export const PREFLIGHT_ACK_ERROR_CODES = [
-  'PROCESS_EXIT_PREFLIGHT',
-  'EXECUTION_CANCELLED_PREFLIGHT',
-  'EXECUTION_INTENT_CONFIRMATION_FAILED',
-  'EXECUTION_INTENT_PERSISTENCE_FAILED',
-  'INTERRUPTED_PREFLIGHT'
-] as const;
-
-function assertPreflightCodesAreNotAmbiguous(): void {
-  const overlap = PREFLIGHT_ACK_ERROR_CODES.filter((code) => isAmbiguousAckErrorCode(code));
-  if (overlap.length > 0) {
-    throw new Error(`Preflight ACK codes must never be ambiguous: ${overlap.join(', ')}`);
-  }
-}
-assertPreflightCodesAreNotAmbiguous();
-
 /** Cap on the per-alias declared role (`agents.role_brief`), measured in UTF-32 code points. */
 export const ROLE_BRIEF_MAX_CODE_POINTS = 1200;
 

@@ -65,9 +65,55 @@ export function esBaseDePruebas(url: string): boolean {
  * An object that only implements `stop` leaves callers of `restart` or `getHost` with a TypeError
  * instead of a no-op, so the failure surfaces close to the source.
  */
-function contenedorDesacoplado(): StartedTestContainer {
+function contenedorDesacoplado(alDetener?: () => Promise<void>): StartedTestContainer {
   const noop = async (): Promise<void> => undefined;
-  return { stop: noop, restart: noop, getHost: () => 'external' } as unknown as StartedTestContainer;
+  return {
+    stop: alDetener ?? noop, restart: noop, getHost: () => 'external',
+  } as unknown as StartedTestContainer;
+}
+
+const PREFIJO_EFIMERA = `${PREFIJO_BASE_DE_PRUEBAS}_e`;
+
+function urlDeBase(servidor: string, base: string): string {
+  const destino = new URL(servidor);
+  destino.pathname = `/${base}`;
+  return destino.toString();
+}
+
+/*
+ * The database is the isolation unit, not the URL: the migration-integrity suites insert into
+ * `schema_migrations` with no ledger entry ON PURPOSE, and one shared database turns that into
+ * "applied without an atomic source ledger" for every later file — measured, 49 of 82.
+ */
+async function crearBaseEfimera(servidor: string): Promise<{ url: string; soltar: () => Promise<void> }> {
+  const nombre = `${PREFIJO_EFIMERA}${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+  const admin = createPool(servidor);
+  try {
+    await waitForDatabase(admin);
+    const viejas = await admin.query<{ datname: string }>(
+      `SELECT d.datname FROM pg_database d
+       WHERE d.datname LIKE $1 AND NOT EXISTS (
+         SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)`,
+      [`${PREFIJO_EFIMERA}%`],
+    );
+    for (const vieja of viejas.rows) {
+      await admin.query(`DROP DATABASE IF EXISTS ${vieja.datname} WITH (FORCE)`).catch(() => undefined);
+    }
+    await admin.query(`CREATE DATABASE ${nombre}`);
+  } finally {
+    await admin.end();
+  }
+  const soltar = async (): Promise<void> => {
+    const limpieza = createPool(servidor);
+    try {
+      await limpieza.query(`DROP DATABASE IF EXISTS ${nombre} WITH (FORCE)`);
+    } catch {
+      // Swept by the next run; a failing teardown would hide the real result.
+    } finally {
+      await limpieza.end();
+    }
+  };
+  return { url: urlDeBase(servidor, nombre), soltar };
 }
 
 export async function startTestDatabase(): Promise<TestDatabase> {
@@ -87,14 +133,16 @@ export async function startTestDatabase(): Promise<TestDatabase> {
           `"${PREFIJO_BASE_DE_PRUEBAS}". Rechazado antes de abrir la conexión.`,
       );
     }
-    const pool = createPool(externa);
+    const { url, soltar } = await crearBaseEfimera(externa);
+    const pool = createPool(url);
     try {
       await waitForDatabase(pool);
       await applyMigrations(pool);
       await guardarSemillaDeCatalogo(pool);
-      return { container: contenedorDesacoplado(), pool, url: externa };
+      return { container: contenedorDesacoplado(soltar), pool, url };
     } catch (error) {
       await pool.end();
+      await soltar();
       throw error;
     }
   }
@@ -107,7 +155,6 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       POSTGRES_USER: 'cauce_test',
       POSTGRES_PASSWORD: password
     })
-    .withExposedPorts(5432)
     .withHealthCheck({
       test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test'],
       interval: 1_000,
@@ -116,7 +163,12 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       startPeriod: 1_000
     })
     .withWaitStrategy(Wait.forHealthCheck());
-  if (network) builder = builder.withNetworkMode(network);
+  /*
+   * On a shared network the container is reached by its address, so publishing is not just
+   * unnecessary: a daemon that does not bind published ports leaves `withExposedPorts` waiting for
+   * a binding that never arrives, and the suite dies before the healthy container is ever used.
+   */
+  builder = network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432);
   const container = await builder.start();
   const host = network ? container.getIpAddress(network) : container.getHost();
   const port = network ? 5432 : container.getMappedPort(5432);
@@ -155,24 +207,11 @@ const TABLA_HUELLA = 'huella_de_migraciones';
 /**
  * Snapshots the catalog exactly as migrations left it, so it can be restored later.
  *
- * Runs once, right after migrating and before any suite touches anything. Idempotent: if the schema
- * already exists (reused external database), it is NOT re-snapshotted — re-snapshotting would copy
- * the already-contaminated state and enshrine the defect instead of fixing it.
- *
- * ── Why the migration fingerprint is stored alongside ──────────────────────────────────────────
- *
- * That idempotency opened a silent hole. A reused external database stores its seed the FIRST time;
- * if a later migration seeds new catalog (e.g. migration 027 adds the `agent_notify` role, which
- * exists in production but was never seeded), `applyMigrations` applies it on `public` while the
- * seed stays stale. Since `restaurarCatalogo()` runs on every `resetTestDatabase()`, the first reset
- * DELETEs the row the migration just created. The suite then fails on something the code does have,
- * with a message that points nowhere.
- *
- * The fingerprint of the applied migration set is stored with the seed. If it does not match on
- * startup, this throws with the exact drop-and-rerun instruction rather than re-snapshotting:
- * re-snapshotting on a base a suite already used would enshrine the contaminated state, which is
- * exactly the defect this mechanism exists to prevent. Dropping the schema is cheap (the database
- * is disposable) and must be a human decision, not a `catch`.
+ * A seed captured under an older migration set is worse than no seed: `restaurarCatalogo()` runs on
+ * every reset and would DELETE the catalog row a newer migration just created, failing the suite on
+ * something the code does have. The fingerprint of the applied set is stored alongside, and a
+ * mismatch THROWS with the drop-and-rerun instruction — re-snapshotting there would enshrine the
+ * contaminated state, so it has to be a human decision and never a `catch`.
  */
 export async function guardarSemillaDeCatalogo(pool: DatabasePool): Promise<void> {
   const huella = await huellaDeMigraciones(pool);

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Post-deploy smoke for Cauce V3: verifies real effects, not green buttons.
 # Exits 0 only if all pass. Can be run standalone anytime.
 set -uo pipefail
 CONSOLE="${CAUCE_CONSOLE_URL:-https://100.64.0.11:8444}"
@@ -18,11 +17,7 @@ for c in gateway dispatcher terminal-relay telegram-bridge console; do
   if [ "$st" = "healthy" ]; then echo "OK  $c healthy"; else echo "ROJO $c: $st"; fallo=1; fi
 done
 
-# 3) Esquema: la cabeza que declara el REPO, no un numero escrito a mano.
 #
-# Estaba fijado a "037" y el 2026-08-30 la 038 entro con la propia tanda que se estaba desplegando:
-# smoke ROJO con todo lo demas en verde, sobre un despliegue sano, y el guion invita a hacer
-# rollback. Un rollback por una asercion rancia es peor que el fallo que dice haber encontrado.
 # Ahora la expectativa se lee del directorio de migraciones: no puede quedarse atras.
 ESPERADA="$(ls "$REPO_DIR/packages/store/migrations"/[0-9]*.sql 2>/dev/null | xargs -r -n1 basename | sort | tail -1)"
 ver="$("${PG[@]}" "SELECT max(version) FROM schema_migrations" 2>/dev/null)"

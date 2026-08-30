@@ -122,6 +122,7 @@ function testcontainersBindings() {
 
 describe('real external QA harness', () => {
   it('passes against Fastify WebSocket and PostgreSQL and emits evidence', async () => {
+    await declareHarnessFleet();
     // `execFile` rejects with "Command failed: <argv>" and leaves the real stdout/stderr hanging
     // on error properties that nobody prints. That causeless message is what made this suite
     // look like a mystery for four days: the harness DID say which check fell over.
@@ -287,15 +288,17 @@ type DeliveryConsumerIdentity =
   | readonly ['Pablo', 'seneca', 'openclaw'];
 
 /**
- * `resetTestDatabase()` deliberately truncates the mutable agent registry. Since lease admission
- * now fails closed when an agent has no durable concurrency declaration, every authentic consumer
- * used after a reset MUST be restored explicitly. The full placement is intentionally local to this
- * disposable test database: production placement has its own manifest parity gates, and copying
- * it here would create a second source of truth. What this scenario proves is the durable
- * declared-consumer contract instead of weakening gateway admission for a missing fixture row.
+ * `resetTestDatabase()` truncates the mutable agent registry, and lease admission fails closed
+ * without a durable concurrency declaration, so every consumer used after a reset MUST be restored.
+ * The placement stays local to this disposable database on purpose: production placement has its
+ * own manifest parity gates, and copying it here would be a second source of truth.
  */
 async function declareDeliveryConsumers(identities: readonly DeliveryConsumerIdentity[]): Promise<void> {
-  for (const [tenant, alias, harness] of identities) {
+  for (const [tenant, alias, harness] of identities) await declareConsumer(tenant, alias, harness);
+}
+
+async function declareConsumer(tenant: string, alias: string, harness: string): Promise<void> {
+  {
     await database.pool.query(
       `INSERT INTO agents(
          tenant_id,alias,harness_id,display_name,enabled,
@@ -307,6 +310,29 @@ async function declareDeliveryConsumers(identities: readonly DeliveryConsumerIde
          home_directory=EXCLUDED.home_directory,state_directory=EXCLUDED.state_directory,
          max_concurrent_deliveries=EXCLUDED.max_concurrent_deliveries,updated_at=now()`,
       [tenant, alias, harness, `e2e-${alias}`, `/tmp/cauce-v3-e2e/${alias}`],
+    );
+  }
+}
+
+/* Migrations leave no `agents` row, no membership for four aliases and no Miguel edge: without
+   this every scenario died on a frame timeout and Steven->Miguel answered 422. */
+async function declareHarnessFleet(): Promise<void> {
+  const { topology } = await import('../../ops/harness/fleet.mjs');
+  for (const [tenant, { room, aliases }] of Object.entries(topology)) {
+    for (const alias of aliases) {
+      await declareConsumer(tenant, alias, 'fake');
+      await database.pool.query(
+        `INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
+         VALUES($1,$2,$3,'agent',true) ON CONFLICT DO NOTHING`,
+        [tenant, room, alias],
+      );
+    }
+  }
+  for (const [from, to] of [['Steven', 'Miguel'], ['Miguel', 'Steven']]) {
+    await database.pool.query(
+      `INSERT INTO acl_edges(from_tenant,to_tenant,enabled,allow_route,allow_read,allow_control)
+       VALUES($1,$2,true,true,true,false) ON CONFLICT DO NOTHING`,
+      [from, to],
     );
   }
 }

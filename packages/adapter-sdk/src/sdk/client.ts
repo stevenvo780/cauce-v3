@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION } from '@cauce/protocol';
+import { AliasSchema, PROTOCOL_VERSION } from '@cauce/protocol';
 import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
 } from '../context/siembra-del-perfil.js';
@@ -39,7 +39,7 @@ export interface AdapterClientOptions {
 }
 
 function validateIdentity(config: AdapterConfig): void {
-  if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(config.alias)) {
+  if (!AliasSchema.safeParse(config.alias).success) {
     throw new Error('Alias must be a stable lowercase identifier');
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/u.test(config.instanceId)) {
@@ -641,7 +641,6 @@ export function clampAckDetail(detail: string | undefined): string | undefined {
 function connectionErrorCode(error: unknown): string {
   if (error instanceof AdapterError) return error.code;
   if (!(error instanceof Error)) return `CONNECTION_UNKNOWN_${typeof error}_${Object.prototype.toString.call(error).slice(8, -1)}`;
-  if (error.message.includes('outside the Cauce V3 schema')) return 'FRAME_SCHEMA';
   if (error.message.includes('closed')) return 'CONNECTION_CLOSED';
   if (error.message.includes('traffic before')) return 'FRAME_BEFORE_HELLO';
   if (error.message.includes('duplicate hello')) return 'DUPLICATE_HELLO';

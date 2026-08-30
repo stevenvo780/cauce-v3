@@ -200,21 +200,6 @@ const BOTTOM_BAR_VIEWPORT = '(max-width: 760px)';
 const CONSOLE_TITLE = 'Cauce V3 Console';
 const NOT_FOUND_TITLE = 'Ruta no encontrada';
 
-/**
- * La consola opera la flota entera, así que tiene prohibido el almacenamiento duradero del
- * navegador (`ops/scripts/validate.sh`). La preferencia vive en memoria: dura lo que la pestaña,
- * que es justo el desenlace que este código ya contemplaba cuando el almacenamiento se denegaba.
- */
-let sidebarPreference: SidebarState = 'expanded';
-
-function readSidebarPreference(): SidebarState {
-  return sidebarPreference;
-}
-
-function writeSidebarPreference(state: SidebarState): void {
-  sidebarPreference = state;
-}
-
 function useMediaQuery(query: string): boolean {
   const subscribeToQuery = useCallback((onChange: () => void) => {
     const list = window.matchMedia(query);
@@ -235,7 +220,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const route = routes.find((candidate) => candidate.id === routeId);
   const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
-  const [preference, setPreference] = useState<SidebarState>(readSidebarPreference);
+  const [preference, setPreference] = useState<SidebarState>('expanded');
   const mainRef = useRef<HTMLElement>(null);
   const routeMounted = useRef(false);
   // With the bottom bar there is no rail; between 761 and 1100 the viewport decides and the choice has no say.
@@ -243,10 +228,8 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const collapsible = !narrowViewport;
 
   const toggleSidebar = useCallback(() => {
-    const next: SidebarState = preference === 'rail' ? 'expanded' : 'rail';
-    setPreference(next);
-    writeSidebarPreference(next);
-  }, [preference]);
+    setPreference((prev) => (prev === 'rail' ? 'expanded' : 'rail'));
+  }, []);
 
   useEffect(() => {
     if (!collapsible) return;

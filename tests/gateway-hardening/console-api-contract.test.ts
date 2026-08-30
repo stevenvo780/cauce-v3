@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildGateway } from '../../services/gateway/src/index.js';
@@ -25,6 +25,8 @@ interface ApiCall {
 }
 
 const CLIENT_PATH = fileURLToPath(new URL('../../console/src/api/client.ts', import.meta.url));
+/* The routes left `client.ts`, which now only forwards: reading it alone verifies ZERO and passes. */
+const CLIENT_MODULES_DIR = fileURLToPath(new URL('../../console/src/api/client/', import.meta.url));
 const HANDLERS_PATH = fileURLToPath(new URL('../../console/src/mocks/handlers.ts', import.meta.url));
 
 /**
@@ -97,18 +99,24 @@ function rutaDeclaradaAntes(source: string, hasta: number, nombre: string): stri
   return ultima;
 }
 
-/** Extracts every `this.request(...)` call the console client issues. */
+function esParametroDeLaFuncion(source: string, index: number, identificador: string): boolean {
+  const firma = source.slice(Math.max(0, index - 240), index);
+  const abre = firma.lastIndexOf('(');
+  if (abre === -1) return false;
+  return new RegExp(`[(,]\\s*${identificador}\\s*[:?,)]`).test(firma.slice(abre));
+}
+
+/** Extracts every `request(...)` call the console client issues, wherever its modules live. */
 function extractClientCalls(source: string): ApiCall[] {
   const calls: ApiCall[] = [];
-  /*
-   * Calls that could not be resolved. They are NOT silently dropped: a route the extractor does
-   * not see is left out of the check, and this file exists precisely because a route left out of
-   * the check ended up as a 404 in production.
-   */
+  /* Not silently dropped: a route the extractor cannot see is a route nobody checks, and this file
+     exists because one of those ended up as a 404 in production. */
   const sinResolver: string[] = [];
-  const marker = 'this.request';
-  for (let index = source.indexOf(marker); index !== -1; index = source.indexOf(marker, index + marker.length)) {
-    const openParen = source.indexOf('(', index);
+  const llamada = /(?<![A-Za-z0-9_$.])(?:this\.)?request\s*[<(]/g;
+  for (let hallazgo = llamada.exec(source); hallazgo; hallazgo = llamada.exec(source)) {
+    const index = hallazgo.index;
+    if (/\b(?:function|async|private|public|protected|static|const|let)\s*$/.test(source.slice(Math.max(0, index - 24), index))) continue;
+    const openParen = source.indexOf('(', index + hallazgo[0].length - 1);
     if (openParen === -1) break;
     const args = callArguments(source, openParen);
     const pathMatch = /^\s*[`'"]([^`'"]*)[`'"]/.exec(args);
@@ -119,6 +127,8 @@ function extractClientCalls(source: string): ApiCall[] {
       const identificador = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:,|\)|$)/.exec(args)?.[1];
       ruta = identificador === undefined ? undefined : rutaDeclaradaAntes(source, index, identificador);
       if (ruta === undefined) {
+        // A pass-through carries no route: the concrete one is at its callers, also read here.
+        if (identificador !== undefined && esParametroDeLaFuncion(source, index, identificador)) continue;
         sinResolver.push(args.slice(0, 60).replace(/\s+/g, ' '));
         continue;
       }
@@ -203,7 +213,12 @@ async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
 
 describe('console API surface matches the gateway routing table', () => {
   it('serves every route the console client requests', async () => {
-    const calls = extractClientCalls(await readFile(CLIENT_PATH, 'utf8'));
+    const modulos = (await readdir(CLIENT_MODULES_DIR))
+      .filter((nombre) => nombre.endsWith('.ts') && !nombre.includes('.test.'))
+      .map((nombre) => `${CLIENT_MODULES_DIR}${nombre}`);
+    const fuentes = await Promise.all([CLIENT_PATH, ...modulos].map((ruta) => readFile(ruta, 'utf8')));
+    const calls = fuentes.flatMap((fuente) => extractClientCalls(fuente));
+    expect(calls.length, 'el extractor no encontro ninguna ruta: estaria verificando nada').toBeGreaterThan(20);
 
     // Guards the parser itself: a silently empty extraction would make this suite vacuous.
     expect(calls.length).toBeGreaterThanOrEqual(15);

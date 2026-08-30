@@ -109,4 +109,37 @@ describe('create-only production override manifest', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('single-link regular file');
   });
+
+  // ── NEGATIVE CONTROL: el assert de arriba en `publishes four active overrides in
+  //    authorized order` exige que el orden de los `active` siga el orden de los `--active`
+  //    que recibe el helper. Sin este control, un cambio a `sorted(names)` interno pasaría
+  //    el assert original siempre que los nombres vinieran ya en orden alfabético
+  //    (lo cual no siempre será cierto). Pasamos los nombres en un orden NO alfabético y
+  //    comprobamos que el manifest respeta ese orden.
+  test('CONTROL NEGATIVO — el manifest respeta el orden de --active, no el alfabético', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-order-overrides-'));
+    scratch.push(directory);
+    const overrides = join(directory, 'overrides');
+    await mkdir(overrides);
+    const names = ['zebra.yaml', 'alpha.yaml', 'mango.yaml'];
+    const bodies = new Map<string, string>();
+    for (const name of names) {
+      const body = `services:\n  ${name.replace(/\.yaml$/u, '')}: {}\n`;
+      bodies.set(name, body);
+      await writeFile(join(overrides, name), body);
+    }
+    const output = join(overrides, 'order.manifest');
+    const args = [helper, '--overrides-dir', overrides, '--output', output,
+      '--expected-yaml-count', '3',
+      '--active', 'mango.yaml',
+      '--active', 'zebra.yaml',
+      '--active', 'alpha.yaml'];
+    const result = spawnSync('python3', args, { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    const expectedActive = ['mango.yaml', 'zebra.yaml', 'alpha.yaml'].map(
+      (name) => `active ${digest(bodies.get(name) ?? '')} ${name}\n`,
+    ).join('');
+    const expectedInactive = '';
+    expect(await readFile(output, 'utf8')).toBe(expectedActive + expectedInactive);
+  });
 });

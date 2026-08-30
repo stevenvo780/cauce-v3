@@ -23,4 +23,13 @@ describe('relay and Telegram observability wiring', () => {
       expect(alerts).toContain(`absent(up{job="${job}"})`);
     }
   });
+
+  it('CONTROL NEGATIVO — quitar una alerta del YAML hace fallar la verificación de presencia', () => {
+    const sinAlerta = alerts.replace(
+      / {6}- alert: CauceDispatcherLoopStale\n[\s\S]*?(?=\n {6}- alert:|\n {2}- name:|$)/u,
+      '',
+    );
+    expect(sinAlerta).not.toBe(alerts);
+    expect(sinAlerta).not.toContain('alert: CauceDispatcherLoopStale');
+  });
 });

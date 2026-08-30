@@ -1686,7 +1686,7 @@ time.sleep(60)
     // The control plane and the adapter survived the tampering attempt.
     assert.equal(sudo(["test", "-f", path.join(pctl, metadataName)]).status, 0, "metadata survived the failed unlink");
     assert.equal(sudo(["test", "-f", path.join(pctl, lockName)]).status, 0, "lock survived the failed unlink");
-    assert.equal(sudo(["kill", "-0", String(rootDoc.pid)]).status, 0, "the adapter is still alive after the failed tampering");
+    assert.equal(sudo(["test", "-d", `/proc/${rootDoc.pid}`]).status, 0, "the adapter is still alive after the failed tampering");
     // A root runtime identity is rejected outright before the control plane is touched.
     const rootRuntime = sudo([...rootEnv, "python3", runtimeHelper, "run", "--alias", "kant", "--state", pstate,
       "--control-dir", pctl, "--runtime-uid", "0", "--runtime-gid", "0", "--container-id", lifecycleContainerId,

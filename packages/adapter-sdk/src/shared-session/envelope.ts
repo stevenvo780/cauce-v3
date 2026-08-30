@@ -47,13 +47,16 @@ export function stripJsonFence(text: string): string {
   return body.trim();
 }
 
-/** Determines whether the text matches the basic structure of a JSON delivery envelope. */
-export function isEnvelopeText(text: string | undefined): boolean {
-  const object = envelopeObject(text);
-  if (object === undefined) return false;
+function hasEnvelopeShape(object: Record<string, unknown>): boolean {
   if (!("reply" in object)) return false;
   if (object.status !== "done" && object.status !== "failed") return false;
   return Array.isArray(object.messages);
+}
+
+/** Determines whether the text matches the basic structure of a JSON delivery envelope. */
+export function isEnvelopeText(text: string | undefined): boolean {
+  const object = envelopeObject(text);
+  return object !== undefined && hasEnvelopeShape(object);
 }
 
 /** The envelope belongs to THIS delivery, it does not merely have the shape of one. */
@@ -63,7 +66,7 @@ export function envelopeHasCorrelation(
 ): boolean {
   const object = envelopeObject(text);
   return object !== undefined
-    && isEnvelopeText(text)
+    && hasEnvelopeShape(object)
     && object[ENVELOPE_CORRELATION_FIELD] === correlationId;
 }
 

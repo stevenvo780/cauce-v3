@@ -65,7 +65,7 @@ beforeAll(async () => {
   provisionStdout = cli.stdout;
 
   await persistDevOnlyCredentialRecord();
-  await seedVisibleChain();
+  await seedAgentAndVisibleChain();
 
   const provider = new PasswordAuthProvider({
     users: new PostgresConsoleUserStore(database.pool),
@@ -283,7 +283,14 @@ async function durableMutationCounts(): Promise<Record<string, number>> {
   );
 }
 
-async function seedVisibleChain(): Promise<void> {
+async function seedAgentAndVisibleChain(): Promise<void> {
+  await database.pool.query(
+    `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
+                        home_directory,state_directory)
+     VALUES($1,$2,'claude',true,'ws-e2e','dev','/home/dev','/home/dev/.cauce/test')
+     ON CONFLICT (tenant_id,alias) DO NOTHING`,
+    [CONSOLE_TENANT, CONSOLE_ALIAS],
+  );
   await database.pool.query(
     `WITH inserted_message AS (
        INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)

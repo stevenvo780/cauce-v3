@@ -1,44 +1,24 @@
 import Fastify from 'fastify';
-import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { marcaDeRevisionDelPerfil, type ContextoDeAlias } from '@cauce/protocol';
 import {
-  registerAgentProfileRoutes, type AgentProfileDeps, type PreparedProfileRuntime,
-  type ProfileRuntimePreflight, type RespuestaDelPerfil, type TopeSuperado,
+  registerAgentProfileRoutes, type AgentProfileDeps,
+  type RespuestaDelPerfil, type TopeSuperado,
 } from './agent-profile.routes.js';
 
 /**
- * THE PROFILE PREVIEW, tested where it can LIE.
  *
  * The value of this route is not returning JSON: it is that what it shows is, byte for byte,
  * what will end up written in the container. Everything tested here defends that property,
  * plus the two things the route cannot know and must say instead of keeping silent.
  */
 
-const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
 const RUTA = '/v3/console/tenants/Steven/agents/zeus/perfil';
 
-function sha(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
-}
-
-function contexto(parcial: Partial<ContextoDeAlias['perfil']>, harness: string): ContextoDeAlias {
-  return {
-    perfil: {
-      tenant_id: 'Steven', alias: 'zeus',
-      purpose: null, role_summary: null, human_brief: null,
-      responsibilities: [], restrictions: [], tools: [], operating_rules: [],
-      ...parcial
-    },
-    hechos: {
-      permisos: { ruta: true, lectura: true, control: false, notificacion: true },
-      cuotas: [{ proveedor: 'claude', cuenta: 'saldantia', limite: '3% semanal' }],
-      arnes: { harness, home: '/home/dev', contenedor: 'ws-zeus', capacidades: ['bash', 'read'] },
-      destinos: ['kant', 'argos']
-    }
-  };
-}
-
+import {
+  ACTOR, contexto, MARK_PROFILE_APPLIED, PERFIL_BODY, PREPARE_RUNTIME, preparedRuntime,
+  REPLACE_PROFILE, RUNTIME_ADOPTION, RUNTIME_VERIFICATION, runtimePreflight, sha,
+} from './agent-profile.fixtures.js';
 async function servidor(ctx: ContextoDeAlias | (() => Promise<never>), exists = true) {
   const app = Fastify();
   registerAgentProfileRoutes(app, {
@@ -179,7 +159,6 @@ describe('lo que la ruta NO sabe, lo dice', () => {
 
 describe('los topes del arnés se contestan con los dos números, no con un 500', () => {
   it('un openclaw pasado de tope devuelve 422 diciendo QUÉ fichero y cuánto mide', async () => {
-    // "It does not fit" over seven files tells nobody what to trim.
     abierto = await servidor(contexto({ purpose: 'x'.repeat(60_001) }, 'openclaw'));
     const res = await abierto.inject({ method: 'GET', url: RUTA });
     expect(res.statusCode).toBe(422);
@@ -332,76 +311,6 @@ describe('la guarda del alias', () => {
     expect(res.statusCode).toBe(400);
     expect(consultada).toBe(false);
   });
-});
-
-const PERFIL_BODY = {
-  purpose: 'coordinar la flota',
-  role_summary: 'coordinador',
-  human_brief: 'Steven, directo',
-  responsibilities: ['coordinar'],
-  restrictions: ['no tocar secretos'],
-  tools: ['cauce'],
-  operating_rules: ['verificar'],
-};
-
-const REPLACE_PROFILE: NonNullable<AgentProfileDeps['replaceProfile']> = async (profile) => ({
-  perfil: profile, exists: true, revision: 2, applied_revision: 1,
-});
-const RUNTIME_VERIFICATION = {
-  state: 'current' as const,
-  generation: 'gen-1',
-  container_id: 'ws-zeus',
-  observed_at: '2026-08-26T00:00:00.000Z',
-  documents: [{
-    name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md',
-    expected_sha: sha('nuevo'), observed_sha: sha('nuevo'),
-    expected_bytes: 5, observed_bytes: 5, current: true,
-  }],
-};
-const RUNTIME_ADOPTION: NonNullable<AgentProfileDeps['readRuntimeAdoption']> = async (
-  _tenant, _alias, revision, verification,
-) => ({
-  evidence: 'adapter_delivery', revision,
-  generation: verification.generation ?? 'sin-generacion',
-  adopted_at: '2026-08-26T00:01:00.000Z',
-  documents: verification.documents.map((document) => ({
-    name: document.name, path: document.path, sha: document.expected_sha,
-  })),
-});
-function preparedRuntime(
-  revision: number,
-  overrides: Partial<PreparedProfileRuntime> = {},
-): PreparedProfileRuntime {
-  return {
-    revision,
-    documents: ['AGENTS.md'],
-    harness: 'codex',
-    preview: [{ nombre: 'AGENTS.md', politica: 'bloque-gestionado', texto: 'nuevo', unidades: 5 }],
-    verification: RUNTIME_VERIFICATION,
-    apply: async () => ([{
-      name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md', state: 'written',
-      sha: sha('nuevo'), bytes: 5, generation: 'gen-1', container_id: 'ws-zeus',
-    }]),
-    ...overrides,
-  };
-}
-
-function runtimePreflight(
-  materialize: (revision: number) => PreparedProfileRuntime = preparedRuntime,
-  harness = 'codex',
-): ProfileRuntimePreflight {
-  return { harness, materialize };
-}
-
-const PREPARE_RUNTIME: NonNullable<AgentProfileDeps['prepareRuntime']> = async () =>
-  runtimePreflight();
-const MARK_PROFILE_APPLIED: NonNullable<AgentProfileDeps['markProfileApplied']> = async (
-  _tenant, _alias, revision,
-) => ({
-  perfil: contexto(PERFIL_BODY, 'codex').perfil,
-  exists: true,
-  revision,
-  applied_revision: revision,
 });
 
 function depsDeEscritura(overrides: Partial<AgentProfileDeps> = {}): AgentProfileDeps {
@@ -765,15 +674,11 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     expect(replaceProfile).not.toHaveBeenCalled();
   });
 
-  it('sin control pero CON lectura, el PUT dice la verdad: 403, no "no existe"', async () => {
-    // Medido en producción el 2026-08-30 sobre el programador de perfiles de /live: ocho cuerpos
-    // distintos, ocho 404 "agent not found or not visible", y el alias devolvía 200 en el GET de
-    // esa MISMA url. La causa real era `allow_control`. Confundir las dos cosas se hace a propósito
-    // para no filtrar existencia a otro tenant; con la lectura ya concedida no hay nada que filtrar.
+  it('el PUT distingue «no lo controlas» de «no existe», y solo cuando ya acredito lectura', async () => {
     const prepareRuntime = vi.fn(PREPARE_RUNTIME);
     const replaceProfile = vi.fn(REPLACE_PROFILE);
     const permisos: string[] = [];
-    const app = await appDeEscritura({
+    const conLectura = await appDeEscritura({
       authorizeTarget: async (_actor, tenantId, alias, permiso) => {
         permisos.push(permiso);
         return permiso === 'read' ? { tenant_id: tenantId, alias, enabled: true } : undefined;
@@ -781,29 +686,21 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
       prepareRuntime,
       replaceProfile,
     });
-    const res = await app.inject({
-      method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
-    });
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toMatchObject({ error: 'forbidden' });
-    expect(res.json().message).toMatch(/no tiene permiso de control/u);
+    const cuerpo = { expected_revision: 1, profile: PERFIL_BODY };
+    const visible = await conLectura.inject({ method: 'PUT', url: RUTA, payload: cuerpo });
+    expect(visible.statusCode).toBe(403);
+    expect(visible.json()).toMatchObject({ error: 'forbidden' });
+    expect(visible.json<{ message: string }>().message).toMatch(/no tiene permiso de control/u);
     expect(permisos).toEqual(['control', 'read']);
     expect(prepareRuntime).not.toHaveBeenCalled();
     expect(replaceProfile).not.toHaveBeenCalled();
-  });
 
-  it('sin control NI lectura sigue siendo 404: no se filtra la existencia a otro tenant', async () => {
-    // El control negativo del test anterior. Éste es el caso que el 404 protege y no puede aflojarse.
-    const app = await appDeEscritura({
-      authorizeTarget: async () => undefined,
-    });
-    const res = await app.inject({
-      method: 'PUT', url: RUTA,
-      payload: { expected_revision: 1, profile: PERFIL_BODY },
-    });
-    expect(res.statusCode).toBe(404);
-    expect(res.json()).toMatchObject({ error: 'not_found' });
+    // Control negativo: sin control NI lectura sigue siendo 404, que es lo que impide usar esta
+    // url como sonda de existencia entre tenants.
+    const invisible = await appDeEscritura({ authorizeTarget: async () => undefined });
+    const oculto = await invisible.inject({ method: 'PUT', url: RUTA, payload: cuerpo });
+    expect(oculto.statusCode).toBe(404);
+    expect(oculto.json()).toMatchObject({ error: 'not_found' });
   });
 
   it('el tenant objetivo del PUT viene de la ruta canónica, nunca del actor', async () => {

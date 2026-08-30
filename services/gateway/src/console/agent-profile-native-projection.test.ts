@@ -362,8 +362,6 @@ describe('el contrato de runtime contra la medición REAL del adaptador', () => 
    * siete documentos, la medición producía cinco, y `profileRuntimeAdoptionFor` compara el
    * conjunto entero. Resultado: NINGÚN alias openclaw podía adoptar su perfil, nunca.
    *
-   * Medido en jarvis el 2026-08-30: 18 turnos cerrados después de la expectativa, los siete shas
-   * del disco idénticos a los esperados, y cero adopciones.
    */
   const documentos = FICHEROS_OPENCLAW.map((name) => ({
     name,

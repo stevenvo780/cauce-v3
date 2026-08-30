@@ -135,21 +135,14 @@ test("OpenClaw bounds result/output wrapper traversal", () => {
 test("plain fallback rejects non-visible, oversized and object-like malformed output", () => {
   assert.throws(() => parseFinalText("  ", "test final"), /visible text/u);
   assert.throws(() => parseFinalText("x".repeat(MAX_FINAL_TEXT_BYTES + 1), "test final"), /limit/u);
-  // CONTRACT CHANGE 2026-08-05: a truncated envelope with a complete `reply` is NO LONGER lost
-  // entirely, the response is delivered (see fence.test.ts). Losing the turn cost the agent
-  // minutes of work for a single truncated accessory field. A truncated envelope WITHOUT a
-  // salvageable reply keeps the diagnosis as a `failed` result, but never materializes its accessory fields.
+ // CONTRACT CHANGE: a truncated envelope with a complete `reply` is NO LONGER lost
   assert.equal(parseFinalText('{"reply":"truncated"', "test final").reply, "truncated");
   const ilegible = parseFinalText('{"messages":[', "test final");
   assert.equal(ilegible.status, "failed");
   assert.equal(ilegible.retryable, false);
   assert.deepEqual(ilegible.messages, []);
   assert.match(ilegible.reply ?? "", /no quedo ni una linea de texto rescatable/u);
-  // CONTRACT CHANGE 2026-08-29, misma razon que la del 2026-08-05 una capa mas arriba: un sobre
-  // que OMITE el andamiaje tampoco pierde el turno. Costo cuatro turnos en un solo dia (jarvis x2
-  // por 'messages', zeus y argos por 'status'), dos de ellos delante de una persona que solo vio
-  // "Error: Structured output is missing 'messages'" y se quedo sin respuesta.
-  // El agente sigue aprendiendo: la respuesta lleva el aviso [Cauce] nombrando lo que falto.
+ // CONTRACT CHANGE, misma razon que la d una capa mas arriba: un sobre
   const sinAndamiaje = parseFinalText('{"reply":"schema-invalid"}', "test final");
   assert.equal(sinAndamiaje.reply?.startsWith("schema-invalid"), true);
   assert.equal(sinAndamiaje.status, "done");

@@ -734,7 +734,8 @@ describe('el rechazo es legible', () => {
       (row) => row.rejection_code === 'root_budget_exhausted'
     );
     expect(rejectedRow?.rejection_reason).toContain('presupuesto');
-    expect(rejectedRow?.rejection_guidance).toBeTruthy();
+    expect(rejectedRow?.rejection_guidance).toEqual(expect.any(String));
+    expect(rejectedRow?.rejection_guidance?.length ?? 0).toBeGreaterThan(0);
 
     const audited = (await pool.query<{ notice: string }>(
       `SELECT metadata->>'rejection_notice' AS notice FROM audit_events
@@ -745,7 +746,8 @@ describe('el rechazo es legible', () => {
 
     const rejection = result.delegation_rejections?.[0];
     expect(rejection?.target).toBe('jarvis');
-    expect(rejection?.guidance).toBeTruthy();
+    expect(rejection?.guidance).toEqual(expect.any(String));
+    expect(rejection?.guidance?.length ?? 0).toBeGreaterThan(0);
   }, 120_000);
 
   it('omite rechazos vacíos pero informa la materialización exacta del ACK sano', async () => {

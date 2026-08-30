@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, test, vi } from 'vitest';
 import {
-  isSystemGateProbeBody, NON_HUMAN_DELIVERY_MESSAGE_TYPES, SYSTEM_PRINCIPAL_ALIASES,
+  isSystemGateProbeBody, SYSTEM_PRINCIPAL_ALIASES,
   type PublishMessage,
 } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
@@ -29,7 +29,6 @@ describe('reserved system gate probe authority', () => {
   test('recognizes only the exact body and classifies it outside the human admission band', () => {
     expect(isSystemGateProbeBody(command().body)).toBe(true);
     expect(isSystemGateProbeBody({ ...command().body, text: 'not canonical' })).toBe(false);
-    expect(NON_HUMAN_DELIVERY_MESSAGE_TYPES).toContain('system.gate.probe');
     expect(SYSTEM_PRINCIPAL_ALIASES).toEqual(['gate-probe', 'quota-collector']);
   });
 

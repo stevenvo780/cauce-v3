@@ -199,8 +199,6 @@ export class HarnessAdapter {
    * context takes effect on the next turn, which is what is expected from a config.
    *
    * If anything fails —no `HOME`, the harness has no file, the disk won't read— returns the
-   * context unchanged and the envelope goes whole. Never throws: a read failure cannot cost a
-   * turn.
    */
   private conSelloDelArnes(context: HarnessRequestContext | undefined): HarnessRequestContext | undefined {
     if (!context) return context;
@@ -223,7 +221,6 @@ export class HarnessAdapter {
      * came to prevent.
      *
      * What is missing to lift this guard is comparing the file's timestamp with the pane's
-     * process start (`/proc/<pid>/stat`). Until that is measured, everything is sent here.
      */
     const home = process.env.HOME;
     if (!home) return context;
@@ -342,8 +339,6 @@ export class HarnessAdapter {
     //
     // A resolver failure MUST NOT take down execution: if the gateway doesn't reply, continue
     // with `{}` — the always-on behavior, the CLI uses the already-logged-in credential. Failing
-    // to dispatch because we couldn't ask WHICH account to use would trade a cost problem for
-    // an outage.
     const credentialEnv = this.resolveCredentialEnv === undefined
       ? {}
       : await this.resolveCredentialEnv().catch(() => ({}));
@@ -357,8 +352,6 @@ export class HarnessAdapter {
     const invocationContext = effectiveContext?.native_profile_context === true
       ? this.prepareContext(effectiveContext)
       : effectiveContext;
-    // Shared TUIs receive this block explicitly. Headless harnesses load the same measured file at
-    // process start; in both cases evidence is emitted only after the run returns valid output.
     const measuredProfileAtStart = invocationContext?.native_profile_measurement
       ?? invocationContext?.runtime_profile
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
@@ -416,10 +409,6 @@ export class HarnessAdapter {
         if (nuncaEmpezoElTurno(result, causeDetail)) {
           // The harness cannot find the conversation we handed it: the stored pointer is dead.
           // Without forgetting it, the retry that this very `retryable: true` triggers resumes the
-          // same id and fails identically, forever. Measured on kratos on 2026-08-29 (and before
-          // that on zeus and atlas): the way out was deleting the entry from `sessions.json` by
-          // hand. The next attempt opens a new conversation, which is the only thing left: the
-          // previous one no longer exists on the provider's side.
           if (effectiveSessionKey !== undefined
             && session.nativeId !== undefined
             && esSesionNativaInexistente(causeDetail)) {
@@ -442,9 +431,6 @@ export class HarnessAdapter {
         // rechaza esos ACK si vienen como reintentables ("Ambiguous ACK errors must not be
         // retryable"). Marcar aqui la interrupcion del dueno como reintentable producia un marco
         // que el gateway rechaza SIEMPRE: el adaptador lo reintentaba una vez por segundo y no
-        // volvia a consumir nada. Medido en tales el 2026-08-29: ~30 min mudo, 156 CONNECTION_ZODERROR
-        // cada 30 s, con el ACK envenenado persistido en outbox.json y delivery-transaction.json.
-        // `false` ademas es lo correcto: si no se sabe si el turno dejo efectos, no se reintenta solo.
         throw new ProcessExecutionError(
           "PROCESS_EXIT_AMBIGUOUS",
           message,

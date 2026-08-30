@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,5 +63,17 @@ describe('PostgreSQL TLS policy used by backup and restore', () => {
     expect(duplicated.status).toBe(2);
     expect(duplicated.stderr).toBe('PostgreSQL TLS parameters must not be repeated\n');
     expect(duplicated.stderr).not.toContain('hidden');
+  });
+
+  // ── NEGATIVE CONTROL: el test de arriba demuestra que `sslmode=require` se rechaza en
+  //    RUNTIME, pero ¿qué pasa si alguien borra la rama `if (mode !== 'verify-full')` del
+  //    script y mantiene el `verify-full` en la URL del test? La invocación con `require`
+  //    pasaría a exit 0 sin avisar. Aquí anclamos el control al CÓDIGO del script: la
+  //    comparación debe seguir ahí y el mensaje exacto debe seguir siendo el que el assert
+  //    original espera en `weak.stderr`.
+  test('CONTROL NEGATIVO — el script ancla el rechazo de sslmode al literal «verify-full»', async () => {
+    const codigo = await readFile(postgresTls, 'utf8');
+    expect(codigo).toMatch(/['"]verify-full['"]/u);
+    expect(codigo).toContain('PostgreSQL requires sslmode=verify-full');
   });
 });

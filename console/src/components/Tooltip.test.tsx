@@ -14,8 +14,7 @@ it('abre con el ratón tras el retraso y expone role="tooltip"', async () => {
 });
 
 it('abre CON EL FOCO DE TECLADO, no sólo con el ratón', async () => {
-  // The view is traversed with Tab. A tooltip that only responds to the pointer leaves out half
-  // of the explanations precisely for those who need them most, which was the bug of using `title` alone.
+  // El teclado navega con Tab; el tooltip debe responder al foco además de al hover.
   const user = userEvent.setup();
   render(<Tooltip label="ack_deadline_at ya pasó"><span>Vencidas</span></Tooltip>);
 
@@ -31,7 +30,8 @@ it('ata el globo al disparador con aria-describedby', async () => {
   const globo = await screen.findByRole('tooltip');
   const disparador = screen.getByText('Cifra').closest('.tooltip-anchor');
   expect(disparador).toHaveAttribute('aria-describedby', globo.id);
-  expect(globo.id).toBeTruthy();
+  // UUID v4 emitido por crypto.randomUUID (vía createId('tooltip')).
+  expect(globo.id).toMatch(/^tooltip-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
 
 it('cierra con Esc sin tener que mover el ratón', async () => {
@@ -46,8 +46,7 @@ it('cierra con Esc sin tener que mover el ratón', async () => {
 });
 
 it('no toma foco propio cuando envuelve un control que ya es enfocable', async () => {
-  // Two tab stops for a single chip is worse accessibility, not better: the wrapper relies on the
-  // button's `focus` bubbling up to it.
+  // Evita dos paradas de Tab para un solo control enfocable.
   const user = userEvent.setup();
   render(
     <Tooltip focusable={false} label="Conectado, con lease vigente y nada en vuelo.">

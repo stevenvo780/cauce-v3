@@ -166,7 +166,8 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   expect(texto).toContain('req-7f3c');
   expect(texto).toContain('trace-4c8f');
   // The "N visible of M" counter of the search box.
-  expect(eventos.querySelector('.panel-subtitle, p')?.textContent ?? texto).toBeTruthy();
+  const contenido = eventos.querySelector('.panel-subtitle, p')?.textContent ?? texto;
+  expect(contenido.trim().length).toBeGreaterThan(0);
   expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();
   // And the search box keeps filtering over the six fields.
   await user.type(screen.getByRole('searchbox'), 'kant');

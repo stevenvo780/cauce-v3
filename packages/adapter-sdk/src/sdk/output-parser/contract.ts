@@ -1,3 +1,9 @@
+import {
+  AGENT_TO_AGENT_MESSAGE_TYPES,
+  EgressHandleSchema,
+  MAX_NOTIFY_BODY_BYTES,
+  NOTIFY_KINDS,
+} from "@cauce/protocol";
 import { AdapterError, MalformedOutputError } from "../errors.js";
 import type {
   NotifyDirective,
@@ -30,20 +36,13 @@ export const MAX_EXPANDED_RELAY_AGGREGATE_BYTES = 512 * 1024;
 export const MAX_RELAY_MESSAGES = 100;
 /** Proactive egress reaches a human, so its limits are an order of magnitude tighter. */
 export const MAX_NOTIFY_DIRECTIVES = 4;
-export const MAX_NOTIFY_BODY_BYTES = 4 * 1024;
 export const MAX_NOTIFY_AGGREGATE_BYTES = 8 * 1024;
-export const NOTIFY_KINDS: readonly NotifyKind[] = [
-  "task_complete",
-  "decision_request",
-  "digest",
-  "alert",
-];
+export { MAX_NOTIFY_BODY_BYTES, NOTIFY_KINDS };
 export const MAX_OPENCLAW_UNWRAP_DEPTH = 8;
 // Patterns to detect OpenClaw tool warnings emitted in place of real responses.
 const OPENCLAW_TOOL_WARNING = /^⚠️? \u{1F6E0}️? /u;
 const OPENCLAW_MESSAGE_WARNING = /^⚠️? ✉️? message failed(?::|$)/iu;
 const CANONICAL_MESSAGE_TARGET = /^(?:@all|[a-z][a-z0-9_-]{0,63})$/u;
-const CANONICAL_NOTIFY_HANDLE = /^[a-z][a-z0-9_.-]{0,63}$/u;
 const INVISIBLE_TEXT = /[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]/gu;
 export const LEADING_INVISIBLE_TEXT = /^[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]+/u;
 
@@ -65,12 +64,6 @@ export function parseJson(text: string, context: string): unknown {
 
 /**
  * Solo `reply` es obligatoria: es el trabajo del turno. `messages`, `status` y `retryable` son
- * andamiaje, y su AUSENCIA no puede costar un turno entero — se normalizan y se le avisa al
- * agente, igual que ya se hacía con `notify`. Medido el 2026-08-29: cuatro turnos muertos en un
- * dia por esto (jarvis x2 por 'messages', zeus y argos por 'status'), dos de ellos delante de una
- * persona que solo vio "Error: Structured output is missing 'messages'" y se quedo sin respuesta.
- * Un campo PRESENTE pero mal formado si sigue siendo error: eso es una violacion de contrato que
- * el agente tiene que corregir, no un descuido.
  */
 export const REQUIRED_OUTPUT_KEYS = ["reply"] as const;
 /** Andamiaje que se normaliza cuando falta, registrando el aviso para que el agente lo aprenda. */
@@ -118,11 +111,6 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
   });
 }
 
-/**
- * `notify` is deliberately absent from requiredKeys(): every live agent emits the five
- * mandatory keys and must keep validating unchanged. An output without it normalizes to an
- * empty list, which produces exactly zero rows downstream.
- */
 function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; descartes: readonly string[] } {
   // Malformed notify directives are discarded while recording the notice, without aborting the turn.
   const descartes: string[] = [];
@@ -140,7 +128,7 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
       descartes.push(`notify[${index}] descartada: necesita 'to' y 'body' de texto`);
       continue;
     }
-    if (!CANONICAL_NOTIFY_HANDLE.test(entry.to)) {
+    if (!EgressHandleSchema.safeParse(entry.to).success) {
       descartes.push(`notify[${index}] descartada: "${entry.to}" no es un handle de destino. Un handle es minusculas, digitos, punto, guion o guion bajo (por ejemplo handle_usuario); NO es el nombre de la persona ni un alias de agente`);
       continue;
     }
@@ -274,8 +262,6 @@ function descartarReboteAlRemitente(
 }
 
 /**
- * Enforces the semantic result contract once trusted delivery context is
- * available. Dialect parsers intentionally remain context-free; the harness
  * adapter calls this before accepting a parsed result.
  */
 export function validateDeliveryOutput(
@@ -306,9 +292,8 @@ export function validateDeliveryOutput(
 
   output = descartarReboteAlRemitente(output, context.senderAlias);
 
-  const internalMessage = context.messageType === "agent.message"
-    || context.messageType === "agent.response"
-    || context.messageType === "agent.fanin";
+  const internalMessage = (AGENT_TO_AGENT_MESSAGE_TYPES as readonly string[])
+    .includes(context.messageType ?? "");
   validateDelegationTargets(output.messages, context, internalMessage);
 
   if (output.reply !== null && !hasVisibleText(output.reply)) {

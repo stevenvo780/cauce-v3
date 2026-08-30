@@ -25,6 +25,26 @@ export default defineConfig({
     // `vitest run tests/...` collected every branch's copy of the same file and ran the suite
     // once per worktree — against stale code, with the ports and containers of the real run.
     exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
-    coverage: { reporter: ['text', 'json-summary'] }
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary', 'html'],
+      reportsDirectory: './coverage',
+      include: [
+        'packages/*/src/**/*.ts',
+        'services/*/src/**/*.ts',
+        'console/src/**/*.ts',
+        'console/src/**/*.tsx'
+      ],
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        '**/test/**',
+        '**/migrations/**',
+        '**/__mocks__/**',
+        '.claude/**'
+      ]
+    }
   }
 });

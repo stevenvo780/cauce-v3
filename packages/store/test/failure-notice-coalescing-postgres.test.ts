@@ -257,7 +257,12 @@ describe('coalescencia de avisos de fracaso', () => {
     // `salva` lives in another non-hub tenant: it cannot enumerate other chains.
     await expect(repository.failureNoticeDetail(bucketId, 'Isa', 'salva')).rejects.toThrow();
     // The child can: it's its own failure.
-    await expect(repository.failureNoticeDetail(bucketId, 'Steven', 'socrates')).resolves.toBeTruthy();
+    const detail = await repository.failureNoticeDetail(bucketId, 'Steven', 'socrates');
+    const childFailures = detail.failures as Array<Record<string, unknown>>;
+    const childNotice = detail.notice as Record<string, unknown>;
+    expect(typeof childNotice.total_failures).toBe('number');
+    expect(childNotice.child_alias).toBe('socrates');
+    expect(childFailures.length).toBeGreaterThan(0);
   });
 
   it('NO pliega dos causas distintas: un problema nuevo nunca queda detrás de uno viejo', async () => {

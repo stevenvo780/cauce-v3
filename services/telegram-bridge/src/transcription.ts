@@ -1,17 +1,7 @@
-/**
- * Audio transcription against an OpenAI-API-compatible service.
- */
+/** Transcripcion de audio contra un servicio compatible con la API de OpenAI. */
 import { logJsonLine } from './ingress-body.js';
 
-/**
- * Cuanto del cuerpo de error del servicio se conserva para el registro.
- *
- * El cuerpo trae la causa de verdad —`RuntimeError: CUDA failed with error out of memory`— y hasta
- * hoy se tiraba entera: el puente devolvia «respondio 500» y no registraba nada. El 2026-08-30 eso
- * costo una hora de diagnostico subiendo a la torre a leer los logs del servicio, mientras kratos
- * y su humano se quedaban sin poder hablar. La causa NO viaja al chat —es interna— pero tiene que
- * quedar en el registro del puente, que es donde se mira primero.
- */
+/** Cuanto del cuerpo de error del servicio se conserva para el registro. */
 const MAX_ERROR_BODY_CHARS = 500;
 
 async function causaDelServicio(respuesta: { text(): Promise<string> }): Promise<string> {

@@ -7,7 +7,7 @@ import type { EgressDestinationRow } from '../egress-destinations.js';
 import { AgentChainControlRepository } from './chain-control.js';
 import { sha256 } from '../config.js';
 import {
-  handlePattern, maxNotifyBodyBytes, notifyKinds,
+  isEgressHandle, maxNotifyBodyBytes, notifyKinds,
   type AgentNotifyEntry, type NotifyDenialCode
 } from '../deliveries.js';
 import { StoreError } from '../errors.js';
@@ -448,7 +448,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
     input: NotifyRequest,
     source: 'http' | 'job' = 'http'
   ): Promise<NotificationVerdict> {
-    if (!handlePattern.test(input.destination)) {
+    if (!isEgressHandle(input.destination)) {
       throw new StoreError('not_found', 'notification destination handle is invalid');
     }
     if (!notifyKinds.has(input.kind)) throw new StoreError('conflict', 'notification kind is invalid');

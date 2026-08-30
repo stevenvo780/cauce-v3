@@ -120,11 +120,6 @@ function ticketTtlSeconds(row: Pick<TerminalSessionRow, 'issued_at' | 'expires_a
   return seconds;
 }
 
-/**
- * The legacy pseudo-operator is shared by every basic-auth console session. It is not an
- * identity, so its quota/list/revoke namespace must additionally include the authenticated
- * certificate subject. Named operators remain intentionally shared across their own sessions.
- */
 function operatorLockIdentity(operator: ResolvedOperator, consoleSubject: string): string {
   return operator.attributed
     ? operator.operator_id
@@ -577,7 +572,6 @@ export function registerTerminalSessionControl(
       const consoleSubject = subjectFor(actor);
       const result = await pool.query<TerminalSessionRow & { occupies_slot: boolean }>(
         // The endpoint is the operator's escape hatch for slots that remain open after a tab
-        // disappears. History can be arbitrarily large; sorting only by issued_at allowed 100
         // newer closed rows to push a still-open session out of the bounded response. Open rows
         // therefore come first, using the exact same predicate as admission.
         `SELECT terminal_sessions.*, (${openPredicate(2)}) AS occupies_slot
@@ -608,10 +602,6 @@ export function registerTerminalSessionControl(
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
       // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
-      // /terminal/sessions` comprueba las dos y estas dos rutas —rotar el dueno y revocar— sólo
-      // comprobaban la primera: un principal cuya membresia no tiene `allow_control` llegaba hasta
-      // el CAS de `terminal_sessions` y recibia 409, nunca 403. El CAS lo frena —hace falta el
-      // owner_token—, pero la puerta faltaba, y dos capas de autorizacion que no coinciden es lo
       // mismo que escondia el permiso ausente detras de un 404 en el perfil.
       try {
         await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
@@ -700,10 +690,6 @@ export function registerTerminalSessionControl(
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
       // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
-      // /terminal/sessions` comprueba las dos y estas dos rutas —rotar el dueno y revocar— sólo
-      // comprobaban la primera: un principal cuya membresia no tiene `allow_control` llegaba hasta
-      // el CAS de `terminal_sessions` y recibia 409, nunca 403. El CAS lo frena —hace falta el
-      // owner_token—, pero la puerta faltaba, y dos capas de autorizacion que no coinciden es lo
       // mismo que escondia el permiso ausente detras de un 404 en el perfil.
       try {
         await repository.assertPermission(actor.tenant_id, actor.alias, 'control');

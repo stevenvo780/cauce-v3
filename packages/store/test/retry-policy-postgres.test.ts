@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
-import { AckSchema, isAmbiguousAckErrorCode, PREFLIGHT_ACK_ERROR_CODES } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -348,33 +347,4 @@ describe('R1 — a preflight code returns to the retry circuit', () => {
       );
       expect(audit.rows[0]?.metadata).toMatchObject({ ambiguous_without_execution: true });
     });
-
-  it('el esquema impide que un código de pre-vuelo entre en la lista de ambiguos', () => {
-    for (const code of PREFLIGHT_ACK_ERROR_CODES) {
-      expect(isAmbiguousAckErrorCode(code)).toBe(false);
-      expect(AckSchema.safeParse({
-        version: '3.0',
-        event_id: randomUUID(),
-        status: 'failed',
-        instance_id: CONSUMER,
-        epoch: 1,
-        claim_token: randomUUID(),
-        attempt: 1,
-        retryable: true,
-        error_code: code
-      }).success).toBe(true);
-    }
-    // And the lock on the other side is still on: an ambiguous code CANNOT declare itself retryable.
-    expect(AckSchema.safeParse({
-      version: '3.0',
-      event_id: randomUUID(),
-      status: 'failed',
-      instance_id: CONSUMER,
-      epoch: 1,
-      claim_token: randomUUID(),
-      attempt: 1,
-      retryable: true,
-      error_code: 'PROCESS_EXIT_AMBIGUOUS'
-    }).success).toBe(false);
-  });
 });

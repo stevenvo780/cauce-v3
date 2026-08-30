@@ -487,7 +487,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
     // Simulates data listener failure.
     await new Promise<void>((resolve) => dataListener!.close(() => resolve()));
-    expect(await answeringPool.query('SELECT 1')).toBeTruthy();
+    expect((await answeringPool.query('SELECT 1')).rowCount).toBe(1);
 
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
@@ -842,7 +842,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
       restrictedUrl.username = role;
       restrictedUrl.password = password;
       restrictedPool = createPool(restrictedUrl.href, { max: 1 });
-      await expect(restrictedPool.query('SELECT 1')).resolves.toBeTruthy();
+      expect((await restrictedPool.query('SELECT 1')).rowCount).toBe(1);
       await expect(probeDeliveryAdmissionPath(restrictedPool))
         .rejects.toThrow(/schema-015 delivery admission/u);
       await expect(probeWakePath(restrictedPool)).rejects.toThrow(/schema-031 claim contract/u);

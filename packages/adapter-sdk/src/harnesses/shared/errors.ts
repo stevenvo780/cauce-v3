@@ -28,15 +28,11 @@ export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
 }
 
 /**
- * Does the harness say the native session we handed it NO LONGER EXISTS?
+ * ¿Dice el arnes que la sesion nativa que le pasamos YA NO EXISTE?
  *
- * STRICT subset of `esDiagnosticoDeArranque`: only the phrases in which the CLI states it cannot
- * find the conversation. Retrying with the same `native_id` fails identically, forever, so the
- * stored pointer has to be forgotten (see `HarnessAdapter.executeUnlocked`).
- *
- * What is left OUT is deliberate: `session id ... already in use` means the conversation EXISTS
- * and someone else holds it — forgetting it would open a new one and abandon the live thread —,
- * and an unreadable `config.toml` or a missing binary say nothing about the session.
+ * Subconjunto ESTRICTO de `esDiagnosticoDeArranque`. Queda fuera a proposito
+ * `session id ... already in use`: ahi la conversacion existe y la tiene otro, y olvidarla
+ * abandonaria el hilo vivo.
  */
 export function esSesionNativaInexistente(detalle: string | undefined): boolean {
   if (detalle === undefined || detalle === "") return false;
@@ -149,15 +145,8 @@ const ABORT_REASON_DETAIL_BUDGET = 300;
 const STDERR_HEAD_SHARE = 0.6;
 
 /**
- * Sanitize process output by removing secret-like patterns and truncating.
  *
- * Redaction runs BEFORE truncation. That alone is NOT enough: raising the budget from 100 to 1200
- * bytes AND emitting the TAIL —where env and config dumps land— greatly widens what can leak,
- * and `last_error` ends up in the database, which the agents read. That's why the patterns
- * below cover the four forms the previous version let through:
  *
- *   1. `ANTHROPIC_API_KEY=…` — a `\b` before `api_key` does not anchor, because `_` is a word
- *      character and there is no boundary inside `ANTHROPIC_API_KEY`. Word prefix is admitted.
  *   2. `Authorization: Bearer sk-…` — `[^\s]+` used to swallow `Bearer` and leave the token in
  *      the clear. The scheme (Bearer/Basic/Token) is consumed before the value.
  *   3. `postgres://user:pass@host` — there was no pattern for URL credentials.
