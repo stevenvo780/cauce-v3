@@ -284,8 +284,7 @@ async function durableMutationCounts(): Promise<Record<string, number>> {
 }
 
 async function seedVisibleChain(): Promise<void> {
-  // Migrations seed tenants, rooms and memberships but NEVER an agent row, and the reader asserts
-  // the agent views answer 200: without this they answer 404 on a freshly migrated schema.
+  // Migrations seed no agent row, so the agent views would answer 404 on a fresh schema.
   await database.pool.query(
     `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
                         home_directory,state_directory)
