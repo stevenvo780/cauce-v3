@@ -6,7 +6,7 @@ import { permissionState } from '../../lib';
 import { exactConfigurationReceipt } from '../config/config-receipt';
 import { describeRegistryError, redactPreview, type RegistryContext } from './registry';
 
-export interface RegistryNotice {
+interface RegistryNotice {
   text: string;
   tone: 'success' | 'error' | 'parcial';
 }

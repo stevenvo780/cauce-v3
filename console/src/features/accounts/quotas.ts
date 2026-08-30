@@ -52,7 +52,7 @@ export function worstWindow(windows: readonly QuotaWindow[]): QuotaWindow | unde
   })[0];
 }
 
-export interface WindowFamilyGroup {
+interface WindowFamilyGroup {
   /** Stable key for React; synthetic when the window does not declare a family. */
   key: string;
   /** Real family, or the label/window_key of the single window when there is no real grouping. */

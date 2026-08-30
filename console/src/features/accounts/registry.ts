@@ -42,7 +42,7 @@ const PROVIDER_ID = /^[a-z][a-z0-9_.-]{0,63}$/;
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 /** State of a field the server may null out because it belongs to the payer. */
-export type FieldVisibility = 'visible' | 'redacted' | 'absent';
+type FieldVisibility = 'visible' | 'redacted' | 'absent';
 
 export interface ProviderAccount {
   id: string;
@@ -60,7 +60,7 @@ export interface ProviderAccount {
   updatedAt: string | null;
 }
 
-export interface AgentRegistration {
+interface AgentRegistration {
   tenantId: string;
   alias: string;
   harnessId: string | null;
@@ -70,7 +70,7 @@ export interface AgentRegistration {
   runtimeUser: string | null;
 }
 
-export interface CeilingEntry {
+interface CeilingEntry {
   tenantId: string;
   alias: string;
   accountId: string;
@@ -79,7 +79,7 @@ export interface CeilingEntry {
   borrowed: boolean;
 }
 
-export interface AccountBinding {
+interface AccountBinding {
   tenantId: string;
   agentAlias: string;
   accountId: string;
@@ -88,7 +88,7 @@ export interface AccountBinding {
 }
 
 /** A section of the snapshot: distinguishes "the gateway does not publish this" from "there are zero rows". */
-export interface SnapshotSection<T> {
+interface SnapshotSection<T> {
   available: boolean;
   items: T[];
 }
@@ -222,7 +222,7 @@ export function viewerTenant(subject: unknown): string | undefined {
   return tenant && TENANT_ID.test(tenant) ? tenant : undefined;
 }
 
-export type MatrixCellState = 'none' | 'ceiling-only' | 'bound-disabled' | 'bound-enabled';
+type MatrixCellState = 'none' | 'ceiling-only' | 'bound-disabled' | 'bound-enabled';
 
 export interface MatrixCell {
   accountId: string;
@@ -234,14 +234,14 @@ export interface MatrixCell {
   rank: number | null;
 }
 
-export interface FallbackStep {
+interface FallbackStep {
   rank: number;
   accountId: string;
   priority: number | null;
   borrowed: boolean;
 }
 
-export interface MatrixRow {
+interface MatrixRow {
   agent: AgentRegistration;
   cells: MatrixCell[];
   /** Retries, in order. Attempt 1 never goes through here: it runs without override and the CLI
