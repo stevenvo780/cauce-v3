@@ -447,6 +447,12 @@ export class AdapterEngine {
                   );
             }
           },
+          onFixedContextResolved: (reason) => {
+            this.logger({
+              event: "fixed_context", delivery_id: delivery.delivery_id, alias: delivery.recipient_alias,
+              attempt: delivery.attempt, timestamp: this.clock.now().toISOString(), reason,
+            });
+          },
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
         });
       }

@@ -341,6 +341,7 @@ export interface AdapterLog {
     | 'shared_session_degraded'
     /** Result of syncing the profile into the harness files on connect. */
     | 'profile_seed'
+    | 'fixed_context'
     /** Failure or anomaly while restoring the conversation in the shared-session pane. */
     | 'shared_session_resume'
     /** Start witness disabled because the configured bridge does not emit the mark. */

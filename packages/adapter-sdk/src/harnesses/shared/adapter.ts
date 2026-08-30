@@ -6,6 +6,7 @@ import {
   nativeProfileContextEnabled,
 } from "../../context/native-profile-context.js";
 import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
+import { signalAborted } from "../../runtime-state.js";
 import {
   isCanonicalOpenCodeSessionId,
   isCanonicalOpenCodeScopeKey,
@@ -31,6 +32,7 @@ import {
   rutaDelContextoFijo,
   selloDesdeElDisco,
   sembrarContextoFijo,
+  motivoDeReenvio,
   type SelloDeContextoFijo,
 } from "../contexto-fijo.js";
 import { planAttachments } from "./attachments.js";
@@ -52,7 +54,7 @@ import {
   sanitizeProcessOutput,
   sinMarcaDeArranque,
 } from "./errors.js";
-import { protocolPrompt, textoFijoDelSobre } from "./prompt.js";
+import { protocolPrompt, textoFijoDelSobre, textoNativoDelSobre } from "./prompt.js";
 import { SessionReservation } from "./session-reservation.js";
 
 /** Suffix distinguishing the agent lane's session key. */
@@ -356,6 +358,10 @@ export class HarnessAdapter {
     const invocationContext = effectiveContext?.native_profile_context === true
       ? this.prepareContext(effectiveContext)
       : effectiveContext;
+    const fixedContext = invocationContext?.native_profile_context === true
+      ? textoNativoDelSobre(invocationContext)
+      : textoFijoDelSobre(invocationContext);
+    request.onFixedContextResolved?.(motivoDeReenvio(invocationContext?.context_seal, fixedContext));
     // Shared TUIs receive this block explicitly. Headless harnesses load the same measured file at
     // process start; in both cases evidence is emitted only after the run returns valid output.
     const measuredProfileAtStart = invocationContext?.native_profile_measurement
@@ -389,7 +395,7 @@ export class HarnessAdapter {
         false,
       );
     }
-    if (result.cancelled || request.signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while the harness run is pending.
+    if (result.cancelled || signalAborted(request.signal)) {
       if (abortadoPorApagado(request.signal) && elTestigoDiceQueNoEmpezo(result)) {
         throw new ProcessExecutionError(
           "EXECUTION_CANCELLED_PREFLIGHT",

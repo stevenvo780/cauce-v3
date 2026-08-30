@@ -7,7 +7,7 @@ import type {
   HarnessDefinition,
   RelayOrigin,
 } from "../sdk/types.js";
-import type { SelloDeContextoFijo } from "../harnesses/contexto-fijo.js";
+import type { MotivoDeReenvio, SelloDeContextoFijo } from "../harnesses/contexto-fijo.js";
 import type { SharedSessionHarness } from "../shared-session/types.js";
 
 export type { HarnessAdapter } from "../harnesses/shared/adapter.js";
@@ -108,6 +108,7 @@ export interface HarnessExecuteRequest {
   readonly signal: AbortSignal;
   readonly origin?: RelayOrigin;
   readonly beforeHarnessInvoke?: () => Promise<void>;
+  readonly onFixedContextResolved?: (reason: MotivoDeReenvio) => void;
   /**
    * Optional witness observer. Never governs durability or retry: the engine crosses that gate
    * before calling `execute`.
