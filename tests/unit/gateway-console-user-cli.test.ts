@@ -205,7 +205,8 @@ describe('parseArguments — última gana con flags duplicados', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0]!;
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     const params = call[1] as unknown[];
     // Email crudo: el segundo gana. Normalizado: el segundo gana.
     expect(params[0]).toBe('segundo@example.com');
@@ -229,7 +230,8 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0]!;
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('INSERT INTO console_users');
@@ -260,7 +262,9 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
     await importCli();
 
-    const params = stub.query.mock.calls[0]![1] as unknown[];
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as unknown[];
     expect(params[4]).toBe('reader');
   });
 
@@ -273,7 +277,9 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const params = stub.query.mock.calls[0]![1] as unknown[];
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as unknown[];
     expect(params[3]).toBe('kant'); // name derivó del local-part
     expect(params[4]).toBe('operator'); // role default
     expect(params[5]).toBe('Steven'); // tenant default
@@ -291,7 +297,9 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
     await importCli();
 
-    const params = stub.query.mock.calls[0]![1] as unknown[];
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as unknown[];
     expect(params[0]).toBe('kant@example.com');
     expect(params[1]).toBe('kant@example.com');
   });
@@ -319,7 +327,8 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    const call = stub.query.mock.calls[0]!;
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('UPDATE console_users SET active=false');
@@ -388,7 +397,9 @@ describe('lectura interactiva de la contraseña (promptPassword + readPassword)'
 
     await importCli();
 
-    const params = stub.query.mock.calls[0]![1] as unknown[];
+    const call = stub.query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as unknown[];
     // El módulo llama a hashPassword(...) y guarda el resultado en la posición $3 del INSERT.
     expect(params[2]).toBe('MOCKED-SCYPT-HASH');
   });

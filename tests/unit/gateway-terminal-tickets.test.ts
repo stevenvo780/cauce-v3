@@ -118,9 +118,9 @@ describe('issueTicket: contrato de serialización canónica', () => {
     const parts = ticket.split('.');
     expect(parts).toHaveLength(3);
     expect(parts[0]).toBe(TICKET_VERSION);
-    expect(parts[1]!.length).toBeGreaterThan(0);
-    expect(parts[2]!.length).toBeGreaterThan(0);
-    expect(ticket).toBe(`${parts[0]}.${parts[1]}.${parts[2]}`);
+    expect(parts[1]?.length ?? 0).toBeGreaterThan(0);
+    expect(parts[2]?.length ?? 0).toBeGreaterThan(0);
+    expect(ticket).toBe(`${parts[0] ?? ''}.${parts[1] ?? ''}.${parts[2] ?? ''}`);
   });
 
   it('el mismo payload con otro alias key produce una firma distinta', () => {
@@ -160,7 +160,8 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
 
   it('rechaza con signature_invalid cuando se voltea un solo bit del HMAC', () => {
     const [version, encoded, signature] = GOLDEN_TICKET_STEVEN_JARVIS.split('.');
-    const tampered = `${version}.${encoded}.${flipLastBit(signature!)}`;
+    if (!signature) throw new Error('golden ticket signature missing');
+    const tampered = `${version ?? ''}.${encoded ?? ''}.${flipLastBit(signature)}`;
     expect(() => verifyTicketSignature(tampered, key)).toThrow(TicketError);
     try {
       verifyTicketSignature(tampered, key);
@@ -196,7 +197,7 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
 
   it('rechaza con malformed cuando la versión no es "v1"', () => {
     const [, encoded, signature] = GOLDEN_TICKET_STEVEN_JARVIS.split('.');
-    const futureVersion = `v2.${encoded}.${signature}`;
+    const futureVersion = `v2.${encoded ?? ''}.${signature ?? ''}`;
     expect(() => verifyTicketSignature(futureVersion, key)).toThrow(TicketError);
     try {
       verifyTicketSignature(futureVersion, key);
@@ -361,7 +362,7 @@ describe('issueResumeToken / parseResumeToken: credencial de reanudación', () =
   it('verifyResumeTokenSignature rechaza una versión que no es r1', () => {
     const token = issueResumeToken('sid', 'op', 1_800_000_000, master, 1_750_000_000);
     const [, encoded, signature] = token.split('.');
-    const wrongVersion = `r2.${encoded}.${signature}`;
+    const wrongVersion = `r2.${encoded ?? ''}.${signature ?? ''}`;
     expect(() => verifyResumeTokenSignature(wrongVersion, master)).toThrow(TicketError);
     try {
       verifyResumeTokenSignature(wrongVersion, master);

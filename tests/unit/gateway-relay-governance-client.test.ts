@@ -368,7 +368,7 @@ describe('readFile: errores tipados', () => {
 
     const resultado = await pending;
     expect(resultado).toMatchObject({ error: 'timeout' });
-    expect(String((resultado as { reason: string }).reason)).toContain('timed out');
+    expect((resultado as { reason: string }).reason).toContain('timed out');
   });
 
   it('cancelled cuando el AbortSignal se cierra antes de que el relay termine', async () => {
@@ -395,7 +395,7 @@ describe('readFile: errores tipados', () => {
 
     const resultado = await pending;
     expect(resultado).toMatchObject({ error: 'unavailable' });
-    expect(String((resultado as { reason: string }).reason)).toContain('ECONNREFUSED');
+    expect((resultado as { reason: string }).reason).toContain('ECONNREFUSED');
   });
 
   it('too_large cuando el cuerpo acumulado excede el tope de 512 KiB', async () => {

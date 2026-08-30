@@ -162,7 +162,8 @@ describe('PostgresConsoleUserStore.findByEmail', () => {
     await store.findByEmail('  KANT@Example.COM ');
 
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0]!;
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('WHERE email_normalized=$1');
@@ -182,7 +183,8 @@ describe('PostgresConsoleUserStore.findById', () => {
 
     expect(user?.id).toBe(VALID_UUID);
     expect(user?.email).toBe('kant@example.com');
-    const call = query.mock.calls[0]!;
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     expect(String(call[0])).toContain('WHERE id=$1::uuid');
   });
 
@@ -200,7 +202,9 @@ describe('PostgresConsoleUserStore.findById', () => {
 
     expect(await store.findById('00000000-0000-4000-8000-000000000099')).toBeUndefined();
     expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0]![1]).toEqual(['00000000-0000-4000-8000-000000000099']);
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    expect(call[1]).toEqual(['00000000-0000-4000-8000-000000000099']);
   });
 
   it('fila presente con role desconocido: la conversión a ConsoleUser lanza', async () => {
@@ -221,7 +225,8 @@ describe('PostgresConsoleUserStore.recordLogin', () => {
     await store.recordLogin(VALID_UUID, at);
 
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0]!;
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     const sql = String(call[0]);
     const params = call[1] as unknown[];
     expect(sql).toContain('UPDATE console_users');
@@ -248,7 +253,9 @@ describe('PostgresConsoleUserStore.ready', () => {
     await store.ready();
 
     expect(query).toHaveBeenCalledTimes(1);
-    expect(String(query.mock.calls[0]![0])).toContain('SELECT id FROM console_users LIMIT 0');
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    expect(String(call[0])).toContain('SELECT id FROM console_users LIMIT 0');
   });
 });
 

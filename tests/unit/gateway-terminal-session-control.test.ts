@@ -188,7 +188,7 @@ function buildContext(options: ContextOptions = {}): Context {
     UUID_PATTERN,
     principal: options.principal ?? (async () => consolePrincipal()),
     openPredicate: (ttlParameter: number) =>
-      `closed_at IS NULL AND revoked_at IS NULL AND ((consumed_at IS NULL AND expires_at > now()) OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${ttlParameter}) > now()))`,
+      `closed_at IS NULL AND revoked_at IS NULL AND ((consumed_at IS NULL AND expires_at > now()) OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${String(ttlParameter)}) > now()))`,
     currentCohort: async () => [{
       tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw'
     }],
@@ -573,7 +573,8 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     const queries = (noRoomsPool as unknown as { query: ReturnType<typeof vi.fn> }).query.mock.calls;
     const auditCall = queries.find((call) => (call[0] as string).includes('INSERT INTO audit_events'));
     expect(auditCall).toBeDefined();
-    const metadata = JSON.parse((auditCall![1] as unknown[])[5] as string) as {
+    if (!auditCall) throw new Error('auditCall unexpectedly undefined');
+    const metadata = JSON.parse((auditCall[1] as unknown[])[5] as string) as {
       reason: string; authority_reason?: string;
     };
     expect(metadata.reason).toBe('no_routing_authority');
@@ -706,7 +707,8 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     const queries = (pool as unknown as { __queries: { text: string; values: unknown[] }[] }).__queries;
     const audit = queries.find((entry) => entry.text.includes('INSERT INTO audit_events'));
     expect(audit).toBeDefined();
-    const metadata = JSON.parse(audit!.values[5] as string) as { routing_state?: string; pty_state?: string };
+    if (!audit) throw new Error('audit query unexpectedly undefined');
+    const metadata = JSON.parse(audit.values[5] as string) as { routing_state?: string; pty_state?: string };
     expect(metadata.routing_state).toBe('relay_ambiguous');
     expect(metadata.pty_state).toBe('agent_offline');
   });
@@ -744,7 +746,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     expect(response.statusCode).toBe(200);
     const body: { items: { state: string; session_id: string }[] } = response.json();
     expect(body.items).toHaveLength(1);
-    expect(body.items[0]!.state).toBe('issued');
+    expect(body.items[0]?.state).toBe('issued');
   });
 
   it('state=active cuando occupies_slot=true y consumed_at != null', async () => {
@@ -766,7 +768,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     });
     expect(response.statusCode).toBe(200);
     const body: { items: { state: string }[] } = response.json();
-    expect(body.items[0]!.state).toBe('active');
+    expect(body.items[0]?.state).toBe('active');
     // sessionExpiry fue consultado para una sesión consumida
     expect(sessionExpiry).toHaveBeenCalledWith(row);
   });
@@ -788,7 +790,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     });
     expect(response.statusCode).toBe(200);
     const body: { items: { state: string }[] } = response.json();
-    expect(body.items[0]!.state).toBe('closed');
+    expect(body.items[0]?.state).toBe('closed');
   });
 
   it('la query incluye operatorScopePredicate (filtro por operator_id + console_subject) y openPredicate', async () => {
@@ -800,7 +802,7 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     expect(response.statusCode).toBe(200);
     const recorded = (pool as unknown as { __queries: { text: string; values: unknown[] }[] }).__queries;
     expect(recorded).toHaveLength(1);
-    const text = recorded[0]!.text;
+    const text = recorded[0]?.text ?? '';
     // Predicate de operator: AND de operator_id=$1 con (atribuido O console_subject=$N)
     expect(text).toMatch(/operator_id=\$1/);
     expect(text).toMatch(/\$3::boolean OR console_subject=\$4/);
@@ -810,7 +812,8 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
     expect(text).toMatch(/ORDER BY occupies_slot DESC, issued_at DESC/u);
     expect(text).toMatch(/LIMIT 100/u);
     // Valores: operator_id, ttlSeconds, attributed (boolean), console_subject
-    expect(recorded[0]!.values).toEqual(['steven-kant', 30, true, 'Steven:kant']);
+    const recordedValues = recorded[0]?.values;
+    expect(recordedValues).toEqual(['steven-kant', 30, true, 'Steven:kant']);
   });
 });
 

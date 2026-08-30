@@ -41,7 +41,8 @@ describe('recordTerminalAudit', () => {
     };
     await recordTerminalAudit(pool, entry);
     expect(query).toHaveBeenCalledTimes(1);
-    const call = query.mock.calls[0]!;
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
     const [sql, params] = call as [string, readonly unknown[]];
     expect(sql).toMatch(QUERY_PATTERN);
     expect(sql).toContain('tenant_id, actor_alias, action, decision, trace_id, metadata');
@@ -64,7 +65,9 @@ describe('recordTerminalAudit', () => {
       decision: 'deny',
       metadata: { reason: 'ticket_expired' }
     });
-    const params = query.mock.calls[0]![1] as readonly unknown[];
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as readonly unknown[];
     expect(params[4]).toBeNull();
     expect(params[3]).toBe('deny');
   });
@@ -78,7 +81,9 @@ describe('recordTerminalAudit', () => {
       decision: 'info',
       metadata: {}
     });
-    const params = query.mock.calls[0]![1] as readonly unknown[];
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as readonly unknown[];
     expect(params[5]).toBe('{}');
     expect(JSON.parse(params[5] as string)).toEqual({});
   });
@@ -98,14 +103,15 @@ describe('recordTerminalAudit', () => {
       trace_id: 'trace-nested',
       metadata: nested
     });
-    const params = query.mock.calls[0]![1] as readonly unknown[];
+    const call = query.mock.calls[0];
+    if (!call) throw new Error('query was not called');
+    const params = call[1] as readonly unknown[];
     expect(JSON.parse(params[5] as string)).toEqual(nested);
   });
 
   it('relanza el error cuando metadata no es JSON-serializable (referencia circular)', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
-    interface Cyclic { name: string; self?: unknown }
-    const cycle: Cyclic = { name: 'cycle' };
+    const cycle: Record<string, unknown> = { name: 'cycle' };
     cycle.self = cycle;
     await expect(recordTerminalAudit(poolCon(query), {
       tenant_id: 'Isa',

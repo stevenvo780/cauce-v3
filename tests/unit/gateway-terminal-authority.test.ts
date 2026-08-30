@@ -146,7 +146,8 @@ describe('fleetPlacement / fleetIdentity / fleetIdentityLabel / containerCohort'
   });
 
   it('fleetIdentity y fleetIdentityLabel exponen el par (tenant, alias) sin filtrar runtime', () => {
-    const placement = fleetPlacement(PLACEMENTS, 'Miguel', 'iza')!;
+    const placement = fleetPlacement(PLACEMENTS, 'Miguel', 'iza');
+    if (!placement) throw new Error('placement unexpectedly undefined');
     expect(fleetIdentity(placement)).toEqual({ tenant_id: 'Miguel', alias: 'iza' });
     expect(fleetIdentityLabel(fleetIdentity(placement))).toBe('Miguel:iza');
   });
