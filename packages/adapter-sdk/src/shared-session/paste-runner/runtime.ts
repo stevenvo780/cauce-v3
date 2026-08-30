@@ -40,7 +40,9 @@ export async function beforeAbort<T>(
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", aborted);
-      rejectBeforeAbort(error);
+      rejectBeforeAbort(error instanceof Error
+        ? error
+        : new Error("Shared-session operation rejected with a non-Error value", { cause: error }));
     });
   });
 }

@@ -231,7 +231,7 @@ async function inspectExistingSession(
       detail: `la sesión ${session} fue reemplazada durante el preflight; no se toca el reemplazo`,
     };
   }
-  if (pane === undefined || pane.windowName !== TUI_WINDOW) {
+  if (pane?.windowName !== TUI_WINDOW) {
     return {
       ready: false,
       created: false,

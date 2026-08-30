@@ -185,7 +185,7 @@ export async function mutateExactPane(
   control?: TmuxRunControl,
   logicalIdentity: "process" | "full" = "process",
   additionalCondition?: string,
-  acceptsSessionDisappearance: boolean = false,
+  acceptsSessionDisappearance = false,
 ): Promise<TmuxMutationState> {
   const paneCondition = exactPaneCondition(identity, logicalIdentity);
   if (paneCondition === undefined) return "ambiguous";
@@ -373,7 +373,8 @@ export async function acquirePaneInputBarrier(
 ): Promise<PaneInputBarrierAcquireResult> {
   const barrier = { identity, token } as const;
   const paneCondition = exactPaneCondition(identity, "full");
-  if (paneCondition === undefined || !INPUT_BARRIER_TOKEN_PATTERN.test(token)) {
+  const barrierCondition = inputBarrierCondition(barrier);
+  if (paneCondition === undefined || barrierCondition === undefined) {
     return { state: "ambiguous" };
   }
 
@@ -418,7 +419,7 @@ export async function acquirePaneInputBarrier(
   // status was lost, the independent waiter + this exact format credit ownership without
   // invoking `display-message`.
   if (mutation.branch === "accepted") {
-    const postcondition = `#{&&:${paneCondition},${inputBarrierCondition(barrier)}}`;
+    const postcondition = `#{&&:${paneCondition},${barrierCondition}}`;
     return await probeTmuxFormat(tmux, identity.paneId, postcondition, control) === true
       ? { state: "acquired", barrier }
       : { state: "ambiguous" };

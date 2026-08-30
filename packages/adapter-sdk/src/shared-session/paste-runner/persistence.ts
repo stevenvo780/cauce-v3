@@ -58,7 +58,7 @@ async function persistQuarantineMarker(target: string, identity: PaneIdentity): 
   const directory = dirname(target);
   const temporary = join(
     directory,
-    `.${basename(target)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`,
+    `.${basename(target)}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`,
   );
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let directoryHandle: Awaited<ReturnType<typeof open>> | undefined;

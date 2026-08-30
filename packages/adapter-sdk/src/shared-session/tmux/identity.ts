@@ -25,14 +25,13 @@ export interface TmuxController {
   run(args: readonly string[], stdin?: string, control?: TmuxRunControl): Promise<TmuxResult>;
 }
 
-const LIFECYCLE_ENV_KEYS = [
-  "CAUCE_ALIAS", "CAUCE_STATE_DIR", "CAUCE_CONTROL_DIR", "CAUCE_CONTAINER_ID",
-  "CAUCE_CONTAINER_GENERATION",
-] as const;
-
 export function withoutLifecycleIdentity(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...environment };
-  for (const key of LIFECYCLE_ENV_KEYS) delete copy[key];
+  delete copy.CAUCE_ALIAS;
+  delete copy.CAUCE_STATE_DIR;
+  delete copy.CAUCE_CONTROL_DIR;
+  delete copy.CAUCE_CONTAINER_ID;
+  delete copy.CAUCE_CONTAINER_GENERATION;
   return copy;
 }
 
@@ -47,8 +46,8 @@ export class CliTmux implements TmuxController {
   constructor(
     private readonly socket: string = TMUX_SOCKET,
     private readonly environment: NodeJS.ProcessEnv = process.env,
-    private readonly defaultTimeoutMs: number = 10_000,
-    private readonly executable: string = "tmux",
+    private readonly defaultTimeoutMs = 10_000,
+    private readonly executable = "tmux",
   ) {}
 
   run(

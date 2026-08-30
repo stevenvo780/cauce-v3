@@ -317,7 +317,7 @@ export abstract class PasteSessionRunnerBase<E> {
   protected async quarantine(
     identity: PaneIdentity,
     pending: PendingQuarantine,
-    forceTerminate: boolean = false,
+    forceTerminate = false,
   ): Promise<string> {
     this.locallyQuarantined = identity;
     const fileMarked = this.options.quarantineFile === undefined
@@ -359,7 +359,7 @@ export abstract class PasteSessionRunnerBase<E> {
     detail: string,
     cancelled: boolean,
     pending: PendingQuarantine,
-    forceTerminate: boolean = false,
+    forceTerminate = false,
   ): Promise<CommandRunResult> {
     const quarantineDetail = await this.quarantine(identity, pending, forceTerminate);
     return result({
@@ -425,13 +425,13 @@ export abstract class PasteSessionRunnerBase<E> {
         styled: true,
         control: this.tmuxControl(signal),
       });
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signal.aborted) return { ok: false, cancelled: true }; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while pane capture is pending.
       if (pane === undefined
         || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(signal))) {
-        if (signal.aborted) return { ok: false, cancelled: true };
+        if (signal.aborted) return { ok: false, cancelled: true }; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while identity verification is pending.
         return { ok: false, replaced: true };
       }
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signal.aborted) return { ok: false, cancelled: true }; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while identity verification is pending.
       const state = inputBoxState(pane);
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
@@ -444,7 +444,7 @@ export abstract class PasteSessionRunnerBase<E> {
           : { ok: false, reason: "input_busy", detail: evidence };
       }
       await this.options.sleep(this.options.pollMs ?? DEFAULT_POLL_MS);
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signal.aborted) return { ok: false, cancelled: true }; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while polling sleep is pending.
     }
   }
 
@@ -453,10 +453,10 @@ export abstract class PasteSessionRunnerBase<E> {
     const sizes = new Map<string, number>();
     if (signal.aborted) return undefined;
     const files = await this.options.transcript.files();
-    if (signal.aborted) return undefined;
+    if (signal.aborted) return undefined; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while transcript discovery is pending.
     for (const file of files) {
       const size = await fileSize(file);
-      if (signal.aborted) return undefined;
+      if (signal.aborted) return undefined; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while filesystem metadata is pending.
       if (size >= 0) sizes.set(file, size);
     }
     return sizes;
@@ -638,7 +638,7 @@ export abstract class PasteSessionRunnerBase<E> {
         `CAUCE: un turno del bus NO pasó por esta terminal (${reason}: ${detail})`,
       );
     }
-    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false }); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while the terminal notice is pending.
     return this.options.fallback.run(request);
   }
 
