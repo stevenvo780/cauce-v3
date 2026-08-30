@@ -98,7 +98,7 @@ async function setChainPolicy(cycleCutEnabled: boolean): Promise<void> {
 
 // `insertAgentOutputRejection` does not write target_tenant/target_alias, so a rejected row has
 // them as NULL and must be identified by (source_alias, output_index).
-async function materializations(): Promise<Array<{
+async function materializations(): Promise<{
   source_alias: string;
   target_alias: string | null;
   output_index: number;
@@ -107,7 +107,7 @@ async function materializations(): Promise<Array<{
   hop_count: number;
   visited_path: string[];
   correlation_visited_path: string[] | null;
-}>> {
+}[]> {
   return (await pool.query<{
     source_alias: string;
     target_alias: string | null;

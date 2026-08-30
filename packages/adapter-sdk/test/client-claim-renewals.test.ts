@@ -1,39 +1,6 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
-import {
-  root,
-  BlockingRunner,
-  CountingRunner,
-  FakeConnection,
-  HelloAgentProfile,
-  ScriptedConnector,
-  makeClient,
-  renewableDelivery,
-  startedAcks,
-  waitUntil,
-  waitUntilTimestamp,
-} from "./client-fixtures.js";
+import {BlockingRunner, FakeConnection, ScriptedConnector, makeClient, renewableDelivery, startedAcks, waitUntil, waitUntilTimestamp} from './client-fixtures.js';
 test("a rejected exact renewal aborts the active harness before another attempt can run", async () => {
   const connection = new FakeConnection(1);
   const runner = new BlockingRunner();

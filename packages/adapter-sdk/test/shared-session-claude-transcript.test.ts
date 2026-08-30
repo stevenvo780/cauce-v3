@@ -174,7 +174,7 @@ test("con la caja ocupada el bus espera y no pega nada", async () => {
   tmux.paneContent = "❯ estoy escribiendo algo a medias";
   let releases = 0;
   const originalRun = tmux.run.bind(tmux);
-  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+  tmux.run = async (args, stdin, _control): Promise<TmuxResult> => {
     if (args[0] === "capture-pane") {
       releases += 1;
       // The owner releases the line on the third poll.

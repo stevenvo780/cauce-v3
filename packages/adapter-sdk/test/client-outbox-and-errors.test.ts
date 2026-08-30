@@ -1,38 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
-import {
-  root,
-  CountingRunner,
-  FakeConnection,
-  HelloAgentProfile,
-  NoopRunner,
-  ScriptedConnector,
-  SequenceConnector,
-  makeClient,
-  renewableDelivery,
-  waitUntil,
-} from "./client-fixtures.js";
+import {DurableStore} from '../src/sdk/durable-store.js';
+import type {DeliveryEvent} from '../src/sdk/types.js';
+import {CountingRunner, FakeConnection, ScriptedConnector, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
 test("pending durable outbox is replayed after hello_ack", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection);

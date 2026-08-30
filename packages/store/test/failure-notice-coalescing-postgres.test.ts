@@ -110,7 +110,7 @@ async function setCoalescing(enabled: boolean, windowSeconds = 900): Promise<voi
 }
 
 /** The notice deliveries the parent would actually receive: one row = one message in its queue. */
-async function noticesTo(alias: string): Promise<Array<{ text: string; delivery_id: string }>> {
+async function noticesTo(alias: string): Promise<{ text: string; delivery_id: string }[]> {
   return (await pool.query<{ text: string; delivery_id: string }>(
     `SELECT message.body->>'text' AS text,delivery.id AS delivery_id
      FROM deliveries delivery
@@ -121,10 +121,10 @@ async function noticesTo(alias: string): Promise<Array<{ text: string; delivery_
   )).rows;
 }
 
-async function buckets(): Promise<Array<{
+async function buckets(): Promise<{
   id: string; child_alias: string; failure_signature: string;
   notices_emitted: number; total_failures: number;
-}>> {
+}[]> {
   return (await pool.query<{
     id: string; child_alias: string; failure_signature: string;
     notices_emitted: number; total_failures: number;
@@ -141,7 +141,7 @@ async function buckets(): Promise<Array<{
  */
 async function fanoutThatDies(
   branches: number,
-  failures: Array<{ error: string; code: string }>
+  failures: { error: string; code: string }[]
 ): Promise<{ kant: Consumer; socrates: Consumer; rootMessageId: string }> {
   const kant = await consumer('Steven', 'kant');
   const socrates = await consumer('Steven', 'socrates');
@@ -231,7 +231,7 @@ describe('coalescencia de avisos de fracaso', () => {
 
     const detail = await repository.failureNoticeDetail(bucketId, 'Steven', 'kant');
 
-    const failures = detail.failures as Array<Record<string, unknown>>;
+    const failures = detail.failures as Record<string, unknown>[];
     // The five failures still exist one by one, with their raw cause.
     expect(failures).toHaveLength(5);
     expect(failures.filter((failure) => failure.coalesced === false)).toHaveLength(1);
@@ -259,7 +259,7 @@ describe('coalescencia de avisos de fracaso', () => {
     await expect(repository.failureNoticeDetail(bucketId, 'Isa', 'salva')).rejects.toThrow();
     // The child can: it's its own failure.
     const detail = await repository.failureNoticeDetail(bucketId, 'Steven', 'socrates');
-    const childFailures = detail.failures as Array<Record<string, unknown>>;
+    const childFailures = detail.failures as Record<string, unknown>[];
     const childNotice = detail.notice as Record<string, unknown>;
     expect(typeof childNotice.total_failures).toBe('number');
     expect(childNotice.child_alias).toBe('socrates');

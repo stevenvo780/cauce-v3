@@ -1,30 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
+import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  ControlledRunner,
-  SUCCESS,
-  delivery,
-  setup,
-  storeFor,
-} from "./engine-fixtures.js";
+import {AdapterEngine} from '../src/sdk/engine.js';
+import type {CancelDelivery, CommandRunResult, CommandRunner, Delivery, DeliveryEvent} from '../src/sdk/types.js';
+import {ControlledRunner, delivery, setup, storeFor} from './engine-fixtures.js';
 test("un 'done' sin reply ni delegacion falla, pero deja texto que la persona puede leer", async () => {
   const runner = new ControlledRunner();
   runner.stdout = JSON.stringify({

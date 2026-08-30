@@ -1,28 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { chmod, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
-import {
-  ATOMIC_STATE_FILES,
-  CANONICAL_OPEN_CODE_SESSION_FILE,
-  DurableStore,
-  MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS,
-  MAX_SESSIONS_FILE_BYTES,
-  type CanonicalOpenCodeSessionPointer,
-  type InboxRecord,
-} from "../src/sdk/durable-store.js";
-import type { Delivery, DeliveryEvent, StructuredOutput } from "../src/sdk/types.js";
-import {
-  scopeA,
-  scopeB,
-  delivery,
-  delegatedOutput,
-  freshStore,
-  pointer,
-  root,
-} from "./durable-store-fixtures.js";
+import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore, MAX_SESSIONS_FILE_BYTES} from '../src/sdk/durable-store.js';
+import {scopeA, scopeB, freshStore, pointer, root} from './durable-store-fixtures.js';
 test("canonical OpenCode reconciliation publishes unavailable with owner-only modes", async () => {
   const { directory, store } = await freshStore("missing");
   await store.setSession(`opencode:kant:${scopeA}`, {

@@ -1,38 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
-import {
-  root,
-  CountingRunner,
-  FakeConnection,
-  HelloAgentProfile,
-  ScriptedConnector,
-  SequenceConnector,
-  makeClient,
-  renewableDelivery,
-  startedAcks,
-  waitUntil,
-} from "./client-fixtures.js";
+import {DurableStore} from '../src/sdk/durable-store.js';
+import type {ClientFrame} from '../src/sdk/types.js';
+import {CountingRunner, FakeConnection, ScriptedConnector, SequenceConnector, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
 
 class HangingExecutionIntentConnection extends FakeConnection {
   closeCalls = 0;

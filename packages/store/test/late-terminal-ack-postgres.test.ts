@@ -133,10 +133,10 @@ async function deliveryRow(deliveryId: string): Promise<{
   return requireValue(result.rows[0], 'result.rows');
 }
 
-async function relayRows(deliveryId: string): Promise<Array<{
+async function relayRows(deliveryId: string): Promise<{
   idempotency_key: string; status: string; outcome: string | null; reply: string | null;
   late_result: boolean | null;
-}>> {
+}[]> {
   const result = await pool.query<{
     idempotency_key: string; status: string; outcome: string | null; reply: string | null;
     late_result: boolean | null;

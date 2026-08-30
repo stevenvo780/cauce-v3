@@ -1,33 +1,9 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
+import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  ControlledRunner,
-  SessionConcurrencyRunner,
-  claimToken,
-  delivery,
-  setup,
-  setupSessionConcurrency,
-  storeFor,
-  waitForQueued,
-} from "./engine-fixtures.js";
+import type {Delivery} from '../src/sdk/types.js';
+import {ControlledRunner, SessionConcurrencyRunner, delivery, setup, setupSessionConcurrency, storeFor, waitForQueued} from './engine-fixtures.js';
 test("profile adoption requires the exact measured document set from the delivery contract", () => {
   const path = "/runtime/.codex/AGENTS.md";
   const sha = "a".repeat(64);

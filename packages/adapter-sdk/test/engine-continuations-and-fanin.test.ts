@@ -1,33 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
+import {readFile} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  ControlledRunner,
-  CountingHarnessAdapter,
-  SUCCESS,
-  claimToken,
-  delivery,
-  root,
-  setup,
-  storeFor,
-} from "./engine-fixtures.js";
+import {HARNESS_DEFINITIONS} from '../src/harnesses/index.js';
+import {AdapterEngine} from '../src/sdk/engine.js';
+import type {Delivery, DeliveryEvent} from '../src/sdk/types.js';
+import {ControlledRunner, CountingHarnessAdapter, SUCCESS, delivery, root, setup, storeFor} from './engine-fixtures.js';
 
 async function optionalFile(path: string): Promise<string | undefined> {
   try { return await readFile(path, "utf8"); }

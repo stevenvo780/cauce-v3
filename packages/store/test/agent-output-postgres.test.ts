@@ -874,7 +874,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'jarvis', 'revoked-return-jarvis', root.epoch
     );
     const faninData = fanin.body.fanin_data_v1 as {
-      responses: Array<{ alias: string; untrusted_text: string }>;
+      responses: { alias: string; untrusted_text: string }[];
     };
     expect(fanin.body).toMatchObject({
       type: 'agent.fanin',
@@ -1216,7 +1216,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'argos', 'nested-denied-argos', root.epoch
     );
     const faninData = fanin.body.fanin_data_v1 as {
-      responses: Array<{ alias: string; delivery_id: string; untrusted_text: string }>;
+      responses: { alias: string; delivery_id: string; untrusted_text: string }[];
     };
     expect(fanin.body).toMatchObject({
       type: 'agent.fanin',
@@ -2006,7 +2006,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       'Steven', 'argos', 'mixed-output-source', root.epoch
     );
     const faninData = fanin.body.fanin_data_v1 as {
-      responses: Array<{ alias: string; untrusted_text: string }>;
+      responses: { alias: string; untrusted_text: string }[];
     };
     expect(fanin.body).toMatchObject({
       type: 'agent.fanin',
@@ -2199,7 +2199,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     const faninData = fanin.body.fanin_data_v1 as {
       schema: string;
       trust: string;
-      responses: Array<{ alias: string; untrusted_text: string }>;
+      responses: { alias: string; untrusted_text: string }[];
     };
     expect(fanin.body).toMatchObject({
       type: 'agent.fanin',
@@ -2344,7 +2344,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
     expect(Buffer.byteLength(JSON.stringify(fanin.body), 'utf8')).toBeLessThanOrEqual(64 * 1024);
     const faninData = fanin.body.fanin_data_v1 as {
       truncation: Record<string, unknown>;
-      responses: Array<{ untrusted_text: string }>;
+      responses: { untrusted_text: string }[];
     };
     expect(faninData.truncation).toMatchObject({
       max_response_bytes: 4 * 1024,

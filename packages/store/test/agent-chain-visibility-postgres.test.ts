@@ -116,7 +116,7 @@ async function setChainPolicy(values: {
   );
 }
 
-async function materializations(): Promise<Array<{
+async function materializations(): Promise<{
   source_alias: string;
   target_alias: string | null;
   status: string;
@@ -125,7 +125,7 @@ async function materializations(): Promise<Array<{
   hop_budget: number;
   visited_path: string[];
   root_message_id: string;
-}>> {
+}[]> {
   return (await pool.query<{
     source_alias: string;
     target_alias: string | null;
@@ -143,9 +143,9 @@ async function materializations(): Promise<Array<{
   )).rows;
 }
 
-async function progressRelays(): Promise<Array<{
+async function progressRelays(): Promise<{
   stage: string; relay_kind: string; terminal: boolean; reply: string; root_message_id: string;
-}>> {
+}[]> {
   return (await pool.query<{
     stage: string; relay_kind: string; terminal: boolean; reply: string; root_message_id: string;
   }>(
@@ -431,7 +431,7 @@ describe('interim chain progress towards Telegram', () => {
 
     const relays = await progressRelays();
     expect(relays.map((relay) => relay.stage)).toEqual(['delegated']);
-    expect(relays.every((relay) => relay.relay_kind === 'ack' && relay.terminal === false)).toBe(true);
+    expect(relays.every((relay) => relay.relay_kind === 'ack' && !relay.terminal)).toBe(true);
     expect(relays.every((relay) => relay.root_message_id === chain.rootMessageId)).toBe(true);
     expect(relays[0]?.reply).toContain('argos delegó en Steven/kant, Steven/socrates');
     expect((await pool.query<{ emitted: number }>(
@@ -561,14 +561,14 @@ describe('agentChain read model', () => {
     const chain = await repository.agentChain(input.trace_id, 'Steven', 'kant');
 
     expect(chain.trace_id).toBe(input.trace_id);
-    const edges = chain.edges as Array<Record<string, unknown>>;
+    const edges = chain.edges as Record<string, unknown>[];
     expect(edges).toHaveLength(2);
     expect(edges.map((edge) => (edge.target as Record<string, unknown>).alias)).toEqual(['socrates', 'jarvis']);
     expect(edges.map((edge) => edge.open)).toEqual([false, true]);
     expect((edges[0]?.response as Record<string, unknown>).decision).toBe('allow');
     expect(edges[1]?.response).toBeNull();
     expect(chain.counters).toMatchObject({ edges: 2, open_branches: 1, redacted_endpoints: 0 });
-    const nodes = chain.nodes as Array<Record<string, unknown>>;
+    const nodes = chain.nodes as Record<string, unknown>[];
     expect(nodes.map((node) => node.alias)).toEqual(['argos', 'jarvis', 'socrates']);
     expect(nodes.find((node) => node.alias === 'argos')).toMatchObject({ delegated: 2 });
     expect((chain.origin_relays as unknown[]).length).toBeGreaterThan(0);
@@ -583,7 +583,7 @@ describe('agentChain read model', () => {
 
     const chain = await repository.agentChain(input.trace_id, 'Pablo', 'seneca');
 
-    const edges = chain.edges as Array<Record<string, unknown>>;
+    const edges = chain.edges as Record<string, unknown>[];
     expect(edges).toHaveLength(1);
     expect(edges[0]?.source).toMatchObject({ redacted: true });
     expect(JSON.stringify(edges[0]?.source)).not.toContain('argos');

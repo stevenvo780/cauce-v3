@@ -13,7 +13,7 @@ interface Member {
 
 interface TenantView {
   id: string;
-  rooms: Array<{ id: string; members: Member[] }>;
+  rooms: { id: string; members: Member[] }[];
 }
 
 let database: TestDatabase;

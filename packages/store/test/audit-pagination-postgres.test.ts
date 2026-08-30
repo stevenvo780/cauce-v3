@@ -119,8 +119,8 @@ describe('participant-aware audit keyset pagination', () => {
       expect(serialized).not.toContain(secret);
     }
     expect(serialized).not.toContain('metadata');
-    const observedIds = [...(first.items as Array<{ event_id: string }>),
-      ...(second.items as Array<{ event_id: string }>)]
+    const observedIds = [...(first.items as { event_id: string }[]),
+      ...(second.items as { event_id: string }[])]
       .map((item) => item.event_id);
     expect(observedIds).toEqual([ownNew, room, cross, ownOld]);
     expect(new Set(observedIds)).toHaveLength(observedIds.length);

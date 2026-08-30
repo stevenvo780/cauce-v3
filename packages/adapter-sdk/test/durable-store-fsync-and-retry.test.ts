@@ -1,28 +1,11 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { chmod, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {readFile, stat} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  ATOMIC_STATE_FILES,
-  CANONICAL_OPEN_CODE_SESSION_FILE,
-  DurableStore,
-  MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS,
-  MAX_SESSIONS_FILE_BYTES,
-  type CanonicalOpenCodeSessionPointer,
-  type InboxRecord,
-} from "../src/sdk/durable-store.js";
+import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore, MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS} from '../src/sdk/durable-store.js';
 import type { Delivery, DeliveryEvent, StructuredOutput } from "../src/sdk/types.js";
-import {
-  completedOutput,
-  delegatedOutput,
-  delivery,
-  freshStore,
-  pointer,
-  root,
-  scopeA,
-} from "./durable-store-fixtures.js";
+import {completedOutput, delegatedOutput, delivery, freshStore, scopeA} from './durable-store-fixtures.js';
 test("sessions EIO rollback preserves both durable mapping and active pointer", async () => {
   const { directory, store } = await freshStore("sessions-fsync-failure");
   await store.reconcileCanonicalOpenCodeSession();
@@ -263,30 +246,4 @@ test("a retry starts with fresh lifecycle and execution-intent identity", async 
     accepted.record.lifecycle_event_ids?.accepted,
   );
 });
-
-async function reopenWithArmedCommitFailure(directory: string, failAt = 2): Promise<{
-  readonly store: DurableStore;
-  readonly arm: () => void;
-  readonly calls: () => number;
-}> {
-  let armed = false;
-  let fsyncCalls = 0;
-  const store = await DurableStore.open(directory, {
-    directoryFsync: async (handle) => {
-      fsyncCalls += 1;
-      if (armed && fsyncCalls === failAt) {
-        throw Object.assign(new Error("injected lifecycle commit failure"), { code: "EIO" });
-      }
-      await handle.sync();
-    },
-  });
-  return {
-    store,
-    arm: () => {
-      fsyncCalls = 0;
-      armed = true;
-    },
-    calls: () => fsyncCalls,
-  };
-}
 

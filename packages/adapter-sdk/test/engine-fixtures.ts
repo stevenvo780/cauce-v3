@@ -2,24 +2,12 @@
 // This file is NOT a test: the compiler picks it up (tsconfig: rootDir "." -> dist/test/engine-fixtures.js)
 // but the `dist/test/*.test.js` runner does NOT. All symbols are exported for reuse.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
+import {readFile, rm} from 'node:fs/promises';
 import { resolve } from "node:path";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
+import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
+import {AdapterEngine} from '../src/sdk/engine.js';
+import type {CommandRunRequest, CommandRunResult, CommandRunner, Delivery, DeliveryEvent} from '../src/sdk/types.js';
 export const root = resolve(".test-state");
 
 export async function storeFor(name: string): Promise<DurableStore> {

@@ -1,27 +1,12 @@
 // Shared helpers for the split client.test.ts tests (Task 2 of opencode-minimax.md).
 // NOT a test: the `dist/test/*.test.js` runner does not pick it up (does not end in .test.js).
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import {rm} from 'node:fs/promises';
 import { resolve } from "node:path";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
+import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
+import {AdapterClient} from '../src/sdk/client.js';
+import {DurableStore} from '../src/sdk/durable-store.js';
+import type {ClientFrame, CommandRunRequest, CommandRunResult, CommandRunner, ConsumerConnection, ConsumerConnector, HarnessDefinition, ServerFrame} from '../src/sdk/types.js';
 export type HelloAgentProfile = NonNullable<Extract<ServerFrame, { type: "hello_ack" }>["agent_profile"]>;
 
 export const root = resolve(".test-state");
@@ -171,22 +156,6 @@ export class FakeConnection implements ConsumerConnection {
 
   async close(): Promise<void> {
     this.end();
-  }
-}
-
-class HangingExecutionIntentConnection extends FakeConnection {
-  closeCalls = 0;
-
-  override async send(frame: ClientFrame): Promise<void> {
-    await super.send(frame);
-    if (frame.type === "ack" && frame.execution_started === true) {
-      await new Promise<void>(() => undefined);
-    }
-  }
-
-  override async close(): Promise<void> {
-    this.closeCalls += 1;
-    await super.close();
   }
 }
 

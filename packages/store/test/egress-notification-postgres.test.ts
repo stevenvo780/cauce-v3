@@ -169,7 +169,7 @@ async function notifications(): Promise<NotificationRow[]> {
   return result.rows;
 }
 
-async function notifyRelays(): Promise<Array<Record<string, unknown>>> {
+async function notifyRelays(): Promise<Record<string, unknown>[]> {
   const result = await pool.query<Record<string, unknown>>(
     `SELECT id,tenant_id,adapter,kind,idempotency_key,origin,payload,status
      FROM adapter_outbox WHERE kind='origin_relay' AND payload->>'relay_kind'='notify'
@@ -178,7 +178,7 @@ async function notifyRelays(): Promise<Array<Record<string, unknown>>> {
   return result.rows;
 }
 
-async function acknowledgementRelays(): Promise<Array<{ message_id: string }>> {
+async function acknowledgementRelays(): Promise<{ message_id: string }[]> {
   const result = await pool.query<{ message_id: string }>(
     `SELECT message_id FROM adapter_outbox
      WHERE adapter='telegram' AND kind='origin_relay' AND payload->>'relay_kind'='ack'
@@ -785,7 +785,7 @@ describe('proactive egress visibility', () => {
       destination: 'steven.dm', kind: 'alert', body: 'sin destino', idempotency_key: 'z', dry_run: false
     });
     const listed = await repository.listNotifications('Steven', 'argos');
-    const items = listed.items as Array<Record<string, unknown>>;
+    const items = listed.items as Record<string, unknown>[];
     expect(items).toHaveLength(1);
     expect(items[0]?.decision).toBe('denied');
     expect(items[0]?.denial_code).toBe('unknown_destination');
@@ -806,7 +806,7 @@ describe('proactive egress visibility', () => {
       `UPDATE adapter_outbox SET status='dead',dead_at=now() WHERE id=$1`, [verdict.outbox_id]
     );
     const listed = await repository.listNotifications('Steven', 'argos');
-    const items = listed.items as Array<Record<string, unknown>>;
+    const items = listed.items as Record<string, unknown>[];
     expect(items[0]).toMatchObject({ decision: 'allowed', relay_status: 'dead' });
   });
 

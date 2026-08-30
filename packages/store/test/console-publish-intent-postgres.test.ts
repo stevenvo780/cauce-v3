@@ -133,7 +133,7 @@ describe('durable console publish intents', () => {
     ]);
     const heads = await pool.query<{
       metadata: Record<string, unknown> & {
-        intents?: Array<Record<string, unknown>>;
+        intents?: Record<string, unknown>[];
       };
     }>(
       `SELECT metadata FROM audit_events WHERE action='console.publish.head'`,

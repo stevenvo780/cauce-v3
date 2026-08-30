@@ -1121,7 +1121,7 @@ describe('operator-only DLQ transitions', () => {
     { disposition: 'auth', duplicate: false },
   ] as const)('closes actionable $disposition without replay', async ({ disposition, duplicate }) => {
     const fixture = await seedDeadOutbox();
-    const evidence = `${disposition.charCodeAt(0).toString(16).padStart(2, '0')}`.repeat(32);
+    const evidence = disposition.charCodeAt(0).toString(16).padStart(2, '0').repeat(32);
     await pool.query(
       `UPDATE outbox_dead_letters SET disposition=$2,disposition_at=now(),evidence_sha256=$3
        WHERE id=$1`, [fixture.letterId, disposition, evidence],

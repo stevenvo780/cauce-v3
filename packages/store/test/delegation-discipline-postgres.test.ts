@@ -153,7 +153,7 @@ async function materializations(): Promise<MaterializationRow[]> {
   )).rows;
 }
 
-async function deliveriesFor(alias: string): Promise<Array<{ id: string; body_type: string | null }>> {
+async function deliveriesFor(alias: string): Promise<{ id: string; body_type: string | null }[]> {
   return (await pool.query<{ id: string; body_type: string | null }>(
     `SELECT delivery.id,message.body->>'type' AS body_type
      FROM deliveries delivery JOIN messages message ON message.id=delivery.message_id
@@ -292,7 +292,7 @@ describe('receipt durable de materialización', () => {
        FROM deliveries delivery WHERE delivery.id=$1`,
       [root.delivery_id],
     )).rows[0], 'rows');
-    const mismatchCases: Array<{ name: string; deliveryId: string; candidate: Ack }> = [
+    const mismatchCases: { name: string; deliveryId: string; candidate: Ack }[] = [
       {
         name: 'event_id',
         deliveryId: root.delivery_id,
@@ -364,7 +364,7 @@ describe('receipt durable de materialización', () => {
     const argos = await consumer('Steven', 'argos');
     await repository.publish(command());
     const root = await nextDelivery(argos);
-    type RoutingTargetForTest = { tenant_id: Tenant; alias: string; online: boolean };
+    interface RoutingTargetForTest { tenant_id: Tenant; alias: string; online: boolean }
     const mutableRepository = repository as unknown as {
       routingTargets(
         client: unknown,
@@ -663,7 +663,7 @@ describe('gate resuelto -> reanuda', () => {
 
     // The visible list is the counterpart of the gate: without it the wait just changes hiding place.
     const open = await repository.listChainGates('Steven', 'kant');
-    expect((open.items as Array<Record<string, unknown>>).map((item) => item.id)).toEqual([gateId]);
+    expect((open.items as Record<string, unknown>[]).map((item) => item.id)).toEqual([gateId]);
 
     const answered = await repository.answerChainGate(gateId, 'Sí, aprobado', 'Steven', 'kant');
     expect(answered.recipient_alias).toBe('argos');
@@ -686,7 +686,7 @@ describe('gate resuelto -> reanuda', () => {
     expect(materialized[0]?.hop_count).toBe(1);
 
     const closed = await repository.listChainGates('Steven', 'kant', { status: 'all' });
-    expect((closed.items as Array<Record<string, unknown>>)[0]?.status).toBe('answered');
+    expect((closed.items as Record<string, unknown>[])[0]?.status).toBe('answered');
   }, 120_000);
 
   it('no se puede contestar dos veces el mismo gate', async () => {
