@@ -80,6 +80,11 @@ export const NEVER_SERVE_BASENAMES: readonly string[] = [
 
 export const NEVER_SERVE_SUFFIXES: readonly string[] = ['.pem', '.key', '.p12', '.pfx'];
 
+export function hasNeverServePathSegment(path: string): boolean {
+  return path.split('/').some((segment) => NEVER_SERVE_BASENAMES.includes(segment)
+    || NEVER_SERVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
+}
+
 function join(dir: string, name: string): string {
   return `${dir.replace(/\/+$/, '')}/${name}`;
 }

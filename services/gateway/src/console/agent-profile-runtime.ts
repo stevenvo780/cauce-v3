@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   ErrorDeTopeDelArnes, bloqueDePerfil, ficherosDelArnes, nombresDelArnes,
+  measureStrictestUnits,
   type ContextoDeAlias,
 } from '@cauce/protocol';
 import type {
@@ -13,7 +14,7 @@ import type {
   ProfileRuntimeDocumentEvidence,
 } from './agent-profile.routes.js';
 
-export type ProfileRuntimeErrorCode =
+type ProfileRuntimeErrorCode =
   | GovernanceReadError['error'] | 'conflict' | 'truncated' | 'unsupported_harness' | 'invalid_ack';
 
 export class ProfileRuntimeError extends Error {
@@ -35,10 +36,6 @@ function isFailure(
 
 function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
-}
-
-function units(text: string): number {
-  return Math.max(Array.from(text).length, text.length);
 }
 
 function isAgentOwnedDocument(harness: string, name: string): boolean {
@@ -198,7 +195,7 @@ export async function prepareAgentProfileRuntime(
         nombre: file.nombre,
         politica: file.politica,
         texto: file.texto,
-        unidades: units(file.texto),
+        unidades: measureStrictestUnits(file.texto),
       });
       if (preservedFile) {
         writes.push({ mode: 'verify', path, precondition });

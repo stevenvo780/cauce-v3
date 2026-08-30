@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENT_PROFILE_LIMITS, AgentProfileError, AliasSchema, TenantSchema, agentProfileUnits,
   clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes, normalizeAgentProfile,
+  measureStrictestUnits,
   type AgentProfile, type ContextoDeAlias, type FicheroGenerado
 } from '@cauce/protocol';
 
@@ -147,7 +148,7 @@ export interface ProfileRuntimePreflight {
 }
 
 /** What the preview is composed of: never an unmeasured measurement. */
-export type BaseDeLaVistaPrevia = 'fichero-vacio' | 'runtime-medido';
+type BaseDeLaVistaPrevia = 'fichero-vacio' | 'runtime-medido';
 
 export interface FicheroDeLaVistaPrevia {
   readonly nombre: string;
@@ -229,11 +230,6 @@ export interface TopeSuperado {
 function esTopeSuperado(error: unknown): error is Error & { fichero: string; medido: number; tope: number } {
   return error instanceof Error && error.name === 'ErrorDeTopeDelArnes'
     && 'fichero' in error && 'medido' in error && 'tope' in error;
-}
-
-/** The same count as the Postgres CHECK and `String.length`. See `measureStrictestUnits`. */
-function unidades(texto: string): number {
-  return Math.max(Array.from(texto).length, texto.length);
 }
 
 function adoptionMatches(
@@ -406,7 +402,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
             nombre: fichero.nombre,
             politica: fichero.politica,
             texto: fichero.texto,
-            unidades: unidades(fichero.texto),
+            unidades: measureStrictestUnits(fichero.texto),
           }));
         const respuesta: RespuestaDelPerfil = {
           ...comun,

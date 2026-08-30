@@ -10,8 +10,7 @@ import type {
   MemoryDirectoryListing
 } from '../agent-documents.routes.js';
 import {
-  NEVER_SERVE_BASENAMES,
-  NEVER_SERVE_SUFFIXES,
+  hasNeverServePathSegment,
   memoryRootForHarness,
   resolveAgentDocuments,
   type DocumentKind,
@@ -350,7 +349,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
       if (!canonicalRelativeMemoryPath(relative)) {
         return { error: 'unknown', reason: 'el relay devolvió una entrada fuera de la raíz de memoria' };
       }
-      if (sensitiveMemoryPath(relative)) {
+      if (hasNeverServePathSegment(relative)) {
         return { error: 'permission_denied', reason: 'el índice intentó publicar metadata de credenciales' };
       }
       seen.add(entryPath);
@@ -390,11 +389,6 @@ function hasMemoryControlCharacter(value: string): boolean {
     const code = character.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });
-}
-
-function sensitiveMemoryPath(relative: string): boolean {
-  return relative.split('/').some((segment) => NEVER_SERVE_BASENAMES.includes(segment)
-    || NEVER_SERVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
 }
 
 function validMemoryTimestamp(value: unknown): value is string {

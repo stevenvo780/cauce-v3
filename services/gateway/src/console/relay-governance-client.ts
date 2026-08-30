@@ -6,6 +6,7 @@ import type {
 import type {
   GovernanceBatchWrite, GovernanceReadError, GovernanceWritePrecondition,
 } from './agent-documents.routes.js';
+import { hasNeverServePathSegment } from './agent-documents/catalog.js';
 
 /**
  * HTTP client for communication with the terminal-relay governance read/write endpoint.
@@ -30,12 +31,6 @@ const MAX_DATE_BYTES = 64;
 const MAX_REASON_BYTES = 2_048;
 const DIRECTORY_KEYS = ['entries', 'observed_at_least', 'path', 'total', 'truncated'];
 const DIRECTORY_ENTRY_KEYS = ['bytes', 'modified_at', 'path'];
-const SENSITIVE_BASENAMES = new Set([
-  '.credentials.json', 'auth.json', '.claude.json', 'openclaw.json', '.env', '.netrc',
-  'id_ed25519', 'id_rsa', 'known_hosts', 'authorized_keys',
-]);
-const SENSITIVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
-
 export interface HttpGovernanceRelayClientOptions {
   /** Browser-side HTTPS origin of the relay, e.g. `https://terminal-relay:8446`. */
   readonly relayUrl: string;
@@ -81,11 +76,6 @@ function canonicalAbsolutePath(value: unknown): value is string {
 
 function strictDescendant(root: string, candidate: string): boolean {
   return candidate.startsWith(`${root}/`);
-}
-
-function sensitivePath(path: string): boolean {
-  return path.split('/').some((segment) => SENSITIVE_BASENAMES.has(segment)
-    || SENSITIVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
 }
 
 function validIsoDate(value: unknown): value is string {
@@ -204,7 +194,7 @@ export function parseDirectoryOutcome(body: string): RelayDirectoryRead | Govern
         || !validIsoDate(entry.modified_at)) {
       return { error: 'unknown', reason: 'el índice contiene una ruta, fecha o tamaño inválidos' };
     }
-    if (sensitivePath(entry.path)) {
+    if (hasNeverServePathSegment(entry.path)) {
       return { error: 'permission_denied', reason: 'el índice intentó publicar metadata de credenciales' };
     }
     paths.add(entry.path);
