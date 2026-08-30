@@ -102,7 +102,7 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
   });
 
   it('responde con 404 target_unavailable cuando algún miembro del cohort no es visible', async () => {
-    const authorizeAgentTarget = vi.fn(async (actorTenant: string, actorAlias: string, targetTenant: string) => {
+    const authorizeAgentTarget = vi.fn(async (_actorTenant: string, _actorAlias: string, targetTenant: string) => {
       if (targetTenant === 'Miguel') return undefined;
       return {
         tenant_id: targetTenant, alias: 'jarvis', container: 'claw', runtime_user: 'claw',

@@ -26,7 +26,7 @@ function mockProbe(entries: Record<string, MockProbeEntry>): AgentFactsProbe {
       if (!entry) return undefined;
       return { facts: entry.facts, source: 'measured' };
     },
-    async readGovernanceDocument(path, facts, tenantId, alias) {
+    async readGovernanceDocument(path, _facts, tenantId, alias) {
       const entry = entries[`${tenantId}:${alias}`];
       if (!entry) {
         return { error: 'not_found', reason: 'alias no encontrado' };
@@ -36,7 +36,7 @@ function mockProbe(entries: Record<string, MockProbeEntry>): AgentFactsProbe {
         reason: `${path} no está disponible`,
       };
     },
-    async listMemoryDirectory(memoryRoot, facts, tenantId, alias) {
+    async listMemoryDirectory(_memoryRoot, _facts, tenantId, alias) {
       const entry = entries[`${tenantId}:${alias}`];
       if (!entry?.memory) {
         return { error: 'not_found', reason: 'sin memoria' };
