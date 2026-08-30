@@ -24,7 +24,7 @@ const FEED_HINT: ReactNode = (
   </>
 );
 
-export interface LiveFleetToolbarProps {
+interface LiveFleetToolbarProps {
   feedState: 'error' | 'paused' | 'live';
   intervalMs: number;
   setIntervalMs: Dispatch<SetStateAction<number>>;

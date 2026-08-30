@@ -10,7 +10,7 @@ const TALLY_ORDER: readonly LiveState[] = [
   'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
 ];
 
-export interface LiveFleetTallyProps {
+interface LiveFleetTallyProps {
   tally: Record<LiveState, number>;
   stateFilter: LiveState | undefined;
   setStateFilter: Dispatch<SetStateAction<LiveState | undefined>>;

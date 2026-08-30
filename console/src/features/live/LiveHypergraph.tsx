@@ -84,7 +84,7 @@ function countAliases(topology: TopologySnapshot | undefined): number {
 
 export type HypergraphLayer = 'ahora' | 'permisos';
 
-export interface LiveHypergraphProps {
+interface LiveHypergraphProps {
   topology: TopologySnapshot | undefined;
   views: readonly LiveAgentView[];
   edges: readonly DelegationEdge[];

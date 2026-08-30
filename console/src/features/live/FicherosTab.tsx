@@ -15,7 +15,7 @@ import {
  * Editor and viewer for the configuration files that govern an agent.
  */
 
-export interface FicherosTabProps {
+interface FicherosTabProps {
   tenantId: string;
   alias: string;
 }

@@ -26,7 +26,7 @@ const FLAG_ORDER: FleetActivityFlag[] = [
   'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired', 'never_connected', 'unregistered', 'queued_without_consumer',
 ];
 
-export interface FleetActivityTableProps {
+interface FleetActivityTableProps {
   snapshot: FleetActivitySnapshot | undefined;
   /** Alias highlighted in the hypergraph, in `tenant/alias` format. Synchronises the two halves. */
   selectedKey?: string | null;

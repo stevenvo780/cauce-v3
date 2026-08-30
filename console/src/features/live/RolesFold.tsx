@@ -21,7 +21,7 @@ function Portador({ clave, onAbrir }: { clave: string; onAbrir: (key: string) =>
   );
 }
 
-export interface RolesFoldProps {
+interface RolesFoldProps {
   configuracion: Resource<ConfigurationSnapshot>;
   onAbrirPerfil: (key: string) => void;
 }

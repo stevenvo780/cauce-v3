@@ -15,7 +15,7 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
  * here, it would be a backend failure, not a UI improvement.
  */
 
-export interface AgentTooltipCardProps {
+interface AgentTooltipCardProps {
   /** `null` = the topology declares the alias and activity does not report it. */
   view: LiveAgentView | null;
   alias: string;

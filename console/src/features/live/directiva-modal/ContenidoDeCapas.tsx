@@ -4,7 +4,7 @@ import type { AgentDirective } from '../../../api/types';
 import { Time } from '../../../components/ui';
 import { medicionDeCapa, totalDeMemoria } from '../directiva';
 
-export interface RecursoDirectiva { data?: AgentDirective; error?: Error; loading: boolean }
+interface RecursoDirectiva { data?: AgentDirective; error?: Error; loading: boolean }
 
 function SinMedir({ children }: { children: ReactNode }) {
   return (

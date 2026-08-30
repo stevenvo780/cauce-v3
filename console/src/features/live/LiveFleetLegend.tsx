@@ -6,7 +6,7 @@ import { ActivityExplainers, FleetSignals } from './FleetActivityTable';
 import { RolesFold } from './RolesFold';
 import { LIVE_STATES, LIVE_STATE_META, STATE_ACCENT } from './agent-state';
 
-export interface LiveFleetLegendProps {
+interface LiveFleetLegendProps {
   snapshot: FleetActivitySnapshot | undefined;
   topologiaEnAlcance: TopologySnapshot | undefined;
   resumenDePermisos: string;
