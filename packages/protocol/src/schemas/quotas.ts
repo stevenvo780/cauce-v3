@@ -84,7 +84,7 @@ export const QuotaSampleRequestSchema = z.object({
   if (totalWindows > MAX_QUOTA_WINDOWS_PER_COLLECTION) {
     context.addIssue({
       code: 'custom',
-      message: `a collection cannot report more than ${MAX_QUOTA_WINDOWS_PER_COLLECTION} windows in total`
+      message: `a collection cannot report more than ${String(MAX_QUOTA_WINDOWS_PER_COLLECTION)} windows in total`
     });
   }
   const seenProviders = new Set<string>();

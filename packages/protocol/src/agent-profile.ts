@@ -90,7 +90,7 @@ function normalizeText(value: unknown, field: AgentProfileTextField): string | n
   const limit = AGENT_PROFILE_LIMITS[field];
   if (units > limit) {
     throw new AgentProfileError(
-      field, `agent profile ${field} admits ${limit} characters at most; ${units} were sent`
+      field, `agent profile ${field} admits ${String(limit)} characters at most; ${String(units)} were sent`
     );
   }
   return trimmed;
@@ -111,17 +111,17 @@ function normalizeList(value: unknown, field: AgentProfileListField): readonly s
     if (trimmed.length === 0) continue;
     const units = measureStrictestUnits(trimmed);
     if (units > AGENT_PROFILE_LIMITS.item) {
-      throw new AgentProfileError(
-        field,
-        `every ${field} entry admits ${AGENT_PROFILE_LIMITS.item} characters at most; ${units} were sent`
-      );
+throw new AgentProfileError(
+      field,
+      `every ${field} entry admits ${String(AGENT_PROFILE_LIMITS.item)} characters at most; ${String(units)} were sent`
+    );
     }
     items.push(trimmed);
   }
   if (items.length > AGENT_PROFILE_LIMITS.items) {
     throw new AgentProfileError(
       field,
-      `agent profile ${field} admits ${AGENT_PROFILE_LIMITS.items} entries at most; ${items.length} were sent`
+      `agent profile ${field} admits ${String(AGENT_PROFILE_LIMITS.items)} entries at most; ${String(items.length)} were sent`
     );
   }
   return items;
@@ -156,7 +156,7 @@ export function normalizeAgentProfile(input: Record<string, unknown>): AgentProf
   if (units > AGENT_PROFILE_LIMITS.total) {
     throw new AgentProfileError(
       'total',
-      `agent profile admits ${AGENT_PROFILE_LIMITS.total} characters in total; ${units} were sent`
+      `agent profile admits ${String(AGENT_PROFILE_LIMITS.total)} characters in total; ${String(units)} were sent`
     );
   }
   return profile;

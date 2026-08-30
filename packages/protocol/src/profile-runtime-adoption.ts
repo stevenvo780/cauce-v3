@@ -13,8 +13,8 @@ export function profileRuntimeAdoptionFor(
   contract: ProfileRuntimeContract | undefined,
   measured: readonly ProfileRuntimeDocumentMeasurement[] | undefined,
 ): ProfileRuntimeAdoptionEvidence | undefined {
-  if (contract === undefined || measured === undefined
-    || contract.documents.length !== measured.length) return undefined;
+  if (contract === undefined
+    || contract.documents.length !== measured?.length) return undefined;
   const observed = new Map(measured.map((document) => [document.path, document.sha256]));
   for (const document of contract.documents) {
     if (document.path.slice(document.path.lastIndexOf('/') + 1) !== document.name

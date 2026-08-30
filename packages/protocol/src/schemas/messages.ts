@@ -23,12 +23,16 @@ export const ATTACHMENT_MIME_TYPES = [
 ] as const;
 
 function hasUnsafeAttachmentCodePoint(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.codePointAt(0)!;
-    return code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code === undefined) continue;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
       (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb);
-  });
+      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 const AttachmentNameSchema = z.string().min(1).max(255).superRefine((name, context) => {
@@ -99,7 +103,7 @@ export const MessageBodySchema = z.record(z.string(), z.unknown()).superRefine((
       context.addIssue({
         code: 'custom',
         path: ['timeout_ms'],
-        message: `body.timeout_ms must be an integer between 1 and ${MAX_MESSAGE_TIMEOUT_MS}`
+        message: `body.timeout_ms must be an integer between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`
       });
     }
   }
