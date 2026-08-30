@@ -66,44 +66,48 @@ interface SendDeadline {
   readonly signal: AbortSignal;
 }
 
-/*
- * Mapping of `AdapterCapabilities` keys to capability strings in the hello frame.
- */
+/** Maps `AdapterCapabilities` keys to hello-frame capability strings. */
 const CAPABILITY_ENCODERS = {
   protocol_version: (value) => [`protocol.${value.protocol_version}`],
   harness: (value) => [`harness.${value.harness}`],
-  structured_output: (value) => value.structured_output === true ? ['structured-output'] : [],
-  stdin_prompt: (value) => value.stdin_prompt === true ? ['stdin-prompt'] : [],
-  durable_inbox: (value) => value.durable_inbox === true ? ['durable-inbox'] : [],
-  durable_outbox: (value) => value.durable_outbox === true ? ['durable-outbox'] : [],
-  idempotent_delivery: (value) => value.idempotent_delivery === true ? ['idempotent-delivery'] : [],
-  heartbeat: (value) => value.heartbeat === true ? ['heartbeat'] : [],
-  cancellation: (value) => value.cancellation === 'process_group'
-    ? ['cancellation.process-group']
-    : [],
-  fencing_epoch: (value) => value.fencing_epoch === true ? ['fencing-epoch'] : [],
-  origin_relay: (value) => value.origin_relay === true ? ['origin-relay'] : [],
-  attempt_scoped_delivery: (value) => value.attempt_scoped_delivery === true
-    ? ['attempt-scoped-delivery']
-    : [],
-  event_id_correlation: (value) => value.event_id_correlation === true
-    ? ['event-id-correlation']
-    : [],
-  claim_token_correlation: (value) => value.claim_token_correlation === true
-    ? ['claim-token-correlation']
-    : [],
-  authenticated_session_scope: (value) => value.authenticated_session_scope === true
-    ? ['authenticated-session-scope']
-    : [],
-  routing_targets_v1: (value) => value.routing_targets_v1 === true ? ['routing_targets_v1'] : [],
-  attachments_v1: (value) => value.attachments_v1 === true ? ['attachments_v1'] : [],
+  structured_output: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.structured_output === true ? ['structured-output'] : [],
+  stdin_prompt: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.stdin_prompt === true ? ['stdin-prompt'] : [],
+  durable_inbox: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.durable_inbox === true ? ['durable-inbox'] : [],
+  durable_outbox: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.durable_outbox === true ? ['durable-outbox'] : [],
+  idempotent_delivery: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.idempotent_delivery === true ? ['idempotent-delivery'] : [],
+  heartbeat: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.heartbeat === true ? ['heartbeat'] : [],
+  cancellation: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Public JavaScript harnesses can violate literal capability types.
+    value.cancellation === 'process_group' ? ['cancellation.process-group'] : [],
+  fencing_epoch: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.fencing_epoch === true ? ['fencing-epoch'] : [],
+  origin_relay: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.origin_relay === true ? ['origin-relay'] : [],
+  attempt_scoped_delivery: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.attempt_scoped_delivery === true ? ['attempt-scoped-delivery'] : [],
+  event_id_correlation: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.event_id_correlation === true ? ['event-id-correlation'] : [],
+  claim_token_correlation: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.claim_token_correlation === true ? ['claim-token-correlation'] : [],
+  authenticated_session_scope: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.authenticated_session_scope === true ? ['authenticated-session-scope'] : [],
+  routing_targets_v1: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.routing_targets_v1 === true ? ['routing_targets_v1'] : [],
+  attachments_v1: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can violate literal capability types.
+    value.attachments_v1 === true ? ['attachments_v1'] : [],
   native_image_input_v1: (value) => value.native_image_input_v1 === true
     ? ['native_image_input_v1']
     : [],
   native_document_input_v1: (value) => value.native_document_input_v1 === true
     ? ['native_document_input_v1']
     : [],
-  persistent_sessions: (value) => value.persistent_sessions === true ? ['persistent-sessions'] : [],
+  persistent_sessions: (value) => // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript harnesses can supply a non-boolean capability value.
+    value.persistent_sessions === true ? ['persistent-sessions'] : [],
   loopback_api: (value) => value.loopback_api === true ? ['loopback-api'] : [],
   stable_alias_sessions: (value) => value.stable_alias_sessions === true
     ? ['stable-alias-sessions']
@@ -167,6 +171,7 @@ export class AdapterClient {
         this.publishAndConfirmExecutionIntent(event, signal, timeoutMs)
       ),
       logger: this.logger,
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Public JavaScript callers can omit required config fields.
       ...(options.config.tenantId === undefined ? {} : { ownTenantId: options.config.tenantId }),
       ...(options.config.ownRoom === undefined ? {} : { ownRoom: options.config.ownRoom }),
       ...(options.config.defaultTimeoutMs === undefined
@@ -209,8 +214,10 @@ export class AdapterClient {
           } finally {
             signal.removeEventListener('abort', closeOnAbort);
           }
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while frame consumption awaits.
           if (!signal.aborted) throw new Error('Consumer connection closed');
         } catch (error) {
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while connection work awaits.
           if (signal.aborted) break;
           if (error instanceof AdapterError && !error.retryable) throw error;
           const errorCode = connectionErrorCode(error);
@@ -226,6 +233,7 @@ export class AdapterClient {
           this.activeConnection = undefined;
           await connection?.close().catch(() => undefined);
         }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while connection cleanup awaits.
         if (!signal.aborted) await this.clock.sleep(this.backoff.nextDelay(), signal).catch(() => undefined);
       }
     } finally {
@@ -247,10 +255,7 @@ export class AdapterClient {
           if (welcomed) throw new Error('Gateway sent duplicate hello_ack');
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
-          /*
-           * Syncs the profile received in `hello_ack` before starting heartbeat, outbox and recovery.
-           * Happens after `activateEpoch` to ensure the runtime applies the identity before processing deliveries.
-           */
+          /* Applies the hello profile after epoch activation and before heartbeat, outbox, and recovery. */
           this.sembrarPerfil(frame);
           this.backoff.reset();
           heartbeat = this.heartbeatLoop(heartbeatAbort.signal).catch(async () => {
@@ -323,14 +328,14 @@ export class AdapterClient {
           && event.claim_token === correlation.claim_token
         ));
         const terminalPending = pending?.phase === 'done' || pending?.phase === 'failed';
-        const terminalReceipt = frame.applied === true
+        const terminalReceipt = frame.applied
           ? 'applied' as const
           : frame.receipt === 'duplicate' || frame.receipt === 'ownership_lost'
             ? frame.receipt
             : undefined;
         const executionIntentReceipt = pending?.execution_started === true
           && frame.status === 'started'
-          && ((frame.applied === true && frame.receipt === 'applied')
+          && ((frame.applied && frame.receipt === 'applied')
             || frame.receipt === 'duplicate')
           ? (frame.receipt === 'applied' ? 'applied' as const : 'duplicate' as const)
           : undefined;
@@ -349,8 +354,7 @@ export class AdapterClient {
             : { execution_intent_receipt: executionIntentReceipt }),
         });
         const intentWaiter = this.executionIntentWaiters.get(frame.event_id);
-        if (intentWaiter !== undefined
-          && intentWaiter.deliveryId === frame.delivery_id
+        if (intentWaiter?.deliveryId === frame.delivery_id
           && intentWaiter.attempt === frame.attempt
           && intentWaiter.claimToken === frame.claim_token) {
           const durableReceipt = this.store.getDelivery(frame.delivery_id)
@@ -366,7 +370,7 @@ export class AdapterClient {
           }
         }
         if (acknowledged && pending?.claim_renewal === true) {
-          if (frame.applied === true || frame.receipt === 'duplicate') {
+          if (frame.applied || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
           } else if (pending.phase === 'accepted' && frame.receipt !== 'ownership_lost') {
             // Renewal in unconfirmed accepted phase; not treated as ownership loss.
@@ -510,6 +514,7 @@ export class AdapterClient {
         confirmation,
       ]);
     } catch (error) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Promise callbacks can settle this state while sendEvent awaits.
       if (!settled) {
         reject(error instanceof AdapterError
           ? error
@@ -556,17 +561,21 @@ export class AdapterClient {
       let timer: NodeJS.Timeout | undefined;
       let onAbort: (() => void) | undefined;
       const timedOut = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new AdapterError(
-          'EXECUTION_INTENT_CONFIRMATION_FAILED',
-          'Execution intent send exceeded the ownership deadline',
-          true,
-        )), remainingMs);
+        timer = setTimeout(() => {
+          reject(new AdapterError(
+            'EXECUTION_INTENT_CONFIRMATION_FAILED',
+            'Execution intent send exceeded the ownership deadline',
+            true,
+          ));
+        }, remainingMs);
         timer.unref();
       });
       const aborted = new Promise<never>((_resolve, reject) => {
-        onAbort = () => reject(deadline.signal.reason instanceof Error
-          ? deadline.signal.reason
-          : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
+        onAbort = () => {
+          reject(deadline.signal.reason instanceof Error
+            ? deadline.signal.reason
+            : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
+        };
         deadline.signal.addEventListener('abort', onAbort, { once: true });
       });
       try {
@@ -588,6 +597,7 @@ export class AdapterClient {
     const interval = this.config.heartbeatMs ?? 15_000;
     while (!signal.aborted) {
       await this.clock.sleep(interval, signal);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while clock.sleep awaits.
       if (signal.aborted || this.engine.epoch === 0) continue;
       const heartbeat: HeartbeatFrame = {
         type: 'heartbeat',
@@ -625,10 +635,7 @@ export function siembraHabilitada(entorno: NodeJS.ProcessEnv): boolean {
     && entorno.CAUCE_SEMBRAR_PERFIL !== '0';
 }
 
-/**
- * Truncates `BaseAckSchema.error` to 2000 characters to fit frame schema limits.
- * The full message remains preserved in `result.output`.
- */
+/** Truncates `BaseAckSchema.error`; the full message remains preserved in `result.output`. */
 const MAX_ACK_ERROR_DETAIL = 2_000;
 const ACK_DETAIL_TRUNCATION_SUFFIX = '… [truncated]';
 
