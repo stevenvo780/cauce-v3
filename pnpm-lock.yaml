@@ -160,6 +160,9 @@ importers:
 
   packages/mcp-fleet-monitor:
     dependencies:
+      '@cauce/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@cauce/store':
         specifier: workspace:*
         version: link:../store

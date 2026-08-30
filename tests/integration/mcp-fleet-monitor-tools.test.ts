@@ -291,6 +291,14 @@ describe('MCP fleet monitor tool surface', () => {
     expect(filtered.data).toEqual([]);
   }, 120_000);
 
+  it('rejects an unknown estado with an explicit error, not an empty list', async () => {
+    const result = await client.callTool('entregas', { estado: 'inventado', limit: 5 });
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toMatch(/Invalid 'estado' value 'inventado'/u);
+    expect(text).not.toMatch(/"data":\s*\[\s*\]/u);
+  });
+
   it('rejects a tool it does not implement', async () => {
     const result = await client.callTool('get_agent_chain_status', { trace_id: 'x' });
     expect(result.isError).toBe(true);

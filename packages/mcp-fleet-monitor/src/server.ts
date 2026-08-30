@@ -6,6 +6,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { DeliveryStateSchema } from '@cauce/protocol';
 import { createPool } from '@cauce/store';
 import { FleetReadModel } from './fleet-read-model.js';
 
@@ -40,17 +41,8 @@ const server = new Server(
   }
 );
 
-/** Mirrors the deliveries.status CHECK constraint in packages/store/migrations/001_initial.sql. */
-const DELIVERY_STATUSES = [
-  'pending',
-  'leased',
-  'accepted',
-  'started',
-  'done',
-  'failed',
-  'retry',
-  'dead',
-] as const;
+/** Derived from `@cauce/protocol`'s DeliveryStateSchema; the enum the deliveries table accepts. */
+const DELIVERY_STATUSES = DeliveryStateSchema.options;
 
 // Tool descriptions
 const TOOLS = [
@@ -158,7 +150,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: unknown;
 
     const aliasArg = typeof args.alias === 'string' ? args.alias : undefined;
-    const estadoArg = typeof args.estado === 'string' ? args.estado : undefined;
+    const rawEstado = typeof args.estado === 'string' ? args.estado : undefined;
+    let estadoArg: string | undefined;
+    if (rawEstado !== undefined) {
+      const parsed = DeliveryStateSchema.safeParse(rawEstado);
+      if (!parsed.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Invalid 'estado' value '${rawEstado}'. Allowed: ${DELIVERY_STATUSES.join(', ')}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      estadoArg = rawEstado;
+    }
     const limitArg = typeof args.limit === 'number' ? args.limit : undefined;
     const traceIdArg = typeof args.trace_id === 'string' ? args.trace_id : undefined;
     const msgIdArg = typeof args.mensaje_id_raiz === 'string' ? args.mensaje_id_raiz : undefined;
