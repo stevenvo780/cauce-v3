@@ -411,7 +411,10 @@ describe('el contrato de runtime contra la medición REAL del adaptador', () => 
       generation: 'g',
       documents: documentos.filter((document) => esFicheroDelAgente(document.name)),
     } as unknown as ProfileRuntimeVerification;
+    // Sin documentos autorados no hay nada que acreditar, y el contrato NO puede salir vacío:
+    // un contrato de cero documentos casaría con una medición de cero y daría por adoptado un
+    // perfil que nadie escribió.
     expect(() => runtimeContractFromVerification(2, soloDelAgente))
-      .toThrow(/at least one authored document/u);
+      .toThrow(/requires an exact current verification/u);
   });
 });

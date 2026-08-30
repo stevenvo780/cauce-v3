@@ -213,20 +213,25 @@ export function runtimeContractFromVerification(
   revision: number,
   verification: ProfileRuntimeVerification,
 ): ProfileRuntimeContract {
+  // Los ficheros del AGENTE (MEMORY.md, HEARTBEAT.md) se descartan ANTES de juzgar nada.
+  //
+  // No entran al contrato porque el adaptador no los mide —son suyos y los reescribe— y
+  // `profileRuntimeAdoptionFor` compara el conjunto ENTERO: con ellos dentro la expectativa
+  // listaba siete documentos y la medicion producia cinco, y la adopcion era imposible para TODO
+  // alias openclaw. Medido en jarvis el 2026-08-30: 18 entregas cerradas despues de registrada la
+  // expectativa, los siete shas del disco identicos a los esperados, y cero adopciones.
+  //
+  // Y tampoco pueden decidir si la verificacion es exacta, por lo mismo: exigirle a un agente que
+  // no escriba su memoria para poder acreditar su perfil es pedirle que no trabaje. Hoy eso no
+  // desbloquea a nadie —medido el mismo dia: los cinco openclaw en `drifted 6/7` se desvian en
+  // AGENTS.md, que SI es autorado, y lo que les falta es un PUT que complete—, pero un fichero que
+  // el perfil no autora no puede vetar el veredicto del perfil.
+  const documentos = verification.documents.filter((document) => !esFicheroDelAgente(document.name));
   if (verification.state !== 'current' || verification.generation === null
-    || verification.documents.length === 0
-    || verification.documents.some((document) => !document.current
+    || documentos.length === 0
+    || documentos.some((document) => !document.current
       || document.observed_sha !== document.expected_sha)) {
     throw new Error('runtime profile expectation requires an exact current verification');
-  }
-  // Los ficheros del AGENTE (MEMORY.md, HEARTBEAT.md) no entran al contrato: el adaptador no los
-  // mide —son suyos y los reescribe— y `profileRuntimeAdoptionFor` compara el conjunto ENTERO. Con
-  // ellos dentro, la expectativa listaba siete documentos y la medicion producia cinco, asi que la
-  // adopcion era imposible para TODO alias openclaw. Medido en jarvis el 2026-08-30: 18 turnos
-  // cerrados, los siete shas del disco identicos a los esperados, y cero adopciones.
-  const documentos = verification.documents.filter((document) => !esFicheroDelAgente(document.name));
-  if (documentos.length === 0) {
-    throw new Error('runtime profile expectation requires at least one authored document');
   }
   return {
     revision,
