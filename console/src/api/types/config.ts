@@ -9,7 +9,7 @@ export type ConfigResource =
  * `packages/store/migrations/010_agent_account_registry.sql`). They are hub-only:
  * `authorizeMutation` did not add them to the self-service list, so a non-hub tenant gets 403.
  */
-export type RegistryConfigResource =
+type RegistryConfigResource =
   | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
 export type AnyConfigResource = ConfigResource | RegistryConfigResource;
 export type ConfigAction = 'create' | 'update' | 'delete';
@@ -18,7 +18,7 @@ export type ConfigMutation = Record<string, unknown> & {
   action: ConfigAction;
 };
 
-export interface ConfigRevision {
+interface ConfigRevision {
   id?: string | null;
   actor_tenant?: string | null;
   actor_alias?: string | null;

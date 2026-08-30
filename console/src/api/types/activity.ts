@@ -27,7 +27,7 @@ export interface FleetActivityThresholds {
 }
 
 /** Subset of PresenceLease relevant to this view; same source (connection_leases). */
-export interface FleetActivityPresence {
+interface FleetActivityPresence {
   online?: boolean | null;
   instance_id?: string | null;
   epoch?: number | null;

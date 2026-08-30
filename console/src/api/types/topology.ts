@@ -1,10 +1,10 @@
-export type MemberOffReason =
+type MemberOffReason =
   | 'not_registered'
   | 'agent_disabled'
   | 'membership_disabled'
   | 'agent_and_membership_disabled';
 
-export interface RoomMember {
+interface RoomMember {
   alias?: string | null;
   role?: string | null;
   /** Routing membership state. */

@@ -331,6 +331,5 @@ export {
   PublishIntentRateLimitedError,
   TIEMPO_MAXIMO_MS,
   safeBase,
-  type FetchLike,
   type RequestOptions,
 } from './client/core';

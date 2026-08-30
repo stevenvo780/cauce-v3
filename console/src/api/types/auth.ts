@@ -8,7 +8,7 @@ export type ConsolePermission =
  * `redirect`, which is how the console behaved before password login existed: an old gateway
  * keeps working by not knowing this field.
  */
-export type LoginMode = 'password' | 'redirect';
+type LoginMode = 'password' | 'redirect';
 
 export interface ConsoleAuthState {
   /** null means the selected legacy auth mode has no BFF session facade. */
