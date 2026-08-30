@@ -27,7 +27,7 @@ interface AgenteSembrado {
 }
 
 /** Taken from `grupos.json`: the roles are the ones the real fleet carries. */
-const FLOTA: readonly AgenteSembrado[] = [
+const FLOTA: readonly [AgenteSembrado, AgenteSembrado, AgenteSembrado] = [
   {
     tenant: 'Steven', room: 'grp.steven', alias: 'zeus', harness: 'claude',
     rol: 'Encargado de la gestion de Cauce y de la infraestructura de los agentes.',
