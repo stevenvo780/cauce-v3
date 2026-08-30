@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (original === undefined) delete process.env[ENV_KEY];
+  if (original === undefined) Reflect.deleteProperty(process.env, ENV_KEY);
   else process.env[ENV_KEY] = original;
 });
 
@@ -46,7 +46,7 @@ describe('redactSecrets: conmutador global de la ingesta', () => {
   });
 
   it('input vacío y oversized se devuelven intactos sin tocar las reglas', () => {
-    delete process.env[ENV_KEY];
+    Reflect.deleteProperty(process.env, ENV_KEY);
     const vacio = redactSecrets('');
     expect(vacio).toEqual({ value: '', kinds: [], count: 0 });
 

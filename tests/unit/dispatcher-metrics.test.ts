@@ -35,7 +35,7 @@ function failingPool(): DatabasePool {
   } as unknown as DatabasePool;
 }
 
-function stubbedPool(matchers: ReadonlyArray<{ match: (sql: string) => boolean; rows: readonly unknown[] }>): { pool: DatabasePool; stub: PoolStub } {
+function stubbedPool(matchers: readonly { match: (sql: string) => boolean; rows: readonly unknown[] }[]): { pool: DatabasePool; stub: PoolStub } {
   const query = vi.fn(async <Row>(sql: string): Promise<FakeQueryResult<Row>> => {
     let rows: readonly unknown[] = [];
     for (const m of matchers) {
@@ -361,7 +361,7 @@ describe('DispatcherMetrics: render() exposition Prometheus', () => {
   });
 
   it('publica los gauges derivados de la base (job queue depth, dlq, leases, relay)', async () => {
-    const matchersLocal: ReadonlyArray<{ match: (sql: string) => boolean; rows: readonly unknown[] }> = [
+    const matchersLocal: readonly { match: (sql: string) => boolean; rows: readonly unknown[] }[] = [
       { match: sql.jobs, rows: [
         { lane: 'interactive', status: 'queued', count: '5' },
         { lane: 'batch', status: 'queued', count: '3' }

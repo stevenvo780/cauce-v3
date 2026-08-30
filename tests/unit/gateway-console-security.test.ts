@@ -61,12 +61,12 @@ interface RequestLike {
 }
 
 function buildRequest(overrides: {
-  url?: string;
-  method?: string;
-  host?: string;
-  protocol?: string;
-  origin?: string;
-  secFetchSite?: string;
+  url?: string | undefined;
+  method?: string | undefined;
+  host?: string | undefined;
+  protocol?: string | undefined;
+  origin?: string | undefined;
+  secFetchSite?: string | undefined;
 }): FastifyRequest {
   const request: RequestLike = {
     url: overrides.url ?? '/v3/console/terminal/sessions',
@@ -78,11 +78,11 @@ function buildRequest(overrides: {
     },
     protocol: overrides.protocol ?? 'https',
   };
-  return request as FastifyRequest;
+  return request as unknown as FastifyRequest;
 }
 
 function asReply(reply: ReplyLike): FastifyReply {
-  return reply as FastifyReply;
+  return reply as unknown as FastifyReply;
 }
 
 afterEach(() => {

@@ -41,6 +41,9 @@ importers:
       eslint:
         specifier: ^9.31.0
         version: 9.39.5
+      fastify:
+        specifier: ^5.4.0
+        version: 5.10.0
       testcontainers:
         specifier: ^11.4.0
         version: 11.14.0

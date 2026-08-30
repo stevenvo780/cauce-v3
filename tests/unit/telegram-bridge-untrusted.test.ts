@@ -49,7 +49,7 @@ describe('safeText: ventana para texto libre controlado por terceros', () => {
     const out = safeText(input, 5);
     const esperado = Array.from(input).slice(0, 5).join('');
     expect(out).toBe(esperado);
-    expect([...(out ?? '')].length).toBe(5);
+    expect(Array.from(out ?? '').length).toBe(5);
   });
 
   it('respeta exactamente el límite pedido', () => {
@@ -91,7 +91,7 @@ describe('safeInline: limpieza profunda para bloques UNTRUSTED del prompt', () =
     const cleaned = safeInline('a'.repeat(1000), 32);
     expect(cleaned?.length).toBe(32);
     const multibyte = safeInline('😀'.repeat(50), 10);
-    expect([...(multibyte ?? '')].length).toBe(10);
+    expect(Array.from(multibyte ?? '').length).toBe(10);
   });
 
   it('preserva acentos, eñes y alfabetos no latinos', () => {
@@ -212,8 +212,8 @@ describe('untrustedAuthor: ensambla autor + sospecha de impersonation', () => {
       first_name: 'a'.repeat(200),
       username: 'b'.repeat(80)
     }), RESERVED);
-    const displayName = result.author?.['display_name'];
-    const username = result.author?.['username'];
+    const displayName = result.author?.display_name;
+    const username = result.author?.username;
     expect(typeof displayName === 'string' ? displayName.length : -1).toBe(MAX_DISPLAY_NAME_LENGTH);
     expect(typeof username === 'string' ? username.length : -1).toBe(MAX_USERNAME_LENGTH);
     expect(MAX_DISPLAY_NAME_LENGTH).toBe(64);

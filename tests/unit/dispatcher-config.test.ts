@@ -53,14 +53,14 @@ beforeEach(() => {
   originalEnv = {};
   for (const key of ENV_KEYS) {
     originalEnv[key] = process.env[key];
-    delete process.env[key];
+    Reflect.deleteProperty(process.env, key);
   }
 });
 
 afterEach(() => {
   for (const key of ENV_KEYS) {
     const value = originalEnv[key];
-    if (value === undefined) delete process.env[key];
+    if (value === undefined) Reflect.deleteProperty(process.env, key);
     else process.env[key] = value;
   }
   vi.unstubAllEnvs();

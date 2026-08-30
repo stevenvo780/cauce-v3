@@ -60,17 +60,6 @@ function visibleMessageRow(overrides: Partial<Record<string, unknown>> = {}): Re
   };
 }
 
-function visibleDeliveryRow(
-  overrides: Partial<Record<string, unknown>> = {},
-): Record<string, unknown> {
-  return {
-    recipient_tenant: 'Steven',
-    recipient_alias: 'kant',
-    state: 'pending',
-    ...overrides,
-  };
-}
-
 describe('messageVisible', () => {
   it('es visible cuando el principal es el emisor del mensaje', () => {
     const row = visibleMessageRow();
@@ -161,10 +150,11 @@ describe('visibleMessageList', () => {
 
     const result = visibleMessageList(value, stevenKant);
 
-    expect(result.items).toHaveLength(2);
-    expect(result.items[0]).toMatchObject({ message_tenant_id: 'Steven', actor_alias: 'kant' });
-    const incoming = result.items[1] as Record<string, unknown>;
-    const remaining = (incoming.deliveries as Array<Record<string, unknown>>);
+    const items = result.items as Record<string, unknown>[];
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ message_tenant_id: 'Steven', actor_alias: 'kant' });
+    const incoming = items[1] ?? {};
+    const remaining = (incoming.deliveries as Record<string, unknown>[]);
     expect(remaining).toHaveLength(1);
     expect(remaining[0]).toMatchObject({ recipient_tenant: 'Steven', recipient_alias: 'kant' });
   });
@@ -201,7 +191,7 @@ describe('visibleMessage', () => {
     };
     const result = visibleMessage(row, stevenKant);
     expect(result).toBeDefined();
-    const deliveries = (result as Record<string, unknown>).deliveries as Array<Record<string, unknown>>;
+    const deliveries = (result as Record<string, unknown>).deliveries as Record<string, unknown>[];
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]).toMatchObject({ recipient_tenant: 'Steven', recipient_alias: 'kant' });
   });
@@ -304,7 +294,7 @@ describe('sameTenantRows', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(2);
-    expect((result.items as Array<Record<string, unknown>>).every(
+    expect((result.items as Record<string, unknown>[]).every(
       (item) => item.tenant_id === 'Steven',
     )).toBe(true);
   });
@@ -336,7 +326,7 @@ describe('visibleOriginRelays', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(1);
-    expect((result.items as Array<Record<string, unknown>>)[0]?.actor_alias).toBe('kant');
+    expect((result.items as Record<string, unknown>[])[0]?.actor_alias).toBe('kant');
   });
 
   it('incluye filas donde el principal figura como participante', () => {
@@ -351,7 +341,7 @@ describe('visibleOriginRelays', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(1);
-    expect((result.items as Array<Record<string, unknown>>)[0]?.tenant_id).toBe('Pablo');
+    expect((result.items as Record<string, unknown>[])[0]?.tenant_id).toBe('Pablo');
   });
 
   it('incluye filas donde el principal es el destinatario (recipient_tenant/recipient_alias)', () => {
@@ -362,7 +352,7 @@ describe('visibleOriginRelays', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(1);
-    expect((result.items as Array<Record<string, unknown>>)[0]?.actor_alias).toBe('atlas');
+    expect((result.items as Record<string, unknown>[])[0]?.actor_alias).toBe('atlas');
   });
 
   it('descarta entradas que no son objetos y conserva la estructura externa', () => {
@@ -428,8 +418,9 @@ describe('safeAuditPage (allowlist del audit cross-tenant)', () => {
         summary: JSON.stringify({ ack: 'done' }),
       }],
     });
+    const auditItems = page.items as Record<string, unknown>[];
     expect(page.next_cursor).toBe('4242');
-    expect(page.items[0]).toMatchObject({
+    expect(auditItems[0]).toMatchObject({
       event_id: '18',
       tenant_id: 'Miguel',
       actor_alias: 'atlas',
@@ -438,7 +429,7 @@ describe('safeAuditPage (allowlist del audit cross-tenant)', () => {
       request_id: null,
       trace_id: 'trace-1',
     });
-    expect(JSON.parse((page.items[0] as Record<string, unknown>).summary as string)).toEqual({ ack: 'done' });
+    expect(JSON.parse(auditItems[0]?.summary as string)).toEqual({ ack: 'done' });
   });
 
   it('rechaza identificadores malformados y resume cualquier summary a null si no es JSON', () => {
@@ -457,7 +448,8 @@ describe('safeAuditPage (allowlist del audit cross-tenant)', () => {
       }],
     });
     expect(page.next_cursor).toBe('99');
-    const item = page.items[0] as Record<string, unknown>;
+    const badItems = page.items as Record<string, unknown>[];
+    const item = badItems[0] ?? {};
     expect(item).toMatchObject({
       event_id: null,
       at: null,
@@ -548,7 +540,8 @@ describe('safeDlqPage (allowlist del DLQ para el navegador)', () => {
     expect(page.total).toBeNull();
     expect(page.truncated).toBeNull();
     expect(page.nextCursor).toBeNull();
-    const item = page.items[0] as Record<string, unknown>;
+    const dlqItems = page.items as Record<string, unknown>[];
+    const item = dlqItems[0] ?? {};
     expect(item.target).toBeNull();
     expect(item.id).toBeNull();
     expect(item.tenantId).toBeNull();

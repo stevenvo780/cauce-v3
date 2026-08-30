@@ -75,7 +75,11 @@ describe('groupRouting: distingue legacy (sin chats) de scoped (con chats)', () 
       rawAlias('argos', { bot_username: 'argos_bot', chats: [] })
     ]);
     expect(groupRouting(firstAlias(config))).toBe('legacy');
-    expect(groupRouting(config.aliases[1] as TelegramAliasConfig)).toBe('scoped');
+    const second = config.aliases[1];
+    expect(second).toBeDefined();
+    if (second !== undefined) {
+      expect(groupRouting(second)).toBe('scoped');
+    }
   });
 });
 
