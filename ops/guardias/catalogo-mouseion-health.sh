@@ -19,6 +19,7 @@ DESTINO="${CAUCE_DESTINO_AVISO:-steven_dm}"
 GATEWAY="${CAUCE_GATEWAY_URL:-https://100.64.0.6:8443}"
 PKI="${CAUCE_PKI:-/home/stev/.config/cauce-v3/container-pki}"
 INFORME="${CATALOGO_INFORME:-/var/log/cauce-catalogo-health.log}"
+ESTADO="${CATALOGO_ESTADO:-${INFORME%.log}.avisadas}"
 SALA_AVISO="${CAUCE_SALA_AVISO:-grp.steven}"
 TENANT_AVISO="${CAUCE_TENANT_AVISO:-Steven}"
 ESPERA="${CATALOGO_TIMEOUT:-20}"
@@ -111,8 +112,16 @@ fi
 
 [ ${#ROTAS[@]} -eq 0 ] && exit 0
 
-# La clave lleva el dia Y la huella del conjunto roto: no repite el mismo aviso, pero si algo
-# NUEVO se cae el mismo dia, vuelve a avisar en vez de quedarse callado.
+# Avisa SOLO si hay alguna rota que no estuviera en el aviso anterior. Sin esto, que el conjunto
+# se ENCOJA (una se arregla, o una sale de la lista) volvia a disparar un aviso con un subconjunto
+# de lo ya dicho: ruido con forma de alarma, que es lo que hace que se dejen de leer.
+NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | sort | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
+printf '%s\n' "${ROTAS[@]}" | sort > "$ESTADO" 2>/dev/null || true
+if [ -z "$NUEVAS" ]; then
+  echo "sin novedades respecto del aviso anterior: no aviso"
+  exit 1
+fi
+
 HUELLA="$(printf '%s\n' "${ROTAS[@]}" | sort | sha256sum | cut -c1-12)"
 CUERPO="$(printf 'Catalogo Mouseion: %d de %d productos NO responden.\n\n%s\n\nMedido %s. Detalle e historico en %s del VPS.' \
   "${#ROTAS[@]}" "$TOTAL" "$(printf '%s\n' "${ROTAS[@]}" | head -6 | sed 's/^/  /')" "$SELLO" "$INFORME")"
