@@ -15,7 +15,10 @@ https://www.elenxos.com
 https://agora.elenxos.com
 https://apotheke.stevenvallejo.com
 https://servicios.stevenvallejo.com
-https://sinergia-pos.vercel.app
+# Sinergia POS SALIO del catalogo de Steven: paso a Jhon, proyecto saldantia. Vive en
+# https://pos.saldantia.cloud (200, IP 2.25.89.230, fuera de Vercel). El despliegue viejo
+# https://sinergia-pos.vercel.app sigue dando 500 pero ya no es de Steven: vigilarlo era
+# alarmarle por un producto ajeno, y un falso positivo sube el umbral y ciega al resto.
 https://agentes.elenxos.com
 https://natacion-asistencia.vercel.app
 https://sigre.elenxos.com
