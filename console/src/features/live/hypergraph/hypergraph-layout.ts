@@ -38,7 +38,6 @@ import {
 export {
   NODE_FOOTPRINT,
   centroidOf,
-  closedSmoothPath,
   convexHull,
   footprintsOverlap,
   hashString,
@@ -53,16 +52,12 @@ export {
 
 export {
   aclCaption,
-  placeLabels,
   rectsOverlap,
   type LabelRect,
 } from './layout-labels';
 
 export {
-  DEFAULTS,
   SEP,
-  anchorEdges,
-  arcBetween,
   collect,
   edgeKey,
   relax,
@@ -72,7 +67,7 @@ export {
 } from './layout-nodes';
 
 /** An alias. Exists only once even if it belongs to several rooms or tenants. */
-export interface HyperNode {
+interface HyperNode {
   alias: string;
   /** Label to display. `null` when the backend did not report an alias (shown as UNKNOWN). */
   label: string | null;
@@ -87,7 +82,7 @@ export interface HyperNode {
 }
 
 /** A room: the hyperedge itself. */
-export interface HyperEdge {
+interface HyperEdge {
   key: string;
   tenantId: string;
   tenantLabel: string | null;
@@ -120,7 +115,7 @@ export interface HyperEdge {
 }
 
 /** An ACL edge between tenants: this one IS binary and directed. */
-export interface AclArc {
+interface AclArc {
   key: string;
   fromTenant: string;
   toTenant: string;
@@ -144,7 +139,7 @@ export interface AclArc {
   angle: number;
 }
 
-export interface TenantBlob {
+interface TenantBlob {
   id: string;
   label: string | null;
   centroid: Point;
