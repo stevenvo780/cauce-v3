@@ -607,6 +607,18 @@ export function registerTerminalSessionControl(
     try {
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
+      // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
+      // /terminal/sessions` comprueba las dos y estas dos rutas —rotar el dueno y revocar— sólo
+      // comprobaban la primera: un principal cuya membresia no tiene `allow_control` llegaba hasta
+      // el CAS de `terminal_sessions` y recibia 409, nunca 403. El CAS lo frena —hace falta el
+      // owner_token—, pero la puerta faltaba, y dos capas de autorizacion que no coinciden es lo
+      // mismo que escondia el permiso ausente detras de un 404 en el perfil.
+      try {
+        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
+      } catch {
+        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
+        return;
+      }
       const operator = resolveOperator(request, actor, config);
       const consoleSubject = subjectFor(actor);
       if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
@@ -687,6 +699,18 @@ export function registerTerminalSessionControl(
     try {
       const actor = await principal(request);
       requireOperatorPermission(actor, 'control');
+      // `requireOperatorPermission` mira la SESION; quien concede `control` es la BD. `POST
+      // /terminal/sessions` comprueba las dos y estas dos rutas —rotar el dueno y revocar— sólo
+      // comprobaban la primera: un principal cuya membresia no tiene `allow_control` llegaba hasta
+      // el CAS de `terminal_sessions` y recibia 409, nunca 403. El CAS lo frena —hace falta el
+      // owner_token—, pero la puerta faltaba, y dos capas de autorizacion que no coinciden es lo
+      // mismo que escondia el permiso ausente detras de un 404 en el perfil.
+      try {
+        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
+      } catch {
+        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
+        return;
+      }
       const operator = resolveOperator(request, actor, config);
       const consoleSubject = subjectFor(actor);
       if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');

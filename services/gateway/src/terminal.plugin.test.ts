@@ -1162,6 +1162,33 @@ describe('terminal control plane', () => {
     expect(response.json()).toEqual({ error: 'forbidden', reason: 'control_permission_required' });
   });
 
+  it('revocar y robar un terminal tambien pasan por la puerta de la BD, no solo por la sesion', async () => {
+    // Medido el 2026-08-30 contra produccion: con un principal cuya membresia NO tenia
+    // `allow_control`, estas dos rutas devolvian 409 `stale_terminal_owner` sobre UUID inventados,
+    // nunca 403. `requireOperatorPermission` mira la SESION y pasaba; la comprobacion contra la BD
+    // que si hace `POST /terminal/sessions` no estaba. El CAS frenaba la toma real —hace falta el
+    // owner_token—, pero la puerta faltaba y las dos capas de autorizacion no coincidian.
+    await report([presence()]);
+    const abierta = (await openSession({})).json<{ session_id: string }>();
+    controlPermission = () => Promise.reject(new Error('principal lacks control permission'));
+
+    const robo = await app.inject({
+      method: 'POST', url: `/v3/console/terminal/sessions/${abierta.session_id}/owner`,
+      headers: { origin: ORIGIN },
+      payload: { expected_owner_generation: 1, owner_token: 'x'.repeat(43), request_id: randomUUID() },
+    });
+    expect(robo.statusCode).toBe(403);
+    expect(robo.json()).toEqual({ error: 'forbidden', reason: 'control_permission_required' });
+
+    const revocacion = await app.inject({
+      method: 'DELETE', url: `/v3/console/terminal/sessions/${abierta.session_id}`,
+      headers: { origin: ORIGIN },
+      payload: { owner_generation: 1, owner_token: 'x'.repeat(43), request_id: randomUUID() },
+    });
+    expect(revocacion.statusCode).toBe(403);
+    expect(revocacion.json()).toEqual({ error: 'forbidden', reason: 'control_permission_required' });
+  });
+
   it('caps concurrent sessions per operator', async () => {
     await build({ maxSessionsPerOperator: 1 });
     await report([presence()]);
