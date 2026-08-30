@@ -1,11 +1,8 @@
 /**
- * The trap the five modals of this console share.
- *
- * Tested straight, and not only through a dialog, because each dialog exercises the one shape of
- * content it happens to have: none of them has a disabled field, so no test of theirs can say what
- * the trap does when the last candidate cannot take focus. That is the case that lets the keyboard
- * out to a page already switched off with `inert`, where the caret is invisible and there is no way
- * back without the mouse.
+ * The trap the five modals of this console share, tested straight and not through a dialog: none
+ * of them has a disabled field, so no test of theirs can say what the trap does when the last
+ * candidate cannot take focus — the case that lets the keyboard out to an `inert` page, where the
+ * caret is invisible and there is no way back without the mouse.
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -66,11 +63,8 @@ it('sin ningún control dentro, no revienta ni secuestra la tecla', async () => 
   expect(screen.getByTestId('caja')).toBeInTheDocument();
 });
 
-/**
- * A disabled field cannot take focus: `.focus()` on it is a no-op and the caret stays where it
- * was, so the next Tab walks out of the dialog. The trap has to ignore it the same way it already
- * ignores a disabled button.
- */
+/** `.focus()` on a disabled field is a no-op, so counting it as the last candidate makes the wrap
+    do nothing and the next Tab leaves the dialog. It has to be ignored like a disabled button. */
 it('un campo deshabilitado no cuenta como control: el tabulador vuelve al primero igual', async () => {
   const user = userEvent.setup();
   render(<Caja>

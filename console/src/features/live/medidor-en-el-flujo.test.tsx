@@ -11,8 +11,8 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { beforeEach, expect, it } from 'vitest';
 import type { AgentPerfil } from '../../api/types';
+import { beforeEach, expect, it } from 'vitest';
 import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
@@ -69,7 +69,7 @@ async function abrirPerfilDeKant() {
 it('el campo de rol se puede escribir de verdad en el flujo real, no sólo en el componente', async () => {
   const { cajon } = await abrirPerfilDeKant();
   const campos = within(cajon).getAllByRole('textbox');
-  const rol = campos.find((campo) => campo.parentElement?.textContent?.includes('Le llega al agente'));
+  const rol = campos.find((campo) => campo.parentElement?.textContent.includes('Le llega al agente'));
   expect(rol, 'el campo con el medidor tiene que existir').toBeDefined();
   expect(rol).toBeEnabled();
 });
@@ -77,7 +77,7 @@ it('el campo de rol se puede escribir de verdad en el flujo real, no sólo en el
 it('pasado de 1200 el aviso SE VE en el cajón, escrito en el campo real', async () => {
   const { user, cajon } = await abrirPerfilDeKant();
   const rol = within(cajon).getAllByRole('textbox')
-    .find((campo) => campo.parentElement?.textContent?.includes('Le llega al agente'));
+    .find((campo) => campo.parentElement?.textContent.includes('Le llega al agente'));
   if (!rol) throw new Error('no hay campo de rol con medidor');
 
   await user.click(rol);
@@ -94,7 +94,7 @@ it('pasado de 1200 el aviso SE VE en el cajón, escrito en el campo real', async
 it('🔴 CONTROL NEGATIVO: con 1200 justos no hay aviso ninguno', async () => {
   const { user, cajon } = await abrirPerfilDeKant();
   const rol = within(cajon).getAllByRole('textbox')
-    .find((campo) => campo.parentElement?.textContent?.includes('Le llega al agente'));
+    .find((campo) => campo.parentElement?.textContent.includes('Le llega al agente'));
   if (!rol) throw new Error('no hay campo de rol con medidor');
 
   await user.click(rol);
@@ -120,12 +120,12 @@ it('con el campo apagado por runtime sin verificar, un rol ya pasado SIGUE avisa
         purpose: 'Hub de la flota.', role_summary: 'b'.repeat(1300), human_brief: null,
         responsibilities: [], restrictions: [], tools: [], operating_rules: [],
       },
-    } as Partial<AgentPerfil>),
+    }),
   )));
   const { cajon } = await abrirPerfilDeKant();
 
   const rol = within(cajon).getAllByRole('textbox')
-    .find((campo) => campo.parentElement?.textContent?.includes('Le llega al agente'));
+    .find((campo) => campo.parentElement?.textContent.includes('Le llega al agente'));
   expect(rol).toBeDisabled();
   expect(within(cajon).getByText(/1300 puntos de código · 1300 unidades UTF-16 \/ 1200/i)).toBeInTheDocument();
   expect(within(cajon).getAllByRole('alert').map((a) => a.textContent).join(' '))
