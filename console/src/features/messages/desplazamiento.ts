@@ -11,7 +11,7 @@
  */
 export const MARGEN_PEGADO = 80;
 
-export interface CajaDesplazable {
+interface CajaDesplazable {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;

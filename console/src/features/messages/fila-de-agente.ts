@@ -9,9 +9,9 @@ export const ROTULO_DE_LEASE: Readonly<Record<LeaseState, string>> = {
 };
 
 /** `detallada` = one chip per figure, known zeros included; `breve` = a single line with only what is above zero. */
-export type FormaDeLaCola = 'detallada' | 'breve';
+type FormaDeLaCola = 'detallada' | 'breve';
 
-export interface CifraViva {
+interface CifraViva {
   kind: 'pending' | 'running';
   texto: string;
 }
