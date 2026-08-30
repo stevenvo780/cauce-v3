@@ -77,3 +77,6 @@ ops/private/credentials/**
 
 # Volcados del MCP de Playwright (logs y snapshots de una sesion de navegador).
 .playwright-mcp/
+
+# Ordenes de trabajo para la flota: locales, nunca versionadas.
+ordenes-locales/
