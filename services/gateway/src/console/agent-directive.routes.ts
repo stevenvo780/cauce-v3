@@ -38,7 +38,7 @@ export interface AgentDirectiveDeps {
 }
 
 /** The relay has its own timeouts; this one bounds the endpoint's overall operation. */
-export const DIRECTIVE_READ_BUDGET_MS = 5_000;
+const DIRECTIVE_READ_BUDGET_MS = 5_000;
 const DIRECTIVE_READ_CONCURRENCY = 3;
 
 /**

@@ -62,7 +62,7 @@ const OWNER_ROTATION_KEYS = [
 ] as const;
 const DELETE_SESSION_KEYS = ['owner_generation', 'owner_token', 'request_id'] as const;
 
-export interface TerminalControlPlaneOptions {
+interface TerminalControlPlaneOptions {
   readonly pool: DatabasePool;
   readonly authProvider: AuthProvider;
   readonly config: TerminalConfig;

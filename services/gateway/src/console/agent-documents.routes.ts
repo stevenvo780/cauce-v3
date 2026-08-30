@@ -156,7 +156,7 @@ export interface AgentFactsProbe {
   ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceReadError | { error: 'conflict'; reason: string }>;
 }
 
-export interface AgentDocumentsDeps {
+interface AgentDocumentsDeps {
   /** Authenticates the principal and requires the role permission for the operation. */
   authorize(
     request: unknown, permission: 'read' | 'control'
@@ -178,7 +178,7 @@ export interface AgentDocumentsDeps {
   probe: AgentFactsProbe;
 }
 
-export interface DocumentRow extends AgentDocument {
+interface DocumentRow extends AgentDocument {
   /** The content can be requested via `:kind/content`; it does not imply it can be written. */
   readonly readable: boolean;
   /** Never `true` if the facts are not measured: this is stated by the field itself, not by a comment. */
@@ -206,7 +206,7 @@ function harnessFromRegistry(value: string | null | undefined): HarnessKind {
     ? value : 'unknown';
 }
 
-export function buildDocumentsResponse(
+function buildDocumentsResponse(
   tenantId: string,
   alias: string,
   facts: RuntimeFacts,

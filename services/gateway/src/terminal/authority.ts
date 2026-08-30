@@ -85,7 +85,7 @@ export function fleetIdentityLabel(placement: FleetIdentity): string {
 /* Grants file                                                                */
 /* -------------------------------------------------------------------------- */
 
-export interface TerminalGrant {
+interface TerminalGrant {
   readonly operator: string;
   readonly tenant_id: string;
   readonly alias: string;
