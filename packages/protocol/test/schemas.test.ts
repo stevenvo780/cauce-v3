@@ -44,7 +44,7 @@ describe('publish receipt correlation contract', () => {
     expect(receipt.causal_hash).toBe(publishReceiptCausalHash(receipt));
     for (const field of ['idempotency_key', 'tenant_id', 'actor_alias', 'request_hash', 'causal_hash'] as const) {
       const uncorrelated = { ...receipt };
-      delete uncorrelated[field];
+      Reflect.deleteProperty(uncorrelated, field);
       expect(PublishResultSchema.safeParse(uncorrelated).success, field).toBe(false);
     }
   });

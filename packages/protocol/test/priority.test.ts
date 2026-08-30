@@ -47,7 +47,7 @@ describe('delivery priority bands', () => {
         room_id: 'grp.steven',
         recipients: [{ tenant_id: 'Steven', alias: 'kant' }],
         body: { text: 'band' },
-        idempotency_key: `band-${priority}`,
+        idempotency_key: `band-${String(priority)}`,
         priority
       }).priority).toBe(priority);
     }

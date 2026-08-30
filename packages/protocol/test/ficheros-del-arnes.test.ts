@@ -105,7 +105,7 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
 
   // ...and in NO other one. This is the control that makes the test able to fail: without it, a
   // generator that wrote the whole profile in the seven files would pass the assertions above.
-  const marcadores: ReadonlyArray<readonly [string, RegExp]> = [
+  const marcadores: readonly (readonly [string, RegExp])[] = [
     ["SOUL.md", /PROPOSITO-SOUL/], ["IDENTITY.md", /ROL-IDENTITY/], ["USER.md", /HUMANO-USER/],
     ["AGENTS.md", /RESPONSABILIDAD-AGENTS/], ["TOOLS.md", /HERRAMIENTA-TOOLS/],
   ];
@@ -114,7 +114,7 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
       if (fichero.nombre === duenno) continue;
       assert.doesNotMatch(
         fichero.texto, marcador,
-        `${marcador} se coló en ${fichero.nombre}; sólo pertenece a ${duenno}`,
+        `${String(marcador)} se coló en ${fichero.nombre}; sólo pertenece a ${duenno}`,
       );
     }
   }
