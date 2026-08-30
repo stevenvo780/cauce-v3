@@ -37,6 +37,29 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
   }
 
   /**
+   * Forgets the pointer to a native session the harness can no longer find.
+   *
+   * This is not housekeeping: it is the only way out of the loop. A dead `native_id` kept on disk
+   * makes every retry reproduce the same start-up failure, and since that failure is retryable the
+   * adapter repeats it indefinitely. Measured on kratos on 2026-08-29, and seen before on zeus and
+   * atlas: it was repaired by hand by deleting this very entry from `sessions.json`.
+   *
+   * Returns whether there was anything to forget, so the caller can log the repair only when it
+   * actually happened.
+   */
+  async forgetSession(key: string): Promise<boolean> {
+    return this.serialized(async () => {
+      if (this.sessions.sessions[key] === undefined) return false;
+      const resto: Record<string, SessionRecord> = { ...this.sessions.sessions };
+      delete resto[key];
+      const next = validateSessionsFile({ version: 1, sessions: resto });
+      await this.atomicWrite("sessions.json", next);
+      this.sessions = next;
+      return true;
+    });
+  }
+
+  /**
    * Confirms a native OpenClaw session and publishes in the SAME rename the selector consumed
    * by the terminal TUI.
    *

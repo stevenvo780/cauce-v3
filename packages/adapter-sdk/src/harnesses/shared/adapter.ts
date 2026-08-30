@@ -47,6 +47,7 @@ import {
   abortadoPorApagado,
   cancellationMessage,
   elTestigoDiceQueNoEmpezo,
+  esSesionNativaInexistente,
   nuncaEmpezoElTurno,
   sanitizeProcessOutput,
   sinMarcaDeArranque,
@@ -413,6 +414,17 @@ export class HarnessAdapter {
         // Extract real cause from stderr, sanitized to avoid leaking secrets
         const causeDetail = sanitizeProcessOutput(sinMarcaDeArranque(result.stderr));
         if (nuncaEmpezoElTurno(result, causeDetail)) {
+          // The harness cannot find the conversation we handed it: the stored pointer is dead.
+          // Without forgetting it, the retry that this very `retryable: true` triggers resumes the
+          // same id and fails identically, forever. Measured on kratos on 2026-08-29 (and before
+          // that on zeus and atlas): the way out was deleting the entry from `sessions.json` by
+          // hand. The next attempt opens a new conversation, which is the only thing left: the
+          // previous one no longer exists on the provider's side.
+          if (effectiveSessionKey !== undefined
+            && session.nativeId !== undefined
+            && esSesionNativaInexistente(causeDetail)) {
+            await this.store.forgetSession(this.sessionStoreKey(effectiveSessionKey));
+          }
           const detalle = causeDetail
             ? `: ${causeDetail}`
             : "; the transport witnessed that it never started";

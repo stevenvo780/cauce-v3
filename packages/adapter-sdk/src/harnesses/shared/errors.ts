@@ -28,6 +28,25 @@ export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
 }
 
 /**
+ * Does the harness say the native session we handed it NO LONGER EXISTS?
+ *
+ * STRICT subset of `esDiagnosticoDeArranque`: only the phrases in which the CLI states it cannot
+ * find the conversation. Retrying with the same `native_id` fails identically, forever, so the
+ * stored pointer has to be forgotten (see `HarnessAdapter.executeUnlocked`).
+ *
+ * What is left OUT is deliberate: `session id ... already in use` means the conversation EXISTS
+ * and someone else holds it — forgetting it would open a new one and abandon the live thread —,
+ * and an unreadable `config.toml` or a missing binary say nothing about the session.
+ */
+export function esSesionNativaInexistente(detalle: string | undefined): boolean {
+  if (detalle === undefined || detalle === "") return false;
+  return [
+    /no conversation found with session id/i,
+    /no rollout found/i,
+  ].some((patron) => patron.test(detalle));
+}
+
+/**
  * Determines with certainty whether the harness process failed before starting the turn execution.
  */
 export function nuncaEmpezoElTurno(result: CommandRunResult, detalle: string | undefined): boolean {
