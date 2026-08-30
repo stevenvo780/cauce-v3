@@ -3,6 +3,7 @@ import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
 } from '../context/siembra-del-perfil.js';
 import { nativeProfileContextEnabled } from '../context/native-profile-context.js';
+import { signalAborted } from '../runtime-state.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
@@ -189,11 +190,9 @@ export class AdapterClient {
           } finally {
             signal.removeEventListener('abort', closeOnAbort);
           }
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while frame consumption awaits.
-          if (!signal.aborted) throw new Error('Consumer connection closed');
+          if (!signalAborted(signal)) throw new Error('Consumer connection closed');
         } catch (error) {
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while connection work awaits.
-          if (signal.aborted) break;
+          if (signalAborted(signal)) break;
           if (error instanceof AdapterError && !error.retryable) throw error;
           const errorCode = connectionErrorCode(error);
           this.onError(errorCode);
@@ -208,8 +207,9 @@ export class AdapterClient {
           this.activeConnection = undefined;
           await connection?.close().catch(() => undefined);
         }
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while connection cleanup awaits.
-        if (!signal.aborted) await this.clock.sleep(this.backoff.nextDelay(), signal).catch(() => undefined);
+        if (!signalAborted(signal)) {
+          await this.clock.sleep(this.backoff.nextDelay(), signal).catch(() => undefined);
+        }
       }
     } finally {
       this.engine.stop();
@@ -489,16 +489,13 @@ export class AdapterClient {
         confirmation,
       ]);
     } catch (error) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Promise callbacks can settle this state while sendEvent awaits.
-      if (!settled) {
-        reject(error instanceof AdapterError
-          ? error
-          : new AdapterError(
-              'EXECUTION_INTENT_CONFIRMATION_FAILED',
-              'Execution intent could not be sent to the gateway',
-              true,
-            ));
-      }
+      reject(error instanceof AdapterError
+        ? error
+        : new AdapterError(
+            'EXECUTION_INTENT_CONFIRMATION_FAILED',
+            'Execution intent could not be sent to the gateway',
+            true,
+          ));
       throw error instanceof AdapterError
         ? error
         : new AdapterError(
@@ -572,8 +569,7 @@ export class AdapterClient {
     const interval = this.config.heartbeatMs ?? 15_000;
     while (!signal.aborted) {
       await this.clock.sleep(interval, signal);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while clock.sleep awaits.
-      if (signal.aborted || this.engine.epoch === 0) continue;
+      if (signalAborted(signal) || this.engine.epoch === 0) continue;
       const heartbeat: HeartbeatFrame = {
         type: 'heartbeat',
         instance_id: this.config.instanceId,

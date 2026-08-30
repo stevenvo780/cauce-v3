@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-useless-constructor: "error" */
+import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { correlateEnvelopePrompt } from "../envelope.js";
 import { turnInFlight } from "../pane.js";
@@ -44,7 +45,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
 
     const ready = await this.preflight(request.signal);
-    if ("cancelled" in ready || request.signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while preflight is pending.
+    if ("cancelled" in ready || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
     }
     if (!ready.ok) return this.degrade(ready.reason, ready.detail, request);
@@ -79,7 +80,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         request,
       );
     }
-    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false }); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change during quarantine reconciliation.
+    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
 
     // Paste and Enter must be a single operation from the owner's perspective: between checking
     // the input box is free and submitting it, no extra waits beyond what is strictly required.
@@ -88,7 +89,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       identity,
       request.signal,
     );
-    if ("cancelled" in acquired || request.signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while input acquisition is pending.
+    if ("cancelled" in acquired || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
     }
     if ("replaced" in acquired) return replacedBeforeSubmission();
@@ -100,19 +101,19 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     // we can CLAIM afterwards and the notice read by the owner. See `turnInFlight`.
     const generating = turnInFlight(acquired.pane);
     const baseline = await this.baseline(request.signal);
-    if (baseline === undefined || request.signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change after the filesystem baseline completes.
+    if (baseline === undefined || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
     }
     if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal))) {
       return replacedBeforeSubmission();
     }
-    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false }); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while pane identity verification is pending.
+    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
 
     const correlationId = randomBytes(32).toString("hex");
     const promptText = correlateEnvelopePrompt(request.stdin, correlationId);
     const armed = await this.armPendingQuarantine(identity, correlationId);
     if (!armed.ok) {
-      if (request.signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while the quarantine marker is persisted.
+      if (signalAborted(request.signal)) {
         return result({ cancelled: true, harnessStarted: false });
       }
       return this.degrade(
@@ -124,7 +125,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const pending = armed.pending;
 
     const buffer = `cauce-${this.options.alias}-${correlationId}`;
-    if (request.signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while the quarantine marker is persisted.
+    if (signalAborted(request.signal)) {
       await this.disarmPendingQuarantine(pending);
       return result({ cancelled: true, harnessStarted: false });
     }
@@ -140,7 +141,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     }
     if (acquiredBarrier.state === "busy") {
       await this.disarmPendingQuarantine(pending);
-      if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false }); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while quarantine cleanup is pending.
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
       return this.degrade(
         "input_busy",
         "otra exclusión de input ya protege la caja; no se adopta ni se concatena",
@@ -149,7 +150,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     }
     if (acquiredBarrier.state === "unsafe_hooks") {
       await this.disarmPendingQuarantine(pending);
-      if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false }); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while quarantine cleanup is pending.
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
       return this.degrade(
         "handshake_failed",
         "la configuración tmux tiene hooks de input que abren una carrera; no se tocó la caja",
@@ -195,7 +196,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl())) {
         return replacedBeforeSubmission();
       }
-      if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false }); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while cleanup and identity verification are pending.
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
       if (paste.reason === "input_busy") {
         return this.degrade(
           "input_busy",
@@ -392,14 +393,14 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         occurredAt: new Date().toISOString(),
         fellBack: false,
       }, ensure.sessionId);
-      if (signal.aborted) return { ok: false, cancelled: true }; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while the session notice is pending.
+      if (signalAborted(signal)) return { ok: false, cancelled: true };
       // A freshly born TUI is not "the same as before": the old PID means nothing now.
       this.lastPanePid = ensure.pid;
       this.lastSessionId = undefined;
       return { ok: true, sessionId: ensure.sessionId, identity };
     }
     await this.notePaneIdentity(ensure.pid);
-    if (signal.aborted) return { ok: false, cancelled: true }; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while pane identity notice is pending.
+    if (signalAborted(signal)) return { ok: false, cancelled: true };
     return { ok: true, sessionId: ensure.sessionId, identity };
   }
 

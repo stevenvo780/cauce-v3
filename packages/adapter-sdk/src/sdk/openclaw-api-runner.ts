@@ -1,4 +1,5 @@
 import { isIP } from "node:net"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { signalAborted } from "../runtime-state.js";
 import { ProcessExecutionError } from "./errors.js";
 import { readBearerTokenFile } from "./secure-files.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "./types.js";
@@ -91,8 +92,8 @@ export class OpenClawApiRunner implements CommandRunner {
     }
     if (request.signal.aborted) throw this.cancelledBeforeDispatch();
 
-    const token = await readBearerTokenFile(this.tokenFile); // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The signal can abort while the token file is read.
-    if (request.signal.aborted) throw this.cancelledBeforeDispatch();
+    const token = await readBearerTokenFile(this.tokenFile);
+    if (signalAborted(request.signal)) throw this.cancelledBeforeDispatch();
     const controller = new AbortController();
     let timedOut = false;
     let cancelled = false;

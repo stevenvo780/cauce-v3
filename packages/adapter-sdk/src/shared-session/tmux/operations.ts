@@ -1,4 +1,5 @@
 import { inputBoxState } from "../pane.js";
+import { signalAborted } from "../../runtime-state.js";
 import {
   CREATION_NONCE_OPTION,
   PANE_ID_PATTERN,
@@ -8,7 +9,6 @@ import {
   hasSessionId,
   paneIdentity,
   samePaneIdentity,
-  signalIsAborted,
   type CreatedSessionOwnership,
   type PaneHarnessIdentity,
   type PaneIdentity,
@@ -300,7 +300,7 @@ export async function pastePrompt(
     ? {}
     : { timeoutMs: options.timeoutMs };
   try {
-    if (signalIsAborted(options.signal)) {
+    if (signalAborted(options.signal)) {
       reason = "cancelled";
     } else {
       const firstGuard = options.verifyInputEmpty === false
@@ -326,7 +326,7 @@ export async function pastePrompt(
           // server and are treated as ambiguous.
           state = load.exitCode === 78 ? "not_pasted" : "ambiguous";
           reason = load.exitCode === 78 ? "mutation_rejected" : undefined;
-        } else if (signalIsAborted(options.signal)) {
+        } else if (signalAborted(options.signal)) {
           // load-buffer finished, but paste-buffer has not yet been invoked: no input reached the pane.
           state = "not_pasted";
           reason = "cancelled";

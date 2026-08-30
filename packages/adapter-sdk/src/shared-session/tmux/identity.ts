@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { signalAborted } from "../../runtime-state.js";
 import { TMUX_SOCKET } from "../types.js";
 
 export interface TmuxResult {
@@ -55,7 +56,7 @@ export class CliTmux implements TmuxController {
     stdin?: string,
     control: TmuxRunControl = {},
   ): Promise<TmuxResult> {
-    if (control.signal?.aborted === true) {
+    if (signalAborted(control.signal)) {
       return Promise.resolve({ exitCode: null, stdout: "", stderr: "tmux client aborted" });
     }
     return new Promise<TmuxResult>((resolveRun) => {
@@ -85,7 +86,7 @@ export class CliTmux implements TmuxController {
       control.signal?.addEventListener("abort", aborted, { once: true });
       // The signal can abort between the pre-spawn check and the listener registration. Re-reading
       // it after registering closes that window without leaving an orphan client.
-      if (control.signal?.aborted === true) aborted();
+      if (signalAborted(control.signal)) aborted();
       const timeout = setTimeout(() => {
         stopClient("timed_out");
       }, timeoutMs);
@@ -175,10 +176,6 @@ const PANE_IDENTITY_FORMAT = [
 ].join("\t");
 
 export const QUARANTINED_PANE_OPTION = "@cauce_quarantined_pane";
-
-export function signalIsAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true;
-}
 
 /** A tmux `$N` id is exact; unlike a name, it never allows prefix-matching. */
 export async function hasSessionId(tmux: TmuxController, sessionId: string): Promise<boolean> {

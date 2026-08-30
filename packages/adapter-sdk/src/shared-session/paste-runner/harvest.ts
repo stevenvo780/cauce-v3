@@ -1,4 +1,5 @@
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { signalAborted } from "../../runtime-state.js";
 import { inspectExactPane, interruptPane, samePaneProcess, type PaneIdentity } from "../tmux.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
 import { PasteSessionRunnerBase } from "./base.js";
@@ -78,7 +79,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             activeIdentity.paneId,
             this.tmuxControl(request.signal),
           );
-          if (cancelObservedAt !== undefined) continue; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- The abort listener can run while the tmux probe is pending.
+          if (signalAborted(request.signal)) continue;
           if (observed.state === "unreadable") {
             return {
               result: await this.ambiguousCommittedState(
@@ -184,7 +185,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           // full budget waiting for an envelope already written. Scoped to our entry, so
           // a pre-paste envelope cannot sneak in.
           const rescue = port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key);
-          if (request.signal.aborted) continue; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A transcript callback can synchronously abort the shared request signal.
+          if (signalAborted(request.signal)) continue;
           if (rescue !== undefined) {
             const harvested = await beforeAbort(
               () => this.harvested(rescue, injectedTurn.sessionId, generating),

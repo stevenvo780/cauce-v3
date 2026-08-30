@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { signalAborted } from "../runtime-state.js";
 import {
   CREATION_NONCE_OPTION,
   capturePane,
@@ -28,7 +29,6 @@ import {
   SESSION_ALIAS_OPTION,
   SESSION_HARNESS_OPTION,
   paneCommandMatches,
-  signalAborted,
   type EnsureFailure,
   type SharedSessionSpec,
   verifyExistingSessionIdentity,

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/no-unnece
 import { createSecureContext } from 'node:tls';
 import WebSocket, { type ClientOptions, type RawData } from 'ws';
 import { WsInboundSchema, WsOutboundSchema, type Tenant } from '@cauce/protocol';
+import { signalAborted } from '../runtime-state.js';
 import { readBearerTokenFile, readOwnerOnlyFile, SecureFileError } from './secure-files.js';
 import type {
   AdapterLog,
@@ -365,8 +366,8 @@ export class WebSocketConsumerConnector implements ConsumerConnector {
 
   async connect(signal: AbortSignal): Promise<ConsumerConnection> {
     if (signal.aborted) throw abortError(signal);
-    const socketOptions = await this.connectionOptions(); // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The signal can abort while credential files are read.
-    if (signal.aborted) throw abortError(signal);
+    const socketOptions = await this.connectionOptions();
+    if (signalAborted(signal)) throw abortError(signal);
     return new Promise<ConsumerConnection>((resolve, reject) => {
       const socket = new WebSocket(this.url, socketOptions);
       const abort = (): void => {
