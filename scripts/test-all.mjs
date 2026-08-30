@@ -19,12 +19,12 @@ const SUITES = [
   'test:e2e',
 ];
 
-/* Kept out of the matrix: the developer machine cannot assume their tooling, and test:coverage is
+/* Kept out of the matrix: the developer machine cannot assume their tooling, and test:coverage:* is
    test:unit instrumented, so running it here would repeat every unit test. */
 const SEPARATELY_GATED = new Set([
   'test:container-supervisor',
   'test:container-cutover',
-  'test:coverage',
+  'test:coverage:unit-and-protocol',
 ]);
 
 
