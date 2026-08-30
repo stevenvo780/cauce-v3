@@ -29,6 +29,7 @@ const ensuredDatabaseUrl: string = databaseUrl;
 let pool: ReturnType<typeof createPool> | undefined;
 let fleetModel: FleetReadModel | undefined;
 
+// eslint-disable-next-line @typescript-eslint/no-deprecated
 const server = new Server(
   {
     name: 'mcp-fleet-monitor',
@@ -246,7 +247,7 @@ async function main() {
     }
 
     console.error('[mcp-fleet-monitor] Connected to database');
-    console.error(`[mcp-fleet-monitor] Tenant: ${tenantId}`);
+    console.error(`[mcp-fleet-monitor] Tenant: ${ensuredTenantId}`);
     console.error('[mcp-fleet-monitor] Connecting stdio transport...');
 
     await server.connect(transport);
