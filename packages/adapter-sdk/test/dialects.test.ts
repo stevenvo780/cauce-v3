@@ -148,7 +148,7 @@ test("plain fallback rejects non-visible, oversized and object-like malformed ou
   assert.equal(sinAndamiaje.status, "done");
   assert.equal(sinAndamiaje.retryable, false);
   assert.deepEqual(sinAndamiaje.messages, []);
-  assert.match(sinAndamiaje.reply ?? "", /faltaba[^\n]*'messages'/u);
+  assert.match(sinAndamiaje.reply, /faltaba[^\n]*'messages'/u);
   // Lo que NO se ablando: un campo PRESENTE pero mal formado sigue siendo fallo duro, porque eso
   // es una violacion de contrato y no un descuido.
   assert.throws(

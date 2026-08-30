@@ -45,8 +45,9 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
   async forgetSession(key: string): Promise<boolean> {
     return this.serialized(async () => {
       if (this.sessions.sessions[key] === undefined) return false;
-      const resto: Record<string, SessionRecord> = { ...this.sessions.sessions };
-      delete resto[key];
+      const resto: Record<string, SessionRecord> = Object.fromEntries(
+        Object.entries(this.sessions.sessions).filter(([clave]) => clave !== key),
+      );
       const next = validateSessionsFile({ version: 1, sessions: resto });
       await this.atomicWrite("sessions.json", next);
       this.sessions = next;

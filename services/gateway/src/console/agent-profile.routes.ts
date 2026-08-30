@@ -482,7 +482,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       // the actor can ALREADY read this alias —its GET returns 200 on this very URL— saying so
       // protects nothing and lies about the cause: the operator gets "does not exist" for an agent
       const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
-      if (visible && visible.tenant_id === tenantId && visible.alias === alias) {
+      if (visible?.tenant_id === tenantId && visible.alias === alias) {
         return reply.code(403).send({
           error: 'forbidden',
           message: `el actor puede leer ${tenantId}/${alias} pero no tiene permiso de control sobre él`,
