@@ -130,7 +130,13 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
       <div className="messenger-agent-list" aria-label="Lista de agentes">
         {loading && agents.length === 0 ? <LoadingState label="Sincronizando la flota del servidor…" />
           : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar la flota: {error.message}</EmptyState></div>
-            : visibles.length === 0 ? <EmptyState>Ningún agente coincide con el filtro.</EmptyState>
+            : visibles.length === 0 ? (
+              <EmptyState>
+                {query.trim() || tenantId !== 'all'
+                  ? 'Ningún agente coincide con el filtro.'
+                  : 'No hay ningún agente visible en las fuentes que contestaron.'}
+              </EmptyState>
+            )
               : visibles.map((agent) => {
                 const forma = formaDeLaCola(salud[agent.id]);
                 return (

@@ -103,6 +103,7 @@ input, select, textarea { min-width: 0; }
 
 /* --- Breakpoint: max-width 460px --- */
 @media (max-width: 460px) {
+  .panel-header { align-items: stretch; flex-direction: column; }
   .adapter-meta, .audit-row dl { grid-template-columns: 1fr; }
   .terminal-gate { grid-template-columns: 1fr; }
   .terminal-cap-meta { flex-direction: column; gap: 9px; }

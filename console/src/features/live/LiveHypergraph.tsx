@@ -233,8 +233,8 @@ export function LiveHypergraph({
       <p className="lhg-empty">Leyendo las salas de la topología…</p>
     ) : (
       <p className="lhg-empty">
-        El control plane todavía no informó ninguna sala, así que no hay grupos que dibujar. La
-        topología no se pudo leer; los muñecos siguen abajo, en la lista.
+        El control plane informó cero salas, así que no hay grupos que dibujar. Los muñecos siguen
+        abajo, en la lista.
       </p>
     );
   }

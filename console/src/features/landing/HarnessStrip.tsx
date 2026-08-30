@@ -48,7 +48,7 @@ export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; err
       {error
         ? <p className="notice error" role="alert">No se pudo leer el manifest de arneses: {error.message}</p>
         : adapters.length === 0
-          ? <EmptyState>El servidor no publicó ningún arnés. No es «no hay ninguno»: es que no se pudo leer la lista.</EmptyState>
+          ? <EmptyState>El servidor devolvió cero tipos de arnés declarados.</EmptyState>
           : (
             <div className="adapter-grid">
               {adapters.map((adapter, index) => (

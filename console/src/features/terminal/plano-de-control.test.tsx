@@ -46,8 +46,6 @@ it('abre los tres bloques en un diálogo, una sola vez y con nombre accesible', 
   const dialogo = await screen.findByRole('dialog', { name: /plano de control/i });
   for (const bloque of BLOQUES) expect(within(dialogo).getByRole('heading', { name: bloque })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: CONTROL })).toHaveAttribute('aria-expanded', 'true');
-  // The double mount, spelled out: two copies would make this two, and every check about the
-  // control plane would have to go back to counting "one or more".
   for (const bloque of BLOQUES) expect(screen.getAllByRole('heading', { name: bloque })).toHaveLength(1);
 });
 

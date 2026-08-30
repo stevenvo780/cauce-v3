@@ -21,10 +21,10 @@ import { chromium } from 'playwright';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONSOLE_ROOT = resolve(HERE, '..');
 const BASELINE = resolve(HERE, 'layout-baseline.json');
+const VITE_ENTRY = resolve(CONSOLE_ROOT, 'node_modules/vite/bin/vite.js');
 const PORT = 4188;
 const ORIGIN = `http://127.0.0.1:${String(PORT)}`;
 
-/** Every declared route with a visible nav entry, plus the landing page. */
 const ROUTES = ['/', '/live', '/accounts', '/messages', '/queues', '/observability', '/config', '/terminal'];
 
 /**
@@ -42,6 +42,7 @@ const TOLERANCIA = {
   recorteSinTeclado: 8,
   enlacesSinNombre: 0,
   solapesDeRotulo: 0,
+  portadoresBajos: 0,
   pantallasMaximas: 0.1,
 };
 
@@ -99,7 +100,6 @@ function medirEnLaPagina() {
     return (etiqueta || visible || titulo).trim();
   });
 
-  // Overlapping nav labels are the defect that shipped once and no jsdom test could see.
   const rotulos = enlaces
     .map((enlace) => enlace.querySelector('span'))
     .filter((span) => span && span.getClientRects().length > 0)
@@ -165,6 +165,7 @@ function medirEnLaPagina() {
     enlacesSinNombre: nombres.filter((nombre) => nombre === '').length,
     enlacesTotales: enlaces.length,
     solapesDeRotulo: solapes,
+    portadoresBajos: 0,
   };
 }
 
@@ -213,6 +214,14 @@ async function medirRuta(pagina, ruta) {
   return pagina.evaluate(medirEnLaPagina);
 }
 
+async function medirPortadores(pagina) {
+  await pagina.locator('details.live-fold > summary').filter({ hasText: 'Roles declarados' }).click();
+  return pagina.locator('.rol-portador').evaluateAll((botones) => botones.filter((boton) => {
+    const caja = boton.getBoundingClientRect();
+    return caja.width > 0 && caja.height > 0 && (caja.width < 24 || caja.height < 24);
+  }).length);
+}
+
 async function medirViewport(navegador, viewport) {
   const contexto = await navegador.newContext({ viewport: { width: viewport, height: 1000 } });
   const pagina = await contexto.newPage();
@@ -221,7 +230,9 @@ async function medirViewport(navegador, viewport) {
   try {
     for (const ruta of ROUTES) {
       const t0 = Date.now();
-      medidas.push({ ruta, viewport, ...(await medirRuta(pagina, ruta)) });
+      const medida = { ruta, viewport, ...(await medirRuta(pagina, ruta)), portadoresBajos: 0 };
+      if (ruta === '/live') medida.portadoresBajos = await medirPortadores(pagina);
+      medidas.push(medida);
       process.stderr.write(`  ${String(viewport)}px ${ruta} ${String(Date.now() - t0)}ms\n`);
       if (ruta === '/live') await medirEstadosDeLive(pagina, viewport, medidas, sinMedir);
     }
@@ -231,7 +242,6 @@ async function medirViewport(navegador, viewport) {
   return { medidas, sinMedir };
 }
 
-/** The six viewports share nothing, so they run at once: geometry is deterministic, not timed. */
 async function medirTodo() {
   const navegador = await chromium.launch();
   try {
@@ -269,16 +279,15 @@ function resumir(medidas) {
       recorteSinTecladoQue: peorSinTeclado.recorteSinTecladoSelector,
       enlacesSinNombre: Math.max(...delViewport.map((m) => m.enlacesSinNombre)),
       solapesDeRotulo: Math.max(...delViewport.map((m) => m.solapesDeRotulo)),
+      portadoresBajos: Math.max(...delViewport.map((m) => m.portadoresBajos)),
       pantallasMaximas: Math.max(...delViewport.map((m) => m.pantallas)),
     };
   }
   return porViewport;
 }
 
-/** Every tracked number is one where lower is better, so one comparison covers them all. */
 const CLAVES = Object.keys(TOLERANCIA);
 
-/** Where to look, for the budgets whose number alone does not say it. */
 const DONDE = {
   huecoMaximo: (v) => v.huecoMaximoEn,
   recorteMaximo: (v) => `${v.recorteMaximoEn} ${v.recorteMaximoQue}`,
@@ -314,11 +323,11 @@ function comparar(actual, base) {
 }
 
 function imprimirTabla(medidas) {
-  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'sin nombre', 'solapes'];
+  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'sin nombre', 'solapes', 'portadores bajos'];
   const filas = medidas.map((m) => [
     m.ruta, m.viewport, m.anchoMain, m.hueco, m.desborde, m.recorte, m.recorteSelector || '-',
     m.recorteSinTeclado, m.recorteSinTecladoSelector || '-',
-    m.pantallas, m.enlacesSinNombre, m.solapesDeRotulo,
+    m.pantallas, m.enlacesSinNombre, m.solapesDeRotulo, m.portadoresBajos,
   ].map(String));
   const anchos = cabecera.map((titulo, i) => Math.max(titulo.length, ...filas.map((f) => f[i].length)));
   const esNumero = (celda) => /^-?\d+(\.\d+)?$/.test(celda);
@@ -329,7 +338,7 @@ function imprimirTabla(medidas) {
 }
 
 async function principal() {
-  const servidor = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
+  const servidor = spawn(process.execPath, [VITE_ENTRY, '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     cwd: CONSOLE_ROOT,
     env: { ...process.env, VITE_USE_MOCKS: 'true' },
     stdio: ['ignore', 'pipe', 'pipe'],

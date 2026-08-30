@@ -11,7 +11,8 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "pantallasMaximas": 8.21
+    "portadoresBajos": 0,
+    "pantallasMaximas": 6.37
   },
   "760": {
     "huecoMaximo": 0,
@@ -25,6 +26,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
+    "portadoresBajos": 0,
     "pantallasMaximas": 4.92
   },
   "1100": {
@@ -39,6 +41,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
+    "portadoresBajos": 0,
     "pantallasMaximas": 4.04
   },
   "1440": {
@@ -53,6 +56,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
+    "portadoresBajos": 0,
     "pantallasMaximas": 3.94
   },
   "1920": {
@@ -67,6 +71,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
+    "portadoresBajos": 0,
     "pantallasMaximas": 3.96
   },
   "2560": {
@@ -81,6 +86,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
+    "portadoresBajos": 0,
     "pantallasMaximas": 3.53
   }
 }

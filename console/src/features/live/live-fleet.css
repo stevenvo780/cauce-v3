@@ -283,6 +283,7 @@ tr[data-highlighted='true'] > td {
 .rol-medida[data-fuera='si'] { color: var(--danger, #d64545); font-weight: 600; }
 .rol-portadores { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--muted); font-size: var(--tipo-rotulo); }
 .rol-portador {
+  min-height: 24px;
   padding: 2px 9px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
