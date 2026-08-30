@@ -488,6 +488,19 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const actor = await deps.authorize(request, 'control');
     const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
     if (!target || target.tenant_id !== tenantId || target.alias !== alias) {
+      // The 404 of `authorizeAgentTarget` deliberately conflates "does not exist" with "you cannot
+      // see it": distinguishing them turns this URL into a cross-tenant existence probe. But when
+      // the actor can ALREADY read this alias —its GET returns 200 on this very URL— saying so
+      // protects nothing and lies about the cause: the operator gets "does not exist" for an agent
+      // they are looking at, and goes looking for the bug in the payload. Measured on 2026-08-30:
+      // eight different bodies, eight identical 404s, and the real cause was `allow_control`.
+      const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
+      if (visible && visible.tenant_id === tenantId && visible.alias === alias) {
+        return reply.code(403).send({
+          error: 'forbidden',
+          message: `el actor puede leer ${tenantId}/${alias} pero no tiene permiso de control sobre él`,
+        });
+      }
       return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
     }
     if (target.enabled !== true) {

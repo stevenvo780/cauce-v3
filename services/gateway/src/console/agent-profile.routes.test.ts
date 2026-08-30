@@ -765,6 +765,47 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     expect(replaceProfile).not.toHaveBeenCalled();
   });
 
+  it('sin control pero CON lectura, el PUT dice la verdad: 403, no "no existe"', async () => {
+    // Medido en producción el 2026-08-30 sobre el programador de perfiles de /live: ocho cuerpos
+    // distintos, ocho 404 "agent not found or not visible", y el alias devolvía 200 en el GET de
+    // esa MISMA url. La causa real era `allow_control`. Confundir las dos cosas se hace a propósito
+    // para no filtrar existencia a otro tenant; con la lectura ya concedida no hay nada que filtrar.
+    const prepareRuntime = vi.fn(PREPARE_RUNTIME);
+    const replaceProfile = vi.fn(REPLACE_PROFILE);
+    const permisos: string[] = [];
+    const app = await appDeEscritura({
+      authorizeTarget: async (_actor, tenantId, alias, permiso) => {
+        permisos.push(permiso);
+        return permiso === 'read' ? { tenant_id: tenantId, alias, enabled: true } : undefined;
+      },
+      prepareRuntime,
+      replaceProfile,
+    });
+    const res = await app.inject({
+      method: 'PUT', url: RUTA,
+      payload: { expected_revision: 1, profile: PERFIL_BODY },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: 'forbidden' });
+    expect(res.json().message).toMatch(/no tiene permiso de control/u);
+    expect(permisos).toEqual(['control', 'read']);
+    expect(prepareRuntime).not.toHaveBeenCalled();
+    expect(replaceProfile).not.toHaveBeenCalled();
+  });
+
+  it('sin control NI lectura sigue siendo 404: no se filtra la existencia a otro tenant', async () => {
+    // El control negativo del test anterior. Éste es el caso que el 404 protege y no puede aflojarse.
+    const app = await appDeEscritura({
+      authorizeTarget: async () => undefined,
+    });
+    const res = await app.inject({
+      method: 'PUT', url: RUTA,
+      payload: { expected_revision: 1, profile: PERFIL_BODY },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: 'not_found' });
+  });
+
   it('el tenant objetivo del PUT viene de la ruta canónica, nunca del actor', async () => {
     const autorizado = vi.fn(async () => ({ tenant_id: 'Miguel', alias: 'kant', enabled: true }));
     const ctx = contexto(PERFIL_BODY, 'codex');
