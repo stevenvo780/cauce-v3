@@ -153,7 +153,6 @@ describe('MCP fleet monitor tool surface', () => {
 
   beforeAll(async () => {
     database = await startTestDatabase();
-    /* Migrations seed tenants, rooms and memberships but NEVER an agent row. */
     await database.pool.query(
       `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
                           home_directory,state_directory)
@@ -211,8 +210,8 @@ describe('MCP fleet monitor tool surface', () => {
   }, 120_000);
 
   /**
-   * Proves the tools read live rows rather than returning a shape. A row is written straight
-   * into the fleet tables and has to surface, unprompted, through the MCP call.
+   * Proves the tools read live rows rather than returning a shape. Migrations seed tenants, rooms
+   * and memberships but NEVER an agent row, so `beforeAll` writes the one this asserts.
    */
   it('returns rows that were really written to the database', async () => {
     const initial = JSON.parse(textOf(await client.callTool('estado_flota'))) as {
