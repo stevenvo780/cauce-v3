@@ -7,7 +7,6 @@ import {
   resolveLiveTui,
   resolveTerminalTarget,
   terminalTargetForAgent,
-  terminalTargetMatchesAgent,
   filterFleetAgents,
 } from './fleet';
 
@@ -62,15 +61,6 @@ it('does not resurrect an explicitly unregistered membership from a stale presen
   });
 
   expect(agents.map((agent) => agent.id)).toEqual(['Miguel:system-principal', 'Steven:legacy-agent']);
-});
-
-it('fails closed when a PTY target is not an exact agent identity', () => {
-  const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'kant' }] });
-  expect(terminalTargetMatchesAgent('Steven:kant', agent)).toBe(true);
-  expect(terminalTargetMatchesAgent('kant', agent)).toBe(false);
-  expect(terminalTargetMatchesAgent('shell for kant', agent)).toBe(false);
-  expect(terminalTargetMatchesAgent(7, agent)).toBe(false);
-  expect(terminalTargetMatchesAgent(undefined, agent)).toBe(false);
 });
 
 it('resolves PTY authority per destination from the server inventory', () => {
@@ -147,17 +137,6 @@ it('matches a target by exact tenant and alias, never by alias alone', () => {
   expect(resolveTerminalTarget(targets, stevenAgent).status).toBe('unknown');
 });
 
-it('never resolves a duplicated alias without its tenant', () => {
-  const agents = buildFleetAgents({ presence: [
-    { tenant_id: 'Steven', alias: 'operator' },
-    { tenant_id: 'Miguel', alias: 'operator' },
-  ] });
-  expect(agents.every((agent) => !terminalTargetMatchesAgent('operator', agent))).toBe(true);
-  const migAgent = agents.find((agent) => agent.tenantId === 'Miguel');
-  if (!migAgent) throw new Error('Agent not found');
-  expect(terminalTargetMatchesAgent('Miguel:operator', migAgent)).toBe(true);
-});
-
 it('keeps tenants that differ only by case as distinct identities', () => {
   const agents = buildFleetAgents({ presence: [
     { tenant_id: 'Steven', alias: 'operator' },
@@ -171,7 +150,6 @@ it('keeps tenants that differ only by case as distinct identities', () => {
   expect(new Set(agents.map((agent) => agent.id))).toEqual(new Set(['Steven:operator', 'steven:operator']));
   expect(terminalTargetForAgent(targets, upper)).toBeUndefined();
   expect(terminalTargetForAgent(targets, lower)?.container).toBe('lower-tenant');
-  expect(terminalTargetMatchesAgent('steven:operator', upper)).toBe(false);
 });
 
 /* -------------------------------------------------------------------------- */

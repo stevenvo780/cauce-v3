@@ -158,15 +158,6 @@ export const ADAPTER_STATE_LABELS: Readonly<Record<'available' | 'degraded' | 'u
 };
 
 /**
- * Legacy single-target check against the capability's `target_label`. Kept for the capability
- * card; per-destination authority now comes from the targets inventory below.
- */
-export function terminalTargetMatchesAgent(targetLabel: unknown, agent: FleetAgent): boolean {
-  if (typeof targetLabel !== 'string' || !targetLabel) return false;
-  return targetLabel === `${agent.tenantId}:${agent.alias}` || targetLabel === agent.id;
-}
-
-/**
  * The lease state, with the SAME words as `/live`.
  *
  * The raw field value was painted —`online` / `expired` / `unknown`, in English and in
