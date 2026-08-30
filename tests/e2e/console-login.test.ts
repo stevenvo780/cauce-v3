@@ -65,7 +65,7 @@ beforeAll(async () => {
   provisionStdout = cli.stdout;
 
   await persistDevOnlyCredentialRecord();
-  await seedVisibleChain();
+  await seedAgentAndVisibleChain();
 
   const provider = new PasswordAuthProvider({
     users: new PostgresConsoleUserStore(database.pool),
@@ -283,8 +283,7 @@ async function durableMutationCounts(): Promise<Record<string, number>> {
   );
 }
 
-async function seedVisibleChain(): Promise<void> {
-  // Migrations seed no agent row, so the agent views would answer 404 on a fresh schema.
+async function seedAgentAndVisibleChain(): Promise<void> {
   await database.pool.query(
     `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
                         home_directory,state_directory)
