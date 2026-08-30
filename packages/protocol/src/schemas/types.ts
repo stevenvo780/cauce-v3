@@ -7,7 +7,6 @@ import type {
   TenantSchema,
 } from './core.js';
 import type {
-  AuthenticatedPublishSchema,
   ConsolePublishIntentPrepareSchema,
   NotifyKindSchema,
   NotifyRequestSchema,
@@ -40,7 +39,6 @@ import type { QuotaProviderReportSchema, QuotaSampleRequestSchema } from './quot
 
 export type Tenant = z.infer<typeof TenantSchema>;
 export type PublishMessage = z.infer<typeof PublishMessageSchema>;
-export type AuthenticatedPublish = z.infer<typeof AuthenticatedPublishSchema>;
 export type PublishResult = z.infer<typeof PublishResultSchema>;
 export type ConsolePublishIntentPrepare = z.infer<typeof ConsolePublishIntentPrepareSchema>;
 export type ConsolePublishIntentPrepareResult = z.infer<typeof ConsolePublishIntentPrepareResultSchema>;

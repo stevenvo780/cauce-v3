@@ -87,7 +87,7 @@ export const AttachmentsV1Schema = z.array(AttachmentContentSchema)
 export const MAX_MESSAGE_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 
 /** Execution budget granted to an individual message, in milliseconds. */
-export const MessageTimeoutMsSchema = z.number().int().positive().max(MAX_MESSAGE_TIMEOUT_MS);
+const MessageTimeoutMsSchema = z.number().int().positive().max(MAX_MESSAGE_TIMEOUT_MS);
 
 /** Safely reads and validates body.timeout_ms; returns undefined if it is invalid or absent. */
 export function messageTimeoutMs(body: unknown): number | undefined {
@@ -153,7 +153,7 @@ export const SystemGateProbeBodySchema = z.object({
   nonce: z.string().regex(/^[a-f0-9]{32}$/),
   timeout_ms: MessageTimeoutMsSchema,
 }).strict();
-export type SystemGateProbeBody = z.infer<typeof SystemGateProbeBodySchema>;
+type SystemGateProbeBody = z.infer<typeof SystemGateProbeBodySchema>;
 
 export function isSystemGateProbeBody(body: unknown): body is SystemGateProbeBody {
   return SystemGateProbeBodySchema.safeParse(body).success;

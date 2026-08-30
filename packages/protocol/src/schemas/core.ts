@@ -27,8 +27,8 @@ export const AMBIGUOUS_ACK_ERROR_CODES = [
   'OPENCLAW_API_AMBIGUOUS',
   'INTERRUPTED_AMBIGUOUS'
 ] as const;
-export const AmbiguousAckErrorCodeSchema = z.enum(AMBIGUOUS_ACK_ERROR_CODES);
-export type AmbiguousAckErrorCode = z.infer<typeof AmbiguousAckErrorCodeSchema>;
+const AmbiguousAckErrorCodeSchema = z.enum(AMBIGUOUS_ACK_ERROR_CODES);
+type AmbiguousAckErrorCode = z.infer<typeof AmbiguousAckErrorCodeSchema>;
 
 export function isAmbiguousAckErrorCode(code: unknown): code is AmbiguousAckErrorCode {
   return AmbiguousAckErrorCodeSchema.safeParse(code).success;
@@ -58,7 +58,7 @@ export const DeliveryStateSchema = z.enum([
 ]);
 export const LaneSchema = z.enum(['interactive', 'batch']);
 
-export const RelayHopSchema = z.object({
+const RelayHopSchema = z.object({
   tenant_id: TenantSchema,
   alias: AliasSchema,
   adapter: z.string().min(1).max(64).optional(),

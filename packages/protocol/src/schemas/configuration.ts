@@ -6,21 +6,21 @@ const ConfigActionSchema = z.enum(['create', 'update', 'delete']);
 const ConfigRevisionSchema = z.number().int().nonnegative();
 const OptionalLabelSchema = z.string().trim().min(1).max(128).nullable().optional();
 
-export const TenantConfigMutationSchema = z.object({
+const TenantConfigMutationSchema = z.object({
   resource: z.literal('tenant'), action: ConfigActionSchema, id: TenantSchema,
   value: z.object({ display_name: OptionalLabelSchema, is_hub: z.boolean().optional(), enabled: z.boolean().optional() }).strict().optional()
 }).strict();
-export const RoomConfigMutationSchema = z.object({
+const RoomConfigMutationSchema = z.object({
   resource: z.literal('room'), action: ConfigActionSchema, tenant_id: TenantSchema,
   id: z.string().min(1).max(128),
   value: z.object({ display_name: OptionalLabelSchema, enabled: z.boolean().optional() }).strict().optional()
 }).strict();
-export const MembershipConfigMutationSchema = z.object({
+const MembershipConfigMutationSchema = z.object({
   resource: z.literal('membership'), action: ConfigActionSchema, tenant_id: TenantSchema,
   room_id: z.string().min(1).max(128), alias: AliasSchema,
   value: z.object({ role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(), enabled: z.boolean().optional() }).strict().optional()
 }).strict();
-export const AclEdgeConfigMutationSchema = z.object({
+const AclEdgeConfigMutationSchema = z.object({
   resource: z.literal('acl_edge'), action: ConfigActionSchema,
   from_tenant: TenantSchema, to_tenant: TenantSchema,
   value: z.object({
@@ -37,7 +37,7 @@ export const HarnessConfigMutationSchema = z.object({
     capabilities: z.array(z.string().min(1).max(80)).max(100).optional(), enabled: z.boolean().optional()
   }).strict().optional()
 }).strict();
-export const RolePolicyConfigMutationSchema = z.object({
+const RolePolicyConfigMutationSchema = z.object({
   resource: z.literal('role_policy'), action: ConfigActionSchema,
   role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
   value: z.object({
@@ -46,7 +46,7 @@ export const RolePolicyConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 /** The proactive-egress allowlist is versioned configuration, not runtime data. */
-export const EgressDestinationConfigMutationSchema = z.object({
+const EgressDestinationConfigMutationSchema = z.object({
   resource: z.literal('egress_destination'), action: ConfigActionSchema,
   tenant_id: TenantSchema, alias: AliasSchema, handle: EgressHandleSchema,
   value: z.object({

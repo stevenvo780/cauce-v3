@@ -84,7 +84,7 @@ export const HeartbeatSchema = z.object({
  * be called applied.  Paths and hashes are evidence, not instructions; the gateway only adds the
  * contract to adapters which explicitly advertise `agent_profile_adoption_v1`.
  */
-export const ProfileRuntimeDocumentSchema = z.object({
+const ProfileRuntimeDocumentSchema = z.object({
   name: z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/u),
   path: z.string().min(1).max(4_096).refine((path) => path.startsWith('/') && !path.includes('\0'), {
     message: 'profile runtime document path must be absolute',
@@ -133,7 +133,7 @@ export const QueryDeliveriesSchema = z.object({
   limit: z.number().int().min(1).max(100).default(20)
 }).strict();
 
-export const WsAckSchema = AckSchema.safeExtend({
+const WsAckSchema = AckSchema.safeExtend({
   type: z.literal('ack'),
   delivery_id: DeliveryIdSchema
 }).strict();
@@ -222,7 +222,7 @@ export const MAX_DELEGATION_REJECTION_TARGET_CHARS = 256;
  * cap must stay ABOVE that with room to spare, or the longest rejection the store knows how to
  * generate would not pass its own schema.
  */
-export const MAX_DELEGATION_REJECTION_REASON_CHARS = 12_000;
+const MAX_DELEGATION_REJECTION_REASON_CHARS = 12_000;
 
 /**
  * Wire and durable replay share one hard ceiling. Producers must reject an oversized fan-out
@@ -257,7 +257,7 @@ export const DelegationMaterializationSchema = z.object({
   child_delivery_id: DeliveryIdSchema
 }).strict();
 
-export const DelegationMaterializationsSchema = z.array(DelegationMaterializationSchema)
+const DelegationMaterializationsSchema = z.array(DelegationMaterializationSchema)
   .max(MAX_DELEGATION_FEEDBACK_ITEMS)
   .superRefine((items, context) => {
     const outputIndexes = new Set<number>();
@@ -299,7 +299,7 @@ export const ChainGateSchema = z.object({
  * `.strict()` on both: an extra field is a sign the two ends do not speak the same version, and
  * in that case it is better to fail the hello than to seed half a profile.
  */
-export const AgentProfileWireSchema = z.object({
+const AgentProfileWireSchema = z.object({
   tenant_id: TenantSchema,
   alias: AliasSchema,
   purpose: z.string().nullable(),
@@ -311,7 +311,7 @@ export const AgentProfileWireSchema = z.object({
   operating_rules: z.array(z.string())
 }).strict();
 
-export const HechosDelAliasWireSchema = z.object({
+const HechosDelAliasWireSchema = z.object({
   permisos: z.object({
     ruta: z.boolean(), lectura: z.boolean(), control: z.boolean(), notificacion: z.boolean()
   }).strict(),
