@@ -25,7 +25,7 @@ import { closePtySession } from './pty-session';
 import { operatorRouteForAgent, type OperatorSession } from './session';
 import type { TerminalGrantRequestOutcome } from './types';
 
-export interface OperatorWorkspaceProps {
+interface OperatorWorkspaceProps {
   agents: FleetAgent[];
   adapters: AdapterView[];
   access?: ConsoleAccess;

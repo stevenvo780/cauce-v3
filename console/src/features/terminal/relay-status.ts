@@ -14,12 +14,12 @@ import { ApiError, type CauceApi } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { TerminalCapability } from '../../api/types';
 
-export type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
+type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
 
 /**
  * Identified cause of the terminals relay being unavailable.
  */
-export type TerminalRelayCause = 'no-desplegado' | 'sin-permiso' | 'sin-comprobar';
+type TerminalRelayCause = 'no-desplegado' | 'sin-permiso' | 'sin-comprobar';
 
 export interface TerminalRelayState {
   status: TerminalRelayStatus;
@@ -45,7 +45,7 @@ const UPSTREAM_INALCANZABLE = [502, 503, 504];
 
 export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar el canal PTY';
 
-export function terminalRelaySinComprobarReason(status?: number, detalle?: string): string {
+function terminalRelaySinComprobarReason(status?: number, detalle?: string): string {
   if (status === undefined) {
     return 'No se pudo consultar o alcanzar el relay de terminales'
       + `${detalle ? `: ${detalle}` : ''}. Reintentá; este fallo de transporte no permite saber `

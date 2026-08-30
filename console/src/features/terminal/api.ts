@@ -6,9 +6,9 @@
  */
 import { ApiError, cauceApi, type CauceApi } from '../../api/client';
 
-export type PtyTargetState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';
+type PtyTargetState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';
 
-export interface TerminalFleetIdentity {
+interface TerminalFleetIdentity {
   tenant_id: string;
   alias: string;
 }
@@ -37,7 +37,7 @@ export interface TerminalTargetsSnapshot {
   reason?: string;
 }
 
-export interface TerminalSessionTargetView {
+interface TerminalSessionTargetView {
   tenant_id: string;
   alias: string;
   container: string | null;
@@ -527,7 +527,7 @@ function exactGrantCohort(value: unknown, target: CreateTerminalSessionInput): T
 }
 
 /** Exact causal projection of a newly inserted PTY reservation; tickets remain memory-only. */
-export function exactTerminalSessionGrant(
+function exactTerminalSessionGrant(
   value: unknown,
   requested: CreateTerminalSessionInput,
 ): TerminalSessionGrant | undefined {

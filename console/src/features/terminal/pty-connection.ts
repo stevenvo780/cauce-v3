@@ -27,7 +27,7 @@ export function stopHandshake(entry: PtyEntry): void {
   entry.handshakeTimer = undefined;
 }
 
-export function startViewerHeartbeat(entry: PtyEntry): void {
+function startViewerHeartbeat(entry: PtyEntry): void {
   if (!entry.readOnly || entry.heartbeatTimer !== undefined) return;
   entry.heartbeatTimer = window.setInterval(() => {
     if (entry.socket?.readyState === WebSocket.OPEN) {
@@ -36,7 +36,7 @@ export function startViewerHeartbeat(entry: PtyEntry): void {
   }, PTY_VIEWER_HEARTBEAT_MS);
 }
 
-export function finishChannel(
+function finishChannel(
   entry: PtyEntry,
   code: number,
   reason: string,
@@ -56,7 +56,7 @@ export function finishChannel(
   entry.onClosed?.(entry.view);
 }
 
-export function rejectMalformedReady(
+function rejectMalformedReady(
   entry: PtyEntry,
   publish: (patch: Partial<PtySessionView>) => void,
 ): void {
@@ -66,7 +66,7 @@ export function rejectMalformedReady(
   finishChannel(entry, 4400, 'invalid_ready', publish);
 }
 
-export function handleControlFrame(
+function handleControlFrame(
   entry: PtyEntry,
   raw: string,
   publish: (patch: Partial<PtySessionView>) => void,
@@ -122,7 +122,7 @@ export function handleControlFrame(
   });
 }
 
-export function scheduleReconnect(
+function scheduleReconnect(
   entry: PtyEntry,
   publish: (patch: Partial<PtySessionView>) => void,
   onReady: () => void,
