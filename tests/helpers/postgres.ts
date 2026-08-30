@@ -155,7 +155,6 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       POSTGRES_USER: 'cauce_test',
       POSTGRES_PASSWORD: password
     })
-    .withExposedPorts(5432)
     .withHealthCheck({
       test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test'],
       interval: 1_000,
@@ -164,7 +163,12 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       startPeriod: 1_000
     })
     .withWaitStrategy(Wait.forHealthCheck());
-  if (network) builder = builder.withNetworkMode(network);
+  /*
+   * On a shared network the container is reached by its address, so publishing is not just
+   * unnecessary: a daemon that does not bind published ports leaves `withExposedPorts` waiting for
+   * a binding that never arrives, and the suite dies before the healthy container is ever used.
+   */
+  builder = network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432);
   const container = await builder.start();
   const host = network ? container.getIpAddress(network) : container.getHost();
   const port = network ? 5432 : container.getMappedPort(5432);
