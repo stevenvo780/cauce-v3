@@ -2,7 +2,7 @@
  * Mapa de cómo interactúa cada arnés con sus ficheros de directiva y su rol declarado.
  */
 
-export interface ArnesReal {
+interface ArnesReal {
   /** El mismo identificador que `HarnessKind` en services/gateway/src/console/agent-documents/catalog.ts:4, más `hermes`. */
   id: string;
   label: string;

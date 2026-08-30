@@ -33,12 +33,12 @@ export interface FalloDeInterruptor {
   revision: number | undefined;
 }
 
-export interface ConfirmacionDeInterruptor {
+interface ConfirmacionDeInterruptor {
   interruptor: Interruptor;
   texto: string;
 }
 
-export interface AvisoDeInterruptor {
+interface AvisoDeInterruptor {
   coleccion: string;
   text: string;
   tone: 'success' | 'parcial';

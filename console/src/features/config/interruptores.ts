@@ -53,7 +53,7 @@ export function esCampoConmutable(coleccion: string, campo: string): boolean {
  * tooltip: `allow_route` is the name of a Postgres column, not an explanation, and the operator
  * reaching this screen needs to know what they are turning on BEFORE turning it on.
  */
-export const EXPLICACION_DE_CAMPO: Record<string, Record<string, string>> = {
+const EXPLICACION_DE_CAMPO: Record<string, Record<string, string>> = {
   acl_edges: {
     enabled: 'El interruptor maestro del cruce. Apagado, los tres permisos de la derecha no cuentan: '
       + 'entre estos dos clientes no pasa nada.',
