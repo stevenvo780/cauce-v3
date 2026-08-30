@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   Container,
@@ -7,6 +8,7 @@ import {
   UserCog,
 } from 'lucide-react';
 import { Unknown } from '../../components/ui';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { DenegacionExplicada } from './denegaciones';
 import type { FleetAgent, TerminalTargetResolution } from './fleet';
 import { ptyReasonProblem, PTY_REASON_MAX_LENGTH } from './session';
@@ -36,17 +38,45 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
 }) {
   const [reason, setReason] = useState('');
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const dialogo = useRef<HTMLDivElement>(null);
   const target = resolution.target;
   const problem = ptyReasonProblem(reason);
   const shared = target?.shares_container_with ?? [];
   const sharedLabels = shared.map((identity) =>
     identity.tenant_id === target?.tenant_id ? identity.alias : `${identity.tenant_id}:${identity.alias}`);
 
-  useEffect(() => { reasonRef.current?.focus(); }, []);
+  // Same shape as the other four modals of this console: the shell goes `inert` —which is what
+  // actually cuts mouse, tab and screen reader on the page behind—, the tab wraps inside, and the
+  // control that opened it gets the focus back. This one asks for a shell in a shared container,
+  // so it is the last place where the keyboard should be allowed to wander off to a dimmed page.
+  useEffect(() => {
+    const abridor = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const fondo = document.querySelector('.app-shell');
+    fondo?.setAttribute('inert', '');
+    reasonRef.current?.focus();
+    return () => {
+      fondo?.removeAttribute('inert');
+      abridor?.focus();
+    };
+  }, []);
 
-  return (
-    <div className="pty-dialog-backdrop" role="presentation" onKeyDown={(event) => { if (event.key === 'Escape') onCancel(); }}>
-      <div className="pty-dialog" role="dialog" aria-modal="true" aria-labelledby="pty-dialog-title" aria-describedby="pty-dialog-scope">
+  const atraparFoco = useFocusTrap(dialogo);
+  const teclado = (evento: KeyboardEvent<HTMLDivElement>) => {
+    if (evento.key === 'Escape') { evento.stopPropagation(); onCancel(); return; }
+    atraparFoco(evento);
+  };
+
+  return createPortal(
+    <div className="pty-dialog-backdrop" role="presentation">
+      <div
+        className="pty-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pty-dialog-title"
+        aria-describedby="pty-dialog-scope"
+        ref={dialogo}
+        onKeyDown={teclado}
+      >
         <header>
           <p className="eyebrow">Sesión interactiva</p>
           <h2 id="pty-dialog-title">Abrir PTY en {agent.alias}</h2>
@@ -102,6 +132,7 @@ export function PtySessionDialog({ agent, resolution, pending, error, onCancel, 
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
