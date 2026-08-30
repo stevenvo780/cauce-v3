@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Vigila cada 24 h las URLs del catalogo Mouseion y avisa al dueno cuando alguna deja de dar 200.
 #
-# Por que un guion y no un agente: Cauce es por eventos y nadie sondea. Un agente no puede
-# "vigilar"; un temporizador de systemd si. El aviso sale por el unico camino que llega a un chat
-# desde fuera del bus: POST /v3/egress/notifications con el certificado mTLS del alias, el mismo
-# que usa ops/guardias/cauce-attach.
+# Un agente no puede "vigilar" (Cauce es por eventos); un temporizador si. El aviso sale por
+# /v3/egress/notifications con el cert mTLS del alias, como ops/guardias/cauce-attach.
 #
 #   --dry-run   valida destino y permiso contra el gateway SIN escribirle a nadie
 #   --list      imprime lo que vigilaria y sale
@@ -40,8 +38,7 @@ TOTAL=0
 
 while IFS= read -r url; do
   TOTAL=$((TOTAL + 1))
-  # -L sigue redirecciones: %{http_code} es el de la respuesta FINAL, que es lo que ve una persona.
-  # Un fallo de red (DNS, TLS, timeout) deja http_code en 000, y eso tambien es una caida.
+  # -L: cuenta la respuesta FINAL, que es la que ve una persona. 000 (DNS/TLS/timeout) es caida.
   linea="$(curl -sL -o /dev/null --max-time "$ESPERA" \
              -w '%{http_code} %{url_effective}' "$url" 2>/dev/null || echo "000 $url")"
   codigo="${linea%% *}"
@@ -100,8 +97,6 @@ print(json.dumps({"room_id": os.environ["SALA"],
 }
 
 if [ "$PRUEBA" = 1 ]; then
-  # Propaga el fallo: un --dry-run que devuelve 0 aunque el gateway rechace es un verde falso,
-  # y este guion existe justamente para que una alarma no se pierda en silencio.
   avisar "prueba del vigia del catalogo Mouseion: el camino de aviso funciona." \
          "catalogo-health:dry-run:$SELLO" \
     || por_el_bus "prueba del vigia del catalogo Mouseion (ignorar): el respaldo por bus funciona." \
@@ -112,9 +107,8 @@ fi
 
 [ ${#ROTAS[@]} -eq 0 ] && exit 0
 
-# Avisa SOLO si hay alguna rota que no estuviera en el aviso anterior. Sin esto, que el conjunto
-# se ENCOJA (una se arregla, o una sale de la lista) volvia a disparar un aviso con un subconjunto
-# de lo ya dicho: ruido con forma de alarma, que es lo que hace que se dejen de leer.
+# Avisa SOLO si hay alguna rota que no estuviera en el aviso anterior: que el conjunto se ENCOJA
+# no es noticia, y repetir un subconjunto es ruido con forma de alarma.
 NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | sort | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
 printf '%s\n' "${ROTAS[@]}" | sort > "$ESTADO" 2>/dev/null || true
 if [ -z "$NUEVAS" ]; then
