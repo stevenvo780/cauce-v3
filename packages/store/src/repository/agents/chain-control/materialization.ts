@@ -2,6 +2,7 @@ import {
   clampAgentPriority, MAX_DELEGATION_FEEDBACK_ITEMS, type Ack, type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
+import { persistedString } from '../../../runtime-values.js';
 import {
   boundedRejectionTarget, describeDelegationRejection, fanoutCapForTurn, HUMAN_GATE_TARGET,
   rejectionText, type RejectionNotice
@@ -150,10 +151,12 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
       && uuidPattern.test(parentCorrelation.root_request_id)
       ? parentCorrelation.root_request_id
       : row.request_id;
-    const rootMessageId = typeof parentCorrelation?.root_message_id === 'string'
-      && uuidPattern.test(parentCorrelation.root_message_id)
-      ? parentCorrelation.root_message_id
-      : row.message_id;
+    const rootMessageId = persistedString(
+      typeof parentCorrelation?.root_message_id === 'string'
+        && uuidPattern.test(parentCorrelation.root_message_id)
+        ? parentCorrelation.root_message_id
+        : row.message_id
+    );
     const rootDeliveryId = typeof parentCorrelation?.root_delivery_id === 'string'
       && uuidPattern.test(parentCorrelation.root_delivery_id)
       ? parentCorrelation.root_delivery_id
@@ -241,7 +244,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
 
     // A human question cancels sibling delegations and is processed first, so subsequent
     // siblings observe the open gate and are rejected with chain_gated.
-    const gateDirective = policy.humanGateEnabled && openGate === undefined && rootMessageId !== undefined // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A malformed persisted root must not open a human gate.
+    const gateDirective = policy.humanGateEnabled && openGate === undefined && rootMessageId !== undefined
       ? expandedOutputs.find((output) => output.target === HUMAN_GATE_TARGET
         && output.rejection === undefined && visibleText(output.body))
       : undefined;
@@ -329,7 +332,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         // `@human` is not an alias: it is a question. It stops being a delivery that cannot
         // complete and becomes a row with state. Only when the primitive exists and is enabled;
         // otherwise it falls back to the old path and ends in 'unroutable_alias', as before.
-      if (output === gateDirective && targetAlias === HUMAN_GATE_TARGET && body !== undefined && rootMessageId !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A malformed persisted root must not materialize a gate.
+      if (output === gateDirective && targetAlias === HUMAN_GATE_TARGET && body !== undefined && rootMessageId !== undefined) {
         const gate = await this.openHumanGate(client, row, ack, output.index, {
           rootMessageId, question: body, correlation
         });
@@ -416,7 +419,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
       // takes), then the edge. If the edge does not fit, the root fuel is RETURNED in the same
       // transaction: otherwise a saturated destination would drain the whole chain's budget
       // without producing a single delivery.
-      if (policy.delegationCaps.enabled && policy.delegationCapsAvailable && rootMessageId !== undefined) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A malformed persisted root must not reserve chain quota.
+      if (policy.delegationCaps.enabled && policy.delegationCapsAvailable && rootMessageId !== undefined) {
         const rootReserved = await this.reserveRootDelegation(
           client, rootMessageId, policy.delegationCaps.maxDelegationsPerRoot
         );

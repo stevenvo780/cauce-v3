@@ -4,6 +4,7 @@ import {
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
+import { postgresBigintString } from '../runtime-values.js';
 import { StoreError } from './errors.js';
 import type {
   OperationalDlqPage, OperationalDlqResolutionRequest, OperationalDlqResolutionResult
@@ -85,7 +86,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     const lastVisible = visible.at(-1);
     return {
       items: visible.map((row) => ({
-        event_id: String(row.event_id), // eslint-disable-line @typescript-eslint/no-unnecessary-type-conversion -- PostgreSQL bigint decoding is normalized to the string API contract.
+        event_id: postgresBigintString(row.event_id),
         at: row.at instanceof Date ? row.at.toISOString() : row.at,
         tenant_id: row.tenant_id,
         actor_alias: row.actor_alias,
@@ -96,7 +97,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         summary: safeAuditSummary(row.action, row.metadata),
       })),
       next_cursor: hasMore && lastVisible !== undefined
-        ? String(lastVisible.event_id) // eslint-disable-line @typescript-eslint/no-unnecessary-type-conversion -- PostgreSQL bigint cursors are strings.
+        ? postgresBigintString(lastVisible.event_id)
         : null,
     };
   }

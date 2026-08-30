@@ -1,5 +1,6 @@
 import { clampAgentPriority, type DeliveryState, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
+import { isLiteralTrue } from '../../../runtime-values.js';
 import { postgresTextSafe } from '../../deliveries.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
@@ -400,7 +401,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
       : bucket.window_started_at;
     // Folding against a notice that does not exist would be silence, not coalescing: if for any
     // reason the bucket has no earlier message to point at, this failure travels.
-    const emit = bucket.last_failure_emitted === true || bucket.last_notice_message_id === null; // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Malformed PostgreSQL flags fail closed.
+    const emit = isLiteralTrue(bucket.last_failure_emitted) || bucket.last_notice_message_id === null;
     return {
       noticeId: bucket.id,
       emit,

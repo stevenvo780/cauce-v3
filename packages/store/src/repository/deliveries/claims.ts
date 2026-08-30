@@ -2,6 +2,7 @@ import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint
 import { HUMAN_PRIORITY_FLOOR, PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
+import { isLiteralTrue } from '../../runtime-values.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { validConnectionToken } from '../outbox.js';
@@ -503,7 +504,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         attempt: row.attempt,
         claim_token: row.claim_token,
         ack_deadline_at: row.ack_deadline_at.toISOString(),
-        human_originated: row.human_originated === true // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Malformed PostgreSQL flags fail closed.
+        human_originated: isLiteralTrue(row.human_originated)
       }));
   }
 

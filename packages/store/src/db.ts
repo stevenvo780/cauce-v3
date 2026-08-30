@@ -8,6 +8,7 @@ import {
   migrationSourcesForApply,
   recordLegacy024Verification,
 } from './migration-integrity.js';
+import { isSignalAborted, readMutableBoolean } from './runtime-values.js';
 
 const { Pool } = pg;
 export type DatabasePool = pg.Pool;
@@ -277,16 +278,16 @@ export async function withAbortableTransaction<T>(
   try {
     if (signal.aborted) throw abortFailure(signal);
     await client.query('BEGIN');
-    if (signal.aborted) throw abortFailure(signal); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while BEGIN is awaited.
+    if (isSignalAborted(signal)) throw abortFailure(signal);
     const result = await work(client);
-    if (signal.aborted) throw abortFailure(signal); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- User work may asynchronously abort the transaction.
+    if (isSignalAborted(signal)) throw abortFailure(signal);
     await client.query('COMMIT');
     // Once COMMIT has succeeded, report success even if abort raced immediately afterwards.
     // Returning AbortError here would falsely describe a durable commit as cancelled.
     return result;
   } catch (error) {
     broken ||= connectionFailure(error);
-    if (!released && !signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- The abort listener can release the client while awaited work rejects.
+    if (!readMutableBoolean(released) && !isSignalAborted(signal)) {
       try {
         await client.query('ROLLBACK');
       } catch {
@@ -404,7 +405,7 @@ export async function subscribeDeliveryWakes(
         connectedClient.on('error', handlers.onError);
         connectedClient.on('end', handlers.onEnd);
         await connectedClient.query('LISTEN cauce_delivery_wake');
-        if (stopped) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Shutdown can race the awaited LISTEN query.
+        if (readMutableBoolean(stopped)) {
           detach(connectedClient);
           try {
             connectedClient.release();

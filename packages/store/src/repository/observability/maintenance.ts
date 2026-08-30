@@ -1,6 +1,7 @@
 import type { DeliveryState } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
+import { isLiteralTrue } from '../../runtime-values.js';
 import { BaseRepository } from '../base.js';
 import { StoreError } from '../errors.js';
 import type {
@@ -122,7 +123,7 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
         // The ceiling overrides the other two conditions and the emergency lever: a delivery that kept
         // renewing for hours is never retried, whether or not it has the execution flag and whether or
         // not `retryStartedDeliveries` is on.
-        const leaseCapExhausted = row.lease_cap_exceeded === true; // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Only literal PostgreSQL true triggers the hard cap.
+        const leaseCapExhausted = isLiteralTrue(row.lease_cap_exceeded);
         // R3. Spending all three attempts against an alias with no adapter connected is not retrying: no
         // execution happened. It is parked and the attempt is refunded. All three guards are necessary:
         //  - `!heldForReview`: if it is recorded that it started, retention wins; it is not touched.
