@@ -1,4 +1,4 @@
-import type { DeliveryState } from '@cauce/protocol';
+import type { DeliveryState } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import { BaseRepository } from '../base.js';
@@ -122,7 +122,7 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
         // The ceiling overrides the other two conditions and the emergency lever: a delivery that kept
         // renewing for hours is never retried, whether or not it has the execution flag and whether or
         // not `retryStartedDeliveries` is on.
-        const leaseCapExhausted = row.lease_cap_exceeded === true;
+        const leaseCapExhausted = row.lease_cap_exceeded === true; // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Only literal PostgreSQL true triggers the hard cap.
         // R3. Spending all three attempts against an alias with no adapter connected is not retrying: no
         // execution happened. It is parked and the attempt is refunded. All three guards are necessary:
         //  - `!heldForReview`: if it is recorded that it started, retention wins; it is not touched.
@@ -166,7 +166,7 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
             `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
              VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
              ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-            [row.recipient_tenant, `wake-parked:${row.id}:${row.attempt}`, row.request_id, row.message_id,
+            [row.recipient_tenant, `wake-parked:${row.id}:${String(row.attempt)}`, row.request_id, row.message_id,
               row.id, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
               JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' }),
               backoffSeconds]
@@ -264,7 +264,7 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
             `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
              VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)
              ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-            [row.recipient_tenant, `wake-dead:${row.id}:${row.attempt}`, row.request_id, row.message_id,
+            [row.recipient_tenant, `wake-dead:${row.id}:${String(row.attempt)}`, row.request_id, row.message_id,
               row.id, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
               JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' })]
           );
@@ -284,7 +284,7 @@ export abstract class ObservabilityMaintenanceRepository extends BaseRepository 
             `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
              VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
              ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-            [row.recipient_tenant, `wake-timeout:${row.id}:${row.attempt}`, row.request_id, row.message_id,
+            [row.recipient_tenant, `wake-timeout:${row.id}:${String(row.attempt)}`, row.request_id, row.message_id,
               row.id, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
               JSON.stringify({ recipient_alias: row.recipient_alias, reason: 'delivery_available' }),
               backoffSeconds]

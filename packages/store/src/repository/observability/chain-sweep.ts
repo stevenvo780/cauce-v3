@@ -41,13 +41,17 @@ interface ChainSilenceCandidate {
 /** "6 h 12 min", "18 min", "45 s". No libraries and no ambiguity for whoever reads it. */
 function humanDuration(seconds: number): string {
   const total = Math.max(0, Math.trunc(seconds));
-  if (total < 60) return `${total} s`;
+  if (total < 60) return `${String(total)} s`;
   const minutes = Math.trunc(total / 60);
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return `${String(minutes)} min`;
   const hours = Math.trunc(minutes / 60);
   const rest = minutes % 60;
-  if (hours < 48) return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
-  return `${Math.trunc(hours / 24)} d ${hours % 24} h`;
+  if (hours < 48) {
+    return rest === 0
+      ? `${String(hours)} h`
+      : `${String(hours)} h ${String(rest)} min`;
+  }
+  return `${String(Math.trunc(hours / 24))} d ${String(hours % 24)} h`;
 }
 
 /**
@@ -64,16 +68,16 @@ function chainSilenceNoticeText(
   const head = candidate.branches === 0
     ? `⚠️ Tu pedido quedó sin respuesta: nadie llegó a trabajarlo`
       + `${candidate.root_status === null ? '' : ` (entrega en «${candidate.root_status}»`
-        + `${candidate.root_attempt === null ? '' : `, ${candidate.root_attempt}/${candidate.root_max_attempts ?? '?'} intentos`})`}.`
-    : `⚠️ Tu pedido quedó sin respuesta: de ${candidate.branches} `
-      + `${candidate.branches === 1 ? 'rama delegada' : 'ramas delegadas'}, ${detail.answered} `
-      + `${detail.answered === 1 ? 'devolvió' : 'devolvieron'} resultado, ${candidate.branches_dead} `
-      + `${candidate.branches_dead === 1 ? 'murió' : 'murieron'}, ${candidate.branches_failed} `
-      + `${candidate.branches_failed === 1 ? 'falló' : 'fallaron'} y ${candidate.branches_open} `
+        + `${candidate.root_attempt === null ? '' : `, ${String(candidate.root_attempt)}/${String(candidate.root_max_attempts ?? '?')} intentos`})`}.`
+    : `⚠️ Tu pedido quedó sin respuesta: de ${String(candidate.branches)} `
+      + `${candidate.branches === 1 ? 'rama delegada' : 'ramas delegadas'}, ${String(detail.answered)} `
+      + `${detail.answered === 1 ? 'devolvió' : 'devolvieron'} resultado, ${String(candidate.branches_dead)} `
+      + `${candidate.branches_dead === 1 ? 'murió' : 'murieron'}, ${String(candidate.branches_failed)} `
+      + `${candidate.branches_failed === 1 ? 'falló' : 'fallaron'} y ${String(candidate.branches_open)} `
       + `${candidate.branches_open === 1 ? 'sigue' : 'siguen'} sin terminar.`;
   const why = detail.cause === undefined
     ? ''
-    : ` Causa dominante: «${detail.cause}» (${detail.causeCount}).`;
+    : ` Causa dominante: «${detail.cause}» (${String(detail.causeCount)}).`;
   const tail = reason === 'settled_without_fanin'
     ? ` La cadena se apagó hace ${idle} y ya no puede avanzar sola, así que la cierro acá.`
     : ` Sin ningún avance desde hace ${idle}, así que la cierro acá.`;
@@ -443,7 +447,7 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
     client: DatabaseClient,
     rootMessageId: string
   ): Promise<{ answered: number; cause?: string; causeCount: number }> {
-    const answered = await client.query<{ answered: number }>(
+    const answered = await client.query<{ answered: number | string }>(
       `SELECT count(*) FILTER (
                 WHERE EXISTS (
                   SELECT 1 FROM audit_events answer
@@ -458,7 +462,7 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
          AND materialization.correlation->>'root_message_id'=$1`,
       [rootMessageId]
     );
-    const cause = await client.query<{ cause: string; total: number }>(
+    const cause = await client.query<{ cause: string; total: number | string }>(
       `SELECT COALESCE(NULLIF(btrim(child.last_error),''),child.status) AS cause,count(*)::int AS total
        FROM agent_output_materializations materialization
        JOIN deliveries child ON child.id=materialization.produced_delivery_id

@@ -137,7 +137,7 @@ export abstract class OutboxSettlementRepository extends OutboxClaimsRepository 
     });
   }
 
-  async listOutbox(kind?: 'wake' | 'origin_relay'): Promise<Array<Record<string, unknown>>> {
+  async listOutbox(kind?: 'wake' | 'origin_relay'): Promise<Record<string, unknown>[]> {
     const result = await this.pool.query<Record<string, unknown>>(
       `SELECT id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,
               origin,payload,status,attempts,max_attempts,available_at,claimed_by,claimed_at,
@@ -209,7 +209,8 @@ export abstract class OutboxSettlementRepository extends OutboxClaimsRepository 
                  AND participant.recipient_tenant=$1 AND participant.recipient_alias=$2))) AS outbox_stuck_origin_relay`,
       [actorTenant ?? null, actorAlias ?? null, outboxStuckAfterMs]
     );
-    const row = result.rows[0]!;
+    const row = result.rows[0];
+    if (row === undefined) throw new StoreError('conflict', 'outbox status query returned no row');
     return {
       online: Number(row.online),
       queued: Number(row.queued),

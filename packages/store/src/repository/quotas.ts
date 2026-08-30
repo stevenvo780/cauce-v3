@@ -377,7 +377,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         remaining_percent: remainingPercent,
         used_units: row.used_units === null ? null : Number(row.used_units),
         limit_units: row.limit_units === null ? null : Number(row.limit_units),
-        window_minutes: row.window_minutes === null ? null : Number(row.window_minutes),
+        window_minutes: row.window_minutes,
         reset_at: row.reset_at?.toISOString() ?? null,
         // Math.max(0, ...): a reset_at that has already passed (the collector has not yet
         // resampled that window) cannot show a negative countdown.
@@ -417,8 +417,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         host: row.host, collector_tenant: row.collector_tenant, collector_alias: row.collector_alias,
         captured_at: row.captured_at.toISOString(), received_at: row.received_at.toISOString(),
         age_seconds: ageSeconds, stale: ageSeconds > DEFAULT_QUOTA_THRESHOLDS.stale_after_seconds,
-        schema_version: Number(row.schema_version), app_version: row.app_version,
-        provider_count: Number(row.provider_count), window_count: Number(row.window_count)
+        schema_version: row.schema_version, app_version: row.app_version,
+        provider_count: row.provider_count, window_count: row.window_count
       };
     });
 
@@ -465,7 +465,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     // does not understand is not blindly mapped -- that is exactly how a misread sample
     // triggers the auto-pause of a healthy subscription.
     if (!(SUPPORTED_QUOTA_SCHEMA_VERSIONS as readonly number[]).includes(sample.schema_version)) {
-      throw new StoreError('invalid_input', `unsupported quota schema_version: ${sample.schema_version}`);
+      throw new StoreError('invalid_input', `unsupported quota schema_version: ${String(sample.schema_version)}`);
     }
 
     const providerCount = sample.providers.length;

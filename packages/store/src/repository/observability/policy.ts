@@ -82,7 +82,7 @@ export function leaseCapMsSql(defaultCapParameter: string, graceParameter: strin
   return `COALESCE(
     CASE WHEN jsonb_typeof(${table}.body->'timeout_ms')='number'
               AND (${table}.body->>'timeout_ms') ~ '^[1-9][0-9]{0,9}$'
-         THEN CASE WHEN (${table}.body->>'timeout_ms')::bigint <= ${MAX_MESSAGE_TIMEOUT_MS}
+         THEN CASE WHEN (${table}.body->>'timeout_ms')::bigint <= ${String(MAX_MESSAGE_TIMEOUT_MS)}
                    THEN (${table}.body->>'timeout_ms')::bigint + ${graceParameter}::bigint END
     END, ${defaultCapParameter}::bigint)`;
 }
