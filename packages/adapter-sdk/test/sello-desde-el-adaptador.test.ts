@@ -240,7 +240,7 @@ test("la TUI compartida recibe el perfil vivo en cada turno sin reiniciar su pro
   process.env.HOME = home;
   delete process.env.CLAUDE_CONFIG_DIR;
   try {
-    const consumidos: Array<{ readonly documents: readonly { readonly path: string; readonly sha256: string }[] }> = [];
+    const consumidos: { readonly documents: readonly { readonly path: string; readonly sha256: string }[] }[] = [];
     const run = () => adapter.execute({
       prompt: "Revisa el perfil.",
       context: contexto("zeus"),

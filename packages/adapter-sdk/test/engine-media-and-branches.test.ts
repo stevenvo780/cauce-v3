@@ -41,7 +41,7 @@ test("materializa attachments_v1 para el harness, verifica contenido y limpia el
   let materializedContents: Buffer | undefined;
   class AttachmentRunner extends ControlledRunner {
     override async run(request: CommandRunRequest): Promise<CommandRunResult> {
-      const pathMatch = request.stdin.match(/"local_path":"([^"]+)"/u);
+      const pathMatch = /"local_path":"([^"]+)"/u.exec(request.stdin);
       assert.ok(pathMatch?.[1], "el prompt debe incluir una ruta local accesible");
       materializedPath = pathMatch[1];
       materializedContents = await readFile(materializedPath);

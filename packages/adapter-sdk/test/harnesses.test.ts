@@ -130,7 +130,7 @@ test("all harness adapters reject direct fan-in before provider or session acces
       (error: unknown) =>
         error instanceof AdapterError
         && error.code === "FANIN_HARNESS_EXECUTION_FORBIDDEN"
-        && error.retryable === false,
+        && !error.retryable,
     );
 
     assert.equal(runnerCalls, 0, `${definition.id} provider runner was called`);
@@ -177,7 +177,7 @@ test("process exit after execution begins is ambiguous and non-retryable", async
       (error: unknown) =>
         error instanceof AdapterError
         && error.code === "PROCESS_EXIT_AMBIGUOUS"
-        && error.retryable === false,
+        && !error.retryable,
     );
   }
 });
@@ -534,7 +534,7 @@ test("cancellation terminates the complete POSIX process group", async () => {
     timeoutMs: 2_000,
     signal: controller.signal,
   });
-  setTimeout(() => controller.abort(), 40);
+  setTimeout(() => { controller.abort(); }, 40);
   const result = await running;
   assert.equal(result.cancelled, true);
   await new Promise((resolveWait) => setTimeout(resolveWait, 300));

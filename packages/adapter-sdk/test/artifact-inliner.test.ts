@@ -299,7 +299,7 @@ test("un FIFO no se convierte y, sobre todo, no deja el turno colgado", async ()
   const output = await Promise.race([
     inlineLocalArtifacts(entrada),
     new Promise<StructuredOutput>((_, reject) => {
-      setTimeout(() => reject(new Error("inlineLocalArtifacts se colgó sobre un FIFO")), 5_000).unref();
+      setTimeout(() => { reject(new Error("inlineLocalArtifacts se colgó sobre un FIFO")); }, 5_000).unref();
     }),
   ]);
   assert.equal(firstUri(output), fifo);

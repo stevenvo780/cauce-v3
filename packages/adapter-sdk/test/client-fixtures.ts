@@ -100,7 +100,7 @@ export class FakeConnection implements ConsumerConnection {
   readonly ephemeral = false as const;
   readonly sent: ClientFrame[] = [];
   private readonly queued: ServerFrame[] = [];
-  private readonly waiters: Array<(value: IteratorResult<ServerFrame>) => void> = [];
+  private readonly waiters: ((value: IteratorResult<ServerFrame>) => void)[] = [];
   private ended = false;
 
   constructor(
@@ -264,7 +264,7 @@ export function renewableDelivery(
   };
 }
 
-export function startedAcks(connection: FakeConnection): Array<Extract<ClientFrame, { type: "ack" }>> {
+export function startedAcks(connection: FakeConnection): Extract<ClientFrame, { type: "ack" }>[] {
   return connection.sent.filter(
     (frame): frame is Extract<ClientFrame, { type: "ack" }> => (
       frame.type === "ack" && frame.status === "started"

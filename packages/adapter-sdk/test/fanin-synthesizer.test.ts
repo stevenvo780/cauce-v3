@@ -358,7 +358,7 @@ test("fan-in synthesis rejects malformed schema or response attribution", () => 
       (error: unknown) =>
         error instanceof AdapterError
         && error.code === "INVALID_DELIVERY"
-        && error.retryable === false,
+        && !error.retryable,
     );
   }
 });

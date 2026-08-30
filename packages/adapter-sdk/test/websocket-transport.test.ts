@@ -48,7 +48,7 @@ test("bearer token and development headers reload safely on reconnect", async ()
   await once(server, "listening");
   const address = server.address();
   assert.ok(address && typeof address === "object");
-  const received: Array<{ authorization?: string; tenant?: string; alias?: string }> = [];
+  const received: { authorization?: string; tenant?: string; alias?: string }[] = [];
   server.on("connection", (_socket, request) => {
     received.push({
       ...(request.headers.authorization === undefined ? {} : { authorization: request.headers.authorization }),
@@ -70,7 +70,7 @@ test("bearer token and development headers reload safely on reconnect", async ()
     { authorization: "Bearer first-token", tenant: "Steven", alias: "kant" },
     { authorization: "Bearer second-token", tenant: "Steven", alias: "kant" },
   ]);
-  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  await new Promise<void>((resolveClose) => { server.close(() => { resolveClose(); }); });
 });
 
 test("credential errors enforce 0600 and never expose bearer contents", async () => {
@@ -170,7 +170,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   );
 
   await connection.close();
-  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  await new Promise<void>((resolveClose) => { server.close(() => { resolveClose(); }); });
 });
 
 /**
@@ -255,7 +255,7 @@ async function frameServer(): Promise<{
         });
       });
     },
-    close: async () => { await new Promise<void>((done) => server.close(() => done())); },
+    close: async () => { await new Promise<void>((done) => { server.close(() => { done(); }); }); },
   };
 }
 
@@ -382,7 +382,7 @@ test("mTLS requires complete valid owner-only material and wss", async () => {
   });
   await assert.rejects(
     connector.connect(new AbortController().signal),
-    (error: unknown) => error instanceof SecureFileError && /material is invalid/u.test(error.message),
+    (error: unknown) => error instanceof SecureFileError && error.message.includes('material is invalid'),
   );
   const missing = new WebSocketConsumerConnector("wss://127.0.0.1:9", {
     environment: "production",

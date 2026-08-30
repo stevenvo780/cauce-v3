@@ -560,13 +560,13 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     rmSync(root, { recursive: true, force: true });
   });
 
-  const cases: Array<{
+  const cases: {
     name: string;
     file: string;
     mutateContract?: boolean;
     mutateGeneration?: boolean;
     omitContract?: boolean;
-  }> = [
+  }[] = [
     {
       name: "stale",
       file: profileFile("zeus", 11, "CURRENT"),
@@ -597,12 +597,12 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     },
     {
       name: "repeated fixed",
-      file: `${profileFile("zeus", 11, "CURRENT")}`
+      file: profileFile("zeus", 11, "CURRENT")
         + `\n${MARCA_INICIO}\nold-a\n${MARCA_FIN}\n${MARCA_INICIO}\nold-b\n${MARCA_FIN}\n`,
     },
     {
       name: "inverted fixed",
-      file: `${profileFile("zeus", 11, "CURRENT")}`
+      file: profileFile("zeus", 11, "CURRENT")
         + `\n${MARCA_FIN}\nold\n${MARCA_INICIO}\n`,
     },
     {

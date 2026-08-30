@@ -195,7 +195,7 @@ test("la proyección de openclaw es sólo el subárbol del alias bajo agents", (
   const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
   const fragmento = JSON.parse(proyeccionOpenclaw("zeus", bloque)) as Record<string, unknown>;
   assert.deepEqual(Object.keys(fragmento), ["agents"]);
-  const agents = fragmento["agents"] as Record<string, unknown>;
+  const agents = fragmento.agents as Record<string, unknown>;
   assert.deepEqual(Object.keys(agents), ["zeus"]);
 });
 
@@ -225,7 +225,7 @@ test("la proyección lleva el sello dentro, para poder comprobarla sin releer el
   const fragmento = JSON.parse(proyeccionOpenclaw("zeus", bloque)) as {
     agents: Record<string, { cauce: { version: string; sha256: string } }>;
   };
-  assert.equal(fragmento.agents["zeus"]?.cauce.sha256, resumirContextoFijo(bloque));
+  assert.equal(fragmento.agents.zeus?.cauce.sha256, resumirContextoFijo(bloque));
 });
 
 /** NEGATIVE CONTROL of the stable serializer: `JSON.stringify` DOES depend on order. */

@@ -108,7 +108,7 @@ export function assistantEntry(
   parentUuid: string,
   text: string,
   sessionId: string,
-  stopReason: string = "end_turn",
+  stopReason = "end_turn",
 ): string {
   return JSON.stringify({
     type: "assistant", uuid, parentUuid, isSidechain: false, sessionId,
@@ -550,7 +550,7 @@ export class FakeTmux implements TmuxController {
         exitCode: 0,
         stdout: `${this.sessionId}\t${this.sessionName}\t`
           + `${this.windowId}\t`
-          + `${this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente")}`
+          + (this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente"))
           + `\t${this.paneId}\t${this.panePid}\t0\t${this.inputOff ? "1" : "0"}`
           + `\t${this.paneInMode ? "1" : "0"}`
           + `\t${this.paneOptions.get("@cauce_input_barrier") ?? ""}\n`,
@@ -571,7 +571,7 @@ export class FakeTmux implements TmuxController {
         exitCode: 0,
         stdout: `${this.sessionId}\t${this.sessionName}\t`
           + `${this.windowId}\t`
-          + `${this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente")}`
+          + (this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente"))
           + `\t${this.paneId}\t${this.panePid}\t0\n`,
         stderr: "",
       };

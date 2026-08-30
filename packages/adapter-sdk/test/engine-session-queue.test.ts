@@ -79,7 +79,7 @@ function delivery(id: string): Delivery {
 /** Blocks execution until the test releases it, so the queue can be observed. */
 class GatedRunner implements CommandRunner {
   started = 0;
-  private readonly releases: Array<() => void> = [];
+  private readonly releases: (() => void)[] = [];
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
     this.started += 1;
@@ -258,7 +258,7 @@ test("un latido de cola que el gateway no aplica no es pérdida de propiedad", a
   const store = await storeFor("queue-renewal-not-applied");
   const runner = new GatedRunner();
   const events: DeliveryEvent[] = [];
-  const logs: Array<Record<string, unknown>> = [];
+  const logs: Record<string, unknown>[] = [];
   const engine = new AdapterEngine({
     store,
     executionIntentMode: "local-test-only",

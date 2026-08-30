@@ -67,7 +67,7 @@ async function crashChildAtAtomicWindow(
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
-    child.once("exit", (code, signal) => resolveExit({ code, signal }));
+    child.once("exit", (code, signal) => { resolveExit({ code, signal }); });
   });
   await new Promise<void>((resolveReady, rejectReady) => {
     const timeout = setTimeout(() => {

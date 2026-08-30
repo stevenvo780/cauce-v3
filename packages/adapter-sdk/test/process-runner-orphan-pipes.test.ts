@@ -37,7 +37,7 @@ function sleep(ms: number): Promise<void> {
 async function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_, fail) => {
-    timer = setTimeout(() => fail(new Error(`${what}: la entrega quedó colgada más de ${ms} ms`)), ms);
+    timer = setTimeout(() => { fail(new Error(`${what}: la entrega quedó colgada más de ${ms} ms`)); }, ms);
   });
   try {
     return await Promise.race([work, deadline]);
@@ -120,7 +120,7 @@ test("la cancelación cierra la entrega aunque el hijo ya haya salido", skipOnWi
     timeoutMs: 3_600_000,
     signal: controller.signal,
   });
-  setTimeout(() => controller.abort(), 200);
+  setTimeout(() => { controller.abort(); }, 200);
 
   const result = await withDeadline(running, 10_000, "cancelación con hijo ya salido");
 

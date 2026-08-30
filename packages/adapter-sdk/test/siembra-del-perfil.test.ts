@@ -359,7 +359,7 @@ test("si un fichero no se puede LEER, OpenClaw cancela el lote entero", () => {
 
 test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lectura-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   assert.equal(discoReal.leer(join(raiz, "ausente.md")), undefined);
 
@@ -376,7 +376,7 @@ test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular
 
 test("la escritura conserva el inode existente y no sigue symlinks", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-escritura-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   const objetivo = join(raiz, "AGENTS.md");
   writeFileSync(objetivo, "antes", "utf8");
@@ -388,13 +388,13 @@ test("la escritura conserva el inode existente y no sigue symlinks", (t) => {
 
   const enlace = join(raiz, "enlace.md");
   symlinkSync(objetivo, enlace);
-  assert.throws(() => discoReal.escribir(enlace, "pisado"));
+  assert.throws(() => { discoReal.escribir(enlace, "pisado"); });
   assert.equal(readFileSync(objetivo, "utf8"), "después");
 });
 
 test("un symlink en cualquier directorio padre no puede escapar del home", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-padre-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   const home = join(raiz, "home");
   const fuera = join(raiz, "fuera");
@@ -404,7 +404,7 @@ test("un symlink en cualquier directorio padre no puede escapar del home", (t) =
   const ruta = join(home, ".codex", "AGENTS.md");
 
   assert.throws(() => discoReal.leer(ruta), "trató el padre symlink como ausencia");
-  assert.throws(() => discoReal.escribir(ruta, "escape"));
+  assert.throws(() => { discoReal.escribir(ruta, "escape"); });
   assert.equal(existsSync(join(fuera, "AGENTS.md")), false, "escribió fuera del home autorizado");
   assert.ok(!readdirSync(fuera).some((nombre) => nombre.startsWith(".cauce-perfil-")));
 });
@@ -444,10 +444,10 @@ test("un swap concurrente del padre aborta y limpia mediante el dirfd original",
 
   assert.deepEqual(await once(worker, "message"), ["ready"]);
   const intercambio = once(worker, "message");
-  assert.throws(() => discoReal.escribir(
+  assert.throws(() => { discoReal.escribir(
     join(directorio, "AGENTS.md"),
     "x".repeat(16 * 1024 * 1024),
-  ));
+  ); });
   assert.deepEqual(await intercambio, ["swapped"]);
   assert.equal(existsSync(join(fuera, "AGENTS.md")), false);
   assert.equal(existsSync(join(movido, "AGENTS.md")), false, "no revirtió el destino anclado");
@@ -456,7 +456,7 @@ test("un swap concurrente del padre aborta y limpia mediante el dirfd original",
 
 test("el preflight del lote falla antes de modificar el primer destino", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lote-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   const primero = join(raiz, "SOUL.md");
   const objetivo = join(raiz, "objetivo.md");
@@ -465,10 +465,10 @@ test("el preflight del lote falla antes de modificar el primer destino", (t) => 
   writeFileSync(objetivo, "segundo-intacto", "utf8");
   symlinkSync(objetivo, segundo);
 
-  assert.throws(() => discoReal.escribirLote([
+  assert.throws(() => { discoReal.escribirLote([
     { ruta: primero, contenido: "primero-nuevo" },
     { ruta: segundo, contenido: "segundo-nuevo" },
-  ]));
+  ]); });
   assert.equal(readFileSync(primero, "utf8"), "primero-intacto");
   assert.equal(readFileSync(objetivo, "utf8"), "segundo-intacto");
   assert.ok(!readdirSync(raiz).some((nombre) => nombre.startsWith(".cauce-perfil-")));

@@ -91,7 +91,7 @@ const ROUTING_TARGETS = [
 
 function isContractError(code: string): (error: unknown) => boolean {
   return (error: unknown): boolean =>
-    error instanceof AdapterError && error.code === code && error.retryable === false;
+    error instanceof AdapterError && error.code === code && !error.retryable;
 }
 
 /**
@@ -652,7 +652,7 @@ test("una notify mal formada se descarta y la respuesta sobrevive", () => {
   // Before this each of these threw, and the throw took the whole reply with it: the agent
   // did the work and the owner got a schema error. `notify` is accessory; if it is malformed
   // it is dropped, the agent is told why in its own reply, and the turn stays alive.
-  const casos: Array<[unknown, RegExp]> = [
+  const casos: [unknown, RegExp][] = [
     ["not-an-array", /no era una lista/u],
     [[{ to: "Steven.DM", kind: "alert", body: "x" }], /no es un handle de destino/u],
     [[{ to: "steven.dm", kind: "gossip", body: "x" }], /'kind' debe ser uno de/u],
@@ -670,8 +670,8 @@ test("una notify mal formada se descarta y la respuesta sobrevive", () => {
   ];
   for (const [notify, patron] of casos) {
     const salida = validateStructuredOutput({ ...output("done", false), notify });
-    assert.match(salida.reply as string, patron);
-    assert.match(salida.reply as string, /\[Cauce\]/u);
+    assert.match(salida.reply!, patron);
+    assert.match(salida.reply!, /\[Cauce\]/u);
   }
 });
 
@@ -682,7 +682,7 @@ test("una notify bien formada pasa intacta y no ensucia la respuesta", () => {
   });
   assert.equal(salida.notify?.length, 1);
   assert.equal(salida.notify?.[0]?.to, "steven_dm");
-  assert.ok(!(salida.reply as string).includes("[Cauce]"));
+  assert.ok(!(salida.reply!).includes("[Cauce]"));
 });
 
 test("las notify agregadas se acotan sin tumbar el turno", () => {
@@ -692,7 +692,7 @@ test("las notify agregadas se acotan sin tumbar el turno", () => {
     notify: Array.from({ length: 3 }, () => ({ to: "steven.dm", kind: "digest", body })),
   });
   assert.ok((salida.notify?.length ?? 0) < 3, "las que exceden el agregado no se entregan");
-  assert.match(salida.reply as string, /limite agregado de bytes/u);
+  assert.match(salida.reply!, /limite agregado de bytes/u);
 });
 
 test("artifacts ausente se normaliza a lista vacia", () => {
@@ -747,6 +747,6 @@ test("a failed output may notify even though it may not delegate", () => {
     artifacts: [],
   }));
   assert.deepEqual(conDelegacion.messages, []);
-  assert.match(conDelegacion.reply as string, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
+  assert.match(conDelegacion.reply!, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
   assert.equal(conDelegacion.notify?.length, 1);
 });

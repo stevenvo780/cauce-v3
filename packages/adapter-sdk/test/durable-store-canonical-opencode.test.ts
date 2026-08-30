@@ -103,10 +103,10 @@ test("invalid initialized mapping never becomes an active canonical pointer", as
 });
 
 test("invalid sessions state replaces a stale active pointer before reconciliation aborts", async () => {
-  const cases: ReadonlyArray<{
+  const cases: readonly {
     name: string;
     prepare(directory: string): Promise<void>;
-  }> = [
+  }[] = [
     {
       name: "malformed",
       prepare: async (directory) => {

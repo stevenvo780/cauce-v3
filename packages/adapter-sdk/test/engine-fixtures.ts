@@ -91,7 +91,7 @@ export class ControlledRunner implements CommandRunner {
     if (this.blockUntilAbort) {
       await new Promise<void>((resolveWait) => {
         if (request.signal.aborted) resolveWait();
-        else request.signal.addEventListener("abort", () => resolveWait(), { once: true });
+        else request.signal.addEventListener("abort", () => { resolveWait(); }, { once: true });
       });
       return {
         stdout: "",
@@ -136,7 +136,7 @@ export class SessionConcurrencyRunner implements CommandRunner {
   readonly requests: CommandRunRequest[] = [];
   maxActive = 0;
   private active = 0;
-  private readonly releases: Array<() => void> = [];
+  private readonly releases: (() => void)[] = [];
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
     this.requests.push(request);
