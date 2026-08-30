@@ -50,8 +50,6 @@ function hechos(overrides: Partial<HechosDelAlias> = {}): HechosDelAlias {
   };
 }
 
-// ── Determinism ────────────────────────────────────────────────────────────────────────────────
-
 test("mismo perfil y mismos hechos producen EXACTAMENTE los mismos bytes", () => {
   const uno = componerBloqueDePerfil(perfil(), hechos());
   const dos = componerBloqueDePerfil(perfil(), hechos());
