@@ -1,6 +1,26 @@
 /**
  * Audio transcription against an OpenAI-API-compatible service.
  */
+import { logJsonLine } from './ingress-body.js';
+
+/**
+ * Cuanto del cuerpo de error del servicio se conserva para el registro.
+ *
+ * El cuerpo trae la causa de verdad —`RuntimeError: CUDA failed with error out of memory`— y hasta
+ * hoy se tiraba entera: el puente devolvia «respondio 500» y no registraba nada. El 2026-08-30 eso
+ * costo una hora de diagnostico subiendo a la torre a leer los logs del servicio, mientras kratos
+ * y su humano se quedaban sin poder hablar. La causa NO viaja al chat —es interna— pero tiene que
+ * quedar en el registro del puente, que es donde se mira primero.
+ */
+const MAX_ERROR_BODY_CHARS = 500;
+
+async function causaDelServicio(respuesta: { text(): Promise<string> }): Promise<string> {
+  try {
+    return (await respuesta.text()).replace(/\s+/gu, ' ').trim().slice(0, MAX_ERROR_BODY_CHARS);
+  } catch {
+    return '';
+  }
+}
 
 export interface TranscriptionConfig {
   /** Service origin, without the path: `http://host:8000/v1`. */
@@ -109,6 +129,13 @@ export async function transcribeAudio(
       signal: control.signal
     });
     if (!respuesta.ok) {
+      logJsonLine({
+        event: 'telegram_transcription_failed',
+        status: respuesta.status,
+        model: config.model,
+        bytes: payload.length,
+        cause: await causaDelServicio(respuesta),
+      });
       return { error: `el servicio de transcripción respondió ${String(respuesta.status)}` };
     }
     const cuerpo: unknown = await respuesta.json();
@@ -120,6 +147,13 @@ export async function transcribeAudio(
     const causa = error instanceof Error && error.name === 'AbortError'
       ? `no respondió en ${String(Math.round(config.timeoutMs / 1_000))} s`
       : 'no está accesible';
+    logJsonLine({
+      event: 'telegram_transcription_failed',
+      status: null,
+      model: config.model,
+      bytes: payload.length,
+      cause: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, MAX_ERROR_BODY_CHARS) : '',
+    });
     return { error: `el servicio de transcripción ${causa}` };
   } finally {
     clearTimeout(reloj);

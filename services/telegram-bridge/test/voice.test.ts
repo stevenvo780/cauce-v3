@@ -148,6 +148,37 @@ describe('transcripción de notas de voz', () => {
     expect(resultado.error).toMatch(/no parece audio/u);
   });
 
+  it('un 500 deja la causa REAL en el registro, y no la manda al chat', async () => {
+    // El 2026-08-30 el ASR devolvio 500 por `RuntimeError: CUDA failed with error out of memory` y
+    // el puente contesto «respondio 500» sin registrar nada: el cuerpo se tiraba entero. Costo una
+    // hora de diagnostico subiendo a la torre a leer los logs del servicio, con kratos y su humano
+    // sin poder hablar mientras tanto.
+    const lineas: string[] = [];
+    const registrar = console.error.bind(console);
+    console.error = (...partes: unknown[]): void => { lineas.push(partes.map(String).join(' ')); };
+    let resultado;
+    try {
+      resultado = await prepareTelegramVoice(
+        message({ voice: VOICE }), voiceApi(), CONFIG,
+        async (payload, filename, mime, config) => transcribeAudio(payload, filename, mime, config, async () =>
+          new Response('RuntimeError: CUDA failed with error out of memory', { status: 500 }))
+      );
+    } finally {
+      console.error = registrar;
+    }
+
+    // Al usuario NO se le cuenta la interioridad del servicio.
+    expect(resultado.error).toMatch(/respondió 500/u);
+    expect(resultado.error).not.toMatch(/CUDA/u);
+
+    // Al registro SI, que es donde se mira primero.
+    const registro = lineas.find((linea) => linea.includes('telegram_transcription_failed'));
+    expect(registro, 'el fallo de transcripción no dejó ninguna línea de registro').toBeDefined();
+    const evento = JSON.parse(registro!) as { status: number; cause: string };
+    expect(evento.status).toBe(500);
+    expect(evento.cause).toMatch(/CUDA failed with error out of memory/u);
+  });
+
   it('recorta y limpia lo que devuelve el servicio: es entrada no confiable', async () => {
     const sucio = `hola \u0007\u202emundo${'x'.repeat(9_000)}`;
     const resultado = await prepareTelegramVoice(
