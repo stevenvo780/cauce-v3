@@ -36,28 +36,21 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
     });
   }
 
-  /**
-   * Olvida el puntero a una sesion nativa que el arnes ya no encuentra.
-   *
-   * No es limpieza: es la unica salida del bucle. Un `native_id` muerto hace que cada reintento
-   * reproduzca el mismo fallo de arranque, y como es reintentable el adaptador lo repite sin fin.
-   */
+  /** Forgets a missing native session so a retry can create a fresh one. */
   async forgetSession(key: string): Promise<boolean> {
     return this.serialized(async () => {
       if (this.sessions.sessions[key] === undefined) return false;
-      const resto: Record<string, SessionRecord> = { ...this.sessions.sessions };
-      delete resto[key];
-      const next = validateSessionsFile({ version: 1, sessions: resto });
+      const remaining: Record<string, SessionRecord> = Object.fromEntries(
+        Object.entries(this.sessions.sessions).filter(([sessionKey]) => sessionKey !== key),
+      );
+      const next = validateSessionsFile({ version: 1, sessions: remaining });
       await this.atomicWrite("sessions.json", next);
       this.sessions = next;
       return true;
     });
   }
 
-  /**
-   *
-   * uninitialized, or vice versa.
-   */
+  /** Publishes the initialized terminal pointer in the same atomic sessions update. */
   async setCanonicalOpenClawTerminalSession(
     alias: string,
     sourceKey: string,

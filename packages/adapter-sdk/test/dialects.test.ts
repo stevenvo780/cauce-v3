@@ -135,22 +135,21 @@ test("OpenClaw bounds result/output wrapper traversal", () => {
 test("plain fallback rejects non-visible, oversized and object-like malformed output", () => {
   assert.throws(() => parseFinalText("  ", "test final"), /visible text/u);
   assert.throws(() => parseFinalText("x".repeat(MAX_FINAL_TEXT_BYTES + 1), "test final"), /limit/u);
- // CONTRACT CHANGE: a truncated envelope with a complete `reply` is NO LONGER lost
+  // A complete reply remains recoverable from a truncated envelope.
   assert.equal(parseFinalText('{"reply":"truncated"', "test final").reply, "truncated");
-  const ilegible = parseFinalText('{"messages":[', "test final");
-  assert.equal(ilegible.status, "failed");
-  assert.equal(ilegible.retryable, false);
-  assert.deepEqual(ilegible.messages, []);
-  assert.match(ilegible.reply ?? "", /no quedo ni una linea de texto rescatable/u);
- // CONTRACT CHANGE, misma razon que la d una capa mas arriba: un sobre
-  const sinAndamiaje = parseFinalText('{"reply":"schema-invalid"}', "test final");
-  assert.equal(sinAndamiaje.reply?.startsWith("schema-invalid"), true);
-  assert.equal(sinAndamiaje.status, "done");
-  assert.equal(sinAndamiaje.retryable, false);
-  assert.deepEqual(sinAndamiaje.messages, []);
-  assert.match(sinAndamiaje.reply ?? "", /faltaba[^\n]*'messages'/u);
-  // Lo que NO se ablando: un campo PRESENTE pero mal formado sigue siendo fallo duro, porque eso
-  // es una violacion de contrato y no un descuido.
+  const unreadable = parseFinalText('{"messages":[', "test final");
+  assert.equal(unreadable.status, "failed");
+  assert.equal(unreadable.retryable, false);
+  assert.deepEqual(unreadable.messages, []);
+  assert.match(unreadable.reply ?? "", /no quedo ni una linea de texto rescatable/u);
+  // A well-formed reply with missing scaffolding remains deliverable.
+  const missingScaffold = parseFinalText('{"reply":"schema-invalid"}', "test final");
+  assert.equal(missingScaffold.reply?.startsWith("schema-invalid"), true);
+  assert.equal(missingScaffold.status, "done");
+  assert.equal(missingScaffold.retryable, false);
+  assert.deepEqual(missingScaffold.messages, []);
+  assert.match(missingScaffold.reply, /faltaba[^\n]*'messages'/u);
+  // Present malformed fields remain hard contract failures.
   assert.throws(
     () => parseFinalText('{"reply":"x","messages":"no-es-lista"}', "test final"),
     /'messages' must be an array/u,

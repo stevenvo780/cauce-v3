@@ -6,6 +6,7 @@ import {
   nativeProfileContextEnabled,
 } from "../../context/native-profile-context.js";
 import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
+import { signalAborted } from "../../runtime-state.js";
 import {
   isCanonicalOpenCodeSessionId,
   isCanonicalOpenCodeScopeKey,
@@ -129,7 +130,6 @@ export class HarnessAdapter {
     if (effectiveSessionKey !== undefined && this.definition.sessionStrategy.kind !== "none") {
       const key = this.sessionStoreKey(effectiveSessionKey);
       const reservation = request.sessionReservation ?? this.reserveResolved(effectiveSessionKey);
-      if (reservation === undefined) throw new Error(`Missing session reservation for ${key}`);
       if (reservation.key !== key) {
         reservation.release();
         throw new Error(`Session reservation mismatch for ${key}`);
@@ -251,7 +251,7 @@ export class HarnessAdapter {
         const motivo = sembrarContextoFijo(ruta, textoFijoDelSobre(context), {
           habilitado: process.env.CAUCE_SEMBRAR_CONTEXTO === "1",
           leer: (r) => readFileSync(r, "utf8"),
-          escribir: (r, contenido) => writeFileSync(r, contenido, "utf8"),
+          escribir: (r, contenido) => { writeFileSync(r, contenido, "utf8"); },
         });
         if (motivo === "sembrado") sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
       }
@@ -270,7 +270,7 @@ export class HarnessAdapter {
    */
   private perfilVivoDelRuntime(context: HarnessRequestContext): RuntimeProfileMeasurement | undefined {
     const home = process.env.HOME;
-    if (home === undefined || !home.startsWith("/")) return undefined;
+    if (!home?.startsWith("/")) return undefined;
 
     const paths: string[] = [];
     const instructionPath = rutaDelContextoFijo(this.definition.id, home);
@@ -278,7 +278,7 @@ export class HarnessAdapter {
       paths.push(instructionPath);
     } else if (this.definition.id === "openclaw") {
       const workspace = process.env.CAUCE_OPENCLAW_WORKSPACE;
-      if (workspace === undefined || !workspace.startsWith("/")) return undefined;
+      if (!workspace?.startsWith("/")) return undefined;
       for (const name of FICHEROS_OPENCLAW) {
         // MEMORY/HEARTBEAT belong to the agent, not an authored facet of the profile.
         if (!esFicheroDelAgente(name)) paths.push(`${workspace}/${name}`);
@@ -288,7 +288,7 @@ export class HarnessAdapter {
     }
 
     const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;
-    const documents: Array<{ path: string; sha256: string; block: string }> = [];
+    const documents: { path: string; sha256: string; block: string }[] = [];
     for (const path of paths) {
       let file: string;
       try {
@@ -298,7 +298,7 @@ export class HarnessAdapter {
       }
       const block = bloqueDePerfil(file);
       // A shared HOME never authorizes injecting a neighbor's profile.
-      if (block === undefined || !block.trimStart().startsWith(owner)) continue;
+      if (!block?.trimStart().startsWith(owner)) continue;
       documents.push({
         path,
         sha256: createHash("sha256").update(file, "utf8").digest("hex"),
@@ -383,7 +383,7 @@ export class HarnessAdapter {
         false,
       );
     }
-    if (result.cancelled || request.signal.aborted) {
+    if (result.cancelled || signalAborted(request.signal)) {
       if (abortadoPorApagado(request.signal) && elTestigoDiceQueNoEmpezo(result)) {
         throw new ProcessExecutionError(
           "EXECUTION_CANCELLED_PREFLIGHT",
@@ -419,18 +419,15 @@ export class HarnessAdapter {
             : "; the transport witnessed that it never started";
           throw new ProcessExecutionError(
             "PROCESS_EXIT_PREFLIGHT",
-            `Harness exited with code ${result.exitCode} before beginning the turn,`
+            `Harness exited with code ${String(result.exitCode)} before beginning the turn,`
             + ` without producing any output${detalle}`,
             true,
           );
         }
         const message = causeDetail
-          ? `Harness exited with code ${result.exitCode} without structured output: ${causeDetail}`
+          ? `Harness exited with code ${String(result.exitCode)} without structured output: ${causeDetail}`
           : "Harness exited after execution began without structured output; completion state is unknown";
-        // `PROCESS_EXIT_AMBIGUOUS` esta en AMBIGUOUS_ACK_ERROR_CODES, y el contrato del gateway
-        // rechaza esos ACK si vienen como reintentables ("Ambiguous ACK errors must not be
-        // retryable"). Marcar aqui la interrupcion del dueno como reintentable producia un marco
-        // que el gateway rechaza SIEMPRE: el adaptador lo reintentaba una vez por segundo y no
+        // The gateway rejects retryable ambiguous ACK errors.
         throw new ProcessExecutionError(
           "PROCESS_EXIT_AMBIGUOUS",
           message,
@@ -442,9 +439,9 @@ export class HarnessAdapter {
     if (result.exitCode !== 0 && parsed.output.status !== "failed") {
       const causeDetail = sanitizeProcessOutput(sinMarcaDeArranque(result.stderr));
       const message = causeDetail
-        ? `Harness exited with code ${result.exitCode}: ${causeDetail}`
+        ? `Harness exited with code ${String(result.exitCode)}: ${causeDetail}`
         : "Harness exited with a non-zero status after execution began; completion state is unknown";
-      // Ver arriba: un ACK ambiguo nunca puede ser reintentable o el gateway lo rechaza en bucle.
+      // A post-start non-zero exit has an unknown completion state.
       throw new ProcessExecutionError(
         "PROCESS_EXIT_AMBIGUOUS",
         message,
