@@ -18,7 +18,6 @@ export function persistedString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-/** PostgreSQL bigint decoders are normalized to the string API contract. */
 export function postgresBigintString(value: unknown): string {
   return String(value);
 }
