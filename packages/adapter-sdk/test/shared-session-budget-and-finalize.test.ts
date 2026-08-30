@@ -52,7 +52,9 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   tmux.sessionName = "cauce-zeus";
   const fallback = new RecordingFallback("{}");
   // The paste is lost: the TUI NEVER writes the entry into the transcript.
-  tmux.onSubmit = async () => {};
+  tmux.onSubmit = async () => {
+    return;
+  };
 
   const runner = new PasteSessionRunner({
     alias: "zeus",

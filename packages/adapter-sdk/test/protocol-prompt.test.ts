@@ -293,6 +293,7 @@ test("el andamiaje sobrevive el puente de stdin: utf-8 estricto, sin controles, 
   // MAX_INPUT_BYTES for the hermes bridge is 1 MiB and rejects the excess instead of trimming it.
   assert.ok(bytes.byteLength < 1024 * 1024);
   // The prompt is read line by line: no control character beyond the newline.
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread -- control characters must be detected by code point, not UTF-16 unit
   const controls = [...scaffolding].filter((character) => {
     const code = character.codePointAt(0)!;
     return character !== "\n" && (code < 0x20 || code === 0x7f);

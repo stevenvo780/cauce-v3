@@ -38,6 +38,7 @@ test("el rol declarado llega entero al harness aunque mida 1300 unidades UTF-16"
   // it to the harness without trimming it: trimming here would invent a role for the agent
   // different from what the operator saved through the screen.
   const brief = `${"a".repeat(1100)}${"\u{1F389}".repeat(100)}`;
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread -- the assertion is the spread: it must count code points, not UTF-16 units
   assert.equal([...brief].length, 1200);
   assert.equal(brief.length, 1300);
 
@@ -53,6 +54,7 @@ test("el rol se recorta por puntos de código: nunca sale un surrogate suelto al
   // surrogate it left has no UTF-8 representation and travelled to the harness stdin as U+FFFD.
   // The agent read its own role ending in a broken character.
   const justo = `${"a".repeat(1199)}\u{1F389}`;
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread -- same code-point count assertion as the line above
   assert.equal([...justo].length, 1200);
   assert.equal(justo.length, 1201);
   // NEGATIVE CONTROL: the old line, run as is, DOES break the emoji. Without this, the

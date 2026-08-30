@@ -33,7 +33,7 @@ test("un sobre precedido de una frase conserva las delegaciones en vez de tragá
   assert.equal(salida.status, "done");
   assert.equal(salida.reply, "Recibido el STAND DOWN. Confirmo: nunca empecé ese encargo.");
   // And, along the way, the raw contract dump stops being published as if it were the reply.
-  assert.equal(String(salida.reply).includes('"messages"'), false);
+  assert.equal(salida.reply.includes('"messages"'), false);
 });
 
 test("un sobre en una valla con prosa alrededor tampoco pierde la delegación", () => {
