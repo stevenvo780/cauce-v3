@@ -1,4 +1,4 @@
-import type { PublishMessage, Tenant } from '@cauce/protocol';
+import type { PublishMessage, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import {
   PublishResultSchema,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
@@ -57,8 +57,9 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         [input.tenant_id, input.actor_alias, input.idempotency_key],
       );
       const durableKey = result.rows[0];
-      if (result.rowCount !== 1 || !durableKey || durableKey.request_hash !== hash
-          || durableKey.message_id === null || durableKey.response === null) {
+      if (result.rowCount !== 1 || durableKey === undefined) return false;
+      if (durableKey.request_hash !== hash || durableKey.message_id === null
+          || durableKey.response === null) {
         return false;
       }
       try {
@@ -106,7 +107,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
         && input.recipients.length === 1
         && input.lane === 'interactive'
         && input.priority === -100
-        && input.idempotency_key === `gate:${recipient?.tenant_id}:${recipient?.alias}:${input.body.nonce}`;
+        && input.idempotency_key === `gate:${String(recipient?.tenant_id)}:${String(recipient?.alias)}:${input.body.nonce}`;
       if (!gateAuthorized) {
         throw new StoreError('forbidden', 'system gate probe authority or payload is invalid');
       }
@@ -190,7 +191,10 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
           [input.tenant_id, input.actor_alias, input.idempotency_key]
         );
         const existing = prior.rows[0];
-        if (!existing || existing.request_hash !== hash) {
+        if (existing === undefined) {
+          throw new StoreError('conflict', 'idempotency key reused with a different request');
+        }
+        if (existing.request_hash !== hash) {
           throw new StoreError('conflict', 'idempotency key reused with a different request');
         }
         if (!existing.message_id || existing.response === null) {
@@ -255,7 +259,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       const authenticatedTelegramIngress = authenticated?.channel === 'telegram'
         && authenticatedOrigin?.adapter === 'telegram'
         && authenticatedOrigin.channel === 'telegram';
-      if (authenticatedTelegramIngress && authenticatedOrigin) {
+      if (authenticatedTelegramIngress) {
         const contactoPrevio = await client.query<{ last_inbound_at: Date }>(
           `SELECT last_inbound_at FROM egress_contacts
            WHERE tenant_id=$1 AND alias=$2 AND adapter='telegram' AND conversation_id=$3`,
@@ -288,7 +292,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
             input.actor_alias,
             authenticatedOrigin.conversation_id,
             conversationKind(authenticatedOrigin.metadata.chat_type),
-            authenticated?.session_id === undefined ? null : sha256(authenticated.session_id)
+            authenticated?.session_id === undefined ? null : sha256(authenticated.session_id) // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A runtime caller can omit the authenticated session.
           ]
         );
         if (acusarAhora) await client.query(

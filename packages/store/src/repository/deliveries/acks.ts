@@ -355,7 +355,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
            VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
            ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-          [tenantId, `wake-retry:${deliveryId}:${row.attempt}`, row.request_id, row.message_id, deliveryId,
+          [tenantId, `wake-retry:${deliveryId}:${String(row.attempt)}`, row.request_id, row.message_id, deliveryId,
             row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
             JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
         );

@@ -121,10 +121,10 @@ export abstract class ConfigRepository extends OutboxRepository {
   }
 
   async principalAccess(tenantId: Tenant, alias: string): Promise<{
-    roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'>;
+    roles: string[]; permissions: ('route' | 'read' | 'control' | 'notify')[];
   }> {
     const result = await this.pool.query<{
-      roles: string[]; allow_route: boolean; allow_read: boolean; allow_control: boolean;
+      roles: string[] | null; allow_route: boolean; allow_read: boolean; allow_control: boolean;
       allow_notify: boolean;
     }>(
       `SELECT array_agg(DISTINCT membership.role ORDER BY membership.role) AS roles,

@@ -184,7 +184,7 @@ export function profileRuntimeAdoptionEvidence(
 }
 export function agentOutputEntries(result: Record<string, unknown> | undefined): AgentOutputEntry[] {
   const output = objectRecord(result?.output);
-  if (!output || output.messages === undefined) return [];
+  if (output?.messages === undefined) return [];
   if (!Array.isArray(output.messages)) {
     return [{ index: 0, target: undefined, body: undefined, rejection: 'invalid_output' }];
   }
@@ -220,7 +220,7 @@ function boundedHandle(value: unknown): string {
 }
 export function agentNotifyEntries(result: Record<string, unknown> | undefined): AgentNotifyEntry[] {
   const output = objectRecord(result?.output);
-  if (!output || output.notify === undefined) return [];
+  if (output?.notify === undefined) return [];
   const invalid = (index: number, handle: unknown, kind: unknown): AgentNotifyEntry => ({
     index,
     handle: boundedHandle(handle),
