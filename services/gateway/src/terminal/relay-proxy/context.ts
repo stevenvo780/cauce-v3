@@ -28,6 +28,7 @@ const CLOSE_WITH_CLAIM_KEYS = [...CLOSE_KEYS, 'claim_epoch', 'claim_token'].sort
 
 function authenticatedRelayInstanceId(request: FastifyRequest): string | undefined {
   const socket = request.raw.socket;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Runtime socket state, not the TLSSocket declaration, proves an encrypted authorized peer.
   if (!(socket instanceof TLSSocket) || !socket.encrypted || !socket.authorized) return undefined;
   const certificate = socket.getPeerX509Certificate();
   if (certificate === undefined || certificate.raw.byteLength === 0) return undefined;
@@ -81,7 +82,7 @@ function boundedMilliseconds(later: Date, earlier: Date, maximum: number): numbe
 function relayAuthorized(request: FastifyRequest, expected: string): boolean {
   const header: unknown = request.headers.authorization;
   const authorization = typeof header === 'string' ? header : undefined;
-  if (authorization === undefined || !authorization.startsWith('Bearer ')) return false;
+  if (!authorization?.startsWith('Bearer ')) return false;
   // Compare digests: constant time, and a length mismatch never throws nor leaks the length.
   return timingSafeEqual(ticketSha256(authorization.slice(7)), ticketSha256(expected));
 }
@@ -244,8 +245,7 @@ export function createRelayProxyContext(
       runtime_user: row.runtime_user,
       expires_at: row.expires_at.toISOString(),
       session_expires_at: expiry.toISOString(),
-      // Capability-like: never log/audit this field and never persist it outside the 0600 relay
-      // close spool. PostgreSQL holds only its SHA-256 digest.
+      // Never log or audit the claim token; PostgreSQL keeps only its digest, and the relay spool is 0600.
       claim_token: claimToken,
       claim_epoch: claimEpoch,
       claim_lease_ms: claimLeaseMs,
@@ -353,7 +353,7 @@ export function createRelayProxyContext(
     );
     if (!authority.allowed) return { allowed: false, reason: 'no_routing_authority' };
     const grantStore = freshGrants
-      ? new GrantStore(config.grantsFile, (message) => app.log.warn(message))
+      ? new GrantStore(config.grantsFile, (message) => { app.log.warn(message); })
       : grants;
     if (!(await grantStore.allowsCohort(row.operator_id, cohort, row.mode))) {
       return { allowed: false, reason: 'no_grant' };

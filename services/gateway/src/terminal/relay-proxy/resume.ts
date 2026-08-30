@@ -36,13 +36,14 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
       }
       const identity = requestRelayIdentity(request, record);
       if (identity === undefined) { await reply.code(401).send(); return; }
-      const token = record?.resume_token;
-      const claimToken = relayClaimToken(record?.claim_token);
-      const presentedEpoch = record?.claim_epoch === undefined
-        ? undefined : relayClaimEpoch(record.claim_epoch);
+      const token = record.resume_token;
+      const claimToken = relayClaimToken(record.claim_token);
+      const rawClaimEpoch = record.claim_epoch;
+      const presentedEpoch = rawClaimEpoch === undefined
+        ? undefined : relayClaimEpoch(rawClaimEpoch);
       if (typeof token !== 'string' || token.length < 80 || token.length > 1_024
           || claimToken === undefined
-          || (record?.claim_epoch !== undefined && presentedEpoch === undefined)) {
+          || (rawClaimEpoch !== undefined && presentedEpoch === undefined)) {
         await refuse(401, 'resume_invalid');
         return;
       }
@@ -79,7 +80,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
             if (!(error instanceof TicketError)) throw error;
           }
           const expiry = sessionExpiry(row);
-          if (credential === undefined || credential.sid !== sid || credential.op !== row.operator_id
+          if (credential?.sid !== sid || credential.op !== row.operator_id
               || expiry === undefined || credential.exp !== Math.floor(expiry.getTime() / 1_000)) {
             refusal = { status: 401, reason: 'resume_invalid' };
           } else if (row.consumed_at === null) {
@@ -118,8 +119,9 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                 && row.relay_claim_sha256.equals(claimSha256)
                 && row.relay_instance_id === identity.relay_instance_id
                 && row.relay_boot_id === identity.relay_boot_id;
-              const liveClaim = row.relay_claim_expires_at !== null
-                && row.relay_claim_expires_at.getTime() > row.database_now.getTime();
+              const claimExpiresAt = row.relay_claim_expires_at;
+              const liveClaim = claimExpiresAt !== null
+                && claimExpiresAt.getTime() > row.database_now.getTime();
               if (exactClaim && liveClaim && presentedEpoch === row.relay_claim_epoch) {
                 const renewed = await client.query<ClaimedSession>(
                   `UPDATE terminal_sessions
@@ -143,7 +145,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
               } else if (liveClaim) {
                 const retryAfterMs = Math.max(
                   1,
-                  Math.ceil(row.relay_claim_expires_at!.getTime() - row.database_now.getTime()),
+                  Math.ceil(claimExpiresAt.getTime() - row.database_now.getTime()),
                 );
                 await recordTransactionalTerminalAudit(client, {
                   tenant_id: actor.tenant_id,

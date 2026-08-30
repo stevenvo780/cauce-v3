@@ -116,6 +116,7 @@ describe('terminal configuration', () => {
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
       CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
     });
+    if (config === undefined) throw new Error('terminal config is unavailable');
     expect(config).toMatchObject({
       wsPath: '/v3/console/terminal/ws',
       grantsFile: '/run/cauce-terminal/grants.json',
@@ -126,9 +127,9 @@ describe('terminal configuration', () => {
       operatorHeader: 'x-cauce-operator',
       relayInstanceIds: new Set(['a'.repeat(64)]),
     });
-    expect(config?.ticketKey.toString('hex')).toBe('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
+    expect(config.ticketKey.toString('hex')).toBe('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
     // No enrolled operators means nobody is ever attributed, hence no cross-tenant terminal.
-    expect(config?.operators.size).toBe(0);
+    expect(config.operators.size).toBe(0);
     const hexFile = join(directory, 'ticket.hex');
     await writeFile(hexFile, '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
     const hex = await loadTerminalConfig({
@@ -137,7 +138,7 @@ describe('terminal configuration', () => {
       CAUCE_TERMINAL_RELAY_TOKEN_FILE: tokenFile,
       CAUCE_TERMINAL_RELAY_INSTANCE_ID: 'a'.repeat(64),
     });
-    expect(hex?.ticketKey.equals(config!.ticketKey)).toBe(true);
+    expect(hex?.ticketKey.equals(config.ticketKey)).toBe(true);
   });
 
   it('refuses a short relay token, an oversized TTL and a missing key file', async () => {

@@ -136,8 +136,8 @@ function operatorScopePredicate(
   attributedParameter: number,
   subjectParameter: number,
 ): string {
-  return `operator_id=$${operatorParameter}
-          AND ($${attributedParameter}::boolean OR console_subject=$${subjectParameter})`;
+  return `operator_id=$${String(operatorParameter)}
+          AND ($${String(attributedParameter)}::boolean OR console_subject=$${String(subjectParameter)})`;
 }
 
 interface TerminalSessionRepository {
@@ -369,8 +369,7 @@ export function registerTerminalSessionControl(
         );
         const previous = recoverable.rows[0];
         if (previous !== undefined) conflict = 'request_conflict';
-        const exactPrevious = previous !== undefined
-            && previous.operator_id === operator.operator_id
+        const exactPrevious = previous?.operator_id === operator.operator_id
             && (operator.attributed || previous.console_subject === consoleSubject)
             && previous.console_subject === consoleSubject
             && previous.tenant_id === placement.tenant_id
@@ -595,7 +594,7 @@ export function registerTerminalSessionControl(
           mode: row.mode,
           opened_at: row.issued_at.toISOString(),
           expires_at: (sessionExpiry(row) ?? row.expires_at).toISOString(),
-          state: sessionState(row, row.occupies_slot === true),
+          state: sessionState(row, row.occupies_slot),
           request_id: row.request_id,
           owner_generation: browserOwnerGeneration(row.browser_owner_generation),
         }))

@@ -41,10 +41,10 @@ function post(port: number, payload: Record<string, unknown>, withCertificate = 
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.on('end', () => resolve({
+      response.on('end', () => { resolve({
         status: response.statusCode ?? 0,
         body: Buffer.concat(chunks).toString('utf8'),
-      }));
+      }); });
     });
     request.once('error', reject);
     request.end(body);

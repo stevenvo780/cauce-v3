@@ -126,8 +126,7 @@ export class AgentRegistry {
   /** Exact current process identity, required by every session mutation after presence. */
   accepts(identity: RelayProcessIdentity, now: number = Date.now()): boolean {
     const relay = this.relays.get(identity.relay_instance_id);
-    return relay !== undefined
-      && relay.relayBootId === identity.relay_boot_id
+    return relay?.relayBootId === identity.relay_boot_id
       && now - relay.observedAt <= AGENT_STALE_AFTER_MS;
   }
 
@@ -147,7 +146,11 @@ export class AgentRegistry {
         observedAt: relay.observedAt,
       });
     }
-    if (live.length === 1) return { status: 'online', observation: observation(live[0]!, false) };
+    if (live.length === 1) {
+      const single = live[0];
+      if (single === undefined) throw new Error('terminal live observation is unavailable');
+      return { status: 'online', observation: observation(single, false) };
+    }
     if (live.length > 1) {
       return {
         status: 'ambiguous',
@@ -215,7 +218,7 @@ const CODEX_NEVER_SERVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
 function validCodexFallbackFilename(value: string): boolean {
   const normalized = value.toLowerCase();
   return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
-    && !value.includes('..') && ![...value].some((character) => {
+    && !value.includes('..') && !Array.from(value).some((character) => {
       const code = character.codePointAt(0) ?? 0;
       return code <= 0x1f || code === 0x7f;
     })
@@ -302,10 +305,10 @@ export function parseAgentPresence(value: unknown): AgentPresence {
     harness,
     runtime_facts_observed: runtimeFactsObserved,
     ...(runtimeFactsObserved ? {
-      home,
-      ...(harness === 'codex' ? { codex_home: codexHome! } : {}),
-      ...(harness === 'claude' ? { claude_config_dir: claudeConfigDir! } : {}),
-      ...(harness === 'openclaw' ? { openclaw_workspace: openclawWorkspace! } : {}),
+      home: stringField(home, 'home', 4096),
+      ...(harness === 'codex' ? { codex_home: stringField(codexHome, 'codex_home', 4096) } : {}),
+      ...(harness === 'claude' ? { claude_config_dir: stringField(claudeConfigDir, 'claude_config_dir', 4096) } : {}),
+      ...(harness === 'openclaw' ? { openclaw_workspace: stringField(openclawWorkspace, 'openclaw_workspace', 4096) } : {}),
       ...(cwd === undefined ? {} : { cwd }),
       ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
       ...(projectRoot === undefined ? {} : { project_root: projectRoot }),

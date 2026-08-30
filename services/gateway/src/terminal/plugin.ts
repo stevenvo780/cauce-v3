@@ -115,7 +115,7 @@ function replyError(reply: FastifyReply, error: unknown): void {
 
 function boundedInteger(value: unknown, min: number, max: number, name: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
-    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+    throw new Error(`${name} must be an integer between ${String(min)} and ${String(max)}`);
   }
   return value;
 }
@@ -153,7 +153,7 @@ function parseSessionRequest(value: unknown): SessionRequestBody {
   // The operator reason is mandatory and hand written: it is the only human explanation the
   // audit row will ever carry, so it is never defaulted or auto-generated.
   if (typeof body.reason !== 'string' || body.reason.trim().length < REASON_MIN || body.reason.length > REASON_MAX) {
-    throw new Error(`reason must be between ${REASON_MIN} and ${REASON_MAX} characters`);
+    throw new Error(`reason must be between ${String(REASON_MIN)} and ${String(REASON_MAX)} characters`);
   }
   return {
     tenant_id: tenant.data,
@@ -232,7 +232,7 @@ export async function registerTerminalControlPlane(
 ): Promise<void> {
   const { pool, authProvider, config } = options;
   const registry = options.registry ?? new AgentRegistry();
-  const grants = new GrantStore(config.grantsFile, (message) => app.log.warn(message));
+  const grants = new GrantStore(config.grantsFile, (message) => { app.log.warn(message); });
   const repository = options.repository ?? new CauceRepository(pool);
 
   async function principal(request: FastifyRequest): Promise<Principal> {
@@ -243,7 +243,7 @@ export async function registerTerminalControlPlane(
   function openPredicate(ttlParameter: number): string {
     return `closed_at IS NULL AND revoked_at IS NULL
             AND ((consumed_at IS NULL AND expires_at > now())
-                 OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${ttlParameter}) > now()))`;
+                 OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${String(ttlParameter)}) > now()))`;
   }
 
   async function currentCohort(

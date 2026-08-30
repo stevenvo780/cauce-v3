@@ -105,14 +105,17 @@ describe('PTY ticket golden vectors', () => {
 
   it('rejects tampered payloads and malformed shapes', () => {
     const key = deriveAliasKey(MASTER, 'Steven', 'jarvis');
-    const parts = GOLDEN_TICKET.split('.');
-    const forged = issueTicket({ ...GOLDEN_PAYLOAD, mode: 'harness' }, key).split('.');
+    const [, payload, signature] = GOLDEN_TICKET.split('.');
+    const [, forgedPayload] = issueTicket({ ...GOLDEN_PAYLOAD, mode: 'harness' }, key).split('.');
+    if (payload === undefined || signature === undefined || forgedPayload === undefined) {
+      throw new Error('ticket fixture is malformed');
+    }
     // Payload of the harness ticket with the signature of the shell ticket.
-    expect(() => parseAndVerify(`v1.${forged[1]}.${parts[2]}`, key, GOLDEN_PAYLOAD.iat + 1))
+    expect(() => parseAndVerify(`v1.${forgedPayload}.${signature}`, key, GOLDEN_PAYLOAD.iat + 1))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
     expect(() => parseAndVerify('v2.a.b', key)).toThrowError(TicketError);
     expect(() => parseAndVerify('v1.a', key)).toThrowError(TicketError);
-    expect(() => parseAndVerify(`v1.${parts[1]}.$$$`, key)).toThrowError(TicketError);
+    expect(() => parseAndVerify(`v1.${payload}.$$$`, key)).toThrowError(TicketError);
   });
 
   it('rejects a non-canonical signature spelling even when it decodes to the authentic HMAC', () => {

@@ -54,7 +54,7 @@ function boundedInteger(value: string | undefined, fallback: number, max: number
   if (value === undefined || value.trim().length === 0) return fallback;
   const seconds = Number(value);
   if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > max) {
-    throw new Error(`${name} must be an integer between 1 and ${max}`);
+    throw new Error(`${name} must be an integer between 1 and ${String(max)}`);
   }
   return seconds;
 }
@@ -136,7 +136,7 @@ export async function loadTerminalConfig(
   );
   if (claimLeaseSeconds < MIN_CLAIM_LEASE_SECONDS) {
     throw new Error(
-      `CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must be between ${MIN_CLAIM_LEASE_SECONDS} and ${MAX_CLAIM_LEASE_SECONDS}`,
+      `CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must be between ${String(MIN_CLAIM_LEASE_SECONDS)} and ${String(MAX_CLAIM_LEASE_SECONDS)}`,
     );
   }
   return {
