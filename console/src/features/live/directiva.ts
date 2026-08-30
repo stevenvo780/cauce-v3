@@ -7,7 +7,7 @@ import type { AgentDirective, AgentDirectiveFile } from '../../api/types';
  * Layer 3 (memory): Persisted harness knowledge.
  */
 
-export type TonoAvisoCapa = 'choque' | 'hueco' | 'nota';
+type TonoAvisoCapa = 'choque' | 'hueco' | 'nota';
 
 export interface AvisoDeCapas {
   id: string;
@@ -227,9 +227,9 @@ export function primerasLineas(texto: string | null | undefined, cuantas: number
  * - `miro-y-no-hay`: read confirmed with an empty result
  * - `hay-datos`: files or entries present
  */
-export type MedicionDeCapa = 'cargando' | 'no-se-miro' | 'miro-y-no-hay' | 'hay-datos';
+type MedicionDeCapa = 'cargando' | 'no-se-miro' | 'miro-y-no-hay' | 'hay-datos';
 
-export interface RecursoDeCapa {
+interface RecursoDeCapa {
   data?: AgentDirective;
   error?: Error;
   loading?: boolean;

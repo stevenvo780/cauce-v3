@@ -49,9 +49,9 @@ function comparaIds(a: string | null | undefined, b: string | null | undefined):
   return (b ?? '').localeCompare(a ?? '');
 }
 
-export type ClaseDeCambio = 'alta' | 'reescritura' | 'borrado' | 'sin-texto';
+type ClaseDeCambio = 'alta' | 'reescritura' | 'borrado' | 'sin-texto';
 
-export interface CambioResumido {
+interface CambioResumido {
   clase: ClaseDeCambio;
   titulo: string;
   /** The detail that can be asserted by looking at THIS entry alone. */
@@ -153,7 +153,7 @@ export function actorDeEntrada(entrada: RoleBriefHistoryEntry): string | undefin
  * `clase: 'borra'` means that value was NULL. The UI labels it as emptying `role_summary`; it does not claim to delete
  * the full profile nor does it write anything until the operator saves.
  */
-export type Restauracion =
+type Restauracion =
   | { clase: 'texto'; texto: string }
   | { clase: 'borra' };
 
@@ -170,7 +170,7 @@ export function restauracionDe(entrada: RoleBriefHistoryEntry): Restauracion {
  * "there are changes". The first two rendered the same —an empty list— and that turns a read failure into the
  * reassuring claim that nothing happened.
  */
-export type EstadoDelDiario =
+type EstadoDelDiario =
   | { clase: 'no-publicado'; motivo: string }
   | { clase: 'vacio' }
   | { clase: 'entradas'; entradas: RoleBriefHistoryEntry[] };

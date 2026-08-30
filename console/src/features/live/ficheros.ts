@@ -24,7 +24,7 @@ import type {
  * already correct, or give up on something that only needs to be deployed.
  */
 
-export type ModoDocumento = 'entero' | 'proyectado' | 'solo-lectura';
+type ModoDocumento = 'entero' | 'proyectado' | 'solo-lectura';
 
 /**
  * What can be done with a document.
@@ -40,7 +40,7 @@ export function modoDeDocumento(item: AgentDocumentItem): ModoDocumento {
   return 'solo-lectura';
 }
 
-export interface Explicacion {
+interface Explicacion {
   titulo: string;
   detalle: string;
   /** `true` if this is fixed by a deployment or a measurement; `false` if it is a decision. */
@@ -147,7 +147,7 @@ export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
   return `El gateway respondió 2xx, pero la aplicación no quedó confirmada por un ACK completo.`;
 }
 
-export interface AckAplicado {
+interface AckAplicado {
   readonly ok: true;
   readonly state: 'applied';
   readonly evidence: 'probe_write_ack';

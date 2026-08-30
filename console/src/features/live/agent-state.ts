@@ -30,7 +30,7 @@ export const LIVE_STATES: readonly LiveState[] = [
   'down', 'blocked', 'delegating', 'settled', 'receiving', 'thinking', 'idle',
 ];
 
-export interface LiveStateMeta {
+interface LiveStateMeta {
   label: string;
   /** One line, in Spanish, explaining what is happening without database jargon. */
   hint: string;
@@ -99,7 +99,7 @@ export interface LiveAgentView {
   agent: FleetActivityAgent;
 }
 
-export interface LiveStateContext {
+interface LiveStateContext {
   pulses?: readonly Pulse[];
   delegatesTo?: readonly string[];
   thresholds?: FleetActivityThresholds | null;
@@ -239,7 +239,7 @@ export function stateTally(views: readonly LiveAgentView[]): Record<LiveState, n
 /**
  * The seven states are the system's truth; these three are the owner's question.
  */
-export type OwnerBucket = 'problema' | 'ocupado' | 'libre';
+type OwnerBucket = 'problema' | 'ocupado' | 'libre';
 
 export function ownerBucket(state: LiveState): OwnerBucket {
   if (state === 'down' || state === 'blocked') return 'problema';
@@ -265,7 +265,7 @@ export interface Verdict {
   culpables: VerdictCulprit[];
 }
 
-export interface VerdictInput {
+interface VerdictInput {
   /** The last read failed. Enough on its own to make the verdict NOT green. */
   error?: Error | null;
   /** `observed_at` of the snapshot being shown. */

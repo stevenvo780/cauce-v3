@@ -24,7 +24,7 @@
 export const ROLE_BRIEF_MAX = 1200;
 
 /** How many characters before the cap to start warning, before it's too late. */
-export const ROLE_BRIEF_CERCA = 120;
+const ROLE_BRIEF_CERCA = 120;
 
 /**
  * Counts the SAME thing the server will count, and that's why it trims before measuring.
@@ -44,7 +44,7 @@ export function contarRoleBrief(text: string): number {
   return Array.from(text.trim()).length;
 }
 
-export type RoleBriefTono = 'ok' | 'cerca' | 'pasado';
+type RoleBriefTono = 'ok' | 'cerca' | 'pasado';
 
 export function tonoRoleBrief(largo: number): RoleBriefTono {
   if (largo > ROLE_BRIEF_MAX) return 'pasado';
