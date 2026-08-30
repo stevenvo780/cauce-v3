@@ -22,9 +22,9 @@ import type { QueueItem } from '../../api/types';
  * the kind of lie this fix comes to remove.
  */
 
-export type EstadoDelFoco = 'sin-foco' | 'encontrada' | 'ausente';
+type EstadoDelFoco = 'sin-foco' | 'encontrada' | 'ausente';
 
-export interface FocoDeEntrega {
+interface FocoDeEntrega {
   estado: EstadoDelFoco;
   /** The id requested by the URL. `undefined` only when `estado` is `sin-foco`. */
   deliveryId?: string;

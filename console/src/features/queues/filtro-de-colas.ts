@@ -30,7 +30,7 @@ export const ROTULO_DEL_GRUPO: Record<GrupoDeEstado, string> = {
   pendientes: 'las pendientes o en manos de un adaptador',
 };
 
-export interface FiltroDeColas {
+interface FiltroDeColas {
   grupo: GrupoDeEstado;
   /** Free text against alias, tenant, delivery id, message id and last error. */
   texto: string;
