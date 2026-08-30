@@ -44,7 +44,7 @@ function runnerEspia(): { runner: CommandRunner; visto: string[] } {
   const visto: string[] = [];
   const runner: CommandRunner = {
     async run(request: CommandRunRequest): Promise<CommandRunResult> {
-      visto.push(request.stdin ?? "");
+      visto.push(request.stdin);
       // The shape emitted by `claude --print --output-format json`: the structured result goes
       // INSIDE `result`. Hand-fabricating it here is what allows using the real `claude` harness,
       // which is the only one that resolves an instructions-file path.
@@ -258,7 +258,7 @@ test("la TUI compartida recibe el perfil vivo en cada turno sin reiniciar su pro
     assert.doesNotMatch(visto[1] ?? "", /perfil de la primera generación/u);
     assert.equal(consumidos.length, 2);
     assert.equal(consumidos[0]?.documents[0]?.path, path);
-    assert.notEqual(consumidos[0].documents[0]?.sha256, consumidos[1]?.documents[0]?.sha256);
+    assert.notEqual(consumidos[0].documents[0].sha256, consumidos[1]?.documents[0]?.sha256);
     assert.equal(
       consumidos[1]?.documents[0]?.sha256,
       createHash("sha256").update(profile("perfil actualizado sin reiniciar la TUI"), "utf8").digest("hex"),

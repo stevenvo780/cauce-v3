@@ -413,9 +413,11 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
 
   // OLD BRANCH.
   const antes = fakeDefinition.parse(stdout).output;
-  assert.equal(antes.artifacts[0]?.uri, uri);
-  assert.match(antes.artifacts[0].uri ?? "", /^file:\/\//u);
-  assert.equal(antes.artifacts[0].uri.startsWith("data:"), false);
+  const antesUri = antes.artifacts[0]?.uri;
+  assert.ok(antesUri, "no hay uri antes");
+  assert.equal(antesUri, uri);
+  assert.match(antesUri, /^file:\/\//u);
+  assert.equal(antesUri.startsWith("data:"), false);
 
   // NEW BRANCH.
   const state = resolve(".test-state", "artifact-inliner-ack");

@@ -431,11 +431,14 @@ test("openclaw proves seven files without exposing memory, heartbeat, or profile
     onRuntimeProfileConsumed: (value) => { measured = value; },
   });
 
-  assert.deepEqual(measured?.documents.map((document) => basename(document.path)), FICHEROS_OPENCLAW);
-  for (const document of measured.documents ?? []) {
+  assert.ok(measured, "the runtime profile was never measured");
+  const measuredDocuments = measured.documents;
+  const measuredText = measured.text;
+  assert.deepEqual(measuredDocuments.map((document) => basename(document.path)), FICHEROS_OPENCLAW);
+  for (const document of measuredDocuments) {
     assert.equal(document.sha256, hash(readFileSync(document.path, "utf8")));
   }
-  assert.doesNotMatch(measured.text ?? "", /PRIVATE-(?:MEMORY|HEARTBEAT)/u);
+  assert.doesNotMatch(measuredText, /PRIVATE-(?:MEMORY|HEARTBEAT)/u);
   const stdin = requests[0]?.stdin ?? "";
   assert.doesNotMatch(stdin, /PRIVATE-|PROFILE-(?:SOUL|IDENTITY|USER|AGENTS|TOOLS)/u);
   assert.doesNotMatch(stdin, /BEGIN TRUSTED RUNTIME PROFILE/u);

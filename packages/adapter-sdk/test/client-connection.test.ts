@@ -34,6 +34,7 @@ test("stable aliases reject an ephemeral transport before hello", async () => {
       sent.push(frame);
     },
     frames: () => ({
+      // eslint-disable-next-line require-yield -- the empty async iterator is the contract: no buffered frames
       async *[Symbol.asyncIterator]() {
         return;
       },

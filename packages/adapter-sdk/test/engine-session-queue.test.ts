@@ -244,7 +244,7 @@ test("la espera en cola tiene techo: vence RETRYABLE y sin haber declarado ejecu
   assert.ok(failure, "la espera vencida debe cerrar la entrega en vez de renovar para siempre");
   assert.equal(failure.error?.code, "SESSION_QUEUE_TIMEOUT");
   assert.equal(
-    failure.error?.retryable,
+    failure.error.retryable,
     true,
     "nada ejecutó, así que la entrega vuelve a la cola limpia en vez de morir en dead-letters",
   );

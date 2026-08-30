@@ -58,7 +58,7 @@ test("el entorno se escapa y entra en el argv del panel", async () => {
   // A value containing a quote cannot escape into the command line.
   const raro = paneEnvironmentPrefix({ CLAUDE_CONFIG_DIR: "/tmp/x'; rm -rf /" });
   assert.equal(raro.ok, true);
-  assert.equal(raro.ok && raro.prefix.includes("'\\''"), true);
+  assert.equal(raro.prefix.includes("'\\''"), true);
   // And an invalid name fails BY SAYING SO, instead of launching the TUI with less environment than requested.
   assert.equal(paneEnvironmentPrefix({ "MAL NOMBRE": "x" }).ok, false);
 

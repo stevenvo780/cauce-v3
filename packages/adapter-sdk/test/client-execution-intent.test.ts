@@ -107,6 +107,7 @@ test("an unconfirmed execution intent times out before invoking the harness", as
     ));
     assert.equal(runner.calls, 0);
     assert.ok(failed, "expected an ACK frame");
+    if (failed.type !== "ack") throw new Error("frame type is not ack");
     assert.equal(failed.error_code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
     assert.equal(failed.retryable, true);
   } finally {

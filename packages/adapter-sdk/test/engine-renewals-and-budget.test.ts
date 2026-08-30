@@ -131,7 +131,7 @@ test("a durable intent fsync failure prevents even a witnessed harness from bein
   const failed = events.at(-1);
   assert.equal(failed?.phase, "failed");
   assert.equal(failed.error?.code, "EXECUTION_INTENT_PERSISTENCE_FAILED");
-  assert.equal(failed.error?.retryable, true);
+  assert.equal(failed.error.retryable, true);
   assert.equal(store.getDelivery("witnessed-start-fsync-failure")?.state, "failed");
 });
 
@@ -199,7 +199,7 @@ test("advancing the fencing epoch preserves post-dispatch cancellation ambiguity
   const failed = context.events.at(-1);
   assert.equal(failed?.phase, "failed");
   assert.equal(failed.error?.code, "EXECUTION_CANCELLED_AMBIGUOUS");
-  assert.equal(failed.error?.retryable, false);
+  assert.equal(failed.error.retryable, false);
   assert.equal(failed.epoch, 2);
 });
 

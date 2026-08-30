@@ -670,8 +670,9 @@ test("una notify mal formada se descarta y la respuesta sobrevive", () => {
   ];
   for (const [notify, patron] of casos) {
     const salida = validateStructuredOutput({ ...output("done", false), notify });
-    assert.match(salida.reply!, patron);
-    assert.match(salida.reply!, /\[Cauce\]/u);
+    assert.ok(salida.reply);
+    assert.match(salida.reply, patron);
+    assert.match(salida.reply, /\[Cauce\]/u);
   }
 });
 
@@ -681,8 +682,9 @@ test("una notify bien formada pasa intacta y no ensucia la respuesta", () => {
     notify: [{ to: "steven_dm", kind: "decision_request", body: "necesito que autorices X" }],
   });
   assert.equal(salida.notify.length, 1);
-  assert.equal(salida.notify.[0]?.to, "steven_dm");
-  assert.ok(!(salida.reply!).includes("[Cauce]"));
+  assert.equal(salida.notify[0]?.to, "steven_dm");
+  assert.ok(salida.reply);
+  assert.ok(!salida.reply.includes("[Cauce]"));
 });
 
 test("las notify agregadas se acotan sin tumbar el turno", () => {
@@ -691,8 +693,9 @@ test("las notify agregadas se acotan sin tumbar el turno", () => {
     ...output("done", false),
     notify: Array.from({ length: 3 }, () => ({ to: "steven.dm", kind: "digest", body })),
   });
-  assert.ok((salida.notify.length ?? 0) < 3, "las que exceden el agregado no se entregan");
-  assert.match(salida.reply!, /limite agregado de bytes/u);
+  assert.ok(salida.notify.length < 3, "las que exceden el agregado no se entregan");
+  assert.ok(salida.reply);
+  assert.match(salida.reply, /limite agregado de bytes/u);
 });
 
 test("artifacts ausente se normaliza a lista vacia", () => {
@@ -722,7 +725,7 @@ test("notify never satisfies the final reply requirement", () => {
   // What changes is that the notification survives. With the `throw` the `notify` was lost
   // too, meaning the turn reached NEITHER the sender NOR the person the agent meant to alert.
   assert.equal(salida.notify.length, 1);
-  assert.equal(salida.notify.[0]?.to, "steven.dm");
+  assert.equal(salida.notify[0]?.to, "steven.dm");
 });
 
 test("a failed output may notify even though it may not delegate", () => {
@@ -747,6 +750,7 @@ test("a failed output may notify even though it may not delegate", () => {
     artifacts: [],
   }));
   assert.deepEqual(conDelegacion.messages, []);
-  assert.match(conDelegacion.reply!, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
+  assert.ok(conDelegacion.reply);
+  assert.match(conDelegacion.reply, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
   assert.equal(conDelegacion.notify.length, 1);
 });

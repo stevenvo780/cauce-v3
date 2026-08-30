@@ -505,7 +505,7 @@ export class FakeTmux implements TmuxController {
       this.sessionOptions.clear();
       this.paneOptions.clear();
       this.inputOff = false;
-      return ok(existia ? 0 : 1);
+      return ok(0);
     }
     if (command === "kill-pane") {
       const target = args[args.indexOf("-t") + 1];

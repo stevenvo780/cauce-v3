@@ -139,7 +139,8 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   });
 
   assert.equal(entries.length, 1);
-  const entry = entries[0]!;
+  const entry = entries[0];
+  assert.ok(entry, "no entry captured");
   assert.equal(entry.event, "outbound_frame_invalid");
   assert.equal(entry.error_code, "OUTBOUND_FRAME_SCHEMA");
   assert.equal(entry.frame_type, "ack");
@@ -147,7 +148,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   assert.equal(entry.delivery_id, "40000000-0000-4000-8000-000000000002");
   assert.equal(entry.attempt, 3);
   assert.deepEqual(entry.issues?.map((issue) => issue.path), ["error"]);
-  assert.equal(entry.issues.[0]?.code, "too_big");
+  assert.equal(entry.issues[0]?.code, "too_big");
   assert.match(String(entry.claim_token_fingerprint), /^sha256:[0-9a-f]{12}$/u);
   assert.ok(typeof entry.timestamp === "string" && !Number.isNaN(Date.parse(entry.timestamp)));
 
@@ -356,10 +357,15 @@ test("a frame outside the schema is dropped and the queue keeps serving the next
   // `unrecognized_keys` is reported at the root, not at the key: the path is `<root>` and the NAME
   // of the leftover field travels in the message. It is the data that serves to diagnose protocol
   // drift ("which new field broke us"), so the test pins it explicitly.
-  assert.equal(entries[0].issues?.length, 1);
-  assert.equal(entries[0].issues?.[0]?.code, "unrecognized_keys");
-  assert.deepEqual(entries[0].issues?.map((issue) => issue.path), ["<root>"]);
-  assert.match(String(entries[0].issues?.[0]?.message), /delegation_disciplina_v2/u);
+  const firstEntry = entries[0];
+  assert.ok(firstEntry, "the first entry must be captured");
+  const issues = firstEntry.issues ?? [];
+  assert.equal(issues.length, 1);
+  const firstIssue = issues[0];
+  assert.ok(firstIssue, "the first issue must be present");
+  assert.equal(firstIssue.code, "unrecognized_keys");
+  assert.deepEqual(issues.map((issue) => issue.path), ["<root>"]);
+  assert.match(String(firstIssue.message), /delegation_disciplina_v2/u);
   // The broken JSON has no shape, and still does not take anything down or invent fields.
   assert.equal(entries[1]?.frame_type, "unknown");
   assert.deepEqual(entries[1].issues, []);

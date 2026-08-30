@@ -360,6 +360,6 @@ test("terminal output preserves delivery origin for relay routing", async () => 
     metadata: {},
   });
   assert.equal(done.output?.reply, "completed");
-  assert.equal(done.output?.messages[0]?.to, "audit");
+  assert.equal(done.output.messages[0]?.to, "audit");
 });
 
