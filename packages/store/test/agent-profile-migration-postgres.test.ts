@@ -31,9 +31,6 @@ const profileRuntimeDownPath = new URL(
 const consolePublishIndexesDownPath = new URL(
   '../migrations/down/037_console_publish_intent_indexes.sql', import.meta.url,
 );
-const textItemsSearchPathDownPath = new URL(
-  '../migrations/down/038_cauce_text_items_ok_search_path.sql', import.meta.url,
-);
 
 async function runSql(url: URL): Promise<void> {
   await pool.query(await readFile(url, 'utf8'));
@@ -63,16 +60,12 @@ async function migrationApplied(version: string): Promise<boolean> {
 async function downProfileDependentsIfApplied(): Promise<void> {
   // 035 owns tables with FKs to agent_profiles, so exercise the real dependency order.
   const dependents = [
-    ['038_cauce_text_items_ok_search_path.sql', textItemsSearchPathDownPath],
     ['037_console_publish_intent_indexes.sql', consolePublishIndexesDownPath],
     ['035_agent_profile_runtime_adoption.sql', profileRuntimeDownPath],
     ['028_canonical_agent_role.sql', canonicalDownPath],
   ] as const;
   for (const [version, path] of dependents) {
-    if (await migrationApplied(version)) {
-      await runSql(path);
-      await pool.query('DELETE FROM schema_migrations WHERE version=$1', [version]);
-    }
+    if (await migrationApplied(version)) await runSql(path);
   }
 }
 

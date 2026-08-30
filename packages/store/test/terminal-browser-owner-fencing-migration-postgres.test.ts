@@ -20,9 +20,6 @@ const version035 = '035_agent_profile_runtime_adoption.sql';
 const up037Path = new URL('../migrations/037_console_publish_intent_indexes.sql', import.meta.url);
 const down037Path = new URL('../migrations/down/037_console_publish_intent_indexes.sql', import.meta.url);
 const version037 = '037_console_publish_intent_indexes.sql';
-const up038Path = new URL('../migrations/038_cauce_text_items_ok_search_path.sql', import.meta.url);
-const down038Path = new URL('../migrations/down/038_cauce_text_items_ok_search_path.sql', import.meta.url);
-const version038 = '038_cauce_text_items_ok_search_path.sql';
 const relayInstanceId = 'a'.repeat(64);
 
 let database: TestDatabase;
@@ -35,11 +32,9 @@ let up035: string;
 let down035: string;
 let up037: string;
 let down037: string;
-let up038: string;
-let down038: string;
 
 beforeAll(async () => {
-  [up, down, up034, down034, up035, down035, up037, down037, up038, down038] = await Promise.all([
+  [up, down, up034, down034, up035, down035, up037, down037] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
     readFile(up034Path, 'utf8'),
@@ -48,8 +43,6 @@ beforeAll(async () => {
     readFile(down035Path, 'utf8'),
     readFile(up037Path, 'utf8'),
     readFile(down037Path, 'utf8'),
-    readFile(up038Path, 'utf8'),
-    readFile(down038Path, 'utf8'),
   ]);
   database = await startTestDatabase();
   pool = database.pool;
@@ -66,7 +59,6 @@ beforeEach(async () => {
   // own their disposable rows explicitly so test order cannot turn a drain guard red or green.
   await pool.query(`TRUNCATE TABLE terminal_sessions`);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
-  await removeLatestTextItemsSearchPathFix();
   await removeLatestConsolePublishIndexes();
   await removeLatestProfileLayer();
 });
@@ -136,16 +128,6 @@ async function restoreLatestSchema(): Promise<void> {
        source_origin=EXCLUDED.source_origin`,
     [version037, createHash('sha256').update(up037).digest('hex')],
   );
-  await pool.query(up038);
-  await markApplied(version038);
-  await pool.query(
-    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
-     VALUES($1,$2,'applied-atomically')
-     ON CONFLICT(version) DO UPDATE SET
-       source_sha256=EXCLUDED.source_sha256,
-       source_origin=EXCLUDED.source_origin`,
-    [version038, createHash('sha256').update(up038).digest('hex')],
-  );
 }
 
 async function consolePublishIndexesExist(): Promise<boolean> {
@@ -158,11 +140,6 @@ async function consolePublishIndexesExist(): Promise<boolean> {
 async function removeLatestConsolePublishIndexes(): Promise<void> {
   if (await consolePublishIndexesExist()) await pool.query(down037);
   else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
-}
-
-async function removeLatestTextItemsSearchPathFix(): Promise<void> {
-  await pool.query(down038);
-  await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version038]);
 }
 
 async function seedSession(input: {
