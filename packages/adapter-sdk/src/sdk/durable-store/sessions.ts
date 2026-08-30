@@ -2,7 +2,7 @@ import {
   AtomicRecoveryError,
   clone,
   recoverAtomicArtifacts,
-} from "./atomic-state.js";
+} from "./atomic-state.js"; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   CANONICAL_OPEN_CODE_SESSION_FILE,
   type CanonicalOpenCodeSessionPointer,

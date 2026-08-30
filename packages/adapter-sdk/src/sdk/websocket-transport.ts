@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { createSecureContext } from 'node:tls';
 import WebSocket, { type ClientOptions, type RawData } from 'ws';
 import { WsInboundSchema, WsOutboundSchema, type Tenant } from '@cauce/protocol';

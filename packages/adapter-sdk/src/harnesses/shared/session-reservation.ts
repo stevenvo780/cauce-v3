@@ -1,4 +1,4 @@
-import { abortReason } from "./errors.js";
+import { abortReason } from "./errors.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { HarnessSessionReservation } from "../../contracts/harness.js";
 
 export class SessionReservation implements HarnessSessionReservation {

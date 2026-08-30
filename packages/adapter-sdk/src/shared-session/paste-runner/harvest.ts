@@ -1,4 +1,4 @@
-import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
+import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { inspectExactPane, interruptPane, samePaneProcess, type PaneIdentity } from "../tmux.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
 import { PasteSessionRunnerBase } from "./base.js";

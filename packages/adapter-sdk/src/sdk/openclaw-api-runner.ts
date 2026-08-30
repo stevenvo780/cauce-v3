@@ -1,4 +1,4 @@
-import { isIP } from "node:net";
+import { isIP } from "node:net"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { ProcessExecutionError } from "./errors.js";
 import { readBearerTokenFile } from "./secure-files.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "./types.js";

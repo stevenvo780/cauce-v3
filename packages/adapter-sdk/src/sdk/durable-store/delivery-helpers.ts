@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { Delivery, DeliveryEvent } from "../types.js";
 import type {
   EventCorrelation,

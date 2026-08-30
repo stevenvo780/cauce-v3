@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-useless-constructor: "error" */
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { correlateEnvelopePrompt } from "../envelope.js";
 import { turnInFlight } from "../pane.js";

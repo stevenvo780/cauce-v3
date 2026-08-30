@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";

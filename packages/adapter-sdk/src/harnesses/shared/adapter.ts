@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { FICHEROS_OPENCLAW, bloqueDePerfil } from "@cauce/protocol";
 import {
