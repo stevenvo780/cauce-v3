@@ -161,7 +161,7 @@ class KeepaliveContractTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _agent() -> "agent.PtyAgent":
+    def _agent() -> agent.PtyAgent:
         instance = agent.PtyAgent.__new__(agent.PtyAgent)
         instance.bundle = {"alias": "zeus", "tenant_id": "Steven"}
         instance.modes = ["shell"]

@@ -130,7 +130,7 @@ class EmulatorResponsesAreNotHumanInput(unittest.TestCase):
     def test_text_paste_mouse_and_generic_ansi_fail_closed(self) -> None:
         abusive = (
             b"whoami\r", b"\x1b[31m", b"\x1b[<0;1;1M", b"\x1b[201;1R",
-            b"\x1b[1;501R", b"\x1b[0;1R", "á".encode("utf-8"), b"\x1b[0n" * 100,
+            b"\x1b[1;501R", b"\x1b[0;1R", "á".encode(), b"\x1b[0n" * 100,
         )
         for payload in abusive:
             with self.subTest(payload=payload):

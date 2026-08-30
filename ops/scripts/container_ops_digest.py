@@ -7,7 +7,6 @@ import pathlib
 import subprocess
 import sys
 
-
 OPERATIONS_SOURCES = (
     "container-aliases.json",
     "scripts/container-adapter-supervisor.sh",

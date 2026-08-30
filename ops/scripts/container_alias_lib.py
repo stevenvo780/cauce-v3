@@ -6,7 +6,6 @@ import pathlib
 import re
 from typing import Any
 
-
 FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harness")
 ALIAS_REQUIRED_FIELDS = (*FIELDS, "membershipRole", "systemdUser")
 ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace", "dockerHost")

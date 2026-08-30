@@ -18,7 +18,6 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
-
 SCHEMA_VERSION: Final = 1
 MANAGERS: Final = ("server", "kratos")
 NAME_RE: Final = re.compile(r"^[a-z][a-z0-9.-]*$")
@@ -46,7 +45,7 @@ class RolloutError(RuntimeError):
     """Fallo cerrado y apto para mostrar sin material sensible."""
 
 
-def fail(message: str) -> "None":
+def fail(message: str) -> None:
     raise RolloutError(message)
 
 
@@ -93,7 +92,7 @@ class Fleet:
     placements: dict[str, str]
 
     @classmethod
-    def load(cls, raw: bytes) -> "Fleet":
+    def load(cls, raw: bytes) -> Fleet:
         document = duplicate_safe_json(raw, "container-aliases.json")
         if document.get("schemaVersion") != 2:
             fail("container-aliases.json no usa schemaVersion 2")
@@ -139,7 +138,7 @@ class ReleaseBundle:
     manifest: bytes
 
     @classmethod
-    def from_ops_root(cls, ops_root: pathlib.Path) -> "ReleaseBundle":
+    def from_ops_root(cls, ops_root: pathlib.Path) -> ReleaseBundle:
         files: dict[str, bytes] = {}
         for relative in RELEASE_FILES:
             source = ops_root / relative

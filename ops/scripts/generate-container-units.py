@@ -12,7 +12,6 @@ from container_alias_lib import load_container_aliases
 from container_ops_digest import operational_digest
 from fleet_derive import HARNESS_RULES
 
-
 root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description="Generate host systemd units for adapters inside existing containers")
 parser.add_argument("--output", type=pathlib.Path)

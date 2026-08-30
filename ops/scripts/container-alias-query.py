@@ -4,8 +4,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from container_alias_lib import ContainerAliasError, FIELDS, load_container_aliases
-
+from container_alias_lib import FIELDS, ContainerAliasError, load_container_aliases
 
 root = pathlib.Path(__file__).resolve().parents[1]
 if len(sys.argv) != 2:

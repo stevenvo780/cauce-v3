@@ -8,7 +8,12 @@ que nadie vigilaba a salva. Un alias sin vigilancia no da error: enmudece y nadi
 Direccion del empuje: kratos -> VPS, porque el VPS NO tiene acceso SSH a kratos y kratos si al VPS.
 No imprime ni copia secretos: solo longitudes, vencimientos y sha256(refreshToken)[:10].
 """
-import json, subprocess, datetime, os, sys, tempfile
+import datetime
+import json
+import os
+import subprocess
+import sys
+import tempfile
 
 OBJETIVOS = [
     ("ws-isa", "/home/dev/.claude/.credentials.json", "claude/salva"),

@@ -18,7 +18,6 @@ import re
 import stat
 import sys
 
-
 ALIAS = re.compile(r"[a-z][a-z0-9-]*\Z")
 FD_ENV = "CAUCE_ALIAS_LOCK_FD"
 LEGACY_FD_ENV = "CAUCE_ALIAS_LEGACY_LOCK_FD"

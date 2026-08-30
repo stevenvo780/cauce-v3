@@ -23,7 +23,6 @@ import termios
 import time
 from typing import Any
 
-
 # Fail-closed exit reserved for identity violations. The container adapter supervisor already
 # refuses a root runtime identity with 78; the PTY agent inherits the same contract so the
 # systemd template can treat it as a permanent (non-restartable) failure.

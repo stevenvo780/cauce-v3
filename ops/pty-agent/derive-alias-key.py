@@ -10,7 +10,6 @@ import pathlib
 import re
 import sys
 
-
 # Domain separation for the PTY ticket key hierarchy.
 TICKET_SALT = b"cauce-v3/pty-ticket/v1"
 INFO_PREFIX = "pty:"

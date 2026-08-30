@@ -15,8 +15,8 @@ import stat
 import subprocess
 import sys
 import time
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 PERMANENT_EXIT = 78
 LOCK_EXIT = 73
@@ -250,7 +250,7 @@ def bundle_digest(root_path: str) -> str:
 
 def proc_stat(pid: int) -> dict[str, int | str]:
     try:
-        raw = open(f"/proc/{pid}/stat", "r", encoding="utf-8").read()
+        raw = open(f"/proc/{pid}/stat", encoding="utf-8").read()
     except (FileNotFoundError, ProcessLookupError) as error:
         raise ProcessLookupError(pid) from error
     close = raw.rfind(")")
@@ -270,7 +270,7 @@ def proc_stat(pid: int) -> dict[str, int | str]:
 
 def process_credentials(pid: int) -> tuple[int, int]:
     try:
-        with open(f"/proc/{pid}/status", "r", encoding="utf-8") as stream:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as stream:
             raw = stream.read()
     except (FileNotFoundError, ProcessLookupError) as error:
         raise ProcessLookupError(pid) from error
@@ -311,7 +311,7 @@ class matched_fs_credentials:
         self._previous_uid: int | None = None
         self._previous_gid: int | None = None
 
-    def __enter__(self) -> "matched_fs_credentials":
+    def __enter__(self) -> matched_fs_credentials:
         if self._switch:
             # setfs[ug]id returns the previous value, not a success code. The
             # second call is therefore the confirmation: it must return the
@@ -389,7 +389,7 @@ def signal_pidfd(pid_fd: int, process_signal: signal.Signals) -> None:
         pass
     except PermissionError:
         try:
-            with open(f"/proc/self/fdinfo/{pid_fd}", "r", encoding="utf-8") as s:
+            with open(f"/proc/self/fdinfo/{pid_fd}", encoding="utf-8") as s:
                 tpid = next((int(w[1]) for line in s if (w := line.split()) and w[0] == "Pid:"), 0)
             if tpid > 1 and (fpid := os.fork()) == 0:
                 uid = os.stat(f"/proc/{tpid}").st_uid
@@ -520,7 +520,7 @@ def starting_executable_identity(requested_path: str) -> dict[str, Any]:
     }
 
 
-def wait_for_exec(tree: "PinnedLeaderTree", requested_path: str, timeout: float = 3.0) -> dict[str, Any]:
+def wait_for_exec(tree: PinnedLeaderTree, requested_path: str, timeout: float = 3.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     pid = tree.leader_pid
     canonical = os.path.realpath(requested_path).encode("utf-8")

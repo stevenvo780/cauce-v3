@@ -11,7 +11,6 @@ import tempfile
 import unittest
 import uuid
 
-
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 LAUNCHER = AGENT_DIR / "cauce-pty-launcher.sh"
 if str(AGENT_DIR) not in sys.path:

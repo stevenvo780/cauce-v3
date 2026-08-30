@@ -9,9 +9,8 @@ import sys
 import tempfile
 import types
 import unittest
-from unittest import mock
 from typing import Any
-
+from unittest import mock
 
 AGENT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 OPS_ROOT = AGENT_ROOT.parent

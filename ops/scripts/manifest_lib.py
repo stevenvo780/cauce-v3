@@ -7,8 +7,8 @@ import re
 from typing import Any
 
 import yaml
-from jsonschema import Draft202012Validator
 from container_alias_lib import load_container_aliases
+from jsonschema import Draft202012Validator
 
 ENV_RE = re.compile(r"^CAUCE_[A-Z0-9_]+_(?:PATH|URL)$")
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")

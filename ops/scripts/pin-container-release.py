@@ -21,7 +21,6 @@ from collections.abc import Iterator
 
 from container_alias_lib import load_container_aliases
 
-
 ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 RELEASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 DIGEST_RE = re.compile(r"sha256:[a-f0-9]{64}\Z")

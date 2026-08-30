@@ -9,7 +9,7 @@ AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
-import cauce_pty_agent as agent
+import cauce_pty_agent as agent  # noqa: E402  (sys.path.insert deliberado arriba)
 
 
 class GovernanceAllowlistsLiteralTest(unittest.TestCase):

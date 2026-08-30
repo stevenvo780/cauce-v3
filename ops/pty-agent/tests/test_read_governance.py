@@ -65,11 +65,11 @@ class ReadGovernanceTests(unittest.TestCase):
         instance.outbound.clear()
         instance._on_read(request)
         frames = drain(instance)
-        
+
         self.assertEqual(len(frames), 1, f"Expected exactly 1 frame, got {len(frames)}")
         tag, payload = frames[0]
         self.assertEqual(tag, agent.TAG_READ_ERR, f"Expected TAG_READ_ERR (0x52), got {hex(tag)}")
-        
+
         # Load JSON payload
         data = json.loads(payload.decode("utf-8"))
         self.assertEqual(data.get("error"), code)
@@ -127,17 +127,17 @@ class ReadGovernanceTests(unittest.TestCase):
         content = b"Build: make\nTest: python3 -m unittest"
         with open(path, "wb") as f:
             f.write(content)
-            
+
         instance = make_agent(self.home)
         instance._on_read({
             "request_id": request_id,
             "kind": "file",
             "path": path,
         })
-        
+
         frames = drain(instance)
         self.assertGreaterEqual(len(frames), 3)
-        
+
         tag_ok, payload_ok = frames[0]
         self.assertEqual(tag_ok, agent.TAG_READ_OK)
         meta = json.loads(payload_ok.decode("utf-8"))
@@ -149,14 +149,14 @@ class ReadGovernanceTests(unittest.TestCase):
         self.assertEqual(meta["chunks"], len(frames) - 2)
         self.assertIn("modified_at", meta)
         self.assert_done(frames[-1], request_id)
-        
+
         assembled = bytearray()
         for tag, payload in frames[1:-1]:
             self.assertEqual(tag, agent.TAG_READ_DATA)
             prefix = payload[:36].decode("ascii")
             self.assertEqual(prefix, request_id)
             assembled.extend(payload[36:])
-            
+
         self.assertEqual(bytes(assembled), content)
 
     def test_project_manuals_outside_home_follow_measured_claude_order(self) -> None:
@@ -265,31 +265,31 @@ class ReadGovernanceTests(unittest.TestCase):
         content = b"A" * real_size
         with open(path, "wb") as f:
             f.write(content)
-            
+
         instance = make_agent(self.home)
         instance._on_read({
             "request_id": request_id,
             "kind": "file",
             "path": path,
         })
-        
+
         frames = drain(instance)
         self.assertGreaterEqual(len(frames), 3)
-        
+
         tag_ok, payload_ok = frames[0]
         self.assertEqual(tag_ok, agent.TAG_READ_OK)
         meta = json.loads(payload_ok.decode("utf-8"))
         self.assertEqual(meta["bytes"], real_size)
         self.assertTrue(meta["truncated"])
         self.assert_done(frames[-1], request_id)
-        
+
         assembled = bytearray()
         for tag, payload in frames[1:-1]:
             self.assertEqual(tag, agent.TAG_READ_DATA)
             req_id, chunk_data = agent.decode_data(payload)
             self.assertEqual(req_id, request_id)
             assembled.extend(chunk_data)
-            
+
         self.assertEqual(len(assembled), agent.MAX_DOCUMENT_BYTES)
         self.assertEqual(assembled, b"A" * agent.MAX_DOCUMENT_BYTES)
 
@@ -300,23 +300,23 @@ class ReadGovernanceTests(unittest.TestCase):
         content = b"B" * size
         with open(path, "wb") as f:
             f.write(content)
-            
+
         instance = make_agent(self.home)
         instance._on_read({
             "request_id": request_id,
             "kind": "file",
             "path": path,
         })
-        
+
         frames = drain(instance)
         self.assertGreaterEqual(len(frames), 4)
-        
+
         tag_ok, payload_ok = frames[0]
         self.assertEqual(tag_ok, agent.TAG_READ_OK)
         meta = json.loads(payload_ok.decode("utf-8"))
         self.assertGreater(meta["chunks"], 1)
         self.assert_done(frames[-1], request_id)
-        
+
         assembled = bytearray()
         for tag, payload in frames[1:-1]:
             self.assertEqual(tag, agent.TAG_READ_DATA)
@@ -324,7 +324,7 @@ class ReadGovernanceTests(unittest.TestCase):
             req_id, chunk_data = agent.decode_data(payload)
             self.assertEqual(req_id, request_id)
             assembled.extend(chunk_data)
-            
+
         self.assertEqual(bytes(assembled), content)
 
     def test_reject_symlink(self) -> None:
@@ -335,7 +335,7 @@ class ReadGovernanceTests(unittest.TestCase):
         with open(real_path, "wb") as f:
             f.write(b"real content")
         os.symlink("real.md", symlink_path)
-        
+
         instance = make_agent(self.home)
         self.expect_error(
             instance,
@@ -429,7 +429,7 @@ class ReadGovernanceTests(unittest.TestCase):
         path = f"{self.home}/NOTAS.md"
         with open(path, "wb") as f:
             f.write(b"some notes")
-            
+
         instance = make_agent(self.home)
         self.expect_error(
             instance,
@@ -468,7 +468,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_reject_non_canonical_paths(self) -> None:
         instance = make_agent(self.home)
-        
+
         non_canonical = [
             "CLAUDE.md",                                 # Relative
             f"{self.home}/../CLAUDE.md",                 # With ..
@@ -478,7 +478,7 @@ class ReadGovernanceTests(unittest.TestCase):
             f"{self.home}/CLAUDE.md\0",                  # Null byte
             f"{self.home}/" + ("a" * agent.MAX_READ_PATH) # Too long
         ]
-        
+
         for idx, path in enumerate(non_canonical):
             request_id = f"99999999-9999-9999-9999-{(idx + 1):012d}"
             self.expect_error(
@@ -491,19 +491,19 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_invalid_request_id_raises_protocol_error(self) -> None:
         instance = make_agent(self.home)
-        
+
         # Absent
         with self.assertRaises(agent.ProtocolError):
             instance._on_read({"kind": "file", "path": f"{self.home}/CLAUDE.md"})
-            
+
         # Non-string
         with self.assertRaises(agent.ProtocolError):
             instance._on_read({"request_id": 12345, "kind": "file", "path": f"{self.home}/CLAUDE.md"})
-            
+
         # Invalid format (non-UUID)
         with self.assertRaises(agent.ProtocolError):
             instance._on_read({"request_id": "not-a-uuid", "kind": "file", "path": f"{self.home}/CLAUDE.md"})
-            
+
         # Uppercase UUID
         with self.assertRaises(agent.ProtocolError):
             instance._on_read({
@@ -514,7 +514,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_invalid_kind_gives_invalid_path_error(self) -> None:
         instance = make_agent(self.home)
-        
+
         # kind = "other"
         self.expect_error(
             instance,
@@ -523,7 +523,7 @@ class ReadGovernanceTests(unittest.TestCase):
             kind="other",
             path=f"{self.home}/CLAUDE.md"
         )
-        
+
         # kind is None
         self.expect_error(
             instance,
@@ -535,7 +535,7 @@ class ReadGovernanceTests(unittest.TestCase):
 
     def test_mismatched_kind_and_filesystem_type(self) -> None:
         instance = make_agent(self.home)
-        
+
         # 1. Directory requested as file
         # We name the directory "CLAUDE.md" to pass the governance name whitelist,
         # so it fails at the S_ISREG check and returns invalid_path.
@@ -549,7 +549,7 @@ class ReadGovernanceTests(unittest.TestCase):
             path=dir_path
         )
         os.rmdir(dir_path)
-        
+
         # 2. The exact measured memory root exists, but is a regular file.
         os.rmdir(self.memory_root)
         file_path = self.memory_root
@@ -567,22 +567,22 @@ class ReadGovernanceTests(unittest.TestCase):
     def test_memory_index(self) -> None:
         request_id = "cccccccc-dddd-eeee-ffff-000000000000"
         instance = make_agent(self.home)
-        
+
         dir1 = f"{self.memory_root}/dir1"
         os.makedirs(dir1, exist_ok=True)
-        
+
         file_newest = f"{self.memory_root}/newest.txt"
         file_middle = f"{dir1}/middle.txt"
         file_oldest = f"{self.memory_root}/oldest.txt"
-        
+
         pathlib.Path(file_newest).write_bytes(b"newest")
         pathlib.Path(file_middle).write_bytes(b"middle")
         pathlib.Path(file_oldest).write_bytes(b"oldest")
-        
+
         os.utime(file_newest, (1000, 1000))
         os.utime(file_middle, (900, 900))
         os.utime(file_oldest, (800, 800))
-        
+
         env_file = f"{self.memory_root}/.env"
         pathlib.Path(env_file).write_bytes(b"SECRET=123")
         key_file = f"{dir1}/mykey.pem"
@@ -591,43 +591,43 @@ class ReadGovernanceTests(unittest.TestCase):
         pathlib.Path(upper_env_file).write_bytes(b"SECRET")
         upper_key_file = f"{dir1}/SECRET.PEM"
         pathlib.Path(upper_key_file).write_bytes(b"PRIVATE KEY")
-        
+
         sym_file = f"{self.memory_root}/symlink_file.txt"
         os.symlink("newest.txt", sym_file)
-        
+
         instance._on_read({
             "request_id": request_id,
             "kind": "dir",
             "path": self.memory_root,
         })
-        
+
         frames = drain(instance)
         self.assertEqual(len(frames), 2)
         tag, payload = frames[0]
         self.assertEqual(tag, agent.TAG_READ_OK)
         self.assert_done(frames[1], request_id)
-        
+
         meta = json.loads(payload.decode("utf-8"))
         self.assertEqual(meta["request_id"], request_id)
         self.assertEqual(meta["kind"], "dir")
         self.assertEqual(meta["path"], self.memory_root)
         self.assertFalse(meta["truncated"])
-        
+
         entries = meta["entries"]
         paths = [entry["path"] for entry in entries]
-        
+
         self.assertIn(file_newest, paths)
         self.assertIn(file_middle, paths)
         self.assertIn(file_oldest, paths)
-        
+
         self.assertNotIn(env_file, paths)
         self.assertNotIn(key_file, paths)
         self.assertNotIn(upper_env_file, paths)
         self.assertNotIn(upper_key_file, paths)
         self.assertNotIn(sym_file, paths)
-        
+
         self.assertEqual(paths, [file_newest, file_middle, file_oldest])
-        
+
         entry_map = {e["path"]: e for e in entries}
         self.assertEqual(entry_map[file_newest]["bytes"], 6)
         self.assertEqual(entry_map[file_middle]["bytes"], 6)
@@ -762,29 +762,29 @@ class ReadGovernanceTests(unittest.TestCase):
     def test_directory_depth_limit(self) -> None:
         request_id = "dddddddd-eeee-ffff-0000-111111111111"
         instance = make_agent(self.home)
-        
+
         d1 = f"{self.memory_root}/d1"
         d2 = f"{d1}/d2"
         d3 = f"{d2}/d3"
         os.makedirs(d3, exist_ok=True)
-        
+
         file_ok = f"{d2}/ok.txt"
         file_deep = f"{d3}/deep.txt"
-        
+
         pathlib.Path(file_ok).write_bytes(b"ok")
         pathlib.Path(file_deep).write_bytes(b"deep")
-        
+
         instance._on_read({
             "request_id": request_id,
             "kind": "dir",
             "path": self.memory_root,
         })
-        
+
         frames = drain(instance)
         self.assertEqual(len(frames), 2)
         self.assert_done(frames[1], request_id)
         meta = json.loads(frames[0][1].decode("utf-8"))
-        
+
         paths = [e["path"] for e in meta["entries"]]
         self.assertIn(file_ok, paths)
         self.assertNotIn(file_deep, paths)
@@ -792,31 +792,31 @@ class ReadGovernanceTests(unittest.TestCase):
     def test_memory_index_fits_in_one_frame(self) -> None:
         request_id = "eeeeeeee-ffff-0000-1111-222222222222"
         instance = make_agent(self.home)
-        
+
         long_dir = f"{self.memory_root}/" + ("a" * 150)
         os.makedirs(long_dir, exist_ok=True)
-        
+
         for i in range(200):
             filename = f"file_{i:03d}_" + ("b" * 100) + ".txt"
             path = f"{long_dir}/{filename}"
             with open(path, "wb") as f:
                 f.write(b"x")
-                
+
         instance._on_read({
             "request_id": request_id,
             "kind": "dir",
             "path": self.memory_root,
         })
-        
+
         frames = drain(instance)
         self.assertEqual(len(frames), 2)
         tag, payload = frames[0]
         self.assertEqual(tag, agent.TAG_READ_OK)
         self.assert_done(frames[1], request_id)
-        
+
         frame_size = 5 + len(payload)
         self.assertTrue(frame_size <= agent.MAX_FRAME, f"Frame size {frame_size} exceeds MAX_FRAME")
-        
+
         meta = json.loads(payload.decode("utf-8"))
         self.assertTrue(meta["truncated"])
         self.assertEqual(meta["total"], 200)
@@ -825,23 +825,23 @@ class ReadGovernanceTests(unittest.TestCase):
     def test_outbound_queue_congested(self) -> None:
         instance = make_agent(self.home)
         instance.outbound.extend(b"x" * (agent.OUTBOUND_HIGH_WATER + 1))
-        
+
         request_id = "ffffffff-0000-1111-2222-333333333333"
         instance._on_read({
             "request_id": request_id,
             "kind": "file",
             "path": f"{self.home}/CLAUDE.md"
         })
-        
+
         congested_len = agent.OUTBOUND_HIGH_WATER + 1
         new_data = instance.outbound[congested_len:]
-        
+
         decoder = agent.FrameDecoder()
         frames = decoder.feed(bytes(new_data))
         self.assertEqual(len(frames), 1)
         tag, payload = frames[0]
         self.assertEqual(tag, agent.TAG_READ_ERR)
-        
+
         meta = json.loads(payload.decode("utf-8"))
         self.assertEqual(meta["error"], "unavailable")
         self.assertEqual(meta["reason"], "outbound queue is congested")
