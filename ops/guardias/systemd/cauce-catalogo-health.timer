@@ -1,0 +1,11 @@
+[Unit]
+Description=Vigia del catalogo Mouseion cada 24 h
+
+[Timer]
+OnCalendar=*-*-* 09:30:00
+Persistent=true
+AccuracySec=5min
+Unit=cauce-catalogo-health.service
+
+[Install]
+WantedBy=timers.target
