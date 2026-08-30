@@ -25,8 +25,7 @@ interface ApiCall {
 }
 
 const CLIENT_PATH = fileURLToPath(new URL('../../console/src/api/client.ts', import.meta.url));
-/* The concrete routes moved out of `client.ts`, which now only forwards: reading it alone would
-   verify ZERO routes and still report green. */
+/* The routes left `client.ts`, which now only forwards: reading it alone verifies ZERO and passes. */
 const CLIENT_MODULES_DIR = fileURLToPath(new URL('../../console/src/api/client/', import.meta.url));
 const HANDLERS_PATH = fileURLToPath(new URL('../../console/src/mocks/handlers.ts', import.meta.url));
 
@@ -100,7 +99,6 @@ function rutaDeclaradaAntes(source: string, hasta: number, nombre: string): stri
   return ultima;
 }
 
-/** Whether the identifier is a parameter of the signature immediately preceding the call. */
 function esParametroDeLaFuncion(source: string, index: number, identificador: string): boolean {
   const firma = source.slice(Math.max(0, index - 240), index);
   const abre = firma.lastIndexOf('(');
@@ -111,16 +109,12 @@ function esParametroDeLaFuncion(source: string, index: number, identificador: st
 /** Extracts every `request(...)` call the console client issues, wherever its modules live. */
 function extractClientCalls(source: string): ApiCall[] {
   const calls: ApiCall[] = [];
-  /*
-   * Calls that could not be resolved. They are NOT silently dropped: a route the extractor does
-   * not see is left out of the check, and this file exists precisely because a route left out of
-   * the check ended up as a 404 in production.
-   */
+  /* Not silently dropped: a route the extractor cannot see is a route nobody checks, and this file
+     exists because one of those ended up as a 404 in production. */
   const sinResolver: string[] = [];
   const llamada = /(?<![A-Za-z0-9_$.])(?:this\.)?request\s*[<(]/g;
   for (let hallazgo = llamada.exec(source); hallazgo; hallazgo = llamada.exec(source)) {
     const index = hallazgo.index;
-    // The declaration of `request` itself is not a call site: its first argument is a parameter.
     if (/\b(?:function|async|private|public|protected|static|const|let)\s*$/.test(source.slice(Math.max(0, index - 24), index))) continue;
     const openParen = source.indexOf('(', index + hallazgo[0].length - 1);
     if (openParen === -1) break;
@@ -133,8 +127,7 @@ function extractClientCalls(source: string): ApiCall[] {
       const identificador = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:,|\)|$)/.exec(args)?.[1];
       ruta = identificador === undefined ? undefined : rutaDeclaradaAntes(source, index, identificador);
       if (ruta === undefined) {
-        // A pass-through forwards its own parameter and carries no route: the concrete one is at
-        // its callers, which this extractor reads too.
+        // A pass-through carries no route: the concrete one is at its callers, also read here.
         if (identificador !== undefined && esParametroDeLaFuncion(source, index, identificador)) continue;
         sinResolver.push(args.slice(0, 60).replace(/\s+/g, ' '));
         continue;
