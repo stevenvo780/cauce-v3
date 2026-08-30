@@ -24,7 +24,7 @@ const ARRAY_COUNTS: Readonly<Record<string, string>> = {
 };
 
 function cleanText(value: string, maximum = MAX_TEXT): string {
-  const printable = [...value].map((character) => {
+  const printable = Array.from(value, (character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 31 || code === 127 ? ' ' : character;
   }).join('').replace(/\s+/gu, ' ').trim();

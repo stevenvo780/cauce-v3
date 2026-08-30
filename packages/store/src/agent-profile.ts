@@ -2,7 +2,7 @@ import {
   emptyAgentProfile, normalizeAgentProfile,
   type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
   type HechosDelAlias, type PermisosDelAlias
-} from '@cauce/protocol';
+} from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 
@@ -177,7 +177,7 @@ export class AgentProfileRepository {
           'conflict',
           expectedRevision === null
             ? 'agent profile already exists'
-            : `agent profile revision changed from ${expectedRevision}`,
+            : `agent profile revision changed from ${String(expectedRevision)}`,
         );
       }
       const state = stored(row);
@@ -228,13 +228,13 @@ export class AgentProfileRepository {
       const row = result.rows[0];
       if (row === undefined) {
         throw new AgentProfileMutationError(
-          'conflict', `agent profile disappeared before runtime ACK ${expectedRevision}`,
+          'conflict', `agent profile disappeared before runtime ACK ${String(expectedRevision)}`,
         );
       }
       const state = stored(row);
       if ((state.applied_revision ?? 0) < expectedRevision) {
         throw new AgentProfileMutationError(
-          'conflict', `agent profile cannot record runtime ACK ${expectedRevision}`,
+          'conflict', `agent profile cannot record runtime ACK ${String(expectedRevision)}`,
         );
       }
       if (advanced) {
@@ -261,7 +261,7 @@ export class AgentProfileRepository {
     if (row === undefined) {
       throw new AgentProfileMutationError('not_found', 'agent not found');
     }
-    if (row.enabled !== true) {
+    if (row.enabled !== true) { // eslint-disable-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Fail closed when a PostgreSQL row violates its declared boolean shape.
       throw new AgentProfileMutationError('disabled', 'agent is disabled');
     }
   }
@@ -425,5 +425,5 @@ function limiteLegible(
   restante: string | number | null, ventana: string | null
 ): string | undefined {
   if (restante === null || ventana === null) return undefined;
-  return `${Number(restante)}% disponible en la ventana ${ventana}`;
+  return `${String(Number(restante))}% disponible en la ventana ${ventana}`;
 }

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { isAbsolute } from 'node:path';
 import pg from 'pg';
 import {
@@ -277,16 +277,16 @@ export async function withAbortableTransaction<T>(
   try {
     if (signal.aborted) throw abortFailure(signal);
     await client.query('BEGIN');
-    if (signal.aborted) throw abortFailure(signal);
+    if (signal.aborted) throw abortFailure(signal); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- AbortSignal can change while BEGIN is awaited.
     const result = await work(client);
-    if (signal.aborted) throw abortFailure(signal);
+    if (signal.aborted) throw abortFailure(signal); // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- User work may asynchronously abort the transaction.
     await client.query('COMMIT');
     // Once COMMIT has succeeded, report success even if abort raced immediately afterwards.
     // Returning AbortError here would falsely describe a durable commit as cancelled.
     return result;
   } catch (error) {
     broken ||= connectionFailure(error);
-    if (!released && !signal.aborted) {
+    if (!released && !signal.aborted) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- The abort listener can release the client while awaited work rejects.
       try {
         await client.query('ROLLBACK');
       } catch {
@@ -365,7 +365,7 @@ export async function subscribeDeliveryWakes(
       retryTimer = undefined;
       void connect(false);
     }, delay);
-    retryTimer.unref?.();
+    retryTimer.unref();
   };
 
   const lost = (client: DatabaseClient): void => {
@@ -392,15 +392,19 @@ export async function subscribeDeliveryWakes(
         }
         const connectedClient = client;
         const handlers = {
-          onError: (): void => lost(connectedClient),
-          onEnd: (): void => lost(connectedClient)
+          onError: (): void => {
+            lost(connectedClient);
+          },
+          onEnd: (): void => {
+            lost(connectedClient);
+          }
         };
         connectionHandlers.set(connectedClient, handlers);
         connectedClient.on('notification', onNotification);
         connectedClient.on('error', handlers.onError);
         connectedClient.on('end', handlers.onEnd);
         await connectedClient.query('LISTEN cauce_delivery_wake');
-        if (stopped) {
+        if (stopped) { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Shutdown can race the awaited LISTEN query.
           detach(connectedClient);
           try {
             connectedClient.release();

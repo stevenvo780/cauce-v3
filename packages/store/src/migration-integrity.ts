@@ -89,7 +89,7 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-async function sourceEntries(): Promise<Array<{ version: string; source: string; sourceSha256: string }>> {
+async function sourceEntries(): Promise<{ version: string; source: string; sourceSha256: string }[]> {
   const directory = fileURLToPath(new URL('../migrations/', import.meta.url));
   const versions = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
   return Promise.all(versions.map(async (version) => {
@@ -221,7 +221,7 @@ export async function inspectMigrationIntegrity(client: pg.PoolClient): Promise<
 }
 
 export async function migrationSourcesForApply(): Promise<
-Array<{ version: string; source: string; sourceSha256: string }>
+{ version: string; source: string; sourceSha256: string }[]
 > {
   return sourceEntries();
 }

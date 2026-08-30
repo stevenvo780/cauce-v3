@@ -175,7 +175,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
          VALUES($1,$2,$3::jsonb,$4::jsonb,$5) RETURNING id::text`,
         [actorTenant, actorAlias, JSON.stringify(mutation), JSON.stringify(inverse), summary]
       );
-      const nextRevision = Number(inserted.rows[0]!.id);
+      const insertedRevision = inserted.rows[0];
+      if (insertedRevision === undefined) {
+        throw new Error('configuration revision insert returned no row');
+      }
+      const nextRevision = Number(insertedRevision.id);
       await this.audit(client, actorTenant, actorAlias, 'config.change', {
         revision: nextRevision, mutation, summary
       });
@@ -213,7 +217,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
       this.authorizeMutation(original.inverse_operation, actorTenant, hub);
       const { inverse: redo, summary } = await this.execute(client, original.inverse_operation);
       await this.assertControl(client, actorTenant, actorAlias);
-      const rollbackSummary = `rollback ${revisionId}: ${summary}`;
+      const rollbackSummary = `rollback ${String(revisionId)}: ${summary}`;
       if (dryRun) {
         return { result: {
           applied: false, dry_run: true, revision: currentRevision,
@@ -229,8 +233,12 @@ export class ConfigurationRepository extends ConfigurationMutations {
         [actorTenant, actorAlias, JSON.stringify(original.inverse_operation), JSON.stringify(redo),
           rollbackSummary, revisionId]
       );
-      const nextRevision = Number(inserted.rows[0]!.id);
-      const rolledBackRevisionId = Number(inserted.rows[0]!.rolled_back_revision_id);
+      const insertedRevision = inserted.rows[0];
+      if (insertedRevision === undefined) {
+        throw new Error('configuration rollback revision insert returned no row');
+      }
+      const nextRevision = Number(insertedRevision.id);
+      const rolledBackRevisionId = Number(insertedRevision.rolled_back_revision_id);
       await this.audit(client, actorTenant, actorAlias, 'config.rollback', {
         revision: nextRevision, rolled_back_revision: revisionId, mutation: original.inverse_operation
       });
@@ -311,7 +319,10 @@ export class ConfigurationRepository extends ConfigurationMutations {
     );
     const revision = Number(selected.rows[0]?.revision ?? 0);
     if (expected !== undefined && revision !== expected) {
-      throw new ConfigurationError('conflict', `configuration revision changed: expected ${expected}, current ${revision}`);
+      throw new ConfigurationError(
+        'conflict',
+        `configuration revision changed: expected ${String(expected)}, current ${String(revision)}`,
+      );
     }
     return revision;
   }

@@ -1,4 +1,4 @@
-import type { Tenant } from '@cauce/protocol';
+import type { Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error" */
 import type { DatabasePool, DatabaseClient } from './db.js';
 import { withTransaction } from './db.js';
 
@@ -153,7 +153,7 @@ async function selectWithClient(
     const candidate: AccountCandidate = {
       account_id: row.account_id,
       provider: row.provider,
-      priority: Number(row.priority),
+      priority: Number(row.priority), // eslint-disable-line @typescript-eslint/no-unnecessary-type-conversion -- Database rows are runtime input; normalize priority despite the declared row type.
       payer_tenant_id: row.payer_tenant_id,
       label: row.label,
       credential_ref_kind: row.credential_ref_kind,
