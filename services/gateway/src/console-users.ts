@@ -105,7 +105,7 @@ export class MemoryConsoleUserStore implements ConsoleUserStore {
     for (const user of users) this.users.set(user.id, user);
   }
 
-  async ready(): Promise<void> {}
+  ready(): Promise<void> { return Promise.resolve(); }
 
   async findByEmail(email: string): Promise<ConsoleUser | undefined> {
     const normalized = normalizeEmail(email);
@@ -116,7 +116,7 @@ export class MemoryConsoleUserStore implements ConsoleUserStore {
     return this.users.get(id);
   }
 
-  async recordLogin(): Promise<void> {}
+  recordLogin(): Promise<void> { return Promise.resolve(); }
 
   put(user: ConsoleUser): void {
     this.users.set(user.id, user);

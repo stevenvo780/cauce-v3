@@ -52,7 +52,7 @@ export class MemoryOidcSessionStore implements OidcSessionStore {
   private readonly logins = new Map<string, MemoryRecord<PendingOidcLogin>>();
   private readonly sessions = new Map<string, MemoryRecord<OidcSession>>();
 
-  async ready(): Promise<void> {}
+  ready(): Promise<void> { return Promise.resolve(); }
 
   async putLogin(id: string, login: PendingOidcLogin): Promise<void> {
     this.logins.set(id, { value: structuredClone(login), expiresAt: login.expiresAt });
@@ -127,7 +127,7 @@ export class PostgresOidcSessionStore implements OidcSessionStore {
     return { key, payload: Buffer.concat([iv, cipher.getAuthTag(), ciphertext]) };
   }
 
-  private decrypt<T>(kind: string, id: string, value: unknown): T {
+  private decrypt(kind: string, id: string, value: unknown): unknown {
     if (!Buffer.isBuffer(value) || value.byteLength < 29) throw new AuthError('stored OIDC session is invalid');
     const key = recordKey(id);
     const iv = value.subarray(0, 12);
@@ -137,7 +137,7 @@ export class PostgresOidcSessionStore implements OidcSessionStore {
       const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
       decipher.setAAD(encryptionAad(kind, key));
       decipher.setAuthTag(tag);
-      return JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')) as T;
+      return JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')) as unknown;
     } catch {
       throw new AuthError('stored OIDC session failed authentication');
     }
@@ -163,7 +163,7 @@ export class PostgresOidcSessionStore implements OidcSessionStore {
       : `SELECT encrypted_payload FROM ${this.table} WHERE kind = $1 AND key_hash = $2 AND expires_at > CURRENT_TIMESTAMP`;
     const result = await this.pool.query(command, [kind, key]);
     const row = result.rows[0] as EncryptedRow | undefined;
-    return row === undefined ? undefined : this.decrypt<T>(kind, id, row.encrypted_payload);
+    return row === undefined ? undefined : this.decrypt(kind, id, row.encrypted_payload) as T;
   }
 
   async putLogin(id: string, login: PendingOidcLogin): Promise<void> {
@@ -246,8 +246,9 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 function cookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   const values = header.split(';').map((item) => item.trim()).filter((item) => item.startsWith(`${name}=`));
-  if (values.length !== 1) return undefined;
-  const value = values[0]!.slice(name.length + 1);
+  const [match] = values;
+  if (values.length !== 1 || match === undefined) return undefined;
+  const value = match.slice(name.length + 1);
   try {
     return decodeURIComponent(value);
   } catch {
@@ -262,7 +263,7 @@ function constantTimeText(left: string, right: string): boolean {
 }
 
 function sessionCookie(name: string, value: string, maxAgeSeconds: number, sameSite: 'Strict' | 'Lax'): string {
-  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`;
+  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${String(Math.max(0, Math.floor(maxAgeSeconds)))}`;
 }
 
 function clearCookie(name: string, sameSite: 'Strict' | 'Lax'): string {
@@ -570,6 +571,7 @@ export class OidcBffAuthProvider implements AuthProvider {
         code_verifier: pending.codeVerifier
       }));
       const verified = await this.verifiedTokens(tokens, pending.nonce);
+      if (verified.idToken === undefined) throw new AuthError('OIDC ID token is required');
       const oldId = cookieValue(headerValue(request.headers.cookie), this.sessionCookieName);
       if (oldId) await this.store.deleteSession(oldId);
       const id = randomOpaque();
@@ -580,7 +582,7 @@ export class OidcBffAuthProvider implements AuthProvider {
         accessToken: verified.accessToken,
         accessExpiresAt: verified.accessExpiresAt,
         ...(verified.refreshToken === undefined ? {} : { refreshToken: verified.refreshToken }),
-        idToken: verified.idToken!,
+        idToken: verified.idToken,
         csrfToken: randomOpaque(),
         createdAt: now,
         expiresAt: now + this.sessionMaxAgeMs

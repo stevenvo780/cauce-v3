@@ -25,7 +25,9 @@ function cookieFrom(response: { headers: Record<string, unknown> }, name: string
     : typeof raw === 'string' ? [raw] : [];
   const selected = values.find((value) => value.startsWith(`${name}=`));
   if (!selected) throw new Error(`missing ${name} cookie`);
-  return selected.split(';', 1)[0]!;
+  const [cookie] = selected.split(';', 1);
+  if (cookie === undefined) throw new Error(`missing ${name} cookie`);
+  return cookie;
 }
 
 function cookieValue(cookie: string): string {
@@ -91,7 +93,7 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
       refreshes += 1;
       return Response.json({
         access_token: token(600), token_type: 'Bearer', expires_in: 600,
-        refresh_token: `rotated-refresh-${refreshes}`
+        refresh_token: `rotated-refresh-${String(refreshes)}`
       });
     }
     return new Response(null, { status: 404 });
@@ -117,7 +119,9 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
     deliveryWakeSubscriber: async () => async () => undefined
   });
   const login = await app.inject({ method: 'GET', url: '/v3/auth/login' });
-  const authorization = new URL(login.headers.location!);
+  const location = login.headers.location;
+  if (location === undefined) throw new Error('missing OIDC authorization location');
+  const authorization = new URL(location);
   nonce = authorization.searchParams.get('nonce') ?? '';
   observedChallenge = authorization.searchParams.get('code_challenge') ?? '';
   const loginCookie = cookieFrom(login, '__Host-cauce_login');

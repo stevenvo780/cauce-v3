@@ -20,10 +20,7 @@ export interface Principal {
   readonly origin?: Origin;
   readonly roles: readonly PrincipalRole[];
   readonly permissions: readonly PrincipalPermission[];
-  /**
-   * Person behind the request, when the authentication provider was able to establish it.
-   * It is server-authenticated authority that takes precedence over delegated headers.
-   */
+  /** Authenticated person authority, when established; it outranks delegated headers. */
   readonly operator_id?: string;
 }
 
@@ -127,6 +124,7 @@ export class DevOnlyAuthProvider implements AuthProvider {
     roles?: readonly PrincipalRole[];
     permissions?: readonly PrincipalPermission[];
   }) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- JavaScript callers must pass literal true.
     if (options.enabled !== true) throw new Error('development authentication must be explicitly enabled');
     this.mode = options.environment;
     this.configuredRoles = options.roles;
@@ -210,9 +208,11 @@ interface CachedJwks {
   keys: Map<string, { jwk: JsonWebKey; key: KeyObject }>;
 }
 
-function decodeJsonPart<T>(part: string, label: string): T {
+function decodeJsonPart(part: string, label: string): Record<string, unknown> {
   try {
-    return JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as T;
+    const decoded: unknown = JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+    if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error();
+    return decoded as Record<string, unknown>;
   } catch {
     throw new AuthError(`malformed JWT ${label}`);
   }
@@ -298,11 +298,12 @@ export class JwksJwtVerifier {
     const parts = token.split('.');
     if (parts.length !== 3 || parts.some((part) => part.length === 0)) throw new AuthError('malformed bearer token');
     const [encodedHeader, encodedPayload, encodedSignature] = parts as [string, string, string];
-    const header = decodeJsonPart<Partial<JwtHeader>>(encodedHeader, 'header');
+    const header = decodeJsonPart(encodedHeader, 'header');
     if (typeof header.alg !== 'string' || !this.allowedAlgorithms.has(header.alg) || typeof header.kid !== 'string') {
       throw new AuthError('JWT signing header is not allowed');
     }
-    if (header.typ !== undefined && !['JWT', 'AT+JWT'].includes(header.typ.toUpperCase())) {
+    if (header.typ !== undefined
+        && (typeof header.typ !== 'string' || !['JWT', 'AT+JWT'].includes(header.typ.toUpperCase()))) {
       throw new AuthError('JWT type is invalid');
     }
     let cached = await this.loadKeys();
@@ -321,7 +322,7 @@ export class JwksJwtVerifier {
       Buffer.from(encodedSignature, 'base64url')
     );
     if (!verified) throw new AuthError('JWT signature is invalid');
-    const claims = decodeJsonPart<JwtClaims>(encodedPayload, 'payload');
+    const claims = decodeJsonPart(encodedPayload, 'payload');
     const now = Date.now() / 1_000;
     if (typeof claims.iss !== 'string' || claims.iss.replace(/\/$/, '') !== this.issuer) {
       throw new AuthError('JWT issuer is invalid');
@@ -392,6 +393,7 @@ export class MtlsAuthProvider implements AuthProvider {
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
     const socket = request.raw.socket;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- TLS authorization is request-bound runtime state.
     if (!(socket instanceof TLSSocket) || !socket.encrypted || !socket.authorized) {
       throw new AuthError('a verified client certificate is required');
     }
@@ -455,8 +457,9 @@ async function readIdentityFile(path: string): Promise<HashedIdentityRecord[]> {
 function cookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   const matches = header.split(';').map((part) => part.trim()).filter((part) => part.startsWith(`${name}=`));
-  if (matches.length !== 1) return undefined;
-  const encoded = matches[0]!.slice(name.length + 1);
+  const [match] = matches;
+  if (matches.length !== 1 || match === undefined) return undefined;
+  const encoded = match.slice(name.length + 1);
   try {
     return decodeURIComponent(encoded);
   } catch {
@@ -495,7 +498,8 @@ export class HashedTokenFileAuthProvider implements AuthProvider {
     const bearer = this.allowBearer && authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
     const cookie = cookieValue(oneHeader(request.headers.cookie), this.cookieName);
     if ((bearer ? 1 : 0) + (cookie ? 1 : 0) !== 1) throw new AuthError('exactly one pilot token credential is required');
-    const raw = bearer ?? cookie!;
+    const raw = bearer ?? cookie;
+    if (raw === undefined) throw new AuthError('exactly one pilot token credential is required');
     if (raw.length < 32 || raw.length > 4_096) throw new AuthError('pilot token is invalid');
     const presented = sha256(raw);
     const identities = await readIdentityFile(this.options.path);

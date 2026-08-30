@@ -23,7 +23,8 @@ function parseArguments(argv: readonly string[]): Options {
   const values = new Map<string, string>();
   let deactivate = false;
   for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]!;
+    const argument = argv[index];
+    if (argument === undefined) throw new Error('no se pudo leer el argumento');
     if (argument === '--deactivate') {
       deactivate = true;
       continue;
@@ -50,7 +51,7 @@ function parseArguments(argv: readonly string[]): Options {
   if (!/^[a-z][a-z0-9_-]{1,63}$/.test(alias)) throw new Error('--alias inválido');
   return {
     email,
-    name: (values.get('name') ?? email.split('@')[0]!).trim(),
+    name: (values.get('name') ?? email.slice(0, email.indexOf('@'))).trim(),
     role,
     // Default Cauce identity for the console.
     tenant: values.get('tenant') ?? 'Steven',
@@ -127,7 +128,8 @@ try {
         options.name, options.role, options.tenant, options.alias
       ]
     );
-    const row = result.rows[0]!;
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('la base no devolvió la cuenta escrita');
     const created = row.created_at.getTime() === row.updated_at.getTime();
     console.log(`${created ? 'cuenta creada' : 'cuenta actualizada'}: ${options.email}`);
     console.log(`  id      ${row.id}`);

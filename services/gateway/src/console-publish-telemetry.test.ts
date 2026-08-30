@@ -23,7 +23,7 @@ describe('identity-free console publish telemetry', () => {
   });
 
   it('fails closed on an invented event or malformed snapshot', () => {
-    expect(() => telemetryWithInventedOutcome()).toThrow(/unknown console publish telemetry outcome/u);
+    expect(() => { telemetryWithInventedOutcome(); }).toThrow(/unknown console publish telemetry outcome/u);
     expect(() => renderConsolePublishMetrics({
       snapshot: () => ({ 'prepare:prepared': -1 }),
     })).toThrow(/unknown counter|invalid console publish/u);

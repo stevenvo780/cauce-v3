@@ -120,7 +120,8 @@ describe('safeDlqPage', () => {
         lastReopenedAt: null,
       }],
     });
-    const safeItem = (page.items as Array<Record<string, unknown>>)[0]!;
+    const safeItem = (page.items as Record<string, unknown>[])[0];
+    if (safeItem === undefined) throw new Error('expected one sanitized DLQ item');
     for (const forbidden of ['payload', 'reason', 'error', 'origin', 'provider_message_id', 'message_id']) {
       expect(safeItem).not.toHaveProperty(forbidden);
     }

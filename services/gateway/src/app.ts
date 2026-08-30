@@ -89,9 +89,9 @@ export interface GatewayRepository {
   verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult): Promise<boolean>;
   assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
   assertPermission(tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'): Promise<void>;
-  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: Array<'route' | 'read' | 'control' | 'notify'> }>;
+  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: ('route' | 'read' | 'control' | 'notify')[] }>;
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
-  listPresence(actorTenant: Tenant, actorAlias: string): Promise<Array<Record<string, unknown>>>;
+  listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;
   topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listMessages(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   queueSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -291,15 +291,14 @@ export interface GatewayOptions {
   logger?: boolean;
 }
 
-// Maximum drain batch. Deliberately equal to the historical default of QueryDeliveriesSchema so
-// that this change alone does not alter how much is claimed: what changes is that the number is
-// now written where it is used instead of being silently inherited from an HTTP endpoint's schema.
+// Matches the historical QueryDeliveriesSchema default while keeping the claim limit local.
 const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
 const DEFAULT_WAKE_PUMP_CONCURRENCY = 4;
 const DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS = 1_000;
 
 
 export async function buildGateway(options: GatewayOptions): Promise<FastifyInstance> {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- JavaScript callers can omit a required TypeScript option.
   if (!options.authProvider) throw new Error('AuthProvider is mandatory');
   if (process.env.NODE_ENV === 'production' && options.authProvider.mode !== 'production') {
     throw new Error('development/test AuthProvider is forbidden in production');

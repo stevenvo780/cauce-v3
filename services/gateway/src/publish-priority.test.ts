@@ -19,7 +19,7 @@ interface Published {
   actor_alias: string;
 }
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 function pool(): DatabasePool {
   return {
@@ -31,7 +31,7 @@ function pool(): DatabasePool {
  * Fastify 5 only accepts a logger CONFIGURATION here, not a logger instance, so the records are
  * collected off the destination stream — which is also what production reads.
  */
-function recordingLogger(warnings: Array<Record<string, unknown>>): never {
+function recordingLogger(warnings: Record<string, unknown>[]): never {
   return {
     level: 'warn',
     stream: {
@@ -49,10 +49,10 @@ function recordingLogger(warnings: Array<Record<string, unknown>>): never {
 async function gateway(): Promise<{
   app: Awaited<ReturnType<typeof buildGateway>>;
   published: Published[];
-  warnings: Array<Record<string, unknown>>;
+  warnings: Record<string, unknown>[];
 }> {
   const published: Published[] = [];
-  const warnings: Array<Record<string, unknown>> = [];
+  const warnings: Record<string, unknown>[] = [];
   const app = await buildGateway({
     pool: pool(),
     authProvider: DevOnlyAuthProvider.forTests(),
@@ -106,7 +106,7 @@ async function publish(
       room_id: 'grp.steven',
       recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
       body: { text: 'priority ceiling' },
-      idempotency_key: `ceiling-${alias}-${priority}-${path}`,
+      idempotency_key: `ceiling-${alias}-${String(priority)}-${path}`,
       lane,
       priority
     }

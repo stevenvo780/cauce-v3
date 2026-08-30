@@ -8,7 +8,7 @@ import { DevOnlyAuthProvider } from './auth.js';
  * Tests for retrieving the full message body in `GET /v3/console/messages/:messageId`.
  */
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 function pool(): DatabasePool {
   return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
@@ -91,7 +91,7 @@ describe('GET /v3/console/messages/:messageId', () => {
     const respuesta = await leer(app, MENSAJE.id, 'argos');
 
     expect(respuesta.statusCode).toBe(200);
-    const cuerpo: { deliveries?: Array<{ recipient_alias?: string }> } = respuesta.json();
+    const cuerpo: { deliveries?: { recipient_alias?: string }[] } = respuesta.json();
     expect(cuerpo.deliveries?.map((entrega) => entrega.recipient_alias)).toEqual(['argos']);
   });
 

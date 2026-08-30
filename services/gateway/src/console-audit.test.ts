@@ -3,7 +3,7 @@ import type { DatabasePool } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 function pool(): DatabasePool {
   return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
@@ -13,7 +13,7 @@ function repository() {
   return {
     principalAccess: vi.fn(async () => ({
       roles: ['operator'] as string[],
-      permissions: ['read'] as Array<'route' | 'read' | 'control' | 'notify'>,
+      permissions: ['read'] as ('route' | 'read' | 'control' | 'notify')[],
     })),
     listAudit: vi.fn(async () => ({
       next_cursor: '41',
