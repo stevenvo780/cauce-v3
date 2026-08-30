@@ -39,7 +39,7 @@ async function boundedResponse(response: Response, limit: number): Promise<strin
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
-  while (true) {
+  for (;;) {
     const next = await reader.read();
     if (next.done) break;
     bytes += next.value.byteLength;
@@ -91,7 +91,7 @@ export class OpenClawApiRunner implements CommandRunner {
     }
     if (request.signal.aborted) throw this.cancelledBeforeDispatch();
 
-    const token = await readBearerTokenFile(this.tokenFile);
+    const token = await readBearerTokenFile(this.tokenFile); // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The signal can abort while the token file is read.
     if (request.signal.aborted) throw this.cancelledBeforeDispatch();
     const controller = new AbortController();
     let timedOut = false;
@@ -151,7 +151,7 @@ export class OpenClawApiRunner implements CommandRunner {
         timedOut: false,
         cancelled: false,
       };
-    } catch (error) {
+    } catch (error) { // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort callbacks can mutate both flags before fetch rejects.
       if (timedOut || cancelled) {
         if (!dispatched) throw this.cancelledBeforeDispatch();
         return this.abortedResult(timedOut);

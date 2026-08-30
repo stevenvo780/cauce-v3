@@ -104,7 +104,7 @@ function rejectDuplicateJsonKeys(text: string): void {
       return;
     }
     const start = offset;
-    while (offset < text.length && !/[\s,}\]]/u.test(text[offset]!)) offset += 1;
+    while (offset < text.length && !/[\s,}\]]/u.test(text.charAt(offset))) offset += 1;
     if (offset === start) invalidSessionsFile();
   };
   value();

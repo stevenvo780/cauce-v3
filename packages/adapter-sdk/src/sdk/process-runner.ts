@@ -133,8 +133,8 @@ export class SpawnCommandRunner {
 
       this.logger({ event: "spawn", harness: request.harness });
       const pid = child.pid;
-      let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-      let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+      let stdout: Buffer = Buffer.alloc(0);
+      let stderr: Buffer = Buffer.alloc(0);
       const witness = request.startWitness;
       let harnessStarted: boolean | undefined = witness === undefined ? undefined : false;
       const noteHarnessStart = (): void => {
@@ -221,12 +221,12 @@ export class SpawnCommandRunner {
         outputExceeded ||= reason === "output";
         this.logger({ event: "terminate", harness: request.harness, timedOut, cancelled });
         signalProcessGroup(child, pid, "SIGTERM");
-        const killTimer = setTimeout(() => signalProcessGroup(child, pid, "SIGKILL"), this.killGraceMs);
+        const killTimer = setTimeout(() => { signalProcessGroup(child, pid, "SIGKILL"); }, this.killGraceMs);
         killTimer.unref();
         armReap(this.killGraceMs + this.orphanPipeGraceMs);
       };
 
-      const collect = (current: Buffer<ArrayBufferLike>, chunk: Buffer<ArrayBufferLike>): Buffer<ArrayBufferLike> => {
+      const collect = (current: Buffer, chunk: Buffer): Buffer => {
         const next = Buffer.concat([current, chunk]);
         if (next.byteLength > this.maxOutputBytes) {
           terminate("output");
@@ -245,9 +245,9 @@ export class SpawnCommandRunner {
         if (witness?.kind === "stderr-marker" && stderr.includes(witness.marker)) noteHarnessStart();
       });
 
-      const timeout = setTimeout(() => terminate("timeout"), request.timeoutMs);
+      const timeout = setTimeout(() => { terminate("timeout"); }, request.timeoutMs);
       timeout.unref();
-      const onAbort = (): void => terminate("cancel");
+      const onAbort = (): void => { terminate("cancel"); };
       request.signal.addEventListener("abort", onAbort, { once: true });
 
       child.once("error", () => {
@@ -266,8 +266,8 @@ export class SpawnCommandRunner {
       });
 
       child.once("close", (code, signal) => {
-        if (exitCode === null) exitCode = code;
-        if (exitSignal === null) exitSignal = signal;
+        exitCode ??= code;
+        exitSignal ??= signal;
         settle();
       });
 

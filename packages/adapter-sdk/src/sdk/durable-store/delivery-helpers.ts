@@ -11,7 +11,7 @@ export function lifecycleSlot(event: DeliveryEvent): LifecycleEventSlot | undefi
   if (event.execution_started === true) return "execution_started";
   if (event.claim_renewal === true) return undefined;
   if (event.phase === "accepted") return "accepted";
-  if (event.phase === "started") return "started";
+  if (event.phase === "started") return "started"; // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Outbox JSON is loaded without runtime validation.
   if (event.phase === "done" || event.phase === "failed") return "terminal";
   return undefined;
 }

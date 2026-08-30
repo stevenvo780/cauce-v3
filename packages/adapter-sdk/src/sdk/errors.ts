@@ -25,7 +25,11 @@ export class ProcessExecutionError extends AdapterError {
 
 export class StaleEpochError extends AdapterError {
   constructor(received: number, current: number) {
-    super("STALE_EPOCH", `Rejected epoch ${received}; active epoch is ${current}`, false);
+    super(
+      "STALE_EPOCH",
+      `Rejected epoch ${String(received)}; active epoch is ${String(current)}`,
+      false,
+    );
     this.name = "StaleEpochError";
   }
 }

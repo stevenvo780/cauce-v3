@@ -15,7 +15,7 @@ const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
  * lane. It travels as-is into the execution request, so the two things that decide which lock
  * and which native session to use always travel together and cannot drift.
  */
-export type HarnessSessionRequestScope = {
+export interface HarnessSessionRequestScope {
   sessionKey?: string;
   sessionLane?: SessionLane;
   /**
@@ -24,7 +24,7 @@ export type HarnessSessionRequestScope = {
    * without this nobody can later say which channel each session came from.
    */
   sessionOrigin?: SessionOrigin;
-};
+}
 
 function describeMedia(body: Record<string, unknown>): string | undefined {
   const verified = body.attachments_v1;
@@ -40,7 +40,9 @@ function describeMedia(body: Record<string, unknown>): string | undefined {
   }
 
   const detalle = [...kinds.entries()]
-    .map(([kind, count]) => (count === 1 ? `un adjunto de tipo ${kind}` : `${count} adjuntos de tipo ${kind}`))
+    .map(([kind, count]) => (
+      count === 1 ? `un adjunto de tipo ${kind}` : `${String(count)} adjuntos de tipo ${kind}`
+    ))
     .join(" y ");
 
   const downloadable = Array.isArray(verified) && verified.length > 0;
@@ -101,7 +103,7 @@ function boundedReply(value: string, maxBytes = MAX_BRANCH_PROGRESS_REPLY_BYTES)
   const marker = " […] ";
   const budget = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
   const headBudget = Math.ceil(budget / 2);
-  const codePoints = [...value];
+  const codePoints = Array.from(value);
 
   let head = "";
   let headBytes = 0;
@@ -115,7 +117,8 @@ function boundedReply(value: string, maxBytes = MAX_BRANCH_PROGRESS_REPLY_BYTES)
   let tail = "";
   let tailBytes = 0;
   for (let index = codePoints.length - 1; index >= 0; index -= 1) {
-    const codePoint = codePoints[index]!;
+    const codePoint = codePoints[index];
+    if (codePoint === undefined) throw new Error("Reply truncation lost a code point");
     const nextBytes = Buffer.byteLength(codePoint, "utf8");
     if (tailBytes + nextBytes > budget - headBytes) break;
     tail = `${codePoint}${tail}`;

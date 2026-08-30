@@ -187,7 +187,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
       const existing = this.inbox.deliveries[deliveryId];
       if (existing === undefined) throw new Error(`Unknown delivery ${deliveryId}`);
       if (details.attempt !== undefined && details.attempt !== existing.attempt) {
-        throw new Error(`Stale attempt ${details.attempt} for delivery ${deliveryId}`);
+        throw new Error(`Stale attempt ${String(details.attempt)} for delivery ${deliveryId}`);
       }
       if (details.claimToken !== undefined && details.claimToken !== existing.claim_token) {
         throw new Error(`Stale claim token for delivery ${deliveryId}`);
@@ -332,7 +332,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
       // the upper attempt the bus is entitled to deliver. Degrade to a retryable failed, but
       // keep the already-confirmed terminal id so a redelivery of the SAME attempt does not
       // fabricate another event nor re-execute the ambiguous work.
-      const ownershipReleasedRecord = terminalOwnershipLost && existing !== undefined
+      const ownershipReleasedRecord = terminalOwnershipLost
         ? (() => {
             const retained: { -readonly [Key in keyof InboxRecord]: InboxRecord[Key] } = {
               ...existing,

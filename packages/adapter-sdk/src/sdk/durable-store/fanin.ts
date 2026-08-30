@@ -142,7 +142,12 @@ export class DurableStoreFanin extends DurableStoreBase {
         right.updated_at.localeCompare(left.updated_at)
         || right.delivery_id.localeCompare(left.delivery_id))
       .map((record): ProcessedFaninReply => {
-        const correlation = objectRecord(record.request!.body.correlation);
+        const request = record.request;
+        const output = record.output;
+        if (request === undefined || output === undefined || !visibleText(output.reply)) {
+          throw new Error("Durable fan-in reply has no validated request or output");
+        }
+        const correlation = objectRecord(request.body.correlation);
         const childDeliveryId = typeof correlation?.child_delivery_id === "string"
           ? correlation.child_delivery_id
           : undefined;
@@ -150,9 +155,9 @@ export class DurableStoreFanin extends DurableStoreBase {
           ? undefined
           : branches.find((branch) => branch.childDeliveryId === childDeliveryId);
         return {
-          tenantId: record.request!.tenant_id,
-          alias: record.request!.actor_alias,
-          reply: record.output!.reply!.trim(),
+          tenantId: request.tenant_id,
+          alias: request.actor_alias,
+          reply: output.reply.trim(),
           updatedAt: record.updated_at,
           ...(childDeliveryId === undefined ? {} : { childDeliveryId }),
           ...(exact === undefined ? {} : {
@@ -228,19 +233,24 @@ export class DurableStoreFanin extends DurableStoreBase {
           && responseCorrelation?.root_delivery_id === rootDeliveryId
           && this.continuationBelongsToRoot(request, rootDeliveryId)
           && record.output?.messages.length === 0
-          && visibleText(record.output?.reply);
+          && visibleText(record.output.reply);
       })
       // Newest first: the coordinator's last completed turn is its actual synthesis, and
       // tenant/alias/delivery ordering says nothing about which reply that is.
       .sort((left, right) =>
         right.updated_at.localeCompare(left.updated_at)
         || right.delivery_id.localeCompare(left.delivery_id))
-      .map((record) => {
-        const childDeliveryId = objectRecord(record.request!.body.correlation)?.child_delivery_id;
+      .map((record): ProcessedFaninReply => {
+        const request = record.request;
+        const output = record.output;
+        if (request === undefined || output === undefined || !visibleText(output.reply)) {
+          throw new Error("Durable fan-in reply has no validated request or output");
+        }
+        const childDeliveryId = objectRecord(request.body.correlation)?.child_delivery_id;
         return {
-          tenantId: record.request!.tenant_id,
-          alias: record.request!.actor_alias,
-          reply: record.output!.reply!.trim(),
+          tenantId: request.tenant_id,
+          alias: request.actor_alias,
+          reply: output.reply.trim(),
           updatedAt: record.updated_at,
           ...(typeof childDeliveryId === "string" && childDeliveryId.length > 0
             ? { childDeliveryId }
