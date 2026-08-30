@@ -19,7 +19,7 @@ export const TICKET_HKDF_SALT = 'cauce-v3/pty-ticket/v1';
 export const RESUME_TOKEN_VERSION = 'r1';
 export const RESUME_HKDF_SALT = 'cauce-v3/pty-resume/v1';
 
-export interface TicketTarget {
+interface TicketTarget {
   readonly tenant: string;
   readonly alias: string;
   readonly container: string;
@@ -40,7 +40,7 @@ export interface TicketPayload {
   readonly exp: number;
 }
 
-export type TicketFailure = 'malformed' | 'signature_invalid' | 'expired';
+type TicketFailure = 'malformed' | 'signature_invalid';
 
 export class TicketError extends Error {
   constructor(readonly reason: TicketFailure, message: string) {
@@ -174,16 +174,6 @@ export function verifyTicketSignature(ticket: string, key: Buffer): TicketPayloa
   return decodePayload(fromBase64url(encodedPayload));
 }
 
-export function parseAndVerify(
-  ticket: string,
-  key: Buffer,
-  nowSeconds: number = Math.floor(Date.now() / 1_000)
-): TicketPayload {
-  const payload = verifyTicketSignature(ticket, key);
-  if (payload.exp <= nowSeconds) throw new TicketError('expired', 'ticket is expired');
-  return payload;
-}
-
 /** Full digest of the emitted ticket; only this is stored, never the ticket. */
 export function ticketSha256(ticket: string): Buffer {
   return createHash('sha256').update(ticket, 'utf8').digest();
@@ -202,7 +192,7 @@ export function ticketDigest(ticket: string): string {
  * re-checks the live database authorization on every resume; the token only proves continuity
  * of this exact browser session while its original TTL is still alive.
  */
-export interface ResumeTokenPayload {
+interface ResumeTokenPayload {
   readonly v: 1;
   readonly sid: string;
   readonly op: string;
@@ -288,14 +278,4 @@ export function verifyResumeTokenSignature(token: string, master: Buffer): Resum
     exp: record.exp,
     nonce: record.nonce
   };
-}
-
-export function parseResumeToken(
-  token: string,
-  master: Buffer,
-  nowSeconds: number = Math.floor(Date.now() / 1_000)
-): ResumeTokenPayload {
-  const payload = verifyResumeTokenSignature(token, master);
-  if (payload.exp <= nowSeconds) throw new TicketError('expired', 'resume token is expired');
-  return payload;
 }

@@ -393,7 +393,8 @@ describe('GET perfil: convergencia medida del runtime', () => {
       'Steven', 'zeus', 1, expect.objectContaining({ state: 'current', generation: 'gen-1' }),
     );
     expect(recordRuntimeExpectation.mock.invocationCallOrder[0])
-      .toBeLessThan(readRuntimeAdoption.mock.invocationCallOrder[0]!);
+      .toBeLessThan(readRuntimeAdoption.mock.invocationCallOrder[0]
+        ?? expect.unreachable('Runtime adoption was not invoked'));
   });
 
   it('desired nueva ya escrita sigue pending_session_refresh hasta que la TUI la adopta', async () => {
@@ -453,7 +454,8 @@ describe('GET perfil: convergencia medida del runtime', () => {
         verification: {
           ...RUNTIME_VERIFICATION,
           documents: [{
-            ...RUNTIME_VERIFICATION.documents[0]!,
+            ...(RUNTIME_VERIFICATION.documents[0]
+              ?? expect.unreachable('Runtime verification document is missing')),
             name: 'CLAUDE.md', path: '/home/dev/.claude/CLAUDE.md',
           }],
         },
@@ -496,7 +498,8 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     );
     expect(markProfileApplied).toHaveBeenCalledWith('Steven', 'zeus', 2, ACTOR);
     expect(readRuntimeAdoption.mock.invocationCallOrder[0])
-      .toBeLessThan(markProfileApplied.mock.invocationCallOrder[0]!);
+      .toBeLessThan(markProfileApplied.mock.invocationCallOrder[0]
+        ?? expect.unreachable('Applied revision was not marked'));
   });
 
   it('un ACK de escritura sin adopción de sesión responde 202 y no marca applied', async () => {

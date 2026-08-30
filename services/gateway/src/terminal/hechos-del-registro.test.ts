@@ -20,9 +20,10 @@ const RELAY_REBOOT = {
   relay_boot_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
 } as const;
 
-/**
- * Unit tests for extracting measured facts from the agent presence.
- */
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('expected test value is unavailable');
+  return value;
+}
 
 function presencia(extra: Record<string, unknown> = {}) {
   return {
@@ -77,7 +78,7 @@ describe('los hechos salen de lo que el agente publica', () => {
       const measured = await hechosDelRegistro(registry).factsFor('Steven', 'zeus');
 
       expect(measured?.facts).toHaveProperty(camel, Object.values(extra)[0]);
-      expect(profileDocumentPaths(measured!.facts)).toContain(path);
+      expect(profileDocumentPaths(required(measured).facts)).toContain(path);
     },
   );
 
@@ -88,7 +89,7 @@ describe('los hechos salen de lo que el agente publica', () => {
     }))]);
     const measured = await hechosDelRegistro(registry).factsFor('Steven', 'zeus');
     expect(measured?.facts.codexHome).toBe('/home/dev/.codex');
-    expect(profileDocumentPaths(measured!.facts)).toEqual(['/home/dev/.codex/AGENTS.md']);
+    expect(profileDocumentPaths(required(measured).facts)).toEqual(['/home/dev/.codex/AGENTS.md']);
   });
 
   it('conserva la proyección Codex relay→registry→facts y deriva fallbacks efectivos', async () => {
@@ -104,8 +105,8 @@ describe('los hechos salen de lo que el agente publica', () => {
       projectDocMaxBytes: 65_536,
       projectDocFallbackFilenames: ['TEAM.md', 'LOCAL.md'],
     });
-    expect(codexProjectDocMaxBytes(measured!.facts)).toBe(65_536);
-    expect(effectiveManualPaths(measured!.facts).map(({ path }) => path)).toContain(
+    expect(codexProjectDocMaxBytes(required(measured).facts)).toBe(65_536);
+    expect(effectiveManualPaths(required(measured).facts).map(({ path }) => path)).toContain(
       '/workspace/repo/sub/TEAM.md',
     );
   });
@@ -125,7 +126,7 @@ describe('los hechos salen de lo que el agente publica', () => {
       expect(parsed.project_doc_max_bytes).toBeUndefined();
       expect(parsed.project_doc_fallback_filenames).toBeUndefined();
       const registry = new AgentRegistry();
-      expect(() => registry.observe(RELAY, [parsed])).not.toThrow();
+      expect(() => { registry.observe(RELAY, [parsed]); }).not.toThrow();
       expect(await hechosDelRegistro(registry).factsFor('Steven', 'zeus')).toBeDefined();
     }
   });
@@ -138,8 +139,8 @@ describe('los hechos salen de lo que el agente publica', () => {
     }))]);
     const measured = await hechosDelRegistro(registry).factsFor('Steven', 'zeus');
     expect(measured?.facts.harness).toBe('hermes');
-    expect(profileDocumentPaths(measured!.facts)).toEqual(['/home/dev/AGENTS.md']);
-    expect(effectiveManualPaths(measured!.facts).map(({ path }) => path))
+    expect(profileDocumentPaths(required(measured).facts)).toEqual(['/home/dev/AGENTS.md']);
+    expect(effectiveManualPaths(required(measured).facts).map(({ path }) => path))
       .toEqual(['/home/dev/AGENTS.md']);
   });
 
@@ -152,7 +153,7 @@ describe('los hechos salen de lo que el agente publica', () => {
       cwd: '/workspace/repo/sub', workspaceRoot: '/workspace', projectRoot: '/workspace/repo',
     });
     const measured = await hechosDelRegistro(registry).factsFor('Steven', 'zeus');
-    expect(effectiveManualPaths(measured!.facts).map(({ path }) => path)).toContain(
+    expect(effectiveManualPaths(required(measured).facts).map(({ path }) => path)).toContain(
       '/workspace/repo/sub/CLAUDE.local.md',
     );
 
@@ -173,7 +174,7 @@ describe('los hechos salen de lo que el agente publica', () => {
     expect(parsed.workspace_root).toBeUndefined();
     expect(parsed.project_root).toBeUndefined();
     const registry = new AgentRegistry();
-    expect(() => registry.observe(RELAY, [parsed])).not.toThrow();
+    expect(() => { registry.observe(RELAY, [parsed]); }).not.toThrow();
     expect(registry.state('Steven', 'zeus')).toBe('online');
   });
 
@@ -295,7 +296,7 @@ describe('la presencia acepta el `home` sin exigirlo', () => {
      * same lesson the `features` comment inside the pty-agent itself carries.
      */
     const registry = new AgentRegistry();
-    expect(() => registry.observe(RELAY, [presencia({ home: undefined })])).not.toThrow();
+    expect(() => { registry.observe(RELAY, [presencia({ home: undefined })]); }).not.toThrow();
     expect(registry.state('Steven', 'zeus')).toBe('online');
   });
 });
@@ -325,7 +326,7 @@ describe('fencing y resolución multi-relay', () => {
     const registry = new AgentRegistry();
     const now = Date.now();
     registry.observe(RELAY, [presencia()], now);
-    expect(() => registry.observe(RELAY_REBOOT, [presencia()], now + 1))
+    expect(() => { registry.observe(RELAY_REBOOT, [presencia()], now + 1); })
       .toThrow(RelayBootConflictError);
     expect(registry.accepts(RELAY, now + 1)).toBe(true);
     expect(registry.accepts(RELAY_REBOOT, now + 1)).toBe(false);

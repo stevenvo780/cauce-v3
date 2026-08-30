@@ -80,16 +80,23 @@ export const NEVER_SERVE_BASENAMES: readonly string[] = [
 
 export const NEVER_SERVE_SUFFIXES: readonly string[] = ['.pem', '.key', '.p12', '.pfx'];
 
+export function hasNeverServePathSegment(path: string): boolean {
+  return path.split('/').some((segment) => NEVER_SERVE_BASENAMES.includes(segment)
+    || NEVER_SERVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
+}
+
 function join(dir: string, name: string): string {
   return `${dir.replace(/\/+$/, '')}/${name}`;
 }
 
 function claudeDir(facts: RuntimeFacts): string {
-  return facts.claudeConfigDir?.trim() || join(facts.home, '.claude');
+  const configured = facts.claudeConfigDir?.trim();
+  return configured === undefined || configured.length === 0 ? join(facts.home, '.claude') : configured;
 }
 
 function codexDir(facts: RuntimeFacts): string {
-  return facts.codexHome?.trim() || join(facts.home, '.codex');
+  const configured = facts.codexHome?.trim();
+  return configured === undefined || configured.length === 0 ? join(facts.home, '.codex') : configured;
 }
 
 /** Memory root for each harness, derived from overrides measured inside the process. */
@@ -97,9 +104,9 @@ export function memoryRootForHarness(facts: RuntimeFacts): string | null {
   const home = facts.home.replace(/\/+$/, '');
   switch (facts.harness) {
     case 'claude':
-      return `${(facts.claudeConfigDir?.trim() || `${home}/.claude`).replace(/\/+$/, '')}/projects`;
+      return `${claudeDir({ ...facts, home }).replace(/\/+$/, '')}/projects`;
     case 'codex':
-      return `${(facts.codexHome?.trim() || `${home}/.codex`).replace(/\/+$/, '')}/memories`;
+      return `${codexDir({ ...facts, home }).replace(/\/+$/, '')}/memories`;
     case 'openclaw': {
       const workspace = facts.openclawWorkspace?.trim().replace(/\/+$/, '');
       return workspace?.startsWith('/') ? `${workspace}/memory` : null;
@@ -117,7 +124,7 @@ export function profileDocumentPaths(facts: RuntimeFacts): readonly string[] {
   if (facts.harness === 'hermes') return [join(facts.home, 'AGENTS.md')];
   if (facts.harness === 'openclaw') {
     const workspace = facts.openclawWorkspace?.trim();
-    if (workspace === undefined || !workspace.startsWith('/')) return [];
+    if (!workspace?.startsWith('/')) return [];
     return FICHEROS_OPENCLAW.map((name) => join(workspace, name));
   }
   return [];
@@ -140,7 +147,7 @@ function validCodexFallbackBasename(value: string): boolean {
   const normalized = value.toLowerCase();
   return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
     && !value.includes('\0') && !value.includes('..')
-    && ![...value].some((character) => {
+    && !Array.from(value).some((character) => {
       const code = character.codePointAt(0) ?? 0;
       return code <= 0x1f || code === 0x7f;
     })
@@ -163,8 +170,8 @@ export function measuredCodexProjectDocumentConfig(
 ): CodexProjectDocumentConfig | undefined {
   const maxBytes = facts.projectDocMaxBytes;
   const rawFallbacks = facts.projectDocFallbackFilenames;
-  if (facts.harness !== 'codex' || !Number.isSafeInteger(maxBytes)
-      || (maxBytes ?? 0) < 1 || (maxBytes ?? 0) > 16 * 1024 * 1024
+  if (facts.harness !== 'codex' || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes)
+      || maxBytes < 1 || maxBytes > 16 * 1024 * 1024
       || !Array.isArray(rawFallbacks) || rawFallbacks.length > 16) return undefined;
   const seen = new Set<string>(['AGENTS.override.md', 'AGENTS.md']);
   const fallbackFilenames: string[] = [];
@@ -175,7 +182,7 @@ export function measuredCodexProjectDocumentConfig(
     seen.add(value);
     fallbackFilenames.push(value);
   }
-  return { maxBytes: maxBytes!, fallbackFilenames };
+  return { maxBytes, fallbackFilenames };
 }
 
 export function codexProjectDocMaxBytes(facts: RuntimeFacts): number {
@@ -203,7 +210,7 @@ function canonicalContextDirectory(value: string): boolean {
  */
 export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveManualPath[] {
   if (!facts.home.startsWith('/')) return [];
-  const candidates: Array<Omit<EffectiveManualPath, 'precedence'>> = [];
+  const candidates: Omit<EffectiveManualPath, 'precedence'>[] = [];
   if (facts.harness === 'claude') {
     candidates.push({
       path: join(claudeDir(facts), 'CLAUDE.md'), scope: 'user', selection: 'all', group: 'user',
@@ -253,7 +260,7 @@ export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveMan
         }
       }
       for (const [level, directory] of directories.entries()) {
-        const group = `workspace:${level}`;
+        const group = `workspace:${String(level)}`;
         if (facts.harness === 'claude') {
           candidates.push(
             { path: join(directory, 'CLAUDE.md'), scope: 'workspace', selection: 'all', group },
@@ -394,7 +401,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
     }
     case 'openclaw': {
       const workspace = facts.openclawWorkspace?.trim();
-      if (workspace === undefined || !workspace.startsWith('/')) return [];
+      if (!workspace?.startsWith('/')) return [];
       const dir = join(facts.home, '.openclaw');
       return [
         {

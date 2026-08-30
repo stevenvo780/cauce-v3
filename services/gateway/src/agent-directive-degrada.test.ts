@@ -10,28 +10,31 @@ describe('la respuesta degradada de /directive dice que no midió', () => {
   it('sin hechos medidos: NO medida, y explica por qué', () => {
     const r = construirRespuestaDegradada(undefined);
     expect(r).toBeDefined();
-    expect(r!.publicado).toBe(true); // the route DOES exist: that is not what is in doubt
-    expect(r!.medido).toBe(false);
-    expect(r!.files).toBeNull();
-    expect(r!.memory).toEqual({
+    if (r === undefined) throw new Error('expected a degraded response');
+    expect(r.publicado).toBe(true); // the route DOES exist: that is not what is in doubt
+    expect(r.medido).toBe(false);
+    expect(r.files).toBeNull();
+    expect(r.memory).toEqual({
       root: null,
       error: 'unavailable',
       reason: 'contenedor no medido todavía (sin hechos de entorno)',
     });
-    expect(r!.motivo).toMatch(/no medido/);
+    expect(r.motivo).toMatch(/no medido/);
   });
 
   it('con hechos de fuente «registry»: NO medida', () => {
     const r = construirRespuestaDegradada('registry');
-    expect(r!.medido).toBe(false);
-    expect(r!.files).toBeNull();
-    expect(r!.motivo).toMatch(/deducidas del registro/);
+    if (r === undefined) throw new Error('expected a degraded response');
+    expect(r.medido).toBe(false);
+    expect(r.files).toBeNull();
+    expect(r.motivo).toMatch(/deducidas del registro/);
   });
 
   it('con hechos de fuente «database»: NO medida', () => {
     const r = construirRespuestaDegradada('database');
-    expect(r!.medido).toBe(false);
-    expect(r!.motivo).toMatch(/deducidas del registro/);
+    if (r === undefined) throw new Error('expected a degraded response');
+    expect(r.medido).toBe(false);
+    expect(r.motivo).toMatch(/deducidas del registro/);
   });
 
   it('CONTROL NEGATIVO: «measured» no produce respuesta degradada', () => {
@@ -51,9 +54,10 @@ describe('la memoria que no se pudo listar es un fallo discriminado, no un índi
   it('el índice vacío y la ausencia de índice NO son el mismo valor', async () => {
     const fuente = await import('./console/agent-directive.routes.js');
     const codigo = fuente.construirRespuestaDegradada(undefined);
-    expect(codigo!.memory).toMatchObject({ error: 'unavailable', root: null });
-    expect(codigo!.memory).not.toHaveProperty('total');
-    expect(codigo!.memory).not.toHaveProperty('entries');
+    if (codigo === undefined) throw new Error('expected a degraded response');
+    expect(codigo.memory).toMatchObject({ error: 'unavailable', root: null });
+    expect(codigo.memory).not.toHaveProperty('total');
+    expect(codigo.memory).not.toHaveProperty('entries');
     // Negative control: a legitimate zero index is still representable and carries no error.
     const indiceRealVacio = { root: '/home/dev/.claude/projects', total: 0, truncated: false, entries: [] };
     expect(indiceRealVacio).not.toHaveProperty('error');

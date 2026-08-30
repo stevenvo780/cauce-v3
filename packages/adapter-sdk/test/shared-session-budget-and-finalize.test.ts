@@ -52,7 +52,9 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   tmux.sessionName = "cauce-zeus";
   const fallback = new RecordingFallback("{}");
   // The paste is lost: the TUI NEVER writes the entry into the transcript.
-  tmux.onSubmit = async () => {};
+  tmux.onSubmit = async () => {
+    return;
+  };
 
   const runner = new PasteSessionRunner({
     alias: "zeus",
@@ -180,7 +182,7 @@ test("una compactacion con la cadena rota no deja la respuesta sin cosechar", ()
 
   const encontrada = findFinalAssistant(entries, "u-inyectado");
   assert.ok(encontrada !== undefined, "la respuesta posterior a una compactacion tiene que cosecharse");
-  assert.equal(encontrada?.text, "la respuesta de verdad");
+  assert.equal(encontrada.text, "la respuesta de verdad");
 });
 
 test("sin compactacion de por medio se sigue exigiendo descendencia real", () => {

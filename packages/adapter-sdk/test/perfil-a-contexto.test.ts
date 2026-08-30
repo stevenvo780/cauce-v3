@@ -195,7 +195,7 @@ test("la proyección de openclaw es sólo el subárbol del alias bajo agents", (
   const bloque = componerBloqueDePerfil(perfil(), hechos({ arnes: { harness: "openclaw", home: "/home/dev", capacidades: [] } }));
   const fragmento = JSON.parse(proyeccionOpenclaw("zeus", bloque)) as Record<string, unknown>;
   assert.deepEqual(Object.keys(fragmento), ["agents"]);
-  const agents = fragmento["agents"] as Record<string, unknown>;
+  const agents = fragmento.agents as Record<string, unknown>;
   assert.deepEqual(Object.keys(agents), ["zeus"]);
 });
 
@@ -225,7 +225,7 @@ test("la proyección lleva el sello dentro, para poder comprobarla sin releer el
   const fragmento = JSON.parse(proyeccionOpenclaw("zeus", bloque)) as {
     agents: Record<string, { cauce: { version: string; sha256: string } }>;
   };
-  assert.equal(fragmento.agents["zeus"]?.cauce.sha256, resumirContextoFijo(bloque));
+  assert.equal(fragmento.agents.zeus?.cauce.sha256, resumirContextoFijo(bloque));
 });
 
 /** NEGATIVE CONTROL of the stable serializer: `JSON.stringify` DOES depend on order. */
@@ -257,14 +257,14 @@ test("el rol compuesto declara si cabe en self_role, y lo dice midiendo", () => 
   const corto = componerBloqueDePerfil(perfil(), hechos());
   assert.ok(
     countCodePoints(corto) <= ROLE_BRIEF_MAX_CODE_POINTS,
-    `un perfil típico deberia caber en self_role; mide ${countCodePoints(corto)}`,
+    `un perfil típico deberia caber en self_role; mide ${String(countCodePoints(corto))}`,
   );
 });
 
 test("control negativo: un perfil que llena el presupuesto NO cabe en self_role", () => {
   const enorme = componerBloqueDePerfil(
     perfil({
-      responsibilities: Array.from({ length: 20 }, (_, i) => `${"r".repeat(999)}${i}`),
+      responsibilities: Array.from({ length: 20 }, (_, i) => `${"r".repeat(999)}${String(i)}`),
     }),
     hechos(),
   );
@@ -383,5 +383,6 @@ test("control negativo: recortar no parte nunca un par suplente", () => {
   const breve = rolBreveDelPerfil(conEmojis) ?? "";
   assert.ok(countCodePoints(breve) <= ROLE_BRIEF_MAX_CODE_POINTS);
   assert.ok(!breve.includes("�"), "quedó un surrogate suelto");
+  // eslint-disable-next-line @typescript-eslint/no-misused-spread -- the assertion is the spread: code points, not UTF-16 units
   assert.equal([...breve].every((c) => c === "\u{1F389}"), true);
 });

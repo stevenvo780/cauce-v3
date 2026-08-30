@@ -43,7 +43,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
           [request.params.sid],
         );
         const existing = locked.rows[0];
-        if (existing !== undefined && existing.closed_at === null) {
+        if (existing?.closed_at === null) {
           const legacy = !malformedClaim && claimToken === undefined && claimEpoch === undefined
             && existing.relay_claim_sha256 === null && existing.relay_claim_epoch === '0'
             && existing.relay_instance_id === identity.relay_instance_id

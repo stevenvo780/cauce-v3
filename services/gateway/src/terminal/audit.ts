@@ -9,7 +9,7 @@ import type { DatabasePool } from '@cauce/store';
  * truncated to 16 hex characters ever reaches metadata.
  */
 
-export type TerminalAuditAction =
+type TerminalAuditAction =
   | 'terminal.session.request'
   | 'terminal.session.consume'
   | 'terminal.session.resume'
@@ -17,7 +17,7 @@ export type TerminalAuditAction =
   | 'terminal.session.revoked'
   | 'terminal.session.close';
 
-export type TerminalAuditDecision = 'allow' | 'deny' | 'info';
+type TerminalAuditDecision = 'allow' | 'deny' | 'info';
 
 export interface TerminalAuditEntry {
   readonly tenant_id: string;

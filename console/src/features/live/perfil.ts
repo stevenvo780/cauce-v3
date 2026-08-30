@@ -26,8 +26,8 @@ export const CAMPOS_DE_TEXTO = ['purpose', 'role_summary', 'human_brief'] as con
 /** List fields, in the order they are painted. */
 export const CAMPOS_DE_LISTA = ['responsibilities', 'restrictions', 'tools', 'operating_rules'] as const;
 
-export type CampoDeTexto = (typeof CAMPOS_DE_TEXTO)[number];
-export type CampoDeLista = (typeof CAMPOS_DE_LISTA)[number];
+type CampoDeTexto = (typeof CAMPOS_DE_TEXTO)[number];
+type CampoDeLista = (typeof CAMPOS_DE_LISTA)[number];
 export type CampoDelPerfil = CampoDeTexto | CampoDeLista;
 
 export const CAMPOS_DEL_PERFIL: readonly CampoDelPerfil[] = [

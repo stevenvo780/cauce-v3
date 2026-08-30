@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { createSecureContext } from 'node:tls';
-import WebSocket, { type ClientOptions } from 'ws';
+import WebSocket, { type ClientOptions, type RawData } from 'ws';
 import { WsInboundSchema, WsOutboundSchema, type Tenant } from '@cauce/protocol';
+import { signalAborted } from '../runtime-state.js';
 import { readBearerTokenFile, readOwnerOnlyFile, SecureFileError } from './secure-files.js';
 import type {
   AdapterLog,
@@ -21,14 +22,26 @@ interface OutboundDiagnostics {
 
 const SILENT_DIAGNOSTICS: OutboundDiagnostics = { logger: () => undefined };
 
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Connection aborted', { cause: signal.reason });
+}
+
+function decodeTextFrame(data: RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  return Buffer.from(data).toString('utf8');
+}
+
 class AsyncFrameQueue implements AsyncIterable<ServerFrame> {
   private readonly values: ServerFrame[] = [];
-  private readonly waiters: Array<{
+  private readonly waiters: {
     resolve: (result: IteratorResult<ServerFrame>) => void;
-    reject: (error: unknown) => void;
-  }> = [];
+    reject: (error: Error) => void;
+  }[] = [];
   private ended = false;
-  private failure: unknown;
+  private failure: Error | undefined;
 
   push(value: ServerFrame): void {
     if (this.ended) return;
@@ -42,7 +55,7 @@ class AsyncFrameQueue implements AsyncIterable<ServerFrame> {
     for (const waiter of this.waiters.splice(0)) waiter.resolve({ value: undefined, done: true });
   }
 
-  fail(error: unknown): void {
+  fail(error: Error): void {
     this.failure = error;
     this.ended = true;
     for (const waiter of this.waiters.splice(0)) waiter.reject(error);
@@ -83,7 +96,7 @@ class WebSocketConsumerConnection implements ConsumerConnection {
       }
       let decoded: unknown;
       try {
-        decoded = JSON.parse(data.toString('utf8'));
+        decoded = JSON.parse(decodeTextFrame(data));
       } catch (error) {
         this.reportInvalidInboundFrame(undefined, error);
         return;
@@ -94,8 +107,8 @@ class WebSocketConsumerConnection implements ConsumerConnection {
         this.reportInvalidInboundFrame(decoded, error);
       }
     });
-    socket.on('close', () => this.queue.end());
-    socket.on('error', () => this.queue.fail(new Error('WebSocket consumer failed')));
+    socket.on('close', () => { this.queue.end(); });
+    socket.on('error', () => { this.queue.fail(new Error('WebSocket consumer failed')); });
   }
 
   async send(frame: ClientFrame): Promise<void> {
@@ -246,7 +259,7 @@ function claimTokenFingerprint(frame: Record<string, unknown>): string | undefin
 function issuePath(path: unknown): string {
   if (!Array.isArray(path) || path.length === 0) return '<root>';
   return path.reduce<string>((rendered, segment) => {
-    if (typeof segment === 'number') return `${rendered}[${segment}]`;
+    if (typeof segment === 'number') return `${rendered}[${String(segment)}]`;
     const key = String(segment);
     return rendered.length === 0 ? key : `${rendered}.${key}`;
   }, '');
@@ -352,14 +365,14 @@ export class WebSocketConsumerConnector implements ConsumerConnector {
   }
 
   async connect(signal: AbortSignal): Promise<ConsumerConnection> {
-    if (signal.aborted) throw signal.reason ?? new Error('Connection aborted');
+    if (signal.aborted) throw abortError(signal);
     const socketOptions = await this.connectionOptions();
-    if (signal.aborted) throw signal.reason ?? new Error('Connection aborted');
+    if (signalAborted(signal)) throw abortError(signal);
     return new Promise<ConsumerConnection>((resolve, reject) => {
       const socket = new WebSocket(this.url, socketOptions);
       const abort = (): void => {
         socket.terminate();
-        reject(signal.reason ?? new Error('Connection aborted'));
+        reject(abortError(signal));
       };
       const fail = (): void => {
         signal.removeEventListener('abort', abort);

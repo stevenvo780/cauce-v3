@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AGENT_STALE_AFTER_MS, AgentRegistry } from './terminal/registry.js';
 import {
-  deriveAliasKey, issueResumeToken, parseAndVerify, verifyTicketSignature,
+  deriveAliasKey, issueResumeToken, verifyTicketSignature,
 } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence, type TerminalSessionRow } from './terminal/types.js';
 
@@ -45,7 +45,7 @@ interface FakeDatabase {
   failNestedPoolQueries(): void;
   rooms: Record<string, string[]>;
   edges: string[];
-  placements: Array<{ tenant_id: string; alias: string; container_name: string; runtime_user: string }>;
+  placements: { tenant_id: string; alias: string; container_name: string; runtime_user: string }[];
 }
 
 function isOpen(row: TerminalSessionRow, ttlSeconds: number, now: number): boolean {
@@ -71,7 +71,7 @@ function fakeDatabase(): FakeDatabase {
       ['Pablo', 'midas', 'agv2-pablo-marcas-oc', 'claw'],
       ['Pablo', 'seneca', 'agv2-pablo-personal-oc', 'claw'], ['Pablo', 'vulcano', 'ws-pablo', 'dev'],
       ['Isa', 'salva', 'ws-isa', 'dev'], ['Jhon', 'hegel', 'agv2-jhon-hegel-oc', 'claw'],
-    ] satisfies ReadonlyArray<readonly [string, string, string, string]>).map(
+    ] satisfies readonly (readonly [string, string, string, string])[]).map(
       ([tenant_id, alias, container_name, runtime_user]) => ({ tenant_id, alias, container_name, runtime_user })
     ),
     rooms: {
@@ -259,7 +259,7 @@ function fakeDatabase(): FakeDatabase {
     }
     if (text.includes('SET consumed_at=now(), relay_claim_sha256=$2')) {
       const row = sessions.get(values[0] as string);
-      if (!row || row.consumed_at !== null || row.revoked_at !== null || row.closed_at !== null
+      if (row?.consumed_at !== null || row.revoked_at !== null || row.closed_at !== null
           || row.expires_at.getTime() <= now || row.relay_instance_id !== values[5]) {
         return { rows: [], rowCount: 0 };
       }
@@ -279,7 +279,7 @@ function fakeDatabase(): FakeDatabase {
       const expectedDigest = values[1] as Buffer;
       const expectedEpoch = values[4] as string;
       const sessionTtlSeconds = values[3] as number;
-      if (!row || row.relay_claim_sha256 === null || !row.relay_claim_sha256.equals(expectedDigest)
+      if (!row?.relay_claim_sha256?.equals(expectedDigest)
           || row.relay_claim_epoch !== expectedEpoch || row.relay_claim_expires_at === null
           || row.relay_claim_expires_at.getTime() <= now || row.consumed_at === null
           || row.revoked_at !== null || row.closed_at !== null
@@ -301,7 +301,7 @@ function fakeDatabase(): FakeDatabase {
         && text.includes('relay_claim_epoch=relay_claim_epoch+1')) {
       const row = sessions.get(values[0] as string);
       const sessionTtlSeconds = values[3] as number;
-      if (!row || row.consumed_at === null || row.revoked_at !== null || row.closed_at !== null
+      if (!row?.consumed_at || row.revoked_at !== null || row.closed_at !== null
           || row.consumed_at.getTime() + sessionTtlSeconds * 1_000 <= now
           || (row.relay_claim_expires_at !== null && row.relay_claim_expires_at.getTime() > now)
           || BigInt(row.relay_claim_epoch) >= 9_223_372_036_854_775_807n) {
@@ -320,7 +320,7 @@ function fakeDatabase(): FakeDatabase {
     }
     if (text.includes('SET consumed_at=now()')) {
       const row = sessions.get(values[0] as string);
-      if (!row || row.consumed_at !== null || row.revoked_at !== null || row.closed_at !== null
+      if (row?.consumed_at !== null || row.revoked_at !== null || row.closed_at !== null
           || row.expires_at.getTime() <= now) {
         return { rows: [], rowCount: 0 };
       }
@@ -368,7 +368,7 @@ function fakeDatabase(): FakeDatabase {
     }
     if (text.includes('SET closed_at=now()')) {
       const row = sessions.get(values[0] as string);
-      if (!row || row.closed_at !== null) return { rows: [], rowCount: 0 };
+      if (row?.closed_at !== null) return { rows: [], rowCount: 0 };
       if (text.includes('relay_claim_sha256=$6')) {
         const legacy = values[4] as boolean;
         const exact = !legacy && row.relay_claim_sha256 !== null
@@ -513,13 +513,13 @@ describe('terminal control plane', () => {
   /** MEASURED facts per alias. Empty = nobody measured that container, which is today's state. */
   let hechos: Map<string, { facts: RuntimeFacts; source: FactsSource }>;
   /** Everything the gateway asked the terminal-relay, in order. */
-  let pedidas: Array<{ tenant_id: string; alias: string; path: string }>;
+  let pedidas: { tenant_id: string; alias: string; path: string }[];
   let leer: (path: string) => RelayFileRead | GovernanceReadError;
   let relayPeerInstanceId: string;
   let relayBootId: string;
 
   async function build(overrides: Partial<TerminalConfig> = {}, provider = consoleAuthProvider()): Promise<void> {
-    // A test that rebuilds with another config must not leak the instance beforeEach created.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- The first beforeEach call reaches this helper before app is initialized at runtime.
     if (app !== undefined) await app.close();
     config = {
       wsPath: '/v3/console/terminal/ws',
@@ -592,7 +592,7 @@ describe('terminal control plane', () => {
     expect(response.statusCode).toBe(200);
   }
 
-  async function grant(entries: Array<{ operator?: string; tenant_id: string; alias: string; modes: string[] }>): Promise<void> {
+  async function grant(entries: { operator?: string; tenant_id: string; alias: string; modes: string[] }[]): Promise<void> {
     await writeFile(grantsFile, JSON.stringify({
       version: 1,
       grants: entries.map((entry) => ({ operator: entry.operator ?? '*', ...entry }))
@@ -657,7 +657,7 @@ describe('terminal control plane', () => {
       payload: {
         resume_token: resumeToken,
         claim_token: claimToken,
-        ...(claimEpoch === undefined ? {} : { claim_epoch: claimEpoch }),
+        claim_epoch: claimEpoch,
       },
     });
   }
@@ -691,7 +691,7 @@ describe('terminal control plane', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json<{
       websocket_path: string;
-      items: Array<Record<string, unknown>>;
+      items: Record<string, unknown>[];
     }>();
     expect(body.websocket_path).toBe('/v3/console/terminal/ws');
     // Steven plus the one ACL-visible tenant Miguel. Pablo/Isa/Jhon remain absent rather than
@@ -734,11 +734,11 @@ describe('terminal control plane', () => {
     const jarvis = async (): Promise<Record<string, unknown>> => {
       const response = await app.inject({ method: 'GET', url: '/v3/console/terminal/targets' });
       expect(response.statusCode).toBe(200);
-      const item = response.json<{ items: Array<Record<string, unknown>> }>().items.find(
+      const item = response.json<{ items: Record<string, unknown>[] }>().items.find(
         (candidate) => candidate.tenant_id === 'Steven' && candidate.alias === 'jarvis',
       );
-      expect(item).toBeDefined();
-      return item!;
+      if (item === undefined) throw new Error('jarvis terminal target is unavailable');
+      return item;
     };
     const expectAuthorizedState = (
       item: Record<string, unknown>,
@@ -788,7 +788,7 @@ describe('terminal control plane', () => {
     await report([presence()]);
     const response = await app.inject({ method: 'GET', url: '/v3/console/terminal/targets' });
     expect(response.statusCode).toBe(200);
-    const items = response.json<{ items: Array<Record<string, unknown>> }>().items;
+    const items = response.json<{ items: Record<string, unknown>[] }>().items;
     expect(items.some((item) => item.alias === 'oculto' || item.tenant_id === 'Pablo')).toBe(false);
     expect(items.find((item) => item.tenant_id === 'Steven' && item.alias === 'jarvis')).toMatchObject({
       authorized: false,
@@ -812,7 +812,7 @@ describe('terminal control plane', () => {
       tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw',
       mode: 'shell', shares_container_with: []
     });
-    const payload = parseAndVerify(body.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
+    const payload = verifyTicketSignature(body.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
     expect(payload).toMatchObject({
       v: 1, sid: body.session_id, op: UNATTRIBUTED_OPERATOR, sub: 'Steven:kant', mode: 'shell',
       tgt: { tenant: 'Steven', alias: 'jarvis', container: 'claw', generation: 'gen-7', uid: 1000, user: 'claw' }
@@ -1110,7 +1110,7 @@ describe('terminal control plane', () => {
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: 'forbidden', reason: 'no_grant' });
     const targets = await app.inject({ method: 'GET', url: '/v3/console/terminal/targets' });
-    expect(targets.json<{ items: Array<{ authorized: boolean }> }>().items.every((item) => !item.authorized)).toBe(true);
+    expect(targets.json<{ items: { authorized: boolean }[] }>().items.every((item) => !item.authorized)).toBe(true);
   });
 
   it('refuses a target with no live pty-agent and reports why', async () => {
@@ -1253,7 +1253,8 @@ describe('terminal control plane', () => {
 
   it('rotates relay instance and boot only after the PostgreSQL lease expires', async () => {
     const consumed = await issueAndConsume();
-    const issuedRow = database.sessions.get(consumed.sessionId)!;
+    const issuedRow = database.sessions.get(consumed.sessionId);
+    if (issuedRow === undefined) throw new Error('issued terminal session is unavailable');
     expect(issuedRow.relay_instance_id).toBe(RELAY_A);
     expect(issuedRow.relay_boot_id).toBe(RELAY_BOOT_A);
 
@@ -1266,7 +1267,8 @@ describe('terminal control plane', () => {
     expect(stillLeased.statusCode).toBe(409);
     expect(stillLeased.json()).toMatchObject({ ok: false, reason: 'claim_conflict' });
 
-    const afterLease = issuedRow.relay_claim_expires_at!.getTime() + 1;
+    if (issuedRow.relay_claim_expires_at === null) throw new Error('terminal claim lease is unavailable');
+    const afterLease = issuedRow.relay_claim_expires_at.getTime() + 1;
     database.clock.now = () => afterLease;
     const takeover = await resumeSession(
       consumed.sessionId, consumed.resumeToken, CLAIM_B, consumed.claimEpoch,
@@ -1323,7 +1325,7 @@ describe('terminal control plane', () => {
   it('rejects a ticket signed with another alias key', async () => {
     await report([presence()]);
     const issued = (await openSession({})).json<{ session_id: string; ticket: string }>();
-    const payload = parseAndVerify(issued.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
+    const payload = verifyTicketSignature(issued.ticket, deriveAliasKey(MASTER, 'Steven', 'jarvis'));
     const { issueTicket } = await import('./terminal/tickets.js');
     const forged = issueTicket(payload, deriveAliasKey(MASTER, 'Steven', 'argos'));
     const response = await app.inject({
@@ -1474,7 +1476,8 @@ describe('terminal control plane', () => {
 
   it('resume revalidates revoked, closed, routing authority and grants on every call', async () => {
     const consumed = await issueAndConsume();
-    const row = database.sessions.get(consumed.sessionId)!;
+    const row = database.sessions.get(consumed.sessionId);
+    if (row === undefined) throw new Error('consumed terminal session is unavailable');
 
     row.revoked_at = new Date();
     expect((await resumeSession(consumed.sessionId, consumed.resumeToken)).json())
@@ -1549,7 +1552,7 @@ describe('terminal control plane', () => {
     });
     expect(authz.json()).toEqual({ ok: false, reason: 'not_consumed' });
     const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
-    expect(listed.json<{ items: Array<{ state: string }> }>().items).toEqual([
+    expect(listed.json<{ items: { state: string }[] }>().items).toEqual([
       expect.objectContaining({ alias: 'jarvis', mode: 'shell', state: 'closed' })
     ]);
   });
@@ -1785,7 +1788,7 @@ describe('terminal control plane', () => {
     expect(independent.statusCode).toBe(201);
     expect(database.sessions.size).toBe(2);
     const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
-    expect(listed.json<{ items: Array<{ session_id: string }> }>().items).toEqual([
+    expect(listed.json<{ items: { session_id: string }[] }>().items).toEqual([
       expect.objectContaining({ session_id: independent.json<{ session_id: string }>().session_id }),
     ]);
   });
@@ -1811,7 +1814,7 @@ describe('terminal control plane', () => {
     }
 
     const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
-    const items = listed.json<{ items: Array<{ session_id: string; state: string }> }>().items;
+    const items = listed.json<{ items: { session_id: string; state: string }[] }>().items;
     expect(items).toHaveLength(100);
     expect(items[0]).toMatchObject({ session_id: issued.session_id, state: 'issued' });
   });
@@ -1826,7 +1829,7 @@ describe('terminal control plane', () => {
 
     const listed = await app.inject({ method: 'GET', url: '/v3/console/terminal/sessions' });
 
-    expect(listed.json<{ items: Array<{ session_id: string; state: string }> }>().items).toEqual([
+    expect(listed.json<{ items: { session_id: string; state: string }[] }>().items).toEqual([
       expect.objectContaining({ session_id: issued.session_id, state: 'closed' }),
     ]);
   });
@@ -1925,12 +1928,9 @@ describe('terminal control plane', () => {
 
     const response = await app.inject({ method: 'GET', url: DIRECTIVA });
 
-//    Directive publishes manuals, not configuration inventory or memory. The other resources
-//    have their own endpoints and must not appear even as empty rows.
     const files = response.json<AgentDirective>().files ?? [];
     expect(files.map((file) => file.path)).toEqual([MANUAL]);
     expect(files.filter((file) => file.text !== null).map((file) => file.path)).toEqual([MANUAL]);
-//    The request to the relay stays just as closed: only the authorized manual.
     expect(pedidas).toEqual([{ tenant_id: 'Steven', alias: 'jarvis', path: MANUAL }]);
   });
 

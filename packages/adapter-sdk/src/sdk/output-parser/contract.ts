@@ -84,24 +84,24 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
     throw new MalformedOutputError("'messages' must be an array");
   }
   if (value.length > MAX_RELAY_MESSAGES) {
-    throw new MalformedOutputError(`'messages' exceeded the ${MAX_RELAY_MESSAGES} message limit`);
+    throw new MalformedOutputError(`'messages' exceeded the ${String(MAX_RELAY_MESSAGES)} message limit`);
   }
   let aggregateBodyBytes = 0;
   return value.map((entry, index) => {
     if (!isObject(entry) || typeof entry.to !== "string" || typeof entry.body !== "string") {
-      throw new MalformedOutputError(`messages[${index}] must contain string 'to' and 'body'`);
+      throw new MalformedOutputError(`messages[${String(index)}] must contain string 'to' and 'body'`);
     }
     if (!CANONICAL_MESSAGE_TARGET.test(entry.to)) {
       throw new MalformedOutputError(
-        `messages[${index}].to must be a canonical lowercase alias or reserved target`,
+        `messages[${String(index)}].to must be a canonical lowercase alias or reserved target`,
       );
     }
     if (!hasVisibleText(entry.body)) {
-      throw new MalformedOutputError(`messages[${index}].body must contain visible text`);
+      throw new MalformedOutputError(`messages[${String(index)}].body must contain visible text`);
     }
     const bodyBytes = Buffer.byteLength(entry.body, "utf8");
     if (bodyBytes > MAX_RELAY_BODY_BYTES) {
-      throw new MalformedOutputError(`messages[${index}].body exceeded the UTF-8 byte limit`);
+      throw new MalformedOutputError(`messages[${String(index)}].body exceeded the UTF-8 byte limit`);
     }
     aggregateBodyBytes += bodyBytes;
     if (aggregateBodyBytes > MAX_RELAY_AGGREGATE_BYTES) {
@@ -121,32 +121,32 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
   let aggregateBodyBytes = 0;
   for (const [index, entry] of value.entries()) {
     if (directives.length >= MAX_NOTIFY_DIRECTIVES) {
-      descartes.push(`se descartaron las notificaciones a partir de la ${MAX_NOTIFY_DIRECTIVES + 1}: el limite es ${MAX_NOTIFY_DIRECTIVES}`);
+      descartes.push(`se descartaron las notificaciones a partir de la ${String(MAX_NOTIFY_DIRECTIVES + 1)}: el limite es ${String(MAX_NOTIFY_DIRECTIVES)}`);
       break;
     }
     if (!isObject(entry) || typeof entry.to !== "string" || typeof entry.body !== "string") {
-      descartes.push(`notify[${index}] descartada: necesita 'to' y 'body' de texto`);
+      descartes.push(`notify[${String(index)}] descartada: necesita 'to' y 'body' de texto`);
       continue;
     }
     if (!EgressHandleSchema.safeParse(entry.to).success) {
-      descartes.push(`notify[${index}] descartada: "${entry.to}" no es un handle de destino. Un handle es minusculas, digitos, punto, guion o guion bajo (por ejemplo handle_usuario); NO es el nombre de la persona ni un alias de agente`);
+      descartes.push(`notify[${String(index)}] descartada: "${entry.to}" no es un handle de destino. Un handle es minusculas, digitos, punto, guion o guion bajo (por ejemplo handle_usuario); NO es el nombre de la persona ni un alias de agente`);
       continue;
     }
     if (typeof entry.kind !== "string" || !NOTIFY_KINDS.includes(entry.kind as NotifyKind)) {
-      descartes.push(`notify[${index}] descartada: 'kind' debe ser uno de ${NOTIFY_KINDS.join(", ")}`);
+      descartes.push(`notify[${String(index)}] descartada: 'kind' debe ser uno de ${NOTIFY_KINDS.join(", ")}`);
       continue;
     }
     if (!hasVisibleText(entry.body)) {
-      descartes.push(`notify[${index}] descartada: 'body' no tiene texto visible`);
+      descartes.push(`notify[${String(index)}] descartada: 'body' no tiene texto visible`);
       continue;
     }
     const bodyBytes = Buffer.byteLength(entry.body, "utf8");
     if (bodyBytes > MAX_NOTIFY_BODY_BYTES) {
-      descartes.push(`notify[${index}] descartada: 'body' supera el limite de bytes UTF-8`);
+      descartes.push(`notify[${String(index)}] descartada: 'body' supera el limite de bytes UTF-8`);
       continue;
     }
     if (aggregateBodyBytes + bodyBytes > MAX_NOTIFY_AGGREGATE_BYTES) {
-      descartes.push(`notify[${index}] y las siguientes descartadas: se supero el limite agregado de bytes`);
+      descartes.push(`notify[${String(index)}] y las siguientes descartadas: se supero el limite agregado de bytes`);
       break;
     }
     aggregateBodyBytes += bodyBytes;
@@ -164,13 +164,13 @@ function parseArtifacts(value: unknown): readonly OutputArtifact[] {
   }
   return value.map((entry, index) => {
     if (!isObject(entry) || typeof entry.name !== "string" || typeof entry.uri !== "string") {
-      throw new MalformedOutputError(`artifacts[${index}] must contain string 'name' and 'uri'`);
+      throw new MalformedOutputError(`artifacts[${String(index)}] must contain string 'name' and 'uri'`);
     }
     if (entry.media_type !== undefined && typeof entry.media_type !== "string") {
-      throw new MalformedOutputError(`artifacts[${index}].media_type must be a string`);
+      throw new MalformedOutputError(`artifacts[${String(index)}].media_type must be a string`);
     }
     if (entry.sha256 !== undefined && typeof entry.sha256 !== "string") {
-      throw new MalformedOutputError(`artifacts[${index}].sha256 must be a string`);
+      throw new MalformedOutputError(`artifacts[${String(index)}].sha256 must be a string`);
     }
     return {
       name: entry.name,
@@ -248,7 +248,7 @@ function descartarReboteAlRemitente(
   const rebotes = output.messages.filter((message) => message.to === senderAlias);
   if (rebotes.length === 0) return output;
 
-  const aviso = `[Cauce] Se descarto ${rebotes.length} mensaje(s) de "messages" dirigido(s) a "${senderAlias}", que es quien te escribio: al remitente se le contesta SOLO por "reply", que vuelve solo a el. "messages" es unicamente para delegar a un TERCER agente.`;
+  const aviso = `[Cauce] Se descarto ${String(rebotes.length)} mensaje(s) de "messages" dirigido(s) a "${senderAlias}", que es quien te escribio: al remitente se le contesta SOLO por "reply", que vuelve solo a el. "messages" es unicamente para delegar a un TERCER agente.`;
   const propio = output.reply === null || output.reply.trim() === "" ? "" : output.reply;
   const cuerpo = propio === ""
     ? recortarABytes(rebotes.map((message) => message.body).join("\n\n"), MAX_FINAL_TEXT_BYTES)
@@ -280,7 +280,7 @@ export function validateDeliveryOutput(
   if (output.status === "failed" && output.messages.length > 0) {
     // Discards delegated messages on failed turns, keeping the answer text.
     const descartadas = output.messages.length;
-    const aviso = `[Cauce] Se descartaron ${descartadas} delegacion(es): un turno que termina en "failed" no materializa mensajes. Si siguen haciendo falta, repetilas en un turno que cierre en "done", o usa "notify" para avisarle a una persona.`;
+    const aviso = `[Cauce] Se descartaron ${String(descartadas)} delegacion(es): un turno que termina en "failed" no materializa mensajes. Si siguen haciendo falta, repetilas en un turno que cierre en "done", o usa "notify" para avisarle a una persona.`;
     output = {
       ...output,
       messages: [],

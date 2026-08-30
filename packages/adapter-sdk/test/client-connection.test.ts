@@ -1,34 +1,12 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import {rm} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
 import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
+import {ConsumerLease} from '../src/sdk/durable-store.js';
 import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
-import {
-  root,
-  FakeConnection,
-  HelloAgentProfile,
-  ScriptedConnector,
-  makeClient,
-  waitUntil,
-} from "./client-fixtures.js";
+import type {ClientFrame, ConsumerConnection} from '../src/sdk/types.js';
+import {root, FakeConnection, ScriptedConnector, makeClient} from './client-fixtures.js';
 test("stale hello epoch is fenced without reconnecting", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection);
@@ -56,6 +34,7 @@ test("stable aliases reject an ephemeral transport before hello", async () => {
       sent.push(frame);
     },
     frames: () => ({
+      // eslint-disable-next-line require-yield -- the empty async iterator is the contract: no buffered frames
       async *[Symbol.asyncIterator]() {
         return;
       },

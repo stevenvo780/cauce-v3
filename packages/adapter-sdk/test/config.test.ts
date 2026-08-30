@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-dynamic-delete -- env snapshot is restored from the captured tuple */
 import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -120,17 +121,16 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
     assert.equal(openclaw.harnessBridge, resolve(root, "openclaw.mjs"));
   } finally {
     for (const [name, value] of previous) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        delete process.env[name];
+      } else process.env[name] = value;
     }
   }
 });
 
-/**
- * La sala propia es identidad, no decoracion: el agente la reporta como suya al harness. Los dos
- * caminos del cargador tenian contratos distintos y NINGUNO estaba afirmado, asi que 547eda3 pudo
- * volver `CAUCE_ROOM` obligatorio sin que nada delatara a los arranques que no la pasaban.
- */
+// La sala propia es identidad, no decoracion: el agente la reporta como suya al harness. Los dos
+// caminos del cargador tenian contratos distintos y NINGUNO estaba afirmado, asi que 547eda3 pudo
+// volver `CAUCE_ROOM` obligatorio sin que nada delatara a los arranques que no la pasaban.
 test("la sala propia es obligatoria por entorno y declarable por archivo", async () => {
   const names = ["CAUCE_TENANT", "CAUCE_ROOM", "CAUCE_ALIAS", "CAUCE_INSTANCE_ID", "CAUCE_STATE_DIR",
     "CAUCE_RELAY_URL", "CAUCE_ENVIRONMENT"] as const;
@@ -153,8 +153,9 @@ test("la sala propia es obligatoria por entorno y declarable por archivo", async
     assert.equal((await loadCliRuntimeConfig("claude", [])).room, "grp.isa");
   } finally {
     for (const [name, value] of previous) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        delete process.env[name];
+      } else process.env[name] = value;
     }
   }
 

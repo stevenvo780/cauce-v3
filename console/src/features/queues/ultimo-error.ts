@@ -29,7 +29,7 @@ const ESTADOS_SIN_ERROR: ReadonlySet<DeliveryState> = new Set<DeliveryState>([
   'done', 'pending', 'leased', 'accepted', 'started',
 ]);
 
-export type LecturaDeUltimoError =
+type LecturaDeUltimoError =
   /** The server said what failed. */
   | { clase: 'texto'; texto: string }
   /** The server said nothing failed: the state guarantees it. */

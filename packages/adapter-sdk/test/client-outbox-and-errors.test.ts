@@ -1,38 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
-import {
-  root,
-  CountingRunner,
-  FakeConnection,
-  HelloAgentProfile,
-  NoopRunner,
-  ScriptedConnector,
-  SequenceConnector,
-  makeClient,
-  renewableDelivery,
-  waitUntil,
-} from "./client-fixtures.js";
+import {DurableStore} from '../src/sdk/durable-store.js';
+import type {DeliveryEvent} from '../src/sdk/types.js';
+import {CountingRunner, FakeConnection, ScriptedConnector, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
 test("pending durable outbox is replayed after hello_ack", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection);
@@ -52,12 +22,10 @@ test("pending durable outbox is replayed after hello_ack", async () => {
   const running = context.client.run(stop.signal);
   await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
   const ack = connection.sent.find((frame) => frame.type === "ack");
-  assert.equal(ack?.type, "ack");
-  if (ack?.type === "ack") {
-    assert.equal(ack.event_id, event.event_id);
-    assert.equal(ack.attempt, event.attempt);
-    assert.equal(ack.claim_token, event.claim_token);
-  }
+  assert.ok(ack, "no se envió ningún ACK");
+  assert.equal(ack.event_id, event.event_id);
+  assert.equal(ack.attempt, event.attempt);
+  assert.equal(ack.claim_token, event.claim_token);
   stop.abort();
   await running;
 });
@@ -85,12 +53,10 @@ test("structured adapter errors are propagated on the ACK without changing retry
   const running = context.client.run(stop.signal);
   await waitUntil(() => connection.sent.some((frame) => frame.type === "ack"));
   const ack = connection.sent.find((frame) => frame.type === "ack");
-  assert.equal(ack?.type, "ack");
-  if (ack?.type === "ack") {
-    assert.equal(ack.error_code, event.error?.code);
-    assert.equal(ack.error, event.error?.message);
-    assert.equal(ack.retryable, false);
-  }
+  assert.ok(ack, "no se envió ningún ACK");
+  assert.equal(ack.error_code, event.error?.code);
+  assert.equal(ack.error, event.error?.message);
+  assert.equal(ack.retryable, false);
   stop.abort();
   await running;
 });

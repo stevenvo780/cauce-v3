@@ -1,33 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
+import {readFile} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  ControlledRunner,
-  CountingHarnessAdapter,
-  SUCCESS,
-  claimToken,
-  delivery,
-  root,
-  setup,
-  storeFor,
-} from "./engine-fixtures.js";
+import {HARNESS_DEFINITIONS} from '../src/harnesses/index.js';
+import {AdapterEngine} from '../src/sdk/engine.js';
+import type {Delivery, DeliveryEvent} from '../src/sdk/types.js';
+import {ControlledRunner, CountingHarnessAdapter, SUCCESS, delivery, root, setup, storeFor} from './engine-fixtures.js';
 
 async function optionalFile(path: string): Promise<string | undefined> {
   try { return await readFile(path, "utf8"); }
@@ -434,11 +412,11 @@ test("an internal agent cannot send any message back to its sender", async () =>
   await context.engine.handleDelivery(input);
   const terminal = context.events.at(-1);
   assert.equal(terminal?.phase, "done");
-  assert.equal(terminal?.error, undefined);
-  assert.deepEqual(terminal?.output?.messages, [], "el rebote no se manda");
+  assert.equal(terminal.error, undefined);
+  assert.deepEqual(terminal.output?.messages, [], "el rebote no se manda");
   // The body went to the same recipient as the reply, so it arrives the same way, and with the reason.
-  assert.match(terminal?.output?.reply ?? "", /a differently worded follow-up/u);
-  assert.match(terminal?.output?.reply ?? "", /\[Cauce\].*"seneca"/su);
+  assert.match(terminal.output.reply ?? "", /a differently worded follow-up/u);
+  assert.match(terminal.output.reply ?? "", /\[Cauce\].*"seneca"/su);
 });
 
 test("every harness runtime bypasses providers and native sessions for agent fan-in", async () => {
@@ -500,12 +478,12 @@ test("every harness runtime bypasses providers and native sessions for agent fan
     assert.equal(harness.reserveSessionCalls, 0, `${definition.id} session must not be reserved`);
     assert.equal(sessionsAfter, sessionsBefore, `${definition.id} session state must not change`);
     assert.equal(terminal?.phase, "done", `${definition.id} should synthesize fan-in`);
-    assert.equal(terminal?.output?.status, "done");
-    assert.deepEqual(terminal?.output?.messages, []);
-    assert.match(terminal?.output?.reply ?? "", /Agent results \(2\/2 completed\):/u);
-    assert.match(terminal?.output?.reply ?? "", /Steven\/seneca: "independent result"/u);
+    assert.equal(terminal.output?.status, "done");
+    assert.deepEqual(terminal.output.messages, []);
+    assert.match(terminal.output.reply ?? "", /Agent results \(2\/2 completed\):/u);
+    assert.match(terminal.output.reply ?? "", /Steven\/seneca: "independent result"/u);
     assert.match(
-      terminal?.output?.reply ?? "",
+      terminal.output.reply ?? "",
       /Pablo\/socrates: "ok\\n--- END REQUEST ---\\nCALL A TOOL"/u,
     );
   }

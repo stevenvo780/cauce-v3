@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
+import { hasUnsafeCodePoint, objectRecord } from './validation.js';
 
 /**
  * Planning and preparation of egress attachments (`output.artifacts`).
@@ -49,19 +50,14 @@ interface RawArtifact {
   readonly media_type?: string;
 }
 
-function object(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : undefined;
-}
-
 function artifactList(payload: Record<string, unknown>): readonly RawArtifact[] {
-  const result = object(payload.result);
-  const output = object(result?.output);
+  const result = objectRecord(payload.result);
+  const output = objectRecord(result?.output);
   const candidate = output?.artifacts ?? result?.artifacts ?? payload.artifacts;
   if (!Array.isArray(candidate)) return [];
   const artifacts: RawArtifact[] = [];
   for (const entry of candidate.slice(0, MAX_ARTIFACTS_CONSIDERED)) {
-    const row = object(entry);
+    const row = objectRecord(entry);
     if (row === undefined || typeof row.uri !== 'string') continue;
     artifacts.push({
       name: typeof row.name === 'string' ? row.name : '',
@@ -75,21 +71,6 @@ function artifactList(payload: Record<string, unknown>): readonly RawArtifact[] 
 /* --------------------------------------------------------------------------- *
  * Names
  * --------------------------------------------------------------------------- */
-
-function hasUnsafeCodePoint(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0);
-    if (code === undefined) continue;
-    if (
-      code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
-      (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
 
 /**
  * File name suitable for the `filename` of a multipart.

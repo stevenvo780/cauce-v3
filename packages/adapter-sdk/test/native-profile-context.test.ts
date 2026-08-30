@@ -119,8 +119,10 @@ function spyRunner(): {
 }
 
 function restoreEnvironment(name: string, previous: string | undefined): void {
-  if (previous === undefined) delete process.env[name];
-  else process.env[name] = previous;
+  if (previous === undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- env key passed in by caller
+    delete process.env[name];
+  } else process.env[name] = previous;
 }
 
 function nativeEnvironment(value = "1"): NodeJS.ProcessEnv {
@@ -283,7 +285,7 @@ test("claude projects the fixed contract and sends only pointer, metadata, and r
   assert.match(finalFile, /PROFILE-NATIVE-CLAUDE/u);
   assert.match(finalFile, new RegExp(PRIMARY_DUTY_HEADER, "u"));
   assert.equal(measured?.documents.length, 1);
-  assert.equal(measured?.documents[0]?.sha256, hash(finalFile));
+  assert.equal(measured.documents[0]?.sha256, hash(finalFile));
   assert.equal(profileAdoptionFor({
     ...delivery("nativefirst"),
     recipient_alias: "zeus",
@@ -429,11 +431,14 @@ test("openclaw proves seven files without exposing memory, heartbeat, or profile
     onRuntimeProfileConsumed: (value) => { measured = value; },
   });
 
-  assert.deepEqual(measured?.documents.map((document) => basename(document.path)), FICHEROS_OPENCLAW);
-  for (const document of measured?.documents ?? []) {
+  assert.ok(measured, "the runtime profile was never measured");
+  const measuredDocuments = measured.documents;
+  const measuredText = measured.text;
+  assert.deepEqual(measuredDocuments.map((document) => basename(document.path)), FICHEROS_OPENCLAW);
+  for (const document of measuredDocuments) {
     assert.equal(document.sha256, hash(readFileSync(document.path, "utf8")));
   }
-  assert.doesNotMatch(measured?.text ?? "", /PRIVATE-(?:MEMORY|HEARTBEAT)/u);
+  assert.doesNotMatch(measuredText, /PRIVATE-(?:MEMORY|HEARTBEAT)/u);
   const stdin = requests[0]?.stdin ?? "";
   assert.doesNotMatch(stdin, /PRIVATE-|PROFILE-(?:SOUL|IDENTITY|USER|AGENTS|TOOLS)/u);
   assert.doesNotMatch(stdin, /BEGIN TRUSTED RUNTIME PROFILE/u);
@@ -558,13 +563,13 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     rmSync(root, { recursive: true, force: true });
   });
 
-  const cases: Array<{
+  const cases: {
     name: string;
     file: string;
     mutateContract?: boolean;
     mutateGeneration?: boolean;
     omitContract?: boolean;
-  }> = [
+  }[] = [
     {
       name: "stale",
       file: profileFile("zeus", 11, "CURRENT"),
@@ -595,12 +600,12 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     },
     {
       name: "repeated fixed",
-      file: `${profileFile("zeus", 11, "CURRENT")}`
+      file: profileFile("zeus", 11, "CURRENT")
         + `\n${MARCA_INICIO}\nold-a\n${MARCA_FIN}\n${MARCA_INICIO}\nold-b\n${MARCA_FIN}\n`,
     },
     {
       name: "inverted fixed",
-      file: `${profileFile("zeus", 11, "CURRENT")}`
+      file: profileFile("zeus", 11, "CURRENT")
         + `\n${MARCA_FIN}\nold\n${MARCA_INICIO}\n`,
     },
     {
@@ -619,8 +624,10 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     writeFileSync(path, scenario.file, "utf8");
     const bytesBeforePreflight = readFileSync(path, "utf8");
     const currentContract = contract(11, [path]);
+    const firstDocument = currentContract.documents[0];
+    assert.ok(firstDocument, "el contrato no tiene documentos");
     const selectedBySha = scenario.mutateContract
-      ? { ...currentContract, documents: [{ ...currentContract.documents[0]!, sha: "f".repeat(64) }] }
+      ? { ...currentContract, documents: [{ ...firstDocument, sha: "f".repeat(64) }] }
       : currentContract;
     const selected = scenario.mutateGeneration
       ? { ...selectedBySha, generation: "another-runtime" }

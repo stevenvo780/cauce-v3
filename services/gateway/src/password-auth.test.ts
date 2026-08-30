@@ -184,7 +184,9 @@ function cookieFrom(headers: Record<string, unknown>): string {
   const values = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : [];
   const selected = values.find((value) => value.startsWith('__Host-cauce_session='));
   if (!selected) throw new Error('la respuesta no trae la cookie de sesión');
-  return selected.split(';', 1)[0]!;
+  const [cookie] = selected.split(';', 1);
+  if (cookie === undefined) throw new Error('la respuesta no trae la cookie de sesión');
+  return cookie;
 }
 
 describe('login por contraseña de la consola', () => {
@@ -224,9 +226,9 @@ describe('login por contraseña de la consola', () => {
         origin: 'http://localhost',
         'x-csrf-token': csrf,
       };
-      const mutations: Array<{
+      const mutations: {
         method: 'POST' | 'PUT'; url: string; payload: Record<string, unknown>;
-      }> = [
+      }[] = [
         {
           method: 'POST', url: '/v3/console/messages',
           payload: {
@@ -322,7 +324,9 @@ describe('login por contraseña de la consola', () => {
       expect(rawCookie).toContain('Path=/');
       const cookie = cookieFrom(login.headers);
       // The token goes ONLY in the cookie: if it appeared in the body, an XSS would carry it away.
-      expect(JSON.stringify(login.json())).not.toContain(cookie.split('=')[1]!.slice(0, 24));
+      const token = cookie.split('=')[1];
+      if (token === undefined) throw new Error('la cookie de sesión no contiene un token');
+      expect(JSON.stringify(login.json())).not.toContain(token.slice(0, 24));
       expect(login.json()).toMatchObject({
         authenticated: true, login_mode: 'password', subject: 'steven@elenxos.com', name: 'Steven'
       });

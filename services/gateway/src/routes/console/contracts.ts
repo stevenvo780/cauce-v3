@@ -26,7 +26,7 @@ export interface ConsoleRouteRepository {
     alias: string,
   ): Promise<{
     roles: string[];
-    permissions: Array<'route' | 'read' | 'control' | 'notify'>;
+    permissions: ('route' | 'read' | 'control' | 'notify')[];
   }>;
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
   topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;

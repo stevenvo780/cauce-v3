@@ -10,8 +10,7 @@ import type {
   MemoryDirectoryListing
 } from '../agent-documents.routes.js';
 import {
-  NEVER_SERVE_BASENAMES,
-  NEVER_SERVE_SUFFIXES,
+  hasNeverServePathSegment,
   memoryRootForHarness,
   resolveAgentDocuments,
   type DocumentKind,
@@ -40,11 +39,11 @@ export interface RelayDirectoryRead {
   readonly total: number | null;
   readonly observed_at_least: number;
   readonly truncated: boolean;
-  readonly entries: ReadonlyArray<{
+  readonly entries: readonly {
     readonly path: string;
     readonly bytes: number;
     readonly modified_at: string;
-  }>;
+  }[];
 }
 
 export interface RelayFileWrite {
@@ -350,7 +349,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
       if (!canonicalRelativeMemoryPath(relative)) {
         return { error: 'unknown', reason: 'el relay devolvió una entrada fuera de la raíz de memoria' };
       }
-      if (sensitiveMemoryPath(relative)) {
+      if (hasNeverServePathSegment(relative)) {
         return { error: 'permission_denied', reason: 'el índice intentó publicar metadata de credenciales' };
       }
       seen.add(entryPath);
@@ -386,15 +385,10 @@ function canonicalRelativeMemoryPath(value: string): boolean {
 }
 
 function hasMemoryControlCharacter(value: string): boolean {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });
-}
-
-function sensitiveMemoryPath(relative: string): boolean {
-  return relative.split('/').some((segment) => NEVER_SERVE_BASENAMES.includes(segment)
-    || NEVER_SERVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
 }
 
 function validMemoryTimestamp(value: unknown): value is string {

@@ -71,7 +71,7 @@ test("el recorte se NOTA en el tamaño, que es lo que motiva todo esto", () => {
   const ahorro = entero.length - recortado.length;
   assert.ok(
     ahorro > 6_000,
-    `el recorte ahorró sólo ${ahorro} caracteres de ${entero.length}: no está quitando el bloque fijo`,
+    `el recorte ahorró sólo ${String(ahorro)} caracteres de ${String(entero.length)}: no está quitando el bloque fijo`,
   );
 });
 

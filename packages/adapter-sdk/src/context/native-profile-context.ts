@@ -121,17 +121,11 @@ export class NativeProfileContext {
       if (measurement.sha256 !== projected.sha256) {
         throw new Error("the authored profile changed while converging its fixed contract");
       }
-      const {
-        runtime_profile: _runtimeProfile,
-        context_seal: _previousSeal,
-        native_profile_context: _previousNative,
-        native_profile_measurement: _previousMeasurement,
-        ...trusted
-      } = context;
-      void _runtimeProfile;
-      void _previousSeal;
-      void _previousNative;
-      void _previousMeasurement;
+      const trusted = { ...context };
+      delete trusted.runtime_profile;
+      delete trusted.context_seal;
+      delete trusted.native_profile_context;
+      delete trusted.native_profile_measurement;
       const result: HarnessRequestContext = {
         ...trusted,
         context_seal: seal,
@@ -162,8 +156,10 @@ export class NativeProfileContext {
       for (let index = 0; index < current.documents.length; index += 1) {
         const before = previous.documents[index];
         const after = current.documents[index];
-        if (before === undefined || after === undefined
-          || before.path !== after.path || before.sha256 !== after.sha256) {
+        if (before === undefined || after === undefined) {
+          throw new Error("native profile files changed after preflight");
+        }
+        if (before.path !== after.path || before.sha256 !== after.sha256) {
           throw new Error("native profile files changed after preflight");
         }
       }
@@ -210,7 +206,7 @@ export class NativeProfileContext {
   }
 
   private requireAbsolute(value: string | undefined, name: string): string {
-    if (value === undefined || !value.startsWith("/")) {
+    if (!value?.startsWith("/")) {
       throw new Error(`${name} must be an absolute path`);
     }
     return value;
@@ -280,8 +276,8 @@ export class NativeProfileContext {
     if (expectedRevision === undefined) {
       throw new Error("delivery has no native profile revision contract");
     }
-    const documents: Array<{ path: string; sha256: string }> = [];
-    const blocks: Array<{ path: string; block: string }> = [];
+    const documents: { path: string; sha256: string }[] = [];
+    const blocks: { path: string; block: string }[] = [];
     const instructionPath = this.instructionPath();
     for (const entry of this.paths()) {
       const file = this.read(entry.path);
@@ -347,7 +343,10 @@ export class NativeProfileContext {
     for (const entry of paths) {
       const document = expected.get(entry.path);
       const name = entry.path.slice(entry.path.lastIndexOf("/") + 1);
-      if (document === undefined || document.name !== name) {
+      if (document === undefined) {
+        throw new Error(`native profile contract does not bind ${entry.path}`);
+      }
+      if (document.name !== name) {
         throw new Error(`native profile contract does not bind ${entry.path}`);
       }
       if (entry.authored && observed.get(entry.path) !== document.sha) {

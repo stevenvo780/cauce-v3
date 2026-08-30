@@ -1,26 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
+import {claudeDefinition, fakeDefinition} from '../src/harnesses/index.js';
+import {capabilityStrings, siembraAplicada, siembraHabilitada} from '../src/sdk/client.js';
+import {ConsumerLease} from '../src/sdk/durable-store.js';
+import type {ConsumerConnector} from '../src/sdk/types.js';
 import {
   root,
   FakeConnection,
@@ -70,16 +54,14 @@ test("connect retries then sends the real harness capabilities in hello", async 
   await waitUntil(() => connection.sent.some((frame) => frame.type === "hello"));
   const hello = connection.sent.find((frame) => frame.type === "hello");
   assert.equal(connector.calls, 2);
-  assert.equal(hello?.type, "hello");
-  if (hello?.type === "hello") {
-    assert.equal(hello.alias, "agent_reconnect");
-    assert.equal(hello.instance_id, "instance-reconnect");
-    assert.deepEqual(hello.capabilities, capabilityStrings(fakeDefinition.capabilities));
-    assert.equal(hello.capabilities.includes("harness.fake"), true);
-    assert.equal(hello.capabilities.includes("agent_profile_v1"), true);
-    assert.equal(hello.capabilities.includes("agent_profile_adoption_v1"), true);
-    assert.equal(hello.capabilities.includes("attachments_v1"), true);
-  }
+  assert.ok(hello, "no se envió ningún HELLO");
+  assert.equal(hello.alias, "agent_reconnect");
+  assert.equal(hello.instance_id, "instance-reconnect");
+  assert.deepEqual(hello.capabilities, capabilityStrings(fakeDefinition.capabilities));
+  assert.equal(hello.capabilities.includes("harness.fake"), true);
+  assert.equal(hello.capabilities.includes("agent_profile_v1"), true);
+  assert.equal(hello.capabilities.includes("agent_profile_adoption_v1"), true);
+  assert.equal(hello.capabilities.includes("attachments_v1"), true);
   stop.abort();
   await running;
 });

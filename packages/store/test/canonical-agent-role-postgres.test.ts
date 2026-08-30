@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PublishMessage } from '@cauce/protocol';
@@ -80,10 +81,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   try {
-    if (pool) await ensureUp();
+    await ensureUp();
   } finally {
-    if (pool) await pool.end();
-    if (database?.container) await database.container.stop();
+    await pool.end();
+    await database.container.stop();
   }
 });
 
@@ -105,7 +106,7 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
           `SELECT EXISTS(
              SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted
            ) AS waiting`,
-          [runnerPid.rows[0]!.pid],
+          [requireValue(runnerPid.rows[0], 'runnerPid.rows').pid],
         );
         if (observed.rows[0]?.waiting) {
           waiting = true;
@@ -192,7 +193,7 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
         WHERE agent.tenant_id='Steven' AND agent.alias='rollback_safe'`,
     );
     expect(state.rows[0]?.role_summary).toBe(rich);
-    expect([...state.rows[0]!.role_brief]).toHaveLength(1_200);
+    expect(Array.from(requireValue(state.rows[0], 'state.rows').role_brief)).toHaveLength(1_200);
     expect(state.rows[0]?.role_brief.endsWith('🎉')).toBe(true);
 
     await applyMigrations(pool);
@@ -338,11 +339,11 @@ describe('delivery context real', () => {
     };
     await repository.publish(message);
     const [delivery] = await repository.claimDeliveries(
-      'Steven', 'argos', instance, lease.epoch!, 1, 30_000,
+      'Steven', 'argos', instance, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000,
     );
 
     expect(delivery).toBeDefined();
-    expect([...(delivery?.self_role ?? '')]).toHaveLength(1_200);
+    expect(Array.from(delivery?.self_role ?? '')).toHaveLength(1_200);
     expect(delivery?.self_role?.endsWith('🎉')).toBe(true);
     expect(delivery?.self_role).not.toBe('caché dañada');
     expect((await profiles.readContext('Steven', 'argos')).perfil.role_summary).toBe(rich);

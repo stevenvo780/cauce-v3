@@ -130,7 +130,7 @@ test("CliTmux cancela y reapea cada operación sin permitir una mutación tardí
         assert.throws(
           () => process.kill(pid, 0),
           (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH",
-          `CliTmux no puede resolver ${stem} hasta que el PID ${pid} haya cerrado`,
+          `CliTmux no puede resolver ${stem} hasta que el PID ${String(pid)} haya cerrado`,
         );
       }
     }

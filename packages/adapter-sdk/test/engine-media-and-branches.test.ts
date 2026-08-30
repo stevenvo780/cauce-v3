@@ -1,23 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import {access, readFile} from 'node:fs/promises';
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
+import type {CommandRunRequest, CommandRunResult, Delivery} from '../src/sdk/types.js';
 import {
   ControlledRunner,
   SUCCESS,
@@ -56,7 +41,7 @@ test("materializa attachments_v1 para el harness, verifica contenido y limpia el
   let materializedContents: Buffer | undefined;
   class AttachmentRunner extends ControlledRunner {
     override async run(request: CommandRunRequest): Promise<CommandRunResult> {
-      const pathMatch = request.stdin.match(/"local_path":"([^"]+)"/u);
+      const pathMatch = /"local_path":"([^"]+)"/u.exec(request.stdin);
       assert.ok(pathMatch?.[1], "el prompt debe incluir una ruta local accesible");
       materializedPath = pathMatch[1];
       materializedContents = await readFile(materializedPath);
@@ -111,9 +96,9 @@ test("los textos que la ingesta acepta tambien se materializan en la entrega", a
   const payload = Buffer.from("# informe\nuna linea\n", "utf8");
   for (const [indice, [name, mime]] of casos.entries()) {
     const runner = new ControlledRunner();
-    const context = await setup(`engine-texto-${indice}`, runner);
+    const context = await setup(`engine-texto-${String(indice)}`, runner);
     const input: Delivery = {
-      ...delivery(`media-texto-${indice}`),
+      ...delivery(`media-texto-${String(indice)}`),
       body: {
         type: "telegram.message",
         attachments_v1: [{

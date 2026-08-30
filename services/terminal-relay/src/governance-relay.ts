@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
+import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import type { AgentLookup } from './agent-leg.js';
 import {
   MAX_GOVERNANCE_BYTES, requestDirectoryRead, requestFileRead, requestFileWrite,
@@ -9,6 +10,7 @@ import {
   type GovernanceWriteBatchOutcome, type GovernanceWritePrecondition,
 } from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
+import { hasControlCharacter } from './validation.js';
 
 /**
  * `POST /v3/terminal/relay/read|write` — mTLS gates from the gateway to the governed disk.
@@ -42,10 +44,6 @@ export const GOVERNANCE_WRITE_BATCH_PATH = '/v3/terminal/relay/write-batch';
 /** 256 KiB base64 plus JSON. Nothing above this ceiling is accumulated. */
 const MAX_REQUEST_BYTES = 512 * 1024;
 
-/** Same alias shape the gateway requires when requesting a terminal session. */
-const ALIAS_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/u;
-
-const MAX_TENANT_LENGTH = 64;
 const MAX_PATH_LENGTH = 4096;
 
 export interface GovernanceRelayOptions {
@@ -94,13 +92,6 @@ function authorized(header: unknown, expected: string): boolean {
   return timingSafeEqual(digest(authorization.slice(7)), digest(expected));
 }
 
-function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 0x1f || code === 0x7f;
-  });
-}
-
 /**
  * The body, or `undefined` if it overshot the ceiling. Whoever sends a dump will not get the
  * relay to store it whole before rejecting it.
@@ -143,10 +134,10 @@ export function parseReadRequest(raw: string): ReadRequest | { readonly rejected
   const tenantId = source.tenant_id;
   const alias = source.alias;
   const path = source.path;
-  if (typeof tenantId !== 'string' || tenantId.length === 0 || tenantId.length > MAX_TENANT_LENGTH) {
+  if (typeof tenantId !== 'string' || !TenantSchema.safeParse(tenantId).success) {
     return { rejected: 'tenant_id es obligatorio' };
   }
-  if (typeof alias !== 'string' || !ALIAS_PATTERN.test(alias)) {
+  if (typeof alias !== 'string' || !AliasSchema.safeParse(alias).success) {
     return { rejected: 'alias no tiene forma de alias' };
   }
   // The path is validated only insofar as it is needed to keep the wire intact; WHICH path is

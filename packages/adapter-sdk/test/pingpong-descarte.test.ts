@@ -84,8 +84,9 @@ test("una delegacion a un tercero legitimo queda intacta", () => {
 
   assert.equal(output.status, "done");
   assert.deepEqual(output.messages, [{ to: "socrates", body: "verificá el resultado de forma independiente" }]);
-  assert.equal(output.reply, "Delego la verificación y te aviso.");
-  assert.doesNotMatch(output.reply ?? "", /\[Cauce\]/u);
+  const reply = output.reply ?? "";
+  assert.equal(reply, "Delego la verificación y te aviso.");
+  assert.doesNotMatch(reply, /\[Cauce\]/u);
 });
 
 // (b-bis) Mix: ONLY the sender's is discarded; the third party's travels.

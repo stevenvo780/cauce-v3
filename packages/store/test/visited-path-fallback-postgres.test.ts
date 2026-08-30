@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -37,7 +38,7 @@ interface Consumer {
 async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
   const instanceId = `${alias}-${randomUUID()}`;
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: lease.epoch! };
+  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 async function nextDelivery(
@@ -97,7 +98,7 @@ async function setChainPolicy(cycleCutEnabled: boolean): Promise<void> {
 
 // `insertAgentOutputRejection` does not write target_tenant/target_alias, so a rejected row has
 // them as NULL and must be identified by (source_alias, output_index).
-async function materializations(): Promise<Array<{
+async function materializations(): Promise<{
   source_alias: string;
   target_alias: string | null;
   output_index: number;
@@ -106,7 +107,7 @@ async function materializations(): Promise<Array<{
   hop_count: number;
   visited_path: string[];
   correlation_visited_path: string[] | null;
-}>> {
+}[]> {
   return (await pool.query<{
     source_alias: string;
     target_alias: string | null;

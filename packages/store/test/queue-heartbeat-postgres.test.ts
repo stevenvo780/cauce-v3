@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -88,21 +89,21 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('queue heartbeat on an accepted delivery', () => {
   it('renews the claim without claiming execution', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'queue-consumer', [], 60_000);
     const published = await repository.publish(command());
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', 'queue-consumer', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'queue-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!claimed) throw new Error('expected a claimed delivery');
 
-    await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), 30_000);
+    await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), 30_000);
     const afterAccept = await deliveryRow(deliveryId);
     expect(afterAccept.status).toBe('accepted');
 
@@ -113,7 +114,7 @@ describe('queue heartbeat on an accepted delivery', () => {
     const shortened = await deliveryRow(deliveryId);
 
     const renewal = await repository.ackDelivery(
-      deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), 600_000
+      deliveryId, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), 600_000
     );
     expect(renewal).toMatchObject({ status: 'accepted', applied: true, receipt: 'applied' });
 
@@ -127,15 +128,15 @@ describe('queue heartbeat on an accepted delivery', () => {
 
   it('a queued delivery that stops beating IS reaped; one that keeps beating is not', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'queue-consumer', [], 60_000);
-    const silent = (await repository.publish(command())).delivery_ids[0]!;
-    const beating = (await repository.publish(command())).delivery_ids[0]!;
+    const silent = requireValue((await repository.publish(command())).delivery_ids[0], 'delivery_ids');
+    const beating = requireValue((await repository.publish(command())).delivery_ids[0], 'delivery_ids');
     const claims = await repository.claimDeliveries(
-      'Isa', 'salva', 'queue-consumer', lease.epoch!, 2, 30_000
+      'Isa', 'salva', 'queue-consumer', requireValue(lease.epoch, 'lease.epoch'), 2, 30_000
     );
     expect(claims).toHaveLength(2);
     for (const claimed of claims) {
       await repository.ackDelivery(
-        claimed.delivery_id, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), 30_000
+        claimed.delivery_id, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), 30_000
       );
     }
 
@@ -144,9 +145,9 @@ describe('queue heartbeat on an accepted delivery', () => {
     await pool.query(
       `UPDATE deliveries SET ack_deadline_at=now()-interval '1 second' WHERE id=$1`, [silent]
     );
-    const beatingClaim = claims.find((entry) => entry.delivery_id === beating)!;
+    const beatingClaim = requireValue(claims.find((entry) => entry.delivery_id === beating), 'value');
     const renewal = await repository.ackDelivery(
-      beating, 'Isa', 'salva', ack(beatingClaim, lease.epoch!, 'accepted'), 600_000
+      beating, 'Isa', 'salva', ack(beatingClaim, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), 600_000
     );
     // If the heartbeat stopped being applied, the test has to say so here, not through the count.
     expect(renewal).toMatchObject({ status: 'accepted', applied: true });
@@ -160,19 +161,19 @@ describe('queue heartbeat on an accepted delivery', () => {
   it('a queue heartbeat cannot renew a delivery that is already executing', async () => {
     const lease = await repository.acquireLease('Isa', 'salva', 'queue-consumer', [], 60_000);
     const published = await repository.publish(command());
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', 'queue-consumer', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'queue-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!claimed) throw new Error('expected a claimed delivery');
 
-    await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), 30_000);
-    await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'started'), 30_000);
+    await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), 30_000);
+    await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'started'), 30_000);
     expect((await deliveryRow(deliveryId)).status).toBe('started');
 
     // A lagging queue heartbeat cannot downgrade or renew a row that is already executing.
     const late = await repository.ackDelivery(
-      deliveryId, 'Isa', 'salva', ack(claimed, lease.epoch!, 'accepted'), 600_000
+      deliveryId, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'accepted'), 600_000
     );
     expect(late).toMatchObject({ status: 'started', applied: false, receipt: 'superseded' });
     expect((await deliveryRow(deliveryId)).status).toBe('started');

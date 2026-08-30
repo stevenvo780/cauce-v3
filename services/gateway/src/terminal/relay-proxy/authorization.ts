@@ -21,8 +21,8 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
       }
       const identity = requestRelayIdentity(request, record);
       if (identity === undefined) { await reply.code(401).send(); return; }
-      const claimToken = relayClaimToken(record?.claim_token);
-      const claimEpoch = relayClaimEpoch(record?.claim_epoch);
+      const claimToken = relayClaimToken(record.claim_token);
+      const claimEpoch = relayClaimEpoch(record.claim_epoch);
       if (claimToken === undefined || claimEpoch === undefined) {
         await reply.code(403).send({ ok: false, reason: 'claim_fenced' });
         return;
@@ -135,12 +135,14 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
         await reply.code(403).send({ ok: false, reason: refusal });
         return;
       }
+      const claimExpiresAt = renewed.relay_claim_expires_at;
+      if (claimExpiresAt === null) throw new Error('database terminal claim lease is invalid');
       return {
         ok: true,
         expires_at: renewed.session_expires_at.toISOString(),
         claim_epoch: databaseClaimEpoch(renewed.relay_claim_epoch),
         claim_lease_ms: boundedMilliseconds(
-          renewed.relay_claim_expires_at!,
+          claimExpiresAt,
           renewed.database_now,
           config.claimLeaseSeconds * 1_000,
         ),

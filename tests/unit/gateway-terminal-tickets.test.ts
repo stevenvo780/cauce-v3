@@ -2,9 +2,8 @@ import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   RESUME_HKDF_SALT, RESUME_TOKEN_VERSION, TICKET_HKDF_SALT, TICKET_VERSION,
-  TicketError, deriveAliasKey, issueResumeToken, issueTicket, parseAndVerify,
-  parseResumeToken, ticketDigest, ticketSha256, verifyResumeTokenSignature,
-  verifyTicketSignature, type TicketPayload,
+  TicketError, deriveAliasKey, issueResumeToken, issueTicket, ticketDigest, ticketSha256,
+  verifyResumeTokenSignature, verifyTicketSignature, type TicketPayload,
 } from '../../services/gateway/src/terminal/tickets.js';
 
 /**
@@ -34,9 +33,9 @@ function exigir<T>(valor: T | undefined, que: string): T {
  * nunca ajustar el expected para que el assert siga verde.
  */
 
-// Los tres valores siguientes vienen del contrato, no del harness. Se escriben como literales
-// (no como copia de `vectors.json`) para que una "regeneración útil" del fichero no mueva el
-// contrato en silencio.
+// The three values below come from the contract, not the harness. They are written as
+// literals (not as copies of `vectors.json`) so a "useful regeneration" of that file does
+// not silently move the contract.
 const GOLDEN_MASTER = Buffer.from('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=', 'base64');
 const GOLDEN_ALIAS_KEY_STEVEN_JARVIS = '33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa';
 const GOLDEN_ALIAS_KEY_STEVEN_KANT = 'c13362c6964d27b97b5af6d39b1f296b45256ada814babf03d49f7b115f49f3d';
@@ -184,7 +183,7 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
   });
 
   it('rechaza con signature_invalid cuando el payload se manipula pero la firma queda igual', () => {
-    // Vector dorado: mismo segmento de firma, segmento de payload con uid:0 (era 1000).
+    // Golden vector: same signature segment, payload segment with uid:0 (was 1000).
     const tamperedPayload = 'v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzUwMDAwMDAwLCJleHAiOjE3NTAwMDAwMzB9.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY';
     expect(() => verifyTicketSignature(tamperedPayload, key)).toThrow(TicketError);
     try {
@@ -195,8 +194,8 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
   });
 
   it('rechaza con signature_invalid cuando el ticket fue firmado con otro alias key', () => {
-    // El ticket dorado de Steven:kant sobre el mismo payload; si lo verificamos con la key de
-    // jarvis, la firma no coincide.
+    // Steven:kant's golden ticket over the same payload; if we verify it with jarvis's key,
+    // the signature does not match.
     const otherKey = Buffer.from(GOLDEN_ALIAS_KEY_STEVEN_KANT, 'hex');
     const foreignTicket = issueTicket(goldenPayload(), otherKey);
     expect(() => verifyTicketSignature(foreignTicket, key)).toThrow(TicketError);
@@ -229,7 +228,7 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
   });
 
   it('rechaza con malformed un segmento de payload con padding base64url (=)', () => {
-    // El payload "{"v":1}" codificado con padding no es canónico; el parser exige forma estricta.
+    // The payload "{"v":1}" encoded with padding is not canonical; the parser requires a strict form.
     const padded = `${TICKET_VERSION}.eyJ2IjoxfQ==.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY`;
     expect(() => verifyTicketSignature(padded, key)).toThrow(TicketError);
   });
@@ -240,7 +239,7 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
   });
 
   it('rechaza con malformed un payload que no es JSON', () => {
-    // Encoda "not-json" en base64url canónico.
+    // Encodes "not-json" in canonical base64url.
     const encoded = Buffer.from('not-json', 'utf8').toString('base64')
       .replace(/=+$/, '').replaceAll('+', '-').replaceAll('/', '_');
     const broken = `${TICKET_VERSION}.${encoded}.034UhsCFtCkD-mxdU51meZwH44SLyjrD1PT26ikM3iY`;
@@ -263,7 +262,7 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
   });
 
   it('rechaza con malformed un payload al que le falta un claim obligatorio', () => {
-    // Sin iat: la firma es válida sobre los bytes que se firmaron, pero los claims son inválidos.
+    // Without iat: the signature is valid over the bytes that were signed, but the claims are invalid.
     const partial = JSON.stringify({ ...goldenPayload(), iat: undefined });
     const encoded = Buffer.from(partial, 'utf8').toString('base64')
       .replace(/=+$/, '').replaceAll('+', '-').replaceAll('/', '_');
@@ -276,40 +275,6 @@ describe('verifyTicketSignature: invariantes criptográficas', () => {
       verifyTicketSignature(ticket, key);
     } catch (error) {
       expect((error as TicketError).reason).toBe('malformed');
-    }
-  });
-});
-
-describe('parseAndVerify: ventana de validez', () => {
-  const key = Buffer.from(GOLDEN_ALIAS_KEY_STEVEN_JARVIS, 'hex');
-
-  it('acepta un ticket dentro de su ventana (iat < now < exp)', () => {
-    const payload = parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_015);
-    expect(payload.sid).toBe(goldenPayload().sid);
-  });
-
-  it('acepta el ticket un segundo antes de su exp (límite estricto: exp es exclusivo)', () => {
-    expect(() => parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_029)).not.toThrow();
-  });
-
-  it('rechaza con expired el ticket un segundo después de su exp', () => {
-    expect(() => parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_031))
-      .toThrow(TicketError);
-    try {
-      parseAndVerify(GOLDEN_TICKET_STEVEN_JARVIS, key, 1_750_000_031);
-    } catch (error) {
-      expect((error as TicketError).reason).toBe('expired');
-    }
-  });
-
-  it('rechaza con expired un ticket cuyo exp ya pasó al momento de emisión', () => {
-    // Ticket dorado con exp:1749999960, ahora=1750000000 → claramente expirado.
-    const expiredTicket = 'v1.eyJ2IjoxLCJzaWQiOiIxMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1NTUiLCJvcCI6InVuYXR0cmlidXRlZDpjb25zb2xlLWJhc2ljLWF1dGgiLCJzdWIiOiJTdGV2ZW46a2FudCIsInRndCI6eyJ0ZW5hbnQiOiJTdGV2ZW4iLCJhbGlhcyI6ImphcnZpcyIsImNvbnRhaW5lciI6ImNsYXciLCJnZW5lcmF0aW9uIjoiZ2VuLTEiLCJpbWFnZSI6InNoYTI1NjpkZWFkYmVlZiIsInVpZCI6MTAwMCwidXNlciI6ImNsYXcifSwibW9kZSI6InNoZWxsIiwiaWF0IjoxNzQ5OTk5OTAwLCJleHAiOjE3NDk5OTk5NjB9.BBG_C9V7oWjmUv6oiKuWqN0whH7o_cCjqUM3hZglBfE';
-    expect(() => parseAndVerify(expiredTicket, key, 1_750_000_000)).toThrow(TicketError);
-    try {
-      parseAndVerify(expiredTicket, key, 1_750_000_000);
-    } catch (error) {
-      expect((error as TicketError).reason).toBe('expired');
     }
   });
 });
@@ -329,7 +294,7 @@ describe('ticketSha256 / ticketDigest: huellas durables', () => {
   });
 });
 
-describe('issueResumeToken / parseResumeToken: credencial de reanudación', () => {
+describe('issueResumeToken / verifyResumeTokenSignature: credencial de reanudación', () => {
   const master = Buffer.from('a'.repeat(32), 'utf8');
 
   it('emite y verifica un resume token: round-trip correcto', () => {
@@ -357,7 +322,7 @@ describe('issueResumeToken / parseResumeToken: credencial de reanudación', () =
   });
 
   it('la key de resume se deriva de un dominio HKDF distinto al de tickets', () => {
-    // Mismo master, info "resume-token" vs. "pty:<tenant>:<alias>" → keys diferentes.
+    // Same master, info "resume-token" vs. "pty:<tenant>:<alias>" → different keys.
     const resumeKey = Buffer.from(hkdfSync('sha256', master, Buffer.from(RESUME_HKDF_SALT, 'utf8'),
       Buffer.from('resume-token', 'utf8'), 32));
     const aliasKey = Buffer.from(hkdfSync('sha256', master, Buffer.from(TICKET_HKDF_SALT, 'utf8'),
@@ -380,17 +345,6 @@ describe('issueResumeToken / parseResumeToken: credencial de reanudación', () =
       verifyResumeTokenSignature(wrongVersion, master);
     } catch (error) {
       expect((error as TicketError).reason).toBe('malformed');
-    }
-  });
-
-  it('parseResumeToken acepta un token dentro de su ventana y rechaza uno expirado', () => {
-    const insideWindow = issueResumeToken('sid', 'op', 1_800_000_000, master, 1_750_000_000);
-    expect(() => parseResumeToken(insideWindow, master, 1_790_000_000)).not.toThrow();
-    expect(() => parseResumeToken(insideWindow, master, 1_800_000_001)).toThrow(TicketError);
-    try {
-      parseResumeToken(insideWindow, master, 1_800_000_001);
-    } catch (error) {
-      expect((error as TicketError).reason).toBe('expired');
     }
   });
 });

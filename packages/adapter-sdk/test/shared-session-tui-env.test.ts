@@ -31,14 +31,14 @@ test("la TUI arranca con el mismo entorno la cree el adaptador o el CLI", () => 
   });
   const cli = cliSharedSessionSpec("codex", "socrates", "/workspace", "/home/dev", environment);
   assert.deepEqual(adapter?.paneEnvironment, { CODEX_HOME: "/home/dev/.codex" });
-  assert.deepEqual(cli.environment, adapter?.paneEnvironment);
+  assert.deepEqual(cli.environment, adapter.paneEnvironment);
 
   // claude uses its own variable, and it is the SAME one used to resolve transcripts.
   const claude = loadSharedSessionConfig("claude", "kratos", "/estado", {
     ...environment, CAUCE_SHARED_SESSION: "1",
   });
   assert.deepEqual(claude?.paneEnvironment, { CLAUDE_CONFIG_DIR: "/home/dev/.claude" });
-  assert.equal(claude?.configDirectory, "/home/dev/.claude");
+  assert.equal(claude.configDirectory, "/home/dev/.claude");
   assert.equal(
     transcriptDirectoryIn(claude.configDirectory, "/workspace"),
     transcriptDirectory("/home/dev", "/workspace"),
@@ -58,7 +58,7 @@ test("el entorno se escapa y entra en el argv del panel", async () => {
   // A value containing a quote cannot escape into the command line.
   const raro = paneEnvironmentPrefix({ CLAUDE_CONFIG_DIR: "/tmp/x'; rm -rf /" });
   assert.equal(raro.ok, true);
-  assert.equal(raro.ok && raro.prefix.includes("'\\''"), true);
+  assert.equal(raro.prefix.includes("'\\''"), true);
   // And an invalid name fails BY SAYING SO, instead of launching the TUI with less environment than requested.
   assert.equal(paneEnvironmentPrefix({ "MAL NOMBRE": "x" }).ok, false);
 
@@ -174,7 +174,7 @@ test("una ventana TUI con más de un pane falla cerrada sin elegir el activo", a
 test(
   "tmux real: un respawn con otro comando invalida una sesión marcada",
   async () => {
-    const socket = `cauce-identity-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-identity-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([

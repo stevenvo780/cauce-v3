@@ -1,21 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {readFile, readdir, rm} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
-import {
-  ATOMIC_STATE_FILES,
-  CANONICAL_OPEN_CODE_SESSION_FILE,
-  DurableStore,
-  MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS,
-  MAX_SESSIONS_FILE_BYTES,
-  type CanonicalOpenCodeSessionPointer,
-  type InboxRecord,
-} from "../src/sdk/durable-store.js";
-import type { Delivery, DeliveryEvent, StructuredOutput } from "../src/sdk/types.js";
+import {ATOMIC_STATE_FILES, CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore} from '../src/sdk/durable-store.js';
 import type { AtomicCrashWindow } from "./durable-store-fixtures.js";
-import { delivery, freshStore, root, scopeA } from "./durable-store-fixtures.js";
+import {root, scopeA} from './durable-store-fixtures.js';
 
 const atomicCrashChild = String.raw`
   import { mkdir, open, rename, writeFile } from "node:fs/promises";
@@ -77,7 +67,7 @@ async function crashChildAtAtomicWindow(
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => { stderr += chunk; });
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
-    child.once("exit", (code, signal) => resolveExit({ code, signal }));
+    child.once("exit", (code, signal) => { resolveExit({ code, signal }); });
   });
   await new Promise<void>((resolveReady, rejectReady) => {
     const timeout = setTimeout(() => {

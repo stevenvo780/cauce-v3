@@ -594,7 +594,7 @@ export abstract class ConfigurationMutations {
       );
       return {
         inverse: { resource: 'provider_account', action: 'delete', id: mutation.id },
-        summary: `create provider account ${mutation.id} paid by ${String(value.payer_tenant_id)}`
+        summary: `create provider account ${mutation.id} paid by ${value.payer_tenant_id}`
       };
     }
     if (!old) throw new ConfigurationError('not_found', 'provider account was not found');

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-
+/* eslint @typescript-eslint/no-deprecated: "error" */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { DeliveryStateSchema } from '@cauce/protocol';
 import { createPool } from '@cauce/store';
 import { FleetReadModel } from './fleet-read-model.js';
 
@@ -21,13 +22,13 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-// These are guaranteed by the checks above, but TypeScript needs reassurance
 const ensuredTenantId: string = tenantId;
 const ensuredDatabaseUrl: string = databaseUrl;
 
 let pool: ReturnType<typeof createPool> | undefined;
 let fleetModel: FleetReadModel | undefined;
 
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- Low-level handlers preserve the advertised schema and explicit tool-error contract.
 const server = new Server(
   {
     name: 'mcp-fleet-monitor',
@@ -40,19 +41,9 @@ const server = new Server(
   }
 );
 
-/** Mirrors the deliveries.status CHECK constraint in packages/store/migrations/001_initial.sql. */
-const DELIVERY_STATUSES = [
-  'pending',
-  'leased',
-  'accepted',
-  'started',
-  'done',
-  'failed',
-  'retry',
-  'dead',
-] as const;
+/** Derived from `@cauce/protocol`'s DeliveryStateSchema; the enum the deliveries table accepts. */
+const DELIVERY_STATUSES = DeliveryStateSchema.options;
 
-// Tool descriptions
 const TOOLS = [
   {
     name: 'estado_flota',
@@ -158,7 +149,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: unknown;
 
     const aliasArg = typeof args.alias === 'string' ? args.alias : undefined;
-    const estadoArg = typeof args.estado === 'string' ? args.estado : undefined;
+    const rawEstado = typeof args.estado === 'string' ? args.estado : undefined;
+    let estadoArg: string | undefined;
+    if (rawEstado !== undefined) {
+      const parsed = DeliveryStateSchema.safeParse(rawEstado);
+      if (!parsed.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Invalid 'estado' value '${rawEstado}'. Allowed: ${DELIVERY_STATUSES.join(', ')}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      estadoArg = rawEstado;
+    }
     const limitArg = typeof args.limit === 'number' ? args.limit : undefined;
     const traceIdArg = typeof args.trace_id === 'string' ? args.trace_id : undefined;
     const msgIdArg = typeof args.mensaje_id_raiz === 'string' ? args.mensaje_id_raiz : undefined;
@@ -238,7 +245,7 @@ async function main() {
     }
 
     console.error('[mcp-fleet-monitor] Connected to database');
-    console.error(`[mcp-fleet-monitor] Tenant: ${tenantId}`);
+    console.error(`[mcp-fleet-monitor] Tenant: ${ensuredTenantId}`);
     console.error('[mcp-fleet-monitor] Connecting stdio transport...');
 
     await server.connect(transport);

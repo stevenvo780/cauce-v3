@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type {
   ConsolePublishIntentRateLimited, PublishMessage, Tenant
 } from '@cauce/protocol';
@@ -24,7 +24,7 @@ export function canonicallyEqual(left: unknown, right: unknown): boolean {
 export const reservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
 
 export function sha256(value: unknown): string {
-  const encoded = typeof value === 'string' ? value : JSON.stringify(canonical(value)) ?? 'undefined';
+  const encoded = typeof value === 'string' ? value : JSON.stringify(canonical(value)) ?? 'undefined'; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Runtime values can make JSON.stringify return undefined.
   return createHash('sha256').update(encoded).digest('hex');
 }
 
@@ -285,7 +285,7 @@ export async function loadConsolePublishIntentByKey(
     }
     if (row.action === CONSOLE_PUBLISH_PREPARE_ACTION) {
       const metadata = consolePrepareMetadata(row.metadata);
-      if (metadata === undefined || metadata.idempotency_key !== idempotencyKey
+      if (metadata?.idempotency_key !== idempotencyKey
           || row.message_id !== null || prepared !== undefined) {
         throw new StoreError('conflict', 'durable console publish prepare journal is invalid');
       }
@@ -294,7 +294,7 @@ export async function loadConsolePublishIntentByKey(
     }
     if (row.action === CONSOLE_PUBLISH_CONFIRM_ACTION) {
       const metadata = consoleConfirmMetadata(row.metadata);
-      if (metadata === undefined || metadata.idempotency_key !== idempotencyKey
+      if (metadata?.idempotency_key !== idempotencyKey
           || row.message_id === null || confirmed !== undefined) {
         throw new StoreError('conflict', 'durable console publish confirm journal is invalid');
       }
@@ -302,7 +302,7 @@ export async function loadConsolePublishIntentByKey(
       continue;
     }
     const metadata = consolePrepareMetadata(row.metadata);
-    if (metadata === undefined || metadata.idempotency_key !== idempotencyKey
+    if (metadata?.idempotency_key !== idempotencyKey
         || row.message_id !== null || expiration !== undefined) {
       throw new StoreError('conflict', 'durable console publish expiration journal is invalid');
     }
@@ -345,8 +345,7 @@ export async function loadConsolePublishIntentByNonce(
   }
   if (result.rowCount === 0) return undefined;
   const metadata = consolePrepareMetadata(result.rows[0]?.metadata);
-  if (metadata === undefined
-      || metadata.operator_scope_hash !== operatorScopeHash
+  if (metadata?.operator_scope_hash !== operatorScopeHash
       || metadata.intent_nonce_hash !== intentNonceHash) {
     throw new StoreError('conflict', 'console publish intent nonce state is invalid');
   }
@@ -394,8 +393,8 @@ export async function loadConsolePublishHead(
   }
   const parsed = result.rows.map((row) => {
     const metadata = consoleHeadMetadata(row.metadata);
-    if (row.decision !== 'allow' || row.message_id !== null || metadata === undefined
-        || metadata.operator_scope_hash !== operatorScopeHash
+    if (row.decision !== 'allow' || row.message_id !== null
+        || metadata?.operator_scope_hash !== operatorScopeHash
         || metadata.conversation_hash !== conversationHash) {
       throw new StoreError('conflict', 'durable console publish head is invalid');
     }
@@ -416,8 +415,7 @@ export async function loadConsolePublishHead(
       client, tenantId, actorAlias, intent.idempotency_key,
     );
     const prepared = state.prepared;
-    if (prepared === undefined
-        || prepared.operator_scope_hash !== operatorScopeHash
+    if (prepared?.operator_scope_hash !== operatorScopeHash
         || prepared.conversation_hash !== conversationHash
         || prepared.semantic_hash !== intent.semantic_hash
         || prepared.requested_hash !== intent.requested_hash

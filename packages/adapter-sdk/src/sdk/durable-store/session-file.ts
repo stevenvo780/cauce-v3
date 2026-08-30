@@ -12,7 +12,7 @@ import {
 
 const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_CLOEXEC ?? 0);
 
-export class InvalidSessionsFileError extends Error {
+class InvalidSessionsFileError extends Error {
   readonly code = "INVALID_SESSIONS_FILE";
 
   constructor() {
@@ -104,7 +104,7 @@ function rejectDuplicateJsonKeys(text: string): void {
       return;
     }
     const start = offset;
-    while (offset < text.length && !/[\s,}\]]/u.test(text[offset]!)) offset += 1;
+    while (offset < text.length && !/[\s,}\]]/u.test(text.charAt(offset))) offset += 1;
     if (offset === start) invalidSessionsFile();
   };
   value();

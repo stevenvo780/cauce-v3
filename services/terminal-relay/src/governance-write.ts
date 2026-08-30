@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentConnection, AgentGovernanceBatchEntry } from './agent-leg.js';
 import { MAX_GOVERNANCE_BYTES, type GovernanceReadCode } from './governance-read.js';
 import { logEvent } from './log.js';
+import { integerField, stringField } from './validation.js';
 
 export type GovernanceWriteOperation = 'replace' | 'create';
 
@@ -29,16 +30,6 @@ const READ_CODES: readonly GovernanceReadCode[] = [
 ];
 const WRITE_CODES: readonly GovernanceWriteFailure['error'][] = [...READ_CODES, 'conflict'];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-
-function stringField(source: Record<string, unknown>, name: string): string | undefined {
-  const value = source[name];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function integerField(source: Record<string, unknown>, name: string): number | undefined {
-  const value = source[name];
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
-}
 
 function normalizeWriteCode(value: string): GovernanceWriteFailure['error'] {
   return WRITE_CODES.includes(value as GovernanceWriteFailure['error'])

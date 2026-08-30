@@ -1,29 +1,7 @@
-import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import assert from "node:assert/strict"; /* eslint-disable @typescript-eslint/no-misused-spread -- each spread IS the assertion: emoji short-surrogate counting */
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  ControlledRunner,
-  SUCCESS,
-  delivery,
-  setup,
-} from "./engine-fixtures.js";
+import type {Delivery} from '../src/sdk/types.js';
+import {delivery, setup} from './engine-fixtures.js';
 test("harness prompt receives authenticated origin context", async () => {
   const context = await setup("engine-authenticated-origin");
   const input: Delivery = {

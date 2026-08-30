@@ -176,7 +176,7 @@ export const DeliveryEnvelopeSchema = z.object({
     if (codePoints <= ROLE_BRIEF_MAX_CODE_POINTS) return;
     ctx.addIssue({
       code: 'custom',
-      message: `self_role admits ${ROLE_BRIEF_MAX_CODE_POINTS} code points at most; ${codePoints} were sent`
+      message: `self_role admits ${String(ROLE_BRIEF_MAX_CODE_POINTS)} code points at most; ${String(codePoints)} were sent`
     });
   }).optional(),
   /**

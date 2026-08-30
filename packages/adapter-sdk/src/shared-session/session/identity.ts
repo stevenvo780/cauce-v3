@@ -13,6 +13,7 @@ import {
   type ResumeSpec,
   type SharedSessionHarness,
 } from "../types.js";
+import { signalAborted } from "../../runtime-state.js";
 
 export interface SharedSessionSpec {
   readonly alias: string;
@@ -41,12 +42,6 @@ export type EnsureFailure =
 
 export const SESSION_ALIAS_OPTION = "@cauce_alias";
 export const SESSION_HARNESS_OPTION = "@cauce_harness";
-
-// Read via a function so TypeScript does not treat `AbortSignal.aborted` as a constant
-// narrowed to `false` across awaits: the value changes precisely from another task.
-export function signalAborted(signal: AbortSignal | undefined): boolean {
-  return signal?.aborted === true;
-}
 
 type IdentityResult =
   | { readonly ok: true; readonly pane?: PaneHarnessIdentity }

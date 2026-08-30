@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { WebSocket } from 'ws';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import {
@@ -6,24 +6,24 @@ import {
   type FencedWakeOutboxRecipient, type WakeOutboxClaimFence,
 } from '@cauce/store';
 import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
+import { isLiteralTrue, isSignalAborted } from '../../runtime-guards.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
 import { send, sessionFence, sessionKey } from './helpers.js';
 
-/** `Promise.allSettled`, but with a fixed number of workers and one result per entry. */
 async function allSettledBounded<T>(
   values: readonly T[],
   concurrency: number,
   operation: (value: T) => Promise<void>
-): Promise<Array<PromiseSettledResult<void>>> {
+): Promise<PromiseSettledResult<void>[]> {
   const results = new Array<PromiseSettledResult<void>>(values.length);
-  let cursor = 0;
+  const entries = values.entries();
   const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-    while (true) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= values.length) return;
+    for (;;) {
+      const next = entries.next();
+      if (next.done) return;
+      const [index, value] = next.value;
       try {
-        await operation(values[index]!);
+        await operation(value);
         results[index] = { status: 'fulfilled', value: undefined };
       } catch (reason) {
         results[index] = { status: 'rejected', reason };
@@ -91,16 +91,13 @@ export function createCoreOutboxRuntime(
         .localeCompare(sessionKey(right.tenant_id, right.alias)));
     if (sortedRecipients.length === 0) return;
 
-    // Rotate the first entry each tick so the lexicographically first alias does not always
-    // monopolise the first worker. The FIFO order of events within each identity is preserved by the store.
     const offset = wakeRecipientCursor % sortedRecipients.length;
     wakeRecipientCursor = (wakeRecipientCursor + 1) % sortedRecipients.length;
     const recipients = [
       ...sortedRecipients.slice(offset),
       ...sortedRecipients.slice(0, offset)
     ];
-    // One SQL claim per cycle. PostgreSQL returns at most one row per requested identity in this
-    // same rotated order, so an old backlog cannot monopolise all leases.
+    // One SQL claim per cycle returns at most one row per requested identity in rotated order.
     const events = await repository.claimWakeOutbox(
       workerId,
       recipients,
@@ -109,12 +106,14 @@ export function createCoreOutboxRuntime(
       outboxPumpAbort.signal,
     );
     wakePumpTelemetry.markProgress();
-    for (let claimed = 0; claimed < events.length; claimed += 1) {
+    for (const event of events) {
+      void event;
       wakePumpTelemetry.markClaimed();
     }
-    if (outboxPumpAbort.signal.aborted) {
+    if (isSignalAborted(outboxPumpAbort.signal)) {
       if (events.length === 0) wakePumpTelemetry.recordOutcome('cancelled');
-      for (let cancelled = 0; cancelled < events.length; cancelled += 1) {
+      for (const event of events) {
+        void event;
         wakePumpTelemetry.recordOutcome('cancelled');
       }
       return;
@@ -170,7 +169,7 @@ export function createCoreOutboxRuntime(
     }
     assertWakeClaimShape(event);
     const active = sessions.get(key);
-    if (!active || active.socket.readyState !== WebSocket.OPEN
+    if (active?.socket.readyState !== WebSocket.OPEN
         || active.connectionToken !== recipient.connection_token
         || active.instanceId !== recipient.instance_id || active.epoch !== recipient.epoch) {
       const result = await ackWake(
@@ -183,7 +182,7 @@ export function createCoreOutboxRuntime(
       wakePumpTelemetry.recordOutcome(result === 'dead' ? 'dead' : 'retry');
       return;
     }
-    if (signal.aborted || active.abort.signal.aborted) {
+    if (active.abort.signal.aborted) {
       wakePumpTelemetry.recordOutcome('cancelled');
       return;
     }
@@ -192,11 +191,12 @@ export function createCoreOutboxRuntime(
       outboxLeaseMs,
       signal,
     );
-    // No await is allowed between the SQL CAS and the frame. A local resume replaces `active`
-    // synchronously; a remote resume rotates the same DB token and fences the later ACK.
+    // No await is allowed between the SQL CAS and frame; replacement must fence the later ACK.
     if (!renewed) throw new StoreError('fenced', 'wake outbox pre-send renewal was fenced');
-    if (signal.aborted || active.abort.signal.aborted
-        || sessions.get(key) !== active || active.socket.readyState !== WebSocket.OPEN
+    if (isSignalAborted(signal) || isSignalAborted(active.abort.signal)
+        || sessions.get(key) !== active
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while renewal is awaited.
+        || active.socket.readyState !== WebSocket.OPEN
         || !send(active.socket, {
           type: 'wake', alias: active.alias, reason: 'delivery_available'
         })) {
@@ -212,7 +212,7 @@ export function createCoreOutboxRuntime(
     }
     const drained = await drain(active);
     if (!drained) {
-      if (signal.aborted || active.abort.signal.aborted) {
+      if (isSignalAborted(signal) || isSignalAborted(active.abort.signal)) {
         wakePumpTelemetry.recordOutcome('cancelled');
         return;
       }
@@ -273,11 +273,11 @@ export function createCoreOutboxRuntime(
       ...(error === undefined ? {} : { error }),
       ...(status === 'retry' ? { retry_after_ms: 250 } : {})
     }, signal);
-    if (result.applied !== true) {
+    if (!isLiteralTrue(result.applied)) {
       throw new StoreError('fenced', 'wake outbox ACK was fenced');
     }
-    const validStatus = result.status === 'sent' || result.status === 'failed'
-      || result.status === 'dead';
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Repository results are runtime data despite their interface type.
+    const validStatus = result.status === 'sent' || result.status === 'failed' || result.status === 'dead';
     const expectedStatus = status === 'sent'
       ? result.status === 'sent'
       : result.status === 'failed' || result.status === 'dead';
@@ -293,13 +293,13 @@ export function createCoreOutboxRuntime(
       const tenant = TenantSchema.safeParse(notice.tenant_id);
       if (!tenant.success) return;
       const active = sessions.get(sessionKey(tenant.data, notice.alias));
-      if (!active || active.socket.readyState !== WebSocket.OPEN) return;
+      if (active?.socket.readyState !== WebSocket.OPEN) return;
       send(active.socket, { type: 'wake', alias: active.alias, reason: 'delivery_available' });
       void drain(active);
     });
 
     const timer = setInterval(() => {
-      void pumpOutbox().catch((error: unknown) => app.log.error(error));
+      void pumpOutbox().catch((error: unknown) => { app.log.error(error); });
     }, outboxPollMs);
     timer.unref();
 
@@ -315,16 +315,15 @@ export function createCoreOutboxRuntime(
         session.expiryTimer = undefined;
         session.socket.close(1001, 'gateway shutdown');
       }
-      // This timer is diagnostic only. Shutdown never abandons an await: abortable store operations
-      // destroy their dedicated backend, settle, and are then joined below.
+      // Diagnostic only: abortable store operations settle and are joined below.
       const warning = setTimeout(() => {
         app.log.error(new Error(
-          `gateway shutdown is still waiting for cancelled work after ${outboxShutdownTimeoutMs}ms`,
+          `gateway shutdown is still waiting for cancelled work after ${String(outboxShutdownTimeoutMs)}ms`,
         ));
       }, outboxShutdownTimeoutMs);
       warning.unref();
       try {
-        while (true) {
+        for (;;) {
           const pending: Promise<unknown>[] = [
             ...(outboxPumpPromise === undefined ? [] : [outboxPumpPromise]),
             ...pendingDrains,

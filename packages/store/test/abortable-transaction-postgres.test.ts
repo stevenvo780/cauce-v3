@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { requireValue } from './helpers.js';
 import {
   createPool,
   withAbortableTransaction,
@@ -22,9 +23,9 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await observer?.query(`DROP TABLE IF EXISTS abortable_transaction_probe`);
-  await observer?.end();
-  await database?.container.stop();
+  await observer.query(`DROP TABLE IF EXISTS abortable_transaction_probe`);
+  await observer.end();
+  await database.container.stop();
 });
 
 async function waitUntil(check: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
@@ -56,7 +57,7 @@ describe('withAbortableTransaction', () => {
     try {
       const operation = withAbortableTransaction(pool, controller.signal, async (client) => {
         const selected = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-        publishPid(selected.rows[0]!.pid);
+        publishPid(requireValue(selected.rows[0], 'selected.rows').pid);
         await client.query('SELECT pg_sleep(30)');
         await client.query(`INSERT INTO abortable_transaction_probe(id) VALUES(1)`);
       });

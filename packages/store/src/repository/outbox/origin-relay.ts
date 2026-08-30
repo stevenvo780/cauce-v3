@@ -103,8 +103,8 @@ export abstract class OriginRelayRepository extends JobsRepository {
        WHERE tenant_id=$1 AND adapter=$2 AND idempotency_key=$3 FOR UPDATE`,
       [relayTenant, row.origin.adapter, idempotencyKey]
     );
-    const priorStatus = prior.rows[0]?.status;
-    if (priorStatus === 'pending' || priorStatus === 'failed') {
+    const priorRow = prior.rows[0];
+    if (priorRow !== undefined && (priorRow.status === 'pending' || priorRow.status === 'failed')) {
       // Nobody has sent it yet: it is rewritten in place and the person gets ONE message, the right
       // one. Without a correction header, because there is nothing to correct for them.
       await client.query(
@@ -112,11 +112,11 @@ export abstract class OriginRelayRepository extends JobsRepository {
          SET payload=$2::jsonb,status='pending',available_at=now(),attempts=0,last_error=NULL,
              claimed_by=NULL,claim_token=NULL,claim_expires_at=NULL,claimed_at=NULL,dead_at=NULL
          WHERE id=$1`,
-        [prior.rows[0]!.id, payload(relayResult)]
+        [priorRow.id, payload(relayResult)]
       );
       return 'rewritten';
     }
-    if (priorStatus === undefined) {
+    if (priorRow === undefined) {
       await client.query(
         `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
          VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
@@ -132,7 +132,7 @@ export abstract class OriginRelayRepository extends JobsRepository {
       `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload)
        VALUES($1,$2,'origin_relay',$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb)
        ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-      [relayTenant, row.origin.adapter, `relay-late:${row.id}:${late.attempt}`,
+      [relayTenant, row.origin.adapter, `relay-late:${row.id}:${String(late.attempt)}`,
         row.request_id, row.message_id, row.id,
         row.trace_id, JSON.stringify(row.origin),
         payload(withReplyNotice(relayResult, LATE_RESULT_HUMAN_NOTICE))]

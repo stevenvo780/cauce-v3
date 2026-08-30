@@ -1,38 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import { HarnessAdapter, claudeDefinition, fakeDefinition } from "../src/harnesses/index.js";
-import { ExponentialBackoff } from "../src/sdk/backoff.js";
-import {
-  AdapterClient, capabilityStrings, siembraAplicada, siembraHabilitada,
-} from "../src/sdk/client.js";
-import { ConsumerLease, DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterError, StaleEpochError } from "../src/sdk/errors.js";
-import type {
-  ClientFrame,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  ConsumerConnection,
-  ConsumerConnector,
-  DeliveryEvent,
-  HarnessDefinition,
-  ServerFrame,
-} from "../src/sdk/types.js";
-import {
-  root,
-  CountingRunner,
-  FakeConnection,
-  HelloAgentProfile,
-  ScriptedConnector,
-  SequenceConnector,
-  makeClient,
-  renewableDelivery,
-  startedAcks,
-  waitUntil,
-} from "./client-fixtures.js";
+import {DurableStore} from '../src/sdk/durable-store.js';
+import type {ClientFrame} from '../src/sdk/types.js';
+import {CountingRunner, FakeConnection, ScriptedConnector, SequenceConnector, makeClient, renewableDelivery, startedAcks, waitUntil} from './client-fixtures.js';
 
 class HangingExecutionIntentConnection extends FakeConnection {
   closeCalls = 0;
@@ -136,11 +106,10 @@ test("an unconfirmed execution intent times out before invoking the harness", as
       frame.type === "ack" && frame.delivery_id === input.delivery_id && frame.status === "failed"
     ));
     assert.equal(runner.calls, 0);
-    assert.equal(failed?.type, "ack");
-    if (failed?.type === "ack") {
-      assert.equal(failed.error_code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
-      assert.equal(failed.retryable, true);
-    }
+    assert.ok(failed, "expected an ACK frame");
+    if (failed.type !== "ack") throw new Error("frame type is not ack");
+    assert.equal(failed.error_code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
+    assert.equal(failed.retryable, true);
   } finally {
     stop.abort();
     await running;
@@ -169,8 +138,9 @@ test("a receipt cannot release the harness while its transport send never settle
     assert.equal(runner.calls, 0, "a remote receipt does not prove the local send completed");
     assert.ok(connection.closeCalls > 0, "the poisoned transport must be closed before reconnect");
     const record = context.store.getDelivery(input.delivery_id);
-    assert.equal(record?.error?.code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
-    assert.equal(record?.error?.retryable, true);
+    assert.ok(record);
+    assert.equal(record.error?.code, "EXECUTION_INTENT_CONFIRMATION_FAILED");
+    assert.ok(record.error.retryable, "the failure must be marked retryable");
     assert.ok(context.store.pendingEvents().some((event) => (
       event.delivery_id === input.delivery_id && event.phase === "failed"
     )), "the retryable failure must remain durable when the connection cannot flush it");

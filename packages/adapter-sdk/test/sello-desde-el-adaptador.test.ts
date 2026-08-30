@@ -44,7 +44,7 @@ function runnerEspia(): { runner: CommandRunner; visto: string[] } {
   const visto: string[] = [];
   const runner: CommandRunner = {
     async run(request: CommandRunRequest): Promise<CommandRunResult> {
-      visto.push(request.stdin ?? "");
+      visto.push(request.stdin);
       // The shape emitted by `claude --print --output-format json`: the structured result goes
       // INSIDE `result`. Hand-fabricating it here is what allows using the real `claude` harness,
       // which is the only one that resolves an instructions-file path.
@@ -116,7 +116,7 @@ test("con el CLAUDE.md sembrado, el adaptador NO le manda el bloque fijo al arn�
     assert.ok(!stdin.includes(PRIMARY_DUTY_HEADER), "el bloque fijo viajó igual teniéndolo el fichero");
     assert.match(stdin, /contexto Cauce v/u, "no quedó la referencia al contrato ya cargado");
     assert.ok(stdin.includes("Revisa el gateway."), "se perdió el pedido");
-    assert.ok(stdin.length < 3_000, `el sobre midió ${stdin.length}: no se recortó`);
+    assert.ok(stdin.length < 3_000, `el sobre midió ${String(stdin.length)}: no se recortó`);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -129,7 +129,7 @@ test("CONTROL NEGATIVO: sin fichero sembrado, el adaptador manda el sobre ENTERO
   try {
     const stdin = await correrUnTurno(home, "zeus");
     assert.ok(stdin.includes(PRIMARY_DUTY_HEADER), "se recortó sin que el fichero dijera nada");
-    assert.ok(stdin.length > 5_000, `el sobre midió ${stdin.length}: parece recortado`);
+    assert.ok(stdin.length > 5_000, `el sobre midió ${String(stdin.length)}: parece recortado`);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -240,7 +240,7 @@ test("la TUI compartida recibe el perfil vivo en cada turno sin reiniciar su pro
   process.env.HOME = home;
   delete process.env.CLAUDE_CONFIG_DIR;
   try {
-    const consumidos: Array<{ readonly documents: readonly { readonly path: string; readonly sha256: string }[] }> = [];
+    const consumidos: { readonly documents: readonly { readonly path: string; readonly sha256: string }[] }[] = [];
     const run = () => adapter.execute({
       prompt: "Revisa el perfil.",
       context: contexto("zeus"),
@@ -258,7 +258,7 @@ test("la TUI compartida recibe el perfil vivo en cada turno sin reiniciar su pro
     assert.doesNotMatch(visto[1] ?? "", /perfil de la primera generación/u);
     assert.equal(consumidos.length, 2);
     assert.equal(consumidos[0]?.documents[0]?.path, path);
-    assert.notEqual(consumidos[0]?.documents[0]?.sha256, consumidos[1]?.documents[0]?.sha256);
+    assert.notEqual(consumidos[0].documents[0].sha256, consumidos[1]?.documents[0]?.sha256);
     assert.equal(
       consumidos[1]?.documents[0]?.sha256,
       createHash("sha256").update(profile("perfil actualizado sin reiniciar la TUI"), "utf8").digest("hex"),

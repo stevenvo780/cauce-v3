@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { requireValue } from './helpers.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabasePool } from '../src/index.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -23,8 +24,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 beforeEach(async () => {
@@ -59,23 +60,23 @@ async function seedOutbox(
        CASE WHEN $6='processing' THEN gen_random_uuid() ELSE NULL END,
        CASE WHEN $6='processing' THEN now()+interval '1 minute' ELSE NULL END
      ) RETURNING id`,
-    [adapter, kind, randomUUID(), requestId, message.rows[0]!.id, status],
+    [adapter, kind, randomUUID(), requestId, requireValue(message.rows[0], 'message.rows').id, status],
   );
-  const hasDisposition = (await pool.query<{ exists: boolean }>(
+  const hasDisposition = requireValue((await pool.query<{ exists: boolean }>(
     `SELECT EXISTS(
        SELECT 1 FROM information_schema.columns
        WHERE table_schema=current_schema() AND table_name='outbox_dead_letters'
          AND column_name='disposition'
      ) AS exists`,
-  )).rows[0]!.exists;
-  if (!hasDisposition) return { outboxId: outbox.rows[0]!.id, letterId: null };
+  )).rows[0], 'rows').exists;
+  if (!hasDisposition) return { outboxId: requireValue(outbox.rows[0], 'outbox.rows').id, letterId: null };
   const letter = await pool.query<{ id: string }>(
     `INSERT INTO outbox_dead_letters(
        outbox_id,tenant_id,adapter,kind,reason,payload,attempts,resolved_at
      ) VALUES($1,'Steven',$2,$3,'migration race','{}'::jsonb,1,now()) RETURNING id`,
-    [outbox.rows[0]!.id, adapter, kind],
+    [requireValue(outbox.rows[0], 'outbox.rows').id, adapter, kind],
   );
-  return { outboxId: outbox.rows[0]!.id, letterId: letter.rows[0]!.id };
+  return { outboxId: requireValue(outbox.rows[0], 'outbox.rows').id, letterId: requireValue(letter.rows[0], 'letter.rows').id };
 }
 
 describe('migration 030 lifecycle', () => {
@@ -168,7 +169,7 @@ describe('migration 030 lifecycle', () => {
       await writer.query('COMMIT');
       await expect(upgrading).rejects.toThrow(/refuses inconsistent causal DLQ\/effect evidence/u);
     } finally {
-      if (!upSettled) await writer.query('ROLLBACK').catch(() => undefined);
+      await writer.query('ROLLBACK').catch(() => undefined);
       writer.release();
     }
     expect((await pool.query<{ exists: boolean }>(
@@ -258,7 +259,7 @@ describe('migration 030 lifecycle', () => {
       await expect(writing).resolves.toBeDefined();
       await expect(downgrading).rejects.toThrow(/cannot downgrade schema 030/u);
     } finally {
-      if (!writerSettled || !downSettled) await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.query('ROLLBACK').catch(() => undefined);
       blocker.release();
     }
     expect((await pool.query<{ count: string }>(

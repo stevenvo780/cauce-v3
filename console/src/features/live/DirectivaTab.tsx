@@ -10,7 +10,7 @@ import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
  * Tab for summarizing an agent's declared directive and role in the side drawer.
  */
 
-export interface DirectivaTabProps {
+interface DirectivaTabProps {
   tenantId: string;
   alias: string;
   configuracion: Resource<ConfigurationSnapshot>;

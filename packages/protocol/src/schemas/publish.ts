@@ -17,10 +17,10 @@ export const PublishResultSchema = z.object({
   request_id: RequestIdSchema,
   trace_id: TraceIdSchema,
   /**
-   * Correlacion causal que el publicador ya conoce antes del POST. `request_id` y `trace_id`
-   * nacen en el gateway, por lo que un cliente no puede usarlos para distinguir su recibo de
-   * otro recibo estructuralmente valido. La clave viaja de vuelta para cerrar ese hueco sin
-   * exponer identidad ni contenido del mensaje.
+   * Causal correlation the publisher already knows before the POST. `request_id` and `trace_id`
+   * are minted at the gateway, so a client cannot use them to distinguish its receipt from
+   * another structurally valid one. The key travels back to close that gap without exposing
+   * identity or message content.
    */
   idempotency_key: z.string().min(1).max(200),
   tenant_id: TenantSchema,

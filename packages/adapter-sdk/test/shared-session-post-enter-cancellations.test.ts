@@ -518,7 +518,7 @@ test("la limpieza CAS no borra una cuarentena concurrente de la generación actu
   const fallback = new RecordingFallback("{}");
   const originalRun = tmux.run.bind(tmux);
   let raced = false;
-  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+  tmux.run = async (args, stdin, _control): Promise<TmuxResult> => {
     if (!raced && args[0] === "if-shell"
       && args.some((argument) => argument.includes("@cauce_quarantined_pane"))) {
       raced = true;

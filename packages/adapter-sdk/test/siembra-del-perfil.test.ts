@@ -188,7 +188,7 @@ test("segunda conexión con el mismo perfil: NO se reescribe el fichero", () => 
   const segunda = sembrarPerfilDelArnes("claude", contexto({ purpose: "el médico" }), opciones);
   assert.equal(d.escrituras.length, 1, "reescribió un fichero que ya estaba al día");
   assert.equal(segunda.estado, "hecho");
-  if (segunda.estado === "hecho") assert.equal(segunda.ficheros[0]?.estado, "ya-estaba");
+  assert.equal(segunda.ficheros[0]?.estado, "ya-estaba");
 });
 
 test("la siembra sólo verifica una proyección revisionada que ya coincide", () => {
@@ -223,9 +223,7 @@ test("la siembra no modifica ni acredita una proyección revisionada con drift",
   assert.deepEqual(d.escrituras, []);
   assert.equal(d.ficheros.get(path), projected.texto);
   assert.equal(resultado.estado, "hecho");
-  if (resultado.estado === "hecho") {
-    assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
-  }
+  assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
 });
 
 test("la siembra no finge que un lote OpenClaw revisionado incompleto está vigente", () => {
@@ -247,10 +245,8 @@ test("la siembra no finge que un lote OpenClaw revisionado incompleto está vige
   assert.deepEqual(d.escrituras, []);
   assert.equal(d.ficheros.has("/ws/SOUL.md"), false);
   assert.equal(resultado.estado, "hecho");
-  if (resultado.estado === "hecho") {
-    assert.equal(resultado.ficheros.length, 7);
-    assert.ok(resultado.ficheros.every((file) => file.estado === "no-se-pudo-escribir"));
-  }
+  assert.equal(resultado.ficheros.length, 7);
+  assert.ok(resultado.ficheros.every((file) => file.estado === "no-se-pudo-escribir"));
 });
 
 test("un fichero OpenClaw vacío pero ausente también es drift revisionado", () => {
@@ -273,9 +269,7 @@ test("un fichero OpenClaw vacío pero ausente también es drift revisionado", ()
   assert.deepEqual(d.escrituras, []);
   assert.equal(d.ficheros.has("/ws/SOUL.md"), false);
   assert.equal(resultado.estado, "hecho");
-  if (resultado.estado === "hecho") {
-    assert.ok(resultado.ficheros.every((file) => file.estado === "no-se-pudo-escribir"));
-  }
+  assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
 });
 
 test("el bloque de OTRO alias no se pisa, y el parte lo dice con esas palabras", () => {
@@ -292,9 +286,7 @@ test("el bloque de OTRO alias no se pisa, y el parte lo dice con esas palabras",
   const resultado = sembrarPerfilDelArnes("codex", contexto({ purpose: "soy atlas" }, "atlas"), opciones);
   assert.equal(d.ficheros.get("/compartido/AGENTS.md"), trasKratos, "atlas pisó a kratos");
   assert.equal(resultado.estado, "hecho");
-  if (resultado.estado === "hecho") {
-    assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
-  }
+  assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
 });
 
 test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera línea", () => {
@@ -312,9 +304,7 @@ test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera 
   assert.deepEqual(d.escrituras, []);
   assert.equal(d.ficheros.get(path), foreign);
   assert.equal(resultado.estado, "hecho");
-  if (resultado.estado === "hecho") {
-    assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
-  }
+  assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
 });
 
 // ── WHAT MUST NOT BREAK THE GREETING ────────────────────────────────────────────────────────
@@ -333,9 +323,7 @@ test("si el disco no deja escribir, lo dice y NO lanza", () => {
     habilitado: true, disco: puerto, entorno: ENTORNO,
   });
   assert.equal(resultado.estado, "hecho");
-  if (resultado.estado === "hecho") {
-    assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
-  }
+  assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
 });
 
 test("si un fichero no se puede LEER, OpenClaw cancela el lote entero", () => {
@@ -351,15 +339,13 @@ test("si un fichero no se puede LEER, OpenClaw cancela el lote entero", () => {
   });
   assert.equal(resultado.estado, "hecho");
   assert.deepEqual(escrituras, [], "escribió una persona parcial de OpenClaw");
-  if (resultado.estado === "hecho") {
-    assert.equal(resultado.ficheros.length, 7);
-    assert.ok(resultado.ficheros.every((fichero) => fichero.estado === "no-se-pudo-escribir"));
-  }
+  assert.equal(resultado.ficheros.length, 7);
+  assert.ok(resultado.ficheros.every((fichero) => fichero.estado === "no-se-pudo-escribir"));
 });
 
 test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lectura-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   assert.equal(discoReal.leer(join(raiz, "ausente.md")), undefined);
 
@@ -376,7 +362,7 @@ test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular
 
 test("la escritura conserva el inode existente y no sigue symlinks", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-escritura-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   const objetivo = join(raiz, "AGENTS.md");
   writeFileSync(objetivo, "antes", "utf8");
@@ -388,13 +374,13 @@ test("la escritura conserva el inode existente y no sigue symlinks", (t) => {
 
   const enlace = join(raiz, "enlace.md");
   symlinkSync(objetivo, enlace);
-  assert.throws(() => discoReal.escribir(enlace, "pisado"));
+  assert.throws(() => { discoReal.escribir(enlace, "pisado"); });
   assert.equal(readFileSync(objetivo, "utf8"), "después");
 });
 
 test("un symlink en cualquier directorio padre no puede escapar del home", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-padre-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   const home = join(raiz, "home");
   const fuera = join(raiz, "fuera");
@@ -404,7 +390,7 @@ test("un symlink en cualquier directorio padre no puede escapar del home", (t) =
   const ruta = join(home, ".codex", "AGENTS.md");
 
   assert.throws(() => discoReal.leer(ruta), "trató el padre symlink como ausencia");
-  assert.throws(() => discoReal.escribir(ruta, "escape"));
+  assert.throws(() => { discoReal.escribir(ruta, "escape"); });
   assert.equal(existsSync(join(fuera, "AGENTS.md")), false, "escribió fuera del home autorizado");
   assert.ok(!readdirSync(fuera).some((nombre) => nombre.startsWith(".cauce-perfil-")));
 });
@@ -444,10 +430,10 @@ test("un swap concurrente del padre aborta y limpia mediante el dirfd original",
 
   assert.deepEqual(await once(worker, "message"), ["ready"]);
   const intercambio = once(worker, "message");
-  assert.throws(() => discoReal.escribir(
+  assert.throws(() => { discoReal.escribir(
     join(directorio, "AGENTS.md"),
     "x".repeat(16 * 1024 * 1024),
-  ));
+  ); });
   assert.deepEqual(await intercambio, ["swapped"]);
   assert.equal(existsSync(join(fuera, "AGENTS.md")), false);
   assert.equal(existsSync(join(movido, "AGENTS.md")), false, "no revirtió el destino anclado");
@@ -456,7 +442,7 @@ test("un swap concurrente del padre aborta y limpia mediante el dirfd original",
 
 test("el preflight del lote falla antes de modificar el primer destino", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lote-"));
-  t.after(() => rmSync(raiz, { recursive: true, force: true }));
+  t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 
   const primero = join(raiz, "SOUL.md");
   const objetivo = join(raiz, "objetivo.md");
@@ -465,10 +451,10 @@ test("el preflight del lote falla antes de modificar el primer destino", (t) => 
   writeFileSync(objetivo, "segundo-intacto", "utf8");
   symlinkSync(objetivo, segundo);
 
-  assert.throws(() => discoReal.escribirLote([
+  assert.throws(() => { discoReal.escribirLote([
     { ruta: primero, contenido: "primero-nuevo" },
     { ruta: segundo, contenido: "segundo-nuevo" },
-  ]));
+  ]); });
   assert.equal(readFileSync(primero, "utf8"), "primero-intacto");
   assert.equal(readFileSync(objetivo, "utf8"), "segundo-intacto");
   assert.ok(!readdirSync(raiz).some((nombre) => nombre.startsWith(".cauce-perfil-")));
@@ -485,7 +471,7 @@ test("un tope superado NO escribe NINGUNO de los siete", () => {
   });
   assert.equal(resultado.estado, "no-entra");
   assert.equal(d.escrituras.length, 0);
-  if (resultado.estado === "no-entra") assert.equal(resultado.fichero, "SOUL.md");
+  assert.equal(resultado.fichero, "SOUL.md");
 });
 
 test("CONTROL NEGATIVO: un arnés sin ficheros no escribe y no es un error", () => {

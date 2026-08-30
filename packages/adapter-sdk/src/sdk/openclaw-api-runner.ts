@@ -1,4 +1,5 @@
-import { isIP } from "node:net";
+import { isIP } from "node:net"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { signalAborted } from "../runtime-state.js";
 import { ProcessExecutionError } from "./errors.js";
 import { readBearerTokenFile } from "./secure-files.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "./types.js";
@@ -39,7 +40,7 @@ async function boundedResponse(response: Response, limit: number): Promise<strin
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
-  while (true) {
+  for (;;) {
     const next = await reader.read();
     if (next.done) break;
     bytes += next.value.byteLength;
@@ -92,7 +93,7 @@ export class OpenClawApiRunner implements CommandRunner {
     if (request.signal.aborted) throw this.cancelledBeforeDispatch();
 
     const token = await readBearerTokenFile(this.tokenFile);
-    if (request.signal.aborted) throw this.cancelledBeforeDispatch();
+    if (signalAborted(request.signal)) throw this.cancelledBeforeDispatch();
     const controller = new AbortController();
     let timedOut = false;
     let cancelled = false;
@@ -151,7 +152,7 @@ export class OpenClawApiRunner implements CommandRunner {
         timedOut: false,
         cancelled: false,
       };
-    } catch (error) {
+    } catch (error) { // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort callbacks can mutate both flags before fetch rejects.
       if (timedOut || cancelled) {
         if (!dispatched) throw this.cancelledBeforeDispatch();
         return this.abortedResult(timedOut);

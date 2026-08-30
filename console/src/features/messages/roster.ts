@@ -7,7 +7,7 @@ import { buildFleetAgents, fleetAgentId, type FleetAgent } from '../terminal/fle
  * to say it: "this alias is in the registry but in no room" is an operational fact, and hiding it
  * was exactly the bug that cost the day of `gaia`.
  */
-export type OrigenDeAgente = 'topologia' | 'presencia' | 'registro' | 'mensajes';
+type OrigenDeAgente = 'topologia' | 'presencia' | 'registro' | 'mensajes';
 
 export interface AgenteDeMensajeria extends FleetAgent {
   origenes: OrigenDeAgente[];

@@ -88,9 +88,10 @@ function headerValue(value: string | string[] | undefined): string | undefined {
 function cookieValue(header: string | undefined, name: string): string | undefined {
   if (!header) return undefined;
   const values = header.split(';').map((item) => item.trim()).filter((item) => item.startsWith(`${name}=`));
-  if (values.length !== 1) return undefined;
+  const [match] = values;
+  if (values.length !== 1 || match === undefined) return undefined;
   try {
-    return decodeURIComponent(values[0]!.slice(name.length + 1));
+    return decodeURIComponent(match.slice(name.length + 1));
   } catch {
     return undefined;
   }
@@ -98,7 +99,7 @@ function cookieValue(header: string | undefined, name: string): string | undefin
 
 function sessionCookie(name: string, value: string, maxAgeSeconds: number): string {
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${
-    Math.max(0, Math.floor(maxAgeSeconds))}`;
+    String(Math.max(0, Math.floor(maxAgeSeconds)))}`;
 }
 
 export function signConsoleSession(key: Buffer, claims: ConsoleSessionClaims): string {
@@ -245,7 +246,7 @@ export class PasswordAuthProvider implements AuthProvider {
 
   constructor(options: PasswordAuthProviderOptions) {
     if (options.signingKey.byteLength < MIN_SIGNING_KEY_BYTES) {
-      throw new Error(`la clave de firma de la consola necesita al menos ${MIN_SIGNING_KEY_BYTES} bytes`);
+      throw new Error(`la clave de firma de la consola necesita al menos ${String(MIN_SIGNING_KEY_BYTES)} bytes`);
     }
     this.users = options.users;
     this.signingKey = Buffer.from(options.signingKey);
@@ -318,7 +319,7 @@ export class PasswordAuthProvider implements AuthProvider {
     const claims = verifyConsoleSession(this.signingKey, token, this.now());
     const user = await this.users.findById(claims.sub);
     // ALWAYS re-read. A signed token is not authority over the current state of the account.
-    if (!user || !user.active) throw new AuthError('la cuenta de consola no está habilitada');
+    if (!user?.active) throw new AuthError('la cuenta de consola no está habilitada');
     // Changing the password invalidates previously issued tokens: revocation without a revocation table.
     if (claims.iat * 1_000 < user.password_changed_at - 1_000) throw new SessionExpiredError();
     const loaded = { claims, user, principal: this.principalFor(user, claims) };

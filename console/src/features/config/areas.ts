@@ -98,7 +98,7 @@ export function areaDeColeccion(key: string): ConfigAreaId {
   return Object.hasOwn(AREA_POR_COLECCION, key) ? AREA_POR_COLECCION[key] : 'otros';
 }
 
-export interface AreaConColecciones {
+interface AreaConColecciones {
   area: ConfigArea;
   colecciones: ConfigCollection[];
 }

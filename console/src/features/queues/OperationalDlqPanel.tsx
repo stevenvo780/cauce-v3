@@ -5,7 +5,7 @@ import type {
   DlqDisposition, DlqItem, DlqPage, DlqTarget, ResolveDlqWithoutReplayResult,
 } from '../../api/types';
 import { useResource } from '../../api/use-resource';
-import { Badge, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown } from '../../components/ui';
+import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown } from '../../components/ui';
 import { compactId } from '../../lib';
 
 const DISPOSITION: Readonly<Record<DlqDisposition, string>> = {
@@ -377,7 +377,7 @@ export function OperationalDlqPanel() {
       ) : null}
 
       {rows.length === 0 ? <EmptyState>No hay incidentes que coincidan con el filtro.</EmptyState> : (
-        <div className="table-wrap">
+        <Desplazable etiqueta="Incidentes de DLQ con clasificación causal">
           <table className="tabla-dlq">
             <caption className="sr-only">Incidentes de DLQ con clasificación causal</caption>
             <thead><tr><th>Incidente</th><th>Tenant</th><th>Origen</th><th>Disposición</th><th>Intentos</th><th>Evidencia</th><th>Creado</th><th>Resolución</th><th>Acción</th></tr></thead>
@@ -405,7 +405,7 @@ export function OperationalDlqPanel() {
               );
             })}</tbody>
           </table>
-        </div>
+        </Desplazable>
       )}
     </Panel>
   );

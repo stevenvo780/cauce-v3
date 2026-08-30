@@ -57,7 +57,7 @@ const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'ficheros', label: 'Ficheros' },
 ];
 
-export interface AgentDrawerProps {
+interface AgentDrawerProps {
   view: LiveAgentView;
   tab: DrawerTab;
   configuracion: Resource<ConfigurationSnapshot>;

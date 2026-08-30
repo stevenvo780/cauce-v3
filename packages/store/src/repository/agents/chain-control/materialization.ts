@@ -1,7 +1,8 @@
 import {
   clampAgentPriority, MAX_DELEGATION_FEEDBACK_ITEMS, type Ack, type Tenant
-} from '@cauce/protocol';
+} from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
+import { persistedString } from '../../../runtime-values.js';
 import {
   boundedRejectionTarget, describeDelegationRejection, fanoutCapForTurn, HUMAN_GATE_TARGET,
   rejectionText, type RejectionNotice
@@ -150,10 +151,12 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
       && uuidPattern.test(parentCorrelation.root_request_id)
       ? parentCorrelation.root_request_id
       : row.request_id;
-    const rootMessageId = typeof parentCorrelation?.root_message_id === 'string'
-      && uuidPattern.test(parentCorrelation.root_message_id)
-      ? parentCorrelation.root_message_id
-      : row.message_id;
+    const rootMessageId = persistedString(
+      typeof parentCorrelation?.root_message_id === 'string'
+        && uuidPattern.test(parentCorrelation.root_message_id)
+        ? parentCorrelation.root_message_id
+        : row.message_id
+    );
     const rootDeliveryId = typeof parentCorrelation?.root_delivery_id === 'string'
       && uuidPattern.test(parentCorrelation.root_delivery_id)
       ? parentCorrelation.root_delivery_id
@@ -329,8 +332,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
         // `@human` is not an alias: it is a question. It stops being a delivery that cannot
         // complete and becomes a row with state. Only when the primitive exists and is enabled;
         // otherwise it falls back to the old path and ends in 'unroutable_alias', as before.
-      if (output === gateDirective && targetAlias === HUMAN_GATE_TARGET && body !== undefined
-        && rootMessageId !== undefined) {
+      if (output === gateDirective && targetAlias === HUMAN_GATE_TARGET && body !== undefined && rootMessageId !== undefined) {
         const gate = await this.openHumanGate(client, row, ack, output.index, {
           rootMessageId, question: body, correlation
         });
@@ -397,11 +399,11 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
           if (edge.rowCount === 1) allowedTargets.push(candidate);
         }
       }
-      if (allowedTargets.length !== 1) {
+      const targetTenant = allowedTargets.length === 1 ? allowedTargets[0] : undefined;
+      if (targetTenant === undefined) {
         await reject(allowedTargets.length > 1 ? 'ambiguous_alias' : 'unroutable_alias');
         continue;
       }
-      const targetTenant = allowedTargets[0]!;
       const targetNode = chainNode(targetTenant, targetAlias);
       // The only point where the destination pair is both resolved and authorized. A cycle
       // is a durable rejection, never an exception: when every output of an ACK is rejected
@@ -417,8 +419,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
       // takes), then the edge. If the edge does not fit, the root fuel is RETURNED in the same
       // transaction: otherwise a saturated destination would drain the whole chain's budget
       // without producing a single delivery.
-      if (policy.delegationCaps.enabled && policy.delegationCapsAvailable
-        && rootMessageId !== undefined) {
+      if (policy.delegationCaps.enabled && policy.delegationCapsAvailable && rootMessageId !== undefined) {
         const rootReserved = await this.reserveRootDelegation(
           client, rootMessageId, policy.delegationCaps.maxDelegationsPerRoot
         );
@@ -463,7 +464,8 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
           // cap cannot be bypassed by the agent.
         lane: 'batch',
         priority: clampAgentPriority(row.priority),
-        authSessionId: row.auth_session_id ?? `delivery:${row.id}:attempt:${ack.attempt}`,
+        authSessionId: row.auth_session_id
+          ?? `delivery:${row.id}:attempt:${String(ack.attempt)}`,
         authChannel: row.auth_channel ?? row.origin?.channel ?? 'agent-output',
       });
       const messageId = message.rows[0]?.id;
@@ -478,7 +480,9 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
            tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload
          ) VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,NULL,$7::jsonb)`,
         [
-          targetTenant, `agent-output:${row.id}:${ack.attempt}:${output.index}`, requestId,
+          targetTenant,
+          `agent-output:${row.id}:${String(ack.attempt)}:${String(output.index)}`,
+          requestId,
           messageId, producedDeliveryId, row.trace_id,
           JSON.stringify({ recipient_alias: targetAlias, reason: 'delivery_available' })
         ]
@@ -534,7 +538,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
       await this.insertProgressRelay(
         client, row, ack.attempt, policy, rootMessageId, 'delegated',
         `${row.recipient_alias} delegó en ${materializedTargets.join(', ')}`
-        + ` (hop ${hopCount}/${hopBudget}).`
+        + ` (hop ${String(hopCount)}/${String(hopBudget)}).`
       );
     }
     return {

@@ -142,7 +142,7 @@ export function registerConsoleRoutesPhase3(
       if (!allowedJobKinds.has(job.kind)) {
         throw new StoreError('no_route', `job kind has no executable handler: ${job.kind}`);
       }
-      return reply.code(202).send({
+      return await reply.code(202).send({
         job_id: await repository.enqueueJob(actor.tenant_id, job.lane, job.priority, job.kind, job.payload)
       });
     } catch (error) { replyError(reply, error); }
@@ -249,6 +249,8 @@ export function registerConsoleRoutesPhase3(
         enabled: true,
       };
     };
+    const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation?.bind(repository);
+    const readRuntimeAdoption = repository.readProfileRuntimeAdoption?.bind(repository);
     registerAgentProfileRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
@@ -257,21 +259,21 @@ export function registerConsoleRoutesPhase3(
         perfiles.replace(profile, expectedRevision, actor),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
-      ...(repository.recordProfileRuntimeExpectation === undefined
+      ...(recordRuntimeExpectation === undefined
         ? {}
         : {
             recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
-              repository.recordProfileRuntimeExpectation!(
+              recordRuntimeExpectation(
                 tenantId,
                 alias,
                 runtimeContractFromVerification(revision, verification),
               ),
           }),
-      ...(repository.readProfileRuntimeAdoption === undefined
+      ...(readRuntimeAdoption === undefined
         ? {}
         : {
             readRuntimeAdoption: (tenantId, alias, revision, verification) =>
-              repository.readProfileRuntimeAdoption!(
+              readRuntimeAdoption(
                 tenantId,
                 alias,
                 runtimeContractFromVerification(revision, verification),
@@ -304,7 +306,7 @@ export function registerConsoleRoutesPhase3(
           const tenant = TenantSchema.safeParse(request.params.tenantId);
           const alias = AliasSchema.safeParse(request.params.alias);
           if (!tenant.success || !alias.success) {
-            return reply.code(400).send({
+            return await reply.code(400).send({
               error: 'invalid_input', message: 'tenantId or alias is invalid',
             });
           }
@@ -312,8 +314,8 @@ export function registerConsoleRoutesPhase3(
           const target = await autorizarDestino(
             actor, tenant.data, alias.data, 'read', false,
           );
-          if (!target || target.tenant_id !== tenant.data || target.alias !== alias.data) {
-            return reply.code(404).send({
+          if (target?.tenant_id !== tenant.data || target.alias !== alias.data) {
+            return await reply.code(404).send({
               error: 'not_found', message: 'agent not found or not visible',
             });
           }
@@ -353,7 +355,7 @@ export function registerConsoleRoutesPhase3(
         const tenant = TenantSchema.safeParse(request.params.tenantId);
         const alias = AliasSchema.safeParse(request.params.alias);
         if (!tenant.success || !alias.success) {
-          return reply.code(400).send({
+          return await reply.code(400).send({
             error: 'invalid_input', message: 'tenantId or alias is invalid',
           });
         }
@@ -364,7 +366,7 @@ export function registerConsoleRoutesPhase3(
           : await repository.getAgentByIdentity(
               tenant.data, alias.data, actor.tenant_id, actor.alias,
             );
-        if (!agent || agent.tenant_id !== tenant.data || agent.alias !== alias.data) {
+        if (agent?.tenant_id !== tenant.data || agent.alias !== alias.data) {
           throw new StoreError('not_found', 'agent not found or not visible');
         }
         return agent;
@@ -380,7 +382,7 @@ export function registerConsoleRoutesPhase3(
       requirePermission(actor, 'read');
       const alias = AliasSchema.parse(request.params.alias);
       const agent = await repository.getAgent(alias, actor.tenant_id, actor.alias);
-      if (!agent || agent.tenant_id !== actor.tenant_id || agent.alias !== alias) {
+      if (agent?.tenant_id !== actor.tenant_id || agent.alias !== alias) {
         throw new StoreError('not_found', 'agent not found or not visible');
       }
       return agent;

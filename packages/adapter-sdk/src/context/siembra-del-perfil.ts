@@ -87,7 +87,7 @@ interface DirectorioAnclado {
 }
 
 function rutaDelDescriptor(descriptor: number): string {
-  return `/proc/self/fd/${descriptor}`;
+  return `/proc/self/fd/${String(descriptor)}`;
 }
 
 function comprobarSoporteDeDirfd(descriptor: number): void {
@@ -355,7 +355,7 @@ function escribirLoteReal(escrituras: readonly EscrituraDelArnes[]): void {
       }
     }
     if (fallosDeRollback.length > 0) {
-      throw new Error(`falló la siembra y también el rollback de ${fallosDeRollback.length} fichero(s)`, {
+      throw new Error(`falló la siembra y también el rollback de ${String(fallosDeRollback.length)} fichero(s)`, {
         cause: error,
       });
     }
@@ -488,7 +488,7 @@ export function sembrarPerfilDelArnes(
         nombre,
         estado: "no-se-pudo-escribir" as const,
         motivo: erroresDeLectura.has(nombre)
-          ? `no se pudo leer el fichero existente: ${erroresDeLectura.get(nombre)}`
+          ? `no se pudo leer el fichero existente: ${String(erroresDeLectura.get(nombre))}`
           : "lote cancelado porque otro fichero no se pudo leer",
       })),
     };
@@ -501,7 +501,7 @@ export function sembrarPerfilDelArnes(
       ? "CLAUDE.md"
       : harness === "openclaw" ? "AGENTS.md" : undefined;
     const textoCanonico = nombreCanonico === undefined ? undefined : existentes.get(nombreCanonico);
-    revisionNativa = textoCanonico === undefined || !textoCanonico.includes(PREFIJO_REVISION_PERFIL)
+    revisionNativa = !textoCanonico?.includes(PREFIJO_REVISION_PERFIL)
       ? undefined
       : revisionDelPerfil(textoCanonico);
     generados = ficherosDelArnes(
@@ -600,13 +600,13 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
     return `siembra del perfil: el arnés «${resultado.harness}» no tiene un directorio absoluto medido`;
   }
   if (resultado.estado === "no-entra") {
-    return `siembra del perfil: NO se escribió nada, ${resultado.fichero} mide ${resultado.medido} `
-      + `y el tope es ${resultado.tope}`;
+    return `siembra del perfil: NO se escribió nada, ${resultado.fichero} mide ${String(resultado.medido)} `
+      + `y el tope es ${String(resultado.tope)}`;
   }
   const cuenta = new Map<string, number>();
   for (const fichero of resultado.ficheros) {
     cuenta.set(fichero.estado, (cuenta.get(fichero.estado) ?? 0) + 1);
   }
-  const partes = [...cuenta].map(([estado, n]) => `${estado}=${n}`).join(" ");
+  const partes = [...cuenta].map(([estado, n]) => `${estado}=${String(n)}`).join(" ");
   return `siembra del perfil: ${partes}`;
 }

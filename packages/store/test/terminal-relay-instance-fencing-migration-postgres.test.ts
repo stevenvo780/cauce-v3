@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseClient, DatabasePool } from '../src/index.js';
@@ -43,8 +44,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 async function columnExists(): Promise<boolean> {
@@ -275,7 +276,7 @@ describe('migration 034 terminal relay instance fencing', () => {
       await writer.query('LOCK TABLE terminal_sessions IN ROW EXCLUSIVE MODE');
       const pid = await migrator.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
       const pending = migrator.query(up);
-      await waitUntilLockBlocked(pid.rows[0]!.pid);
+      await waitUntilLockBlocked(requireValue(pid.rows[0], 'pid.rows').pid);
 
       await seedLegacySession(writer, true);
       await writer.query('COMMIT');
@@ -302,7 +303,7 @@ describe('migration 034 terminal relay instance fencing', () => {
       await writer.query('LOCK TABLE terminal_sessions IN ROW EXCLUSIVE MODE');
       const pid = await migrator.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
       const pending = migrator.query(down);
-      await waitUntilLockBlocked(pid.rows[0]!.pid);
+      await waitUntilLockBlocked(requireValue(pid.rows[0], 'pid.rows').pid);
 
       await seedPinnedSession(writer, { closed: true });
       await writer.query('COMMIT');

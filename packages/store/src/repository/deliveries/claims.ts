@@ -1,7 +1,8 @@
-import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol';
+import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { HUMAN_PRIORITY_FLOOR, PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
+import { isLiteralTrue } from '../../runtime-values.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { validConnectionToken } from '../outbox.js';
@@ -90,11 +91,15 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
            RETURNING lease_until,connection_token::text`,
           [tenantId, alias, instanceId, Number(active.epoch), JSON.stringify(capabilities), ttlMs]
         );
+        const resumedLease = resumed.rows[0];
+        if (resumedLease === undefined) {
+          throw new StoreError('conflict', 'resumed connection lease is unavailable');
+        }
         return {
           acquired: true,
           epoch: Number(active.epoch),
-          connection_token: resumed.rows[0]!.connection_token,
-          lease_expires_at: resumed.rows[0]!.lease_until.toISOString()
+          connection_token: resumedLease.connection_token,
+          lease_expires_at: resumedLease.lease_until.toISOString()
         };
       }
       if (active?.live && options.takeover !== true) {
@@ -114,11 +119,15 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
            connection_token=gen_random_uuid()
          RETURNING lease_until,connection_token::text`, [tenantId, alias, instanceId, nextEpoch, JSON.stringify(capabilities), ttlMs]
       );
+      const acquiredLease = lease.rows[0];
+      if (acquiredLease === undefined) {
+        throw new StoreError('conflict', 'acquired connection lease is unavailable');
+      }
       return {
         acquired: true,
         epoch: nextEpoch,
-        connection_token: lease.rows[0]!.connection_token,
-        lease_expires_at: lease.rows[0]!.lease_until.toISOString(),
+        connection_token: acquiredLease.connection_token,
+        lease_expires_at: acquiredLease.lease_until.toISOString(),
       };
     });
   }
@@ -293,11 +302,12 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       if (capacityRow === undefined) {
         throw new StoreError('conflict', 'delivery consumer capacity could not be evaluated');
       }
-      const configured = configuredCapacity.rowCount === 1;
+      const configuredCapacityRow = configuredCapacity.rows[0];
+      const configured = configuredCapacityRow !== undefined;
       if (!configured && admission.requireDeclaredCapacity === true) {
         throw new StoreError('conflict', 'delivery consumer is missing its durable agent capacity');
       }
-      const concurrencyCap = configured ? configuredCapacity.rows[0]!.cap : null;
+      const concurrencyCap = configuredCapacityRow?.cap ?? null;
       const inFlight = Number(capacityRow.in_flight);
       const humanInFlight = Number(capacityRow.human_in_flight);
       if (!Number.isSafeInteger(inFlight) || inFlight < 0
@@ -412,37 +422,42 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         ? await this.profileRuntimeExpectation(client, tenantId, alias)
         : undefined;
 
-      return claimedRows.map((row) => ({
-        type: 'delivery',
-        version: PROTOCOL_VERSION,
-        delivery_id: row.id,
-        event_id: row.id,
-        message_id: row.message_id,
-        request_id: row.request_id,
-        trace_id: row.trace_id,
-        epoch,
-        attempt: row.attempt,
-        claim_token: row.claim_token!,
-        ack_deadline_at: row.ack_deadline_at!.toISOString(),
-        tenant_id: row.tenant_id,
-        room_id: row.room_id,
-        actor_alias: row.actor_alias,
-        recipient_alias: row.recipient_alias,
-        body: row.body,
-        ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
-        ...(selfRole === undefined ? {} : { self_role: selfRole }),
-        ...(profileRuntimeContract === undefined
-          ? {}
-          : { profile_runtime_contract: profileRuntimeContract }),
-        ...(row.origin ? { origin: row.origin } : {}),
-        ...(row.auth_session_id && row.auth_channel ? {
-          authenticated_context: {
-            session_id: row.auth_session_id,
-            channel: row.auth_channel,
-            ...(row.origin ? { origin: row.origin } : {})
-          }
-        } : {})
-      }));
+      return claimedRows.map((row) => {
+        if (row.claim_token === null || row.ack_deadline_at === null) {
+          throw new StoreError('conflict', 'claimed delivery is missing its fencing fields');
+        }
+        return {
+          type: 'delivery',
+          version: PROTOCOL_VERSION,
+          delivery_id: row.id,
+          event_id: row.id,
+          message_id: row.message_id,
+          request_id: row.request_id,
+          trace_id: row.trace_id,
+          epoch,
+          attempt: row.attempt,
+          claim_token: row.claim_token,
+          ack_deadline_at: row.ack_deadline_at.toISOString(),
+          tenant_id: row.tenant_id,
+          room_id: row.room_id,
+          actor_alias: row.actor_alias,
+          recipient_alias: row.recipient_alias,
+          body: row.body,
+          ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
+          ...(selfRole === undefined ? {} : { self_role: selfRole }),
+          ...(profileRuntimeContract === undefined
+            ? {}
+            : { profile_runtime_contract: profileRuntimeContract }),
+          ...(row.origin ? { origin: row.origin } : {}),
+          ...(row.auth_session_id && row.auth_channel ? {
+            authenticated_context: {
+              session_id: row.auth_session_id,
+              channel: row.auth_channel,
+              ...(row.origin ? { origin: row.origin } : {})
+            }
+          } : {})
+        };
+      });
     };
     return signal === undefined
       ? withTransaction(this.pool, work)
@@ -489,7 +504,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         attempt: row.attempt,
         claim_token: row.claim_token,
         ack_deadline_at: row.ack_deadline_at.toISOString(),
-        human_originated: row.human_originated === true
+        human_originated: isLiteralTrue(row.human_originated)
       }));
   }
 

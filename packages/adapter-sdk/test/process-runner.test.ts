@@ -107,7 +107,7 @@ test("spawn failure remains an unequivocally pre-execution retryable error", asy
     (error: unknown) =>
       error instanceof ProcessExecutionError
       && error.code === "SPAWN_FAILED"
-      && error.retryable === true,
+      && error.retryable,
   );
 });
 
@@ -130,7 +130,7 @@ test("an already-aborted signal never spawns a process and remains non-ambiguous
     (error: unknown) =>
       error instanceof ProcessExecutionError
       && error.code === "CANCELLED"
-      && error.retryable === false,
+      && !error.retryable,
   );
   assert.deepEqual(events, []);
 });
@@ -149,6 +149,6 @@ test("output limit after spawn is explicitly ambiguous and non-retryable", async
     (error: unknown) =>
       error instanceof ProcessExecutionError
       && error.code === "OUTPUT_LIMIT_AMBIGUOUS"
-      && error.retryable === false,
+      && !error.retryable,
   );
 });

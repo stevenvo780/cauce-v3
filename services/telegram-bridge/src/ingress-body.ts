@@ -14,17 +14,14 @@ import type {
 } from './types.js';
 import { safeText } from './untrusted.js';
 
+export { positiveTelegramId as id } from './validation.js';
+
 /** Injection point for tests; in production it is always the real HTTP client. */
 export type Transcriber = typeof transcribeAudio;
 
 /** Same shape the dispatcher uses: one JSON object per line on stderr. */
 export function logJsonLine(record: Record<string, unknown>): void {
   console.error(JSON.stringify(record));
-}
-
-/** Positive-only Telegram user ID matching `positiveId` in the addressing resolver. */
-export function id(value: unknown): string | undefined {
-  return Number.isSafeInteger(value) && Number(value) > 0 ? String(value) : undefined;
 }
 
 export function conversationId(value: unknown): string | undefined {

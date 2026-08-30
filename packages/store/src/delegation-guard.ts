@@ -108,7 +108,7 @@ export function describeDelegationRejection(
     case 'fanout_exceeded':
       return {
         code,
-        reason: `Abanico agotado: este turno ya delegó ${context.cap ?? 0} veces, que es el máximo`
+        reason: `Abanico agotado: este turno ya delegó ${String(context.cap ?? 0)} veces, que es el máximo`
           + ' por turno interno, y la delegación hacia ' + target + ' no se emitió.',
         guidance: 'No reintentes. Elegí las delegaciones imprescindibles y mandá esas; el resto'
           + ' hacelo vos o pedilo en un turno posterior, cuando vuelvan las respuestas.'
@@ -116,7 +116,7 @@ export function describeDelegationRejection(
     case 'edge_repeat_exceeded':
       return {
         code,
-        reason: `Ya le pasaste esta misma tarea a ${target} ${context.cap ?? 0} veces dentro de`
+        reason: `Ya le pasaste esta misma tarea a ${target} ${String(context.cap ?? 0)} veces dentro de`
           + ' esta cadena; el store no emite una más.',
         guidance: 'Repetir el mismo pase no está avanzando el trabajo. Resolvelo vos con lo que'
           + ' ya tenés, o devolvé el resultado parcial hacia arriba explicando qué falta.'
@@ -124,7 +124,7 @@ export function describeDelegationRejection(
     case 'root_budget_exhausted':
       return {
         code,
-        reason: `Esta cadena ya consumió su presupuesto de ${context.cap ?? 0} delegaciones`
+        reason: `Esta cadena ya consumió su presupuesto de ${String(context.cap ?? 0)} delegaciones`
           + ' y no admite ninguna más.',
         guidance: 'Cerrá con lo que tengas: devolvé una respuesta final aunque sea parcial y'
           + ' decí explícitamente qué quedó sin hacer. Abrir una cadena nueva para lo mismo'
@@ -158,8 +158,8 @@ export function describeDelegationRejection(
     case 'hop_budget_exhausted':
       return {
         code,
-        reason: `Presupuesto de saltos agotado (${context.hopCount ?? '?'} de`
-          + ` ${context.hopBudget ?? '?'}).`,
+        reason: `Presupuesto de saltos agotado (${String(context.hopCount ?? '?')} de`
+          + ` ${String(context.hopBudget ?? '?')}).`,
         guidance: 'Terminá acá y devolvé lo que tengas hacia arriba.'
       };
     case 'ambiguous_alias':

@@ -2,24 +2,12 @@
 // This file is NOT a test: the compiler picks it up (tsconfig: rootDir "." -> dist/test/engine-fixtures.js)
 // but the `dist/test/*.test.js` runner does NOT. All symbols are exported for reuse.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
+import {readFile, rm} from 'node:fs/promises';
 import { resolve } from "node:path";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
+import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
+import {AdapterEngine} from '../src/sdk/engine.js';
+import type {CommandRunRequest, CommandRunResult, CommandRunner, Delivery, DeliveryEvent} from '../src/sdk/types.js';
 export const root = resolve(".test-state");
 
 export async function storeFor(name: string): Promise<DurableStore> {
@@ -38,7 +26,7 @@ export async function optionalFile(path: string): Promise<string | undefined> {
 }
 
 export function claimToken(attempt: number, variant = 0): string {
-  return `20000000-0000-4000-${8000 + variant}-${String(attempt).padStart(12, "0")}`;
+  return `20000000-0000-4000-${String(8000 + variant)}-${String(attempt).padStart(12, "0")}`;
 }
 
 export function delivery(id: string, epoch = 1, attempt = 1, claim = claimToken(attempt)): Delivery {
@@ -103,7 +91,7 @@ export class ControlledRunner implements CommandRunner {
     if (this.blockUntilAbort) {
       await new Promise<void>((resolveWait) => {
         if (request.signal.aborted) resolveWait();
-        else request.signal.addEventListener("abort", () => resolveWait(), { once: true });
+        else request.signal.addEventListener("abort", () => { resolveWait(); }, { once: true });
       });
       return {
         stdout: "",
@@ -148,7 +136,7 @@ export class SessionConcurrencyRunner implements CommandRunner {
   readonly requests: CommandRunRequest[] = [];
   maxActive = 0;
   private active = 0;
-  private readonly releases: Array<() => void> = [];
+  private readonly releases: (() => void)[] = [];
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
     this.requests.push(request);
@@ -210,7 +198,7 @@ export async function setup(
 /** Native session the harness received in execution `index`. */
 export function sessionOf(runner: ControlledRunner, index: number): string {
   const value = runner.requests[index]?.args.at(-1);
-  assert.ok(value, `la ejecución ${index} no llegó al harness`);
+  assert.ok(value, `la ejecución ${String(index)} no llegó al harness`);
   return value;
 }
 

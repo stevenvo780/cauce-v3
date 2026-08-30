@@ -60,7 +60,7 @@ export async function exactTmuxPaneStateViaList(tmux: TmuxController, paneId: st
   assert.equal(state.exitCode, 0, state.stderr);
   const rows = state.stdout.split(/\r?\n/u).filter((row) => row !== "");
   assert.equal(rows.length, 1, `debe existir exactamente ${paneId}`);
-  return `${rows[0]}\n`;
+  return `${String(rows[0])}\n`;
 }
 
 export const ENVELOPE = {
@@ -108,7 +108,7 @@ export function assistantEntry(
   parentUuid: string,
   text: string,
   sessionId: string,
-  stopReason: string = "end_turn",
+  stopReason = "end_turn",
 ): string {
   return JSON.stringify({
     type: "assistant", uuid, parentUuid, isSidechain: false, sessionId,
@@ -173,13 +173,13 @@ export class FakeTmux implements TmuxController {
 
   replaceSession(options?: { alias?: string; harness?: "claude" | "codex" }): string {
     this.sessionExists = true;
-    this.sessionId = `$${this.nextSessionNumber}`;
+    this.sessionId = `$${String(this.nextSessionNumber)}`;
     this.nextSessionNumber += 1;
     this.windows = ["agente"];
     this.panePid = String(Number(this.panePid) + 1);
-    this.windowId = `@${this.nextWindowNumber}`;
+    this.windowId = `@${String(this.nextWindowNumber)}`;
     this.nextWindowNumber += 1;
-    this.paneId = `%${this.nextPaneNumber}`;
+    this.paneId = `%${String(this.nextPaneNumber)}`;
     this.nextPaneNumber += 1;
     this.inputContent = "";
     this.pasted = undefined;
@@ -435,7 +435,7 @@ export class FakeTmux implements TmuxController {
         if (!this.sessionExists) return { exitCode: 0, stdout: "", stderr: "" };
         const paneIds = [this.paneId];
         for (let index = 0; index < this.extraPaneCount; index += 1) {
-          paneIds.push(`%${900 + index}`);
+          paneIds.push(`%${String(900 + index)}`);
         }
         return { exitCode: 0, stdout: `${paneIds.join("\n")}\n`, stderr: "" };
       }
@@ -449,8 +449,8 @@ export class FakeTmux implements TmuxController {
           + `\t${this.panePid}\t0\t${this.paneStartCommand}`,
       ];
       for (let index = 0; index < this.extraPaneCount; index += 1) {
-        rows.push(`${this.sessionId}\t${this.sessionName}\t${this.windowId}\t${window}\t%${900 + index}`
-          + `\t${9000 + index}\t0\t${this.paneStartCommand}`);
+        rows.push(`${this.sessionId}\t${this.sessionName}\t${this.windowId}\t${window}\t%${String(900 + index)}`
+          + `\t${String(9000 + index)}\t0\t${this.paneStartCommand}`);
       }
       return { exitCode: 0, stdout: `${rows.join("\n")}\n`, stderr: "" };
     }
@@ -465,11 +465,11 @@ export class FakeTmux implements TmuxController {
         this.sessionName = args[sessionIndex + 1] ?? this.sessionName;
       }
       if (command === "new-session") {
-        this.sessionId = `$${this.nextSessionNumber}`;
+        this.sessionId = `$${String(this.nextSessionNumber)}`;
         this.nextSessionNumber += 1;
-        this.windowId = `@${this.nextWindowNumber}`;
+        this.windowId = `@${String(this.nextWindowNumber)}`;
         this.nextWindowNumber += 1;
-        this.paneId = `%${this.nextPaneNumber}`;
+        this.paneId = `%${String(this.nextPaneNumber)}`;
         this.nextPaneNumber += 1;
         this.inputContent = "";
         this.pasted = undefined;
@@ -505,7 +505,7 @@ export class FakeTmux implements TmuxController {
       this.sessionOptions.clear();
       this.paneOptions.clear();
       this.inputOff = false;
-      return ok(existia ? 0 : 1);
+      return ok(0);
     }
     if (command === "kill-pane") {
       const target = args[args.indexOf("-t") + 1];
@@ -539,7 +539,7 @@ export class FakeTmux implements TmuxController {
       }
       const rendered = this.inputContent === ""
         ? this.paneContent
-        : `${this.paneContent}\n[Pasted text #1 +${this.inputContent.split("\n").length} lines]\n❯ `;
+        : `${this.paneContent}\n[Pasted text #1 +${String(this.inputContent.split("\n").length)} lines]\n❯ `;
       return { exitCode: 0, stdout: rendered, stderr: "" };
     }
     if (command === "display-message" && args[1] === "-p"
@@ -550,7 +550,7 @@ export class FakeTmux implements TmuxController {
         exitCode: 0,
         stdout: `${this.sessionId}\t${this.sessionName}\t`
           + `${this.windowId}\t`
-          + `${this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente")}`
+          + (this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente"))
           + `\t${this.paneId}\t${this.panePid}\t0\t${this.inputOff ? "1" : "0"}`
           + `\t${this.paneInMode ? "1" : "0"}`
           + `\t${this.paneOptions.get("@cauce_input_barrier") ?? ""}\n`,
@@ -571,7 +571,7 @@ export class FakeTmux implements TmuxController {
         exitCode: 0,
         stdout: `${this.sessionId}\t${this.sessionName}\t`
           + `${this.windowId}\t`
-          + `${this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente")}`
+          + (this.windows.includes("agente") ? "agente" : (this.windows[0] ?? "agente"))
           + `\t${this.paneId}\t${this.panePid}\t0\n`,
         stderr: "",
       };
@@ -638,14 +638,14 @@ export class FakeTmux implements TmuxController {
       const target = args[args.indexOf("-t") + 1];
       const name = args[args.indexOf("-b") + 1];
       const value = name === undefined ? undefined : this.buffers.get(name);
-      if (!this.targetExists(target) || value === undefined) return ok(1);
+      if (!this.targetExists(target) || value === undefined || name === undefined) return ok(1);
       if (this.inputOff) {
-        if (args.includes("-d")) this.buffers.delete(name!);
+        if (args.includes("-d")) this.buffers.delete(name);
         return ok(0);
       }
       this.inputContent += value;
       this.pasted = value;
-      if (args.includes("-d")) this.buffers.delete(name!);
+      if (args.includes("-d")) this.buffers.delete(name);
       return ok(0);
     }
     if (command === "delete-buffer") {

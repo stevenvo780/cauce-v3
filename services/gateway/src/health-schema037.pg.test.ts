@@ -65,8 +65,9 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
         [migration037],
       );
       ledgerRow = ledger.rows[0];
-      expect(ledgerRow?.source_sha256).toBe(migration037Sha256);
-      expect(ledgerRow?.source_origin).toBe('applied-atomically');
+      if (ledgerRow === undefined) throw new Error('schema-037 ledger row is unavailable');
+      expect(ledgerRow.source_sha256).toBe(migration037Sha256);
+      expect(ledgerRow.source_origin).toBe('applied-atomically');
 
       await expect(probeConsolePublishIntentPath(database.pool)).resolves.toBeUndefined();
 
@@ -80,7 +81,12 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
         `INSERT INTO schema_migration_ledger(
            version,source_sha256,source_origin,recorded_at
          ) VALUES ($1,$2,$3,$4)`,
-        [migration037, ledgerRow!.source_sha256, ledgerRow!.source_origin, ledgerRow!.recorded_at],
+        [
+          migration037,
+          ledgerRow.source_sha256,
+          ledgerRow.source_origin,
+          ledgerRow.recorded_at,
+        ],
       );
       await expect(probeConsolePublishIntentPath(database.pool)).resolves.toBeUndefined();
 

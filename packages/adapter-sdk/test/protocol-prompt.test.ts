@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "node:assert/strict"; /* eslint-disable @typescript-eslint/no-misused-spread -- the spread IS the assertion: code-point scan over the scaffolding */
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -294,7 +294,8 @@ test("el andamiaje sobrevive el puente de stdin: utf-8 estricto, sin controles, 
   assert.ok(bytes.byteLength < 1024 * 1024);
   // The prompt is read line by line: no control character beyond the newline.
   const controls = [...scaffolding].filter((character) => {
-    const code = character.codePointAt(0)!;
+    const code = character.codePointAt(0);
+    assert.ok(code !== undefined, "codePointAt returned undefined");
     return character !== "\n" && (code < 0x20 || code === 0x7f);
   });
   assert.deepEqual(controls, []);

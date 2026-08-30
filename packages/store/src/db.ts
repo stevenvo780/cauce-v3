@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { isAbsolute } from 'node:path';
 import pg from 'pg';
 import {
@@ -8,6 +8,7 @@ import {
   migrationSourcesForApply,
   recordLegacy024Verification,
 } from './migration-integrity.js';
+import { isSignalAborted, readMutableBoolean } from './runtime-values.js';
 
 const { Pool } = pg;
 export type DatabasePool = pg.Pool;
@@ -277,16 +278,16 @@ export async function withAbortableTransaction<T>(
   try {
     if (signal.aborted) throw abortFailure(signal);
     await client.query('BEGIN');
-    if (signal.aborted) throw abortFailure(signal);
+    if (isSignalAborted(signal)) throw abortFailure(signal);
     const result = await work(client);
-    if (signal.aborted) throw abortFailure(signal);
+    if (isSignalAborted(signal)) throw abortFailure(signal);
     await client.query('COMMIT');
     // Once COMMIT has succeeded, report success even if abort raced immediately afterwards.
     // Returning AbortError here would falsely describe a durable commit as cancelled.
     return result;
   } catch (error) {
     broken ||= connectionFailure(error);
-    if (!released && !signal.aborted) {
+    if (!readMutableBoolean(released) && !isSignalAborted(signal)) {
       try {
         await client.query('ROLLBACK');
       } catch {
@@ -365,7 +366,7 @@ export async function subscribeDeliveryWakes(
       retryTimer = undefined;
       void connect(false);
     }, delay);
-    retryTimer.unref?.();
+    retryTimer.unref();
   };
 
   const lost = (client: DatabaseClient): void => {
@@ -392,15 +393,19 @@ export async function subscribeDeliveryWakes(
         }
         const connectedClient = client;
         const handlers = {
-          onError: (): void => lost(connectedClient),
-          onEnd: (): void => lost(connectedClient)
+          onError: (): void => {
+            lost(connectedClient);
+          },
+          onEnd: (): void => {
+            lost(connectedClient);
+          }
         };
         connectionHandlers.set(connectedClient, handlers);
         connectedClient.on('notification', onNotification);
         connectedClient.on('error', handlers.onError);
         connectedClient.on('end', handlers.onEnd);
         await connectedClient.query('LISTEN cauce_delivery_wake');
-        if (stopped) {
+        if (readMutableBoolean(stopped)) {
           detach(connectedClient);
           try {
             connectedClient.release();

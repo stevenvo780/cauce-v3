@@ -6,22 +6,69 @@ Cauce V3 corre en producción desde el primer despliegue real (estado a 28-08-20
 
 Lo que sigue sin cerrar de la propia ventana de despliegue, antes de dar la fase por terminada.
 
-- **Rollout del launcher PTY con siega**: la instalación vigente del launcher (release `20260825`) no lleva la siega de procesos huérfanos. Se detectaron y limpiaron a mano 12 agentes PTY huérfanos en contenedores (argos ×4, atlas ×4, …) causando ~540 ciclos/min de flapping en `terminal-relay`; el fix manual bajó a 0 ciclos/min pero no sobrevive a un reinicio. Falta desplegar el launcher que sí siega (commit `0a08de4d`) a todos los alias.
-- **Gateway acepta agentes `enabled=false`** (seguridad, asignado a codex-1 en `ordenes/codex.md`): el hello mTLS de `/v3/ws` autoriza solo por certificado; `authority.ts:220` filtra `agent.enabled` para enrutar, pero el hello/lease no lo consulta. Verificado en la demo probeta: tras `UPDATE agents SET enabled=false` el gateway siguió respondiendo `hello_ack`. Rompe la promesa de "la baja es 1 UPDATE en BD" hasta que se revoca el cert a mano. Fichero: `services/gateway/src/routes/core.ts` (handler del hello, ~líneas 207-422).
-- **Contextos nativos por harness — revisión adversarial RECHAZÓ activar** (flag permanece OFF en main). Cuatro bloqueantes reales, en orden activa de codex-1 (`ordenes/codex.md`):
-  1. Topes de truncado de OpenClaw cableados a una constante (`60.000/150.000`) que solo vale para el contenedor `claw`; el resto usa defaults reales distintos (20.000/60.000 o 24.000/90.000) leídos del `openclaw.json` de cada alias, no propagados. `packages/protocol/src/ficheros-del-arnes.ts:141`.
-  2. Precipicio de expectativa vencida: la primera entrega con el flag ON converge el bloque A y cambia el SHA del fichero canónico; la segunda entrega falla `NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED` contra la misma expectativa y muere en dead-letter. `packages/adapter-sdk/src/context/native-profile-context.ts:99-141,331-359`.
-  3. La allowlist del supervisor no conoce `CAUCE_NATIVE_PROFILE_CONTEXT`: activarlo hoy mata el alias (`die "config key is not allowlisted"`). `ops/scripts/container-adapter-supervisor.sh:176-196`.
-  4. Las fórmulas de "generación" del supervisor y del launcher no coinciden (una produce 64 hex, la otra 32), así que el filtro de procesos del launcher no encontraría nada. `ops/scripts/container-adapter-supervisor.sh:483-485` vs `ops/pty-agent/cauce-pty-launcher.sh:149-155`.
-  Además: 5 tests de `shared-session` rojos en `adapter-sdk` por aserciones en castellano que la traducción a inglés dejó desfasadas (zona de minimax-1); lado Claude sin alias elegible en producción (único agente Claude, `zeus`, corre TUI compartida y `NativeProfileContext` rechaza `sharedSession`).
-- **Revivir o decidir jarvis**: sin proceso adaptador, bus offline desde antes del deploy (mismo `last_heartbeat_at`, 08:48:58Z), 1 mensaje pending sin reclamar. Es el cuello de botella histórico (ver §2). El deploy ni lo rompió ni lo arregló.
-- **El cuello de botella OpenClaw**: jarvis migró a WhatsApp porque las colas de Cauce se atascan para OpenClaw. Sin diagnosticar la causa raíz; candidato de primera misión para el Zeus guardián (§2) apoyado en logs de comportamiento (§2).
-- **Poda de historiales de BD** y **GC del registry de contenedores** (`cauce-v3-*-legacy`, tags viejos): aprobados en principio por el dueño, backup fresco ya hecho; falta decidir con él qué tablas/antigüedad y ejecutar.
-- **Limpiar `prod.env`**: 9 claves sin consumidor (`SHADOW_*`, `CAUCE_RELAY_*`, `CAUCE_COMPOSE_OVERRIDE_MANIFEST`).
-- **Archivar `/opt/cauce-v3` y `/etc/cauce-v3/compose-overrides/`**: quedan muertos pero intactos como ruta de rollback documentada; archivar tras un periodo de reposo sin incidentes.
-- **Montaje rw de `ws-zeus` sobre el árbol de producción**: `/datos/workspaces/zeus → /workspace` está montado `rw` en el contenedor del propio agente zeus, y ese árbol es desde el despliegue material de producción (prometheus/otel/postgres montan ficheros de ahí). Decisión pendiente del dueño: montar `ro` o sacar del árbol lo que producción monta.
-- **`cauce <alias> on` sin `XDG_RUNTIME_DIR` bajo `su stev`**: `systemctl --user start` falla en silencio tras `|| true`, sin diagnóstico. `ops/cli/cauce:549`.
-- **Las 2 entregas atascadas de hegel**: `a35c0d83` (12 días) y `aefdee3a`, `status='failed'`, `attempt=1/3`, no agotadas ni promovidas a `dead`. El segador de fase 3 (migraciones 025-037) no las alcanzó; siguen como deuda del escenario 3.
+**Verificado ítem por ítem contra el árbol el 30-08-2026.** Cada punto lleva su veredicto: *cerrado*
+con el commit que lo cerró, *sigue en pie* con la línea que lo demuestra, o *no verificado* cuando el
+ítem habla del estado de la flota (kratos, la base de producción) y no del árbol. Un roadmap que da
+por abierto lo que ya está cerrado hace que alguien gaste una ronda en arreglar lo arreglado, así que
+lo que no se comprobó se dice, no se supone.
+
+- **Rollout del launcher PTY con siega** — *sigue en pie, sólo el despliegue.* El código ya está en el
+  árbol: `ops/pty-agent/cauce-pty-launcher.sh:763` define `reap_orphan_agents` y `:798` la invoca
+  (commit `0a08de4`). Lo que falta es llevarlo a los alias; **no comprobé qué release corre hoy la
+  flota**, eso es estado de kratos.
+- **Gateway acepta agentes `enabled=false`** — **CERRADO** por `dcdf7a9`. `routes/core.ts:238-240` y
+  `routes/core/http.ts:46` pasan `requireEnabledAgent: true` al `acquireLease`, y
+  `packages/store/src/repository/deliveries/claims.ts:58-60` lo aplica dentro de la transacción del
+  lease (`StoreError('forbidden', 'delivery consumer is disabled')`).
+- **Contextos nativos por harness** — el flag sigue OFF; de los cuatro bloqueantes, uno cerrado, dos
+  en pie y uno sin verificar:
+  1. **Sigue en pie.** Topes de truncado de OpenClaw cableados a una constante:
+     `packages/protocol/src/ficheros-del-arnes.ts:139`,
+     `export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 }`. (El roadmap citaba la
+     línea 141; el fichero se movió, el defecto no.)
+  2. **No verificado.** El precipicio de expectativa vencida. El fichero cambió por `6ea006e`,
+     `c483075` y `c09c67c`, y hoy tiene un camino `revalidate()` y escritura compare-and-swap
+     (`escribirEnDiscoRealSiCoincide`, `native-profile-context.ts:109`) que no existían cuando se
+     anotó. **No ejecuté el escenario de dos entregas seguidas** que produce el precipicio, así que
+     no lo doy por cerrado ni por abierto.
+  3. **CERRADO** por `a3a157a`. La allowlist del supervisor sí conoce la clave:
+     `ops/scripts/container-adapter-supervisor.sh:177` la valida (`^[01]$`) y `:885` la propaga al
+     entorno del alias.
+  4. **Sigue en pie.** Las dos fórmulas de generación siguen sin coincidir, y en dos ejes a la vez:
+     `container-adapter-supervisor.sh:489` hashea `id\0started\0restart\0init_starttime` y se queda
+     el sha256 **entero** (64 hex); `cauce-pty-launcher.sh:150-153` hashea `id|started|restart` y se
+     queda `${digest:0:32}` (32 hex). Distinta entrada y distinta longitud.
+  5. **CERRADO.** Los 5 tests de `shared-session` rojos en `adapter-sdk` ya no existen como tales: el
+     fichero de 5.444 líneas se partió en 18 (commit `fd10fea`) y la suite corre **689 tests**. Ojo
+     con el número: en reposo pasa entera, pero **bajo carga cae** — ver la nota al final de esta
+     sección.
+  6. **No verificado.** Lado Claude sin alias elegible en producción: es estado de la flota.
+- **Revivir o decidir jarvis** — **no verificado**: estado de la flota y de la base de producción.
+- **El cuello de botella OpenClaw** — **no verificado**: sin diagnosticar, y no es comprobable contra
+  el árbol.
+- **Poda de historiales de BD** y **GC del registry de contenedores** — **no verificado**: requieren
+  la base y el registry de producción.
+- **Limpiar `prod.env`** — *la cuenta de 9 claves no es de fiar.* `prod.env` vive en el servidor (en
+  el árbol sólo está `ops/config/prod.env.example`), así que la lista no se puede recontar aquí; pero
+  **`CAUCE_COMPOSE_OVERRIDE_MANIFEST` sí tiene consumidor** — `ops/scripts/compose.sh:43-58` lo trata
+  como control de compose. `SHADOW_*` sí da cero ocurrencias en todo el árbol. Recontar antes de
+  borrar nada.
+- **Archivar `/opt/cauce-v3` y `/etc/cauce-v3/compose-overrides/`** — **no verificado**: rutas del
+  servidor.
+- **Montaje rw de `ws-zeus` sobre el árbol de producción** — **no verificado**: decisión del dueño
+  sobre un montaje del host.
+- **`cauce <alias> on` sin `XDG_RUNTIME_DIR` bajo `su stev`** — **CERRADO** por `5f80ed1`.
+  `ops/cli/cauce:517-519` (`systemctl_user_o_avisa`) deriva `XDG_RUNTIME_DIR` de `/run/user/$(id -u)`
+  y `DBUS_SESSION_BUS_ADDRESS` del socket, y si el `systemctl --user` falla lo imprime con la pista
+  (`systemctl --user -M stev@`) y devuelve 1. Ya no hay `|| true` que se lo trague.
+- **Las 2 entregas atascadas de hegel** — **no verificado**: estado de la base de producción.
+
+> **Nota medida el 30-08-2026 — hay un rojo sensible a la carga dentro de `test:unit`.** Con cuatro
+> suites de consola compitiendo, `pnpm --filter @cauce/adapter-sdk run test` cayó dos veces seguidas
+> (`# fail 2` y `# fail 1` de 689), siempre en
+> `a receipt cannot release the harness while its transport send never settles`. En reposo la suite
+> pasa entera. No es el mismo caso que el de la consola y merece su propia ronda: un test que sólo
+> falla cuando la máquina está ocupada convierte el gate en una moneda al aire.
 
 ## 2. Producto — los 7 puntos de la visión
 
@@ -47,20 +94,38 @@ Estado de cada punto de `docs/flota-y-participantes.md` §La visión:
 
 - **Molienda estricta por zonas, pendiente de promoción al gate** (`lint:estricto:zonas` en `package.json` hoy solo cubre `console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `tests`). Zonas medidas en rojo y con orden activa (`ordenes/codex-2.md`): `packages/protocol/src` (20 problemas), `packages/mcp-fleet-monitor/src` (15), `packages/store/src` (136), `services/gateway/src` (346). Cada zona se promueve al gate solo cuando cierra en `0 problems`.
 - **Traducción de comentarios a inglés**: en curso por zonas (`ordenes/opencode-minimax.md`, `opencode-minimax-2.md`). Cerradas: `adapter-sdk/src`, `dispatcher`, `deploy`, `scripts`, `pty-agent`, las 18 herramientas de `ops/guardias/`. Pendientes: barrido de restos (~51 comentarios en español medidos en la última ronda) en las zonas ya tocadas; tests de consola/relay/bridge; `packages/adapter-sdk/test/**` (zona exclusiva de minimax-1, en curso con la partición del punto siguiente).
-- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 21 ficheros en `lineas`, 24 en `fechas`, 810 entradas acotadas en `comentarios`. `shared-session.test.ts` (5.444 líneas, el mayor del repo) tiene plan de partición escrito y ronda activa (`ordenes/opencode-minimax.md`). Quedan además, fuera de la lista congelada o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.730), `ops/pty_agent/cauce_pty_agent.py` (2.659), `services/gateway/src/terminal.plugin.test.ts` (2.020), `ops/tests/container-supervisor.test.mjs` (1.712), `ops/container-runtime/cauce-container-runtime.py` (1.652), y varios más entre 800-1.400 líneas.
+- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 21 ficheros en `lineas`, 24 en `fechas`, 810 entradas acotadas en `comentarios`. `shared-session.test.ts` (5.444 líneas, el que fue el mayor del repo) **ya está partido** en 18 ficheros por `fd10fea`; verificado el 30-08-2026. Quedan además, fuera de la lista congelada o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.730), `ops/pty_agent/cauce_pty_agent.py` (2.659), `services/gateway/src/terminal.plugin.test.ts` (2.020), `ops/tests/container-supervisor.test.mjs` (1.712), `ops/container-runtime/cauce-container-runtime.py` (1.652), y varios más entre 800-1.400 líneas.
 - **Cirugía de dominios** (planificada, sin ronda asignada): mover `flota/` a su propio dominio, subir consola a la raíz del repo, repartir `ops/` — con checklists derivados de `docs/grafo.md` para no romper consumidores.
 - **Mega-refactor de consola**: deudas acumuladas de la revisión de vistas — deep-link en `/terminal` que desbloquearía borrar ~180 LOC más y los casos especiales del router; regenerar `docs/grafo.md`; resolver los 74 asserts-sobre-texto de los tests de consola. Incluye adoptar el patrón "un agente con Chrome revisa legibilidad" en vez de sondas CDP quemadas en código (las 6 sondas de contraste/tipografía/CSP se conservan para ese uso).
 
 ## 4. Deuda anotada
 
-- `ops/scripts/generate-container-units.py` no purgaba units huérfanas al dar de baja un alias (`generate-units.py` sí) — **corregido** durante la demo probeta, verificar que la paridad entre ambos generadores se mantenga en cambios futuros.
-- `ops/scripts/register-agent-identity.py`: sin modo de baja; la revocación de identidad mTLS hoy es manual. `cauce retirar` debería encadenarlo.
-- `packages/store/migrations/**`: fila NADIE del residuo físico BD↔realidad; para el drift físico está el overlay (`ops/flota.json` / snapshot), no nuevas migraciones.
-- `container-aliases.json` y `manifests/` siguen sin fusionarse dentro del snapshot único (round 2, sin ronda asignada); mientras tanto son 3 parsers duplicados pineados por G-SNAP-4.
-- `/opt/.../fleet_source.py` y su watchdog no están versionados en git; falta añadir el chequeo de paridad BD↔físico al watchdog de 10 minutos (hoy es manual).
-- `cauce alta` haciendo el INSERT en BD tras confirmación del operador (hoy el alta es un INSERT manual, documentado pero no asistido por el CLI).
-- 7 tests de `ops/` que un censo anterior llamó "huérfanos" no lo son (cubren `alias-lock-exec`, `verify-hermes-runtime`, el reaper del container-runtime, en 3 casos como única cobertura); el único candidato real a limpieza futura es `gate-collector.test.mjs` (tiene gemelo ya wireado).
-- `services/gateway`: 1 línea `AuthError 401` observada tras el deploy por petición sin sesión de consola — comportamiento correcto, no defecto, pero sin test que lo fije como contrato.
+**Verificada ítem por ítem contra el árbol el 30-08-2026**, con el mismo criterio del §1.
+
+- **CERRADO** por `eeac106`, y la paridad se mantiene hoy: los dos generadores purgan units huérfanas
+  — `ops/scripts/generate-container-units.py:258-263` retira `cauce-v3-container-*.service` y su
+  `.env.example`, `ops/scripts/generate-units.py:120-124` retira `cauce-v3-alias-*.service`. Sigue
+  mereciendo vigilancia en cambios futuros, pero hoy no es deuda abierta.
+- **Sigue en pie.** `ops/scripts/register-agent-identity.py` no tiene modo de baja: la única mención
+  a revocar es el texto de error de `:276` («revocarla antes de registrar esta»). La revocación de
+  identidad mTLS sigue siendo manual y `cauce retirar` no la encadena.
+- **No verificado.** «Fila NADIE del residuo físico BD↔realidad» en `packages/store/migrations/**`:
+  la cadena `NADIE` no aparece en el árbol y el apunte no dice contra qué compararla. **No pude
+  comprobar de qué habla**; o se reescribe con la evidencia o se retira.
+- **Sigue en pie.** `container-aliases.json` y `manifests/` sin fusionar en el snapshot único: más de
+  veinte ficheros de `ops/` lo parsean por su cuenta (`generate-container-aliases.py`,
+  `rollout_pty_lib.py`, `update-alias-config.py`, `gate-collector.mjs`, `container_ops_digest.py`,
+  `generate-telegram-config.py`, `provision-hermes-runtime.sh`, `validate.sh`, …).
+- **Sigue en pie.** `/opt/.../fleet_source.py` y su watchdog no están versionados:
+  `git ls-files | grep fleet_source` no devuelve nada.
+- **Sigue en pie.** `cauce alta` no hace el INSERT: `ops/cli/cauce:1186` lo sigue **imprimiendo como
+  instrucción** al operador («alta = 1 INSERT en agents+memberships, luego export-fleet-snapshot.py»).
+- **Sigue en pie.** `ops/tests/gate-collector.test.mjs` y su gemelo `ops/tests/fake-gate-collector.mjs`
+  siguen ahí; el resto de los 7 tests de `ops/` que un censo llamó huérfanos siguen siendo la única
+  cobertura de lo suyo, así que la nota de «no los limpies» sigue vigente.
+- **CERRADO** por `80dcbf7`. El `AuthError 401` sin sesión de consola ya tiene test que lo fija como
+  contrato: `services/gateway/src/password-auth.test.ts:350` comprueba que `GET /v3/status` sin
+  cookie responde 401 (y `:386`, `:403` cubren la cookie inválida y la caducada).
 
 ## Hallazgos de la revisión post-despliegue (28-08, tras el primer despliegue real)
 

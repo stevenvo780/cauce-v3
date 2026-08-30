@@ -1,9 +1,10 @@
-import type { Tenant } from '@cauce/protocol';
+import type { Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
+import { postgresBigintString } from '../runtime-values.js';
 import { StoreError } from './errors.js';
 import type {
   OperationalDlqPage, OperationalDlqResolutionRequest, OperationalDlqResolutionResult
@@ -82,10 +83,11 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     );
     const hasMore = result.rows.length > limit;
     const visible = result.rows.slice(0, limit);
+    const lastVisible = visible.at(-1);
     return {
       items: visible.map((row) => ({
-        event_id: String(row.event_id),
-        at: row.at instanceof Date ? row.at.toISOString() : String(row.at),
+        event_id: postgresBigintString(row.event_id),
+        at: row.at instanceof Date ? row.at.toISOString() : row.at,
         tenant_id: row.tenant_id,
         actor_alias: row.actor_alias,
         action: row.action,
@@ -94,8 +96,8 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         trace_id: row.trace_id,
         summary: safeAuditSummary(row.action, row.metadata),
       })),
-      next_cursor: hasMore && visible.length > 0
-        ? String(visible[visible.length - 1]!.event_id)
+      next_cursor: hasMore && lastVisible !== undefined
+        ? postgresBigintString(lastVisible.event_id)
         : null,
     };
   }
@@ -240,11 +242,11 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     request: OperationalDlqResolutionRequest
   ): Promise<OperationalDlqResolutionResult> {
     const reason = request.reason.trim();
-    if ((request.target !== 'delivery' && request.target !== 'outbox')
+    if ((request.target !== 'delivery' && request.target !== 'outbox') // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Runtime callers can violate the target union.
       || !UUID_PATTERN.test(request.id)
       || !/^[a-f0-9]{64}$/.test(request.evidenceSha256)
       || reason.length < 1 || reason.length > 1_000
-      || [...reason].some((character) => {
+      || Array.from(reason).some((character) => {
         const code = character.charCodeAt(0);
         return code < 0x20 || code === 0x7f;
       })

@@ -89,7 +89,9 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-async function sourceEntries(): Promise<Array<{ version: string; source: string; sourceSha256: string }>> {
+export async function migrationSourcesForApply(): Promise<
+{ version: string; source: string; sourceSha256: string }[]
+> {
   const directory = fileURLToPath(new URL('../migrations/', import.meta.url));
   const versions = (await readdir(directory)).filter((name) => name.endsWith('.sql')).sort();
   return Promise.all(versions.map(async (version) => {
@@ -138,7 +140,7 @@ export async function ensureMigrationIntegrityTables(client: pg.PoolClient): Pro
 }
 
 export async function inspectMigrationIntegrity(client: pg.PoolClient): Promise<MigrationIntegrityReport> {
-  const sources = await sourceEntries();
+  const sources = await migrationSourcesForApply();
   if (!await relationExists(client, 'schema_migrations')) {
     throw new Error('schema_migrations is absent');
   }
@@ -218,12 +220,6 @@ export async function inspectMigrationIntegrity(client: pg.PoolClient): Promise<
     });
   }
   return { schemaVersion: 1, structuralContract: '024-agent-role-templates-v1', entries };
-}
-
-export async function migrationSourcesForApply(): Promise<
-Array<{ version: string; source: string; sourceSha256: string }>
-> {
-  return sourceEntries();
 }
 
 export async function recordLegacy024Verification(

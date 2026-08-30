@@ -45,10 +45,10 @@ export function registerCoreRuntimeHttpRoutes(
         hello.tenant_id, hello.alias, hello.instance_id, hello.capabilities, leaseTtlMs,
         { requireDeclaredCapacity: true, requireEnabledAgent: true },
       );
-      if (!lease.acquired) return reply.code(409).send(lease);
+      if (!lease.acquired) return await reply.code(409).send(lease);
       if (!lease.epoch) throw new StoreError('conflict', 'lease acquisition returned no epoch');
       const leaseConnectionToken = connectionToken(lease.connection_token);
-      return reply.code(200).send({
+      return await reply.code(200).send({
         ...lease,
         connection_token: leaseConnectionToken,
       });
@@ -142,7 +142,7 @@ export function registerCoreRuntimeHttpRoutes(
       // published message. Drain is not awaited so the HTTP response is not tied to a claim round.
       if (RELEASES_CAPACITY.has(result.status)) {
         const active = sessions.get(sessionKey(actor.tenant_id, actor.alias));
-        if (active) void drain(active).catch((error: unknown) => app.log.error(error));
+        if (active) void drain(active).catch((error: unknown) => { app.log.error(error); });
       }
       return { ...result, event_id: ack.event_id, attempt: ack.attempt, claim_token: ack.claim_token };
     } catch (error) {

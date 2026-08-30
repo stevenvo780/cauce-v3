@@ -14,7 +14,7 @@ import {
 } from './auth.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 function pool(): DatabasePool {
   return {
@@ -32,24 +32,24 @@ async function gateway(options: {
   app: Awaited<ReturnType<typeof buildGateway>>;
   prepares: ConsolePublishIntentCommand[];
   prepareScopes: string[];
-  publishes: Array<{
+  publishes: {
     command: PublishMessage;
     options: {
       readonly requirePreparedConsoleIntent?: boolean;
       readonly consoleIntentOperatorScope?: string;
     } | undefined;
-  }>;
+  }[];
   confirmations: unknown[];
 }> {
   const prepares: ConsolePublishIntentCommand[] = [];
   const prepareScopes: string[] = [];
-  const publishes: Array<{
+  const publishes: {
     command: PublishMessage;
     options: {
       readonly requirePreparedConsoleIntent?: boolean;
       readonly consoleIntentOperatorScope?: string;
     } | undefined;
-  }> = [];
+  }[] = [];
   const confirmations: unknown[] = [];
   const app = await buildGateway({
     pool: pool(),

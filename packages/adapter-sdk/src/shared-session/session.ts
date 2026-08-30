@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { signalAborted } from "../runtime-state.js";
 import {
   CREATION_NONCE_OPTION,
   capturePane,
@@ -28,7 +29,6 @@ import {
   SESSION_ALIAS_OPTION,
   SESSION_HARNESS_OPTION,
   paneCommandMatches,
-  signalAborted,
   type EnsureFailure,
   type SharedSessionSpec,
   verifyExistingSessionIdentity,
@@ -231,7 +231,7 @@ async function inspectExistingSession(
       detail: `la sesión ${session} fue reemplazada durante el preflight; no se toca el reemplazo`,
     };
   }
-  if (pane === undefined || pane.windowName !== TUI_WINDOW) {
+  if (pane?.windowName !== TUI_WINDOW) {
     return {
       ready: false,
       created: false,

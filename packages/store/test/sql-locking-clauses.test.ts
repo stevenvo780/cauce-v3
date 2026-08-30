@@ -40,7 +40,7 @@ describe('cláusulas de bloqueo y funciones de ventana', () => {
         const ventana = /\bOVER\s*\(/i.test(literal);
         if (bloquea && ventana) {
           const primeraLinea = literal.trim().split('\n')[0] ?? '';
-          ofensivas.push(`${file.split('/').pop()}: ${primeraLinea.slice(0, 120)}`);
+          ofensivas.push(`${String(file.split('/').pop())}: ${primeraLinea.slice(0, 120)}`);
         }
       }
     }

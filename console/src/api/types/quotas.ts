@@ -5,7 +5,7 @@
 
 export type QuotaSeverity = 'ok' | 'warn' | 'critical' | 'exhausted' | 'unknown';
 
-export interface QuotaHistoryPoint {
+interface QuotaHistoryPoint {
   at?: string | null;
   used_percent?: number | null;
 }

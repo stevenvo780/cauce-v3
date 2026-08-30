@@ -51,7 +51,7 @@ export function ultimateTerminalGate(capability: TerminalCapability | undefined,
 }
 
 /** `blocked` means the plugin gate itself is closed, before any destination is even considered. */
-export interface TerminalChannelGate {
+interface TerminalChannelGate {
   enabled: boolean;
   status: TerminalAccessStatus | 'blocked';
   reason: string;
@@ -97,7 +97,7 @@ export function terminalChannelGate(
 }
 
 /** Same as `terminalChannelGate`, but for the agent's live TUI (`harness` mode). */
-export interface LiveTuiGate {
+interface LiveTuiGate {
   enabled: boolean;
   status: LiveTuiStatus | 'blocked';
   reason: string;

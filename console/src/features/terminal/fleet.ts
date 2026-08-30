@@ -13,7 +13,7 @@ export interface FleetAgent {
   leaseState: LeaseState;
 }
 
-export interface FleetFilters {
+interface FleetFilters {
   tenantId: string;
   roomId: string;
   query: string;
@@ -123,7 +123,7 @@ export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], fi
  * Breakdown of adapters available, failing, or unreported,
  * avoiding interpreting unreported states as confirmed failures.
  */
-export interface AdapterBreakdown {
+interface AdapterBreakdown {
   disponibles: number;
   /** `degraded` + `unavailable`: the server DID report, and reported a problem. */
   conFallo: number;
@@ -156,15 +156,6 @@ export const ADAPTER_STATE_LABELS: Readonly<Record<'available' | 'degraded' | 'u
   unavailable: 'No disponible',
   unknown: 'Sin reportar',
 };
-
-/**
- * Legacy single-target check against the capability's `target_label`. Kept for the capability
- * card; per-destination authority now comes from the targets inventory below.
- */
-export function terminalTargetMatchesAgent(targetLabel: unknown, agent: FleetAgent): boolean {
-  if (typeof targetLabel !== 'string' || !targetLabel) return false;
-  return targetLabel === `${agent.tenantId}:${agent.alias}` || targetLabel === agent.id;
-}
 
 /**
  * The lease state, with the SAME words as `/live`.
@@ -269,7 +260,7 @@ export const SHELL_MODE = 'shell';
 
 export type LiveTuiStatus = 'available' | 'no_tui' | 'blocked' | 'unknown';
 
-export interface LiveTuiResolution {
+interface LiveTuiResolution {
   status: LiveTuiStatus;
   /** Always populated: a grey button without a reason is the same as saying nothing. */
   reason: string;
@@ -323,7 +314,7 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
  * State and visual reason of the terminal chip: indicates whether the destination has live TUI
  * available or degrades to shell/offline mode with its corresponding reason.
  */
-export interface FleetTerminalChip {
+interface FleetTerminalChip {
   status: TerminalAccessStatus | 'no_tui';
   label: string;
   /** Always populated: a chip without a reason is exactly the bug this fixes. */

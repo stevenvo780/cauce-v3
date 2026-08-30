@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { requireValue } from './helpers.js';
 import { AGENT_PROFILE_LIMITS, countCodePoints, measureStrictestUnits } from '@cauce/protocol';
 import { AgentProfileRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -41,8 +42,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('migration 026 is actually applied', () => {
@@ -160,14 +161,14 @@ describe('the database CHECKs reject the same things as the TypeScript guard', (
   });
 
   it('rechaza una lista con más elementos de los admitidos', async () => {
-    const muchos = Array.from({ length: AGENT_PROFILE_LIMITS.items + 1 }, (_, i) => `t${i}`);
+    const muchos = Array.from({ length: AGENT_PROFILE_LIMITS.items + 1 }, (_, i) => `t${String(i)}`);
     await expect(insertRaw('tools', muchos))
       .rejects.toMatchObject({ constraint: 'agent_profiles_tools_count' });
   });
 
   /** NEGATIVE CONTROL on cardinality. */
   it('negative control: EXACTLY the allowed number of items is accepted', async () => {
-    const justos = Array.from({ length: AGENT_PROFILE_LIMITS.items }, (_, i) => `t${i}`);
+    const justos = Array.from({ length: AGENT_PROFILE_LIMITS.items }, (_, i) => `t${String(i)}`);
     await insertRaw('tools', justos);
     const stored = await pool.query<{ tools: string[] }>(
       `SELECT tools FROM agent_profiles WHERE alias='zeus'`
@@ -384,7 +385,7 @@ describe('AgentProfileRepository', () => {
     const brief = await pool.query<{ role_brief: string }>(
       `SELECT role_brief FROM agents WHERE tenant_id='Steven' AND alias='zeus'`
     );
-    expect([...brief.rows[0]!.role_brief]).toHaveLength(1_200);
+    expect(Array.from(requireValue(brief.rows[0], 'brief.rows').role_brief)).toHaveLength(1_200);
     expect(brief.rows[0]?.role_brief.endsWith(ASTRAL)).toBe(true);
     expect((await repository.read('Steven', 'zeus')).role_summary).toBe(rico);
   });

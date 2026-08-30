@@ -6,7 +6,7 @@ import { DevOnlyAuthProvider } from './auth.js';
 
 const INCIDENT_ID = '8b31b078-dd9f-4da2-8d1e-f4050965db83';
 const EVIDENCE_SHA256 = 'a'.repeat(64);
-const apps: Array<Awaited<ReturnType<typeof buildGateway>>> = [];
+const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
 function pool(): DatabasePool {
   return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
@@ -53,7 +53,7 @@ function repository() {
   return {
     principalAccess: vi.fn(async () => ({
       roles: ['operator'] as string[],
-      permissions: ['route', 'read', 'control'] as Array<'route' | 'read' | 'control' | 'notify'>,
+      permissions: ['route', 'read', 'control'] as ('route' | 'read' | 'control' | 'notify')[],
     })),
     listOperationalDlq: vi.fn(async () => ({
       ...page,

@@ -1,12 +1,12 @@
 import { ROLE_BRIEF_MAX, contarRoleBrief } from './role-brief';
 
-export interface AliasConRol {
+interface AliasConRol {
   tenantId: string;
   alias: string;
   displayName?: string;
 }
 
-export interface RolCatalogado {
+interface RolCatalogado {
   texto: string;
   /** Code points: what `char_length` measures in Postgres and the column's CHECK. */
   puntos: number;
@@ -17,7 +17,7 @@ export interface RolCatalogado {
   portadores: AliasConRol[];
 }
 
-export interface CatalogoDeRoles {
+interface CatalogoDeRoles {
   roles: RolCatalogado[];
   /** Registered aliases with no declared role. `null` and `''` are the same here: no preamble. */
   sinRol: AliasConRol[];

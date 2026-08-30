@@ -62,9 +62,9 @@ async function setupServer(): Promise<{
   const address = server.address();
   assert.ok(address && typeof address === "object");
   return {
-    endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+    endpoint: `http://127.0.0.1:${String(address.port)}/v1/chat/completions`,
     requests,
-    close: async () => new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+    close: async () => new Promise<void>((resolveClose) => server.close(() => { resolveClose(); })),
   };
 }
 
@@ -159,15 +159,15 @@ test("OpenClaw API timeout and cancellation abort requests", async () => {
   }), (error: unknown) =>
     error instanceof AdapterError
     && error.code === "EXECUTION_TIMEOUT_AMBIGUOUS"
-    && error.retryable === false);
+    && !error.retryable);
 
   const controller = new AbortController();
   const running = adapter.execute({ prompt: "SCENARIO:slow", timeoutMs: 1_000, signal: controller.signal });
-  setTimeout(() => controller.abort(), 30);
+  setTimeout(() => { controller.abort(); }, 30);
   await assert.rejects(running, (error: unknown) =>
     error instanceof AdapterError
     && error.code === "EXECUTION_CANCELLED_AMBIGUOUS"
-    && error.retryable === false);
+    && !error.retryable);
   assert.equal(api.requests.length, 2, "both ambiguous aborts occurred after OpenClaw accepted the request");
   await api.close();
 });
@@ -190,7 +190,7 @@ test("OpenClaw API does not POST when the signal is already aborted", async () =
     (error: unknown) =>
       error instanceof AdapterError
       && error.code === "CANCELLED"
-      && error.retryable === false,
+      && !error.retryable,
   );
   assert.equal(api.requests.length, 0);
   await api.close();
@@ -214,7 +214,7 @@ test("OpenClaw API retries only an explicit pre-execution rejection", async () =
     (error: unknown) =>
       error instanceof AdapterError
       && error.code === "OPENCLAW_HTTP_PRE_EXECUTION"
-      && error.retryable === true,
+      && error.retryable,
   );
   await assert.rejects(
     adapter.execute({
@@ -225,7 +225,7 @@ test("OpenClaw API retries only an explicit pre-execution rejection", async () =
     (error: unknown) =>
       error instanceof AdapterError
       && error.code === "OPENCLAW_HTTP_AMBIGUOUS"
-      && error.retryable === false,
+      && !error.retryable,
   );
   await api.close();
 });

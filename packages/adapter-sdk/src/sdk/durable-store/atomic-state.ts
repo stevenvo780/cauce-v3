@@ -73,7 +73,7 @@ async function copyRollbackFile(sourcePath: string, backupPath: string): Promise
     await backup.chmod(0o600);
     const buffer = Buffer.alloc(64 * 1024);
     let sourcePosition = 0;
-    while (true) {
+    for (;;) {
       const { bytesRead } = await source.read(buffer, 0, buffer.length, sourcePosition);
       if (bytesRead === 0) break;
       let written = 0;
@@ -244,7 +244,6 @@ export async function recoverAtomicArtifacts(
   targets: readonly AtomicStateFile[],
   directoryFsync: DirectoryFsync,
 ): Promise<void> {
-  const targetSet = new Set<string>(targets);
   const groups = new Map<AtomicStateFile, Map<string, Set<AtomicArtifactKind>>>();
   const entries = await readdir(directoryPath);
   // A manual list omitted `delivery-transaction.json` — exactly the WAL that makes the inbox/outbox
@@ -265,19 +264,22 @@ export async function recoverAtomicArtifacts(
 
   for (const entry of entries) {
     const legacy = legacyPattern.exec(entry);
-    if (legacy !== null && targetSet.has(legacy[1]!)) {
-      throw new AtomicRecoveryError(legacy[1] as AtomicStateFile);
-    }
+    const legacyTarget = targets.find((candidate) => candidate === legacy?.[1]);
+    if (legacyTarget !== undefined) throw new AtomicRecoveryError(legacyTarget);
     const match = currentPattern.exec(entry);
     if (match === null) {
       const target = targets.find((candidate) => entry.startsWith(`${candidate}.`) && entry.includes(".atomic-"));
       if (target !== undefined) throw new AtomicRecoveryError(target);
       continue;
     }
-    const target = match[1] as AtomicStateFile;
-    if (!targetSet.has(target)) continue;
-    const transaction = match[2]!;
-    const kind = match[3] as AtomicArtifactKind;
+    const target = targets.find((candidate) => candidate === match[1]);
+    if (target === undefined) continue;
+    const transaction = match[2];
+    const kind = match[3];
+    if (transaction === undefined
+      || (kind !== "tmp" && kind !== "backup-tmp" && kind !== "backup" && kind !== "committed")) {
+      throw new AtomicRecoveryError(target);
+    }
     const transactions = groups.get(target) ?? new Map<string, Set<AtomicArtifactKind>>();
     const kinds = transactions.get(transaction) ?? new Set<AtomicArtifactKind>();
     kinds.add(kind);
@@ -292,7 +294,7 @@ export async function recoverAtomicArtifacts(
   );
   try {
     for (const [target, transactions] of groups) {
-      const artifacts: Array<{ transaction: string; kind: AtomicArtifactKind; path: string }> = [];
+      const artifacts: { transaction: string; kind: AtomicArtifactKind; path: string }[] = [];
       for (const [transaction, kinds] of transactions) {
         if ((kinds.has("backup") && kinds.has("committed"))
           || (kinds.has("backup-tmp") && (kinds.has("backup") || kinds.has("committed")))) {
@@ -307,8 +309,9 @@ export async function recoverAtomicArtifacts(
       const backups = artifacts.filter((artifact) => artifact.kind === "backup");
       if (backups.length > 1) throw new AtomicRecoveryError(target);
       const targetPath = join(directoryPath, target);
-      if (backups.length === 1) {
-        await rename(backups[0]!.path, targetPath);
+      const backup = backups[0];
+      if (backup !== undefined) {
+        await rename(backup.path, targetPath);
         await directoryFsync(directory);
       } else if (artifacts.some((artifact) => artifact.kind === "committed")) {
         await validateAtomicRecoveryFile(targetPath).catch(() => {
@@ -316,7 +319,7 @@ export async function recoverAtomicArtifacts(
         });
       }
       for (const artifact of artifacts) {
-        if (backups.length === 1 && artifact.path === backups[0]!.path) continue;
+        if (artifact.path === backup?.path) continue;
         await unlink(artifact.path).catch((error: unknown) => {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         });

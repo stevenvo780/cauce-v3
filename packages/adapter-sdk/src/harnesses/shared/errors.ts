@@ -203,5 +203,5 @@ function clampPreservingTail(text: string, maxLengthBytes: number): string {
 }
 
 function truncationMarker(omitted: number): string {
-  return `\n… [${omitted} caracteres omitidos] …\n`;
+  return `\n… [${String(omitted)} caracteres omitidos] …\n`;
 }

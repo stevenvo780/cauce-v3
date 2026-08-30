@@ -129,8 +129,10 @@ test("un DM de Telegram queda etiquetado con su canal y su chat", async () => {
   const sesiones = await corre("origen-telegram", telegramDelivery("tg-1"));
   const claves = Object.keys(sesiones);
   assert.equal(claves.length, 1);
-  assert.ok(claves[0]!.startsWith("fake:jarvis:auth-v3:"), `clave inesperada: ${claves[0]}`);
-  assert.deepEqual((sesiones[claves[0]!] as Record<string, unknown>).origin, {
+  const primeraClave = claves[0];
+  assert.ok(primeraClave, "no hay claves");
+  assert.ok(primeraClave.startsWith("fake:jarvis:auth-v3:"), `clave inesperada: ${primeraClave}`);
+  assert.deepEqual((sesiones[primeraClave] as Record<string, unknown>).origin, {
     adapter: "telegram",
     channel: "telegram",
     conversation_id: "8981434475",
@@ -139,7 +141,8 @@ test("un DM de Telegram queda etiquetado con su canal y su chat", async () => {
 
 test("una publicación de consola se etiqueta como consola, no como Telegram", async () => {
   const sesiones = await corre("origen-consola", consoleDelivery("con-1"));
-  const clave = Object.keys(sesiones)[0]!;
+  const clave = Object.keys(sesiones)[0];
+  assert.ok(clave, "no se publicó ninguna sesión");
   assert.deepEqual((sesiones[clave] as Record<string, unknown>).origin, {
     adapter: "console",
     channel: "console",
@@ -149,7 +152,8 @@ test("una publicación de consola se etiqueta como consola, no como Telegram", a
 
 test("sin canal no se inventa origen: la entrada queda con la forma vieja", async () => {
   const sesiones = await corre("origen-ausente", sinCanalDelivery("nada-1"));
-  const clave = Object.keys(sesiones)[0]!;
+  const clave = Object.keys(sesiones)[0];
+  assert.ok(clave, "no se publicó ninguna sesión");
   assert.equal(clave, "fake:jarvis:alias-default");
   assert.deepEqual(Object.keys(sesiones[clave] as Record<string, unknown>).sort(), ["initialized", "native_id"]);
 });
@@ -188,7 +192,7 @@ test("OpenClaw mueve el pointer estable a la conversación humana real sin colap
   await engine.handleDelivery(consoleDelivery("oc-console"));
   const second = store.getSession(pointerKey);
   assert.ok(second);
-  assert.notEqual(second.native_id, first?.native_id, "el pointer cambia de conversación nativa");
+  assert.notEqual(second.native_id, first.native_id, "el pointer cambia de conversación nativa");
   assert.deepEqual(Object.keys(second).sort(), ["initialized", "native_id"]);
   const persisted = JSON.parse(
     await readFile(resolve(root, nombre, "sessions.json"), "utf8"),

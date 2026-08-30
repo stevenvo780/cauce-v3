@@ -15,7 +15,7 @@ type DurablePublishApi = Pick<
   'preparePublishIntent' | 'publishMessage' | 'confirmPublishIntent'
 >;
 
-export interface DurablePublishOutcome {
+interface DurablePublishOutcome {
   receipt: DurablePublishReceipt;
   reconciled: boolean;
   journalStatus: 'confirmed' | 'pending' | 'rejected';

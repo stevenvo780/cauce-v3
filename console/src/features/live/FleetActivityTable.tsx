@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import type {
   FleetActivityAgent, FleetActivityFlag, FleetActivitySnapshot, FleetActivityThresholds,
 } from '../../api/types';
-import { Badge, EmptyState, Panel, Time, Unknown } from '../../components/ui';
+import { Badge, Desplazable, EmptyState, Panel, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import {
   FLAG_LABEL, FLAG_TONE, agentDisplayName, agentKeyOf, agentRowKey, estadoDeFila,
@@ -26,7 +26,7 @@ const FLAG_ORDER: FleetActivityFlag[] = [
   'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired', 'never_connected', 'unregistered', 'queued_without_consumer',
 ];
 
-export interface FleetActivityTableProps {
+interface FleetActivityTableProps {
   snapshot: FleetActivitySnapshot | undefined;
   /** Alias highlighted in the hypergraph, in `tenant/alias` format. Synchronises the two halves. */
   selectedKey?: string | null;
@@ -99,7 +99,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
               : 'Ningún alias visible: ni configurado, ni con entregas abiertas, ni con lease reciente.'}
         </EmptyState>
       ) : (
-        <div className="table-wrap">
+        <Desplazable etiqueta="Actividad en vuelo por agente">
           <table>
             <caption className="sr-only">Actividad en vuelo por agente</caption>
             <thead>
@@ -143,7 +143,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
               })}
             </tbody>
           </table>
-        </div>
+        </Desplazable>
       )}
     </Panel>
   );
@@ -336,7 +336,7 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
         <tr className="row-detail">
           <td />
           <td colSpan={8}>
-            <div className="table-wrap">
+            <Desplazable etiqueta={`Entregas en vuelo de ${agent.alias}`}>
               <table>
                 <caption className="sr-only">Entregas en vuelo de {agent.alias}</caption>
                 <thead>
@@ -360,7 +360,7 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Desplazable>
             {agent.in_flight_items_truncated ? (
               <p className="notice">
                 Mostrando las {items.length} entregas en vuelo más antiguas de {agent.in_flight} totales; el resto

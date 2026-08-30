@@ -52,7 +52,7 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
     if (this.socket && this.socket.readyState !== WebSocket.CLOSED) throw new Error('harness is already connected');
     const socket = new WebSocket(url, { headers });
     this.socket = socket;
-    socket.on('message', (data: WebSocket.RawData) => this.receive(data));
+    socket.on('message', (data: WebSocket.RawData) => { this.receive(data); });
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);
       socket.once('error', reject);
@@ -89,8 +89,9 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
     status: Ack['status'],
     detail: Partial<Pick<Ack, 'event_id' | 'retryable' | 'error' | 'error_code' | 'result' | 'execution_started'>> = {},
   ): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('harness is disconnected');
-    this.socket.send(JSON.stringify({
+    const socket = this.socket;
+    if (socket?.readyState !== WebSocket.OPEN) throw new Error('harness is disconnected');
+    socket.send(JSON.stringify({
       type: 'ack', version: PROTOCOL_VERSION, event_id: detail.event_id ?? randomUUID(),
       delivery_id: delivery.delivery_id, attempt: delivery.attempt, claim_token: delivery.claim_token, status,
       instance_id: this.identity.instance_id, epoch: this.epoch,
@@ -107,15 +108,20 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
   }
 
   heartbeat(): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error('harness is disconnected');
-    this.socket.send(JSON.stringify({
+    const socket = this.socket;
+    if (socket?.readyState !== WebSocket.OPEN) throw new Error('harness is disconnected');
+    socket.send(JSON.stringify({
       type: 'heartbeat', instance_id: this.identity.instance_id, epoch: this.epoch
     }));
   }
 
   async waitFor(predicate: (message: WsOutbound) => boolean, timeoutMs = 5_000): Promise<WsOutbound> {
     const index = this.frames.findIndex(predicate);
-    if (index >= 0) return this.frames.splice(index, 1)[0]!;
+    if (index >= 0) {
+      const [frame] = this.frames.splice(index, 1);
+      if (frame === undefined) throw new Error('matched WebSocket frame disappeared before delivery');
+      return frame;
+    }
     if (!this.socket) throw new Error('harness is disconnected');
     return new Promise<WsOutbound>((resolve, reject) => {
       const waiter = {} as FrameWaiter;
@@ -148,7 +154,7 @@ export class FakeHarness extends EventEmitter implements AdapterConsumer {
     this.currentEpoch = undefined;
     if (!socket || socket.readyState === WebSocket.CLOSED) return;
     await new Promise<void>((resolve) => {
-      socket.once('close', () => resolve());
+      socket.once('close', () => { resolve(); });
       socket.close(1000, 'harness close');
       setTimeout(() => {
         if (socket.readyState !== WebSocket.CLOSED) socket.terminate();

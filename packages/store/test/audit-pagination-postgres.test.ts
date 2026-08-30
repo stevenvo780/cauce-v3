@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
@@ -24,8 +25,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 async function message(tenant: string, room: string, actor: string): Promise<string> {
@@ -34,7 +35,7 @@ async function message(tenant: string, room: string, actor: string): Promise<str
      VALUES($1,$2,$3,$4,$5,$6::jsonb,'interactive',0) RETURNING id`,
     [randomUUID(), `trace-${randomUUID()}`, tenant, room, actor, JSON.stringify({ text: 'private body' })],
   );
-  return result.rows[0]!.id;
+  return requireValue(result.rows[0], 'result.rows').id;
 }
 
 async function audit(values: {
@@ -53,7 +54,7 @@ async function audit(values: {
     [values.tenant, values.actor, values.action, values.decision, values.messageId ?? null,
       values.deliveryId ?? null, `trace-${randomUUID()}`, JSON.stringify(values.metadata)],
   );
-  return result.rows[0]!.id;
+  return requireValue(result.rows[0], 'result.rows').id;
 }
 
 describe('participant-aware audit keyset pagination', () => {
@@ -77,7 +78,7 @@ describe('participant-aware audit keyset pagination', () => {
     const cross = await audit({
       tenant: 'Miguel', actor: 'janus', action: 'delivery.ack', decision: 'allow',
       metadata: { ack: 'done', payload: 'CROSS_SECRET', token: 'CROSS_SECRET' },
-      deliveryId: crossDelivery.rows[0]!.id,
+      deliveryId: requireValue(crossDelivery.rows[0], 'crossDelivery.rows').id,
     });
     const room = await audit({
       tenant: 'Steven', actor: 'argos', action: 'message.route', decision: 'allow',
@@ -103,7 +104,7 @@ describe('participant-aware audit keyset pagination', () => {
 
     const second = await repository.listAudit('Steven', 'kant', {
       limit: 2,
-      before: String((first as { next_cursor: string }).next_cursor),
+      before: (first as { next_cursor: string }).next_cursor,
     });
     expect(second).toEqual({
       items: [
@@ -118,8 +119,8 @@ describe('participant-aware audit keyset pagination', () => {
       expect(serialized).not.toContain(secret);
     }
     expect(serialized).not.toContain('metadata');
-    const observedIds = [...(first.items as Array<{ event_id: string }>),
-      ...(second.items as Array<{ event_id: string }>)]
+    const observedIds = [...(first.items as { event_id: string }[]),
+      ...(second.items as { event_id: string }[])]
       .map((item) => item.event_id);
     expect(observedIds).toEqual([ownNew, room, cross, ownOld]);
     expect(new Set(observedIds)).toHaveLength(observedIds.length);

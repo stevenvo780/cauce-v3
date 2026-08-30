@@ -1,33 +1,9 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  SUCCESS,
-  ControlledRunner,
-  SessionConcurrencyRunner,
-  claimToken,
-  delivery,
-  setup,
-  setupSessionConcurrency,
-  storeFor,
-} from "./engine-fixtures.js";
+import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
+import {AdapterEngine} from '../src/sdk/engine.js';
+import type {Delivery, DeliveryEvent} from '../src/sdk/types.js';
+import {ControlledRunner, SessionConcurrencyRunner, delivery, setup, setupSessionConcurrency, storeFor} from './engine-fixtures.js';
 test("a running harness emits durable started renewals until it completes", async () => {
   const store = await storeFor("engine-renewable-claim");
   const runner = new SessionConcurrencyRunner();
@@ -154,8 +130,8 @@ test("a durable intent fsync failure prevents even a witnessed harness from bein
   assert.equal(events.some((event) => event.phase === "done"), false);
   const failed = events.at(-1);
   assert.equal(failed?.phase, "failed");
-  assert.equal(failed?.error?.code, "EXECUTION_INTENT_PERSISTENCE_FAILED");
-  assert.equal(failed?.error?.retryable, true);
+  assert.equal(failed.error?.code, "EXECUTION_INTENT_PERSISTENCE_FAILED");
+  assert.equal(failed.error.retryable, true);
   assert.equal(store.getDelivery("witnessed-start-fsync-failure")?.state, "failed");
 });
 
@@ -222,9 +198,9 @@ test("advancing the fencing epoch preserves post-dispatch cancellation ambiguity
   await running;
   const failed = context.events.at(-1);
   assert.equal(failed?.phase, "failed");
-  assert.equal(failed?.error?.code, "EXECUTION_CANCELLED_AMBIGUOUS");
-  assert.equal(failed?.error?.retryable, false);
-  assert.equal(failed?.epoch, 2);
+  assert.equal(failed.error?.code, "EXECUTION_CANCELLED_AMBIGUOUS");
+  assert.equal(failed.error.retryable, false);
+  assert.equal(failed.epoch, 2);
 });
 
 test("outbox removes events only after relay ACK", async () => {
@@ -258,7 +234,7 @@ test("structured retryable failure becomes a retryable failed lifecycle event", 
   await context.engine.handleDelivery(delivery("retryable-1"));
   const failed = context.events.at(-1);
   assert.equal(failed?.phase, "failed");
-  assert.equal(failed?.error?.retryable, true);
-  assert.equal(failed?.output?.status, "failed");
+  assert.equal(failed.error?.retryable, true);
+  assert.equal(failed.output?.status, "failed");
 });
 

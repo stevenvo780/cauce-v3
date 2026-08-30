@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "node:assert/strict"; /* eslint-disable @typescript-eslint/no-dynamic-delete -- env keys come from a constant above */
 import test, { afterEach, beforeEach } from "node:test";
 import { AdapterError } from "../src/sdk/errors.js";
 import { synthesizeFaninOutput } from "../src/sdk/fanin-synthesizer.js";
@@ -13,8 +13,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (previousFaninFooter === undefined) delete process.env[FANIN_FOOTER_ENV];
-  else process.env[FANIN_FOOTER_ENV] = previousFaninFooter;
+  if (previousFaninFooter === undefined) {
+    delete process.env[FANIN_FOOTER_ENV];
+  } else process.env[FANIN_FOOTER_ENV] = previousFaninFooter;
 });
 
 function synthesizedFooterFixture(): string {
@@ -355,7 +356,7 @@ test("fan-in synthesis rejects malformed schema or response attribution", () => 
       (error: unknown) =>
         error instanceof AdapterError
         && error.code === "INVALID_DELIVERY"
-        && error.retryable === false,
+        && !error.retryable,
     );
   }
 });

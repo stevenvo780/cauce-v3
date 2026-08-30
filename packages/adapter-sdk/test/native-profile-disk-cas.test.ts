@@ -16,7 +16,7 @@ import {
 
 test("native fixed-context CAS preserves bytes on stale read and rejects hardlinks", (t) => {
   const root = mkdtempSync(join(tmpdir(), "cauce-native-cas-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); });
   const path = join(root, "AGENTS.md");
   writeFileSync(path, "current", "utf8");
 
@@ -24,7 +24,7 @@ test("native fixed-context CAS preserves bytes on stale read and rejects hardlin
   assert.equal(readFileSync(path, "utf8"), "current");
 
   assert.throws(
-    () => escribirEnDiscoRealSiCoincide(path, "stale", "replacement"),
+    () => { escribirEnDiscoRealSiCoincide(path, "stale", "replacement"); },
     /cambi/u,
   );
   assert.equal(readFileSync(path, "utf8"), "current");
@@ -32,7 +32,7 @@ test("native fixed-context CAS preserves bytes on stale read and rejects hardlin
   const hardlink = join(root, "AGENTS-linked.md");
   linkSync(path, hardlink);
   assert.throws(
-    () => escribirEnDiscoRealSiCoincide(path, "current", "replacement"),
+    () => { escribirEnDiscoRealSiCoincide(path, "current", "replacement"); },
     /enlaces duros/u,
   );
   assert.equal(readFileSync(path, "utf8"), "current");

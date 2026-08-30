@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/prefer-optional-chain: "error", @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DeliveryState, Tenant } from '@cauce/protocol';
 import type { DeliveryRow } from '../../observability.js';
 import { textualReply, visibleText } from '../../outbox.js';
@@ -25,7 +25,7 @@ export function chainNode(tenant: Tenant, alias: string): string {
 }
 
 function humanAddressedAlias(origin: DeliveryRow['origin']): string | undefined {
-  if (!origin || !origin.metadata) return undefined;
+  if (!origin || !origin.metadata) return undefined; // eslint-disable-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition -- PostgreSQL JSON can omit metadata despite its static shape.
   const alias = origin.metadata.bridge_alias;
   return typeof alias === 'string' && aliasPattern.test(alias) ? alias : undefined;
 }
@@ -52,7 +52,7 @@ export function agentResponseRequestId(
   attempt: number,
   kind: 'agent-response' | 'agent-response-late' = 'agent-response'
 ): string {
-  return hashToUuidV7(`${kind}:${deliveryId}:${attempt}`);
+  return hashToUuidV7(`${kind}:${deliveryId}:${String(attempt)}`);
 }
 
 export function agentFaninRequestId(rootMessageId: string): string {
@@ -123,9 +123,10 @@ export function aggregatedFailureText(
   childAlias: string,
   reservation: FailureNoticeReservation | undefined
 ): string {
-  if (!reservation || reservation.coalescedFailures < 1) return base;
-  return `${base} [aggregated: ${reservation.totalFailures} failures with this same cause from `
-    + `${childAlias} in this chain; ${reservation.coalescedFailures} of them were coalesced into `
+  if (reservation === undefined) return base;
+  if (reservation.coalescedFailures < 1) return base;
+  return `${base} [aggregated: ${String(reservation.totalFailures)} failures with this same cause from `
+    + `${childAlias} in this chain; ${String(reservation.coalescedFailures)} of them were coalesced into `
     + `this notice instead of being delivered. Full detail: `
     + `agent_failure_notice_events where notice_id=${reservation.noticeId}.]`;
 }

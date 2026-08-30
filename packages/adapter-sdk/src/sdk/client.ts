@@ -1,8 +1,9 @@
-import { AliasSchema, PROTOCOL_VERSION } from '@cauce/protocol';
+import { AliasSchema, PROTOCOL_VERSION } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   resumenDeLaSiembra, sembrarPerfilDelArnes, type ResultadoDeLaSiembra,
 } from '../context/siembra-del-perfil.js';
 import { nativeProfileContextEnabled } from '../context/native-profile-context.js';
+import { signalAborted } from '../runtime-state.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
@@ -52,6 +53,11 @@ function validateIdentity(config: AdapterConfig): void {
 
 type CapabilityEncoder = (capabilities: AdapterCapabilities) => readonly string[];
 
+/** Public JavaScript harnesses may supply non-literal capability values at runtime. */
+function matchesCapability(value: unknown, expected: string | boolean): boolean {
+  return value === expected;
+}
+
 interface ExecutionIntentWaiter {
   readonly deliveryId: string;
   readonly attempt: number;
@@ -66,62 +72,36 @@ interface SendDeadline {
   readonly signal: AbortSignal;
 }
 
-/*
- * Mapping of `AdapterCapabilities` keys to capability strings in the hello frame.
- */
+/** Maps `AdapterCapabilities` keys to hello-frame capability strings. */
 const CAPABILITY_ENCODERS = {
   protocol_version: (value) => [`protocol.${value.protocol_version}`],
   harness: (value) => [`harness.${value.harness}`],
-  structured_output: (value) => value.structured_output === true ? ['structured-output'] : [],
-  stdin_prompt: (value) => value.stdin_prompt === true ? ['stdin-prompt'] : [],
-  durable_inbox: (value) => value.durable_inbox === true ? ['durable-inbox'] : [],
-  durable_outbox: (value) => value.durable_outbox === true ? ['durable-outbox'] : [],
-  idempotent_delivery: (value) => value.idempotent_delivery === true ? ['idempotent-delivery'] : [],
-  heartbeat: (value) => value.heartbeat === true ? ['heartbeat'] : [],
-  cancellation: (value) => value.cancellation === 'process_group'
-    ? ['cancellation.process-group']
-    : [],
-  fencing_epoch: (value) => value.fencing_epoch === true ? ['fencing-epoch'] : [],
-  origin_relay: (value) => value.origin_relay === true ? ['origin-relay'] : [],
-  attempt_scoped_delivery: (value) => value.attempt_scoped_delivery === true
-    ? ['attempt-scoped-delivery']
-    : [],
-  event_id_correlation: (value) => value.event_id_correlation === true
-    ? ['event-id-correlation']
-    : [],
-  claim_token_correlation: (value) => value.claim_token_correlation === true
-    ? ['claim-token-correlation']
-    : [],
-  authenticated_session_scope: (value) => value.authenticated_session_scope === true
-    ? ['authenticated-session-scope']
-    : [],
-  routing_targets_v1: (value) => value.routing_targets_v1 === true ? ['routing_targets_v1'] : [],
-  attachments_v1: (value) => value.attachments_v1 === true ? ['attachments_v1'] : [],
-  native_image_input_v1: (value) => value.native_image_input_v1 === true
-    ? ['native_image_input_v1']
-    : [],
-  native_document_input_v1: (value) => value.native_document_input_v1 === true
-    ? ['native_document_input_v1']
-    : [],
-  persistent_sessions: (value) => value.persistent_sessions === true ? ['persistent-sessions'] : [],
-  loopback_api: (value) => value.loopback_api === true ? ['loopback-api'] : [],
-  stable_alias_sessions: (value) => value.stable_alias_sessions === true
-    ? ['stable-alias-sessions']
-    : [],
-  api_cancellation: (value) => value.api_cancellation === 'abort_signal'
-    ? ['api-cancellation.abort-signal']
-    : [],
-  renewable_delivery_claims_v1: (value) => value.renewable_delivery_claims_v1 === true
-    ? ['renewable_delivery_claims_v1']
-    : [],
-  delegation_feedback_v1: (value) => value.delegation_feedback_v1 === true
-    ? ['delegation_feedback_v1']
-    : [],
-  agent_identity_v1: (value) => value.agent_identity_v1 === true ? ['agent_identity_v1'] : [],
-  agent_profile_v1: (value) => value.agent_profile_v1 === true ? ['agent_profile_v1'] : [],
-  agent_profile_adoption_v1: (value) => value.agent_profile_adoption_v1 === true
-    ? ['agent_profile_adoption_v1']
-    : [],
+  structured_output: (value) => matchesCapability(value.structured_output, true) ? ['structured-output'] : [],
+  stdin_prompt: (value) => matchesCapability(value.stdin_prompt, true) ? ['stdin-prompt'] : [],
+  durable_inbox: (value) => matchesCapability(value.durable_inbox, true) ? ['durable-inbox'] : [],
+  durable_outbox: (value) => matchesCapability(value.durable_outbox, true) ? ['durable-outbox'] : [],
+  idempotent_delivery: (value) => matchesCapability(value.idempotent_delivery, true) ? ['idempotent-delivery'] : [],
+  heartbeat: (value) => matchesCapability(value.heartbeat, true) ? ['heartbeat'] : [],
+  cancellation: (value) => matchesCapability(value.cancellation, 'process_group') ? ['cancellation.process-group'] : [],
+  fencing_epoch: (value) => matchesCapability(value.fencing_epoch, true) ? ['fencing-epoch'] : [],
+  origin_relay: (value) => matchesCapability(value.origin_relay, true) ? ['origin-relay'] : [],
+  attempt_scoped_delivery: (value) => matchesCapability(value.attempt_scoped_delivery, true) ? ['attempt-scoped-delivery'] : [],
+  event_id_correlation: (value) => matchesCapability(value.event_id_correlation, true) ? ['event-id-correlation'] : [],
+  claim_token_correlation: (value) => matchesCapability(value.claim_token_correlation, true) ? ['claim-token-correlation'] : [],
+  authenticated_session_scope: (value) => matchesCapability(value.authenticated_session_scope, true) ? ['authenticated-session-scope'] : [],
+  routing_targets_v1: (value) => matchesCapability(value.routing_targets_v1, true) ? ['routing_targets_v1'] : [],
+  attachments_v1: (value) => matchesCapability(value.attachments_v1, true) ? ['attachments_v1'] : [],
+  native_image_input_v1: (value) => matchesCapability(value.native_image_input_v1, true) ? ['native_image_input_v1'] : [],
+  native_document_input_v1: (value) => matchesCapability(value.native_document_input_v1, true) ? ['native_document_input_v1'] : [],
+  persistent_sessions: (value) => matchesCapability(value.persistent_sessions, true) ? ['persistent-sessions'] : [],
+  loopback_api: (value) => matchesCapability(value.loopback_api, true) ? ['loopback-api'] : [],
+  stable_alias_sessions: (value) => matchesCapability(value.stable_alias_sessions, true) ? ['stable-alias-sessions'] : [],
+  api_cancellation: (value) => matchesCapability(value.api_cancellation, 'abort_signal') ? ['api-cancellation.abort-signal'] : [],
+  renewable_delivery_claims_v1: (value) => matchesCapability(value.renewable_delivery_claims_v1, true) ? ['renewable_delivery_claims_v1'] : [],
+  delegation_feedback_v1: (value) => matchesCapability(value.delegation_feedback_v1, true) ? ['delegation_feedback_v1'] : [],
+  agent_identity_v1: (value) => matchesCapability(value.agent_identity_v1, true) ? ['agent_identity_v1'] : [],
+  agent_profile_v1: (value) => matchesCapability(value.agent_profile_v1, true) ? ['agent_profile_v1'] : [],
+  agent_profile_adoption_v1: (value) => matchesCapability(value.agent_profile_adoption_v1, true) ? ['agent_profile_adoption_v1'] : [],
 } satisfies Record<keyof AdapterCapabilities, CapabilityEncoder>;
 
 export function capabilityStrings(capabilities: AdapterCapabilities): string[] {
@@ -167,6 +147,7 @@ export class AdapterClient {
         this.publishAndConfirmExecutionIntent(event, signal, timeoutMs)
       ),
       logger: this.logger,
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Public JavaScript callers can omit required config fields.
       ...(options.config.tenantId === undefined ? {} : { ownTenantId: options.config.tenantId }),
       ...(options.config.ownRoom === undefined ? {} : { ownRoom: options.config.ownRoom }),
       ...(options.config.defaultTimeoutMs === undefined
@@ -209,9 +190,9 @@ export class AdapterClient {
           } finally {
             signal.removeEventListener('abort', closeOnAbort);
           }
-          if (!signal.aborted) throw new Error('Consumer connection closed');
+          if (!signalAborted(signal)) throw new Error('Consumer connection closed');
         } catch (error) {
-          if (signal.aborted) break;
+          if (signalAborted(signal)) break;
           if (error instanceof AdapterError && !error.retryable) throw error;
           const errorCode = connectionErrorCode(error);
           this.onError(errorCode);
@@ -226,7 +207,9 @@ export class AdapterClient {
           this.activeConnection = undefined;
           await connection?.close().catch(() => undefined);
         }
-        if (!signal.aborted) await this.clock.sleep(this.backoff.nextDelay(), signal).catch(() => undefined);
+        if (!signalAborted(signal)) {
+          await this.clock.sleep(this.backoff.nextDelay(), signal).catch(() => undefined);
+        }
       }
     } finally {
       this.engine.stop();
@@ -247,10 +230,7 @@ export class AdapterClient {
           if (welcomed) throw new Error('Gateway sent duplicate hello_ack');
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
-          /*
-           * Syncs the profile received in `hello_ack` before starting heartbeat, outbox and recovery.
-           * Happens after `activateEpoch` to ensure the runtime applies the identity before processing deliveries.
-           */
+          /* Applies the hello profile after epoch activation and before heartbeat, outbox, and recovery. */
           this.sembrarPerfil(frame);
           this.backoff.reset();
           heartbeat = this.heartbeatLoop(heartbeatAbort.signal).catch(async () => {
@@ -323,14 +303,14 @@ export class AdapterClient {
           && event.claim_token === correlation.claim_token
         ));
         const terminalPending = pending?.phase === 'done' || pending?.phase === 'failed';
-        const terminalReceipt = frame.applied === true
+        const terminalReceipt = frame.applied
           ? 'applied' as const
           : frame.receipt === 'duplicate' || frame.receipt === 'ownership_lost'
             ? frame.receipt
             : undefined;
         const executionIntentReceipt = pending?.execution_started === true
           && frame.status === 'started'
-          && ((frame.applied === true && frame.receipt === 'applied')
+          && ((frame.applied && frame.receipt === 'applied')
             || frame.receipt === 'duplicate')
           ? (frame.receipt === 'applied' ? 'applied' as const : 'duplicate' as const)
           : undefined;
@@ -349,8 +329,7 @@ export class AdapterClient {
             : { execution_intent_receipt: executionIntentReceipt }),
         });
         const intentWaiter = this.executionIntentWaiters.get(frame.event_id);
-        if (intentWaiter !== undefined
-          && intentWaiter.deliveryId === frame.delivery_id
+        if (intentWaiter?.deliveryId === frame.delivery_id
           && intentWaiter.attempt === frame.attempt
           && intentWaiter.claimToken === frame.claim_token) {
           const durableReceipt = this.store.getDelivery(frame.delivery_id)
@@ -366,7 +345,7 @@ export class AdapterClient {
           }
         }
         if (acknowledged && pending?.claim_renewal === true) {
-          if (frame.applied === true || frame.receipt === 'duplicate') {
+          if (frame.applied || frame.receipt === 'duplicate') {
             this.engine.confirmClaim(frame.delivery_id, frame.attempt, frame.claim_token);
           } else if (pending.phase === 'accepted' && frame.receipt !== 'ownership_lost') {
             // Renewal in unconfirmed accepted phase; not treated as ownership loss.
@@ -510,15 +489,13 @@ export class AdapterClient {
         confirmation,
       ]);
     } catch (error) {
-      if (!settled) {
-        reject(error instanceof AdapterError
-          ? error
-          : new AdapterError(
-              'EXECUTION_INTENT_CONFIRMATION_FAILED',
-              'Execution intent could not be sent to the gateway',
-              true,
-            ));
-      }
+      reject(error instanceof AdapterError
+        ? error
+        : new AdapterError(
+            'EXECUTION_INTENT_CONFIRMATION_FAILED',
+            'Execution intent could not be sent to the gateway',
+            true,
+          ));
       throw error instanceof AdapterError
         ? error
         : new AdapterError(
@@ -556,17 +533,21 @@ export class AdapterClient {
       let timer: NodeJS.Timeout | undefined;
       let onAbort: (() => void) | undefined;
       const timedOut = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new AdapterError(
-          'EXECUTION_INTENT_CONFIRMATION_FAILED',
-          'Execution intent send exceeded the ownership deadline',
-          true,
-        )), remainingMs);
+        timer = setTimeout(() => {
+          reject(new AdapterError(
+            'EXECUTION_INTENT_CONFIRMATION_FAILED',
+            'Execution intent send exceeded the ownership deadline',
+            true,
+          ));
+        }, remainingMs);
         timer.unref();
       });
       const aborted = new Promise<never>((_resolve, reject) => {
-        onAbort = () => reject(deadline.signal.reason instanceof Error
-          ? deadline.signal.reason
-          : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
+        onAbort = () => {
+          reject(deadline.signal.reason instanceof Error
+            ? deadline.signal.reason
+            : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
+        };
         deadline.signal.addEventListener('abort', onAbort, { once: true });
       });
       try {
@@ -588,7 +569,7 @@ export class AdapterClient {
     const interval = this.config.heartbeatMs ?? 15_000;
     while (!signal.aborted) {
       await this.clock.sleep(interval, signal);
-      if (signal.aborted || this.engine.epoch === 0) continue;
+      if (signalAborted(signal) || this.engine.epoch === 0) continue;
       const heartbeat: HeartbeatFrame = {
         type: 'heartbeat',
         instance_id: this.config.instanceId,
@@ -625,10 +606,7 @@ export function siembraHabilitada(entorno: NodeJS.ProcessEnv): boolean {
     && entorno.CAUCE_SEMBRAR_PERFIL !== '0';
 }
 
-/**
- * Truncates `BaseAckSchema.error` to 2000 characters to fit frame schema limits.
- * The full message remains preserved in `result.output`.
- */
+/** Truncates `BaseAckSchema.error`; the full message remains preserved in `result.output`. */
 const MAX_ACK_ERROR_DETAIL = 2_000;
 const ACK_DETAIL_TRUNCATION_SUFFIX = '… [truncated]';
 

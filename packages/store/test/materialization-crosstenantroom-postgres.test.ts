@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -75,8 +76,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('materialization across tenant rooms', () => {
@@ -107,17 +108,17 @@ describe('materialization across tenant rooms', () => {
       'Steven', 'grp.steven', 'kant', 'Steven', 'kant',
     ));
     const [paraKant] = await repository.claimDeliveries(
-      'Steven', 'kant', 'kant-1', leaseKant.epoch!, 1, 30_000,
+      'Steven', 'kant', 'kant-1', requireValue(leaseKant.epoch, 'leaseKant.epoch'), 1, 30_000,
     );
     expect(paraKant).toBeDefined();
-    await repository.ackDelivery(paraKant!.delivery_id, 'Steven', 'kant', {
+    await repository.ackDelivery(requireValue(paraKant, 'paraKant').delivery_id, 'Steven', 'kant', {
       version: '3.0',
       event_id: randomUUID(),
       status: 'done',
       instance_id: 'kant-1',
-      epoch: leaseKant.epoch!,
-      claim_token: paraKant!.claim_token,
-      attempt: paraKant!.attempt,
+      epoch: requireValue(leaseKant.epoch, 'leaseKant.epoch'),
+      claim_token: requireValue(paraKant, 'paraKant').claim_token,
+      attempt: requireValue(paraKant, 'paraKant').attempt,
       retryable: false,
       result: {
         output: {
@@ -137,7 +138,7 @@ describe('materialization across tenant rooms', () => {
        WHERE d.recipient_tenant='Isa' AND d.recipient_alias='salva' ORDER BY d.created_at DESC LIMIT 1`,
     );
     expect(cruzada.rowCount).toBe(1);
-    const deliveryId = cruzada.rows[0]!.id;
+    const deliveryId = requireValue(cruzada.rows[0], 'cruzada.rows').id;
 
     /*
      * 🔴 THE LEASE WAS MISSING, which is why these two tests had been red.
@@ -155,12 +156,12 @@ describe('materialization across tenant rooms', () => {
     expect(lease.acquired).toBe(true);
 
     // Claim the delivery to salva (Isa)
-    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', lease.epoch!, 1, 30_000);
+    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
     expect(claimed).toHaveLength(1);
-    expect(claimed[0]!.recipient_alias).toBe('salva');
+    expect(requireValue(claimed[0], 'claimed').recipient_alias).toBe('salva');
 
     // salva returns a failed ACK
-    const ack = failedAck(claimed[0]!, 'instance-1', lease.epoch!);
+    const ack = failedAck(requireValue(claimed[0], 'claimed'), 'instance-1', requireValue(lease.epoch, 'lease.epoch'));
     const ackResult = await repository.ackDelivery(deliveryId, 'Isa', 'salva', ack);
     expect(ackResult.applied).toBe(true);
 
@@ -169,7 +170,7 @@ describe('materialization across tenant rooms', () => {
       'SELECT status FROM deliveries WHERE id = $1',
       [deliveryId]
     );
-    expect(deliveryAfterAck.rows[0]!.status).toBe('failed');
+    expect(requireValue(deliveryAfterAck.rows[0], 'deliveryAfterAck.rows').status).toBe('failed');
 
     /*
      * The reaper has NOTHING to do here, and that is the assertion that matters.
@@ -198,7 +199,7 @@ describe('materialization across tenant rooms', () => {
     const trasElReaper = await pool.query<{ status: string }>(
       'SELECT status FROM deliveries WHERE id = $1', [deliveryId]
     );
-    expect(trasElReaper.rows[0]!.status).toBe('failed');
+    expect(requireValue(trasElReaper.rows[0], 'trasElReaper.rows').status).toBe('failed');
 
     // Verify that if a response message was created, it's in the correct room
     const responseMessages = await pool.query<{
@@ -223,7 +224,7 @@ describe('materialization across tenant rooms', () => {
      * here and not pretend it is still covered.
      */
     expect(responseMessages.rows.length).toBeGreaterThan(0);
-    const response = responseMessages.rows[0]!;
+    const response = requireValue(responseMessages.rows[0], 'responseMessages.rows');
     expect(response.tenant_id).toBe('Isa');  // the response lives in salva's tenant
     expect(response.actor_alias).toBe('salva');
     // And in a room of HER own, never in the delegator's: that is the bug this test hunts.
@@ -238,12 +239,12 @@ describe('materialization across tenant rooms', () => {
     // Arrange: Create a delivery to an agent
     const msg = publishMessageCrossTenant('Steven', 'grp.steven', 'kant', 'Isa', 'salva');
     const published = await repository.publish(msg);
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
 
     // Claim it — with its own lease, for the same reason as the test above.
     const lease = await repository.acquireLease('Isa', 'salva', 'instance-1', [], 30_000);
     expect(lease.acquired).toBe(true);
-    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', lease.epoch!, 1, 30_000);
+    const claimed = await repository.claimDeliveries('Isa', 'salva', 'instance-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000);
     expect(claimed).toHaveLength(1);
 
     // Disable salva's membership to simulate broken sandbox
@@ -268,6 +269,6 @@ describe('materialization across tenant rooms', () => {
       [deliveryId]
     );
     // Status should be one of the processable states, not stuck in 'leased'
-    expect(['dead', 'failed', 'done', 'retry']).toContain(finalDelivery.rows[0]!.status);
+    expect(['dead', 'failed', 'done', 'retry']).toContain(requireValue(finalDelivery.rows[0], 'finalDelivery.rows').status);
   });
 });

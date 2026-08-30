@@ -293,7 +293,7 @@ describe('client frames', () => {
       .toEqual({ type: 'resize', cols: MAX_COLS, rows: MAX_ROWS });
   });
 
-  // Control negativo: acotar no puede volverse "acepto cualquier cosa".
+  // Negative control: bounding must not become "I accept anything".
   it('sigue rechazando un resize que no trae enteros', () => {
     expect(parseClientMessage(Buffer.from('{"type":"resize","cols":"80","rows":24}'), false)).toBeUndefined();
     expect(parseClientMessage(Buffer.from('{"type":"resize","cols":80.5,"rows":24}'), false)).toBeUndefined();

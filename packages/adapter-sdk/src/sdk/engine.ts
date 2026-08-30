@@ -447,6 +447,12 @@ export class AdapterEngine {
                   );
             }
           },
+          onFixedContextResolved: (reason) => {
+            this.logger({
+              event: "fixed_context", delivery_id: delivery.delivery_id, alias: delivery.recipient_alias,
+              attempt: delivery.attempt, timestamp: this.clock.now().toISOString(), reason,
+            });
+          },
           onRuntimeProfileConsumed: (profile) => { consumedProfile = profile; },
         });
       }
@@ -544,7 +550,7 @@ export class AdapterEngine {
     const queueTimer = setTimeout(() => {
       controller.abort(new AdapterError(
         "SESSION_QUEUE_TIMEOUT",
-        `Delivery waited ${queueBudgetMs} ms for its session turn without starting execution`,
+        `Delivery waited ${String(queueBudgetMs)} ms for its session turn without starting execution`,
         true,
       ));
     }, queueBudgetMs);

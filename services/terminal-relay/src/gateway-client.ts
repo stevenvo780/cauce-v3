@@ -6,6 +6,7 @@ import {
   isRelayInstanceId,
   type RelayProcessIdentity,
 } from './relay-identity.js';
+import { integerField, stringField } from './validation.js';
 
 export * from './governance-read.js';
 export * from './governance-write.js';
@@ -135,16 +136,6 @@ export interface HttpsTerminalGatewayClientOptions {
   readonly clientCert: Buffer;
   readonly clientKey: Buffer;
   readonly identity: RelayProcessIdentity;
-}
-
-function stringField(source: Record<string, unknown>, name: string): string | undefined {
-  const value = source[name];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function integerField(source: Record<string, unknown>, name: string): number | undefined {
-  const value = source[name];
-  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
 }
 
 const CLAIM_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

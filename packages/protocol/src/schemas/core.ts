@@ -39,12 +39,15 @@ export const ROLE_BRIEF_MAX_CODE_POINTS = 1200;
 
 /** Length of a text in code points. */
 export function countCodePoints(text: string): number {
-  return [...text].length;
+  let count = 0;
+  for (const _ of text) count += 1;
+  return count;
 }
 
 /** Truncates a text to ROLE_BRIEF_MAX_CODE_POINTS code points without splitting surrogate pairs. */
 export function clampToRoleBriefLimit(text: string): string {
-  const codePoints = [...text];
+  const codePoints: string[] = [];
+  for (const codePoint of text) codePoints.push(codePoint);
   return codePoints.length <= ROLE_BRIEF_MAX_CODE_POINTS
     ? text
     : codePoints.slice(0, ROLE_BRIEF_MAX_CODE_POINTS).join('');

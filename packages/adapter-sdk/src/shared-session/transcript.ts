@@ -324,11 +324,11 @@ export function claudeTranscript(
     compactions: (appended) => compactBoundaries(appended).map((event) => {
       const tokens = event.preTokens === undefined || event.postTokens === undefined
         ? ""
-        : ` (${event.preTokens} -> ${event.postTokens} tokens)`;
+        : ` (${String(event.preTokens)} -> ${String(event.postTokens)} tokens)`;
       return {
         id: event.uuid,
         detail: `la terminal compactó su contexto durante este turno, disparo ${event.trigger}`
-          + `${tokens}`,
+          + tokens,
       };
     }),
     stdout: (text, sessionId) => JSON.stringify({

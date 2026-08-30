@@ -84,7 +84,7 @@ function renderAttributedSection(
       "utf8",
     ));
   const omittedLine = (count: number): string =>
-    `[${count} ${entryKind} ${count === 1 ? "entry" : "entries"} omitted for byte limit]`;
+    `[${String(count)} ${entryKind} ${count === 1 ? "entry" : "entries"} omitted for byte limit]`;
   const headingBytes = Buffer.byteLength(heading, "utf8");
   let includedCount = 0;
   let includedMinimumBytes = 0;
@@ -116,7 +116,9 @@ function renderAttributedSection(
   const baseExtraBytes = Math.floor(availableExtraBytes / includedCount);
   let remainder = availableExtraBytes % includedCount;
   const lines = entries.slice(0, includedCount).map((entry, index) => {
-    const entryBytes = minimumEntryBytes[index]!
+    const minimumBytes = minimumEntryBytes[index];
+    if (minimumBytes === undefined) throw new Error("Fan-in entry budget is missing");
+    const entryBytes = minimumBytes
       + baseExtraBytes
       + (remainder > 0 ? 1 : 0);
     remainder = Math.max(0, remainder - 1);
@@ -135,7 +137,7 @@ export function synthesizeFaninOutput(
   options: FaninSynthesisOptions = {},
 ): StructuredOutput {
   const data = objectRecord(body.fanin_data_v1);
-  if (data === undefined || data.schema !== FANIN_SCHEMA || !Array.isArray(data.responses)) {
+  if (data?.schema !== FANIN_SCHEMA || !Array.isArray(data.responses)) {
     throw new AdapterError(
       "INVALID_DELIVERY",
       `agent.fanin requires body.fanin_data_v1 with schema '${FANIN_SCHEMA}' and responses[]`,
@@ -154,7 +156,7 @@ export function synthesizeFaninOutput(
       || typeof response.untrusted_text !== "string") {
       throw new AdapterError(
         "INVALID_DELIVERY",
-        `agent.fanin response[${index}] requires canonical tenant_id/alias and string untrusted_text`,
+        `agent.fanin response[${String(index)}] requires canonical tenant_id/alias and string untrusted_text`,
         false,
       );
     }
@@ -178,8 +180,8 @@ export function synthesizeFaninOutput(
     ? data.completed
     : responses.length;
   const heading = expected === undefined
-    ? `Agent results (${completed} completed):`
-    : `Agent results (${completed}/${expected} completed):`;
+    ? `Agent results (${String(completed)} completed):`
+    : `Agent results (${String(completed)}/${String(expected)} completed):`;
   const processedReplies = (options.processedReplies ?? [])
     .filter((candidate) =>
       TENANT_PATTERN.test(candidate.tenantId)
@@ -221,7 +223,8 @@ export function synthesizeFaninOutput(
   // into a single escaped line. Every other locally processed reply still has to appear:
   // with a stateless harness the leading turn never saw the sibling branches, so dropping
   // them would destroy terminal local reviews that only exist here.
-  const primary = processedReplies[0]!;
+  const primary = processedReplies[0];
+  if (primary === undefined) throw new Error("Fan-in synthesis has no primary reply");
   const others = processedReplies.slice(1);
   // Coverage is keyed by the branch delivery id the store itself stamped on each
   // agent.response. A tenant/alias key would collapse two branches delegated to the same
@@ -233,10 +236,10 @@ export function synthesizeFaninOutput(
   const uncovered = responses.filter((response) =>
     response.deliveryId === undefined || !covered.has(response.deliveryId));
   const footer = process.env.CAUCE_FANIN_FOOTER === "1"
-    ? `[${processedReplies.length} locally synthesized branch `
+    ? `[${String(processedReplies.length)} locally synthesized branch `
       + `${processedReplies.length === 1 ? "reply" : "replies"}; `
-      + `${responses.length} branch ${responses.length === 1 ? "response" : "responses"} `
-      + `in this chain; ${uncovered.length} without local synthesis]`
+      + `${String(responses.length)} branch ${responses.length === 1 ? "response" : "responses"} `
+      + `in this chain; ${String(uncovered.length)} without local synthesis]`
     : undefined;
 
   const sections: {
@@ -249,7 +252,7 @@ export function synthesizeFaninOutput(
     sections.push({
       heading: others.length === 1
         ? "Other locally processed branch reply (1):"
-        : `Other locally processed branch replies (${others.length}):`,
+        : `Other locally processed branch replies (${String(others.length)}):`,
       entries: others,
       emptyText: "No other locally processed replies were available.",
       entryKind: "processed branch",
@@ -259,7 +262,7 @@ export function synthesizeFaninOutput(
     sections.push({
       heading: uncovered.length === 1
         ? "Branch without local synthesis (1):"
-        : `Branches without local synthesis (${uncovered.length}):`,
+        : `Branches without local synthesis (${String(uncovered.length)}):`,
       entries: uncovered,
       emptyText: "No branch responses were available.",
       entryKind: "raw branch",

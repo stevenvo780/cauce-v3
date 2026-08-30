@@ -1,5 +1,6 @@
-import { abortReason } from "./errors.js";
+import { abortReason } from "./errors.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { HarnessSessionReservation } from "../../contracts/harness.js";
+import { signalAborted } from "../../runtime-state.js";
 
 export class SessionReservation implements HarnessSessionReservation {
   private released = false;
@@ -31,12 +32,12 @@ async function waitForSessionTurn(previous: Promise<void>, signal: AbortSignal):
       signal.removeEventListener("abort", onAbort);
       callback();
     };
-    const onAbort = (): void => settle(() => rejectWait(abortReason(signal)));
+    const onAbort = (): void => { settle(() => { rejectWait(abortReason(signal)); }); };
     signal.addEventListener("abort", onAbort, { once: true });
     void previous.then(
-      () => settle(resolveWait),
-      () => settle(resolveWait),
+      () => { settle(resolveWait); },
+      () => { settle(resolveWait); },
     );
   });
-  if (signal.aborted) throw abortReason(signal);
+  if (signalAborted(signal)) throw abortReason(signal);
 }

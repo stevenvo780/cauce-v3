@@ -64,8 +64,10 @@ export async function reconstructPublishReceipt(
   const expectedOrigin = authenticated?.origin ?? input.origin ?? null;
   const expectedSession = authenticated?.session_id ?? input.session_id ?? null;
   const expectedChannel = authenticated?.channel ?? input.channel ?? null;
-  if (messageResult.rowCount !== 1 || !message
-      || message.id !== messageId
+  if (messageResult.rowCount !== 1 || message === undefined) {
+    throw new StoreError('conflict', 'idempotent publish durable message differs from its request');
+  }
+  if (message.id !== messageId
       || message.version !== input.version
       || message.tenant_id !== input.tenant_id
       || message.room_id !== input.room_id
@@ -166,8 +168,10 @@ export async function reconstructCommittedConsoleIntentReceipt(
     [durable.message_id],
   );
   const message = messageResult.rows[0];
-  if (messageResult.rowCount !== 1 || message === undefined
-      || message.auth_session_id === null || message.auth_channel === null) {
+  if (messageResult.rowCount !== 1 || message === undefined) {
+    throw new StoreError('conflict', 'committed console publish auth context is unavailable');
+  }
+  if (message.auth_session_id === null || message.auth_channel === null) {
     throw new StoreError('conflict', 'committed console publish auth context is unavailable');
   }
   const origin = message.origin === null ? undefined : OriginSchema.safeParse(message.origin);

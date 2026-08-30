@@ -141,13 +141,13 @@ export async function materializeAttachments(body: Record<string, unknown>): Pro
       if (aggregateBytes > MAX_ATTACHMENTS_TOTAL_BYTES) throw attachmentError("Delivery attachments exceed aggregate size limit");
       const actualHash = createHash("sha256").update(payload).digest("hex");
       if (actualHash !== expectedHash) throw attachmentError("Delivery attachment checksum does not match");
-      const path = join(directory, `${index + 1}-${name}`);
+      const path = join(directory, `${String(index + 1)}-${name}`);
       await writeFile(path, payload, { mode: 0o600, flag: "wx" });
       attachments.push({
         kind: item.kind as "image" | "document", name, mimeType: mime, path,
         size: payload.length, sha256: actualHash,
       });
-      lines.push(`Attachment ${index + 1}: ${JSON.stringify({
+      lines.push(`Attachment ${String(index + 1)}: ${JSON.stringify({
         name, mime_type: mime, file_size: payload.length, sha256: actualHash, local_path: path,
       })}`);
     }

@@ -19,7 +19,7 @@ export interface BorradorDeFichero {
   shaBase: string | null;
 }
 
-export interface FicherosTabProps {
+interface FicherosTabProps {
   tenantId: string;
   alias: string;
   /** Outside the component and indexed by kind: tab, file and fold all unmount the editor. */

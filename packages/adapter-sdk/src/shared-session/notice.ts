@@ -29,13 +29,15 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   turn_merged: "el panel estaba ocupado y la terminal fundió este pedido con el turno en curso",
 };
 
+const CONTEXT_RESET_NOTICE = {
+  mark: RESET_MARK,
+  consequence: "Este turno SÍ pasó por la terminal, pero lo anterior a este reinicio ya no está"
+    + " en su conversación.",
+} as const;
+
 /** Explanatory messages by type of terminal context change. */
 const CONTEXT_NOTICE: Readonly<Record<string, { readonly mark: string; readonly consequence: string }>> = {
-  context_reset: {
-    mark: RESET_MARK,
-    consequence: "Este turno SÍ pasó por la terminal, pero lo anterior a este reinicio ya no está"
-      + " en su conversación.",
-  },
+  context_reset: CONTEXT_RESET_NOTICE,
   session_created: {
     mark: RESET_MARK,
     consequence: "Este turno SÍ pasó por una terminal real, pero por una RECIÉN CREADA y vacía:"
@@ -67,7 +69,7 @@ export function degradationNotice(
 ): string {
   const mecanismo = `tmux + registro de ${harness}`;
   if (!degradation.fellBack) {
-    const context = CONTEXT_NOTICE[degradation.reason] ?? CONTEXT_NOTICE.context_reset!;
+    const context = CONTEXT_NOTICE[degradation.reason] ?? CONTEXT_RESET_NOTICE;
     return [
       context.mark,
       `La memoria de la terminal de ${alias} cambió: ${REASON_TEXT[degradation.reason]}`

@@ -349,7 +349,7 @@ describe('TerminalRelayFactsProbe.listMemoryDirectory', () => {
         total: 201,
         truncated: true,
         entries: Array.from({ length: 201 }, (_, index) => ({
-          path: `${MEMORY_ROOT}/${index}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
+          path: `${MEMORY_ROOT}/${String(index)}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
         })),
       }),
       indice({ total: 1 }),

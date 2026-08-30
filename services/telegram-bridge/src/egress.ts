@@ -11,6 +11,7 @@ import { TelegramApiError, validTelegramMessageId } from './telegram.js';
 import { markdownToPlainText, markdownToTelegramHtml } from './markdown.js';
 import type { TelegramLoopObserver } from './progress.js';
 import { sleep } from './abort-sleep.js';
+import { objectRecord } from './validation.js';
 
 export class EgressCrash extends Error {
   constructor(readonly point: 'before_begin' | 'before_send' | 'during_send' | 'after_send' | 'after_complete') {
@@ -32,7 +33,6 @@ export interface TelegramEgressWorkerOptions {
   aliases: readonly TelegramAliasConfig[];
   apis: ReadonlyMap<string, TelegramApi>;
   workerId?: string;
-  batchSize?: number;
   leaseMs?: number;
   baseRetryMs?: number;
   hooks?: TelegramEgressHooks;
@@ -46,11 +46,6 @@ class EgressLeaseLost extends Error {
     super('Telegram egress lease or durable ACK was fenced');
     this.name = 'EgressLeaseLost';
   }
-}
-
-function object(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : undefined;
 }
 
 const VISIBLE_TEXT = /[\p{L}\p{N}\p{P}\p{S}]/u;
@@ -106,7 +101,7 @@ export function unwrapStructuredEnvelope(value: string): string | undefined {
   } catch {
     return value;
   }
-  const envelope = object(decoded);
+  const envelope = objectRecord(decoded);
   if (envelope === undefined || !('reply' in envelope)) return value;
   if (!ENVELOPE_KEYS.some((key) => key in envelope)) return value;
 
@@ -120,8 +115,8 @@ export function unwrapStructuredEnvelope(value: string): string | undefined {
 }
 
 function candidate(payload: Record<string, unknown>): string | undefined {
-  const result = object(payload.result);
-  const output = object(result?.output);
+  const result = objectRecord(payload.result);
+  const output = objectRecord(result?.output);
   const values = [
     output?.reply, result?.reply,
     result?.text, result?.content, result?.message,
@@ -270,7 +265,6 @@ export class TelegramEgressWorker {
   private readonly aliases: ReadonlyMap<string, TelegramAliasConfig>;
   private readonly apis: ReadonlyMap<string, TelegramApi>;
   private readonly workerId: string;
-  private readonly batchSize: number;
   private readonly leaseMs: number;
   private readonly baseRetryMs: number;
   private readonly hooks: TelegramEgressHooks;
@@ -283,17 +277,13 @@ export class TelegramEgressWorker {
     this.aliases = new Map(options.aliases.map((entry) => [entry.alias, entry]));
     this.apis = options.apis;
     this.workerId = options.workerId ?? `telegram-egress:${randomUUID()}`;
-    // Compatibility accepts the old batch option, but a claim is always incremental. A remote
-    // send must never wait in memory behind leases that started at the same instant.
-    this.batchSize = 1;
     this.leaseMs = options.leaseMs ?? 90_000;
     this.baseRetryMs = options.baseRetryMs ?? 500;
     this.hooks = options.hooks ?? {};
     this.activity = options.activity;
     this.onMetric = options.onMetric ?? (() => undefined);
     this.observer = options.observer;
-    if ((options.batchSize !== undefined && options.batchSize < 1) ||
-        !Number.isInteger(this.leaseMs) || this.leaseMs < 1_000 ||
+    if (!Number.isInteger(this.leaseMs) || this.leaseMs < 1_000 ||
         !Number.isInteger(this.baseRetryMs) || this.baseRetryMs < 1) {
       throw new Error('Telegram egress worker options are invalid');
     }
@@ -603,7 +593,7 @@ export class TelegramEgressWorker {
   }
 
   async runOnce(): Promise<number> {
-    const events = await this.repository.claim(this.workerId, this.batchSize, this.leaseMs);
+    const events = await this.repository.claim(this.workerId, 1, this.leaseMs);
     for (const event of events) await this.process(event);
     return events.length;
   }

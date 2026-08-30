@@ -20,7 +20,7 @@ export type TerminalDenialCode =
   | 'request_conflict'
   | 'not_installed';
 
-export interface TerminalDenialCopy {
+interface TerminalDenialCopy {
   /** Headline. A short sentence understood without knowing anything about the gateway. */
   titulo: string;
   /** The door that closed, said in terms the operator can verify. */

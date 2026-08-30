@@ -1,4 +1,5 @@
-import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
+import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import { signalAborted } from "../../runtime-state.js";
 import { inspectExactPane, interruptPane, samePaneProcess, type PaneIdentity } from "../tmux.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
 import { PasteSessionRunnerBase } from "./base.js";
@@ -78,7 +79,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             activeIdentity.paneId,
             this.tmuxControl(request.signal),
           );
-          if (cancelObservedAt !== undefined) continue;
+          if (signalAborted(request.signal)) continue;
           if (observed.state === "unreadable") {
             return {
               result: await this.ambiguousCommittedState(
@@ -125,9 +126,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             if (noted.aborted) continue;
           }
           // If the paste merged with an in-flight turn, recover the envelope written after the paste.
-          if (injected === undefined && scan.envelope !== undefined) {
+          const envelope = scan.envelope;
+          if (injected === undefined && envelope !== undefined) {
             const harvested = await beforeAbort(
-              () => this.harvested(scan.envelope!, undefined, generating),
+              () => this.harvested(envelope, undefined, generating),
               request.signal,
             );
             if (harvested.aborted) continue;
@@ -135,21 +137,22 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           }
         }
         let injectedGrew = false;
-        if (injected !== undefined) {
+        const injectedTurn = injected;
+        if (injectedTurn !== undefined) {
           const grew = await beforeAbort(
-            () => this.grew(injected!.file, lastSize),
+            () => this.grew(injectedTurn.file, lastSize),
             request.signal,
           );
           if (grew.aborted) continue;
           injectedGrew = grew.value;
         }
-        if (injected !== undefined && injectedGrew) {
-          const measured = await beforeAbort(() => fileSize(injected!.file), request.signal);
+        if (injectedTurn !== undefined && injectedGrew) {
+          const measured = await beforeAbort(() => fileSize(injectedTurn.file), request.signal);
           if (measured.aborted) continue;
           lastSize = measured.value;
           lastActivityAt = Date.now();
           const read = await beforeAbort(
-            () => port.read(injected!.file, baseline.get(injected!.file) ?? 0),
+            () => port.read(injectedTurn.file, baseline.get(injectedTurn.file) ?? 0),
             request.signal,
           );
           if (read.aborted) continue;
@@ -159,7 +162,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             request.signal,
           );
           if (noted.aborted) continue;
-          const outcome = port.findAnswer(slice.entries, injected.key);
+          const outcome = port.findAnswer(slice.entries, injectedTurn.key);
           if (request.signal.aborted) continue;
           if (outcome?.kind === "failed") {
             // The turn DID enter the terminal and ended badly. Do not retry on the default path:
@@ -173,7 +176,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             return {
               result: result({
                 exitCode: 0,
-                stdout: port.stdout(outcome.text, outcome.sessionId ?? injected.sessionId),
+                stdout: port.stdout(outcome.text, outcome.sessionId ?? injectedTurn.sessionId),
               }),
               terminalBoundary: true,
             };
@@ -181,11 +184,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           // Localized turn but no ancestry arriving: the other way of holding the lock until the
           // full budget waiting for an envelope already written. Scoped to our entry, so
           // a pre-paste envelope cannot sneak in.
-          const rescue = port.findEnvelope?.(slice.entries, correlationId, injected.key);
-          if (request.signal.aborted) continue;
+          const rescue = port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key);
+          if (signalAborted(request.signal)) continue;
           if (rescue !== undefined) {
             const harvested = await beforeAbort(
-              () => this.harvested(rescue, injected?.sessionId, generating),
+              () => this.harvested(rescue, injectedTurn.sessionId, generating),
               request.signal,
             );
             if (harvested.aborted) continue;
@@ -198,7 +201,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
           return {
             result: await this.quarantineTimedOut(
               activeIdentity,
-              `la TUI no registró un turno correlacionado en ${Math.round(injectTimeoutMs / 1000)}`
+              `la TUI no registró un turno correlacionado en ${String(Math.round(injectTimeoutMs / 1000))}`
                 + " s después de aceptar paste+Enter",
               pending,
             ),
@@ -220,9 +223,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             request.signal,
           );
           if (rescued.aborted) continue;
-          if (rescued.value !== undefined) {
+          const rescuedEnvelope = rescued.value;
+          if (rescuedEnvelope !== undefined) {
             const harvested = await beforeAbort(
-              () => this.harvested(rescued.value!, undefined, generating),
+              () => this.harvested(rescuedEnvelope, undefined, generating),
               request.signal,
             );
             if (harvested.aborted) continue;
@@ -245,9 +249,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
             request.signal,
           );
           if (rescued.aborted) continue;
-          if (rescued.value !== undefined) {
+          const rescuedEnvelope = rescued.value;
+          if (rescuedEnvelope !== undefined) {
             const harvested = await beforeAbort(
-              () => this.harvested(rescued.value!, injected?.sessionId, generating),
+              () => this.harvested(rescuedEnvelope, injected?.sessionId, generating),
               request.signal,
             );
             if (harvested.aborted) continue;

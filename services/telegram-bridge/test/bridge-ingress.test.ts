@@ -314,7 +314,7 @@ describe('Telegram DM identity (poller integration)', () => {
     };
   }
 
-  /** Directorio con dos alias vivos: es de donde el poller saca los nombres reservados. */
+  /** Directory with two live aliases: source of the reserved names the poller uses. */
   const FLEET = {
     byUsername: new Map([['kant_bot', 'kant'], ['zeus_bot', 'zeus']]),
     byBotId: new Map([['900001', 'kant']])
@@ -347,12 +347,12 @@ describe('Telegram DM identity (poller integration)', () => {
     expect(prompt).toContain('"display_name":"Ana"');
     expect(prompt).toContain('"username":"ana_dev"');
     expect(prompt.endsWith('hola, ¿podés mirar el deploy?')).toBe(true);
-    // El nombre NO se cuela en origin.metadata, que el harness imprime como TRUSTED ORIGIN CONTEXT.
+    // The name does NOT leak into origin.metadata, which the harness prints as TRUSTED ORIGIN CONTEXT.
     expect(call.origin.metadata).toEqual({
       bridge_alias: 'kant', bridge_tenant: TENANT, chat_type: 'private'
     });
     expect(JSON.stringify(call.origin.metadata)).not.toContain('Ana');
-    // El sobre de grupo sigue siendo de los grupos.
+    // The group envelope stays with the groups.
     expect(call.body).not.toHaveProperty('thread_id');
     expect(call.body).not.toHaveProperty('addressed_by');
   });

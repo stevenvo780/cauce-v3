@@ -28,8 +28,10 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
     options: { status?: 'open' | 'all'; limit?: number } = {}
   ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
-    const limit = Number.isSafeInteger(options.limit) && (options.limit ?? 0) > 0
-      ? Math.min(options.limit!, 500)
+    const requestedLimit = options.limit;
+    const limit = typeof requestedLimit === 'number' && Number.isSafeInteger(requestedLimit)
+      && requestedLimit > 0
+      ? Math.min(requestedLimit, 500)
       : 200;
     const onlyOpen = options.status !== 'all';
     const result = await this.pool.query<Record<string, unknown>>(

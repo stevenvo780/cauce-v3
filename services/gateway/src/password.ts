@@ -39,7 +39,7 @@ function assertPasswordShape(password: string): void {
     throw new Error('la contraseña no puede estar vacía');
   }
   if (password.length > MAX_PASSWORD_LENGTH) {
-    throw new Error(`la contraseña no puede superar ${MAX_PASSWORD_LENGTH} caracteres`);
+    throw new Error(`la contraseña no puede superar ${String(MAX_PASSWORD_LENGTH)} caracteres`);
   }
 }
 
@@ -47,7 +47,7 @@ function assertPasswordShape(password: string): void {
 export function assertPasswordPolicy(password: string): void {
   assertPasswordShape(password);
   if (password.length < MIN_PASSWORD_LENGTH) {
-    throw new Error(`la contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres`);
+    throw new Error(`la contraseña debe tener al menos ${String(MIN_PASSWORD_LENGTH)} caracteres`);
   }
 }
 
@@ -64,7 +64,7 @@ export async function hashPassword(
   const derived = await scryptAsync(password.normalize('NFKC'), salt, KEY_LENGTH, {
     N: parameters.cost, r: parameters.blockSize, p: parameters.parallelism, maxmem: MAX_MEMORY
   });
-  return `$scrypt$n=${parameters.cost},r=${parameters.blockSize},p=${parameters.parallelism}$${
+  return `$scrypt$n=${String(parameters.cost)},r=${String(parameters.blockSize)},p=${String(parameters.parallelism)}$${
     salt.toString('base64')}$${derived.toString('base64')}`;
 }
 
@@ -85,15 +85,19 @@ function positiveInteger(value: string | undefined, name: string, maximum: numbe
 export function parsePasswordHash(encoded: string): ParsedHash {
   const parts = encoded.split('$');
   // ['', 'scrypt', 'n=..,r=..,p=..', '<salt>', '<derived>']
-  if (parts.length !== 5 || parts[0] !== '' || parts[1] !== 'scrypt') {
+  const rawOptions = parts.at(2);
+  const rawSalt = parts.at(3);
+  const rawDerived = parts.at(4);
+  if (parts.length !== 5 || parts.at(0) !== '' || parts.at(1) !== 'scrypt'
+      || rawOptions === undefined || rawSalt === undefined || rawDerived === undefined) {
     throw new Error('hash de contraseña con formato desconocido');
   }
-  const options = new Map(parts[2]!.split(',').map((item) => {
+  const options = new Map(rawOptions.split(',').map((item) => {
     const separator = item.indexOf('=');
     return [item.slice(0, separator), item.slice(separator + 1)] as const;
   }));
-  const salt = Buffer.from(parts[3]!, 'base64');
-  const derived = Buffer.from(parts[4]!, 'base64');
+  const salt = Buffer.from(rawSalt, 'base64');
+  const derived = Buffer.from(rawDerived, 'base64');
   if (salt.byteLength < 8 || derived.byteLength < 16) throw new Error('hash de contraseña truncado');
   return {
     parameters: {

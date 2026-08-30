@@ -86,7 +86,7 @@ function revisionLine(text: string): RevisionLine | undefined {
   validaTopologiaDeBloquesGestionados(text);
   const position = text.indexOf(PREFIJO_REVISION_PERFIL);
   if (position === -1) return undefined;
-  if (text.indexOf(PREFIJO_REVISION_PERFIL, position + PREFIJO_REVISION_PERFIL.length) !== -1) {
+  if (text.includes(PREFIJO_REVISION_PERFIL, position + PREFIJO_REVISION_PERFIL.length)) {
     throw new Error("native profile file has repeated revision markers");
   }
   const start = text.lastIndexOf("\n", position - 1) + 1;
@@ -169,8 +169,8 @@ export class ErrorDeTopeDelArnes extends Error {
   ) {
     super(
       fichero === "total"
-        ? `los ficheros del arnés suman ${medido} unidades y el tope total es ${tope}`
-        : `${fichero} mide ${medido} unidades y el tope por fichero es ${tope}`,
+        ? `los ficheros del arnés suman ${String(medido)} unidades y el tope total es ${String(tope)}`
+        : `${fichero} mide ${String(medido)} unidades y el tope por fichero es ${String(tope)}`,
     );
     this.name = "ErrorDeTopeDelArnes";
   }

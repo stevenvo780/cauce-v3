@@ -254,7 +254,7 @@ class FakeTmux implements TmuxController {
     if (command === "capture-pane") {
       const rendered = this.inputContent === ""
         ? this.paneContent
-        : `${this.paneContent}\n[Pasted text #1 +${this.inputContent.split("\n").length} lines]\n❯ `;
+        : `${this.paneContent}\n[Pasted text #1 +${String(this.inputContent.split("\n").length)} lines]\n❯ `;
       return { exitCode: 0, stdout: rendered, stderr: "" };
     }
     if (command === "display-message" && args[1] === "-p"
@@ -523,7 +523,7 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
         await delay(20);
         await appendFile(
           file,
-          `${assistantEntry(randomUUID(), duenio, `paso ${paso}`, sessionId, "tool_use")}\n`,
+          `${assistantEntry(randomUUID(), duenio, `paso ${String(paso)}`, sessionId, "tool_use")}\n`,
         );
       }
       // And only now, well past the correlation deadline, the envelope.
@@ -582,7 +582,7 @@ test("el turno que sí abre turno propio se cosecha por ascendencia y sin aviso"
   assert.equal(output.reply, "desde la TUI");
   assert.equal(fallback.calls, 0);
   // No notices: the correlation worked as usual.
-  assert.ok(!(output.reply ?? "").includes(MERGED_MARK));
+  assert.ok(!output.reply.includes(MERGED_MARK));
 });
 
 test("claude ignora el sobre headless de otro fichero y rescata sólo su nonce", async () => {
@@ -671,7 +671,7 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
     (error: Error) => /execution deadline/iu.test(error.message),
   );
   // And fast: the network cannot have stayed waiting the entire budget.
-  assert.ok(Date.now() - empezo < 30_000, `tardó ${Date.now() - empezo} ms`);
+  assert.ok(Date.now() - empezo < 30_000, `tardó ${String(Date.now() - empezo)} ms`);
   assert.equal(fallback.calls, 0);
 });
 
@@ -728,7 +728,7 @@ test("la espera por un turno fundido termina en su techo, no en el presupuesto",
   } finally {
     escribiendo = false;
   }
-  assert.ok(Date.now() - empezo < 30_000, `tardó ${Date.now() - empezo} ms`);
+  assert.ok(Date.now() - empezo < 30_000, `tardó ${String(Date.now() - empezo)} ms`);
 });
 
 // ---------------------------------------------------------------------------
@@ -768,7 +768,7 @@ test("el sobre se localiza sin ascendencia, y un mensaje intermedio no cuenta", 
   ] as TranscriptEntry[];
   const found = findEnvelopeTurn(entries, correlationId);
   assert.equal(found?.text, envelopeText("el entregable", correlationId));
-  assert.equal(found?.sessionId, sessionId);
+  assert.equal(found.sessionId, sessionId);
 
   // A subagent writes to the same file and cannot count as the turn's envelope.
   const sidechain = [{

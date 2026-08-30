@@ -28,7 +28,7 @@ async function deniedWithoutClientCertificate(port: number): Promise<Error> {
     });
     request.once('response', (response) => {
       response.resume();
-      reject(new Error(`mTLS listener unexpectedly returned HTTP ${response.statusCode ?? 0}`));
+      reject(new Error(`mTLS listener unexpectedly returned HTTP ${String(response.statusCode ?? 0)}`));
     });
     request.once('error', resolve);
     request.end();
@@ -66,8 +66,8 @@ describe('mTLS health isolation', () => {
       await health.listen({ host: '127.0.0.1', port: 0 });
       await data.listen({ host: '127.0.0.1', port: 0 });
       const healthAddress = health.server.address() as AddressInfo;
-      const healthLive = await fetch(`http://127.0.0.1:${healthAddress.port}/health/live`);
-      const healthReady = await fetch(`http://127.0.0.1:${healthAddress.port}/health/ready`);
+      const healthLive = await fetch(`http://127.0.0.1:${String(healthAddress.port)}/health/live`);
+      const healthReady = await fetch(`http://127.0.0.1:${String(healthAddress.port)}/health/ready`);
       expect(await healthLive.json()).toEqual({ status: 'live' });
       expect(await healthReady.json()).toEqual({ status: 'ready' });
       expect((await health.inject({ method: 'GET', url: '/v3/status' })).statusCode).toBe(404);

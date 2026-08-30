@@ -6,7 +6,7 @@ import type {
 } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import {
-  Badge, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown
+  Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown
 } from '../../components/ui';
 import { permissionState } from '../../lib';
 import {
@@ -526,9 +526,9 @@ export function ConfigPage() {
       >{avisoDeRollback.text}</p> : null}
       {previewDeRollback ? <pre className="config-preview" aria-label="Preview del rollback">{previewDeRollback}</pre> : null}
 
-      {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <div className="table-wrap config-audit"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
+      {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className="table-wrap config-audit"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
         {config.data.revisions.map((revision, index) => <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id ? <span className="config-actions"><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, true); }}>Preview</button><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, false); }}><RotateCcw size={14} />Rollback</button></span> : <Unknown value={null} />}</td></tr>)}
-      </tbody></table></div>}
+      </tbody></table></Desplazable>}
     </Panel>
 
     {/* The escape hatch: still alive and whole for everything that has no form (harness, role_policy, chain_policy,

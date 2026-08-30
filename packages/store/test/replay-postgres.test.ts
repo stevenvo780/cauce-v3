@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,7 +57,7 @@ function failedAck(delivery: DeliveryEnvelope, epoch: number): Ack {
     claim_token: delivery.claim_token,
     attempt: delivery.attempt,
     retryable: true,
-    error: `attempt ${delivery.attempt} exhausted`
+    error: `attempt ${String(delivery.attempt)} exhausted`
   };
 }
 
@@ -66,7 +67,7 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_00
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`condition not met within ${timeoutMs}ms`);
+  throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
 
 beforeAll(async () => {
@@ -89,8 +90,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('transactional manual delivery replay', () => {
@@ -100,15 +101,15 @@ describe('transactional manual delivery replay', () => {
       const durableStore = await DurableStore.open(stateDirectory);
       const lease = await repository.acquireLease('Isa', 'salva', 'replay-consumer', [], 60_000);
       const published = await repository.publish(command());
-      const originalDeliveryId = published.delivery_ids[0]!;
+      const originalDeliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
       let terminalClaim: DeliveryEnvelope | undefined;
 
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         const [claimed] = await repository.claimDeliveries(
-          'Isa', 'salva', 'replay-consumer', lease.epoch!, 1, 30_000
+          'Isa', 'salva', 'replay-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
         );
         expect(claimed).toMatchObject({ delivery_id: originalDeliveryId, attempt });
-        if (!claimed) throw new Error(`expected delivery attempt ${attempt}`);
+        if (!claimed) throw new Error(`expected delivery attempt ${String(attempt)}`);
         terminalClaim = claimed;
         if (attempt === 3) {
           await expect(durableStore.accept(claimed as Delivery, new Date().toISOString()))
@@ -123,7 +124,7 @@ describe('transactional manual delivery replay', () => {
           claimed.delivery_id,
           'Isa',
           'salva',
-          failedAck(claimed, lease.epoch!)
+          failedAck(claimed, requireValue(lease.epoch, 'lease.epoch'))
         )).resolves.toMatchObject({
           delivery_id: originalDeliveryId,
           status: attempt === 3 ? 'dead' : 'retry',
@@ -151,19 +152,19 @@ describe('transactional manual delivery replay', () => {
         [published.message_id]
       );
 
-      const originalBefore = (await pool.query<Record<string, unknown>>(
+      const originalBefore = requireValue((await pool.query<Record<string, unknown>>(
         `SELECT message_id,status,attempt,max_attempts,last_ack_rank,last_error,result,terminal_at,
                 claimed_at,claim_expires_at,ack_deadline_at,claim_token,
                 consumer_instance_id,consumer_epoch,created_at,updated_at
          FROM deliveries WHERE id=$1`,
         [originalDeliveryId]
-      )).rows[0]!;
-      const originalMessage = (await pool.query<Record<string, unknown>>(
+      )).rows[0], 'rows');
+      const originalMessage = requireValue((await pool.query<Record<string, unknown>>(
         `SELECT id,request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
                 auth_session_id,auth_channel
          FROM messages WHERE id=$1`,
         [published.message_id]
-      )).rows[0]!;
+      )).rows[0], 'rows');
 
       await expect(repository.replayDelivery(originalDeliveryId, 'Isa', 'salva'))
         .rejects.toMatchObject({ code: 'forbidden' });
@@ -218,7 +219,7 @@ describe('transactional manual delivery replay', () => {
         [originalDeliveryId]
       )).rows[0]).toEqual(originalBefore);
 
-      const replayed = (await pool.query<{
+      const replayed = requireValue((await pool.query<{
         message_id: string; status: string; attempt: number; max_attempts: number;
         last_ack_rank: number; last_error: string | null; result: unknown;
         terminal_at: Date | null; claimed_at: Date | null; claim_expires_at: Date | null;
@@ -230,7 +231,7 @@ describe('transactional manual delivery replay', () => {
                 consumer_instance_id,consumer_epoch
          FROM deliveries WHERE id=$1`,
         [replayedDeliveryId]
-      )).rows[0]!;
+      )).rows[0], 'rows');
       expect(typeof replayed.message_id).toBe('string');
       expect(replayed).toEqual({
         message_id: replayed.message_id,
@@ -250,12 +251,12 @@ describe('transactional manual delivery replay', () => {
       });
       expect(replayed.message_id).not.toBe(published.message_id);
 
-      const replayedMessage = (await pool.query<Record<string, unknown>>(
+      const replayedMessage = requireValue((await pool.query<Record<string, unknown>>(
         `SELECT id,request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane,priority,
                 auth_session_id,auth_channel
          FROM messages WHERE id=$1`,
         [replayed.message_id]
-      )).rows[0]!;
+      )).rows[0], 'rows');
       const {
         id: originalMessageId, request_id: originalRequestId, ...originalContext
       } = originalMessage;
@@ -306,7 +307,7 @@ describe('transactional manual delivery replay', () => {
       )).rowCount).toBe(2);
 
       const [replayedClaim] = await repository.claimDeliveries(
-        'Isa', 'salva', 'replay-consumer', lease.epoch!, 1, 30_000
+        'Isa', 'salva', 'replay-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
       );
       expect(replayedClaim).toMatchObject({
         delivery_id: replayedDeliveryId,
@@ -333,7 +334,7 @@ describe('transactional manual delivery replay', () => {
 
   it('waits for an in-progress authorization revocation and rejects without creating a clone', async () => {
     const published = await repository.publish(command());
-    const originalDeliveryId = published.delivery_ids[0]!;
+    const originalDeliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     await pool.query(
       `UPDATE deliveries
        SET status='dead',attempt=3,last_ack_rank=3,last_error='concurrent revocation fixture',
@@ -354,9 +355,9 @@ describe('transactional manual delivery replay', () => {
     try {
       await revoker.query('BEGIN');
       transactionOpen = true;
-      const revokerPid = (await revoker.query<{ pid: number }>(
+      const revokerPid = requireValue((await revoker.query<{ pid: number }>(
         'SELECT pg_backend_pid() AS pid'
-      )).rows[0]!.pid;
+      )).rows[0], 'rows').pid;
       await revoker.query(
         `UPDATE memberships SET enabled=false
          WHERE tenant_id='Steven' AND room_id='grp.steven' AND alias='kant'`
@@ -411,7 +412,7 @@ describe('transactional manual delivery replay', () => {
 
   it('recovers a legacy replay-resolved dead letter exactly once when its old wake proves provenance', async () => {
     const published = await repository.publish(command());
-    const originalDeliveryId = published.delivery_ids[0]!;
+    const originalDeliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
     await pool.query(
       `UPDATE deliveries
        SET status='dead',attempt=3,last_ack_rank=3,last_error='legacy replay exhausted',
@@ -424,10 +425,10 @@ describe('transactional manual delivery replay', () => {
        VALUES($1,'Isa','legacy replay exhausted','{}'::jsonb,3,now())`,
       [originalDeliveryId]
     );
-    const resolvedAt = (await pool.query<{ resolved_at: Date }>(
+    const resolvedAt = requireValue((await pool.query<{ resolved_at: Date }>(
       `SELECT resolved_at FROM dead_letters WHERE delivery_id=$1`,
       [originalDeliveryId]
-    )).rows[0]!.resolved_at;
+    )).rows[0], 'rows').resolved_at;
 
     await expect(repository.replayDelivery(originalDeliveryId, 'Steven', 'kant'))
       .rejects.toMatchObject({ code: 'not_found' });
@@ -470,10 +471,10 @@ describe('transactional manual delivery replay', () => {
       `SELECT 1 FROM deliveries WHERE id=$1 AND status='dead' AND attempt=3`,
       [originalDeliveryId]
     )).rowCount).toBe(1);
-    expect((await pool.query<{ resolved_at: Date }>(
+    expect(requireValue((await pool.query<{ resolved_at: Date }>(
       `SELECT resolved_at FROM dead_letters WHERE delivery_id=$1`,
       [originalDeliveryId]
-    )).rows[0]!.resolved_at).toEqual(resolvedAt);
+    )).rows[0], 'rows').resolved_at).toEqual(resolvedAt);
     expect((await pool.query(
       `SELECT 1 FROM audit_events
        WHERE action='delivery.replay' AND delivery_id=$1
@@ -519,8 +520,8 @@ describe('transactional manual delivery replay', () => {
        SELECT message_id,id AS delivery_id FROM inserted_delivery`,
       [childRequestId, root.trace_id]
     );
-    const childMessageId = child.rows[0]!.message_id;
-    const childDeliveryId = child.rows[0]!.delivery_id;
+    const childMessageId = requireValue(child.rows[0], 'child.rows').message_id;
+    const childDeliveryId = requireValue(child.rows[0], 'child.rows').delivery_id;
     await pool.query(
       `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
        VALUES($1,'Steven','materialized child exhausted','{}'::jsonb,3)`,
@@ -573,7 +574,7 @@ describe('transactional manual delivery replay', () => {
     }
     const lease = await repository.acquireLease('Steven', 'argos', 'lineage-consumer', [], 60_000);
     const [claimed] = await repository.claimDeliveries(
-      'Steven', 'argos', 'lineage-consumer', lease.epoch!, 1, 30_000
+      'Steven', 'argos', 'lineage-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     expect(claimed).toMatchObject({ delivery_id: replayedDeliveryId, attempt: 1 });
     if (!claimed) throw new Error('expected replayed materialized child');
@@ -583,7 +584,7 @@ describe('transactional manual delivery replay', () => {
       event_id: randomUUID(),
       status: 'done',
       instance_id: 'lineage-consumer',
-      epoch: lease.epoch!,
+      epoch: requireValue(lease.epoch, 'lease.epoch'),
       claim_token: claimed.claim_token,
       attempt: claimed.attempt,
       retryable: false,
@@ -634,7 +635,7 @@ describe('transactional manual delivery replay', () => {
        FROM messages WHERE id=$1 RETURNING id`,
       [published.message_id]
     );
-    const cyclicPeerId = cyclicPeer.rows[0]!.id;
+    const cyclicPeerId = requireValue(cyclicPeer.rows[0], 'cyclicPeer.rows').id;
     await pool.query(
       `INSERT INTO audit_events(
          tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
@@ -651,7 +652,7 @@ describe('transactional manual delivery replay', () => {
 
     const lease = await repository.acquireLease('Isa', 'salva', 'cycle-consumer', [], 60_000);
     const [claimed] = await repository.claimDeliveries(
-      'Isa', 'salva', 'cycle-consumer', lease.epoch!, 1, 30_000
+      'Isa', 'salva', 'cycle-consumer', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     if (!claimed) throw new Error('expected cyclic-lineage source delivery');
     await expect(repository.ackDelivery(claimed.delivery_id, 'Isa', 'salva', {
@@ -659,7 +660,7 @@ describe('transactional manual delivery replay', () => {
       event_id: randomUUID(),
       status: 'done',
       instance_id: 'cycle-consumer',
-      epoch: lease.epoch!,
+      epoch: requireValue(lease.epoch, 'lease.epoch'),
       claim_token: claimed.claim_token,
       attempt: claimed.attempt,
       retryable: false,

@@ -9,13 +9,13 @@ export function planAttachments(
   for (const [index, attachment] of attachments.entries()) {
     const native = harness === "codex" && attachment.kind === "image";
     if (native) {
-      args.push(harness === "codex" ? "--image" : "--file", attachment.path);
-      lines.push(`attachment_${index + 1} delivery_mode=native metadata=${JSON.stringify({
+      args.push("--image", attachment.path);
+      lines.push(`attachment_${String(index + 1)} delivery_mode=native metadata=${JSON.stringify({
         name: attachment.name, mime_type: attachment.mimeType, size: attachment.size,
         sha256: attachment.sha256,
       })}`);
     } else {
-      lines.push(`attachment_${index + 1} delivery_mode=filesystem_fallback; provider does not expose native ${attachment.mimeType} input; inspect this verified local file with available file/vision tools: ${JSON.stringify({
+      lines.push(`attachment_${String(index + 1)} delivery_mode=filesystem_fallback; provider does not expose native ${attachment.mimeType} input; inspect this verified local file with available file/vision tools: ${JSON.stringify({
         name: attachment.name, path: attachment.path, size: attachment.size, sha256: attachment.sha256,
       })}`);
     }

@@ -323,7 +323,7 @@ test("cancelar durante el preflight corta después del await y no ejecuta ningú
   const fallback = new RecordingFallback("{}");
   const controller = new AbortController();
   const originalRun = tmux.run.bind(tmux);
-  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+  tmux.run = async (args, stdin, _control): Promise<TmuxResult> => {
     const response = await originalRun(args, stdin);
     if (args[0] === "list-sessions") controller.abort();
     return response;

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
@@ -54,7 +55,7 @@ interface Consumer {
 async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
   const instanceId = `${alias}-${randomUUID()}`;
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: lease.epoch! };
+  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
 async function nextDelivery(
@@ -186,8 +187,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 /**
@@ -300,7 +301,7 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
     const published = await repository.publish(telegramCommand('chat-abanico'));
     const fanout = Array.from({ length: 100 }, (_, index) => ({
       to: index % 2 === 0 ? 'socrates' : 'jarvis',
-      body: `rama ${index}`
+      body: `rama ${String(index)}`
     }));
     await ackWith(argos, await nextDelivery(argos), fanout);
     expect((await pool.query(
@@ -642,7 +643,7 @@ describe('cómo se lee el aviso', () => {
     const argos = await consumer('Steven', 'argos');
     const published = await repository.publish(telegramCommand('chat-muestra'));
     await ackWith(argos, await nextDelivery(argos), Array.from({ length: 7 }, (_, index) => ({
-      to: index % 2 === 0 ? 'socrates' : 'jarvis', body: `rama ${index}`
+      to: index % 2 === 0 ? 'socrates' : 'jarvis', body: `rama ${String(index)}`
     })));
     await pool.query(
       `UPDATE deliveries SET status='dead',terminal_at=now(),updated_at=now(),

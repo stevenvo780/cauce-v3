@@ -166,7 +166,7 @@ function findRolloutOutcome(
 ): TurnOutcome | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const payload = eventPayload(entries[index]);
-    if (payload === undefined || payload.turn_id !== key) continue;
+    if (payload?.turn_id !== key) continue;
     if (payload.type === "task_complete") {
       const text = asText(payload.last_agent_message) ?? finalAnswerOf(entries, key);
       return text === undefined
@@ -193,12 +193,12 @@ function findRolloutEnvelope(
 ): TurnOutcome | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const payload = eventPayload(entries[index]);
-    if (payload === undefined || payload.type !== "task_complete") continue;
+    if (payload?.type !== "task_complete") continue;
     const turnId = typeof payload.turn_id === "string" ? payload.turn_id : undefined;
     const text = asText(payload.last_agent_message)
       ?? (turnId === undefined ? undefined : finalAnswerOf(entries, turnId));
-    if (!envelopeHasCorrelation(text, correlationId)) continue;
-    return { kind: "answer", text: text! };
+    if (text === undefined || !envelopeHasCorrelation(text, correlationId)) continue;
+    return { kind: "answer", text };
   }
   return undefined;
 }
@@ -207,7 +207,7 @@ function findRolloutEnvelope(
 function finalAnswerOf(entries: readonly RolloutLine[], key: string): string | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const payload = messagePayload(entries[index], "assistant");
-    if (payload === undefined || payload.phase !== "final_answer") continue;
+    if (payload?.phase !== "final_answer") continue;
     if (messageTurnId(payload) !== key) continue;
     const text = messageText(payload);
     if (text !== undefined) return text;

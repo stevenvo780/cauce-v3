@@ -187,7 +187,7 @@ test("todo hook tmux efectivo rechaza la barrera antes de tocar la caja", async 
     "window-linked",
   ];
   for (const [index, hook] of hooks.entries()) {
-    const { home, workspace } = await freshState(`input-hook-inseguro-${index}`);
+    const { home, workspace } = await freshState(`input-hook-inseguro-${String(index)}`);
     const tmux = new FakeTmux();
     tmux.configuredInputHooks.add(hook);
     const fallback = new RecordingFallback("{}");
@@ -216,7 +216,7 @@ test(
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-after-load-preexisting-"));
     const output = join(scratch, "lines.txt");
-    const socket = `cauce-after-load-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-after-load-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket, { ...process.env, CAUCE_TEST_OUTPUT: output });
     const buffer = `cauce-${randomUUID()}`;
     try {
@@ -262,7 +262,7 @@ test(
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-after-load-race-"));
     const output = join(scratch, "lines.txt");
-    const socket = `cauce-after-load-race-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-after-load-race-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket, { ...process.env, CAUCE_TEST_OUTPUT: output });
     const buffer = `cauce-${randomUUID()}`;
     try {
@@ -276,7 +276,6 @@ test(
       const initial = await exactTmuxPaneState(base, identity.paneId);
       const acquired = await acquirePaneInputBarrier(base, identity, "2".repeat(64));
       assert.equal(acquired.state, "acquired");
-      if (acquired.state !== "acquired") return;
       const fenced = await exactTmuxPaneState(base, identity.paneId);
       const hostile = `select-pane -e -t ${identity.paneId}`
         + ` ; paste-buffer -b ${buffer} -t ${identity.paneId} -p`
@@ -392,7 +391,7 @@ test("si delete y scrub no se acreditan el aborto falla cerrado y pone la genera
 test(
   "tmux real: aborto tras load y delete fallido deja sólo el marcador inocuo acreditado",
   async () => {
-    const socket = `cauce-test-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-test-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);
     const controller = new AbortController();
     const buffer = `cauce-test-${randomUUID()}`;

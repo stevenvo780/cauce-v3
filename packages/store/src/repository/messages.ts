@@ -205,14 +205,14 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
       if (activeStates.length > MAX_OPEN_CONSOLE_PUBLISH_INTENTS) {
         throw new StoreError('conflict', 'console publish intent capacity state exceeds its bound');
       }
-      const committedMatches: Array<{
+      const committedMatches: {
         readonly idempotency_key: string;
         readonly receipt: ProtocolPublishResult;
-      }> = [];
+      }[] = [];
       const uneffectedMatches: ConsolePublishIntentKeyState[] = [];
       for (const state of activeStates) {
         const prepared = state.prepared;
-        if (prepared === undefined || prepared.requested_hash !== requestedHash) continue;
+        if (prepared?.requested_hash !== requestedHash) continue;
         const durableResult = await client.query<{
           request_hash: string;
           response: unknown;
@@ -472,9 +472,10 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
         [tenantId, actorAlias, input.idempotency_key],
       );
       const durable = durableResult.rows[0];
-      if (durableResult.rowCount !== 1 || durable === undefined
-          || durable.message_id !== input.message_id
-          || durable.message_id === null || durable.response === null) {
+      if (durableResult.rowCount !== 1 || durable === undefined) {
+        throw new StoreError('conflict', 'console publish confirmation does not match its durable effect');
+      }
+      if (durable.message_id !== input.message_id || durable.response === null) {
         throw new StoreError('conflict', 'console publish confirmation does not match its durable effect');
       }
       const receipt = await reconstructCommittedConsoleIntentReceipt(

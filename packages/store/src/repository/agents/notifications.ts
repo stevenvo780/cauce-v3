@@ -58,7 +58,9 @@ interface NotificationContext {
  * second notification message even if the first idempotency layer were bypassed.
  */
 function agentNotifyRequestId(deliveryId: string, attempt: number, notifyIndex: number): string {
-  return hashToUuidV7(`agent-notify:${deliveryId}:${attempt}:${notifyIndex}`);
+  return hashToUuidV7(
+    `agent-notify:${deliveryId}:${String(attempt)}:${String(notifyIndex)}`
+  );
 }
 
 export abstract class AgentNotificationsRepository extends AgentChainControlRepository {
@@ -99,7 +101,11 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
           JSON.stringify({ source: context.source, notify_index: request.index })
         ]
       );
-      const notificationId = inserted.rows[0]!.id;
+      const insertedNotification = inserted.rows[0];
+      if (insertedNotification === undefined) {
+        throw new Error('egress notification denial insert returned no id');
+      }
+      const notificationId = insertedNotification.id;
       await client.query(
         `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,request_id,trace_id,metadata)
          VALUES($1,$2,'egress.notify','deny',$3,$4,$5::jsonb)`,
@@ -265,7 +271,11 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
       authSessionId: `egress-notify:${context.tenant}:${context.alias}:${request.idempotencyKey}`,
       authChannel: destination.channel,
     });
-    const notificationMessageId = notificationMessage.rows[0]!.id;
+    const insertedMessage = notificationMessage.rows[0];
+    if (insertedMessage === undefined) {
+      throw new Error('egress notification message insert returned no id');
+    }
+    const notificationMessageId = insertedMessage.id;
 
     // The relay's own correlation root is the notification message itself, never
     // the chain it came from. Reusing the inbound root would make claimOutbox's
@@ -316,7 +326,11 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
         JSON.stringify(relayPayload)
       ]
     );
-    const outboxId = outbox.rows[0]!.id;
+    const insertedOutbox = outbox.rows[0];
+    if (insertedOutbox === undefined) {
+      throw new Error('egress notification outbox insert returned no id');
+    }
+    const outboxId = insertedOutbox.id;
     const stored = await client.query<{ id: string }>(
       `INSERT INTO egress_notifications(
          id,tenant_id,alias,handle,adapter,conversation_id,kind,source,idempotency_key,decision,
@@ -346,8 +360,12 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
           source: context.source, adapter: destination.adapter, body_bytes: bodyBytes
         })]
     );
+    const storedNotification = stored.rows[0];
+    if (storedNotification === undefined) {
+      throw new Error('egress notification insert returned no id');
+    }
     return {
-      notification_id: stored.rows[0]!.id,
+      notification_id: storedNotification.id,
       decision: 'allowed',
       message_id: notificationMessageId,
       outbox_id: outboxId,
@@ -402,6 +420,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
     const ordered = [...entries].sort((left, right) =>
       left.handle === right.handle ? left.index - right.index : left.handle.localeCompare(right.handle));
     for (const entry of ordered) {
+      const sourceRootMessageId = this.rootMessageId(row);
       const context: NotificationContext = {
         tenant: row.recipient_tenant,
         alias: row.recipient_alias,
@@ -411,7 +430,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
         sourceDeliveryId: row.id,
         sourceAttempt: ack.attempt,
         sourceMessageId: row.message_id,
-        ...(this.rootMessageId(row) === undefined ? {} : { sourceRootMessageId: this.rootMessageId(row)! })
+        ...(sourceRootMessageId === undefined ? {} : { sourceRootMessageId })
       };
       const request: NotificationRequest = {
         ...entry,
@@ -419,7 +438,7 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
         // whether the work happened. It must never become a message to a human
         // claiming it did.
         ...(ambiguousExecution ? { forcedDenial: 'ambiguous_execution' as const } : {}),
-        idempotencyKey: `agent:${row.id}:${ack.attempt}:${entry.index}`
+        idempotencyKey: `agent:${row.id}:${String(ack.attempt)}:${String(entry.index)}`
       };
       await client.query('SAVEPOINT cauce_notify');
       try {

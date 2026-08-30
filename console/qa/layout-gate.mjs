@@ -39,6 +39,7 @@ const TOLERANCIA = {
   huecoMaximo: 2,
   desbordeMaximo: 0,
   recorteMaximo: 8,
+  recorteSinTeclado: 8,
   enlacesSinNombre: 0,
   solapesDeRotulo: 0,
   pantallasMaximas: 0.1,
@@ -127,14 +128,28 @@ function medirEnLaPagina() {
   };
   let recorte = 0;
   let recorteSelector = '';
+  // Hidden content in a box the keyboard cannot even reach. A `div` with `overflow-x:auto` takes no
+  // focus, so the arrow keys never get to it: what it cuts is lost to anyone without a pointer.
+  let recorteSinTeclado = 0;
+  let recorteSinTecladoSelector = '';
   for (const nodo of document.querySelectorAll('*')) {
     if (nodo === raiz || nodo === document.body) continue;
     const desbordeX = window.getComputedStyle(nodo).overflowX;
     if (desbordeX !== 'auto' && desbordeX !== 'scroll') continue;
     const oculto = Math.round(nodo.scrollWidth - nodo.clientWidth);
-    if (oculto <= recorte) continue;
-    recorte = oculto;
-    recorteSelector = selectorDe(nodo);
+    if (oculto > recorte) {
+      recorte = oculto;
+      recorteSelector = selectorDe(nodo);
+    }
+    // A strip of tabs or buttons is reached through its own children —moving the focus scrolls it—
+    // so only a box with nothing focusable inside actually strands what it cuts.
+    const conFoco = nodo.querySelector(
+      'button:not([disabled]), summary, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (nodo.tabIndex < 0 && !conFoco && oculto > recorteSinTeclado) {
+      recorteSinTeclado = oculto;
+      recorteSinTecladoSelector = selectorDe(nodo);
+    }
   }
 
   return {
@@ -142,6 +157,8 @@ function medirEnLaPagina() {
     hueco: Math.max(0, hueco),
     recorte,
     recorteSelector,
+    recorteSinTeclado,
+    recorteSinTecladoSelector,
     anchoMain: cajaMain ? Math.round(cajaMain.width) : 0,
     altoContenido: main ? Math.round(main.scrollHeight) : 0,
     pantallas: main ? Number((main.scrollHeight / window.innerHeight).toFixed(2)) : 0,
@@ -238,6 +255,8 @@ function resumir(medidas) {
     const delViewport = medidas.filter((m) => m.viewport === viewport);
     const peorHueco = delViewport.reduce((peor, m) => (m.hueco > peor.hueco ? m : peor), delViewport[0]);
     const peorRecorte = delViewport.reduce((peor, m) => (m.recorte > peor.recorte ? m : peor), delViewport[0]);
+    const peorSinTeclado = delViewport.reduce(
+      (peor, m) => (m.recorteSinTeclado > peor.recorteSinTeclado ? m : peor), delViewport[0]);
     porViewport[String(viewport)] = {
       huecoMaximo: peorHueco.hueco,
       huecoMaximoEn: peorHueco.ruta,
@@ -245,6 +264,9 @@ function resumir(medidas) {
       recorteMaximo: peorRecorte.recorte,
       recorteMaximoEn: peorRecorte.ruta,
       recorteMaximoQue: peorRecorte.recorteSelector,
+      recorteSinTeclado: peorSinTeclado.recorteSinTeclado,
+      recorteSinTecladoEn: peorSinTeclado.ruta,
+      recorteSinTecladoQue: peorSinTeclado.recorteSinTecladoSelector,
       enlacesSinNombre: Math.max(...delViewport.map((m) => m.enlacesSinNombre)),
       solapesDeRotulo: Math.max(...delViewport.map((m) => m.solapesDeRotulo)),
       pantallasMaximas: Math.max(...delViewport.map((m) => m.pantallas)),
@@ -260,6 +282,7 @@ const CLAVES = Object.keys(TOLERANCIA);
 const DONDE = {
   huecoMaximo: (v) => v.huecoMaximoEn,
   recorteMaximo: (v) => `${v.recorteMaximoEn} ${v.recorteMaximoQue}`,
+  recorteSinTeclado: (v) => `${v.recorteSinTecladoEn} ${v.recorteSinTecladoQue}`,
 };
 
 function comparar(actual, base) {
@@ -291,9 +314,10 @@ function comparar(actual, base) {
 }
 
 function imprimirTabla(medidas) {
-  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'recorte', 'recortado en', 'pantallas', 'sin nombre', 'solapes'];
+  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'sin nombre', 'solapes'];
   const filas = medidas.map((m) => [
     m.ruta, m.viewport, m.anchoMain, m.hueco, m.desborde, m.recorte, m.recorteSelector || '-',
+    m.recorteSinTeclado, m.recorteSinTecladoSelector || '-',
     m.pantallas, m.enlacesSinNombre, m.solapesDeRotulo,
   ].map(String));
   const anchos = cabecera.map((titulo, i) => Math.max(titulo.length, ...filas.map((f) => f[i].length)));

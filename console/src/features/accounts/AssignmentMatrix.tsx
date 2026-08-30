@@ -2,7 +2,7 @@ import { ArrowDownUp, Ban, Cpu, Link2Off, ShieldQuestion } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
-import { Badge, EmptyState, Panel } from '../../components/ui';
+import { Badge, Desplazable, EmptyState, Panel } from '../../components/ui';
 import { MutationBar } from './MutationBar';
 import {
   bindingMutation, buildAssignmentMatrix, ceilingMutation, readAgents, readBindings, readCeiling,
@@ -158,7 +158,7 @@ export function AssignmentMatrix({ config, access }: {
           ? <EmptyState>El servidor devolvió cero agentes registrados en <code>agents</code>. Un alias que hoy funciona por membresía puede no estar todavía en el registro: son dos cosas distintas.</EmptyState>
           : accounts.items.length === 0
             ? <EmptyState>No hay cuentas visibles para formar columnas.</EmptyState>
-            : <div className="table-wrap">
+            : <Desplazable etiqueta="Matriz de techo y fallback por agente y cuenta">
               <table>
                 <caption className="sr-only">Matriz de techo y fallback por agente y cuenta</caption>
                 <thead><tr>
@@ -197,7 +197,7 @@ export function AssignmentMatrix({ config, access }: {
                   })}
                 </tbody>
               </table>
-            </div>}
+            </Desplazable>}
     </Panel>
 
     <Panel title="Orden de fallback efectivo" subtitle="Sólo bindings habilitados y dentro del techo, de menor a mayor priority. Un techo sin binding habilitado es alcanzable pero nunca elegido.">

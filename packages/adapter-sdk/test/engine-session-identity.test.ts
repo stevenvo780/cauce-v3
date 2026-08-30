@@ -1,35 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import test from "node:test";
-import {
-  HARNESS_DEFINITIONS,
-  HarnessAdapter,
-  fakeDefinition,
-} from "../src/harnesses/index.js";
-import { DurableStore } from "../src/sdk/durable-store.js";
-import { AdapterEngine, profileAdoptionFor } from "../src/sdk/engine.js";
-import type {
-  CancelDelivery,
-  CommandRunRequest,
-  CommandRunResult,
-  CommandRunner,
-  Delivery,
-  DeliveryEvent,
-} from "../src/sdk/types.js";
-import {
-  ControlledRunner,
-  SessionConcurrencyRunner,
-  SUCCESS,
-  claimToken,
-  conversation,
-  delivery,
-  originless,
-  sessionOf,
-  setup,
-  setupSessionConcurrency,
-} from "./engine-fixtures.js";
+import type {Delivery} from '../src/sdk/types.js';
+import {ControlledRunner, SUCCESS, claimToken, conversation, delivery, originless, sessionOf, setup} from './engine-fixtures.js';
 test("two authenticated conversations never share a session, whatever the untrusted label says", async () => {
   const context = await setup("engine-tenant-session");
   const steven: Delivery = {
@@ -154,11 +126,13 @@ test("bridge tenant no longer splits one conversation in two", async () => {
 test("the conversation, not the delivery tenant, keeps cross-tenant agent responses in one shared agent-lane session", async () => {
   const context = await setup("engine-agent-response-session");
   const root = delivery("agent-response-session-a");
+  assert.ok(root.origin, "delivery without origin");
+  assert.ok(root.authenticated_context, "delivery without authenticated_context");
   const trustedOrigin = {
-    ...root.origin!,
+    ...root.origin,
     metadata: { bridge_alias: "jarvis", bridge_tenant: "Steven" },
   };
-  const rootContext = root.authenticated_context!;
+  const rootContext = root.authenticated_context;
   const request: Delivery = {
     ...root,
     actor_alias: "jarvis",

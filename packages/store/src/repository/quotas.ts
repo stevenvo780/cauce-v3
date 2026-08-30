@@ -1,5 +1,6 @@
 import type { QuotaSampleRequest, Tenant } from '@cauce/protocol';
 import { SUPPORTED_QUOTA_SCHEMA_VERSIONS } from '@cauce/protocol';
+import { AUTOMATIC_PAUSE_PREFIX } from '../accounts.js';
 import { withTransaction } from '../db.js';
 import { DeliveryControlRepository } from './deliveries/control.js';
 import { StoreError } from './errors.js';
@@ -377,7 +378,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         remaining_percent: remainingPercent,
         used_units: row.used_units === null ? null : Number(row.used_units),
         limit_units: row.limit_units === null ? null : Number(row.limit_units),
-        window_minutes: row.window_minutes === null ? null : Number(row.window_minutes),
+        window_minutes: row.window_minutes,
         reset_at: row.reset_at?.toISOString() ?? null,
         // Math.max(0, ...): a reset_at that has already passed (the collector has not yet
         // resampled that window) cannot show a negative countdown.
@@ -417,8 +418,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         host: row.host, collector_tenant: row.collector_tenant, collector_alias: row.collector_alias,
         captured_at: row.captured_at.toISOString(), received_at: row.received_at.toISOString(),
         age_seconds: ageSeconds, stale: ageSeconds > DEFAULT_QUOTA_THRESHOLDS.stale_after_seconds,
-        schema_version: Number(row.schema_version), app_version: row.app_version,
-        provider_count: Number(row.provider_count), window_count: Number(row.window_count)
+        schema_version: row.schema_version, app_version: row.app_version,
+        provider_count: row.provider_count, window_count: row.window_count
       };
     });
 
@@ -446,7 +447,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       paused_accounts: pausedRows.rows.map((row) => ({
         account_id: row.account_id, provider: row.provider, label: row.label,
         payer_tenant_id: row.payer_tenant_id, paused_until: row.paused_until.toISOString(),
-        paused_reason: row.paused_reason, automatic: row.paused_reason?.startsWith('quota_exhausted:') ?? false
+        paused_reason: row.paused_reason,
+        automatic: row.paused_reason?.startsWith(AUTOMATIC_PAUSE_PREFIX) ?? false
       }))
     };
   }
@@ -465,7 +467,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     // does not understand is not blindly mapped -- that is exactly how a misread sample
     // triggers the auto-pause of a healthy subscription.
     if (!(SUPPORTED_QUOTA_SCHEMA_VERSIONS as readonly number[]).includes(sample.schema_version)) {
-      throw new StoreError('invalid_input', `unsupported quota schema_version: ${sample.schema_version}`);
+      throw new StoreError('invalid_input', `unsupported quota schema_version: ${String(sample.schema_version)}`);
     }
 
     const providerCount = sample.providers.length;
@@ -612,14 +614,14 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       const pausedAccountRows = await client.query<{ account_id: string; provider: string; group_key: string; window_key: string; paused_until: Date }>(
         `UPDATE provider_accounts p
             SET paused_until = GREATEST(COALESCE(p.paused_until, now()), s.reset_at),
-                paused_reason = 'quota_exhausted:'||s.provider||'/'||s.group_key||'/'||s.window_key,
+                paused_reason = $2||s.provider||'/'||s.group_key||'/'||s.window_key,
                 updated_at = now()
            FROM quota_window_state s
           WHERE s.account_id = p.id AND s.collection_id = $1
             AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
             AND s.reset_at IS NOT NULL
          RETURNING p.id AS account_id, p.provider, s.group_key, s.window_key, p.paused_until`,
-        [collectionId]
+        [collectionId, AUTOMATIC_PAUSE_PREFIX]
       );
       const pausedAccounts: QuotaSamplePausedAccount[] = pausedAccountRows.rows.map((row) => ({
         account_id: row.account_id, provider: row.provider, group_key: row.group_key,
@@ -628,17 +630,18 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
 
       // GLOBAL auto-resume (not bounded to this collection_id) on purpose: if another provider of the same run,
       // or a previous run, already left an account healthy, it must be lifted as soon as it is detected, not
-      // only when THAT specific account shows up again in a POST. The WHERE paused_reason LIKE 'quota_exhausted:%'
+      // only when THAT specific account shows up again in a POST. The automatic pause prefix
       // clause is what prevents overwriting a manual pause.
       const resumedAccountRows = await client.query<{ account_id: string; provider: string }>(
         `UPDATE provider_accounts p
             SET paused_until = NULL, paused_reason = NULL, updated_at = now()
-          WHERE p.paused_reason LIKE 'quota_exhausted:%'
+          WHERE starts_with(p.paused_reason, $1)
             AND NOT EXISTS (
               SELECT 1 FROM quota_window_state s
                WHERE s.account_id = p.id AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
             )
-         RETURNING p.id AS account_id, p.provider`
+         RETURNING p.id AS account_id, p.provider`,
+        [AUTOMATIC_PAUSE_PREFIX]
       );
       const resumedAccounts: QuotaSampleResumedAccount[] = resumedAccountRows.rows.map((row) => ({
         account_id: row.account_id, provider: row.provider

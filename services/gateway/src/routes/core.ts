@@ -1,9 +1,10 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { WebSocket, type RawData } from 'ws';
 import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, type Hello, type Tenant } from '@cauce/protocol';
 import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResult } from '@cauce/store';
 import { requirePermission, validatePrincipal } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
+import { isSignalAborted } from '../runtime-guards.js';
 import { registerCoreRuntimeHttpRoutes } from './core/http.js';
 import { createCoreOutboxRuntime } from './core/outbox.js';
 import { registerCorePublishRoutes } from './core/publish.js';
@@ -100,9 +101,7 @@ export function createCoreRoutePhases(
 
   async function drainExclusively(session: Session): Promise<boolean> {
     try {
-      // The cap only exists against UNPRODUCTIVE rounds: productive ones are already bounded by
-      // capacity, which drops with each claim taken. Without a cap, two gateways against the same
-      // queue could pass each other wakes of deliveries the other already took and spin in the void.
+      // The cap only applies to unproductive rounds; productive ones consume bounded capacity.
       for (let round = 0; round < MAX_DRAIN_ROUNDS; round += 1) {
         if (session.abort.signal.aborted) return false;
         session.drainAgain = false;
@@ -123,7 +122,7 @@ export function createCoreRoutePhases(
           session.connectionToken,
           session.abort.signal,
         )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
-        if (session.abort.signal.aborted
+        if (isSignalAborted(session.abort.signal)
             || sessions.get(sessionKey(session.tenantId, session.alias)) !== session
             || session.socket.readyState !== WebSocket.OPEN) return false;
         let allFramesQueued = true;
@@ -133,10 +132,9 @@ export function createCoreRoutePhases(
           session.claims.set(delivery.delivery_id, claim);
           allFramesQueued = send(session.socket, delivery) && allFramesQueued;
         }
-        // The store already granted these claims. If the socket dropped while waiting for the
-        // claim, the wake cannot be declared delivered: reconnection will reclaim it selectively
-        // and the delivery's lease will follow its normal recovery.
+        // A socket can drop while the store grants claims; reconnection reclaims them selectively.
         if (!allFramesQueued) return false;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Concurrent drain requests can flip this flag during the claim await.
         if (!session.drainAgain) return true;
       }
       return true;
@@ -261,7 +259,8 @@ export function createCoreRoutePhases(
                 }
                 throw error;
               }
-              if (!lease.acquired || !lease.epoch) {
+              const leaseEpoch = lease.epoch;
+              if (!lease.acquired || !leaseEpoch) {
                 send(socket, {
                   type: 'takeover_rejected',
                   reason: 'another live instance owns this consumer',
@@ -279,7 +278,7 @@ export function createCoreRoutePhases(
                     hello.tenant_id,
                     hello.alias,
                     hello.instance_id,
-                    lease.epoch!,
+                    leaseEpoch,
                     leaseConnectionToken,
                   );
                 } catch {
@@ -291,7 +290,7 @@ export function createCoreRoutePhases(
                   hello.tenant_id,
                   hello.alias,
                   hello.instance_id,
-                  lease.epoch,
+                  leaseEpoch,
                   leaseTtlMs,
                   leaseConnectionToken,
                 );
@@ -376,7 +375,7 @@ export function createCoreRoutePhases(
                   hello.tenant_id,
                   hello.alias,
                   hello.instance_id,
-                  lease.epoch,
+                  leaseEpoch,
                   leaseTtlMs,
                   leaseConnectionToken,
                 );
@@ -399,6 +398,7 @@ export function createCoreRoutePhases(
                 }
                 return;
               }
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while the heartbeat is awaited.
               if (closed || socket.readyState !== WebSocket.OPEN
                   || helloAdmissions.get(key) !== helloAdmission) {
                 await rejectInactiveHello();
@@ -408,7 +408,7 @@ export function createCoreRoutePhases(
               current = {
                 socket, tenantId: hello.tenant_id, alias: hello.alias,
                 instanceId: hello.instance_id,
-                epoch: lease.epoch,
+                epoch: leaseEpoch,
                 connectionToken: leaseConnectionToken,
                 abort: new AbortController(),
                 drainAgain: false,
@@ -427,15 +427,15 @@ export function createCoreRoutePhases(
                 previous.socket.close(4401, 'superseded by newer connection');
               }
               send(socket, {
-                type: 'hello_ack', version: '3.0', epoch: lease.epoch,
+                type: 'hello_ack', version: '3.0', epoch: leaseEpoch,
                 lease_expires_at: confirmedLeaseExpiresAt,
                 ...(agentProfile === undefined ? {} : { agent_profile: agentProfile })
               });
               const initialDrainReady = await drain(current);
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while the initial drain is awaited.
               if (!initialDrainReady || socket.readyState !== WebSocket.OPEN) return;
-              // The hello is also the durable signal that this recipient returned. There is no
-              // need to wait for the next tick to pick up the wakes that stayed intact offline.
-              void pumpOutbox().catch((error: unknown) => app.log.error(error));
+              // Hello is the durable signal to pick up wakes that stayed intact offline.
+              void pumpOutbox().catch((error: unknown) => { app.log.error(error); });
               return;
             }
 
@@ -494,8 +494,7 @@ export function createCoreRoutePhases(
             // nothing changes.
             const liveClaim = current.claims.get(deliveryId);
             const recentClaim = current.recentClaims.get(deliveryId);
-            const matchesRecent = recentClaim !== undefined
-              && recentClaim.attempt === incoming.attempt
+            const matchesRecent = recentClaim?.attempt === incoming.attempt
               && recentClaim.claim_token === incoming.claim_token;
             const sessionClaim = matchesRecent ? recentClaim : (liveClaim ?? recentClaim);
             // A rehydrated claim counts towards capacity but does NOT fence: we rebuilt it from
@@ -570,8 +569,7 @@ export function createCoreRoutePhases(
             let releasedSlot = false;
             if (['done', 'failed', 'dead', 'retry'].includes(result.status)) {
               const completedClaim = current.claims.get(deliveryId);
-              const closesCurrentClaim = completedClaim !== undefined
-                && completedClaim.attempt === incoming.attempt
+              const closesCurrentClaim = completedClaim?.attempt === incoming.attempt
                 && completedClaim.claim_token === incoming.claim_token;
               releasedSlot = closesCurrentClaim && current.claims.delete(deliveryId);
               // Not deleted: moved to `recentClaims`. A late ACK for this same delivery must keep
@@ -590,7 +588,7 @@ export function createCoreRoutePhases(
             send(socket, { type: 'error', code, message: error instanceof Error ? error.message : 'unknown frame error' });
             if (code === 'fenced') socket.close(4401, 'fenced');
           }
-        }).catch((error: unknown) => app.log.error(error));
+        }).catch((error: unknown) => { app.log.error(error); });
       });
 
       socket.on('close', () => {

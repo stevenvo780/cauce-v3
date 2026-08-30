@@ -57,7 +57,7 @@ test("las formas exhaustivas de ocupación rechazada son busy y no mutan input n
     assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), previousToken, scenario.name);
     assert.equal(tmux.calls.some((call) => call[0] === "select-pane"), false, scenario.name);
     assert.equal(
-      tmux.calls.some((call) => ["display-message", "list-panes", "run-shell"].includes(call[0]!)),
+      tmux.calls.some((call) => call[0] !== undefined && ["display-message", "list-panes", "run-shell"].includes(call[0])),
       false,
       `${scenario.name}: toda negativa y sus probes deben ser hookless`,
     );
@@ -99,9 +99,7 @@ test("una postcondición exacta acredita la barrera aunque se pierda el exit sta
   assert.equal(lostStatus, true);
   assert.equal(tmux.inputOff, true);
   assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), "b".repeat(64));
-  if (acquired.state === "acquired") {
-    assert.equal(await releasePaneInputBarrier(tmux, acquired.barrier), "applied");
-  }
+  assert.equal(await releasePaneInputBarrier(tmux, acquired.barrier), "applied");
 });
 
 test("copy-mode en el runner degrada sin liberar barrera inexistente ni terminar al humano", async () => {
@@ -169,7 +167,7 @@ test(
   async () => {
     const scratch = await mkdtemp(join(tmpdir(), "cauce-input-barrier-"));
     const output = join(scratch, "lines.txt");
-    const socket = `cauce-race-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-race-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const session = "barrier";
     const base = new CliTmux(socket, { ...process.env, CAUCE_TEST_OUTPUT: output });
     let client: ReturnType<typeof spawn> | undefined;
@@ -200,7 +198,6 @@ test(
       const token = "a".repeat(64);
       const acquired = await acquirePaneInputBarrier(base, identity, token);
       assert.equal(acquired.state, "acquired");
-      if (acquired.state !== "acquired") return;
 
       let loaded = false;
       let raced = false;
@@ -251,7 +248,7 @@ test(
 test(
   "tmux real: token ajeno rechaza adquisición sin alterar modo, input, identidad ni opción",
   async () => {
-    const socket = `cauce-foreign-token-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-foreign-token-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([
@@ -323,7 +320,7 @@ test(
 test(
   "tmux real: mutación con identidad anterior preserva exactamente el pane respawnado",
   async () => {
-    const socket = `cauce-replacement-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-replacement-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([
@@ -400,7 +397,6 @@ test("la mutación atómica rechaza respawn-pane después del probe y antes de E
   const pasteTmux = new FakeTmux();
   const acquired = await acquirePaneInputBarrier(pasteTmux, identity, "c".repeat(64));
   assert.equal(acquired.state, "acquired");
-  if (acquired.state !== "acquired") return;
   const originalPasteRun = pasteTmux.run.bind(pasteTmux);
   let swappedPaste = false;
   pasteTmux.run = async (args, stdin, control): Promise<TmuxResult> => {

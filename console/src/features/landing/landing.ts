@@ -11,9 +11,9 @@ import type {
  * that has to be testable with its negative control, not eyeballed on a screen.
  */
 
-export type AlertaTono = 'danger' | 'warning';
+type AlertaTono = 'danger' | 'warning';
 
-export interface Alerta {
+interface Alerta {
   /** Stable: serves as React `key` and as an anchor in tests. */
   id: string;
   tono: AlertaTono;
@@ -34,7 +34,7 @@ export interface Alerta {
   rutaLabel: string;
 }
 
-export interface ResumenPortada {
+interface ResumenPortada {
   alertas: Alerta[];
   /**
    * The sources that did NOT answer. This is the half that is almost always missing: without
@@ -198,7 +198,7 @@ export function puedeDecirSinIncidencias(resumen: ResumenPortada): boolean {
  * Group alerts by their destination.
  * ============================================================================================ */
 
-export interface GrupoDeAlertas {
+interface GrupoDeAlertas {
   ruta: string;
   rutaLabel: string;
   /** The worst tone in the group: if a single one is `danger`, the group is `danger`. */

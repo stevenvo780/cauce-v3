@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cauce/protocol": "workspace:*",
     "@cauce/store": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "pg": "^8.16.3"

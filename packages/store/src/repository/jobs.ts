@@ -20,7 +20,11 @@ export abstract class JobsRepository extends ObservabilityRepository {
       `INSERT INTO jobs(tenant_id,lane,priority,kind,payload) VALUES($1,$2,$3,$4,$5::jsonb) RETURNING id`,
       [tenantId, lane, priority, kind, JSON.stringify(payload)]
     );
-    return result.rows[0]!.id;
+    const job = result.rows[0];
+    if (job === undefined) {
+      throw new StoreError('conflict', 'enqueued job is missing its durable identifier');
+    }
+    return job.id;
   }
 
   async claimJobs(lane: 'interactive' | 'batch', worker: string, limit = 1, leaseMs = 30_000): Promise<JobClaim[]> {

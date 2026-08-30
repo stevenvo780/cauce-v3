@@ -1,4 +1,5 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-useless-constructor: "error" */
+import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { correlateEnvelopePrompt } from "../envelope.js";
 import { turnInFlight } from "../pane.js";
@@ -34,7 +35,7 @@ type PromptCommitOutcome =
  * and recovers the results from the structured transcript.
  */
 export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implements SharedSessionRunner {
-  constructor(options: PasteSessionOptions<E>) {
+  constructor(options: PasteSessionOptions<E>) { // eslint-disable-line @typescript-eslint/no-useless-constructor -- The public constructor exposes a constructible API over the protected base constructor.
     super(options);
   }
 
@@ -44,7 +45,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
 
     const ready = await this.preflight(request.signal);
-    if ("cancelled" in ready || request.signal.aborted) {
+    if ("cancelled" in ready || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
     }
     if (!ready.ok) return this.degrade(ready.reason, ready.detail, request);
@@ -79,7 +80,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         request,
       );
     }
-    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
 
     // Paste and Enter must be a single operation from the owner's perspective: between checking
     // the input box is free and submitting it, no extra waits beyond what is strictly required.
@@ -88,7 +89,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       identity,
       request.signal,
     );
-    if ("cancelled" in acquired || request.signal.aborted) {
+    if ("cancelled" in acquired || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
     }
     if ("replaced" in acquired) return replacedBeforeSubmission();
@@ -100,19 +101,19 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     // we can CLAIM afterwards and the notice read by the owner. See `turnInFlight`.
     const generating = turnInFlight(acquired.pane);
     const baseline = await this.baseline(request.signal);
-    if (baseline === undefined || request.signal.aborted) {
+    if (baseline === undefined || signalAborted(request.signal)) {
       return result({ cancelled: true, harnessStarted: false });
     }
     if (!await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(request.signal))) {
       return replacedBeforeSubmission();
     }
-    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
 
     const correlationId = randomBytes(32).toString("hex");
     const promptText = correlateEnvelopePrompt(request.stdin, correlationId);
     const armed = await this.armPendingQuarantine(identity, correlationId);
     if (!armed.ok) {
-      if (request.signal.aborted) {
+      if (signalAborted(request.signal)) {
         return result({ cancelled: true, harnessStarted: false });
       }
       return this.degrade(
@@ -124,7 +125,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const pending = armed.pending;
 
     const buffer = `cauce-${this.options.alias}-${correlationId}`;
-    if (request.signal.aborted) {
+    if (signalAborted(request.signal)) {
       await this.disarmPendingQuarantine(pending);
       return result({ cancelled: true, harnessStarted: false });
     }
@@ -140,7 +141,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     }
     if (acquiredBarrier.state === "busy") {
       await this.disarmPendingQuarantine(pending);
-      if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
       return this.degrade(
         "input_busy",
         "otra exclusión de input ya protege la caja; no se adopta ni se concatena",
@@ -149,7 +150,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     }
     if (acquiredBarrier.state === "unsafe_hooks") {
       await this.disarmPendingQuarantine(pending);
-      if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
       return this.degrade(
         "handshake_failed",
         "la configuración tmux tiene hooks de input que abren una carrera; no se tocó la caja",
@@ -164,7 +165,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         pending,
       );
     }
-    if (acquiredBarrier.state !== "acquired") {
+    if (acquiredBarrier.state !== "acquired") { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A tmux boundary must fail closed if a runtime implementation returns a state outside its declared union.
       return this.ambiguousCommittedState(
         identity,
         "tmux devolvió un estado imposible al adquirir la exclusión de input",
@@ -195,7 +196,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl())) {
         return replacedBeforeSubmission();
       }
-      if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
       if (paste.reason === "input_busy") {
         return this.degrade(
           "input_busy",
@@ -324,7 +325,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         };
       }
     }
-    return outcome ?? {
+    return outcome ?? { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- The tmux commit boundary must fail closed if no runtime postcondition was recorded.
       state: "ambiguous",
       detail: "el commit de input terminó sin postcondición",
       forceTerminate: true,
@@ -364,9 +365,14 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     // `ensure` accredits pane/PID/command as a single generation. Do not re-resolve by
     // `session:window`, because a window with several panes could pick the active one silently.
     const identity = ensure.pane;
-    if (signal.aborted) return { ok: false, cancelled: true };
-    if (identity === undefined
-      || identity.sessionId !== ensure.sessionId
+    if (identity === undefined) {
+      return {
+        ok: false,
+        reason: "session_identity_unverified",
+        detail: "tmux no pudo acreditar sesión, ventana, pane_id y pane_pid como una sola generación",
+      };
+    }
+    if (identity.sessionId !== ensure.sessionId
       || identity.sessionName !== sessionName(this.options.alias)
       || identity.windowName !== TUI_WINDOW
       || (ensure.pid !== undefined && identity.panePid !== ensure.pid)
@@ -387,14 +393,14 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         occurredAt: new Date().toISOString(),
         fellBack: false,
       }, ensure.sessionId);
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signalAborted(signal)) return { ok: false, cancelled: true };
       // A freshly born TUI is not "the same as before": the old PID means nothing now.
       this.lastPanePid = ensure.pid;
       this.lastSessionId = undefined;
       return { ok: true, sessionId: ensure.sessionId, identity };
     }
     await this.notePaneIdentity(ensure.pid);
-    if (signal.aborted) return { ok: false, cancelled: true };
+    if (signalAborted(signal)) return { ok: false, cancelled: true };
     return { ok: true, sessionId: ensure.sessionId, identity };
   }
 
@@ -408,6 +414,4 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       ...(this.options.onNotice === undefined ? {} : { log: this.options.onNotice }),
     };
   }
-
-
 }

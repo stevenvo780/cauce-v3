@@ -60,7 +60,7 @@ test("el turno del bus produce el sobre completo cosechado del transcript", asyn
     assert.equal(target, "%0", `operación no exacta: ${call.join(" ")}`);
   }
   // And no notice pasted: the turn did go through the terminal.
-  assert.ok(!(output.reply ?? "").includes(DEGRADED_MARK));
+  assert.ok(!output.reply.includes(DEGRADED_MARK));
   assert.deepEqual(await readDegradations(state), []);
 });
 
@@ -174,7 +174,7 @@ test("con la caja ocupada el bus espera y no pega nada", async () => {
   tmux.paneContent = "❯ estoy escribiendo algo a medias";
   let releases = 0;
   const originalRun = tmux.run.bind(tmux);
-  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+  tmux.run = async (args, stdin, _control): Promise<TmuxResult> => {
     if (args[0] === "capture-pane") {
       releases += 1;
       // The owner releases the line on the third poll.
@@ -246,8 +246,8 @@ test("sin sesion compartida se responde igual pero el aviso viaja en el reply", 
   const records = await readDegradations(state);
   assert.equal(records.length, 1);
   assert.equal(records[0]?.reason, "session_absent");
-  assert.equal(records[0]?.alias, "kratos");
-  assert.equal(records[0]?.fellBack, true);
+  assert.equal(records[0].alias, "kratos");
+  assert.equal(records[0].fellBack, true);
 
   // There is no credited `$N` to notify. Pointing by name here would open a race: a homonymous
   // session created after the preflight would receive a notice that does not belong to it.

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   HUMAN_PRIORITY_FLOOR, type Ack, type DeliveryEnvelope, type PublishMessage, type Tenant,
@@ -49,13 +50,13 @@ async function publishRawDelivery(body: Record<string, unknown>, priority: numbe
      VALUES($1,$2,$3,'grp.steven','kant',$4::jsonb,'batch',$5) RETURNING id`,
     [randomUUID(), `trace-${randomUUID()}`, humanTenant, JSON.stringify(body), priority]
   );
-  const messageId = message.rows[0]!.id;
+  const messageId = requireValue(message.rows[0], 'message.rows').id;
   const delivery = await pool.query<{ id: string }>(
     `INSERT INTO deliveries(message_id,recipient_tenant,recipient_alias)
      VALUES($1,$2,$3) RETURNING id`,
     [messageId, consumerTenant, consumerAlias]
   );
-  return delivery.rows[0]!.id;
+  return requireValue(delivery.rows[0], 'delivery.rows').id;
 }
 
 async function publishAgentDelivery(text: string): Promise<string> {
@@ -178,7 +179,7 @@ describe('atomic delivery-consumer lease admission', () => {
       epoch: String(original.epoch), connection_token: original.connection_token,
     });
     await expect(repository.heartbeat(
-      consumerTenant, consumerAlias, instanceId, original.epoch!, 30_000,
+      consumerTenant, consumerAlias, instanceId, requireValue(original.epoch, 'original.epoch'), 30_000,
       original.connection_token,
     )).resolves.toMatch(/^\d{4}-\d{2}-\d{2}T/u);
   });
@@ -196,7 +197,7 @@ describe('claim admission with a reserve for humans', () => {
     );
 
     const claimed = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'assistant-priority-authority', lease.epoch!,
+      consumerTenant, consumerAlias, 'assistant-priority-authority', requireValue(lease.epoch, 'lease.epoch'),
       0, 30_000, 3,
       { generalCapacity: 0, humanReservedCapacity: 1, maxClaims: 1 },
     );
@@ -216,12 +217,12 @@ describe('claim admission with a reserve for humans', () => {
     // The general capacity is explicitly zero. Without a reserve this would return zero and the
     // human would be left waiting for the task to finish.
     const claimed = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'assistant-1', lease.epoch!, 0, 30_000, 3,
+      consumerTenant, consumerAlias, 'assistant-1', requireValue(lease.epoch, 'lease.epoch'), 0, 30_000, 3,
       { generalCapacity: 0, humanReservedCapacity: 1, maxClaims: 1 }
     );
 
     expect(claimed).toHaveLength(1);
-    expect(claimed[0]!.body).toMatchObject({ text: '¿cómo venís?' });
+    expect(requireValue(claimed[0], 'claimed').body).toMatchObject({ text: '¿cómo venís?' });
     // And the two agent-to-agent tasks keep waiting: the human used its share, not theirs.
     expect((await pool.query(
       `SELECT 1 FROM deliveries WHERE status='pending'`
@@ -230,11 +231,11 @@ describe('claim admission with a reserve for humans', () => {
 
   it('serves the human delivery first even when it was queued last', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-2', [], 30_000);
-    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${index}`);
+    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${String(index)}`);
     await repository.publish(command({ body: { text: 'llegué última' } }));
 
     const [first] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'assistant-2', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'assistant-2', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
 
     expect(first?.body).toMatchObject({ text: 'llegué última' });
@@ -242,13 +243,13 @@ describe('claim admission with a reserve for humans', () => {
 
   it('yields one turn to agent work after the configured human burst', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-3', [], 30_000);
-    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${index}`);
+    for (let index = 0; index < 4; index += 1) await publishAgentDelivery(`hop ${String(index)}`);
     for (let index = 0; index < 4; index += 1) {
-      await repository.publish(command({ body: { text: `humano ${index}` } }));
+      await repository.publish(command({ body: { text: `humano ${String(index)}` } }));
     }
 
     const claimed = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'assistant-3', lease.epoch!, 8, 30_000, 3
+      consumerTenant, consumerAlias, 'assistant-3', requireValue(lease.epoch, 'lease.epoch'), 8, 30_000, 3
     );
 
     // Three humans, then one agent, then a human again: the same alternation that
@@ -271,7 +272,7 @@ describe('claim admission with a reserve for humans', () => {
     await publishAgentDelivery('trabajo entre agentes');
     await repository.publish(command({ body: { text: 'mensaje de una persona' } }));
     const claimed = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'assistant-5', lease.epoch!, 2, 30_000
+      consumerTenant, consumerAlias, 'assistant-5', requireValue(lease.epoch, 'lease.epoch'), 2, 30_000
     );
     expect(claimed).toHaveLength(2);
 
@@ -280,10 +281,10 @@ describe('claim admission with a reserve for humans', () => {
     expect(new Set(live.map((claim) => claim.human_originated))).toEqual(new Set([true, false]));
 
     // A finished claim stops occupying capacity immediately.
-    const first = claimed.find((delivery) => delivery.body.type === undefined)!;
+    const first = requireValue(claimed.find((delivery) => delivery.body.type === undefined), 'value');
     await repository.ackDelivery(
       first.delivery_id, consumerTenant, consumerAlias,
-      ack(first, 'assistant-5', lease.epoch!, 'done')
+      ack(first, 'assistant-5', requireValue(lease.epoch, 'lease.epoch'), 'done')
     );
     const remaining = await repository.liveDeliveryClaims(consumerTenant, consumerAlias);
     expect(remaining.map((claim) => claim.human_originated)).toEqual([false]);
@@ -292,7 +293,7 @@ describe('claim admission with a reserve for humans', () => {
   it('rejects a claim with no general budget and no reserve', async () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-4', [], 30_000);
     await expect(repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'assistant-4', lease.epoch!, 0, 30_000
+      consumerTenant, consumerAlias, 'assistant-4', requireValue(lease.epoch, 'lease.epoch'), 0, 30_000
     )).rejects.toMatchObject({ code: 'conflict' });
   });
 });
@@ -303,11 +304,11 @@ describe('agent-derived messages leave the interactive lane', () => {
     const source = command({ lane: 'interactive', body: { text: 'delegá esto' } });
     await repository.publish(source);
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'delegator-1', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'delegator-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
 
-    await repository.ackDelivery(delivery!.delivery_id, consumerTenant, consumerAlias, {
-      ...ack(delivery!, 'delegator-1', lease.epoch!, 'done'),
+    await repository.ackDelivery(requireValue(delivery, 'delivery').delivery_id, consumerTenant, consumerAlias, {
+      ...ack(requireValue(delivery, 'delivery'), 'delegator-1', requireValue(lease.epoch, 'lease.epoch'), 'done'),
       result: {
         output: {
           reply: null,
@@ -337,15 +338,15 @@ describe('stale delivery reaper', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'crashed-1', [], 30_000);
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'crashed-1', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'crashed-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
-    await expire(delivery!.delivery_id);
+    await expire(requireValue(delivery, 'delivery').delivery_id);
 
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
 
     const row = await pool.query<{ status: string; available_in: number }>(
       `SELECT status,EXTRACT(EPOCH FROM (available_at-now())) AS available_in
-       FROM deliveries WHERE id=$1`, [delivery!.delivery_id]
+       FROM deliveries WHERE id=$1`, [requireValue(delivery, 'delivery').delivery_id]
     );
     expect(row.rows[0]?.status).toBe('retry');
     // `available_at=now()` returned the delivery to the same saturated agent on the next tick:
@@ -365,17 +366,17 @@ describe('stale delivery reaper', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'waiting-1', [], 30_000);
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'waiting-1', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'waiting-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     await repository.ackDelivery(
-      delivery!.delivery_id, consumerTenant, consumerAlias,
-      ack(delivery!, 'waiting-1', lease.epoch!, 'started')
+      requireValue(delivery, 'delivery').delivery_id, consumerTenant, consumerAlias,
+      ack(requireValue(delivery, 'delivery'), 'waiting-1', requireValue(lease.epoch, 'lease.epoch'), 'started')
     );
-    await expire(delivery!.delivery_id);
+    await expire(requireValue(delivery, 'delivery').delivery_id);
 
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
     expect((await pool.query<{ status: string; execution_started_at: Date | null }>(
-      'SELECT status,execution_started_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT status,execution_started_at FROM deliveries WHERE id=$1', [requireValue(delivery, 'delivery').delivery_id]
     )).rows[0]).toMatchObject({ status: 'retry', execution_started_at: null });
   });
 
@@ -383,17 +384,17 @@ describe('stale delivery reaper', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'worker-1', [], 30_000);
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'worker-1', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'worker-1', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     // Explicit mark from the SDK: the harness obtained the session turn and was invoked. THAT is
     // what it means that a run has already been paid for.
-    await startExecution(delivery!, 'worker-1', lease.epoch!);
-    await expire(delivery!.delivery_id);
+    await startExecution(requireValue(delivery, 'delivery'), 'worker-1', requireValue(lease.epoch, 'lease.epoch'));
+    await expire(requireValue(delivery, 'delivery').delivery_id);
 
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 0, dead: 1, parked: 0 });
 
     const row = await pool.query<{ status: string; attempt: number; last_error: string }>(
-      'SELECT status,attempt,last_error FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT status,attempt,last_error FROM deliveries WHERE id=$1', [requireValue(delivery, 'delivery').delivery_id]
     );
     expect(row.rows[0]).toMatchObject({
       status: 'dead',
@@ -406,13 +407,13 @@ describe('stale delivery reaper', () => {
     expect((await pool.query(
       `SELECT 1 FROM dead_letters
        WHERE delivery_id=$1 AND reason='ACK timeout: execution already started; held for manual replay'`,
-      [delivery!.delivery_id]
+      [requireValue(delivery, 'delivery').delivery_id]
     )).rowCount).toBe(1);
     expect((await pool.query(
       `SELECT 1 FROM audit_events
        WHERE delivery_id=$1 AND action='delivery.ack_timeout'
          AND metadata->>'reason'='execution_already_started'`,
-      [delivery!.delivery_id]
+      [requireValue(delivery, 'delivery').delivery_id]
     )).rowCount).toBe(1);
     // And above all: nobody can take it over again.
     // `takeover: true` on purpose: without it, acquireLease returns acquired:false WITHOUT epoch
@@ -424,7 +425,7 @@ describe('stale delivery reaper', () => {
       consumerTenant, consumerAlias, 'worker-2', [], 30_000, { takeover: true }
     );
     expect(await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'worker-2', secondLease.epoch!, 5, 30_000
+      consumerTenant, consumerAlias, 'worker-2', requireValue(secondLease.epoch, 'secondLease.epoch'), 5, 30_000
     )).toHaveLength(0);
   });
 
@@ -436,10 +437,10 @@ describe('stale delivery reaper', () => {
       }
     }));
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'worker-3', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'worker-3', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
-    await startExecution(delivery!, 'worker-3', lease.epoch!);
-    await expire(delivery!.delivery_id);
+    await startExecution(requireValue(delivery, 'delivery'), 'worker-3', requireValue(lease.epoch, 'lease.epoch'));
+    await expire(requireValue(delivery, 'delivery').delivery_id);
 
     await repository.retryStaleDeliveries(0);
 
@@ -447,7 +448,7 @@ describe('stale delivery reaper', () => {
     // to be able to know what happened, even if the answer is that it failed.
     const relay = await pool.query<{ payload: Record<string, unknown> }>(
       `SELECT payload FROM adapter_outbox WHERE kind='origin_relay' AND delivery_id=$1`,
-      [delivery!.delivery_id]
+      [requireValue(delivery, 'delivery').delivery_id]
     );
     expect(relay.rowCount).toBe(1);
     expect(relay.rows[0]?.payload).toMatchObject({
@@ -460,15 +461,15 @@ describe('stale delivery reaper', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'worker-4', [], 30_000);
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'worker-4', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'worker-4', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
-    await startExecution(delivery!, 'worker-4', lease.epoch!);
-    await expire(delivery!.delivery_id);
+    await startExecution(requireValue(delivery, 'delivery'), 'worker-4', requireValue(lease.epoch, 'lease.epoch'));
+    await expire(requireValue(delivery, 'delivery').delivery_id);
 
     expect(await repository.retryStaleDeliveries(0, 100, { retryStartedDeliveries: true }))
       .toEqual({ retried: 1, dead: 0, parked: 0 });
     expect((await pool.query<{ status: string }>(
-      'SELECT status FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT status FROM deliveries WHERE id=$1', [requireValue(delivery, 'delivery').delivery_id]
     )).rows[0]?.status).toBe('retry');
   });
 
@@ -476,22 +477,22 @@ describe('stale delivery reaper', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'worker-5', [], 30_000);
     await repository.publish(command());
     const [first] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'worker-5', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'worker-5', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
-    await startExecution(first!, 'worker-5', lease.epoch!);
-    await expire(first!.delivery_id);
+    await startExecution(requireValue(first, 'first'), 'worker-5', requireValue(lease.epoch, 'lease.epoch'));
+    await expire(requireValue(first, 'first').delivery_id);
     // Force the retry of attempt 1 with the lever, to leave in delivery_acks a
     // 'started' applied from an OLD attempt. The backoff pushes available_at into the future, so
     // it has to be rehabilitated to be claimable inside the test.
     expect(await repository.retryStaleDeliveries(0, 100, { retryStartedDeliveries: true }))
       .toEqual({ retried: 1, dead: 0, parked: 0 });
-    await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [first!.delivery_id]);
+    await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [requireValue(first, 'first').delivery_id]);
 
     const [second] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'worker-5', lease.epoch!, 1, 30_000
+      consumerTenant, consumerAlias, 'worker-5', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
     );
     expect(second?.attempt).toBe(2);
-    await expire(second!.delivery_id);
+    await expire(requireValue(second, 'second').delivery_id);
 
     // Attempt 2 never started. The mark belongs to the attempt and is cleared both on
     // retry and on claim; without that, a delivery would be held forever by evidence from an
@@ -512,21 +513,21 @@ describe('ack deadline bookkeeping', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'deadline-1', [], 30_000);
     await repository.publish(command());
     const [delivery] = await repository.claimDeliveries(
-      consumerTenant, consumerAlias, 'deadline-1', lease.epoch!, 1, 5_000
+      consumerTenant, consumerAlias, 'deadline-1', requireValue(lease.epoch, 'lease.epoch'), 1, 5_000
     );
-    const claimed = Date.parse(delivery!.ack_deadline_at);
+    const claimed = Date.parse(requireValue(delivery, 'delivery').ack_deadline_at);
 
     await repository.ackDelivery(
-      delivery!.delivery_id, consumerTenant, consumerAlias,
-      ack(delivery!, 'deadline-1', lease.epoch!, 'started'),
+      requireValue(delivery, 'delivery').delivery_id, consumerTenant, consumerAlias,
+      ack(requireValue(delivery, 'delivery'), 'deadline-1', requireValue(lease.epoch, 'lease.epoch'), 'started'),
       60_000
     );
 
     const row = await pool.query<{ ack_deadline_at: Date; claim_expires_at: Date }>(
-      'SELECT ack_deadline_at,claim_expires_at FROM deliveries WHERE id=$1', [delivery!.delivery_id]
+      'SELECT ack_deadline_at,claim_expires_at FROM deliveries WHERE id=$1', [requireValue(delivery, 'delivery').delivery_id]
     );
-    expect(row.rows[0]!.ack_deadline_at.getTime()).toBeGreaterThan(claimed);
-    expect(row.rows[0]!.claim_expires_at.getTime())
-      .toBe(row.rows[0]!.ack_deadline_at.getTime());
+    expect(requireValue(row.rows[0], 'row.rows').ack_deadline_at.getTime()).toBeGreaterThan(claimed);
+    expect(requireValue(row.rows[0], 'row.rows').claim_expires_at.getTime())
+      .toBe(requireValue(row.rows[0], 'row.rows').ack_deadline_at.getTime());
   });
 });

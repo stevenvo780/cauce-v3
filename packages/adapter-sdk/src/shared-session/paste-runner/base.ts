@@ -1,6 +1,7 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { signalAborted } from "../../runtime-state.js";
 import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js";
 import { validateStructuredOutput } from "../../sdk/output-parser.js";
 import { envelopeHasCorrelation, stripJsonFence } from "../envelope.js";
@@ -317,7 +318,7 @@ export abstract class PasteSessionRunnerBase<E> {
   protected async quarantine(
     identity: PaneIdentity,
     pending: PendingQuarantine,
-    forceTerminate: boolean = false,
+    forceTerminate = false,
   ): Promise<string> {
     this.locallyQuarantined = identity;
     const fileMarked = this.options.quarantineFile === undefined
@@ -359,7 +360,7 @@ export abstract class PasteSessionRunnerBase<E> {
     detail: string,
     cancelled: boolean,
     pending: PendingQuarantine,
-    forceTerminate: boolean = false,
+    forceTerminate = false,
   ): Promise<CommandRunResult> {
     const quarantineDetail = await this.quarantine(identity, pending, forceTerminate);
     return result({
@@ -425,13 +426,13 @@ export abstract class PasteSessionRunnerBase<E> {
         styled: true,
         control: this.tmuxControl(signal),
       });
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signalAborted(signal)) return { ok: false, cancelled: true };
       if (pane === undefined
         || !await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(signal))) {
-        if (signal.aborted) return { ok: false, cancelled: true };
+        if (signalAborted(signal)) return { ok: false, cancelled: true };
         return { ok: false, replaced: true };
       }
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signalAborted(signal)) return { ok: false, cancelled: true };
       const state = inputBoxState(pane);
       // The pane we decided to paste into is the one to inspect for merged turn: recapturing later
       // would be a different moment.
@@ -444,7 +445,7 @@ export abstract class PasteSessionRunnerBase<E> {
           : { ok: false, reason: "input_busy", detail: evidence };
       }
       await this.options.sleep(this.options.pollMs ?? DEFAULT_POLL_MS);
-      if (signal.aborted) return { ok: false, cancelled: true };
+      if (signalAborted(signal)) return { ok: false, cancelled: true };
     }
   }
 
@@ -453,10 +454,10 @@ export abstract class PasteSessionRunnerBase<E> {
     const sizes = new Map<string, number>();
     if (signal.aborted) return undefined;
     const files = await this.options.transcript.files();
-    if (signal.aborted) return undefined;
+    if (signalAborted(signal)) return undefined;
     for (const file of files) {
       const size = await fileSize(file);
-      if (signal.aborted) return undefined;
+      if (signalAborted(signal)) return undefined;
       if (size >= 0) sizes.set(file, size);
     }
     return sizes;
@@ -638,7 +639,7 @@ export abstract class PasteSessionRunnerBase<E> {
         `CAUCE: un turno del bus NO pasó por esta terminal (${reason}: ${detail})`,
       );
     }
-    if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
+    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
     return this.options.fallback.run(request);
   }
 

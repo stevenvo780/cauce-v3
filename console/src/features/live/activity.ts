@@ -18,7 +18,7 @@ export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
   stalled: 'Trabado',
 };
 
-export const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
+const WORK_STATE_TONE: Record<FleetWorkState, BadgeTone> = {
   idle: 'offline',
   queued: 'info',
   working: 'running',
@@ -55,7 +55,7 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
 export type EstadosVivos = ReadonlyMap<string, LiveState>;
 
 /** Badge tone per state. Derived from the `tone` of `LIVE_STATE_META`, without inventing any. */
-export const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
+const LIVE_STATE_TONE: Record<LiveState, BadgeTone> = {
   down: 'danger',
   blocked: 'danger',
   delegating: 'info',
@@ -200,13 +200,13 @@ export function inFlightItemTone(status: string | null | undefined): BadgeTone {
  * Per-row signal summary: deduplication of signals visible in the table.
  * ============================================================================================ */
 
-export interface SenalPintada {
+interface SenalPintada {
   clave: string;
   label: string;
   tone: BadgeTone;
 }
 
-export interface ResumenDeSenales {
+interface ResumenDeSenales {
   /** The headline of the cell. Always exactly one. */
   estado: SenalPintada;
   /** The signals that ADD something to the headline. At most `TOPE_DE_SENALES`. */
@@ -221,7 +221,7 @@ export interface ResumenDeSenales {
  * What the "Presence" column of the same row is already saying. Passed in to avoid repeating it.
  * `sin-presencia` means "not known / not being shown", and then nothing is deduplicated.
  */
-export type PresenciaDeLaFila = 'conectado' | 'caido' | 'nunca' | 'sin-presencia';
+type PresenciaDeLaFila = 'conectado' | 'caido' | 'nunca' | 'sin-presencia';
 
 /** Translates the presence badge already painted into the deduplication vocabulary. */
 export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila {
@@ -232,7 +232,7 @@ export function presenciaDeLaFila(agent: FleetActivityAgent): PresenciaDeLaFila 
 }
 
 /** How many signals fit next to the state before folding into a "+N". */
-export const TOPE_DE_SENALES = 2;
+const TOPE_DE_SENALES = 2;
 
 /**
  * Decides which signals are omitted because they are already implicit in the main state or presence.

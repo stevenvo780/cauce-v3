@@ -92,7 +92,7 @@ export function parseDlqResolution(
   }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   if (reason.length < 1 || reason.length > 1_000
-      || [...reason].some((character) => {
+      || Array.from(reason).some((character) => {
         const code = character.codePointAt(0) ?? 0;
         return code <= 31 || code === 127;
       })) {

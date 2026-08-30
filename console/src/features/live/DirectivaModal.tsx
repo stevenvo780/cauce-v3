@@ -13,7 +13,7 @@ import { CapaCabecera } from './directiva-modal/CapaCabecera';
 import { CapasPendientes } from './directiva-modal/CapasPendientes';
 import { CapaDeFicheros, CapaDeMemoria } from './directiva-modal/ContenidoDeCapas';
 
-export interface DirectivaModalProps extends RoleBriefTabProps {
+interface DirectivaModalProps extends RoleBriefTabProps {
   onEditarEnFicheros: () => void;
   devolverFocoA?: RefObject<HTMLElement | null>;
   onCerrar: () => void;

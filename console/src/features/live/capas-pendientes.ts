@@ -4,7 +4,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
  * Information about pending agent configuration layers awaiting integration.
  */
 
-export interface CapaPendiente {
+interface CapaPendiente {
   id: string;
   titulo: string;
   pedido: string;

@@ -96,7 +96,7 @@ test("un PNG en file:// sale como data: y los bytes decodificados son idénticos
   // The effect, not the function name: the bytes that travel are THE file.
   assert.deepEqual(decodeDataUri(salida), PNG_BYTES);
   assert.equal(output.artifacts[0]?.media_type, "image/png");
-  assert.equal(output.artifacts[0]?.sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
+  assert.equal(output.artifacts[0].sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
   // The rest of the response is left untouched.
   assert.equal(output.reply, "listo, te dejo la hoja de ruta");
   assert.equal(output.status, "done");
@@ -189,9 +189,9 @@ test("el techo agregado por respuesta corta en el segundo adjunto, y el segundo 
 test("veinte artifacts: se convierten los primeros N y el resto queda como estaba, sin excepción", async () => {
   const paths: string[] = [];
   for (let index = 0; index < 20; index += 1) {
-    paths.push(await fileWith(`lote-${index}.png`, PNG_BYTES));
+    paths.push(await fileWith(`lote-${String(index)}.png`, PNG_BYTES));
   }
-  const entrada = envelope(paths.map((path, index) => ({ name: `lote-${index}.png`, uri: path })));
+  const entrada = envelope(paths.map((path, index) => ({ name: `lote-${String(index)}.png`, uri: path })));
 
   const output = await inlineLocalArtifacts(entrada);
 
@@ -299,7 +299,7 @@ test("un FIFO no se convierte y, sobre todo, no deja el turno colgado", async ()
   const output = await Promise.race([
     inlineLocalArtifacts(entrada),
     new Promise<StructuredOutput>((_, reject) => {
-      setTimeout(() => reject(new Error("inlineLocalArtifacts se colgó sobre un FIFO")), 5_000).unref();
+      setTimeout(() => { reject(new Error("inlineLocalArtifacts se colgó sobre un FIFO")); }, 5_000).unref();
     }),
   ]);
   assert.equal(firstUri(output), fifo);
@@ -413,9 +413,11 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
 
   // OLD BRANCH.
   const antes = fakeDefinition.parse(stdout).output;
-  assert.equal(antes.artifacts[0]?.uri, uri);
-  assert.match(antes.artifacts[0]?.uri ?? "", /^file:\/\//u);
-  assert.equal(antes.artifacts[0]?.uri.startsWith("data:"), false);
+  const antesUri = antes.artifacts[0]?.uri;
+  assert.ok(antesUri, "no hay uri antes");
+  assert.equal(antesUri, uri);
+  assert.match(antesUri, /^file:\/\//u);
+  assert.equal(antesUri.startsWith("data:"), false);
 
   // NEW BRANCH.
   const state = resolve(".test-state", "artifact-inliner-ack");
@@ -442,7 +444,7 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
   assert.equal(enviado.name, "hoja_ruta_domiciliario.png");
   assert.equal(enviado.media_type, "image/png");
   // And the work —the reply— goes out just the same.
-  assert.equal(done.output?.reply, "acá va la hoja de ruta");
+  assert.equal(done.output.reply, "acá va la hoja de ruta");
   assert.equal(store.getDelivery("miguel-1")?.state, "done");
 });
 
@@ -473,6 +475,6 @@ test("un adjunto ilegible no le cuesta el turno a nadie: el ACK sale igual, con 
   const done = events.find((event) => event.phase === "done");
   assert.ok(done, "un adjunto ilegible se llevó puesto el turno");
   assert.equal(done.output?.reply, "no pude generar el pantallazo, pero acá va el informe");
-  assert.equal(done.output?.artifacts[0]?.uri.startsWith("file://"), true);
+  assert.equal(done.output.artifacts[0]?.uri.startsWith("file://"), true);
   assert.equal(store.getDelivery("miguel-2")?.state, "done");
 });

@@ -3,7 +3,7 @@ import { Fragment, useEffect, useRef, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { Badge, EmptyState, Panel, Unknown } from '../../components/ui';
+import { Badge, Desplazable, EmptyState, Panel, Unknown } from '../../components/ui';
 import type { ConfigCollection } from './collections';
 import {
   accionDeRol, claveDeFila, columnaNumerica, columnasDe, esColumnaDeFecha, esColumnaFundida,
@@ -90,7 +90,7 @@ export function CollectionTable({
             el valor que sí manda.
           </p> : null}
 
-          <div className="table-wrap"><table><thead><tr>
+          <Desplazable etiqueta={title}><table><thead><tr>
             {columnas.map((columna) => {
               const inerte = motivoInerte(key, columna.clave);
               return <th
@@ -138,7 +138,7 @@ export function CollectionTable({
                 /> : null}
               </Fragment>;
             })}
-          </tbody></table></div>
+          </tbody></table></Desplazable>
 
           {pendiente ? <ConfirmacionDeAccion
             pendiente={pendiente} busy={busy} onConfirmar={onConfirmar} onCancelar={onCancelar}

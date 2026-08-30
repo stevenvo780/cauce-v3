@@ -8,7 +8,7 @@ import { SessionStage } from './SessionStage';
 import type { OperatorSession } from './session';
 import type { RequestTerminalGrant } from './types';
 
-export interface GridContainerProps {
+interface GridContainerProps {
   sessions: OperatorSession[];
   sessionTokens: ReadonlyMap<string, number>;
   activeId?: string;

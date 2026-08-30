@@ -19,6 +19,7 @@ import {
 } from './hypergraph/hypergraph-layout';
 import type { FleetDelegationEdge } from '../../api/types';
 import { FlowArrow } from './hypergraph/FlowArrow';
+import { Desplazable } from '../../components/Desplazable';
 
 /**
  * The map: the fleet doughboys placed in their rooms, with what they are passing between hands.
@@ -83,7 +84,7 @@ function countAliases(topology: TopologySnapshot | undefined): number {
 
 export type HypergraphLayer = 'ahora' | 'permisos';
 
-export interface LiveHypergraphProps {
+interface LiveHypergraphProps {
   topology: TopologySnapshot | undefined;
   views: readonly LiveAgentView[];
   edges: readonly DelegationEdge[];
@@ -265,7 +266,7 @@ export function LiveHypergraph({
 
   return (
     <div className={`lhg${atenuando ? ' is-focusing' : ''}`} data-layer={layer}>
-      <div className="lhg-scroll">
+      <Desplazable etiqueta="Mapa de la flota" className="lhg-scroll">
       <svg
         className="lhg-svg"
         viewBox={viewBox}
@@ -427,7 +428,7 @@ export function LiveHypergraph({
           })}
         </g>
       </svg>
-      </div>
+      </Desplazable>
 
       {layer === 'permisos' ? (
         <p className="lhg-legend">

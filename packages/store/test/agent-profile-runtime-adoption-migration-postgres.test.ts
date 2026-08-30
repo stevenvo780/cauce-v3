@@ -125,8 +125,8 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('migration 035 durable runtime adoption invariants', () => {

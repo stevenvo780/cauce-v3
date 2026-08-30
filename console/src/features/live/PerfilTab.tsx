@@ -35,7 +35,7 @@ function AyudaDelCampo({ campo, destino }: { campo: CampoDelPerfil; destino: Des
   );
 }
 
-export interface PerfilTabProps {
+interface PerfilTabProps {
   tenantId: string;
   alias: string;
   /**

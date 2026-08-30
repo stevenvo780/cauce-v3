@@ -1,8 +1,13 @@
 import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
+import { PROTOCOL_VERSION, type Hello } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
-import { MemoryOidcSessionStore, OidcBffAuthProvider } from './oidc-bff.js';
+import { JwksJwtAuthProvider } from './auth.js';
+import {
+  OidcBffAuthProvider,
+  type OidcSession, type OidcSessionStore, type PendingOidcLogin
+} from './oidc-bff.js';
 
 const issuer = 'https://idp.example';
 const clientId = 'cauce-console';
@@ -10,6 +15,46 @@ const audience = 'cauce-api';
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = publicKey.export({ format: 'jwk' });
 Object.assign(jwk, { kid: 'test-key', alg: 'RS256', use: 'sig' });
+
+interface MemoryRecord<T> {
+  value: T;
+  expiresAt: number;
+}
+
+class MemoryOidcSessionStore implements OidcSessionStore {
+  private readonly logins = new Map<string, MemoryRecord<PendingOidcLogin>>();
+  private readonly sessions = new Map<string, MemoryRecord<OidcSession>>();
+
+  ready(): Promise<void> { return Promise.resolve(); }
+
+  async putLogin(id: string, login: PendingOidcLogin): Promise<void> {
+    this.logins.set(id, { value: structuredClone(login), expiresAt: login.expiresAt });
+  }
+
+  async takeLogin(id: string): Promise<PendingOidcLogin | undefined> {
+    const record = this.logins.get(id);
+    this.logins.delete(id);
+    if (!record || record.expiresAt <= Date.now()) return undefined;
+    return structuredClone(record.value);
+  }
+
+  async getSession(id: string): Promise<OidcSession | undefined> {
+    const record = this.sessions.get(id);
+    if (!record || record.expiresAt <= Date.now()) {
+      this.sessions.delete(id);
+      return undefined;
+    }
+    return structuredClone(record.value);
+  }
+
+  async putSession(id: string, session: OidcSession): Promise<void> {
+    this.sessions.set(id, { value: structuredClone(session), expiresAt: session.expiresAt });
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    this.sessions.delete(id);
+  }
+}
 
 function jwt(key: KeyObject, claims: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'test-key', typ: 'JWT' })).toString('base64url');
@@ -25,7 +70,9 @@ function cookieFrom(response: { headers: Record<string, unknown> }, name: string
     : typeof raw === 'string' ? [raw] : [];
   const selected = values.find((value) => value.startsWith(`${name}=`));
   if (!selected) throw new Error(`missing ${name} cookie`);
-  return selected.split(';', 1)[0]!;
+  const [cookie] = selected.split(';', 1);
+  if (cookie === undefined) throw new Error(`missing ${name} cookie`);
+  return cookie;
 }
 
 function cookieValue(cookie: string): string {
@@ -45,6 +92,7 @@ function fakeRepository(): GatewayRepository {
     listPresence: vi.fn(async () => []),
     claimOutbox: vi.fn(async () => []),
     liveDeliveryClaims: vi.fn(async () => []),
+    heartbeat: vi.fn(async () => new Date(Date.now() + 60_000).toISOString()),
   } as unknown as GatewayRepository;
 }
 
@@ -91,16 +139,22 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
       refreshes += 1;
       return Response.json({
         access_token: token(600), token_type: 'Bearer', expires_in: 600,
-        refresh_token: `rotated-refresh-${refreshes}`
+        refresh_token: `rotated-refresh-${String(refreshes)}`
       });
     }
     return new Response(null, { status: 404 });
   }) as typeof fetch;
   const store = new MemoryOidcSessionStore();
-  const provider = new OidcBffAuthProvider({
+  const bearerProvider = new JwksJwtAuthProvider({
     issuer,
     audience,
     jwksUrl: `${issuer}/jwks`,
+    fetcher
+  });
+  const provider = new OidcBffAuthProvider({
+    issuer,
+    jwksUrl: `${issuer}/jwks`,
+    bearerProvider,
     authorizationEndpoint: `${issuer}/authorize`,
     tokenEndpoint: `${issuer}/token`,
     clientId,
@@ -117,7 +171,9 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
     deliveryWakeSubscriber: async () => async () => undefined
   });
   const login = await app.inject({ method: 'GET', url: '/v3/auth/login' });
-  const authorization = new URL(login.headers.location!);
+  const location = login.headers.location;
+  if (location === undefined) throw new Error('missing OIDC authorization location');
+  const authorization = new URL(location);
   nonce = authorization.searchParams.get('nonce') ?? '';
   observedChallenge = authorization.searchParams.get('code_challenge') ?? '';
   const loginCookie = cookieFrom(login, '__Host-cauce_login');
@@ -134,6 +190,7 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
     get refreshes() { return refreshes; },
     get observedChallenge() { return observedChallenge; },
     get observedVerifier() { return observedVerifier; },
+    get bearerToken() { return token(600); },
     advance(ms: number) { providerNow += ms; }
   };
 }
@@ -175,6 +232,11 @@ describe('OIDC console BFF', () => {
         headers: { cookie: test.sessionCookie, origin: 'http://localhost', 'x-csrf-token': 'wrong' }
       });
       expect(rejected.statusCode).toBe(403);
+      const missingCsrf = await test.app.inject({
+        method: 'POST', url: '/v3/auth/logout',
+        headers: { cookie: test.sessionCookie, origin: 'http://localhost' }
+      });
+      expect(missingCsrf.statusCode).toBe(403);
       const logout = await test.app.inject({
         method: 'POST', url: '/v3/auth/logout',
         headers: { cookie: test.sessionCookie, origin: 'http://localhost', 'x-csrf-token': csrf }
@@ -182,6 +244,58 @@ describe('OIDC console BFF', () => {
       expect(logout.statusCode).toBe(204);
       expect(logout.headers['set-cookie']).toContain('SameSite=Strict');
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie: test.sessionCookie } })).statusCode).toBe(401);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('routes bearer-only HTTP and hello authentication through JWKS without browser CSRF', async () => {
+    const test = await fixture();
+    try {
+      const authorization = `Bearer ${test.bearerToken}`;
+      const anonymous = await test.app.inject({ method: 'GET', url: '/v3/status' });
+      expect(anonymous.statusCode).toBe(401);
+      expect(anonymous.json()).toMatchObject({ message: 'OIDC session cookie is required' });
+
+      const api = await test.app.inject({
+        method: 'GET', url: '/v3/status', headers: { authorization }
+      });
+      expect(api.statusCode).toBe(200);
+      expect(api.json()).toMatchObject({ online: 1, auth_provider: 'oidc-bff' });
+
+      const mutation = await test.app.inject({
+        method: 'POST',
+        url: '/v3/heartbeat',
+        headers: { authorization },
+        payload: {
+          type: 'heartbeat',
+          instance_id: 'oidc-bearer-test',
+          epoch: 1,
+          connection_token: '11111111-2222-4333-8444-555555555555'
+        }
+      });
+      expect(mutation.statusCode).toBe(200);
+
+      const crossOrigin = await test.app.inject({
+        method: 'POST',
+        url: '/v3/console/messages',
+        headers: { authorization, origin: 'https://evil.example' },
+        payload: {}
+      });
+      expect(crossOrigin.statusCode).toBe(403);
+
+      const request = { headers: { authorization } } as unknown as FastifyRequest;
+      const hello: Hello = {
+        type: 'hello',
+        version: PROTOCOL_VERSION,
+        tenant_id: 'Steven',
+        alias: 'kant',
+        instance_id: 'oidc-bearer-test',
+        capabilities: []
+      };
+      const principal = await test.provider.authenticateHello(request, hello);
+      expect(principal).toMatchObject({ tenant_id: 'Steven', alias: 'kant' });
+      expect(principal.operator_id).toBeUndefined();
     } finally {
       await test.app.close();
     }

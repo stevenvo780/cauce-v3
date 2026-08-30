@@ -37,12 +37,18 @@ export class ExponentialBackoff {
   }
 }
 
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Aborted", { cause: signal.reason });
+}
+
 export const systemClock: Clock = {
   now: () => new Date(),
   sleep: (ms, signal) =>
     new Promise<void>((resolve, reject) => {
       if (signal.aborted) {
-        reject(signal.reason ?? new Error("Aborted"));
+        reject(abortError(signal));
         return;
       }
       const timer = setTimeout(resolve, ms);
@@ -50,7 +56,7 @@ export const systemClock: Clock = {
         "abort",
         () => {
           clearTimeout(timer);
-          reject(signal.reason ?? new Error("Aborted"));
+          reject(abortError(signal));
         },
         { once: true },
       );

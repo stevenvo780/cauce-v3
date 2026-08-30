@@ -231,7 +231,7 @@ export interface AuditPage {
 
 export type OriginRelayState = 'pending' | 'processing' | 'sent' | 'failed';
 
-export interface OriginRelayView {
+interface OriginRelayView {
   id?: string | null;
   tenant_id?: string | null;
   adapter?: string | null;

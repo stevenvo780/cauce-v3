@@ -217,7 +217,7 @@ test("el cleanup atómico rechaza un rename en la antigua frontera compare-kill"
 test(
   "tmux real: cleanup CAS de cuarentena preserva exactamente una marca concurrente y la UI",
   async () => {
-    const socket = `cauce-quarantine-cas-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-quarantine-cas-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);
     try {
       const created = await base.run([
@@ -287,7 +287,7 @@ test(
 test(
   "tmux real: rename antes del if-shell atómico preserva la sesión original por id",
   async () => {
-    const socket = `cauce-test-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-test-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);
     try {
       const created = await base.run([
@@ -351,7 +351,7 @@ test(
 test(
   "tmux real: respawn con PID nuevo invalida ownership y cleanup preserva el proceso humano",
   async () => {
-    const socket = `cauce-cleanup-${process.pid}-${randomUUID().slice(0, 8)}`;
+    const socket = `cauce-cleanup-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const tmux = new CliTmux(socket);
     try {
       const created = await tmux.run([

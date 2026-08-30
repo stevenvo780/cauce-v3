@@ -9,7 +9,7 @@
  * canonical keys and therefore drops it before the response leaves the adapter. Its only useful
  * life is the TUI -> transcript -> `findEnvelope` hop.
  */
-export const ENVELOPE_CORRELATION_FIELD = "cauce_correlation_id";
+const ENVELOPE_CORRELATION_FIELD = "cauce_correlation_id";
 
 /**
  * Adds to the already-built prompt a local and unambiguous correlation obligation.

@@ -1,26 +1,11 @@
 import assert from "node:assert/strict";
-import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { claudeTranscript, type TranscriptEntry } from "../src/shared-session/transcript.js";
 import type { TranscriptReader } from "../src/shared-session/types.js";
-import {
-  FakeTmux,
-  RecordingFallback,
-  TmuxResult,
-  adapterFor,
-  assistantEntry,
-  claudeRunner,
-  controlledDelayedTmuxMutation,
-  controlledTmuxHang,
-  envelopeText,
-  execute,
-  freshState,
-  randomUUID,
-  userEntry,
-} from "./shared-session-fixtures.js";
+import {FakeTmux, RecordingFallback, TmuxResult, adapterFor, claudeRunner, controlledDelayedTmuxMutation, controlledTmuxHang, envelopeText, execute, freshState} from './shared-session-fixtures.js';
 
 test("un scan de transcript colgado no retrasa el plazo post-cancelación", async () => {
   const { home, workspace } = await freshState("abort-hung-transcript-scan");

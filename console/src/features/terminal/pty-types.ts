@@ -66,24 +66,24 @@ export function websocketUrl(path: string): string {
   return url.toString();
 }
 
-export const MAX_RESPUESTA_TECNICA = 256;
-export const DA_PRIMARIA = '\x1b[?1;2c';
-export const DA_SECUNDARIA = '\x1b[>0;276;0c';
-export const DSR_ESTADO = '\x1b[0n';
-export const MAX_FILAS_REMOTAS = 200;
-export const MAX_COLUMNAS_REMOTAS = 500;
+const MAX_RESPUESTA_TECNICA = 256;
+const DA_PRIMARIA = '\x1b[?1;2c';
+const DA_SECUNDARIA = '\x1b[>0;276;0c';
+const DSR_ESTADO = '\x1b[0n';
+const MAX_FILAS_REMOTAS = 200;
+const MAX_COLUMNAS_REMOTAS = 500;
 export const MAX_INPUT_FRAME_BYTES = 16 * 1024;
 export const MAX_PENDING_INPUT_BYTES = 64 * 1024;
-export const MAX_CLAIM_LEASE_MS = 300_000;
-export const MAX_POSTGRES_BIGINT = '9223372036854775807';
-export const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MAX_CLAIM_LEASE_MS = 300_000;
+const MAX_POSTGRES_BIGINT = '9223372036854775807';
+const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const PTY_VIEWER_HEARTBEAT_MS = 30_000;
 /** Browser TCP/TLS/upgrade deadline. The relay attach deadline starts only after `open`. */
 export const PTY_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const PTY_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000] as const;
 export const UTF8_ENCODER = new TextEncoder();
 
-export function decimalPositivo(value: string): boolean {
+function decimalPositivo(value: string): boolean {
   if (value.length === 0 || value.length > 3 || value.startsWith('0')) return false;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -93,7 +93,7 @@ export function decimalPositivo(value: string): boolean {
 }
 
 /** Length of the initial CPR/DECXCPR, or zero if the prefix is not exactly a DSR response. */
-export function longitudRespuestaDeCursor(data: string): number {
+function longitudRespuestaDeCursor(data: string): number {
   if (!data.startsWith('\x1b[')) return 0;
   let start = 2;
   if (data[start] === '?') start += 1;
@@ -136,7 +136,7 @@ export function esRespuestaTecnicaDelTerminal(data: string): boolean {
 }
 
 /** Positive PostgreSQL `bigint`, kept as text so no bits are lost in JavaScript. */
-export function claimEpochCanonico(value: unknown): value is string {
+function claimEpochCanonico(value: unknown): value is string {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) return false;
   if (value.length !== MAX_POSTGRES_BIGINT.length) return value.length < MAX_POSTGRES_BIGINT.length;
   return value <= MAX_POSTGRES_BIGINT;

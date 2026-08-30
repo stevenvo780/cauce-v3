@@ -8,7 +8,7 @@ import type {
   TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendResult, TelegramUpload
 } from '../src/types.js';
 
-/** PNG de 1x1 real: sirve para probar el camino de bytes de punta a punta. */
+/** Real 1x1 PNG: end-to-end byte path probe. */
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64'
@@ -27,7 +27,7 @@ describe('plan de adjuntos', () => {
     expect(upload?.kind).toBe('photo');
     expect(upload?.name).toBe('captura.png');
     expect(upload?.bytes.equals(PNG)).toBe(true);
-    // Una foto no se anuncia en el pie: se ve.
+    // A photo is not announced in the footer: it is visible.
     expect(plan.footer).toBe('');
   });
 
@@ -59,7 +59,7 @@ describe('plan de adjuntos', () => {
     expect(plan.uploads).toHaveLength(0);
     expect(plan.footer).toContain('Guion-Museo-de-Identidades.docx');
     expect(plan.footer).toContain('no viajó al chat');
-    // La ruta cruda no se repite en el chat, y sobre todo NO se abre: `/run/secrets/database_url`
+    // The raw path is not repeated in the chat, and is NEVER opened: `/run/secrets/database_url`
     // it exists INSIDE the bridge, and reading it would publish the production credential.
     expect(plan.footer).not.toContain('/run/secrets/database_url');
   });
@@ -137,7 +137,7 @@ function relay(artifacts: unknown): TelegramOriginRelay {
   };
 }
 
-/** Repositorio en memoria: reproduce la contabilidad de efectos que exige el ACK real. */
+/** In-memory repository: replays the effect accounting the real ACK demands. */
 class MemoryRepository implements TelegramEgressRepository {
   readonly effects = new Map<string, TelegramEffect>();
   readonly acks: TelegramOriginRelayAck[] = [];

@@ -214,7 +214,9 @@ export class DurableStoreBase {
     return this.serialized(async () => {
       if (!Number.isSafeInteger(epoch) || epoch <= 0) throw new RangeError("Epoch must be positive");
       if (epoch < this.fencing.epoch) {
-        throw new RangeError(`Cannot lower fencing epoch from ${this.fencing.epoch} to ${epoch}`);
+        throw new RangeError(
+          `Cannot lower fencing epoch from ${String(this.fencing.epoch)} to ${String(epoch)}`,
+        );
       }
       if (epoch === this.fencing.epoch) return "same";
       this.fencing = { version: 1, epoch };

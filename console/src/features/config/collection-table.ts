@@ -86,7 +86,7 @@ export function esColumnaLarga(clave: string): boolean {
 }
 
 /** How many characters of a long field fit in a cell before truncating. */
-export const LARGO_DE_RESUMEN = 120;
+const LARGO_DE_RESUMEN = 120;
 
 /**
  * Visible truncation. The trailing "..." is not decorative: it is the only signal that what you are

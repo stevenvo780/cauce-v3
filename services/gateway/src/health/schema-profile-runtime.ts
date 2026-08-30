@@ -1,4 +1,5 @@
 import { withTransaction, type DatabasePool } from '@cauce/store';
+import { isLiteralTrue } from '../runtime-guards.js';
 
 interface ProfileRuntimeSchemaProbeRow {
   readonly migration_applied: boolean;
@@ -56,12 +57,7 @@ BEGIN
 END
 `;
 
-/**
- * Schema-035 is behavioral evidence, not a best-effort UI cache. This probe checks the complete
- * frozen table/constraint/function/trigger topology and the privileges used by expectation writes,
- * delivery reads and adoption ACKs. It is read-only and uses impossible NULL keys, so readiness
- * cannot create evidence or observe an agent identity.
- */
+/** Proves schema-035 topology and privileges read-only with impossible identity keys. */
 export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query('SET TRANSACTION READ ONLY');
@@ -249,9 +245,12 @@ export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void>
       [profileDocumentsFunctionBody, profileAdoptionTriggerFunctionBody],
     );
     const contract = schema.rows[0];
-    if (contract?.migration_applied !== true || contract.columns_exact !== true
-        || contract.constraints_exact !== true || contract.functions_exact !== true
-        || contract.triggers_exact !== true || contract.mutation_permissions !== true) {
+    if (!isLiteralTrue(contract?.migration_applied)
+        || !isLiteralTrue(contract?.columns_exact)
+        || !isLiteralTrue(contract?.constraints_exact)
+        || !isLiteralTrue(contract?.functions_exact)
+        || !isLiteralTrue(contract?.triggers_exact)
+        || !isLiteralTrue(contract?.mutation_permissions)) {
       throw new Error('gateway schema-035 profile runtime contract is unavailable');
     }
     const behavior = await client.query<{ documents_contract: boolean }>(

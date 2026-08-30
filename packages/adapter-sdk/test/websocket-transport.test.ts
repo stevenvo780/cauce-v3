@@ -48,7 +48,7 @@ test("bearer token and development headers reload safely on reconnect", async ()
   await once(server, "listening");
   const address = server.address();
   assert.ok(address && typeof address === "object");
-  const received: Array<{ authorization?: string; tenant?: string; alias?: string }> = [];
+  const received: { authorization?: string; tenant?: string; alias?: string }[] = [];
   server.on("connection", (_socket, request) => {
     received.push({
       ...(request.headers.authorization === undefined ? {} : { authorization: request.headers.authorization }),
@@ -56,7 +56,7 @@ test("bearer token and development headers reload safely on reconnect", async ()
       ...(request.headers["x-cauce-alias"] === undefined ? {} : { alias: String(request.headers["x-cauce-alias"]) }),
     });
   });
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${address.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(address.port)}`, {
     environment: "test",
     bearerTokenFile: tokenFile,
     developmentIdentity: { tenant_id: "Steven", alias: "kant" },
@@ -70,7 +70,7 @@ test("bearer token and development headers reload safely on reconnect", async ()
     { authorization: "Bearer first-token", tenant: "Steven", alias: "kant" },
     { authorization: "Bearer second-token", tenant: "Steven", alias: "kant" },
   ]);
-  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  await new Promise<void>((resolveClose) => { server.close(() => { resolveClose(); }); });
 });
 
 test("credential errors enforce 0600 and never expose bearer contents", async () => {
@@ -122,7 +122,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   assert.ok(address && typeof address === "object");
   const accepted = once(server, "connection");
   const entries: AdapterLog[] = [];
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${address.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(address.port)}`, {
     environment: "test",
     alias: "argos",
     logger: (entry) => { entries.push(entry); },
@@ -139,7 +139,8 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   });
 
   assert.equal(entries.length, 1);
-  const entry = entries[0]!;
+  const entry = entries[0];
+  assert.ok(entry, "no entry captured");
   assert.equal(entry.event, "outbound_frame_invalid");
   assert.equal(entry.error_code, "OUTBOUND_FRAME_SCHEMA");
   assert.equal(entry.frame_type, "ack");
@@ -147,7 +148,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   assert.equal(entry.delivery_id, "40000000-0000-4000-8000-000000000002");
   assert.equal(entry.attempt, 3);
   assert.deepEqual(entry.issues?.map((issue) => issue.path), ["error"]);
-  assert.equal(entry.issues?.[0]?.code, "too_big");
+  assert.equal(entry.issues[0]?.code, "too_big");
   assert.match(String(entry.claim_token_fingerprint), /^sha256:[0-9a-f]{12}$/u);
   assert.ok(typeof entry.timestamp === "string" && !Number.isNaN(Date.parse(entry.timestamp)));
 
@@ -170,7 +171,7 @@ test("an outbound frame the schema refuses is logged with the rejected field pat
   );
 
   await connection.close();
-  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  await new Promise<void>((resolveClose) => { server.close(() => { resolveClose(); }); });
 });
 
 /**
@@ -255,14 +256,14 @@ async function frameServer(): Promise<{
         });
       });
     },
-    close: async () => { await new Promise<void>((done) => server.close(() => done())); },
+    close: async () => { await new Promise<void>((done) => { server.close(() => { done(); }); }); },
   };
 }
 
 test("the delegation feedback fields are part of the ack_result frame contract", async () => {
   const server = await frameServer();
   const entries: AdapterLog[] = [];
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${server.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(server.port)}`, {
     environment: "test",
     alias: "zeus",
     logger: (entry) => { entries.push(entry); },
@@ -315,7 +316,7 @@ test("the delegation feedback fields are part of the ack_result frame contract",
 test("a frame outside the schema is dropped and the queue keeps serving the next one", async () => {
   const server = await frameServer();
   const entries: AdapterLog[] = [];
-  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${server.port}`, {
+  const connector = new WebSocketConsumerConnector(`ws://127.0.0.1:${String(server.port)}`, {
     environment: "test",
     alias: "zeus",
     logger: (entry) => { entries.push(entry); },
@@ -351,18 +352,23 @@ test("a frame outside the schema is dropped and the queue keeps serving the next
     "frame_dropped", "frame_dropped", "frame_dropped",
   ]);
   assert.equal(entries[0]?.frame_type, "ack_result");
-  assert.equal(entries[0]?.alias, "zeus");
-  assert.equal(entries[0]?.delivery_id, frameIds.delivery);
+  assert.equal(entries[0].alias, "zeus");
+  assert.equal(entries[0].delivery_id, frameIds.delivery);
   // `unrecognized_keys` is reported at the root, not at the key: the path is `<root>` and the NAME
   // of the leftover field travels in the message. It is the data that serves to diagnose protocol
   // drift ("which new field broke us"), so the test pins it explicitly.
-  assert.equal(entries[0]?.issues?.length, 1);
-  assert.equal(entries[0]?.issues?.[0]?.code, "unrecognized_keys");
-  assert.deepEqual(entries[0]?.issues?.map((issue) => issue.path), ["<root>"]);
-  assert.match(String(entries[0]?.issues?.[0]?.message), /delegation_disciplina_v2/u);
+  const firstEntry = entries[0];
+  assert.ok(firstEntry, "the first entry must be captured");
+  const issues = firstEntry.issues ?? [];
+  assert.equal(issues.length, 1);
+  const firstIssue = issues[0];
+  assert.ok(firstIssue, "the first issue must be present");
+  assert.equal(firstIssue.code, "unrecognized_keys");
+  assert.deepEqual(issues.map((issue) => issue.path), ["<root>"]);
+  assert.match(String(firstIssue.message), /delegation_disciplina_v2/u);
   // The broken JSON has no shape, and still does not take anything down or invent fields.
   assert.equal(entries[1]?.frame_type, "unknown");
-  assert.deepEqual(entries[1]?.issues, []);
+  assert.deepEqual(entries[1].issues, []);
 
   await connection.close();
   await server.close();
@@ -382,7 +388,7 @@ test("mTLS requires complete valid owner-only material and wss", async () => {
   });
   await assert.rejects(
     connector.connect(new AbortController().signal),
-    (error: unknown) => error instanceof SecureFileError && /material is invalid/u.test(error.message),
+    (error: unknown) => error instanceof SecureFileError && error.message.includes('material is invalid'),
   );
   const missing = new WebSocketConsumerConnector("wss://127.0.0.1:9", {
     environment: "production",

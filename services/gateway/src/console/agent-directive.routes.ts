@@ -38,7 +38,7 @@ export interface AgentDirectiveDeps {
 }
 
 /** The relay has its own timeouts; this one bounds the endpoint's overall operation. */
-export const DIRECTIVE_READ_BUDGET_MS = 5_000;
+const DIRECTIVE_READ_BUDGET_MS = 5_000;
 const DIRECTIVE_READ_CONCURRENCY = 3;
 
 /**
@@ -159,7 +159,7 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
       }
       const requested = { tenant_id: tenant.data, alias: alias.data };
       const target = await deps.authorize(request, requested);
-      if (!target || target.tenant_id !== requested.tenant_id || target.alias !== requested.alias) {
+      if (target?.tenant_id !== requested.tenant_id || target.alias !== requested.alias) {
         return reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
       }
 
@@ -186,24 +186,23 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
       const memoryRoot = memoryRootForHarness(facts);
       const abort = new AbortController();
       let abortReason: 'timeout' | 'cancelled' = 'cancelled';
-      const budgetMs = Number.isSafeInteger(deps.readBudgetMs)
-        && (deps.readBudgetMs ?? 0) >= 1 && (deps.readBudgetMs ?? 0) <= 60_000
-        ? deps.readBudgetMs!
+      const configuredBudgetMs = deps.readBudgetMs;
+      const budgetMs = typeof configuredBudgetMs === 'number' && Number.isSafeInteger(configuredBudgetMs)
+        && configuredBudgetMs >= 1 && configuredBudgetMs <= 60_000
+        ? configuredBudgetMs
         : DIRECTIVE_READ_BUDGET_MS;
       const globalFailure = (): PublishedReadError => abortReason === 'timeout'
         ? {
           error: 'timeout',
-          reason: `la lectura completa excedió su presupuesto global de ${budgetMs} ms`,
+          reason: `la lectura completa excedió su presupuesto global de ${String(budgetMs)} ms`,
         }
         : {
           error: 'cancelled',
           reason: 'el cliente cerró la petición antes de completar la medición',
         };
-      let resolveAbort!: (failure: GovernanceReadError) => void;
       const aborted = new Promise<GovernanceReadError>((resolve) => {
-        resolveAbort = resolve;
+        abort.signal.addEventListener('abort', () => { resolve(globalFailure()); }, { once: true });
       });
-      abort.signal.addEventListener('abort', () => resolveAbort(globalFailure()), { once: true });
       const stop = (reason: 'timeout' | 'cancelled'): void => {
         if (abort.signal.aborted) return;
         abortReason = reason;
@@ -214,8 +213,8 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
       };
       request.raw.once('aborted', abortOnClose);
       reply.raw.once('close', abortOnClose);
-      const budgetTimer = setTimeout(() => stop('timeout'), budgetMs);
-      budgetTimer.unref?.();
+      const budgetTimer = setTimeout(() => { stop('timeout'); }, budgetMs);
+      budgetTimer.unref();
 
       const readManual = async (
         manual: EffectiveManualPath,
@@ -300,7 +299,8 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
           const projectLimit = codexProjectDocMaxBytes(facts);
           let projectBytes = 0;
           for (let index = 0; index < manuals.length; index += 1) {
-            const manual = manuals[index]!;
+            const manual = manuals[index];
+            if (manual === undefined) throw new Error('directive manual index is out of bounds');
             if (manual.scope === 'workspace' && projectBytes >= projectLimit) break;
             const read = await readManual(manual);
             if (read === null) continue;
@@ -346,7 +346,9 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
             while (next < manuals.length) {
               const index = next;
               next += 1;
-              results[index] = await readManual(manuals[index]!);
+              const manual = manuals[index];
+              if (manual === undefined) throw new Error('directive worker index is out of bounds');
+              results[index] = await readManual(manual);
             }
           };
           await Promise.all(Array.from(
@@ -377,7 +379,7 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
             : facts.harness === 'codex' && measuredCodexConfig === undefined
               ? [
                 'El agente no publicó la proyección conjunta de `project_doc_fallback_filenames` '
-                  + `y \`project_doc_max_bytes\`; se aplicó el límite conservador de ${codexProjectDocMaxBytes(facts)} bytes `
+                  + `y \`project_doc_max_bytes\`; se aplicó el límite conservador de ${String(codexProjectDocMaxBytes(facts))} bytes `
                   + 'y sólo los nombres estándar.',
               ]
               : [],

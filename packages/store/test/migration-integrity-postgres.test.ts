@@ -27,8 +27,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await pool?.end();
-  await database?.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('migration source integrity', () => {
@@ -52,7 +52,7 @@ describe('migration source integrity', () => {
       .start();
     const cleanPool = createPool(
       `postgresql://cauce_contract:${encodeURIComponent(password)}@${container.getHost()}:` +
-      `${container.getMappedPort(5432)}/cauce_024_contract`,
+      `${String(container.getMappedPort(5432))}/cauce_024_contract`,
       { max: 2 },
     );
     try {

@@ -16,7 +16,7 @@ import type { Verdict, VerdictCulprit } from './agent-state';
  * tooltip away. What changes is the hierarchy. First the sentence, then the number.
  */
 
-export interface FleetVerdictProps {
+interface FleetVerdictProps {
   verdict: Verdict;
   totals: FleetActivityTotals | null | undefined;
   /** Click on a culprit chip: focuses that agent on the map and on the table. */

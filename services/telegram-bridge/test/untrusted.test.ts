@@ -26,7 +26,7 @@ describe('confusableSkeleton: dos strings que se dibujan igual dan el mismo esqu
     expect(confusableSkeleton('\u0405teven')).toBe('steven');
     // k-a-n-t written entirely in Cyrillic: KA, A, PE, TE.
     expect(confusableSkeleton('\u043a\u0430\u043f\u0442')).toBe('kant');
-    // CYRILLIC SMALL LETTER IE (U+0435) en el medio de una palabra latina.
+    // CYRILLIC SMALL LETTER IE (U+0435) in the middle of a Latin word.
     expect(confusableSkeleton('s\u0435neca')).toBe('seneca');
   });
 
@@ -42,7 +42,7 @@ describe('confusableSkeleton: dos strings que se dibujan igual dan el mismo esqu
     expect(confusableSkeleton('z\u00e9us')).toBe('zeus');
     // FULLWIDTH LATIN SMALL LETTER Z/E/U/S.
     expect(confusableSkeleton('\uff5a\uff45\uff55\uff53')).toBe('zeus');
-    // MATHEMATICAL BOLD SMALL Z/E/U/S: el disfraz que sobrevive a cualquier `.toLowerCase()`.
+    // MATHEMATICAL BOLD SMALL Z/E/U/S: disguise that survives any `.toLowerCase()`.
     expect(confusableSkeleton('\u{1d433}\u{1d41e}\u{1d42e}\u{1d42c}')).toBe('zeus');
   });
 
@@ -81,7 +81,7 @@ describe('reservedNameHit: quién se está haciendo pasar por quién', () => {
 
 describe('untrustedAuthor: la identidad que sí llega al prompt', () => {
   it('borra el override bidi y marca el intento de suplantación que escondía', () => {
-    // RIGHT-TO-LEFT OVERRIDE (U+202E) metido dentro del nombre.
+    // RIGHT-TO-LEFT OVERRIDE (U+202E) smuggled inside the name.
     const { author, impersonation } = untrustedAuthor({ id: 1, first_name: 'ze\u202eus' }, RESERVED);
     expect(author?.display_name).toBe('zeus');
     expect(String(author?.display_name)).not.toContain('\u202e');

@@ -12,15 +12,7 @@ interface AliasState {
 
 // Explicitly match the response structure
 interface EstadoFlotaResult {
-  data: Array<{
-    alias: string;
-    lease_alive: boolean;
-    active_instance_id?: string;
-    lease_expires_at?: string;
-    epoch?: number;
-    last_activity?: string;
-    available: boolean;
-  }>;
+  data: AliasState[];
   available: boolean;
 }
 
@@ -37,17 +29,7 @@ interface DeliveryRecord {
 }
 
 interface EntregasResult {
-  data: Array<{
-    id: string;
-    message_id: string;
-    recipient_alias: string;
-    status: string;
-    attempt: number;
-    max_attempts: number;
-    created_at: string;
-    root_message_id?: string;
-    available: boolean;
-  }>;
+  data: DeliveryRecord[];
   available: boolean;
 }
 
@@ -72,12 +54,12 @@ interface CadenaResult {
 interface DeadLetterGroup {
   cause: string;
   count: number;
-  recent_examples: Array<{
+  recent_examples: {
     delivery_id: string;
     alias: string;
     created_at: string;
     rejection_code?: string;
-  }>;
+  }[];
 }
 
 interface HealthSummary {
@@ -127,7 +109,7 @@ export class FleetReadModel {
         GROUP BY aa.alias, l.instance_id, l.lease_until, l.epoch
         ORDER BY aa.alias
         `,
-        [this.tenantId, alias || null]
+        [this.tenantId, alias ?? null]
       );
 
       const mappedData = result.rows.map((row) => {
@@ -185,7 +167,7 @@ export class FleetReadModel {
         ORDER BY d.created_at DESC
         LIMIT $4
         `,
-        [this.tenantId, alias || null, estado || null, bounded]
+        [this.tenantId, alias ?? null, estado ?? null, bounded]
       );
 
       const mappedData = result.rows.map((row) => {
@@ -290,7 +272,7 @@ export class FleetReadModel {
       const groups: DeadLetterGroup[] = [];
 
       for (const row of result.rows) {
-        const cause = row.rejection_code || 'unknown';
+        const cause = row.rejection_code ?? 'unknown';
 
         // Get recent examples
         const examples = await this.pool.query<{
@@ -386,10 +368,10 @@ export class FleetReadModel {
 
       // `acked` is not a deliveries.status value. Only terminal outcomes belong in the success
       // rate; counting pending/leased/started as failures makes a busy healthy fleet look sick.
-      const done = deliveriesByStatus['done'] ?? 0;
+      const done = deliveriesByStatus.done ?? 0;
       const terminalDeliveries = done
-        + (deliveriesByStatus['failed'] ?? 0)
-        + (deliveriesByStatus['dead'] ?? 0);
+        + (deliveriesByStatus.failed ?? 0)
+        + (deliveriesByStatus.dead ?? 0);
       const okRate = terminalDeliveries > 0 ? Math.round((done / terminalDeliveries) * 100) : 100;
 
       const status =
@@ -400,7 +382,7 @@ export class FleetReadModel {
             : 'critical';
 
       const summary =
-        `Flota: ${total} alias, ${live} vivos (${status}), ${okRate}% entregas OK`;
+        `Flota: ${String(total)} alias, ${String(live)} vivos (${status}), ${String(okRate)}% entregas OK`;
 
       return {
         summary,

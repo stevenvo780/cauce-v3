@@ -1,6 +1,6 @@
 import {
-  TicketError, deriveAliasKey, issueResumeToken, issueTicket, parseAndVerify, parseResumeToken, ticketDigest,
-  type TicketPayload
+  TicketError, deriveAliasKey, issueResumeToken, issueTicket, ticketDigest,
+  verifyResumeTokenSignature, verifyTicketSignature, type TicketPayload
 } from './terminal/tickets.js';
 
 /**
@@ -75,17 +75,9 @@ describe('PTY ticket golden vectors', () => {
     expect(issueTicket(shuffled, key)).toBe(GOLDEN_TICKET);
   });
 
-  it('round-trips the payload while the ticket is inside its window', () => {
+  it('round-trips the signed payload', () => {
     const key = deriveAliasKey(MASTER, 'Steven', 'jarvis');
-    expect(parseAndVerify(GOLDEN_TICKET, key, GOLDEN_PAYLOAD.iat + 1)).toEqual(GOLDEN_PAYLOAD);
-  });
-
-  it('rejects an expired ticket', () => {
-    const key = deriveAliasKey(MASTER, 'Steven', 'jarvis');
-    expect(() => parseAndVerify(GOLDEN_TICKET, key, GOLDEN_PAYLOAD.exp))
-      .toThrowError(expect.objectContaining({ reason: 'expired' }) as Error);
-    expect(() => parseAndVerify(GOLDEN_TICKET, key, GOLDEN_PAYLOAD.exp + 3_600))
-      .toThrowError(expect.objectContaining({ reason: 'expired' }) as Error);
+    expect(verifyTicketSignature(GOLDEN_TICKET, key)).toEqual(GOLDEN_PAYLOAD);
   });
 
   it('rejects a ticket minted for another alias: a stolen ticket is useless elsewhere', () => {
@@ -95,7 +87,7 @@ describe('PTY ticket golden vectors', () => {
     for (const key of [otherAlias, otherTenant]) {
       let failure: TicketError | undefined;
       try {
-        parseAndVerify(GOLDEN_TICKET, key, GOLDEN_PAYLOAD.iat + 1);
+        verifyTicketSignature(GOLDEN_TICKET, key);
       } catch (error) {
         failure = error as TicketError;
       }
@@ -105,14 +97,17 @@ describe('PTY ticket golden vectors', () => {
 
   it('rejects tampered payloads and malformed shapes', () => {
     const key = deriveAliasKey(MASTER, 'Steven', 'jarvis');
-    const parts = GOLDEN_TICKET.split('.');
-    const forged = issueTicket({ ...GOLDEN_PAYLOAD, mode: 'harness' }, key).split('.');
+    const [, payload, signature] = GOLDEN_TICKET.split('.');
+    const [, forgedPayload] = issueTicket({ ...GOLDEN_PAYLOAD, mode: 'harness' }, key).split('.');
+    if (payload === undefined || signature === undefined || forgedPayload === undefined) {
+      throw new Error('ticket fixture is malformed');
+    }
     // Payload of the harness ticket with the signature of the shell ticket.
-    expect(() => parseAndVerify(`v1.${forged[1]}.${parts[2]}`, key, GOLDEN_PAYLOAD.iat + 1))
+    expect(() => verifyTicketSignature(`v1.${forgedPayload}.${signature}`, key))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
-    expect(() => parseAndVerify('v2.a.b', key)).toThrowError(TicketError);
-    expect(() => parseAndVerify('v1.a', key)).toThrowError(TicketError);
-    expect(() => parseAndVerify(`v1.${parts[1]}.$$$`, key)).toThrowError(TicketError);
+    expect(() => verifyTicketSignature('v2.a.b', key)).toThrowError(TicketError);
+    expect(() => verifyTicketSignature('v1.a', key)).toThrowError(TicketError);
+    expect(() => verifyTicketSignature(`v1.${payload}.$$$`, key)).toThrowError(TicketError);
   });
 
   it('rejects a non-canonical signature spelling even when it decodes to the authentic HMAC', () => {
@@ -120,7 +115,7 @@ describe('PTY ticket golden vectors', () => {
     const [version, payload, signature] = GOLDEN_TICKET.split('.') as [string, string, string];
     const alternate = nonCanonicalEncodingOfSameBytes(signature);
     expect(Buffer.from(alternate, 'base64url')).toEqual(Buffer.from(signature, 'base64url'));
-    expect(() => parseAndVerify(`${version}.${payload}.${alternate}`, key, GOLDEN_PAYLOAD.iat + 1))
+    expect(() => verifyTicketSignature(`${version}.${payload}.${alternate}`, key))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
   });
 
@@ -141,18 +136,16 @@ describe('PTY resume credential', () => {
     const first = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
     const second = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
     expect(first).not.toBe(second);
-    expect(parseResumeToken(first, MASTER, issuedAt + 1)).toMatchObject({
+    expect(verifyResumeTokenSignature(first, MASTER)).toMatchObject({
       v: 1, sid, op: operator, iat: issuedAt, exp: expiresAt,
     });
-    expect(parseResumeToken(first, MASTER, issuedAt + 1).nonce).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(verifyResumeTokenSignature(first, MASTER).nonce).toMatch(/^[A-Za-z0-9_-]{22}$/);
   });
 
-  it('expires exactly at exp and rejects a signature made under another master', () => {
+  it('rejects a signature made under another master', () => {
     const token = issueResumeToken(sid, operator, expiresAt, MASTER, issuedAt);
-    expect(() => parseResumeToken(token, MASTER, expiresAt))
-      .toThrowError(expect.objectContaining({ reason: 'expired' }) as Error);
     const otherMaster = Buffer.alloc(32, 0xff);
-    expect(() => parseResumeToken(token, otherMaster, issuedAt + 1))
+    expect(() => verifyResumeTokenSignature(token, otherMaster))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
   });
 
@@ -161,11 +154,11 @@ describe('PTY resume credential', () => {
     const [version, payload, signature] = token.split('.') as [string, string, string];
     const tamperedPayload = `${payload.slice(0, -1)}${payload.endsWith('A') ? 'B' : 'A'}`;
     const tamperedSignature = `${signature.slice(0, -1)}${signature.endsWith('A') ? 'B' : 'A'}`;
-    expect(() => parseResumeToken(`${version}.${tamperedPayload}.${signature}`, MASTER, issuedAt + 1))
+    expect(() => verifyResumeTokenSignature(`${version}.${tamperedPayload}.${signature}`, MASTER))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
-    expect(() => parseResumeToken(`${version}.${payload}.${tamperedSignature}`, MASTER, issuedAt + 1))
+    expect(() => verifyResumeTokenSignature(`${version}.${payload}.${tamperedSignature}`, MASTER))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
-    expect(() => parseResumeToken(`r2.${payload}.${signature}`, MASTER, issuedAt + 1)).toThrowError(TicketError);
+    expect(() => verifyResumeTokenSignature(`r2.${payload}.${signature}`, MASTER)).toThrowError(TicketError);
   });
 
   it('rejects a non-canonical signature spelling that decodes to the same bytes', () => {
@@ -173,7 +166,7 @@ describe('PTY resume credential', () => {
     const [version, payload, signature] = token.split('.') as [string, string, string];
     const alternate = nonCanonicalEncodingOfSameBytes(signature);
     expect(Buffer.from(alternate, 'base64url')).toEqual(Buffer.from(signature, 'base64url'));
-    expect(() => parseResumeToken(`${version}.${payload}.${alternate}`, MASTER, issuedAt + 1))
+    expect(() => verifyResumeTokenSignature(`${version}.${payload}.${alternate}`, MASTER))
       .toThrowError(expect.objectContaining({ reason: 'signature_invalid' }) as Error);
   });
 });

@@ -113,19 +113,19 @@ function buildFakeReadlineFactory(answers: readonly string[]): () => {
       cb(answer);
     },
     close() {
-      // No-op; el módulo lo invoca en su `finally`.
+      // No-op; the module invokes it from its `finally`.
     },
   });
 }
 
 function enableTty(answers: readonly string[]): void {
-  // `process.stdin.isTTY` lo setea el runtime de Node según cómo se arrancó el proceso.
-  // En CI suele ser `undefined`; lo forzamos a `true` para que promptPassword no se niegue.
+  // `process.stdin.isTTY` is set by the Node runtime based on how the process was started.
+  // In CI it is usually `undefined`; we force it to `true` so promptPassword does not bail.
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
   const createInterface = vi.fn().mockImplementation(buildFakeReadlineFactory(answers));
   vi.doMock('node:readline', () => ({ createInterface }));
-  // Evita que un test se quede con process.stdout.write apuntando al no-op del módulo
-  // y contamine al siguiente — `process.stdout` es compartido.
+  // Avoid a test leaving process.stdout.write pointing to the module's no-op
+  // and contaminating the next one — `process.stdout` is shared.
   Object.defineProperty(process.stdout, 'write', {
     configurable: true,
     writable: true,
@@ -165,7 +165,7 @@ describe('parseArguments — validaciones que tiran ANTES de tocar la base', () 
   });
 
   it('--alias que no cumple la regex [a-z][a-z0-9_-]{1,63}: rechaza', async () => {
-    // Mayúsculas no están permitidas.
+    // Uppercase is not allowed.
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'Kant'];
 
     await expect(importCli()).rejects.toThrow(/--alias inválido/);
@@ -191,7 +191,7 @@ describe('parseArguments — validaciones que tiran ANTES de tocar la base', () 
   });
 
   it('flag sin valor al final del argv (sin compañero): rechaza', async () => {
-    // Después del --email no hay valor — `--email` es el último elemento.
+    // No value after --email — `--email` is the last element.
     process.argv = ['node', 'console-user-cli.js', '--email'];
 
     await expect(importCli()).rejects.toThrow(/falta el valor de --email/);
@@ -217,7 +217,7 @@ describe('parseArguments — última gana con flags duplicados', () => {
     expect(stub.query).toHaveBeenCalledTimes(1);
     const call = exigir(stub.query.mock.calls[0], 'una llamada registrada');
     const params = call[1] as unknown[];
-    // Email crudo: el segundo gana. Normalizado: el segundo gana.
+    // Raw email: the second wins. Normalized: the second wins.
     expect(params[0]).toBe('segundo@example.com');
     expect(params[1]).toBe('segundo@example.com');
   });
@@ -244,17 +244,17 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     const params = call[1] as unknown[];
     expect(sql).toContain('INSERT INTO console_users');
     expect(sql).toContain('ON CONFLICT (email_normalized) DO UPDATE SET');
-    // posición 0 = email crudo (trim), posición 1 = email_normalizado (lower+trim)
+    // position 0 = raw email (trim), position 1 = email_normalized (lower+trim)
     expect(params[0]).toBe('User@Example.com'.trim());
     expect(params[1]).toBe('user@example.com');
-    // posición 2 = hash de la contraseña, viene del mock determinista
+    // position 2 = password hash, from the deterministic mock
     expect(params[2]).toBe('MOCKED-SCYPT-HASH');
-    // posición 3..6 = name, role, tenant, alias
+    // position 3..6 = name, role, tenant, alias
     expect(params[3]).toBe('A');
     expect(params[4]).toBe('operator');
     expect(params[5]).toBe('Steven');
     expect(params[6]).toBe('kant');
-    // pool.end se llama en el finally
+    // pool.end is called in the finally block
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 
@@ -277,7 +277,7 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
   it('valores por defecto: sin --name deriva del local-part; sin --alias usa kant; sin --tenant usa Steven; sin --role usa operator', async () => {
     const row = { id: '00000000-0000-4000-8000-000000000003', created_at: new Date(0), updated_at: new Date(0) };
     stub.query.mockResolvedValueOnce({ rows: [row], rowCount: 1 });
-    // Solo --email: el resto debe salir por default.
+    // Only --email: the rest must come from defaults.
     process.argv = ['node', 'console-user-cli.js', '--email', 'kant@example.com'];
 
     await importCli();
@@ -315,8 +315,8 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     await importCli();
 
     expect(stub.query).toHaveBeenCalledTimes(1);
-    // El módulo ya loggea por stdout; el assert importante es que el INSERT corrió
-    // y el pool se cerró.
+    // The module already logs to stdout; the important assertion is that the INSERT ran
+    // and the pool closed.
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 });
@@ -334,7 +334,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
     const params = call[1] as unknown[];
     expect(sql).toContain('UPDATE console_users SET active=false');
     expect(sql).toContain('RETURNING email, active');
-    // Sólo se manda el email normalizado como parámetro en este branch.
+    // Only the normalized email is sent as a parameter in this branch.
     expect(params).toEqual(['a@b.c']);
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
@@ -351,7 +351,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
     process.argv = ['node', 'console-user-cli.js', '--email', 'fantasma@example.com', '--deactivate'];
 
     await expect(importCli()).rejects.toThrow(/no existe una cuenta de consola para fantasma@example.com/);
-    // Aún así el finally cierra el pool.
+    // The finally block still closes the pool.
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 
@@ -378,7 +378,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
 
 describe('lectura interactiva de la contraseña (promptPassword + readPassword)', () => {
   it('sin TTY: el módulo falla con "pasá la contraseña en CAUCE_CONSOLE_USER_PASSWORD"', async () => {
-    // Sin env, sin TTY → debe colgarse del mensaje de error específico.
+    // Without env, without TTY → must bail with the specific error message.
     Reflect.deleteProperty(process.env, 'CAUCE_CONSOLE_USER_PASSWORD');
     Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
     process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];

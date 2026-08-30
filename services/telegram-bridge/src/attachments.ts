@@ -5,6 +5,7 @@ import { transcribeAudio, type TranscriptionConfig } from './transcription.js';
 import type {
   PreparedTelegramAttachment, TelegramApi, TelegramFile, TelegramMessage
 } from './types.js';
+import { hasUnsafeCodePoint } from './validation.js';
 
 export const MAX_TELEGRAM_ATTACHMENT_BYTES = 10_000_000;
 
@@ -87,26 +88,13 @@ function safeRemotePath(value: string): boolean {
  * another for free text— and two validators of the same field drifting apart is exactly how a
  * value ends up accepted by one layer and rejected by the next.
  */
-export function hasUnsafeAttachmentCodePoint(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0);
-    if (code === undefined) continue;
-    if (
-      code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
-      (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
+export { hasUnsafeCodePoint as hasUnsafeAttachmentCodePoint } from './validation.js';
 
 function safeName(value: string): boolean {
   return value.length >= 1 && value.length <= 255 && basename(value) === value &&
     // Reject controls, bidi/invisible formatting and path separators in attacker-controlled names.
     value !== '.' && value !== '..' &&
-    !value.includes('/') && !value.includes('\\') && !hasUnsafeAttachmentCodePoint(value);
+    !value.includes('/') && !value.includes('\\') && !hasUnsafeCodePoint(value);
 }
 
 function declaredType(item: Candidate, remotePath: string): { type?: AttachmentType; name: string } {

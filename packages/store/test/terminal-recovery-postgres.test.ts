@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
@@ -59,10 +60,10 @@ async function publishAndClaim(
   const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
   const published = await repository.publish(input);
   const [delivery] = await repository.claimDeliveries(
-    tenant, alias, instanceId, lease.epoch!, 1, 30_000
+    tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
   );
   if (!delivery) throw new Error('expected a claimed delivery');
-  return { delivery, epoch: lease.epoch!, deliveryId: published.delivery_ids[0]! };
+  return { delivery, epoch: requireValue(lease.epoch, 'lease.epoch'), deliveryId: requireValue(published.delivery_ids[0], 'published.delivery_ids') };
 }
 
 /** Terminal error ACK NOT retryable: the branch that used to leave the delivery in 'failed'. */
@@ -125,8 +126,8 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  if (pool) await pool.end();
-  if (database?.container) await database.container.stop();
+  await pool.end();
+  await database.container.stop();
 });
 
 describe('todo final de error queda replayable', () => {
@@ -219,7 +220,7 @@ describe('cancelación de primera clase', () => {
     );
 
     const cancelled = await repository.cancelDelivery(
-      childDeliveryId!, OPERATOR, OPERATOR_ALIAS, 'duplicado: ya lo hizo jarvis'
+      requireValue(childDeliveryId, 'childDeliveryId'), OPERATOR, OPERATOR_ALIAS, 'duplicado: ya lo hizo jarvis'
     );
     expect(cancelled).toMatchObject({
       delivery_id: childDeliveryId,
@@ -268,14 +269,14 @@ describe('cancelación de primera clase', () => {
     });
 
     // The cancelled branch remains rescuable: cancelling is not irreversible.
-    await expect(repository.replayDelivery(childDeliveryId!, OPERATOR, OPERATOR_ALIAS))
+    await expect(repository.replayDelivery(requireValue(childDeliveryId, 'childDeliveryId'), OPERATOR, OPERATOR_ALIAS))
       .resolves.toMatchObject({ replayed: true });
   });
 
   it('avisa al humano del origen cuando la entrega no es hija de nadie', async () => {
     const input = command();
     const published = await repository.publish(input);
-    const deliveryId = published.delivery_ids[0]!;
+    const deliveryId = requireValue(published.delivery_ids[0], 'published.delivery_ids');
 
     const cancelled = await repository.cancelDelivery(deliveryId, OPERATOR, OPERATOR_ALIAS);
     expect(cancelled).toMatchObject({
@@ -358,7 +359,7 @@ describe('cancelación de primera clase', () => {
     await pool.query(
       `UPDATE acl_edges SET allow_control=false WHERE from_tenant='Steven' AND to_tenant='Pablo'`
     );
-    await expect(repository.cancelDelivery(published.delivery_ids[0]!, OPERATOR, OPERATOR_ALIAS))
+    await expect(repository.cancelDelivery(requireValue(published.delivery_ids[0], 'published.delivery_ids'), OPERATOR, OPERATOR_ALIAS))
       .rejects.toMatchObject({ code: 'not_found' });
     expect((await pool.query(
       `SELECT status FROM deliveries WHERE id=$1`, [published.delivery_ids[0]]
@@ -369,7 +370,7 @@ describe('cancelación de primera clase', () => {
     await pool.query(
       `UPDATE acl_edges SET allow_control=true WHERE from_tenant='Steven' AND to_tenant='Pablo'`
     );
-    await expect(repository.cancelDelivery(published.delivery_ids[0]!, OPERATOR, OPERATOR_ALIAS))
+    await expect(repository.cancelDelivery(requireValue(published.delivery_ids[0], 'published.delivery_ids'), OPERATOR, OPERATOR_ALIAS))
       .resolves.toMatchObject({ cancelled: true });
   });
 });
@@ -402,7 +403,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
 
     // (b) the 'cancelled by zeus' case: manual UPDATE, no dead letter and no terminal_at.
     const manual = await repository.publish(command());
-    const manualId = manual.delivery_ids[0]!;
+    const manualId = requireValue(manual.delivery_ids[0], 'manual.delivery_ids');
     await pool.query(
       `UPDATE deliveries
          SET status='dead',last_error='cancelado por zeus 2026-07-28: aviso duplicado',
@@ -412,7 +413,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
 
     // (c) a healthy delivery: the migration cannot touch it.
     const healthy = await repository.publish(command());
-    const healthyId = healthy.delivery_ids[0]!;
+    const healthyId = requireValue(healthy.delivery_ids[0], 'healthy.delivery_ids');
 
     await runBackfill();
 
@@ -432,7 +433,7 @@ describe('migración 018: rescate de las entregas que ya murieron sin dead lette
 
     // `created_at` is when it died, not when the migration ran: the row without `terminal_at`
     // falls on `updated_at` (two days ago), not on `now()`.
-    expect(byId.get(manualId)!.created_at.getTime())
+    expect(requireValue(byId.get(manualId), 'value').created_at.getTime())
       .toBeLessThan(Date.now() - 24 * 60 * 60 * 1000);
 
     // And the only thing that matters: now they can be rescued.

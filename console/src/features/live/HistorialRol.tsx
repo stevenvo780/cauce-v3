@@ -17,7 +17,7 @@ import {
  * without reopening the old `agent.update {role_brief}`.
  */
 
-export interface HistorialRolProps {
+interface HistorialRolProps {
   tenantId: string;
   alias: string;
   /** Absent without `config.write`: the journal is still read; only the draft loading disappears. */

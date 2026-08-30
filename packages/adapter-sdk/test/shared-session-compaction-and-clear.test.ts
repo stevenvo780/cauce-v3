@@ -83,7 +83,9 @@ test("la cosecha atraviesa una compactación a mitad de turno", () => {
   // And the two pieces separately, so it is clear what supports what.
   const byUuid = indexByUuid(entries);
   assert.equal(byUuid.get(leaf)?.parentUuid, a1, "el índice se queda con la PRIMERA aparición");
-  assert.equal(descendsFrom(byUuid, entries[6]!, inj), true);
+  const seventhEntry = entries[6];
+  assert.ok(seventhEntry, "seven-entry fixture is short");
+  assert.equal(descendsFrom(byUuid, seventhEntry, inj), true);
 });
 
 test("una compactación durante el turno se cosecha Y se avisa con sus cifras", async () => {
@@ -135,7 +137,7 @@ test("una compactación durante el turno se cosecha Y se avisa con sus cifras", 
   );
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "context_compacted");
-  assert.equal(records[0]?.fellBack, false);
+  assert.equal(records[0].fellBack, false);
 });
 
 test("un /clear del dueño se dice en la respuesta en vez de mentir", async () => {
@@ -175,7 +177,7 @@ test("un /clear del dueño se dice en la respuesta en vez de mentir", async () =
   assert.equal(tmux.panePid, "4242", "sin reinicio de proceso: el PID no delata nada");
   const records = await readDegradations(state);
   assert.equal(records[0]?.reason, "context_cleared");
-  assert.equal(records[0]?.fellBack, false);
+  assert.equal(records[0].fellBack, false);
 });
 
 test("resucitar la sesión no puede parecer una sesión compartida de siempre", async () => {

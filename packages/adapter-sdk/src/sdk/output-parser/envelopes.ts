@@ -454,7 +454,8 @@ function recoverReplyString(candidate: string, start: number): RecoveredReplyStr
       index += 1;
       continue;
     }
-    const codePoint = character?.codePointAt(0) ?? 0;
+    if (character === undefined) break;
+    const codePoint = character.codePointAt(0) ?? 0;
     encoded += codePoint <= 0x1f
       ? `\\u${codePoint.toString(16).padStart(4, "0")}`
       : character;

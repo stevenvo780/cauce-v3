@@ -18,14 +18,13 @@ import {
   MAX_AGENT_WRITE_QUEUE_BYTES,
   MAX_TERMINAL_READ_TOMBSTONES,
   agentKey,
-  integerField,
-  stringField,
   type AgentGovernanceBatchEntry,
   type AgentHello,
   type AgentReadHandlers,
   type AgentSessionHandlers,
   type AgentWriteHandlers,
 } from './agent-hello.js';
+import { integerField, stringField } from './validation.js';
 
 /** One live agent socket. Frame routing to sessions lives here so the leg stays a registry. */
 export class AgentConnection {
@@ -394,7 +393,7 @@ export class AgentConnection {
       return;
     }
     if (frame.tag === FRAME_TAGS.READ_DATA) {
-      // Mismo prefijo de 36 bytes que STDOUT, pero lo que lleva es el `request_id`.
+      // Same 36-byte prefix as STDOUT, but it carries the `request_id`.
       const data = decodeDataFrame(frame.payload);
       this.dispatchRead(data.sessionId, 'data', (handlers) => { handlers.onReadData(data.data); });
       return;

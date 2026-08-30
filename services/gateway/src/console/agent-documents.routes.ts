@@ -65,11 +65,11 @@ export interface MemoryDirectoryListing {
   /** true if the list was truncated. */
   readonly truncated: boolean;
   /** File entry: path relative to root. */
-  readonly entries: Array<{
+  readonly entries: {
     readonly path: string;
     readonly bytes: number;
     readonly modified_at: string;
-  }>;
+  }[];
 }
 
 /**
@@ -156,7 +156,7 @@ export interface AgentFactsProbe {
   ): Promise<readonly GovernanceBatchWriteAck[] | GovernanceReadError | { error: 'conflict'; reason: string }>;
 }
 
-export interface AgentDocumentsDeps {
+interface AgentDocumentsDeps {
   /** Authenticates the principal and requires the role permission for the operation. */
   authorize(
     request: unknown, permission: 'read' | 'control'
@@ -178,7 +178,7 @@ export interface AgentDocumentsDeps {
   probe: AgentFactsProbe;
 }
 
-export interface DocumentRow extends AgentDocument {
+interface DocumentRow extends AgentDocument {
   /** The content can be requested via `:kind/content`; it does not imply it can be written. */
   readonly readable: boolean;
   /** Never `true` if the facts are not measured: this is stated by the field itself, not by a comment. */
@@ -206,7 +206,7 @@ function harnessFromRegistry(value: string | null | undefined): HarnessKind {
     ? value : 'unknown';
 }
 
-export function buildDocumentsResponse(
+function buildDocumentsResponse(
   tenantId: string,
   alias: string,
   facts: RuntimeFacts,
@@ -277,12 +277,12 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         || typeof raw.sha !== 'string' || !SHA256_PATTERN.test(raw.sha)) return false;
     const visibleBytes = Buffer.byteLength(raw.text, 'utf8');
     if (visibleBytes > Number(raw.bytes)) return false;
-    return raw.truncated === true
+    return raw.truncated
       || (visibleBytes === Number(raw.bytes)
         && createHash('sha256').update(raw.text, 'utf8').digest('hex') === raw.sha);
   }
 
-  type BaseParams = { tenantId?: string; alias: string };
+  interface BaseParams { tenantId?: string; alias: string }
   type ContentParams = BaseParams & { kind: string };
   type Target = NonNullable<Awaited<ReturnType<AgentDocumentsDeps['authorizeTarget']>>>;
   const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -308,7 +308,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
     const target = await deps.authorizeTarget(
       actor, tenantResult.data, aliasResult.data, permission, legacySameTenant,
     );
-    if (!target || target.tenant_id !== tenantResult.data || target.alias !== aliasResult.data) {
+    if (target?.tenant_id !== tenantResult.data || target.alias !== aliasResult.data) {
       await reply.code(404).send({ error: 'not_found', message: 'agent not found or not visible' });
       return undefined;
     }

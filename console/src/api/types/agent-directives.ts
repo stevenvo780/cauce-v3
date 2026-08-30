@@ -24,7 +24,7 @@ export interface AgentDirectiveFile {
 }
 
 /** An agent's memory index (file metadata, no content). */
-export interface AgentMemoryIndexAvailable {
+interface AgentMemoryIndexAvailable {
   root?: string | null;
   /** Exact total; null means only `observed_at_least` is known. */
   total?: number | null;
@@ -40,7 +40,7 @@ export interface AgentMemoryIndexAvailable {
   reason?: never;
 }
 
-export interface AgentMemoryIndexUnavailable {
+interface AgentMemoryIndexUnavailable {
   root?: string | null;
   total?: null;
   observed_at_least?: null;
@@ -53,7 +53,7 @@ export interface AgentMemoryIndexUnavailable {
 }
 
 /** `error` discriminates a failed measurement; newer gateways do not hide it as `null`. */
-export type AgentMemoryIndex = AgentMemoryIndexAvailable | AgentMemoryIndexUnavailable;
+type AgentMemoryIndex = AgentMemoryIndexAvailable | AgentMemoryIndexUnavailable;
 
 /** An agent's governance files: document inventory and content. */
 
@@ -215,7 +215,7 @@ export interface AgentPerfilValor {
   operating_rules: string[];
 }
 
-export interface AgentPerfilFichero {
+interface AgentPerfilFichero {
   nombre: string;
   /** `solo-si-falta` = it belongs to the agent (MEMORY.md, HEARTBEAT.md): if it exists it is NOT touched. */
   politica: 'bloque-gestionado' | 'solo-si-falta';
@@ -298,7 +298,7 @@ export interface AgentPerfil {
   aviso?: string;
 }
 
-export interface AgentPerfilRuntimeAck {
+interface AgentPerfilRuntimeAck {
   name: string;
   path: string;
   state: 'written' | 'already_current' | 'preserved';

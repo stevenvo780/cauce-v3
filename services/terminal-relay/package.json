@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit -p ../../tsconfig.json"
   },
   "dependencies": {
+    "@cauce/protocol": "workspace:*",
     "ws": "^8.18.3"
   }
 }

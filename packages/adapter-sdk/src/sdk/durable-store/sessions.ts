@@ -2,7 +2,7 @@ import {
   AtomicRecoveryError,
   clone,
   recoverAtomicArtifacts,
-} from "./atomic-state.js";
+} from "./atomic-state.js"; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   CANONICAL_OPEN_CODE_SESSION_FILE,
   type CanonicalOpenCodeSessionPointer,
@@ -66,7 +66,7 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
     const pointerKey = canonicalOpenClawTerminalKey(alias);
     if (pointerKey === undefined || !sourceKey.startsWith(`openclaw:${alias}:`)) {
       throw new Error("Invalid canonical OpenClaw terminal session scope");
-    }
+    } // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Public JavaScript callers can pass a non-boolean value.
     if (record.initialized !== true) {
       throw new Error("Canonical OpenClaw terminal session must be initialized");
     }
@@ -132,12 +132,13 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
         key.startsWith(prefix)
         && key !== pointerKey
         && !key.endsWith(".agent-lane")
-        && candidate.initialized === true
+        && candidate.initialized
       ));
-      const sessions = { ...this.sessions.sessions };
-      delete sessions[pointerKey];
-      if (candidates.length === 1) {
-        const candidate = candidates[0]![1];
+      const sessions = Object.fromEntries(
+        Object.entries(this.sessions.sessions).filter(([key]) => key !== pointerKey),
+      );
+      const candidate = candidates.length === 1 ? candidates[0]?.[1] : undefined;
+      if (candidate !== undefined) {
         sessions[pointerKey] = { native_id: candidate.native_id, initialized: true };
       }
       const next = validateSessionsFile({ version: 1, sessions });
@@ -145,7 +146,7 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
         await this.atomicWrite("sessions.json", next);
         this.sessions = next;
       }
-      return candidates.length === 1;
+      return candidate !== undefined;
     });
   }
 
@@ -183,8 +184,9 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
       } else if (mappings.length > 1) {
         pointer = unavailableCanonicalOpenCodeSession("ambiguous");
       } else {
-        const mapping = mappings[0]!;
-        if (!isCanonicalOpenCodeScopeKey(mapping.scopeKey)
+        const mapping = mappings[0];
+        if (mapping === undefined
+          || !isCanonicalOpenCodeScopeKey(mapping.scopeKey)
           || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
           pointer = unavailableCanonicalOpenCodeSession("invalid");
         } else {
@@ -226,8 +228,8 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
           );
           return false;
         }
-        const mapping = mappings[0]!;
-        if (mapping.scopeKey !== scopeKey
+        const mapping = mappings[0];
+        if (mapping?.scopeKey !== scopeKey
           || !isCanonicalOpenCodeScopeKey(mapping.scopeKey)
           || !isCanonicalOpenCodeSessionId(mapping.sessionId)) {
           await this.atomicWrite(
@@ -248,9 +250,9 @@ export class DurableStoreSessions extends DurableStoreDeliveries {
     });
   }
 
-  private canonicalOpenCodeMappings(): Array<{ scopeKey: string; sessionId: string }> {
+  private canonicalOpenCodeMappings(): { scopeKey: string; sessionId: string }[] {
     const prefix = "opencode:kant:";
-    const mappings: Array<{ scopeKey: string; sessionId: string }> = [];
+    const mappings: { scopeKey: string; sessionId: string }[] = [];
     for (const [key, record] of Object.entries(this.sessions.sessions)) {
       const candidate = record as unknown;
       if (!key.startsWith(prefix)
