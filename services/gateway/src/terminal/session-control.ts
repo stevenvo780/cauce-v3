@@ -5,6 +5,7 @@ import type {
 } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
 import { requireOperatorPermission, type Principal } from '../auth.js';
+import { isLiteralTrue } from '../runtime-guards.js';
 import {
   recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext, type TerminalAuditEntry,
 } from './audit.js';
@@ -590,8 +591,7 @@ export function registerTerminalSessionControl(
           mode: row.mode,
           opened_at: row.issued_at.toISOString(),
           expires_at: (sessionExpiry(row) ?? row.expires_at).toISOString(),
-          /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; only literal true can occupy an operator slot.
-          state: sessionState(row, row.occupies_slot === true),
+          state: sessionState(row, isLiteralTrue(row.occupies_slot)),
           request_id: row.request_id,
           owner_generation: browserOwnerGeneration(row.browser_owner_generation),
         }))

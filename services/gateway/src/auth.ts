@@ -3,10 +3,10 @@ import {
   type JsonWebKey, type KeyObject, type X509Certificate
 } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { readFile } from 'node:fs/promises';
-import { TLSSocket } from 'node:tls';
 import type { FastifyRequest } from 'fastify';
 import type { Hello, Origin, Tenant } from '@cauce/protocol';
 import { AliasSchema, OriginSchema, TenantSchema } from '@cauce/protocol';
+import { isAuthorizedTlsSocket, isLiteralTrue } from './runtime-guards.js';
 
 export type PrincipalRole = 'agent' | 'operator' | 'adapter';
 export type PrincipalPermission = 'route' | 'read' | 'control' | 'notify';
@@ -124,8 +124,9 @@ export class DevOnlyAuthProvider implements AuthProvider {
     roles?: readonly PrincipalRole[];
     permissions?: readonly PrincipalPermission[];
   }) {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare -- JavaScript callers must pass literal true.
-    if (options.enabled !== true) throw new Error('development authentication must be explicitly enabled');
+    if (!isLiteralTrue(options.enabled)) {
+      throw new Error('development authentication must be explicitly enabled');
+    }
     this.mode = options.environment;
     this.configuredRoles = options.roles;
     this.configuredPermissions = options.permissions;
@@ -393,8 +394,7 @@ export class MtlsAuthProvider implements AuthProvider {
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
     const socket = request.raw.socket;
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- TLS authorization is request-bound runtime state.
-    if (!(socket instanceof TLSSocket) || !socket.encrypted || !socket.authorized) {
+    if (!isAuthorizedTlsSocket(socket)) {
       throw new AuthError('a verified client certificate is required');
     }
     const certificate = socket.getPeerX509Certificate();

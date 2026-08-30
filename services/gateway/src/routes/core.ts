@@ -4,6 +4,7 @@ import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, type Hello, type Tenant
 import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResult } from '@cauce/store';
 import { requirePermission, validatePrincipal } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
+import { isSignalAborted } from '../runtime-guards.js';
 import { registerCoreRuntimeHttpRoutes } from './core/http.js';
 import { createCoreOutboxRuntime } from './core/outbox.js';
 import { registerCorePublishRoutes } from './core/publish.js';
@@ -121,8 +122,7 @@ export function createCoreRoutePhases(
           session.connectionToken,
           session.abort.signal,
         )).map((delivery) => normalizeDeliveryClaim(delivery, ackDeadlineMs));
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort state can change while the claim is awaited.
-        if (session.abort.signal.aborted
+        if (isSignalAborted(session.abort.signal)
             || sessions.get(sessionKey(session.tenantId, session.alias)) !== session
             || session.socket.readyState !== WebSocket.OPEN) return false;
         let allFramesQueued = true;

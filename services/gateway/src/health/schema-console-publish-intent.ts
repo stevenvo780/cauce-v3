@@ -1,4 +1,5 @@
 import { withTransaction, type DatabasePool } from '@cauce/store';
+import { isLiteralTrue } from '../runtime-guards.js';
 
 interface ConsolePublishIntentSchemaProbeRow {
   readonly migration_ledger_exact: boolean;
@@ -118,8 +119,9 @@ export async function probeConsolePublishIntentPath(pool: DatabasePool): Promise
       [consolePublishIntentMigrationSha256],
     );
     const contract = schema.rows[0];
-    /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
-    if (contract?.migration_ledger_exact !== true || contract.indexes_exact !== true || contract.journal_permissions !== true) {
+    if (!isLiteralTrue(contract?.migration_ledger_exact)
+        || !isLiteralTrue(contract?.indexes_exact)
+        || !isLiteralTrue(contract?.journal_permissions)) {
       throw new Error('gateway schema-037 console publish intent contract is unavailable');
     }
   });

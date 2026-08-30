@@ -1,4 +1,5 @@
 import { withTransaction, type DatabasePool } from '@cauce/store';
+import { isLiteralTrue } from '../runtime-guards.js';
 
 interface ProfileRuntimeSchemaProbeRow {
   readonly migration_applied: boolean;
@@ -244,8 +245,12 @@ export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void>
       [profileDocumentsFunctionBody, profileAdoptionTriggerFunctionBody],
     );
     const contract = schema.rows[0];
-    /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
-    if (contract?.migration_applied !== true || contract.columns_exact !== true || contract.constraints_exact !== true || contract.functions_exact !== true || contract.triggers_exact !== true || contract.mutation_permissions !== true) {
+    if (!isLiteralTrue(contract?.migration_applied)
+        || !isLiteralTrue(contract?.columns_exact)
+        || !isLiteralTrue(contract?.constraints_exact)
+        || !isLiteralTrue(contract?.functions_exact)
+        || !isLiteralTrue(contract?.triggers_exact)
+        || !isLiteralTrue(contract?.mutation_permissions)) {
       throw new Error('gateway schema-035 profile runtime contract is unavailable');
     }
     const behavior = await client.query<{ documents_contract: boolean }>(

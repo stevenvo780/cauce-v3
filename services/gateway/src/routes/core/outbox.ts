@@ -6,6 +6,7 @@ import {
   type FencedWakeOutboxRecipient, type WakeOutboxClaimFence,
 } from '@cauce/store';
 import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
+import { isLiteralTrue, isSignalAborted } from '../../runtime-guards.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
 import { send, sessionFence, sessionKey } from './helpers.js';
 
@@ -109,8 +110,7 @@ export function createCoreOutboxRuntime(
       void event;
       wakePumpTelemetry.markClaimed();
     }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort state can change while the outbox claim is awaited.
-    if (outboxPumpAbort.signal.aborted) {
+    if (isSignalAborted(outboxPumpAbort.signal)) {
       if (events.length === 0) wakePumpTelemetry.recordOutcome('cancelled');
       for (const event of events) {
         void event;
@@ -193,8 +193,7 @@ export function createCoreOutboxRuntime(
     );
     // No await is allowed between the SQL CAS and frame; replacement must fence the later ACK.
     if (!renewed) throw new StoreError('fenced', 'wake outbox pre-send renewal was fenced');
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort and socket state can change while renewal is awaited.
-    if (signal.aborted || active.abort.signal.aborted
+    if (isSignalAborted(signal) || isSignalAborted(active.abort.signal)
         || sessions.get(key) !== active
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Socket state can change while renewal is awaited.
         || active.socket.readyState !== WebSocket.OPEN
@@ -213,8 +212,7 @@ export function createCoreOutboxRuntime(
     }
     const drained = await drain(active);
     if (!drained) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Abort state can change while drain is awaited.
-      if (signal.aborted || active.abort.signal.aborted) {
+      if (isSignalAborted(signal) || isSignalAborted(active.abort.signal)) {
         wakePumpTelemetry.recordOutcome('cancelled');
         return;
       }
@@ -275,8 +273,7 @@ export function createCoreOutboxRuntime(
       ...(error === undefined ? {} : { error }),
       ...(status === 'retry' ? { retry_after_ms: 250 } : {})
     }, signal);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- Repository results must carry literal boolean authority.
-    if (result.applied !== true) {
+    if (!isLiteralTrue(result.applied)) {
       throw new StoreError('fenced', 'wake outbox ACK was fenced');
     }
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Repository results are runtime data despite their interface type.

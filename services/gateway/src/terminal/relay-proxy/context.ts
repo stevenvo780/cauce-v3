@@ -1,5 +1,4 @@
 import { createHash, timingSafeEqual } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
-import { TLSSocket } from 'node:tls';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
   AuthorizedAgentTarget, DatabaseClient, DatabasePool,
@@ -14,6 +13,7 @@ import type { TerminalConfig } from '../config.js';
 import { AgentRegistry, type RelayProcessIdentity } from '../registry.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
+import { isAuthorizedTlsSocket } from '../../runtime-guards.js';
 
 export const CLAIM_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const POSITIVE_BIGINT_PATTERN = /^[1-9][0-9]{0,18}$/;
@@ -28,8 +28,7 @@ const CLOSE_WITH_CLAIM_KEYS = [...CLOSE_KEYS, 'claim_epoch', 'claim_token'].sort
 
 function authenticatedRelayInstanceId(request: FastifyRequest): string | undefined {
   const socket = request.raw.socket;
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Runtime socket state, not the TLSSocket declaration, proves an encrypted authorized peer.
-  if (!(socket instanceof TLSSocket) || !socket.encrypted || !socket.authorized) return undefined;
+  if (!isAuthorizedTlsSocket(socket)) return undefined;
   const certificate = socket.getPeerX509Certificate();
   if (certificate === undefined || certificate.raw.byteLength === 0) return undefined;
   return createHash('sha256').update(certificate.raw).digest('hex');

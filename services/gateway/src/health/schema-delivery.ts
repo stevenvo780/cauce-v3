@@ -1,4 +1,5 @@
 import { withTransaction, type DatabasePool } from '@cauce/store';
+import { isLiteralTrue } from '../runtime-guards.js';
 
 interface DeliveryAdmissionSchemaProbeRow {
   readonly migration_applied: boolean;
@@ -69,8 +70,11 @@ export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<vo
            AS claim_permissions`,
     );
     const contract = schema.rows[0];
-    /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: 'error' */ // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
-    if (contract?.migration_applied !== true || contract.capacity_column_exact !== true || contract.capacity_constraint_valid !== true || contract.inflight_index_valid !== true || contract.claim_permissions !== true) {
+    if (!isLiteralTrue(contract?.migration_applied)
+        || !isLiteralTrue(contract?.capacity_column_exact)
+        || !isLiteralTrue(contract?.capacity_constraint_valid)
+        || !isLiteralTrue(contract?.inflight_index_valid)
+        || !isLiteralTrue(contract?.claim_permissions)) {
       throw new Error('gateway schema-015 delivery admission contract is unavailable');
     }
     await client.query(
@@ -171,8 +175,9 @@ export async function probeWakePath(pool: DatabasePool): Promise<void> {
            AS claim_permissions`
     );
     const contract = schema.rows[0];
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare -- PostgreSQL rows are runtime input; every readiness authority flag must be literal true.
-    if (contract?.migration_applied !== true || contract.connection_token_exact !== true || contract.claim_permissions !== true) {
+    if (!isLiteralTrue(contract?.migration_applied)
+        || !isLiteralTrue(contract?.connection_token_exact)
+        || !isLiteralTrue(contract?.claim_permissions)) {
       throw new Error('gateway wake schema-031 claim contract is unavailable');
     }
     // This is the read-only half of claimWakeOutbox's fenced claim. A NULL recipient cannot match
