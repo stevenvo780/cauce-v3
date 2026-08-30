@@ -79,3 +79,30 @@ it('cierra con su botón de cerrar, que es el foco de entrada del diálogo', asy
   await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
   expect(screen.getByRole('button', { name: CONTROL })).toHaveFocus();
 });
+
+/* The two halves the other cases leave out: the background is really switched off, and the tab
+   wraps instead of walking into it. Without the trap the focus lands on an `inert` page, where the
+   caret cannot be seen and there is no way back without the mouse. */
+it('apaga el armazón mientras vive y da la vuelta al tabulador en vez de irse a él', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<div className="app-shell"><TerminalPage /></div>);
+  await user.click(await screen.findByRole('button', { name: CONTROL }));
+  const dialogo = await screen.findByRole('dialog', { name: /plano de control/i });
+
+  const armazon = document.querySelector('.app-shell');
+  expect(armazon).toHaveAttribute('inert');
+  expect(armazon?.contains(dialogo)).toBe(false);
+
+  const focos = [...dialogo.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), summary, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )];
+  expect(focos.length).toBeGreaterThan(0);
+  focos[focos.length - 1].focus();
+  await user.tab();
+  expect(document.activeElement).toBe(focos[0]);
+  await user.tab({ shift: true });
+  expect(document.activeElement).toBe(focos[focos.length - 1]);
+
+  await user.keyboard('{Escape}');
+  await waitFor(() => { expect(document.querySelector('.app-shell')).not.toHaveAttribute('inert'); });
+});

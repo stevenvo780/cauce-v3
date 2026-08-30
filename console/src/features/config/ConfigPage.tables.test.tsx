@@ -331,3 +331,23 @@ it('FAMILIA 7: el JSON va detrás de un desplegable cerrado y los dos botones vi
     }
   }
 });
+
+/* The confirmation already had focus entry, Escape and the inert background; what no case covered
+   is the wrap. Both its buttons live outside the `details`, so the tab has three stops to go round. */
+it('FAMILIA 7: el tabulador da la vuelta dentro de la confirmación en vez de irse al fondo', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<div className="app-shell"><ConfigPage /></div>);
+  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+
+  const dialogo = screen.getByRole('dialog');
+  const focos = [...dialogo.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), summary, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )];
+  expect(focos.length).toBeGreaterThan(1);
+
+  focos[focos.length - 1].focus();
+  await user.tab();
+  expect(document.activeElement).toBe(focos[0]);
+  await user.tab({ shift: true });
+  expect(document.activeElement).toBe(focos[focos.length - 1]);
+});
