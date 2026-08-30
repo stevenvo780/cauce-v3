@@ -3,6 +3,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   { ignores: ['dist/**', '**/dist/**', 'node_modules/**', '.serena/**', 'console/**', 'ops/artifacts/**'] },
+  { linterOptions: { reportUnusedDisableDirectives: 'off' } },
   {
     files: ['**/*.{js,mjs}'],
     ...js.configs.recommended,
@@ -30,18 +31,9 @@ export default tseslint.config(
     }
   },
   {
-    files: ['packages/adapter-sdk/src/**/*.ts'],
-    rules: {
-      '@typescript-eslint/prefer-promise-reject-errors': 'off',
-      '@typescript-eslint/only-throw-error': 'off',
-      '@typescript-eslint/no-base-to-string': 'off'
-    }
-  },
-  {
     files: ['packages/adapter-sdk/test/**/*.{ts,mjs}'],
     rules: {
       '@typescript-eslint/no-floating-promises': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
       'require-yield': 'off'
     }
   }
