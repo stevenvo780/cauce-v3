@@ -119,8 +119,10 @@ function spyRunner(): {
 }
 
 function restoreEnvironment(name: string, previous: string | undefined): void {
-  if (previous === undefined) delete process.env[name];
-  else process.env[name] = previous;
+  if (previous === undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- env key passed in by caller
+    delete process.env[name];
+  } else process.env[name] = previous;
 }
 
 function nativeEnvironment(value = "1"): NodeJS.ProcessEnv {

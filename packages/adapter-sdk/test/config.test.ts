@@ -120,8 +120,10 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
     assert.equal(openclaw.harnessBridge, resolve(root, "openclaw.mjs"));
   } finally {
     for (const [name, value] of previous) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- restoring the captured env snapshot
+        delete process.env[name];
+      } else process.env[name] = value;
     }
   }
 });
@@ -153,8 +155,10 @@ test("la sala propia es obligatoria por entorno y declarable por archivo", async
     assert.equal((await loadCliRuntimeConfig("claude", [])).room, "grp.isa");
   } finally {
     for (const [name, value] of previous) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- restoring the captured env snapshot
+        delete process.env[name];
+      } else process.env[name] = value;
     }
   }
 
