@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { WebSocket, type RawData } from 'ws';
 import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, type Hello, type Tenant } from '@cauce/protocol';
 import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResult } from '@cauce/store';

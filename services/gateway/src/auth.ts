@@ -1,7 +1,7 @@
 import {
   constants, createHash, createPublicKey, timingSafeEqual, verify as verifySignature,
   type JsonWebKey, type KeyObject, type X509Certificate
-} from 'node:crypto';
+} from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { readFile } from 'node:fs/promises';
 import { TLSSocket } from 'node:tls';
 import type { FastifyRequest } from 'fastify';

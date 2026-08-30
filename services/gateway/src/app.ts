@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
