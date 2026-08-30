@@ -2,7 +2,7 @@
 // NOT a test: the `dist/test/*.test.js` runner does not pick it up.
 import {readFile, rm} from 'node:fs/promises';
 import { resolve } from "node:path";
-import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore} from '../src/sdk/durable-store.js';
+import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore, type CanonicalOpenCodeSessionPointer} from '../src/sdk/durable-store.js';
 import type {Delivery, StructuredOutput} from '../src/sdk/types.js';
 export const root = resolve(".test-state/canonical-open-code-store");
 export const scopeA = `auth-v1:${"A".repeat(43)}`;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {readFile, writeFile} from 'node:fs/promises';
 import { resolve } from "node:path";
 import test from "node:test";
-import {DurableStore} from '../src/sdk/durable-store.js';
+import {DurableStore, type InboxRecord} from '../src/sdk/durable-store.js';
 import type {DeliveryEvent} from '../src/sdk/types.js';
 import {completedOutput, delegatedOutput, delivery, freshStore} from './durable-store-fixtures.js';
 
