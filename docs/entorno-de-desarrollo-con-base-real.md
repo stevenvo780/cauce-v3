@@ -123,12 +123,54 @@ llegaban a correr.
 que esa suite quería un contenedor propio. Es un mensaje que invita a instalar lo que no era: la
 distinción que desatasca es **base externa vs testcontainers**, no la presencia de la base.
 
-## Lo que sigue sin poder hacerse aquí
+## Docker: sí hay, y por qué es un `socat`
 
-- **No hay demonio de Docker** (`/var/run/docker.sock` no existe). El camino de `testcontainers`
-  sigue muerto en este workspace; la variable de entorno es el único camino.
-- Por eso quedan **seis ficheros en rojo, y ninguno es del store**: cuatro necesitan un contenedor
-  de verdad —levantan el suyo, o llaman a `container.restart()` para simular pérdida de backend, que
-  contra una base externa es un no-op—, uno es `mcp-fleet-monitor` sin construir (`dist/server.js`
-  no existe) y otro es el extractor de rutas de `console-api-contract`. No hay que taparlos.
-- **`pnpm test` completo** sigue sin verificarse en este entorno.
+`/var/run/docker.sock` **existe** y responde (`Server Version 29.6.2`). No es un bind mount: es un
+relé montado desde dentro,
+
+```
+socat UNIX-LISTEN:/var/run/docker.sock,fork,mode=0660,user=1000,group=1000 \
+      EXEC:ssh -T -F /workspace/.docker-host-ssh/config docker-host
+```
+
+que reenvía cada conexión por SSH al demonio del host. Ventaja: se aplicó **sin recrear el
+contenedor**, así que no mató ninguna sesión. Precio: **es un proceso, no un montaje**. Si muere o el
+contenedor reinicia, el acceso se va; se vuelve a levantar con
+`/workspace/.docker-host-ssh/start-relay.sh`. El arreglo duradero —montar el socket y el `group_add`—
+está preparado en el compose del host y entra solo el día que se recree el contenedor.
+
+Las claves del canal viven en `/workspace/.docker-host-ssh/` con permisos `0600`, **fuera del
+repositorio**. Comprobado: no hay nada de eso en `git status`.
+
+### Trampa: este demonio NO publica puertos
+
+`docker run -p 5432 …` deja `{"5432/tcp": null}`. Por eso `testcontainers` moría con
+`Timed out after 10000ms while waiting for container ports to be bound to the host` **sobre un
+contenedor que ya estaba sano**. La vía es la dirección del contenedor en la red compartida, no el
+puerto publicado: hay que exportar `CAUCE_TEST_DOCKER_NETWORK` con una red del propio contenedor
+(hoy `net-claw-ws`), y `tests/helpers/postgres.ts` deja de publicar puertos cuando esa variable está.
+
+```bash
+env -u CAUCE_TEST_DATABASE_URL CAUCE_TEST_DOCKER_NETWORK=net-claw-ws pnpm test
+```
+
+## El gate completo, medido
+
+Por la vía Docker, `pnpm test` da **5 de 8 suites en verde** en 765 s:
+
+```
+PASS test:unit  ·  PASS test:terminal-pty  ·  PASS test:pty
+PASS test:services            ·  PASS test:store-hardening
+FAIL test:gateway-hardening   ·  FAIL test:integration   ·  FAIL test:e2e
+```
+
+**Los rojos que quedan ya no son de entorno.** Son cuatro tests, y ninguno pide contenedor ni base:
+
+| Test | Qué pasa |
+|---|---|
+| `console-api-contract` | el extractor no saca la ruta de unas llamadas de `client.ts` |
+| `mcp-fleet-monitor-tools` | lee de vuelta las filas y recibe `[]` (5 de 6 casos pasan) |
+| `console-login` (e2e) | pide `/v3/console/agents/kant` y da 404: **el test no siembra ningún agente** y una base recién migrada tiene `agents` vacía |
+| `real-qa` (e2e) | `ops/harness/runner.mjs` sale con código 1; entre sus fallos, uno revienta con `Cannot read properties of undefined (reading 'room')` |
+
+Eso es lo que valía tener el entorno: antes no se podía ni saber que existían.
