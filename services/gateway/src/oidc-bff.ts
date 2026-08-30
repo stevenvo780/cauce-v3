@@ -2,9 +2,10 @@ import {
   createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual
 } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { Hello } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import {
-  AuthError, AuthorizationError, JwksJwtVerifier, principalFromJwtClaims,
+  AuthError, AuthorizationError, JwksJwtAuthProvider, JwksJwtVerifier, principalFromJwtClaims,
   validatePrincipal,
   type AuthProvider, type JwtClaims, type Principal
 } from './auth.js';
@@ -40,47 +41,6 @@ export interface OidcSessionStore {
   getSession(id: string): Promise<OidcSession | undefined>;
   putSession(id: string, session: OidcSession): Promise<void>;
   deleteSession(id: string): Promise<void>;
-}
-
-interface MemoryRecord<T> {
-  value: T;
-  expiresAt: number;
-}
-
-/** Test/development store. Production wiring uses PostgresOidcSessionStore. */
-export class MemoryOidcSessionStore implements OidcSessionStore {
-  private readonly logins = new Map<string, MemoryRecord<PendingOidcLogin>>();
-  private readonly sessions = new Map<string, MemoryRecord<OidcSession>>();
-
-  ready(): Promise<void> { return Promise.resolve(); }
-
-  async putLogin(id: string, login: PendingOidcLogin): Promise<void> {
-    this.logins.set(id, { value: structuredClone(login), expiresAt: login.expiresAt });
-  }
-
-  async takeLogin(id: string): Promise<PendingOidcLogin | undefined> {
-    const record = this.logins.get(id);
-    this.logins.delete(id);
-    if (!record || record.expiresAt <= Date.now()) return undefined;
-    return structuredClone(record.value);
-  }
-
-  async getSession(id: string): Promise<OidcSession | undefined> {
-    const record = this.sessions.get(id);
-    if (!record || record.expiresAt <= Date.now()) {
-      this.sessions.delete(id);
-      return undefined;
-    }
-    return structuredClone(record.value);
-  }
-
-  async putSession(id: string, session: OidcSession): Promise<void> {
-    this.sessions.set(id, { value: structuredClone(session), expiresAt: session.expiresAt });
-  }
-
-  async deleteSession(id: string): Promise<void> {
-    this.sessions.delete(id);
-  }
 }
 
 interface EncryptedRow {
@@ -197,8 +157,8 @@ interface TokenResponse extends Record<string, unknown> {
 
 export interface OidcBffAuthProviderOptions {
   issuer: string;
-  audience: string | readonly string[];
   jwksUrl: string | URL;
+  bearerProvider: JwksJwtAuthProvider;
   authorizationEndpoint: string | URL;
   tokenEndpoint: string | URL;
   clientId: string;
@@ -254,6 +214,10 @@ function cookieValue(header: string | undefined, name: string): string | undefin
   } catch {
     return undefined;
   }
+}
+
+function hasCookie(header: string | undefined, name: string): boolean {
+  return header?.split(';').some((item) => item.trim().startsWith(`${name}=`)) === true;
 }
 
 function constantTimeText(left: string, right: string): boolean {
@@ -314,7 +278,7 @@ export class OidcBffAuthProvider implements AuthProvider {
   private readonly fetcher: typeof fetch;
   private readonly scopes: readonly string[];
   private readonly store: OidcSessionStore;
-  private readonly accessVerifier: JwksJwtVerifier;
+  private readonly bearerProvider: JwksJwtAuthProvider;
   private readonly idVerifier: JwksJwtVerifier;
   private readonly sessionMaxAgeMs: number;
   private readonly loginMaxAgeMs: number;
@@ -341,6 +305,7 @@ export class OidcBffAuthProvider implements AuthProvider {
     }
     if (this.sessionCookieName === this.loginCookieName) throw new Error('OIDC session and login cookies must differ');
     this.store = options.sessionStore;
+    this.bearerProvider = options.bearerProvider;
     this.sessionMaxAgeMs = options.sessionMaxAgeMs ?? 8 * 60 * 60 * 1_000;
     this.loginMaxAgeMs = options.loginMaxAgeMs ?? 10 * 60 * 1_000;
     this.refreshLeewayMs = options.refreshLeewayMs ?? 30_000;
@@ -351,7 +316,6 @@ export class OidcBffAuthProvider implements AuthProvider {
       jwksUrl: options.jwksUrl,
       fetcher: this.fetcher
     };
-    this.accessVerifier = new JwksJwtVerifier({ ...verifierOptions, audience: options.audience });
     this.idVerifier = new JwksJwtVerifier({ ...verifierOptions, audience: this.clientId });
   }
 
@@ -362,6 +326,11 @@ export class OidcBffAuthProvider implements AuthProvider {
   private sessionId(request: FastifyRequest): string | undefined {
     if (headerValue(request.headers.authorization) !== undefined) throw new AuthError('browser bearer credentials are not accepted');
     return cookieValue(headerValue(request.headers.cookie), this.sessionCookieName);
+  }
+
+  private usesBearerProvider(request: FastifyRequest): boolean {
+    return !hasCookie(headerValue(request.headers.cookie), this.sessionCookieName)
+      && headerValue(request.headers.authorization) !== undefined;
   }
 
   private async tokenRequest(parameters: URLSearchParams): Promise<TokenResponse> {
@@ -396,7 +365,7 @@ export class OidcBffAuthProvider implements AuthProvider {
   }> {
     const accessToken = requiredString(tokens.access_token, 'access token');
     if (tokens.token_type !== 'Bearer') throw new AuthError('OIDC token type is invalid');
-    const accessClaims = await this.accessVerifier.verify(accessToken);
+    const { claims: accessClaims } = await this.bearerProvider.verifyToken(accessToken);
     const accessSubject = subject(accessClaims);
     if (previousSubject !== undefined && accessSubject !== previousSubject) throw new AuthError('OIDC refresh changed subject');
     const tokenPrincipal = principalFromJwtClaims(accessClaims);
@@ -497,11 +466,13 @@ export class OidcBffAuthProvider implements AuthProvider {
   }
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
+    if (this.usesBearerProvider(request)) return this.bearerProvider.authenticateHttp(request);
     return (await this.load(request)).session.principal;
   }
 
-  async authenticateHello(request: FastifyRequest): Promise<Principal> {
-    return this.authenticateHttp(request);
+  async authenticateHello(request: FastifyRequest, _hello: Hello): Promise<Principal> {
+    if (this.usesBearerProvider(request)) return this.bearerProvider.authenticateHello(request);
+    return (await this.load(request)).session.principal;
   }
 
   async requireCsrf(request: FastifyRequest): Promise<void> {
@@ -621,7 +592,8 @@ function isUnsafe(method: string): boolean {
 export function registerOidcBff(app: FastifyInstance, provider: OidcBffAuthProvider): void {
   app.addHook('onRequest', async (request, reply) => {
     const dataMutation = request.url.startsWith('/v3/') && isUnsafe(request.method);
-    if (!dataMutation) return;
+    const sessionCookie = hasCookie(headerValue(request.headers.cookie), provider.sessionCookieName);
+    if (!dataMutation || !sessionCookie) return;
     try {
       await provider.requireCsrf(request);
     } catch (error) {

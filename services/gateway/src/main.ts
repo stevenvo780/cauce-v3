@@ -6,7 +6,7 @@ import {
 } from './config.js';
 import {
   DevOnlyAuthProvider, HashedMtlsIdentityFileProvider, HashedTokenFileAuthProvider,
-  MtlsAuthProvider, type AuthProvider
+  JwksJwtAuthProvider, MtlsAuthProvider, type AuthProvider
 } from './auth.js';
 import { buildLoopbackHealthProbe, probeAckPath } from './health.js';
 import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
@@ -135,10 +135,11 @@ async function configuredAuthProvider(pool: DatabasePool): Promise<AuthProvider>
       process.env.CAUCE_OIDC_SESSION_TABLE ?? 'gateway_oidc_sessions'
     );
     const clientSecret = await optionalTextFile(process.env.CAUCE_OIDC_CLIENT_SECRET_FILE);
+    const bearerProvider = new JwksJwtAuthProvider({ issuer, audience, jwksUrl });
     const provider = new OidcBffAuthProvider({
       issuer,
-      audience,
       jwksUrl,
+      bearerProvider,
       authorizationEndpoint,
       tokenEndpoint,
       clientId,
