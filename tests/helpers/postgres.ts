@@ -62,13 +62,17 @@ export function esBaseDePruebas(url: string): boolean {
 /**
  * Minimum container contract suites use for the external database.
  *
- * An object that only implements `stop` leaves callers of `restart` or `getHost` with a TypeError
- * instead of a no-op, so the failure surfaces close to the source.
+ * `restart` MUST do something: as a no-op it left the backend-loss cycles of
+ * `adversarial-postgres.test.ts` nothing to lose (negative control read `expected true to be
+ * false`) and let `real-qa.test.ts` claim `evidence: 'real'` for a restart that never happened.
+ * With no postmaster to bounce, killing every backend of that database is the honest emulation.
  */
-function contenedorDesacoplado(alDetener?: () => Promise<void>): StartedTestContainer {
-  const noop = async (): Promise<void> => undefined;
+function contenedorDesacoplado(
+  alDetener: () => Promise<void>,
+  alReiniciar: () => Promise<void>,
+): StartedTestContainer {
   return {
-    stop: alDetener ?? noop, restart: noop, getHost: () => 'external',
+    stop: alDetener, restart: alReiniciar, getHost: () => 'external',
   } as unknown as StartedTestContainer;
 }
 
@@ -85,7 +89,9 @@ function urlDeBase(servidor: string, base: string): string {
  * `schema_migrations` with no ledger entry ON PURPOSE, and one shared database turns that into
  * "applied without an atomic source ledger" for every later file — measured, 49 of 82.
  */
-async function crearBaseEfimera(servidor: string): Promise<{ url: string; soltar: () => Promise<void> }> {
+async function crearBaseEfimera(servidor: string): Promise<{
+  url: string; soltar: () => Promise<void>; tirarConexiones: () => Promise<void>;
+}> {
   const nombre = `${PREFIJO_EFIMERA}${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const admin = createPool(servidor);
   try {
@@ -113,7 +119,19 @@ async function crearBaseEfimera(servidor: string): Promise<{ url: string; soltar
       await limpieza.end();
     }
   };
-  return { url: urlDeBase(servidor, nombre), soltar };
+  const tirarConexiones = async (): Promise<void> => {
+    const admin = createPool(servidor);
+    try {
+      await admin.query(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+           WHERE datname=$1 AND pid<>pg_backend_pid()`,
+        [nombre],
+      );
+    } finally {
+      await admin.end();
+    }
+  };
+  return { url: urlDeBase(servidor, nombre), soltar, tirarConexiones };
 }
 
 export async function startTestDatabase(): Promise<TestDatabase> {
@@ -133,13 +151,13 @@ export async function startTestDatabase(): Promise<TestDatabase> {
           `"${PREFIJO_BASE_DE_PRUEBAS}". Rechazado antes de abrir la conexión.`,
       );
     }
-    const { url, soltar } = await crearBaseEfimera(externa);
+    const { url, soltar, tirarConexiones } = await crearBaseEfimera(externa);
     const pool = createPool(url);
     try {
       await waitForDatabase(pool);
       await applyMigrations(pool);
       await guardarSemillaDeCatalogo(pool);
-      return { container: contenedorDesacoplado(soltar), pool, url };
+      return { container: contenedorDesacoplado(soltar, tirarConexiones), pool, url };
     } catch (error) {
       await pool.end();
       await soltar();
