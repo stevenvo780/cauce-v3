@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import {
-  Badge, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time,
+  Badge, Desplazable, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time,
   Unknown, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
 import { NO_APLICA, compactId, safeOriginRelayState } from '../../lib';
@@ -78,7 +78,7 @@ export function ObservabilityPage() {
           ? <p className="notice error" role="alert">No se pudieron leer los origin relays: {relays.error.message}. Las señales de arriba sí llegaron.</p>
           : relayItems.length === 0
             ? <EmptyState>El servidor no devolvió ningún relay visible para tu cuenta. No es «no hay relays»: es que no se ve ninguno desde acá.</EmptyState>
-            : <div className="table-wrap">
+            : <Desplazable etiqueta="Estado real de origin relays">
               <table>
                 <caption className="sr-only">Estado real de origin relays</caption>
                 <thead><tr><th>Relay</th><th>Adapter</th><th>Tenant</th><th>Delivery</th><th>Estado</th><th>Intentos</th><th>Creado</th><th>Enviado</th><th>Auditoría</th></tr></thead>
@@ -128,7 +128,7 @@ export function ObservabilityPage() {
                   );
                 })}</tbody>
               </table>
-            </div>}
+            </Desplazable>}
       </Panel>
     </ViewTabPanel> : null}
 

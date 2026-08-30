@@ -5,7 +5,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { ConfigurationSnapshot, ConsoleAccess, QuotaSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import {
-  Badge, EmptyState, Metric, Panel, Unknown, Time,
+  Badge, Desplazable, EmptyState, Metric, Panel, Unknown, Time,
 } from '../../components/ui';
 import { AccountRoutingDetail } from './AccountRoutingDetail';
 import './licenses.css';
@@ -162,7 +162,7 @@ export function AccountsInventory({ config, access, quotas }: {
         </EmptyState>
         : accounts.items.length === 0
           ? <EmptyState>El servidor devolvió cero cuentas visibles para este actor.</EmptyState>
-          : <div className="table-wrap">
+          : <Desplazable etiqueta="Inventario de cuentas de proveedores de IA">
             <table>
               <caption className="sr-only">Inventario de cuentas de proveedores de IA</caption>
               <thead><tr>
@@ -226,7 +226,7 @@ export function AccountsInventory({ config, access, quotas }: {
                 })}
               </tbody>
             </table>
-          </div>}
+          </Desplazable>}
       <p className="trust-callout">
         <KeyRound size={15} aria-hidden="true" />
         El snapshot nunca trae <code>credential_ref</code>. Lo único que se registra es dónde encontrar la credencial —una variable de entorno, una ruta, o un <code>esquema:path</code> de secret manager— y sólo el host que ya tiene el material puede resolverla. Por eso prestar una cuenta no filtra nada.

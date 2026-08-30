@@ -2,7 +2,7 @@ import { ArchiveX, Ban, Clock, RotateCcw, Rows3, TriangleAlert } from 'lucide-re
 import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { DeliveryState, QueueItem } from '../../api/types';
-import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
+import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { exactCancelReceipt, exactReplayReceipt } from './delivery-receipts';
 import { ESTADO_ENTREGA } from './estado-de-entrega';
@@ -200,7 +200,7 @@ export function DeliveryTable({
       ) : null}
 
       {rows.length === 0 ? <EmptyState>{empty ?? 'No hay deliveries informadas.'}</EmptyState> : (
-        <div className="table-wrap">
+        <Desplazable etiqueta={caption ?? 'Colas, retries y dead letters'}>
           <table className="tabla-entregas">
             <caption className="sr-only">{caption ?? 'Colas, retries y dead letters'}</caption>
             <thead><tr><th>Delivery</th><th>Destino</th><th>Carril</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
@@ -260,7 +260,7 @@ export function DeliveryTable({
               })}
             </tbody>
           </table>
-        </div>
+        </Desplazable>
       )}
     </>
   );

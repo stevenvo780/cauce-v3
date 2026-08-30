@@ -8,7 +8,7 @@ import type {
   QuotaThresholds, QuotaUnboundGroup,
 } from '../../api/types';
 import {
-  Badge, EmptyState, LoadingState, Metric, Panel, Time, Unknown,
+  Badge, Desplazable, EmptyState, LoadingState, Metric, Panel, Time, Unknown,
 } from '../../components/ui';
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import './licenses.css';
@@ -194,7 +194,7 @@ export function ConsumptionSection({ quotas, config }: {
               : 'Sin muestras: ningún recolector publicó nunca una.'}
           </EmptyState>
         ) : (
-          <div className="table-wrap">
+          <Desplazable etiqueta="Recolectores de cuota y su frescura">
             <table>
               <caption className="sr-only">Recolectores de cuota y su frescura</caption>
               <thead><tr><th>Host</th><th>Identidad</th><th>Capturado</th><th>Recibido</th><th>Edad</th><th>Frescura</th><th>Versión</th><th>Proveedores</th><th>Ventanas</th></tr></thead>
@@ -204,7 +204,7 @@ export function ConsumptionSection({ quotas, config }: {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Desplazable>
         )}
         {failedProbes.length > 0 && (
           <div className="banner banner-error" style={{ marginTop: 12 }}>
@@ -239,7 +239,7 @@ export function ConsumptionSection({ quotas, config }: {
       <Panel title="Suscripciones pausadas" subtitle="Las que pausó el recolector por cuota agotada sólo las levanta el recolector; el resto son pausas que puso una persona a mano.">
         {paused.length === 0
           ? <EmptyState>Ninguna suscripción pausada ahora mismo.</EmptyState>
-          : <div className="table-wrap">
+          : <Desplazable etiqueta="Cuentas de proveedor con el despacho cortado">
             <table>
               <caption className="sr-only">Cuentas de proveedor con el despacho cortado</caption>
               <thead><tr><th>Cuenta</th><th>Proveedor</th><th>Paga</th><th>Hasta</th><th>Motivo</th><th>Origen</th></tr></thead>
@@ -247,7 +247,7 @@ export function ConsumptionSection({ quotas, config }: {
                 {paused.map((entry) => <PausedRow key={entry.account_id ?? entry.paused_reason} entry={entry} />)}
               </tbody>
             </table>
-          </div>}
+          </Desplazable>}
       </Panel>
 
       {hasFindings && (
@@ -270,7 +270,7 @@ export function ConsumptionSection({ quotas, config }: {
             <div className="finding-section">
               <h4><AlertCircle size={16} aria-hidden="true" /> Grupos sin cuenta atada</h4>
               <p>Reportados por el recolector pero sin account_id en el inventario. La muestra se guardó igual: no atar una cuenta no descarta el dato, sólo le impide pausar algo.</p>
-              <div className="table-wrap">
+              <Desplazable etiqueta="Grupos de cuota sin cuenta registrada">
                 <table>
                   <caption className="sr-only">Grupos de cuota sin cuenta registrada</caption>
                   <thead><tr><th>Host</th><th>Proveedor</th><th>Grupo</th><th>Ventanas</th><th>Motivo</th></tr></thead>
@@ -278,7 +278,7 @@ export function ConsumptionSection({ quotas, config }: {
                     {unbound.map((entry, index) => <UnboundRow key={`${entry.host ?? 'unknown'}:${entry.provider ?? 'unknown'}:${entry.group_key ?? 'unknown'}:${String(index)}`} entry={entry} />)}
                   </tbody>
                 </table>
-              </div>
+              </Desplazable>
             </div>
           )}
 
@@ -448,7 +448,7 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
       {rows.length === 0 ? (
         <EmptyState>Sin ventanas informadas en esta corrida.</EmptyState>
       ) : (
-        <div className="table-wrap">
+        <Desplazable etiqueta={`Ventanas de cuota para ${provider.provider ?? 'UNKNOWN'}`}>
           <table>
             <caption className="sr-only">Ventanas de cuota para {provider.provider}</caption>
             <thead><tr><th aria-hidden="true" /><th>Cuenta / grupo</th><th>Ventana</th><th>Severidad</th><th>Consumo</th><th>Resetea</th><th>Historial (24h)</th></tr></thead>
@@ -464,7 +464,7 @@ function ProviderCard({ provider, expanded, onToggle, staleAfterSeconds }: {
               ))}
             </tbody>
           </table>
-        </div>
+        </Desplazable>
       )}
     </section>
   );
@@ -525,7 +525,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
         <tr className="row-detail">
           <td />
           <td colSpan={6}>
-            <div className="table-wrap">
+            <Desplazable etiqueta={`Ventanas individuales de ${family.label}`}>
               <table>
                 <caption className="sr-only">Ventanas individuales de {family.label}</caption>
                 <thead><tr><th>Ventana</th><th>Severidad</th><th>Consumo</th><th>Modelo</th><th>Resetea</th><th>Historial</th></tr></thead>
@@ -542,7 +542,7 @@ function QuotaRow({ rowKey, row, expanded, onToggle }: {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Desplazable>
           </td>
         </tr>
       ) : null}
