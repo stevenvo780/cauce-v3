@@ -15,7 +15,7 @@ describe('Telegram fenced egress', () => {
     }));
 
     await new TelegramEgressWorker({
-      repository, aliases: [config()], apis: new Map([['kant', api]]), batchSize: 20
+      repository, aliases: [config()], apis: new Map([['kant', api]])
     }).runOnce();
 
     expect(repository.claimLimits).toEqual([1]);

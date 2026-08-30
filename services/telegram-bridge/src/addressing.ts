@@ -1,4 +1,5 @@
 import type { TelegramChatPolicy, TelegramEntity, TelegramMessage, TelegramUser } from './types.js';
+import { positiveTelegramId } from './validation.js';
 
 /**
  * Pure, deterministic addressing resolver.
@@ -94,10 +95,6 @@ const MAX_INSPECTED_ENTITIES = 512;
 const ADDRESSING_ENTITY_TYPES = new Set(['mention', 'text_mention', 'bot_command']);
 const USERNAME_PATTERN = /^[a-z0-9_]{1,32}$/;
 
-function positiveId(value: unknown): string | undefined {
-  return Number.isSafeInteger(value) && Number(value) > 0 ? String(value) : undefined;
-}
-
 /**
  * Topic id for the message, or '0' when it is not a topic message.
  *
@@ -106,7 +103,7 @@ function positiveId(value: unknown): string | undefined {
  * jsonb, so it is validated as a positive safe integer instead of being stringified blindly.
  */
 export function telegramThreadId(message: TelegramMessage): string {
-  return (message.is_topic_message === true ? positiveId(message.message_thread_id) : undefined) ?? '0';
+  return (message.is_topic_message === true ? positiveTelegramId(message.message_thread_id) : undefined) ?? '0';
 }
 
 interface MentionScan {
@@ -179,7 +176,7 @@ function scanEntities(
       continue;
     }
     if (entity.type === 'text_mention') {
-      const mentioned = positiveId(entity.user?.id);
+      const mentioned = positiveTelegramId(entity.user?.id);
       if (mentioned !== undefined) scan.mentionUserIds.add(mentioned);
       if (first && offset === 0) scan.leadingMention = true;
       continue;
@@ -304,7 +301,7 @@ export function resolveAddressing(input: AddressingInput): AddressingDecision {
     ({ addressed: true, reason, bucket: addressingBucket(reason), thread_id: threadId });
 
   // P0.a
-  const authorId = positiveId(message.from?.id);
+  const authorId = positiveTelegramId(message.from?.id);
   if (authorId === undefined) return deny('no_author');
 
   // P0.b — private chats keep the exact legacy semantics of poller.allowed().
@@ -351,7 +348,7 @@ export function resolveAddressing(input: AddressingInput): AddressingDecision {
 
   // P5
   const replyFrom = message.reply_to_message?.from;
-  if (positiveId(replyFrom?.id) === self.bot_id) return allow('reply');
+  if (positiveTelegramId(replyFrom?.id) === self.bot_id) return allow('reply');
   // P6
   if (isFleetBot(replyFrom, fleet)) return deny('other_bot_replied');
 
