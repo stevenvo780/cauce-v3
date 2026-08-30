@@ -28,7 +28,7 @@ _scripts_dir = str(pathlib.Path(__file__).resolve().parent)
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
-from update_alias_lib import (
+from update_alias_lib import (  # noqa: E402  (sys.path.insert deliberado arriba)
     ALIAS_RE,
     BACKUP_AUTH_KEY,
     BACKUP_AUTH_KEY_BYTES,

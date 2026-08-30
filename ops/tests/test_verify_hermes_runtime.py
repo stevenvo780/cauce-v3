@@ -10,7 +10,6 @@ import sys
 import tempfile
 import unittest
 
-
 OPS = pathlib.Path(__file__).resolve().parents[1]
 VERIFIER = OPS / "scripts" / "verify-hermes-runtime.py"
 

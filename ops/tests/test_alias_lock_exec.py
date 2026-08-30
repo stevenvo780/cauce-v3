@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import os
 import pathlib
-import fcntl
 import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts" / "alias-lock-exec.py"

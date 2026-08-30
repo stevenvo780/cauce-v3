@@ -47,7 +47,7 @@ def verify_backup(backup_file):
         print(f"  Integrity: {integrity}")
         print(f"  Size: {os.path.getsize(backup_file)} bytes")
         print(f"  Tables: {len(tables)}")
-        
+
         con = ro_connect(backup_file)
         for (tname,) in tables:
             count = con.execute(f"SELECT COUNT(*) FROM {tname}").fetchone()[0]
@@ -117,7 +117,7 @@ def monitor(max_age_hours=48):
 
     print(f"Latest backup: {latest_fname}")
     print(f"Age: {age_hours:.1f} hours")
-    
+
     if age_hours > max_age:
         print(f"ALERT: Backup is {age_hours:.1f} hours old (threshold: {max_age}h)")
         return 1

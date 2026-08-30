@@ -13,6 +13,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+
 # Test 1: Script exists and has proper shebang
 def test_script_exists():
     watchdog_path = pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'fleet-watchdog.py'

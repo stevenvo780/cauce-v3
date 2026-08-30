@@ -21,7 +21,6 @@ import sys
 import tempfile
 from typing import Any
 
-
 PROJECT = pathlib.Path(__file__).resolve().parents[2]
 ALIAS = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 IDENTIFIER = re.compile(r"^-?[1-9][0-9]{0,18}$")

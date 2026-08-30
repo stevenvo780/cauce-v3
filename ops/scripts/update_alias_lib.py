@@ -11,7 +11,6 @@ import stat
 from dataclasses import dataclass
 from typing import Any
 
-
 MAX_CONFIG_BYTES = 1024 * 1024
 ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*\Z")

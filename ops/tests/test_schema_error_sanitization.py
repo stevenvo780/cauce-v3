@@ -8,13 +8,11 @@ import unittest
 
 from jsonschema import Draft202012Validator
 
-
 OPS = pathlib.Path(__file__).resolve().parents[1]
 ROOT = OPS.parent
 sys.path.insert(0, str(OPS / "scripts"))
 
 from manifest_lib import safe_schema_diagnostic  # noqa: E402
-
 
 SCRIPTS = (
     "manifest_lib.py",

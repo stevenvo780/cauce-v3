@@ -14,7 +14,6 @@ import sys
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OPS = ROOT / "ops"
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")

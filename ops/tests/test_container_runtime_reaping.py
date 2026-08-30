@@ -9,14 +9,13 @@ Run: python3 ops/tests/test_container_runtime_reaping.py
 from __future__ import annotations
 
 import os
+import pathlib
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
-import pathlib
-
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME = OPS / "container-runtime" / "cauce-container-runtime.py"

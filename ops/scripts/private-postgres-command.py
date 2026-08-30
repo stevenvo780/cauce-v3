@@ -7,17 +7,16 @@ both are removed before this process exits.  No URL component is ever printed.
 """
 from __future__ import annotations
 
-import os
-import pathlib
 import fcntl
 import hashlib
+import os
+import pathlib
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import urllib.parse
-
 
 MAX_URL_BYTES = 16_384
 PRIVATE_MODES = {0o400, 0o600}
