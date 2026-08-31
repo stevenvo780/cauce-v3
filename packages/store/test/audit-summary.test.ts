@@ -44,6 +44,25 @@ describe('safeAuditSummary', () => {
     expect(parsed.summary.length).toBeLessThanOrEqual(180);
   });
 
+  it('quita los controles que el colapso de espacios NO cubre: ESC, BEL y NUL', () => {
+    const parsed = JSON.parse(safeAuditSummary('config.change', {
+      summary: 'alta\u001b[31mrojo\u0007fin\u0000',
+    }) ?? 'null') as { summary: string };
+    const controles = Array.from(parsed.summary)
+      .filter((character) => (character.codePointAt(0) ?? 0) <= 31
+        || character.codePointAt(0) === 127);
+    expect(controles).toEqual([]);
+    expect(parsed.summary).toContain('rojo');
+  });
+
+  it('corta en 10 campos aunque el origen traiga mas escalares permitidos', () => {
+    const parsed = JSON.parse(safeAuditSummary('x', {
+      ack: 'ok', state: 'a', status: 'b', outcome: 'c', phase: 'd', epoch: 1,
+      attempt: 2, mode: 'e', kind: 'f', source: 'g', adapter: 'h', schema: 'i',
+    }) ?? 'null') as Record<string, unknown>;
+    expect(Object.keys(parsed)).toHaveLength(10);
+  });
+
   it('returns null for absent, scalar, array or wholly private metadata', () => {
     expect(safeAuditSummary('x', null)).toBeNull();
     expect(safeAuditSummary('x', ['ack'])).toBeNull();
