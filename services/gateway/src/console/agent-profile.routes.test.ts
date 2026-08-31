@@ -730,3 +730,30 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     expect(autorizado).toHaveBeenCalledWith(ACTOR, 'Miguel', 'kant', 'control', false);
   });
 });
+
+describe('GET perfil: una adopción que no coincide nunca puede decir applied', () => {
+  type Adopcion = NonNullable<Awaited<ReturnType<NonNullable<AgentProfileDeps['readRuntimeAdoption']>>>>;
+
+  const adopcionParcheada = (
+    parche: Record<string, unknown>,
+  ): NonNullable<AgentProfileDeps['readRuntimeAdoption']> =>
+    async (tenant, alias, revision, verification) => ({
+      ...await RUNTIME_ADOPTION(tenant, alias, revision, verification),
+      ...parche,
+    } as Adopcion);
+
+  it.each([
+    ['la evidencia no es una entrega del adaptador', { evidence: 'consola_lo_supuso' }],
+    ['la generación del contenedor es otra', { generation: 'gen-vieja' }],
+    ['el adopted_at no es una fecha', { adopted_at: 'ayer por la tarde' }],
+    ['la revisión adoptada no es la durable', { revision: 99 }],
+    ['no se adoptaron todos los documentos', { documents: [] }],
+  ])('deja el estado en pending_session_refresh cuando %s', async (_caso, parche) => {
+    const app = await appDeEscritura({ readRuntimeAdoption: adopcionParcheada(parche) });
+
+    const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body.runtime_state).toBe('pending_session_refresh');
+    expect(body.runtime_adoption).toBeNull();
+  });
+});
