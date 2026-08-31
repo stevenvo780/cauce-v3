@@ -221,7 +221,7 @@ export class HarnessAdapter {
      * would answer wrongly and look like the model worsened. That is exactly the failure the seal
      * came to prevent.
      *
-     * What is missing to lift this guard is comparing the file's timestamp with the pane's
+     * To lift this guard, compare the file mtime with the pane start time in /proc/<pid>/stat.
      */
     const home = process.env.HOME;
     if (!home) return context;
