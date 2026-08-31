@@ -1,0 +1,28 @@
+# URLs del catalogo Mouseion que se vigilan cada 24 h.
+# Fuente: HUMANIZAR-CATALOGO-REAL-2026-08-30.md (workspace de argos).
+# Una por linea. Lo que empieza por # se ignora.
+# Prometeo no esta: es interno, no tiene URL publica.
+# elenxos.com sin www tampoco: da NXDOMAIN a proposito, la canonica es www.
+https://stevenvallejo.com
+https://catalogo.humanizar.tech
+https://agenda.humanizar.tech
+https://humanizar.tech
+https://www.humanizar.co
+https://nomos.stevenvallejo.com
+https://koinonia.stevenvallejo.com
+https://preontologia.stevenvallejo.com
+https://www.elenxos.com
+https://agora.elenxos.com
+https://apotheke.stevenvallejo.com
+https://servicios.stevenvallejo.com
+# Sinergia POS SALIO del catalogo de Steven: paso a Jhon, proyecto saldantia. Vive en
+# https://pos.saldantia.cloud (200, IP 2.25.89.230, fuera de Vercel). El despliegue viejo
+# https://sinergia-pos.vercel.app sigue dando 500 pero ya no es de Steven: vigilarlo era
+# alarmarle por un producto ajeno, y un falso positivo sube el umbral y ciega al resto.
+https://agentes.elenxos.com
+https://natacion-asistencia.vercel.app
+https://sigre.elenxos.com
+https://aletheia.humanizar.tech
+https://xenia.stevenvallejo.com
+https://demeter.humanizar.cloud
+https://admin.graf.com.co

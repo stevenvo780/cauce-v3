@@ -1,0 +1,9 @@
+[Unit]
+Description=Vigia del catalogo Mouseion: 20 URLs, avisa al dueno si alguna deja de dar 200
+
+[Service]
+Type=oneshot
+ExecStart=/datos/workspaces/zeus/cauce-v3/ops/guardias/catalogo-mouseion-health.sh
+Environment=CATALOGO_INFORME=%h/.local/state/cauce-catalogo-health.log
+# Sale 1 cuando hay caidas: es informacion, no un fallo de la unidad.
+SuccessExitStatus=0 1

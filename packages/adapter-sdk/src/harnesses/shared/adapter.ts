@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { FICHEROS_OPENCLAW, bloqueDePerfil, esFicheroDelAgente } from "@cauce/protocol";
 import {
@@ -32,6 +32,7 @@ import {
   rutaDelContextoFijo,
   selloDesdeElDisco,
   sembrarContextoFijo,
+  motivoDeReenvio,
   type SelloDeContextoFijo,
 } from "../contexto-fijo.js";
 import { planAttachments } from "./attachments.js";
@@ -53,7 +54,7 @@ import {
   sanitizeProcessOutput,
   sinMarcaDeArranque,
 } from "./errors.js";
-import { protocolPrompt, textoFijoDelSobre } from "./prompt.js";
+import { protocolPrompt, textoFijoDelSobre, textoNativoDelSobre } from "./prompt.js";
 import { SessionReservation } from "./session-reservation.js";
 
 /** Suffix distinguishing the agent lane's session key. */
@@ -352,6 +353,10 @@ export class HarnessAdapter {
     const invocationContext = effectiveContext?.native_profile_context === true
       ? this.prepareContext(effectiveContext)
       : effectiveContext;
+    const fixedContext = invocationContext?.native_profile_context === true
+      ? textoNativoDelSobre(invocationContext)
+      : textoFijoDelSobre(invocationContext);
+    request.onFixedContextResolved?.(motivoDeReenvio(invocationContext?.context_seal, fixedContext));
     const measuredProfileAtStart = invocationContext?.native_profile_measurement
       ?? invocationContext?.runtime_profile
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
@@ -427,7 +432,10 @@ export class HarnessAdapter {
         const message = causeDetail
           ? `Harness exited with code ${String(result.exitCode)} without structured output: ${causeDetail}`
           : "Harness exited after execution began without structured output; completion state is unknown";
-        // The gateway rejects retryable ambiguous ACK errors.
+        // `PROCESS_EXIT_AMBIGUOUS` esta en AMBIGUOUS_ACK_ERROR_CODES, y el contrato del gateway
+        // rechaza esos ACK si vienen como reintentables ("Ambiguous ACK errors must not be
+        // retryable"). Marcar aqui la interrupcion del dueno como reintentable producia un marco
+        // que el gateway rechaza SIEMPRE: el adaptador lo reintentaba una vez por segundo y no
         throw new ProcessExecutionError(
           "PROCESS_EXIT_AMBIGUOUS",
           message,
@@ -441,7 +449,7 @@ export class HarnessAdapter {
       const message = causeDetail
         ? `Harness exited with code ${String(result.exitCode)}: ${causeDetail}`
         : "Harness exited with a non-zero status after execution began; completion state is unknown";
-      // A post-start non-zero exit has an unknown completion state.
+      // Ver arriba: un ACK ambiguo nunca puede ser reintentable o el gateway lo rechaza en bucle.
       throw new ProcessExecutionError(
         "PROCESS_EXIT_AMBIGUOUS",
         message,
