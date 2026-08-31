@@ -18,6 +18,9 @@ const down035Path = new URL(`../migrations/down/${version035}`, import.meta.url)
 const version037 = '037_console_publish_intent_indexes.sql';
 const up037Path = new URL(`../migrations/${version037}`, import.meta.url);
 const down037Path = new URL(`../migrations/down/${version037}`, import.meta.url);
+const version038 = '038_cauce_text_items_ok_search_path.sql';
+const up038Path = new URL(`../migrations/${version038}`, import.meta.url);
+const down038Path = new URL(`../migrations/down/${version038}`, import.meta.url);
 const relayInstanceId = 'a'.repeat(64);
 const relayBootId = '11111111-1111-4111-8111-111111111111';
 
@@ -29,15 +32,19 @@ let up035: string;
 let down035: string;
 let up037: string;
 let down037: string;
+let up038: string;
+let down038: string;
 
 beforeAll(async () => {
-  [up, down, up035, down035, up037, down037] = await Promise.all([
+  [up, down, up035, down035, up037, down037, up038, down038] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
     readFile(up035Path, 'utf8'),
     readFile(down035Path, 'utf8'),
     readFile(up037Path, 'utf8'),
     readFile(down037Path, 'utf8'),
+    readFile(up038Path, 'utf8'),
+    readFile(down038Path, 'utf8'),
   ]);
   database = await startTestDatabase();
   pool = database.pool;
@@ -98,6 +105,8 @@ async function restoreLatestSchema(): Promise<void> {
   await mark035Applied();
   if (!await consolePublishIndexesExist()) await pool.query(up037);
   await markConsolePublishIndexesApplied();
+  await pool.query(up038);
+  await markTextItemsSearchPathFixApplied();
 }
 
 async function markConsolePublishIndexesApplied(): Promise<void> {
@@ -126,10 +135,38 @@ async function removeLatestConsolePublishIndexes(): Promise<void> {
   else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
 }
 
+async function migrationApplied(migrationVersion: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1 FROM schema_migrations WHERE version=$1`, [migrationVersion],
+  );
+  return result.rowCount === 1;
+}
+
+async function markTextItemsSearchPathFixApplied(): Promise<void> {
+  await pool.query(
+    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version038],
+  );
+  await pool.query(
+    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
+     VALUES($1,$2,'applied-atomically')
+     ON CONFLICT(version) DO UPDATE SET
+       source_sha256=EXCLUDED.source_sha256,
+       source_origin=EXCLUDED.source_origin`,
+    [version038, createHash('sha256').update(up038).digest('hex')],
+  );
+}
+
+async function removeLatestTextItemsSearchPathFix(): Promise<void> {
+  if (!await migrationApplied(version038)) return;
+  await pool.query(down038);
+  await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version038]);
+}
+
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query('DELETE FROM terminal_sessions');
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeLatestTextItemsSearchPathFix();
   await removeLatestConsolePublishIndexes();
   await removeLatestProfileLayer();
   if (await columnExists()) await pool.query(down);
