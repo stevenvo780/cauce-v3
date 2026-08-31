@@ -117,6 +117,57 @@ for (const state of ["absent", "ambiguous"] as const) {
   });
 }
 
+test("OpenClaw bridge declares a failed turn when every model in the chain is exhausted", () => {
+  const result = spawnSync(process.execPath, [sourceOpenClaw, "--session-key", "session-exhausted"], {
+    input: "OPENCLAW_ALL_MODELS_FAILED",
+    encoding: "utf8",
+    env: { ...process.env, CAUCE_OPENCLAW_DIST_DIR: fakeOpenClaw },
+    timeout: 5_000,
+  });
+  assert.notEqual(
+    result.stdout.trim(),
+    "",
+    "empty stdout after the turn began is only classifiable as PROCESS_EXIT_AMBIGUOUS, which is not retryable:"
+    + " the delivery dies on attempt 1/3 and whoever ordered it never learns why",
+  );
+  const parsed = parseOpenClawOutput(result.stdout);
+  assert.equal(
+    parsed.output.status,
+    "failed",
+    "only a declared failure travels back to the requester as an answer instead of dying as a transport error",
+  );
+  assert.equal(
+    parsed.output.retryable,
+    false,
+    "the turn already ran and paid for its side effects, so a retry repeats work that was already done",
+  );
+  assert.match(
+    parsed.output.reply ?? "",
+    /All models failed/u,
+    "the requester must read the real cause, not a generic ambiguous-exit message",
+  );
+  assert.ok(
+    !(parsed.output.reply ?? "").includes("at main ("),
+    "the reply is read by the agent that ordered the work: a stack trace of the bridge tells it"
+    + " nothing and duplicated the message; the trace belongs on stderr, where an operator reads it",
+  );
+  assert.equal(
+    parsed.nativeSessionId,
+    "session-exhausted",
+    "losing the native session on a failed turn would strand the conversation the harness already owns",
+  );
+  assert.match(
+    result.stderr,
+    /openclaw stdin bridge failed: [\s\S]*All models failed/u,
+    "the crude error stays on stderr for diagnosis, where it does not pollute the stdout contract",
+  );
+  assert.equal(
+    result.status,
+    1,
+    "adapter.ts admits a non-zero exit when the turn declared itself failed, so the exit code must not be softened",
+  );
+});
+
 test("external timeout terminates an OpenClaw bridge invocation", async () => {
   const result = await new SpawnCommandRunner({ killGraceMs: 15 }).run({
     command: process.execPath,

@@ -127,6 +127,12 @@ function decodeFinal(captured, returned) {
   throw new Error("OpenClaw produced no final output");
 }
 
+function describeFailure(error) {
+  return error instanceof Error
+    ? `${error.message}\n${error.stack ?? ""}`
+    : String(error);
+}
+
 async function main() {
   const message = await readPrompt();
   const nativeSessionKey = sessionKey(process.argv.slice(2));
@@ -140,6 +146,7 @@ async function main() {
   });
 
   let returned;
+  let empezado = false;
   try {
     const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
     // From the next line on the turn MAY have side effects. The marker goes here and not before
@@ -148,12 +155,23 @@ async function main() {
     // is the expensive error — retrying work already paid for. Goes via stderr because stdout is
     // the structured contract. See HARNESS_START_MARKER in sdk/types.ts.
     process.stderr.write("<<cauce:harness-started>>\n");
+    empezado = true;
     returned = await agentCliCommand({
       message,
       sessionKey: nativeSessionKey,
       json: true,
       deliver: false,
     }, defaultRuntime);
+  } catch (error) {
+    if (!empezado) throw error;
+    process.stdout.write = originalWrite;
+    originalWrite(`${JSON.stringify({
+      result: { ok: false, error: error instanceof Error ? error.message : String(error) },
+      ...(nativeSessionKey === undefined ? {} : { session_id: nativeSessionKey }),
+    })}\n`);
+    process.stderr.write(`openclaw stdin bridge failed: ${describeFailure(error)}\n`);
+    process.exitCode = 1;
+    return;
   } finally {
     process.stdout.write = originalWrite;
   }
@@ -169,9 +187,6 @@ async function main() {
 main().catch((error) => {
   // Dumps the full error to stderr for diagnosis; the structured response travels via stdout
   // and stderr does not pollute the contract.
-  const detail = error instanceof Error
-    ? `${error.message}\n${error.stack ?? ""}`
-    : String(error);
-  process.stderr.write(`openclaw stdin bridge failed: ${detail}\n`);
+  process.stderr.write(`openclaw stdin bridge failed: ${describeFailure(error)}\n`);
   process.exitCode = 1;
 });
