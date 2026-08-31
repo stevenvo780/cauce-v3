@@ -76,7 +76,6 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
         try {
           await handler(claimed);
           if (!await repository.completeJob(claimed.id, worker, claimed.claim_token)) {
-            options.metrics?.recordJob(claimed.lane, 'fenced');
             throw new Error('job completion fenced');
           }
           options.metrics?.recordJob(claimed.lane, 'done');

@@ -172,7 +172,7 @@ export class DispatcherMetrics {
     try {
       const [jobs, jobOldest, deliveries, deliveryOldest, dlq, jobLeases, deliveryLeases, consumerLeases, relays, relayOldest] = await Promise.all([
         this.pool.query<CountRow>(`SELECT lane,status,count(*)::text AS count FROM jobs GROUP BY lane,status`),
-        this.pool.query<CountRow>(`SELECT lane,count(*)::text AS count,
+        this.pool.query<CountRow>(`SELECT lane,'queued'::text AS status,count(*)::text AS count,
           COALESCE(extract(epoch FROM now()-min(created_at)),0)::float8 AS oldest_seconds
           FROM jobs WHERE status='queued' GROUP BY lane`),
         this.pool.query<CountRow>(`SELECT m.lane,d.status,count(*)::text AS count
@@ -200,21 +200,23 @@ export class DispatcherMetrics {
           WHERE o.kind='origin_relay' AND o.status IN ('pending','processing','failed') GROUP BY m.lane,o.status`),
       ]);
 
+      const gauges: string[] = [];
+      appendMatrix(gauges, 'cauce_dispatcher_job_queue_depth', 'Queued jobs currently stored.', lanes, ['queued'], jobs.rows);
+      appendOldest(gauges, 'cauce_dispatcher_job_oldest_seconds', 'Age of the oldest queued job.', lanes, ['queued'], jobOldest.rows);
+      appendMatrix(gauges, 'cauce_dispatcher_delivery_queue_depth', 'Deliveries currently stored by durable state.', lanes, deliveryStates, deliveries.rows);
+      appendOldest(gauges, 'cauce_dispatcher_delivery_oldest_seconds', 'Age of oldest non-terminal delivery by state.', lanes, ['pending', 'retry', 'leased', 'accepted', 'started'], deliveryOldest.rows);
+      appendTargetMatrix(gauges, dlq.rows);
+      appendLaneGauge(gauges, 'cauce_dispatcher_job_leases_active', 'Non-expired running job leases.', jobLeases.rows);
+      appendLaneGauge(gauges, 'cauce_dispatcher_delivery_leases_active', 'Non-expired delivery claim leases.', deliveryLeases.rows);
+      gauges.push('# HELP cauce_dispatcher_consumer_leases_active Non-expired consumer identity leases.');
+      gauges.push('# TYPE cauce_dispatcher_consumer_leases_active gauge');
+      gauges.push(`cauce_dispatcher_consumer_leases_active ${String(number(consumerLeases.rows[0]?.count))}`);
+      appendMatrix(gauges, 'cauce_dispatcher_origin_relay_depth', 'Origin relay rows by durable status.', lanes, relayStates, relays.rows);
+      appendOldest(gauges, 'cauce_dispatcher_origin_relay_oldest_seconds', 'Age of oldest unfinished origin relay.', lanes, ['pending', 'processing', 'failed'], relayOldest.rows);
       lines.push('# HELP cauce_dispatcher_metrics_query_success Whether exact PostgreSQL gauges were collected.');
       lines.push('# TYPE cauce_dispatcher_metrics_query_success gauge');
       lines.push('cauce_dispatcher_metrics_query_success 1');
-      appendMatrix(lines, 'cauce_dispatcher_job_queue_depth', 'Queued jobs currently stored.', lanes, ['queued'], jobs.rows);
-      appendOldest(lines, 'cauce_dispatcher_job_oldest_seconds', 'Age of the oldest queued job.', lanes, ['queued'], jobOldest.rows);
-      appendMatrix(lines, 'cauce_dispatcher_delivery_queue_depth', 'Deliveries currently stored by durable state.', lanes, deliveryStates, deliveries.rows);
-      appendOldest(lines, 'cauce_dispatcher_delivery_oldest_seconds', 'Age of oldest non-terminal delivery by state.', lanes, ['pending', 'retry', 'leased', 'accepted', 'started'], deliveryOldest.rows);
-      appendTargetMatrix(lines, dlq.rows);
-      appendLaneGauge(lines, 'cauce_dispatcher_job_leases_active', 'Non-expired running job leases.', jobLeases.rows);
-      appendLaneGauge(lines, 'cauce_dispatcher_delivery_leases_active', 'Non-expired delivery claim leases.', deliveryLeases.rows);
-      lines.push('# HELP cauce_dispatcher_consumer_leases_active Non-expired consumer identity leases.');
-      lines.push('# TYPE cauce_dispatcher_consumer_leases_active gauge');
-      lines.push(`cauce_dispatcher_consumer_leases_active ${String(number(consumerLeases.rows[0]?.count))}`);
-      appendMatrix(lines, 'cauce_dispatcher_origin_relay_depth', 'Origin relay rows by durable status.', lanes, relayStates, relays.rows);
-      appendOldest(lines, 'cauce_dispatcher_origin_relay_oldest_seconds', 'Age of oldest unfinished origin relay.', lanes, ['pending', 'processing', 'failed'], relayOldest.rows);
+      lines.push(...gauges);
     } catch {
       lines.push('# HELP cauce_dispatcher_metrics_query_success Whether exact PostgreSQL gauges were collected.');
       lines.push('# TYPE cauce_dispatcher_metrics_query_success gauge');
