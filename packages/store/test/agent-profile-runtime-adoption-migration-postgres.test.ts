@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { DatabasePool } from '../src/index.js';
+import { applyMigrations, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
@@ -10,8 +10,9 @@ const version = '035_agent_profile_runtime_adoption.sql';
 const upPath = new URL(`../migrations/${version}`, import.meta.url);
 const downPath = new URL(`../migrations/down/${version}`, import.meta.url);
 const version037 = '037_console_publish_intent_indexes.sql';
-const up037Path = new URL(`../migrations/${version037}`, import.meta.url);
 const down037Path = new URL(`../migrations/down/${version037}`, import.meta.url);
+const version038 = '038_cauce_text_items_ok_search_path.sql';
+const down038Path = new URL(`../migrations/down/${version038}`, import.meta.url);
 const document = {
   name: 'AGENTS.md', path: '/home/dev/.codex/AGENTS.md', sha: 'a'.repeat(64),
 } as const;
@@ -20,8 +21,8 @@ let database: TestDatabase;
 let pool: DatabasePool;
 let up: string;
 let down: string;
-let up037: string;
 let down037: string;
+let down038: string;
 
 async function tableExists(name: string): Promise<boolean> {
   const result = await pool.query<{ exists: boolean }>(
@@ -35,6 +36,14 @@ async function ensureUp(): Promise<void> {
   await pool.query(
     `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version],
   );
+  await pool.query(
+    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
+     VALUES($1,$2,'applied-atomically')
+     ON CONFLICT(version) DO UPDATE SET
+       source_sha256=EXCLUDED.source_sha256,
+       source_origin=EXCLUDED.source_origin`,
+    [version, createHash('sha256').update(up).digest('hex')],
+  );
 }
 
 async function consolePublishIndexesExist(): Promise<boolean> {
@@ -44,24 +53,22 @@ async function consolePublishIndexesExist(): Promise<boolean> {
   return result.rows[0]?.exists === true;
 }
 
+async function migrationApplied(migrationVersion: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1 FROM schema_migrations WHERE version=$1`, [migrationVersion],
+  );
+  return result.rowCount === 1;
+}
+
+async function removeLatestTextItemsSearchPath(): Promise<void> {
+  if (!await migrationApplied(version038)) return;
+  await pool.query(down038);
+  await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version038]);
+}
+
 async function removeLatestConsolePublishIndexes(): Promise<void> {
   if (await consolePublishIndexesExist()) await pool.query(down037);
   else await pool.query(`DELETE FROM schema_migrations WHERE version=$1`, [version037]);
-}
-
-async function restoreLatestConsolePublishIndexes(): Promise<void> {
-  if (!await consolePublishIndexesExist()) await pool.query(up037);
-  await pool.query(
-    `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version037],
-  );
-  await pool.query(
-    `INSERT INTO schema_migration_ledger(version,source_sha256,source_origin)
-     VALUES($1,$2,'applied-atomically')
-     ON CONFLICT(version) DO UPDATE SET
-       source_sha256=EXCLUDED.source_sha256,
-       source_origin=EXCLUDED.source_origin`,
-    [version037, createHash('sha256').update(up037).digest('hex')],
-  );
 }
 
 async function seedProfile(): Promise<number> {
@@ -101,11 +108,11 @@ async function seedDelivery(): Promise<string> {
 }
 
 beforeAll(async () => {
-  [up, down, up037, down037] = await Promise.all([
+  [up, down, down037, down038] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
-    readFile(up037Path, 'utf8'),
     readFile(down037Path, 'utf8'),
+    readFile(down038Path, 'utf8'),
   ]);
   database = await startTestDatabase();
   pool = database.pool;
@@ -114,6 +121,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetTestDatabase(pool);
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
+  await removeLatestTextItemsSearchPath();
   await removeLatestConsolePublishIndexes();
   await ensureUp();
 });
@@ -121,7 +129,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await ensureUp();
-  await restoreLatestConsolePublishIndexes();
+  await applyMigrations(pool);
 });
 
 afterAll(async () => {
