@@ -14,6 +14,12 @@ describe('severityRank', () => {
     expect(severityRank('unknown')).toBeGreaterThan(severityRank('ok'));
   });
 
+  it('un proveedor que no informa severidad rankea como unknown, nunca como ok', () => {
+    expect(severityRank(null)).toBe(severityRank('unknown'));
+    expect(severityRank(undefined)).toBe(severityRank('unknown'));
+    expect(severityRank(null)).toBeGreaterThan(severityRank('ok'));
+  });
+
   it('ranks exhausted as the worst', () => {
     expect(severityRank('exhausted')).toBeGreaterThan(severityRank('critical'));
     expect(severityRank('critical')).toBeGreaterThan(severityRank('warn'));
@@ -141,6 +147,13 @@ describe('balanceSeverity', () => {
     expect(balanceSeverity(24.9, null, thresholds)).toBe('warn');
     expect(balanceSeverity(10, null, thresholds)).toBe('warn');
     expect(balanceSeverity(9.9, null, thresholds)).toBe('critical');
+  });
+
+  it('sin umbrales del servidor cae a 10/25, los mismos que usa el servidor', () => {
+    expect(balanceSeverity(25, null, null)).toBe('ok');
+    expect(balanceSeverity(24.9, null, null)).toBe('warn');
+    expect(balanceSeverity(10, null, undefined)).toBe('warn');
+    expect(balanceSeverity(9.9, null, undefined)).toBe('critical');
   });
 
   it('0 % es agotado, no meramente crítico', () => {
