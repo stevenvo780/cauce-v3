@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { DelegationRejectionSchema, MAX_DELEGATION_REJECTION_TARGET_CHARS } from '@cauce/protocol';
 import {
-  DEFAULT_DELEGATION_CAPS, DISABLED_DELEGATION_CAPS, describeDelegationRejection,
-  fanoutCapForTurn, HUMAN_GATE_TARGET, rejectionText, sanitizedDelegationCaps
+  boundedRejectionTarget, DEFAULT_DELEGATION_CAPS, DISABLED_DELEGATION_CAPS,
+  describeDelegationRejection, fanoutCapForTurn, HUMAN_GATE_TARGET, rejectionText,
+  sanitizedDelegationCaps
 } from '../src/delegation-guard.js';
 
 /**
@@ -119,5 +121,41 @@ describe('HUMAN_GATE_TARGET', () => {
     // directive can never collide with a real alias nor become routable by accident.
     expect(HUMAN_GATE_TARGET.startsWith('@')).toBe(true);
     expect(/^[a-z][a-z0-9_-]{0,63}$/u.test(HUMAN_GATE_TARGET)).toBe(false);
+  });
+});
+
+describe('boundedRejectionTarget', () => {
+  it('deja intacto un destino que ya cabe', () => {
+    expect(boundedRejectionTarget(undefined)).toBeUndefined();
+    expect(boundedRejectionTarget('Steven/socrates')).toBe('Steven/socrates');
+    const exact = 't'.repeat(MAX_DELEGATION_REJECTION_TARGET_CHARS);
+    expect(boundedRejectionTarget(exact)).toBe(exact);
+  });
+
+  it('recorta el primer destino que se pasa, contando la elipsis', () => {
+    const oversized = 't'.repeat(MAX_DELEGATION_REJECTION_TARGET_CHARS + 1);
+    const bounded = boundedRejectionTarget(oversized);
+    expect(bounded).not.toBe(oversized);
+    expect(bounded?.length).toBe(MAX_DELEGATION_REJECTION_TARGET_CHARS);
+    expect(bounded?.endsWith('…')).toBe(true);
+  });
+
+  it('lo recortado sobrevive al safeParse de policy.ts, que descarta en silencio lo que no cabe', () => {
+    for (const length of [
+      MAX_DELEGATION_REJECTION_TARGET_CHARS,
+      MAX_DELEGATION_REJECTION_TARGET_CHARS + 1,
+      MAX_DELEGATION_REJECTION_TARGET_CHARS * 4
+    ]) {
+      const target = boundedRejectionTarget('t'.repeat(length)) ?? '';
+      const notice = describeDelegationRejection('unroutable_alias', { target });
+      const parsed = DelegationRejectionSchema.safeParse({
+        output_index: 0,
+        code: notice.code,
+        reason: notice.reason,
+        guidance: notice.guidance,
+        target
+      });
+      expect(parsed.success).toBe(true);
+    }
   });
 });
