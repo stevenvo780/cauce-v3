@@ -19,6 +19,7 @@ const laterVersions = [
   '034_terminal_relay_instance_fencing.sql',
   '035_agent_profile_runtime_adoption.sql',
   '037_console_publish_intent_indexes.sql',
+  '038_cauce_text_items_ok_search_path.sql',
 ] as const;
 
 let database: TestDatabase;
@@ -53,7 +54,10 @@ beforeEach(async () => {
     const recorded = await pool.query(
       'SELECT 1 FROM schema_migrations WHERE version=$1', [version],
     );
-    if (recorded.rowCount === 1) await pool.query(requireValue(laterDown[index], 'laterDown'));
+    if (recorded.rowCount === 1) {
+      await pool.query(requireValue(laterDown[index], 'laterDown'));
+      await pool.query('DELETE FROM schema_migrations WHERE version=$1', [version]);
+    }
   }
 });
 
