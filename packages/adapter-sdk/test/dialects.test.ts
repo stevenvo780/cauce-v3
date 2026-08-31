@@ -149,13 +149,16 @@ test("plain fallback rejects non-visible, oversized and object-like malformed ou
   assert.equal(missingScaffold.retryable, false);
   assert.deepEqual(missingScaffold.messages, []);
   assert.match(missingScaffold.reply, /faltaba[^\n]*'messages'/u);
-  // Present malformed fields remain hard contract failures.
   assert.throws(
     () => parseFinalText('{"reply":"x","messages":"no-es-lista"}', "test final"),
     /'messages' must be an array/u,
+    "a half list could dispatch work to the wrong recipient, so it stays a hard failure",
   );
-  assert.throws(
-    () => parseFinalText('{"reply":"x","status":"quiza"}', "test final"),
-    /'status' must be 'done' or 'failed'/u,
-  );
+  const andamiajeRoto = parseFinalText('{"reply":"x","retryable":"si"}', "test final");
+  assert.equal(andamiajeRoto.reply?.startsWith("x"), true,
+    "scaffolding is not the work: the reply survives a malformed retryable");
+  assert.equal(andamiajeRoto.retryable, false);
+  const statusRoto = parseFinalText('{"reply":"x","status":"quiza"}', "test final");
+  assert.equal(statusRoto.status, "done");
+  assert.match(statusRoto.reply ?? "", /'status' llego como "quiza"/u);
 });

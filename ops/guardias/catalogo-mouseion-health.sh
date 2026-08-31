@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # Vigila cada 24 h las URLs del catalogo Mouseion y avisa al dueno cuando alguna deja de dar 200.
 #
-# Un agente no puede "vigilar" (Cauce es por eventos); un temporizador si.
 #
 #   --dry-run   valida destino y permiso contra el gateway SIN escribirle a nadie
 #   --list      imprime lo que vigilaria y sale
-#
 # Sale 1 si hay alguna caida (para que systemd la marque), 0 si todas responden.
 set -uo pipefail
 
@@ -20,6 +18,8 @@ ESTADO="${CATALOGO_ESTADO:-${INFORME%.log}.avisadas}"
 SALA_AVISO="${CAUCE_SALA_AVISO:-grp.steven}"
 TENANT_AVISO="${CAUCE_TENANT_AVISO:-Steven}"
 ESPERA="${CATALOGO_TIMEOUT:-20}"
+# Cuerpo mas chico que esto = dominio aparcado o error generico. El sano mas chico pesa 1777 B.
+MINIMO="${CATALOGO_MINIMO:-1024}"
 
 PRUEBA=0
 case "${1:-}" in
@@ -35,15 +35,26 @@ SELLO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ROTAS=()
 TOTAL=0
 
-while IFS= read -r url; do
+while IFS=$'\t' read -r url marca; do
   TOTAL=$((TOTAL + 1))
+  cuerpo="$(mktemp)"
   # -L: cuenta la respuesta FINAL, que es la que ve una persona. 000 (DNS/TLS/timeout) es caida.
-  linea="$(curl -sL -o /dev/null --max-time "$ESPERA" \
-             -w '%{http_code} %{url_effective}' "$url" 2>/dev/null || echo "000 $url")"
-  codigo="${linea%% *}"
-  final="${linea#* }"
-  printf '%s %s %s -> %s\n' "$SELLO" "$codigo" "$url" "$final" >> "$INFORME" 2>/dev/null || true
-  [ "$codigo" = "200" ] || ROTAS+=("$codigo $url")
+  linea="$(curl -sL -o "$cuerpo" --max-time "$ESPERA" \
+             -w '%{http_code} %{size_download} %{url_effective}' "$url" 2>/dev/null)"
+  codigo="${linea%% *}"; resto="${linea#* }"; peso="${resto%% *}"; final="${resto#* }"
+  [ -n "$codigo" ] || { codigo=000; peso=0; final="$url"; }
+
+  # Un 200 no prueba que sea LA pagina: un aparcado y el catch-all de una SPA tambien contestan
+  # 200 a cualquier ruta. Se exige ademas peso y, si la lista lo declara, su marcador.
+  veredicto=""
+  if   [ "$codigo" != "200" ];                                   then veredicto="$codigo"
+  elif [ "${peso:-0}" -lt "$MINIMO" ];                           then veredicto="VACIA($peso)"
+  elif [ -n "${marca:-}" ] && ! grep -Fqi -- "$marca" "$cuerpo"; then veredicto="SINMARCA"
+  fi
+  rm -f "$cuerpo"
+
+  printf '%s %s %s %s -> %s\n' "$SELLO" "$codigo" "$peso" "$url" "$final" >> "$INFORME" 2>/dev/null || true
+  [ -z "$veredicto" ] || ROTAS+=("$veredicto $url")
 done < <(grep -vE '^\s*(#|$)' "$LISTA")
 
 echo "catalogo: $((TOTAL - ${#ROTAS[@]}))/$TOTAL en 200"
@@ -108,7 +119,8 @@ fi
 
 # Avisa SOLO si hay alguna rota que no estuviera en el aviso anterior: que el conjunto se ENCOJA
 # no es noticia, y repetir un subconjunto es ruido con forma de alarma.
-NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | sort | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
+NUEVAS="$(printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort \
+          | comm -23 - <(sort "$ESTADO" 2>/dev/null || true))"
 if [ -z "$NUEVAS" ]; then
   echo "sin novedades respecto del aviso anterior: no aviso"
   exit 1
@@ -121,7 +133,7 @@ CUERPO="$(printf 'Catalogo Mouseion: %d de %d productos NO responden.\n\n%s\n\nM
 # caida muda para siempre, que es justo el fallo que este vigia existe para evitar.
 if avisar "$CUERPO" "catalogo-health:$(date -u +%Y-%m-%d):$HUELLA" \
    || por_el_bus "$CUERPO" "catalogo-health-bus:$(date -u +%Y-%m-%d):$HUELLA"; then
-  printf '%s\n' "${ROTAS[@]}" | sort > "$ESTADO" \
+  printf '%s\n' "${ROTAS[@]}" | awk '{print $NF}' | sort > "$ESTADO" \
     || echo "no pude guardar el estado en $ESTADO: la proxima corrida volvera a avisar" >&2
 else
   echo "el aviso NO salio por ningun camino: dejo el estado intacto para reintentarlo" >&2

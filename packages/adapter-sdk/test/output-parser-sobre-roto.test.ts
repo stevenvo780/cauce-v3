@@ -257,10 +257,16 @@ test('un sobre sin andamiaje entrega el turno Y le ensena al agente', () => {
   assert.match(String(salida.reply), /los siete campos/u);
 });
 
-test('un campo PRESENTE pero mal formado sigue siendo fallo duro', () => {
-  // Aca si hay violacion de contrato, no descuido: el agente declaro el campo y lo declaro mal.
-  assert.throws(() => parseFinalText('{"reply":"hola","retryable":"si"}', 'X'), /'retryable' must be a boolean/u);
-  assert.throws(() => parseFinalText('{"reply":"hola","messages":{}}', 'X'), /'messages' must be an array/u);
+test('el andamiaje mal formado se normaliza; lo que puede hacer dano sigue siendo fallo duro', () => {
+  const conRetryableRoto = parseFinalText('{"reply":"hola","retryable":"si"}', 'X');
+  assert.equal(conRetryableRoto.reply?.startsWith('hola'), true,
+    'el reply ES el trabajo: 27 turnos de 8 alias se perdieron enteros por andamiaje mal escrito');
+  assert.equal(conRetryableRoto.retryable, false);
+  const conStatusRoto = parseFinalText('{"reply":"hola","status":"ok"}', 'X');
+  assert.equal(conStatusRoto.status, 'done',
+    'un status fuera del contrato no puede costar el turno, solo dejar constancia');
+  assert.throws(() => parseFinalText('{"reply":"hola","messages":{}}', 'X'), /'messages' must be an array/u,
+    'messages sigue muriendo a proposito: una lista a medias podria despachar trabajo a quien no toca');
 });
 
 test('una respuesta en prosa sigue siendo una respuesta en prosa', () => {

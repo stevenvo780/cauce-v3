@@ -53,11 +53,12 @@ test("preserves retryable failures", () => {
   assert.equal(parsed.retryable, true);
 });
 
-test("still rejects a non-boolean retryable field", () => {
-  assert.throws(
-    () => validateStructuredOutput(output("done", "true")),
-    /'retryable' must be a boolean/u,
-  );
+test("normalises a non-boolean retryable field instead of killing the turn", () => {
+  const salida = validateStructuredOutput(output("done", "true"));
+  assert.equal(salida.retryable, false,
+    "an unreadable retryable can only default to not retrying: re-running may repeat paid effects");
+  assert.match(salida.reply ?? "", /'retryable' no era booleano/u,
+    "the agent only stops repeating the mistake if it reads it in its own reply");
 });
 
 test("rejects empty delegation targets and bodies", () => {

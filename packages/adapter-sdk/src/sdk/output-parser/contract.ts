@@ -181,6 +181,31 @@ function parseArtifacts(value: unknown): readonly OutputArtifact[] {
   });
 }
 
+const STATUS_QUE_DECLARAN_FALLO = new Set([
+  "error", "failed", "failure", "fail", "ko", "aborted", "abort",
+  "cancelled", "canceled", "timeout", "timed_out", "blocked",
+]);
+
+function normalizarStatus(
+  valor: unknown,
+  reply: unknown,
+): { status: "done" | "failed"; descartes: readonly string[] } {
+  if (valor === undefined || valor === "done" || valor === "failed") {
+    return { status: valor === "failed" ? "failed" : "done", descartes: [] };
+  }
+  const texto = typeof valor === "string" ? valor.trim().toLowerCase() : "";
+  const hayTrabajo = typeof reply === "string" && hasVisibleText(reply);
+  const status = STATUS_QUE_DECLARAN_FALLO.has(texto) || !hayTrabajo ? "failed" : "done";
+  const recibido = typeof valor === "string" ? `"${valor}"` : JSON.stringify(valor);
+  return {
+    status,
+    descartes: [
+      `'status' llego como ${recibido}, que no es un valor del contrato; se normalizo a `
+      + `"${status}" para no perder el turno. Los unicos validos son "done" y "failed"`,
+    ],
+  };
+}
+
 export function validateStructuredOutput(value: unknown): StructuredOutput {
   if (!isObject(value)) {
     throw new MalformedOutputError("Structured output must be a JSON object");
@@ -189,21 +214,24 @@ export function validateStructuredOutput(value: unknown): StructuredOutput {
   if (value.reply !== null && typeof value.reply !== "string") {
     throw new MalformedOutputError("'reply' must be a string or null");
   }
-  // Ausencias del andamiaje: se normalizan y se listan. Presencias mal formadas siguen fallando.
+  // El andamiaje se normaliza y se lista, este ausente o mal formado. Solo 'reply' cuesta el turno.
   const ausentes = NORMALIZED_WHEN_ABSENT.filter((key) => !(key in value));
-  const status = value.status === undefined ? "done" : value.status;
-  if (status !== "done" && status !== "failed") {
-    throw new MalformedOutputError("'status' must be 'done' or 'failed'");
-  }
-  const retryable = value.retryable === undefined ? false : value.retryable;
-  if (typeof retryable !== "boolean") {
-    throw new MalformedOutputError("'retryable' must be a boolean");
+  const estado = normalizarStatus(value.status, value.reply);
+  const status = estado.status;
+  const retryableDescartes: string[] = [];
+  let retryable = false;
+  if (typeof value.retryable === "boolean") {
+    retryable = value.retryable;
+  } else if (value.retryable !== undefined) {
+    retryableDescartes.push(
+      `'retryable' no era booleano (${JSON.stringify(value.retryable)}); se tomo false`,
+    );
   }
   const notificaciones = value.notify === undefined
     ? { directives: [] as readonly NotifyDirective[], descartes: [] as readonly string[] }
     : parseNotify(value.notify);
   // The agent must learn what was discarded, or it will repeat the same error every turn.
-  const notas = [...notificaciones.descartes];
+  const notas = [...estado.descartes, ...retryableDescartes, ...notificaciones.descartes];
   if (ausentes.length > 0) {
     notas.push(
       `faltaba ${ausentes.map((key) => `'${key}'`).join(", ")} en el sobre; se normalizo para no `
