@@ -156,6 +156,8 @@ DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
         "vitest.config.ts",
         "tests/e2e",
         "tests/helpers",
+        "ops/harness/adapter-roundtrip-fixture.mjs",
+        "ops/harness/adapter-roundtrip.mjs",
         "ops/harness/runner.mjs",
         "ops/scripts/run-testcontainers.sh",
         "ops/scripts/validate-testcontainers-evidence.py",

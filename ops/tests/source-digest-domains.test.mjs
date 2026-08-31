@@ -94,6 +94,8 @@ assert(
 for (const sentinel of [
   'tests/e2e/real-qa.test.ts',
   'tests/helpers/postgres.ts',
+  'ops/harness/adapter-roundtrip-fixture.mjs',
+  'ops/harness/adapter-roundtrip.mjs',
   'ops/harness/runner.mjs',
   'ops/scripts/run-testcontainers.sh',
   'ops/scripts/validate-testcontainers-evidence.py',
@@ -214,6 +216,8 @@ try {
   await write('console/src/theme.css', '.panel { color: red; }\n');
   await write('console/src/features/_grafo/consultas-grafo.sql', 'SELECT 1;\n');
   await write('ops/harness/contract-runner.mjs', 'export const contract = 1;\n');
+  await write('ops/harness/adapter-roundtrip-fixture.mjs', 'export const fixture = 1;\n');
+  await write('ops/harness/adapter-roundtrip.mjs', 'export const roundtrip = 1;\n');
   await write('ops/harness/runner.mjs', 'export const run = 1;\n');
   await write('ops/flota.json', '{"schemaVersion":1,"fleet":{}}\n');
   await write('ops/scripts/fault-compose.sh', '#!/bin/sh\n');
@@ -360,6 +364,34 @@ try {
     'the global verification domain must cover root tests');
   assert.notEqual(digestOf('full', sandbox), beforeTestcontainers.full,
     'full must cover the Testcontainers harness');
+
+  let priorHarness = {
+    runtime: digestOf('runtime', sandbox),
+    testcontainers: digestOf('testcontainers', sandbox),
+    verification: digestOf('verification', sandbox),
+    full: digestOf('full', sandbox),
+  };
+  for (const [relative, contents] of [
+    ['ops/harness/adapter-roundtrip-fixture.mjs', 'export const fixture = 2;\n'],
+    ['ops/harness/adapter-roundtrip.mjs', 'export const roundtrip = 2;\n'],
+    ['ops/harness/runner.mjs', 'export const run = 2;\n'],
+  ]) {
+    await write(relative, contents);
+    const nextHarness = {
+      runtime: digestOf('runtime', sandbox),
+      testcontainers: digestOf('testcontainers', sandbox),
+      verification: digestOf('verification', sandbox),
+      full: digestOf('full', sandbox),
+    };
+    assert.equal(nextHarness.runtime, priorHarness.runtime, `${relative} moved runtime image evidence`);
+    assert.notEqual(nextHarness.testcontainers, priorHarness.testcontainers,
+      `${relative} must invalidate Testcontainers evidence`);
+    assert.notEqual(nextHarness.verification, priorHarness.verification,
+      `${relative} must invalidate verification evidence`);
+    assert.notEqual(nextHarness.full, priorHarness.full,
+      `${relative} must invalidate full evidence`);
+    priorHarness = nextHarness;
+  }
 
   const beforeOpsTest = {
     runtime: digestOf('runtime', sandbox),

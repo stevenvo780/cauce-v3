@@ -44,7 +44,7 @@
     "test:store-hardening": "pnpm prepare:runtime && ./scripts/test.sh tests/store-hardening packages/store/test --testTimeout=180000",
     "test:integration": "pnpm prepare:runtime && pnpm build:mcp && ./scripts/test.sh tests/integration --testTimeout=120000",
     "test:e2e": "pnpm prepare:runtime && pnpm build:adapter && ./scripts/test.sh tests/e2e --testTimeout=180000",
-    "qa:real": "node ops/harness/runner.mjs --live --artifact-dir ops/artifacts/real",
+    "qa:real": "pnpm prepare:runtime && pnpm build:adapter && node ops/harness/runner.mjs --live --artifact-dir ops/artifacts/real",
     "qa:contract": "node ops/harness/contract-runner.mjs --mock --artifact-dir ops/artifacts/mock",
     "qa:testcontainers": "./ops/scripts/run-testcontainers.sh",
     "qa:runtime-packaging": "./deploy/smoke-runtime-packaging.sh",

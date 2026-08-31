@@ -135,6 +135,7 @@ describe('real external QA harness', () => {
         CAUCE_BASE_URL: httpUrl,
         CAUCE_WS_URL: `${httpUrl.replace('http:', 'ws:')}/v3/ws`,
         CAUCE_FAULT_MODE: 'none',
+        CAUCE_ADAPTER_ROUNDTRIP_CONFIRM: 'ephemeral-only',
         CAUCE_PRESENCE_LEASE_MS: '500',
         CAUCE_RETRY_TIMEOUT_MS: '45000',
       },
@@ -327,6 +328,17 @@ async function declareHarnessFleet(): Promise<void> {
         [tenant, room, alias],
       );
     }
+  }
+  for (const [alias, harness] of [
+    ['qa-opencode', 'opencode'],
+    ['qa-reviewer', 'fake'],
+  ] as const) {
+    await declareConsumer('Steven', alias, harness);
+    await database.pool.query(
+      `INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
+       VALUES('Steven','grp.steven',$1,'agent',true) ON CONFLICT DO NOTHING`,
+      [alias],
+    );
   }
   for (const [from, to] of [['Steven', 'Miguel'], ['Miguel', 'Steven']]) {
     await database.pool.query(

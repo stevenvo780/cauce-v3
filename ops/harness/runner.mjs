@@ -8,6 +8,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { runAdapterRoundTrip } from './adapter-roundtrip.mjs';
 import { topology } from './fleet.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +23,16 @@ const requireRestarts = args.includes('--require-restarts') || process.env.CAUCE
 const baseUrl = required('CAUCE_BASE_URL');
 const wsBaseUrl = required('CAUCE_WS_URL');
 const faultMode = process.env.CAUCE_FAULT_MODE || 'none';
+const adapterRoundTripConfirmation = process.env.CAUCE_ADAPTER_ROUNDTRIP_CONFIRM;
+if (adapterRoundTripConfirmation !== undefined && adapterRoundTripConfirmation !== 'ephemeral-only') {
+  console.error('CAUCE_ADAPTER_ROUNDTRIP_CONFIRM must be ephemeral-only when set');
+  process.exit(2);
+}
+const adapterProcessRoundTrip = adapterRoundTripConfirmation === 'ephemeral-only';
+if (adapterProcessRoundTrip && (!loopbackUrl(baseUrl) || !loopbackUrl(wsBaseUrl) || faultMode !== 'none')) {
+  console.error('adapter process round-trip requires loopback HTTP/WS endpoints and CAUCE_FAULT_MODE=none');
+  process.exit(2);
+}
 if (requireRestarts && faultMode !== 'compose') {
   console.error('restart evidence is required but CAUCE_FAULT_MODE=compose is not enabled');
   process.exit(2);
@@ -376,6 +387,14 @@ const tests = [
     });
   }, { doubles: true, evidenceClass: 'protocol-double' }],
 
+  ...(adapterProcessRoundTrip
+    ? [[
+      'OpenCode to fake adapter process round-trip reaches one final origin relay',
+      async () => runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs: retryTimeoutMs }),
+      { evidenceClass: 'adapter-process-roundtrip', adapterExecutables: ['opencode', 'fake'] },
+    ]]
+    : []),
+
   ['double consumer rejected and fencing retained', async () => {
     const actor = identity('Steven', 'kant');
     const first = new WsClient(actor, 'opencode', unique('first'));
@@ -657,7 +676,12 @@ async function main() {
     evidence: {
       transport: 'real Fastify HTTP/WebSocket gateway',
       persistence: 'real PostgreSQL',
-      harnessExecution: 'four advertised harness kinds are protocol doubles; adapter executable tests are unit/contract',
+      harnessExecution: adapterProcessRoundTrip
+        ? 'advertised harness kinds are protocol doubles except the dedicated OpenCode-to-fake adapter process round-trip'
+        : 'advertised harness kinds are protocol doubles; adapter process round-trip requires the ephemeral-only gate',
+      adapterProcessRoundTrip: adapterProcessRoundTrip
+        ? 'built adapters with controlled harness executables and API-observed final origin relay'
+        : 'disabled',
       faultMode,
       aliases: allIdentities.length,
       harnessKinds,
@@ -687,6 +711,11 @@ function redactUrl(value) {
   url.password = '';
   for (const key of [...url.searchParams.keys()]) if (/token|key|secret|auth/i.test(key)) url.searchParams.set(key, 'REDACTED');
   return url.toString();
+}
+
+function loopbackUrl(value) {
+  const hostname = new URL(value).hostname;
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1';
 }
 
 function xmlEscape(value) {
