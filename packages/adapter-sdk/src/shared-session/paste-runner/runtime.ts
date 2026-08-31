@@ -1,14 +1,16 @@
 import { stat } from "node:fs/promises";
 import type { CommandRunResult } from "../../sdk/types.js";
 
-export const DEFAULT_ACQUIRE_TIMEOUT_MS = 120_000;
+export const DEFAULT_ACQUIRE_TIMEOUT_MS = 20 * 60_000;
 export const DEFAULT_POLL_MS = 750;
 export const DEFAULT_CANCEL_DRAIN_TIMEOUT_MS = 30_000;
 export const QUARANTINE_OPERATION_TIMEOUT_MS = 2_000;
 export const SETTLE_MS = 250;
 export const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
 export const LIVENESS_EVERY = 8;
-export const DEFAULT_CORRELATION_TIMEOUT_MS = 5 * 60_000;
+/** Un dialogo no se destraba esperando: rendirse pronto es lo que hace seguro el plazo largo. */
+export const ACQUIRE_MODAL_TIMEOUT_MS = 15_000;
+export const DEFAULT_CORRELATION_TIMEOUT_MS = 25 * 60_000;
 export const DEFAULT_QUIET_MS = 5 * 60_000;
 export const DEFAULT_MERGED_GRACE_MS = 30 * 60_000;
 

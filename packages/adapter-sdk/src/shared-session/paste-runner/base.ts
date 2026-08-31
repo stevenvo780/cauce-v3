@@ -32,6 +32,7 @@ import {
 } from "./persistence.js";
 import {
   beforeDeadline,
+  ACQUIRE_MODAL_TIMEOUT_MS,
   DEFAULT_ACQUIRE_TIMEOUT_MS,
   DEFAULT_POLL_MS,
   fileSize,
@@ -418,6 +419,7 @@ export abstract class PasteSessionRunnerBase<E> {
     | { ok: false; replaced: true }
   > {
     const deadline = Date.now() + (this.options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS);
+    const modalDeadline = Date.now() + ACQUIRE_MODAL_TIMEOUT_MS;
     let evidence = "la caja de entrada nunca quedó libre";
     let modal = false;
     for (;;) {
@@ -439,7 +441,7 @@ export abstract class PasteSessionRunnerBase<E> {
       if (!state.occupied) return { ok: true, pane };
       evidence = state.evidence;
       modal = state.kind === "modal";
-      if (Date.now() >= deadline) {
+      if (Date.now() >= (modal ? Math.min(deadline, modalDeadline) : deadline)) {
         return modal
           ? { ok: false, reason: "modal_blocking", detail: evidence }
           : { ok: false, reason: "input_busy", detail: evidence };
