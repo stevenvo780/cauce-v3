@@ -1,5 +1,8 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
+import type { TestContext } from 'vitest';
 import {
   applyMigrations, createPool, type DatabaseClient, type DatabasePool
 } from '@cauce/store';
@@ -9,6 +12,18 @@ export interface TestDatabase {
   pool: DatabasePool;
   url: string;
 }
+
+export interface EmptyTestDatabase {
+  close: () => Promise<void>;
+  pool: DatabasePool;
+  url: string;
+}
+
+export interface DockerTestRequirement {
+  skipIfUnavailable: (skipTest: TestContext['skip']) => Promise<void>;
+}
+
+const execFileAsync = promisify(execFile);
 
 async function waitForDatabase(pool: DatabasePool): Promise<void> {
   let lastError: unknown;
@@ -32,7 +47,6 @@ async function waitForDatabase(pool: DatabasePool): Promise<void> {
 
 /**
  * The database name prefix a `CAUCE_TEST_DATABASE_URL` MUST carry to be accepted.
- *
  * This is what separates "run the suite" from "truncate production". The suites call
  * `resetTestDatabase()`, which TRUNCATEs 30 tables CASCADE. If the real database URL is exported
  * by mistake, the suite would silently wipe it; the check is therefore on the name and fails closed.
@@ -47,7 +61,6 @@ export function nombreDeBase(url: string): string {
 
 /**
  * Whether this URL points to a disposable test database.
- *
  * Exported on purpose so the guard can be tested in isolation, using the production URL as the
  * negative control. A guard that is never tested against the case it is meant to prevent is not a guard.
  */
@@ -57,6 +70,62 @@ export function esBaseDePruebas(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+function assertTestDatabaseUrl(url: string): void {
+  if (esBaseDePruebas(url)) return;
+  throw new Error(
+    `CAUCE_TEST_DATABASE_URL apunta a la base "${nombreDeBase(url)}" y las pruebas ` +
+      `TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por ` +
+      `"${PREFIJO_BASE_DE_PRUEBAS}". Rechazado antes de abrir la conexión.`,
+  );
+}
+
+function errorField(error: unknown, field: string): string {
+  if (typeof error !== 'object' || error === null || !(field in error)) return '';
+  const value = (error as Record<string, unknown>)[field];
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  return '';
+}
+
+function errorBooleanField(error: unknown, field: string): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && field in error
+    && (error as Record<string, unknown>)[field] === true;
+}
+
+async function unavailableDockerCapability(): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync('docker', ['info', '--format', '{{.ServerVersion}}'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+    });
+    return stdout.trim() === '' ? 'Docker server probe returned no version' : undefined;
+  } catch (error) {
+    if (errorField(error, 'code') === 'ENOENT') return 'Docker CLI unavailable';
+    const stderr = errorField(error, 'stderr');
+    if (stderr.includes('Cannot connect to the Docker daemon')) return 'Docker daemon unavailable';
+    if (stderr.toLowerCase().includes('permission denied')) return 'Docker daemon inaccessible';
+    if (errorField(error, 'code') === 'ETIMEDOUT'
+        || errorBooleanField(error, 'killed')
+        || errorField(error, 'signal') === 'SIGTERM') return 'Docker server probe timed out';
+    return 'Docker server probe failed';
+  }
+}
+
+export function dockerTestRequirement(unverifiedCoverage: string): DockerTestRequirement {
+  return {
+    skipIfUnavailable: async (skipTest) => {
+      const unavailableCapability = await unavailableDockerCapability();
+      if (unavailableCapability === undefined) return;
+      const reason = `${unavailableCapability}; not checked: ${unverifiedCoverage}`;
+      console.warn(`[docker] test skipped: ${reason}`);
+      skipTest(reason);
+    },
+  };
 }
 
 /**
@@ -134,6 +203,30 @@ async function crearBaseEfimera(servidor: string): Promise<{
   return { url: urlDeBase(servidor, nombre), soltar, tirarConexiones };
 }
 
+export async function startEmptyTestDatabase(serverUrl: string): Promise<EmptyTestDatabase> {
+  assertTestDatabaseUrl(serverUrl);
+  const { url, soltar } = await crearBaseEfimera(serverUrl);
+  const pool = createPool(url, { max: 2 });
+  try {
+    await waitForDatabase(pool);
+    return {
+      pool,
+      url,
+      close: async () => {
+        try {
+          await pool.end();
+        } finally {
+          await soltar();
+        }
+      },
+    };
+  } catch (error) {
+    await pool.end();
+    await soltar();
+    throw error;
+  }
+}
+
 export async function startTestDatabase(): Promise<TestDatabase> {
   /*
    * External database support via CAUCE_TEST_DATABASE_URL for environments where the Docker
@@ -144,13 +237,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
     if (process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1') {
       throw new Error('CAUCE_REQUIRE_TESTCONTAINERS=1 rejects the external database fallback');
     }
-    if (!esBaseDePruebas(externa)) {
-      throw new Error(
-        `CAUCE_TEST_DATABASE_URL apunta a la base "${nombreDeBase(externa)}" y las pruebas ` +
-          `TRUNCAN 30 tablas. Sólo se acepta una base cuyo nombre empiece por ` +
-          `"${PREFIJO_BASE_DE_PRUEBAS}". Rechazado antes de abrir la conexión.`,
-      );
-    }
+    assertTestDatabaseUrl(externa);
     const { url, soltar, tirarConexiones } = await crearBaseEfimera(externa);
     const pool = createPool(url);
     try {
@@ -343,4 +430,3 @@ export async function closeTestDatabase(database?: TestDatabase, pool?: Database
     await database.container.stop().catch(() => undefined);
   }
 }
-

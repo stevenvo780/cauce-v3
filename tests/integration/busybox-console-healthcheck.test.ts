@@ -5,12 +5,27 @@ import { isIP } from 'node:net';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { dockerTestRequirement } from '../helpers/postgres.js';
 
 const execFileAsync = promisify(execFile);
 const busyboxImage = process.env.CAUCE_BUSYBOX_TEST_IMAGE ?? 'nginxinc/nginx-unprivileged:1.27-alpine';
 const caPath = '/run/secrets/console_tls_ca';
 const tlsWgetCommand = `SSL_CERT_FILE=${caPath} wget -q -O /dev/null`;
 const healthcheckCommand = `test -r ${caPath} && ${tlsWgetCommand}`;
+const dockerRequirement = dockerTestRequirement(
+  'nginx-unprivileged BusyBox healthcheck with the mounted CA and all three negative TLS controls',
+);
+
+async function docker(arguments_: string[], timeout = 30_000) {
+  try {
+    return await execFileAsync('docker', arguments_, { timeout });
+  } catch (error) {
+    throw new Error(
+      `Docker command ${arguments_[0] ?? 'unknown'} failed after the server probe succeeded`,
+      { cause: error },
+    );
+  }
+}
 
 interface DockerReachability {
   readonly network: string;
@@ -30,7 +45,7 @@ interface DockerNetworkInspection {
 async function resolveDockerReachability(): Promise<DockerReachability> {
   const requestedNetwork = process.env.CAUCE_TEST_DOCKER_NETWORK;
   try {
-    const inspection = await execFileAsync('docker', [
+    const inspection = await docker([
       'inspect', '--format', '{{json .NetworkSettings.Networks}}', hostname(),
     ]);
     const parsed: unknown = JSON.parse(inspection.stdout);
@@ -82,7 +97,8 @@ describe('BusyBox console healthcheck runtime', () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  it('trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust', async () => {
+  it('trusts the mounted self-signed CA through SSL_CERT_FILE and rejects it without that trust', async ({ skip }) => {
+    await dockerRequirement.skipIfUnavailable(skip);
     const certificatePath = join(directory, 'console-ca.crt');
     const caKeyPath = join(directory, 'console-ca.key');
     const serverCertificatePath = join(directory, 'console.crt');
@@ -152,23 +168,26 @@ describe('BusyBox console healthcheck runtime', () => {
     const installCa = `printf '%s' "$CAUCE_TEST_CONSOLE_CA" > ${caPath} && chmod 0444 ${caPath} && `;
     const targetUrl = `https://${targetHost}:${String(port)}/`;
     try {
-      const result = await execFileAsync('docker', [
+      const result = await docker([
         ...commonArguments,
         `${installCa}${healthcheckCommand} ${targetUrl}`,
-      ], { timeout: 30_000 });
+      ]);
       expect(typeof result.stdout).toBe('string');
-      await expect(execFileAsync('docker', [
+      await expect(docker([
         ...commonArguments,
         `${healthcheckCommand} ${targetUrl}`,
-      ], { timeout: 30_000 })).rejects.toThrow();
-      await expect(execFileAsync('docker', [
+      ])).rejects.toThrow();
+      await dockerRequirement.skipIfUnavailable(skip);
+      await expect(docker([
         ...commonArguments,
         `${tlsWgetCommand} ${targetUrl}`,
-      ], { timeout: 30_000 })).rejects.toThrow();
-      await expect(execFileAsync('docker', [
+      ])).rejects.toThrow();
+      await dockerRequirement.skipIfUnavailable(skip);
+      await expect(docker([
         ...commonArguments,
         `${installCa}wget -q -O /dev/null ${targetUrl}`,
-      ], { timeout: 30_000 })).rejects.toThrow();
+      ])).rejects.toThrow();
+      await dockerRequirement.skipIfUnavailable(skip);
     } finally {
       await close(server);
     }

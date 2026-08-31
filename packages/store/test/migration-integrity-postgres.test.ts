@@ -1,16 +1,18 @@
 import { readFile } from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   applyMigrations,
-  createPool,
   expectedLegacy024SchemaSha256,
   inspectMigrationIntegrity,
   migrationSourcesForApply,
   type DatabasePool,
 } from '@cauce/store';
-import { GenericContainer, Wait } from 'testcontainers';
-import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import {
+  startEmptyTestDatabase,
+  startTestDatabase,
+  type TestDatabase,
+} from '../../../tests/helpers/postgres.js';
 
 const version024 = '024_agent_role_templates.sql';
 const version028 = '028_canonical_agent_role.sql';
@@ -33,28 +35,8 @@ afterAll(async () => {
 
 describe('migration source integrity', () => {
   it('derives the 024 contract from a clean database applying exactly through 024', async () => {
-    const password = randomUUID();
-    const container = await new GenericContainer('postgres:16-alpine')
-      .withEnvironment({
-        POSTGRES_DB: 'cauce_024_contract',
-        POSTGRES_USER: 'cauce_contract',
-        POSTGRES_PASSWORD: password,
-      })
-      .withExposedPorts(5432)
-      .withHealthCheck({
-        test: ['CMD-SHELL', 'pg_isready -U cauce_contract -d cauce_024_contract'],
-        interval: 1_000,
-        timeout: 3_000,
-        retries: 60,
-        startPeriod: 1_000,
-      })
-      .withWaitStrategy(Wait.forHealthCheck())
-      .start();
-    const cleanPool = createPool(
-      `postgresql://cauce_contract:${encodeURIComponent(password)}@${container.getHost()}:` +
-      `${String(container.getMappedPort(5432))}/cauce_024_contract`,
-      { max: 2 },
-    );
+    const cleanDatabase = await startEmptyTestDatabase(database.url);
+    const cleanPool = cleanDatabase.pool;
     try {
       const through024 = (await migrationSourcesForApply())
         .filter((migration) => migration.version <= version024);
@@ -91,8 +73,7 @@ describe('migration source integrity', () => {
         }
       })).rejects.toThrow(/024_agent_role_templates.*fingerprint mismatch/u);
     } finally {
-      await cleanPool.end();
-      await container.stop();
+      await cleanDatabase.close();
     }
   }, 120_000);
 
