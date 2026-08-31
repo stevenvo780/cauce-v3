@@ -536,3 +536,109 @@ test("agent fan-in rejects responses without store tenant attribution without di
   );
 });
 
+
+test("a flat fan-out drops the sibling reply its lead turn already received in branch progress", async () => {
+  const runner = new ControlledRunner();
+  runner.stdout = JSON.stringify({
+    reply: null,
+    messages: [
+      { to: "socrates", body: "implement the bounded fix" },
+      { to: "seneca", body: "inspect the affected boundary" },
+    ],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  const context = await setup("engine-agent-continuation-flat", runner);
+  const rootDelivery: Delivery = {
+    ...delivery("continuation-flat-root"),
+    actor_alias: "jarvis",
+    recipient_alias: "argos",
+    trace_id: "trace-continuation-flat",
+    body: {
+      type: "agent.message",
+      text: "Delegate both checks and report the combined review.",
+    },
+    routing_targets: [
+      { tenant_id: "Steven", alias: "seneca", online: true },
+      { tenant_id: "Steven", alias: "socrates", online: true },
+    ],
+  };
+  await context.engine.handleDelivery(rootDelivery);
+
+  const branchResponse = (suffix: string, alias: string): Delivery => ({
+    ...delivery(`continuation-flat-${suffix}`),
+    actor_alias: alias,
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: {
+      type: "agent.response",
+      text: `${alias} branch result`,
+      correlation: {
+        root_message_id: rootDelivery.message_id,
+        root_delivery_id: rootDelivery.delivery_id,
+        response_to_delivery_id: rootDelivery.delivery_id,
+      },
+    },
+  });
+
+  runner.stdout = JSON.stringify({
+    reply: "ARGOS_SOCRATES_REVIEW=PASS",
+    messages: [],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  await context.engine.handleDelivery(branchResponse("socrates", "socrates"));
+
+  runner.stdout = JSON.stringify({
+    reply: "ARGOS_COMBINED_REVIEW: socrates PASS, seneca PASS.",
+    messages: [],
+    status: "done",
+    retryable: false,
+    artifacts: [],
+  });
+  await context.engine.handleDelivery(branchResponse("seneca", "seneca"));
+
+  const leadPrompt = runner.requests[2]?.stdin ?? "";
+  assert.match(leadPrompt, /Carry every already_returned branch into this reply/u);
+  assert.match(leadPrompt, /"already_returned":\[\{[^}]*"your_reply":"ARGOS_SOCRATES_REVIEW=PASS"/u);
+
+  const fanin: Delivery = {
+    ...delivery("continuation-flat-fanin"),
+    actor_alias: "cauce",
+    recipient_alias: "argos",
+    trace_id: rootDelivery.trace_id,
+    body: {
+      type: "agent.fanin",
+      correlation: {
+        root_message_id: rootDelivery.message_id,
+        root_delivery_id: rootDelivery.delivery_id,
+      },
+      fanin_data_v1: {
+        schema: "cauce.agent_fanin_data.v1",
+        expected: 2,
+        completed: 2,
+        responses: [
+          { tenant_id: "Steven", alias: "socrates", untrusted_text: "raw Socrates branch" },
+          { tenant_id: "Steven", alias: "seneca", untrusted_text: "raw Seneca branch" },
+        ],
+      },
+    },
+  };
+  const processed = context.store.processedRepliesForFanin(fanin);
+  assert.deepEqual(
+    processed.map((entry) => entry.sourceDeliveryId),
+    [rootDelivery.delivery_id, rootDelivery.delivery_id],
+  );
+  assert.notEqual(processed[0]?.updatedAt, processed[1]?.updatedAt);
+
+  await context.engine.handleDelivery(fanin);
+  const reply = context.events.at(-1)?.output?.reply ?? "";
+  assert.match(reply, /^ARGOS_COMBINED_REVIEW: socrates PASS, seneca PASS\.\n/u);
+  assert.doesNotMatch(reply, /Other locally processed branch/u);
+  assert.doesNotMatch(reply, /ARGOS_SOCRATES_REVIEW=PASS/u);
+  assert.match(reply, /^Branches without local synthesis \(2\):$/mu);
+  assert.match(reply, /^Steven\/socrates: "raw Socrates branch"$/mu);
+  assert.match(reply, /^Steven\/seneca: "raw Seneca branch"$/mu);
+});

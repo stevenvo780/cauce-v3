@@ -29,6 +29,7 @@ export interface FaninSynthesisOptions {
     readonly reply: string;
     readonly updatedAt?: string;
     readonly childDeliveryId?: string;
+    readonly sourceDeliveryId?: string;
   }[];
 }
 
@@ -196,6 +197,9 @@ export function synthesizeFaninOutput(
       ...(typeof candidate.childDeliveryId === "string" && candidate.childDeliveryId.length > 0
         ? { childDeliveryId: candidate.childDeliveryId }
         : {}),
+      ...(typeof candidate.sourceDeliveryId === "string" && candidate.sourceDeliveryId.length > 0
+        ? { sourceDeliveryId: candidate.sourceDeliveryId }
+        : {}),
     }))
     .sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt) || left.order - right.order);
@@ -216,20 +220,27 @@ export function synthesizeFaninOutput(
     };
   }
 
-  // The newest locally processed reply leads the synthesis: it is the last turn this
-  // adapter completed for the chain, so it reads as the answer instead of as one more row
-  // of a dump. It is emitted verbatim — unquoted and unescaped — because it was produced by
-  // this adapter, not read off the wire; quoting it would collapse a multi-paragraph reply
-  // into a single escaped line. Every other locally processed reply still has to appear:
-  // with a stateless harness the leading turn never saw the sibling branches, so dropping
-  // them would destroy terminal local reviews that only exist here.
+  // The newest locally processed reply leads: it is the last turn this adapter completed for
+  // the chain, so it reads as the answer instead of one more row of a dump. It is emitted
+  // verbatim because this adapter produced it, not read it off the wire; quoting it would
+  // collapse a multi-paragraph reply into one escaped line.
   const primary = processedReplies[0];
   if (primary === undefined) throw new Error("Fan-in synthesis has no primary reply");
   const others = processedReplies.slice(1);
-  // Coverage is keyed by the branch delivery id the store itself stamped on each
-  // agent.response. A tenant/alias key would collapse two branches delegated to the same
-  // alias and silently drop the evidence of the one that was never synthesized locally.
-  // A branch that cannot be proven covered always keeps its raw evidence.
+  // Older siblings are dropped only when the lead turn was provably handed them: they continue
+  // the same fan-out turn, whose branch_progress.already_returned carries the replies this
+  // coordinator already wrote under a standing order to carry every one of them into the reply,
+  // and the lead closed strictly last, so all of them existed before its prompt was built.
+  const carriedByPrimary = others.length > 0
+    && primary.sourceDeliveryId !== undefined
+    && primary.updatedAt !== ""
+    && others.every((reply) =>
+      reply.sourceDeliveryId === primary.sourceDeliveryId
+      && reply.updatedAt !== ""
+      && reply.updatedAt < primary.updatedAt);
+  // Coverage is keyed by the branch delivery id the store stamped on each agent.response: a
+  // tenant/alias key would collapse two branches delegated to the same alias and silently drop
+  // the evidence of the one never synthesized locally. Unproven coverage keeps raw evidence.
   const covered = new Set(processedReplies
     .map((reply) => reply.childDeliveryId)
     .filter((value): value is string => value !== undefined));
@@ -248,7 +259,7 @@ export function synthesizeFaninOutput(
     readonly emptyText: string;
     readonly entryKind: string;
   }[] = [];
-  if (others.length > 0) {
+  if (others.length > 0 && !carriedByPrimary) {
     sections.push({
       heading: others.length === 1
         ? "Other locally processed branch reply (1):"

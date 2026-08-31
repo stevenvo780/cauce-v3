@@ -91,6 +91,7 @@ export interface ProcessedFaninReply {
    * tenant/alias key cannot express.
    */
   readonly childDeliveryId?: string;
+  readonly sourceDeliveryId?: string; // fan-out turn this branch continues; siblings share it
   readonly outputIndex?: number;
   readonly targetTenant?: string;
 }

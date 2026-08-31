@@ -159,6 +159,7 @@ export class DurableStoreFanin extends DurableStoreBase {
           alias: request.actor_alias,
           reply: output.reply.trim(),
           updatedAt: record.updated_at,
+          sourceDeliveryId: source.delivery_id,
           ...(childDeliveryId === undefined ? {} : { childDeliveryId }),
           ...(exact === undefined ? {} : {
             outputIndex: exact.outputIndex,
@@ -246,7 +247,9 @@ export class DurableStoreFanin extends DurableStoreBase {
         if (request === undefined || output === undefined || !visibleText(output.reply)) {
           throw new Error("Durable fan-in reply has no validated request or output");
         }
-        const childDeliveryId = objectRecord(request.body.correlation)?.child_delivery_id;
+        const correlation = objectRecord(request.body.correlation);
+        const childDeliveryId = correlation?.child_delivery_id;
+        const sourceDeliveryId = correlation?.response_to_delivery_id;
         return {
           tenantId: request.tenant_id,
           alias: request.actor_alias,
@@ -254,6 +257,9 @@ export class DurableStoreFanin extends DurableStoreBase {
           updatedAt: record.updated_at,
           ...(typeof childDeliveryId === "string" && childDeliveryId.length > 0
             ? { childDeliveryId }
+            : {}),
+          ...(typeof sourceDeliveryId === "string" && sourceDeliveryId.length > 0
+            ? { sourceDeliveryId }
             : {}),
         };
       });

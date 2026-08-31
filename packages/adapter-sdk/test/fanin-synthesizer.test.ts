@@ -378,3 +378,111 @@ test("fan-in attribution disambiguates the same alias across tenants", () => {
   assert.match(output.reply ?? "", /^Steven\/socrates: "first"$/mu);
   assert.match(output.reply ?? "", /^Pablo\/socrates: "second"$/mu);
 });
+
+const FANOUT_TURN_ID = "50000000-0000-4000-8000-000000000000";
+const NESTED_TURN_ID = "50000000-0000-4000-8000-000000000009";
+const BRANCH_SOCRATES = "40000000-0000-4000-8000-00000000000a";
+const BRANCH_SENECA = "40000000-0000-4000-8000-00000000000b";
+const BRANCH_PLATO = "40000000-0000-4000-8000-00000000000c";
+const BRANCH_HEGEL = "40000000-0000-4000-8000-00000000000d";
+const LEAD_REPLY = "Argos combined review: socrates PASS, seneca PASS, plato PASS.";
+
+function synthesizeFanoutOfFour(
+  lead: { readonly updatedAt: string; readonly sourceDeliveryId: string },
+): string {
+  return synthesizeFaninOutput({
+    type: "agent.fanin",
+    fanin_data_v1: {
+      schema: "cauce.agent_fanin_data.v1",
+      expected: 4,
+      completed: 4,
+      responses: [
+        {
+          tenant_id: "Steven",
+          alias: "socrates",
+          delivery_id: BRANCH_SOCRATES,
+          untrusted_text: "raw socrates branch",
+        },
+        {
+          tenant_id: "Steven",
+          alias: "seneca",
+          delivery_id: BRANCH_SENECA,
+          untrusted_text: "raw seneca branch",
+        },
+        {
+          tenant_id: "Steven",
+          alias: "plato",
+          delivery_id: BRANCH_PLATO,
+          untrusted_text: "raw plato branch",
+        },
+        {
+          tenant_id: "Steven",
+          alias: "hegel",
+          delivery_id: BRANCH_HEGEL,
+          untrusted_text: "raw hegel branch",
+        },
+      ],
+    },
+  }, {
+    processedReplies: [
+      {
+        tenantId: "Steven",
+        alias: "plato",
+        reply: LEAD_REPLY,
+        childDeliveryId: BRANCH_PLATO,
+        updatedAt: lead.updatedAt,
+        sourceDeliveryId: lead.sourceDeliveryId,
+      },
+      {
+        tenantId: "Steven",
+        alias: "seneca",
+        reply: "Argos review of Seneca: PASS.",
+        updatedAt: "2026-01-01T00:00:02.000Z",
+        childDeliveryId: BRANCH_SENECA,
+        sourceDeliveryId: FANOUT_TURN_ID,
+      },
+      {
+        tenantId: "Steven",
+        alias: "socrates",
+        reply: "Argos review of Socrates: PASS.",
+        updatedAt: "2026-01-01T00:00:01.000Z",
+        childDeliveryId: BRANCH_SOCRATES,
+        sourceDeliveryId: FANOUT_TURN_ID,
+      },
+    ],
+  }).reply ?? "";
+}
+
+test("fan-in drops sibling replies the lead turn was handed by branch progress", () => {
+  process.env[FANIN_FOOTER_ENV] = "1";
+  const reply = synthesizeFanoutOfFour({
+    updatedAt: "2026-01-01T00:00:03.000Z",
+    sourceDeliveryId: FANOUT_TURN_ID,
+  });
+
+  assert.equal(
+    reply,
+    [
+      LEAD_REPLY,
+      "",
+      "Branch without local synthesis (1):",
+      'Steven/hegel: "raw hegel branch"',
+      "",
+      "[3 locally synthesized branch replies; 4 branch responses in this chain;"
+      + " 1 without local synthesis]",
+    ].join("\n"),
+  );
+});
+
+test("fan-in keeps sibling replies the lead turn cannot be proven to have carried", () => {
+  for (const lead of [
+    { updatedAt: "2026-01-01T00:00:03.000Z", sourceDeliveryId: NESTED_TURN_ID },
+    { updatedAt: "2026-01-01T00:00:02.000Z", sourceDeliveryId: FANOUT_TURN_ID },
+  ]) {
+    const reply = synthesizeFanoutOfFour(lead);
+    assert.match(reply, /^Other locally processed branch replies \(2\):$/mu);
+    assert.match(reply, /^Steven\/seneca: "Argos review of Seneca: PASS\."$/mu);
+    assert.match(reply, /^Steven\/socrates: "Argos review of Socrates: PASS\."$/mu);
+    assert.match(reply, /^Branch without local synthesis \(1\):$/mu);
+  }
+});
