@@ -427,7 +427,7 @@ describe('DispatcherMetrics: render() exposition Prometheus', () => {
     expect(text).toMatch(/cauce_dispatcher_metrics_query_success 1/);
   });
 
-  it('si una fila devuelve count u oldest_seconds no parseable, el catch del render reporta query_success=0', async () => {
+  it('si una fila devuelve count u oldest_seconds no parseable, el render reporta query_success=0 y no deja gauges a medias', async () => {
     const { pool } = stubbedPool([
       { match: sql.jobs, rows: [
         { lane: 'interactive', status: 'queued', count: 'no-es-numero' }
@@ -436,7 +436,7 @@ describe('DispatcherMetrics: render() exposition Prometheus', () => {
     const { metrics } = makeMetrics({ pool });
     const text = await metrics.render(true);
     expect(text).toMatch(/cauce_dispatcher_metrics_query_success 0/);
-    expect(text).toMatch(/# HELP cauce_dispatcher_job_queue_depth/);
+    expect(text).not.toMatch(/# HELP cauce_dispatcher_job_queue_depth/);
   });
 
   it('number() rechaza NaN lanzado desde la fila, manteniendo el contrato del helper', () => {
