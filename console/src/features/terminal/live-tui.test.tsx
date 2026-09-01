@@ -132,7 +132,7 @@ it('CONTROL NEGATIVO: el mismo alias sin el modo harness no abre ninguna sesión
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-  await screen.findByRole('textbox', { name: /entrada para zeus/i });
+  await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
   // The PTY is still available (it is the same authorised destination): what is missing is the TUI.
   await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeEnabled(); });
 
@@ -159,7 +159,7 @@ it('CONTROL NEGATIVO: publica harness pero el agente PTY está offline; no se in
   renderWithApi(<TerminalPage />);
 
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
-  await screen.findByRole('textbox', { name: /entrada para zeus/i });
+  await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
   await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
   expect(screen.getByText('TUI no habilitada')).toBeInTheDocument();

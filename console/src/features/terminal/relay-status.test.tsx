@@ -6,6 +6,7 @@ import { ApiError } from '../../api/client';
 import {
   CHECKING_RELAY_STATE,
   deriveTerminalRelayState,
+  TerminalRelayProvider,
   TERMINAL_RELAY_NOT_DEPLOYED_REASON,
   TERMINAL_RELAY_SIN_PERMISO_REASON,
   useTerminalRelayStatus,
@@ -138,9 +139,13 @@ describe('deriveTerminalRelayState', () => {
 });
 
 describe('useTerminalRelayStatus', () => {
-  function Probe() {
-    const relay = useTerminalRelayStatus(50);
+  function ProbeContent() {
+    const relay = useTerminalRelayStatus();
     return <output>{relay.status}: {relay.reason}</output>;
+  }
+
+  function Probe() {
+    return <TerminalRelayProvider pollMs={50}><ProbeContent /></TerminalRelayProvider>;
   }
 
   it('starts checking and settles to unavailable against the default opt-in-absent mock', async () => {
