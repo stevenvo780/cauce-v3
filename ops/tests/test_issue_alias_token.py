@@ -21,8 +21,13 @@ SPEC.loader.exec_module(MODULE)
 
 
 def _write_json(path: pathlib.Path, document: object, mode: int) -> None:
-    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    path.chmod(mode)
+    replacement = path.with_name(f".{path.name}.test-replacement")
+    try:
+        replacement.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        replacement.chmod(mode)
+        replacement.replace(path)
+    finally:
+        replacement.unlink(missing_ok=True)
 
 
 def _record(alias: str, digest: str) -> dict[str, object]:
@@ -167,12 +172,14 @@ class IssueAliasTokenTest(unittest.TestCase):
         document["identities"].append(_record("argos", "b" * 64))
         _write_json(self.token_hashes, document, 0o400)
         before = self.token_hashes.read_bytes()
+        self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
 
         with self.assertRaises(MODULE.IssueTokenError):
             self._issue()
 
         self.assertFalse((self.tokens_dir / "argos.token").exists())
         self.assertEqual(self.token_hashes.read_bytes(), before)
+        self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
 
     def test_dry_run_leaves_filesystem_untouched(self) -> None:
         message = MODULE.describe_dry_run("argos", self.tokens_dir, self.identities_dir, self.flota_json, 730)

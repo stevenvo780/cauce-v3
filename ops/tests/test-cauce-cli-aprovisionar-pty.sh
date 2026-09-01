@@ -44,7 +44,7 @@ corre_dry() {
 
 # --- 1) fresh alias, dry-run: every PTY sub-piece is announced and NOTHING is written --------
 salida=$(corre_dry); rc=$?
-[ "$rc" = 0 ] && ok "dry-run exits 0" || bad "dry-run exits 0 (rc=$rc)"
+if [ "$rc" = 0 ]; then ok "dry-run exits 0"; else bad "dry-run exits 0 (rc=$rc)"; fi
 assert_contains "$salida" "[3] haria: publish-alias-key.sh --tenant Test --alias probe" "[3] announces the alias key"
 assert_contains "$salida" "[3b] haria: emitir clave RSA 4096 + cert CN=pty-probe (365 dias, firmado por $WORK/ca.crt)" "[3b] announces the PTY cert"
 assert_contains "$salida" "[3c] haria: anexar {tenant_id=Test, alias=probe, huella, expires_at} en $REG" "[3c] announces the relay registry append"
@@ -68,12 +68,16 @@ chmod 600 "$H/.config/cauce-v3/pty/probe.env"
 reg_antes=$(sha256sum "$REG")
 
 salida=$(corre_dry); rc=$?
-[ "$rc" = 0 ] && ok "dry-run over provisioned alias exits 0" || bad "dry-run over provisioned alias exits 0 (rc=$rc)"
+if [ "$rc" = 0 ]; then ok "dry-run over provisioned alias exits 0"; else bad "dry-run over provisioned alias exits 0 (rc=$rc)"; fi
 assert_contains "$salida" "[3] $PKI/alias-key.hex ya existe (se salta)" "[3] skips the existing alias key"
 assert_contains "$salida" "[3b] $PKI/client.crt ya existe y no esta vencido (se salta)" "[3b] skips the valid PTY cert"
 assert_contains "$salida" "[3c] la huella de pty-probe ya esta en $REG (se salta)" "[3c] skips the registered fingerprint"
 assert_contains "$salida" "[3d] $H/.config/cauce-v3/pty/probe.env ya existe (se salta)" "[3d] skips the existing launcher env"
-[ "$reg_antes" = "$(sha256sum "$REG")" ] && ok "the relay registry was not rewritten" || bad "the relay registry was rewritten"
+if [ "$reg_antes" = "$(sha256sum "$REG")" ]; then
+  ok "the relay registry was not rewritten"
+else
+  bad "the relay registry was rewritten"
+fi
 
 if [ "$fail" = 0 ]; then echo "ALL OK"; else echo "SOME FAILED"; fi
 exit "$fail"

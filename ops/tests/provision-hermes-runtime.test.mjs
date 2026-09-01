@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,13 +13,36 @@ import { setTimeout as delay } from "node:timers/promises";
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const script = path.join(ops, "scripts/provision-hermes-runtime.sh");
 const lockHelper = path.join(ops, "scripts/alias-lock-exec.py");
+const runtimeVerifier = path.join(ops, "scripts/verify-hermes-runtime.py");
+const aliasGenerator = path.join(ops, "scripts/generate-container-aliases.py");
+const hermesRuntime = path.join(ops, "hermes-runtime.json");
+const fleetFixture = path.join(ops, "tests/fixtures/fleet_snapshot/minimal/flota.json");
+const HERMES_ALIAS = "fixture-hermes";
+const NON_HERMES_ALIAS = "fixture-codex";
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "cauce-hermes-provision-"));
   const bin = path.join(root, "bin");
   const log = path.join(root, "docker.log");
-  await mkdir(bin);
-  await mkdir(path.join(root, "locks"), { mode: 0o700 });
+  const fixtureOps = path.join(root, "ops");
+  const fixtureScripts = path.join(fixtureOps, "scripts");
+  const fixtureLockHelper = path.join(fixtureScripts, "alias-lock-exec.py");
+  await Promise.all([
+    mkdir(bin),
+    mkdir(path.join(root, "locks"), { mode: 0o700 }),
+    mkdir(fixtureScripts, { recursive: true }),
+  ]);
+  const generated = spawnSync("python3", [
+    aliasGenerator,
+    "--snapshot", fleetFixture,
+    "--output", path.join(fixtureOps, "container-aliases.json"),
+  ], { encoding: "utf8" });
+  assert.equal(generated.status, 0, generated.stderr);
+  await Promise.all([
+    copyFile(hermesRuntime, path.join(fixtureOps, "hermes-runtime.json")),
+    copyFile(lockHelper, fixtureLockHelper),
+    copyFile(runtimeVerifier, path.join(fixtureScripts, "verify-hermes-runtime.py")),
+  ]);
   await writeFile(path.join(bin, "docker"), `#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "$CAUCE_FAKE_DOCKER_LOG"
@@ -28,7 +53,8 @@ case "\${1:-}" in
 esac
 `);
   await chmod(path.join(bin, "docker"), 0o755);
-  return { root, bin, log };
+  const runtime = JSON.parse(await readFile(hermesRuntime, "utf8"));
+  return { root, bin, log, fixtureOps, fixtureLockHelper, runtimeVersion: runtime.packageVersion };
 }
 
 function run(args, f) {
@@ -37,6 +63,7 @@ function run(args, f) {
     env: {
       ...process.env,
       PATH: `${f.bin}:${process.env.PATH}`,
+      CAUCE_CONTAINER_OPS_ROOT: f.fixtureOps,
       CAUCE_CONTAINER_LOCK_ROOT: path.join(f.root, "locks"),
       CAUCE_FAKE_DOCKER_LOG: f.log,
     },
@@ -69,15 +96,19 @@ function runRecovery(program, runtimeParent, ownerUid = process.getuid()) {
   ], { encoding: "utf8" });
 }
 
-test("provision/check resolves only the declared local Hermes alias and never exposes credentials", async (t) => {
+test("provision/check resolves a declared local Hermes fixture and never exposes credentials", async (t) => {
   const f = await fixture();
   t.after(() => rm(f.root, { recursive: true, force: true }));
-  const result = run(["--check", "iza"], f);
+  const result = run(["--check", HERMES_ALIAS], f);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /runtime inmutable 0\.20\.5 verificado/u);
+  assert.equal(
+    result.stdout.trim(),
+    `Hermes ${HERMES_ALIAS}: runtime inmutable ${f.runtimeVersion} verificado; `
+      + "perfil persistente separado (credenciales no copiadas).",
+  );
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /token|password|credential|\.env/iu);
   const calls = await readFile(f.log, "utf8");
-  assert.match(calls, /^ps --no-trunc --filter name=\^\/ws-humanizar\$/mu);
+  assert.match(calls, /^ps --no-trunc --filter name=\^\/fixture-hermes-runtime\$/mu);
   assert.match(calls, /^exec -i --user dev deadbeef \/usr\/bin\/python3 -c /mu);
   assert.match(calls, /^exec -i --user 0 deadbeef sh -s -- check /mu);
 });
@@ -85,7 +116,7 @@ test("provision/check resolves only the declared local Hermes alias and never ex
 test("a non-Hermes alias fails before Docker", async (t) => {
   const f = await fixture();
   t.after(() => rm(f.root, { recursive: true, force: true }));
-  const result = run(["kratos"], f);
+  const result = run([NON_HERMES_ALIAS], f);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /no usa Hermes/u);
   await assert.rejects(readFile(f.log, "utf8"), { code: "ENOENT" });
@@ -108,7 +139,7 @@ test("the provisioner pins Git, uv and a root-owned immutable runtime without co
 
 test("a SIGKILL partial release is recovered exactly under lock and a sealed release is idempotent", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "cauce-hermes-recovery-"));
-  const runtimeParent = path.join(root, "iza");
+  const runtimeParent = path.join(root, HERMES_ALIAS);
   const runtime = path.join(runtimeParent, "runtime-fixture");
   t.after(async () => {
     await chmod(runtime, 0o700).catch(() => undefined);
@@ -160,7 +191,7 @@ test("a SIGKILL partial release is recovered exactly under lock and a sealed rel
 test("partial recovery fails closed on exact-path symlinks and ambiguous ownership/mode", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "cauce-hermes-recovery-negative-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const runtimeParent = path.join(root, "iza");
+  const runtimeParent = path.join(root, HERMES_ALIAS);
   const runtime = path.join(runtimeParent, "runtime-fixture");
   const external = path.join(root, "external");
   const sentinel = path.join(external, "sentinel");
@@ -193,9 +224,9 @@ test("a symlink lock is rejected without truncating its target", async (t) => {
   await mkdir(lockDirectory, { mode: 0o700 });
   const target = path.join(f.root, "do-not-touch");
   await writeFile(target, "intacto\n");
-  await symlink(target, path.join(lockDirectory, "iza.lock"));
+  await symlink(target, path.join(lockDirectory, `${HERMES_ALIAS}.lock`));
 
-  const result = run(["iza"], f);
+  const result = run([HERMES_ALIAS], f);
   assert.equal(result.status, 73);
   assert.match(result.stderr, /alias-lock-exec: .*lock/u);
   assert.equal(await readFile(target, "utf8"), "intacto\n");
@@ -206,7 +237,8 @@ test("a live supervisor lock blocks Hermes provisioning for the same alias", asy
   t.after(() => rm(f.root, { recursive: true, force: true }));
   const marker = path.join(f.root, "supervisor-ready");
   const holder = spawn("python3", [
-    lockHelper, "run", "--lock-root", path.join(f.root, "locks"), "--alias", "iza", "--",
+    f.fixtureLockHelper, "run", "--lock-root", path.join(f.root, "locks"),
+    "--alias", HERMES_ALIAS, "--",
     process.execPath, "-e",
     "require('node:fs').writeFileSync(process.argv[1], 'ready\\n'); setInterval(() => {}, 1000)",
     marker,
@@ -222,7 +254,7 @@ test("a live supervisor lock blocks Hermes provisioning for the same alias", asy
     }
   }
   assert.equal(await readFile(marker, "utf8"), "ready\n");
-  const blocked = run(["iza"], f);
+  const blocked = run([HERMES_ALIAS], f);
   assert.equal(blocked.status, 73);
   assert.match(blocked.stderr, /lock is already held/u);
   holder.kill("SIGTERM");

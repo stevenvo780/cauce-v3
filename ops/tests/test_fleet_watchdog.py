@@ -5,6 +5,7 @@ Unit tests for fleet watchdog.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import pathlib
@@ -13,25 +14,52 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+OPS_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = OPS_ROOT / 'scripts'
+WATCHDOG_PATH = SCRIPTS_DIR / 'fleet-watchdog.py'
+CONTAINER_ALIAS_LIB_PATH = SCRIPTS_DIR / 'container_alias_lib.py'
+
+
+def load_watchdog_module():
+    """Load the production module with its sibling dependencies resolved from ops/scripts."""
+    spec = importlib.util.spec_from_file_location('fleet_watchdog_under_test', WATCHDOG_PATH)
+    assert spec is not None and spec.loader is not None, 'watchdog module has an import loader'
+
+    original_path = sys.path.copy()
+    previous_dependency = sys.modules.pop('container_alias_lib', None)
+    try:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        watchdog_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(watchdog_module)
+        dependency = sys.modules.get('container_alias_lib')
+        assert dependency is not None, 'watchdog imports container_alias_lib'
+        assert pathlib.Path(dependency.__file__).resolve() == CONTAINER_ALIAS_LIB_PATH, (
+            'container_alias_lib comes from ops/scripts'
+        )
+        return watchdog_module
+    finally:
+        sys.path[:] = original_path
+        sys.modules.pop('container_alias_lib', None)
+        if previous_dependency is not None:
+            sys.modules['container_alias_lib'] = previous_dependency
+
 
 # Test 1: Script exists and has proper shebang
 def test_script_exists():
-    watchdog_path = pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'fleet-watchdog.py'
-    assert watchdog_path.exists(), 'fleet-watchdog.py exists'
-    content = watchdog_path.read_text()
+    assert WATCHDOG_PATH.exists(), 'fleet-watchdog.py exists'
+    content = WATCHDOG_PATH.read_text()
     assert content.startswith('#!/usr/bin/env python3'), 'has proper shebang'
     print('✓ Script exists and has proper shebang')
 
 
 # Test 2: Missing CAUCE_DATABASE_URL exits with code 2
 def test_missing_database_url():
-    watchdog_path = pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'fleet-watchdog.py'
     env = os.environ.copy()
-    if 'CAUCE_DATABASE_URL' in env:
-        del env['CAUCE_DATABASE_URL']
+    env.pop('CAUCE_DATABASE_URL', None)
+    env.pop('PYTHONPATH', None)
 
     result = subprocess.run(
-        [sys.executable, str(watchdog_path)],
+        [sys.executable, str(WATCHDOG_PATH)],
         capture_output=True,
         text=True,
         env=env,
@@ -44,36 +72,20 @@ def test_missing_database_url():
 # Test 3: Parse psql output correctly
 def test_parse_psql_rows():
     """Test the parse_psql_rows function indirectly through state file."""
-    watchdog_path = pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'fleet-watchdog.py'
+    watchdog_module = load_watchdog_module()
 
-    # Import the module to access parse_psql_rows
-    spec = None
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('fleet_watchdog', watchdog_path)
-        watchdog_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(watchdog_module)
-
-        # Test psql output parsing
-        sample_output = 'alias|epoch\nargos|15\natlas|18'
-        rows = watchdog_module.parse_psql_rows(sample_output)
-        assert len(rows) == 2, 'parses two data rows'
-        assert rows[0]['alias'] == 'argos', 'first row alias correct'
-        assert rows[0]['epoch'] == '15', 'first row epoch correct'
-        print('✓ psql output parsing works correctly')
-    except Exception as error:
-        print(f'⚠️  psql parsing test skipped: {error}', file=sys.stderr)
+    sample_output = 'alias|epoch\nargos|15\natlas|18'
+    rows = watchdog_module.parse_psql_rows(sample_output)
+    assert len(rows) == 2, 'parses two data rows'
+    assert rows[0]['alias'] == 'argos', 'first row alias correct'
+    assert rows[0]['epoch'] == '15', 'first row epoch correct'
+    print('✓ psql output parsing works correctly')
 
 
 # Test 4: State file structure
 def test_state_file():
     """Test state file creation and structure."""
-    watchdog_path = pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'fleet-watchdog.py'
-
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('fleet_watchdog', watchdog_path)
-    watchdog_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(watchdog_module)
+    watchdog_module = load_watchdog_module()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_file = pathlib.Path(tmpdir) / 'watchdog.state'
@@ -105,12 +117,7 @@ def test_state_file():
 # Test 5: Output format validation
 def test_output_formats():
     """Test JSON and text output formats."""
-    watchdog_path = pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'fleet-watchdog.py'
-
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('fleet_watchdog', watchdog_path)
-    watchdog_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(watchdog_module)
+    watchdog_module = load_watchdog_module()
 
     now = datetime.now(timezone.utc)
     checks = {

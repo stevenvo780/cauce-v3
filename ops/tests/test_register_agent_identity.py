@@ -28,15 +28,19 @@ def _write_json(path: pathlib.Path, document: object, mode: int) -> None:
 
 def _write_certificate(path: pathlib.Path, common_name: str) -> str:
     """Issues a throwaway self-signed leaf and returns its expected certificate_sha256."""
-    key_path = path.with_suffix(".key")
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-            "-keyout", str(key_path), "-out", str(path), "-subj", f"/CN={common_name}",
-        ],
-        capture_output=True, text=True, check=True,
-    )
-    key_path.unlink()
+    with tempfile.TemporaryDirectory(prefix="certificate-rotation-", dir=path.parent) as work:
+        work_path = pathlib.Path(work)
+        certificate_path = work_path / path.name
+        key_path = work_path / f"{path.stem}.key"
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                "-keyout", str(key_path), "-out", str(certificate_path), "-subj", f"/CN={common_name}",
+            ],
+            capture_output=True, text=True, check=True,
+        )
+        certificate_path.chmod(0o444)
+        certificate_path.replace(path)
     path.chmod(0o444)
     der = ssl.PEM_cert_to_DER_cert(path.read_text(encoding="ascii"))
     return hashlib.sha256(der).hexdigest()
@@ -171,14 +175,20 @@ class RegisterAgentIdentityTest(unittest.TestCase):
 
     def test_rejects_a_different_certificate_for_an_already_registered_alias(self) -> None:
         self._register()
+        self.assertEqual(stat.S_IMODE(self.mtls_identities.stat().st_mode), 0o400)
         rotated_sha256 = _write_certificate(self.cert_dir / "agent-argos.crt", "agent-argos")
         self.assertNotEqual(rotated_sha256, self.argos_sha256)
+        self.assertEqual(
+            stat.S_IMODE((self.cert_dir / "agent-argos.crt").stat().st_mode),
+            0o444,
+        )
         before = self.mtls_identities.read_bytes()
 
         with self.assertRaises(MODULE.RegisterIdentityError):
             self._register()
 
         self.assertEqual(self.mtls_identities.read_bytes(), before)
+        self.assertEqual(stat.S_IMODE(self.mtls_identities.stat().st_mode), 0o400)
 
     def test_rejects_disabled_alias_and_writes_nothing(self) -> None:
         _write_certificate(self.cert_dir / "agent-retirado.crt", "agent-retirado")

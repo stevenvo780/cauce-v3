@@ -11,20 +11,13 @@ import unittest
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = OPS_ROOT / "scripts"
-SNAPSHOT = pathlib.Path(__file__).resolve().parent / "fixtures" / "fleet_snapshot" / "real-11" / "flota.json"
-EXPECTED_ALIASES = {
-    "argos",
-    "atlas",
-    "hegel",
-    "iza",
-    "janus",
-    "jarvis",
-    "kant",
-    "kratos",
-    "salva",
-    "socrates",
-    "zeus",
+FLEET = OPS_ROOT / "flota.json"
+EXPECTED_BY_HARNESS = {
+    "claude": {"heraclito", "kratos", "salva", "zeus"},
+    "codex": {"atlas", "kant", "socrates", "tales"},
+    "openclaw": {"argos", "gaia", "hegel", "iza", "janus", "jarvis"},
 }
+EXPECTED_ALIASES = set().union(*EXPECTED_BY_HARNESS.values())
 
 
 def run_script(name: str, *arguments: str) -> None:
@@ -38,12 +31,19 @@ def run_script(name: str, *arguments: str) -> None:
 
 
 class FleetPhaseATests(unittest.TestCase):
-    def test_real_eleven_snapshot_reproduces_committed_artifacts_byte_for_byte(self) -> None:
-        snapshot = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    def test_current_fleet_reproduces_committed_artifacts_byte_for_byte(self) -> None:
+        snapshot = json.loads(FLEET.read_text(encoding="utf-8"))
         self.assertEqual(set(snapshot["fleet"]), EXPECTED_ALIASES)
+        for harness, aliases in EXPECTED_BY_HARNESS.items():
+            self.assertEqual(
+                {alias for alias, row in snapshot["fleet"].items() if row["harness"] == harness},
+                aliases,
+                harness,
+            )
         self.assertEqual(
-            {alias for alias, row in snapshot["fleet"].items() if row["harness"] == "claude"},
-            {"argos", "zeus"},
+            {row["harness"] for row in snapshot["fleet"].values()},
+            set(EXPECTED_BY_HARNESS),
+            "un arnés nuevo exige una expectativa explícita",
         )
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -53,14 +53,14 @@ class FleetPhaseATests(unittest.TestCase):
             run_script(
                 "generate-container-aliases.py",
                 "--snapshot",
-                str(SNAPSHOT),
+                str(FLEET),
                 "--output",
                 str(generated_aliases),
             )
             run_script(
                 "generate-manifests.py",
                 "--snapshot",
-                str(SNAPSHOT),
+                str(FLEET),
                 "--output",
                 str(generated_manifests),
             )

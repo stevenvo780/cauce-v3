@@ -29,6 +29,7 @@ import unittest
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
 SUPERVISOR = RAIZ / "scripts" / "container-adapter-supervisor.sh"
 PLANIFICADOR = RAIZ / "scripts" / "separar-config-alias.mjs"
+CONFIGS_GENERADAS = RAIZ / "generated" / "container-systemd" / "rootless" / "configs"
 
 def _fuente_de(nombre: str) -> str:
     """La función tal como está HOY en el supervisor desplegable."""
@@ -177,16 +178,21 @@ class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
         cantidades: dict[str, int] = {}
         for entrada in inventario.values():
             cantidades[entrada["container"]] = cantidades.get(entrada["container"], 0) + 1
+        self.assertEqual(
+            {ruta.name for ruta in CONFIGS_GENERADAS.glob("*.env.example")},
+            {f"{alias}.env.example" for alias in inventario},
+            "cada alias vigente debe tener exactamente un ejemplo rootless y no deben quedar obsoletos",
+        )
         for alias, entrada in inventario.items():
-            ejemplo = RAIZ / "generated" / "container-systemd" / "configs" / f"{alias}.env.example"
+            ejemplo = CONFIGS_GENERADAS / f"{alias}.env.example"
             texto = ejemplo.read_text(encoding="utf-8")
             self.assertIn("CAUCE_SEMBRAR_PERFIL=1", texto, alias)
             multi = cantidades[entrada["container"]] > 1
             if multi and entrada["harness"] in {"claude", "codex"}:
                 self.assertIn("CONFIG_POR_ALIAS=1", texto, alias)
-            elif entrada["harness"] in {"claude", "codex"}:
+            else:
                 self.assertNotIn("CONFIG_POR_ALIAS=1", texto, alias)
-            if multi and entrada["harness"] == "hermes":
+            if entrada["harness"] == "hermes":
                 self.assertIn(
                     f"HERMES_HOME={entrada['home']}/.local/share/cauce-v3/hermes/{alias}", texto, alias,
                 )
@@ -198,8 +204,14 @@ class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
                     texto,
                     alias,
                 )
+            else:
+                self.assertNotIn("HERMES_HOME=", texto, alias)
+                self.assertNotIn("HERMES_SOURCE_COMMIT=", texto, alias)
+                self.assertNotIn("HERMES_PYTHON=", texto, alias)
             if entrada["harness"] == "openclaw":
                 self.assertIn(f"OPENCLAW_WORKSPACE={entrada['workspace']}", texto, alias)
+            else:
+                self.assertNotIn("OPENCLAW_WORKSPACE=", texto, alias)
 
 
 if __name__ == "__main__":

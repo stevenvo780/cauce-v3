@@ -28,9 +28,8 @@ helper_src=$(awk '/^systemctl_user_o_avisa\(\) \{/{p=1} p{print; if (/^}$/) exit
 eval "$helper_src"
 
 WORK=$(mktemp -d)
-FAKE_UID_DIR=""
 # shellcheck disable=SC2329  # invoked indirectly, via the EXIT trap below
-cleanup() { rm -rf "$WORK"; [ -n "$FAKE_UID_DIR" ] && rm -rf "$FAKE_UID_DIR"; }
+cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
 BINDIR="$WORK/bin"
@@ -59,16 +58,20 @@ assert_contains "$err_new" "systemctl --user start bogus.service" "fixed: failur
 assert_contains "$err_new" "Failed to connect to bus" "fixed: failure message carries the real systemctl error text"
 
 # --- 3) root cause: XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS derived from /run/user/$(id -u) --
-FAKE_UID=4294900037
-FAKE_UID_DIR="/run/user/$FAKE_UID"
-mkdir -p "$FAKE_UID_DIR"
+RUNTIME_DIR="$WORK/runtime"
+mkdir -p "$RUNTIME_DIR"
+FAKE_UID_SUFFIX="../../${RUNTIME_DIR#/}"
+DERIVED_RUNTIME_DIR="/run/user/$FAKE_UID_SUFFIX"
 python3 -c "import socket,sys
 s=socket.socket(socket.AF_UNIX)
-s.bind(sys.argv[1])" "$FAKE_UID_DIR/bus"
+s.bind(sys.argv[1])" "$RUNTIME_DIR/bus"
+
+resolved_runtime=$(readlink -f "$DERIVED_RUNTIME_DIR")
+assert_eq "$resolved_runtime" "$RUNTIME_DIR" "fixture: derived runtime path resolves inside the temporary directory"
 
 cat > "$BINDIR/id" <<EOF
 #!/usr/bin/env bash
-[ "\$1" = -u ] && { echo $FAKE_UID; exit 0; }
+[ "\$1" = -u ] && { echo '$FAKE_UID_SUFFIX'; exit 0; }
 exec /usr/bin/id "\$@"
 EOF
 chmod +x "$BINDIR/id"
@@ -86,8 +89,8 @@ systemctl_user_o_avisa start real.service"
 rc_derive=$?
 seen=$(cat "$WORK/env-seen.log" 2>/dev/null)
 assert_eq "$rc_derive" "0" "derivation: helper succeeds once env is derived and systemctl works"
-assert_contains "$seen" "XDG_RUNTIME_DIR=$FAKE_UID_DIR" "derivation: XDG_RUNTIME_DIR derived from /run/user/\$(id -u)"
-assert_contains "$seen" "DBUS_SESSION_BUS_ADDRESS=unix:path=$FAKE_UID_DIR/bus" "derivation: DBUS_SESSION_BUS_ADDRESS derived from the bus socket"
+assert_contains "$seen" "XDG_RUNTIME_DIR=$DERIVED_RUNTIME_DIR" "derivation: XDG_RUNTIME_DIR comes from /run/user/\$(id -u) without writing host runtime state"
+assert_contains "$seen" "DBUS_SESSION_BUS_ADDRESS=unix:path=$DERIVED_RUNTIME_DIR/bus" "derivation: DBUS_SESSION_BUS_ADDRESS comes from the derived bus socket"
 
 # --- 4) cmd_on/cmd_off actually call the helper instead of the old swallow-everything form ----
 if grep -qF 'systemctl_user_o_avisa start "$u"' "$CLI"; then
