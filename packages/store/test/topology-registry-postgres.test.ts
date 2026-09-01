@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { preparePostgresSuite } from './postgres-suite.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -17,6 +18,7 @@ interface TenantView {
 }
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
@@ -37,8 +39,9 @@ async function seedMembership(alias: string, enabled: boolean): Promise<void> {
   );
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
 }, 180_000);
@@ -54,6 +57,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });
