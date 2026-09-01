@@ -4,6 +4,7 @@ import { useApi } from '../../api/context';
 import type {
   DlqDisposition, DlqItem, DlqPage, DlqTarget, ResolveDlqWithoutReplayResult,
 } from '../../api/types';
+import { isLowercaseSha256, isUuidV1ToV8 } from '../../api/contract-guards';
 import { useResource } from '../../api/use-resource';
 import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown } from '../../components/ui';
 import { compactId } from '../../lib';
@@ -21,8 +22,6 @@ const RESOLVABLE: ReadonlySet<DlqDisposition> = new Set([
   'ambiguous', 'safe_retry', 'missing_final', 'auth',
 ]);
 const DUPLICATE_RISK: ReadonlySet<DlqDisposition> = new Set(['ambiguous', 'missing_final']);
-const SHA256 = /^[a-f0-9]{64}$/u;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const CURSOR = /^(?:[a-f0-9]{2}){1,512}$/u;
 const NO_ADDITIONAL_ITEMS: DlqItem[] = [];
 
@@ -49,7 +48,7 @@ function pageCursor(value: unknown): string | undefined {
 
 function incidentKey(item: DlqItem): string | undefined {
   const itemTarget = target(item.target);
-  return itemTarget !== undefined && typeof item.id === 'string' && UUID.test(item.id)
+  return itemTarget !== undefined && isUuidV1ToV8(item.id)
     ? `${itemTarget}:${item.id}`
     : undefined;
 }
@@ -61,10 +60,8 @@ function canResolve(item: DlqItem): boolean {
     && kind !== undefined
     && RESOLVABLE.has(kind)
     && target(item.target) !== undefined
-    && typeof item.id === 'string'
-    && UUID.test(item.id)
-    && typeof item.evidenceSha256 === 'string'
-    && SHA256.test(item.evidenceSha256);
+    && isUuidV1ToV8(item.id)
+    && isLowercaseSha256(item.evidenceSha256);
 }
 
 function exactResolutionReceipt(
@@ -79,8 +76,7 @@ function exactResolutionReceipt(
     && result.phase === 'resolved'
     && countMatchesReceipt
     && result.evidenceSha256 === draft.item.evidenceSha256
-    && typeof result.reasonSha256 === 'string'
-    && SHA256.test(result.reasonSha256)
+    && isLowercaseSha256(result.reasonSha256)
     && result.possibleDuplicateAcknowledged === (duplicateRequired && draft.possibleDuplicate)
     && result.possibleNoDeliveryAcknowledged === draft.possibleNoDelivery;
 }

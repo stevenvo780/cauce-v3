@@ -92,13 +92,13 @@ describe('el aviso de cada entrega es suyo', () => {
     await confirmar(user, screen.getByRole('button', { name: new RegExp(`cancelar delivery ${VIVA}`, 'i') }));
 
     expect(await screen.findByText(/Cancelada 10000000…00cccc/)).toBeInTheDocument();
-    // The uncertain one is still on screen, naming its own delivery and keeping the verdict of its
-    // reread: that verdict is what the operator needs before deciding whether to replay again.
+    // The uncertain one is still on screen and remains locked: a response-shaped `{}` is not
+    // evidence that a replay clone exists.
     expect(screen.getByText(/Resultado incierto del reinyectado de 10000000…00aaaa/))
-      .toHaveTextContent(/La cola ya se releyó/);
+      .toHaveTextContent(/snapshot no demuestra el efecto/i);
   }, 20_000);
 
-  it('reintentar la MISMA entrega reemplaza su aviso en vez de acumular dos', async () => {
+  it('🔴 una relectura inconcluyente NO habilita re-POST sobre la misma entrega', async () => {
     let intentos = 0;
     server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', ({ params }) => {
       intentos += 1;
@@ -119,10 +119,12 @@ describe('el aviso de cada entrega es suyo', () => {
     await confirmar(user, boton);
     expect(await screen.findByText(/Resultado incierto del reinyectado de 10000000…00aaaa/)).toBeInTheDocument();
 
-    // A verified reread released the row: the operator retries and the row keeps ONE reading.
-    await confirmar(user, boton);
-    expect(await screen.findByText(/Replay encolado para 10000000…00aaaa/)).toBeInTheDocument();
-    expect(screen.queryByText(/Resultado incierto/)).not.toBeInTheDocument();
+    await screen.findByText(/snapshot no demuestra el efecto/i);
+    expect(boton).toBeDisabled();
+    await user.click(boton);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(intentos).toBe(1);
+    expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
     expect(avisos()).toHaveLength(1);
   }, 20_000);
 });

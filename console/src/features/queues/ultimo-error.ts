@@ -1,4 +1,5 @@
 import type { DeliveryState } from '../../api/types';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 
 /**
  * **AMBER "UNKNOWN" IN THE ERROR COLUMN OF DELIVERIES THAT SUCCEEDED.**
@@ -24,11 +25,6 @@ import type { DeliveryState } from '../../api/types';
  *   would be inventing the reassuring half.
  */
 
-/** States in which "no error" is an AFFIRMATION by the server, not a gap. */
-const ESTADOS_SIN_ERROR: ReadonlySet<DeliveryState> = new Set<DeliveryState>([
-  'done', 'pending', 'leased', 'accepted', 'started',
-]);
-
 type LecturaDeUltimoError =
   /** The server said what failed. */
   | { clase: 'texto'; texto: string }
@@ -42,6 +38,6 @@ export function leerUltimoError(
   ultimoError: string | null | undefined,
 ): LecturaDeUltimoError {
   if (typeof ultimoError === 'string' && ultimoError.trim()) return { clase: 'texto', texto: ultimoError };
-  if (estado !== undefined && ESTADOS_SIN_ERROR.has(estado)) return { clase: 'sin-error' };
+  if (deliveryPolicy(estado).errorExpectation === 'absent') return { clase: 'sin-error' };
   return { clase: 'desconocido' };
 }
