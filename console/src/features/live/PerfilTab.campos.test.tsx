@@ -18,7 +18,15 @@ import { RUTA_PERFIL, ackAplicado, perfilAplicado } from './perfil-fixtures';
 
 function VistaDePerfil() {
   const [borrador, setBorrador] = useState<Partial<AgentPerfilCampos>>();
-  return <PerfilTab tenantId="Steven" alias="kant" borrador={borrador} onBorrador={setBorrador} />;
+  return (
+    <PerfilTab
+      tenantId="Steven"
+      alias="kant"
+      borrador={borrador}
+      onBorrador={setBorrador}
+      configWritePermission="allowed"
+    />
+  );
 }
 
 function montarPerfil() {

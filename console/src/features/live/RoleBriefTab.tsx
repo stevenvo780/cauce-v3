@@ -1,21 +1,10 @@
 import { ArrowRight } from 'lucide-react';
-import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { useResource } from '../../api/use-resource';
 import { EmptyState } from '../../components/ui';
-import { permissionState } from '../../lib';
+import type { PermissionState } from '../../lib';
 import { HistorialRol } from './HistorialRol';
+import { selectAgentRegistryEntry } from './agent-registry-entry';
 import { ROLE_BRIEF_MAX, contarRoleBrief, tonoRoleBrief } from './role-brief';
-
-/** The legacy registry row for this alias, or `undefined` if it is not published. */
-function filaDelAgente(
-  agents: Record<string, unknown>[] | null | undefined,
-  tenantId: string,
-  alias: string,
-): Record<string, unknown> | undefined {
-  if (!Array.isArray(agents)) return undefined;
-  return agents.find((row) => row.tenant_id === tenantId && row.alias === alias);
-}
 
 export interface RoleBriefTabProps {
   tenantId: string;
@@ -34,6 +23,7 @@ export interface RoleBriefTabProps {
   onEditarEnPerfil: () => void;
   /** Carries a historical revision into the canonical draft `role_summary` and focuses it. */
   onRestaurarEnPerfil: (texto: string) => void;
+  configWritePermission: PermissionState;
 }
 
 /**
@@ -47,14 +37,13 @@ export interface RoleBriefTabProps {
  */
 export function RoleBriefTab({
   tenantId, alias, configuration, onEditarEnPerfil, onRestaurarEnPerfil,
+  configWritePermission,
 }: RoleBriefTabProps) {
-  const api = useApi();
-  const access = useResource('console-access', () => api.getConsoleAccess());
-  const estadoPermiso = permissionState(access.data, 'config.write');
-  const soloLectura = estadoPermiso !== 'allowed';
+  const estadoPermiso = configWritePermission;
+  const soloLectura = configWritePermission !== 'allowed';
 
-  const fila = filaDelAgente(configuration.data?.agents, tenantId, alias);
-  const texto = typeof fila?.role_brief === 'string' ? fila.role_brief : '';
+  const registro = selectAgentRegistryEntry(configuration.data, tenantId, alias);
+  const texto = registro.state === 'found' ? registro.roleBrief : '';
   const largo = contarRoleBrief(texto);
   const tono = tonoRoleBrief(largo);
 
@@ -72,11 +61,11 @@ export function RoleBriefTab({
         <EmptyState>
           No se pudo leer la proyección del rol; no se interpreta como un rol vacío: {configuration.error.message}
         </EmptyState>
-      ) : !Array.isArray(configuration.data?.agents) ? (
+      ) : registro.state === 'registry-unavailable' ? (
         <EmptyState>
           Este gateway no publica el registro de agentes, así que no hay una proyección del rol que mostrar.
         </EmptyState>
-      ) : !fila ? (
+      ) : registro.state === 'agent-missing' ? (
         <EmptyState>
           {alias} no está en el registro de agentes de {tenantId}. Un alias sin fila no tiene una
           proyección declarada que mostrar.

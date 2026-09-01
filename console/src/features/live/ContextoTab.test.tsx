@@ -12,6 +12,33 @@ beforeEach(() => {
   server.use(http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())));
 });
 
+it('Contexto comparte una sola lectura de config.write entre perfil, manual y restauración', async () => {
+  const user = userEvent.setup();
+  let accessReads = 0;
+  server.use(http.get('*/v3/console/access', () => {
+    accessReads += 1;
+    return HttpResponse.json({
+      subject: 'Steven:kant',
+      roles: ['operator'],
+      permissions: ['config.write'],
+    });
+  }));
+
+  renderWithApi(<LiveFleetPage />);
+  await screen.findByLabelText('Veredicto de la flota');
+  expect(accessReads).toBe(0);
+
+  await user.click(await screen.findByRole('row', { name: /kant/i }));
+  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
+  await within(cajon).findByRole('heading', { name: 'Campos canónicos' });
+  await waitFor(() => { expect(accessReads).toBe(1); });
+
+  await user.click(within(cajon).getByRole('button', { name: /abrir directiva completa/i }));
+  await screen.findByRole('dialog', { name: /directiva de kant/i });
+  expect(accessReads).toBe(1);
+});
+
 it('el cajón tiene un solo lugar de contexto y Ficheros nunca ofrece una mutación', async () => {
   const user = userEvent.setup();
   let puts = 0;
