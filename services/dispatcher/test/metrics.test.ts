@@ -1,28 +1,37 @@
 import { CauceRepository, type DatabasePool } from '@cauce/store';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase
+  dockerTestRequirement, resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import { DispatcherMetrics } from '../src/metrics.js';
 
-let database: TestDatabase;
+const postgresRequirement = dockerTestRequirement(
+  'PostgreSQL dispatcher queue depth, queue age and invalid-read metrics contracts',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
+
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
-beforeAll(async () => {
-  database = await startTestDatabase();
-  pool = database.pool;
-  repository = new CauceRepository(pool);
-}, 180_000);
-
 afterAll(async () => {
-  await pool.end();
-  await database.container.stop();
+  if (database === undefined) return;
+  try {
+    await database.pool.end();
+  } finally {
+    await database.container.stop();
+  }
 });
 
-beforeEach(async () => {
+beforeEach(async ({ skip }) => {
+  if (testDatabaseNeedsDocker) await postgresRequirement.skipIfUnavailable(skip);
+  if (database === undefined) {
+    database = await startTestDatabase();
+    pool = database.pool;
+    repository = new CauceRepository(pool);
+  }
   await resetTestDatabase(pool);
-});
+}, 180_000);
 
 function metricValue(exposition: string, sample: string): number {
   const line = exposition.split('\n').find((candidate) => candidate.startsWith(`${sample} `));

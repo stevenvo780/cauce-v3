@@ -34,7 +34,7 @@ inhibit_rules:
   - source_matchers:
       - alertname=~"CauceDispatcherDown|CauceDispatcherDatabaseMetricsMissing"
     target_matchers:
-      - alertname=~"CauceDeliveryDlqGrowing|CauceJobDlqGrowing|CauceDeliveryRetryBacklog|CauceInteractiveDeliveryStalled|CauceBatchDeliveryStalled|CauceJobLaneStalled|CauceUnknownJobKinds|CauceConsumerLeaseChurn|CauceOriginRelayFailed|CauceOriginRelayStalled|CauceOriginRelayDead"
+      - alertname=~"CauceDeliveryDlqGrowing|CauceJobDlqGrowing|CauceDeliveryRetryBacklog|CauceInteractiveDeliveryStalled|CauceBatchDeliveryStalled|CauceJobLaneStalled|CauceUnknownJobKinds|CauceConsumerLeaseChurn|CauceOriginRelayFailed|CauceOriginRelayStalled"
   # A missing gateway metrics listener already says the process is unobservable. Suppress the
   # derivative stale signal until the target returns; fenced/error counters remain visible again
   # as soon as Prometheus can scrape them.

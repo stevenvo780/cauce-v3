@@ -161,26 +161,6 @@ groups:
 
   - name: cauce-v3-leases-and-relay
     rules:
-      - alert: CauceOriginRelayTargetDown
-        expr: absent(up{job="cauce-origin-relay"}) or up{job="cauce-origin-relay"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "A discovered origin-relay profile is not scrapeable"
-      - alert: CauceOriginRelayLoopStale
-        expr: cauce_origin_relay_loop_stale == 1
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Origin relay process exists but its claim loop is not progressing"
-      - alert: CauceOriginRelayFencedAck
-        expr: increase(cauce_origin_relay_results_total{result="fenced"}[10m]) > 0
-        labels:
-          severity: critical
-        annotations:
-          summary: "Origin relay remote result could not be durably ACKed"
       - alert: CauceConsumerLeaseChurn
         expr: changes(cauce_dispatcher_consumer_leases_active[10m]) > 10
         for: 5m
@@ -202,13 +182,6 @@ groups:
           severity: critical
         annotations:
           summary: "Origin relay egress is stalled in lane {{ $labels.lane }}"
-      - alert: CauceOriginRelayDead
-        expr: increase(cauce_origin_relay_results_total{result="dead"}[10m]) > 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Origin relay events reached terminal DLQ"
 
   - name: cauce-v3-telegram-progress
     rules:
