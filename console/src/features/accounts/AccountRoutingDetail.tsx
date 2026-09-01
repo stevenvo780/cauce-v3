@@ -1,27 +1,24 @@
 import { AlertCircle } from 'lucide-react';
-import type { ConfigurationSnapshot, QuotaSnapshot } from '../../api/types';
+import type { QuotaSnapshot } from '../../api/types';
 import './licenses.css';
 import { Badge } from '../../components/ui';
-import {
-  accountAssignments, accountConsumption, extractAgents, extractBindings, extractCeiling,
-} from './licenses';
+import { accountConsumption } from './licenses';
+import type { AccountRouteProjection } from './registry';
 
 /**
  * Expandable routing and consumption card for an account:
- * shows plan, inactivity reason, assigned agents and routing ceiling.
+ * shows plan, inactivity reason, fallback bindings and routing ceiling.
  * The consumption reason is only shown when its scope is `account`.
  */
-export function AccountRoutingDetail({ accountId, quotas, config }: {
+export function AccountRoutingDetail({ accountId, quotas, route }: {
   accountId: string;
   quotas: QuotaSnapshot | undefined;
-  config: ConfigurationSnapshot | undefined;
+  route: AccountRouteProjection | undefined;
 }) {
-  const agents = extractAgents(config);
-  const bindings = extractBindings(config);
-  const ceiling = extractCeiling(config);
   const consumption = accountConsumption(accountId, quotas, quotas?.thresholds);
-  const assignments = accountAssignments(accountId, bindings, agents);
-  const accountCeiling = ceiling.find((entry) => entry.account_id === accountId);
+  const entries = route?.entries ?? [];
+  const fallbacks = entries.filter((entry) => entry.cell.state === 'bound-enabled'
+    || entry.cell.state === 'bound-disabled');
 
   return (
     <div className="account-body">
@@ -42,39 +39,39 @@ export function AccountRoutingDetail({ accountId, quotas, config }: {
       )}
 
       <div className="account-section">
-        <h4>Asignada a</h4>
-        {assignments.length === 0
-          ? <span className="unknown">Ningún alias la tiene asignada.</span>
+        <h4>Fallback para</h4>
+        {fallbacks.length === 0
+          ? <span className="unknown">Ningún alias la tiene configurada como fallback.</span>
           : <ul className="assignments-list">
-            {assignments.map((assignment, index) => (
-              <li key={`${assignment.tenant_id ?? 'unknown'}/${assignment.alias ?? 'unknown'}-${String(index)}`} className={`assignment-item ${assignment.isPrimary ? 'primary' : 'fallback'} ${!assignment.enabled ? 'disabled' : ''}`}>
+            {fallbacks.map(({ agent, cell }) => (
+              <li key={`${agent.tenantId}/${agent.alias}`} className={`assignment-item ${cell.state === 'bound-disabled' ? 'disabled' : ''}`}>
                 <div className="assignment-header">
-                  {/* Qualified by tenant: the same alias exists under more than one client, and the bare
-                      alias did not say which of them has the account. */}
-                  <span className="agent-alias mono">
-                    {assignment.tenant_id ? `${assignment.tenant_id}/${assignment.alias ?? '?'}` : assignment.alias ?? '?'}
-                  </span>
-                  <span className="agent-display">{assignment.display_name ?? '—'}</span>
-                  {assignment.isPrimary && <Badge tone="online">PRIMARIA</Badge>}
-                  {!assignment.enabled && <Badge tone="offline">INACTIVO</Badge>}
+                  <span className="agent-alias mono">{agent.tenantId}/{agent.alias}</span>
+                  <span className="agent-display">{agent.displayName ?? '—'}</span>
+                  {cell.state === 'bound-enabled'
+                    ? <Badge tone="online">FALLBACK #{String(cell.rank ?? '?')}</Badge>
+                    : <Badge tone="offline">FALLBACK INACTIVO</Badge>}
                 </div>
                 <div className="assignment-container">
-                  Contenedor: <span className="mono">{assignment.container_name ?? '?'}</span>
+                  Contenedor: <span className="mono">{agent.containerName ?? '?'}</span>
+                  {' · '}prioridad <span className="mono">{cell.priority ?? 'UNKNOWN'}</span>
                 </div>
               </li>
             ))}
           </ul>}
       </div>
 
-      {accountCeiling && (
+      {entries.length > 0 && (
         <div className="account-section">
           <h4>Techo de ruteo</h4>
-          <div className="ceiling-info">
-            Alias <span className="mono">{accountCeiling.alias}</span> está limitado a esta cuenta.
-            {accountCeiling.account_payer_tenant && accountCeiling.account_payer_tenant !== accountCeiling.created_by_tenant && (
-              <div className="ceiling-note">Creado por tenant <span className="mono">{accountCeiling.created_by_tenant}</span></div>
-            )}
-          </div>
+          <ul className="config-records">
+            {entries.map(({ agent, cell, ceiling }) => <li key={`${agent.tenantId}/${agent.alias}`}>
+              <span className="mono">{agent.tenantId}/{agent.alias}</span> puede alcanzar esta cuenta
+              {cell.state === 'ceiling-only' ? ' · sin binding de fallback' : ''}
+              {cell.borrowed ? ' · prestada' : ''}
+              {ceiling.createdByTenant ? ` · otorgado por ${ceiling.createdByTenant}` : ''}
+            </li>)}
+          </ul>
         </div>
       )}
     </div>

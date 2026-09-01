@@ -2,8 +2,9 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { DeliveryTable, type DeliverySnapshotRefresh } from './DeliveryTable';
+import { ApiProvider } from '../../api/context';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { renderWithApi, testApi } from '../../test/render';
 import type { QueueItem } from '../../api/types';
 
 /**
@@ -96,8 +97,13 @@ it('dice que el outcome es incierto y relee cuando el replay no obtiene recibo',
   />);
 
   await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') }));
-  expect(await screen.findByText(/Resultado incierto del reinyectado/)).toHaveTextContent(/ya fue reencolada/i);
-  expect(screen.getByRole('status')).toHaveTextContent(/cola ya se releyó/i);
+  const replayButton = screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') });
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent(/snapshot no demuestra el efecto/i);
+  });
+  expect(screen.getByRole('status')).toHaveTextContent(/ya fue reencolada/i);
+  expect(replayButton).toBeDisabled();
+  await user.click(replayButton);
   expect(recargas).toBe(1);
 });
 
@@ -119,6 +125,7 @@ it('no afirma replay aplicado ante un 2xx sin recibo durable exacto', async () =
   expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
   // The remote effect may have happened: re-read the truth even if the receipt was ambiguous.
   expect(recargas).toBe(1);
+  expect(screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') })).toBeDisabled();
 });
 
 it('keeps an uncertain replay locked until its deferred server reread is verified', async () => {
@@ -148,9 +155,82 @@ it('keeps an uncertain replay locked until its deferred server reread is verifie
   expect(replayPosts).toBe(1);
 
   finishRefresh({ data: {} });
-  await waitFor(() => { expect(replayButton).toBeEnabled(); });
-  expect(screen.getByRole('status')).toHaveTextContent(/cola ya se releyó/i);
+  await waitFor(() => { expect(screen.getByRole('status')).toHaveTextContent(/snapshot no demuestra el efecto/i); });
+  expect(replayButton).toBeDisabled();
+  await user.click(replayButton);
   expect(replayPosts).toBe(1);
+});
+
+it('desbloquea un replay ambiguo sólo cuando la relectura trae su clon con lineage', async () => {
+  let replayPosts = 0;
+  const replayedId = '20000000-0000-4000-8000-000000000010';
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', () => {
+    replayPosts += 1;
+    return HttpResponse.json({
+      delivery_id: replayedId,
+      replayed_from_delivery_id: DEAD_ID,
+      state: 'pending',
+      replayed: true,
+      extra: 'receipt is not exact',
+    }, { status: 202 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<DeliveryTable
+    rows={[DEAD]}
+    canReplay
+    canCancel
+    onChanged={async () => ({ data: { items: [{
+      delivery_id: replayedId,
+      replayed_from_delivery_id: DEAD_ID,
+      state: 'accepted',
+    }] } })}
+  />);
+
+  const replayButton = screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') });
+  await confirmar(user, replayButton);
+  await waitFor(() => { expect(screen.getByRole('status')).toHaveTextContent(/demostró el efecto durable/i); });
+  expect(replayButton).toBeEnabled();
+  expect(replayPosts).toBe(1);
+});
+
+it('un snapshot posterior sólo libera el lock cuando agrega evidencia autoritativa', async () => {
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/replay', () => HttpResponse.json(
+    { error: 'conflict', message: 'resultado perdido' }, { status: 409 },
+  )));
+  const user = userEvent.setup();
+  const props = {
+    canReplay: true,
+    canCancel: true,
+    onChanged: async () => ({ data: {} }),
+  };
+  const view = renderWithApi(<DeliveryTable
+    {...props}
+    rows={[DEAD]}
+    snapshotVersion="snapshot-1"
+  />);
+  const replayButton = screen.getByRole('button', { name: new RegExp(`replay delivery ${DEAD_ID}`, 'i') });
+  await confirmar(user, replayButton);
+  await waitFor(() => { expect(replayButton).toBeDisabled(); });
+
+  view.rerender(<ApiProvider api={testApi}><DeliveryTable
+    {...props}
+    rows={[DEAD]}
+    snapshotVersion="snapshot-2"
+  /></ApiProvider>);
+  expect(replayButton).toBeDisabled();
+
+  const clone: QueueItem & { replayed_from_delivery_id: string } = {
+    delivery_id: '20000000-0000-4000-8000-000000000011',
+    replayed_from_delivery_id: DEAD_ID,
+    state: 'started',
+  };
+  view.rerender(<ApiProvider api={testApi}><DeliveryTable
+    {...props}
+    rows={[DEAD, clone]}
+    snapshotVersion="snapshot-3"
+  /></ApiProvider>);
+  await waitFor(() => { expect(replayButton).toBeEnabled(); });
+  expect(screen.getByRole('status')).toHaveTextContent(/relectura posterior demostró el replay/i);
 });
 
 it('trata una cancelación 2xx truncada como incierta y relee sin afirmar que canceló', async () => {
@@ -170,6 +250,29 @@ it('trata una cancelación 2xx truncada como incierta y relee sin afirmar que ca
   expect(await screen.findByText(/Resultado incierto de la cancelación/)).toHaveTextContent(/recibo durable exacto/i);
   expect(screen.queryByText(/^Cancelada /i)).not.toBeInTheDocument();
   expect(recargas).toBe(1);
+  expect(screen.getByRole('button', { name: new RegExp(`cancelar delivery ${LIVE_ID}`, 'i') })).toBeDisabled();
+});
+
+it('desbloquea una cancelación ambigua sólo con dead y el motivo durable de operador', async () => {
+  server.use(http.post('http://localhost/v3/console/deliveries/:deliveryId/cancel', () => HttpResponse.json(
+    { delivery_id: LIVE_ID, state: 'dead', cancelled: true }, { status: 202 },
+  )));
+  const user = userEvent.setup();
+  renderWithApi(<DeliveryTable
+    rows={[LIVE]}
+    canReplay
+    canCancel
+    onChanged={async () => ({ data: { items: [{
+      delivery_id: LIVE_ID,
+      state: 'dead',
+      last_error: 'Cancelled by operator Steven:kant',
+    }] } })}
+  />);
+
+  const cancelButton = screen.getByRole('button', { name: new RegExp(`cancelar delivery ${LIVE_ID}`, 'i') });
+  await confirmar(user, cancelButton);
+  await waitFor(() => { expect(screen.getByRole('status')).toHaveTextContent(/demostró el efecto durable/i); });
+  expect(cancelButton).toBeEnabled();
 });
 
 it('con cero filas dice el vacío que le pasa quien la monta, no uno genérico', async () => {

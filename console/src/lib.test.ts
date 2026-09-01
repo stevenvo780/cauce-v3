@@ -1,10 +1,9 @@
-import { permissionState, plural, safeDeliveryState, safeJobLane, safeOriginRelayState } from './lib';
+import { permissionState, plural, safeJobLane, safeOriginRelayState } from './lib';
 
 it('fails closed for unknown RBAC and runtime states', () => {
   expect(permissionState(undefined, 'job.create')).toBe('unknown');
   expect(permissionState({ permissions: [] }, 'job.create')).toBe('denied');
   expect(permissionState({ permissions: ['job.create'] }, 'job.create')).toBe('allowed');
-  expect(safeDeliveryState('invented')).toBeUndefined();
   // `safeJobState` was retired together with the jobs view; `safeJobLane` was NOT, because the
   // MESSAGE lane (not the job lane) is still read by Messages, Queues, Actividad, and the fleet drawer.
   expect(safeJobLane('express')).toBeUndefined();

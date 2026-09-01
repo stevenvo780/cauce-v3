@@ -4,7 +4,7 @@ import { configCollections } from './collections';
 const LARGO_DESCRIPCION = 90;
 const vacia = (key: string) => ({ key, title: key, rows: [] });
 
-it('reparte las doce colecciones conocidas por área, sin perder ninguna', () => {
+it('reparte las colecciones propias de Ajustes por área, sin perder ninguna', () => {
   const colecciones = configCollections({ revision: 1, tenants: [], rooms: [] });
   const repartidas = agruparPorArea(colecciones).flatMap((entrada) => entrada.colecciones.map((c) => c.key));
 
@@ -93,8 +93,10 @@ it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que t
   expect(permisos?.detalle).toMatch(/todo empieza denegado/i);
 });
 
-it('«Agentes y cuentas» ya no promete decir con qué programa corre cada bot', () => {
+it('«Agentes» ya no promete cuentas ni decir con qué programa corre cada bot', () => {
   const agentes = CONFIG_AREAS.find((area) => area.id === 'agentes');
+  expect(agentes?.label).toBe('Agentes');
+  expect(agentes?.descripcion).not.toMatch(/cuentas/i);
   expect(agentes?.descripcion).not.toMatch(/con qué programa corre/i);
   // And it says it where it is read in full, not kept quiet: the folded detail names where it comes from.
   expect(agentes?.detalle).toMatch(/binario en ejecución/i);

@@ -9,10 +9,11 @@
  * `no-desplegado`; upstream failures and transport errors mean `sin-comprobar` because they do
  * not reveal whether the relay exists. A check in flight remains `checking`.
  */
-import { useEffect, useState } from 'react';
-import { ApiError, type CauceApi } from '../../api/client';
+import { createContext, createElement, useContext, useEffect, type ReactNode } from 'react';
+import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { TerminalCapability } from '../../api/types';
+import { useResource, type Resource } from '../../api/use-resource';
 
 type TerminalRelayStatus = 'checking' | 'available' | 'unavailable';
 
@@ -123,40 +124,44 @@ export function deriveTerminalRelayState(
   return { status: 'available', reason: trimmedReason ?? 'Relay de terminales disponible.' };
 }
 
-/**
- * Standalone poll of `getTerminalCapability()`. Meant for callers that need to know relay
- * availability without mounting the Terminal page itself — e.g. the sidebar entry, which has
- * to reflect this *before* the operator ever navigates in. `TerminalPage` does not use this: it
- * already polls the same endpoint via `useResource` and feeds that result through
- * `deriveTerminalRelayState` instead, so the two never issue duplicate requests.
- */
-export function useTerminalRelayStatus(pollMs = 60_000): TerminalRelayState {
-  const api = useApi();
-  return usePolledRelayState(api, pollMs);
-}
+const TerminalCapabilityContext = createContext<Resource<TerminalCapability> | undefined>(undefined);
 
-function usePolledRelayState(api: CauceApi, pollMs: number): TerminalRelayState {
-  const [state, setState] = useState<TerminalRelayState>(CHECKING_RELAY_STATE);
+/** Owns the sole capability read used by both navigation and the Terminal page. */
+export function TerminalRelayProvider({ children, pollMs = 30_000 }: {
+  children?: ReactNode;
+  pollMs?: number;
+}) {
+  const api = useApi();
+  const capability = useResource('terminal-relay-capability', () => api.getTerminalCapability());
+  const capabilityLoading = capability.loading;
+  const reloadCapability = capability.reload;
 
   useEffect(() => {
-    let cancelled = false;
+    if (capabilityLoading) return;
+    const interval = window.setInterval(() => { void reloadCapability(); }, pollMs);
+    return () => { window.clearInterval(interval); };
+  }, [capabilityLoading, pollMs, reloadCapability]);
 
-    async function probe() {
-      try {
-        const capability = await api.getTerminalCapability();
-        if (!cancelled) setState(deriveTerminalRelayState(capability, undefined));
-      } catch (error) {
-        if (!cancelled) setState(deriveTerminalRelayState(undefined, error));
-      }
-    }
+  return createElement(TerminalCapabilityContext.Provider, { value: capability }, children);
+}
 
-    void probe();
-    const interval = window.setInterval(() => void probe(), pollMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [api, pollMs]);
+/** Adds a local owner only for isolated renders; the real app already has the provider at its shell. */
+export function TerminalRelayBoundary({ children, pollMs }: { children: ReactNode; pollMs?: number }) {
+  const shared = useContext(TerminalCapabilityContext);
+  return shared
+    ? children
+    : createElement(TerminalRelayProvider, { pollMs }, children);
+}
 
-  return state;
+export function useTerminalCapability(): Resource<TerminalCapability> {
+  const capability = useContext(TerminalCapabilityContext);
+  if (!capability) {
+    throw new Error('Terminal capability must be read inside TerminalRelayProvider.');
+  }
+  return capability;
+}
+
+export function useTerminalRelayStatus(): TerminalRelayState {
+  const capability = useTerminalCapability();
+  return deriveTerminalRelayState(capability.data, capability.error);
 }

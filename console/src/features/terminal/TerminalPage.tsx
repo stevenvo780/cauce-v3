@@ -1,15 +1,28 @@
 import { Activity, ChevronDown, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { Badge, PageHeader } from '../../components/ui';
+import { Badge, EmptyState, PageHeader } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { listTerminalTargets } from './api';
 import { TEXTO_DOCTRINA } from './doctrina';
-import { adapterBreakdown, adapterBreakdownText, buildFleetAgents, countLiveTuiTargets, countOnlinePtyTargets } from './fleet';
+import {
+  adapterBreakdown,
+  adapterBreakdownText,
+  buildFleetAgents,
+  countLiveTuiTargets,
+  countOnlinePtyTargets,
+  fleetAgentId,
+} from './fleet';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { ultimateTerminalGate } from './plugin';
-import { deriveTerminalRelayState, TERMINAL_RELAY_SIN_COMPROBAR_TITULO } from './relay-status';
+import {
+  deriveTerminalRelayState,
+  TerminalRelayBoundary,
+  TERMINAL_RELAY_SIN_COMPROBAR_TITULO,
+  useTerminalCapability,
+} from './relay-status';
 import './terminal-panel.css';
 
 function useRefreshInterval(reload: () => void, milliseconds: number, loading: boolean) {
@@ -20,7 +33,20 @@ function useRefreshInterval(reload: () => void, milliseconds: number, loading: b
   }, [loading, milliseconds, reload]);
 }
 
-export function TerminalPage() {
+interface TerminalPageProps {
+  tenantId?: string;
+  alias?: string;
+}
+
+export function TerminalPage(props: TerminalPageProps = {}) {
+  return (
+    <ConsoleAccessBoundary>
+      <TerminalRelayBoundary><TerminalPageContent {...props} /></TerminalRelayBoundary>
+    </ConsoleAccessBoundary>
+  );
+}
+
+function TerminalPageContent({ tenantId, alias }: TerminalPageProps) {
   const api = useApi();
   /**
    * With an open session the page enters observation mode: the terminal keeps the height and the
@@ -31,8 +57,8 @@ export function TerminalPage() {
   const status = useResource('ultimate-terminal-status', () => api.getStatus());
   const topology = useResource('ultimate-terminal-topology', () => api.getTopology());
   const adapters = useResource('ultimate-terminal-adapters', () => api.listAdapters());
-  const access = useResource('ultimate-terminal-access', () => api.getConsoleAccess());
-  const capability = useResource('ultimate-terminal-capability', () => api.getTerminalCapability());
+  const access = useConsoleAccess();
+  const capability = useTerminalCapability();
   const targets = useResource('ultimate-terminal-targets', () => listTerminalTargets());
 
   useRefreshInterval(status.reload, 5_000, status.loading);
@@ -40,9 +66,9 @@ export function TerminalPage() {
   useRefreshInterval(targets.reload, 15_000, targets.loading);
   useRefreshInterval(topology.reload, 30_000, topology.loading);
   useRefreshInterval(access.reload, 30_000, access.loading);
-  useRefreshInterval(capability.reload, 30_000, capability.loading);
 
   const agents = useMemo(() => buildFleetAgents(status.data, topology.data), [status.data, topology.data]);
+  const initialAgentId = tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;
   const online = agents.filter((agent) => agent.leaseState === 'online').length;
   const adapterItems = adapters.data?.items ?? [];
   const adapterCuenta = adapterBreakdown(adapterItems);
@@ -55,6 +81,10 @@ export function TerminalPage() {
   const tuiOnline = countLiveTuiTargets(verifiedTargets?.items);
   const fleetLoading = (status.loading && !status.data) || (topology.loading && !topology.data);
   const fleetError = status.error ?? topology.error;
+  const requestedAgentMissing = initialAgentId !== undefined
+    && !fleetLoading
+    && !fleetError
+    && agents.every((agent) => agent.id !== initialAgentId);
   const fleetLabel = fleetLoading
     ? 'Operación privilegiada · leyendo la flota'
     : fleetError && agents.length === 0
@@ -145,44 +175,51 @@ export function TerminalPage() {
         }
       />
 
-      {observando ? null : contadores}
+      {requestedAgentMissing ? (
+        <EmptyState>El servidor no observa al agente {tenantId}:{alias}. No se abrió otra terminal en su lugar.</EmptyState>
+      ) : (
+        <>
+          {observando ? null : contadores}
 
-      {relayUnavailable ? (
-        <div className="terminal-relay-notice" role="status">
-          <TerminalSquare size={17} aria-hidden="true" />
-          {/* The TITLE must tell the truth too: with a 403 the channel exists and what is missing is
-              the permission, so "not available in this stack" was the same lie as the body. See
-              `TerminalRelayCause` in relay-status.ts. */}
-          <div>
-            <strong>{relay.cause === 'sin-permiso'
-              ? 'La terminal de agentes requiere permiso de control'
-              : relay.cause === 'sin-comprobar'
-                ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO
-                : 'Canal PTY no disponible en este stack'}</strong>
-            <p>{relay.reason}</p>
-          </div>
-        </div>
-      ) : null}
+          {relayUnavailable ? (
+            <div className="terminal-relay-notice" role="status">
+              <TerminalSquare size={17} aria-hidden="true" />
+              {/* The TITLE must tell the truth too: with a 403 the channel exists and what is missing is
+                  the permission, so "not available in this stack" was the same lie as the body. See
+                  `TerminalRelayCause` in relay-status.ts. */}
+              <div>
+                <strong>{relay.cause === 'sin-permiso'
+                  ? 'La terminal de agentes requiere permiso de control'
+                  : relay.cause === 'sin-comprobar'
+                    ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO
+                    : 'Canal PTY no disponible en este stack'}</strong>
+                <p>{relay.reason}</p>
+              </div>
+            </div>
+          ) : null}
 
-      {failures.length ? (
-        <div className="terminal-degraded" role="alert">
-          <Activity size={17} aria-hidden="true" />
-          <div><strong>El plano de control contestó a medias</strong><p>{failures.join(' · ')}</p></div>
-          <button className="button small secondary" type="button" onClick={refreshAll}><RefreshCw size={14} aria-hidden="true" /> Reintentar</button>
-        </div>
-      ) : null}
+          {failures.length ? (
+            <div className="terminal-degraded" role="alert">
+              <Activity size={17} aria-hidden="true" />
+              <div><strong>El plano de control contestó a medias</strong><p>{failures.join(' · ')}</p></div>
+              <button className="button small secondary" type="button" onClick={refreshAll}><RefreshCw size={14} aria-hidden="true" /> Reintentar</button>
+            </div>
+          ) : null}
 
-      <OperatorWorkspace
-        agents={agents}
-        adapters={adapters.data?.items ?? []}
-        access={verifiedAccess}
-        topologyAccess={topology.error ? undefined : topology.data}
-        terminalCapability={verifiedCapability}
-        terminalTargets={verifiedTargets}
-        fleetLoading={fleetLoading}
-        fleetError={fleetError}
-        onSesionesAbiertas={setSesionesAbiertas}
-      />
+          <OperatorWorkspace
+            agents={agents}
+            initialAgentId={initialAgentId}
+            adapters={adapters.data?.items ?? []}
+            access={verifiedAccess}
+            topologyAccess={topology.error ? undefined : topology.data}
+            terminalCapability={verifiedCapability}
+            terminalTargets={verifiedTargets}
+            fleetLoading={fleetLoading}
+            fleetError={fleetError}
+            onSesionesAbiertas={setSesionesAbiertas}
+          />
+        </>
+      )}
     </div>
   );
 }

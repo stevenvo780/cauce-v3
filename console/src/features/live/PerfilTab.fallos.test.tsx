@@ -19,7 +19,15 @@ import { RUTA_PERFIL, perfilAplicado } from './perfil-fixtures';
 
 function VistaDePerfil() {
   const [borrador, setBorrador] = useState<Partial<AgentPerfilCampos>>();
-  return <PerfilTab tenantId="Steven" alias="kant" borrador={borrador} onBorrador={setBorrador} />;
+  return (
+    <PerfilTab
+      tenantId="Steven"
+      alias="kant"
+      borrador={borrador}
+      onBorrador={setBorrador}
+      configWritePermission="allowed"
+    />
+  );
 }
 
 function rechazaCon(status: number, cuerpo: Record<string, unknown>) {

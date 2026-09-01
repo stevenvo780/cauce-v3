@@ -534,18 +534,10 @@
 .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text .eyebrow { order: 2; min-width: 0; margin: 0; }
 .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity h2 { flex: none; font-size: var(--tipo-rotulo); }
 
-/*
- * El «Room de origen» dice por dónde SALE una instrucción escrita a mano, o sea que gobierna el
- * compositor de la pestaña «Feed» y no tiene nada que ver con la TUI que se está mirando. Con el
- * terminal en pantalla se llevaba la franja más alta de la cabecera de sesión — y a 1280 px la
- * partía en dos —. Se repliega mientras el panel del PTY está montado y vuelve, entero y en su
- * sitio, al pulsar «Feed». Es el mismo argumento por el que ya se replegaba por debajo de 900 px
- * (ver el bloque de móvil), aplicado también al ancho donde el defecto igual existe.
- *
- * `:has()` y no una prop de React: el dato que decide es «hay un panel de PTY montado», que es
- * exactamente lo que el selector pregunta, y así la regla vive al lado de la que la explica.
- */
-.terminal-console:has(.terminal-pty-pane) .terminal-room-label { display: none; }
+/* The feed observes here; its only write control is a link to the canonical Messages view. */
+.terminal-readonly-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-top: 1px solid var(--border); background: #0b1320; }
+.terminal-readonly-actions p { margin: 0; color: var(--faint); font-size: var(--tipo-apunte); }
+.terminal-readonly-actions .button, .terminal-queue-link { flex: none; }
 
 /* ── 4. La barra de la sesión deja de decir el alias por TERCERA vez ───────────────────────────
  *
@@ -804,10 +796,8 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-identity-text h2 { font-size: .95rem; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-session-head .session-controls { flex: 1 1 100%; justify-content: flex-start; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-mode-switch { flex-wrap: nowrap; overflow-x: auto; }
-  /* El selector de room de origen es del FEED (por dónde sale una instrucción escrita), no de la
-     TUI. En vertical se llevaba una fila entera —y dejaba huérfano su rótulo— por encima de lo
-     único que se vino a mirar. Vuelve al girar el teléfono o al pasar a la pestaña Feed. */
-  .ultimate-terminal-page[data-tui="abierta"] .terminal-room-label { display: none; }
+  /* Keep the canonical-view link readable without squeezing it beside the explanation. */
+  .terminal-readonly-actions { align-items: stretch; flex-direction: column; }
   .ultimate-terminal-page[data-tui="abierta"] .pty-bar-dato,
   .ultimate-terminal-page[data-tui="abierta"] .pty-bar-feed,
   /* «TUI en vivo · solo lectura» ya lo dice, en la línea de abajo, la barra de conexión. */

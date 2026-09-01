@@ -30,16 +30,73 @@ it('shows the server-side login entry point when no BFF session exists', async (
   );
 });
 
-it('routes /fleet/:tenant/:alias to the bot detail instead of the fleet list', async () => {
+it('redirige el detalle legado de Fleet a la única Terminal y conserva el agente exacto', async () => {
   window.history.pushState({}, '', '/fleet/Steven/kant');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'kant' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /volver a fleet/i })).toHaveAttribute('href', '/fleet');
-  // `fleet` is no longer a menu entry, so none of them is marked as the current page. What
-  // matters — and what would break if the alias were applied to routes with parameters — is
-  // that the address bar does NOT rewrite to /live.
-  expect(window.location.pathname).toBe('/fleet/Steven/kant');
+  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
+  await waitFor(() => { expect(window.location.pathname).toBe('/terminal/Steven/kant'); });
+  expect(screen.queryByRole('link', { name: /volver a fleet/i })).not.toBeInTheDocument();
+});
+
+it('abre /terminal/:tenant/:alias directamente sin reescribir su ruta canónica', async () => {
+  window.history.pushState({}, '', '/terminal/Steven/kant');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
+  expect(window.location.pathname).toBe('/terminal/Steven/kant');
+});
+
+it('un detalle de Terminal desconocido falla cerrado y no lo sustituye por la flota general', async () => {
+  window.history.pushState({}, '', '/terminal/Steven/fantasma');
+  renderWithApi(<App />);
+
+  expect(await screen.findByText(/no observa al agente Steven:fantasma/i, {}, { timeout: 10_000 }))
+    .toBeInTheDocument();
+  expect(screen.queryByRole('complementary', { name: 'Flota de agentes' })).not.toBeInTheDocument();
+  expect(window.location.pathname).toBe('/terminal/Steven/fantasma');
+});
+
+it('la barra y Terminal comparten una sola lectura del estado del relay', async () => {
+  let capabilityReads = 0;
+  server.use(http.get('*/v3/console/terminal/capability', () => {
+    capabilityReads += 1;
+    return HttpResponse.json({
+      available: false,
+      capabilities: [],
+      reason: 'Relay no desplegado en este test.',
+    });
+  }));
+  window.history.pushState({}, '', '/terminal');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 }))
+    .toBeInTheDocument();
+  await waitFor(() => { expect(capabilityReads).toBe(1); });
+});
+
+it('la barra y las páginas activas comparten una sola consulta de acceso', async () => {
+  let accessReads = 0;
+  server.use(http.get('*/v3/console/access', () => {
+    accessReads += 1;
+    return HttpResponse.json({
+      subject: 'Steven:kant', roles: ['operator'],
+      permissions: ['config.write', 'config.rollback'],
+    });
+  }));
+  window.history.pushState({}, '', '/accounts');
+  const user = userEvent.setup();
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' }, { timeout: 10_000 }))
+    .toBeInTheDocument();
+  await waitFor(() => { expect(accessReads).toBe(1); });
+  await user.click(screen.getByRole('link', { name: /ajustes y altas/i }));
+  expect(await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i }, { timeout: 10_000 }))
+    .toBeInTheDocument();
+  expect(accessReads).toBe(1);
 });
 
 it('el menú tiene UNA sola entrada para cuentas, cuotas y licencias, no tres que se llaman casi igual', async () => {
@@ -110,7 +167,8 @@ it('CONTROL NEGATIVO — /messages con una aridad distinta sigue siendo 404', as
 });
 
 it.each([
-  '/terminal/unused/segment',
+  '/terminal/solo-tenant',
+  '/terminal/tenant/alias/sobrante',
   '/config/sobrante',
   '/live/sobrante',
   '/licenses/sobrante',

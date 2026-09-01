@@ -1,31 +1,15 @@
 import { ArchiveX, Ban, Clock, RotateCcw, Rows3, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
-import type { DeliveryState, QueueItem } from '../../api/types';
+import type { QueueItem } from '../../api/types';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
-import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
-import { exactCancelReceipt, exactReplayReceipt } from './delivery-receipts';
-import { ESTADO_ENTREGA } from './estado-de-entrega';
+import { compactId, safeJobLane } from '../../lib';
+import {
+  cancelDeliverySafely, replayDeliverySafely, rereadProvesDeliveryEffect,
+  type DeliveryReconciliation, type DeliverySnapshotRefresh,
+} from '../deliveries/delivery-actions';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { leerUltimoError } from './ultimo-error';
-
-/**
- * States in which there STILL cannot be a last error. "No error yet" is NOT an unknown: painting
- * it in the alarm colour is what makes real alarms stop being read.
- */
-const SIN_FALLO_TODAVIA: ReadonlySet<string> = new Set(['pending', 'leased', 'accepted', 'started', 'done']);
-
-function stateTone(state?: DeliveryState | null): 'done' | 'danger' | 'warning' | 'running' | 'unknown' {
-  if (state === 'done') return 'done';
-  if (state === 'dead' || state === 'failed') return 'danger';
-  if (state === 'retry') return 'warning';
-  if (state) return 'running';
-  return 'unknown';
-}
-
-// The two final error states are replayable: 'failed' and 'dead'.
-const replayableStates: ReadonlySet<string> = new Set(['dead', 'failed']);
-// Cancel applies to what is still alive: pending, in backoff, or in the adapter's hands.
-const cancellableStates: ReadonlySet<string> = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
 
 /** Explanation of each action before confirmation. */
 export const EXPLICACION_REPLAY =
@@ -41,9 +25,7 @@ interface Pendiente {
   alias: string;
 }
 
-export type DeliverySnapshotRefresh =
-  | { data: unknown; error?: undefined }
-  | { data?: undefined; error: Error };
+export type { DeliverySnapshotRefresh } from '../deliveries/delivery-actions';
 
 function addId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet<string> {
   if (current.has(deliveryId)) return current;
@@ -53,6 +35,25 @@ function addId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet<st
 function removeId(current: ReadonlySet<string>, deliveryId: string): ReadonlySet<string> {
   if (!current.has(deliveryId)) return current;
   const next = new Set(current);
+  next.delete(deliveryId);
+  return next;
+}
+
+function withUncertainty(
+  current: ReadonlyMap<string, DeliveryReconciliation>,
+  reconciliation: DeliveryReconciliation,
+): ReadonlyMap<string, DeliveryReconciliation> {
+  const next = new Map(current);
+  next.set(reconciliation.deliveryId, reconciliation);
+  return next;
+}
+
+function withoutUncertainty(
+  current: ReadonlyMap<string, DeliveryReconciliation>,
+  deliveryId: string,
+): ReadonlyMap<string, DeliveryReconciliation> {
+  if (!current.has(deliveryId)) return current;
+  const next = new Map(current);
   next.delete(deliveryId);
   return next;
 }
@@ -97,52 +98,57 @@ export function DeliveryTable({
   const api = useApi();
   const [replaying, setReplaying] = useState<ReadonlySet<string>>(() => new Set());
   const [cancelling, setCancelling] = useState<ReadonlySet<string>>(() => new Set());
-  const [uncertain, setUncertain] = useState<ReadonlySet<string>>(() => new Set());
+  const [uncertain, setUncertain] = useState<ReadonlyMap<string, DeliveryReconciliation>>(() => new Map());
   const [notices, setNotices] = useState<ReadonlyMap<string, string>>(() => new Map());
-  const previousSnapshotVersion = useRef(snapshotVersion);
+  const previousSnapshot = useRef({ rows, version: snapshotVersion });
   const [pendiente, setPendiente] = useState<Pendiente>();
 
   useEffect(() => {
-    if (previousSnapshotVersion.current === snapshotVersion) return;
-    previousSnapshotVersion.current = snapshotVersion;
-    // A changed version is evidence of a later successful server snapshot, including one loaded
-    // from the page-level refresh after an earlier reconciliation request failed.
-    setUncertain((current) => current.size === 0 ? current : new Set());
-  }, [snapshotVersion]);
-
-  async function rereadAfterUncertain(deliveryId: string): Promise<boolean> {
-    setUncertain((current) => addId(current, deliveryId));
-    try {
-      const refreshed = await onChanged();
-      if (refreshed.data === undefined) return false;
-      setUncertain((current) => removeId(current, deliveryId));
-      return true;
-    } catch {
-      return false;
-    }
-  }
+    const changed = previousSnapshot.current.version !== snapshotVersion
+      || previousSnapshot.current.rows !== rows;
+    previousSnapshot.current = { rows, version: snapshotVersion };
+    if (!changed || uncertain.size === 0) return;
+    const snapshot = { items: rows };
+    const proven = [...uncertain.values()].filter((reconciliation) => (
+      rereadProvesDeliveryEffect(reconciliation, snapshot)
+    ));
+    if (proven.length === 0) return;
+    setUncertain((current) => {
+      const next = new Map(current);
+      for (const reconciliation of proven) next.delete(reconciliation.deliveryId);
+      return next;
+    });
+    setNotices((current) => {
+      let next = current;
+      for (const reconciliation of proven) {
+        const action = reconciliation.action === 'replay' ? 'el replay' : 'la cancelación';
+        next = withNotice(
+          next,
+          reconciliation.deliveryId,
+          `Una relectura posterior demostró ${action} de ${compactId(reconciliation.deliveryId)}; no se repetirá el POST.`,
+        );
+      }
+      return next;
+    });
+  }, [rows, snapshotVersion, uncertain]);
 
   async function replay(deliveryId: string) {
     setReplaying((current) => addId(current, deliveryId));
     setNotices((current) => withoutNotice(current, deliveryId));
     try {
-      const result = await api.replayDelivery(deliveryId);
-      if (!exactReplayReceipt(result, deliveryId)) {
-        throw new Error('el gateway no devolvió un recibo durable exacto del replay');
+      const outcome = await replayDeliverySafely({
+        api,
+        deliveryId,
+        reread: onChanged,
+        onUncertain: (notice, reconciliation) => {
+          setUncertain((current) => withUncertainty(current, reconciliation));
+          setNotices((current) => withNotice(current, deliveryId, notice));
+        },
+      });
+      if (outcome.kind === 'uncertain' && outcome.effectProven) {
+        setUncertain((current) => withoutUncertainty(current, deliveryId));
       }
-      setNotices((current) => withNotice(current, deliveryId, `Replay encolado para ${compactId(deliveryId)}`));
-      void onChanged().catch(() => undefined);
-    } catch (error) {
-      // A network error or a truncated 2xx can occur AFTER the commit. Replay has no key the
-      // browser can safely reuse, so the retry is not done blindly: we reread the row and
-      // declare the outcome uncertain.
-      const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
-      const encabezado = `Resultado incierto del reinyectado de ${compactId(deliveryId)}: ${detail}.`;
-      setNotices((current) => withNotice(current, deliveryId, `${encabezado} Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`));
-      const verified = await rereadAfterUncertain(deliveryId);
-      setNotices((current) => withNotice(current, deliveryId, `${encabezado} ${verified
-        ? 'La cola ya se releyó; revisá el estado antes de decidir otra acción.'
-        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`));
+      setNotices((current) => withNotice(current, deliveryId, outcome.notice));
     } finally {
       setReplaying((current) => removeId(current, deliveryId));
     }
@@ -152,22 +158,19 @@ export function DeliveryTable({
     setCancelling((current) => addId(current, deliveryId));
     setNotices((current) => withoutNotice(current, deliveryId));
     try {
-      const result = await api.cancelDelivery(deliveryId);
-      if (!exactCancelReceipt(result, deliveryId)) {
-        throw new Error('el gateway no devolvió un recibo durable exacto de la cancelación');
+      const outcome = await cancelDeliverySafely({
+        api,
+        deliveryId,
+        reread: onChanged,
+        onUncertain: (notice, reconciliation) => {
+          setUncertain((current) => withUncertainty(current, reconciliation));
+          setNotices((current) => withNotice(current, deliveryId, notice));
+        },
+      });
+      if (outcome.kind === 'uncertain' && outcome.effectProven) {
+        setUncertain((current) => withoutUncertainty(current, deliveryId));
       }
-      setNotices((current) => withNotice(current, deliveryId, `Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`));
-      void onChanged().catch(() => undefined);
-    } catch (error) {
-      // Cancel may also have confirmed before losing its response. The only safe authority is the
-      // reread; reissuing the POST without it could race the new state.
-      const detail = error instanceof Error ? error.message : 'el servidor no dijo por qué';
-      const encabezado = `Resultado incierto de la cancelación de ${compactId(deliveryId)}: ${detail}.`;
-      setNotices((current) => withNotice(current, deliveryId, `${encabezado} Se debe releer la cola antes de volver a intentarlo; la acción queda bloqueada durante esa lectura.`));
-      const verified = await rereadAfterUncertain(deliveryId);
-      setNotices((current) => withNotice(current, deliveryId, `${encabezado} ${verified
-        ? 'La cola ya se releyó; revisá el estado antes de decidir otra acción.'
-        : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`));
+      setNotices((current) => withNotice(current, deliveryId, outcome.notice));
     } finally {
       setCancelling((current) => removeId(current, deliveryId));
     }
@@ -224,10 +227,11 @@ export function DeliveryTable({
             <thead><tr><th>Delivery</th><th>Destino</th><th>Carril</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
             <tbody>
               {rows.map((item, index) => {
-                const state = safeDeliveryState(item.state);
+                const policy = deliveryPolicy(item.state);
+                const state = policy.state;
                 const deliveryId = item.delivery_id;
-                const replayable = deliveryId != null && state != null && replayableStates.has(state);
-                const cancellable = deliveryId != null && state != null && cancellableStates.has(state);
+                const replayable = deliveryId != null && policy.replayable;
+                const cancellable = deliveryId != null && policy.cancellable;
                 const enfocada = resaltada != null && deliveryId === resaltada;
                 const alias = item.recipient_alias ?? 'UNKNOWN';
                 const error = leerUltimoError(state, item.last_error);
@@ -242,23 +246,23 @@ export function DeliveryTable({
                   <td data-label="Delivery"><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
                   <td data-label="Destino"><strong><Unknown value={item.recipient_alias} /></strong><small className="subline"><Unknown value={item.tenant_id} /></small></td>
                   <td data-label="Carril"><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
-                  {/* The status label is shown in Spanish (`ESTADO_ENTREGA`), like the rest of the
+                  {/* The status label is shown in Spanish, like the rest of the
                       screen. A value this console does not know is NOT invented: UNKNOWN is shown
                       and the `title=` says what the server sent. */}
-                  <td data-label="Estado"><Badge tone={stateTone(state)}><Unknown
-                    value={state ? ESTADO_ENTREGA[state] : undefined}
-                    motivo={item.state ? `El servidor mandó un estado que esta consola no conoce: ${item.state}` : undefined}
+                  <td data-label="Estado"><Badge tone={policy.tone}><Unknown
+                    value={policy.known ? policy.label : undefined}
+                    motivo={item.state && !policy.known ? `El servidor mandó un estado que esta consola no conoce: ${item.state}` : undefined}
                   /></Badge></td>
                   <td data-label="Intentos"><Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} /></td>
                   <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
-                  {/* "No error" is not UNKNOWN; SIN_FALLO_TODAVIA covers deliveries that have not yet failed. */}
+                  {/* "No error" is not UNKNOWN when the lifecycle policy says no failure is expected. */}
                   <td data-label="Último error" className="error-copy">
                     {error.clase === 'texto' ? error.texto
                       : error.clase === 'sin-error' ? <span className="sin-error">sin error</span>
                         : <Unknown
                           value={null}
-                          ausente={state && SIN_FALLO_TODAVIA.has(state) ? 'todavia-no' : 'sin-dato'}
-                          motivo={state && SIN_FALLO_TODAVIA.has(state)
+                          ausente={policy.errorExpectation === 'absent' ? 'todavia-no' : 'sin-dato'}
+                          motivo={policy.errorExpectation === 'absent'
                             ? 'Esta entrega no falló todavía, así que no hay ningún error que mostrar.'
                             : 'El servidor no informó ningún error para esta entrega.'}
                         />}

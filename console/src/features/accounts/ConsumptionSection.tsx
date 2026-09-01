@@ -13,8 +13,9 @@ import {
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import './licenses.css';
 import {
-  extractAgents, extractBindings, extractProviderAccounts, freshness, orphans,
+  freshness, orphans,
 } from './licenses';
+import type { RegistryModel } from './registry';
 import { Sparkline } from './Sparkline';
 import {
   SEVERITY_LABEL, SEVERITY_TONE, balanceSeverity, buildQuotaRows, formatPercent, formatResetIn,
@@ -23,9 +24,10 @@ import {
 } from './quotas';
 
 /** Consumption and quota balance section per provider and account. */
-export function ConsumptionSection({ quotas, config }: {
+export function ConsumptionSection({ quotas, config, registry }: {
   quotas: Resource<QuotaSnapshot>;
   config: Resource<ConfigurationSnapshot>;
+  registry: RegistryModel;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -33,9 +35,9 @@ export function ConsumptionSection({ quotas, config }: {
   const reloadConfig = config.reload;
 
   const snapshot = quotas.data;
-  const accounts = useMemo(() => extractProviderAccounts(config.data), [config.data]);
-  const agents = useMemo(() => extractAgents(config.data), [config.data]);
-  const bindings = useMemo(() => extractBindings(config.data), [config.data]);
+  const accounts = registry.accounts.items;
+  const agents = registry.agents.items;
+  const bindings = registry.bindings.items;
   const orphanedItems = useMemo(
     () => orphans(accounts, snapshot, bindings, agents),
     [accounts, snapshot, bindings, agents],
@@ -282,11 +284,11 @@ export function ConsumptionSection({ quotas, config }: {
           {orphanedItems.agentsWithoutBindings.length > 0 && (
             <div className="finding-section">
               <h4><AlertCircle size={16} aria-hidden="true" /> Agentes sin bindings</h4>
-              <p>Registrados pero no asignados a ninguna cuenta:</p>
+              <p>Registrados pero sin ningún binding de fallback:</p>
               <ul className="finding-list">
                 {orphanedItems.agentsWithoutBindings.map((agent) => (
-                  <li key={`${agent.tenant_id ?? 'unknown'}/${agent.alias ?? 'unknown'}`}>
-                    <span className="mono">{agent.tenant_id ? `${agent.tenant_id}/${agent.alias ?? '?'}` : agent.alias ?? '?'}</span> — {agent.display_name ?? '—'} en {agent.container_name ?? '?'}
+                  <li key={`${agent.tenantId}/${agent.alias}`}>
+                    <span className="mono">{agent.tenantId}/{agent.alias}</span> — {agent.displayName ?? '—'} en {agent.containerName ?? '?'}
                   </li>
                 ))}
               </ul>

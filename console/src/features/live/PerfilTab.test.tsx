@@ -8,7 +8,6 @@ import { renderWithApi } from '../../test/render';
 import { PerfilTab } from './PerfilTab';
 
 const RUTA = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
-const RUTA_ACCESO = 'http://localhost/v3/console/access';
 const SHA = 'a'.repeat(64);
 
 function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<AgentPerfil, 'publicado'> {
@@ -44,9 +43,19 @@ function respuesta(exists: boolean, overrides: Partial<AgentPerfil> = {}): Omit<
   };
 }
 
-function Vista() {
+function Vista({ configWritePermission = 'allowed' }: {
+  configWritePermission?: 'allowed' | 'denied' | 'unknown';
+}) {
   const [borrador, setBorrador] = useState<Partial<AgentPerfilCampos>>();
-  return <PerfilTab tenantId="Steven" alias="kant" borrador={borrador} onBorrador={setBorrador} />;
+  return (
+    <PerfilTab
+      tenantId="Steven"
+      alias="kant"
+      borrador={borrador}
+      onBorrador={setBorrador}
+      configWritePermission={configWritePermission}
+    />
+  );
 }
 
 interface PutBody {
@@ -200,10 +209,9 @@ it('permiso ausente o no acreditado bloquea caja y PUT', async () => {
   let puts = 0;
   server.use(
     http.get(RUTA, () => HttpResponse.json(respuesta(true))),
-    http.get(RUTA_ACCESO, () => HttpResponse.json({ authenticated: true })),
     http.put(RUTA, () => { puts += 1; return HttpResponse.json(ackAplicado(5)); }),
   );
-  renderWithApi(<Vista />);
+  renderWithApi(<Vista configWritePermission="unknown" />);
 
   expect(await screen.findByLabelText(/Identidad y propósito/i)).toBeDisabled();
   expect(screen.getByText(/No se pudo acreditar el permiso de escritura/)).toBeInTheDocument();

@@ -1,7 +1,8 @@
 import {
   ChevronDown, ChevronRight, CreditCard, EyeOff, KeyRound, Lock, PencilLine, Plus, Power, PowerOff, Share2,
+  Trash2,
 } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type {
   ConfigurationSnapshot, ConsoleAccess, QuotaSeverity, QuotaSnapshot, QuotaThresholds,
 } from '../../api/types';
@@ -15,8 +16,8 @@ import { accountConsumption, type AccountConsumption } from './licenses';
 import { MutationBar } from './MutationBar';
 import {
   CREDENTIAL_REF_HINTS, CREDENTIAL_REF_KINDS, accountDraftError, createAccountMutation,
-  readAgents, readBindings, readCeiling, readProviderAccounts, updateAccountMutation, viewerTenant,
-  type AccountDraft, type CredentialRefKind, type ProviderAccount, type RegistryContext,
+  deleteAccountMutation, updateAccountMutation, viewerTenant,
+  type AccountDraft, type CredentialRefKind, type ProviderAccount, type RegistryModel,
 } from './registry';
 import { SEVERITY_TONE, balanceSeverity, formatPercent } from './quotas';
 import { useRegistryMutation } from './use-registry-mutation';
@@ -42,7 +43,8 @@ interface AccountEdit {
 
 type FormState =
   | { kind: 'create'; draft: AccountDraft }
-  | { kind: 'edit'; edit: AccountEdit };
+  | { kind: 'edit'; edit: AccountEdit }
+  | { kind: 'delete'; accountId: string; confirmation: string };
 
 /**
  * An account update rewrites label, shared_with_pool and enabled at once. If the snapshot does
@@ -81,29 +83,19 @@ function PayerScoped({ account, children }: { account: ProviderAccount; children
 }
 
 /** Inventory and management of AI provider accounts and consumption state. */
-export function AccountsInventory({ config, access, quotas }: {
+export function AccountsInventory({ config, access, quotas, registry }: {
   config: Resource<ConfigurationSnapshot>;
   access: Resource<ConsoleAccess>;
   quotas: Resource<QuotaSnapshot>;
+  registry: RegistryModel;
 }) {
   const [form, setForm] = useState<FormState>({ kind: 'create', draft: emptyDraft });
   const [openDetail, setOpenDetail] = useState<Set<string>>(new Set());
 
-  const accounts = useMemo(() => readProviderAccounts(config.data), [config.data]);
-  const agents = useMemo(() => readAgents(config.data), [config.data]);
-  const ceiling = useMemo(() => readCeiling(config.data), [config.data]);
-  const bindings = useMemo(() => readBindings(config.data), [config.data]);
-  const tenantIds = useMemo(
-    () => (config.data?.tenants ?? []).map((row) => row.id).filter((id): id is string => typeof id === 'string'),
-    [config.data],
-  );
-  const context: RegistryContext = useMemo(() => ({
-    accounts: accounts.items, agents: agents.items, ceiling: ceiling.items,
-    bindings: bindings.items, tenantIds,
-  }), [accounts.items, agents.items, ceiling.items, bindings.items, tenantIds]);
-  const runner = useRegistryMutation({ config, access, context });
+  const { accounts, ceiling } = registry;
+  const runner = useRegistryMutation({ config, access, context: registry.context });
 
-  const actorTenant = viewerTenant(access.data?.subject);
+  const actorTenant = viewerTenant(access.error ? undefined : access.data?.subject);
   const pooled = accounts.available ? accounts.items.filter((item) => item.sharedWithPool === true).length : null;
   const enabled = accounts.available ? accounts.items.filter((item) => item.enabled === true).length : null;
   const foreign = accounts.available && actorTenant
@@ -116,14 +108,32 @@ export function AccountsInventory({ config, access, quotas }: {
   const editInvalid = form.kind === 'edit'
     ? (editing ? editBlocker(editing) : 'La cuenta que estabas editando ya no está en el snapshot: volvé al inventario.')
     : undefined;
+  const accountCeilings = form.kind === 'delete'
+    ? ceiling.items.filter((entry) => entry.accountId === form.accountId)
+    : [];
+  const deleteInvalid = form.kind === 'delete'
+    ? !ceiling.available
+      ? 'No se puede borrar con seguridad: el gateway no publicó alias_routing_ceiling y no se sabe si algún alias todavía referencia la cuenta.'
+      : accountCeilings.length > 0
+        ? accountCeilings.length === 1
+          ? `Primero revocá el techo que todavía apunta a esta cuenta: ${accountCeilings[0]?.tenantId}/${accountCeilings[0]?.alias}.`
+          : `Primero revocá los ${String(accountCeilings.length)} techos que todavía apuntan a esta cuenta: ${accountCeilings.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
+        : form.confirmation !== form.accountId
+          ? `Escribí exactamente «${form.accountId}» para confirmar el borrado.`
+          : undefined
+    : undefined;
   const mutation = form.kind === 'create'
     ? (accountDraftError(form.draft) ? undefined : createAccountMutation(form.draft))
-    : (editInvalid ? undefined : updateAccountMutation(form.edit.id, {
-      label: form.edit.label.trim() || null,
-      sharedWithPool: form.edit.sharedWithPool,
-      enabled: form.edit.enabled,
-    }));
-  const invalid = form.kind === 'create' ? accountDraftError(form.draft) : editInvalid;
+    : form.kind === 'edit'
+      ? (editInvalid ? undefined : updateAccountMutation(form.edit.id, {
+        label: form.edit.label.trim() || null,
+        sharedWithPool: form.edit.sharedWithPool,
+        enabled: form.edit.enabled,
+      }))
+      : (deleteInvalid ? undefined : deleteAccountMutation(form.accountId));
+  const invalid = form.kind === 'create'
+    ? accountDraftError(form.draft)
+    : form.kind === 'edit' ? editInvalid : deleteInvalid;
 
   function editDraft(patch: Partial<AccountDraft>) {
     setForm((current) => (current.kind === 'create' ? { kind: 'create', draft: { ...current.draft, ...patch } } : current));
@@ -148,6 +158,16 @@ export function AccountsInventory({ config, access, quotas }: {
     runner.clear();
   }
 
+  function startDelete(accountId: string) {
+    setForm({ kind: 'delete', accountId, confirmation: '' });
+    runner.clear();
+  }
+
+  function startCreate() {
+    setForm({ kind: 'create', draft: emptyDraft });
+    runner.clear();
+  }
+
   return <>
     <div className="metrics-grid">
       <Metric label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las publicadas al pool' : 'el servidor no publica el inventario de cuentas'} />
@@ -156,7 +176,7 @@ export function AccountsInventory({ config, access, quotas }: {
       <Metric label="Pagadas por otro tenant" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={actorTenant ? `cuentas cuyo pagador no es ${actorTenant}` : 'el servidor no informó el tenant del actor'} />
     </div>
 
-    <Panel title="Inventario de cuentas" subtitle="Datos efectivos del servidor. No hay borrado duro desde esta pantalla: una cuenta se retira deshabilitándola.">
+    <Panel title="Inventario de cuentas" subtitle="Datos efectivos del servidor. Deshabilitar conserva el registro; borrar se reserva para retiro definitivo o rotación y exige confirmación más dry-run.">
       {!accounts.available
         ? <EmptyState>
           No disponible: este gateway no publica <code>provider_accounts</code> dentro de <code>GET /v3/console/config</code>. No se muestra inventario porque no hay dato que mostrar, y la consola no lo simula.
@@ -216,11 +236,14 @@ export function AccountsInventory({ config, access, quotas }: {
                     >
                       {account.sharedWithPool === true ? <Lock size={15} aria-hidden="true" /> : <Share2 size={15} aria-hidden="true" />}
                     </RowAction>
+                    <RowAction label={`Retirar o rotar «${account.id}»`} undoes onClick={() => { startDelete(account.id); }}>
+                      <Trash2 size={15} aria-hidden="true" />
+                    </RowAction>
                   </span></td>
                 </tr>,
                   ...(detailOpen ? [<tr key={`${account.id}-detalle`} className="account-detail-row">
                     <td colSpan={11}>
-                      <AccountRoutingDetail accountId={account.id} quotas={quotas.data} config={config.data} />
+                      <AccountRoutingDetail accountId={account.id} quotas={quotas.data} route={registry.routing.byAccount.get(account.id)} />
                     </td>
                   </tr>] : []),
                   ];
@@ -278,8 +301,36 @@ export function AccountsInventory({ config, access, quotas }: {
       </p>
       <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="edición de cuenta" />
       <div className="config-actions">
-        <button className="button small" type="button" onClick={() => { setForm({ kind: 'create', draft: emptyDraft }); runner.clear(); }}>
+        <button className="button small" type="button" onClick={startCreate}>
           <Plus size={14} aria-hidden="true" />Volver al alta de cuenta
+        </button>
+      </div>
+    </Panel> : null}
+
+    {form.kind === 'delete' ? <Panel
+      title={`Retirar o rotar «${form.accountId}»`}
+      subtitle="Borrar es irreversible en el inventario actual y es el primer paso de una rotación de identidad o locator: después hay que recrear el mismo id con la credencial nueva."
+    >
+      <p className="notice error" role="note">
+        El borrado falla si cualquier alias conserva esta cuenta en su techo. No encadena una recreación automática:
+        si el alta posterior fallara, encadenarla dejaría la cuenta ausente sin darle al operador control sobre el desenlace.
+      </p>
+      <label className="config-json">
+        Confirmá escribiendo <strong className="mono">{form.accountId}</strong>
+        <input
+          aria-label={`Confirmar borrado de ${form.accountId}`}
+          value={form.confirmation}
+          onChange={(event) => {
+            setForm({ ...form, confirmation: event.target.value });
+            runner.clear();
+          }}
+          autoComplete="off"
+        />
+      </label>
+      <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="retiro o rotación de cuenta" />
+      <div className="config-actions">
+        <button className="button small" type="button" onClick={startCreate}>
+          <Plus size={14} aria-hidden="true" />Cancelar y volver al alta
         </button>
       </div>
     </Panel> : null}

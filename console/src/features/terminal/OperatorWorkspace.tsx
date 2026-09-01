@@ -27,6 +27,7 @@ import type { TerminalGrantRequestOutcome } from './types';
 
 interface OperatorWorkspaceProps {
   agents: FleetAgent[];
+  initialAgentId?: string;
   adapters: AdapterView[];
   access?: ConsoleAccess;
   topologyAccess?: TopologySnapshot;
@@ -186,7 +187,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, initialAgentId, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
@@ -200,6 +201,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   const [revisandoPlazas, setRevisandoPlazas] = useState(false);
   const [cerrandoPlaza, setCerrandoPlaza] = useState<Record<string, true>>({});
   const [errorPlazas, setErrorPlazas] = useState<string>();
+  const initialAgentOpenedRef = useRef<string | undefined>(undefined);
 
   const sessionTokensRef = useRef(new Map<string, number>());
   const nextSessionTokenRef = useRef(0);
@@ -287,7 +289,7 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
   }));
   const activeSession = liveSessions.find((session) => session.id === activeId);
 
-  function openAgent(agent: FleetAgent) {
+  const openAgent = useCallback((agent: FleetAgent) => {
     const id = sessionId(agent);
     if (!sessionTokensRef.current.has(id)) {
       sessionTokensRef.current.set(id, ++nextSessionTokenRef.current);
@@ -300,7 +302,15 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
       return current.map((session) => session.id === id ? { ...session, sourceRoomId } : session);
     });
     setActiveId(id);
-  }
+  }, [access, topologyAccess]);
+
+  useEffect(() => {
+    if (!initialAgentId || initialAgentOpenedRef.current === initialAgentId) return;
+    const requestedAgent = agents.find((agent) => agent.id === initialAgentId);
+    if (!requestedAgent) return;
+    initialAgentOpenedRef.current = initialAgentId;
+    openAgent(requestedAgent);
+  }, [agents, initialAgentId, openAgent]);
 
   function requestTerminalGrant(
     id: string,
@@ -461,7 +471,6 @@ export function OperatorWorkspace({ agents, adapters, access, topologyAccess, te
           activeId={activeId}
           agents={agents}
           access={access}
-          topologyAccess={topologyAccess}
           capability={terminalCapability}
           targets={terminalTargets}
           grants={grants}

@@ -19,7 +19,7 @@ import { MARCA_INERTE } from './campos-inertes';
  * distinguish anything, and would be as useless as not having one.
  */
 
-const AGENTES = /agentes y cuentas/i;
+const AGENTES = /^agentes$/i;
 const PERMISOS = /^permisos$/i;
 const ESPACIOS = /espacios y miembros/i;
 
@@ -162,7 +162,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
 });
 
 describe('la tabla de cómo funciona cada arnés de verdad', () => {
-  it('sale en «Agentes y cuentas», con los cuatro arneses y dónde lee cada uno', async () => {
+  it('sale en «Agentes», con los cuatro arneses y dónde lee cada uno', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);

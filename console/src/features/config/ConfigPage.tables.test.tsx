@@ -14,7 +14,7 @@ import {
 } from './ConfigPage.test-helpers';
 
 const HISTORIAL = /historial y json/i;
-const AGENTES = /agentes y cuentas/i;
+const AGENTES = /^agentes$/i;
 
 function rotulo(celda: HTMLElement): string {
   return celda.textContent.replace(/[?:].*/s, '').trim();

@@ -151,6 +151,92 @@ it('rechaza agents.role_brief localmente y no emite ni preview ni apply', async 
   expect(changes).toEqual([]);
 });
 
+it('centraliza cuentas, techos y bindings en /accounts: no repite tablas ni acepta JSON crudo', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
+
+  await irA(user, /^agentes$/i);
+  expect(screen.getByRole('link', { name: /ir a cuentas y cuotas/i })).toHaveAttribute('href', '/accounts');
+  expect(screen.queryByRole('heading', { name: /provider accounts/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /alias routing ceiling/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /account bindings/i })).not.toBeInTheDocument();
+
+  await irA(user, HISTORIAL);
+  fireEvent.change(screen.getByLabelText('Mutación JSON'), { target: { value: JSON.stringify({
+    resource: 'provider_account', action: 'delete', id: 'codex-steven',
+  }) } });
+  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/únicamente en «Cuentas y cuotas»/i);
+  expect(screen.getByRole('alert')).toHaveTextContent(/\/accounts/);
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  expect(changes).toEqual([]);
+});
+
+it('bloquea fail-closed el rollback de cuentas y sólo ejecuta una revisión no-account', async () => {
+  const rollbackRequests: string[] = [];
+  servirConfig(() => ({
+    ...snapshotDeConfig(9),
+    revisions: [
+      {
+        id: '7', actor_tenant: 'Steven', actor_alias: 'kant', summary: 'retiro de cuenta',
+        operation: { resource: 'provider_account', action: 'delete', id: 'codex-steven' },
+      },
+      {
+        id: '8', actor_tenant: 'Steven', actor_alias: 'kant', summary: 'retiro de techo',
+        operation: {
+          resource: 'alias_routing_ceiling', action: 'delete', tenant_id: 'Steven', alias: 'kant',
+        },
+      },
+      {
+        id: '9', actor_tenant: 'Steven', actor_alias: 'kant', summary: 'retiro de binding',
+        operation: {
+          resource: 'agent_account_binding', action: 'delete', tenant_id: 'Steven', alias: 'kant',
+          account_id: 'codex-steven',
+        },
+      },
+      {
+        id: '10', actor_tenant: 'Steven', actor_alias: 'kant', summary: 'operación ausente',
+        operation: null,
+      },
+      {
+        id: '11', actor_tenant: 'Steven', actor_alias: 'kant', summary: 'cambio de tenant permitido',
+        operation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: true } },
+      },
+    ],
+  }));
+  server.use(http.post('*/v3/console/config/revisions/:id/rollback', ({ params }) => {
+    rollbackRequests.push(String(params.id));
+    return HttpResponse.json({
+      applied: false, dry_run: true, revision: 9, rolled_back_revision_id: 11,
+      summary: 'preview rollback 11',
+      mutation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: false } },
+      inverse_mutation: { resource: 'tenant', action: 'update', id: 'Steven', value: { enabled: true } },
+    });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await irA(user, HISTORIAL);
+
+  const audit = within(panelDe(/audit trail/i));
+  for (const summary of ['retiro de cuenta', 'retiro de techo', 'retiro de binding', 'operación ausente']) {
+    const row = audit.getByText(summary).closest('tr');
+    expect(row).not.toBeNull();
+    if (row) expect(within(row).queryByRole('button')).not.toBeInTheDocument();
+  }
+  expect(audit.getAllByText(/su única autoridad es Cuentas y cuotas/i)).toHaveLength(3);
+  expect(audit.getAllByRole('link', { name: /abrir cuentas y cuotas/i })).toHaveLength(3);
+  expect(audit.getByText(/no publica una operación reconocible/i)).toBeInTheDocument();
+
+  const allowedRow = audit.getByText('cambio de tenant permitido').closest('tr');
+  expect(allowedRow).not.toBeNull();
+  if (allowedRow) await user.click(within(allowedRow).getByRole('button', { name: /^Preview$/ }));
+  expect(await audit.findByText(/preview del rollback de la revisión 11 aceptado/i)).toBeInTheDocument();
+  expect(rollbackRequests).toEqual(['11']);
+});
+
 it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéricos', async () => {
   server.use(http.post('http://localhost/v3/console/config/changes', () => HttpResponse.json(
     { error: 'conflict', message: 'ACL edge already exists' },

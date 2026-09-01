@@ -7,7 +7,7 @@ Generado por `pnpm grafo` (determinista — regenerar tras reordenar). Nodo = di
 ```mermaid
 graph LR
   node_scripts["scripts"] -->|149| node_packages_adapter_sdk["packages/adapter-sdk"]
-  node_scripts["scripts"] -->|138| node_console["console"]
+  node_scripts["scripts"] -->|136| node_console["console"]
   node_scripts["scripts"] -->|85| node_packages_store["packages/store"]
   node_packages_store["packages/store"] -->|80| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|80| node_services_gateway["services/gateway"]
@@ -15,8 +15,8 @@ graph LR
   node_tests_unit["tests/unit"] -->|57| node_services_gateway["services/gateway"]
   node_services_gateway["services/gateway"] -->|50| node_packages_store["packages/store"]
   node_scripts["scripts"] -->|48| node_tests_unit["tests/unit"]
-  node_packages_store["packages/store"] -->|43| node_tests_helpers["tests/helpers"]
-  node_services_gateway["services/gateway"] -->|38| node_packages_protocol["packages/protocol"]
+  node_packages_store["packages/store"] -->|44| node_tests_helpers["tests/helpers"]
+  node_services_gateway["services/gateway"] -->|39| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|36| node_ops_tests["ops/tests"]
   node_scripts["scripts"] -->|33| node_services_telegram_bridge["services/telegram-bridge"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|33| node_services_gateway["services/gateway"]
@@ -25,7 +25,7 @@ graph LR
   node_scripts["scripts"] -->|29| node_ops_pty_agent["ops/pty-agent"]
   node_scripts["scripts"] -->|25| node_services_terminal_relay["services/terminal-relay"]
   node_ops_tests["ops/tests"] -->|21| node_ops_scripts["ops/scripts"]
-  node_console["console"] -->|20| node_packages_store["packages/store"]
+  node_console["console"] -->|19| node_packages_store["packages/store"]
   node_scripts["scripts"] -->|19| node_tests_gateway_hardening["tests/gateway-hardening"]
   node_tests_store_hardening["tests/store-hardening"] -->|19| node_packages_store["packages/store"]
   node_scripts["scripts"] -->|17| node_packages_protocol["packages/protocol"]
@@ -39,17 +39,17 @@ graph LR
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|11| node_packages_store["packages/store"]
   node_tests_unit["tests/unit"] -->|11| node_services_telegram_bridge["services/telegram-bridge"]
   node_console["console"] -->|10| node_packages_protocol["packages/protocol"]
-  node_console["console"] -->|10| node_services_gateway["services/gateway"]
+  node_services_dispatcher["services/dispatcher"] -->|10| node_packages_store["packages/store"]
   node_services_telegram_bridge["services/telegram-bridge"] -->|10| node_packages_store["packages/store"]
   node_services_telegram_bridge["services/telegram-bridge"] -->|10| node_packages_protocol["packages/protocol"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|10| node_packages_protocol["packages/protocol"]
   node_ops_scripts["ops/scripts"] -->|9| node_deploy["deploy"]
   node_scripts["scripts"] -->|9| node_ops_guardias["ops/guardias"]
   node_scripts["scripts"] -->|9| node_tests_terminal_pty["tests/terminal-pty"]
-  node_services_dispatcher["services/dispatcher"] -->|9| node_packages_store["packages/store"]
   node_tests_store_hardening["tests/store-hardening"] -->|9| node_tests_helpers["tests/helpers"]
   node_tests_store_hardening["tests/store-hardening"] -->|8| node_services_gateway["services/gateway"]
   node_tests_unit["tests/unit"] -->|8| node_packages_adapter_sdk["packages/adapter-sdk"]
+  node_console["console"] -->|7| node_services_gateway["services/gateway"]
   node_console["console"] -->|7| node_packages_adapter_sdk["packages/adapter-sdk"]
   node_scripts["scripts"] -->|7| node_tests_store_hardening["tests/store-hardening"]
   node_tests_e2e["tests/e2e"] -->|7| node_services_gateway["services/gateway"]
@@ -112,7 +112,7 @@ graph LR
 | Desde | Hacia | Refs |
 |---|---|---|
 | scripts | packages/adapter-sdk | 149 |
-| scripts | console | 138 |
+| scripts | console | 136 |
 | scripts | packages/store | 85 |
 | packages/store | packages/protocol | 80 |
 | scripts | services/gateway | 80 |
@@ -120,8 +120,8 @@ graph LR
 | tests/unit | services/gateway | 57 |
 | services/gateway | packages/store | 50 |
 | scripts | tests/unit | 48 |
-| packages/store | tests/helpers | 43 |
-| services/gateway | packages/protocol | 38 |
+| packages/store | tests/helpers | 44 |
+| services/gateway | packages/protocol | 39 |
 | scripts | ops/tests | 36 |
 | scripts | services/telegram-bridge | 33 |
 | tests/gateway-hardening | services/gateway | 33 |
@@ -130,7 +130,7 @@ graph LR
 | scripts | ops/pty-agent | 29 |
 | scripts | services/terminal-relay | 25 |
 | ops/tests | ops/scripts | 21 |
-| console | packages/store | 20 |
+| console | packages/store | 19 |
 | scripts | tests/gateway-hardening | 19 |
 | tests/store-hardening | packages/store | 19 |
 | scripts | packages/protocol | 17 |
@@ -144,17 +144,17 @@ graph LR
 | tests/gateway-hardening | packages/store | 11 |
 | tests/unit | services/telegram-bridge | 11 |
 | console | packages/protocol | 10 |
-| console | services/gateway | 10 |
+| services/dispatcher | packages/store | 10 |
 | services/telegram-bridge | packages/store | 10 |
 | services/telegram-bridge | packages/protocol | 10 |
 | tests/gateway-hardening | packages/protocol | 10 |
 | ops/scripts | deploy | 9 |
 | scripts | ops/guardias | 9 |
 | scripts | tests/terminal-pty | 9 |
-| services/dispatcher | packages/store | 9 |
 | tests/store-hardening | tests/helpers | 9 |
 | tests/store-hardening | services/gateway | 8 |
 | tests/unit | packages/adapter-sdk | 8 |
+| console | services/gateway | 7 |
 | console | packages/adapter-sdk | 7 |
 | scripts | tests/store-hardening | 7 |
 | tests/e2e | services/gateway | 7 |
@@ -271,17 +271,17 @@ graph LR
 
 ## Hubs (los 15 ficheros más referenciados)
 
-- packages/protocol/src/index.ts ← 192
-- packages/store/src/index.ts ← 152
-- console/src/api/types.ts ← 127
+- packages/protocol/src/index.ts ← 193
+- packages/store/src/index.ts ← 154
+- console/src/api/types.ts ← 133
 - packages/adapter-sdk/src/sdk/types.ts ← 93
-- tests/helpers/postgres.ts ← 74
-- console/src/mocks/server.ts ← 62
-- console/src/test/render.tsx ← 61
+- tests/helpers/postgres.ts ← 75
+- console/src/mocks/server.ts ← 63
+- console/src/test/render.tsx ← 62
 - services/gateway/src/auth.ts ← 61
 - packages/store/src/db.ts ← 52
-- packages/store/test/postgres-suite.ts ← 51
-- console/src/components/ui.tsx ← 46
+- packages/store/test/postgres-suite.ts ← 52
+- console/src/components/ui.tsx ← 45
 - console/src/lib.ts ← 44
 - packages/adapter-sdk/src/sdk/durable-store.ts ← 44
 - packages/adapter-sdk/src/harnesses/index.ts ← 33
@@ -330,9 +330,9 @@ graph LR
 
 | Nodo | Ficheros |
 |---|---|
-| console | 323 |
+| console | 334 |
 | packages/adapter-sdk | 186 |
-| packages/store | 111 |
+| packages/store | 112 |
 | services/gateway | 102 |
 | tests/unit | 83 |
 | ops/scripts | 67 |
@@ -344,7 +344,7 @@ graph LR
 | tests/gateway-hardening | 20 |
 | deploy/runtime | 18 |
 | ops/manifests | 14 |
-| services/dispatcher | 12 |
+| services/dispatcher | 13 |
 | ops/guardias | 11 |
 | scripts | 11 |
 | tests/terminal-pty | 10 |

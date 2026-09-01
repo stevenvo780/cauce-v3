@@ -6,30 +6,23 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type KeyboardEvent,
-  type SyntheticEvent,
 } from 'react';
 import {
   Activity,
   Braces,
-  ChevronDown,
   CircleOff,
   Clock3,
-  LockKeyhole,
+  ExternalLink,
   MessageSquareText,
   MonitorPlay,
   RefreshCw,
-  Send,
   ShieldCheck,
   TerminalSquare,
 } from 'lucide-react';
 import { useApi } from '../../api/context';
-import type { ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { Badge, LoadingState, Time, Unknown } from '../../components/ui';
-import { compactId, permissionState } from '../../lib';
-import { publishDurably } from '../messages/durable-publish';
-import { exactCancelReceipt, exactReplayReceipt } from '../queues/delivery-receipts';
 import { AckInspector } from './AckInspector';
 import {
   TerminalApiError,
@@ -54,7 +47,6 @@ import { readPtySession, subscribePtySession } from './pty-session';
 import { liveTuiGate, terminalChannelGate } from './plugin';
 import {
   liveTuiReason,
-  operatorRouteForAgent,
   ptySecondsLeft,
   sessionDeliveries,
   transcriptForSession,
@@ -72,13 +64,12 @@ const PtyTerminal = lazy(() => import('./PtyTerminal'));
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
-export function SessionStage({ session, sessionToken, agents, access, topologyAccess, capability, targets, grants, closedChannels, onUpdate, onRequestGrant, onChannelClosed, onReleaseChannel, onReconciliarPlazas }: {
+export function SessionStage({ session, sessionToken, agents, access, capability, targets, grants, closedChannels, onUpdate, onRequestGrant, onChannelClosed, onReleaseChannel, onReconciliarPlazas }: {
   session: OperatorSession;
   /** Incarnation of this tab. Closing and reopening the same alias produces a different token. */
   sessionToken: number;
   agents: FleetAgent[];
   access?: ConsoleAccess;
-  topologyAccess?: TopologySnapshot;
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
   grants: Record<string, TerminalSessionGrant>;
@@ -93,10 +84,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
 }) {
   const api = useApi();
   const messages = useResource('terminal-message-feed', () => api.listMessages());
-  const [draft, setDraft] = useState('');
   const [selectedDeliveryId, setSelectedDeliveryId] = useState<string>();
-  const [submitting, setSubmitting] = useState(false);
-  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; text: string }>();
   const [showPtyDialog, setShowPtyDialog] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<DenegacionExplicada>();
@@ -151,13 +139,7 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
   const selectedMessageId = transcript.find((item) => (
     selectedDelivery?.delivery_id != null && item.delivery?.delivery_id === selectedDelivery.delivery_id
   ))?.message.message_id ?? undefined;
-  const canPublish = permissionState(access, 'message.publish') === 'allowed';
-  const route = operatorRouteForAgent(topologyAccess, access, liveSession.agent);
-  const sourceRoomId = route.sourceRoomIds.includes(liveSession.sourceRoomId)
-    ? liveSession.sourceRoomId
-    : route.sourceRoomIds[0] ?? '';
-  const roomEnabled = route.membership === true && Boolean(sourceRoomId);
-  const canRoute = route.allowed && roomEnabled;
+  const messagesHref = `/messages/${encodeURIComponent(liveSession.agent.tenantId)}/${encodeURIComponent(liveSession.agent.alias)}`;
   const channel = terminalChannelGate(capability, access, targets, liveSession.agent);
   const channelLabel = channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
   const channelTarget = terminalTargetForAgent(targets?.items, liveSession.agent);
@@ -188,70 +170,6 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
     autoOpenedRef.current = liveSession.id;
     void requestChannelRef.current(liveTuiReason(liveSession.agent.alias), LIVE_TUI_MODE);
   }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled]);
-
-  async function submit(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canPublish || !sourceRoomId || !canRoute) return;
-    const text = draft.trim();
-    if (!text) return;
-    setSubmitting(true);
-    setNotice(undefined);
-    try {
-      const input = {
-        room_id: sourceRoomId,
-        recipients: [{ tenant_id: liveSession.agent.tenantId, alias: liveSession.agent.alias }],
-        body: { text },
-        lane: 'interactive' as const,
-        priority: 10,
-      };
-      const { receipt: result, reconciled, journalStatus } = await publishDurably({
-        api,
-        input,
-        publisherSubject: access?.subject,
-        expectedDeliveries: 1,
-        reconcile: messages.reload,
-      });
-      setDraft('');
-      setNotice({
-        tone: 'success',
-        text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(result.message_id)}. `
-          + `${journalStatus === 'confirmed'
-            ? 'Intención confirmada'
-            : journalStatus === 'pending'
-              ? 'Confirmación incierta; intención pendiente y cercada'
-              : 'Confirmación rechazada; intención cercada contra duplicados'}; esperando ACK por polling.`,
-      });
-      void messages.reload();
-    } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'No se pudo publicar la instrucción.' });
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  }
-
-  async function replay(deliveryId: string) {
-    const result = await api.replayDelivery(deliveryId);
-    if (!exactReplayReceipt(result, deliveryId)) {
-      void messages.reload();
-      throw new Error('El gateway no devolvió un recibo durable exacto del replay.');
-    }
-    void messages.reload();
-  }
-
-  async function cancel(deliveryId: string) {
-    const result = await api.cancelDelivery(deliveryId);
-    if (!exactCancelReceipt(result, deliveryId)) {
-      void messages.reload();
-      throw new Error('El gateway no devolvió un recibo durable exacto de la cancelación.');
-    }
-    void messages.reload();
-  }
 
   async function requestChannel(reason: string, mode: string) {
     if (mode === LIVE_TUI_MODE ? !liveTui.enabled : !channel.enabled) return;
@@ -350,11 +268,6 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
             <Badge tone={liveSession.agent.leaseState === 'online' ? 'online' : liveSession.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{LEASE_STATE_LABEL[liveSession.agent.leaseState]}</Badge>
           </div>
           <div className="session-controls">
-             <label className="terminal-room-label">Room de origen
-               <span className="room-select-wrap"><select value={sourceRoomId} onChange={(event) => { onUpdate({ ...liveSession, sourceRoomId: event.target.value }); }} disabled={!route.sourceRoomIds.length}>
-                 {route.sourceRoomIds.length ? route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>) : <option value="">No autorizado</option>}
-               </select><ChevronDown size={14} aria-hidden="true" /></span>
-             </label>
              <div className="terminal-mode-switch" aria-label="Canal de sesión">
                <button type="button" aria-pressed={liveSession.mode === 'transcript'} data-active={liveSession.mode === 'transcript' || undefined} onClick={() => { onUpdate({ ...liveSession, mode: 'transcript' }); }}><MessageSquareText size={14} aria-hidden="true" /> Feed</button>
                <button
@@ -465,35 +378,17 @@ export function SessionStage({ session, sessionToken, agents, access, topologyAc
                  }}
               />
             )}
-            <form className="terminal-composer" onSubmit={(event) => void submit(event)}>
-              <label htmlFor={`terminal-input-${liveSession.id}`}>Entrada para {liveSession.agent.alias}</label>
-              <textarea
-                id={`terminal-input-${liveSession.id}`}
-                value={draft}
-                onChange={(event) => { setDraft(event.target.value); }}
-                onKeyDown={composerKeyDown}
-                rows={3}
-                maxLength={8_000}
-                placeholder={liveSession.agent.leaseState === 'online' ? 'Escribí una instrucción…' : 'El agente no tiene lease vigente; Cauce puede encolar la instrucción.'}
-                disabled={!canPublish || !sourceRoomId || !canRoute || submitting}
-              />
-              <div className="composer-footer">
-                <span><kbd>Enter</kbd> enviar · <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea</span>
-                 <button className="button primary" type="submit" disabled={!canPublish || !sourceRoomId || !canRoute || submitting || !(draft.trim())}>
-                  <Send size={15} aria-hidden="true" /> {submitting ? 'Enviando…' : 'Enviar'}
-                </button>
-              </div>
-               {!canPublish ? <p className="composer-blocked"><LockKeyhole size={14} aria-hidden="true" /> Requiere message.publish.</p> : null}
-               {route.membership === undefined ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> No se pudo leer si sos miembro del room de origen; no se asume que lo seas.</p> : null}
-               {route.membership === false ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> Membership deshabilitada o sin room compartido.</p> : null}
-               {!route.allowed ? <p className="composer-blocked"><CircleOff size={14} aria-hidden="true" /> {route.reason}</p> : null}
-              {notice ? <p className={`notice ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p> : null}
-            </form>
+            <div className="terminal-readonly-actions">
+              <p>Este feed es de observación. La única vista que publica mensajes es Mensajes.</p>
+              <a className="button small secondary" href={messagesHref} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={14} aria-hidden="true" /> Escribir a {liveSession.agent.alias} en Mensajes
+              </a>
+            </div>
           </>
         )}
       </section>
       <aside className="terminal-inspector" aria-label="Inspector de sesión">
-        <AckInspector delivery={selectedDelivery} access={access} onReplay={replay} onCancel={cancel} />
+        <AckInspector delivery={selectedDelivery} />
         <section className="terminal-inspector-section session-facts">
           <header className="inspector-title"><div><p className="eyebrow">Session facts</p><h3>Observación</h3></div><Activity size={18} aria-hidden="true" /></header>
           <dl>

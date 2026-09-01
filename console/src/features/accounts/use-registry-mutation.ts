@@ -3,7 +3,7 @@ import { useApi } from '../../api/context';
 import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { permissionState } from '../../lib';
-import { exactConfigurationReceipt } from '../config/config-receipt';
+import { executeConfigurationChange, textoRecarga } from '../config/config-change';
 import { describeRegistryError, redactPreview, type RegistryContext } from './registry';
 
 interface RegistryNotice {
@@ -27,6 +27,11 @@ function key(mutation: ConfigMutation): string {
   return JSON.stringify(mutation);
 }
 
+interface ValidatedMutation {
+  mutationKey: string;
+  expectedRevision: number | undefined;
+}
+
 /**
  * The only write path for the pool screens: `changeConfiguration()`, dry-run first and apply
  * after, exactly like ConfigPage. Apply stays disabled until the server has validated the EXACT
@@ -42,10 +47,13 @@ export function useRegistryMutation(options: {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<RegistryNotice>();
   const [preview, setPreview] = useState<string>();
-  const [validatedKey, setValidatedKey] = useState<string>();
+  const [validated, setValidated] = useState<ValidatedMutation>();
   const [chainedRevision, setChainedRevision] = useState<number>();
 
-  const canWrite = permissionState(options.access.data, 'config.write') === 'allowed';
+  const canWrite = permissionState(
+    options.access.error ? undefined : options.access.data,
+    'config.write',
+  ) === 'allowed';
   const snapshotRevision = typeof options.config.data?.revision === 'number' ? options.config.data.revision : undefined;
   // Like ConfigPage: the snapshot reload is async, so until it catches up to the revision returned
   // by the last apply, that revision is the only expected value.
@@ -57,7 +65,7 @@ export function useRegistryMutation(options: {
   function clear() {
     setNotice(undefined);
     setPreview(undefined);
-    setValidatedKey(undefined);
+    setValidated(undefined);
   }
 
   async function run(mutation: ConfigMutation, dryRun: boolean): Promise<boolean> {
@@ -66,62 +74,58 @@ export function useRegistryMutation(options: {
       return false;
     }
     const mutationKey = key(mutation);
-    if (!dryRun && validatedKey !== mutationKey) {
-      setNotice({ text: 'Primero hay que previsualizar exactamente esta mutación: el apply sólo se habilita sobre el dry-run que el servidor ya aceptó.', tone: 'error' });
+    const isCurrentPreview = validated?.mutationKey === mutationKey
+      && validated.expectedRevision === expectedRevision;
+    if (!dryRun && !isCurrentPreview) {
+      setNotice({ text: 'Primero hay que previsualizar exactamente esta mutación sobre la revisión visible: el apply sólo se habilita sobre el dry-run que el servidor ya aceptó.', tone: 'error' });
       return false;
     }
     setBusy(true);
     setNotice(undefined);
     try {
-      const result = await api.changeConfiguration(mutation, {
+      const outcome = await executeConfigurationChange({
+        mutation,
         dryRun,
-        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+        expectedRevision,
+        change: (next, changeOptions) => api.changeConfiguration(next, changeOptions),
+        reload: options.config.reload,
+        describeError: (error) => describeRegistryError(error, mutation, options.context),
       });
-      if (!exactConfigurationReceipt(result, dryRun, mutation)) {
-        setValidatedKey(undefined);
-        setPreview(undefined);
-        const recarga = dryRun ? undefined : await options.config.reload();
-        const desenlace = recarga === undefined
-          ? ''
-          : recarga.error
-            ? ` La relectura tampoco llegó (${recarga.error.message}).`
-            : ` Se releyó la revisión ${String(recarga.data.revision ?? 'no informada')}; verificá allí el efecto.`;
+      if (!outcome.ok) {
+        if (outcome.conflict) {
+          setChainedRevision(undefined);
+          setValidated(undefined);
+          setPreview(undefined);
+        }
+        if (outcome.uncertain !== undefined) {
+          setValidated(undefined);
+          setPreview(undefined);
+        }
         setNotice({
+          text: outcome.message + textoRecarga(outcome.recarga),
           tone: 'error',
-          text: dryRun
-            ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
-            : `El servidor devolvió un 2xx sin el recibo durable exacto. La escritura puede haberse aplicado; no la repitas sin conciliar.${desenlace}`,
         });
         return false;
       }
+      const { result } = outcome;
       if (dryRun) {
-        setValidatedKey(mutationKey);
+        setValidated({ mutationKey, expectedRevision });
         setPreview(redactPreview(result));
         setNotice({ text: `Dry-run aceptado: ${result.summary ?? 'el servidor no devolvió resumen'}. Revisá el resultado antes de aplicar.`, tone: 'success' });
         return true;
       }
-      setValidatedKey(undefined);
+      setValidated(undefined);
       setPreview(undefined);
       if (typeof result.revision === 'number') setChainedRevision(result.revision);
-      const recarga = await options.config.reload();
+      const recarga = outcome.recarga;
       setNotice({
         text: `Aplicado en revisión ${String(result.revision ?? '')}: ${result.summary ?? ''}.`
-          + (recarga.error
-            ? ` PERO la relectura del inventario no llegó (${recarga.error.message}); lo visible puede estar vencido.`
-            : ` Inventario releído en revisión ${String(recarga.data.revision ?? 'no informada')}.`),
-        tone: recarga.error ? 'parcial' : 'success',
+          + (recarga && !recarga.releido
+            ? ` PERO la relectura del inventario no llegó (${recarga.motivo}); lo visible puede estar vencido.`
+            : ` Inventario releído en revisión ${String(recarga?.revision ?? 'no informada')}.`),
+        tone: recarga && !recarga.releido ? 'parcial' : 'success',
       });
       return true;
-    } catch (error) {
-      const described = describeRegistryError(error, mutation, options.context);
-      if (described.conflict) {
-        setChainedRevision(undefined);
-        setValidatedKey(undefined);
-        setPreview(undefined);
-        await options.config.reload();
-      }
-      setNotice({ text: described.message, tone: 'error' });
-      return false;
     } finally {
       setBusy(false);
     }
@@ -133,7 +137,8 @@ export function useRegistryMutation(options: {
     notice,
     preview,
     expectedRevision,
-    isValidated: (mutation) => validatedKey === key(mutation),
+    isValidated: (mutation) => validated?.mutationKey === key(mutation)
+      && validated.expectedRevision === expectedRevision,
     run,
     clear,
   };

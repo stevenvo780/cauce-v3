@@ -55,7 +55,7 @@ it('FAMILIA 5: /config son CINCO pestañas reales, en el orden en que se monta u
   const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
     .getAllByRole('tab');
   expect(pestanas.map((boton) => boton.textContent)).toEqual([
-    'Espacios y miembros', 'Permisos', 'Agentes y cuentas',
+    'Espacios y miembros', 'Permisos', 'Agentes',
     'Avisos y cadena', 'Historial y JSON',
   ]);
   expect(pestanas[0]).toHaveAttribute('aria-selected', 'true');

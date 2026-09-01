@@ -44,8 +44,8 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
   },
   {
     id: 'agentes',
-    label: 'Agentes y cuentas',
-    descripcion: 'El registro de bots declarados y a qué cuentas de IA llega cada uno.',
+    label: 'Agentes',
+    descripcion: 'El registro de bots declarados y la definición de sus harnesses.',
     detalle: 'Es un registro declarado, no un mando: el programa que corre cada bot sale del '
       + 'binario en ejecución y no de la columna «Harness». Y esto NO decide a quién se le entrega: '
       + 'eso son las membresías, en «Espacios y miembros».',
@@ -83,9 +83,6 @@ const AREA_POR_COLECCION: Record<string, ConfigAreaId> = {
   role_policies: 'permisos',
   agents: 'agentes',
   harness_definitions: 'agentes',
-  provider_accounts: 'agentes',
-  alias_routing_ceiling: 'agentes',
-  agent_account_bindings: 'agentes',
   chain_policies: 'avisos',
   egress_destinations: 'avisos',
 };

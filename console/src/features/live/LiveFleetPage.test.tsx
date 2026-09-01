@@ -506,8 +506,10 @@ describe('el cajón', () => {
     const ahora = within(cajon).getByRole('tab', { name: 'Ahora' });
     const conexion = within(cajon).getByRole('tab', { name: 'Conexión' });
 
+    const terminal = within(cajon).getByRole('link', { name: /abrir este agente en terminal/i });
+    expect(terminal).toHaveAttribute('href', '/terminal/Steven/zeus');
     await user.tab({ shift: true });
-    expect(within(cajon).getByRole('link', { name: /abrir la terminal/i })).toHaveFocus();
+    expect(terminal).toHaveFocus();
     ahora.focus();
     await user.keyboard('{ArrowRight}');
     expect(conexion).toHaveFocus();
@@ -515,7 +517,7 @@ describe('el cajón', () => {
     expect(ahora).toHaveAttribute('tabindex', '-1');
     cerrar.focus();
     await user.tab({ shift: true });
-    expect(within(cajon).getByRole('link', { name: /abrir la terminal/i })).toHaveFocus();
+    expect(terminal).toHaveFocus();
   });
 
   it('reabre el agente que venía en la URL: el enlace se puede pegar en un chat', async () => {

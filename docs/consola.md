@@ -14,9 +14,9 @@ No utiliza `react-router`. El enrutamiento se resuelve con un módulo propio en 
 |---|---|
 | `features/landing/` | Dashboard: estado rápido del sistema |
 | `features/live/` | Estado de flota en tiempo real y drawer de agente: una única vista `Contexto` para editar perfil y manual, más `Ficheros` como visor |
-| `features/fleet/` | Mapa de estado de la flota |
-| `features/messages/` | Explorador y visor de mensajes |
-| `features/queues/` | Colas de salida, DLQ, reintentos |
+| `features/messages/` | Conversaciones y única superficie de publicación durable |
+| `features/deliveries/` | Política canónica de estados y ejecución segura de comandos sobre entregas |
+| `features/queues/` | Colas de salida, DLQ y única superficie de replay/cancelación/resolución |
 | `features/observability/` | Métricas, gráficos, salud de colas |
 | `features/config/` | Configuración versionada con OCC |
 | `features/accounts/` | Gestión y selección de cuentas/tenants |
@@ -24,6 +24,24 @@ No utiliza `react-router`. El enrutamiento se resuelve con un módulo propio en 
 | `features/audit/` | Visor de eventos de auditoría y telemetría |
 | `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo) |
 | `features/help/` | Documentación integrada y atajos de teclado |
+
+## Autoridades únicas de escritura
+
+Cada entidad operativa tiene una sola superficie de mutación. Las demás vistas pueden proyectar el
+mismo dato para dar contexto, pero sólo enlazan a su autoridad:
+
+- `/live`, pestaña **Contexto**: perfil canónico y manual del arnés del agente;
+- `/accounts`: cuentas de proveedor, techos por alias y bindings de fallback;
+- `/messages/:tenant/:alias`: redacción y publicación durable;
+- `/queues?delivery=:id`: replay, cancelación y resolución de DLQ;
+- `/config`: topología, registro de agentes, políticas y revisiones; no acepta contextos ni recursos
+  del pool de cuentas;
+- `/terminal/:tenant/:alias`: PTY, transcript y ACK en lectura. La ruta histórica
+  `/fleet/:tenant/:alias` redirige a este detalle canónico.
+
+La política de los ocho estados de entrega vive en `features/deliveries/delivery-policy.ts`; los
+rótulos, tonos, filtros y acciones no mantienen listas paralelas. Los comandos operativos validan
+el recibo exacto y releen la cola ante una respuesta incierta antes de afirmar éxito.
 
 ## Contexto y ficheros de gobernanza
 
@@ -66,6 +84,12 @@ juego de arneses soportado y la consola no ofrece una edición ficticia para él
 ## Cliente API
 
 `src/api/client.ts` — cliente HTTP tipado con control de timeout y soporte de cancelación. El contexto se provee mediante `src/api/context.tsx` y el hook `src/api/use-resource.ts`.
+
+El shell mantiene una sola lectura compartida de `/v3/console/access` mediante
+`src/api/console-access.ts`; navegación y vistas consumen el mismo `Resource` y no consultan los
+permisos por separado. Del mismo modo, `features/terminal/relay-status.ts` es la única autoridad de
+la capacidad del relay para la navegación y la Terminal. Los `Boundary` de ambos módulos existen
+únicamente para montar componentes de forma aislada en tests.
 
 ## Terminal interactiva
 

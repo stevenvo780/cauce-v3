@@ -347,7 +347,7 @@ it('ofrece el salto a la terminal del agente, apuntando a su detalle real', asyn
   renderWithApi(<MessagesPage />);
 
   const hilo = await abrirConversacion(user, 'argos');
-  expect(within(hilo).getByRole('link', { name: /abrir tui/i })).toHaveAttribute('href', '/fleet/Steven/argos');
+  expect(within(hilo).getByRole('link', { name: /abrir tui/i })).toHaveAttribute('href', '/terminal/Steven/argos');
 }, 20_000);
 
 it('un enlace profundo a un alias que el servidor no observa lo dice, en vez de inventar el agente', async () => {
@@ -465,6 +465,11 @@ function feedConFanOut() {
           recipient_tenant: 'Steven', recipient_alias: 'jarvis', status: 'failed' as const, attempt: 2,
           timeline: [{ status: 'published' as const, at: new Date(Date.now() - 95_000).toISOString(), attempt: 1 }],
         },
+        {
+          delivery_id: 'eeeeeeee-3333-4444-8555-666666666666',
+          recipient_tenant: 'Steven', recipient_alias: 'socrates', status: 'retry' as const, attempt: 3,
+          timeline: [{ status: 'published' as const, at: new Date(Date.now() - 95_000).toISOString(), attempt: 1 }],
+        },
       ],
     });
   server.use(http.get('*/v3/console/messages', () => HttpResponse.json({ ...feed, items })));
@@ -496,6 +501,24 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   const fanout = within(hilo).getByRole('region', { name: /entregas hermanas/i });
   expect(within(fanout).getByText('Steven:jarvis')).toBeInTheDocument();
   expect(within(fanout).getByText('FALLÓ')).toBeInTheDocument();
+  expect(within(fanout).getByText('Steven:socrates')).toBeInTheDocument();
+  expect(within(fanout).getByText('EN REINTENTO').closest('.badge')).toHaveClass('badge-warning');
+
+  const gestionarPrincipal = within(detalle).getByRole('link', {
+    name: /gestionar delivery 4b981ddd-f311-494e-887c-83fd5e11be90 en colas/i,
+  });
+  expect(gestionarPrincipal).toHaveAttribute(
+    'href', '/queues?delivery=4b981ddd-f311-494e-887c-83fd5e11be90',
+  );
+  const gestionarHermana = within(fanout).getByRole('link', {
+    name: /gestionar delivery ffffffff-2222-4333-8444-555555555555 en colas/i,
+  });
+  expect(gestionarHermana).toHaveAttribute(
+    'href', '/queues?delivery=ffffffff-2222-4333-8444-555555555555',
+  );
+
+  expect(within(detalle).queryByRole('button', { name: /replay delivery/i })).not.toBeInTheDocument();
+  expect(within(detalle).queryByRole('button', { name: /cancelar delivery/i })).not.toBeInTheDocument();
 }, 25_000);
 
 /**

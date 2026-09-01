@@ -1,7 +1,23 @@
 import type { TimelineEvent } from '../../api/types';
 import { Badge, Time } from '../../components/ui';
+import { DELIVERY_POLICY, deliveryPolicy } from '../deliveries/delivery-policy';
 
 const ordered = ['published', 'accepted', 'started'] as const;
+
+function timelinePolicy(status: unknown) {
+  if (status === 'published') return { label: 'PUBLICADA', tone: 'info' as const, className: 'published' };
+  if (status === 'done / failed') return {
+    label: `${DELIVERY_POLICY.done.label} / ${DELIVERY_POLICY.failed.label}`,
+    tone: 'unknown' as const,
+    className: 'unknown',
+  };
+  const policy = deliveryPolicy(status);
+  return {
+    label: policy.label,
+    tone: policy.tone,
+    className: policy.known ? policy.state : 'unknown',
+  };
+}
 
 export function MessageTimeline({ events = [] }: { events?: TimelineEvent[] | null }) {
   const safeEvents = events ?? [];
@@ -14,11 +30,11 @@ export function MessageTimeline({ events = [] }: { events?: TimelineEvent[] | nu
   return (
     <ol className="timeline" aria-label="Timeline publish a resultado terminal">
       {steps.map(({ label, event }) => (
-        <li key={label} className={event ? `timeline-${event.status}` : 'timeline-missing'}>
+        <li key={label} className={event ? `timeline-${timelinePolicy(event.status).className}` : 'timeline-missing'}>
           <span className="timeline-node" aria-hidden="true" />
           <div>
-            <Badge tone={!event ? 'unknown' : event.status === 'failed' ? 'danger' : event.status === 'done' ? 'done' : event.status === 'started' ? 'running' : 'info'}>
-              {event ? event.status.toUpperCase() : `${label.toUpperCase()} · UNKNOWN`}
+            <Badge tone={event ? timelinePolicy(event.status).tone : 'unknown'}>
+              {event ? timelinePolicy(event.status).label : `${timelinePolicy(label).label} · UNKNOWN`}
             </Badge>
             <Time value={event?.at} />
             {event?.attempt ? <small>Intento {event.attempt}</small> : null}

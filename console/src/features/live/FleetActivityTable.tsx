@@ -4,10 +4,11 @@ import type {
   FleetActivityAgent, FleetActivityFlag, FleetActivitySnapshot, FleetActivityThresholds,
 } from '../../api/types';
 import { Badge, Desplazable, EmptyState, Panel, Time, Unknown } from '../../components/ui';
-import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
+import { compactId, safeJobLane } from '../../lib';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 import {
   FLAG_LABEL, FLAG_TONE, agentDisplayName, agentKeyOf, agentRowKey, estadoDeFila,
-  formatAckAge, formatInFlightAge, inFlightItemTone, presenceBadge, presenciaDeLaFila,
+  formatAckAge, formatInFlightAge, presenceBadge, presenciaDeLaFila,
   resumirSenales, rowUrgency, sortByUrgency,
   type EstadosVivos,
 } from './activity';
@@ -346,18 +347,24 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item, index) => (
-                    <tr key={item.delivery_id ?? index}>
+                  {items.map((item, index) => {
+                    const policy = deliveryPolicy(item.status);
+                    return <tr key={item.delivery_id ?? index}>
                       <td><span className="mono">{compactId(item.delivery_id)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
                       <td><Unknown value={item.from_alias} />@<Unknown value={item.from_tenant} /><small className="subline"><Unknown value={item.origin_adapter} /></small></td>
                       <td><Unknown value={safeJobLane(item.lane)} /></td>
-                      <td><Badge tone={inFlightItemTone(item.status)}><Unknown value={safeDeliveryState(item.status)} /></Badge></td>
+                      <td><Badge tone={policy.tone}><Unknown
+                        value={policy.known ? policy.label : undefined}
+                        motivo={item.status && !policy.known
+                          ? `El servidor mandó un estado que esta consola no conoce: ${item.status}`
+                          : undefined}
+                      /></Badge></td>
                       <td><Unknown value={item.attempt} /></td>
                       <td>{formatInFlightAge(item.seconds_in_flight)}</td>
                       <td><Time value={item.ack_deadline_at} relativo /></td>
                       <td>{item.last_ack_at ? <Time value={item.last_ack_at} relativo /> : <span className="unknown">sin ACK</span>}</td>
-                    </tr>
-                  ))}
+                    </tr>;
+                  })}
                 </tbody>
               </table>
             </Desplazable>

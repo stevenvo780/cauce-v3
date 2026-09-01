@@ -40,6 +40,7 @@ const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)/;
 const ACCOUNT_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const PROVIDER_ID = /^[a-z][a-z0-9_.-]{0,63}$/;
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const ALIAS_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /** State of a field the server may null out because it belongs to the payer. */
 type FieldVisibility = 'visible' | 'redacted' | 'absent';
@@ -60,7 +61,7 @@ export interface ProviderAccount {
   updatedAt: string | null;
 }
 
-interface AgentRegistration {
+export interface AgentRegistration {
   tenantId: string;
   alias: string;
   harnessId: string | null;
@@ -70,16 +71,17 @@ interface AgentRegistration {
   runtimeUser: string | null;
 }
 
-interface CeilingEntry {
+export interface CeilingEntry {
   tenantId: string;
   alias: string;
   accountId: string;
   accountPayerTenant: string | null;
+  createdByTenant: string | null;
   /** Derived from the server: the account is paid by a tenant different from the one routing the alias. */
   borrowed: boolean;
 }
 
-interface AccountBinding {
+export interface AccountBinding {
   tenantId: string;
   agentAlias: string;
   accountId: string;
@@ -88,7 +90,7 @@ interface AccountBinding {
 }
 
 /** A section of the snapshot: distinguishes "the gateway does not publish this" from "there are zero rows". */
-interface SnapshotSection<T> {
+export interface SnapshotSection<T> {
   available: boolean;
   items: T[];
 }
@@ -129,7 +131,7 @@ function payerFieldVisibility(row: Record<string, unknown>): FieldVisibility {
 }
 
 function section<T>(
-  snapshot: ConfigurationSnapshot | undefined,
+  snapshot: ConfigurationSnapshot | null | undefined,
   key: 'agents' | 'provider_accounts' | 'alias_routing_ceiling' | 'agent_account_bindings',
   map: (row: Record<string, unknown>) => T | undefined,
 ): SnapshotSection<T> {
@@ -145,10 +147,10 @@ function section<T>(
   return { available: true, items };
 }
 
-export function readProviderAccounts(snapshot?: ConfigurationSnapshot): SnapshotSection<ProviderAccount> {
+export function readProviderAccounts(snapshot?: ConfigurationSnapshot | null): SnapshotSection<ProviderAccount> {
   return section(snapshot, 'provider_accounts', (row) => {
     const id = text(row, 'id');
-    if (!id) return undefined;
+    if (!id || !ACCOUNT_ID.test(id)) return undefined;
     return {
       id,
       provider: text(row, 'provider'),
@@ -165,11 +167,11 @@ export function readProviderAccounts(snapshot?: ConfigurationSnapshot): Snapshot
   });
 }
 
-export function readAgents(snapshot?: ConfigurationSnapshot): SnapshotSection<AgentRegistration> {
+export function readAgents(snapshot?: ConfigurationSnapshot | null): SnapshotSection<AgentRegistration> {
   return section(snapshot, 'agents', (row) => {
     const tenantId = text(row, 'tenant_id');
     const alias = text(row, 'alias');
-    if (!tenantId || !alias) return undefined;
+    if (!tenantId || !TENANT_ID.test(tenantId) || !alias || !ALIAS_ID.test(alias)) return undefined;
     return {
       tenantId,
       alias,
@@ -182,29 +184,32 @@ export function readAgents(snapshot?: ConfigurationSnapshot): SnapshotSection<Ag
   });
 }
 
-export function readCeiling(snapshot?: ConfigurationSnapshot): SnapshotSection<CeilingEntry> {
+export function readCeiling(snapshot?: ConfigurationSnapshot | null): SnapshotSection<CeilingEntry> {
   return section(snapshot, 'alias_routing_ceiling', (row) => {
     const tenantId = text(row, 'tenant_id');
     const alias = text(row, 'alias');
     const accountId = text(row, 'account_id');
-    if (!tenantId || !alias || !accountId) return undefined;
+    if (!tenantId || !TENANT_ID.test(tenantId) || !alias || !ALIAS_ID.test(alias)
+      || !accountId || !ACCOUNT_ID.test(accountId)) return undefined;
     const accountPayerTenant = text(row, 'account_payer_tenant');
     return {
       tenantId,
       alias,
       accountId,
       accountPayerTenant,
+      createdByTenant: text(row, 'created_by_tenant'),
       borrowed: accountPayerTenant !== null && accountPayerTenant !== tenantId,
     };
   });
 }
 
-export function readBindings(snapshot?: ConfigurationSnapshot): SnapshotSection<AccountBinding> {
+export function readBindings(snapshot?: ConfigurationSnapshot | null): SnapshotSection<AccountBinding> {
   return section(snapshot, 'agent_account_bindings', (row) => {
     const tenantId = text(row, 'tenant_id');
     const agentAlias = text(row, 'agent_alias');
     const accountId = text(row, 'account_id');
-    if (!tenantId || !agentAlias || !accountId) return undefined;
+    if (!tenantId || !TENANT_ID.test(tenantId) || !agentAlias || !ALIAS_ID.test(agentAlias)
+      || !accountId || !ACCOUNT_ID.test(accountId)) return undefined;
     return {
       tenantId,
       agentAlias,
@@ -234,14 +239,14 @@ export interface MatrixCell {
   rank: number | null;
 }
 
-interface FallbackStep {
+export interface FallbackStep {
   rank: number;
   accountId: string;
   priority: number | null;
   borrowed: boolean;
 }
 
-interface MatrixRow {
+export interface MatrixRow {
   agent: AgentRegistration;
   cells: MatrixCell[];
   /** Retries, in order. Attempt 1 never goes through here: it runs without override and the CLI
@@ -310,6 +315,44 @@ export function buildAssignmentMatrix(
         .sort((left, right) => left.localeCompare(right)),
     };
   });
+}
+
+export interface AccountRouteEntry {
+  agent: AgentRegistration;
+  cell: MatrixCell;
+  ceiling: CeilingEntry;
+}
+
+export interface AccountRouteProjection {
+  accountId: string;
+  entries: AccountRouteEntry[];
+}
+
+export interface RegistryRoutingProjection {
+  matrix: MatrixRow[];
+  byAccount: ReadonlyMap<string, AccountRouteProjection>;
+}
+
+export function buildRegistryRouting(
+  agents: AgentRegistration[],
+  accounts: ProviderAccount[],
+  ceiling: CeilingEntry[],
+  bindings: AccountBinding[],
+): RegistryRoutingProjection {
+  const matrix = buildAssignmentMatrix(agents, accounts, ceiling, bindings);
+  const byAccount = new Map<string, AccountRouteProjection>();
+  for (const account of accounts) {
+    byAccount.set(account.id, {
+      accountId: account.id,
+      entries: matrix.flatMap((row) => {
+        const cell = row.cells.find((candidate) => candidate.accountId === account.id);
+        const granted = ceiling.find((entry) => entry.tenantId === row.agent.tenantId
+          && entry.alias === row.agent.alias && entry.accountId === account.id);
+        return cell && cell.state !== 'none' && granted ? [{ agent: row.agent, cell, ceiling: granted }] : [];
+      }),
+    });
+  }
+  return { matrix, byAccount };
 }
 
 export interface AccountDraft {
@@ -393,6 +436,10 @@ export function updateAccountMutation(
   };
 }
 
+export function deleteAccountMutation(id: string): ConfigMutation {
+  return { resource: 'provider_account', action: 'delete', id };
+}
+
 export function ceilingMutation(
   action: 'create' | 'delete',
   tenantId: string,
@@ -439,6 +486,47 @@ export interface RegistryContext {
   tenantIds: string[];
 }
 
+export interface RegistryModel {
+  accounts: SnapshotSection<ProviderAccount>;
+  agents: SnapshotSection<AgentRegistration>;
+  ceiling: SnapshotSection<CeilingEntry>;
+  bindings: SnapshotSection<AccountBinding>;
+  tenantIds: string[];
+  routing: RegistryRoutingProjection;
+  context: RegistryContext;
+}
+
+export function readRegistry(snapshot?: ConfigurationSnapshot | null): RegistryModel {
+  const accounts = readProviderAccounts(snapshot);
+  const agents = readAgents(snapshot);
+  const ceiling = readCeiling(snapshot);
+  const bindings = readBindings(snapshot);
+  const tenantRows = snapshot?.tenants;
+  const tenantIds = Array.isArray(tenantRows)
+    ? tenantRows.flatMap((entry) => {
+      const row = record(entry);
+      const id = row ? text(row, 'id') : null;
+      return id && TENANT_ID.test(id) ? [id] : [];
+    })
+    : [];
+  const context: RegistryContext = {
+    accounts: accounts.items,
+    agents: agents.items,
+    ceiling: ceiling.items,
+    bindings: bindings.items,
+    tenantIds,
+  };
+  return {
+    accounts,
+    agents,
+    ceiling,
+    bindings,
+    tenantIds,
+    routing: buildRegistryRouting(agents.items, accounts.items, ceiling.items, bindings.items),
+    context,
+  };
+}
+
 const DURABLE_CONSTRAINT = /violates a durable constraint/i;
 const IMMUTABLE_ACCOUNT = /identity and credential rotation/i;
 
@@ -455,6 +543,15 @@ function borrowersOf(context: RegistryContext, accountId: string, payerTenant: s
  */
 function constraintCause(mutation: ConfigMutation, context: RegistryContext): string {
   const prefix = 'El servidor rechazó el cambio con 409 y no publica qué restricción falló.';
+
+  if (mutation.resource === 'provider_account' && mutation.action === 'delete') {
+    const id = String(mutation.id);
+    const refs = context.ceiling.filter((entry) => entry.accountId === id);
+    if (refs.length > 0) {
+      return `No se puede borrar la cuenta «${id}»: todavía pertenece al techo de ${refs.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}. El foreign key de alias_routing_ceiling impide dejar esos alias apuntando a una cuenta inexistente; revocá primero esos techos y volvé a previsualizar.`;
+    }
+    return `${prefix} Un borrado de cuenta sólo puede chocar con un techo que todavía la referencia. El snapshot local no lo muestra: actualizá antes de repetir el retiro o la rotación.`;
+  }
 
   if (mutation.resource === 'provider_account' && mutation.action === 'update') {
     const value = record(mutation.value);

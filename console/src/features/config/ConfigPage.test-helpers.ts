@@ -21,6 +21,10 @@ export const REVISIONES = [{
   id: '1',
   actor_tenant: 'Steven',
   actor_alias: 'kant',
+  operation: {
+    resource: 'acl_edge', action: 'create', from_tenant: 'Steven', to_tenant: 'Isa',
+    value: { enabled: true, allow_route: false, allow_read: false, allow_control: false },
+  },
   summary: 'alta de la arista Steven → Isa',
   created_at: '2026-08-20T10:00:00.000Z',
 }];
