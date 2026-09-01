@@ -48,7 +48,7 @@ export function RolesFold({ configuracion: config, onAbrirPerfil }: RolesFoldPro
         <>
           <p className="live-legend-lead">
             Agrupados por el texto que recibe cada bot. El título es un resumen de su primera línea,
-            no un nombre guardado. El rol se escribe en la pestaña <strong>Perfil</strong> del bot, y
+            no un nombre guardado. El rol se escribe en la pestaña <strong>Contexto</strong> del bot, y
             eso es lo que abre cada enlace.
           </p>
           {catalogo.roles.length === 0 ? (

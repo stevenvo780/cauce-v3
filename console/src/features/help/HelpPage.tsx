@@ -23,7 +23,8 @@ export function HelpPage() {
             <div>
               <strong>La flota ahora (<code>/live</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                Hipergrafo en tiempo real que muestra agentes activos, dependencias, aristas de delegación y cajón de directivas.
+                Hipergrafo en tiempo real y cajón de cada agente. «Contexto» es el único lugar para
+                modificar su perfil canónico y su manual; «Ficheros» es un visor de lo materializado.
               </p>
             </div>
             <div>
@@ -53,7 +54,8 @@ export function HelpPage() {
             <div>
               <strong>Ajustes y altas (<code>/config</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                Control atómico de topología (tenants, salas, membresías y directivas de rol) con historial de revisiones y reversión segura.
+                Control atómico de topología: tenants, salas, membresías, roles de permisos y ACL,
+                con historial de revisiones y reversión segura. No edita el contexto de los agentes.
               </p>
             </div>
             <div>
@@ -61,6 +63,28 @@ export function HelpPage() {
               <p className="muted" style={{ margin: '4px 0 0' }}>
                 Consola interactiva PTY por agente con feed durable respaldado por PostgreSQL para auditoría completa.
               </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>Contexto, capacidades y permisos</h2>
+          <div style={{ display: 'grid', gap: '12px', marginTop: '12px' }}>
+            <div>
+              <strong>Contexto declarado</strong>: propósito, rol, responsabilidades, restricciones,
+              herramientas declaradas y reglas estables que se redactan en «Contexto».
+            </div>
+            <div>
+              <strong>Capacidades del runtime</strong>: lo que el proceso acredita que sabe hacer;
+              describir una herramienta en el contexto no habilita un binario ni un MCP.
+            </div>
+            <div>
+              <strong>Permisos efectivos</strong>: membresías, roles de permisos, ACL y RBAC deciden
+              qué operaciones están autorizadas. No salen del texto del contexto.
+            </div>
+            <div>
+              <strong>Ficheros</strong>: inventario y lectura diagnóstica. Si un contexto se puede
+              modificar desde la consola, el control vive en «Contexto», no en este visor.
             </div>
           </div>
         </div>

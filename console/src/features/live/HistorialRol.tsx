@@ -125,13 +125,13 @@ export function HistorialRol({ tenantId, alias, onRestaurar }: HistorialRolProps
                   >
                     <RotateCcw size={14} aria-hidden="true" />
                     {restauracion.clase === 'texto'
-                      ? ' Usar este texto en Perfil'
-                      : ' Vaciar el rol en un borrador de Perfil'}
+                      ? ' Usar este texto en Contexto'
+                      : ' Vaciar el rol en un borrador de Contexto'}
                   </button>
                   <span className="historial-entrada-ayuda">
                     {restauracion.clase === 'texto'
-                      ? 'No guarda nada: carga role_summary y abre Perfil para revisarlo y aplicarlo con CAS y ACK.'
-                      : 'Antes de este cambio no había rol. Perfil se abre con role_summary vacío; los demás campos se conservan.'}
+                      ? 'No guarda nada: carga role_summary y enfoca los campos canónicos para revisarlo y aplicarlo con CAS y ACK.'
+                      : 'Antes de este cambio no había rol. Contexto enfoca role_summary vacío; los demás campos se conservan.'}
                   </span>
                 </div>
               ) : null}

@@ -13,7 +13,7 @@ No utiliza `react-router`. El enrutamiento se resuelve con un módulo propio en 
 | Directorio | Función |
 |---|---|
 | `features/landing/` | Dashboard: estado rápido del sistema |
-| `features/live/` | Estado de flota en tiempo real, drawer de agente con tabs de directiva/perfil/ficheros, editor de ficheros de gobernanza (`FicherosTab.tsx`) |
+| `features/live/` | Estado de flota en tiempo real y drawer de agente: una única vista `Contexto` para editar perfil y manual, más `Ficheros` como visor |
 | `features/fleet/` | Mapa de estado de la flota |
 | `features/messages/` | Explorador y visor de mensajes |
 | `features/queues/` | Colas de salida, DLQ, reintentos |
@@ -25,9 +25,43 @@ No utiliza `react-router`. El enrutamiento se resuelve con un módulo propio en 
 | `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo) |
 | `features/help/` | Documentación integrada y atajos de teclado |
 
-## Editor de ficheros de gobernanza
+## Contexto y ficheros de gobernanza
 
-`src/features/live/FicherosTab.tsx` junto con `src/api/client.ts` permiten leer y escribir `CLAUDE.md`, `AGENTS.md` y `SOUL.md` a través de `GET|PUT /v3/console/tenants/:t/agents/:a/documents/:kind/content`. La escritura utiliza `expected_sha` para control optimista de concurrencia (409 si otro usuario escribió primero) y confirma con ACK tipado. El código está completo; las rutas del gateway se publicarán en FASE 3.
+El drawer de `/live` tiene un solo lugar de mutación: la pestaña **Contexto**. Allí conviven dos
+controles distintos sin duplicar navegación:
+
+- el perfil canónico (`purpose`, `role_summary`, `human_brief`, responsabilidades, restricciones,
+  herramientas declaradas y reglas operativas), leído y escrito mediante
+  `GET|PUT /v3/console/tenants/:t/agents/:a/perfil`;
+- el texto manual ajeno al perfil, leído y escrito mediante
+  `GET|PUT /v3/console/tenants/:t/agents/:a/documents/directive/content`.
+
+Ambas escrituras ya tienen rutas en el gateway y requieren hechos medidos del runtime, control de
+acceso y ACK verificable. El perfil usa revisión esperada y se aplica como lote. El manual usa
+`expected_sha` —o `create_if_absent` para un fichero realmente ausente— y rechaza el conflicto si
+otro operador escribió primero.
+
+Los bloques delimitados por los marcadores reservados `<!-- CAUCE:CONTEXTO-FIJO ... -->` /
+`<!-- CAUCE:FIN-CONTEXTO-FIJO -->` y `<!-- CAUCE:PERFIL ... -->` /
+`<!-- CAUCE:FIN-PERFIL -->`, junto con `<!-- CAUCE:REVISION-PERFIL ... -->`, pertenecen al perfil
+canónico. El PUT manual conserva esos bloques y rechaza cualquier intento de modificarlos,
+retirarlos o introducir nuevos marcadores `CAUCE`; el texto libre de fuera sigue siendo editable.
+Así el editor manual no se convierte en una segunda vía para cambiar el perfil.
+Si el fichero contiene un marcador `CAUCE` de una versión que el gateway todavía no conoce, la
+edición falla cerrada hasta actualizarlo. En documentos CRLF, la consola restaura ese mismo estilo
+de salto antes del PUT para no alterar los bloques por la normalización propia de `<textarea>`.
+
+`Ficheros` no guarda nada: lista rutas derivadas de hechos medidos y abre únicamente contenido
+permitido en modo de sólo lectura. Configuraciones sensibles, credenciales, directorios y memoria
+viva permanecen fuera de la escritura web.
+
+El campo `tools` del perfil sólo declara herramientas en el contexto. No concede permisos, no
+habilita binarios ni configura MCP; las capacidades acreditadas proceden del runtime y la
+autorización efectiva de membresías, `role_policies`, ACL y RBAC.
+
+La aplicación canónica por lote existe para Claude, Codex y OpenClaw. Hermes sólo puede ofrecer el
+manual que su runtime mida; no se presenta como compatible con ese lote. OpenCode no pertenece al
+juego de arneses soportado y la consola no ofrece una edición ficticia para él.
 
 ## Cliente API
 
@@ -47,7 +81,8 @@ Dockerfile genera una SPA estática servida por nginx-unprivileged. TLS con cert
 
 ## Tests
 
-107 tests (vitest + jsdom):
+La consola mantiene tests Vitest + jsdom, sin fijar en esta guía un conteo que envejece con cada
+regresión nueva:
 
 ```bash
 pnpm --filter @cauce/console test

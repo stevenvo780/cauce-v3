@@ -35,3 +35,17 @@ it('abre con su propio encabezado, igual que su entrada de ruta', () => {
   expect(screen.getByRole('heading', { name: /mapa de vistas/i })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: /estados de la flota/i })).toBeInTheDocument();
 });
+
+it('separa el contexto declarado de capacidades y permisos, con un solo lugar de edición', () => {
+  render(<HelpPage />);
+  const seccion = screen.getByRole('heading', { name: /contexto, capacidades y permisos/i })
+    .closest('.card');
+
+  expect(seccion).not.toBeNull();
+  expect(seccion).toHaveTextContent(/herramientas declaradas/i);
+  expect(seccion).toHaveTextContent(/no habilita un binario ni un MCP/i);
+  expect(seccion).toHaveTextContent(/membresías, roles de permisos, ACL y RBAC/i);
+  expect(seccion).toHaveTextContent(/el control vive en «Contexto», no en este visor/i);
+  expect(document.body).toHaveTextContent(/«Contexto» es el único lugar para modificar/i);
+  expect(document.body).toHaveTextContent(/«Ficheros» es un visor/i);
+});
