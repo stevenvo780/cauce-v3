@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConfigPage } from './ConfigPage';
@@ -129,6 +129,26 @@ it('acepta en el editor los recursos que el servidor acepta y la lista fija rech
     resource: 'egress_destination', action: 'update', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
   });
   expect(screen.queryByText(/resource no reconocido/i)).not.toBeInTheDocument();
+});
+
+it('rechaza agents.role_brief localmente y no emite ni preview ni apply', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
+  await irA(user, HISTORIAL);
+
+  fireEvent.change(screen.getByLabelText('Mutación JSON'), { target: { value: JSON.stringify({
+    resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'kant',
+    value: { role_brief: 'Sos kant.' },
+  }) } });
+
+  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/proyección diagnóstica de sólo lectura/i);
+  expect(screen.getByRole('alert')).toHaveTextContent(/«Contexto»/);
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  expect(changes).toEqual([]);
 });
 
 it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéricos', async () => {

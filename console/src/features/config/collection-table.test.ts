@@ -47,7 +47,7 @@ it('no funde una arista a medias: sin los dos extremos se siguen viendo las colu
 
 it('los permisos dejan de rotularse con el nombre de la columna de Postgres', () => {
   const columnas = columnasDe('role_policies', [{ role: 'agent', allow_route: true, allow_control: false }]);
-  expect(columnas.map((columna) => columna.etiqueta)).toEqual(['Rol', 'Ruta', 'Control']);
+  expect(columnas.map((columna) => columna.etiqueta)).toEqual(['Rol de permisos', 'Ruta', 'Control']);
 });
 
 it('arma el cambio de rol y rechaza lo que el gateway rechazaría igual', () => {

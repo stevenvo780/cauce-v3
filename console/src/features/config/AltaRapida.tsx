@@ -116,8 +116,8 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
         : null}
       {recurso === 'membership' ? <>
         <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
-        <label>Rol <span className="label-hint">route/read/control salen de role_policies</span>
-          <input {...inerte} aria-label="Rol" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
+        <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span>
+          <input {...inerte} aria-label="Rol de permisos" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
       </> : null}
       {recurso === 'tenant' || recurso === 'room'
         ? <label>Nombre <span className="label-hint">opcional, null si queda vacío</span>

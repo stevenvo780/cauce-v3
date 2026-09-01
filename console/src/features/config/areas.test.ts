@@ -87,6 +87,8 @@ it('CONTROL NEGATIVO — marca la descripción que estaba desplegada (194 caract
 it('lo que se plegó sigue estando: de dónde saca el enrutado la flota, y que todo empieza denegado', () => {
   const espacios = CONFIG_AREAS.find((area) => area.id === 'espacios');
   expect(espacios?.detalle).toMatch(/un alias sin membership habilitada no recibe entregas/i);
+  expect(espacios?.detalle).toMatch(/Rol de permisos.*role_policy/i);
+  expect(espacios?.detalle).toMatch(/no es el contexto ni el rol declarado/i);
   const permisos = CONFIG_AREAS.find((area) => area.id === 'permisos');
   expect(permisos?.detalle).toMatch(/todo empieza denegado/i);
 });

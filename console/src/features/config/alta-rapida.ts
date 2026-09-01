@@ -74,7 +74,7 @@ export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): strin
     }
     return SLUG.test(borrador.role.trim())
       ? undefined
-      : 'El rol debe ser minúsculas y empezar con letra: los route/read/control salen de role_policies.';
+      : 'El rol de permisos debe ser minúsculas y empezar con letra: route/read/control salen de role_policies y no cambian el contexto.';
   }
   if (!TENANT.test(borrador.desde.trim())) return 'El tenant de origen debe empezar con letra (máx. 64 caracteres).';
   if (!TENANT.test(borrador.hacia.trim())) return 'El tenant de destino debe empezar con letra (máx. 64 caracteres).';

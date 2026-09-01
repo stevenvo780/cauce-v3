@@ -21,7 +21,7 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
  * Columns not listed are shown with their original column name.
  */
 const ETIQUETAS: Record<string, string> = {
-  id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol',
+  id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol de permisos',
   display_name: 'Nombre', is_hub: 'Hub', enabled: 'Habilitado',
   created_at: 'Alta', updated_at: 'Última edición',
   from_tenant: 'Desde', to_tenant: 'Hacia',
@@ -29,7 +29,7 @@ const ETIQUETAS: Record<string, string> = {
   allow_notify: 'Aviso proactivo', harness_id: 'Harness', command: 'Comando',
   capabilities: 'Capacidades', handle: 'Handle', adapter: 'Adaptador', channel: 'Canal',
   provider: 'Proveedor', account_id: 'Cuenta', agent_alias: 'Alias', priority: 'Prioridad',
-  role_brief: 'Rol declarado', label: 'Etiqueta',
+  role_brief: 'Rol declarado (diagnóstico)', label: 'Etiqueta',
   container_name: 'Contenedor', runtime_user: 'Usuario', home_directory: 'Carpeta personal',
   image_id: 'Imagen', generation: 'Generación',
   protocol_version: 'Protocolo', last_seen_at: 'Última señal', connected_since: 'Conectado desde',
@@ -76,8 +76,8 @@ export function esColumnaDeFecha(clave: string): boolean {
  * a row becomes unreadable because of a field you do not edit here.
  *
  * The full text is not lost: it remains in the cell's `title`, in the "Ver crudo" dropdown of the
- * collection, and is shown read-only in the "Rol" tab of the "La flota ahora" drawer; the editor is
- * the "Perfil" tab beside it. Here it is enough to see it summarised.
+ * collection, and is shown as a read-only diagnostic in «Contexto» inside the «La flota ahora»
+ * drawer. That single tab owns context changes. Here it is enough to see the projection summarised.
  */
 const COLUMNAS_LARGAS: ReadonlySet<string> = new Set(['role_brief']);
 
@@ -237,7 +237,7 @@ export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionD
   if (!ROL.test(pedido) || pedido === actual) return undefined;
   return {
     id: 'role',
-    descripcion: `Cambiar el rol de ${tenantId}/${roomId}/${alias} de ${actual ?? 'UNKNOWN'} a ${pedido}`,
+    descripcion: `Cambiar el rol de permisos de ${tenantId}/${roomId}/${alias} de ${actual ?? 'UNKNOWN'} a ${pedido}`,
     mutation: {
       resource: 'membership', action: 'update', tenant_id: tenantId, room_id: roomId, alias,
       value: { role: pedido },

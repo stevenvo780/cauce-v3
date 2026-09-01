@@ -1,29 +1,23 @@
-/**
- * Mapeo de cómo interactúa cada arnés con sus ficheros de configuración y rol declarado.
- */
+/** How each harness interacts with its configuration files and declared role. */
 
 interface ArnesReal {
-  /** El mismo identificador que `HarnessKind` en services/gateway/src/console/agent-documents/catalog.ts:4, más `hermes`. */
+  /** Same identifier as `HarnessKind` in the gateway document catalog. */
   id: string;
   label: string;
-  /** Dónde lee su directiva, con la ruta exacta. Cadena vacía = no lee ninguna. */
+  /** Exact location from which the harness reads its effective manual. */
   directiva: string;
-  /** Por qué esa ruta es así, en una frase. Es lo que evita que alguien la «arregle» a mano. */
+  /** Why this path is authoritative, so nobody "fixes" it from registry guesses. */
   detalle: string;
   /**
-   * Siempre `false`, y por eso es un literal y no un booleano suelto: hoy NINGÚN documento de
-   * arnés se escribe desde «Ajustes y altas», ni siquiera los que el gateway declara editables —
-   * ésos se editan desde el cajón del bot, con hechos medidos dentro del contenedor.
+   * Always false: no harness document is changed from Settings. Editable manuals live in the
+   * agent drawer and still require measured runtime facts.
    */
   editableDesdeAjustes: false;
-  /** Dónde SÍ se toca. Un «no se puede acá» sin destino deja al operador sin salida. */
+  /** Where it can actually be changed; a prohibition without a destination is not actionable. */
   dondeSeToca: string;
 }
 
-/**
- * El juego cerrado. `hermes` está aunque no tenga documento, y es a propósito: media flota lo usó y
- * su dueño necesita leer «este bot no lee ningún fichero de instrucciones» en vez de no encontrarlo.
- */
+/** The closed harness set currently recognized by the gateway document inventory. */
 export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'claude',
@@ -32,8 +26,8 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     detalle: 'Si el proceso lleva `CLAUDE_CONFIG_DIR`, el fichero se mueve con él — y ese ajuste '
       + 'arrastra también el `.claude.json` de los MCP, no sólo el manual.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'Desde el cajón del bot en «La flota ahora», y sólo cuando el pty-agent midió el '
-      + 'entorno del proceso dentro del contenedor.',
+    dondeSeToca: 'En la pestaña única «Contexto» del bot: los campos canónicos y el editor manual '
+      + 'están juntos, y sólo escriben con hechos del runtime medidos.',
   },
   {
     id: 'codex',
@@ -42,42 +36,40 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     detalle: 'Si el proceso lleva `CODEX_HOME`, la directiva es la de ESA carpeta. Hay alias con las '
       + 'dos, del mismo tamaño, y la de `~/.codex` es la que abriría un resolutor ingenuo.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'Desde el cajón del bot en «La flota ahora», con el entorno del proceso medido. Su '
-      + '`config.toml` queda de sólo lectura: un TOML mal formado deja al bot sin arrancar.',
+    dondeSeToca: 'En la pestaña única «Contexto» del bot, con el entorno del proceso medido. Su '
+      + '`config.toml` sigue de sólo lectura: un TOML mal formado deja al bot sin arrancar.',
   },
   {
     id: 'openclaw',
     label: 'OpenClaw',
-    directiva: '<HOME>/.openclaw/openclaw.json → campo `agents`',
-    detalle: 'No es un fichero de instrucciones: es un campo de su JSON de configuración, el mismo '
-      + 'documento que lleva `auth` y `secrets`. Servirlo entero sería una fuga, así que hay que '
-      + 'proyectarlo campo a campo y todavía no está hecho.',
+    directiva: '<WORKSPACE_OPENCLAW>/AGENTS.md',
+    detalle: 'El perfil canónico se proyecta en ficheros Markdown separados del workspace. '
+      + '`openclaw.json` conserva auth, secrets y configuración sensible y no se sirve en el navegador.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'Hoy por ninguna pantalla: ni acá ni en el cajón del bot. Se edita a mano dentro '
-      + 'del contenedor hasta que exista la proyección campo a campo.',
+    dondeSeToca: 'En «Contexto» se editan los campos canónicos que Cauce proyecta. La configuración '
+      + 'sensible de `openclaw.json` no se edita desde la consola.',
   },
   {
     id: 'hermes',
     label: 'Hermes',
-    directiva: '',
-    detalle: 'El gateway no le resuelve ninguno: cae al `default` de `resolveAgentDocuments` y '
-      + 'devuelve lista vacía (services/gateway/src/console/agent-documents/catalog.ts:317). Lo único que le llega delante de su contrato '
-      + 'es el rol declarado.',
+    directiva: '<HOME>/AGENTS.md',
+    detalle: 'El inventario puede resolver ese manual con hechos medidos, pero el perfil canónico '
+      + 'por lote no declara soporte para Hermes. Son capacidades distintas.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'No hay documento que tocar. Su identidad se le da con el rol declarado, y ése se '
-      + 'escribe en la pestaña «Perfil» del bot en «La flota ahora».',
+    dondeSeToca: '«Contexto» concentra el manual cuando el runtime acredita su ruta. No promete '
+      + 'aplicar el perfil canónico por lote a Hermes.',
   },
 ];
 
-/**
- * El cierre del panel: dónde se escribe de verdad el rol declarado, y por qué le vale a los cuatro
- * arneses por igual: no lo lee el arnés de un fichero suyo, lo antepone Cauce dentro del sobre.
- */
+/** Explains the canonical source of the declared role and the read-only registry projection. */
 export const DONDE_SE_ESCRIBE_EL_ROL_DECLARADO =
-  'El rol declarado tampoco sale de esta pantalla: `agents.role_brief` es una proyección de sólo '
-  + 'lectura y el editor genérico rechaza mutarla. Se redacta en la pestaña «Perfil» del bot en «La '
-  + 'flota ahora», sobre `agent_profiles.role_summary`, y desde ahí le llega a los cuatro arneses '
-  + 'por igual porque no vive en ningún fichero del bot: lo lee el servidor al entregar '
-  + '(`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215), viaja en el sobre como '
-  + '`self_role` y el adaptador lo antepone al contrato. Por eso un bot sin directiva propia '
-  + '—hermes— igual recibe identidad.';
+  '`agents.role_brief` es una proyección diagnóstica de sólo lectura y el editor genérico rechaza '
+  + 'mutarla. El rol declarado se redacta una sola vez en la pestaña «Contexto» del bot, sobre '
+  + '`agent_profiles.role_summary`. El servidor lo lee con `selfRoleFromProfile` y lo publica como '
+  + '`self_role`; la aplicación a ficheros depende del soporte acreditado de cada arnés.';
+
+/** Declared tools are authored guidance; they are never an authorization or runtime capability grant. */
+export const DISTINCION_HERRAMIENTAS_Y_PERMISOS =
+  'Las herramientas declaradas en «Contexto» son instrucciones para el agente: no habilitan '
+  + 'binarios, MCP ni permisos. Las capacidades acreditadas salen del runtime; la autorización '
+  + 'sale de membresías, role_policies, ACL y RBAC. Son planos distintos.';

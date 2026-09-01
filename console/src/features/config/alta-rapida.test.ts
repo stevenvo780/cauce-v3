@@ -12,7 +12,7 @@ it('arma el alta de una membership tal como la espera MembershipConfigMutationSc
 it('rechaza el alias y el rol que el zod del gateway rechazaría, con el motivo escrito', () => {
   const base = { ...BORRADOR_VACIO, tenantId: 'Miguel', roomId: 'grp.miguel', alias: 'atlas' };
   expect(errorDeAlta('membership', { ...base, alias: 'Atlas' })).toMatch(/alias debe ser minúsculas/i);
-  expect(errorDeAlta('membership', { ...base, role: '' })).toMatch(/rol debe ser minúsculas/i);
+  expect(errorDeAlta('membership', { ...base, role: '' })).toMatch(/rol de permisos debe ser minúsculas/i);
   expect(errorDeAlta('membership', { ...base, tenantId: '1Miguel' })).toMatch(/tenant debe empezar con letra/i);
 });
 

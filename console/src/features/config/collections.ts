@@ -24,8 +24,8 @@ const COLLECTION_TITLES: Record<string, string> = {
   agent_account_bindings: 'Agent ↔ account bindings',
 };
 
-/** Snapshot keys that are not configuration collections: they have their own render. */
-const NON_COLLECTION_KEYS = new Set(['revision', 'observed_at', 'revisions']);
+/** Non-collections with dedicated renderers; `agent_profiles` belongs only to the typed Contexto editor. */
+const NON_COLLECTION_KEYS = new Set(['revision', 'observed_at', 'revisions', 'agent_profiles']);
 
 export interface ConfigCollection {
   key: string;

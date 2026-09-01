@@ -32,7 +32,7 @@ it('pinta cada colección como TABLA con columnas de verdad y deja el JSON crudo
 
   const memberships = panelDe(/memberships/i);
   expect(within(memberships).getAllByRole('columnheader').map((celda) => rotulo(celda)))
-    .toEqual(['Tenant', 'Room', 'Alias', 'Rol', 'Habilitado', 'Alta']);
+    .toEqual(['Tenant', 'Room', 'Alias', 'Rol de permisos', 'Habilitado', 'Alta']);
   expect(within(memberships).getByText('janus')).toBeInTheDocument();
 
   const tenants = panelDe(/^Tenants$/);
@@ -67,7 +67,7 @@ it('cambia el rol de una membership desde su propia columna, con el mismo camino
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   expect(changes).toEqual([]);
   await user.click(screen.getByRole('button', { name: 'Confirmar' }));
   expect(changes[0]?.mutation).toEqual({
@@ -82,11 +82,11 @@ it('cancela un cambio de rol sin escribir nada y deja la fila como estaba', asyn
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   await user.click(screen.getByRole('button', { name: 'Cancelar' }));
   expect(changes).toEqual([]);
   expect(screen.queryByLabelText('Mutación a aplicar')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Rol de Miguel/grp.miguel/janus')).toHaveValue('agent');
+  expect(screen.getByLabelText('Rol de permisos de Miguel/grp.miguel/janus')).toHaveValue('agent');
 });
 
 it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la vista', async () => {
@@ -99,7 +99,7 @@ it('sin config.write se ve TODO en solo lectura y lo dice, en vez de esconder la
     .toBeInTheDocument();
   expect(within(panelDe(/memberships/i)).getByText('janus')).toBeInTheDocument();
   expect(screen.getByRole('switch', { name: MEMBERSHIP_JANUS })).toBeDisabled();
-  expect(screen.getByLabelText('Rol de Miguel/grp.miguel/janus')).toBeDisabled();
+  expect(screen.getByLabelText('Rol de permisos de Miguel/grp.miguel/janus')).toBeDisabled();
   await irA(userEvent.setup(), HISTORIAL);
   expect(screen.getByRole('button', { name: /aplicar atómico/i })).toBeDisabled();
 });
@@ -221,7 +221,7 @@ it('FAMILIA 3: la confirmación pendiente se anula cuando «Actualizar» mueve e
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
 
   await user.click(screen.getByRole('button', { name: 'Actualizar' }));
@@ -242,7 +242,7 @@ it('FAMILIA 3: sin tenant_id el selector de rol no se queda mudo: se apaga y DIC
   }));
   renderWithApi(<ConfigPage />);
 
-  const selector = await screen.findByLabelText('Rol de fila-0');
+  const selector = await screen.findByLabelText('Rol de permisos de fila-0');
   expect(selector).toBeDisabled();
   expect(selector).toHaveAttribute('title', expect.stringContaining('tenant_id'));
   expect(within(panelDe(/memberships/i)).getByText(/no publica tenant_id en esta fila/i))
@@ -292,7 +292,7 @@ it('FAMILIA 7: la confirmación es un diálogo de verdad — el foco entra, ESC 
   const user = userEvent.setup();
   renderWithApi(<div className="app-shell"><ConfigPage /></div>);
 
-  const selector = await screen.findByLabelText('Rol de Miguel/grp.miguel/janus');
+  const selector = await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus');
   await user.selectOptions(selector, 'operator');
 
   const dialogo = screen.getByRole('dialog');
@@ -315,7 +315,7 @@ it('FAMILIA 7: la confirmación es un diálogo de verdad — el foco entra, ESC 
 it('FAMILIA 7: el JSON va detrás de un desplegable cerrado y los dos botones viven fuera de él', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
 
   const dialogo = screen.getByRole('dialog');
   expect(dialogo).toHaveTextContent(/Confirmá el cambio/i);
@@ -337,7 +337,7 @@ it('FAMILIA 7: el JSON va detrás de un desplegable cerrado y los dos botones vi
 it('FAMILIA 7: el tabulador da la vuelta dentro de la confirmación en vez de irse al fondo', async () => {
   const user = userEvent.setup();
   renderWithApi(<div className="app-shell"><ConfigPage /></div>);
-  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
 
   const dialogo = screen.getByRole('dialog');
   const focos = [...dialogo.querySelectorAll<HTMLElement>(

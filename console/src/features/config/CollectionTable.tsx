@@ -194,9 +194,9 @@ function Celda({
     }
   }
 
-  // A membership's role is changed right here, in its own column. It is not a boolean —it is a
-  // choice among several values— so it stays a `<select>` and keeps confirming: changing role
-  // rewrites what the agent can do, and there is no "opposite" to revert to with one click.
+  // A membership's PERMISSION role is not authored context. It stays a `<select>` because it
+  // chooses a role_policy, and keeps confirming: changing it rewrites what the member can do and
+  // has no boolean "opposite" to restore.
   if (coleccion === 'memberships' && columna.clave === 'role') {
     const actual = typeof valor === 'string' ? valor : '';
     const opciones = rolesDisponibles(politicasDeRol, actual === '' ? undefined : actual);
@@ -206,7 +206,7 @@ function Celda({
     const motivo = motivoSinCambioDeRol(fila);
     return <>
       <select
-        aria-label={`Rol de ${filaId}`}
+        aria-label={`Rol de permisos de ${filaId}`}
         value={actual}
         disabled={soloLectura || busy || motivo !== undefined}
         title={motivo ?? (soloLectura ? CONFIG_SIN_CONTROL_REASON : undefined)}
@@ -224,7 +224,7 @@ function Celda({
 
   // A full-paragraph field (`role_brief`: up to 1200 characters) pushes the other eleven columns
   // of "Agent registry" off-screen. It is shown summarized; the full text lives in the `title`,
-  // in "View raw", and —to edit it— in the "Role" tab of the "Fleet now" drawer.
+  // in "View raw", and as a diagnostic projection in the single "Context" tab. It is not editable here.
   if (esColumnaLarga(columna.clave) && typeof valor === 'string' && valor.trim() !== '') {
     return <span className="config-resumen" title={valor}>{resumirTextoLargo(valor)}</span>;
   }

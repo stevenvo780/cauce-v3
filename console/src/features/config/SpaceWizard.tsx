@@ -113,7 +113,7 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
   if (step === 'membership') {
     if (!draft.withMembership) return undefined;
     if (!SLUG.test(draft.alias.trim())) return 'El alias debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
-    return SLUG.test(draft.role.trim()) ? undefined : 'El rol debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
+    return SLUG.test(draft.role.trim()) ? undefined : 'El rol de permisos debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
   }
   if (step === 'harness') {
     if (!draft.withHarness) return undefined;
@@ -243,7 +243,7 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
     {step === 'membership' ? <div className="config-form">
       <label className="config-json casilla"><input type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
       <label>Alias<input value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
-      <label>Rol <span className="label-hint">route/read/control salen de role_policies</span><input value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
+      <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span><input value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'harness' ? <div className="config-form">

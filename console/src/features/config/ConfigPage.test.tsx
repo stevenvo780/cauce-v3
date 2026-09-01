@@ -114,7 +114,7 @@ it('FAMILIA 5: el cambio de rol por columna y el JSON crudo por fila siguen en �
   expect(within(memberships).getByText(/ver crudo/i)).toBeInTheDocument();
 
   await user.selectOptions(
-    within(memberships).getByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator',
+    within(memberships).getByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator',
   );
   await user.click(screen.getByRole('button', { name: 'Confirmar' }));
   expect(changes[0]?.mutation).toEqual({
@@ -129,7 +129,7 @@ it('FAMILIA 5: cambiar de pestaña con una confirmación pendiente la ANULA, no 
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  await user.selectOptions(await screen.findByLabelText('Rol de Miguel/grp.miguel/janus'), 'operator');
+  await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
 
   await irA(user, PERMISOS);

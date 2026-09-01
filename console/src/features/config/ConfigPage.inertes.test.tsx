@@ -92,7 +92,8 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
 
   /**
    * NEGATIVE CONTROL. If the flag came out on every column it would distinguish nothing. `Alias`
-   * and `Rol declarado` have a proven reader —`selfRoleFromProfile`, packages/store/src/repository/agents.ts:215— and CANNOT carry it.
+   * and the diagnostic declared role have a proven reader —`selfRoleFromProfile`,
+   * packages/store/src/repository/agents.ts:215— and CANNOT carry it.
    */
   it('NO marca las columnas del registro que sí tienen lector', async () => {
     conHarnessReal();
@@ -101,8 +102,8 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     await irA(user, AGENTES);
 
     const registro = panelDe(/agent registry/i);
-    for (const rotulo of ['Alias', 'Rol declarado', 'Habilitado', 'Contenedor', 'Usuario']) {
-      const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });
+    for (const rotulo of ['Alias', 'Rol declarado (diagnóstico)', 'Habilitado', 'Contenedor', 'Usuario']) {
+      const cabecera = within(registro).getByRole('columnheader', { name: rotulo });
       expect(cabecera, `${rotulo} NO debería estar marcada`).not.toHaveTextContent(MARCA_INERTE);
     }
   });
@@ -169,22 +170,24 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
 
     const panel = panelDe(/qué lee cada arnés/i);
     expect(within(panel).getByText(/CLAUDE\.md/)).toBeInTheDocument();
-    expect(within(panel).getByText(/AGENTS\.md/)).toBeInTheDocument();
-    expect(within(panel).getByText(/openclaw\.json/)).toBeInTheDocument();
-    // Hermes reads none, and that is SAID: a silent row would read as "we don't know".
-    expect(within(panel).getByText(/no lee ningún documento/i)).toBeInTheDocument();
+    expect(within(panel).getAllByText(/AGENTS\.md/)).toHaveLength(3);
+    expect(within(panel).getAllByText(/openclaw\.json/)).toHaveLength(2);
+    expect(within(panel).getByText(/perfil canónico por lote no declara soporte para Hermes/i))
+      .toBeInTheDocument();
   });
 
-  it('dice que el rol declarado TAMPOCO se escribe acá, y manda a «Perfil» a escribirlo', async () => {
+  it('dice que role_brief es diagnóstico y manda a la única pestaña «Contexto»', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
     await irA(user, AGENTES);
 
-    const cierre = within(panelDe(/qué lee cada arnés/i)).getByRole('note');
+    const notas = within(panelDe(/qué lee cada arnés/i)).getAllByRole('note');
+    const cierre = notas.find((nota) => nota.textContent.includes('role_brief'));
+    expect(cierre).toBeDefined();
     expect(cierre).toHaveTextContent(/role_brief/);
-    expect(cierre).toHaveTextContent(/proyección de sólo lectura/);
-    expect(cierre).toHaveTextContent(/«Perfil»/);
+    expect(cierre).toHaveTextContent(/proyección diagnóstica de sólo lectura/);
+    expect(cierre).toHaveTextContent(/«Contexto»/);
   });
 
   /** NEGATIVE CONTROL: the panel belongs to that tab, not a banner glued to the whole page. */
