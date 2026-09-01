@@ -18,7 +18,7 @@ import {
  * - Never throws: a failure leaves the previous file intact and returns a diagnostic report.
  */
 
-/** What happened with each file. Goes to the log; the turn continues regardless. */
+/** Per file. Goes to the log with its reason; the turn continues regardless. */
 export type ResultadoDeFichero =
   | { readonly nombre: string; readonly estado: "escrito" }
   | { readonly nombre: string; readonly estado: "ya-estaba" }
@@ -608,5 +608,10 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
     cuenta.set(fichero.estado, (cuenta.get(fichero.estado) ?? 0) + 1);
   }
   const partes = [...cuenta].map(([estado, n]) => `${estado}=${String(n)}`).join(" ");
-  return `siembra del perfil: ${partes}`;
+  const motivos = [...new Set(resultado.ficheros.flatMap((fichero) => (
+    fichero.estado === "no-se-pudo-escribir" ? [`${fichero.nombre}: ${fichero.motivo}`] : []
+  )))];
+  return motivos.length === 0
+    ? `siembra del perfil: ${partes}`
+    : `siembra del perfil: ${partes} — ${motivos.join("; ")}`;
 }

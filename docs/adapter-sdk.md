@@ -72,6 +72,21 @@ conservar un binario compatible con este formato.
 - **Contexto nativo de perfil** (`context/native-profile-context.ts`): inyecta `CLAUDE.md`/`AGENTS.md`/etc. como archivos de contexto nativos del harness (actualmente OFF — 4 blockers en [roadmap.md](roadmap.md) §1).
 - **Contexto fijo** (`harnesses/contexto-fijo.ts`): contexto estático por tipo de harness.
 
+### Siembra no fatal
+
+Al recibir `hello_ack`, `sdk/client.ts` siembra el perfil del agente en los ficheros del arnés. **Esa siembra no puede costar la conexión**, y esa decisión es deliberada.
+
+Antes lanzaba un `PROFILE_SEED_FAILED` reintentable, que cerraba la conexión antes de reclamar una sola entrega. El problema es que hay fallos de siembra que el adaptador **no puede resolver por sí mismo**: el caso común es una revisión de perfil subida desde la consola que todavía no se aplicó al disco. La guarda de `siembra-del-perfil.ts` se niega entonces a escribir («sólo el publicador durable puede cambiarla»), y el adaptador reintentaba contra un desajuste que sólo un operador humano podía deshacer.
+
+Medido en producción el 01-09-2026 sobre el alias `zeus`: **1.074 reconexiones en 8 h 52 min**, todas muriendo en el mismo punto, con cada mensaje dirigido a ese alias caducando en la cola. El dueño no se enteró porque el bus le acusaba recibo igualmente.
+
+El intercambio elegido: correr con un perfil desactualizado es un problema de *contenido*; quedarse sordo **y callado** es peor. Por eso el fallo ahora es ruidoso en tres sitios —línea de log, `onError('PROFILE_SEED_FAILED')` para las superficies del operador, y un evento `connection_degraded`— y el alias sigue consumiendo con el perfil anterior.
+
+Dos detalles que sostienen esto:
+
+- `backoff.reset()` corre **antes** de sembrar. El backoff mide la salud del *transporte*, y un `hello_ack` ya la demuestra. Reseteándolo después, un fallo de siembra dejaba el retardo clavado en su techo mientras durase.
+- `resumenDeLaSiembra` incluye el **motivo** de cada fichero que no se pudo escribir, no sólo el recuento. El recuento a secas (`no-se-pudo-escribir=1`) se registró más de mil veces durante el apagón sin decir nunca cuál de las dos ramas de fallo se había disparado.
+
 ## Tests
 
 La suite usa `node:test`. Ejecutar:

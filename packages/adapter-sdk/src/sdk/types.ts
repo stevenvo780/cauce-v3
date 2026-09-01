@@ -345,7 +345,8 @@ export interface AdapterLog {
     /** Failure or anomaly while restoring the conversation in the shared-session pane. */
     | 'shared_session_resume'
     /** Start witness disabled because the configured bridge does not emit the mark. */
-    | 'harness_start_witness_disabled';
+    | 'harness_start_witness_disabled'
+    | 'connection_degraded'; /** Transport is up but something else is not. */
   timestamp?: string; // ISO8601, optional for convenience
   delivery_id?: string;
   phase?: DeliveryPhase;

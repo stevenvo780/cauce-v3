@@ -122,6 +122,7 @@ export class AdapterClient {
   private readonly failedConnections = new WeakSet<ConsumerConnection>();
   private readonly executionIntentWaiters = new Map<string, ExecutionIntentWaiter>();
   private running = false;
+  private perfilAdoptado = true; // False once a hello profile could not be written.
   private readonly onError: (code: string) => void;
   private readonly onLeaseAcquired: (() => Promise<void>) | undefined;
 
@@ -230,9 +231,8 @@ export class AdapterClient {
           if (welcomed) throw new Error('Gateway sent duplicate hello_ack');
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
-          /* Applies the hello profile after epoch activation and before heartbeat, outbox, and recovery. */
+          this.backoff.reset(); // Before seeding: `hello_ack` already proves the transport.
           this.sembrarPerfil(frame);
-          this.backoff.reset();
           heartbeat = this.heartbeatLoop(heartbeatAbort.signal).catch(async () => {
             await connection.close().catch(() => undefined);
           });
@@ -256,30 +256,38 @@ export class AdapterClient {
    * Writes the profile received in the greeting into the harness files or fails the connection.
    * `CAUCE_SEMBRAR_PERFIL=0` disables the sync.
    */
+  /** Applies the hello profile. NEVER throws: see «Siembra no fatal» in docs/adapter-sdk.md. */
   private sembrarPerfil(frame: Extract<ServerFrame, { type: 'hello_ack' }>): void {
     const perfil = frame.agent_profile;
     if (perfil === undefined) return;
+    let resumen: string;
     try {
       const resultado = sembrarPerfilDelArnes(
         this.harness.definition.id,
         perfil,
         { habilitado: siembraHabilitada(process.env) },
       );
-      const resumen = resumenDeLaSiembra(resultado);
+      resumen = resumenDeLaSiembra(resultado);
+      this.perfilAdoptado = siembraAplicada(resultado);
       this.logger({ event: 'profile_seed', alias: this.config.alias, reason: resumen });
-      if (!siembraAplicada(resultado)) {
-        throw new AdapterError('PROFILE_SEED_FAILED', resumen, true);
-      }
     } catch (error) {
-      if (error instanceof AdapterError) throw error;
+      this.perfilAdoptado = false;
+      resumen = 'la siembra del perfil falló antes de acreditar el runtime';
       this.logger({
         event: 'profile_seed',
         alias: this.config.alias,
-        reason: 'la siembra del perfil falló antes de acreditar el runtime',
+        reason: resumen,
         error_message: error instanceof Error ? error.message : String(error),
       });
-      throw new AdapterError('PROFILE_SEED_FAILED', 'Profile seed failed before runtime ACK', true);
     }
+    if (this.perfilAdoptado) return;
+    this.onError('PROFILE_SEED_FAILED');
+    this.logger({
+      event: 'connection_degraded',
+      alias: this.config.alias,
+      reason: 'PROFILE_SEED_FAILED',
+      error_message: `${resumen}; el alias sigue recibiendo con el perfil anterior`,
+    });
   }
 
   private async handleFrame(frame: Exclude<ServerFrame, { type: 'hello_ack' | 'takeover_rejected' }>): Promise<void> {

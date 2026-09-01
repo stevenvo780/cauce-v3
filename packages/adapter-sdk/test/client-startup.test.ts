@@ -89,7 +89,17 @@ test("la siembra de reconnect es default-on y sólo acepta un lote completo o co
   }), false);
 });
 
-test("un perfil que no puede sembrarse corta la conexión antes del heartbeat y reintenta", async () => {
+/**
+ * DELIBERATE POLICY CHANGE. This test used to assert the opposite: that a profile which cannot be
+ * seeded cut the connection before the heartbeat and retried. That policy cost an alias 8h52m of
+ * total deafness across 1074 identical reconnections, because a console revision that had not
+ * reached disk yet is unfixable from the adapter side — it retried forever against a mismatch only
+ * an operator could resolve, and every message queued for that alias expired.
+ *
+ * The transport now survives and the failure is loud instead. Running with a stale profile is a
+ * content problem; being unreachable AND silent is worse than both.
+ */
+test("un perfil que no puede sembrarse avisa pero NO cuesta la conexión", async () => {
   const anteriorInterruptor = process.env.CAUCE_SEMBRAR_PERFIL;
   const anteriorClaudeHome = process.env.CLAUDE_CONFIG_DIR;
   delete process.env.CAUCE_SEMBRAR_PERFIL;
@@ -118,10 +128,13 @@ test("un perfil que no puede sembrarse corta la conexión antes del heartbeat y 
   const running = client.run(stop.signal);
   try {
     await waitUntil(() => errors.includes("PROFILE_SEED_FAILED"));
+    // The whole point: the alias keeps consuming. Without it there is no heartbeat, because the
+    // connection died before reaching the heartbeat loop.
+    await waitUntil(() => connection.sent.some((frame) => frame.type === "heartbeat"));
     assert.equal(
-      connection.sent.some((frame) => frame.type === "heartbeat"),
-      false,
-      "inició heartbeat y se declaró consumidor pese a no aplicar el perfil",
+      connector.calls,
+      1,
+      "reconectó por un fallo de siembra: eso es el bucle que dejó al alias sordo 8h52m",
     );
   } finally {
     stop.abort();
