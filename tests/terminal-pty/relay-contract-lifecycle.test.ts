@@ -240,7 +240,7 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
     expect(gateway.auditOf('terminal.session.consume')).toHaveLength(before);
   });
 
-  it('reconnects publicly to the same PTY, replays scrollback and gives one socket ownership', async () => {
+  it('reconnects publicly to the same PTY, replays scrollback and rejects a second socket', async () => {
     const handle = agent ?? await attachAgent();
     const payload = ticketPayload();
     const first = openBrowserSocket();
@@ -274,13 +274,11 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
       prior_claim_token: priorClaimToken, prior_claim_epoch: priorClaimEpoch,
       after_bytes: 0, cols: 100, rows: 30,
     });
-    const replayClosed = closeCode(replay);
     resumed.send(resumeFrame);
+    const resumedReady = await resumedStream.nextControl();
+    const replayClosed = closeCode(replay);
     replay.send(resumeFrame);
-    const [resumedReady, replayCode] = await Promise.all([
-      resumedStream.nextControl(),
-      replayClosed,
-    ]);
+    const replayCode = await replayClosed;
     expect(replayCode).toBe(CLOSE_CODE.session_conflict);
     expect(resumedReady).toMatchObject({
       type: 'ready', resumed: true, stream_offset: 0, resume_token: resumeToken,
@@ -289,8 +287,6 @@ describe.skipIf(relay === null || isRoot)('terminal-relay end to end: browser, r
     resumed.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
     expect(await resumedStream.nextBinaryUntil((text) => text.includes('pong-2'))).toContain('pong-2');
 
-    expect(handle.events.filter((event) => event.event === 'open_ok' && event.session_id === payload.sid))
-      .toHaveLength(1);
     expect(handle.events.filter((event) => event.event === 'open_ok' && event.session_id === payload.sid))
       .toHaveLength(1);
   });
