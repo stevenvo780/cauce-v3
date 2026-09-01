@@ -7,7 +7,7 @@ import {
 import {
   ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL, TOPES_OPENCLAW,
   ficherosDelArnes, marcaDeRevisionDelPerfil, nombresDelArnes, revisionDelPerfil,
-  type FicheroGenerado,
+  verifyManagedContextEdit, type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
 // Tests for the per-harness file generator.
@@ -215,6 +215,175 @@ test("lo que escribió una persona sobrevive byte a byte, antes y después del b
   assert.ok(soul.includes(humano), "se perdió el texto humano del principio");
   assert.ok(soul.includes(cola.trim()), "se perdió el texto humano del final");
   assert.match(soul, /PROPOSITO-SOUL/);
+});
+
+test("el editor manual sólo puede cambiar bytes fuera de los bloques gestionados", () => {
+  const current = [
+    "# Manual anterior",
+    MARCA_INICIO,
+    "contrato sellado",
+    MARCA_FIN,
+    marcaDeRevisionDelPerfil(7),
+    MARCA_PERFIL_INICIO,
+    "perfil proyectado",
+    MARCA_PERFIL_FIN,
+    "cola anterior",
+    "",
+  ].join("\n");
+  const proposed = current
+    .replace("# Manual anterior", "# Manual nuevo")
+    .replace("cola anterior", "cola nueva");
+
+  assert.deepEqual(verifyManagedContextEdit(current, proposed), { allowed: true });
+});
+
+test("el editor manual acepta CRLF si conserva bloques, revisión y EOL gestionados byte a byte", () => {
+  const current = [
+    "# Manual anterior",
+    MARCA_INICIO,
+    "contrato sellado",
+    MARCA_FIN,
+    marcaDeRevisionDelPerfil(7),
+    MARCA_PERFIL_INICIO,
+    "perfil proyectado",
+    MARCA_PERFIL_FIN,
+    "cola anterior",
+    "",
+  ].join("\r\n");
+  const proposed = current
+    .replace("# Manual anterior", "# Manual nuevo")
+    .replace("cola anterior", "cola nueva");
+
+  assert.deepEqual(verifyManagedContextEdit(current, proposed), { allowed: true });
+  assert.deepEqual(
+    verifyManagedContextEdit(current, current.replace("contrato sellado", "contrato alterado")),
+    { allowed: false, conflict: "managed_fixed_context_changed" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(
+      current,
+      current.replace(`${marcaDeRevisionDelPerfil(7)}\r\n`, `${marcaDeRevisionDelPerfil(7)}\n`),
+    ),
+    { allowed: false, conflict: "managed_profile_revision_changed" },
+  );
+});
+
+test("el editor manual rechaza cambios byte a byte en contexto, perfil y revisión", () => {
+  const current = [
+    MARCA_INICIO,
+    "contrato sellado",
+    MARCA_FIN,
+    marcaDeRevisionDelPerfil(7),
+    MARCA_PERFIL_INICIO,
+    "perfil proyectado",
+    MARCA_PERFIL_FIN,
+    "",
+  ].join("\n");
+  const cases = [
+    ["contrato sellado", "contrato alterado", "managed_fixed_context_changed"],
+    ["perfil proyectado", "perfil alterado", "managed_profile_changed"],
+    [marcaDeRevisionDelPerfil(7), marcaDeRevisionDelPerfil(8), "managed_profile_revision_changed"],
+  ] as const;
+
+  for (const [from, to, conflict] of cases) {
+    assert.deepEqual(
+      verifyManagedContextEdit(current, current.replace(from, to)),
+      { allowed: false, conflict },
+    );
+  }
+});
+
+test("el editor manual rechaza marcadores retirados, añadidos, desconocidos o malformados", () => {
+  const current = `${MARCA_PERFIL_INICIO}\nperfil\n${MARCA_PERFIL_FIN}\nmanual\n`;
+  const unknown = "<!-- CAUCE:FUTURO v9 -->";
+
+  assert.deepEqual(
+    verifyManagedContextEdit(current, current.replace(`${MARCA_PERFIL_FIN}\n`, "")),
+    { allowed: false, conflict: "malformed_proposed" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(current, `${current}${unknown}\n`),
+    { allowed: false, conflict: "unknown_reserved_markers_in_proposed" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit("manual\n", `manual\ntexto ${unknown}\n`),
+    { allowed: false, conflict: "malformed_proposed" },
+  );
+
+  const currentWithUnknown = `manual anterior\n${unknown}\n`;
+  assert.deepEqual(
+    verifyManagedContextEdit(currentWithUnknown, `manual nuevo\n${unknown}\n`),
+    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(currentWithUnknown, currentWithUnknown.replace("FUTURO", "OTRO")),
+    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
+  );
+});
+
+test("un gateway antiguo falla cerrado ante payload o movimiento de pares CAUCE futuros", () => {
+  const futureStart = "<!-- CAUCE:FUTURO v2 -->";
+  const futureEnd = "<!-- CAUCE:FIN-FUTURO -->";
+  const current = [
+    "manual anterior",
+    futureStart,
+    "payload opaco",
+    futureEnd,
+    "manual posterior",
+    "",
+  ].join("\n");
+
+  assert.deepEqual(
+    verifyManagedContextEdit(current, current.replace("payload opaco", "payload alterado")),
+    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(
+      current,
+      [futureStart, "payload opaco", futureEnd, "manual anterior", "manual posterior", ""].join("\n"),
+    ),
+    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit("manual conocido\n", current),
+    { allowed: false, conflict: "unknown_reserved_markers_in_proposed" },
+  );
+});
+
+test("se protege el orden relativo de bloques conocidos, no su anclaje al texto manual", () => {
+  const fixed = [MARCA_INICIO, "contrato", MARCA_FIN].join("\n");
+  const profile = [
+    marcaDeRevisionDelPerfil(3),
+    MARCA_PERFIL_INICIO,
+    "perfil",
+    MARCA_PERFIL_FIN,
+  ].join("\n");
+  const current = `antes\n${fixed}\nentre\n${profile}\ndespués\n`;
+
+  assert.deepEqual(
+    verifyManagedContextEdit(current, `antes\nentre\ndespués\n${fixed}\n${profile}\n`),
+    { allowed: true },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(current, `antes\n${profile}\nentre\n${fixed}\ndespués\n`),
+    { allowed: false, conflict: "reserved_markers_changed" },
+  );
+});
+
+test("la creación manual sólo admite documentos sin marcadores reservados", () => {
+  assert.deepEqual(verifyManagedContextEdit(undefined, "# Manual\n"), { allowed: true });
+  assert.deepEqual(
+    verifyManagedContextEdit("# Manual anterior\r\n", "# Manual nuevo\r\n"),
+    { allowed: true },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(undefined, `${MARCA_INICIO}\ncontrato\n${MARCA_FIN}\n`),
+    { allowed: false, conflict: "reserved_markers_on_create" },
+  );
+  assert.deepEqual(
+    verifyManagedContextEdit(undefined, "<!-- CAUCE:FUTURO v1 -->\n"),
+    { allowed: false, conflict: "reserved_markers_on_create" },
+  );
 });
 
 test("regenerar sobre lo ya generado NO duplica el bloque", () => {

@@ -279,6 +279,13 @@ describe('verifyWritablePath — falla cerrada', () => {
       ['configuration', 'configuration', '/home/claw/.openclaw/openclaw.json'],
     ]);
     expect(docs.every((d) => !d.editable)).toBe(true);
+    const canonicalKinds = new Set(['prompts', 'identity', 'human', 'directive', 'tools']);
+    const canonicalReasons = docs
+      .filter((doc) => canonicalKinds.has(doc.kind))
+      .map((doc) => doc.reason);
+    expect(canonicalReasons).toHaveLength(5);
+    expect(canonicalReasons.every((reason) => reason?.includes('desde Contexto'))).toBe(true);
+    expect(canonicalReasons.every((reason) => !reason?.includes('desde Perfil'))).toBe(true);
     expect(docs.find((doc) => doc.kind === 'configuration')?.reason).toMatch(/secrets/);
     expect(verifyWritablePath(
       MEDIDO.jarvis, 'directive', documentForKind(MEDIDO.jarvis, 'directive')?.path

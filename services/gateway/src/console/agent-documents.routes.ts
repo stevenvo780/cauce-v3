@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { AliasSchema, TenantSchema } from '@cauce/protocol';
+import {
+  AliasSchema, TenantSchema, verifyManagedContextEdit, type ManagedContextEditConflict,
+} from '@cauce/protocol';
 import {
   MAX_DOCUMENT_BYTES, type AgentDocument, type DocumentKind, type HarnessKind, type RuntimeFacts,
   documentForKind, resolveAgentDocuments, verifyReadableDocument, verifyWritablePath
@@ -200,6 +202,18 @@ const CAVEAT_NO_MEDIDO =
   'Estas rutas están DEDUCIDAS del registro, no medidas dentro del contenedor. El 23-ago-2026 el ' +
   'registro se equivocaba de arnés en 5 de los 14 alias, así que trátalas como una pista y no ' +
   'como la verdad. Nada es editable hasta que el pty-agent mida el entorno del proceso.';
+
+const MANAGED_CONTEXT_CONFLICT_MESSAGES: Record<ManagedContextEditConflict, string> = {
+  malformed_current: 'el fichero actual tiene marcadores CAUCE malformados; no se modifica manualmente',
+  malformed_proposed: 'la edición crea o malforma marcadores CAUCE gestionados',
+  managed_fixed_context_changed: 'la edición altera o retira el bloque CAUCE de contexto fijo',
+  managed_profile_changed: 'la edición altera, crea o retira el bloque CAUCE de campos canónicos de Contexto',
+  managed_profile_revision_changed: 'la edición altera, crea o retira la revisión CAUCE de Contexto',
+  reserved_markers_changed: 'la edición altera, crea, retira o reordena marcadores CAUCE reservados',
+  reserved_markers_on_create: 'un fichero nuevo no puede crear marcadores CAUCE reservados desde el manual',
+  unknown_reserved_markers_in_current: 'el fichero usa marcadores CAUCE de una versión más nueva; actualizá el gateway antes de editarlo',
+  unknown_reserved_markers_in_proposed: 'la edición introduce marcadores CAUCE que este gateway no conoce',
+};
 
 function harnessFromRegistry(value: string | null | undefined): HarnessKind {
   return value === 'claude' || value === 'codex' || value === 'openclaw' || value === 'hermes'
@@ -519,6 +533,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
       const actual = await deps.probe.readGovernanceDocument(
         doc.path, medido.facts, target.tenant_id, target.alias,
       );
+      let contenidoActual: string | undefined;
       if (precondition.state === 'absent') {
         if (!esError(actual)) {
           return reply.code(409).send({
@@ -528,6 +543,7 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         if (actual.error !== 'not_found') {
           return reply.code(codigoDe(actual.error)).send({ error: actual.error, message: actual.reason });
         }
+        contenidoActual = undefined;
       } else {
         if (esError(actual)) {
           if (actual.error === 'not_found') {
@@ -546,6 +562,18 @@ export function registerAgentDocumentRoutes(app: FastifyInstance, deps: AgentDoc
         if (actual.sha !== precondition.sha256) {
           return reply.code(409).send({
             error: 'conflict', message: 'el fichero cambió desde que se abrió; hay que releerlo',
+          });
+        }
+        contenidoActual = actual.text;
+      }
+
+      if (kind === 'directive') {
+        const managedContext = verifyManagedContextEdit(contenidoActual, contenido);
+        if (!managedContext.allowed) {
+          return reply.code(409).send({
+            error: 'managed_context_conflict',
+            conflict: managedContext.conflict,
+            message: MANAGED_CONTEXT_CONFLICT_MESSAGES[managedContext.conflict],
           });
         }
       }

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { ContextoDeAlias } from '@cauce/protocol';
+import { ficherosDelArnes, type ContextoDeAlias } from '@cauce/protocol';
 import type {
   AgentFactsProbe, GovernanceBatchWrite, GovernanceBatchWriteAck, GovernanceDocumentContent,
   GovernanceReadError,
@@ -336,6 +336,33 @@ describe('prepareAgentProfileRuntime', () => {
       documents: [{ name: 'AGENTS.md', path, current: false, observed_sha: sha('# manual\n') }],
     });
     expect(prepared.preview[0]?.texto).toContain('# manual');
+    expect(batch).not.toHaveBeenCalled();
+  });
+
+  it('editar texto manual fuera del bloque conserva el perfil current', async () => {
+    const path = '/home/dev/.claude/CLAUDE.md';
+    const ctx = contexto('zeus', 'claude');
+    const projected = ficherosDelArnes(
+      'claude', ctx, new Map([['CLAUDE.md', '# manual anterior\n']]), { revision: 7 },
+    )[0]?.texto;
+    if (projected === undefined) throw new Error('CLAUDE.md no se proyectó');
+    const manuallyEdited = projected.replace('# manual anterior', '# manual actualizado');
+    const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
+
+    const prepared = await prepareRevision(
+      probe(
+        { harness: 'claude', home: '/home/dev' },
+        new Map([[path, read(manuallyEdited)]]),
+        batch,
+      ),
+      'Steven', 'zeus', ctx,
+    );
+
+    expect(prepared.verification).toMatchObject({
+      state: 'current',
+      documents: [{ name: 'CLAUDE.md', current: true, observed_sha: sha(manuallyEdited) }],
+    });
+    expect(prepared.preview[0]?.texto).toBe(manuallyEdited);
     expect(batch).not.toHaveBeenCalled();
   });
 
