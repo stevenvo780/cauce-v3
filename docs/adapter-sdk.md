@@ -21,7 +21,7 @@ Entregar = pegar texto en la sesión tmux viva del harness (`paste-runner.ts`, `
 | `sdk/engine.ts` | Loop principal: claim → ACK → pegar texto |
 | `sdk/client.ts` | Cliente WebSocket con hello/heartbeat/fencing |
 | `sdk/websocket-transport.ts` | Capa de transporte con reconexión |
-| `sdk/durable-store.ts` | Persistencia local de deliveries y ACKs antes de ejecución |
+| `sdk/durable-store.ts` | Persistencia local exacta de deliveries, ACKs e historial terminal |
 | `sdk/process-runner.ts` | Ejecución spawn-based para Claude/Codex |
 | `sdk/openclaw-api-runner.ts` | Ejecución API-based para OpenClaw |
 | `sdk/fanin-synthesizer.ts` | Materializa respuestas de cadenas de delegación A→B→C |
@@ -43,6 +43,24 @@ Entregar = pegar texto en la sesión tmux viva del harness (`paste-runner.ts`, `
 
 Cada harness → `runCli()` → monta `DurableStore` + `HarnessAdapter` sobre el runner correspondiente.
 
+## Persistencia local exacta
+
+`inbox.json` conserva como máximo 256 terminales confirmados por defecto. Al superar el límite,
+los más antiguos pasan a segmentos append-only, owner-only y direccionados por SHA-256 dentro de
+`terminal-history/`; el inbox vuelve hasta la mitad del límite para evitar reescribir un fichero sin
+cota en cada ACK. Nunca se archivan eventos pendientes ni contexto de fan-in retenido, y el historial
+no usa TTL ni borrado silencioso: duplicados, colisiones, intentos y `claim_token` antiguos siguen
+vallados después de reiniciar. El WAL incluye el digest exacto antes de retirar cada registro del
+inbox y la apertura falla cerrada ante corrupción o permisos inseguros.
+
+El historial es acotado en coste de reescritura, no en retención total: los segmentos crecen con
+los terminales y hoy no tienen recolección. La apertura valida todos los segmentos y mantiene el
+último registro exacto de cada `delivery_id` en memoria, por lo que RAM y tiempo de arranque son
+O(historial); un índice durable y carga perezosa quedan como rediseño pendiente. Después de la
+primera compactación no es seguro volver a una versión del SDK que desconozca
+`terminal-history/`, porque esa versión vería solo el inbox inline; cualquier rollback debe
+conservar un binario compatible con este formato.
+
 ## La cadena: supervisor → runtime → harness
 
 - **Supervisor** (`ops/scripts/container-adapter-supervisor.sh`): invocado por la unidad systemd del alias; resuelve config/bundle/PKI, valida el bind del contenedor, ejecuta con lock.
@@ -56,7 +74,7 @@ Cada harness → `runCli()` → monta `DurableStore` + `HarnessAdapter` sobre el
 
 ## Tests
 
-674 tests con `node:test`. Ejecutar:
+La suite usa `node:test`. Ejecutar:
 
 ```bash
 pnpm --filter @cauce/adapter-sdk test

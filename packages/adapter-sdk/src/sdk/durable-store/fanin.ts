@@ -11,7 +11,7 @@ import { objectRecord, visibleText } from "./delivery-helpers.js";
 
 export class DurableStoreFanin extends DurableStoreBase {
   getDelivery(deliveryId: string): InboxRecord | undefined {
-    const record = this.inbox.deliveries[deliveryId];
+    const record = this.inbox.deliveries[deliveryId] ?? this.terminalHistory.get(deliveryId);
     return record === undefined ? undefined : clone(record);
   }
 

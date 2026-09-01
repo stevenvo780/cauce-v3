@@ -48,7 +48,8 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     enqueueLifecycle: boolean,
   ): Promise<LifecycleAcceptance> {
     return this.serialized(async () => {
-      const existing = this.inbox.deliveries[delivery.delivery_id];
+      const existing = this.inbox.deliveries[delivery.delivery_id]
+        ?? this.terminalHistory.get(delivery.delivery_id);
       const fingerprint = deliveryFingerprint(delivery);
       if (existing !== undefined) {
         if (existing.fingerprint !== fingerprint) {
@@ -116,7 +117,8 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     correlation: Pick<InboxRecord, "delivery_id" | "attempt" | "claim_token">,
   ): Promise<InboxRecord> {
     return this.serialized(async () => {
-      const existing = this.inbox.deliveries[correlation.delivery_id];
+      const existing = this.inbox.deliveries[correlation.delivery_id]
+        ?? this.terminalHistory.get(correlation.delivery_id);
       if (existing === undefined) throw new Error(`Unknown delivery ${correlation.delivery_id}`);
       if (existing.attempt !== correlation.attempt || existing.claim_token !== correlation.claim_token) {
         throw new Error(`Stale lifecycle correlation for delivery ${correlation.delivery_id}`);

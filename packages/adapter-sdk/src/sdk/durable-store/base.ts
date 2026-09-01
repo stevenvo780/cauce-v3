@@ -21,6 +21,7 @@ import {
   type OutboxFile,
   type SessionsFile,
 } from "./contracts.js";
+import { TerminalHistory } from "./terminal-history.js";
 
 export class DurableStoreBase {
   protected inbox: InboxFile = clone(EMPTY_INBOX);
@@ -36,6 +37,8 @@ export class DurableStoreBase {
   protected constructor(
     protected readonly directory: string,
     protected readonly directoryFsync: DirectoryFsync,
+    protected readonly terminalHistory: TerminalHistory,
+    private readonly maxInlineTerminalRecords: number,
   ) {}
 
   protected path(name: string): string {
@@ -47,44 +50,72 @@ export class DurableStoreBase {
   }
 
   /**
-   * Write-ahead transaction over the historical inbox/outbox files.
+   * Write-ahead transaction over the mutable inbox/outbox files.
    *
    * The intent is durable before either target changes. A crash at any later instruction leaves
-   * enough information to idempotently finish both writes on reopen. Keeping the patch small
-   * avoids rewriting the unbounded inbox for renewals and ACKs, while preserving the existing
-   * files for old diagnostics and rollback tooling.
+   * enough information to idempotently finish both writes on reopen. The patch avoids rewriting
+   * unchanged inbox records for renewals and ACKs, while confirmed terminals move to exact
+   * immutable history for old diagnostics and fencing.
    */
   protected async commitDeliveryState(
     inbox: InboxFile,
     outbox: OutboxFile,
     targets: { readonly inbox: boolean; readonly outbox: boolean },
-  ): Promise<void> {
-    if (!targets.inbox && !targets.outbox) return;
+  ): Promise<number> {
+    const compacted = await this.withCompactedTerminalHistory(inbox, outbox);
+    const committedInboxCandidate = compacted.inbox;
+    const archivedByDelivery = new Map(compacted.archived.map((record) => (
+      [record.delivery_id, record] as const
+    )));
+    const writeInbox = targets.inbox || compacted.count > 0;
+    if (!writeInbox && !targets.outbox) return 0;
     const transactionId = randomUUID();
-    const inboxUpdates = targets.inbox
-      ? Object.fromEntries(Object.entries(inbox.deliveries).filter(
+    const inboxUpdates = writeInbox
+      ? Object.fromEntries(Object.entries(committedInboxCandidate.deliveries).filter(
           ([deliveryId, record]) => this.inbox.deliveries[deliveryId] !== record,
         ))
       : undefined;
+    const inboxDeletes = writeInbox
+      ? Object.entries(this.inbox.deliveries).flatMap(([deliveryId, record]) => {
+          if (Object.hasOwn(committedInboxCandidate.deliveries, deliveryId)) return [];
+          const archived = archivedByDelivery.get(deliveryId);
+          if (archived === undefined) {
+            throw new Error(`Inbox deletion has no archived candidate for ${deliveryId}`);
+          }
+          return [{
+            delivery_id: deliveryId,
+            fingerprint: record.fingerprint,
+            attempt: record.attempt,
+            claim_token: record.claim_token,
+            record_digest: this.terminalHistory.digest(archived),
+          }];
+        })
+      : [];
     const transaction: DeliveryTransactionFile = {
       version: 1,
       transaction_id: transactionId,
       ...(inboxUpdates === undefined ? {} : { inbox_updates: inboxUpdates }),
+      ...(inboxDeletes.length === 0 ? {} : { inbox_deletes: inboxDeletes }),
       ...(targets.outbox ? { outbox_pending: outbox.pending } : {}),
     };
     await this.atomicWrite("delivery-transaction.json", transaction);
     try {
-      const committedInbox: InboxFile = targets.inbox
-        ? { version: 1, deliveries: inbox.deliveries, last_transaction_id: transactionId }
+      const committedInbox: InboxFile = writeInbox
+        ? {
+            version: 1,
+            deliveries: committedInboxCandidate.deliveries,
+            last_transaction_id: transactionId,
+          }
         : this.inbox;
       const committedOutbox: OutboxFile = targets.outbox
         ? { version: 1, pending: outbox.pending, last_transaction_id: transactionId }
         : this.outbox;
-      if (targets.inbox) await this.atomicWrite("inbox.json", committedInbox);
+      if (writeInbox) await this.atomicWrite("inbox.json", committedInbox);
       if (targets.outbox) await this.atomicWrite("outbox.json", committedOutbox);
       this.inbox = committedInbox;
       this.outbox = committedOutbox;
       this.recoveryRequired = false;
+      return compacted.count;
     } catch (error) {
       this.recoveryRequired = true;
       throw error;
@@ -100,11 +131,31 @@ export class DurableStoreBase {
       this.recoveryRequired = false;
       return;
     }
-    if (pending.inbox_updates !== undefined
+    if ((pending.inbox_updates !== undefined || pending.inbox_deletes !== undefined)
       && this.inbox.last_transaction_id !== pending.transaction_id) {
+      const deliveries: Record<string, InboxRecord> = {
+        ...this.inbox.deliveries,
+        ...pending.inbox_updates,
+      };
+      for (const deletion of pending.inbox_deletes ?? []) {
+        const current = deliveries[deletion.delivery_id];
+        if (current !== undefined && (current.fingerprint !== deletion.fingerprint
+            || current.attempt !== deletion.attempt
+            || current.claim_token !== deletion.claim_token)) {
+          throw new Error(`Stale inbox deletion fence for ${deletion.delivery_id}`);
+        }
+        const archived = this.terminalHistory.get(deletion.delivery_id);
+        if (archived?.fingerprint !== deletion.fingerprint
+            || archived.attempt !== deletion.attempt
+            || archived.claim_token !== deletion.claim_token
+            || !this.terminalHistory.hasExact(deletion.delivery_id, deletion.record_digest)) {
+          throw new Error(`Inbox deletion has no exact terminal history for ${deletion.delivery_id}`);
+        }
+        Reflect.deleteProperty(deliveries, deletion.delivery_id);
+      }
       const recoveredInbox: InboxFile = {
         version: 1,
-        deliveries: { ...this.inbox.deliveries, ...pending.inbox_updates },
+        deliveries,
         last_transaction_id: pending.transaction_id,
       };
       await this.atomicWrite("inbox.json", recoveredInbox);
@@ -121,6 +172,47 @@ export class DurableStoreBase {
       this.outbox = recoveredOutbox;
     }
     this.recoveryRequired = false;
+  }
+
+  private async withCompactedTerminalHistory(
+    inbox: InboxFile,
+    outbox: OutboxFile,
+  ): Promise<{
+    readonly inbox: InboxFile;
+    readonly archived: readonly InboxRecord[];
+    readonly count: number;
+  }> {
+    const pendingDeliveries = new Set(outbox.pending.map((event) => event.delivery_id));
+    const eligible = Object.values(inbox.deliveries)
+      .filter((record) => (
+        (record.state === "done" || record.state === "failed")
+        && record.request === undefined
+        && record.lifecycle_event_ids?.terminal !== undefined
+        && !pendingDeliveries.has(record.delivery_id)
+      ))
+      .sort((left, right) => (
+        left.updated_at.localeCompare(right.updated_at)
+        || left.delivery_id.localeCompare(right.delivery_id)
+      ));
+    if (eligible.length <= this.maxInlineTerminalRecords) {
+      return { inbox, archived: [], count: 0 };
+    }
+    const retained = this.maxInlineTerminalRecords === 0
+      ? 0
+      : Math.floor(this.maxInlineTerminalRecords / 2);
+    const archived = eligible.slice(0, eligible.length - retained);
+    await this.terminalHistory.archive(archived);
+    const deliveries = { ...inbox.deliveries };
+    for (const record of archived) Reflect.deleteProperty(deliveries, record.delivery_id);
+    return { inbox: { version: 1, deliveries }, archived, count: archived.length };
+  }
+
+  async compactTerminalRecords(): Promise<number> {
+    return this.serialized(async () => this.commitDeliveryState(
+      this.inbox,
+      this.outbox,
+      { inbox: false, outbox: false },
+    ));
   }
 
   protected withoutExpiredDelegationContexts(nowMs: number): InboxFile {

@@ -63,7 +63,16 @@ export interface DeliveryTransactionFile {
   readonly version: 1;
   readonly transaction_id: string;
   readonly inbox_updates?: Readonly<Record<string, InboxRecord>>;
+  readonly inbox_deletes?: readonly (Pick<
+    InboxRecord,
+    "delivery_id" | "fingerprint" | "attempt" | "claim_token"
+  > & { readonly record_digest: string })[];
   readonly outbox_pending?: readonly DeliveryEvent[];
+}
+
+export interface TerminalHistorySegment {
+  readonly version: 1;
+  readonly records: readonly InboxRecord[];
 }
 
 export interface SessionOrigin {
@@ -121,6 +130,10 @@ export const MAX_SESSIONS_FILE_BYTES = 1024 * 1024;
 export const MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS = 24 * 60 * 60 * 1_000;
 export const DELEGATION_CONTEXT_PRUNE_RETRY_MS = 60_000;
 export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+export const DEFAULT_MAX_INLINE_TERMINAL_RECORDS = 256;
+export const MAX_INLINE_TERMINAL_RECORDS = 4_096;
+export const TERMINAL_HISTORY_SEGMENT_RECORDS = 256;
+export const TERMINAL_HISTORY_DIRECTORY = "terminal-history";
 
 /** Directory fsync is optional only when the filesystem explicitly reports it unsupported. */
 export const UNSUPPORTED_DIRECTORY_FSYNC_CODES = ["EINVAL", "ENOTSUP", "EOPNOTSUPP"] as const;
@@ -132,6 +145,7 @@ export interface DurableStoreOpenOptions {
   readonly deferSessions?: boolean;
   /** Deterministic fault injection for durability tests; production omits it. */
   readonly directoryFsync?: DirectoryFsync;
+  readonly maxInlineTerminalRecords?: number;
 }
 
 export type CanonicalOpenCodeSessionPointer =
