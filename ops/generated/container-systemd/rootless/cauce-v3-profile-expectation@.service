@@ -1,0 +1,20 @@
+[Unit]
+Description=Cauce V3 native-profile runtime expectation for %i (re-registers it against the live container)
+After=network-online.target cauce-v3-container-%i.service
+ConditionPathExists=%h/.config/cauce-v3/container-aliases/%i.env
+
+[Service]
+Type=oneshot
+UMask=0077
+Environment=CAUCE_CONTAINER_CONFIG_ROOT=%h/.config/cauce-v3/container-aliases
+ExecStart=%h/.local/share/cauce-v3/ops/scripts/refresh-profile-expectation.sh %i
+TimeoutStartSec=420s
+StandardInput=null
+NoNewPrivileges=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

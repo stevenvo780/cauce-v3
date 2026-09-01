@@ -16,6 +16,7 @@ Environment=CAUCE_CONTAINER_BUNDLE_ROOT=%h/.local/share/cauce-v3-adapter
 Environment=CAUCE_CONTAINER_LOCK_ROOT=%t/cauce-v3
 ExecStart=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh start heraclito
 ExecStop=%h/.local/share/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop heraclito
+ExecStartPost=/usr/bin/systemctl --user start --no-block cauce-v3-profile-expectation@heraclito.service
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78

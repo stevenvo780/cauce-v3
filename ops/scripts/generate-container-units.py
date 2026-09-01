@@ -44,6 +44,7 @@ for entry in aliases.values():
     container = entry["container"]
     physical_alias_counts[container] = physical_alias_counts.get(container, 0) + 1
 
+UNIT_PREFIX = "cauce-v3"
 mode = "rootless" if args.rootless else "system"
 args.output = args.output or root / "generated" / "container-systemd" / ("rootless" if args.rootless else "")
 home = args.home.resolve().as_posix()
@@ -103,6 +104,7 @@ Group=root
 UMask=0077
 ExecStart=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh start {alias}
 ExecStop=/opt/cauce-v3/ops/scripts/container-adapter-supervisor.sh stop {alias}
+ExecStartPost=/usr/bin/systemctl start --no-block cauce-v3-profile-expectation@{alias}.service
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
@@ -154,6 +156,7 @@ Environment=CAUCE_CONTAINER_BUNDLE_ROOT={unit_bundle_root}
 Environment=CAUCE_CONTAINER_LOCK_ROOT={unit_lock_root}
 ExecStart={install_prefix}/ops/scripts/container-adapter-supervisor.sh start {alias}
 ExecStop={install_prefix}/ops/scripts/container-adapter-supervisor.sh stop {alias}
+ExecStartPost=/usr/bin/systemctl --user start --no-block cauce-v3-profile-expectation@{alias}.service
 Restart=always
 RestartSec=5s
 RestartPreventExitStatus=2 73 78
@@ -171,6 +174,35 @@ SystemCallArchitectures=native
 WantedBy=default.target
 """
 
+
+def expectation_unit() -> str:
+    """One template for every alias: it re-registers the native-profile runtime expectation.
+
+    Alias-neutral on purpose. The row it repairs is written only by the console, so without this
+    a container that came back under a new incarnation left the alias fail-closed and mute.
+    """
+    scope = "default.target" if args.rootless else "multi-user.target"
+    return f"""[Unit]
+Description=Cauce V3 native-profile runtime expectation for %i (re-registers it against the live container)
+After=network-online.target {UNIT_PREFIX}-container-%i.service
+ConditionPathExists={unit_config_root}/%i.env
+
+[Service]
+Type=oneshot
+UMask=0077
+Environment=CAUCE_CONTAINER_CONFIG_ROOT={unit_config_root}
+ExecStart={install_prefix}/ops/scripts/refresh-profile-expectation.sh %i
+TimeoutStartSec=420s
+StandardInput=null
+NoNewPrivileges=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy={scope}
+"""
 
 def unit(alias: str, entry: dict[str, str]) -> str:
     return rootless_unit(alias, entry) if args.rootless else system_unit(alias, entry)
@@ -260,6 +292,10 @@ for stale in sorted(args.output.glob("cauce-v3-container-*.service")):
         stale.unlink()
         (config_output / f"{stale_alias}.env.example").unlink(missing_ok=True)
         print(f"retired {stale}")
+
+expectation_path = args.output / f"{UNIT_PREFIX}-profile-expectation@.service"
+atomic_write(expectation_path, expectation_unit())
+generated.append(expectation_path)
 
 operations_path = args.output / "OPERATIONS.sha256"
 atomic_write(operations_path, f"{operational_digest(root, args.output.resolve(), rootless=args.rootless)}\n")
