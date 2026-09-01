@@ -1,12 +1,11 @@
 import { ArrowDownUp, Ban, Cpu, Link2Off, ShieldQuestion } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { Badge, Desplazable, EmptyState, Panel } from '../../components/ui';
 import { MutationBar } from './MutationBar';
 import {
-  bindingMutation, buildAssignmentMatrix, ceilingMutation, readAgents, readBindings, readCeiling,
-  readProviderAccounts, type MatrixCell, type RegistryContext,
+  bindingMutation, ceilingMutation, type MatrixCell, type RegistryModel,
 } from './registry';
 import { useRegistryMutation } from './use-registry-mutation';
 
@@ -53,27 +52,14 @@ function agentKeyOf(tenantId: string, alias: string): string {
  * defect the merge comes to close. The mutation runner IS its own: the view has two independent
  * forms, and one dry-run must not enable the other's apply.
  */
-export function AssignmentMatrix({ config, access }: {
+export function AssignmentMatrix({ config, access, registry }: {
   config: Resource<ConfigurationSnapshot>;
   access: Resource<ConsoleAccess>;
+  registry: RegistryModel;
 }) {
-  const accounts = useMemo(() => readProviderAccounts(config.data), [config.data]);
-  const agents = useMemo(() => readAgents(config.data), [config.data]);
-  const ceiling = useMemo(() => readCeiling(config.data), [config.data]);
-  const bindings = useMemo(() => readBindings(config.data), [config.data]);
-  const tenantIds = useMemo(
-    () => (config.data?.tenants ?? []).map((row) => row.id).filter((id): id is string => typeof id === 'string'),
-    [config.data],
-  );
-  const context: RegistryContext = useMemo(() => ({
-    accounts: accounts.items, agents: agents.items, ceiling: ceiling.items,
-    bindings: bindings.items, tenantIds,
-  }), [accounts.items, agents.items, ceiling.items, bindings.items, tenantIds]);
-  const matrix = useMemo(
-    () => buildAssignmentMatrix(agents.items, accounts.items, ceiling.items, bindings.items),
-    [agents.items, accounts.items, ceiling.items, bindings.items],
-  );
-  const runner = useRegistryMutation({ config, access, context });
+  const { accounts, agents, ceiling, bindings } = registry;
+  const matrix = registry.routing.matrix;
+  const runner = useRegistryMutation({ config, access, context: registry.context });
 
   const [assignment, setAssignment] = useState<Assignment>({
     agentKey: '', accountId: '', operation: 'grant-ceiling', priority: '100', enabled: true,

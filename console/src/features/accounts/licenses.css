@@ -121,18 +121,6 @@
   }
 }
 
-.assignment-item.primary {
-  border-color: hsl(120 100% 50%);
-  background-color: hsl(120 100% 95%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-item.primary {
-    border-color: hsl(120 100% 45%);
-    background-color: hsl(120 50% 15%);
-  }
-}
-
 .assignment-item.disabled {
   opacity: 0.6;
   background-color: hsl(0 0% 93%);

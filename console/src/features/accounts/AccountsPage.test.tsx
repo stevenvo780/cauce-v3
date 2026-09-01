@@ -8,9 +8,10 @@ import { renderWithApi } from '../../test/render';
 
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
-function configuration(overrides: Record<string, unknown>) {
+function configuration(overrides: Record<string, unknown>, revision: number | (() => number) = 4) {
   server.use(http.get('http://localhost/v3/console/config', () => HttpResponse.json({
-    revision: 4, observed_at: new Date().toISOString(), tenants: [{ id: 'Steven' }, { id: 'Pablo' }],
+    revision: typeof revision === 'function' ? revision() : revision,
+    observed_at: new Date().toISOString(), tenants: [{ id: 'Steven' }, { id: 'Pablo' }],
     rooms: [], memberships: [], acl_edges: [], harness_definitions: [], role_policies: [],
     revisions: [], ...overrides,
   })));
@@ -47,6 +48,10 @@ const borrowedAccount = {
  */
 function accountActions() {
   return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
+}
+
+function deleteActions() {
+  return within(screen.getByRole('group', { name: /acciones de retiro o rotación de cuenta/i }));
 }
 
 /**
@@ -186,6 +191,7 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
   await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
 
   expect(await screen.findByText(/la escritura puede haberse aplicado/i)).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent(/releído del servidor.*revisión 4/i);
   expect(screen.queryByText(/aplicado en revisión 5/i)).not.toBeInTheDocument();
 }, 20_000);
 
@@ -221,7 +227,106 @@ it('deshabilita sin borrar: la acción abre el update con enabled en false', asy
     resource: 'provider_account', action: 'update', id: 'codex-steven',
     value: { label: 'Codex del hub', shared_with_pool: true, enabled: false },
   });
-  expect(screen.queryByRole('button', { name: /eliminar|borrar/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /retirar o rotar/i })).toBeInTheDocument();
+});
+
+it('invalida el dry-run si Actualizar cambia la revisión y exige previsualizar otra vez', async () => {
+  const changes: ChangeRequest[] = [];
+  let revision = 4;
+  configuration(
+    { provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] },
+    () => revision,
+  );
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  await openInventory(user);
+  await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
+  const preview = accountActions().getByRole('button', { name: /previsualizar/i });
+  const apply = accountActions().getByRole('button', { name: /^aplicar$/i });
+  await user.click(preview);
+  expect(apply).toBeEnabled();
+  expect(changes[0]?.expected_revision).toBe(4);
+
+  revision = 5;
+  await user.click(screen.getByRole('button', { name: /^Actualizar$/i }));
+  await waitFor(() => { expect(apply).toBeDisabled(); });
+  await user.click(apply);
+  expect(changes).toHaveLength(1);
+
+  await user.click(preview);
+  await waitFor(() => { expect(changes).toHaveLength(2); });
+  expect(changes[1]?.expected_revision).toBe(5);
+  expect(apply).toBeEnabled();
+});
+
+it('ofrece el delete necesario para retiro o rotación con confirmación exacta y dry-run', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  await openInventory(user);
+  await user.click(screen.getByRole('button', { name: /retirar o rotar «codex-steven»/i }));
+  expect(deleteActions().getByRole('button', { name: /previsualizar/i })).toBeDisabled();
+  await user.type(screen.getByLabelText(/confirmar borrado de codex-steven/i), 'codex-steven');
+  expect(deleteActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
+
+  await user.click(deleteActions().getByRole('button', { name: /previsualizar/i }));
+  expect(changes[0]).toEqual({
+    dry_run: true,
+    expected_revision: 4,
+    mutation: { resource: 'provider_account', action: 'delete', id: 'codex-steven' },
+  });
+  await user.click(deleteActions().getByRole('button', { name: /^aplicar$/i }));
+  expect(changes[1]?.mutation).toEqual({ resource: 'provider_account', action: 'delete', id: 'codex-steven' });
+});
+
+it('no deja borrar una cuenta mientras un techo la referencia', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({
+    provider_accounts: [ownAccount],
+    agents: [{ tenant_id: 'Steven', alias: 'kant' }],
+    alias_routing_ceiling: [{
+      tenant_id: 'Steven', alias: 'kant', account_id: 'codex-steven',
+      account_payer_tenant: 'Steven', created_by_tenant: 'Steven',
+    }],
+    agent_account_bindings: [],
+  });
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  await openInventory(user);
+  await user.click(screen.getByRole('button', { name: /retirar o rotar «codex-steven»/i }));
+  await user.type(screen.getByLabelText(/confirmar borrado de codex-steven/i), 'codex-steven');
+
+  expect(screen.getByText(/primero revocá el techo.*Steven\/kant/i)).toBeInTheDocument();
+  expect(deleteActions().getByRole('button', { name: /previsualizar/i })).toBeDisabled();
+  expect(changes).toEqual([]);
+});
+
+it('ante 409 por revisión relee y obliga a validar otra vez la mutación del registro', async () => {
+  const changes: ChangeRequest[] = [];
+  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  recordChanges(changes, () => HttpResponse.json(
+    { error: 'conflict', message: 'configuration revision changed: expected 4, current 9' },
+    { status: 409 },
+  ));
+  const user = userEvent.setup();
+  renderWithApi(<AccountsPage />);
+
+  await openInventory(user);
+  await user.click(screen.getByRole('button', { name: /deshabilitar/i }));
+  await user.click(accountActions().getByRole('button', { name: /previsualizar/i }));
+
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent(/conflicto de revisión/i);
+  expect(alert).toHaveTextContent(/revisión 4 y el servidor ya va por la 9/i);
+  expect(alert).toHaveTextContent(/releído del servidor/i);
+  expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
 });
 
 it('explica la causa real cuando el servidor bloquea despublicar una cuenta prestada', async () => {

@@ -1,12 +1,13 @@
 /**
  * Reads of the license inventory (`GET /v3/console/config`) cross-referenced with the quota
- * collector sample: extractors, freshness, per-account consumption, bindings, and orphans.
+ * collector sample: freshness, per-account consumption, and orphan detection over the normalized registry.
  */
 import { formatDurationSeconds, UNKNOWN } from '../../lib';
 import type {
-  ConfigurationSnapshot, QuotaCollector, QuotaSeverity, QuotaSnapshot,
+  QuotaCollector, QuotaSeverity, QuotaSnapshot,
   QuotaThresholds,
 } from '../../api/types';
+import type { AccountBinding, AgentRegistration, ProviderAccount } from './registry';
 
 // Internal types
 
@@ -18,44 +19,6 @@ export interface Collector {
   stale: boolean | null;
   provider_count: number | null;
   window_count: number | null;
-}
-
-export interface ProviderAccount {
-  id: string;
-  provider: string | null;
-  payer_tenant_id: string | null;
-  label: string | null;
-  shared_with_pool: boolean | null;
-  enabled: boolean | null;
-  external_account_id: string | null;
-  credential_ref_kind: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
-
-export interface Agent {
-  tenant_id: string | null;
-  alias: string | null;
-  harness_id: string | null;
-  display_name: string | null;
-  enabled: boolean | null;
-  container_name: string | null;
-}
-
-export interface AgentAccountBinding {
-  tenant_id: string | null;
-  agent_alias: string | null;
-  account_id: string | null;
-  priority: number | null;
-  enabled: boolean | null;
-}
-
-export interface AliasRoutingCeiling {
-  tenant_id: string | null;
-  alias: string | null;
-  account_id: string | null;
-  account_payer_tenant: string | null;
-  created_by_tenant: string | null;
 }
 
 // Freshness: is the probe stale?
@@ -283,58 +246,11 @@ export function accountConsumption(
   };
 }
 
-// Per-account bindings: who has it?
-
-export interface AssignedAgent {
-  tenant_id: string | null;
-  alias: string | null;
-  display_name: string | null;
-  container_name: string | null;
-  priority: number | null;
-  enabled: boolean | null;
-  isPrimary: boolean;
-}
-
 /** Identity of an agent: the PAIR (tenant, alias), the one `buildAssignmentMatrix` already crosses by. An alias
  *  is unique inside its tenant, not across the fleet: crossing by alias alone brought the homonym of another
  *  client. The components are escaped so two different pairs cannot collide. */
-function agentIdentity(tenantId: string | null, alias: string | null): string {
-  return `${encodeURIComponent(tenantId ?? '')}/${encodeURIComponent(alias ?? '')}`;
-}
-
-/**
- * Lists the agents bound to an account, sorted by priority.
- * Priority 0 = primary, 1+ = fallbacks.
- */
-export function accountAssignments(
-  accountId: string,
-  bindings: AgentAccountBinding[],
-  agents: Agent[],
-): AssignedAgent[] {
-  const agentsMap = new Map<string, Agent>();
-  agents.forEach((a) => {
-    agentsMap.set(agentIdentity(a.tenant_id, a.alias), a);
-  });
-
-  const relevant = bindings.filter((b) => b.account_id === accountId);
-  const sorted = relevant.sort((a, b) => {
-    const aPrio = a.priority ?? Infinity;
-    const bPrio = b.priority ?? Infinity;
-    return aPrio - bPrio;
-  });
-
-  return sorted.map((b) => {
-    const agent = agentsMap.get(agentIdentity(b.tenant_id, b.agent_alias));
-    return {
-      tenant_id: b.tenant_id,
-      alias: b.agent_alias,
-      display_name: agent?.display_name ?? null,
-      container_name: agent?.container_name ?? null,
-      priority: b.priority,
-      enabled: b.enabled,
-      isPrimary: b.priority === 0,
-    };
-  });
+function agentIdentity(tenantId: string, alias: string): string {
+  return `${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}`;
 }
 
 // Orphans: the three directions
@@ -348,7 +264,7 @@ export interface Orphans {
     reason: string | null;
     detail: string | null;
   }[];
-  agentsWithoutBindings: Agent[];
+  agentsWithoutBindings: AgentRegistration[];
 }
 
 /**
@@ -360,8 +276,8 @@ export interface Orphans {
 export function orphans(
   accounts: ProviderAccount[],
   quotas: QuotaSnapshot | null | undefined,
-  bindings: AgentAccountBinding[],
-  agents: Agent[],
+  bindings: AccountBinding[],
+  agents: AgentRegistration[],
 ): Orphans {
   const quotaAccountIds = new Set<string>();
   if (quotas?.providers) {
@@ -387,9 +303,9 @@ export function orphans(
   }));
 
   const bound = new Set<string>(
-    bindings.map((b) => agentIdentity(b.tenant_id, b.agent_alias)),
+    bindings.map((binding) => agentIdentity(binding.tenantId, binding.agentAlias)),
   );
-  const agentsWithoutBindings = agents.filter((a) => !bound.has(agentIdentity(a.tenant_id, a.alias)));
+  const agentsWithoutBindings = agents.filter((agent) => !bound.has(agentIdentity(agent.tenantId, agent.alias)));
 
   return {
     accountsWithoutQuotas,
@@ -412,56 +328,4 @@ export function formatResetIn(seconds: unknown): string {
     return `hace ${formatDurationSeconds(Math.abs(seconds))}`;
   }
   return `en ${formatDurationSeconds(seconds)}`;
-}
-
-// Configuration extractors
-
-export function extractProviderAccounts(config: ConfigurationSnapshot | null | undefined): ProviderAccount[] {
-  if (!config?.provider_accounts) return [];
-  return config.provider_accounts.map((raw) => ({
-    id: (raw.id ?? '') as string,
-    provider: (raw.provider ?? null) as string | null,
-    payer_tenant_id: (raw.payer_tenant_id ?? null) as string | null,
-    label: (raw.label ?? null) as string | null,
-    shared_with_pool: (raw.shared_with_pool ?? null) as boolean | null,
-    enabled: (raw.enabled ?? null) as boolean | null,
-    external_account_id: (raw.external_account_id ?? null) as string | null,
-    credential_ref_kind: (raw.credential_ref_kind ?? null) as string | null,
-    created_at: (raw.created_at ?? null) as string | null,
-    updated_at: (raw.updated_at ?? null) as string | null,
-  }));
-}
-
-export function extractAgents(config: ConfigurationSnapshot | null | undefined): Agent[] {
-  if (!config?.agents) return [];
-  return config.agents.map((raw) => ({
-    tenant_id: (raw.tenant_id ?? null) as string | null,
-    alias: (raw.alias ?? null) as string | null,
-    harness_id: (raw.harness_id ?? null) as string | null,
-    display_name: (raw.display_name ?? null) as string | null,
-    enabled: (raw.enabled ?? null) as boolean | null,
-    container_name: (raw.container_name ?? null) as string | null,
-  }));
-}
-
-export function extractBindings(config: ConfigurationSnapshot | null | undefined): AgentAccountBinding[] {
-  if (!config?.agent_account_bindings) return [];
-  return config.agent_account_bindings.map((raw) => ({
-    tenant_id: (raw.tenant_id ?? null) as string | null,
-    agent_alias: (raw.agent_alias ?? null) as string | null,
-    account_id: (raw.account_id ?? null) as string | null,
-    priority: (raw.priority ?? null) as number | null,
-    enabled: (raw.enabled ?? null) as boolean | null,
-  }));
-}
-
-export function extractCeiling(config: ConfigurationSnapshot | null | undefined): AliasRoutingCeiling[] {
-  if (!config?.alias_routing_ceiling) return [];
-  return config.alias_routing_ceiling.map((raw) => ({
-    tenant_id: (raw.tenant_id ?? null) as string | null,
-    alias: (raw.alias ?? null) as string | null,
-    account_id: (raw.account_id ?? null) as string | null,
-    account_payer_tenant: (raw.account_payer_tenant ?? null) as string | null,
-    created_by_tenant: (raw.created_by_tenant ?? null) as string | null,
-  }));
 }
