@@ -78,5 +78,8 @@ ops/private/credentials/**
 # Volcados del MCP de Playwright (logs y snapshots de una sesion de navegador).
 .playwright-mcp/
 
+# Evidencia visual de Archify; el HTML autónomo entregado sí se versiona.
+docs/diagramas/*.visual-check.*
+
 # Ordenes de trabajo para la flota: locales, nunca versionadas.
 ordenes-locales/

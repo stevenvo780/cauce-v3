@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "archify",
+  "version": "2.16.0",
+  "source": "https://github.com/tt-a1i/archify",
+  "tag": "v2.16.0",
+  "commit": "c826e6c3a7abad19c0f3cd1ca57207d54b1ad8de",
+  "archiveSha256": "4c59fa6557a2385beaaef8c7219cc414573acc9f0c30a932d5053b0b20689a46",
+  "installedFileCount": 190,
+  "installedTreeSha256": "57ef6e5699d759e78fa0e790bd5807c8d960140ca4638670b76e7edf217eb1f6"
+}
