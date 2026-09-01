@@ -10,9 +10,8 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
 import { AgentAvatar } from './AgentAvatar';
-import { DirectivaTab } from './DirectivaTab';
+import { ContextoTab } from './ContextoTab';
 import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
-import { PerfilTab } from './PerfilTab';
 import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -32,29 +31,18 @@ import { LIVE_STATE_META, humanSeconds, type LiveAgentView, type OrigenEncargo }
  * confirmation.
  */
 
-export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'rol' | 'perfil' | 'ficheros';
+export type DrawerTab = 'ahora' | 'conexion' | 'entregas' | 'rol' | 'ficheros';
+export type ContextFocusTarget = 'campos' | 'manual';
 
 /**
- * "Directiva" lives here and not in a dedicated view: it is the place where the operator ALREADY
- * looks at the bot, and the text governing it explains what it does on the other four tabs.
- *
- * It was called "Rol" while showing one layer. Now it shows three —declared role, site manual,
- * and memory— and keeping the name "Rol" would name the tab after the only layer that used to
- * show. The tab id stays `rol` on purpose: it is what goes into `?tab=rol` deep links, and
- * breaking it would invalidate the links already pasted elsewhere.
+ * Context editing has one visible home. The tab id stays `rol` because pasted deep links already
+ * use it; the retired `perfil` query value is normalized by `LiveFleetPage` to this same tab.
  */
 const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
   { id: 'ahora', label: 'Ahora' },
   { id: 'conexion', label: 'Conexión' },
   { id: 'entregas', label: 'Entregas' },
-  { id: 'rol', label: 'Directiva' },
-  /*
-   * "Perfil" goes BETWEEN "Directiva" and "Ficheros" because that is the real order of the data:
-   * the directiva is what the alias has today, the perfil is what gets written, and the ficheros
-   * are where it ends up. It is the only drawer tab from which what the agent reads at startup
-   * can be changed — until now that could only be done by editing the database by hand.
-   */
-  { id: 'perfil', label: 'Perfil' },
+  { id: 'rol', label: 'Contexto' },
   { id: 'ficheros', label: 'Ficheros' },
 ];
 
@@ -67,13 +55,20 @@ interface AgentDrawerProps {
   onBorradorPerfil: (campos: Partial<AgentPerfilCampos> | undefined) => void;
   borradoresFicheros?: Partial<Record<AgentDocumentKind, BorradorDeFichero>>;
   onBorradorFichero: (kind: AgentDocumentKind, borrador: BorradorDeFichero | undefined) => void;
-  onTab: (tab: DrawerTab) => void;
+  profileWriteInFlight: boolean;
+  onProfileWriteInFlightChange: (inFlight: boolean) => void;
+  runtimeRefreshRevision: number;
+  onRuntimeRefresh: () => void;
+  contextFocusTarget?: ContextFocusTarget;
+  onTab: (tab: DrawerTab, contextFocusTarget?: ContextFocusTarget) => void;
   onClose: () => void;
 }
 
 export function AgentDrawer({
   view, tab, configuracion, borradorPerfil, onBorradorPerfil,
-  borradoresFicheros, onBorradorFichero, onTab, onClose,
+  borradoresFicheros, onBorradorFichero, profileWriteInFlight,
+  onProfileWriteInFlightChange, runtimeRefreshRevision, onRuntimeRefresh,
+  contextFocusTarget, onTab, onClose,
 }: AgentDrawerProps) {
   const cajon = useRef<HTMLElement>(null);
   const cerrar = useRef<HTMLButtonElement>(null);
@@ -179,40 +174,34 @@ export function AgentDrawer({
         {tab === 'ahora' ? <TabAhora view={view} /> : null}
         {tab === 'conexion' ? <TabConexion view={view} /> : null}
         {tab === 'entregas' ? <TabEntregas view={view} /> : null}
-        {/* `key` por alias evita que las lecturas y el modal de un bot sobrevivan al cambio de
-            agente. Los borradores editables viven fuera, ya indexados por alias. */}
+        {/* `key` por alias evita que las lecturas de un bot sobrevivan al cambio de agente. Los
+            borradores editables viven fuera, ya indexados por alias. */}
         {tab === 'rol' ? (
-          <DirectivaTab
+          <ContextoTab
             key={view.key}
             tenantId={view.tenantId}
             alias={view.alias}
             configuracion={configuracion}
-            onEditarEnPerfil={() => { onTab('perfil'); }}
-            onEditarEnFicheros={() => { onTab('ficheros'); }}
-            onRestaurarEnPerfil={(texto) => {
-              // Only `role_summary` changes: a restore never overwrites the other six fields the operator
-              // may already have as draft for this alias.
-              onBorradorPerfil({ ...borradorPerfil, role_summary: texto });
-              onTab('perfil');
-            }}
-          />
-        ) : null}
-        {tab === 'perfil' ? (
-          <PerfilTab
-            key={view.key}
-            tenantId={view.tenantId}
-            alias={view.alias}
-            borrador={borradorPerfil}
-            onBorrador={onBorradorPerfil}
+            borradorPerfil={borradorPerfil}
+            onBorradorPerfil={onBorradorPerfil}
+            borradoresFicheros={borradoresFicheros}
+            onBorradorFichero={onBorradorFichero}
+            focusTarget={contextFocusTarget}
+            profileWriteInFlight={profileWriteInFlight}
+            onProfileWriteInFlightChange={onProfileWriteInFlightChange}
+            runtimeRefreshRevision={runtimeRefreshRevision}
+            onRuntimeRefresh={onRuntimeRefresh}
           />
         ) : null}
         {tab === 'ficheros' ? (
           <FicherosTab
-            key={view.key}
+            key={`${view.key}/${String(runtimeRefreshRevision)}`}
             tenantId={view.tenantId}
             alias={view.alias}
             borradores={borradoresFicheros}
             onBorrador={onBorradorFichero}
+            mode="inventory"
+            onOpenContext={() => { onTab('rol', 'manual'); }}
           />
         ) : null}
       </div>

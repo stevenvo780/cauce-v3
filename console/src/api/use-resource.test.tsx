@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { vi } from 'vitest';
-import { useResource } from './use-resource';
+import { useResource, type RecargaResultado } from './use-resource';
 
 it('runs at most one load concurrently and coalesces reloads into one pending load', async () => {
   let active = 0;
@@ -67,4 +67,22 @@ it('never exposes the previous key data while the next key is still loading', as
   expect(screen.queryByText('data-A')).not.toBeInTheDocument();
   await act(async () => resolveLoads.get('B')?.('data-B'));
   expect(await screen.findByText('data-B')).toBeInTheDocument();
+});
+
+it('a reload requested after unmount resolves as closed instead of hanging forever', async () => {
+  let reload: (() => Promise<RecargaResultado<string>>) | undefined;
+
+  function Probe() {
+    const resource = useResource('probe', async () => 'ready');
+    reload = resource.reload;
+    return <output>{resource.data ?? 'loading'}</output>;
+  }
+
+  const view = render(<Probe />);
+  expect(await screen.findByText('ready')).toBeInTheDocument();
+  view.unmount();
+  if (!reload) throw new Error('the probe did not expose reload');
+
+  const outcome = await reload();
+  expect(outcome.error?.message).toMatch(/vista se cerró antes de empezar a releer/i);
 });

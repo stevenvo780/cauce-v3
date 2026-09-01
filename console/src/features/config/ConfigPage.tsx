@@ -88,6 +88,14 @@ function parseMutation(text: string): ConfigMutation {
     throw new Error('resource no reconocido.');
   }
   if (!allActions.includes(String(mutation.action) as ConfigAction)) throw new Error('action no reconocida.');
+  const rawValue = (value as Record<string, unknown>).value;
+  if (mutation.resource === 'agent' && rawValue !== null && typeof rawValue === 'object'
+    && !Array.isArray(rawValue) && Object.hasOwn(rawValue, 'role_brief')) {
+    throw new Error(
+      '`agents.role_brief` es una proyección diagnóstica de sólo lectura. '
+      + 'Modificá el contexto del agente en la pestaña única «Contexto» de «La flota ahora».',
+    );
+  }
   return mutation as ConfigMutation;
 }
 
@@ -411,7 +419,7 @@ export function ConfigPage() {
       <div>
         <h1>Ajustes y altas</h1>
         <p className="config-intro">
-          Cada colección es una tabla y cada permiso un interruptor que se aplica al pulsarlo.
+          Topología y permisos: el contexto de cada agente se modifica sólo en «La flota ahora» → «Contexto».
         </p>
       </div>
       <RefreshButton onClick={config.reload} loading={config.loading} />

@@ -1,4 +1,24 @@
-/* ── El editor de perfil ──────────────────────────────────────────────────── */
+/* ── La vista única de contexto ───────────────────────────────────────────── */
+
+.contexto-tab { display: grid; gap: 20px; }
+
+.contexto-seccion {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  scroll-margin-top: 16px;
+}
+
+.contexto-seccion:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
+.contexto-cabecera h3 { margin: 0; font-size: var(--tipo-panel); }
+.contexto-cabecera p { margin: 4px 0 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.45; }
+.contexto-efectivo { grid-template-columns: minmax(0, 1fr); }
+
+/* ── Los campos canónicos ─────────────────────────────────────────────────── */
 
 .perfil-tab {
   display: grid;

@@ -1,6 +1,9 @@
 import { FileText, Slash } from 'lucide-react';
 import { Panel } from '../../components/ui';
-import { ARNESES_REALES, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO } from './arneses';
+import {
+  ARNESES_REALES, DISTINCION_HERRAMIENTAS_Y_PERMISOS,
+  DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
+} from './arneses';
 
 /**
  * **What each harness actually reads**, on top of the bot registry.
@@ -20,8 +23,9 @@ export function ArnesesPanel() {
   return (
     <Panel
       title="Qué lee cada arnés de verdad"
-      subtitle="Y por qué la columna «Harness» de la tabla de abajo no lo decide"
+      subtitle="Contexto declarado, capacidades del runtime y permisos no son lo mismo"
     >
+      <p className="notice arnes-gobierna" role="note">{DISTINCION_HERRAMIENTAS_Y_PERMISOS}</p>
       <ul className="arnes-lista">
         {ARNESES_REALES.map((arnes) => (
           <li key={arnes.id} className="arnes-card" data-sin-directiva={arnes.directiva === '' ? 'true' : undefined}>

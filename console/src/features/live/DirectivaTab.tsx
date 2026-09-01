@@ -112,7 +112,7 @@ export function DirectivaTab({
             setAbierto(false);
             /*
              * The legacy column is read-only. It is re-read on close to avoid keeping a stale
-             * projection after Perfil has applied a canonical revision.
+             * projection after Contexto has applied a canonical revision.
              */
             void config.reload();
           }}

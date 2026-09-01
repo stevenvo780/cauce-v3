@@ -65,6 +65,19 @@ export function DirectivaModal({
 
   const teclado = useFocusTrap(dialogo);
 
+  const cerrarYEnfocarCampos = () => {
+    onCerrar();
+    onEditarEnPerfil();
+  };
+  const cerrarYEnfocarManual = () => {
+    onCerrar();
+    onEditarEnFicheros();
+  };
+  const restaurarYEnfocarCampos = (texto: string) => {
+    onCerrar();
+    onRestaurarEnPerfil(texto);
+  };
+
   const avisos = avisosDeCapas(
     briefGuardado(configuration.data, tenantId, alias),
     directiva.error ? undefined : directiva.data,
@@ -120,8 +133,8 @@ export function DirectivaModal({
                 tenantId={tenantId}
                 alias={alias}
                 configuration={configuration}
-                onEditarEnPerfil={onEditarEnPerfil}
-                onRestaurarEnPerfil={onRestaurarEnPerfil}
+                onEditarEnPerfil={cerrarYEnfocarCampos}
+                onRestaurarEnPerfil={restaurarYEnfocarCampos}
               />
             </section>
 
@@ -141,16 +154,16 @@ export function DirectivaModal({
               <button
                 type="button"
                 className="button small directiva-editar-fichero"
-                onClick={onEditarEnFicheros}
+                onClick={cerrarYEnfocarManual}
               >
-                Editar CLAUDE.md / AGENTS.md
+                Editar el manual en Contexto
               </button>
               <button
                 type="button"
                 className="button small secondary directiva-editar-fichero"
-                onClick={onEditarEnPerfil}
+                onClick={cerrarYEnfocarCampos}
               >
-                Editar perfil / OpenClaw (7 ficheros)
+                Ir a los campos canónicos
               </button>
             </section>
 

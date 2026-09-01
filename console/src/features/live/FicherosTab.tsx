@@ -8,7 +8,7 @@ import { EmptyState } from '../../components/ui';
 import { permissionState } from '../../lib';
 import {
   avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
-  modoDeDocumento,
+  modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
 
 /** Editor and viewer for the configuration files that govern an agent. */
@@ -22,12 +22,19 @@ export interface BorradorDeFichero {
 interface FicherosTabProps {
   tenantId: string;
   alias: string;
+  mode: 'inventory' | 'manual-editor';
   /** Outside the component and indexed by kind: tab, file and fold all unmount the editor. */
   borradores?: Partial<Record<AgentDocumentKind, BorradorDeFichero>>;
   onBorrador: (kind: AgentDocumentKind, borrador: BorradorDeFichero | undefined) => void;
+  onApplied?: (message: string) => void;
+  onOpenContext?: () => void;
+  mutationBlocked?: boolean;
 }
 
-export function FicherosTab({ tenantId, alias, borradores, onBorrador }: FicherosTabProps) {
+export function FicherosTab({
+  tenantId, alias, mode, borradores, onBorrador, onApplied, onOpenContext,
+  mutationBlocked = false,
+}: FicherosTabProps) {
   const api = useApi();
   const mapa = useResource(
     `ficheros-${tenantId}-${alias}`, () => api.getAgentDocuments(tenantId, alias),
@@ -36,9 +43,12 @@ export function FicherosTab({ tenantId, alias, borradores, onBorrador }: Fichero
   const [abierto, setAbierto] = useState<AgentDocumentKind | undefined>(undefined);
 
   const aviso = mapa.data ? avisoDeFuente(mapa.data) : undefined;
-  const items = mapa.data?.items ?? [];
+  const items = (mapa.data?.items ?? []).filter(
+    (item) => mode === 'inventory' || item.kind === 'directive',
+  );
   const estadoPermiso = permissionState(access.data, 'config.write');
   const canWrite = estadoPermiso === 'allowed';
+  const canEdit = mode === 'manual-editor' && canWrite;
 
   if (mapa.loading) return <p className="muted">Leyendo el mapa de ficheros…</p>;
 
@@ -68,6 +78,15 @@ export function FicherosTab({ tenantId, alias, borradores, onBorrador }: Fichero
 
   return (
     <div className="ficheros">
+      {mode === 'inventory' ? (
+        <p className="ficheros-nota" role="note">
+          <span>
+            Este tab es inventario y visor de sólo lectura. El manual se modifica únicamente en
+            {' '}<button type="button" className="button small secondary" onClick={onOpenContext}>Contexto</button>.
+          </span>
+        </p>
+      ) : null}
+
       {aviso ? (
         <p className="ficheros-caveat" role="status">
           <AlertTriangle size={14} aria-hidden="true" /> {aviso}
@@ -76,9 +95,13 @@ export function FicherosTab({ tenantId, alias, borradores, onBorrador }: Fichero
 
       {items.length === 0 ? (
         <EmptyState>
-          <strong>No se pudo resolver ningún fichero para este alias.</strong> Para saber qué
-          ficheros gobiernan a un agente hay que saber qué arnés corre de verdad y con qué HOME, y
-          eso sólo se puede medir dentro de su contenedor.
+          <strong>
+            {mode === 'manual-editor'
+              ? 'No se pudo resolver un manual editable para este alias.'
+              : 'No se pudo resolver ningún fichero para este alias.'}
+          </strong>{' '}
+          Para saber qué ficheros gobiernan a un agente hay que saber qué arnés corre de verdad y
+          con qué HOME, y eso sólo se puede medir dentro de su contenedor.
         </EmptyState>
       ) : (
         <ul className="ficheros-lista">
@@ -88,17 +111,19 @@ export function FicherosTab({ tenantId, alias, borradores, onBorrador }: Fichero
               item={item}
               tenantId={tenantId}
               alias={alias}
-              canWrite={canWrite}
+              canEdit={canEdit}
+              mutationBlocked={mutationBlocked}
               abierto={abierto === item.kind}
-              borrador={borradores?.[item.kind]}
+              borrador={mode === 'manual-editor' ? borradores?.[item.kind] : undefined}
               onBorrador={(nuevo) => { onBorrador(item.kind, nuevo); }}
               onAbrir={() => { setAbierto(abierto === item.kind ? undefined : item.kind); }}
+              onApplied={onApplied}
             />
           ))}
         </ul>
       )}
 
-      {!canWrite ? (
+      {mode === 'manual-editor' && !canWrite ? (
         <p className="ficheros-caveat" role="status">
           <Lock size={14} aria-hidden="true" />
           {estadoPermiso === 'unknown'
@@ -107,22 +132,34 @@ export function FicherosTab({ tenantId, alias, borradores, onBorrador }: Fichero
         </p>
       ) : null}
 
-      <HuecoDeclarado />
+      {mode === 'manual-editor' && mutationBlocked ? (
+        <p className="ficheros-caveat" role="status">
+          <Lock size={14} aria-hidden="true" />
+          Aplicación de campos canónicos en curso. El manual queda bloqueado hasta recibir su ACK.
+        </p>
+      ) : null}
+
+      {mode === 'inventory' ? <HuecoDeclarado /> : null}
     </div>
   );
 }
 
 function FilaDeFichero(
-  { item, tenantId, alias, canWrite, abierto, borrador, onBorrador, onAbrir }:
+  {
+    item, tenantId, alias, canEdit, mutationBlocked, abierto, borrador, onBorrador, onAbrir,
+    onApplied,
+  }:
   {
     item: AgentDocumentItem;
     tenantId: string;
     alias: string;
-    canWrite: boolean;
+    canEdit: boolean;
+    mutationBlocked: boolean;
     abierto: boolean;
     borrador: BorradorDeFichero | undefined;
     onBorrador: (borrador: BorradorDeFichero | undefined) => void;
     onAbrir: () => void;
+    onApplied?: (message: string) => void;
   },
 ) {
   const modo = modoDeDocumento(item);
@@ -132,13 +169,17 @@ function FilaDeFichero(
     : undefined);
   const cabecera = (
     <>
-      {item.editable ? <FileText size={14} aria-hidden="true" /> : <Lock size={14} aria-hidden="true" />}
+      {canEdit && item.editable && !mutationBlocked
+        ? <FileText size={14} aria-hidden="true" />
+        : <Lock size={14} aria-hidden="true" />}
       <span className="ficheros-rotulo">{item.label}</span>
       <code className="ficheros-ruta">{item.path}</code>
-      <span className={`ficheros-modo ficheros-modo-${readable ? modo : 'solo-lectura'}`}>
+      <span className={`ficheros-modo ficheros-modo-${readable && canEdit && item.editable && !mutationBlocked ? modo : 'solo-lectura'}`}>
         {!readable
           ? 'no se sirve'
-          : item.editable
+          : canEdit && item.editable && mutationBlocked
+            ? 'bloqueado · aplicación en curso'
+          : canEdit && item.editable
             ? 'editable'
             : 'visor · sólo lectura'}
       </span>
@@ -166,11 +207,12 @@ function FilaDeFichero(
       {reason ? <p className="ficheros-razon">{reason}</p> : null}
 
       {abierto && readable
-        ? item.editable
+        ? canEdit && item.editable
           ? (
             <Editor
-              item={item} tenantId={tenantId} alias={alias} canWrite={canWrite}
-              borrador={borrador} onBorrador={onBorrador}
+              item={item} tenantId={tenantId} alias={alias}
+              canWrite={!mutationBlocked} mutationBlocked={mutationBlocked}
+              borrador={borrador} onBorrador={onBorrador} onApplied={onApplied}
             />
             )
           : <Visor item={item} tenantId={tenantId} alias={alias} />
@@ -258,10 +300,14 @@ function Visor({ item, tenantId, alias }: {
   );
 }
 
-function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
+function Editor({
+  item, tenantId, alias, canWrite, mutationBlocked, borrador, onBorrador, onApplied,
+}: {
   item: AgentDocumentItem; tenantId: string; alias: string; canWrite: boolean;
+  mutationBlocked: boolean;
   borrador: BorradorDeFichero | undefined;
   onBorrador: (borrador: BorradorDeFichero | undefined) => void;
+  onApplied?: (message: string) => void;
 }) {
   const api = useApi();
   const [cargando, setCargando] = useState(true);
@@ -292,6 +338,13 @@ function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
 
   const guardar = useCallback(async () => {
     if (!servido) return;
+    if (mutationBlocked) {
+      setFallo({
+        titulo: 'Aplicación canónica en curso',
+        detalle: 'Esperá el ACK del perfil antes de cambiar el manual.',
+      });
+      return;
+    }
     if (!canWrite) {
       setFallo({
         titulo: 'Permiso de escritura no acreditado',
@@ -336,10 +389,18 @@ function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
         exists: true, truncated: false, editable: true,
       });
       onBorrador(undefined);
-      setGuardado(mensajeDeGuardado(resultado));
+      const mensaje = mensajeDeGuardado(resultado);
+      setGuardado(mensaje);
+      onApplied?.(mensaje);
     } catch (error) {
       const status = error instanceof ApiError ? error.status : undefined;
-      const explicado = status === 409
+      const explicado = error instanceof ApiError && status === 409
+        && error.code === 'managed_context_conflict'
+        ? {
+          titulo: 'El bloque canónico se edita en Contexto / campos canónicos',
+          detalle: `${error.message}. El manual conserva el borrador; revisá los campos canónicos sin perder este texto.`,
+        }
+        : status === 409
         ? {
           titulo: 'Alguien lo cambió mientras lo editabas',
           detalle: error instanceof Error ? error.message : 'Vuelve a abrirlo antes de guardar.',
@@ -349,7 +410,10 @@ function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
     } finally {
       setGuardando(false);
     }
-  }, [api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, onBorrador]);
+  }, [
+    api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, mutationBlocked,
+    onBorrador, onApplied,
+  ]);
 
   if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
 
@@ -398,7 +462,8 @@ function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
         readOnly={!canWrite || !servido.editable || servido.truncated}
         aria-readonly={!canWrite || !servido.editable || servido.truncated}
         onChange={(event) => {
-          const escrito = event.target.value;
+          if (!canWrite || mutationBlocked) return;
+          const escrito = preserveSourceLineEndings(servido.content, event.target.value);
           onBorrador(escrito === servido.content
             ? undefined
             : { texto: escrito, shaBase: borrador ? borrador.shaBase : servido.sha });
@@ -415,8 +480,12 @@ function Editor({ item, tenantId, alias, canWrite, borrador, onBorrador }: {
         <button
           type="button"
           className="button small secondary"
-          disabled={guardando}
-          onClick={() => { onBorrador(undefined); void cargar(); }}
+          disabled={guardando || mutationBlocked}
+          onClick={() => {
+            if (mutationBlocked) return;
+            onBorrador(undefined);
+            void cargar();
+          }}
         >
           Descartar y releer
         </button>

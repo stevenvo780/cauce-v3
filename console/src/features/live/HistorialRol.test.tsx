@@ -10,7 +10,7 @@ import { LiveFleetPage } from './LiveFleetPage';
  * THE LEGACY JOURNAL AND ITS BRIDGE TO THE CANONICAL PROFILE, tested from the live page.
  *
  * Recovering a revision never writes `agents.role_brief`: it ends up in `role_summary`, inside
- * the Profile editor. A loose component test would pass even if the button reopened the generic
+ * the canonical fields in Context. A loose component test would pass even if the button reopened the generic
  * POST, which is why the flow is tested from the live page.
  *
  * The draft keeps the other profile fields, goes through its strict caps, and is only saved via
@@ -35,7 +35,7 @@ async function abrirDiarioDeKant() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
   const proyeccion = await within(dialogo).findByLabelText(/proyección del rol de kant/i);
@@ -76,7 +76,7 @@ it('avisa de que editar a mano desvinculó la plantilla', async () => {
   expect(await within(dialogo).findByText(/desvinculado de la plantilla «orquestador»/i)).toBeInTheDocument();
 });
 
-it('recuperar carga role_summary en Perfil y NO escribe por ninguna ruta', async () => {
+it('recuperar carga role_summary en Contexto y NO escribe por ninguna ruta', async () => {
   let cambiosGenericos = 0;
   let perfilesGuardados = 0;
   server.use(http.post('*/v3/console/config/changes', async () => {
@@ -91,11 +91,11 @@ it('recuperar carga role_summary en Perfil y NO escribe por ninguna ruta', async
   const { user, cajon, dialogo, proyeccion } = await abrirDiarioDeKant();
 
   expect(proyeccion).toHaveValue('Sos kant, el hub de coordinacion de la flota.');
-  const botones = await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i });
+  const botones = await within(dialogo).findAllByRole('button', { name: /usar este texto en Contexto/i });
   await user.click(botones[0]);
 
   expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
-  expect(within(cajon).getByRole('tab', { name: 'Perfil' })).toHaveAttribute('aria-selected', 'true');
+  expect(within(cajon).getByRole('tab', { name: 'Contexto' })).toHaveAttribute('aria-selected', 'true');
   expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue('Sos kant.');
   expect(cambiosGenericos).toBe(0);
   expect(perfilesGuardados).toBe(0);
@@ -163,7 +163,7 @@ it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', 
   );
 
   const { user, cajon, dialogo } = await abrirDiarioDeKant();
-  await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i }))[0]);
+  await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Contexto/i }))[0]);
   await user.click(await within(cajon).findByRole('button', { name: /guardar y aplicar perfil/i }));
 
   await waitFor(() => { expect(cuerpoPut).toBeDefined(); });
@@ -182,7 +182,7 @@ it('guardar una revisión recuperada usa sólo el PUT canónico con CAS y ACK', 
 it('recuperar un alta se rotula como borrador vacío, no como borrado inmediato del alias', async () => {
   const { dialogo } = await abrirDiarioDeKant();
 
-  expect(await within(dialogo).findByRole('button', { name: /vaciar el rol en un borrador de Perfil/i }))
+  expect(await within(dialogo).findByRole('button', { name: /vaciar el rol en un borrador de Contexto/i }))
     .toBeInTheDocument();
 });
 
@@ -198,7 +198,7 @@ it('un texto recuperado pasa por el tope estricto de role_summary antes del PUT'
   }]);
 
   const { user, cajon, dialogo } = await abrirDiarioDeKant();
-  await user.click(await within(dialogo).findByRole('button', { name: /usar este texto en Perfil/i }));
+  await user.click(await within(dialogo).findByRole('button', { name: /usar este texto en Contexto/i }));
 
   expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue(viejo);
   expect(within(cajon).getByText('5000 / 4000')).toHaveClass('perfil-cuenta-fuera');
@@ -220,7 +220,7 @@ it('si el gateway no publica el diario dice «no se pudo mirar», nunca «no cam
 
   expect(await within(dialogo).findByText(/no se pudo mirar el diario del rol/i)).toBeInTheDocument();
   expect(within(dialogo).getByText(/NO significa que este rol no haya cambiado nunca/i)).toBeInTheDocument();
-  expect(within(dialogo).queryByRole('button', { name: /usar este texto en Perfil/i })).not.toBeInTheDocument();
+  expect(within(dialogo).queryByRole('button', { name: /usar este texto en Contexto/i })).not.toBeInTheDocument();
 });
 
 it('un 404 not_found del alias no se degrada a «gateway viejo»', async () => {
@@ -254,7 +254,7 @@ it('sin config.write el diario se LEE igual: lo que se retira es la vuelta atrá
 
   expect(await within(dialogo).findByText('Se reescribió el rol')).toBeInTheDocument();
   await waitFor(() => {
-    expect(within(dialogo).queryByRole('button', { name: /usar este texto en Perfil/i })).not.toBeInTheDocument();
+    expect(within(dialogo).queryByRole('button', { name: /usar este texto en Contexto/i })).not.toBeInTheDocument();
   });
 });
 
@@ -281,7 +281,7 @@ async function abrirPendientesDeKant() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
 
@@ -315,17 +315,17 @@ it('no se inventa la ubicación cuando el registro no la declara', async () => {
   expect(within(pendientes).getByText(/\$HOME UNKNOWN/i)).toBeInTheDocument();
 });
 
-it('el role_summary recuperado sobrevive a desmontar Perfil y conserva los otros campos', async () => {
+it('el role_summary recuperado sobrevive a desmontar Contexto y conserva los otros campos', async () => {
   const { user, cajon, dialogo } = await abrirDiarioDeKant();
 
-  await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Perfil/i }))[0]);
+  await user.click((await within(dialogo).findAllByRole('button', { name: /usar este texto en Contexto/i }))[0]);
   const rol = await within(cajon).findByLabelText(/^Rol declarado/i);
   const proposito = within(cajon).getByLabelText(/^Identidad y propósito/i);
   expect(rol).toHaveValue('Sos kant.');
   expect(proposito).toHaveValue('Coordinás lo pendiente de la flota y perseguís lo que se quedó a medias.');
 
   await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
-  await user.click(within(cajon).getByRole('tab', { name: 'Perfil' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
 
   expect(await within(cajon).findByLabelText(/^Rol declarado/i)).toHaveValue('Sos kant.');
   expect(within(cajon).getByLabelText(/^Identidad y propósito/i))

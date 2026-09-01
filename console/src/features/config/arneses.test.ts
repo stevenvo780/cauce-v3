@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ARNESES_REALES, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
+  ARNESES_REALES, DISTINCION_HERRAMIENTAS_Y_PERMISOS,
+  DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
 } from './arneses';
 
 /**
@@ -11,17 +12,15 @@ import {
  * question the operator has in front of them —"where is what this bot reads changed?"— can only
  * be answered per harness, and the answer is different for all four.
  *
- * The set is CLOSED and comes from `resolveAgentDocuments()`
- * (services/gateway/src/console/agent-documents/catalog.ts:317): claude, codex and openclaw have a
- * resolved document; everything else —hermes included— falls back to `default` and returns an
- * empty list. If the gateway learns a new harness, this test turns red and forces a decision on
- * what gets shown, instead of leaving a silent row.
+ * The set is CLOSED and comes from `resolveAgentDocuments()`: Claude, Codex, OpenClaw and Hermes
+ * have an inventory strategy. That does not mean every one supports the canonical profile batch.
+ * If the gateway learns a new harness, this test turns red and forces an explicit UI decision.
  */
 
 const JUEGO_CERRADO = ['claude', 'codex', 'openclaw', 'hermes'] as const;
 
 describe('la tabla de arneses reales', () => {
-  it('cubre el juego cerrado que el gateway sabe resolver, más el que no resuelve ninguno', () => {
+  it('cubre el juego cerrado que el inventario del gateway sabe resolver', () => {
     expect(ARNESES_REALES.map((arnes) => arnes.id).sort()).toEqual([...JUEGO_CERRADO].sort());
   });
 
@@ -31,14 +30,16 @@ describe('la tabla de arneses reales', () => {
     for (const arnes of ARNESES_REALES) {
       expect(arnes.label.trim().length, `${arnes.id} no tiene rótulo`).toBeGreaterThan(0);
       expect(arnes.detalle.trim().length, `${arnes.id} no explica su ruta`).toBeGreaterThan(0);
-      // The empty path is data, not a gap: it means "reads none", and that is checked by the
-      // hermes assertion below. What cannot happen is a declared path that is only half there.
-      if (arnes.directiva !== '') expect(arnes.directiva.trim()).toBe(arnes.directiva);
+      expect(arnes.directiva.trim(), `${arnes.id} no declara su manual efectivo`).toBe(arnes.directiva);
     }
   });
 
-  it('hermes es el único que no lee ningún documento de instrucciones', () => {
-    expect(ARNESES_REALES.filter((arnes) => arnes.directiva.trim() === '').map((arnes) => arnes.id)).toEqual(['hermes']);
+  it('no inventa soporte OpenCode y no presenta un perfil por lote para Hermes', () => {
+    expect(ARNESES_REALES.map((arnes) => arnes.id)).not.toContain('opencode');
+    const hermes = ARNESES_REALES.find((arnes) => arnes.id === 'hermes');
+    expect(hermes?.directiva).toMatch(/AGENTS\.md/);
+    expect(hermes?.detalle).toMatch(/no declara soporte para Hermes/i);
+    expect(hermes?.dondeSeToca).not.toMatch(/perfil canónico.*aplicado|soportado/i);
   });
 
   /**
@@ -56,8 +57,15 @@ describe('la tabla de arneses reales', () => {
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/role_brief/);
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/selfRoleFromProfile/);
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/self_role/);
-    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/«Perfil»/);
+    expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/«Contexto»/);
     expect(DONDE_SE_ESCRIBE_EL_ROL_DECLARADO).toMatch(/sólo lectura/);
+  });
+
+  it('separa las herramientas declaradas de capacidades y permisos reales', () => {
+    expect(DISTINCION_HERRAMIENTAS_Y_PERMISOS).toMatch(/instrucciones/i);
+    expect(DISTINCION_HERRAMIENTAS_Y_PERMISOS).toMatch(/no habilitan/i);
+    expect(DISTINCION_HERRAMIENTAS_Y_PERMISOS).toMatch(/capacidades.*runtime/i);
+    expect(DISTINCION_HERRAMIENTAS_Y_PERMISOS).toMatch(/membresías.*role_policies.*ACL.*RBAC/i);
   });
 
   it('CONTROL NEGATIVO — la frase no vuelve a prometer que el rol se escribe en esta pantalla', () => {

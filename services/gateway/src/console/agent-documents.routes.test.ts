@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO,
+  marcaDeRevisionDelPerfil,
+} from '@cauce/protocol';
 import type { RuntimeFacts } from './agent-documents.js';
 import {
   type AgentFactsProbe, type DocumentsResponse, type FactsSource, registerAgentDocumentRoutes
@@ -19,6 +23,19 @@ const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
 function sha(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
+
+const MANAGED_DIRECTIVE = [
+  '# Manual anterior',
+  MARCA_INICIO,
+  'contrato sellado',
+  MARCA_FIN,
+  marcaDeRevisionDelPerfil(7),
+  MARCA_PERFIL_INICIO,
+  'perfil proyectado',
+  MARCA_PERFIL_FIN,
+  'cola anterior',
+  '',
+].join('\n');
 
 function probe(entradas: Record<string, { facts: RuntimeFacts; source: FactsSource }>): AgentFactsProbe {
   return {
@@ -463,6 +480,147 @@ describe('contenido y escritura tenant-qualified', () => {
       '/home/dev/.claude/CLAUDE.md', nuevo,
       { state: 'present', sha256: sha(anterior) }, FACTS, 'Miguel', 'kant',
     );
+  });
+
+  it('permite cambiar texto manual externo y conserva los bloques gestionados con ACK exacto', async () => {
+    const nuevo = MANAGED_DIRECTIVE
+      .replace('# Manual anterior', '# Manual nuevo')
+      .replace('cola anterior', 'cola nueva');
+    const writeGovernanceDocument = vi.fn(async () => ({
+      sha: sha(nuevo), bytes: Buffer.byteLength(nuevo, 'utf8'),
+    }));
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
+        readGovernanceDocument: async () => ({
+          text: MANAGED_DIRECTIVE,
+          bytes: Buffer.byteLength(MANAGED_DIRECTIVE, 'utf8'),
+          truncated: false,
+          modified_at: '2026-08-25T00:00:00Z',
+          sha: sha(MANAGED_DIRECTIVE),
+        }),
+        writeGovernanceDocument,
+      },
+    });
+
+    const res = await vivo.inject({
+      method: 'PUT', url: rutaContenido('Miguel', 'kant'),
+      payload: { content: nuevo, expected_sha: sha(MANAGED_DIRECTIVE) },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true, evidence: 'probe_write_ack', sha: sha(nuevo),
+    });
+    expect(writeGovernanceDocument).toHaveBeenCalledWith(
+      '/home/dev/.claude/CLAUDE.md', nuevo,
+      { state: 'present', sha256: sha(MANAGED_DIRECTIVE) }, FACTS, 'Miguel', 'kant',
+    );
+  });
+
+  it.each([
+    [
+      'contenido gestionado alterado',
+      MANAGED_DIRECTIVE.replace('perfil proyectado', 'perfil manual'),
+      'managed_profile_changed',
+    ],
+    [
+      'revisión retirada',
+      MANAGED_DIRECTIVE.replace(`${marcaDeRevisionDelPerfil(7)}\n`, ''),
+      'managed_profile_revision_changed',
+    ],
+    [
+      'marcador retirado',
+      MANAGED_DIRECTIVE.replace(`${MARCA_PERFIL_FIN}\n`, ''),
+      'malformed_proposed',
+    ],
+    [
+      'marcador reservado añadido',
+      `${MANAGED_DIRECTIVE}<!-- CAUCE:OTRO v1 -->\n`,
+      'unknown_reserved_markers_in_proposed',
+    ],
+    [
+      'marcador reservado malformado',
+      `${MANAGED_DIRECTIVE}texto <!-- CAUCE:OTRO v1 -->\n`,
+      'malformed_proposed',
+    ],
+  ] as const)('%s responde 409 sin pedir escritura', async (_label, nuevo, conflict) => {
+    const writeGovernanceDocument = vi.fn(async () => ({
+      sha: sha(nuevo), bytes: Buffer.byteLength(nuevo, 'utf8'),
+    }));
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
+        readGovernanceDocument: async () => ({
+          text: MANAGED_DIRECTIVE,
+          bytes: Buffer.byteLength(MANAGED_DIRECTIVE, 'utf8'),
+          truncated: false,
+          modified_at: '2026-08-25T00:00:00Z',
+          sha: sha(MANAGED_DIRECTIVE),
+        }),
+        writeGovernanceDocument,
+      },
+    });
+
+    const res = await vivo.inject({
+      method: 'PUT', url: rutaContenido('Miguel', 'kant'),
+      payload: { content: nuevo, expected_sha: sha(MANAGED_DIRECTIVE) },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'managed_context_conflict', conflict });
+    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    `${MARCA_INICIO}\ncontrato\n${MARCA_FIN}\n`,
+    '<!-- CAUCE:FUTURO v1 -->\n',
+  ])('rechaza crear un manual ausente con marcadores reservados', async (nuevo) => {
+    const writeGovernanceDocument = vi.fn(async () => ({
+      sha: sha(nuevo), bytes: Buffer.byteLength(nuevo, 'utf8'),
+    }));
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
+        readGovernanceDocument: async () => ({ error: 'not_found', reason: 'no existe' }),
+        writeGovernanceDocument,
+      },
+    });
+
+    const res = await vivo.inject({
+      method: 'PUT', url: rutaContenido('Miguel', 'kant'),
+      payload: { content: nuevo, create_if_absent: true },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      error: 'managed_context_conflict', conflict: 'reserved_markers_on_create',
+    });
+    expect(writeGovernanceDocument).not.toHaveBeenCalled();
+  });
+
+  it('mantiene el CAS: una carrera de SHA responde 409 antes de comparar o escribir', async () => {
+    const actual = '# cambio concurrente\n';
+    const writeGovernanceDocument = vi.fn(async () => ({ sha: sha('nuevo'), bytes: 5 }));
+    vivo = servidor({
+      probe: {
+        ...probe({ 'Miguel:kant': { facts: FACTS, source: 'measured' } }),
+        readGovernanceDocument: async () => ({
+          text: actual, bytes: Buffer.byteLength(actual, 'utf8'), truncated: false,
+          modified_at: '2026-08-25T00:00:00Z', sha: sha(actual),
+        }),
+        writeGovernanceDocument,
+      },
+    });
+
+    const res = await vivo.inject({
+      method: 'PUT', url: rutaContenido('Miguel', 'kant'),
+      payload: { content: '# nuevo\n', expected_sha: sha('# versión abierta\n') },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'conflict' });
+    expect(writeGovernanceDocument).not.toHaveBeenCalled();
   });
 
   it('crea sólo cuando GET observó ausencia y el cliente manda create_if_absent', async () => {

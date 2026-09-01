@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { mockActivity } from '../../mocks/data';
@@ -17,7 +17,7 @@ async function abrirProyeccionDeKant() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   await user.click(await within(cajon).findByRole('button', { name: /abrir directiva completa/i }));
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
   return { user, cajon, dialogo };
@@ -41,13 +41,16 @@ it('muestra role_brief como proyección legacy de sólo lectura y no ofrece el P
   expect(cambiosGenericos).toBe(0);
 }, 25_000);
 
-it('el único control de edición lleva a Perfil dentro del mismo cajón', async () => {
+it('el único control de edición enfoca los campos canónicos dentro de Contexto', async () => {
   const { user, cajon, dialogo } = await abrirProyeccionDeKant();
 
-  await user.click(within(dialogo).getByRole('button', { name: /editar el perfil canónico/i }));
+  await user.click(within(dialogo).getByRole('button', { name: /editar los campos canónicos/i }));
 
-  expect(await within(cajon).findByRole('heading', { name: /perfil de kant/i })).toBeInTheDocument();
-  expect(within(cajon).getByRole('tab', { name: 'Perfil' })).toHaveAttribute('aria-selected', 'true');
+  const heading = await within(cajon).findByRole('heading', { name: /campos canónicos de kant/i });
+  await waitFor(() => {
+    expect(heading.closest('section')?.parentElement?.closest('section')).toHaveFocus();
+  });
+  expect(within(cajon).getByRole('tab', { name: 'Contexto' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
 }, 25_000);
 

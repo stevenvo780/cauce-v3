@@ -36,7 +36,7 @@ async function abrirPestanaDeKant() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   return { user, cajon };
 }
 
@@ -53,7 +53,7 @@ async function abrirDirectivaDeKant() {
  * THE DRAWER SUMMARY. It breaks if someone puts the layers back inside the drawer: the three
  * sections would stop being behind the button and `Capa 2` would show without clicking.
  */
-it('la pestaña deja en el cajón sólo el resumen del rol; las capas están detrás del botón', async () => {
+it('Contexto deja las capas efectivas detrás del resumen y el botón', async () => {
   configConBrief('Sos kant, el hub de la flota.\nAUTONOMIA: decidí y actuá vos.\nEscalá a Steven si hay dinero.');
   const { cajon } = await abrirPestanaDeKant();
 

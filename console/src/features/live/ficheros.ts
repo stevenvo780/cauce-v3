@@ -135,6 +135,13 @@ export function hayCambios(original: string, borrador: string): boolean {
   return original !== borrador;
 }
 
+export function preserveSourceLineEndings(source: string, edited: string): string {
+  const withoutCrlf = source.replace(/\r\n/gu, '');
+  const sourceUsesOnlyCrlf = source.includes('\r\n')
+    && !withoutCrlf.includes('\r') && !withoutCrlf.includes('\n');
+  return sourceUsesOnlyCrlf ? edited.replace(/\r\n|\r|\n/gu, '\r\n') : edited;
+}
+
 /**
  * A lone 2xx does not mean "applied". Only the new contract, which carries the probe's ACK of writing in
  * the container, authorizes that word. The defensive branch avoids lying during a staged deployment if an

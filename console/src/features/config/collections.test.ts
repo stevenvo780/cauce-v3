@@ -47,6 +47,19 @@ it('muestra una colección que el servidor agregue sin que la consola la conozca
   expect(collections[collections.length - 1]?.key).toBe('future_widgets');
 });
 
+it('no convierte agent_profiles en otra pantalla genérica para editar contexto', () => {
+  const collections = configCollections({
+    revision: 1,
+    tenants: [],
+    agent_profiles: [{ tenant_id: 'Steven', alias: 'kant', role_summary: 'Coordina la flota.' }],
+    future_widgets: [{ id: 'nuevo' }],
+  } as never);
+
+  expect(collections.some((collection) => collection.key === 'agent_profiles')).toBe(false);
+  expect(collections.find((collection) => collection.key === 'future_widgets'))
+    .toMatchObject({ rows: [{ id: 'nuevo' }] });
+});
+
 it('no inventa colecciones cuando todavía no hay snapshot', () => {
   expect(configCollections(undefined)).toEqual([]);
 });

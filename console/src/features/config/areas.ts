@@ -33,7 +33,8 @@ export const CONFIG_AREAS: readonly ConfigArea[] = [
     label: 'Espacios y miembros',
     descripcion: 'Los clientes, sus salas y quién está dentro de cada sala.',
     detalle: 'Es de acá de donde el enrutado saca la flota: un alias sin membership habilitada no '
-      + 'recibe entregas, aunque esté en el registro de agentes.',
+      + 'recibe entregas, aunque esté en el registro de agentes. El «Rol de permisos» de una '
+      + 'membership selecciona una role_policy; no es el contexto ni el rol declarado del agente.',
   },
   {
     id: 'permisos',

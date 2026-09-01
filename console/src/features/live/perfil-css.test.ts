@@ -9,8 +9,8 @@ const HOJA = leerCss('features/live/live.css');
 /** Without comments: otherwise a `@container` quoted in prose would count as a declaration. */
 const SIN_COMENTARIOS = sinComentarios(HOJA);
 
-describe('el editor de perfil tiene sitio donde caber', () => {
-  it('el cajón se ensancha cuando la pestaña abierta es «Perfil»', () => {
+describe('los campos canónicos tienen sitio donde caber', () => {
+  it('el cajón se ensancha cuando la pestaña abierta es «Contexto»', () => {
     const reglas = cuerpos(SIN_COMENTARIOS, '.live-page.has-drawer.cajon-ancho');
     expect(reglas.length).toBeGreaterThan(0);
     expect(reglas.join(' ')).toMatch(/grid-template-columns:[^;]*min\(/);

@@ -32,7 +32,7 @@ export interface RoleBriefTabProps {
   };
   /** Switches the tab of the same drawer to the canonical editor, without opening another write surface. */
   onEditarEnPerfil: () => void;
-  /** Carries a historical revision into the canonical draft `role_summary` and opens Profile. */
+  /** Carries a historical revision into the canonical draft `role_summary` and focuses it. */
   onRestaurarEnPerfil: (texto: string) => void;
 }
 
@@ -42,7 +42,7 @@ export interface RoleBriefTabProps {
  * `agents.role_brief` is no longer an editable source: migration 028 derives it from
  * `agent_profiles.role_summary`. The old POST `agent/update {role_brief}` only accredited a
  * generic database revision; it could leave the harness file pending and still paint success.
- * This view offers no alternative path: it directs to the canonical Profile PUT, which only
+ * This view offers no alternative path: it directs to the canonical context PUT, which only
  * confirms success after CAS, governed batch, and convergent `applied_revision`.
  */
 export function RoleBriefTab({
@@ -62,7 +62,7 @@ export function RoleBriefTab({
     <div className="role-brief">
       <p className="notice" role="note">
         Solo lectura: <code>agents.role_brief</code> es una proyección corta del
-        {' '}<code>role_summary</code> canónico. Editalo en Perfil; allí un cambio sólo figura
+        {' '}<code>role_summary</code> canónico. Editalo en Contexto; allí un cambio sólo figura
         aplicado cuando el runtime acredita todos sus ficheros.
       </p>
 
@@ -107,7 +107,7 @@ export function RoleBriefTab({
       )}
 
       <button type="button" className="button primary" onClick={onEditarEnPerfil}>
-        {soloLectura ? 'Abrir el perfil canónico' : 'Editar el perfil canónico'}
+        {soloLectura ? 'Abrir los campos canónicos' : 'Editar los campos canónicos'}
         {' '}<ArrowRight size={15} aria-hidden="true" />
       </button>
 
@@ -124,7 +124,7 @@ export function RoleBriefTab({
         <p className="muted">
           {estadoPermiso === 'unknown'
             ? 'No se pudo acreditar config.write: el historial sigue visible, pero restaurar queda bloqueado.'
-            : 'Tu sesión puede leer el historial, pero no cargar una revisión en el editor de Perfil.'}
+            : 'Tu sesión puede leer el historial, pero no cargar una revisión en los campos canónicos.'}
         </p>
       ) : null}
     </div>

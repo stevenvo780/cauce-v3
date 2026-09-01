@@ -25,6 +25,42 @@ interface StrictBlock {
   readonly end: number;
 }
 
+export type ManagedContextEditConflict =
+  | "malformed_current"
+  | "malformed_proposed"
+  | "managed_fixed_context_changed"
+  | "managed_profile_changed"
+  | "managed_profile_revision_changed"
+  | "reserved_markers_changed"
+  | "reserved_markers_on_create"
+  | "unknown_reserved_markers_in_current"
+  | "unknown_reserved_markers_in_proposed";
+
+export type ManagedContextEditVerdict =
+  | { readonly allowed: true }
+  | { readonly allowed: false; readonly conflict: ManagedContextEditConflict };
+
+interface ManagedContextSnapshot {
+  readonly fixedContext?: string;
+  readonly profile?: string;
+  readonly profileRevision?: string;
+  readonly reservedMarkers: readonly string[];
+  readonly hasUnknownReservedMarkers: boolean;
+}
+
+const RESERVED_MARKER_PREFIX = "<!-- CAUCE:";
+const RESERVED_MARKER_PATTERN = /^<!-- CAUCE:[^<>\r\n]* -->$/u;
+const REVISION_MARKER_PATTERN = new RegExp(
+  `^${PREFIJO_REVISION_PERFIL} v${VERSION_REVISION_PERFIL} revision=([1-9][0-9]*) -->$`,
+  "u",
+);
+const KNOWN_RESERVED_MARKERS = new Set([
+  MARCA_INICIO,
+  MARCA_FIN,
+  MARCA_PERFIL_INICIO,
+  MARCA_PERFIL_FIN,
+]);
+
 export function marcaDeRevisionDelPerfil(revision: number): string {
   if (!Number.isSafeInteger(revision) || revision <= 0) {
     throw new RangeError("profile revision must be a positive safe integer");
@@ -44,7 +80,10 @@ function occurrences(text: string, marker: string): number {
 
 function isFullLine(text: string, position: number, length: number): boolean {
   const before = position === 0 || text[position - 1] === "\n";
-  const after = position + length === text.length || text[position + length] === "\n";
+  const afterPosition = position + length;
+  const after = afterPosition === text.length
+    || text[afterPosition] === "\n"
+    || (text[afterPosition] === "\r" && text[afterPosition + 1] === "\n");
   return before && after;
 }
 
@@ -70,8 +109,8 @@ function strictBlock(
   return { start, end: closing + endMarker.length };
 }
 
-export function validaTopologiaDeBloquesGestionados(text: string): void {
-  if (text.includes("\r")) {
+function validateManagedBlockTopology(text: string, rejectCarriageReturns: boolean): void {
+  if (rejectCarriageReturns && text.includes("\r")) {
     throw new Error("native profile projection does not accept CR or CRLF line endings");
   }
   const fixed = strictBlock(text, MARCA_INICIO, MARCA_FIN, "fixed-context");
@@ -82,8 +121,12 @@ export function validaTopologiaDeBloquesGestionados(text: string): void {
   }
 }
 
-function revisionLine(text: string): RevisionLine | undefined {
-  validaTopologiaDeBloquesGestionados(text);
+export function validaTopologiaDeBloquesGestionados(text: string): void {
+  validateManagedBlockTopology(text, true);
+}
+
+function revisionLine(text: string, rejectCarriageReturns = true): RevisionLine | undefined {
+  validateManagedBlockTopology(text, rejectCarriageReturns);
   const position = text.indexOf(PREFIJO_REVISION_PERFIL);
   if (position === -1) return undefined;
   if (text.includes(PREFIJO_REVISION_PERFIL, position + PREFIJO_REVISION_PERFIL.length)) {
@@ -91,16 +134,16 @@ function revisionLine(text: string): RevisionLine | undefined {
   }
   const start = text.lastIndexOf("\n", position - 1) + 1;
   const newline = text.indexOf("\n", position);
-  const end = newline === -1 ? text.length : newline;
+  const physicalEnd = newline === -1 ? text.length : newline;
+  const end = physicalEnd > start && text[physicalEnd - 1] === "\r"
+    ? physicalEnd - 1
+    : physicalEnd;
   const line = text.slice(start, end);
-  const exact = new RegExp(
-    `^${PREFIJO_REVISION_PERFIL} v${VERSION_REVISION_PERFIL} revision=([1-9][0-9]*) -->$`,
-    "u",
-  ).exec(line);
+  const exact = REVISION_MARKER_PATTERN.exec(line);
   if (start !== position || exact === null) {
     throw new Error("native profile file has a malformed revision marker");
   }
-  const after = newline === -1 ? end : end + 1;
+  const after = newline === -1 ? end : newline + 1;
   if (!text.startsWith(MARCA_PERFIL_INICIO, after)) {
     throw new Error("native profile revision marker is not adjacent to the profile block");
   }
@@ -125,6 +168,102 @@ export function conRevisionDelPerfil(text: string, revision: number): string {
   const profile = text.indexOf(MARCA_PERFIL_INICIO);
   if (profile === -1) throw new Error("native profile revision requires a managed profile block");
   return `${text.slice(0, profile)}${marker}\n${text.slice(profile)}`;
+}
+
+function reservedMarkerLines(text: string): {
+  readonly markers: readonly string[];
+  readonly hasUnknown: boolean;
+} {
+  const markers: string[] = [];
+  let hasUnknown = false;
+  for (const physicalLine of text.split("\n")) {
+    const line = physicalLine.endsWith("\r") ? physicalLine.slice(0, -1) : physicalLine;
+    if (!line.includes(RESERVED_MARKER_PREFIX)) continue;
+    if (!RESERVED_MARKER_PATTERN.test(line)) {
+      throw new Error("native profile file has a malformed reserved CAUCE marker");
+    }
+    markers.push(line);
+    if (!KNOWN_RESERVED_MARKERS.has(line) && !REVISION_MARKER_PATTERN.test(line)) {
+      hasUnknown = true;
+    }
+  }
+  return { markers, hasUnknown };
+}
+
+function managedContextSnapshot(text: string): ManagedContextSnapshot {
+  validateManagedBlockTopology(text, false);
+  const fixed = strictBlock(text, MARCA_INICIO, MARCA_FIN, "fixed-context");
+  const profile = strictBlock(text, MARCA_PERFIL_INICIO, MARCA_PERFIL_FIN, "profile");
+  const revision = revisionLine(text, false);
+  const reserved = reservedMarkerLines(text);
+  const revisionAfter = revision === undefined
+    ? undefined
+    : (() => {
+      const newline = text.indexOf("\n", revision.end);
+      return newline === -1 ? revision.end : newline + 1;
+    })();
+  return {
+    ...(fixed === undefined ? {} : { fixedContext: text.slice(fixed.start, fixed.end) }),
+    ...(profile === undefined ? {} : { profile: text.slice(profile.start, profile.end) }),
+    ...(revision === undefined || revisionAfter === undefined
+      ? {}
+      : { profileRevision: text.slice(revision.start, revisionAfter) }),
+    reservedMarkers: reserved.markers,
+    hasUnknownReservedMarkers: reserved.hasUnknown,
+  };
+}
+
+export function verifyManagedContextEdit(
+  current: string | undefined,
+  proposed: string,
+): ManagedContextEditVerdict {
+  let currentSnapshot: ManagedContextSnapshot | undefined;
+  if (current !== undefined) {
+    try {
+      currentSnapshot = managedContextSnapshot(current);
+    } catch {
+      return { allowed: false, conflict: "malformed_current" };
+    }
+    if (currentSnapshot.hasUnknownReservedMarkers) {
+      return { allowed: false, conflict: "unknown_reserved_markers_in_current" };
+    }
+  }
+
+  let proposedSnapshot: ManagedContextSnapshot;
+  try {
+    proposedSnapshot = managedContextSnapshot(proposed);
+  } catch {
+    return { allowed: false, conflict: "malformed_proposed" };
+  }
+
+  if (current === undefined) {
+    return proposedSnapshot.reservedMarkers.length === 0
+      ? { allowed: true }
+      : { allowed: false, conflict: "reserved_markers_on_create" };
+  }
+  if (proposedSnapshot.hasUnknownReservedMarkers) {
+    return { allowed: false, conflict: "unknown_reserved_markers_in_proposed" };
+  }
+  if (currentSnapshot === undefined) {
+    return { allowed: false, conflict: "malformed_current" };
+  }
+
+  if (currentSnapshot.fixedContext !== proposedSnapshot.fixedContext) {
+    return { allowed: false, conflict: "managed_fixed_context_changed" };
+  }
+  if (currentSnapshot.profile !== proposedSnapshot.profile) {
+    return { allowed: false, conflict: "managed_profile_changed" };
+  }
+  if (currentSnapshot.profileRevision !== proposedSnapshot.profileRevision) {
+    return { allowed: false, conflict: "managed_profile_revision_changed" };
+  }
+  if (currentSnapshot.reservedMarkers.length !== proposedSnapshot.reservedMarkers.length
+      || currentSnapshot.reservedMarkers.some(
+        (marker, index) => marker !== proposedSnapshot.reservedMarkers[index]
+      )) {
+    return { allowed: false, conflict: "reserved_markers_changed" };
+  }
+  return { allowed: true };
 }
 
 /**

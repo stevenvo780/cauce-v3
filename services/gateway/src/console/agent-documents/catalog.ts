@@ -316,6 +316,9 @@ const RAZON_OPENCLAW =
   'En openclaw las herramientas, las skills, los prompts y los MCP viven en `openclaw.json`, el ' +
   'mismo documento que `auth` y `secrets`. No se sirve entero: hay que proyectar campo a campo.';
 
+const RAZON_CONTEXTO_CANONICO =
+  'Es parte del contexto canónico: se cambia desde Contexto y se aplica como un lote.';
+
 /**
  * Resolves the CLOSED set of documents for an alias. Closed on purpose: the path never comes from the browser;
  * it is derived here from measured facts. The browser sends a `kind`, not a `path`.
@@ -411,7 +414,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(workspace, 'SOUL.md'),
           format: 'markdown',
           editable: false,
-          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+          reason: RAZON_CONTEXTO_CANONICO,
         },
         {
           kind: 'identity',
@@ -420,7 +423,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(workspace, 'IDENTITY.md'),
           format: 'markdown',
           editable: false,
-          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+          reason: RAZON_CONTEXTO_CANONICO,
         },
         {
           kind: 'human',
@@ -429,7 +432,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(workspace, 'USER.md'),
           format: 'markdown',
           editable: false,
-          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+          reason: RAZON_CONTEXTO_CANONICO,
         },
         {
           kind: 'memory',
@@ -456,7 +459,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(workspace, 'AGENTS.md'),
           format: 'markdown',
           editable: false,
-          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+          reason: RAZON_CONTEXTO_CANONICO,
         },
         {
           kind: 'tools',
@@ -465,7 +468,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(workspace, 'TOOLS.md'),
           format: 'markdown',
           editable: false,
-          reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+          reason: RAZON_CONTEXTO_CANONICO,
         },
         {
           kind: 'configuration',

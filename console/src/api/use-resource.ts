@@ -109,6 +109,11 @@ export function useResource<T>(key: string, loader: () => Promise<T>): Resource<
   };
 
   const queueReload = useCallback(() => {
+    if (!mountedRef.current) {
+      return Promise.resolve<RecargaResultado<T>>({
+        error: new Error('la vista se cerró antes de empezar a releer'),
+      });
+    }
     // The resolver is registered BEFORE anything starts: that way the fetch fired below already
     // finds and adopts it, and there is no window in which the response arrives with no recipient.
     const promesa = new Promise<RecargaResultado<T>>((resolve) => {

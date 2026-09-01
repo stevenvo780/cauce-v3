@@ -64,8 +64,8 @@ export const ETIQUETAS: Record<CampoDelPerfil, { titulo: string; ayuda: string }
     ayuda: 'Qué NO puede hacer, aunque pudiera. Una por línea.',
   },
   tools: {
-    titulo: 'Herramientas',
-    ayuda: 'Con qué cuenta, más allá de las capacidades del arnés. Una por línea.',
+    titulo: 'Herramientas declaradas en el contexto',
+    ayuda: 'Describe con qué cuenta; no concede permisos ni capacidades. Una por línea.',
   },
   operating_rules: {
     titulo: 'Instrucciones fijas de funcionamiento',
