@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,21 @@ const repositoryRoot = path.join(here, '..', '..');
 const fixture = path.join(here, 'adapter-roundtrip-fixture.mjs');
 const inheritedEnvironment = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TEMP'];
 const diagnosticKeys = ['event', 'alias', 'reason', 'error_code', 'phase'];
-const roundTripAliases = { opencode: 'qa-opencode', reviewer: 'qa-reviewer' };
+const defaultActor = { tenant: 'Steven', alias: 'kant' };
+const roundTripAliases = {
+  opencode: 'qa-opencode',
+  reviewers: ['qa-reviewer-a', 'qa-reviewer-b'],
+  isolationSource: 'qa-isolated-source',
+  isolationTarget: 'qa-isolated-target',
+};
+const adapterIdentities = [
+  { tenant: 'Steven', room: 'grp.steven', alias: roundTripAliases.opencode, harness: 'opencode' },
+  ...roundTripAliases.reviewers.map((alias) => (
+    { tenant: 'Steven', room: 'grp.steven', alias, harness: 'fake' }
+  )),
+  { tenant: 'Isa', room: 'grp.isa', alias: roundTripAliases.isolationSource, harness: 'fake' },
+  { tenant: 'Jhon', room: 'grp.jhon', alias: roundTripAliases.isolationTarget, harness: 'fake' },
+];
 
 function safeEnvironment() {
   return Object.fromEntries(inheritedEnvironment.flatMap((key) => (
@@ -53,17 +67,18 @@ function diagnosticCapture() {
     const parts = pending.split(/\r?\n/u);
     pending = parts.pop() ?? '';
     for (const line of parts) {
-      if (line.trim().length > 0 && lines.length < 40) lines.push(sanitizedLine(line));
+      if (line.trim().length === 0) continue;
+      lines.push(sanitizedLine(line));
+      if (lines.length > 40) lines.shift();
     }
   };
-  const snapshot = () => [
-    ...lines,
-    ...(pending.trim().length === 0 || lines.length >= 40 ? [] : [sanitizedLine(pending)]),
-  ];
+  const snapshot = () => pending.trim().length === 0
+    ? [...lines]
+    : [...lines.slice(-39), sanitizedLine(pending)];
   return { append, snapshot };
 }
 
-function startAdapter({ alias, entrypoint, root, wsBaseUrl }) {
+function startAdapter({ tenant, room, alias, entrypoint, root, wsBaseUrl }) {
   const capture = diagnosticCapture();
   const stateDirectory = path.join(root, alias, 'state');
   const homeDirectory = path.join(root, alias, 'home');
@@ -73,8 +88,8 @@ function startAdapter({ alias, entrypoint, root, wsBaseUrl }) {
     env: {
       ...safeEnvironment(),
       HOME: homeDirectory,
-      CAUCE_TENANT: 'Steven',
-      CAUCE_ROOM: 'grp.steven',
+      CAUCE_TENANT: tenant,
+      CAUCE_ROOM: room,
       CAUCE_ALIAS: alias,
       CAUCE_INSTANCE_ID: `qa-${alias}-${crypto.randomUUID()}`,
       CAUCE_STATE_DIR: stateDirectory,
@@ -82,6 +97,7 @@ function startAdapter({ alias, entrypoint, root, wsBaseUrl }) {
       CAUCE_ENVIRONMENT: 'test',
       CAUCE_DEV_AUTH: '1',
       CAUCE_HARNESS_COMMAND: fixture,
+      CAUCE_ADAPTER_ROUNDTRIP_ROOT: root,
       CAUCE_HEARTBEAT_MS: '100',
       CAUCE_DEFAULT_TIMEOUT_MS: '15000',
       CAUCE_SEMBRAR_PERFIL: '0',
@@ -171,13 +187,13 @@ function assertRunning(adapters) {
   }
 }
 
-async function api(baseUrl, method, pathname, body, expectedStatus = 200) {
+async function api(baseUrl, method, pathname, body, expectedStatus = 200, actor = defaultActor) {
   const response = await fetch(new URL(pathname, baseUrl), {
     method,
     headers: {
       accept: 'application/json',
-      'x-cauce-tenant': 'Steven',
-      'x-cauce-alias': 'kant',
+      'x-cauce-tenant': actor.tenant,
+      'x-cauce-alias': actor.alias,
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -211,12 +227,14 @@ function finalReply(relay) {
 
 export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_000 }) {
   const nonce = crypto.randomBytes(16).toString('hex');
+  const isolationNonce = crypto.randomBytes(16).toString('hex');
   const marker = `CAUCE_ADAPTER_ROUNDTRIP_V1:${nonce}`;
+  const isolationMarker = `CAUCE_ADAPTER_ISOLATION_V1:${isolationNonce}`;
   const expectedReply = `CAUCE_ADAPTER_ROUNDTRIP_FINAL:${nonce}`;
   const root = await mkdtemp(path.join(os.tmpdir(), 'cauce-adapter-roundtrip-'));
   const entrypoints = {
     opencode: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'opencode.js'),
-    reviewer: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'fake.js'),
+    fake: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'fake.js'),
   };
   const adapters = [];
   let outcome;
@@ -224,32 +242,43 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
   try {
     await Promise.all([
       access(entrypoints.opencode, fsConstants.R_OK),
-      access(entrypoints.reviewer, fsConstants.R_OK),
+      access(entrypoints.fake, fsConstants.R_OK),
       access(fixture, fsConstants.X_OK),
     ]);
-    await Promise.all(Object.values(roundTripAliases).map(async (alias) => {
+    await Promise.all(adapterIdentities.map(async ({ alias }) => {
       await mkdir(path.join(root, alias, 'home'), { recursive: true, mode: 0o700 });
       await mkdir(path.join(root, alias, 'state'), { recursive: true, mode: 0o700 });
     }));
-    adapters.push(
-      startAdapter({ alias: roundTripAliases.opencode, entrypoint: entrypoints.opencode, root, wsBaseUrl }),
-      startAdapter({ alias: roundTripAliases.reviewer, entrypoint: entrypoints.reviewer, root, wsBaseUrl }),
-    );
+    adapters.push(...adapterIdentities.map((identity) => startAdapter({
+      ...identity,
+      entrypoint: entrypoints[identity.harness],
+      root,
+      wsBaseUrl,
+    })));
     await waitFor(async () => {
       const status = await api(baseUrl, 'GET', '/v3/status');
-      return Object.values(roundTripAliases).every((alias) => status.presence.some((row) => (
-        row.tenant_id === 'Steven' && row.alias === alias && row.online === true
+      return adapterIdentities.every((identity) => status.presence.some((row) => (
+        row.tenant_id === identity.tenant && row.alias === identity.alias && row.online === true
       )));
     }, adapters, timeoutMs);
 
-    const published = await api(baseUrl, 'POST', '/v3/messages', {
+    const publishRequest = {
       room_id: 'grp.steven',
       recipients: [{ tenant_id: 'Steven', alias: roundTripAliases.opencode }],
       body: { text: marker },
       idempotency_key: `qa-adapter-roundtrip-${nonce}`,
       lane: 'interactive',
       priority: 10,
-    }, 202);
+    };
+    const published = await api(baseUrl, 'POST', '/v3/messages', publishRequest, 202);
+    const duplicate = await api(baseUrl, 'POST', '/v3/messages', publishRequest, 202);
+    assert.equal(duplicate.duplicate, true);
+    assert.equal(duplicate.message_id, published.message_id);
+    assert.deepEqual(duplicate.delivery_ids, published.delivery_ids);
+    await api(baseUrl, 'POST', '/v3/messages', {
+      ...publishRequest,
+      body: { text: `${marker}:mutated` },
+    }, 409);
 
     const relay = await waitFor(async () => {
       const page = await api(baseUrl, 'GET', '/v3/console/origin-relays');
@@ -274,19 +303,74 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
     assert.equal(finalReply(relay), expectedReply);
     const chain = await api(baseUrl, 'GET', `/v3/console/chains/${encodeURIComponent(published.trace_id)}`);
     assert.equal(chain.trace_id, published.trace_id);
-    assert.equal(chain.edges.length, 1);
-    const [review] = chain.edges;
-    assert.equal(review.source.alias, roundTripAliases.opencode);
-    assert.equal(review.source.status, 'done');
-    assert.equal(review.target.alias, roundTripAliases.reviewer);
-    assert.equal(review.target.status, 'done');
-    assert.equal(review.state, 'materialized');
-    assert.equal(review.open, false);
-    assert.equal(review.response.decision, 'allow');
-    assert.equal(review.response.outcome, 'done');
+    assert.equal(chain.edges.length, 2);
+    const reviews = [...chain.edges].sort((left, right) => (
+      left.target.alias.localeCompare(right.target.alias)
+    ));
+    assert.deepEqual(reviews.map((review) => review.target.alias), [...roundTripAliases.reviewers]);
+    for (const review of reviews) {
+      assert.equal(review.source.alias, roundTripAliases.opencode);
+      assert.equal(review.source.status, 'done');
+      assert.equal(review.target.status, 'done');
+      assert.equal(review.state, 'materialized');
+      assert.equal(review.open, false);
+      assert.equal(review.response.decision, 'allow');
+      assert.equal(review.response.outcome, 'done');
+    }
     assert.equal(chain.counters.open_branches, 0);
     assert.equal(chain.counters.rejected_branches, 0);
-    outcome = { evidenceClass: 'adapter-process-roundtrip', adapters: ['opencode', 'fake'], originRelays: 1 };
+    await Promise.all(roundTripAliases.reviewers.map((alias) => (
+      access(path.join(root, 'fanout-barrier', alias), fsConstants.R_OK)
+    )));
+
+    const isolated = await api(baseUrl, 'POST', '/v3/messages', {
+      room_id: 'grp.steven',
+      recipients: [{ tenant_id: 'Isa', alias: roundTripAliases.isolationSource }],
+      body: { text: isolationMarker },
+      idempotency_key: `qa-adapter-isolation-${isolationNonce}`,
+      lane: 'interactive',
+      priority: 10,
+    }, 202);
+    const sourceActor = { tenant: 'Isa', alias: roundTripAliases.isolationSource };
+    await waitFor(async () => {
+      const queues = await api(baseUrl, 'GET', '/v3/console/queues', undefined, 200, sourceActor);
+      return queues.items.some((item) => (
+        item.delivery_id === isolated.delivery_ids[0] && item.state === 'failed'
+      ));
+    }, adapters, timeoutMs);
+    const sourceAdapter = adapters.find((adapter) => adapter.alias === roundTripAliases.isolationSource);
+    assert.ok(sourceAdapter?.diagnostics().events.some((line) => (
+      line.includes('UNKNOWN_DELEGATION_TARGET')
+    )), 'cross-tenant source did not fail closed on the absent trusted routing target');
+    const observation = JSON.parse(await readFile(
+      path.join(root, 'isolation-observation.json'), 'utf8',
+    ));
+    assert.deepEqual(observation, { targetAdvertised: false });
+    await assert.rejects(
+      access(path.join(root, 'isolation-target-hit'), fsConstants.F_OK),
+      (error) => error?.code === 'ENOENT',
+    );
+    const targetQueue = await api(
+      baseUrl,
+      'GET',
+      '/v3/console/queues',
+      undefined,
+      200,
+      { tenant: 'Jhon', alias: roundTripAliases.isolationTarget },
+    );
+    assert.equal(targetQueue.items.some((item) => (
+      item.actor_alias === roundTripAliases.isolationSource
+    )), false);
+    outcome = {
+      evidenceClass: 'adapter-process-roundtrip',
+      adapters: { opencode: 1, fake: 4 },
+      fanoutBranches: 2,
+      concurrentBarrier: true,
+      duplicateSuppressed: true,
+      mutatedDuplicateRejected: true,
+      crossTenantIsolation: 'online target excluded and undelivered',
+      finalOriginRelaysForRoundTrip: 1,
+    };
   } catch (error) {
     const diagnostics = adapters.map((adapter) => adapter.diagnostics());
     const reason = error instanceof Error ? sanitizeText(error.message) : sanitizeText(error);

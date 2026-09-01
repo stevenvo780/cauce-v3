@@ -389,9 +389,14 @@ const tests = [
 
   ...(adapterProcessRoundTrip
     ? [[
-      'OpenCode to fake adapter process round-trip reaches one final origin relay',
+      'OpenCode adapter process fan-out, duplicate publish, and tenant isolation',
       async () => runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs: retryTimeoutMs }),
-      { evidenceClass: 'adapter-process-roundtrip', adapterExecutables: ['opencode', 'fake'] },
+      {
+        evidenceClass: 'adapter-process-roundtrip',
+        adapterExecutables: ['opencode', 'fake'],
+        controlledHarnessExecutables: true,
+        adversarialCoverage: ['concurrent-fanout', 'idempotent-duplicate', 'cross-tenant-isolation'],
+      },
     ]]
     : []),
 
@@ -677,10 +682,10 @@ async function main() {
       transport: 'real Fastify HTTP/WebSocket gateway',
       persistence: 'real PostgreSQL',
       harnessExecution: adapterProcessRoundTrip
-        ? 'advertised harness kinds are protocol doubles except the dedicated OpenCode-to-fake adapter process round-trip'
+        ? 'advertised harness kinds are protocol doubles except the dedicated built-adapter process round-trip; its harness commands remain controlled fixtures'
         : 'advertised harness kinds are protocol doubles; adapter process round-trip requires the ephemeral-only gate',
       adapterProcessRoundTrip: adapterProcessRoundTrip
-        ? 'built adapters with controlled harness executables and API-observed final origin relay'
+        ? 'built adapters with controlled harness executables, concurrent fan-out barrier, idempotency conflict, final relay, and online cross-tenant negative target'
         : 'disabled',
       faultMode,
       aliases: allIdentities.length,

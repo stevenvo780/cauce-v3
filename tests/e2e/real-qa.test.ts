@@ -4,18 +4,28 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { FakeHarness } from '@cauce/adapter-sdk';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import { createDefaultJobHandlerRegistry, runDispatcher } from '../../services/dispatcher/src/index.js';
-import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import {
+  dockerTestRequirement,
+  resetTestDatabase,
+  startTestDatabase,
+  type TestDatabase,
+} from '../helpers/postgres.js';
 
 const execute = promisify(execFile);
 let database: TestDatabase;
 let app: Awaited<ReturnType<typeof buildGateway>>;
 let stopDispatcher: (() => void) | undefined;
 let httpUrl: string;
+const databaseRequirement = dockerTestRequirement(
+  'live gateway, dispatcher, adapter, fault, restart, fairness, and message-roundtrip E2E behavior against ephemeral PostgreSQL',
+);
+let setupPromise: Promise<void> | undefined;
+let setupReady = false;
 
 interface DatabaseImageBinding {
   role: 'postgresql-test-dependency';
@@ -28,47 +38,78 @@ interface DatabaseImageBinding {
 
 let databaseImageBinding: DatabaseImageBinding | undefined;
 
-beforeAll(async () => {
-  database = await startTestDatabase();
-  if (process.env.CAUCE_EVIDENCE_CLASS === 'testcontainers') {
-    databaseImageBinding = await inspectDatabaseImage();
-    process.env.CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST = databaseImageBinding.repositoryDigest;
-    process.env.CAUCE_TESTCONTAINERS_DB_IMAGE_ID = databaseImageBinding.imageId;
-    process.env.CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE = databaseImageBinding.containerConfigImage;
-    process.env.CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256 = databaseImageBinding.containerIdSha256;
+async function setupSuite(): Promise<void> {
+  const startedDatabase = await startTestDatabase();
+  let startedApp: Awaited<ReturnType<typeof buildGateway>> | undefined;
+  let startedDispatcher: (() => void) | undefined;
+  try {
+    if (process.env.CAUCE_EVIDENCE_CLASS === 'testcontainers') {
+      databaseImageBinding = await inspectDatabaseImage(startedDatabase);
+      process.env.CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST = databaseImageBinding.repositoryDigest;
+      process.env.CAUCE_TESTCONTAINERS_DB_IMAGE_ID = databaseImageBinding.imageId;
+      process.env.CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE = databaseImageBinding.containerConfigImage;
+      process.env.CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256 = databaseImageBinding.containerIdSha256;
+    }
+    startedApp = await buildGateway({
+      pool: startedDatabase.pool,
+      authProvider: DevOnlyAuthProvider.forTests(),
+      leaseTtlMs: 30_000,
+      outboxPollMs: 10,
+      allowedJobKinds: ['system.database.probe', 'qa.fairness'],
+    });
+    await startedApp.listen({ host: '127.0.0.1', port: 0 });
+    const address = startedApp.server.address() as AddressInfo;
+    startedDispatcher = runDispatcher(startedDatabase.pool, {
+      pollMs: 20,
+      staleAckMs: 50,
+      interactiveBurst: 3,
+      jobLeaseMs: 500,
+      handlers: createDefaultJobHandlerRegistry(startedDatabase.pool, 'test'),
+    }).stop;
+    database = startedDatabase;
+    app = startedApp;
+    stopDispatcher = startedDispatcher;
+    httpUrl = `http://127.0.0.1:${String(address.port)}`;
+    setupReady = true;
+  } catch (error) {
+    startedDispatcher?.();
+    await startedApp?.close().catch(() => undefined);
+    await startedDatabase.pool.end().catch(() => undefined);
+    await startedDatabase.container.stop().catch(() => undefined);
+    clearDatabaseImageBindings();
+    throw error;
   }
-  app = await buildGateway({
-    pool: database.pool,
-    authProvider: DevOnlyAuthProvider.forTests(),
-    leaseTtlMs: 30_000,
-    outboxPollMs: 10,
-    allowedJobKinds: ['system.database.probe', 'qa.fairness'],
-  });
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${String(address.port)}`;
-  stopDispatcher = runDispatcher(database.pool, {
-    pollMs: 20,
-    staleAckMs: 50,
-    interactiveBurst: 3,
-    jobLeaseMs: 500,
-    handlers: createDefaultJobHandlerRegistry(database.pool, 'test'),
-  }).stop;
+}
+
+beforeEach(async ({ skip }) => {
+  if (setupPromise === undefined) {
+    if (!process.env.CAUCE_TEST_DATABASE_URL) {
+      await databaseRequirement.skipIfUnavailable(skip);
+    }
+    setupPromise = setupSuite();
+  }
+  await setupPromise;
 }, 120_000);
 
 afterAll(async () => {
-  if (stopDispatcher) stopDispatcher();
-  await app.close();
-  await database.pool.end();
-  await database.container.stop();
+  if (setupReady) {
+    stopDispatcher?.();
+    await app.close();
+    await database.pool.end();
+    await database.container.stop();
+  }
+  clearDatabaseImageBindings();
+});
+
+function clearDatabaseImageBindings(): void {
   for (const key of [
     'CAUCE_TESTCONTAINERS_DB_REPOSITORY_DIGEST', 'CAUCE_TESTCONTAINERS_DB_IMAGE_ID',
     'CAUCE_TESTCONTAINERS_DB_CONFIG_IMAGE', 'CAUCE_TESTCONTAINERS_DB_CONTAINER_ID_SHA256',
   ]) Reflect.deleteProperty(process.env, key);
-});
+}
 
-async function inspectDatabaseImage(): Promise<DatabaseImageBinding> {
-  const containerId = database.container.getId();
+async function inspectDatabaseImage(targetDatabase: TestDatabase): Promise<DatabaseImageBinding> {
+  const containerId = targetDatabase.container.getId();
   const container = JSON.parse((await execute(
     'docker', ['inspect', '--format', '{{json .}}', containerId], { maxBuffer: 1024 * 1024 },
   )).stdout) as { Image?: unknown; Config?: { Image?: unknown } };
@@ -329,15 +370,18 @@ async function declareHarnessFleet(): Promise<void> {
       );
     }
   }
-  for (const [alias, harness] of [
-    ['qa-opencode', 'opencode'],
-    ['qa-reviewer', 'fake'],
+  for (const [tenant, room, alias, harness] of [
+    ['Steven', 'grp.steven', 'qa-opencode', 'opencode'],
+    ['Steven', 'grp.steven', 'qa-reviewer-a', 'fake'],
+    ['Steven', 'grp.steven', 'qa-reviewer-b', 'fake'],
+    ['Isa', 'grp.isa', 'qa-isolated-source', 'fake'],
+    ['Jhon', 'grp.jhon', 'qa-isolated-target', 'fake'],
   ] as const) {
-    await declareConsumer('Steven', alias, harness);
+    await declareConsumer(tenant, alias, harness);
     await database.pool.query(
       `INSERT INTO memberships(tenant_id,room_id,alias,role,enabled)
-       VALUES('Steven','grp.steven',$1,'agent',true) ON CONFLICT DO NOTHING`,
-      [alias],
+       VALUES($1,$2,$3,'agent',true) ON CONFLICT DO NOTHING`,
+      [tenant, room, alias],
     );
   }
   for (const [from, to] of [['Steven', 'Miguel'], ['Miguel', 'Steven']]) {
