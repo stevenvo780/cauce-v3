@@ -9,6 +9,7 @@ Detects:
 - Excessive open dead letters
 - Anomalous epoch counts (reconnection loops)
 - Pending deliveries stuck unclaimed
+- Aliases that claimed deliveries and never began executing them (a deaf adapter)
 - Failed systemd units in kratos (optional)
 
 State file tracking prevents alert noise by detecting CHANGES, not just conditions.
@@ -40,6 +41,7 @@ THRESHOLDS = {
     'pending_unclaimed_minutes': 60,
     'dead_letters_threshold': 10,
     'epoch_outlier_multiplier': 2.0,
+    'claimed_not_started_minutes': 5,  # Healthy is milliseconds; minutes means a deaf adapter.
 }
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -378,6 +380,58 @@ def check_pending_deliveries(database_url: str, now: datetime.datetime) -> dict[
     return check
 
 
+CLAIMED_NOT_STARTED_QUERY = """
+        SELECT
+            recipient_alias,
+            COUNT(*) as count,
+            ROUND(EXTRACT(EPOCH FROM (now() - MIN(claimed_at))) / 60) as age_min
+        FROM deliveries
+        WHERE status IN ('leased', 'accepted')
+          AND execution_started_at IS NULL
+          AND claimed_at < now() - interval '{minutes} minutes'
+        GROUP BY recipient_alias;
+"""
+
+
+def check_claimed_not_started(database_url: str, now: datetime.datetime) -> dict[str, Any]:
+    """Aliases holding claims they never began executing.
+
+    `check_pending_deliveries` only looks at `status = 'pending'`, so an alias that CLAIMS
+    deliveries and then dies before running them stays invisible: its rows sit in 'leased'. That
+    gap reported a healthy fleet through an 8h52m outage in which every message to one alias
+    expired. Unstarted alone is not a fault (healthy claims are, for milliseconds): age makes it one.
+    """
+    del now  # The age comparison happens in SQL, against the database clock.
+    check: dict[str, Any] = {'status': 'ok', 'message': '', 'stuck_aliases': []}
+    query = CLAIMED_NOT_STARTED_QUERY.format(
+        minutes=int(THRESHOLDS['claimed_not_started_minutes']),
+    )
+
+    try:
+        rows = parse_psql_rows(run_psql(database_url, query))
+    except ValueError as error:
+        check['status'] = 'read-error'
+        check['message'] = str(error)
+        return check
+
+    for row in rows:
+        try:
+            check['stuck_aliases'].append({
+                'alias': row['recipient_alias'],
+                'count': int(row['count']),
+                'age_min': int(float(row['age_min'])),
+            })
+        except (ValueError, KeyError):
+            continue
+
+    if check['stuck_aliases']:
+        names = ', '.join(sorted(item['alias'] for item in check['stuck_aliases']))
+        check['status'] = 'critical'
+        check['message'] = f'reclamaron trabajo y no lo empezaron: {names}'
+
+    return check
+
+
 def check_systemd() -> dict[str, Any]:
     """Check systemd units in kratos (optional, requires ssh)."""
     check = {
@@ -525,6 +579,7 @@ def main() -> None:
         'dead_letters': check_dead_letters(database_url),
         'epochs': check_epochs(database_url),
         'pending': check_pending_deliveries(database_url, now),
+        'claimed_not_started': check_claimed_not_started(database_url, now),
     }
 
     if check_systemd:

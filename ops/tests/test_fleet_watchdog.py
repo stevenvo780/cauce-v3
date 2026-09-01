@@ -148,6 +148,36 @@ def test_output_formats():
     assert 'dedalo' in text_str, 'text includes offline alias'
     print('✓ Text output format correct')
 
+def test_claimed_not_started():
+    """The gap that reported a healthy fleet through an 8h52m outage: an adapter dying right
+    after claiming leaves rows in 'leased', which the pending check never looks at."""
+    watchdog_module = load_watchdog_module()
+    original = watchdog_module.run_psql
+    try:
+        watchdog_module.run_psql = lambda *_args, **_kwargs: (
+            'recipient_alias|count|age_min\n'
+            'zeus|4|532\n'
+        )
+        check = watchdog_module.check_claimed_not_started('postgres://x', datetime.now(timezone.utc))
+        assert check['status'] == 'critical', f"deaf alias must be critical (got {check['status']})"
+        assert 'zeus' in check['message'], 'the message names the alias'
+        assert check['stuck_aliases'] == [{'alias': 'zeus', 'count': 4, 'age_min': 532}]
+
+        # NEGATIVE CONTROL: else a check that always said critical would pass above.
+        watchdog_module.run_psql = lambda *_args, **_kwargs: 'recipient_alias|count|age_min\n'
+        healthy = watchdog_module.check_claimed_not_started('postgres://x', datetime.now(timezone.utc))
+        assert healthy['status'] == 'ok', 'a fleet with nothing stuck stays ok'
+        assert healthy['stuck_aliases'] == []
+    finally:
+        watchdog_module.run_psql = original
+
+    # Those ran against a FAKED psql: they prove the verdict, not the SQL. These pin it.
+    query = watchdog_module.CLAIMED_NOT_STARTED_QUERY
+    assert "status IN ('leased', 'accepted')" in query, 'looks at claimed, not pending, rows'
+    assert 'execution_started_at IS NULL' in query, 'only rows that never began executing'
+    assert 'claimed_at < now() - interval' in query, 'age is what turns unstarted into a fault'
+    print('✓ Claimed-but-never-started aliases are reported as critical')
+
 
 if __name__ == '__main__':
     test_script_exists()
@@ -155,4 +185,5 @@ if __name__ == '__main__':
     test_parse_psql_rows()
     test_state_file()
     test_output_formats()
+    test_claimed_not_started()
     print('\n✓ All tests passed')
