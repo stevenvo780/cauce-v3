@@ -13,7 +13,6 @@ import type {
   CapabilityState,
   ConsoleAccess,
   ConsolePermission,
-  DeliveryState,
   JobLane,
   OriginRelayState,
 } from './api/types';
@@ -116,10 +115,6 @@ export type PermissionState = 'allowed' | 'denied' | 'unknown';
 export function permissionState(access: ConsoleAccess | null | undefined, permission: ConsolePermission): PermissionState {
   if (!Array.isArray(access?.permissions)) return 'unknown';
   return access.permissions.includes(permission) ? 'allowed' : 'denied';
-}
-
-export function safeDeliveryState(value: unknown): DeliveryState | undefined {
-  return oneOf(value, ['pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'] as const);
 }
 
 export function safeJobLane(value: unknown): JobLane | undefined {

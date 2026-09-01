@@ -1,5 +1,6 @@
 import { MessagesSquare, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
@@ -51,10 +52,14 @@ function agenteDeLaRuta(path: string): { tenantId: string; alias: string } | und
  * Interactive messaging view with fleet agents and queue monitoring.
  */
 export function MessagesPage() {
+  return <ConsoleAccessBoundary><MessagesPageContent /></ConsoleAccessBoundary>;
+}
+
+function MessagesPageContent() {
   const api = useApi();
   const status = useResource('messages-status', () => api.getStatus());
   const topology = useResource('messages-topology', () => api.getTopology());
-  const access = useResource('console-access', () => api.getConsoleAccess());
+  const access = useConsoleAccess();
   const messages = useResource('messages-feed', () => api.listMessages());
   const activity = useResource('messages-activity', () => api.getFleetActivity());
   const queues = useResource('messages-queues', () => api.getQueues());

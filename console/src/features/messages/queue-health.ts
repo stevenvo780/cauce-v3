@@ -1,4 +1,5 @@
 import type { FleetActivitySnapshot, QueueSnapshot } from '../../api/types';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
 
 /**
@@ -96,7 +97,7 @@ export function saludDeColaPorAgente(
   for (const fila of filas) {
     if (!fila.tenant_id || !fila.recipient_alias) continue;
     const salud = entrada(mapa, fleetAgentId(fila.tenant_id, fila.recipient_alias));
-    if (fila.state === 'dead' || fila.state === 'failed') salud.muertas = (salud.muertas ?? 0) + 1;
+    if (deliveryPolicy(fila.state).group === 'review') salud.muertas = (salud.muertas ?? 0) + 1;
   }
 
   // `/queues` answered: for the aliases that show up in the view, "no dead rows" is a KNOWN zero
