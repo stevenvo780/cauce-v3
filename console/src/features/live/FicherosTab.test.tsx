@@ -67,7 +67,7 @@ const IDENTIDAD_DE_PERFIL = {
   format: 'markdown',
   readable: true,
   editable: false,
-  reason: 'Es parte del perfil canónico: se cambia desde Perfil y se aplica como un lote.',
+  reason: 'Es parte de los campos canónicos: se cambia desde Contexto y se aplica como un lote.',
 };
 
 beforeEach(() => {
@@ -82,6 +82,16 @@ async function abrirFicheros() {
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
   await user.click(within(cajon).getByRole('tab', { name: 'Ficheros' }));
+  return { user, cajon };
+}
+
+async function abrirContexto() {
+  const user = userEvent.setup();
+  renderWithApi(<LiveFleetPage />);
+  await screen.findByLabelText('Veredicto de la flota');
+  await user.click(await screen.findByRole('row', { name: /kant/i }));
+  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   return { user, cajon };
 }
 
@@ -157,13 +167,13 @@ it('abre manuales y perfil allowlisted en visor readonly, sin Guardar ni PUT', a
   const manual = await within(cajon).findByLabelText('Contenido de AGENTS.md del proyecto');
   expect(manual).toHaveValue('# reglas del proyecto\n');
   expect(manual).toHaveAttribute('readonly');
-  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
+  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
 
   await user.click(within(cajon).getByText('Identidad (IDENTITY.md)'));
   const perfil = await within(cajon).findByLabelText('Contenido de Identidad (IDENTITY.md)');
   expect(perfil).toHaveValue('# identidad\n');
   expect(perfil).toHaveAttribute('readonly');
-  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
+  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
   expect(puts).toBe(0);
 });
 
@@ -223,7 +233,7 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
     }),
   );
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
@@ -231,7 +241,7 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
 
   await user.clear(caja);
   await user.type(caja, '# nuevo');
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido?.content).toBe('# nuevo');
@@ -254,7 +264,7 @@ it('cuando no hay canal hasta el agente lo DICE, y no enseña una caja vacía', 
     { status: 503 },
   )));
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
 
   expect(await within(cajon).findByText('Todavía no hay camino hasta el disco de este agente'))
@@ -262,7 +272,7 @@ it('cuando no hay canal hasta el agente lo DICE, y no enseña una caja vacía', 
   expect(within(cajon).getByText(/La consola no tiene todavía ningún camino/)).toBeInTheDocument();
   // And there is nowhere to write and nothing to save.
   expect(within(cajon).queryByLabelText(/Contenido de CLAUDE\.md/i)).not.toBeInTheDocument();
-  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
+  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
 });
 
 it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', async () => {
@@ -279,14 +289,42 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
     )),
   );
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'lo mio');
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/cambió mientras lo editabas/i)).toBeInTheDocument();
+  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
+});
+
+it('un conflicto con el bloque canónico conserva el borrador y dirige a sus campos', async () => {
+  mapaDeKant([CLAUDE_MD]);
+  server.use(
+    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
+      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
+      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      exists: true, content: 'original', sha: SHA_VIEJO, bytes: 8,
+      editable: true, projected: false, truncated: false,
+    })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json({
+      error: 'managed_context_conflict',
+      message: 'el texto invade un bloque gobernado por el perfil',
+    }, { status: 409 })),
+  );
+
+  const { user, cajon } = await abrirContexto();
+  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
+  await user.clear(caja);
+  await user.type(caja, 'mi manual');
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
+
+  expect(await within(cajon).findByText(/bloque canónico se edita en Contexto/i)).toBeInTheDocument();
+  expect(within(cajon).getByText(/manual conserva el borrador/i)).toBeInTheDocument();
+  expect(caja).toHaveValue('mi manual');
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
 });
 
@@ -307,11 +345,11 @@ it('un fichero ausente se crea con create_if_absent, nunca como reemplazo sin SH
       });
     }),
   );
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.type(caja, '# nuevo');
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   await waitFor(() => { expect(recibido).toBeDefined(); });
   expect(recibido).toEqual({ content: '# nuevo', create_if_absent: true });
@@ -325,13 +363,13 @@ it('un contenido truncado se enseña pero nunca queda editable ni guardable', as
     content: 'prefijo', sha: SHA_VIEJO, bytes: 900_000,
     editable: false, projected: false, truncated: true,
   })));
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   expect(caja).toHaveAttribute('readonly');
-  expect(await within(cajon).findByRole('alert')).toHaveTextContent(/lectura está recortada/i);
-  expect(within(cajon).getByRole('button', { name: /^Guardar/i })).toBeDisabled();
+  expect(await within(cajon).findByText(/Esta lectura está recortada/i)).toBeInTheDocument();
+  expect(within(cajon).getByRole('button', { name: /^Guardar$/i })).toBeDisabled();
 });
 
 it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', async () => {
@@ -345,16 +383,16 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
     })),
     http.put(RUTA_CONTENIDO, () => HttpResponse.json({ ok: true, path: '/home/stev/.claude/CLAUDE.md' })),
   );
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'nuevo');
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/no confirmó la aplicación/i)).toBeInTheDocument();
   expect(caja).toHaveValue('nuevo');
-  expect(within(cajon).getByRole('button', { name: /^Guardar/i })).toBeEnabled();
+  expect(within(cajon).getByRole('button', { name: /^Guardar$/i })).toBeEnabled();
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
 });
 
@@ -413,13 +451,13 @@ it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', 
     }),
   );
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
 
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   expect(caja).toHaveAttribute('readonly');
   expect(within(cajon).getByText(/No se pudo acreditar config\.write/)).toBeInTheDocument();
-  expect(within(cajon).getByRole('button', { name: /^Guardar/i })).toBeDisabled();
+  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
   expect(puts).toBe(0);
 });
 
@@ -446,12 +484,12 @@ it('un 413 al guardar dice el tope y NO se lleva por delante lo escrito', async 
     )),
   );
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'lo que no cabe');
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/El fichero pasa del tope/)).toBeInTheDocument();
   expect(within(cajon).getByText(/se pasa del tope de 256 KiB/)).toBeInTheDocument();
@@ -473,12 +511,12 @@ it('un 403 de la política de rutas se explica como decisión, no como avería',
     )),
   );
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
   const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
   await user.clear(caja);
   await user.type(caja, 'mio');
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar/i }));
+  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
   expect(await within(cajon).findByText(/no se sirve por esta vía/)).toBeInTheDocument();
   expect(within(cajon).getByText(/mezcla configuración con credenciales/)).toBeInTheDocument();
@@ -491,7 +529,7 @@ it('una ruta sin medir se distingue de un fichero que no está', async () => {
     { error: 'facts_not_measured', message: 'nadie midió qué arnés corre este alias' }, { status: 409 },
   )));
 
-  const { user, cajon } = await abrirFicheros();
+  const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
 
   expect(await within(cajon).findByText(/no está medida/)).toBeInTheDocument();
@@ -537,5 +575,5 @@ it('el visor avisa de que lo recortado es un prefijo, y no ofrece guardarlo', as
   expect(await within(cajon).findByRole('alert')).toHaveTextContent(/lectura está recortada/i);
   expect(within(cajon).getByLabelText(/Contenido de Identidad/i)).toHaveAttribute('readonly');
   expect(within(cajon).getByText(/prefijo recortado/)).toBeInTheDocument();
-  expect(within(cajon).queryByRole('button', { name: /^Guardar/i })).not.toBeInTheDocument();
+  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
 });

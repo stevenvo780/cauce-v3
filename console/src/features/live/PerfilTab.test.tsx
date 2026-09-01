@@ -317,7 +317,7 @@ it('un alias claude ve CLAUDE.md en los siete campos y NINGÚN fichero de opencl
   ]) {
     expect(rotuloDe(titulo)).toContain('→ CLAUDE.md');
   }
-  const editor = screen.getByText(/Perfil de kant/i).closest('section');
+  const editor = screen.getByText(/Campos canónicos de kant/i).closest('section');
   for (const ajeno of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'TOOLS.md', 'openclaw']) {
     expect(editor?.textContent ?? '').not.toContain(ajeno);
   }
@@ -338,7 +338,7 @@ it('un alias codex junta los siete campos en AGENTS.md, sin nombrar ficheros aje
   await abrirCon({ harness: 'codex' });
   expect(rotuloDe(/Identidad y propósito/i)).toContain('→ AGENTS.md');
   expect(rotuloDe(/^Herramientas/i)).toContain('→ AGENTS.md');
-  expect(screen.getByText(/Perfil de kant/i).closest('section')?.textContent ?? '')
+  expect(screen.getByText(/Campos canónicos de kant/i).closest('section')?.textContent ?? '')
     .not.toContain('TOOLS.md');
 });
 
@@ -347,7 +347,7 @@ it('sin arnés declarado dice «sin dato» y lo explica una vez, en vez de adivi
   expect(rotuloDe(/Identidad y propósito/i)).toContain('sin dato');
   expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent)
     .toContain('no dice qué arnés');
-  expect(screen.getByText(/Perfil de kant/i).closest('section')?.textContent ?? '')
+  expect(screen.getByText(/Campos canónicos de kant/i).closest('section')?.textContent ?? '')
     .not.toContain('SOUL.md');
 });
 

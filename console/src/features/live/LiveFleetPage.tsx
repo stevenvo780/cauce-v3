@@ -8,7 +8,7 @@ import {
   ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel,
 } from '../../components/ui';
 import { FleetActivityTable } from './FleetActivityTable';
-import { AgentDrawer, type DrawerTab } from './AgentDrawer';
+import { AgentDrawer, type ContextFocusTarget, type DrawerTab } from './AgentDrawer';
 import type { BorradorDeFichero } from './FicherosTab';
 import { AgentTooltipCard } from './AgentTooltipCard';
 import { FleetVerdict } from './FleetVerdict';
@@ -67,14 +67,28 @@ export function LiveFleetPage() {
 
   const snapshot = activity.data;
 
-  const [drawer, setDrawer] = useState<{ key: string; tab: DrawerTab } | null>(
+  const [drawer, setDrawer] = useState<{
+    key: string; tab: DrawerTab; contextFocusTarget?: ContextFocusTarget;
+  } | null>(
     () => leerQuery(),
   );
+
+  useEffect(() => {
+    if (!drawer || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('agente') === drawer.key && params.get('pestana') === 'perfil') {
+      escribirQuery(drawer.key, 'rol');
+    }
+  }, [drawer]);
 
   const [borradoresPerfil, setBorradoresPerfil] =
     useState<Record<string, Partial<AgentPerfilCampos>>>({});
   const [borradoresFicheros, setBorradoresFicheros] =
     useState<Record<string, Partial<Record<AgentDocumentKind, BorradorDeFichero>>>>({});
+  const [profileWritesInFlight, setProfileWritesInFlight] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [contextRuntimeRevisions, setContextRuntimeRevisions] = useState<Record<string, number>>({});
 
   const memoryRef = useRef<FleetMemory>({});
   const [pulses, setPulses] = useState<PulseMap>({});
@@ -251,8 +265,10 @@ export function LiveFleetPage() {
   const feedState = activity.error ? 'error' : intervalMs <= 0 ? 'paused' : 'live';
   const edadSegundos = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
 
-  const abrirCajon = useCallback((key: string, tab: DrawerTab = 'ahora') => {
-    setDrawer({ key, tab });
+  const abrirCajon = useCallback((
+    key: string, tab: DrawerTab = 'ahora', contextFocusTarget?: ContextFocusTarget,
+  ) => {
+    setDrawer({ key, tab, ...(contextFocusTarget === undefined ? {} : { contextFocusTarget }) });
     setSelected(key);
     escribirQuery(key, tab);
   }, []);
@@ -282,7 +298,7 @@ export function LiveFleetPage() {
 
   return (
     <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
-      + (drawer && detail && (drawer.tab === 'perfil' || drawer.tab === 'ficheros') ? ' cajon-ancho' : '')}>
+      + (drawer && detail && (drawer.tab === 'rol' || drawer.tab === 'ficheros') ? ' cajon-ancho' : '')}>
       <div className="live-main">
         <PageHeader
           eyebrow="Flota"
@@ -396,7 +412,7 @@ export function LiveFleetPage() {
           topologiaEnAlcance={topologiaEnAlcance}
           resumenDePermisos={resumenDePermisos}
           configuracion={configuracion}
-          onAbrirPerfil={(key) => { abrirCajon(key, 'perfil'); }}
+          onAbrirPerfil={(key) => { abrirCajon(key, 'rol', 'campos'); }}
         />
       </div>
 
@@ -417,6 +433,26 @@ export function LiveFleetPage() {
             return { ...actuales, [drawer.key]: campos };
           }); }}
           borradoresFicheros={borradoresFicheros[drawer.key]}
+          profileWriteInFlight={profileWritesInFlight.has(drawer.key)}
+          onProfileWriteInFlightChange={(inFlight) => {
+            const key = drawer.key;
+            setProfileWritesInFlight((current) => {
+              if (inFlight && current.has(key)) return current;
+              if (!inFlight && !current.has(key)) return current;
+              const next = new Set(current);
+              if (inFlight) next.add(key);
+              else next.delete(key);
+              return next;
+            });
+          }}
+          runtimeRefreshRevision={contextRuntimeRevisions[drawer.key] ?? 0}
+          onRuntimeRefresh={() => {
+            const key = drawer.key;
+            setContextRuntimeRevisions((current) => ({
+              ...current, [key]: (current[key] ?? 0) + 1,
+            }));
+          }}
+          contextFocusTarget={drawer.contextFocusTarget}
           onBorradorFichero={(kind, nuevo) => { setBorradoresFicheros((actuales) => {
             const previos = actuales[drawer.key] ?? {};
             const delAgente = nuevo === undefined
@@ -424,7 +460,12 @@ export function LiveFleetPage() {
               : { ...previos, [kind]: nuevo };
             return { ...actuales, [drawer.key]: delAgente };
           }); }}
-          onTab={(tab) => { setDrawer((current) => (current ? { ...current, tab } : current)); escribirQuery(drawer.key, tab); }}
+          onTab={(tab, contextFocusTarget) => {
+            setDrawer((current) => (current
+              ? { key: current.key, tab, ...(contextFocusTarget === undefined ? {} : { contextFocusTarget }) }
+              : current));
+            escribirQuery(drawer.key, tab);
+          }}
           onClose={cerrarCajon}
         />
       ) : null}
@@ -451,13 +492,16 @@ function escribirQuery(key?: string, tab?: DrawerTab): void {
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
 }
 
-function leerQuery(): { key: string; tab: DrawerTab } | null {
+function leerQuery(): {
+  key: string; tab: DrawerTab; contextFocusTarget?: ContextFocusTarget;
+} | null {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
   const key = params.get('agente');
   if (!key) return null;
   const tab = params.get('pestana');
-  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'rol', 'perfil', 'ficheros'];
+  if (tab === 'perfil') return { key, tab: 'rol', contextFocusTarget: 'campos' };
+  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'rol', 'ficheros'];
   return {
     key,
     tab: valida.includes(tab as DrawerTab) ? tab as DrawerTab : 'ahora',

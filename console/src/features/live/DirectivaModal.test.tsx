@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, expect, it } from 'vitest';
@@ -37,7 +37,7 @@ async function abrir() {
   await screen.findByLabelText('Veredicto de la flota');
   await user.click(await screen.findByRole('row', { name: /kant/i }));
   const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Directiva' }));
+  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
   const boton = await within(cajon).findByRole('button', { name: /abrir directiva completa/i });
   await user.click(boton);
   const dialogo = await screen.findByRole('dialog', { name: /directiva de kant/i });
@@ -60,15 +60,18 @@ it('el foco entra al diálogo al abrir y vuelve al botón que lo abrió al cerra
   expect(document.activeElement).toBe(boton);
 }, 25_000);
 
-it('desde la capa manual abre directamente el editor real de ficheros del mismo alias', async () => {
+it('desde la capa manual cierra el modal y enfoca el único editor dentro de Contexto', async () => {
   const { user, dialogo, cajon } = await abrir();
   await user.click(within(dialogo).getByRole('button', {
-    name: /editar claude\.md \/ agents\.md/i,
+    name: /editar el manual en contexto/i,
   }));
 
   expect(screen.queryByRole('dialog', { name: /directiva de kant/i })).not.toBeInTheDocument();
-  expect(within(cajon).getByRole('tab', { name: 'Ficheros' })).toHaveAttribute('aria-selected', 'true');
+  expect(within(cajon).getByRole('tab', { name: 'Contexto' })).toHaveAttribute('aria-selected', 'true');
   expect(await within(cajon).findByText('CLAUDE.md (manual del sitio)')).toBeInTheDocument();
+  await waitFor(() => {
+    expect(within(cajon).getByRole('heading', { name: 'Manual del arnés' }).closest('section')).toHaveFocus();
+  });
 }, 25_000);
 
 /**
@@ -134,13 +137,13 @@ it('mientras el diálogo vive, el armazón queda inerte y el cajón marcado como
 }, 25_000);
 
 /** The legacy column cannot reopen a save that omits the runtime ACK. */
-it('la columna 1 muestra la proyección sólo lectura y dirige al perfil canónico', async () => {
+it('la columna 1 muestra la proyección sólo lectura y dirige a los campos canónicos', async () => {
   const { dialogo } = await abrir();
   const capa1 = within(dialogo).getByLabelText('Capa 1: rol declarado');
   expect(await within(capa1).findByLabelText(/proyección del rol de kant/i)).toHaveAttribute('readonly');
   expect(within(capa1).getByText(/\/ 1200$/)).toBeInTheDocument();
   expect(within(capa1).queryByRole('button', { name: /guardar el rol/i })).not.toBeInTheDocument();
-  expect(within(capa1).getByRole('button', { name: /editar el perfil canónico/i })).toBeInTheDocument();
+  expect(within(capa1).getByRole('button', { name: /editar los campos canónicos/i })).toBeInTheDocument();
 }, 25_000);
 
 it('no afirma que falta un manual cuando el runtime no fue medido', async () => {

@@ -1,7 +1,7 @@
 import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
 import {
   avisoAntesDeGuardar, avisoDeFuente, explicarFallo, hayCambios, mensajeDeGuardado,
-  modoDeDocumento,
+  modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
 
 function doc(extra: Partial<AgentDocumentItem> = {}): AgentDocumentItem {
@@ -114,6 +114,13 @@ describe('hay cambios sin guardar', () => {
   it('un espacio al final también es un cambio', () => {
     expect(hayCambios('hola', 'hola ')).toBe(true);
     expect(hayCambios('hola', 'hola')).toBe(false);
+  });
+
+  it('restaura CRLF cuando el textarea normaliza los saltos a LF', () => {
+    expect(preserveSourceLineEndings('uno\r\ndos\r\n', 'uno\ndos editado\n'))
+      .toBe('uno\r\ndos editado\r\n');
+    expect(preserveSourceLineEndings('uno\ndos\n', 'uno\ndos editado\n'))
+      .toBe('uno\ndos editado\n');
   });
 });
 

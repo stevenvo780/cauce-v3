@@ -45,15 +45,23 @@ interface PerfilTabProps {
    */
   borrador?: Partial<AgentPerfilCampos>;
   onBorrador: (campos: Partial<AgentPerfilCampos> | undefined) => void;
+  onMutationSettled?: () => void;
+  onWriteInFlightChange?: (inFlight: boolean) => void;
+  writeInFlight?: boolean;
+  blockedByManualDraft?: boolean;
+  runtimeRefreshRevision?: number;
 }
 
-export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabProps) {
+export function PerfilTab({
+  tenantId, alias, borrador, onBorrador, onMutationSettled, onWriteInFlightChange,
+  writeInFlight = false, blockedByManualDraft = false, runtimeRefreshRevision = 0,
+}: PerfilTabProps) {
   const api = useApi();
   const perfil = useResource(
     `perfil-${tenantId}-${alias}`, () => api.getAgentPerfil(tenantId, alias),
   );
   const access = useResource('console-access', () => api.getConsoleAccess());
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setLocalBusy] = useState(false);
   const [aviso, setAviso] = useState<{ text: string; tone: TonoAviso }>();
   const [ficheroAbierto, setFicheroAbierto] = useState<string>();
 
@@ -91,12 +99,18 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   const aplicable = ficheros.length > 0;
   const destinos = destinosDelArnes(perfil.data?.harness, ficheros);
   const sinDestino = motivoSinDestino(destinos);
+  const busy = localBusy || writeInFlight;
 
   // The persistence state speaks about the previous text. As soon as it is edited again, it no
   // longer describes the visible draft and is withdrawn. The red is kept: the rejection is still true.
   useEffect(() => {
     if (sucio) setAviso((actual) => (actual?.tone === 'error' ? actual : undefined));
   }, [sucio]);
+
+  const reloadProfile = perfil.reload;
+  useEffect(() => {
+    if (runtimeRefreshRevision > 0) void reloadProfile();
+  }, [reloadProfile, runtimeRefreshRevision]);
 
   if (perfil.loading && !perfil.data) {
     return <p className="muted">Leyendo el perfil del alias y componiendo sus ficheros…</p>;
@@ -122,6 +136,14 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
   }
 
   async function guardar() {
+    if (blockedByManualDraft) {
+      setAviso({
+        tone: 'error',
+        text: 'Hay un borrador sin guardar en el manual. Guardalo o descartalo antes de aplicar '
+          + 'los campos canónicos; así su SHA base no queda obsoleto ni se pierde texto.',
+      });
+      return;
+    }
     if (estadoPermiso !== 'allowed') {
       setAviso({
         tone: 'error',
@@ -154,7 +176,8 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       return;
     }
     setAviso(undefined);
-    setBusy(true);
+    setLocalBusy(true);
+    onWriteInFlightChange?.(true);
     try {
       const expectedRevision = perfil.data?.exists === true ? (perfil.data.revision ?? null) : null;
       const result = await api.putAgentPerfil(
@@ -232,7 +255,9 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
               + 'el borrador se conserva.',
       });
     } finally {
-      setBusy(false);
+      setLocalBusy(false);
+      onMutationSettled?.();
+      onWriteInFlightChange?.(false);
     }
   }
 
@@ -243,7 +268,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
       <section className="perfil-editor">
         <header className="perfil-cabecera">
           <div>
-            <h4>Perfil de {alias}</h4>
+            <h4>Campos canónicos de {alias}</h4>
             <p className="muted perfil-ayuda">
               Esto es lo FIJO del alias y va a su fichero de arnés, no al sobre de cada mensaje.
               Entre turnos sólo debería viajar lo que fluctúa.
@@ -370,6 +395,12 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
             confirmar una aplicación completa.
           </p>
         ) : null}
+        {blockedByManualDraft ? (
+          <p className="perfil-aviso perfil-aviso-parcial" role="status">
+            Hay un borrador manual pendiente. Guardalo o descartalo antes de aplicar estos campos;
+            el perfil cambia el mismo fichero y volvería obsoleta su huella CAS.
+          </p>
+        ) : null}
 
         <button
           type="button"
@@ -377,7 +408,7 @@ export function PerfilTab({ tenantId, alias, borrador, onBorrador }: PerfilTabPr
           disabled={soloLectura || busy || !presenciaConocida || !revisionCoherente
             || !estadoConocido || !runtimeActual || runtimeNoVerificado
             || !agenteHabilitado || !aplicable
-            || (!sucio && !pendiente) || fuera.length > 0}
+            || blockedByManualDraft || (!sucio && !pendiente) || fuera.length > 0}
           onClick={() => { void guardar(); }}
         >
           <Save size={16} aria-hidden />
