@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { AttachmentContentSchema, AttachmentsV1Schema } from '@cauce/protocol';
 import type { SuppressionReason } from './addressing.js';
 import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
+import { logJsonLine } from './logging.js';
 import { redactSecretsDeep } from './redaction.js';
 import type { transcribeAudio, TranscriptionConfig } from './transcription.js';
 import type {
@@ -15,14 +16,10 @@ import type {
 import { safeText } from './untrusted.js';
 
 export { positiveTelegramId as id } from './validation.js';
+export { logJsonLine };
 
 /** Injection point for tests; in production it is always the real HTTP client. */
 export type Transcriber = typeof transcribeAudio;
-
-/** Same shape the dispatcher uses: one JSON object per line on stderr. */
-export function logJsonLine(record: Record<string, unknown>): void {
-  console.error(JSON.stringify(record));
-}
 
 export function conversationId(value: unknown): string | undefined {
   return Number.isSafeInteger(value) && Number(value) !== 0 ? String(value) : undefined;

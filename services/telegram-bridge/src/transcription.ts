@@ -1,5 +1,5 @@
 /** Transcripcion de audio contra un servicio compatible con la API de OpenAI. */
-import { logJsonLine } from './ingress-body.js';
+import { logJsonLine } from './logging.js';
 
 /** Cuanto del cuerpo de error del servicio se conserva para el registro. */
 const MAX_ERROR_BODY_CHARS = 500;

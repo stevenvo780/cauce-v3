@@ -1,11 +1,17 @@
 import type {
   FleetActivityAgent,
+  FleetActivitySnapshot,
   FleetActivityThresholds,
 } from '../../api/types';
 import {
+  agentKey,
+  delegationEdges,
   humanSeconds,
+  origenesDeAgente,
   plural,
+  type DelegationEdge,
   type Pulse,
+  type PulseMap,
   type OrigenEncargo,
 } from './agent-state-helpers';
 
@@ -67,10 +73,6 @@ export const STATE_ACCENT: Record<LiveState, string> = {
 
 /** How long a transient state stays on screen before falling to the stable state. */
 export const BURST_MS = 4500;
-
-export function agentKey(agent: { tenant_id: string; alias: string }): string {
-  return `${agent.tenant_id}/${agent.alias}`;
-}
 
 export interface LiveAgentView {
   key: string;
@@ -232,6 +234,57 @@ export function stateTally(views: readonly LiveAgentView[]): Record<LiveState, n
   return tally;
 }
 
+export function buildLiveViews(
+  snapshot: FleetActivitySnapshot | undefined,
+  pulses: PulseMap,
+  nowMs: number,
+): { views: LiveAgentView[]; edges: DelegationEdge[] } {
+  const edges = delegationEdges(snapshot);
+  const outgoing = new Map<string, string[]>();
+  const incoming = new Map<string, string[]>();
+  for (const edge of edges) {
+    outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge.to]);
+    incoming.set(edge.to, [...(incoming.get(edge.to) ?? []), edge.from]);
+  }
+
+  const agents = snapshot?.agents ?? [];
+  const known = new Set(agents.map(agentKey));
+
+  const views = agents.map((agent) => {
+    const key = agentKey(agent);
+    const delegatesTo = [...new Set(outgoing.get(key) ?? [])];
+    const { state, reason, overloaded } = liveState(agent, {
+      pulses: pulses[key],
+      delegatesTo,
+      thresholds: snapshot?.thresholds,
+      nowMs,
+    });
+    return {
+      key,
+      tenantId: agent.tenant_id,
+      alias: agent.alias,
+      displayName: agent.display_name,
+      harnessId: agent.harness_id,
+      state,
+      reason,
+      overloaded,
+      inFlight: agent.in_flight ?? 0,
+      queued: agent.queued ?? 0,
+      oldestInFlightSeconds: agent.oldest_in_flight_seconds,
+      secondsSinceLastAck: agent.seconds_since_last_ack,
+      delegatesTo,
+      delegatedFrom: [...new Set(incoming.get(key) ?? [])],
+      flags: agent.flags ?? [],
+      closed24h: typeof agent.closed_24h === 'number' ? agent.closed_24h : undefined,
+      rooms: agent.rooms ?? [],
+      origenes: origenesDeAgente(agent, known),
+      agent,
+    } satisfies LiveAgentView;
+  });
+
+  return { views, edges };
+}
+
 // ==============================================================================================
 // The verdict, and what is needed to be able to issue it honestly.
 // ==============================================================================================
@@ -340,6 +393,7 @@ export function fleetVerdict(views: readonly LiveAgentView[], input: VerdictInpu
 }
 
 export {
+  agentKey,
   aliasDe,
   plural,
   humanSeconds,
@@ -353,7 +407,6 @@ export {
   type Pulse,
   type PulseMap,
   detectPulses,
-  buildLiveViews,
   type EdgeAggregate,
   edgePairKey,
   aggregateEdges,

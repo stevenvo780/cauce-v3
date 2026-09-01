@@ -7,7 +7,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const files = execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(Boolean);
-const esFuente = f => /\.(ts|tsx|mjs|cjs|py|sh|yaml|yml|json|conf)$/.test(f) && !f.includes('node_modules');
+const esFuente = f => /\.(ts|tsx|mjs|cjs|py|sh|yaml|yml|json|conf)$/.test(f)
+  && !f.includes('node_modules')
+  && !f.startsWith('docs/diagramas/');
 const contenido = {};
 for (const f of files) { if (esFuente(f)) try { contenido[f] = readFileSync(f, 'utf8'); } catch { /* ilegible: fuera del grafo */ } }
 
@@ -70,8 +72,20 @@ const huerfanos = Object.keys(contenido).filter(f =>
 const hubs = [...entrantes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 const top = [...aristas.entries()].sort((a, b) => b[1] - a[1]);
 
-let md = `# Grafo de dependencias del repo\n\nGenerado por \`pnpm grafo\` (determinista — regenerar tras reordenar). Nodo = directorio; arista A→B = ficheros de A que referencian ficheros de B (peso = nº de referencias).\n\n## El grafo (aristas con peso ≥2)\n\n\`\`\`mermaid\ngraph LR\n`;
-for (const [k, v] of top) if (v >= 2) md += `  ${k.replace(/[/.()-]/g, '_').replace(' --> ', ' --> ')}\n`.replace(/(\w+) --> (\w+)/, `$1 -->|${v}| $2`);
+function mermaidId(value) {
+  return `node_${value.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+}
+
+function mermaidLabel(value) {
+  return value.replaceAll('"', '&quot;');
+}
+
+let md = `# Grafo de dependencias del repo\n\nGenerado por \`pnpm grafo\` (determinista — regenerar tras reordenar). Nodo = directorio; arista A→B = ficheros de A que referencian ficheros de B (peso = nº de referencias). Mapa navegable: [Arquitectura visual de Cauce V3](diagramas/cauce-v3.architecture.html).\n\n## El grafo (aristas con peso ≥2)\n\n\`\`\`mermaid\ngraph LR\n`;
+for (const [key, weight] of top) {
+  if (weight < 2) continue;
+  const [from, to] = key.split(' --> ');
+  md += `  ${mermaidId(from)}["${mermaidLabel(from)}"] -->|${weight}| ${mermaidId(to)}["${mermaidLabel(to)}"]\n`;
+}
 md += '```\n\n## Aristas completas\n\n| Desde | Hacia | Refs |\n|---|---|---|\n';
 for (const [k, v] of top) { const [a, b] = k.split(' --> '); md += `| ${a} | ${b} | ${v} |\n`; }
 md += '\n## Hubs (los 15 ficheros más referenciados)\n\n';
