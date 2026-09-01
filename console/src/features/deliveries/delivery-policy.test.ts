@@ -45,4 +45,3 @@ describe('delivery lifecycle policy', () => {
     expect(deliveryPolicy(undefined).cancellable).toBe(false);
   });
 });
-

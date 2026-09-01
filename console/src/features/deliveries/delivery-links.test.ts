@@ -8,4 +8,3 @@ it('builds a queue deep link only for a canonical durable delivery id', () => {
   expect(queueDeliveryPath('delivery-without-contract')).toBeUndefined();
   expect(queueDeliveryPath(null)).toBeUndefined();
 });
-

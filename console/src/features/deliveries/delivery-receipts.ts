@@ -36,4 +36,3 @@ export function exactCancelReceipt(value: unknown, deliveryId: string): boolean 
     && PARENT_NOTICE.has(result.parent_notice ?? '')
     && typeof result.origin_relayed === 'boolean';
 }
-

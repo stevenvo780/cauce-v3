@@ -6,4 +6,3 @@ export function queueDeliveryPath(deliveryId: unknown): string | undefined {
     ? `/queues?delivery=${encodeURIComponent(deliveryId)}`
     : undefined;
 }
-
