@@ -16,7 +16,8 @@ export type FleetActivityFlag =
   | 'lease_expired'
   | 'never_connected'
   | 'unregistered'
-  | 'queued_without_consumer';
+  | 'queued_without_consumer'
+  | 'claimed_not_started';
 
 export interface FleetActivityThresholds {
   saturation_in_flight?: number | null;

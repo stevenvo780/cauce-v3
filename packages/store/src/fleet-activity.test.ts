@@ -5,16 +5,16 @@ import {
 } from './fleet-activity.js';
 
 /**
- * The four cases come from the real example in the GET /v3/console/activity contract (kant,
- * midas, atlas, salva): they are the regression vector against which the heuristic was validated
- * before a single line of SQL was written, so they are pinned here as-is so a future change
- * cannot silently break the diagnosis that motivated the whole panel.
+ * The four cases come from the real GET /v3/console/activity contract example (kant, midas,
+ * atlas, salva): the regression vector the heuristic was validated against before a line of SQL
+ * existed, pinned as-is so a change cannot silently break the diagnosis behind the whole panel.
  */
 describe('agentWorkState', () => {
   it('kant: trabajando sano -- en vuelo, ACKs recientes, sin overdue', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 3, queued: 1, overdue_in_flight: 0,
-      seconds_since_last_ack: 12, lease_online: true
+      seconds_since_last_ack: 12, lease_online: true,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS)).toEqual({ work_state: 'working', flags: [] });
   });
@@ -22,7 +22,8 @@ describe('agentWorkState', () => {
   it('midas: el caso del incidente -- saturado Y colgado a la vez, las dos flags sobreviven', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 41, queued: 12, overdue_in_flight: 41,
-      seconds_since_last_ack: 1268, lease_online: false
+      seconds_since_last_ack: 1268, lease_online: false,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('stalled');
@@ -32,7 +33,8 @@ describe('agentWorkState', () => {
   it('atlas: cola sin nadie consumiendo, lease vencido, cero en vuelo', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 8, overdue_in_flight: 0,
-      seconds_since_last_ack: null, lease_online: false
+      seconds_since_last_ack: null, lease_online: false,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('queued');
@@ -42,7 +44,8 @@ describe('agentWorkState', () => {
   it('salva: idle real -- sin trabajo en vuelo, un ACK viejo no lo marca como colgado', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0,
-      seconds_since_last_ack: 799, lease_online: true
+      seconds_since_last_ack: 799, lease_online: true,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS)).toEqual({ work_state: 'idle', flags: [] });
   });
@@ -50,7 +53,8 @@ describe('agentWorkState', () => {
   it('nunca conectado: sin fila de lease, se distingue de un lease vencido', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 0, queued: 0, overdue_in_flight: 0,
-      seconds_since_last_ack: null, lease_online: null
+      seconds_since_last_ack: null, lease_online: null,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('idle');
@@ -60,7 +64,8 @@ describe('agentWorkState', () => {
   it('no registrado: aparece por deliveries o lease pero no está en el registro de agentes', () => {
     const row: FleetActivityWorkStateInput = {
       registered: false, in_flight: 5, queued: 0, overdue_in_flight: 0,
-      seconds_since_last_ack: 5, lease_online: true
+      seconds_since_last_ack: 5, lease_online: true,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
     expect(result.work_state).toBe('working');
@@ -70,7 +75,8 @@ describe('agentWorkState', () => {
   it('saturado exactamente en el umbral configurado', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 8, queued: 0, overdue_in_flight: 0,
-      seconds_since_last_ack: 1, lease_online: true
+      seconds_since_last_ack: 1, lease_online: true,
+      claimed_not_started: 0, oldest_in_flight_seconds: 1
     };
     const result = agentWorkState(row, { ...DEFAULT_FLEET_ACTIVITY_THRESHOLDS, saturation_in_flight: 8 });
     expect(result.work_state).toBe('saturated');
@@ -79,10 +85,9 @@ describe('agentWorkState', () => {
 });
 
 /**
- * No-leak contract for GET /v3/console/activity, verifiable WITHOUT Postgres: the SQL text is
- * the single source of truth of which columns travel, so it is enough to inspect it. It does not
- * replace an integration test (which cannot run on this machine), but it does prevent someone
- * from adding "d.result" or "m.body" to this query without a test noticing.
+ * No-leak contract for GET /v3/console/activity, verifiable WITHOUT Postgres: the SQL text is the
+ * single source of truth of which columns travel. No substitute for an integration test, but it
+ * stops someone adding "d.result" or "m.body" to this query unnoticed.
  */
 describe('FLEET_ACTIVITY_QUERY contract', () => {
   it('nunca selecciona cuerpos de mensajes, resultados de entrega ni el conversation_id de origen', () => {
@@ -97,5 +102,28 @@ describe('FLEET_ACTIVITY_QUERY contract', () => {
     expect(FLEET_ACTIVITY_QUERY).not.toMatch(/FOR\s+(SHARE|UPDATE)/i);
     expect(FLEET_ACTIVITY_QUERY).not.toMatch(/\bOVER\s*\(/i);
     expect(FLEET_ACTIVITY_QUERY).not.toMatch(/\brow_number\s*\(/i);
+  });
+
+  // zeus 01-09 murió tras `hello_ack`: reclamó y nunca corrió; 8h52m se leyeron como `idle`.
+  it('zeus: reclamó y nunca empezó -- deja de leerse como libre', () => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 2, queued: 0, overdue_in_flight: 0,
+      seconds_since_last_ack: 30, lease_online: true,
+      claimed_not_started: 2, oldest_in_flight_seconds: 3_100
+    };
+    const result = agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS);
+    expect(result.work_state).toBe('stalled');
+    expect(result.flags).toContain('claimed_not_started');
+  });
+
+  // CONTROL NEGATIVO: sin la antigüedad, esto se dispararía en toda la flota.
+  it('una reclamación recién tomada NO es un fallo', () => {
+    const row: FleetActivityWorkStateInput = {
+      registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
+      seconds_since_last_ack: 5, lease_online: true,
+      claimed_not_started: 1, oldest_in_flight_seconds: 1
+    };
+    expect(agentWorkState(row, DEFAULT_FLEET_ACTIVITY_THRESHOLDS))
+      .toEqual({ work_state: 'working', flags: [] });
   });
 });

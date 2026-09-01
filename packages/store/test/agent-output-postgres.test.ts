@@ -299,7 +299,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       relay_kind: 'ack',
       terminal: false,
       outcome: 'ack',
-      reply: 'Recibido; estoy trabajando en ello.',
+      reply: 'Recibido por el bus; en cola para el agente.',
       root_message_id: first.message_id
     }]);
   });
@@ -2095,7 +2095,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
       {
         idempotency_key: `relay-ack:${root.delivery.message_id}`,
         delivery_id: root.delivery.delivery_id,
-        reply: 'Recibido; estoy trabajando en ello.'
+        reply: 'Recibido por el bus; en cola para el agente.'
       },
       {
         idempotency_key: `relay:${root.delivery.delivery_id}`,
@@ -2483,7 +2483,7 @@ describe('transactional StructuredOutput.messages materialization', () => {
         outcome: 'ack',
         error: null,
         error_code: null,
-        result_reply: 'Recibido; estoy trabajando en ello.'
+        result_reply: 'Recibido por el bus; en cola para el agente.'
       },
       {
         idempotency_key: `relay:${delivery.delivery_id}`,

@@ -136,10 +136,19 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       const inFlight = Number(row.in_flight ?? 0);
       const queued = Number(row.queued ?? 0);
       const overdueInFlight = Number(row.overdue_in_flight ?? 0);
+      const claimedNotStarted = Number(row.claimed_not_started ?? 0);
+      const oldestInFlightSeconds = row.oldest_in_flight_seconds === null
+        || row.oldest_in_flight_seconds === undefined
+        ? null : Number(row.oldest_in_flight_seconds);
       const registered = row.registered === true;
 
       const { work_state, flags } = agentWorkState(
-        { registered, in_flight: inFlight, queued, overdue_in_flight: overdueInFlight, seconds_since_last_ack: secondsSinceLastAck, lease_online: leaseOnline },
+        {
+          registered, in_flight: inFlight, queued, overdue_in_flight: overdueInFlight,
+          claimed_not_started: claimedNotStarted,
+          oldest_in_flight_seconds: oldestInFlightSeconds,
+          seconds_since_last_ack: secondsSinceLastAck, lease_online: leaseOnline,
+        },
         thresholds
       );
 

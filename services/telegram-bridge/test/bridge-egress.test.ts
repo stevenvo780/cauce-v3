@@ -70,7 +70,7 @@ describe('Telegram fenced egress', () => {
         outcome: 'ack',
         result: {
           output: {
-            reply: 'Recibido; estoy trabajando en ello.',
+            reply: 'Recibido por el bus; en cola para el agente.',
             messages: [],
             status: 'done',
             retryable: false,
@@ -93,7 +93,7 @@ describe('Telegram fenced egress', () => {
 
     expect(api.sends).toEqual([{
       chat: '201',
-      text: 'Recibido; estoy trabajando en ello.',
+      text: 'Recibido por el bus; en cola para el agente.',
       options: { parse_mode: 'html' },
       arity: 3
     }]);

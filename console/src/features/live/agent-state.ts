@@ -148,6 +148,15 @@ function decidirEstado(
     return { state: 'down', reason: 'El lease venció. El adaptador no está sosteniendo la conexión.', overloaded };
   }
 
+  if (flags.includes('claimed_not_started')) { // Never STARTED: «no la cerró» would mislead.
+    const age = agent.oldest_in_flight_seconds;
+    const desde = typeof age === 'number' ? ` hace ${humanSeconds(age)}` : '';
+    return {
+      state: 'blocked',
+      reason: `Tomó trabajo${desde} y nunca lo empezó: no está recibiendo. Revisá su adaptador.`,
+      overloaded,
+    };
+  }
   if (agent.work_state === 'stalled') {
     const age = agent.oldest_in_flight_seconds;
     return {

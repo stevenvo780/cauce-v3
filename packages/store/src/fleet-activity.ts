@@ -5,14 +5,14 @@
 export interface FleetActivityThresholds {
   /** How many in-flight deliveries make an agent be considered saturated. */
   saturation_in_flight: number;
-  /** Seconds without an applied ACK after which an agent is considered stalled. */
-  stall_after_seconds: number;
+  stall_after_seconds: number; // Seconds without an applied ACK before an agent counts as stalled.
   /** Seconds window within which an ACK counts as recent. */
   ack_recent_seconds: number;
   /** Look-back window in seconds for the last applied ACK. */
   ack_lookback_seconds: number;
   /** Cap of in-flight deliveries detailed per alias in in_flight_items. */
   items_per_agent: number;
+  start_after_seconds: number; // A claim unstarted beyond this means the alias is not consuming.
 }
 
 export const DEFAULT_FLEET_ACTIVITY_THRESHOLDS: FleetActivityThresholds = {
@@ -20,7 +20,8 @@ export const DEFAULT_FLEET_ACTIVITY_THRESHOLDS: FleetActivityThresholds = {
   stall_after_seconds: 300,
   ack_recent_seconds: 300,
   ack_lookback_seconds: 3600,
-  items_per_agent: 10
+  items_per_agent: 10,
+  start_after_seconds: 60  // Healthy claims are unstarted for ms: without a delay it always fires.
 };
 
 export const FLEET_WORK_STATES = ['idle', 'queued', 'working', 'saturated', 'stalled'] as const;
@@ -28,7 +29,7 @@ export type FleetWorkState = (typeof FLEET_WORK_STATES)[number];
 
 export const FLEET_ACTIVITY_FLAGS = [
   'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired',
-  'never_connected', 'unregistered', 'queued_without_consumer'
+  'never_connected', 'unregistered', 'queued_without_consumer', 'claimed_not_started'
 ] as const;
 export type FleetActivityFlag = (typeof FLEET_ACTIVITY_FLAGS)[number];
 
@@ -38,6 +39,8 @@ export interface FleetActivityWorkStateInput {
   in_flight: number;
   queued: number;
   overdue_in_flight: number;
+  claimed_not_started: number;
+  oldest_in_flight_seconds: number | null; // null when nothing is in flight.
   /** Seconds since the last applied ACK, or null if none was recorded within the window. */
   seconds_since_last_ack: number | null;
   /** true = lease in force, false = lease expired, null = no lease recorded. */
@@ -58,7 +61,11 @@ export function agentWorkState(
   thresholds: FleetActivityThresholds = DEFAULT_FLEET_ACTIVITY_THRESHOLDS
 ): FleetActivityWorkStateResult {
   const ackIsStale = row.seconds_since_last_ack === null || row.seconds_since_last_ack > thresholds.stall_after_seconds;
-  const stalled = row.in_flight > 0 && (row.overdue_in_flight > 0 || ackIsStale);
+  // Handed work, never began: an 8h52m outage read `idle` because only ACK staleness counted.
+  const noEmpieza = row.claimed_not_started > 0
+    && row.oldest_in_flight_seconds !== null
+    && row.oldest_in_flight_seconds > thresholds.start_after_seconds;
+  const stalled = noEmpieza || (row.in_flight > 0 && (row.overdue_in_flight > 0 || ackIsStale));
   const saturated = row.in_flight >= thresholds.saturation_in_flight;
 
   const work_state: FleetWorkState = stalled
@@ -79,6 +86,7 @@ export function agentWorkState(
   if (row.lease_online === null) flags.push('never_connected');
   if (!row.registered) flags.push('unregistered');
   if (row.in_flight === 0 && row.queued > 0) flags.push('queued_without_consumer');
+  if (noEmpieza) flags.push('claimed_not_started');
 
   return { work_state, flags };
 }

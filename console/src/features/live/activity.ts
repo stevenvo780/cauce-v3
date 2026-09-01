@@ -37,6 +37,7 @@ export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   never_connected: 'Nunca conectó',
   unregistered: 'Fuera del registro',
   queued_without_consumer: 'Cola sin quien la consuma',
+  claimed_not_started: 'Tomó y no empezó',
 };
 
 export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
@@ -47,6 +48,7 @@ export const FLAG_TONE: Record<FleetActivityFlag, BadgeTone> = {
   never_connected: 'unknown',
   unregistered: 'unknown',
   queued_without_consumer: 'warning',
+  claimed_not_started: 'danger',
 };
 
 /**
