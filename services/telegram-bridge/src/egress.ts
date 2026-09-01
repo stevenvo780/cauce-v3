@@ -105,13 +105,22 @@ export function unwrapStructuredEnvelope(value: string): string | undefined {
   if (envelope === undefined || !('reply' in envelope)) return value;
   if (!ENVELOPE_KEYS.some((key) => key in envelope)) return value;
 
-  // `reply` is what the agent meant to say. When it is empty —happens when the model wrote its
-  // message as prose and left the field null— the prose that ended up before the object counts.
+  // `reply` is what the agent meant to say; when the model wrote prose and left it null, the
+  // prose before the object counts.
   if (hasVisibleText(envelope.reply)) return envelope.reply;
   const prose = bare.slice(0, opening).trim();
   // Confirmed envelope, no `reply`, no prose: there is nothing human to publish. Returning
   // `value` here would re-emit the raw JSON into the chat.
   return hasVisibleText(prose) ? prose : undefined;
+}
+
+/** Exhausted attempts never reached the agent: the person must resend. */
+function textoDeEntregaMuerta(payload: Record<string, unknown>): string {
+  const code = typeof payload.error_code === 'string' && payload.error_code.length > 0
+    ? payload.error_code
+    : typeof payload.error === 'string' ? payload.error : 'sin causa registrada';
+  return 'Tu mensaje no llegó al agente: agotó los reintentos y se descartó. '
+    + `Reenvíalo cuando el agente vuelva a estar disponible. (causa: ${code})`;
 }
 
 function candidate(payload: Record<string, unknown>): string | undefined {
@@ -121,11 +130,11 @@ function candidate(payload: Record<string, unknown>): string | undefined {
     output?.reply, result?.reply,
     result?.text, result?.content, result?.message,
     payload.text, payload.content, payload.message,
+    payload.outcome === 'dead' ? textoDeEntregaMuerta(payload) : undefined,
     typeof payload.error === 'string' ? `Error: ${payload.error}` : undefined
   ];
-  // Walked in preference order rather than with a `find`: if the preferred candidate turns out
-  // to be an empty envelope, unwrapping it leaves no text, and keeping it would publish a blank
-  // message while a worse but legible candidate sits below (typically `result.text`).
+  // Preference order, not `find`: an empty envelope unwraps to nothing, and keeping it would
+  // publish a blank message while a worse but legible candidate sits below.
   for (const value of values) {
     if (!hasVisibleText(value)) continue;
     const unwrapped = unwrapStructuredEnvelope(value);

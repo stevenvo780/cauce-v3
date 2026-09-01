@@ -68,6 +68,21 @@ describe('Telegram egress text extraction', () => {
     })).toEqual(['Error: adapter failed']);
   });
 
+  it('una entrega muerta se explica y pide reenviar, no vuelca el error crudo', () => {
+    const [texto] = telegramTextChunks({
+      outcome: 'dead', error: 'ACK timeout: max attempts exhausted', error_code: 'ACK_TIMEOUT'
+    });
+    expect(texto).not.toMatch(/^Error: /);
+    expect(texto).toContain('no llegó al agente');
+    expect(texto).toContain('Reenvíalo');
+    expect(texto).toContain('ACK_TIMEOUT');
+  });
+
+  it('un fallo que NO es entrega muerta conserva el error crudo', () => {
+    expect(telegramTextChunks({ outcome: 'failed', error: 'adapter failed' }))
+      .toEqual(['Error: adapter failed']);
+  });
+
   it('does not treat zero-width, combining-mark-only, or control-only replies as visible Telegram content', () => {
     expect(telegramTextChunks({
       result: { output: { reply: '\u200B\u2060\u0000' } },

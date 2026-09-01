@@ -30,7 +30,8 @@ import {
 } from './contracts.js';
 import { reconstructPublishReceipt } from './receipts.js';
 
-const telegramRelayAcknowledgement = 'Recibido; estoy trabajando en ello.';
+// The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
+const telegramRelayAcknowledgement = 'Recibido por el bus; en cola para el agente.';
 const ackVentanaSilencioMs = 10 * 60 * 1000;
 
 function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
@@ -40,8 +41,7 @@ function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
 }
 
 export abstract class MessagePublishingRepository extends ConfigRepository {
-  // Verify receipt IDs against locked durable rows, not the digest carried by that same receipt.
-  // This independently authenticates the exact idempotency tuple.
+  // Verify receipt IDs against locked durable rows, never that receipt's own digest.
   async verifyPublishReceipt(input: PublishMessage, candidate: PublishResult): Promise<boolean> {
     const parsed = PublishResultSchema.safeParse(candidate);
     if (!parsed.success) return false;
