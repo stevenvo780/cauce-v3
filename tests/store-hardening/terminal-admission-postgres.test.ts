@@ -1,3 +1,4 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +24,7 @@ const TICKET_KEY = Buffer.alloc(32, 7);
 const RELAY_INSTANCE_ID = 'a'.repeat(64);
 const RELAY_BOOT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let app!: FastifyInstance;
 let directory!: string;
@@ -174,8 +176,9 @@ async function allowAuditAgain(): Promise<void> {
   await pool.query('DROP TRIGGER IF EXISTS cauce_test_terminal_audit_fail ON audit_events');
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
@@ -206,6 +209,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (!databaseStarted) return;
   await app.close();
   await rm(directory, { recursive: true, force: true });
   await pool.query('DROP TRIGGER IF EXISTS cauce_test_terminal_insert_delay ON terminal_sessions');
@@ -214,6 +218,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.query('DROP FUNCTION IF EXISTS cauce_test_terminal_insert_delay()');
   await pool.end();
   await database.container.stop();

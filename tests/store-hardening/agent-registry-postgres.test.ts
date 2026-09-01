@@ -1,5 +1,6 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
@@ -9,11 +10,13 @@ import {
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
 }, 120_000);
@@ -32,6 +35,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

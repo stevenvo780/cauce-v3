@@ -1,3 +1,4 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Readable } from 'node:stream';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
@@ -15,6 +16,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const collector = join(repository, 'ops/scripts/gate-collector.mjs');
 const migrationGate = join(repository, 'ops/scripts/migration-gate.mjs');
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let temporary: string;
 let inventory: string;
@@ -142,8 +144,9 @@ async function waitUntilCollectorBlocks(timeoutMs = 10_000) {
   throw new Error('collector did not reach the deterministic table-lock barrier');
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   temporary = await mkdtemp(join(tmpdir(), 'cauce-gate-collector-postgres-'));
   inventory = join(temporary, 'inventory.json');
@@ -159,6 +162,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await rm(temporary, { recursive: true, force: true });
   await pool.end();
   await database.container.stop();

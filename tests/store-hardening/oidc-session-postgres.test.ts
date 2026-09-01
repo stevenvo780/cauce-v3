@@ -1,17 +1,21 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { applyMigrations } from '@cauce/store';
 import { PostgresOidcSessionStore, type OidcSession, type PendingOidcLogin } from '../../services/gateway/src/oidc-bff.js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 describe('migration 006 OIDC session DDL', () => {
   let database: TestDatabase | undefined;
+  let databaseStarted = false;
 
-  beforeAll(async () => {
+  preparePostgresSuite(import.meta.url, async () => {
     database = await startTestDatabase();
+    databaseStarted = true;
   });
 
   afterAll(async () => {
+    if (!databaseStarted) return;
     if (!database) return;
     await database.pool.end();
     await database.container.stop();

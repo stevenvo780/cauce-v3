@@ -1,5 +1,6 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   AGENT_PROFILE_LIMITS, AgentConfigMutationSchema, ConfigMutationSchema,
   ROLE_BRIEF_MAX_CODE_POINTS, WsOutboundSchema, clampToRoleBriefLimit, countCodePoints,
@@ -11,6 +12,7 @@ import {
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 let profiles: AgentProfileRepository;
@@ -18,14 +20,16 @@ let profiles: AgentProfileRepository;
 const actor = { tenant_id: 'Steven', alias: 'kant' } as const;
 const edgeRole = `${'a'.repeat(1_100)}${'🎉'.repeat(100)}`;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
   profiles = new AgentProfileRepository(pool);
-}, 120_000);
+}, 120_000, ['el recorte de compatibilidad no parte un par suplente']);
 
 beforeEach(async () => {
+  if (!databaseStarted) return;
   await resetTestDatabase(pool);
   await pool.query(`
     TRUNCATE config_revisions RESTART IDENTITY;
@@ -44,6 +48,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

@@ -1,3 +1,4 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 /**
  * Regression of quota ingest (`recordQuotaSample`).
  *
@@ -10,24 +11,27 @@
  * This matters for account rotation: without samples there is no exhaustion detection, and
  * without that the selector has no way to know a subscription ran out.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { QuotaSampleRequest } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
 const CAPTURED_AT = new Date().toISOString();
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
 }, 180_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

@@ -1,3 +1,4 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 /**
  * Coverage of the account selector (packages/store/src/accounts.ts).
  *
@@ -6,13 +7,14 @@
  * and the manual-pause defense lives ENTIRELY in the WHERE of an UPDATE. A mock of `pg` would have
  * passed with the broken `ON CONFLICT` that this same patch fixes.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   selectAccountForAlias, AUTOMATIC_PAUSE_PREFIX, type DatabasePool
 } from '@cauce/store';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 
 /** Fixed clock: selection depends on `paused_until > now` and `reset_at > now`, so a real
@@ -21,12 +23,14 @@ const NOW = new Date('2026-07-28T12:00:00.000Z');
 const IN_AN_HOUR = new Date('2026-07-28T13:00:00.000Z');
 const AN_HOUR_AGO = new Date('2026-07-28T11:00:00.000Z');
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 180_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

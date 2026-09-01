@@ -1,5 +1,6 @@
+import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   AckSchema, HUMAN_CHAT_PRIORITY, TenantSchema, type PublishMessage,
 } from '@cauce/protocol';
@@ -10,11 +11,10 @@ import { PostgresTelegramBridgeRepository } from '../../services/telegram-bridge
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../helpers/postgres.js';
-
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
-
 function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   return {
     version: '3.0',
@@ -31,7 +31,6 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
     ...overrides
   };
 }
-
 async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -40,14 +39,14 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_00
   }
   throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
-
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
-}, 120_000);
-
+}, 120_000, ['makes delivery claim token and attempt mandatory in the ACK protocol']);
 beforeEach(async () => {
+  if (!databaseStarted) return;
   await resetTestDatabase(pool);
   await pool.query(
     'TRUNCATE delivery_lane_fairness,job_lane_fairness,outbox_dead_letters CASCADE',
@@ -65,6 +64,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });
