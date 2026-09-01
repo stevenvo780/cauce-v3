@@ -14,10 +14,13 @@ Todo commit que toque código **debe pasar el gate antes de hacer commit**. Comm
 |---|---|---|
 | `pnpm typecheck` | TypeScript strict (core, adapter, mcp, console) | Cada commit |
 | `pnpm lint` | ESLint por zona + `lint:estricto:zonas` (console, terminal-relay, telegram-bridge, dispatcher, tests) + `ruff check` (Python) + ratchet `scripts/calidad.mjs` | Cada commit |
+| `pnpm lint:cycles` | AST de imports/reexportaciones runtime, incluidas entradas del workspace; baseline cero de ciclos | Dentro de `pnpm lint` |
 | `pnpm test:unit` | Gate rápido: protocol, adapter-sdk, mcp, console, `tests/unit` | Cada commit |
-| `pnpm test` (`scripts/test-all.mjs`) | Gate completo: orquesta 8 suites secuenciales, verifica que no haya scripts `test:*` huérfanos | Gate completo |
-| `ops/scripts/validate.sh` | Sintaxis de `.sh`/`.mjs` en ops+deploy, shellcheck, YAML/JSON Schema de manifiestos, paridad byte-a-byte G-SNAP | Al tocar fleet/ops |
+| `pnpm test` (`scripts/test-all.mjs`) | Gate completo: orquesta 9 suites secuenciales, verifica que no haya scripts `test:*` huérfanos | Gate completo |
+| `pnpm test:ops` | Descubre y ejecuta en serie las 31 pruebas directas de `ops/tests`; no abandona al primer rojo | Al tocar ops |
+| `ops/scripts/validate.sh` | Sintaxis de `.sh`/`.mjs` en ops+deploy, ShellCheck obligatorio, YAML/JSON Schema de manifiestos, paridad byte-a-byte G-SNAP | Al tocar fleet/ops |
 | `pnpm qa:layout` (`qa/layout-gate.mjs`) | Regresión visual en Chromium a 360/760/1100/1440/1920/2560 px — mide ancho útil, espacio muerto, overflow, scroll, enlaces sin nombre, etiquetas superpuestas | Al tocar console |
+| `pnpm arch:validate` / `pnpm arch:visual-check` | Valida la especificación Archify fijada y revisa el mapa navegable en temas y viewports múltiples | Al cambiar límites o dependencias |
 
 ## Ratchet (`scripts/calidad.mjs`)
 
@@ -29,19 +32,20 @@ Ratchet determinista controlado por `scripts/calidad-base.json`:
 | **Fechas en comentarios** | Detecta patrones de fecha — excepciones congeladas solo se reducen. |
 | **Densidad de comentarios** | Medida por archivo — solo puede disminuir. |
 
-Excepciones congeladas actuales: **21** archivos en `lineas`, **24** en `fechas`, **810** entradas acotadas en `comentarios`. Cuando un archivo mejora por debajo de su valor congelado, `calidad.mjs` falla exigiendo actualizar la línea base — las mejoras se bloquean permanentemente.
+Excepciones congeladas actuales: **21** archivos en `lineas`, **11** en `fechas`, **922** entradas acotadas en `comentarios`. Los valores existentes solo pueden bajar o conservarse; `--update` recoge una poda revisada de la línea base y las ampliaciones fallan.
 
-## Suites de test (8 suites en `scripts/test-all.mjs`)
+## Suites de test (9 suites en `scripts/test-all.mjs`)
 
 | Suite | Directorio | Qué valida |
 |---|---|---|
-| Unit | `tests/unit/` (75) | Políticas Docker, probes liveness/readiness, parseo de perfil de agente, cierre source-digest, contratos canary/gate |
+| Unit | `tests/unit/` (80) | Políticas Docker, probes liveness/readiness, parseo de perfil de agente, cierre source-digest, contratos canary/gate |
+| Operación | `ops/tests/` (31) | Generadores, CLI, supervisor, cutover, watchdog, permisos y evidencia operacional con fixtures herméticos |
 | Gateway hardening | `tests/gateway-hardening/` (19) | mTLS, admisión de entrega, correlación WS, reintentos de publish receipt, seguridad |
 | Store hardening | `tests/store-hardening/` (9) | PostgreSQL real / Testcontainers: locks, config OCC, migration ledger, admisión terminal, selección de cuentas |
 | Integration | `tests/integration/` (4) | End-to-end vertical con PostgreSQL y observabilidad |
-| E2E | `tests/e2e/` (2) | Login de console, QA real |
+| E2E | `tests/e2e/` (3) | Login de console, QA real y fixture de fan-out concurrente entre adapters |
 | Terminal PTY | `tests/terminal-pty/` (5) | Protocolo binario PTY, doubles de relay, fixtures vectoriales |
-| Package tests | `packages/*/test/` | Por paquete: protocol (unit), store (DB), adapter-sdk (689 node:test), mcp-fleet-monitor |
+| Package tests | `packages/*/test/` | Por paquete: protocol (unit), store (DB), adapter-sdk (`node:test`), mcp-fleet-monitor |
 | Service tests | `services/*/` | gateway, dispatcher, telegram-bridge, terminal-relay |
 
 ## Cobertura (`pnpm test:coverage` → `scripts/cobertura.mjs`)
@@ -82,6 +86,18 @@ líneas, nunca ramas.
 - **`--test-coverage-include` de node se aplica dos veces**, al fichero en disco y a la ruta del
   source map. Con uno solo de los dos patrones la tabla sale vacía e informa `all files 100.00`,
   que se lee como nota perfecta y no como medición que no ocurrió.
+
+El orquestador borra los `dist` relevantes antes de compilar y falla con código distinto de cero si
+un build, una suite o un informe falla. Puede imprimir una tabla parcial para diagnóstico, pero esa
+tabla nunca acredita un gate verde.
+
+## Mensajería adversarial y OpenCode
+
+El round-trip de adapters del QA real cubre fan-out de dos ramas que deben solaparse, duplicado
+idempotente, conflicto por duplicado mutado y una delegación negativa hacia un agente en línea de
+otro tenant que no aparece en `routing_targets` ni recibe entrega. `pnpm qa:opencode-cli` acredita
+solo instalación y superficie de comandos de un OpenCode real (`--version` y `run --help`) dentro de
+un HOME aislado: no hereda credenciales, no autentica, no invoca modelos y no ejecuta prompts.
 
 ## G-SNAP (paridad de snapshots generados)
 

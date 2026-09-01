@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cauce V3 — arquitectura durable entre agentes",
+    "output": "docs/diagramas/cauce-v3.architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/stevenvo780/cauce-v3",
+      "revision": "735f723b2294034ab975b9a2d1216a0578e4cdd6"
+    },
+    "viewBox": [1120, 620],
+    "views": [
+      {
+        "id": "delivery_path",
+        "label": "Entrega durable",
+        "focus": ["cli_agents", "adapter_sdk", "gateway", "postgres"],
+        "note": "El adaptador reclama por WS y el estado durable vive en PostgreSQL. OpenCode aparece como harness de QA, no como agente desplegado."
+      },
+      {
+        "id": "operator_channels",
+        "label": "Canales de operador",
+        "focus": ["web_console", "telegram_bridge", "gateway", "postgres"],
+        "note": "La consola publica vía Gateway; Telegram persiste mediante el store sobre PostgreSQL."
+      },
+      {
+        "id": "terminal_plane",
+        "label": "Plano terminal",
+        "focus": ["web_console", "gateway", "terminal_relay", "pty_agent"],
+        "note": "El relay separa navegador, gobierno y PTY con fencing propio."
+      },
+      {
+        "id": "recovery_evidence",
+        "label": "Recuperación y evidencia",
+        "focus": ["postgres", "dispatcher", "fleet_monitor", "observability"],
+        "note": "Los reintentos nacen del estado durable y dejan señales operativas."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "cli_agents",
+      "type": "external",
+      "label": "Harnesses CLI",
+      "sublabel": "Claude · Codex · OpenClaw · OpenCode",
+      "pos": [20, 200],
+      "size": [170, 70],
+      "sources": [
+        { "path": "ops/flota.json", "label": "flota derivada" }
+      ]
+    },
+    {
+      "id": "adapter_sdk",
+      "type": "backend",
+      "label": "Adapter SDK",
+      "sublabel": "claim · ACK · historial local exacto",
+      "pos": [220, 200],
+      "size": [180, 70],
+      "sources": [
+        { "path": "packages/adapter-sdk/src/sdk/engine.ts", "label": "motor consumidor" },
+        { "path": "packages/adapter-sdk/src/sdk/durable-store.ts", "label": "estado local" }
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "security",
+      "label": "Gateway HTTP + WS",
+      "sublabel": "identidad · ACL · publish · fencing",
+      "pos": [440, 200],
+      "size": [190, 70],
+      "sources": [
+        { "path": "services/gateway/src/app.ts", "label": "composición" },
+        { "path": "services/gateway/src/routes/core.ts", "label": "protocolo v3" }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "única fuente durable central",
+      "pos": [670, 200],
+      "size": [180, 70],
+      "sources": [
+        { "path": "packages/store/src/repository.ts", "label": "fachada store" },
+        { "path": "deploy/compose.postgres.yaml", "label": "runtime" }
+      ]
+    },
+    {
+      "id": "dispatcher",
+      "type": "backend",
+      "label": "Dispatcher",
+      "sublabel": "segador de reintentos y mantenimiento",
+      "pos": [670, 370],
+      "size": [180, 70],
+      "sources": [
+        { "path": "services/dispatcher/src/index.ts", "label": "bucle" }
+      ]
+    },
+    {
+      "id": "web_console",
+      "type": "frontend",
+      "label": "Consola web",
+      "sublabel": "operación · RBAC · terminal",
+      "pos": [445, 30],
+      "size": [180, 70],
+      "sources": [
+        { "path": "console/src/main.tsx", "label": "SPA" }
+      ]
+    },
+    {
+      "id": "telegram_bridge",
+      "type": "external",
+      "label": "Telegram Bridge",
+      "sublabel": "ingreso · adjuntos · egreso",
+      "pos": [445, 370],
+      "size": [180, 70],
+      "sources": [
+        { "path": "services/telegram-bridge/src/main.ts", "label": "servicio" }
+      ]
+    },
+    {
+      "id": "terminal_relay",
+      "type": "security",
+      "label": "Terminal Relay",
+      "sublabel": "mTLS · claim · sesión",
+      "pos": [220, 520],
+      "size": [170, 70],
+      "sources": [
+        { "path": "services/terminal-relay/src/main.ts", "label": "relay" }
+      ]
+    },
+    {
+      "id": "pty_agent",
+      "type": "backend",
+      "label": "PTY Agent",
+      "sublabel": "sesión tmux · CAS · rollback",
+      "pos": [20, 520],
+      "size": [170, 70],
+      "sources": [
+        { "path": "ops/pty-agent/cauce_pty_agent.py", "label": "agente saliente" }
+      ]
+    },
+    {
+      "id": "fleet_monitor",
+      "type": "backend",
+      "label": "MCP Fleet Monitor",
+      "sublabel": "consulta read-only",
+      "pos": [670, 30],
+      "size": [180, 70],
+      "sources": [
+        { "path": "packages/mcp-fleet-monitor/src/index.ts", "label": "servidor MCP" }
+      ]
+    },
+    {
+      "id": "observability",
+      "type": "cloud",
+      "label": "Observabilidad",
+      "sublabel": "Prometheus · alertas · OTel",
+      "pos": [900, 370],
+      "size": [190, 70],
+      "sources": [
+        { "path": "ops/observability/prometheus.yaml", "label": "scrape" },
+        { "path": "ops/observability/alerts.yaml", "label": "alertas" }
+      ]
+    }
+  ],
+  "connections": [
+    { "from": "cli_agents", "to": "adapter_sdk", "label": "harness local", "variant": "emphasis", "labelDy": -29 },
+    { "from": "adapter_sdk", "to": "gateway", "label": "WSS claim + ACK", "variant": "security", "labelDy": -29 },
+    { "from": "gateway", "to": "postgres", "label": "transacciones SQL", "variant": "emphasis", "labelDy": -29 },
+    { "from": "web_console", "to": "gateway", "label": "HTTPS + mTLS", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 24 },
+    { "from": "telegram_bridge", "to": "postgres", "label": "SQL/store durable", "variant": "security", "fromSide": "right", "toSide": "left", "via": [[650, 405], [650, 235]], "labelAt": [650, 320] },
+    { "from": "dispatcher", "to": "postgres", "label": "retry · DLQ · poda", "variant": "dashed" },
+    { "from": "fleet_monitor", "to": "postgres", "label": "SQL read-only", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "straight", "labelDy": 24 },
+    { "from": "pty_agent", "to": "terminal_relay", "label": "mTLS saliente", "variant": "security", "labelDy": -29 },
+    { "from": "gateway", "to": "terminal_relay", "label": "ticket + fencing", "variant": "security", "fromSide": "bottom", "toSide": "right", "via": [[535, 310], [415, 310], [415, 555]], "labelSegment": 1 },
+    { "from": "dispatcher", "to": "observability", "label": "métricas + alertas", "variant": "dashed", "labelDy": -29 },
+    { "from": "telegram_bridge", "to": "observability", "label": "métricas scrape", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[535, 475], [995, 475]], "labelSegment": 1 }
+  ]
+}

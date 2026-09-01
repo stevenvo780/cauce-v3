@@ -2,9 +2,9 @@
 
 ## 1. Qué es
 
-Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants, con consola web de operador y puente Telegram (`AGENTS.md:3`). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull*: el adapter de cada agente reclama sus entregas por WebSocket con fencing (`claim_token`+`epoch`) (`AGENTS.md:3`). El `dispatcher` no reparte nada — es el segador de reintentos (`services/dispatcher/README.md:3`). "Entregar" significa pegar el texto en la sesión tmux viva del CLI del agente (`packages/adapter-sdk/README.md:5`). Estado a 28-08-2026: primer despliegue real completado, commit `caa8789a`, esquema 024→037, 10 contenedores `cauce-v3-prod-*` sanos (`deploy/HISTORIAL.md:7`).
+Bus de mensajería durable entre agentes de IA en CLI (Claude Code, Codex, OpenClaw) de 4 tenants, con consola web de operador y puente Telegram (`AGENTS.md:3`). PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull*: el adapter de cada agente reclama sus entregas por WebSocket con fencing (`claim_token`+`epoch`) (`AGENTS.md:3`). El `dispatcher` no reparte nada — es el segador de reintentos (`services/dispatcher/README.md:3`). "Entregar" significa pegar el texto en la sesión tmux viva del CLI del agente (`packages/adapter-sdk/README.md:5`). El bundle versionado de migraciones alcanza el esquema 038; el estado vivo de producción se acredita con las sondas de operación, no se infiere desde este documento.
 
-Documentación detallada por pieza: [consola.md](consola.md), [telegram.md](telegram.md), [adapter-sdk.md](adapter-sdk.md), [calidad-y-gates.md](calidad-y-gates.md).
+Documentación detallada por pieza: [consola.md](consola.md), [telegram.md](telegram.md), [adapter-sdk.md](adapter-sdk.md), [calidad-y-gates.md](calidad-y-gates.md). El [mapa navegable con Archify](diagramas/README.md) muestra la topología actual y sus fuentes verificables.
 
 ## 2. Mapa de piezas
 
@@ -30,7 +30,7 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 | Paquete | Exporta | Fuente |
 |---|---|---|
 | `packages/protocol` | schemas Zod del wire `3.0`: `PublishMessage` estricto sin identidad, escalera de ACK `accepted→started→done|failed`, prioridad, perfiles de agente | `packages/protocol/src/index.ts`, `schemas.ts`, `agent-profile.ts`, `publish-receipt.ts` (`packages/protocol/README.md:3-6`) |
-| `packages/store` | `CauceRepository`: mensajes, entregas con fencing claim/epoch, outbox, DLQ, jobs, config versionada, agentes, auditoría; migrator transaccional 001→037 con huecos deliberados (022/025/029/036) | `packages/store/src/repository.ts` (fachada, 43 líneas) + `repository/{messages,outbox,jobs,config,observability,quotas,deliveries,agents}/**`; `migrations/` (`packages/store/README.md:5`) |
+| `packages/store` | `CauceRepository`: mensajes, entregas con fencing claim/epoch, outbox, DLQ, jobs, config versionada, agentes, auditoría; migrator transaccional 001→038 con huecos deliberados (022/025/029/036) | `packages/store/src/repository.ts` (fachada, 43 líneas) + `repository/{messages,outbox,jobs,config,observability,quotas,deliveries,agents}/**`; `migrations/` (`packages/store/README.md:5`) |
 | `packages/adapter-sdk` | motor del consumidor durable (WS de larga vida, ACK correlacionado por `event_id`+`delivery_id`+`attempt`+`claim_token`) y ejecución sobre el harness (pegar en tmux) | `src/sdk/engine.ts`, `src/shared-session/{paste-runner,tmux}.ts`, ejecutables reales `src/bin/{claude,codex,openclaw}.ts` (`packages/adapter-sdk/README.md:3-9`) |
 | `packages/mcp-fleet-monitor` | servidor MCP de solo lectura: `estado_flota`, `entregas`, `cadena`, `dead_letters`, `salud` — escrito y probado, sin registrar en ningún alias hoy | `packages/mcp-fleet-monitor/README.md:3-5` |
 
@@ -48,7 +48,7 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 
 ## 3. Flujo de un mensaje
 
-**Ingreso** — Telegram (`telegram-bridge`, canal más usado en producción: ~12.000 entrantes por Telegram frente a 1 de consola, `services/telegram-bridge/README.md:3`), consola web, o CLI de operador → todos publican contra el gateway.
+**Ingreso** — Telegram entra por `telegram-bridge`, que persiste mediante `CauceRepository` sobre PostgreSQL; la consola web y el CLI de operador publican por el gateway autenticado.
 
 **Gateway** — `services/gateway/src/app.ts` compone `routes/{health,console,core,console-publish,chain-gates-legado}` y el plugin de terminal. `routes/core.ts` (628) + `routes/core/{contracts,helpers,http,outbox,publish}.ts` implementan `POST /v3/messages|/v3/publish` (publicar, identidad derivada del principal autenticado — el payload público es `strict`), `POST /v3/connections/hello`, `/v3/heartbeat`, `/v3/ack`, y `GET /v3/ws` (`services/gateway/src/routes/core.ts:207`) — el socket de larga vida de cada adapter.
 
@@ -78,7 +78,7 @@ Fuente única: el compose del propio repo, sin overrides externos — `deploy/de
 
 ## 6. Gates de calidad
 
-`pnpm typecheck` (core+adapter+mcp+console) y `pnpm lint` (ESLint por zona, `lint:estricto:zonas` con reglas más duras sobre console/terminal-relay/telegram-bridge/dispatcher/tests, `ruff check` sobre Python, `scripts/calidad.mjs` con trinquete de líneas por fichero y de fechas en comentarios) son gate de todo commit (`package.json:17-28`, `AGENTS.md`). `pnpm test:unit` corre los paquetes con test propio más `tests/unit` y `packages/protocol/test`; `pnpm test` (`scripts/test-all.mjs`) es el gate completo. `ops/scripts/validate.sh` valida sintaxis de todos los `.sh`/`.mjs` de `ops`+`deploy`, `shellcheck` si está disponible, YAML/JSON Schema de manifiestos, y la identidad byte a byte de generados (§4).
+`pnpm typecheck` (core+adapter+mcp+console) y `pnpm lint` (ESLint por zona, gate AST con baseline cero de ciclos runtime, `lint:estricto:zonas` con reglas más duras sobre console/terminal-relay/telegram-bridge/dispatcher/tests, `ruff check` sobre Python, `scripts/calidad.mjs` con trinquete de líneas por fichero y de fechas en comentarios) son gate de todo commit (`package.json:17-28`, `AGENTS.md`). `pnpm test:unit` corre los paquetes con test propio más `tests/unit` y `packages/protocol/test`; `pnpm test` (`scripts/test-all.mjs`) recorre las nueve suites, incluidas las 31 pruebas directas de `ops/tests`. `ops/scripts/validate.sh` valida sintaxis de todos los `.sh`/`.mjs` de `ops`+`deploy`, exige ShellCheck, valida YAML/JSON Schema y comprueba la identidad byte a byte de generados (§4). La especificación visual se valida con `pnpm arch:validate` y se inspecciona en varios tamaños con `pnpm arch:visual-check`.
 
 ## 7. Máquinas
 
