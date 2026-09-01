@@ -58,6 +58,27 @@ function doneAck(
   };
 }
 
+function agentDoneAck(
+  delivery: Pick<DeliveryEnvelope, 'claim_token' | 'attempt'>,
+  instanceId: string,
+  epoch: number,
+  reply: string,
+  messages: readonly { to: string; body: string }[] = []
+): Ack {
+  return {
+    ...doneAck(delivery, instanceId, epoch, reply),
+    result: {
+      output: {
+        reply,
+        messages: [...messages],
+        status: 'done',
+        retryable: false,
+        artifacts: []
+      }
+    }
+  };
+}
+
 async function relayRowCount(deliveryId: string): Promise<number> {
   const result = await pool.query(
     `SELECT 1 FROM adapter_outbox
@@ -121,4 +142,120 @@ it('still relays a telegram-originated delivery, proving the console guard is ad
   );
 
   expect(await relayRowCount(delivery.delivery_id)).toBe(1);
+});
+
+it('returns a cross-tenant fan-in relay to its root actor without exposing it to an unrelated peer', async () => {
+  const salvaInstance = 'worker-origin-salva';
+  const argosInstance = 'worker-origin-argos';
+  const salvaLease = await repository.acquireLease('Isa', 'salva', salvaInstance, [], 30_000);
+  const argosLease = await repository.acquireLease('Steven', 'argos', argosInstance, [], 30_000);
+  const published = await repository.publish(command({
+    recipients: [{ tenant_id: 'Isa', alias: 'salva' }],
+    authenticated_context: {
+      session_id: `origin-visibility-${randomUUID()}`,
+      channel: 'telegram',
+      origin: {
+        adapter: 'telegram', channel: 'telegram', conversation_id: `origin-${randomUUID()}`,
+        relay: [], metadata: { bridge_alias: 'kant', bridge_tenant: 'Steven' }
+      }
+    }
+  }));
+  const [root] = await repository.claimDeliveries(
+    'Isa', 'salva', salvaInstance, requireValue(salvaLease.epoch, 'salvaLease.epoch'), 1, 30_000
+  );
+  if (!root) throw new Error('expected the cross-tenant root delivery');
+  await repository.ackDelivery(
+    root.delivery_id,
+    'Isa',
+    'salva',
+    agentDoneAck(
+      root,
+      salvaInstance,
+      requireValue(salvaLease.epoch, 'salvaLease.epoch'),
+      'delegated review',
+      [{ to: 'argos', body: 'review the result' }]
+    )
+  );
+
+  const [child] = await repository.claimDeliveries(
+    'Steven', 'argos', argosInstance, requireValue(argosLease.epoch, 'argosLease.epoch'), 1, 30_000
+  );
+  if (!child) throw new Error('expected the delegated child delivery');
+  await repository.ackDelivery(
+    child.delivery_id,
+    'Steven',
+    'argos',
+    agentDoneAck(
+      child, argosInstance, requireValue(argosLease.epoch, 'argosLease.epoch'), 'review complete'
+    )
+  );
+
+  const [response] = await repository.claimDeliveries(
+    'Isa', 'salva', salvaInstance, requireValue(salvaLease.epoch, 'salvaLease.epoch'), 1, 30_000
+  );
+  if (response?.body.type !== 'agent.response') {
+    throw new Error('expected the authenticated child response');
+  }
+  await repository.ackDelivery(
+    response.delivery_id,
+    'Isa',
+    'salva',
+    agentDoneAck(
+      response, salvaInstance, requireValue(salvaLease.epoch, 'salvaLease.epoch'), 'combined result'
+    )
+  );
+
+  const pending = await repository.claimDeliveries(
+    'Isa', 'salva', salvaInstance, requireValue(salvaLease.epoch, 'salvaLease.epoch'), 10, 30_000
+  );
+  const fanin = pending.find((delivery) => delivery.body.type === 'agent.fanin');
+  if (!fanin) throw new Error('expected the fan-in delivery');
+  await repository.ackDelivery(
+    fanin.delivery_id,
+    'Isa',
+    'salva',
+    agentDoneAck(
+      fanin, salvaInstance, requireValue(salvaLease.epoch, 'salvaLease.epoch'), 'final result'
+    )
+  );
+
+  const rootActorView = await repository.listOriginRelays('Steven', 'kant');
+  const outsiderView = await repository.listOriginRelays('Steven', 'socrates');
+  const finalRelays = (value: Record<string, unknown>): Record<string, unknown>[] => {
+    const items: unknown[] = Array.isArray(value.items) ? value.items : [];
+    return items.filter((item): item is Record<string, unknown> => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) return false;
+      const row = item as Record<string, unknown>;
+      const payload = row.payload;
+      return row.trace_id === published.trace_id
+        && typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+        && (payload as Record<string, unknown>).outcome === 'done';
+    });
+  };
+  expect(finalRelays(rootActorView)).toEqual([
+    expect.objectContaining({
+      participants: [{ tenant_id: 'Steven', alias: 'kant' }]
+    })
+  ]);
+  expect(finalRelays(outsiderView)).toEqual([]);
+
+  const unrelated = await repository.publish(command({
+    actor_alias: 'socrates',
+    recipients: [{ tenant_id: 'Steven', alias: 'argos' }]
+  }));
+  await pool.query(
+    `UPDATE adapter_outbox
+     SET payload=jsonb_set(payload,'{correlation,root_message_id}',to_jsonb($2::text))
+     WHERE kind='origin_relay' AND delivery_id=$1`,
+    [fanin.delivery_id, unrelated.message_id]
+  );
+  expect(finalRelays(await repository.listOriginRelays('Steven', 'socrates'))).toEqual([]);
+
+  await pool.query(
+    `UPDATE adapter_outbox
+     SET payload=jsonb_set(payload,'{correlation,root_message_id}',to_jsonb('invalid'::text))
+     WHERE kind='origin_relay' AND delivery_id=$1`,
+    [fanin.delivery_id]
+  );
+  await expect(repository.listOriginRelays('Steven', 'kant')).resolves.toBeDefined();
 });

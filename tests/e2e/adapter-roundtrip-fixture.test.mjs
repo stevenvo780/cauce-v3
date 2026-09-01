@@ -36,7 +36,7 @@ function executeFixture(input, root) {
       env: {
         ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
         HOME: root,
-        CAUCE_ADAPTER_ROUNDTRIP_ROOT: root,
+        TMPDIR: root,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

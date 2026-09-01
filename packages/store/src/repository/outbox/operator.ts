@@ -304,10 +304,23 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       `SELECT outbox.id,outbox.tenant_id,outbox.adapter,outbox.request_id,outbox.message_id,
               outbox.delivery_id,outbox.trace_id,outbox.origin,outbox.payload,outbox.status,
               outbox.attempts,outbox.created_at,outbox.sent_at,message.actor_alias,
-              message.tenant_id AS message_tenant_id,delivery.recipient_tenant,delivery.recipient_alias
+              message.tenant_id AS message_tenant_id,delivery.recipient_tenant,delivery.recipient_alias,
+              CASE WHEN root_message.id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(
+                jsonb_build_object('tenant_id',root_message.tenant_id,'alias',root_message.actor_alias)
+              ) END AS participants
        FROM adapter_outbox outbox JOIN messages message ON message.id=outbox.message_id
        LEFT JOIN deliveries delivery ON delivery.id=outbox.delivery_id
+       LEFT JOIN messages root_message
+         ON root_message.id=CASE
+           WHEN outbox.payload#>>'{correlation,root_message_id}'
+             ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           THEN (outbox.payload#>>'{correlation,root_message_id}')::uuid
+           ELSE NULL
+         END
+        AND root_message.trace_id=outbox.trace_id
        WHERE outbox.kind='origin_relay' AND (
+         (root_message.tenant_id=$1 AND root_message.actor_alias=$2)
+         OR
          EXISTS (SELECT 1 FROM memberships source_member
                  WHERE source_member.tenant_id=$1 AND source_member.room_id=message.room_id
                    AND source_member.alias=$2 AND source_member.enabled AND message.tenant_id=$1)

@@ -8,7 +8,7 @@ const isolationSource = 'qa-isolated-source';
 const isolationTarget = 'qa-isolated-target';
 
 function roundTripRoot() {
-  const root = process.env.CAUCE_ADAPTER_ROUNDTRIP_ROOT;
+  const root = process.env.TMPDIR;
   if (root === undefined || !path.isAbsolute(root)) {
     throw new Error('controlled round-trip fixture requires an absolute temporary root');
   }

@@ -238,11 +238,13 @@ it('con canal y TUI el escenario ofrece abrir el alias que ya está emitiendo', 
   const user = userEvent.setup();
   enableCapability();
   serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness'] })]);
+  serveGrant();
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByText('Ningún agente seleccionado')).toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: /abrir la tui de jarvis/i }));
   expect(await screen.findByRole('tab', { name: /jarvis/i })).toHaveAttribute('aria-selected', 'true');
+  await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
 }, 20_000);
 
 it('sin inventario de destinos NO dice que ningún alias emita: dice que no se pudo comprobar', async () => {

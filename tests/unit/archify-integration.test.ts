@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const wrapperUrl = new URL('../../scripts/archify-cauce.mjs', import.meta.url);
@@ -11,6 +13,15 @@ const artifactUrl = new URL(
   '../../docs/diagramas/cauce-v3.architecture.html',
   import.meta.url,
 );
+const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
+const architectureRuntimeRoots = [
+  'console/src',
+  'ops/harness',
+  'ops/observability',
+  'ops/pty-agent',
+  'packages',
+  'services',
+];
 
 describe('Archify integration contract', () => {
   it('pins exact installed bytes and never forwards the ambient environment', async () => {
@@ -33,12 +44,45 @@ describe('Archify integration contract', () => {
   it('ships an offline artifact with the real Telegram persistence path', async () => {
     const artifact = await readFile(artifactUrl, 'utf8');
     const specification = JSON.parse(await readFile(specificationUrl, 'utf8')) as {
+      meta: { repository: { revision: string } };
+      components: { sources?: { path: string }[] }[];
       connections: { from: string; to: string; label: string }[];
     };
+    const evidenceMatch = /<script id="archify-source-evidence-data" type="application\/json">([^<]+)<\/script>/u
+      .exec(artifact);
     const autoLoadingUrl = /<(?:iframe|img|link|script|source)\b[^>]*(?:href|src)=["']https?:\/\//iu;
 
     expect(artifact).not.toMatch(autoLoadingUrl);
     expect(artifact).not.toMatch(/url\(\s*["']?https?:\/\//iu);
+    expect(evidenceMatch).not.toBeNull();
+    const evidence = JSON.parse(evidenceMatch?.[1] ?? '{}') as {
+      repository?: { revision?: string };
+    };
+    expect(specification.meta.repository.revision).toMatch(/^[a-f0-9]{40}$/u);
+    expect(evidence.repository?.revision).toBe(specification.meta.repository.revision);
+    expect(() => {
+      execFileSync(
+        'git',
+        ['merge-base', '--is-ancestor', specification.meta.repository.revision, 'HEAD'],
+        { cwd: repositoryRoot, stdio: 'pipe' },
+      );
+    }, 'Archify revision must be an ancestor of HEAD').not.toThrow();
+    const evidencePaths = specification.components.flatMap(
+      (component) => component.sources?.map((source) => source.path) ?? [],
+    );
+    const architecturalChanges = execFileSync(
+      'git',
+      [
+        'diff',
+        '--name-only',
+        `${specification.meta.repository.revision}..HEAD`,
+        '--',
+        ...architectureRuntimeRoots,
+        ...evidencePaths,
+      ],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    expect(architecturalChanges, 'Archify must be refreshed after committed runtime changes').toBe('');
     expect(specification.connections).toContainEqual(expect.objectContaining({
       from: 'telegram_bridge',
       to: 'postgres',

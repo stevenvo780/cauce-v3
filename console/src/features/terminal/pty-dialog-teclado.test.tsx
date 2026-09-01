@@ -44,6 +44,7 @@ beforeEach(() => {
       observed_at: new Date().toISOString(), websocket_path: WS_PATH,
       items: [target({ tenant_id: 'Steven', alias: 'zeus' })],
     })),
+    http.post('*/v3/console/terminal/sessions', () => new HttpResponse(null, { status: 409 })),
   );
 });
 
@@ -58,6 +59,7 @@ async function abrirDialogoPty() {
   renderWithApi(<div className="app-shell"><TerminalPage /></div>);
   await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
   const boton = await screen.findByRole('button', { name: /^PTY$/i });
+  await waitFor(() => { expect(boton).toBeEnabled(); });
   await user.click(boton);
   const dialogo = await screen.findByRole('dialog');
   return { user, dialogo, boton };
@@ -115,5 +117,5 @@ it('Escape cierra el diálogo y devuelve el foco, sin pedir ninguna shell', asyn
   await user.keyboard('{Escape}');
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
   expect(document.activeElement).toBe(boton);
-  expect(modos).not.toContain('shell');
+  expect(modos).toEqual(['harness']);
 });

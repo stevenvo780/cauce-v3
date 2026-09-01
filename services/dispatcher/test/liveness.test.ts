@@ -1,11 +1,15 @@
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer, type Server } from 'node:http';
+import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DatabasePool } from '@cauce/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  startDispatcherHealthServer, type DispatcherHealthServerOptions,
+} from '../src/health.js';
 import { runDispatcher } from '../src/index.js';
 import { DispatcherMetrics } from '../src/metrics.js';
 
@@ -52,6 +56,22 @@ function runProbe(url: string, stallMs: number): Promise<{ code: number | null; 
   });
 }
 
+async function listenHealth(
+  options: Omit<DispatcherHealthServerOptions, 'port' | 'host'>,
+  host?: string,
+): Promise<string> {
+  const server = startDispatcherHealthServer({
+    port: 0,
+    ...(host === undefined ? {} : { host }),
+    ...options,
+  });
+  health = server;
+  await once(server, 'listening');
+  const address = server.address();
+  if (typeof address !== 'object' || address === null) throw new Error('no port');
+  return `http://127.0.0.1:${String(address.port)}`;
+}
+
 beforeEach(async () => {
   stateDirectory = await mkdtemp(join(tmpdir(), 'cauce-dispatcher-liveness-'));
 });
@@ -75,22 +95,14 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
       onError: () => undefined,
     });
 
-    // `/health/ready` served with the same progress contract as main.ts.
-    const server = createServer((_request, response) => {
-      const progress = metrics.progress(200);
-      response.writeHead(progress.ready ? 200 : 503, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({
-        status: progress.ready ? 'ready' : 'not_ready',
-        reason: progress.reason,
-        ticks: progress.ticks,
-        tick_age_ms: progress.tickAgeMs ?? null,
-      }));
-    });
-    health = server;
-    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', () => { resolve(); }); });
-    const address = server.address();
-    if (typeof address !== 'object' || address === null) throw new Error('no port');
-    const url = `http://127.0.0.1:${String(address.port)}/health/ready`;
+    const baseUrl = await listenHealth({
+      pool: idlePool,
+      metrics,
+      healthStaleMs: 200,
+      environment: 'test',
+      lastError: () => undefined,
+    }, '127.0.0.1');
+    const url = `${baseUrl}/health/ready`;
 
     // Loop runs for real: wait to see real ticks before assertions.
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -116,6 +128,96 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
     const dead = await runProbe(url, 200);
     expect(dead.code).toBe(1);
     expect(dead.stderr).toContain('HTTP 503');
+  });
+
+  it('serves liveness, readiness, metrics and not-found from the production implementation', async () => {
+    const metrics = new DispatcherMetrics(idlePool);
+    const baseUrl = await listenHealth({
+      pool: idlePool,
+      metrics,
+      healthStaleMs: 1_000,
+      environment: 'test',
+      lastError: () => 'previous tick failed',
+    });
+
+    const live = await fetch(`${baseUrl}/health/live`);
+    expect(live.status).toBe(200);
+    expect(live.headers.get('cache-control')).toBe('no-store');
+    expect(await live.json()).toMatchObject({ status: 'live', reason: 'starting', ticks: 0 });
+
+    const starting = await fetch(`${baseUrl}/health/ready`);
+    expect(starting.status).toBe(503);
+    expect(await starting.json()).toEqual({ status: 'not_ready', reason: 'starting' });
+
+    metrics.recordTick('ok');
+    const ready = await fetch(`${baseUrl}/health/ready`);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({
+      status: 'ready',
+      last_error: 'previous tick failed',
+      ticks: 1,
+      successful_ticks: 1,
+      failed_ticks: 0,
+      fenced_ticks: 0,
+    });
+
+    const rendered = await fetch(`${baseUrl}/metrics`);
+    expect(rendered.status).toBe(200);
+    expect(rendered.headers.get('content-type')).toBe('text/plain; version=0.0.4; charset=utf-8');
+    expect(await rendered.text()).toContain('cauce_dispatcher_metrics_query_success 1');
+
+    const missing = await fetch(`${baseUrl}/missing`);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: 'not_found' });
+  });
+
+  it('reports database failures without disguising them as loop progress failures', async () => {
+    const metrics = new DispatcherMetrics(failingPool);
+    const baseUrl = await listenHealth({
+      pool: failingPool,
+      metrics,
+      healthStaleMs: 1_000,
+      environment: 'test',
+      lastError: () => undefined,
+    });
+
+    const response = await fetch(`${baseUrl}/health/ready`);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      status: 'not_ready',
+      reason: 'postgres_unavailable',
+    });
+  });
+
+  it('requires the active PostgreSQL connection to be encrypted in production', async () => {
+    let encrypted = false;
+    const tlsPool = {
+      query: async (statement: string) => statement.startsWith('SELECT ssl')
+        ? { rows: [{ ssl: encrypted }], rowCount: 1 }
+        : { rows: [], rowCount: 1 },
+      connect: async () => idleClient,
+    } as unknown as DatabasePool;
+    const metrics = new DispatcherMetrics(tlsPool);
+    metrics.recordTick('ok');
+    const baseUrl = await listenHealth({
+      pool: tlsPool,
+      metrics,
+      healthStaleMs: 1_000,
+      environment: 'production',
+      lastError: () => undefined,
+    });
+
+    const rejected = await fetch(`${baseUrl}/health/ready`);
+    expect(rejected.status).toBe(503);
+    expect(await rejected.json()).toEqual({
+      status: 'not_ready',
+      reason: 'postgres_tls_required',
+    });
+
+    encrypted = true;
+    const ready = await fetch(`${baseUrl}/health/ready`);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({ status: 'ready', last_error: null });
   });
 
   it('counts a failing tick as liveness progress but never as readiness success', () => {

@@ -88,6 +88,7 @@ function startAdapter({ tenant, room, alias, entrypoint, root, wsBaseUrl }) {
     env: {
       ...safeEnvironment(),
       HOME: homeDirectory,
+      TMPDIR: root,
       CAUCE_TENANT: tenant,
       CAUCE_ROOM: room,
       CAUCE_ALIAS: alias,
@@ -97,7 +98,6 @@ function startAdapter({ tenant, room, alias, entrypoint, root, wsBaseUrl }) {
       CAUCE_ENVIRONMENT: 'test',
       CAUCE_DEV_AUTH: '1',
       CAUCE_HARNESS_COMMAND: fixture,
-      CAUCE_ADAPTER_ROUNDTRIP_ROOT: root,
       CAUCE_HEARTBEAT_MS: '100',
       CAUCE_DEFAULT_TIMEOUT_MS: '15000',
       CAUCE_SEMBRAR_PERFIL: '0',
