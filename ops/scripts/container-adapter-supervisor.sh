@@ -460,6 +460,7 @@ validate_pki() {
 
 container_id=''
 container_generation=''
+container_presence_generation=''
 container_state_signature=''
 container_running='false'
 container_init_starttime=''
@@ -489,6 +490,9 @@ set_generation_from_signature() {
   container_generation=$(printf '%s\0%s\0%s\0%s' "$container_id" "$started" "$restart" "$container_init_starttime" | sha256sum)
   container_generation=${container_generation%% *}
   [[ $container_generation =~ ^[a-f0-9]{64}$ ]] || die 'container generation digest is invalid' 75
+  container_presence_generation=$(printf '%s|%s|%s' "$container_id" "$started" "$restart" | sha256sum)
+  [[ ${container_presence_generation%% *} =~ ^[a-f0-9]{64}$ ]] || die 'container presence generation digest is invalid' 75
+  container_presence_generation=${container_presence_generation:0:32}
 }
 
 read_container_init_starttime() {
@@ -877,6 +881,7 @@ start_adapter() {
     "CAUCE_ALIAS=$alias_name" "CAUCE_INSTANCE_ID=systemd-container-$alias_name" "CAUCE_STATE_DIR=$state_directory"
     "CAUCE_CONTROL_DIR=$control_dir"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
+    "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation"
     "CAUCE_RELAY_URL=${CONFIG[RELAY_URL]}"
     "CAUCE_DEFAULT_TIMEOUT_MS=$effective_default_timeout_ms"
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"

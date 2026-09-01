@@ -62,6 +62,7 @@ export class NativeProfileContext {
   private readonly claudeConfigDirectory: string | undefined;
   private readonly openClawWorkspace: string | undefined;
   private readonly runtimeGeneration: string;
+  private readonly presenceGeneration: string | undefined;
 
   constructor(
     private readonly harness: HarnessId,
@@ -82,6 +83,10 @@ export class NativeProfileContext {
       throw new Error("Native profile context requires CAUCE_CONTAINER_GENERATION");
     }
     this.runtimeGeneration = generation;
+    const presence = environment.CAUCE_CONTAINER_PRESENCE_GENERATION;
+    this.presenceGeneration = presence === undefined || presence.length === 0
+      ? undefined
+      : presence;
   }
 
   prepare(context: HarnessRequestContext | undefined): HarnessRequestContext {
@@ -330,7 +335,9 @@ export class NativeProfileContext {
   ): void {
     const contract = context.native_profile_contract;
     if (contract === undefined) throw new Error("delivery has no native profile revision contract");
-    if (contract.generation !== this.runtimeGeneration) {
+    if (contract.generation !== this.runtimeGeneration
+      && (this.presenceGeneration === undefined
+        || contract.generation !== this.presenceGeneration)) {
       throw new Error("native profile contract belongs to another runtime generation");
     }
     const paths = this.paths();

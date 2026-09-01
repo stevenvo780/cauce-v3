@@ -544,6 +544,83 @@ test("openclaw rejects a fixed block that would exceed the native document limit
   for (const path of paths) assert.equal(readFileSync(path, "utf8"), before.get(path));
 });
 
+test("a contract sealed with the presence generation of THIS incarnation is accepted", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "cauce-native-presence-gen-"));
+  const previousHome = process.env.HOME;
+  const previousConfig = process.env.CLAUDE_CONFIG_DIR;
+  const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
+  const previousPresence = process.env.CAUCE_CONTAINER_PRESENCE_GENERATION;
+  process.env.CAUCE_CONTAINER_GENERATION = "b".repeat(64);
+  process.env.CAUCE_CONTAINER_PRESENCE_GENERATION = "c".repeat(32);
+  delete process.env.CLAUDE_CONFIG_DIR;
+  t.after(() => {
+    restoreEnvironment("HOME", previousHome);
+    restoreEnvironment("CLAUDE_CONFIG_DIR", previousConfig);
+    restoreEnvironment("CAUCE_CONTAINER_GENERATION", previousGeneration);
+    restoreEnvironment("CAUCE_CONTAINER_PRESENCE_GENERATION", previousPresence);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const attempt = async (
+    generation: string,
+    name: string,
+  ): Promise<CommandRunRequest[]> => {
+    const home = join(root, name);
+    const config = join(home, ".claude");
+    mkdirSync(config, { recursive: true });
+    const path = join(config, "CLAUDE.md");
+    writeFileSync(path, profileFile("zeus", 31, "PROFILE-PRESENCE-GENERATION"), "utf8");
+    process.env.HOME = home;
+    const sealed = { ...contract(31, [path]), generation };
+    const { runner, requests } = spyRunner();
+    const adapter = new HarnessAdapter({
+      definition: definition("claude"),
+      runner,
+      store: await DurableStore.open(join(root, `state-${name}`)),
+      environment: nativeEnvironment(),
+    });
+    await adapter.execute({
+      prompt: "Run under the sealed generation.",
+      context: { ...context("zeus"), native_profile_contract: sealed },
+      timeoutMs: 2_000,
+      signal: AbortSignal.timeout(2_000),
+    });
+    return requests;
+  };
+
+  assert.equal((await attempt("c".repeat(32), "presence")).length, 1);
+  assert.equal((await attempt("b".repeat(64), "supervisor")).length, 1);
+
+  const home = join(root, "foreign");
+  const config = join(home, ".claude");
+  mkdirSync(config, { recursive: true });
+  const path = join(config, "CLAUDE.md");
+  writeFileSync(path, profileFile("zeus", 31, "PROFILE-PRESENCE-GENERATION"), "utf8");
+  process.env.HOME = home;
+  const bytesBefore = readFileSync(path, "utf8");
+  const { runner, requests } = spyRunner();
+  const adapter = new HarnessAdapter({
+    definition: definition("claude"),
+    runner,
+    store: await DurableStore.open(join(root, "state-foreign")),
+    environment: nativeEnvironment(),
+  });
+  await assert.rejects(adapter.execute({
+    prompt: "must not run",
+    context: {
+      ...context("zeus"),
+      native_profile_contract: { ...contract(31, [path]), generation: "d".repeat(32) },
+    },
+    timeoutMs: 2_000,
+    signal: AbortSignal.timeout(2_000),
+  }), (error: unknown) => {
+    assert.equal((error as { code?: unknown }).code, "NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED");
+    return true;
+  });
+  assert.equal(requests.length, 0);
+  assert.equal(readFileSync(path, "utf8"), bytesBefore);
+});
+
 test("stale, absent, foreign, and malformed projections fail before the runner", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "cauce-native-fail-closed-"));
   const home = join(root, "home");

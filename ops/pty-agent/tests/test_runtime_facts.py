@@ -357,6 +357,28 @@ class AdapterGenerationParityTest(unittest.TestCase):
         self.assertIn('CAUCE_PTY_MEASURE_GENERATION=$adapter_generation', launcher)
         self.assertNotIn('CAUCE_PTY_MEASURE_GENERATION=$container_generation', launcher)
 
+    def test_supervisor_stamps_the_launcher_ticket_generation_for_the_adapter(self) -> None:
+        """The reverse direction of the same parity, and the one that kept aliases silent.
+
+        The console only ever observes the presence the relay reports, so the expectation row --
+        and every contract sealed into a delivery -- carries the launcher's 32-char ticket
+        generation. An adapter that only knew the supervisor's NUL-joined digest rejected all of
+        them with "belongs to another runtime generation". The supervisor therefore recomputes the
+        launcher's formula and exports it, so the adapter knows both names of its own incarnation.
+        """
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        supervisor = (REPO / "ops/scripts/container-adapter-supervisor.sh").read_text(encoding="utf-8")
+        ticket_formula = """printf '%s|%s|%s'"""
+        self.assertIn(ticket_formula, launcher, "launcher ticket generation formula moved")
+        self.assertIn(ticket_formula, supervisor, "supervisor must recompute the ticket formula")
+        self.assertIn("container_generation=${digest:0:32}", launcher)
+        self.assertIn(
+            "container_presence_generation=${container_presence_generation:0:32}", supervisor
+        )
+        self.assertIn(
+            "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation", supervisor
+        )
+
     def test_the_two_generations_are_computed_from_the_same_container_facts(self) -> None:
         launcher = LAUNCHER.read_text(encoding="utf-8")
         # Both digests read id/started/restart from the same inspect; only the adapter form adds the
