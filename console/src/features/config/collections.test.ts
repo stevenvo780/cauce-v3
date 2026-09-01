@@ -11,18 +11,29 @@ it('publica las colecciones que el snapshot trae, no una lista fija de seis', ()
     revisions: [{ id: '7' }],
   });
 
-  // `revision`, `observed_at` and the audit trail are not configuration collections: they have
-  // their own panel and must not appear as cards of effective data.
+  // Metadata and the three account-registry collections have dedicated authorities and must not
+  // appear as duplicate cards of effective data here.
   expect(collections.map((collection) => collection.key)).toEqual([
     'tenants', 'rooms', 'memberships', 'acl_edges', 'harness_definitions', 'role_policies',
-    'chain_policies', 'egress_destinations', 'agents', 'provider_accounts',
-    'alias_routing_ceiling', 'agent_account_bindings',
+    'chain_policies', 'egress_destinations', 'agents',
   ]);
   expect(collections.find((collection) => collection.key === 'chain_policies')).toMatchObject({
     title: 'Chain visibility policy', rows: [{ id: 'default', cycle_cut_enabled: true }],
   });
   expect(collections.find((collection) => collection.key === 'egress_destinations')?.title)
     .toBe('Proactive egress allowlist');
+});
+
+it('deja provider_accounts, techos y bindings exclusivamente en Cuentas y cuotas', () => {
+  const collections = configCollections({
+    revision: 1,
+    provider_accounts: [{ id: 'codex-steven' }],
+    alias_routing_ceiling: [{ tenant_id: 'Steven', alias: 'kant', account_id: 'codex-steven' }],
+    agent_account_bindings: [{ tenant_id: 'Steven', agent_alias: 'kant', account_id: 'codex-steven' }],
+  });
+  expect(collections.map((collection) => collection.key)).not.toEqual(expect.arrayContaining([
+    'provider_accounts', 'alias_routing_ceiling', 'agent_account_bindings',
+  ]));
 });
 
 it('distingue una clave ausente de una lista vacía', () => {

@@ -2,12 +2,12 @@ import type { ConfigurationSnapshot } from '../../api/types';
 
 /**
  * The collections of `GET /v3/console/config` (packages/store/src/configuration.ts), with the
- * title the console gives them. The map fixes ORDER and translation, not scope: a key the
- * server adds tomorrow is still published, with its own name as title.
+ * title the console gives them. The map fixes order and translation; dedicated typed keys are
+ * excluded, while a new server key is still published with its own name as title.
  *
- * The effective-data panel had six hardcoded entries while the snapshot already carried twelve,
- * so `chain_policies` and `egress_destinations` were invisible despite existing on the server
- * and being reversible from the audit trail. Deriving from the snapshot closes that class of bug.
+ * The effective-data panel had six hardcoded entries while the snapshot carried more; deriving
+ * from it keeps new general collections visible without duplicating the account registry owned
+ * by Cuentas y cuotas.
  */
 const COLLECTION_TITLES: Record<string, string> = {
   tenants: 'Tenants',
@@ -24,8 +24,11 @@ const COLLECTION_TITLES: Record<string, string> = {
   agent_account_bindings: 'Agent ↔ account bindings',
 };
 
-/** Non-collections with dedicated renderers; `agent_profiles` belongs only to the typed Contexto editor. */
-const NON_COLLECTION_KEYS = new Set(['revision', 'observed_at', 'revisions', 'agent_profiles']);
+/** Snapshot keys rendered by their dedicated typed views. */
+const NON_COLLECTION_KEYS = new Set([
+  'revision', 'observed_at', 'revisions', 'agent_profiles',
+  'provider_accounts', 'alias_routing_ceiling', 'agent_account_bindings',
+]);
 
 export interface ConfigCollection {
   key: string;
@@ -41,7 +44,7 @@ export interface ConfigCollection {
 export function configCollections(snapshot: ConfigurationSnapshot | undefined): ConfigCollection[] {
   if (!snapshot) return [];
   const record = snapshot as Record<string, unknown>;
-  const known = Object.keys(COLLECTION_TITLES);
+  const known = Object.keys(COLLECTION_TITLES).filter((key) => !NON_COLLECTION_KEYS.has(key));
   // `Object.hasOwn` rather than `in`: a server key named `toString` would inherit the prototype
   // title and a function would render as the panel name.
   const extra = Object.keys(record).filter((key) =>
