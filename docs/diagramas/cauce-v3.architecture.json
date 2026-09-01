@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/stevenvo780/cauce-v3",
-      "revision": "11a02081c18f1d765e1a4dfb29970695fbf510d5"
+      "revision": "b9e68cb7224e513a3b8f3d5a12dbe0981fa1f867"
     },
     "viewBox": [1120, 620],
     "views": [
@@ -46,7 +46,8 @@
       "pos": [20, 200],
       "size": [170, 70],
       "sources": [
-        { "path": "ops/flota.json", "label": "flota derivada" }
+        { "path": "ops/flota.json", "label": "flota derivada" },
+        { "path": "ops/harness/adapter-roundtrip.mjs", "label": "round-trip OpenCode" }
       ]
     },
     {
@@ -83,6 +84,7 @@
       "size": [180, 70],
       "sources": [
         { "path": "packages/store/src/repository.ts", "label": "fachada store" },
+        { "path": "packages/store/src/repository/outbox/operator.ts", "label": "visibilidad de relays" },
         { "path": "deploy/compose.postgres.yaml", "label": "runtime" }
       ]
     },
@@ -94,7 +96,9 @@
       "pos": [670, 370],
       "size": [180, 70],
       "sources": [
-        { "path": "services/dispatcher/src/index.ts", "label": "bucle" }
+        { "path": "services/dispatcher/src/index.ts", "label": "bucle" },
+        { "path": "services/dispatcher/src/main.ts", "label": "composición" },
+        { "path": "services/dispatcher/src/health.ts", "label": "salud HTTP" }
       ]
     },
     {

@@ -31,9 +31,9 @@ graph LR
   node_scripts["scripts"] -->|17| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|16| node_deploy_runtime["deploy/runtime"]
   node_tests_unit["tests/unit"] -->|16| node_packages_store["packages/store"]
+  node_tests_unit["tests/unit"] -->|14| node_packages_protocol["packages/protocol"]
   node_tests_unit["tests/unit"] -->|14| node_ops_observability["ops/observability"]
   node__raiz_["(raiz)"] -->|13| node_scripts["scripts"]
-  node_tests_unit["tests/unit"] -->|13| node_packages_protocol["packages/protocol"]
   node_ops_scripts["ops/scripts"] -->|12| node_ops["ops"]
   node_ops_tests["ops/tests"] -->|12| node_ops_harness["ops/harness"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|11| node_packages_store["packages/store"]
@@ -136,9 +136,9 @@ graph LR
 | scripts | packages/protocol | 17 |
 | scripts | deploy/runtime | 16 |
 | tests/unit | packages/store | 16 |
+| tests/unit | packages/protocol | 14 |
 | tests/unit | ops/observability | 14 |
 | (raiz) | scripts | 13 |
-| tests/unit | packages/protocol | 13 |
 | ops/scripts | ops | 12 |
 | ops/tests | ops/harness | 12 |
 | tests/gateway-hardening | packages/store | 11 |
@@ -334,7 +334,7 @@ graph LR
 | packages/adapter-sdk | 186 |
 | packages/store | 111 |
 | services/gateway | 102 |
-| tests/unit | 82 |
+| tests/unit | 83 |
 | ops/scripts | 67 |
 | services/telegram-bridge | 44 |
 | ops/tests | 43 |
