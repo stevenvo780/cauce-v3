@@ -39,7 +39,7 @@ if [ -f "$ROOT/flota.json" ]; then
   )
 fi
 
-for file in "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; do bash -n "$file"; done
+for file in "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$ROOT"/tests/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; do bash -n "$file"; done
 for file in "$ROOT"/scripts/*.mjs "$ROOT"/harness/*.mjs "$ROOT"/tests/*.mjs "$PROJECT"/deploy/*.mjs "$PROJECT"/deploy/runtime/*.mjs; do node --check "$file"; done
 PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
 import json, pathlib, sys, yaml
@@ -61,6 +61,9 @@ for path in sorted((root / 'container-runtime').glob('*.py')):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
     print(f'python syntax ok: {path}')
 for path in sorted((root / 'guardias').glob('*.py')):
+    compile(path.read_text(encoding='utf-8'), str(path), 'exec')
+    print(f'python syntax ok: {path}')
+for path in sorted((root / 'tests').glob('*.py')) + sorted((root / 'tests/fixtures').glob('*.py')):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
     print(f'python syntax ok: {path}')
 PY
@@ -103,24 +106,7 @@ for generated in "${container_units[@]}" "${container_configs[@]}" "$tmp_contain
 done
 (cd "$ROOT/generated/container-systemd/rootless" && sha256sum -c SHA256SUMS >/dev/null)
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container_ops_digest.py" --rootless --check
-node "$ROOT/tests/container-supervisor.test.mjs"
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_container_runtime_reaping.py"
-# The provisioner rejects root-owned tokens, so this suite runs as an unprivileged identity under root.
-if [ "$(id -u)" = 0 ]; then
-  setpriv --reuid=65534 --regid=65534 --clear-groups env HOME=/tmp PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
-else
-  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_provision_alertmanager_config.py"
-fi
-node "$ROOT/tests/alias-runner.test.mjs"
-node "$ROOT/tests/container-cutover.test.mjs"
-node "$ROOT/tests/container-ops-evidence.test.mjs"
-node "$ROOT/tests/sector-table.test.mjs"
-node "$ROOT/tests/fleet-snapshot-gates.test.mjs"
-node "$ROOT/tests/fleet-reader-parity.test.mjs"
-# Guards the source-digest domain split: proves the runtime domain still covers everything that
-# reaches the runtime image and that console is the only thing it drops. Removing a family from
-# a digest LOOSENS the gate, so the narrowing has to be pinned by a test.
-node "$ROOT/tests/source-digest-domains.test.mjs"
+node "$ROOT/tests/run-all.mjs"
 
 python3 - "$PROJECT" <<'PY'
 import pathlib, re, sys
@@ -242,6 +228,10 @@ if ! docker build --help >/dev/null 2>&1; then
   fi
   printf 'docker build check skipped outside release\n'
 fi
-if command -v shellcheck >/dev/null 2>&1; then shellcheck "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; fi
+if ! command -v shellcheck >/dev/null 2>&1; then
+  printf 'static validation failed: shellcheck unavailable\n' >&2
+  exit 127
+fi
+shellcheck "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$ROOT"/tests/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh
 node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/console/src"
 printf 'static validation passed\n'

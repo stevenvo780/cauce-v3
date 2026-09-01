@@ -34,6 +34,11 @@ const SUITES_RAIZ = [
 
 const INCLUIR_RAIZ = ['packages/*/src/**/*.ts', 'services/*/src/**/*.ts'];
 const EXCLUIR_RAIZ = ['packages/adapter-sdk/src/**'];
+const SALIDAS_COMPILADAS = [
+  'packages/protocol/dist',
+  'packages/mcp-fleet-monitor/dist',
+  'packages/adapter-sdk/dist',
+];
 
 function ejecutar(comando, argumentos, opciones = {}) {
   const inicio = Date.now();
@@ -42,6 +47,33 @@ function ejecutar(comando, argumentos, opciones = {}) {
     stdio: opciones.capturar ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   });
   return { ...resultado, ms: Date.now() - inicio };
+}
+
+function falloDeCorrida(nombre, corrida) {
+  if (corrida.error) {
+    return new Error(`${nombre} no pudo arrancar: ${corrida.error.message}`, { cause: corrida.error });
+  }
+  if (corrida.status === 0) return undefined;
+  const causa = corrida.signal ? `señal ${corrida.signal}` : `exit ${String(corrida.status)}`;
+  return new Error(`${nombre} falló (${causa})`);
+}
+
+function mostrarSalidaCapturada(corrida) {
+  if (corrida.stdout) process.stdout.write(corrida.stdout);
+  if (corrida.stderr) process.stderr.write(corrida.stderr);
+}
+
+function exigirCorridaVerde(nombre, corrida) {
+  const fallo = falloDeCorrida(nombre, corrida);
+  if (!fallo) return;
+  mostrarSalidaCapturada(corrida);
+  throw fallo;
+}
+
+function limpiarSalidasCompiladas() {
+  for (const ruta of SALIDAS_COMPILADAS) {
+    rmSync(join(root, ruta), { recursive: true, force: true });
+  }
 }
 
 function resumen(directorio) {
@@ -64,7 +96,11 @@ function dominioRaiz(salida) {
     '--testTimeout=180000', ...SUITES_RAIZ,
   ];
   const corrida = ejecutar('npx', argumentos);
-  return { resumen: resumen(salida), ms: corrida.ms, codigo: corrida.status };
+  return {
+    resumen: resumenTrasCorrida('suite raíz', salida, corrida),
+    ms: corrida.ms,
+    fallo: falloDeCorrida('suite raíz', corrida),
+  };
 }
 
 function dominioConsola(salida) {
@@ -77,7 +113,23 @@ function dominioConsola(salida) {
     '--coverage.exclude=**/*.test.tsx',
   ];
   const corrida = ejecutar('npx', argumentos, { cwd: join(root, 'console') });
-  return { resumen: resumen(salida), ms: corrida.ms, codigo: corrida.status };
+  return {
+    resumen: resumenTrasCorrida('suite consola', salida, corrida),
+    ms: corrida.ms,
+    fallo: falloDeCorrida('suite consola', corrida),
+  };
+}
+
+function resumenTrasCorrida(nombre, salida, corrida) {
+  try {
+    return resumen(salida);
+  } catch (error) {
+    const fallo = falloDeCorrida(nombre, corrida);
+    if (!fallo) throw error;
+    throw new AggregateError([fallo, error], `${nombre} falló y no dejó cobertura utilizable`, {
+      cause: fallo,
+    });
+  }
 }
 
 /*
@@ -87,19 +139,29 @@ function dominioConsola(salida) {
  */
 function dominioAdapter() {
   const paquete = join(root, 'packages/adapter-sdk');
-  ejecutar('pnpm', ['--filter', '@cauce/adapter-sdk', 'build'], { capturar: true });
   const corrida = ejecutar('node', [
     '--enable-source-maps', '--import', '../../scripts/paquetes-de-este-arbol.mjs',
     '--test', '--test-concurrency=1', '--experimental-test-coverage',
     '--test-coverage-include=src/**', '--test-coverage-include=dist/src/**',
     'dist/test/*.test.js',
   ], { cwd: paquete, capturar: true });
+  const fallo = falloDeCorrida('suite adapter-sdk', corrida);
+  if (fallo) mostrarSalidaCapturada(corrida);
   const tabla = (corrida.stdout ?? '').split('\n');
   const ficheros = tabla.filter((linea) => /\.ts\s+\|/.test(linea)).length;
   const total = tabla.find((linea) => linea.startsWith('# all files'));
   const cifras = total ? total.split('|').slice(1, 4).map((valor) => Number(valor.trim())) : [];
-  if (ficheros === 0) throw new Error('el informe de adapter-sdk salió vacío: la medición no ocurrió');
-  return { lineas: cifras[0], ramas: cifras[1], funciones: cifras[2], ficheros, ms: corrida.ms };
+  if (ficheros === 0 || cifras.length !== 3 || cifras.some((valor) => !Number.isFinite(valor))) {
+    const informe = new Error('el informe de adapter-sdk salió vacío o malformado: la medición no ocurrió');
+    if (!fallo) throw informe;
+    throw new AggregateError([fallo, informe], 'suite adapter-sdk falló sin cobertura utilizable', {
+      cause: fallo,
+    });
+  }
+  return {
+    lineas: cifras[0], ramas: cifras[1], funciones: cifras[2], ficheros, ms: corrida.ms,
+    fallo,
+  };
 }
 
 function peores(resumenes, cuantos) {
@@ -118,43 +180,87 @@ function segundos(ms) {
   return `${(ms / 1_000).toFixed(0)}s`;
 }
 
+function intentar(operacion) {
+  try {
+    return { valor: operacion() };
+  } catch (error) {
+    return { error };
+  }
+}
+
+function mensaje(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 const cuantos = Number(process.argv[process.argv.indexOf('--peores') + 1]) || 15;
 const salida = mkdtempSync(join(tmpdir(), 'cauce-cobertura-'));
 try {
-  ejecutar('pnpm', ['prepare:runtime'], { capturar: true });
-  ejecutar('pnpm', ['build:mcp'], { capturar: true });
-  ejecutar('pnpm', ['build:adapter'], { capturar: true });
-  const raiz = dominioRaiz(join(salida, 'raiz'));
-  const consola = dominioConsola(join(salida, 'consola'));
-  const adapter = dominioAdapter();
+  limpiarSalidasCompiladas();
+  exigirCorridaVerde(
+    'build de protocol',
+    ejecutar('pnpm', ['prepare:runtime'], { capturar: true }),
+  );
+  exigirCorridaVerde('build de mcp', ejecutar('pnpm', ['build:mcp'], { capturar: true }));
+  exigirCorridaVerde('build de adapter', ejecutar('pnpm', ['build:adapter'], { capturar: true }));
 
-  const lineas = ['lines', 'branches'].map((metrica) => {
-    const total = raiz.resumen.total[metrica].total + consola.resumen.total[metrica].total;
-    const cubierto = raiz.resumen.total[metrica].covered + consola.resumen.total[metrica].covered;
-    return { metrica, total, cubierto, pct: porcentaje(cubierto, total) };
-  });
+  const resultadoRaiz = intentar(() => dominioRaiz(join(salida, 'raiz')));
+  const resultadoConsola = intentar(() => dominioConsola(join(salida, 'consola')));
+  const resultadoAdapter = intentar(dominioAdapter);
+  const raiz = resultadoRaiz.valor;
+  const consola = resultadoConsola.valor;
+  const adapter = resultadoAdapter.valor;
+
+  const lineas = raiz && consola
+    ? ['lines', 'branches'].map((metrica) => {
+      const total = raiz.resumen.total[metrica].total + consola.resumen.total[metrica].total;
+      const cubierto = raiz.resumen.total[metrica].covered + consola.resumen.total[metrica].covered;
+      return { metrica, total, cubierto, pct: porcentaje(cubierto, total) };
+    })
+    : undefined;
 
   console.log(`\n${'='.repeat(78)}\ncobertura de cauce-v3\n${'='.repeat(78)}`);
   console.log(`\nsuites que produjeron la cifra (todas en una sola corrida por dominio):`);
   console.log(`  raiz     ${SUITES_RAIZ.join(' ')}`);
   console.log(`  consola  console/src (vitest propio: jsdom + plugin react)`);
   console.log(`\ndominio            lineas              ramas               corrida`);
-  for (const [nombre, dato] of [['raiz', raiz], ['consola', consola]]) {
+  for (const [nombre, dato, resultado] of [
+    ['raiz', raiz, resultadoRaiz], ['consola', consola, resultadoConsola],
+  ]) {
+    if (!dato) {
+      console.log(`  ${nombre.padEnd(16)} NO DISPONIBLE      ${mensaje(resultado.error)}`);
+      continue;
+    }
     const l = dato.resumen.total.lines, b = dato.resumen.total.branches;
     console.log(`  ${nombre.padEnd(16)} ${`${l.covered}/${l.total}`.padEnd(14)} ${`${l.pct.toFixed(2)}%`.padEnd(8)} ${`${b.pct.toFixed(2)}%`.padEnd(10)} ${segundos(dato.ms)}`);
   }
-  console.log(`\n  CIFRA FUSIONADA  lineas ${lineas[0].cubierto}/${lineas[0].total} = ${lineas[0].pct.toFixed(2)}%   ramas ${lineas[1].pct.toFixed(2)}%`);
+  if (lineas) {
+    console.log(`\n  CIFRA FUSIONADA  lineas ${lineas[0].cubierto}/${lineas[0].total} = ${lineas[0].pct.toFixed(2)}%   ramas ${lineas[1].pct.toFixed(2)}%`);
+  } else {
+    console.log(`\n  CIFRA FUSIONADA  NO DISPONIBLE: falta al menos un dominio medible`);
+  }
   console.log(`\ndeclarado aparte — packages/adapter-sdk (node --test sobre dist, source-mapped;`);
   console.log(`  v8 coverage de vitest NO lo alcanza, así que queda fuera de la cifra de arriba)`);
-  console.log(`  lineas ${adapter.lineas.toFixed(2)}%   ramas ${adapter.ramas.toFixed(2)}%   funciones ${adapter.funciones.toFixed(2)}%   (${adapter.ficheros} ficheros, ${segundos(adapter.ms)})`);
+  if (adapter) {
+    console.log(`  lineas ${adapter.lineas.toFixed(2)}%   ramas ${adapter.ramas.toFixed(2)}%   funciones ${adapter.funciones.toFixed(2)}%   (${adapter.ficheros} ficheros, ${segundos(adapter.ms)})`);
+  } else {
+    console.log(`  NO DISPONIBLE: ${mensaje(resultadoAdapter.error)}`);
+  }
 
-  const lista = peores([raiz.resumen, consola.resumen], cuantos);
+  const resumenes = [raiz?.resumen, consola?.resumen].filter(Boolean);
+  const lista = peores(resumenes, cuantos);
   console.log(`\n${cuantos} ficheros peor cubiertos (>=40 lineas):`);
   for (const fila of lista) {
     console.log(`  ${`${fila.pct.toFixed(1)}%`.padStart(7)}  ${String(fila.total).padStart(5)}  ${fila.ruta}`);
   }
-  if (raiz.codigo !== 0 || consola.codigo !== 0) {
-    console.log(`\nAVISO: alguna suite falló (raiz ${raiz.codigo}, consola ${consola.codigo}); la cifra sale de lo que sí corrió.`);
+
+  const fallos = [resultadoRaiz, resultadoConsola, resultadoAdapter].flatMap((resultado) => {
+    if (resultado.error) return [resultado.error];
+    return resultado.valor?.fallo ? [resultado.valor.fallo] : [];
+  });
+  if (fallos.length > 0) {
+    console.error(`\nCOBERTURA FALLIDA: la tabla parcial no acredita un gate verde.`);
+    for (const fallo of fallos) console.error(`  - ${mensaje(fallo)}`);
+    throw new AggregateError(fallos, `${String(fallos.length)} dominio(s) de cobertura fallaron`);
   }
 } finally {
   rmSync(salida, { recursive: true, force: true });

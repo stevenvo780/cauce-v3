@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { afterEach, describe, expect, it } from 'vitest';
-import { startTestDatabase } from '../../../tests/helpers/postgres.js';
+import { dockerTestRequirement, startTestDatabase } from '../../../tests/helpers/postgres.js';
 import {
   buildLoopbackHealthProbe, probeAckPath, probeConsolePublishIntentPath,
   probeDeliveryAdmissionPath, probeProfileRuntimePath,
@@ -11,11 +11,10 @@ import {
   probeWakePath, renderWakePumpMetrics,
 } from './health.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
-
+const postgresRequirement = dockerTestRequirement('PostgreSQL readiness and least-privilege contracts for schemas 015 and 031-035');
 const answeringPool = {
   query: async () => ({ rows: [{ ssl: true }], rowCount: 1 }),
 } as unknown as DatabasePool;
-
 let dataListener: Server | undefined;
 
 afterEach(async () => {
@@ -793,7 +792,8 @@ describe('gateway readiness stops lying about the listener the agents actually u
     await app.close();
   });
 
-  it('proves exact 015/031/032/033/034/035 contracts on PostgreSQL 16 and rejects false structural greens', async () => {
+  it('proves exact 015/031/032/033/034/035 contracts on PostgreSQL 16 and rejects false structural greens', async ({ skip }) => {
+    if (!process.env.CAUCE_TEST_DATABASE_URL) await postgresRequirement.skipIfUnavailable(skip);
     const database = await startTestDatabase();
     const role = `wake_probe_${randomUUID().replaceAll('-', '')}`;
     const password = randomUUID();

@@ -12,6 +12,7 @@ const SUITES = [
   'test:unit',
   'test:terminal-pty',
   'test:pty',
+  'test:ops',
   'test:services',
   'test:gateway-hardening',
   'test:store-hardening',

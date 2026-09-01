@@ -19,7 +19,7 @@ done
 
 #
 # Ahora la expectativa se lee del directorio de migraciones: no puede quedarse atras.
-ESPERADA="$(ls "$REPO_DIR/packages/store/migrations"/[0-9]*.sql 2>/dev/null | xargs -r -n1 basename | sort | tail -1)"
+ESPERADA="$(find "$REPO_DIR/packages/store/migrations" -maxdepth 1 -type f -name '[0-9]*.sql' -printf '%f\n' | sort | tail -1)"
 ver="$("${PG[@]}" "SELECT max(version) FROM schema_migrations" 2>/dev/null)"
 if [ -z "$ESPERADA" ]; then
   echo "ROJO esquema: no pude leer las migraciones del repo para saber que esperar"; fallo=1

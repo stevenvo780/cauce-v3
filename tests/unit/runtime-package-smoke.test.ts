@@ -13,6 +13,8 @@ const { validateRuntimeBridges } = await import(/* @vite-ignore */ smokeModuleUr
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
 const dockerfilePath = join(repositoryRoot, 'deploy', 'Dockerfile');
 const composePath = join(repositoryRoot, 'deploy', 'compose.yaml');
+const buildTsconfigPath = join(repositoryRoot, 'tsconfig.build.json');
+const packageManifestPath = join(repositoryRoot, 'package.json');
 const sourceBridgeDirectory = join(repositoryRoot, 'packages', 'adapter-sdk', 'bridge');
 
 describe('runtime bridge packaging smoke', () => {
@@ -104,5 +106,21 @@ describe('runtime bridge packaging smoke', () => {
     );
     expect(compose).toContain('- terminal_close_spool:/var/lib/cauce-terminal');
     expect(compose.match(/terminal_close_spool/gu)).toHaveLength(2);
+  });
+
+  it('excludes test fixtures from every compiled runtime tree', async () => {
+    const buildConfiguration = JSON.parse(await readFile(buildTsconfigPath, 'utf8')) as {
+      exclude?: string[];
+    };
+    expect(buildConfiguration.exclude).toEqual(expect.arrayContaining([
+      '**/*.fixtures.ts',
+      '**/*-test-fixtures.ts',
+      '**/test-fixtures/**',
+    ]));
+    const manifest = JSON.parse(await readFile(packageManifestPath, 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    expect(manifest.scripts?.['build:core']).toMatch(/^pnpm clean:core &&/u);
+    expect(manifest.scripts?.['clean:core']).toContain("fs.rm('dist',{recursive:true,force:true})");
   });
 });

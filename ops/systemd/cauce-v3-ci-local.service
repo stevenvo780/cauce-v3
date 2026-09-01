@@ -5,7 +5,7 @@ Description=Cauce V3: CI local nocturno — el gate completo + validate sobre ma
 Type=oneshot
 WorkingDirectory=/datos/workspaces/zeus/cauce-v3
 # Runs as root like the whole fleet (root-owned files in the tree broke the stev run at 17s).
-ExecStart=/usr/bin/bash -lc 'umask 022 && git pull --rebase --autostash origin main && pnpm typecheck && pnpm lint && pnpm test:unit && pnpm test:pty && ops/scripts/validate.sh'
+ExecStart=/usr/bin/bash -lc 'umask 022 && test -z "$(git status --porcelain=v1)" && test "$(git branch --show-current)" = main && git pull --ff-only origin main && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && pnpm typecheck && pnpm lint && CAUCE_REQUIRE_TESTCONTAINERS=1 pnpm test && CAUCE_RELEASE_VALIDATION=1 pnpm ops:validate'
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=3600

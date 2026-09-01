@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { esBaseDePruebas, nombreDeBase } from '../helpers/postgres.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  dockerTestRequirement, esBaseDePruebas, nombreDeBase,
+} from '../helpers/postgres.js';
 
 /*
  * The guard that stops the suite from truncating production.
@@ -15,6 +17,16 @@ import { esBaseDePruebas, nombreDeBase } from '../helpers/postgres.js';
  */
 
 describe('la guarda de base desechable', () => {
+  const originalRequireTestcontainers = process.env.CAUCE_REQUIRE_TESTCONTAINERS;
+
+  afterEach(() => {
+    if (originalRequireTestcontainers === undefined) {
+      Reflect.deleteProperty(process.env, 'CAUCE_REQUIRE_TESTCONTAINERS');
+    } else {
+      process.env.CAUCE_REQUIRE_TESTCONTAINERS = originalRequireTestcontainers;
+    }
+  });
+
   it('acepta una base cuyo nombre empieza por cauce_test', () => {
     expect(esBaseDePruebas('postgresql://u:p@127.0.0.1:5432/cauce_test')).toBe(true);
     expect(esBaseDePruebas('postgresql://u:p@127.0.0.1:5432/cauce_test_zeus_20260824')).toBe(true);
@@ -37,5 +49,34 @@ describe('la guarda de base desechable', () => {
 
   it('lee el nombre de la base sin arrastrar la contraseña', () => {
     expect(nombreDeBase('postgresql://u:p%40ss@h:5432/cauce_test')).toBe('cauce_test');
+  });
+
+  it('CONTROL NEGATIVO: el gate obligatorio no convierte Docker ausente en un skip verde', async () => {
+    process.env.CAUCE_REQUIRE_TESTCONTAINERS = '1';
+    const skip = vi.fn();
+    const requirement = dockerTestRequirement(
+      'contrato PostgreSQL obligatorio',
+      async () => 'Docker daemon unavailable',
+    );
+
+    await requirement.skipIfUnavailable(skip as never);
+
+    expect(skip).not.toHaveBeenCalled();
+  });
+
+  it('el gate normal conserva el motivo exacto de la capacidad que no pudo comprobar', async () => {
+    Reflect.deleteProperty(process.env, 'CAUCE_REQUIRE_TESTCONTAINERS');
+    const skip = vi.fn();
+    const requirement = dockerTestRequirement(
+      'contrato PostgreSQL acotado',
+      async () => 'Docker daemon unavailable',
+    );
+
+    await requirement.skipIfUnavailable(skip as never);
+
+    expect(skip).toHaveBeenCalledOnce();
+    expect(skip).toHaveBeenCalledWith(
+      'Docker daemon unavailable; not checked: contrato PostgreSQL acotado',
+    );
   });
 });
