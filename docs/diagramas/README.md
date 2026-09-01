@@ -7,6 +7,8 @@ El mapa navegable de Cauce vive en dos archivos:
 
 Abrí el HTML directamente para recorrer componentes, relaciones, vistas guiadas, fuentes de código y temas claro/oscuro. Para trabajar en vivo:
 
+Archify v2.16.0 no admite el locale `es`: el contenido autoral del mapa está en español, pero los controles fijos del visor y el atributo `lang` del HTML permanecen en inglés.
+
 ```bash
 pnpm arch:preview
 ```
