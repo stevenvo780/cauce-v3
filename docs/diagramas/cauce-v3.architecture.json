@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/stevenvo780/cauce-v3",
-      "revision": "735f723b2294034ab975b9a2d1216a0578e4cdd6"
+      "revision": "11a02081c18f1d765e1a4dfb29970695fbf510d5"
     },
     "viewBox": [1120, 620],
     "views": [
@@ -58,7 +58,8 @@
       "size": [180, 70],
       "sources": [
         { "path": "packages/adapter-sdk/src/sdk/engine.ts", "label": "motor consumidor" },
-        { "path": "packages/adapter-sdk/src/sdk/durable-store.ts", "label": "estado local" }
+        { "path": "packages/adapter-sdk/src/sdk/durable-store.ts", "label": "estado local" },
+        { "path": "packages/adapter-sdk/src/sdk/durable-store/terminal-history.ts", "label": "historial append-only" }
       ]
     },
     {
