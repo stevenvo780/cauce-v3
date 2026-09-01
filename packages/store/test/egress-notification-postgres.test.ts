@@ -1,5 +1,6 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
@@ -7,12 +8,11 @@ import {
 } from '../../../tests/helpers/postgres.js';
 import { requireValue } from './helpers.js';
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
-
 const NOTIFY_ROLE = 'agent_notify';
 const CHAT_ID = '-1001234567890';
-
 interface NotificationRow {
   id: string;
   alias: string;
@@ -28,7 +28,6 @@ interface NotificationRow {
   idempotency_key: string;
   created_at: Date;
 }
-
 function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   return {
     version: '3.0',
@@ -45,7 +44,6 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
     ...overrides
   };
 }
-
 function telegramIngress(overrides: Partial<PublishMessage> = {}): PublishMessage {
   return command({
     actor_alias: 'argos',
@@ -196,8 +194,9 @@ async function seedPriorContact(): Promise<void> {
   await repository.publish(telegramIngress({ recipients: [{ tenant_id: 'Steven', alias: 'kant' }] }));
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
 }, 180_000);
@@ -215,6 +214,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

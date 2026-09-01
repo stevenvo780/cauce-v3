@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { preparePostgresSuite } from './postgres-suite.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyLegacyConsoleOutboxReconciliation,
   inspectLegacyConsoleOutbox,
@@ -12,14 +13,17 @@ import {
 import type { DatabasePool } from '@cauce/store';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

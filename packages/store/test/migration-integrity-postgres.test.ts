@@ -1,6 +1,7 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   applyMigrations,
   expectedLegacy024SchemaSha256,
@@ -17,18 +18,21 @@ import {
 const version024 = '024_agent_role_templates.sql';
 const version028 = '028_canonical_agent_role.sql';
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

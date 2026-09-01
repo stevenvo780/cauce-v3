@@ -1,6 +1,7 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   resetTestDatabase,
   startTestDatabase,
@@ -13,12 +14,10 @@ interface DeadOutboxFixture {
   messageId: string;
   requestId: string;
 }
-
 interface ReconciliationTransition {
   rule: string;
   count: number;
 }
-
 interface ReconciliationPlan {
   planSha256: string;
   material: {
@@ -28,13 +27,11 @@ interface ReconciliationPlan {
     transitions: ReconciliationTransition[];
   };
 }
-
 interface ReconciliationApply {
   alreadyApplied: boolean;
   transitionCount: number;
   recoveredSentCount: number;
 }
-
 interface SafeListItem {
   id: string;
   [key: string]: unknown;
@@ -52,14 +49,17 @@ interface OperatorResolution {
 }
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

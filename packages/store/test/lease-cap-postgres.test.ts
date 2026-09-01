@@ -1,6 +1,7 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import {
   CauceRepository, DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
@@ -11,6 +12,7 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
@@ -97,13 +99,15 @@ async function ageExecutionStart(id: string, ms: number): Promise<void> {
   );
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
-}, 180_000);
+}, 180_000, ['deriva el techo del timeout declarado, hacia abajo y hacia arriba']);
 
 beforeEach(async () => {
+  if (!databaseStarted) return;
   await resetTestDatabase(pool);
   await pool.query(`
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
@@ -115,6 +119,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

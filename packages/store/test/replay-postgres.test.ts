@@ -1,9 +1,10 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage } from '@cauce/protocol';
 import { DurableStore } from '../../adapter-sdk/src/sdk/durable-store.js';
 import type { Delivery } from '../../adapter-sdk/src/sdk/types.js';
@@ -13,6 +14,7 @@ import {
 } from '../../../tests/helpers/postgres.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
@@ -70,8 +72,9 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 5_00
   throw new Error(`condition not met within ${String(timeoutMs)}ms`);
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
 }, 120_000);
@@ -90,6 +93,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

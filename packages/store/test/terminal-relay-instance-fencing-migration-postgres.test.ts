@@ -1,7 +1,8 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseClient, DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase,
@@ -25,6 +26,7 @@ const relayInstanceId = 'a'.repeat(64);
 const relayBootId = '11111111-1111-4111-8111-111111111111';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let up: string;
 let down: string;
@@ -35,7 +37,7 @@ let down037: string;
 let up038: string;
 let down038: string;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   [up, down, up035, down035, up037, down037, up038, down038] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
@@ -47,10 +49,12 @@ beforeAll(async () => {
     readFile(down038Path, 'utf8'),
   ]);
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });
@@ -174,6 +178,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (!databaseStarted) return;
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await pool.query(`TRUNCATE TABLE terminal_sessions`);
   await restoreLatestSchema();

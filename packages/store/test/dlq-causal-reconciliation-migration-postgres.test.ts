@@ -1,8 +1,9 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { readFile } from 'node:fs/promises';
 import { requireValue } from './helpers.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabasePool } from '../src/index.js';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   resetTestDatabase,
   startTestDatabase,
@@ -13,17 +14,20 @@ const upPath = new URL('../migrations/030_dlq_causal_reconciliation.sql', import
 const downPath = new URL('../migrations/down/030_dlq_causal_reconciliation.sql', import.meta.url);
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let up: string;
 let down: string;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   [up, down] = await Promise.all([readFile(upPath, 'utf8'), readFile(downPath, 'utf8')]);
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });
