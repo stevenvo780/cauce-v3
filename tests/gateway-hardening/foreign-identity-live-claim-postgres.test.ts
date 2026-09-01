@@ -1,29 +1,34 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { DeliveryEnvelopeSchema, type Ack, type PublishMessage } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase,
+  closeTestDatabase, dockerTestRequirement, resetTestDatabase, startTestDatabase,
+  type TestDatabase,
 } from '../helpers/postgres.js';
 import { text } from './helpers.js';
 
 type Gateway = Awaited<ReturnType<typeof buildGateway>>;
 
-let database: TestDatabase;
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
 let app: Gateway | undefined;
 const sockets: WebSocket[] = [];
+const databaseRequirement = dockerTestRequirement(
+  'foreign-identity ACK ownership fencing against real PostgreSQL',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
 
-beforeAll(async () => {
-  database = await startTestDatabase();
-  pool = database.pool;
-}, 180_000);
-
-beforeEach(async () => {
+beforeEach(async ({ skip }) => {
+  if (testDatabaseNeedsDocker) await databaseRequirement.skipIfUnavailable(skip);
+  if (database === undefined) {
+    database = await startTestDatabase();
+    pool = database.pool;
+  }
   await resetTestDatabase(pool);
   await pool.query(
     `INSERT INTO agents(
@@ -31,7 +36,7 @@ beforeEach(async () => {
        container_name,runtime_user,home_directory,state_directory
      ) VALUES('Steven','argos','claude',true,100,'ws-argos','dev','/home/dev','/home/dev/.cauce')`,
   );
-});
+}, 180_000);
 
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.terminate();
@@ -40,8 +45,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await pool.end();
-  await database.container.stop();
+  await closeTestDatabase(database);
 });
 
 async function connect(port: number): Promise<{

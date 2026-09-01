@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabasePool } from '@cauce/store';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  dockerTestRequirement,
+  resetTestDatabase,
   startTestDatabase,
   type TestDatabase
 } from '../../../tests/helpers/postgres.js';
@@ -12,6 +14,10 @@ import type {
 } from '../src/types.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
+const postgresRequirement = dockerTestRequirement(
+  'PostgreSQL Telegram egress ambiguity, dead-letter, manual replay fencing and reconciliation contracts',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
 
 const alias: TelegramAliasConfig = {
   alias: 'kant',
@@ -78,20 +84,25 @@ async function seedRelay(pool: DatabasePool, eventId = EVENT_ID): Promise<void> 
 describe('Telegram PostgreSQL crash recovery', () => {
   let database: TestDatabase | undefined;
 
-  beforeAll(async () => {
-    database = await startTestDatabase();
-    await seedRelay(database.pool);
-  });
+  beforeEach(async ({ skip }) => {
+    if (testDatabaseNeedsDocker) await postgresRequirement.skipIfUnavailable(skip);
+    database ??= await startTestDatabase();
+    await resetTestDatabase(database.pool);
+  }, 180_000);
 
   afterAll(async () => {
-    if (database) {
-      await database.pool.end();
-      await database.container.stop();
+    if (database !== undefined) {
+      try {
+        await database.pool.end();
+      } finally {
+        await database.container.stop();
+      }
     }
   });
 
   it('persists ambiguity, dead outbox diagnosis and a fenced manual replay across restart', async () => {
     if (!database) throw new Error('PostgreSQL test database did not start');
+    await seedRelay(database.pool);
     const api = new RecordingTelegram();
     const firstRepository = new PostgresTelegramBridgeRepository(database.pool);
     await expect(new TelegramEgressWorker({

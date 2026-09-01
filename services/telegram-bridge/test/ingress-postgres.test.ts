@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import {
-  startTestDatabase, type TestDatabase
+  dockerTestRequirement, resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import { StoreTelegramIngress } from '../src/ingress.js';
 import { TelegramPoller } from '../src/poller.js';
@@ -12,18 +12,31 @@ import type {
   TelegramSendResult, TelegramUpdate
 } from '../src/types.js';
 
-let database: TestDatabase;
+const postgresRequirement = dockerTestRequirement(
+  'PostgreSQL Telegram publish-before-cursor replay, idempotency and durable cursor contracts',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
+
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
 
-beforeAll(async () => {
-  database = await startTestDatabase();
-  pool = database.pool;
-}, 180_000);
-
 afterAll(async () => {
-  await pool.end();
-  await database.container.stop();
+  if (database === undefined) return;
+  try {
+    await database.pool.end();
+  } finally {
+    await database.container.stop();
+  }
 });
+
+beforeEach(async ({ skip }) => {
+  if (testDatabaseNeedsDocker) await postgresRequirement.skipIfUnavailable(skip);
+  if (database === undefined) {
+    database = await startTestDatabase();
+    pool = database.pool;
+  }
+  await resetTestDatabase(pool);
+}, 180_000);
 
 class OneUpdateTelegram implements TelegramApi {
   constructor(private readonly input: TelegramUpdate) {}

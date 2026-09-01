@@ -4,11 +4,15 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
-import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import {
+  dockerTestRequirement,
+  startTestDatabase,
+  type TestDatabase,
+} from '../helpers/postgres.js';
 
 const execute = promisify(execFile);
 
@@ -39,50 +43,77 @@ let database: TestDatabase;
 let app: Awaited<ReturnType<typeof buildGateway>>;
 let httpUrl: string;
 let provisionStdout = '';
+const databaseRequirement = dockerTestRequirement(
+  'console password login, session, RBAC, CSRF, and durable side effects against ephemeral PostgreSQL',
+);
+let setupPromise: Promise<void> | undefined;
+let setupReady = false;
 
-beforeAll(async () => {
-  database = await startTestDatabase();
+async function setupSuite(): Promise<void> {
+  const startedDatabase = await startTestDatabase();
+  let startedApp: Awaited<ReturnType<typeof buildGateway>> | undefined;
+  try {
+    // Account creation goes through the production CLI against the ephemeral database. The
+    // password travels only via the subprocess environment and is never exposed in argv.
+    const cli = await execute(
+      join(process.cwd(), 'node_modules/.bin/tsx'),
+      [
+        'services/gateway/src/console-user-cli.ts',
+        '--email', CONSOLE_EMAIL,
+        '--name', 'QA E2E Dev',
+        '--role', 'reader',
+        '--tenant', CONSOLE_TENANT,
+        '--alias', CONSOLE_ALIAS
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          DATABASE_URL: startedDatabase.url,
+          CAUCE_CONSOLE_USER_PASSWORD: CONSOLE_PASSWORD,
+        }
+      }
+    );
+    provisionStdout = cli.stdout;
 
-  // Account creation goes through the REAL production path: the same `console-user-cli.ts` that
-  // `pnpm console:user` invokes, against the ephemeral database's DATABASE_URL. The password
-  // travels ONLY via subprocess env var — never via argv (visible in `ps`), and never printed:
-  // the CLI reads it from `CAUCE_CONSOLE_USER_PASSWORD` and echoes nothing sensitive.
-  const cli = await execute(
-    join(process.cwd(), 'node_modules/.bin/tsx'),
-    [
-      'services/gateway/src/console-user-cli.ts',
-      '--email', CONSOLE_EMAIL,
-      '--name', 'QA E2E Dev',
-      '--role', 'reader',
-      '--tenant', CONSOLE_TENANT,
-      '--alias', CONSOLE_ALIAS
-    ],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, DATABASE_URL: database.url, CAUCE_CONSOLE_USER_PASSWORD: CONSOLE_PASSWORD }
+    await persistDevOnlyCredentialRecord();
+    await seedAgentAndVisibleChain(startedDatabase);
+
+    const provider = new PasswordAuthProvider({
+      users: new PostgresConsoleUserStore(startedDatabase.pool),
+      signingKey: randomBytes(32),
+      sessionTtlMs: 60 * 60 * 1_000
+      // No fallback: this suite certifies only the password door.
+    });
+    await provider.ready();
+
+    startedApp = await buildGateway({ pool: startedDatabase.pool, authProvider: provider });
+    await startedApp.listen({ host: '127.0.0.1', port: 0 });
+    const address = startedApp.server.address() as AddressInfo;
+    database = startedDatabase;
+    app = startedApp;
+    httpUrl = `http://127.0.0.1:${String(address.port)}`;
+    setupReady = true;
+  } catch (error) {
+    await startedApp?.close().catch(() => undefined);
+    await startedDatabase.pool.end().catch(() => undefined);
+    await startedDatabase.container.stop().catch(() => undefined);
+    throw error;
+  }
+}
+
+beforeEach(async ({ skip }) => {
+  if (setupPromise === undefined) {
+    if (!process.env.CAUCE_TEST_DATABASE_URL) {
+      await databaseRequirement.skipIfUnavailable(skip);
     }
-  );
-  provisionStdout = cli.stdout;
-
-  await persistDevOnlyCredentialRecord();
-  await seedAgentAndVisibleChain();
-
-  const provider = new PasswordAuthProvider({
-    users: new PostgresConsoleUserStore(database.pool),
-    signingKey: randomBytes(32),
-    sessionTtlMs: 60 * 60 * 1_000
-    // No `fallback` on purpose: this suite certifies ONLY the password door, not the agent mTLS
-    // (already covered by `tests/e2e/real-qa.test.ts` with `DevOnlyAuthProvider`).
-  });
-  await provider.ready();
-
-  app = await buildGateway({ pool: database.pool, authProvider: provider });
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${String(address.port)}`;
+    setupPromise = setupSuite();
+  }
+  await setupPromise;
 }, 120_000);
 
 afterAll(async () => {
+  if (!setupReady) return;
   await app.close();
   await database.pool.end();
   await database.container.stop();
@@ -283,15 +314,15 @@ async function durableMutationCounts(): Promise<Record<string, number>> {
   );
 }
 
-async function seedAgentAndVisibleChain(): Promise<void> {
-  await database.pool.query(
+async function seedAgentAndVisibleChain(targetDatabase: TestDatabase): Promise<void> {
+  await targetDatabase.pool.query(
     `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
                         home_directory,state_directory)
      VALUES($1,$2,'claude',true,'ws-e2e','dev','/home/dev','/home/dev/.cauce/test')
      ON CONFLICT (tenant_id,alias) DO NOTHING`,
     [CONSOLE_TENANT, CONSOLE_ALIAS],
   );
-  await database.pool.query(
+  await targetDatabase.pool.query(
     `WITH inserted_message AS (
        INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
        VALUES(gen_random_uuid(),$1,$2,'grp.steven',$3,'{}'::jsonb,'interactive')

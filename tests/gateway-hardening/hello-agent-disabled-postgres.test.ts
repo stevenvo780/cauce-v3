@@ -1,32 +1,36 @@
 import type { AddressInfo } from 'node:net';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase,
+  closeTestDatabase, dockerTestRequirement, resetTestDatabase, startTestDatabase,
+  type TestDatabase,
 } from '../helpers/postgres.js';
 import { closeGatewaysAndSockets, text } from './helpers.js';
 
 type Gateway = Awaited<ReturnType<typeof buildGateway>>;
 
-let database: TestDatabase;
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
 const apps: Gateway[] = [];
 const sockets: WebSocket[] = [];
-
-beforeAll(async () => {
-  database = await startTestDatabase();
-  pool = database.pool;
-}, 180_000);
+const databaseRequirement = dockerTestRequirement(
+  'disabled-agent hello rejection and enabled-agent lease creation against real PostgreSQL',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
 
 afterAll(async () => {
-  await pool.end();
-  await database.container.stop();
+  await closeTestDatabase(database);
 });
 
-beforeEach(async () => {
+beforeEach(async ({ skip }) => {
+  if (testDatabaseNeedsDocker) await databaseRequirement.skipIfUnavailable(skip);
+  if (database === undefined) {
+    database = await startTestDatabase();
+    pool = database.pool;
+  }
   await resetTestDatabase(pool);
   await pool.query(
     `INSERT INTO agents(
@@ -34,7 +38,7 @@ beforeEach(async () => {
        container_name,runtime_user,home_directory,state_directory
      ) VALUES('Steven','argos','claude',false,100,'ws-argos','dev','/home/dev','/home/dev/.cauce')`,
   );
-});
+}, 180_000);
 
 afterEach(async () => {
   await closeGatewaysAndSockets(apps, sockets);

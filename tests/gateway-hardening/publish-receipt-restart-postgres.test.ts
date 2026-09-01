@@ -1,15 +1,22 @@
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeEach, expect, it } from 'vitest';
 import { PublishResultSchema, publishReceiptCausalHash } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
-  resetTestDatabase, startTestDatabase, type TestDatabase,
+  closeTestDatabase, dockerTestRequirement, resetTestDatabase, startTestDatabase,
+  type TestDatabase,
 } from '../helpers/postgres.js';
 
-let database: TestDatabase;
+type Gateway = Awaited<ReturnType<typeof buildGateway>>;
+
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
-let app: Awaited<ReturnType<typeof buildGateway>>;
+let app: Gateway | undefined;
+const databaseRequirement = dockerTestRequirement(
+  'publish receipt replay and durable single-effect repair across gateway restart against real PostgreSQL',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
 
 const headers = {
   'x-cauce-tenant': 'Steven',
@@ -35,25 +42,24 @@ async function bootGateway() {
   });
 }
 
-beforeAll(async () => {
-  database = await startTestDatabase();
-  pool = database.pool;
+beforeEach(async ({ skip }) => {
+  if (testDatabaseNeedsDocker) await databaseRequirement.skipIfUnavailable(skip);
+  if (database === undefined) {
+    database = await startTestDatabase();
+    pool = database.pool;
+  }
+  await app?.close();
+  await resetTestDatabase(pool);
   app = await bootGateway();
 }, 180_000);
 
-beforeEach(async () => {
-  await app.close();
-  await resetTestDatabase(pool);
-  app = await bootGateway();
-});
-
 afterAll(async () => {
-  await app.close();
-  await pool.end();
-  await database.container.stop();
+  await app?.close();
+  await closeTestDatabase(database);
 });
 
 it('returns 202 after restart for a pre-upgrade receipt and never repeats its durable effect', async () => {
+  if (app === undefined) throw new Error('gateway test setup did not complete');
   const firstResponse = await app.inject({ method: 'POST', url: '/v3/messages', headers, payload });
   expect(firstResponse.statusCode).toBe(202);
   const first = PublishResultSchema.parse(firstResponse.json());

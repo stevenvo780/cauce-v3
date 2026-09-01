@@ -2,8 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  dockerTestRequirement,
+  startTestDatabase,
+  type TestDatabase,
+} from '../helpers/postgres.js';
 
 /**
  * The fleet monitor is the only MCP surface Cauce exposes to an agent, so it is the only
@@ -31,6 +35,11 @@ const HARNESS_PROMPT_SOURCE = fileURLToPath(
  * package docs used to instruct.
  */
 const TENANT = 'Steven';
+const databaseRequirement = dockerTestRequirement(
+  'live MCP tools/list and tools/call behavior against migrated PostgreSQL',
+);
+let setupPromise: Promise<void> | undefined;
+let setupReady = false;
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -151,20 +160,43 @@ describe('MCP fleet monitor tool surface', () => {
   let client: StdioMcpClient;
   let advertised: readonly ToolDescriptor[];
 
-  beforeAll(async () => {
-    database = await startTestDatabase();
-    await database.pool.query(
-      `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
-                          home_directory,state_directory)
-       VALUES($1,'kant','claude',true,'ws-kant','dev','/home/dev','/home/dev/.cauce/test')`,
-      [TENANT],
-    );
-    client = new StdioMcpClient(database.url);
-    await client.initialize();
-    advertised = await client.listTools();
+  async function setupSuite(): Promise<void> {
+    const startedDatabase = await startTestDatabase();
+    let startedClient: StdioMcpClient | undefined;
+    try {
+      await startedDatabase.pool.query(
+        `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,
+                            home_directory,state_directory)
+         VALUES($1,'kant','claude',true,'ws-kant','dev','/home/dev','/home/dev/.cauce/test')`,
+        [TENANT],
+      );
+      startedClient = new StdioMcpClient(startedDatabase.url);
+      await startedClient.initialize();
+      const listedTools = await startedClient.listTools();
+      database = startedDatabase;
+      client = startedClient;
+      advertised = listedTools;
+      setupReady = true;
+    } catch (error) {
+      await startedClient?.close().catch(() => undefined);
+      await startedDatabase.pool.end().catch(() => undefined);
+      await startedDatabase.container.stop().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  beforeEach(async ({ skip }) => {
+    if (setupPromise === undefined) {
+      if (!process.env.CAUCE_TEST_DATABASE_URL) {
+        await databaseRequirement.skipIfUnavailable(skip);
+      }
+      setupPromise = setupSuite();
+    }
+    await setupPromise;
   }, 300_000);
 
   afterAll(async () => {
+    if (!setupReady) return;
     await client.close();
     await database.pool.end();
     await database.container.stop();

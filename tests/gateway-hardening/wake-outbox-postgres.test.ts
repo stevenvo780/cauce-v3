@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, createPool, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
 import {
+  closeTestDatabase,
+  dockerTestRequirement,
   resetTestDatabase,
   startTestDatabase,
   type TestDatabase,
@@ -15,22 +17,25 @@ import { closeGatewaysAndSockets, text } from './helpers.js';
 
 type Gateway = Awaited<ReturnType<typeof buildGateway>>;
 
-let database: TestDatabase;
+let database: TestDatabase | undefined;
 let observer: DatabasePool;
 const apps: Gateway[] = [];
 const sockets: WebSocket[] = [];
-
-beforeAll(async () => {
-  database = await startTestDatabase();
-  observer = database.pool;
-}, 120_000);
+const databaseRequirement = dockerTestRequirement(
+  'cross-gateway wake ownership fencing and lock-blocked shutdown cancellation against real PostgreSQL',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
 
 afterAll(async () => {
-  await observer.end();
-  await database.container.stop();
+  await closeTestDatabase(database);
 });
 
-beforeEach(async () => {
+beforeEach(async ({ skip }) => {
+  if (testDatabaseNeedsDocker) await databaseRequirement.skipIfUnavailable(skip);
+  if (database === undefined) {
+    database = await startTestDatabase();
+    observer = database.pool;
+  }
   await resetTestDatabase(observer);
   await observer.query(
     `INSERT INTO agents(
@@ -38,7 +43,7 @@ beforeEach(async () => {
        container_name,runtime_user,home_directory,state_directory
      ) VALUES('Isa','salva','claude',true,100,'ws-salva','dev','/home/dev','/home/dev/.cauce')`,
   );
-});
+}, 120_000);
 
 afterEach(async () => {
   await closeGatewaysAndSockets(apps, sockets);
@@ -161,6 +166,7 @@ describe('gateway wake fencing against real PostgreSQL', () => {
   });
 
   it('aborts a lock-blocked real claim so app.close and pool.end finish with no late effect', async () => {
+    if (database === undefined) throw new Error('PostgreSQL test database did not start');
     const applicationName = `cauce-gateway-abort-${randomUUID()}`;
     const dedicated = createPool(database.url, {
       max: 4, connectionTimeoutMillis: 2_000, applicationName,

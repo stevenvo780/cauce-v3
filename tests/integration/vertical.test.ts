@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeHarness } from '@cauce/adapter-sdk';
 import {
   publishReceiptCausalHash, PublishResultSchema, type Ack, type DeliveryEnvelope,
@@ -8,7 +8,12 @@ import {
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import {
+  dockerTestRequirement,
+  resetTestDatabase,
+  startTestDatabase,
+  type TestDatabase,
+} from '../helpers/postgres.js';
 
 interface Published {
   message_id: string;
@@ -45,6 +50,11 @@ let app: Awaited<ReturnType<typeof buildGateway>>;
 let httpUrl: string;
 let wsUrl: string;
 const harnesses: FakeHarness[] = [];
+const databaseRequirement = dockerTestRequirement(
+  'PostgreSQL-backed HTTP/WebSocket delivery, ACK, retry, fencing, tenancy, and idempotency behavior',
+);
+let setupPromise: Promise<void> | undefined;
+let setupReady = false;
 
 function harness(
   tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel',
@@ -136,21 +146,40 @@ async function ackAndWait(
   return client.waitFor((frame) => frame.type === 'ack_result' && frame.delivery_id === delivery.delivery_id);
 }
 
-beforeAll(async () => {
-  database = await startTestDatabase();
-  pool = database.pool;
-  repository = new CauceRepository(pool);
-  app = await buildGateway({
-    pool, authProvider: DevOnlyAuthProvider.forTests(), leaseTtlMs: 10_000,
-    ackDeadlineMs: 600_000, outboxPollMs: 20
-  });
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const address = app.server.address() as AddressInfo;
-  httpUrl = `http://127.0.0.1:${String(address.port)}`;
-  wsUrl = `ws://127.0.0.1:${String(address.port)}/v3/ws`;
-}, 120_000);
+async function setupSuite(): Promise<void> {
+  const startedDatabase = await startTestDatabase();
+  const startedPool = startedDatabase.pool;
+  let startedApp: Awaited<ReturnType<typeof buildGateway>> | undefined;
+  try {
+    startedApp = await buildGateway({
+      pool: startedPool, authProvider: DevOnlyAuthProvider.forTests(), leaseTtlMs: 10_000,
+      ackDeadlineMs: 600_000, outboxPollMs: 20
+    });
+    await startedApp.listen({ host: '127.0.0.1', port: 0 });
+    const address = startedApp.server.address() as AddressInfo;
+    database = startedDatabase;
+    pool = startedPool;
+    repository = new CauceRepository(startedPool);
+    app = startedApp;
+    httpUrl = `http://127.0.0.1:${String(address.port)}`;
+    wsUrl = `ws://127.0.0.1:${String(address.port)}/v3/ws`;
+    setupReady = true;
+  } catch (error) {
+    await startedApp?.close().catch(() => undefined);
+    await startedPool.end().catch(() => undefined);
+    await startedDatabase.container.stop().catch(() => undefined);
+    throw error;
+  }
+}
 
-beforeEach(async () => {
+beforeEach(async ({ skip }) => {
+  if (setupPromise === undefined) {
+    if (!process.env.CAUCE_TEST_DATABASE_URL) {
+      await databaseRequirement.skipIfUnavailable(skip);
+    }
+    setupPromise = setupSuite();
+  }
+  await setupPromise;
   await resetTestDatabase(pool);
   // The productive runtime rejects consumers missing from the durable inventory. This vertical
   // exercises the bus, not the fleet migration, so it explicitly models one capability for every
@@ -164,9 +193,10 @@ beforeEach(async () => {
      FROM memberships
      ON CONFLICT(tenant_id,alias) DO NOTHING`,
   );
-});
+}, 120_000);
 
 afterEach(async () => {
+  if (!setupReady) return;
   const closing = harnesses.splice(0);
   await Promise.all(closing.map(async (client) => client.close()));
   // The WebSocket close handshake completes on the client before the gateway's asynchronous
@@ -176,6 +206,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  if (!setupReady) return;
   await app.close();
   await pool.end();
   await database.container.stop();

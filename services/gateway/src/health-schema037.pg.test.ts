@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { describe, expect, it } from 'vitest';
-import { startTestDatabase } from '../../../tests/helpers/postgres.js';
+import { dockerTestRequirement, startTestDatabase } from '../../../tests/helpers/postgres.js';
 import { probeConsolePublishIntentPath } from './health.js';
 
 const migration037 = '037_console_publish_intent_indexes.sql';
 const migration037Sha256 =
   '0daeb89c224e940600562ab162fba03c4facd4cb0b80b65f20feedc02b33f281';
+const postgresRequirement = dockerTestRequirement(
+  'PostgreSQL schema-037 ledger, index topology, predicates and least-privilege readiness contracts',
+);
+const testDatabaseNeedsDocker = !process.env.CAUCE_TEST_DATABASE_URL;
 
 const indexDefinitions = {
   audit_events_console_publish_key_037_idx: `CREATE INDEX audit_events_console_publish_key_037_idx
@@ -42,7 +46,8 @@ async function replaceIndex(
 }
 
 describe('gateway schema-037 readiness on PostgreSQL 16', () => {
-  it('rejects absent ledger, absent index, definition drift, predicate drift and missing authority', async () => {
+  it('rejects absent ledger, absent index, definition drift, predicate drift and missing authority', async ({ skip }) => {
+    if (testDatabaseNeedsDocker) await postgresRequirement.skipIfUnavailable(skip);
     const database = await startTestDatabase();
     const role = `publish_health_${randomUUID().replaceAll('-', '')}`;
     const password = randomUUID();

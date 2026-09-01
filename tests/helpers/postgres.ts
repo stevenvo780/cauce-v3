@@ -116,10 +116,14 @@ async function unavailableDockerCapability(): Promise<string | undefined> {
   }
 }
 
-export function dockerTestRequirement(unverifiedCoverage: string): DockerTestRequirement {
+export function dockerTestRequirement(
+  unverifiedCoverage: string,
+  probe: () => Promise<string | undefined> = unavailableDockerCapability,
+): DockerTestRequirement {
   return {
     skipIfUnavailable: async (skipTest) => {
-      const unavailableCapability = await unavailableDockerCapability();
+      if (process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1') return;
+      const unavailableCapability = await probe();
       if (unavailableCapability === undefined) return;
       const reason = `${unavailableCapability}; not checked: ${unverifiedCoverage}`;
       console.warn(`[docker] test skipped: ${reason}`);
