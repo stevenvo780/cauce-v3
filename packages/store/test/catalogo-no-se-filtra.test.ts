@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { preparePostgresSuite } from './postgres-suite.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
@@ -10,14 +11,17 @@ import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../.
  */
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 180_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

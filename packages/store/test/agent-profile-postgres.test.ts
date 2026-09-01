@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { preparePostgresSuite } from './postgres-suite.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { requireValue } from './helpers.js';
 import { AGENT_PROFILE_LIMITS, countCodePoints, measureStrictestUnits } from '@cauce/protocol';
 import { AgentProfileRepository, type DatabasePool } from '../src/index.js';
@@ -12,6 +13,7 @@ import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../.
  */
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: AgentProfileRepository;
 
@@ -30,8 +32,9 @@ async function seedAgent(alias: string): Promise<void> {
   );
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new AgentProfileRepository(pool);
 }, 120_000);
@@ -42,6 +45,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

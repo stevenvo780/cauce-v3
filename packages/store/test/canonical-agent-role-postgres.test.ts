@@ -1,7 +1,8 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PublishMessage } from '@cauce/protocol';
 import {
   AgentProfileRepository, CauceRepository, applyMigrations,
@@ -19,6 +20,7 @@ import {
  */
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 const ACTOR = { tenant_id: 'Steven', alias: 'kant' } as const;
 
@@ -67,8 +69,9 @@ async function insertAgent(
   );
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 180_000);
 
@@ -80,6 +83,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   try {
     await ensureUp();
   } finally {

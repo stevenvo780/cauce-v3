@@ -1,5 +1,6 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   publishReceiptCausalHash, type ConsolePublishIntentCommand, type PublishMessage,
 } from '@cauce/protocol';
@@ -12,12 +13,11 @@ import {
 } from '../../../tests/helpers/postgres.js';
 import { requireValue } from './helpers.js';
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
-
 const OPERATOR_SCOPE = 'a'.repeat(64);
 const OTHER_OPERATOR_SCOPE = 'b'.repeat(64);
-
 function intent(
   overrides: Partial<ConsolePublishIntentCommand> = {},
 ): ConsolePublishIntentCommand {
@@ -45,7 +45,6 @@ function intent(
     intent_nonce: overrides.intent_nonce ?? base.intent_nonce,
   };
 }
-
 function command(
   prepared: ConsolePublishIntentCommand,
   idempotencyKey: string,
@@ -66,7 +65,6 @@ function command(
     ...overrides,
   };
 }
-
 function prepare(
   input: ConsolePublishIntentCommand,
   scope = OPERATOR_SCOPE,
@@ -95,8 +93,9 @@ function confirm(
   return repository.confirmConsolePublishIntent(tenantId, actorAlias, scope, input);
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
   repository = new CauceRepository(pool);
 }, 180_000);
@@ -107,6 +106,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });

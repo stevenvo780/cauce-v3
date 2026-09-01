@@ -1,6 +1,7 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { readFile } from 'node:fs/promises';
 import { requireValue } from './helpers.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyMigrations, inspectMigrationIntegrity, type DatabasePool,
 } from '../src/index.js';
@@ -23,12 +24,13 @@ const laterVersions = [
 ] as const;
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let up: string;
 let down: string;
 let laterDown: string[];
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   [up, down, laterDown] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
@@ -37,10 +39,12 @@ beforeAll(async () => {
     ))),
   ]);
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });
@@ -62,6 +66,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (!databaseStarted) return;
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   const tokenColumn = await pool.query<{ exists: boolean }>(
     `SELECT EXISTS(

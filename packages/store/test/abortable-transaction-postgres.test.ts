@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { requireValue } from './helpers.js';
 import {
   createPool,
@@ -6,12 +6,15 @@ import {
   type DatabasePool,
 } from '../src/index.js';
 import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { preparePostgresSuite } from './postgres-suite.js';
 
 let database: TestDatabase;
+let databaseStarted = false;
 let observer: DatabasePool;
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   observer = database.pool;
   await observer.query(
     `CREATE TABLE IF NOT EXISTS abortable_transaction_probe(
@@ -23,6 +26,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await observer.query(`DROP TABLE IF EXISTS abortable_transaction_probe`);
   await observer.end();
   await database.container.stop();

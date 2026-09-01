@@ -1,5 +1,6 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { readFile } from 'node:fs/promises';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { applyMigrations, type DatabasePool } from '../src/index.js';
 import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
@@ -20,6 +21,7 @@ import { startTestDatabase, type TestDatabase } from '../../../tests/helpers/pos
  */
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 
 const upPath = new URL('../migrations/026_agent_profile.sql', import.meta.url);
@@ -76,12 +78,14 @@ async function downProfileDependentsIfApplied(): Promise<void> {
   }
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 120_000);
 
 afterAll(async () => {
+  if (!databaseStarted) return;
     // Leave the schema UP no matter what: the other files in the suite share this database,
     // and finding it half-migrated would break them for a reason that is not theirs.
   try {

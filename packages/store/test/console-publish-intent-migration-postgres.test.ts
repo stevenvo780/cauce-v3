@@ -1,6 +1,7 @@
+import { preparePostgresSuite } from './postgres-suite.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyMigrations, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase,
@@ -19,6 +20,7 @@ const indexNames = [
 ] as const;
 
 let database: TestDatabase;
+let databaseStarted = false;
 let pool: DatabasePool;
 let up: string;
 let down: string;
@@ -122,13 +124,14 @@ async function explainWithGenericPlan(
   }
 }
 
-beforeAll(async () => {
+preparePostgresSuite(import.meta.url, async () => {
   [up, down, down038] = await Promise.all([
     readFile(upPath, 'utf8'),
     readFile(downPath, 'utf8'),
     readFile(down038Path, 'utf8'),
   ]);
   database = await startTestDatabase();
+  databaseStarted = true;
   pool = database.pool;
 }, 180_000);
 
@@ -140,12 +143,14 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (!databaseStarted) return;
   await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
   await ensureUp();
   await applyMigrations(pool);
 });
 
 afterAll(async () => {
+  if (!databaseStarted) return;
   await pool.end();
   await database.container.stop();
 });
