@@ -1,10 +1,14 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AuthError, AuthorizationError, validatePrincipal,
   type AuthProvider, type Principal, type PrincipalPermission, type PrincipalRole
 } from './auth.js';
 import type { ConsoleUser, ConsoleUserRole, ConsoleUserStore } from './console-users.js';
+import {
+  clearHostSessionCookie, constantTimeText, hostSessionCookie, isHostCookieName,
+  scalarHeaderValue, uniqueCookieValue
+} from './http-auth-primitives.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 
 /**
@@ -68,38 +72,6 @@ const ROLE_AUTHORITY: Readonly<Record<ConsoleUserRole, {
 
 function base64urlJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
-}
-
-function constantTimeText(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, 'utf8');
-  const rightBuffer = Buffer.from(right, 'utf8');
-  return leftBuffer.byteLength === rightBuffer.byteLength && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function headerValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-/**
- * Returns `undefined` if the header carries the cookie more than once. Two values with the same
- * name are the classic "cookie tossing" pattern: a compromised subdomain writes a second cookie
- * and the server picks the wrong one. Here we pick neither.
- */
-function cookieValue(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined;
-  const values = header.split(';').map((item) => item.trim()).filter((item) => item.startsWith(`${name}=`));
-  const [match] = values;
-  if (values.length !== 1 || match === undefined) return undefined;
-  try {
-    return decodeURIComponent(match.slice(name.length + 1));
-  } catch {
-    return undefined;
-  }
-}
-
-function sessionCookie(name: string, value: string, maxAgeSeconds: number): string {
-  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${
-    String(Math.max(0, Math.floor(maxAgeSeconds)))}`;
 }
 
 export function signConsoleSession(key: Buffer, claims: ConsoleSessionClaims): string {
@@ -252,7 +224,7 @@ export class PasswordAuthProvider implements AuthProvider {
     this.signingKey = Buffer.from(options.signingKey);
     this.fallback = options.fallback;
     this.cookieName = options.cookieName ?? '__Host-cauce_session';
-    if (!/^__Host-[A-Za-z0-9_-]+$/.test(this.cookieName)) {
+    if (!isHostCookieName(this.cookieName)) {
       throw new Error('la cookie de sesión debe usar el prefijo __Host-');
     }
     this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
@@ -290,7 +262,7 @@ export class PasswordAuthProvider implements AuthProvider {
   }
 
   private token(request: FastifyRequest): string | undefined {
-    return cookieValue(headerValue(request.headers.cookie), this.cookieName);
+    return uniqueCookieValue(scalarHeaderValue(request.headers.cookie), this.cookieName);
   }
 
   private principalFor(user: ConsoleUser, claims: ConsoleSessionClaims): Principal {
@@ -348,7 +320,7 @@ export class PasswordAuthProvider implements AuthProvider {
 
   async requireCsrf(request: FastifyRequest): Promise<void> {
     const { claims } = await this.load(request);
-    const presented = headerValue(request.headers['x-csrf-token']);
+    const presented = scalarHeaderValue(request.headers['x-csrf-token']);
     if (!presented || !constantTimeText(presented, claims.csrf)) {
       throw new AuthorizationError('se requiere un token CSRF válido');
     }
@@ -439,7 +411,7 @@ export class PasswordAuthProvider implements AuthProvider {
     const authority = ROLE_AUTHORITY[user.role];
     await reply
       .header('Cache-Control', 'no-store')
-      .header('Set-Cookie', sessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000))
+      .header('Set-Cookie', hostSessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000, 'Strict'))
       .code(200)
       .send({
         authenticated: true,
@@ -462,7 +434,7 @@ export class PasswordAuthProvider implements AuthProvider {
   async logout(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
     await reply
       .header('Cache-Control', 'no-store')
-      .header('Set-Cookie', sessionCookie(this.cookieName, '', 0))
+      .header('Set-Cookie', clearHostSessionCookie(this.cookieName, 'Strict'))
       .code(204)
       .send();
   }

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
 import type { DatabaseClient, DatabasePool } from '@cauce/store';
 import type { Principal } from '../auth.js';
+import { scalarHeaderValue } from '../http-auth-primitives.js';
 import type { TerminalConfig } from './config.js';
 import { UNATTRIBUTED_OPERATOR, type FleetIdentity, type FleetPlacement, type TerminalMode } from './types.js';
 
@@ -280,10 +281,6 @@ export interface ResolvedOperator {
   readonly attributed: boolean;
 }
 
-function headerValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
 /**
  * Who the person is, in order of authority.
  *
@@ -303,7 +300,7 @@ export function resolveOperator(
     return { operator_id: actor.operator_id, attributed: true };
   }
   if (actor.channel !== 'console') return { operator_id: UNATTRIBUTED_OPERATOR, attributed: false };
-  const declared = headerValue(request.headers[config.operatorHeader])?.trim();
+  const declared = scalarHeaderValue(request.headers[config.operatorHeader])?.trim();
   if (declared === undefined || declared.length === 0 || !config.operators.has(declared)) {
     return { operator_id: UNATTRIBUTED_OPERATOR, attributed: false };
   }

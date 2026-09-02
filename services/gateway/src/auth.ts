@@ -6,6 +6,11 @@ import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
 import type { Hello, Origin, Tenant } from '@cauce/protocol';
 import { AliasSchema, OriginSchema, TenantSchema } from '@cauce/protocol';
+import {
+  isHostCookieName,
+  scalarHeaderValue,
+  uniqueCookieValue
+} from './http-auth-primitives.js';
 import { isAuthorizedTlsSocket, isLiteralTrue } from './runtime-guards.js';
 
 export type PrincipalRole = 'agent' | 'operator' | 'adapter';
@@ -49,10 +54,6 @@ export interface AuthProvider {
   readonly mode: 'development' | 'production' | 'test';
   authenticateHttp(request: FastifyRequest): Promise<Principal>;
   authenticateHello(request: FastifyRequest, hello: Hello): Promise<Principal>;
-}
-
-function oneHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
 }
 
 function nonEmptyString(value: unknown, name: string, max = 512): string {
@@ -141,8 +142,8 @@ export class DevOnlyAuthProvider implements AuthProvider {
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
     if (process.env.NODE_ENV === 'production') throw new AuthError('development authentication is disabled');
-    const tenant = TenantSchema.safeParse(oneHeader(request.headers['x-cauce-tenant']));
-    const alias = AliasSchema.safeParse(oneHeader(request.headers['x-cauce-alias']));
+    const tenant = TenantSchema.safeParse(scalarHeaderValue(request.headers['x-cauce-tenant']));
+    const alias = AliasSchema.safeParse(scalarHeaderValue(request.headers['x-cauce-alias']));
     if (!tenant.success || !alias.success) {
       throw new AuthError('dev auth requires x-cauce-tenant and x-cauce-alias');
     }
@@ -370,7 +371,7 @@ export class JwksJwtAuthProvider implements AuthProvider {
   }
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
-    const authorization = oneHeader(request.headers.authorization);
+    const authorization = scalarHeaderValue(request.headers.authorization);
     if (!authorization?.startsWith('Bearer ') || authorization.length <= 7) throw new AuthError('bearer token is required');
     return (await this.verifyToken(authorization.slice(7))).principal;
   }
@@ -454,19 +455,6 @@ async function readIdentityFile(path: string): Promise<HashedIdentityRecord[]> {
   });
 }
 
-function cookieValue(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined;
-  const matches = header.split(';').map((part) => part.trim()).filter((part) => part.startsWith(`${name}=`));
-  const [match] = matches;
-  if (matches.length !== 1 || match === undefined) return undefined;
-  const encoded = match.slice(name.length + 1);
-  try {
-    return decodeURIComponent(encoded);
-  } catch {
-    return undefined;
-  }
-}
-
 export interface HashedTokenFileAuthProviderOptions {
   path: string;
   cookieName?: string;
@@ -487,16 +475,16 @@ export class HashedTokenFileAuthProvider implements AuthProvider {
   constructor(private readonly options: HashedTokenFileAuthProviderOptions) {
     if (!options.path) throw new Error('hashed token identity file path is required');
     this.cookieName = options.cookieName ?? '__Host-cauce_session';
-    if (!/^__Host-[A-Za-z0-9_-]+$/.test(this.cookieName)) {
+    if (!isHostCookieName(this.cookieName)) {
       throw new Error('token cookie must use the __Host- prefix');
     }
     this.allowBearer = options.allowBearer ?? true;
   }
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
-    const authorization = oneHeader(request.headers.authorization);
+    const authorization = scalarHeaderValue(request.headers.authorization);
     const bearer = this.allowBearer && authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
-    const cookie = cookieValue(oneHeader(request.headers.cookie), this.cookieName);
+    const cookie = uniqueCookieValue(scalarHeaderValue(request.headers.cookie), this.cookieName);
     if ((bearer ? 1 : 0) + (cookie ? 1 : 0) !== 1) throw new AuthError('exactly one pilot token credential is required');
     const raw = bearer ?? cookie;
     if (raw === undefined) throw new AuthError('exactly one pilot token credential is required');
