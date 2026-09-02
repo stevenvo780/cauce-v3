@@ -6,3 +6,5 @@ export * from './marcas-de-bloque.js';
 export * from './ficheros-del-arnes.js';
 export * from './outbox-contracts.js';
 export * from './profile-runtime-adoption.js';
+export * from './content-safety.js';
+export * from './governance-documents.js';
