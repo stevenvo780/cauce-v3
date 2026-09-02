@@ -34,9 +34,12 @@ Solo mediante `manualReplayEffect()`. Requisitos:
 
 ## Adjuntos (entrantes)
 
-- **Fotos**: JPEG, PNG, WebP. **Documentos**: PDF, TXT (UTF-8), DOCX. Máximo 10 MB.
-- Validación: nombre, ruta remota, tamaño declarado/real, extensión, MIME y firma de contenido.
-- El contenido viaja en el body de entrega durable. El adaptador materializa en un directorio privado `/tmp` con permisos `0600`; se limpia tras la ejecución.
+- **Cualquier formato.** No hay lista de tipos admitidos: entran fotos, documentos, vídeos y animaciones, con la extensión que sea o sin ninguna. Se toma `photo`, `document`, `video` y `animation`; `voice`, `audio` y `video_note` siguen yendo a transcripción.
+- Lo que se valida es **identidad e integridad, nunca el tipo**: nombre seguro (sin traversal, sin bidi ni invisibles), ruta remota segura, concordancia entre tamaño declarado y descargado, sha256 y base64 canónico.
+- El tipo se deduce de los **bytes** primero, de lo que declara Telegram después y de la extensión al final; lo que nadie reconoce viaja como `application/octet-stream`. El parámetro `; charset=…` se recorta.
+- `kind: image` se marca **solo si los bytes son una imagen ráster** (JPEG, PNG, WebP, GIF). Un `image/svg+xml` o un HEIC entran como documento: ese campo decide si un arnés puede pasar el fichero a una entrada nativa de imagen, y una imagen mentida cuesta el turno entero.
+- **Máximo 10 MB por adjunto y 10 MB agregados, 4 por mensaje.** Es hoy la única limitación real. Telegram además no deja descargar más de 20 MB con `getFile` ni enviar más de 50 MB (10 MB si es foto) salvo contra un servidor Bot API propio.
+- El contenido viaja en el body de entrega durable. El adaptador materializa en un directorio privado `/tmp` con permisos `0600`; se limpia tras la ejecución. Del fichero solo está verificada su identidad: su contenido es dato no confiable.
 
 ## Notas de voz (entrantes)
 
