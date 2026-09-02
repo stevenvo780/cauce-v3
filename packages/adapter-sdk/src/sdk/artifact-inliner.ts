@@ -3,7 +3,14 @@ import { constants as fsConstants } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, extname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isValidMediaType, mediaTypeForExtension } from "@cauce/protocol";
+import {
+  base64CharacterBudget,
+  isValidMediaType,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENTS_TOTAL_BYTES,
+  mediaTypeForExtension,
+} from "@cauce/protocol";
 import type { OutputArtifact, StructuredOutput } from "./types.js";
 
 /**
@@ -11,20 +18,11 @@ import type { OutputArtifact, StructuredOutput } from "./types.js";
  * publishing the response to the bus, enabling safe delivery to the end user.
  */
 
-/**
- * Per-attachment cap. Mirrors `MAX_EGRESS_ATTACHMENT_BYTES` on the bridge and
- * `MAX_ATTACHMENT_BYTES` on the protocol (ingest). Exceeding it is not an error: the attachment
- * is left as is.
- */
-export const MAX_INLINED_ARTIFACT_BYTES = 10_000_000;
+export const MAX_INLINED_ARTIFACT_BYTES = MAX_ATTACHMENT_BYTES;
 
-/** Mirrors `MAX_UPLOADS_PER_RELAY` on the bridge and `MAX_ATTACHMENTS_PER_MESSAGE` on the protocol. */
-export const MAX_INLINED_ARTIFACTS_PER_RESPONSE = 4;
+export const MAX_INLINED_ARTIFACTS_PER_RESPONSE = MAX_ATTACHMENTS_PER_MESSAGE;
 
-/**
- * Aggregate cap per response, aligned with `MAX_ATTACHMENTS_TOTAL_BYTES` from ingest.
- */
-export const MAX_INLINED_TOTAL_BYTES = 10_000_000;
+export const MAX_INLINED_TOTAL_BYTES = MAX_ATTACHMENTS_TOTAL_BYTES;
 
 /**
  * Maximum paths attempted to open. The parser doesn't cap the length of `artifacts`, and a turn
@@ -33,7 +31,7 @@ export const MAX_INLINED_TOTAL_BYTES = 10_000_000;
 const MAX_LOOKUPS = 16;
 
 /** Cap on the resulting base64: the same calculation the bridge does before decoding. */
-const MAX_BASE64_CHARACTERS = Math.ceil(MAX_INLINED_ARTIFACT_BYTES / 3) * 4 + 64;
+const MAX_BASE64_CHARACTERS = base64CharacterBudget(MAX_INLINED_ARTIFACT_BYTES, 64);
 
 /**
  * No `/proc`, `/sys`, or `/dev`. These are "regular" files that aren't files: `/proc/self/…`

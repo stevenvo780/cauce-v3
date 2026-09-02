@@ -46,7 +46,7 @@ const CANONICAL_MESSAGE_TARGET = /^(?:@all|[a-z][a-z0-9_-]{0,63})$/u;
 const INVISIBLE_TEXT = /[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]/gu;
 export const LEADING_INVISIBLE_TEXT = /^[\p{White_Space}\p{Cf}\p{Cc}\p{Mn}\p{Me}]+/u;
 
-export function hasVisibleText(value: string): boolean {
+export function hasNonBlankText(value: string): boolean {
   return value.replace(INVISIBLE_TEXT, "").length > 0;
 }
 
@@ -96,7 +96,7 @@ function parseMessages(value: unknown): readonly RelayMessage[] {
         `messages[${String(index)}].to must be a canonical lowercase alias or reserved target`,
       );
     }
-    if (!hasVisibleText(entry.body)) {
+    if (!hasNonBlankText(entry.body)) {
       throw new MalformedOutputError(`messages[${String(index)}].body must contain visible text`);
     }
     const bodyBytes = Buffer.byteLength(entry.body, "utf8");
@@ -136,7 +136,7 @@ function parseNotify(value: unknown): { directives: readonly NotifyDirective[]; 
       descartes.push(`notify[${String(index)}] descartada: 'kind' debe ser uno de ${NOTIFY_KINDS.join(", ")}`);
       continue;
     }
-    if (!hasVisibleText(entry.body)) {
+    if (!hasNonBlankText(entry.body)) {
       descartes.push(`notify[${String(index)}] descartada: 'body' no tiene texto visible`);
       continue;
     }
@@ -194,7 +194,7 @@ function normalizarStatus(
     return { status: valor === "failed" ? "failed" : "done", descartes: [] };
   }
   const texto = typeof valor === "string" ? valor.trim().toLowerCase() : "";
-  const hayTrabajo = typeof reply === "string" && hasVisibleText(reply);
+  const hayTrabajo = typeof reply === "string" && hasNonBlankText(reply);
   const status = STATUS_QUE_DECLARAN_FALLO.has(texto) || !hayTrabajo ? "failed" : "done";
   const recibido = typeof valor === "string" ? `"${valor}"` : JSON.stringify(valor);
   return {
@@ -324,7 +324,7 @@ export function validateDeliveryOutput(
     .includes(context.messageType ?? "");
   validateDelegationTargets(output.messages, context, internalMessage);
 
-  if (output.reply !== null && !hasVisibleText(output.reply)) {
+  if (output.reply !== null && !hasNonBlankText(output.reply)) {
     throw new AdapterError(
       "INVISIBLE_REPLY",
       "Harness reply must be null or contain visible text",

@@ -1,14 +1,12 @@
+import { ALIAS_PATTERN, objectRecord, TENANT_PATTERN } from "@cauce/protocol";
 import { AdapterError } from "./errors.js";
-import { hasVisibleText, MAX_FINAL_TEXT_BYTES } from "./output-parser.js";
+import { hasNonBlankText, MAX_FINAL_TEXT_BYTES } from "./output-parser.js";
 import type { StructuredOutput } from "./types.js";
 
 const FANIN_SCHEMA = "cauce.agent_fanin_data.v1";
-const TENANT_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
-const ALIAS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 const TRUNCATION_NOTICE = "\n[fan-in synthesis truncated]";
 const ENTRY_TRUNCATION_NOTICE = " [entry truncated]";
 
-type JsonObject = Record<string, unknown>;
 interface AttributedText {
   readonly tenantId: string;
   readonly alias: string;
@@ -31,12 +29,6 @@ export interface FaninSynthesisOptions {
     readonly childDeliveryId?: string;
     readonly sourceDeliveryId?: string;
   }[];
-}
-
-function objectRecord(value: unknown): JsonObject | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonObject
-    : undefined;
 }
 
 function boundedUtf8(
@@ -161,7 +153,7 @@ export function synthesizeFaninOutput(
         false,
       );
     }
-    const text = hasVisibleText(response.untrusted_text)
+    const text = hasNonBlankText(response.untrusted_text)
       ? response.untrusted_text
       : "completed without a visible textual response.";
     responses.push({
@@ -187,7 +179,7 @@ export function synthesizeFaninOutput(
     .filter((candidate) =>
       TENANT_PATTERN.test(candidate.tenantId)
       && ALIAS_PATTERN.test(candidate.alias)
-      && hasVisibleText(candidate.reply))
+      && hasNonBlankText(candidate.reply))
     .map((candidate, order) => ({
       tenantId: candidate.tenantId,
       alias: candidate.alias,

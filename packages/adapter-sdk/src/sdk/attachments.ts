@@ -1,14 +1,16 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { extname, join } from "node:path";
 import {
-  hasUnsafeTextCodePoint,
+  decodeCanonicalBase64,
   imageSignature,
+  isSafeBasename,
   isValidMediaType,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENTS_TOTAL_BYTES,
+  objectRecord,
 } from "@cauce/protocol";
 import { AdapterError } from "./errors.js";
 import type { HarnessAttachment } from "./types.js";
@@ -19,17 +21,8 @@ export interface MaterializedAttachments {
   cleanup(): Promise<void>;
 }
 
-function row(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
 function safeName(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length < 1 || value.length > 255) return undefined;
-  if (basename(value) !== value || value === "." || value === "..") return undefined;
-  if (value.includes("/") || value.includes("\\") || hasUnsafeTextCodePoint(value)) return undefined;
-  return value;
+  return isSafeBasename(value) ? value : undefined;
 }
 
 /**
@@ -40,19 +33,6 @@ function declaredKind(kind: unknown, mime: string): "image" | "document" | undef
   if (kind === "document") return "document";
   if (kind !== "image") return undefined;
   return mime.toLowerCase().startsWith("image/") ? "image" : undefined;
-}
-
-function decodeBase64(value: unknown): Buffer | undefined {
-  if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0 ||
-      value.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) {
-    return undefined;
-  }
-  // One quantifier over a character class: a repeated group backtracks per repetition and
-  // overflows the regex stack around 4 M characters, below what the protocol admits.
-  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value)) return undefined;
-  const decoded = Buffer.from(value, "base64");
-  if (decoded.length > MAX_ATTACHMENT_BYTES || decoded.toString("base64") !== value) return undefined;
-  return decoded;
 }
 
 function attachmentError(message: string): AdapterError {
@@ -96,12 +76,12 @@ export async function materializeAttachments(body: Record<string, unknown>): Pro
   ];
   try {
     for (const [index, value] of encoded.entries()) {
-      const item = row(value);
+      const item = objectRecord(value);
       const name = safeName(item?.name);
       const mime = item?.mime_type;
       const size = item?.file_size;
       const expectedHash = item?.sha256;
-      const payload = decodeBase64(item?.content_base64);
+      const payload = decodeCanonicalBase64(item?.content_base64, MAX_ATTACHMENT_BYTES);
       if (item === undefined || name === undefined || typeof mime !== "string" || !isValidMediaType(mime) ||
           !Number.isSafeInteger(size) || Number(size) < 0 || payload === undefined || payload.length !== size ||
           typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(expectedHash)) {

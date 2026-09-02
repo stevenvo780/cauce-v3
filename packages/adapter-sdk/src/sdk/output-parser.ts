@@ -8,7 +8,7 @@ export {
   MAX_RELAY_BODY_BYTES,
   MAX_RELAY_MESSAGES,
   NOTIFY_KINDS,
-  hasVisibleText,
+  hasNonBlankText,
   validateDeliveryOutput,
   validateStructuredOutput,
 } from "./output-parser/contract.js";

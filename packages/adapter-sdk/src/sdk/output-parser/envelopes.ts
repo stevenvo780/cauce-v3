@@ -5,7 +5,7 @@ import {
   MAX_EMBEDDED_ENVELOPE_CANDIDATES,
   MAX_FINAL_TEXT_BYTES,
   REQUIRED_OUTPUT_KEYS,
-  hasVisibleText,
+  hasNonBlankText,
   isObject,
   recortarABytes,
   type JsonObject,
@@ -34,7 +34,7 @@ const MAX_FAILURE_DETAIL_BYTES = 4 * 1024;
 
 export function failureText(value: unknown, depth = 0): string | undefined {
   if (depth > 4) return undefined;
-  if (typeof value === "string") return hasVisibleText(value) ? value.trim() : undefined;
+  if (typeof value === "string") return hasNonBlankText(value) ? value.trim() : undefined;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) {
     for (const entry of value) {
@@ -54,7 +54,7 @@ export function failureText(value: unknown, depth = 0): string | undefined {
 
 function hasErrorPayload(value: unknown): boolean {
   if (value === undefined || value === null || value === false) return false;
-  if (typeof value === "string") return hasVisibleText(value);
+  if (typeof value === "string") return hasNonBlankText(value);
   if (Array.isArray(value)) return value.length > 0;
   if (isObject(value)) return Object.keys(value).length > 0;
   return true;
@@ -124,7 +124,7 @@ function boundedDetail(text: string): string {
 export function failedTurnOutput(candidate: unknown, context: string, detail: string): StructuredOutput {
   const parsed = safeCandidate(candidate, context);
   if (parsed?.status === "failed") return parsed;
-  const spoken = typeof candidate === "string" && hasVisibleText(candidate)
+  const spoken = typeof candidate === "string" && hasNonBlankText(candidate)
     ? candidate.trim()
     : parsed?.reply ?? undefined;
   const headline = `${context} reported a failed turn: ${detail}`;
@@ -152,7 +152,7 @@ export function structuredCandidate(value: unknown): unknown {
 
 function fallbackTextOutput(text: string, context: string): StructuredOutput {
   const reply = text.trim();
-  if (!hasVisibleText(reply)) throw new MalformedOutputError(`${context} did not contain visible text`);
+  if (!hasNonBlankText(reply)) throw new MalformedOutputError(`${context} did not contain visible text`);
   if (Buffer.byteLength(reply, "utf8") > MAX_FINAL_TEXT_BYTES) {
     throw new MalformedOutputError(`${context} exceeded the plain-text reply limit`);
   }
@@ -417,7 +417,7 @@ interface RecoveredReplyString {
 function decodeRecoveredReply(encoded: string): string | undefined {
   try {
     const value = JSON.parse(`"${encoded}"`) as unknown;
-    return typeof value === "string" && hasVisibleText(value) ? value : undefined;
+    return typeof value === "string" && hasNonBlankText(value) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -543,7 +543,7 @@ function recoverMalformedObject(candidate: string, context: string): StructuredO
 
 export function parseFinalText(text: string, context: string): StructuredOutput {
   const trimmed = text.trim();
-  if (!hasVisibleText(trimmed)) throw new MalformedOutputError(`${context} did not contain visible text`);
+  if (!hasNonBlankText(trimmed)) throw new MalformedOutputError(`${context} did not contain visible text`);
   const jsonCandidate = unwrapCodeFence(trimmed.replace(LEADING_INVISIBLE_TEXT, ""));
 
   let decoded: unknown;

@@ -67,13 +67,3 @@ export function deliveryFingerprint(delivery: Delivery): string {
     )
     .digest("hex");
 }
-
-export function objectRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-export function visibleText(value: unknown): value is string {
-  return typeof value === "string" && /[\p{L}\p{N}\p{P}\p{S}]/u.test(value);
-}

@@ -1,3 +1,4 @@
+import { hasVisibleText, objectRecord } from "@cauce/protocol";
 import type { Delivery } from "../types.js";
 import { clone } from "./atomic-state.js";
 import { DurableStoreBase } from "./base.js";
@@ -7,7 +8,6 @@ import type {
   InboxRecord,
   ProcessedFaninReply,
 } from "./contracts.js";
-import { objectRecord, visibleText } from "./delivery-helpers.js";
 
 export class DurableStoreFanin extends DurableStoreBase {
   getDelivery(deliveryId: string): InboxRecord | undefined {
@@ -136,7 +136,7 @@ export class DurableStoreFanin extends DurableStoreBase {
           && request.recipient_alias === delivery.recipient_alias
           && correlation?.response_to_delivery_id === source.delivery_id
           && this.continuationSource(request)?.delivery_id === source.delivery_id
-          && visibleText(record.output?.reply);
+          && hasVisibleText(record.output?.reply);
       })
       .sort((left, right) =>
         right.updated_at.localeCompare(left.updated_at)
@@ -144,7 +144,7 @@ export class DurableStoreFanin extends DurableStoreBase {
       .map((record): ProcessedFaninReply => {
         const request = record.request;
         const output = record.output;
-        if (request === undefined || output === undefined || !visibleText(output.reply)) {
+        if (request === undefined || output === undefined || !hasVisibleText(output.reply)) {
           throw new Error("Durable fan-in reply has no validated request or output");
         }
         const correlation = objectRecord(request.body.correlation);
@@ -234,7 +234,7 @@ export class DurableStoreFanin extends DurableStoreBase {
           && responseCorrelation?.root_delivery_id === rootDeliveryId
           && this.continuationBelongsToRoot(request, rootDeliveryId)
           && record.output?.messages.length === 0
-          && visibleText(record.output.reply);
+          && hasVisibleText(record.output.reply);
       })
       // Newest first: the coordinator's last completed turn is its actual synthesis, and
       // tenant/alias/delivery ordering says nothing about which reply that is.
@@ -244,7 +244,7 @@ export class DurableStoreFanin extends DurableStoreBase {
       .map((record): ProcessedFaninReply => {
         const request = record.request;
         const output = record.output;
-        if (request === undefined || output === undefined || !visibleText(output.reply)) {
+        if (request === undefined || output === undefined || !hasVisibleText(output.reply)) {
           throw new Error("Durable fan-in reply has no validated request or output");
         }
         const correlation = objectRecord(request.body.correlation);
