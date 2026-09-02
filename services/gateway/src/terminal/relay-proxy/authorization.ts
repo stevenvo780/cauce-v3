@@ -1,3 +1,4 @@
+import { withTransaction } from '@cauce/store';
 import { terminalAuditMetadata } from '../audit.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
@@ -37,13 +38,9 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
         database_now: Date;
         session_expires_at: Date;
       }
-      const client = await pool.connect();
-      let transactionOpen = false;
       let renewed: RenewedSession | undefined;
       let refusal = 'unknown_session';
-      try {
-        await client.query('BEGIN');
-        transactionOpen = true;
+      await withTransaction(pool, async (client) => {
         const locked = await client.query<LockedAuthzSession>(
           `SELECT terminal_sessions.*,now() AS database_now,
                   consumed_at+make_interval(secs => $2) AS session_expires_at,
@@ -123,14 +120,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
             });
           }
         }
-        await client.query('COMMIT');
-        transactionOpen = false;
-      } catch (error) {
-        if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        client.release();
-      }
+      });
       if (renewed === undefined) {
         await reply.code(403).send({ ok: false, reason: refusal });
         return;

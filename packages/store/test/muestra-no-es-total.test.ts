@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
@@ -10,7 +10,7 @@ import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../.
  * between window/permission-bounded metrics and global system metrics.
  */
 
-let database: TestDatabase;
+let database: TestDatabase | undefined;
 let pool: DatabasePool;
 let repository: CauceRepository;
 
@@ -21,7 +21,8 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await pool.end();
+  if (database === undefined) return;
+  await database.pool.end();
   await database.container.stop();
 });
 
@@ -79,15 +80,46 @@ describe('la muestra de colas no se puede confundir con el total', () => {
     // 12 dead, but the window is asked for 5: the window's figure CANNOT pass as total.
     await sembrarMuertas(12);
 
-    const snapshot = await repository.queueSnapshot('Steven', 'kant', 5) as {
+    interface QueueSnapshot extends Record<string, unknown> {
       dead: number; items: unknown[]; totals?: { dead: number }; muestra_recortada?: boolean;
-    };
+    }
+    function assertQueueSnapshot(value: Record<string, unknown>): asserts value is QueueSnapshot {
+      const totals = value.totals;
+      if (typeof value.dead !== 'number'
+          || !Array.isArray(value.items)
+          || (value.muestra_recortada !== undefined
+            && typeof value.muestra_recortada !== 'boolean')
+          || (totals !== undefined && (totals === null || typeof totals !== 'object'
+            || !('dead' in totals) || typeof totals.dead !== 'number'))) {
+        throw new TypeError('queue snapshot has an invalid shape');
+      }
+    }
+    const querySpy = vi.spyOn(pool, 'query');
+    let snapshot: QueueSnapshot;
+    let queueStatements: string[] = [];
+    try {
+      const value = await repository.queueSnapshot('Steven', 'kant', 5);
+      assertQueueSnapshot(value);
+      snapshot = value;
+      queueStatements = querySpy.mock.calls.flatMap(([statement]) =>
+        typeof statement === 'string' ? [statement] : []
+      );
+    } finally {
+      querySpy.mockRestore();
+    }
+    expect(snapshot).toBeDefined();
 
     expect(snapshot.items.length).toBe(5);
     expect(snapshot.dead).toBeLessThanOrEqual(5);
     // What doesn't exist today and is the whole point: the real total, said separately.
     expect(snapshot.totals?.dead).toBe(12);
     expect(snapshot.muestra_recortada).toBe(true);
+    expect(queueStatements.filter((statement) =>
+      statement.includes('WITH visible_deliveries AS MATERIALIZED')
+    )).toHaveLength(1);
+    expect(queueStatements.filter((statement) =>
+      statement.includes('FROM deliveries d JOIN messages m')
+    )).toHaveLength(1);
   }, 120_000);
 
   // ── NEGATIVE CONTROL ──────────────────────────────────────────────────────────────────────────
@@ -115,7 +147,18 @@ describe('la muestra de colas no se puede confundir con el total', () => {
     // And one dead delivery from ANOTHER client, which Steven has no reason to count.
     await sembrarMuertas(1, 'Miguel', 'grp.miguel', 'janus', 'janus');
 
-    const snapshot = await repository.queueSnapshot('Steven', 'kant', 200) as { totals?: { dead: number } };
+    const snapshot = await repository.queueSnapshot('Steven', 'kant', 200) as {
+      dead: number;
+      items: { tenant_id: string; message_tenant_id: string }[];
+      totals?: { dead: number };
+      muestra_recortada?: boolean;
+    };
+    expect(snapshot.dead).toBe(4);
+    expect(snapshot.items).toHaveLength(4);
+    expect(snapshot.items.every((item) =>
+      item.tenant_id === 'Steven' && item.message_tenant_id === 'Steven'
+    )).toBe(true);
     expect(snapshot.totals?.dead).toBe(4);
+    expect(snapshot.muestra_recortada).toBe(false);
   }, 120_000);
 });

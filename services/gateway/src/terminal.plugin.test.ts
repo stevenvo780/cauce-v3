@@ -12,11 +12,9 @@ import { createConsoleSecurityHook } from './console-security.js';
 import type { TerminalConfig } from './terminal/config.js';
 import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AGENT_STALE_AFTER_MS, AgentRegistry } from './terminal/registry.js';
-import {
-  deriveAliasKey, issueResumeToken, verifyTicketSignature,
-} from './terminal/tickets.js';
+import { deriveAliasKey, issueResumeToken, verifyTicketSignature } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence, type TerminalSessionRow } from './terminal/types.js';
-
+import { instrumentFailurePool, registerBrokenClientTest } from './terminal.plugin.test-support.js';
 
 const ORIGIN = 'https://consola.elenxos.com';
 const RELAY_TOKEN = 'relay-token-that-is-long-enough-0123456789';
@@ -429,7 +427,7 @@ function fakeDatabase(): FakeDatabase {
     closed_at: row.closed_at === null ? null : new Date(row.closed_at),
   });
   return {
-    pool: {
+    pool: instrumentFailurePool({
       query: async (text: string, values: unknown[] = []) => {
         if (rejectNestedPoolQueries && checkedOutClients > 0) {
           throw new Error('pool.query attempted while the only database client is checked out');
@@ -471,7 +469,7 @@ function fakeDatabase(): FakeDatabase {
           },
         };
       },
-    } as unknown as DatabasePool,
+    } as unknown as DatabasePool),
     clock, sessions, audit,
     failNextAudit: (action) => { failingAuditAction = action; },
     failNestedPoolQueries: () => { rejectNestedPoolQueries = true; },
@@ -1750,6 +1748,8 @@ describe('terminal control plane', () => {
     expect(database.sessions.get(issued.session_id)?.revoked_at).not.toBeNull();
     expect(database.audit.filter((row) => row.action === 'terminal.session.revoked')).toHaveLength(1);
   });
+
+  registerBrokenClientTest(() => ({ app, database, openSession, prepare: () => report([presence()]) }), ORIGIN);
 
   it('scopes unattributed quotas, listing and revocation to the authenticated console subject', async () => {
     await build({ maxSessionsPerOperator: 1 }, consoleAuthProvider({ alias: 'kant' }));
