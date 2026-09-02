@@ -17,7 +17,6 @@ import { isValidMediaType } from './media-types.js';
 export const MAX_ATTACHMENT_BYTES = 10_000_000;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
-/** Bound on the media type string, not on which types exist: every format is carried. */
 export const MAX_ATTACHMENT_MEDIA_TYPE_LENGTH = 127;
 
 const AttachmentNameSchema = z.string().min(1).max(255).superRefine((name, context) => {

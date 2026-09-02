@@ -1,4 +1,10 @@
-import { FICHEROS_OPENCLAW } from '@cauce/protocol';
+import {
+  FICHEROS_OPENCLAW,
+  GOVERNANCE_NEVER_SERVE_BASENAMES,
+  GOVERNANCE_NEVER_SERVE_SUFFIXES,
+  hasGovernanceSensitivePathSegment,
+  parseCodexProjectDocumentConfig,
+} from '@cauce/protocol';
 
 /** Running harness inferred from the measured environment. */
 export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'unknown';
@@ -65,24 +71,11 @@ export interface AgentDocument {
  * also by already-resolved path (`realpath`), because in `ctrl-infra` `.credentials.json` is a SINGLE-FILE
  * bind-mount placed inside an otherwise own `.claude`: looking only at the directory would not save it.
  */
-export const NEVER_SERVE_BASENAMES: readonly string[] = [
-  '.credentials.json',
-  'auth.json',
-  '.claude.json',
-  'openclaw.json',
-  '.env',
-  '.netrc',
-  'id_ed25519',
-  'id_rsa',
-  'known_hosts',
-  'authorized_keys',
-];
-
-export const NEVER_SERVE_SUFFIXES: readonly string[] = ['.pem', '.key', '.p12', '.pfx'];
+export const NEVER_SERVE_BASENAMES = GOVERNANCE_NEVER_SERVE_BASENAMES;
+export const NEVER_SERVE_SUFFIXES = GOVERNANCE_NEVER_SERVE_SUFFIXES;
 
 export function hasNeverServePathSegment(path: string): boolean {
-  return path.split('/').some((segment) => NEVER_SERVE_BASENAMES.includes(segment)
-    || NEVER_SERVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
+  return hasGovernanceSensitivePathSegment(path);
 }
 
 function join(dir: string, name: string): string {
@@ -143,18 +136,6 @@ export interface EffectiveManualPath {
 /** Value Codex applies when config.toml does not override it. */
 export const DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES = 32 * 1024;
 
-function validCodexFallbackBasename(value: string): boolean {
-  const normalized = value.toLowerCase();
-  return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
-    && !value.includes('\0') && !value.includes('..')
-    && !Array.from(value).some((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code <= 0x1f || code === 0x7f;
-    })
-    && !NEVER_SERVE_BASENAMES.includes(normalized)
-    && !NEVER_SERVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
-}
-
 export interface CodexProjectDocumentConfig {
   readonly maxBytes: number;
   readonly fallbackFilenames: readonly string[];
@@ -168,21 +149,11 @@ export interface CodexProjectDocumentConfig {
 export function measuredCodexProjectDocumentConfig(
   facts: RuntimeFacts,
 ): CodexProjectDocumentConfig | undefined {
-  const maxBytes = facts.projectDocMaxBytes;
-  const rawFallbacks = facts.projectDocFallbackFilenames;
-  if (facts.harness !== 'codex' || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes)
-      || maxBytes < 1 || maxBytes > 16 * 1024 * 1024
-      || !Array.isArray(rawFallbacks) || rawFallbacks.length > 16) return undefined;
-  const seen = new Set<string>(['AGENTS.override.md', 'AGENTS.md']);
-  const fallbackFilenames: string[] = [];
-  for (const value of rawFallbacks) {
-    if (typeof value !== 'string' || !validCodexFallbackBasename(value) || seen.has(value)) {
-      return undefined;
-    }
-    seen.add(value);
-    fallbackFilenames.push(value);
-  }
-  return { maxBytes, fallbackFilenames };
+  return parseCodexProjectDocumentConfig({
+    harness: facts.harness,
+    maxBytes: facts.projectDocMaxBytes,
+    fallbackFilenames: facts.projectDocFallbackFilenames,
+  });
 }
 
 export function codexProjectDocMaxBytes(facts: RuntimeFacts): number {

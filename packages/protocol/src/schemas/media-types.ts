@@ -1,9 +1,4 @@
-/**
- * Media type authority: syntax, raster signatures and the extension table.
- *
- * Nothing here accepts or rejects an attachment. A media type only decides how a file is labelled
- * and how it is routed (inline image or plain file); the platform carries any format.
- */
+/** Media-type syntax and routing metadata; attachment admission belongs to consuming schemas. */
 
 /** `type/subtype` restricted to the characters RFC 2045 allows in a token: no parameters, no space. */
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$/iu;
@@ -33,12 +28,7 @@ function matches(payload: Uint8Array, offset: number, signature: readonly number
     signature.every((byte, index) => payload[offset + index] === byte);
 }
 
-/**
- * The raster formats a viewer can be trusted to decode, identified by their bytes.
- *
- * A file that fails every signature is never turned away: the answer only says whether it may be
- * routed as an image, and `image/*` is wider than what is decodable (`image/svg+xml` is markup).
- */
+/** Detects raster formats that can be routed as images; every other format remains a plain file. */
 export function imageSignature(payload: Uint8Array): RasterImageMediaType | undefined {
   if (matches(payload, 0, JPEG)) return 'image/jpeg';
   if (matches(payload, 0, PNG)) return 'image/png';

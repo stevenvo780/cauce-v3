@@ -1,7 +1,5 @@
-import { FICHEROS_OPENCLAW } from '@cauce/protocol';
+import { FICHEROS_OPENCLAW, governanceSensitiveBasenameKind } from '@cauce/protocol';
 import {
-  NEVER_SERVE_BASENAMES,
-  NEVER_SERVE_SUFFIXES,
   codexFallbackFilenames,
   documentForKind,
   effectiveManualPaths,
@@ -40,10 +38,11 @@ export function verifyWritablePath(
     if (candidate.includes('\0')) return { allowed: false, reason: 'la ruta lleva un byte nulo' };
 
     const base = candidate.slice(candidate.lastIndexOf('/') + 1);
-    if (NEVER_SERVE_BASENAMES.includes(base)) {
+    const sensitiveKind = governanceSensitiveBasenameKind(base);
+    if (sensitiveKind === 'forbidden_basename') {
       return { allowed: false, reason: `\`${base}\` no se sirve nunca por esta vía` };
     }
-    if (NEVER_SERVE_SUFFIXES.some((suffix) => base.endsWith(suffix))) {
+    if (sensitiveKind === 'credential_suffix') {
       return { allowed: false, reason: `\`${base}\` parece material de credencial` };
     }
   }
@@ -74,8 +73,7 @@ export function verifyWritableProfilePath(
       return { allowed: false, reason: 'la ruta del perfil no está en forma canónica' };
     }
     const base = segments[segments.length - 1] ?? '';
-    if (NEVER_SERVE_BASENAMES.includes(base)
-      || NEVER_SERVE_SUFFIXES.some((suffix) => base.endsWith(suffix))) {
+    if (governanceSensitiveBasenameKind(base) !== undefined) {
       return { allowed: false, reason: 'el destino parece material sensible' };
     }
   }
@@ -123,10 +121,11 @@ export function verifyReadablePath(facts: RuntimeFacts, requested: string): Path
   }
 
   const base = segments[segments.length - 1] ?? '';
-  if (NEVER_SERVE_BASENAMES.includes(base)) {
+  const sensitiveKind = governanceSensitiveBasenameKind(base);
+  if (sensitiveKind === 'forbidden_basename') {
     return { allowed: false, reason: `\`${base}\` no se sirve nunca por esta vía` };
   }
-  if (NEVER_SERVE_SUFFIXES.some((suffix) => base.endsWith(suffix))) {
+  if (sensitiveKind === 'credential_suffix') {
     return { allowed: false, reason: `\`${base}\` parece material de credencial` };
   }
   const profilePath = profileDocumentPaths(facts).includes(requested);

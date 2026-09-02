@@ -1,3 +1,4 @@
+import { parseCodexProjectDocumentConfig } from '@cauce/protocol';
 import type { AgentPresence, PtyState } from './types.js';
 
 /**
@@ -207,45 +208,19 @@ function measuredPath(record: Record<string, unknown>, name: string): string | u
     ? undefined : checked;
 }
 
-const MAX_CODEX_PROJECT_DOC_BYTES = 16 * 1024 * 1024;
-const MAX_CODEX_FALLBACKS = 16;
-const CODEX_NEVER_SERVE_BASENAMES = new Set([
-  '.credentials.json', 'auth.json', '.claude.json', 'openclaw.json', '.env', '.netrc',
-  'id_ed25519', 'id_rsa', 'known_hosts', 'authorized_keys',
-]);
-const CODEX_NEVER_SERVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
-
-function validCodexFallbackFilename(value: string): boolean {
-  const normalized = value.toLowerCase();
-  return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
-    && !value.includes('..') && !Array.from(value).some((character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return code <= 0x1f || code === 0x7f;
-    })
-    && !CODEX_NEVER_SERVE_BASENAMES.has(normalized)
-    && !CODEX_NEVER_SERVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
-}
-
 function codexProjectDocumentFields(
   record: Record<string, unknown>,
   harness: string,
 ): Pick<AgentPresence, 'project_doc_max_bytes' | 'project_doc_fallback_filenames'> {
-  const maxBytes = record.project_doc_max_bytes;
-  const rawFallbacks = record.project_doc_fallback_filenames;
-  if (harness !== 'codex' || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes)
-      || maxBytes < 1 || maxBytes > MAX_CODEX_PROJECT_DOC_BYTES
-      || !Array.isArray(rawFallbacks) || rawFallbacks.length > MAX_CODEX_FALLBACKS) return {};
-  const seen = new Set<string>(['AGENTS.override.md', 'AGENTS.md']);
-  const fallbacks: string[] = [];
-  for (const candidate of rawFallbacks) {
-    if (typeof candidate !== 'string' || !validCodexFallbackFilename(candidate)
-        || seen.has(candidate)) return {};
-    seen.add(candidate);
-    fallbacks.push(candidate);
-  }
+  const parsed = parseCodexProjectDocumentConfig({
+    harness,
+    maxBytes: record.project_doc_max_bytes,
+    fallbackFilenames: record.project_doc_fallback_filenames,
+  });
+  if (parsed === undefined) return {};
   return {
-    project_doc_max_bytes: maxBytes,
-    project_doc_fallback_filenames: fallbacks,
+    project_doc_max_bytes: parsed.maxBytes,
+    project_doc_fallback_filenames: parsed.fallbackFilenames,
   };
 }
 

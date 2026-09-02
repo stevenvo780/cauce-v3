@@ -280,8 +280,6 @@ describe('attachment transport contract', () => {
     expect(PublishMessageSchema.safeParse({ ...publishBase, body: { attachments_v1: [invalid] } }).success).toBe(false);
   });
 
-  // No format is turned away: the type is carried, never vetted. The extension is free to disagree
-  // with it, or to be absent, because neither is what makes an attachment safe.
   it.each([
     { mime_type: 'application/x-sh', name: 'deploy.sh' },
     { mime_type: 'application/zip', name: 'evidencia.zip' },

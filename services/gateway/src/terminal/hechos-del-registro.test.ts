@@ -118,7 +118,9 @@ describe('los hechos salen de lo que el agente publica', () => {
       { project_doc_max_bytes: 65_536, project_doc_fallback_filenames: ['SECRET.PEM'] },
       { project_doc_max_bytes: 65_536, project_doc_fallback_filenames: ['Auth.Json'] },
       { project_doc_max_bytes: 65_536, project_doc_fallback_filenames: ['private.KEY'] },
+      { project_doc_max_bytes: 65_536, project_doc_fallback_filenames: ['Agents.MD'] },
       { project_doc_max_bytes: 65_536, project_doc_fallback_filenames: ['TEAM.md', 'TEAM.md'] },
+      { project_doc_max_bytes: 65_536, project_doc_fallback_filenames: ['TEAM.md', 'team.md'] },
     ]) {
       const parsed = parseAgentPresence(presencia({
         harness: 'codex', codex_home: '/home/dev/.codex', ...extra,
