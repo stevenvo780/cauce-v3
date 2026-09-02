@@ -568,3 +568,29 @@ describe('los adaptadores se dicen en palabras, no en pseudo-etiquetas', () => {
     expect(screen.queryByText('2 / 4')).not.toBeInTheDocument();
   });
 });
+
+describe('el riel de la flota se pliega sin perder a ningún agente', () => {
+  it('el control es un interruptor «pulsado», no un desplegable, y la página lo publica para la hoja', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithApi(<TerminalPage />);
+
+    const boton = await screen.findByRole('button', { name: 'Plegar la lista de la flota' });
+    expect(boton).toHaveAttribute('aria-pressed', 'false');
+    expect(boton).not.toHaveAttribute('aria-expanded');
+    expect(container.querySelector('.ultimate-terminal-page')).not.toHaveAttribute('data-flota');
+    const lista = document.getElementById(boton.getAttribute('aria-controls') ?? '');
+    expect(lista).not.toBeNull();
+
+    await user.click(boton);
+
+    expect(container.querySelector('.ultimate-terminal-page')).toHaveAttribute('data-flota', 'plegada');
+    const desplegar = await screen.findByRole('button', { name: 'Desplegar la lista de la flota' });
+    expect(desplegar).toHaveAttribute('aria-pressed', 'true');
+    const kant = await screen.findByRole('button', { name: /abrir sesión con kant/i });
+    expect(kant).toBeInTheDocument();
+    expect(kant.querySelector('.agent-name strong')).toHaveTextContent('kant');
+
+    await user.click(desplegar);
+    expect(container.querySelector('.ultimate-terminal-page')).not.toHaveAttribute('data-flota');
+  });
+});

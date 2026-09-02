@@ -1,5 +1,5 @@
 import { AlertTriangle, MonitorPlay } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { useApi } from '../../api/context';
 import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
@@ -38,11 +38,14 @@ interface OperatorWorkspaceProps {
   fleetLoading: boolean;
   fleetError?: Error;
   /**
-   * How many sessions are open. The page needs it to enter observation mode: with one open
-   * session the terminal is the content and the six counters collapse. This component owns
-   * the count, not the page.
+   * How many sessions are open: with one open the terminal is the content and the six counters
+   * collapse into a disclosure. This component owns the count, not the page.
    */
   onSesionesAbiertas?: (cantidad: number) => void;
+  /** The page measures this box to write `--terminal-tope`; see `TerminalPage`. */
+  cajaRef?: RefObject<HTMLDivElement | null>;
+  flotaPlegada?: boolean;
+  onPlegarFlota?: () => void;
 }
 
 function sessionId(agent: FleetAgent): string {
@@ -188,7 +191,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, initialAgentId, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, initialAgentId, adapters, access, topologyAccess, terminalCapability, terminalTargets, fleetLoading, fleetError, onSesionesAbiertas, cajaRef, flotaPlegada, onPlegarFlota }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const [sessions, setSessions] = useState<OperatorSession[]>([]);
@@ -444,7 +447,7 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
         onRevisar={() => { void revisarPlazas(); }}
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
-      <div className="ultimate-terminal-shell">
+      <div className="ultimate-terminal-shell" data-objeto-principal="escenario" ref={cajaRef}>
       <ControlPlanePanel adapters={adapters} access={access} capability={terminalCapability} />
       <FleetSidebar
         agents={agents}
@@ -454,6 +457,8 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
         loading={fleetLoading}
         error={fleetError}
         targets={terminalTargets}
+        plegada={flotaPlegada}
+        onPlegar={onPlegarFlota}
       />
       {liveSessions.length === 0 ? (
         <EscenarioVacio

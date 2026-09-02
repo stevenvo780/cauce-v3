@@ -1,10 +1,10 @@
 import { Activity, ChevronDown, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
-import { Badge, EmptyState, PageHeader } from '../../components/ui';
+import { Badge, EmptyState, PageHeader, PageShell } from '../../components/ui';
 import { permissionState } from '../../lib';
 import { listTerminalTargets } from './api';
 import { TEXTO_DOCTRINA } from './doctrina';
@@ -25,6 +25,15 @@ import {
   useTerminalCapability,
 } from './relay-status';
 import './terminal-panel.css';
+
+/**
+ * The CSS variables carrying what the viewport does NOT hand to the terminal box: the measured top
+ * of the block plus the room the page container keeps below it. The sheet READS them and this
+ * component WRITES them, so a drift between the two strings fails no typecheck, no lint and no DOM
+ * test — the box would quietly fall back to the hand-summed 396. `alto-medido.test.ts` pins them.
+ */
+export const VAR_TOPE_TERMINAL = '--terminal-tope';
+export const VAR_TOPE_PAGINA = '--shell-tope';
 
 interface TerminalPageProps {
   params?: readonly string[];
@@ -48,6 +57,26 @@ function TerminalPageContent({ params }: TerminalPageProps) {
    * 900-px window —44 px visible— and on mobile, at y=1952: off the entire screen.
    */
   const [sesionesAbiertas, setSesionesAbiertas] = useState(0);
+  const [flotaPlegada, setFlotaPlegada] = useState(false);
+  const paginaRef = useRef<HTMLDivElement | null>(null);
+  const cajaRef = useRef<HTMLDivElement | null>(null);
+  const medirElTope = useCallback(() => {
+    const envoltura = paginaRef.current?.parentElement;
+    if (!envoltura) return;
+    const contenedor = envoltura.closest('main');
+    const reserva = contenedor ? Number.parseFloat(getComputedStyle(contenedor).paddingBottom) : 0;
+    const tope = (nodo: Element) => {
+      const alto = nodo.getBoundingClientRect().top + window.scrollY + (Number.isFinite(reserva) ? reserva : 0);
+      return `${String(Math.round(alto))}px`;
+    };
+    envoltura.style.setProperty(VAR_TOPE_PAGINA, tope(envoltura));
+    if (cajaRef.current) envoltura.style.setProperty(VAR_TOPE_TERMINAL, tope(cajaRef.current));
+  }, []);
+  useEffect(medirElTope);
+  useEffect(() => {
+    window.addEventListener('resize', medirElTope);
+    return () => { window.removeEventListener('resize', medirElTope); };
+  }, [medirElTope]);
   const status = useResource('ultimate-terminal-status', () => api.getStatus());
   const topology = useResource('ultimate-terminal-topology', () => api.getTopology());
   const adapters = useResource('ultimate-terminal-adapters', () => api.listAdapters());
@@ -108,17 +137,9 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   }
 
   /*
-   * ═══ OBSERVATION MODE: WHAT YOU CHECK BEFORE OPENING TAKES NO HEIGHT WHILE A TUI IS OPEN ═══
-   *
-   * The six counters answer a single question, and a BEFORE-the-fact one: "can I open a terminal,
-   * and whose?". None talks about the alias you are watching and none changes while you watch it.
-   * With an open session they move to a disclosure living in the header row —cost: ZERO rows—
-   * and come back whole with a click. MEASURED at 1920x1080 before this: the strip took 40 px
-   * plus 10 of margin, and the doctrine footer another 30, on a terminal left with 54.1% of the
-   * window.
-   *
-   * With no open session NOTHING collapses: those six pieces of data are exactly what the operator
-   * came to read. `densidad-observacion.test.tsx` checks this, with its negative control.
+   * OBSERVATION MODE. The six counters answer a BEFORE-the-fact question —"can I open a terminal,
+   * and whose?"— so with a session open they move to a disclosure in the header row and cost ZERO
+   * rows. With no session NOTHING collapses: `densidad-observacion.test.tsx` is the control.
    */
   const observando = sesionesAbiertas > 0;
   const contadores = (
@@ -137,83 +158,93 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   );
 
   return (
-    <div className="ultimate-terminal-page" data-tui={observando ? 'abierta' : undefined}>
-      <PageHeader
-        eyebrow={fleetLabel}
-        title="Terminal de agentes"
-        description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora— en solo lectura. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
-        actions={
+    <PageShell kind="aplicacion">
+      <div
+        className="ultimate-terminal-page"
+        ref={paginaRef}
+        data-tui={observando ? 'abierta' : undefined}
+        data-flota={flotaPlegada ? 'plegada' : undefined}
+      >
+        <PageHeader
+          eyebrow={fleetLabel}
+          title="Terminal de agentes"
+          description="Transmisión en vivo de la TUI de cada agente —la sesión tmux que está corriendo ahora— en solo lectura. Un alias sólo emite si el servidor publica su modo harness; el resto queda con su motivo escrito, nunca en verde."
+          actions={
+            <>
+              {observando ? (
+                <details className="terminal-resumen">
+                  {/*
+                    The label carries the figure you actually glance at —active leases— so the closed
+                    disclosure is not a mute button: it opens when the detail is needed, not to find
+                    out whether something is happening.
+                  */}
+                  <summary title="Los seis contadores de la flota y la doctrina de la vista. Se repliegan mientras mirás una TUI porque no cambian mientras la mirás.">
+                    <Wifi size={14} aria-hidden="true" />
+                    Estado de la flota
+                    <span className="terminal-resumen-cifra">{online} / {agents.length || '?'}</span>
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </summary>
+                  <div className="terminal-resumen-panel">
+                    {contadores}
+                    {/* Same constant as the grid footer, which in this mode collapses. */}
+                    <p className="terminal-resumen-doctrina"><ShieldCheck size={13} aria-hidden="true" /> {TEXTO_DOCTRINA}</p>
+                  </div>
+                </details>
+              ) : null}
+              <button className="button secondary" type="button" onClick={refreshAll} disabled={status.loading && !status.data}><RefreshCw size={16} aria-hidden="true" /> Sincronizar todo</button>
+            </>
+          }
+        />
+
+        {requestedAgentMissing ? (
+          <EmptyState>El servidor no observa al agente {tenantId}:{alias}. No se abrió otra terminal en su lugar.</EmptyState>
+        ) : (
           <>
-            {observando ? (
-              <details className="terminal-resumen">
-                {/*
-                  The label carries the figure you actually glance at —active leases— so the closed
-                  disclosure is not a mute button: it opens when the detail is needed, not to find
-                  out whether something is happening.
-                */}
-                <summary title="Los seis contadores de la flota y la doctrina de la vista. Se repliegan mientras mirás una TUI porque no cambian mientras la mirás.">
-                  <Wifi size={14} aria-hidden="true" />
-                  Estado de la flota
-                  <span className="terminal-resumen-cifra">{online} / {agents.length || '?'}</span>
-                  <ChevronDown size={13} aria-hidden="true" />
-                </summary>
-                <div className="terminal-resumen-panel">
-                  {contadores}
-                  {/* Same constant as the grid footer, which in this mode collapses. */}
-                  <p className="terminal-resumen-doctrina"><ShieldCheck size={13} aria-hidden="true" /> {TEXTO_DOCTRINA}</p>
+            {observando ? null : contadores}
+
+            {relayUnavailable ? (
+              <div className="terminal-relay-notice" role="status">
+                <TerminalSquare size={17} aria-hidden="true" />
+                {/* The TITLE must tell the truth too: with a 403 the channel exists and what is missing is
+                    the permission, so "not available in this stack" was the same lie as the body. See
+                    `TerminalRelayCause` in relay-status.ts. */}
+                <div>
+                  <strong>{relay.cause === 'sin-permiso'
+                    ? 'La terminal de agentes requiere permiso de control'
+                    : relay.cause === 'sin-comprobar'
+                      ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO
+                      : 'Canal PTY no disponible en este stack'}</strong>
+                  <p>{relay.reason}</p>
                 </div>
-              </details>
-            ) : null}
-            <button className="button secondary" type="button" onClick={refreshAll} disabled={status.loading && !status.data}><RefreshCw size={16} aria-hidden="true" /> Sincronizar todo</button>
-          </>
-        }
-      />
-
-      {requestedAgentMissing ? (
-        <EmptyState>El servidor no observa al agente {tenantId}:{alias}. No se abrió otra terminal en su lugar.</EmptyState>
-      ) : (
-        <>
-          {observando ? null : contadores}
-
-          {relayUnavailable ? (
-            <div className="terminal-relay-notice" role="status">
-              <TerminalSquare size={17} aria-hidden="true" />
-              {/* The TITLE must tell the truth too: with a 403 the channel exists and what is missing is
-                  the permission, so "not available in this stack" was the same lie as the body. See
-                  `TerminalRelayCause` in relay-status.ts. */}
-              <div>
-                <strong>{relay.cause === 'sin-permiso'
-                  ? 'La terminal de agentes requiere permiso de control'
-                  : relay.cause === 'sin-comprobar'
-                    ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO
-                    : 'Canal PTY no disponible en este stack'}</strong>
-                <p>{relay.reason}</p>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {failures.length ? (
-            <div className="terminal-degraded" role="alert">
-              <Activity size={17} aria-hidden="true" />
-              <div><strong>El plano de control contestó a medias</strong><p>{failures.join(' · ')}</p></div>
-              <button className="button small secondary" type="button" onClick={refreshAll}><RefreshCw size={14} aria-hidden="true" /> Reintentar</button>
-            </div>
-          ) : null}
+            {failures.length ? (
+              <div className="terminal-degraded" role="alert">
+                <Activity size={17} aria-hidden="true" />
+                <div><strong>El plano de control contestó a medias</strong><p>{failures.join(' · ')}</p></div>
+                <button className="button small secondary" type="button" onClick={refreshAll}><RefreshCw size={14} aria-hidden="true" /> Reintentar</button>
+              </div>
+            ) : null}
 
-          <OperatorWorkspace
-            agents={agents}
-            initialAgentId={initialAgentId}
-            adapters={adapters.data?.items ?? []}
-            access={verifiedAccess}
-            topologyAccess={topology.error ? undefined : topology.data}
-            terminalCapability={verifiedCapability}
-            terminalTargets={verifiedTargets}
-            fleetLoading={fleetLoading}
-            fleetError={fleetError}
-            onSesionesAbiertas={setSesionesAbiertas}
-          />
-        </>
-      )}
-    </div>
+            <OperatorWorkspace
+              agents={agents}
+              initialAgentId={initialAgentId}
+              adapters={adapters.data?.items ?? []}
+              access={verifiedAccess}
+              topologyAccess={topology.error ? undefined : topology.data}
+              terminalCapability={verifiedCapability}
+              terminalTargets={verifiedTargets}
+              fleetLoading={fleetLoading}
+              fleetError={fleetError}
+              onSesionesAbiertas={setSesionesAbiertas}
+              cajaRef={cajaRef}
+              flotaPlegada={flotaPlegada}
+              onPlegarFlota={() => { setFlotaPlegada((plegada) => !plegada); }}
+            />
+          </>
+        )}
+      </div>
+    </PageShell>
   );
 }

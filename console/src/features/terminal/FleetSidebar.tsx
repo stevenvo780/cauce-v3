@@ -1,4 +1,4 @@
-import { Bot, Filter, Radio, Search, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
+import { Bot, Filter, PanelLeftClose, PanelLeftOpen, Radio, Search, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { AdapterView } from '../../api/types';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
@@ -17,7 +17,11 @@ interface FleetSidebarProps {
   error?: Error;
   /** Optional: absent inventory renders every alias as an explicit UNKNOWN, never as a spinner. */
   targets?: TerminalTargetsSnapshot;
+  plegada?: boolean;
+  onPlegar?: () => void;
 }
+
+const LISTA_ID = 'terminal-flota-agentes';
 
 function fichaTecnica(agent: FleetAgent, capabilities: string[]): string {
   const expiry = agent.presence?.lease_expires_at ?? agent.presence?.lease_until;
@@ -28,7 +32,7 @@ function fichaTecnica(agent: FleetAgent, capabilities: string[]): string {
   ].join(' · ');
 }
 
-export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loading, error, targets }: FleetSidebarProps) {
+export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loading, error, targets, plegada, onPlegar }: FleetSidebarProps) {
   const [tenantId, setTenantId] = useState('all');
   const [roomId, setRoomId] = useState('all');
   const [query, setQuery] = useState('');
@@ -45,6 +49,23 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
   return (
     <aside className="terminal-fleet-sidebar" aria-label="Flota de agentes">
       <header className="terminal-fleet-head">
+        {/* The rail is 272px the mirror renders as columns: folded it leaves the agents one click
+            away. Folded the list stays rendered and focusable, so the control reports `aria-pressed`:
+            `aria-expanded="false"` over a list that is still there would be false to AT. */}
+        {onPlegar ? (
+          <button
+            className="fleet-plegar"
+            type="button"
+            onClick={onPlegar}
+            aria-pressed={plegada ?? false}
+            aria-controls={LISTA_ID}
+            aria-label={plegada ? 'Desplegar la lista de la flota' : 'Plegar la lista de la flota'}
+            title={plegada ? 'Desplegar la lista de la flota' : 'Plegar la lista de la flota'}
+          >
+            {plegada ? <PanelLeftOpen size={14} aria-hidden="true" /> : <PanelLeftClose size={14} aria-hidden="true" />}
+            <span className="fleet-plegar-rotulo">{plegada ? 'Desplegar' : 'Plegar'}</span>
+          </button>
+        ) : null}
         <p className="eyebrow">Flota en vivo</p>
         <div className="fleet-head-count">
           <h2>{agents.length} agentes</h2>
@@ -87,7 +108,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
         {loading ? <span className="terminal-syncing"><span className="spinner" aria-hidden="true" /> Sincronizando</span> : <span>leases del servidor</span>}
       </div>
 
-      <div className="terminal-agent-list" aria-label="Agentes disponibles">
+      <div className="terminal-agent-list" id={LISTA_ID} aria-label="Agentes disponibles">
         {loading && agents.length === 0 ? <LoadingState label="Sincronizando la flota del servidor…" />
           : error && agents.length === 0 ? <div role="alert"><EmptyState>No se pudo cargar la flota: {error.message}</EmptyState></div>
             : visible.length === 0 ? <EmptyState>No hay agentes que coincidan con los filtros.</EmptyState> : visible.map((agent) => {
