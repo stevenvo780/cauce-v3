@@ -508,7 +508,7 @@ def build_ssl_context(pki_dir: str) -> ssl.SSLContext:
     # Name verification stays ALWAYS on (check_hostname is never turned off): the connection
     # is by tailnet IP (100.64.0.6), and Python validates literal IPs against IP-type SANs the
     # same way it validates DNS names. Same pattern already used by
-    # ops/pty-agent/cauce_pty_agent.py (_tls_context/_connect): if the gateway's cert ever
+    # ops/pty-agent/cauce_pty_agent/agent.py (_tls_context/_connect): if the gateway's cert ever
     # stopped carrying that IP as a SAN, the escape hatch is CAUCE_QUOTA_GATEWAY_SERVER_NAME
     # (see PinnedHTTPSConnection), not turning verification off.
     ctx.check_hostname = True

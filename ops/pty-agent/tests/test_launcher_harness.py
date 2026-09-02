@@ -43,6 +43,13 @@ fi
 """
 
 
+def _window_constant_source() -> str:
+    """El nombre de ventana tal como lo declara el launcher: el fake docker imprime `agente`."""
+    text = LAUNCHER.read_text(encoding="utf-8")
+    start = text.index("readonly TMUX_TUI_WINDOW=")
+    return text[start:text.index("\n", start) + 1]
+
+
 def _function_source() -> str:
     """La funcion tal como esta hoy en el launcher desplegable."""
     text = LAUNCHER.read_text(encoding="utf-8")
@@ -59,7 +66,7 @@ def _fake_docker(
     session_id: str = "$7",
     marker_alias: str = "zeus",
     marker_harness: str = "claude",
-    tui_live: bool = True,
+    canonical_window: bool = True,
     pane_alive: bool = True,
     pane_cwd: str = "/workspace/repo",
     window_panes: int = 1,
@@ -83,8 +90,8 @@ def _fake_docker(
         '  [[ $args == *"-t cauce-zeus"* ]] || exit 88',
         "  [[ $args == *$'#{session_name}\\t#{session_id}\\t#{window_name}\\t#{window_panes}\\t#{@cauce_alias}\\t#{@cauce_harness}\\t#{pane_pid}\\t#{pane_dead}\\t#{pane_current_path}'* ]] || exit 89",
         "  exit 1" if not session_live else
-        f"  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t4321\\t%s\\t%s\\n' 'cauce-zeus' '{session_id}' '{'tui' if tui_live else 'legacy'}' '{window_panes}' '{marker_alias}' '{marker_harness}' '{'0' if pane_alive else '1'}' '{pane_cwd}'",
-        f"  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t4322\\t0\\t%s\\n' 'cauce-zeus' '{session_id}' 'tui' '1' '{marker_alias}' '{marker_harness}' '{pane_cwd}'"
+        f"  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t4321\\t%s\\t%s\\n' 'cauce-zeus' '{session_id}' '{'agente' if canonical_window else 'tui'}' '{window_panes}' '{marker_alias}' '{marker_harness}' '{'0' if pane_alive else '1'}' '{pane_cwd}'",
+        f"  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t4322\\t0\\t%s\\n' 'cauce-zeus' '{session_id}' 'agente' '1' '{marker_alias}' '{marker_harness}' '{pane_cwd}'"
         if session_live and duplicate_tui else "  :",
         "  exit 0",
         "fi",
@@ -103,7 +110,7 @@ class DeriveHarnessCommandTest(unittest.TestCase):
             tmp = pathlib.Path(raw)
             fake = _fake_docker(tmp, **kwargs)  # type: ignore[arg-type]
             done = subprocess.run(
-                ["bash", "-c", PRELUDE + _function_source() + EPILOGUE],
+                ["bash", "-c", PRELUDE + _window_constant_source() + _function_source() + EPILOGUE],
                 capture_output=True,
                 text=True,
                 env={"PATH": "/usr/bin:/bin", "FAKE_DOCKER": str(fake)},
@@ -115,7 +122,7 @@ class DeriveHarnessCommandTest(unittest.TestCase):
     def test_a_verified_live_tmux_yields_its_stable_id_and_exact_window(self) -> None:
         self.assertEqual(
             self._run(tmux_path="/usr/bin/tmux", session_live=True),
-            "DERIVED /usr/bin/tmux $7 $7:tui /workspace/repo",
+            "DERIVED /usr/bin/tmux $7 $7:agente /workspace/repo",
         )
 
     def test_control_negativo_no_session_no_harness(self) -> None:
@@ -154,9 +161,9 @@ class DeriveHarnessCommandTest(unittest.TestCase):
             "NO_TUI conflict=1 path=/usr/bin/tmux",
         )
 
-    def test_control_negativo_requires_the_exact_tui_window(self) -> None:
+    def test_control_negativo_a_window_named_tui_is_not_the_harness(self) -> None:
         self.assertEqual(
-            self._run(tmux_path="/usr/bin/tmux", session_live=True, tui_live=False),
+            self._run(tmux_path="/usr/bin/tmux", session_live=True, canonical_window=False),
             "NO_TUI conflict=1 path=/usr/bin/tmux",
         )
 

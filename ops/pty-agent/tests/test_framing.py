@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the PTY wire framing in ops/pty-agent/cauce_pty_agent.py.
+"""Tests for the PTY wire framing in ops/pty-agent/cauce_pty_agent/framing.py.
 
 The relay (TypeScript) and the gateway (TypeScript) encode the same frames, so the golden vector
 below is the contract between the three implementations: tag 0x21, session

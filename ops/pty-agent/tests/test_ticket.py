@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the second, independent ticket check in ops/pty-agent/cauce_pty_agent.py.
+"""Tests for the second, independent ticket check in ops/pty-agent/cauce_pty_agent/framing.py.
 
 The relay already verified the ticket before forwarding OPEN; the agent verifies it again with the
 per-alias key that only exists inside the container. These tests pin the golden ticket the gateway

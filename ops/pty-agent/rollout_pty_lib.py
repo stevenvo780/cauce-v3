@@ -24,12 +24,22 @@ NAME_RE: Final = re.compile(r"^[a-z][a-z0-9.-]*$")
 SHA_RE: Final = re.compile(r"^[a-f0-9]{64}$")
 UNIT_RE: Final = re.compile(r"^cauce-v3-pty@([a-z][a-z0-9.-]*)\.service$")
 MODE_RE: Final = re.compile(r"^[a-z][a-z0-9_-]*$")
+AGENT_PACKAGE_PREFIX: Final = "pty-agent/cauce_pty_agent/"
 RELEASE_FILES: Final = (
     "container-aliases.json",
     "scripts/container-alias-query.py",
     "scripts/container_alias_lib.py",
     "pty-agent/cauce-pty-launcher.sh",
-    "pty-agent/cauce_pty_agent.py",
+    "pty-agent/cauce_pty_agent/__init__.py",
+    "pty-agent/cauce_pty_agent/__main__.py",
+    "pty-agent/cauce_pty_agent/agent.py",
+    "pty-agent/cauce_pty_agent/framing.py",
+    "pty-agent/cauce_pty_agent/governance_paths.py",
+    "pty-agent/cauce_pty_agent/governance_read.py",
+    "pty-agent/cauce_pty_agent/governance_write.py",
+    "pty-agent/cauce_pty_agent/runtime_facts.py",
+    "pty-agent/cauce_pty_agent/session.py",
+    "pty-agent/cauce_pty_agent/tmux.py",
     "pty-agent/derive-alias-key.py",
     "pty-agent/install-pty-agent.sh",
     "pty-agent/systemd/cauce-v3-pty@.service",
@@ -37,7 +47,8 @@ RELEASE_FILES: Final = (
     "pty-agent/rollout_pty_lib.py",
 )
 EXECUTABLE_FILES: Final = frozenset(
-    path for path in RELEASE_FILES if path.endswith((".py", ".sh"))
+    path for path in RELEASE_FILES
+    if path.endswith((".py", ".sh")) and not path.startswith(AGENT_PACKAGE_PREFIX)
 )
 
 

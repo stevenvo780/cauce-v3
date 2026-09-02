@@ -127,8 +127,8 @@ class RolloutPtyTest(unittest.TestCase):
             rollout.sha256((AGENT_ROOT / "cauce-pty-launcher.sh").read_bytes()),
         )
         self.assertEqual(
-            self.bundle.digests["pty-agent/cauce_pty_agent.py"],
-            rollout.sha256((AGENT_ROOT / "cauce_pty_agent.py").read_bytes()),
+            self.bundle.digests["pty-agent/cauce_pty_agent/agent.py"],
+            rollout.sha256((AGENT_ROOT / "cauce_pty_agent/agent.py").read_bytes()),
         )
         self.assertEqual(
             self.bundle.mapping_sha,
@@ -234,7 +234,7 @@ class RolloutPtyTest(unittest.TestCase):
         temporary, worker, _ = self.worker()
         self.addCleanup(temporary.cleanup)
         worker.publish(self.bundle)
-        path = worker.release_path(self.bundle.release_sha) / "pty-agent/cauce_pty_agent.py"
+        path = worker.release_path(self.bundle.release_sha) / "pty-agent/cauce_pty_agent/agent.py"
         path.chmod(0o600)
         path.write_bytes(b"alterado")
         path.chmod(0o400)
@@ -415,6 +415,28 @@ class RolloutPtyTest(unittest.TestCase):
         self.assertIn("${CAUCE_PTY_OPS_ROOT}", exec_lines[0].replace("$$", "$"))
         self.assertIn("%i", exec_lines[0])
         self.assertIn("cauce-pty-launcher.sh", exec_lines[0])
+
+
+class ReleaseInputsCoverTheWholeAgentPackage(unittest.TestCase):
+    """Un modulo que no viaja en el release arranca con ModuleNotFoundError y exit 1, que no esta
+    en RestartPreventExitStatus: la unidad reintenta para siempre y el alias no vuelve nunca.
+    Ni el preflight del launcher (solo mira `__main__.py`) ni `validate_release` (solo mira lo
+    listado) pueden verlo, asi que la lista se compara aqui contra el paquete en disco."""
+
+    def _listed_and_on_disk(self) -> tuple[set[str], set[str]]:
+        prefix = importlib.import_module("rollout_pty_lib").AGENT_PACKAGE_PREFIX
+        listed = {path for path in rollout.RELEASE_FILES if path.startswith(prefix)}
+        on_disk = {f"{prefix}{path.name}" for path in (OPS_ROOT / prefix).glob("*.py")}
+        return listed, on_disk
+
+    def test_every_module_of_the_package_is_a_release_input(self) -> None:
+        listed, on_disk = self._listed_and_on_disk()
+        self.assertEqual(listed, on_disk, "RELEASE_FILES y el paquete en disco han divergido")
+
+    def test_control_negativo_the_comparison_is_not_two_empty_sets(self) -> None:
+        listed, on_disk = self._listed_and_on_disk()
+        self.assertIn("pty-agent/cauce_pty_agent/__main__.py", listed)
+        self.assertGreater(len(on_disk), 1, "el glob del paquete no encontro modulos")
 
 
 if __name__ == "__main__":

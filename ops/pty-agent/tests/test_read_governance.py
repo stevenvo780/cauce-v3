@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the read_governance features in ops/pty-agent/cauce_pty_agent.py.
+"""Tests for the read_governance features in ops/pty-agent/cauce_pty_agent/governance_read.py.
 
 This test file verifies the secure reading of governance files (like CLAUDE.md
 and AGENTS.md) and memory index directory scans. Since this mechanism handles

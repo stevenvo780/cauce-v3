@@ -28,6 +28,23 @@ def _bundle(socket_name: str, *, alias: str = "zeus", harness: str = "claude") -
     }
 
 
+def _loadable_bundle(**overrides: object) -> dict:
+    """Un bundle completo: el unico camino por el que el agente acepta un descriptor tmux."""
+    document = {
+        "tenant_id": "Steven", "alias": "zeus", "container_id": "claw", "generation": "gen-1",
+        "image_id": "sha256:deadbeef", "runtime_user": "claw", "runtime_uid": 1000,
+        "runtime_gid": 1000, "home": "/home/claw", "shell_candidates": [["/bin/bash", "-l"]],
+        "harness_command": None, "harness": "claude", "relay_host": "100.64.0.6",
+        "relay_port": 8445, "alias_key_hex": "ab" * 32,
+        "client_cert_pem": "-----BEGIN CERTIFICATE-----\n",
+        "client_key_pem": "-----BEGIN PRIVATE KEY-----\n",
+        "ca_pem": "-----BEGIN CERTIFICATE-----\n", "agent_version": "1",
+        "tmux_tui": {"path": TMUX or "/usr/bin/tmux", "socket": "cauce"},
+    }
+    document.update(overrides)  # type: ignore[arg-type]
+    return document
+
+
 @unittest.skipUnless(TMUX, "tmux is required for the real identity regression")
 class DynamicTmuxIdentityTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -43,9 +60,9 @@ class DynamicTmuxIdentityTest(unittest.TestCase):
             env=self.env,
         )
 
-    def _session(self, marker_alias: str, marker_harness: str) -> str:
+    def _session(self, marker_alias: str, marker_harness: str, window: str = "agente") -> str:
         subprocess.run(
-            [TMUX, "-L", self.socket, "new-session", "-d", "-s", "cauce-zeus", "-n", "tui", "sleep 30"],
+            [TMUX, "-L", self.socket, "new-session", "-d", "-s", "cauce-zeus", "-n", window, "sleep 30"],
             check=True,
             env=self.env,
         )
@@ -142,9 +159,24 @@ class DynamicTmuxIdentityTest(unittest.TestCase):
         )
         self.assertEqual(refused.returncode, 77)
 
+    def test_control_negativo_a_window_named_tui_is_not_the_harness(self) -> None:
+        """Nada en el arbol emite `tui`: una ventana asi acredita identidad y aun asi se rechaza."""
+        self._session("zeus", "claude", window="tui")
+        argv = agent.resolve_tmux_tui_command(_bundle(self.socket))
+        self.assertIsNotNone(argv)
+        refused = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=self.env,
+        )
+        self.assertEqual(refused.returncode, 77, refused.stderr.decode("utf-8", "replace"))
+
     def test_missing_exact_tui_target_fails_closed(self) -> None:
         subprocess.run(
-            [TMUX, "-L", self.socket, "new-session", "-d", "-s", "cauce-kant", "-n", "tui", "sleep 30"],
+            [TMUX, "-L", self.socket, "new-session", "-d", "-s", "cauce-kant", "-n", "agente", "sleep 30"],
             check=True,
             env=self.env,
         )
@@ -178,12 +210,31 @@ class TmuxDescriptorValidationTest(unittest.TestCase):
 
     def test_argv_contains_atomic_identity_check_and_read_only_attach(self) -> None:
         argv = agent.resolve_tmux_tui_command(_bundle("cauce"))
-        self.assertEqual(argv[:7], [TMUX or "/usr/bin/tmux", "-L", "cauce", "if-shell", "-F", "-t", "cauce-zeus:tui"])
+        self.assertEqual(argv[:7], [TMUX or "/usr/bin/tmux", "-L", "cauce", "if-shell", "-F", "-t", "cauce-zeus:agente"])
         self.assertIn("#{session_name}", argv[7])
         self.assertIn("@cauce_alias", argv[7])
         self.assertIn("@cauce_harness", argv[7])
-        self.assertEqual(argv[8], "attach-session -r -f ignore-size -t cauce-zeus:tui")
+        self.assertEqual(argv[8], "attach-session -r -f ignore-size -t cauce-zeus:agente")
+        self.assertIn("#{==:#{window_name},agente}", argv[7])
         self.assertEqual(argv[9], 'run-shell "exit 77"')
+
+
+@unittest.skipUnless(TMUX, "tmux is required to validate the descriptor")
+class ADescriptorThatCannotResolveNeverLoads(unittest.TestCase):
+    """`harness` se anuncia sobre un bundle ya validado: un descriptor irresoluble muere al cargar."""
+
+    def test_a_descriptor_that_resolves_loads_and_advertises_harness(self) -> None:
+        instance = agent.PtyAgent(agent.validate_bundle(_loadable_bundle()))
+        self.assertEqual(instance.modes, ["shell", "harness"])
+
+    def test_control_negativo_a_descriptor_the_resolver_would_refuse_is_rejected_at_load(self) -> None:
+        for overrides in (
+            {"harness": "openclaw"},
+            {"alias": "zeus.dev"},
+            {"harness_command": ["/usr/bin/openclaw", "tui"]},
+        ):
+            with self.subTest(**overrides), self.assertRaises(agent.PermanentError):
+                agent.validate_bundle(_loadable_bundle(**overrides))
 
 
 if __name__ == "__main__":  # pragma: no cover

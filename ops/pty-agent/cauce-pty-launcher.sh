@@ -17,7 +17,7 @@ else
   default_lock_root="$xdg_state_home/cauce-v3/lock"
 fi
 LOCK_ROOT=${CAUCE_PTY_LOCK_ROOT:-$default_lock_root}
-AGENT_SOURCE="$SCRIPT_ROOT/cauce_pty_agent.py"
+AGENT_SOURCE="$SCRIPT_ROOT/cauce_pty_agent"
 AGENT_VERSION=${CAUCE_PTY_AGENT_VERSION:-1}
 DOCKER_CALL_TIMEOUT=${CAUCE_PTY_DOCKER_TIMEOUT:-30}
 
@@ -71,7 +71,7 @@ command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
 command -v flock >/dev/null 2>&1 || die 'flock is unavailable' 127
 command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 [[ $DOCKER_CALL_TIMEOUT =~ ^[0-9]{1,4}$ && $DOCKER_CALL_TIMEOUT -ge 1 ]] || die 'docker call timeout is invalid'
-[[ -f $AGENT_SOURCE && ! -L $AGENT_SOURCE ]] || die_transient 'PTY agent source is unavailable'
+[[ -f $AGENT_SOURCE/__main__.py && -d $AGENT_SOURCE && ! -L $AGENT_SOURCE ]] || die_transient 'PTY agent source is unavailable'
 
 # 1. Alias -> container tuple. Read-only use of the fleet mapping owned by ops/scripts.
 mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
@@ -188,7 +188,7 @@ resolve_runtime_identity() {
   [[ $runtime_uid != 0 && $runtime_gid != 0 ]] || die 'container runtime identity must not be root' 78
 }
 
-agent_path="/var/tmp/cauce-pty-agent-$alias_name.py"
+agent_root="/var/tmp/cauce-pty-agent-$alias_name"
 bundle_path="/var/tmp/.cauce-pty-bundle-$alias_name.json"
 local_bundle=''
 
@@ -199,14 +199,16 @@ cleanup() {
 trap cleanup EXIT
 
 publish_agent() {
-  # Root-owned and non-writable inside the container: the runtime user executes but cannot rewrite.
-  docker_control cp "$AGENT_SOURCE" "$container_id:$agent_path" || die 'cannot publish the PTY agent'
-  docker_control exec --user 0 "$container_id" chown 0:0 "$agent_path" || die 'cannot own the published PTY agent'
-  docker_control exec --user 0 "$container_id" chmod 0555 "$agent_path" || die 'cannot secure the published PTY agent'
+  # Replaced, never merged, and root-owned: a module dropped by a later release cannot survive in the container, nothing the runtime user planted under the shared /var/tmp root stays on PYTHONPATH, and the published tree is importable but not rewritable.
+  docker_control exec --user 0 "$container_id" sh -c "rm -rf -- '$agent_root' && mkdir -p -- '$agent_root'" || die 'cannot recreate the PTY agent root'
+  docker_control cp "$AGENT_SOURCE" "$container_id:$agent_root/" || die 'cannot publish the PTY agent'
+  docker_control exec --user 0 "$container_id" chown -R 0:0 "$agent_root" || die 'cannot own the published PTY agent'
+  docker_control exec --user 0 "$container_id" chmod -R a=rX "$agent_root" || die 'cannot secure the published PTY agent'
 }
 
-# Fleet tmux socket. Not the default: plain `tmux ls` does not see these sessions.
+# Fleet tmux socket. Not the default: plain `tmux ls` does not see these sessions. The window name below is a copy of its single producer, packages/adapter-sdk/src/shared-session/types.ts.
 TMUX_SOCKET=${CAUCE_PTY_TMUX_SOCKET:-cauce}
+readonly TMUX_TUI_WINDOW=agente
 
 # `harness` mode emits the TUI for an already-running agent; `shell` opens a new terminal.
 # When HARNESS_COMMAND is unset, the tmux binary is discovered inside the container as the
@@ -221,7 +223,7 @@ TMUX_SOCKET=${CAUCE_PTY_TMUX_SOCKET:-cauce}
 derive_harness_command() {
   local tmux_path session windows observed_session_name observed_session_id extra session_id
   local validated_pane_cwd
-  local marker_alias marker_harness window_name window_panes tui_windows pane_pid pane_dead pane_cwd
+  local marker_alias marker_harness window_name window_panes harness_windows pane_pid pane_dead pane_cwd
   TMUX_MEASUREMENT_CONFLICT=0
   TMUX_PANE_CWD_FOUND=''
   tmux_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
@@ -234,9 +236,8 @@ derive_harness_command() {
   TMUX_PATH_FOUND=$tmux_path
   session="cauce-$alias_name"
 
-  # One tmux command returns session, markers, window cardinality and pane facts from the same
-  # observation: five independent probes could otherwise assemble a cwd from states that never
-  # coexisted. `list-windows` also lets us reject duplicate `tui` windows explicitly.
+  # One tmux command returns session, markers, window cardinality and pane facts from the same observation: separate
+  # probes could assemble a cwd from states that never coexisted, and `list-windows` rejects duplicate windows too.
   windows=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
     "$tmux_path" -L "$TMUX_SOCKET" list-windows -t "$session" -F \
     $'#{session_name}\t#{session_id}\t#{window_name}\t#{window_panes}\t#{@cauce_alias}\t#{@cauce_harness}\t#{pane_pid}\t#{pane_dead}\t#{pane_current_path}' \
@@ -247,23 +248,23 @@ derive_harness_command() {
   TMUX_MEASUREMENT_CONFLICT=1
   session_id=''
   validated_pane_cwd=''
-  tui_windows=0
+  harness_windows=0
   while IFS=$'\t' read -r observed_session_name observed_session_id window_name window_panes \
     marker_alias marker_harness pane_pid pane_dead pane_cwd extra; do
     [[ -z ${extra:-} && $observed_session_name == "$session" \
       && $observed_session_id =~ ^\$[0-9]+$ ]] || return 1
-    [[ $window_name == tui ]] || continue
-    tui_windows=$((tui_windows + 1))
+    [[ $window_name == "$TMUX_TUI_WINDOW" ]] || continue
+    harness_windows=$((harness_windows + 1))
     [[ $window_panes == 1 && $marker_alias == "$alias_name" && $marker_harness == "$harness" \
       && $pane_pid =~ ^[1-9][0-9]*$ && $pane_dead == 0 ]] || return 1
     valid_absolute_path "$pane_cwd" || return 1
     session_id=$observed_session_id
     validated_pane_cwd=$pane_cwd
   done <<<"$windows"
-  [[ $tui_windows -eq 1 && -n $session_id ]] || return 1
+  [[ $harness_windows -eq 1 && -n $session_id ]] || return 1
 
   TMUX_SESSION_FOUND=$session_id
-  TMUX_TARGET_FOUND="${session_id}:tui"
+  TMUX_TARGET_FOUND="${session_id}:${TMUX_TUI_WINDOW}"
   TMUX_PANE_CWD_FOUND=$validated_pane_cwd
   TMUX_MEASUREMENT_CONFLICT=0
   return 0
@@ -780,17 +781,17 @@ PYTHON
 # Host flock dies with the `docker exec` client, but the Python agent INSIDE the container
 # survives. Two agents of the same alias share a certificate and the relay kicks each other
 # out forever. Before starting, kill any prior agent of the alias inside the container (match
-# by exact script name so no other process is targeted).
+# by its bundle path, the only per-alias literal left in the argv of `python3 -m cauce_pty_agent`).
 reap_orphan_agents() {
   local victims
   victims=$(docker_control exec "$container_id" sh -c \
-    "ps -eo pid,args | awk -v s=\"cauce-pty-agent-$alias_name.py\" 'index(\$0, s) && \$2 != \"awk\" {print \$1}'" 2>/dev/null) || true
+    "ps -eo pid,args | awk -v s=\".cauce-pty-bundle-$alias_name.json\" 'index(\$0, s) && \$2 != \"awk\" {print \$1}'" 2>/dev/null) || true
   [[ -n ${victims:-} ]] || return 0
   printf 'cauce-pty-launcher: reaping orphan agents alias=%s pids=%s\n' "$alias_name" "$(tr '\n' ' ' <<<"$victims")" >&2
   while IFS= read -r pid; do
     [[ $pid =~ ^[0-9]+$ ]] || continue
     docker_control exec "$container_id" sh -c \
-      "ps -o args= -p $pid 2>/dev/null | grep -qF 'cauce-pty-agent-$alias_name.py' && kill $pid" 2>/dev/null || true
+      "ps -o args= -p $pid 2>/dev/null | grep -qF '.cauce-pty-bundle-$alias_name.json' && kill $pid" 2>/dev/null || true
   done <<<"$victims"
 }
 
@@ -819,8 +820,7 @@ start_agent() {
   reap_orphan_agents
   printf 'cauce-pty-launcher: exec agent alias=%s container=%s generation=%s uid=%s\n' \
     "$alias_name" "${container_id:0:12}" "$container_generation" "$runtime_uid" >&2
-  exec docker exec -i --user "$runtime_uid:$runtime_gid" "$container_id" \
-    /usr/bin/python3 "$agent_path" --bundle "$bundle_path"
+  exec docker exec -i --user "$runtime_uid:$runtime_gid" -e PYTHONPATH="$agent_root" "$container_id" /usr/bin/python3 -m cauce_pty_agent --bundle "$bundle_path"
 }
 
 start_agent

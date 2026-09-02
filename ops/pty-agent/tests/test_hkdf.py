@@ -2,9 +2,11 @@
 """Tests for ops/pty-agent/derive-alias-key.py.
 
 Pins the golden derivation the gateway must reproduce in TypeScript: from the documented 32 byte
-master, Steven/jarvis derives 33ab99cc...f7233efa, which is the very key that signs the golden
-ticket in test_ticket.py. Also proves the derivation is per-alias, so the key copied to kratos for
-one agent cannot authorise any of the other thirteen.
+master, Steven/jarvis derives the very key that signs the golden ticket in test_ticket.py. The
+master and the key are NOT copied here: both are read from tests/terminal-pty/vectors.json, the
+frozen contract gateway, relay and agent share, so there are never two truths free to diverge.
+It also proves the derivation is per alias, so the key copied to kratos for one agent authorises
+none of the other thirteen.
 
 Runs standalone (`python3 ops/pty-agent/tests/test_hkdf.py`) or under
 `python3 -m unittest discover ops/pty-agent/tests`.
@@ -15,6 +17,7 @@ import base64
 import hashlib
 import hmac
 import importlib.util
+import json
 import os
 import pathlib
 import tempfile
@@ -22,6 +25,7 @@ import unittest
 from unittest import mock
 
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
+VECTORS_PATH = pathlib.Path(__file__).resolve().parents[3] / "tests" / "terminal-pty" / "vectors.json"
 
 
 def _load(name: str, filename: str):
@@ -34,9 +38,10 @@ def _load(name: str, filename: str):
 
 derive = _load("derive_alias_key", "derive-alias-key.py")
 
-MASTER_B64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+VECTORS = json.loads(VECTORS_PATH.read_text(encoding="utf-8"))
+MASTER_B64 = VECTORS["master_key_b64"]
 MASTER = base64.b64decode(MASTER_B64)
-GOLDEN = "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa"
+GOLDEN = VECTORS["keys"]["Steven:jarvis"]
 
 
 def _remove_tree(directory: pathlib.Path) -> None:
@@ -61,6 +66,13 @@ class GoldenVectorTests(unittest.TestCase):
     def test_the_salt_and_info_labels_are_pinned(self) -> None:
         self.assertEqual(derive.TICKET_SALT, b"cauce-v3/pty-ticket/v1")
         self.assertEqual(derive.INFO_PREFIX, "pty:")
+
+    def test_the_derivation_parameters_come_from_the_frozen_vectors(self) -> None:
+        hkdf = VECTORS["hkdf"]
+        self.assertEqual(hkdf["salt_utf8"].encode("utf-8"), derive.TICKET_SALT)
+        self.assertEqual(hkdf["info_template"], derive.INFO_PREFIX + "<tenant>:<alias>")
+        self.assertEqual(hkdf["length"], derive.KEY_LENGTH)
+        self.assertEqual(len(MASTER), 32)
 
 
 class SeparationTests(unittest.TestCase):

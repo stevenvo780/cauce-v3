@@ -15,6 +15,13 @@ def _extract_reap_function() -> str:
     return text[start:end]
 
 
+def _extract_publish_function() -> str:
+    text = LAUNCHER.read_text(encoding="utf-8")
+    start = text.index("publish_agent() {")
+    end = text.index("\n}\n", start) + len("\n}\n")
+    return text[start:end]
+
+
 def _extract_docker_control_function() -> str:
     """reap_orphan_agents calls docker_control, not docker exec directly: the sandboxed
     runner script needs the real one-line definition, not a hand-copied stand-in."""
@@ -34,12 +41,12 @@ if [[ $1 == "exec" ]]; then
   if [[ $1 == "sh" && $2 == "-c" ]]; then
     cmd=$3
     if [[ $cmd == *"ps -eo pid,args"* ]]; then
-      printf '%s\n' "${MOCK_PROCESSES:-}" | awk -v s="cauce-pty-agent-$alias_name.py" 'index($0, s) && $2 != "awk" {print $1}'
+      printf '%s\n' "${MOCK_PROCESSES:-}" | awk -v s=".cauce-pty-bundle-$alias_name.json" 'index($0, s) && $2 != "awk" {print $1}'
       exit 0
     elif [[ $cmd == *"kill"* ]]; then
       pid=$(echo "$cmd" | grep -oE 'kill [0-9]+' | awk '{print $2}')
       proc_line=$(printf '%s\n' "${MOCK_PROCESSES:-}" | awk -v p="$pid" '$1 == p {print $0}')
-      if [[ -n "$proc_line" && "$proc_line" == *"cauce-pty-agent-$alias_name.py"* ]]; then
+      if [[ -n "$proc_line" && "$proc_line" == *".cauce-pty-bundle-$alias_name.json"* ]]; then
         echo "$pid" >> "$KILL_LOG"
         exit 0
       fi
@@ -94,10 +101,10 @@ reap_orphan_agents
     def test_reaps_only_matching_alias_orphans(self) -> None:
         processes = "\n".join([
             "1 /sbin/init",
-            "101 /usr/bin/python3 /tmp/cauce-pty-agent-zeus.py --bundle /tmp/bundle.json",
-            "102 python3 /opt/cauce-pty-agent-zeus.py",
-            "201 python3 /tmp/cauce-pty-agent-kant.py --bundle /tmp/bundle.json",
-            "301 python3 /tmp/cauce-pty-agent.py",
+            "101 /usr/bin/python3 -m cauce_pty_agent --bundle /var/tmp/.cauce-pty-bundle-zeus.json",
+            "102 python3 -m cauce_pty_agent --bundle /var/tmp/.cauce-pty-bundle-zeus.json",
+            "201 python3 -m cauce_pty_agent --bundle /var/tmp/.cauce-pty-bundle-kant.json",
+            "301 python3 -m cauce_pty_agent --bundle /var/tmp/bundle.json",
             "401 /usr/local/bin/claude",
         ])
         code, stdout, stderr, killed = self._run_reap("zeus", processes)
@@ -109,9 +116,9 @@ reap_orphan_agents
     def test_respects_other_aliases_and_legitimate_processes(self) -> None:
         processes = "\n".join([
             "1 /sbin/init",
-            "201 python3 /tmp/cauce-pty-agent-kant.py --bundle /tmp/bundle.json",
-            "202 python3 /tmp/cauce-pty-agent-hermes.py",
-            "301 python3 /tmp/cauce-pty-agent.py",
+            "201 python3 -m cauce_pty_agent --bundle /var/tmp/.cauce-pty-bundle-kant.json",
+            "202 python3 -m cauce_pty_agent --bundle /var/tmp/.cauce-pty-bundle-hermes.json",
+            "301 python3 -m cauce_pty_agent --bundle /var/tmp/bundle.json",
             "401 /usr/local/bin/claude",
             "501 /bin/bash",
         ])
@@ -176,6 +183,58 @@ reap_orphan_agents
             self.assertEqual(res.returncode, 0)
             self.assertIn("cauce-pty-launcher: reaping orphan agents alias=zeus pids=101", res.stderr)
             self.assertFalse(kill_log.exists())
+
+
+class PublishReplacesTheAgentRootInsteadOfMerging(unittest.TestCase):
+    """`/var/tmp` es 1777 y la raiz del agente la comparten todos los releases: fusionar sobre lo
+    que ya hay deja un modulo retirado por un release posterior —o un `.py` que el usuario runtime
+    hubiera plantado antes del lanzamiento— dentro del PYTHONPATH del proceso que sostiene el
+    certificado del alias. `docker cp` solo sobrescribe los ficheros que trae, nunca borra."""
+
+    def _docker_commands(self) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = pathlib.Path(raw)
+            log = tmp / "docker.log"
+            fake = tmp / "docker"
+            fake.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >>"$DOCKER_LOG"\n', encoding="utf-8")
+            fake.chmod(0o755)
+            runner_script = f"""
+set -uo pipefail
+die() {{ printf '%s\n' "$1" >&2; exit "${{2:-2}}"; }}
+container_id=deadbeef
+agent_root=/var/tmp/cauce-pty-agent-zeus
+AGENT_SOURCE=/opt/cauce/pty-agent/cauce_pty_agent
+DOCKER_CALL_TIMEOUT=30
+{_extract_docker_control_function()}
+{_extract_publish_function()}
+publish_agent
+"""
+            done = subprocess.run(
+                ["bash", "-c", runner_script],
+                capture_output=True,
+                text=True,
+                env={"PATH": f"{tmp}:/usr/bin:/bin", "DOCKER_LOG": str(log)},
+                check=False,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return log.read_text(encoding="utf-8").splitlines()
+
+    def test_the_root_is_removed_and_recreated_before_the_package_is_copied(self) -> None:
+        commands = self._docker_commands()
+        removals = [index for index, line in enumerate(commands) if "rm -rf" in line]
+        copies = [index for index, line in enumerate(commands) if line.startswith("cp ")]
+        self.assertEqual(len(removals), 1, commands)
+        self.assertEqual(len(copies), 1, commands)
+        self.assertIn("mkdir -p", commands[removals[0]])
+        self.assertIn("/var/tmp/cauce-pty-agent-zeus", commands[removals[0]])
+        self.assertLess(removals[0], copies[0])
+
+    def test_control_negativo_the_copy_is_still_owned_and_locked_down_afterwards(self) -> None:
+        commands = self._docker_commands()
+        copy = next(index for index, line in enumerate(commands) if line.startswith("cp "))
+        rest = commands[copy + 1:]
+        self.assertTrue(any("chown -R 0:0" in line for line in rest), commands)
+        self.assertTrue(any("chmod -R a=rX" in line for line in rest), commands)
 
 
 if __name__ == "__main__":

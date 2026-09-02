@@ -7,7 +7,9 @@ import pathlib
 import re
 import unittest
 
-AGENTE = pathlib.Path(__file__).resolve().parent.parent / "cauce_pty_agent.py"
+PAQUETE = pathlib.Path(__file__).resolve().parent.parent / "cauce_pty_agent"
+AGENTE = PAQUETE / "agent.py"
+HECHOS = PAQUETE / "runtime_facts.py"
 LANZADOR = pathlib.Path(__file__).resolve().parent.parent / "cauce-pty-launcher.sh"
 
 
@@ -60,7 +62,7 @@ class LaPresenciaLlevaElHome(unittest.TestCase):
         ya era obligatorio; esto lo fija para que nadie lo vuelva opcional por el camino y convierta
         un dato que falta en una caida al saludar.
         """
-        fuente = AGENTE.read_text(encoding="utf-8")
+        fuente = HECHOS.read_text(encoding="utf-8")
         campos = re.search(r'"runtime_gid",\s*"home"', fuente)
         self.assertIsNotNone(campos, "`home` ya no esta en los campos obligatorios del bundle")
 
