@@ -19,8 +19,13 @@ El preview escucha únicamente en loopback y vuelve a renderizar cuando cambia e
 pnpm arch:verify
 pnpm arch:validate
 pnpm arch:render
+pnpm arch:refresh
 pnpm arch:visual-check
 ```
+
+## Refrescar la revisión fijada
+
+`pnpm arch:refresh` sella `meta.repository.revision` con el `HEAD` actual y vuelve a renderizar el HTML, de modo que el bloque de evidencia quede en la misma revisión que la especificación. Solo hace falta cuando cambia alguno de los ficheros citados como fuente por un componente (`components[].sources[].path`): el gate compara esas rutas entre la revisión fijada y `HEAD`, no todo el árbol de runtime. El resultado son exactamente dos líneas de diff, una en el JSON y otra en el HTML.
 
 ## Instalación fijada
 

@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '..');
@@ -142,6 +142,26 @@ async function assertOfflineArtifact() {
   }
 }
 
+async function stampRepositoryRevision() {
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  }).trim();
+  if (!/^[a-f0-9]{40}$/u.test(head)) {
+    throw new Error(`git rev-parse HEAD did not yield a full revision: ${head}`);
+  }
+  const source = await readFile(specificationPath, 'utf8');
+  const revisionField = /("revision"\s*:\s*")[a-f0-9]{40}(")/gu;
+  const occurrences = source.match(revisionField) ?? [];
+  if (occurrences.length !== 1) {
+    throw new Error(`expected exactly one pinned revision in ${specificationPath}, found ${occurrences.length}`);
+  }
+  const stamped = source.replace(revisionField, `$1${head}$2`);
+  JSON.parse(stamped);
+  if (stamped !== source) await writeFile(specificationPath, stamped, 'utf8');
+  return head;
+}
+
 function argumentsFor(command, cli) {
   const common = ['--quality', 'showcase', '--repo-root', repositoryRoot];
   if (command === 'verify-install') return null;
@@ -149,7 +169,7 @@ function argumentsFor(command, cli) {
   if (command === 'validate') {
     return [cli, 'validate', 'architecture', specificationPath, ...common, '--json'];
   }
-  if (command === 'render') {
+  if (command === 'render' || command === 'refresh') {
     return [cli, 'deliver', 'architecture', specificationPath, artifactPath, ...common, '--json'];
   }
   if (command === 'preview') {
@@ -176,7 +196,10 @@ async function run() {
   }
 
   if (command === 'visual-check') await assertOfflineArtifact();
-  const derived = command === 'render' || command === 'preview'
+  const previousSpecification = command === 'refresh' ? await readFile(specificationPath, 'utf8') : undefined;
+  if (command === 'refresh') await stampRepositoryRevision();
+  const rendersArtifact = command === 'render' || command === 'refresh';
+  const derived = rendersArtifact || command === 'preview'
     ? await offlineInstall(install.root)
     : undefined;
   try {
@@ -191,7 +214,10 @@ async function run() {
       child.once('error', reject);
       child.once('exit', code => resolveExit(code ?? 1));
     });
-    if (exitCode === 0 && command === 'render') await assertOfflineArtifact();
+    if (exitCode === 0 && rendersArtifact) await assertOfflineArtifact();
+    if (exitCode !== 0 && previousSpecification !== undefined) {
+      await writeFile(specificationPath, previousSpecification, 'utf8');
+    }
     process.exitCode = exitCode;
   } finally {
     await derived?.cleanup();

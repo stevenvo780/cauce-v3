@@ -21,6 +21,7 @@ Todo commit que toque código **debe pasar el gate antes de hacer commit**. Comm
 | `ops/scripts/validate.sh` | Sintaxis de `.sh`/`.mjs` en ops+deploy, ShellCheck obligatorio, YAML/JSON Schema de manifiestos, paridad byte-a-byte G-SNAP | Al tocar fleet/ops |
 | `pnpm qa:layout` (`qa/layout-gate.mjs`) | Regresión visual en Chromium a 360/760/1100/1440/1920/2560 px — mide ancho útil, espacio muerto, overflow, scroll, enlaces sin nombre, etiquetas superpuestas | Al tocar console |
 | `pnpm arch:validate` / `pnpm arch:visual-check` | Valida la especificación Archify fijada y revisa el mapa navegable en temas y viewports múltiples | Al cambiar límites o dependencias |
+| `pnpm arch:refresh` | Sella la revisión fijada del mapa con el `HEAD` actual y re-renderiza el HTML | Al commitear un cambio en alguna ruta citada como fuente por un componente del mapa |
 
 ## Ratchet (`scripts/calidad.mjs`)
 

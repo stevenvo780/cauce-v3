@@ -14,14 +14,6 @@ const artifactUrl = new URL(
   import.meta.url,
 );
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
-const architectureRuntimeRoots = [
-  'console/src',
-  'ops/harness',
-  'ops/observability',
-  'ops/pty-agent',
-  'packages',
-  'services',
-];
 
 describe('Archify integration contract', () => {
   it('pins exact installed bytes and never forwards the ambient environment', async () => {
@@ -70,19 +62,22 @@ describe('Archify integration contract', () => {
     const evidencePaths = specification.components.flatMap(
       (component) => component.sources?.map((source) => source.path) ?? [],
     );
-    const architecturalChanges = execFileSync(
+    expect(evidencePaths.length).toBeGreaterThan(0);
+    const staleEvidence = execFileSync(
       'git',
       [
         'diff',
         '--name-only',
         `${specification.meta.repository.revision}..HEAD`,
         '--',
-        ...architectureRuntimeRoots,
         ...evidencePaths,
       ],
       { cwd: repositoryRoot, encoding: 'utf8' },
     ).trim();
-    expect(architecturalChanges, 'Archify must be refreshed after committed runtime changes').toBe('');
+    expect(
+      staleEvidence,
+      'a cited evidence path changed since the pinned revision; run: pnpm arch:refresh',
+    ).toBe('');
     expect(specification.connections).toContainEqual(expect.objectContaining({
       from: 'telegram_bridge',
       to: 'postgres',
