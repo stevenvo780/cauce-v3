@@ -20,12 +20,13 @@ lo que no se comprobó se dice, no se supone.
   `routes/core/http.ts:46` pasan `requireEnabledAgent: true` al `acquireLease`, y
   `packages/store/src/repository/deliveries/claims.ts:58-60` lo aplica dentro de la transacción del
   lease (`StoreError('forbidden', 'delivery consumer is disabled')`).
-- **Contextos nativos por harness** — el flag sigue OFF; de los cuatro bloqueantes, uno cerrado, dos
-  en pie y uno sin verificar:
+- **Contextos nativos por harness** — el flag sigue OFF; de los seis puntos anotados, tres cerrados,
+  uno en pie y dos sin verificar:
   1. **Sigue en pie.** Topes de truncado de OpenClaw cableados a una constante:
-     `packages/protocol/src/ficheros-del-arnes.ts:139`,
+     `packages/protocol/src/ficheros-del-arnes.ts:278`,
      `export const TOPES_OPENCLAW = { porFichero: 60_000, total: 150_000 }`. (El roadmap citaba la
-     línea 141; el fichero se movió, el defecto no.)
+     línea 141 y después la 139; el fichero se movió otra vez, el defecto no. Recomprobar con
+     `grep -n 'TOPES_OPENCLAW' packages/protocol/src/ficheros-del-arnes.ts` antes de citar la línea.)
   2. **No verificado.** El precipicio de expectativa vencida. El fichero cambió por `6ea006e`,
      `c483075` y `c09c67c`, y hoy tiene un camino `revalidate()` y escritura compare-and-swap
      (`escribirEnDiscoRealSiCoincide`, `native-profile-context.ts:109`) que no existían cuando se
@@ -34,14 +35,23 @@ lo que no se comprobó se dice, no se supone.
   3. **CERRADO** por `a3a157a`. La allowlist del supervisor sí conoce la clave:
      `ops/scripts/container-adapter-supervisor.sh:177` la valida (`^[01]$`) y `:885` la propaga al
      entorno del alias.
-  4. **Sigue en pie.** Las dos fórmulas de generación siguen sin coincidir, y en dos ejes a la vez:
-     `container-adapter-supervisor.sh:489` hashea `id\0started\0restart\0init_starttime` y se queda
-     el sha256 **entero** (64 hex); `cauce-pty-launcher.sh:150-153` hashea `id|started|restart` y se
-     queda `${digest:0:32}` (32 hex). Distinta entrada y distinta longitud.
+  4. **CERRADO.** El supervisor deriva ahora **las dos** generaciones, no una:
+     `ops/scripts/container-adapter-supervisor.sh:490-492` calcula `container_generation` con el
+     sha256 **entero** (64 hex) de `id\0started\0restart\0init_starttime`, y `:493-495` calcula
+     `container_presence_generation` = sha256 de `id|started|restart` truncado a 32 hex, que es
+     exactamente la fórmula del launcher (`ops/pty-agent/cauce-pty-launcher.sh:152-157`). El
+     consumidor acepta cualquiera de las dos:
+     `packages/adapter-sdk/src/context/native-profile-context.ts:373-375` compara el contrato contra
+     `runtimeGeneration` **o** `presenceGeneration`. Cada una responde a una pregunta distinta y por
+     eso son dos: la larga incluye el arranque del PID 1 y detecta que el **proceso de dentro** se
+     reinició aunque el contenedor no (invalida contextos nativos ya sembrados); la corta identifica
+     la **encarnación del contenedor** que el launcher nombra en el ticket firmado, así que un
+     `docker restart` entre emisión y uso caduca los tickets vivos. Fundirlas en una sola vuelve a
+     abrir uno de los dos agujeros.
   5. **CERRADO.** Los 5 tests de `shared-session` rojos en `adapter-sdk` ya no existen como tales: el
-     fichero de 5.444 líneas se partió en 18 (commit `fd10fea`) y la suite corre **689 tests**. Ojo
-     con el número: en reposo pasa entera, pero **bajo carga cae** — ver la nota al final de esta
-     sección.
+     fichero de 5.444 líneas se partió en 18 (commit `fd10fea`) y la suite corre **689 tests**. En
+     reposo pasa entera; el rojo que aparecía **bajo carga** ya tiene arreglo en el árbol y falta
+     reconfirmarlo — ver la nota al final de esta sección.
   6. **No verificado.** Lado Claude sin alias elegible en producción: es estado de la flota.
 - **Revivir o decidir jarvis** — **no verificado**: estado de la flota y de la base de producción.
 - **El cuello de botella OpenClaw** — **no verificado**: sin diagnosticar, y no es comprobable contra
@@ -72,12 +82,15 @@ lo que no se comprobó se dice, no se supone.
   control negativo: una reclamación sana no dispara la alerta), y la consola distingue ese caso de
   `idle` en vez de leerlo como «Libre».
 
-> **Nota medida el 30-08-2026 — hay un rojo sensible a la carga dentro de `test:unit`.** Con cuatro
-> suites de consola compitiendo, `pnpm --filter @cauce/adapter-sdk run test` cayó dos veces seguidas
-> (`# fail 2` y `# fail 1` de 689), siempre en
-> `a receipt cannot release the harness while its transport send never settles`. En reposo la suite
-> pasa entera. No es el mismo caso que el de la consola y merece su propia ronda: un test que sólo
-> falla cuando la máquina está ocupada convierte el gate en una moneda al aire.
+> **Nota — el rojo sensible a la carga de `test:unit` está atacado en el árbol.** Lo medido el
+> 30-08-2026 fue esto: con cuatro suites de consola compitiendo,
+> `pnpm --filter @cauce/adapter-sdk run test` cayó dos veces seguidas (`# fail 2` y `# fail 1` de
+> 689), siempre en `a receipt cannot release the harness while its transport send never settles`; en
+> reposo pasaba entera. La causa —estado compartido entre procesos de test— está corregida: cada
+> proceso escribe en su propia raíz (`testStateRoot(...)`, usado en todo `packages/adapter-sdk/test/**`)
+> y cada socket tmux lleva pid y UUID (`cauce-*-${process.pid}-${randomUUID()}`), así que dos
+> corridas simultáneas ya no se pisan el directorio ni el servidor tmux. Lo que falta es la
+> confirmación empírica: **no volví a correr la suite bajo carga en esta ronda — no lo probé.**
 
 ## 2. Producto — los 7 puntos de la visión
 
@@ -101,9 +114,9 @@ Estado de cada punto de `docs/flota-y-participantes.md` §La visión:
 
 ## 3. Calidad continua
 
-- **Molienda estricta por zonas, pendiente de promoción al gate** (`lint:estricto:zonas` en `package.json` hoy solo cubre `console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `tests`). Zonas medidas en rojo y con orden activa (`ordenes/codex-2.md`): `packages/protocol/src` (20 problemas), `packages/mcp-fleet-monitor/src` (15), `packages/store/src` (136), `services/gateway/src` (346). Cada zona se promueve al gate solo cuando cierra en `0 problems`.
+- **Molienda estricta por zonas — las cuatro zonas rojas ya están promovidas al gate.** `packages/protocol/src` (20 problemas medidos entonces), `packages/mcp-fleet-monitor/src` (15), `packages/store/src` (136) y `services/gateway/src` (346) cierran hoy en `0 problems` y están dentro de `lint:estricto:zonas` en `package.json`, que además cubre `packages/protocol/test`, `packages/store/test`, `packages/adapter-sdk/src` y `packages/adapter-sdk/test` sobre las zonas que ya tenía (`console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `tests`). Como `lint` encadena `lint:estricto:zonas`, cualquier regresión en ellas es roja de gate, no deuda anotada. Lo que queda pendiente es fundir la enumeración: `lint:estricto` (árbol entero, sin `--max-warnings 0`) y `lint:estricto:zonas` conviven, y mientras la lista sea manual una zona nueva entra al repo sin gate hasta que alguien la añada.
 - **Traducción de comentarios a inglés**: en curso por zonas (`ordenes/opencode-minimax.md`, `opencode-minimax-2.md`). Cerradas: `adapter-sdk/src`, `dispatcher`, `deploy`, `scripts`, `pty-agent`, las 18 herramientas de `ops/guardias/`. Pendientes: barrido de restos (~51 comentarios en español medidos en la última ronda) en las zonas ya tocadas; tests de consola/relay/bridge; `packages/adapter-sdk/test/**` (zona exclusiva de minimax-1, en curso con la partición del punto siguiente).
-- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 21 ficheros en `lineas`, 24 en `fechas`, 810 entradas acotadas en `comentarios`. `shared-session.test.ts` (5.444 líneas, el que fue el mayor del repo) **ya está partido** en 18 ficheros por `fd10fea`; verificado el 30-08-2026. Quedan además, fuera de la lista congelada o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.730), `ops/pty_agent/cauce_pty_agent.py` (2.659), `services/gateway/src/terminal.plugin.test.ts` (2.020), `ops/tests/container-supervisor.test.mjs` (1.712), `ops/container-runtime/cauce-container-runtime.py` (1.652), y varios más entre 800-1.400 líneas.
+- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 19 ficheros en `lineas`, 11 en `fechas`, 950 entradas acotadas en `comentarios` (recontar con `node -e "const b=require('./scripts/calidad-base.json');console.log(Object.keys(b.lineas).length,Object.keys(b.fechas).length,Object.keys(b.comentarios).length)"` antes de citar cualquier número: la lista baja sola con cada partición). `shared-session.test.ts` (5.444 líneas, el que fue el mayor del repo) **ya está partido** en 18 ficheros por `fd10fea`; verificado el 30-08-2026. `ops/pty-agent/cauce_pty_agent.py` (2.659 líneas, y que el roadmap citaba mal como `ops/pty_agent/…`) **ya no existe**: hoy es el paquete `ops/pty-agent/cauce_pty_agent/` (10 módulos, ninguno por encima de 664 líneas) y ha salido de la lista congelada. Quedan, fuera de la lista o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.700), `services/gateway/src/terminal.plugin.test.ts` (2.034), `ops/tests/container-supervisor.test.mjs` (1.728), `ops/container-runtime/cauce-container-runtime.py` (1.650), y varios más entre 800-1.400 líneas.
 - **Cirugía de dominios** (planificada, sin ronda asignada): mover `flota/` a su propio dominio, subir consola a la raíz del repo, repartir `ops/` — con checklists derivados de `docs/grafo.md` para no romper consumidores.
 - **Mega-refactor de consola**: deudas acumuladas de la revisión de vistas — deep-link en `/terminal` que desbloquearía borrar ~180 LOC más y los casos especiales del router; regenerar `docs/grafo.md`; resolver los 74 asserts-sobre-texto de los tests de consola. Incluye adoptar el patrón "un agente con Chrome revisa legibilidad" en vez de sondas CDP quemadas en código (las 6 sondas de contraste/tipografía/CSP se conservan para ese uso).
 
@@ -184,11 +197,11 @@ Ordenados por prioridad; cada uno con su zona. Evidencia y reproducción en el h
 ## Incidente 503 al aplicar perfiles desde la consola (29-08) — resuelto
 
 - **Síntoma (dueño)**: `PUT /v3/console/tenants/:t/agents/:a/perfil` → 503 "el runtime no publicó hechos medidos del alias", en TODOS los agentes, hasta lo más básico.
-- **Cadena**: la consola exige medir el runtime vivo antes de escribir (prepareRuntime→factsFor). Los facts los publica el pty-agent, que los MIDE UNA VEZ al arrancar escaneando /proc del contenedor por el proceso del adaptador con identidad exacta (CAUCE_ALIAS+CAUCE_CONTAINER_GENERATION+CAUCE_STATE_DIR+HOME), exigiendo `len(observed)==1` (cauce-pty-launcher.sh:559).
+- **Cadena**: la consola exige medir el runtime vivo antes de escribir (prepareRuntime→factsFor). Los facts los publica el pty-agent, que los MIDE UNA VEZ al arrancar escaneando /proc del contenedor por el proceso del adaptador con identidad exacta (CAUCE_ALIAS+CAUCE_CONTAINER_GENERATION+CAUCE_STATE_DIR+HOME), exigiendo `len(observed)==1` (`ops/pty-agent/cauce-pty-launcher.sh:579`).
 - **Causa raíz A (universal, hoy)**: al reiniciar TODOS los adaptadores hoy (rollouts de bundles), cambió su generación y las mediciones puntuales de los PTY quedaron obsoletas → factsFor undefined → 503 en toda la flota. **Reparado**: reinicio de los 10 PTY (re-miden contra la generación actual). Regla operativa: tras reiniciar un adaptador, reiniciar su PTY (adaptador primero, luego PTY — el ticket HMAC y los facts se atan a la generación).
 - **Causa raíz B (claude/codex sin aislar)**: zeus/socrates/tales/heraclito no exportaban CLAUDE_CONFIG_DIR/CODEX_HOME (corren en su default sin config aislada), así que la medición no capturaba la ruta del perfil → 503 permanente. **Reparado (c210ec10)**: el supervisor exporta el default explícito ($HOME/.claude|.codex), byte-idéntico en comportamiento, con test. zeus/socrates verificados exportando y midiendo OK. Verificación: 9/9 aliases locales con PTY producen facts.
 - **Bugs colaterales cazados**: la ola ES→EN de dev había corrompido el fixture del supervisor (MOUNT_RW 'true'→'1', bloque MOUNT_* cruzado, CAUCE_SEMBRAR_PERFIL '1'→'0') al colapsar líneas; restaurados.
-- **FIX PERMANENTE PENDIENTE (diseño listo, opción B del análisis)**: que el pty-agent RE-MIDA en caliente en vez de una sola vez, para que ningún reinicio de adaptador vuelva a dejar la medición obsoleta. El pipeline relay→gateway ya refresca presencia cada 10s; el único eslabón congelado es `self.bundle["runtime_facts"]` en cauce_pty_agent.py. Puntos de inserción: portar la medición (heredoc launcher 415-585) a una función del agente; añadir `state_directory` al bundle; re-medir en `_serve()` antes del HELLO (~1017) y chequear en `_maintain()` (~2559) forzando reconexión SOLO si cambian los facts Y no hay sesiones abiertas; PRESERVAR la invariante de generación (nunca adoptar una nueva) y no inventar pane tmux (tmux_cwd=None). Tests: ops/pty-agent/tests/test_runtime_facts.py, test_presencia_home.py. Hacerlo con calma/con zeus — toca el plano PTY.
+- **FIX PERMANENTE PENDIENTE (diseño listo, opción B del análisis)**: que el pty-agent RE-MIDA en caliente en vez de una sola vez, para que ningún reinicio de adaptador vuelva a dejar la medición obsoleta. El pipeline relay→gateway ya refresca presencia cada 10s; el único eslabón congelado es `runtime_facts` del bundle, que se carga una sola vez al arrancar (`ops/pty-agent/cauce_pty_agent/runtime_facts.py:104-105`) y viaja en el HELLO (`ops/pty-agent/cauce_pty_agent/agent.py:223-224`). Puntos de inserción, ya sobre el paquete (el monolito `cauce_pty_agent.py` no existe; recomprobar los números con `grep -n`): portar la medición (heredoc de `ops/pty-agent/cauce-pty-launcher.sh:434-618`) a una función del agente; añadir `state_directory` al bundle; re-medir en `_serve()` antes del HELLO (`agent.py:191`) y chequear en `_maintain()` (`session.py:388`) forzando reconexión SOLO si cambian los facts Y no hay sesiones abiertas; PRESERVAR la invariante de generación (nunca adoptar una nueva) y no inventar pane tmux (tmux_cwd=None). Tests: ops/pty-agent/tests/test_runtime_facts.py, test_presencia_home.py. Hacerlo con calma/con zeus — toca el plano PTY.
 
 ## Auditoría intensiva de la UI (29-08, 5 auditores en paralelo por feature) — hallazgos y arreglos
 

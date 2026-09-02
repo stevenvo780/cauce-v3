@@ -138,11 +138,37 @@ y quedarse con una lista de permisos incompleta o vacía por accidente.
 umask 027
 tmp=$(mktemp /etc/cauce-v3/terminal/.grants.json.XXXXXX)   # mismo filesystem
 cat > "$tmp" <<'JSON'
-{"version":1,"grants":[{"alias":"jarvis","tenant":"Steven","operator":"steven","mode":"rw"}]}
+{"version":1,"grants":[{"operator":"<correo de console_users>","tenant_id":"Steven","alias":"jarvis","modes":["shell","harness"]}]}
 JSON
 chown 1000:1000 "$tmp"; chmod 0440 "$tmp"
 mv -f "$tmp" /etc/cauce-v3/terminal/grants.json                # rename atómico
+docker exec cauce-v3-prod-gateway-1 node -e 'const g=JSON.parse(require("fs").readFileSync("/run/cauce-terminal/grants.json","utf8"));console.log(g.version, g.grants.length)'
 ```
+
+Los cuatro campos son exactamente los que exige `parseGrants`
+(`services/gateway/src/terminal/authority.ts:110-115`): `operator`, `tenant_id` y `alias` no
+vacíos, y `modes` como **array de cadenas**. Escribir `tenant` o `mode` en singular levanta
+`grant fields are invalid`, y `rw` ni siquiera es un modo: los únicos son `shell` y `harness`
+(`services/gateway/src/terminal/types.ts:7`). Con el login por contraseña el `operator_id` es el
+**correo** de `console_users` (`ops/runbooks/console-login.md:235`), así que poner `steven`
+repite el fallo de atribución ya documentado ahí: la sesión es válida y todos los destinos
+contestan `authorized:false`. El único comodín es `"*"`, y sólo en `operator`.
+
+**Un error tipográfico cierra la puerta a todos.** Cualquier excepción dentro de `parseGrants`
+deja el archivo ENTERO en `grants: []` y se registra una sola vez por minuto
+(`authority.ts:144-158`): no hay rechazo por fila ni lista parcialmente válida, y la consola sólo
+muestra un `no_grant` genérico que no distingue "a este operador no le toca" de "el archivo no
+parseó".
+
+**Ese log no sirve como comprobación inmediata.** `GrantStore` lee el archivo de forma perezosa,
+dentro de una request (`authority.ts:142-145`): nadie vigila la ruta ni la sondea, así que recién
+renombrado el archivo `docker logs ... | grep 'terminal grants'` sale vacío tanto si el JSON es
+bueno como si es basura. Por eso la comprobación pegada al rename es el `docker exec ... node -e`
+de arriba, que lee el mismo inodo montado y revienta ruidosamente si el fichero no parsea. La
+validación de campos de `parseGrants` sólo se ve **forzando una lectura**: recargar la barra de
+flota en la consola y recién entonces
+`docker logs --since 2m cauce-v3-prod-gateway-1 | grep 'terminal grants'`, que ya sí es concluyente
+(sin salida = la lista nueva se aplicó).
 
 Por eso `/run/cauce-terminal` se monta como **bind de DIRECTORIO y no como
 secret de archivo**, con el mismo razonamiento que el bind de identidades: el
@@ -264,8 +290,20 @@ Para el canal PTY el rollback barato no es ese: es vaciar `grants.json`
 Recién ahora se abre la puerta, y se abre para un alias:
 
 ```sh
-# rename atómico de §1.4, con la fila de jarvis
+umask 027
+tmp=$(mktemp /etc/cauce-v3/terminal/.grants.json.XXXXXX)
+cat > "$tmp" <<'JSON'
+{"version":1,"grants":[{"operator":"<correo de console_users>","tenant_id":"Steven","alias":"jarvis","modes":["shell","harness"]}]}
+JSON
+chown 1000:1000 "$tmp"; chmod 0440 "$tmp"
+mv -f "$tmp" /etc/cauce-v3/terminal/grants.json
+docker exec cauce-v3-prod-gateway-1 node -e 'const g=JSON.parse(require("fs").readFileSync("/run/cauce-terminal/grants.json","utf8"));console.log(g.version, g.grants.length)'
 ```
+
+Los nombres de los campos y por qué el operador es un correo están en §1.4. Si ese `node -e`
+falla, la fila no se aplicó y además quedaron revocados los grants que ya hubiera: corregir el
+JSON y repetir el rename antes de seguir. El `grep 'terminal grants'` del log sólo dice algo
+**después** de una lectura real (§1.4), así que va al final de la verificación de abajo, no acá.
 
 Verificación de extremo a extremo, en la consola publicada
 (https://consola.elenxos.com, detrás de Caddy con basic auth, que no se toca):
@@ -277,7 +315,9 @@ shell, `id -un` devuelve el usuario del contenedor (`claw` para `jarvis`,
 nunca root) y `hostname` devuelve el contenedor esperado. En `/audit` tienen que
 aparecer `terminal.session.request` (allow), `terminal.session.consume` y
 `terminal.session.close` con alias, contenedor, digest de imagen, generación y
-el motivo escrito a mano.
+el motivo escrito a mano. Cargada esa barra, el gateway ya leyó `grants.json`: ahí
+`docker logs --since 2m cauce-v3-prod-gateway-1 | grep 'terminal grants'` sin salida confirma que
+la lista se aplicó, y con salida delata la errata que dejó a los 15 alias sin puerta.
 
 ## 3. Los tres kill switches
 
@@ -340,10 +380,14 @@ quede un contenedor con las dos puertas abiertas.
 
 ## 5. Dev: probar el circuito completo antes de tocar producción
 
-`deploy/compose.dev.yaml` levanta el relay en claro en las dos piernas (8445 y
-8446 publicadas en `CAUCE_DEV_BIND_IP`) y el gateway con
-`CAUCE_TERMINAL_ENABLED=1`. Como el stack de dev no tiene bloque `secrets:`, la
-clave de tickets y el token compartido viven en el mismo directorio de trabajo:
+`deploy/compose.dev.yaml` publica las dos piernas del relay (8445 y 8446) en
+`CAUCE_DEV_BIND_IP` y levanta el gateway con `CAUCE_TERMINAL_ENABLED=1`. Las dos piernas van con
+TLS, no en claro: el relay construye siempre un listener HTTPS con `requestCert: true` y
+`rejectUnauthorized: true` (`services/terminal-relay/src/browser-leg.ts:113-122`), y dev apunta
+certificado, clave, CA de cliente y CA de agentes al mismo `relay.crt`/`relay.key`
+(`deploy/compose.dev.yaml:123-126`) — dos archivos que el script de abajo **no** crea. Como el
+stack de dev no tiene bloque `secrets:`, la clave de tickets y el token compartido viven en el
+mismo directorio de trabajo:
 
 ```sh
 install -d -m 0750 /ruta/privada/cauce-terminal-dev
@@ -357,9 +401,49 @@ CAUCE_TERMINAL_CONFIG_DIR=/ruta/privada/cauce-terminal-dev \
 CAUCE_ENV_FILE=/ruta/privada/dev.env ops/scripts/compose.sh dev up --build -d --wait
 ```
 
-El nginx de dev (`console/nginx.conf`) tiene el mismo `location` de match
-exacto apuntando a `http://terminal-relay:8446`, sin mTLS. Dev no acredita
-producción: no hay TLS, la auth es de desarrollo y los grants son de juguete.
+El nginx de dev (`console/nginx.conf:15`) **no** tiene el mismo `location` que producción:
+declara el literal viejo `location = /v3/console/terminal/ws` y hace `proxy_pass` en claro a
+`http://terminal-relay:8446`, sin ninguna directiva `proxy_ssl_*`. Producción declara otro
+literal, el de la identidad del relay
+(`deploy/console/nginx-console-tls.conf:28`), con mTLS completo contra la CA interna. Dev no
+acredita producción: la auth es de desarrollo y los grants son de juguete.
+
+### 5.1 Pendiente abierto: hoy el circuito de dev no cierra
+
+Esto es trabajo del workstream de consola/deploy; acá sólo queda anotado el orden real en que
+falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
+
+1. **El stack de dev no arranca.** `deploy/compose.dev.yaml` no define
+   `CAUCE_TERMINAL_RELAY_INSTANCE_ID` ni para el gateway (env en las líneas 57-68) ni para el
+   relay (118-136), y los dos lo exigen: el gateway tira
+   `CAUCE_TERMINAL_RELAY_INSTANCE_ID is required when the terminal plane is enabled`
+   (`services/gateway/src/terminal/config.ts:66-73`, alcanzado porque dev trae
+   `CAUCE_TERMINAL_ENABLED` en `1`) y el relay lo pide por `requiredEnv`
+   (`services/terminal-relay/src/config.ts:84-90`). Esto precede a cualquier problema de PTY: sin
+   resolverlo no hay nada que probar.
+2. **La ruta que reparte el gateway no existe en el nginx de dev.** El grant devuelve
+   `/v3/console/terminal/relays/<64hex>/ws`
+   (`services/gateway/src/terminal/session-control.ts:60-63`), y dev sólo declara
+   `location = /v3/console/terminal/ws` (`console/nginx.conf:15`). El upgrade del navegador cae
+   entonces en `location /v3/` (`console/nginx.conf:36-40`), que va al gateway y **no** manda
+   `Upgrade` ni `Connection`: el WebSocket no llega a nacer.
+3. **El `Origin` es el primer rechazo de la capa de aplicación.** El handler de upgrade comprueba
+   en este orden (`services/terminal-relay/src/browser-leg.ts:203-220`): ruta → `origin_mismatch`
+   (`:210-211`) → `untrusted_client_certificate` (`:217-218`). Y `isSameOrigin` exige
+   `protocol === 'https:'` (`:157-165`), así que un dev servido por HTTP cae ahí **antes** de que
+   se mire ningún certificado.
+4. **Con el proxy en claro el relay no registra nada.** El nginx de dev proxea
+   `http://terminal-relay:8446` sin `proxy_ssl_certificate` contra un listener construido con
+   `requestCert: true, rejectUnauthorized: true`
+   (`services/terminal-relay/src/browser-leg.ts:113-122`): el handshake muere en el transporte y el
+   evento `upgrade` no llega a dispararse, así que no se emite ni `origin_mismatch` ni
+   `untrusted_client_certificate`. Lo que ve el operador es un 502 de nginx o un error de TLS, no
+   un rechazo del relay — por eso este punto se descubre el último aunque falle el primero.
+
+**El `location` de match exacto de producción no se convierte en prefijo.** El literal está
+fijado por `tests/unit/terminal-relay-operability.test.ts:57-59`, y el match exacto es una
+propiedad de cerco: la identidad de otro relay tiene que seguir siendo un 404 en el borde. Lo que
+se arregla es dev, alineándolo con el literal de producción; no al revés.
 
 ## 6. Integración con el resto del árbol
 
@@ -378,3 +462,43 @@ resto del runtime ya están cerradas:
   `CAUCE_TERMINAL_RELAY_TLS_KEY_PATH`, `TERMINAL_RELAY_AGENT_PORT`).
 - El relay declara `healthcheck` en `deploy/compose.yaml` sobre su puerto de salud
   (`CAUCE_TERMINAL_RELAY_HEALTH_PORT`), igual que el resto de los servicios del runtime.
+
+### 6.1 Constantes que deberían salir de `vectors.json`, no re-declararse
+
+`tests/terminal-pty/vectors.json` no es solo un fichero de pruebas: es el contrato del canal, y
+lleva los bloques `geometry`, `limits`, `ttls`, `ws_close_codes` y `framing.tags`. Hoy ninguna pieza
+de runtime lo lee; cada una re-declara los mismos números a mano, y cuando dos copias divergen el
+síntoma no es un error de compilación sino una sesión que se cierra sin explicación.
+
+Lo que debería importarse en vez de copiarse:
+
+| Bloque | Qué fija |
+|---|---|
+| `geometry` | cotas de `cols`/`rows` (20–500 × 5–200) |
+| `limits` | tope de trama y de dato, altas marcas de stdin/salida y presupuestos de gobierno |
+| `ttls` | plazos de `ping`, `hello`, lápida, TTL de sesión y ocio |
+| `ws_close_codes` | los códigos de cierre 4400–4423 y el `1011` interno |
+| `framing.tags` | los tags, incluidos los de gobierno 0x50–0x5E |
+
+Las cuatro copias que existen hoy:
+
+- `services/gateway/src/terminal/plugin.ts:49-52` — `COLS_MIN`/`COLS_MAX`/`ROWS_MIN`/`ROWS_MAX`.
+- `services/terminal-relay/src/session-limits.ts:28-31` — `MIN_COLS`/`MAX_COLS`/`MIN_ROWS`/`MAX_ROWS`,
+  con `CLOSE_CODES` en `:12-26` y los topes de stdin y de ventana justo debajo.
+- El agente PTY: `ops/pty-agent/cauce_pty_agent/framing.py:63-66` (`MAX_FRAME`,
+  `SESSION_ID_BYTES`, `MAX_DATA`; los tags `TAG_*` están arriba, en `:23-61`, y `DATA_TAGS` en
+  `:67`) y `ops/pty-agent/cauce_pty_agent/session.py:47-59` (plazos y cotas de geometría).
+- `console/src/features/terminal/pty-types.ts:73-76` — `MAX_FILAS_REMOTAS`, `MAX_COLUMNAS_REMOTAS`,
+  `MAX_INPUT_FRAME_BYTES`, `MAX_PENDING_INPUT_BYTES`.
+
+El agente Python es la referencia de la que salieron los valores, y
+`ops/pty-agent/tests/test_vectors_contract.py` ya falla si el agente y el fichero se separan. La
+procedencia escrita en el propio fichero es parcial: sólo `geometry`, `limits` y `ttls` llevan
+campo `sources` (`ws_close_codes` y `framing.tags` no lo tienen). Esas fuentes se citan por
+módulo y nombre de constante (`cauce_pty_agent/session.py:MIN_COLS,…`,
+`cauce_pty_agent/framing.py:MAX_FRAME`), no por número de línea, así que no envejecen con cada
+edición; `limits.stdin_coalesce_ms` apunta al relay (`services/terminal-relay/src/session-limits.ts`),
+que es donde vive ese tope. Los valores no corren peligro porque el contrato los verifica contra el
+paquete vivo. La mitad que falta es la TypeScript: **generar un módulo desde
+`vectors.json`** —y hacer que relay, gateway y consola lo importen— es trabajo del frente de
+servicios, no de este sector; aquí solo queda anotado qué habría que generar y desde dónde.
