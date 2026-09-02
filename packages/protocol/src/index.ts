@@ -14,3 +14,5 @@ export * from './outbox-contracts.js';
 export * from './profile-runtime-adoption.js';
 export * from './content-safety.js';
 export * from './governance-documents.js';
+export * from './health-server.js';
+export * from './log.js';
