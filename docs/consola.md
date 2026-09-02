@@ -23,7 +23,65 @@ No utiliza `react-router`. El enrutamiento (`matchRoute`, `ROUTE_TABLE`, `ROUTE_
 | `features/auth/` | Login OIDC / contraseña / selección de sesión |
 | `features/audit/` | Visor de eventos de auditoría y telemetría |
 | `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo) |
-| `features/help/` | Documentación integrada y atajos de teclado |
+| `features/help/` | Ayuda integrada en `/ayuda`: qué contesta cada vista, qué significa cada estado de la flota y los atajos; el índice se deriva de `NAV_ENTRIES`, así que no puede describir una vista que no existe |
+
+## Armazón de página
+
+Ninguna vista inventa su propio contenedor: el ancho, la cabecera y el scroll salen de dos
+primitivas de `components/ui.tsx`.
+
+- `PageHeader` es la cabecera única — antetítulo, `h1`, acciones a la derecha y el texto
+  explicativo dentro de `PageHelp`, nunca como párrafo suelto. Ocupa el ancho del contenido, no la
+  medida de lectura, y queda pegada arriba y opaca sobre `--bg` para que el título de la vista siga
+  legible mientras una tabla de tres pantallas hace scroll. Por debajo de 640 px pasa a una sola
+  columna, donde la acción ya no cabe junto al título.
+- `PageShell kind` declara qué clase de página es el cuerpo:
+  - `documento` — se lee línea a línea y se limita a `--measure-prose`: `/config` y `/ayuda`;
+  - `aplicacion` — ocupa una altura de ventana y gestiona su propio scroll: `/terminal`.
+
+`aplicacion` no lleva alturas mágicas: la vista mide en runtime lo que ocupa lo que tiene encima y
+lo escribe en `--shell-tope`. `/messages` resuelve lo mismo con su propia medida `--messenger-tope`.
+
+## Tema de la consola
+
+`components/ThemeControl.tsx` vive en la barra superior y ofrece tres estados: **sistema**,
+**claro** y **oscuro**. `claro` y `oscuro` estampan `data-theme="light"` o `data-theme="dark"` en
+`<html>`; `sistema` **retira** el atributo y devuelve la decisión a `prefers-color-scheme`.
+
+La paleta se declara por tres caminos en `styles/base.css`: la clara en el `:root` desnudo —ningún
+color tiene su única definición dentro de una media query— y la oscura dos veces con los mismos
+valores, una para la preferencia del sistema (`:root:not([data-theme="light"])`) y otra para el
+atributo forzado (`:root[data-theme="dark"]`). `styles.legibilidad-themes.test.ts` lee los tres
+caminos y exige en todos el mismo juego de tokens y contraste AA.
+
+La elección se recuerda en `localStorage` bajo la clave `cauce.tema`, y cada lectura y cada
+escritura van en `try/catch`: una ventana privada lanza en todo acceso al almacenamiento y el tema
+no puede ser el motivo de que la consola no pinte. Es la **única excepción** del validador
+`ops/scripts/validate-console-browser-storage.mjs`, acotada a `ThemeControl.tsx` —y a su test—, al
+arranque `public/tema.js` y a esa clave. Lo que la prohibición protege es otra cosa: identidad,
+semántica de mensaje y material de idempotencia duraderos en el navegador. El nombre de un tema no
+es ninguna de las tres.
+
+El tema forzado tiene que estar en `<html>` **antes del primer pintado**, o el operador ve un
+destello del tema contrario. Eso lo hace `public/tema.js`, que `index.html` carga con
+`<script src="/tema.js"></script>` delante del paquete: es un **fichero del mismo origen y no un
+bloque en línea** porque la consola sirve `script-src 'self'`, que jamás ejecuta script inline —un
+`<script>` incrustado no correría en producción y además dispararía una violación de CSP en cada
+carga. Marca también el `<meta name="theme-color">` que toca, para que la barra del navegador
+acompañe al tema forzado. La clave y los tres nombres están repetidos ahí porque el arranque no
+pasa por el bundle; `src/tema-bootstrap.test.ts` importa `CLAVE_TEMA` y `TEMAS` de
+`ThemeControl.tsx`, lee `public/tema.js` y se pone rojo si las dos copias divergen.
+
+## Pliegue: qué se ve sin hacer scroll
+
+Cada vista declara su **objeto principal** con `data-objeto-principal` —la tabla de flota en
+`/live`, el hilo en `/messages`, la caja de terminal en `/terminal`— y el criterio de v3.1 es que
+ese objeto empiece por encima del pliegue. El gate de maquetado lo mide (más abajo); en `/live` la
+maquetación que lo persigue es una sola tira de mando —refresco, triaje y veredicto— pegada arriba a
+partir de 1101px, más la leyenda y el mapa de la flota dentro de `<details>` que arrancan plegados,
+porque el mapa abierto deja la tabla fuera del primer pliegue. Por debajo de 1101px nada de `/live`
+se pega y la cabecera global vuelve a ser lo que mantiene el título alcanzable, como en el resto de
+las vistas.
 
 ## Autoridades únicas de escritura
 
@@ -95,9 +153,31 @@ la capacidad del relay para la navegación y la Terminal. Los `Boundary` de ambo
 
 `src/features/terminal/pty-session.ts` gestiona la sesión WebSocket en el mismo origen, que el gateway proxea hacia `terminal-relay`. Véase [terminal-pty.md](terminal-pty.md) y [services/terminal-relay/README.md](../services/terminal-relay/README.md).
 
+La página es una vista de `aplicacion`: la caja de terminal no tiene altura fija ni techo, se estira
+hasta el alto de la ventana menos `--terminal-tope` —con un suelo de 430 px para que nunca quede
+inservible— y ese tope sale de medir en runtime lo que hay encima, no de una constante escrita a
+mano. La columna de flota se pliega a una tira de iconos con un
+botón nombrado que declara `aria-pressed` y `aria-controls` —no `aria-expanded`: plegada la lista
+sigue renderizada y enfocable, y decir que está colapsada sería mentirle al lector de pantalla.
+
 ## Gate de regresión visual
 
-`qa/layout-gate.mjs` (ejecutar con `pnpm qa:layout`): lanza la consola con mocks, ejecuta Chromium a 360/760/1100/1440/1920/2560 px y mide ancho útil, espacio muerto, overflow, pantallas de scroll, enlaces de nav sin nombre y etiquetas solapadas. Baseline en `qa/layout-baseline.json` — funciona como ratchet: los números solo pueden mejorar. Requiere `npx playwright install chromium`.
+`qa/layout-gate.mjs` (ejecutar con `pnpm qa:layout`): lanza la consola con mocks y recorre con
+Chromium las diez rutas declaradas en `ROUTES` —`/`, `/live`, `/accounts`, `/messages`, el hilo
+`/messages/<tenant>/<alias>`, `/queues`, `/observability`, `/config`, `/terminal` y `/ayuda`— más
+los dos estados del cajón de `/live`, a 360/760/1100/1440/1920/2560 px sobre una ventana de 1000 px
+de alto. El hilo se mide aparte porque en `/messages` a secas no hay conversación abierta y el
+objeto principal de esa vista sólo existe con una.
+
+Mide el desperdicio horizontal (ancho útil, hueco lateral, desborde, recorte con y sin alcance de
+teclado), la accesibilidad de la nav (enlaces sin nombre, rótulos solapados, portadores pequeños) y
+el desperdicio vertical: `foldDesaprovechado` —la banda muerta bajo lo último realmente pintado
+dentro de `main`, no bajo la caja que un `<details>` plegado sigue reportando—, `objetoPrincipalTop`
+y `objetoPrincipalBajoElPliegue`, más las `pantallas` de scroll de cada ruta. Línea base en
+`qa/layout-baseline.json`. La semántica del trinquete, los objetivos de v3.1 y la única forma
+sancionada de subir un valor registrado están en
+[calidad-y-gates.md](calidad-y-gates.md#gate-de-maquetado-pnpm-qalayout). Requiere
+`npx playwright install chromium`.
 
 ## Despliegue
 
@@ -115,5 +195,8 @@ pnpm --filter @cauce/console test
 ## Restricciones clave
 
 - La consola **no importa** paquetes `@cauce/*` — está desacoplada en la frontera HTTP.
-- Sin almacenamiento de tokens ni identidad en el navegador.
+- Sin almacenamiento de tokens ni identidad en el navegador:
+  `ops/scripts/validate-console-browser-storage.mjs` prohíbe `localStorage`, `sessionStorage`,
+  IndexedDB, `caches` y `document.cookie` en `console/src` y en `public/tema.js`, con la única
+  excepción de la clave `cauce.tema` del control de tema.
 - CSP estricta: `script-src 'self'`, `style-src 'self'`; únicamente `style-src-attr 'unsafe-inline'` para la geometría de xterm.
