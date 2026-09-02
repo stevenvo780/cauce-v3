@@ -5,6 +5,7 @@ import {
 } from '@cauce/store';
 import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlerRegistry } from './handlers.js';
 import type { DispatcherMetrics } from './metrics.js';
+import { type DispatcherPhase, PhaseGuard } from './phases.js';
 
 export interface DispatcherOptions {
   pollMs?: number;
@@ -24,7 +25,7 @@ export interface DispatcherOptions {
   chainSweep?: ChainSilenceSweepOptions;
   handlers?: JobHandlerRegistry;
   metrics?: DispatcherMetrics;
-  onError?: (error: unknown) => void;
+  onError?: (error: unknown, phase?: DispatcherPhase) => void;
 }
 
 export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {}): { stop: () => void; tick: () => Promise<void> } {
@@ -32,74 +33,87 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const handlers = options.handlers ?? createDefaultJobHandlerRegistry(pool);
   const worker = `dispatcher:${randomUUID()}`;
   const chainSweepMs = options.chainSweepMs ?? 60_000;
+  const pollMs = options.pollMs ?? 250;
+  const guard = new PhaseGuard({
+    baseMs: pollMs,
+    onFailure: (phase, error) => {
+      options.metrics?.recordPhaseFailure(phase);
+      options.onError?.(error, phase);
+    },
+  });
   let running = false;
   const retentionIntervalMs = options.retentionIntervalMs ?? 0;
   // Initialize to -Infinity so the first sweep fires on the initial tick.
   let nextPruneAtMs = Number.NEGATIVE_INFINITY;
   let lastChainSweep = Number.NEGATIVE_INFINITY;
 
+  const runClaimedJobs = async (jobs: readonly Readonly<Record<string, unknown>>[]): Promise<void> => {
+    for (const job of jobs) {
+      const claimed = asClaimedJob(job);
+      const handler = handlers.get(claimed.kind);
+      if (!handler) {
+        const error = new UnknownJobKindError(claimed.kind);
+        const deadLettered = await deadLetterUnknownJob(
+          pool, claimed.id, worker, claimed.claim_token, error.message
+        );
+        options.metrics?.recordJob(claimed.lane, deadLettered ? 'unknown_kind' : 'fenced');
+        options.onError?.(error);
+        continue;
+      }
+      try {
+        await handler(claimed);
+        if (!await repository.completeJob(claimed.id, worker, claimed.claim_token)) {
+          throw new Error('job completion fenced');
+        }
+        options.metrics?.recordJob(claimed.lane, 'done');
+      } catch (error) {
+        const result = await repository.failJob(
+          claimed.id, worker, error instanceof Error ? error.message : 'unknown job error',
+          claimed.claim_token
+        );
+        options.metrics?.recordJob(claimed.lane, result);
+        options.onError?.(error);
+      }
+    }
+  };
+
   const tick = async (): Promise<void> => {
     if (running) return;
     running = true;
     try {
-      await repository.retryStaleDeliveries(options.staleAckMs ?? 30_000, 100, {
-        retryStartedDeliveries: options.retryStartedDeliveries === true,
-        ...(options.leaseCapMs === undefined ? {} : { leaseCapMs: options.leaseCapMs }),
-        ...(options.leaseCapGraceMs === undefined
-          ? {}
-          : { leaseCapGraceMs: options.leaseCapGraceMs })
-      });
-      await repository.retryExpiredJobs();
-      // Periodic sweep of silent chains with error isolation.
+      const stale = await guard.run('stale_deliveries', async () => repository.retryStaleDeliveries(
+        options.staleAckMs ?? 30_000, 100, {
+          retryStartedDeliveries: options.retryStartedDeliveries === true,
+          ...(options.leaseCapMs === undefined ? {} : { leaseCapMs: options.leaseCapMs }),
+          ...(options.leaseCapGraceMs === undefined
+            ? {}
+            : { leaseCapGraceMs: options.leaseCapGraceMs })
+        }
+      ));
+      const expired = await guard.run('expired_jobs', async () => repository.retryExpiredJobs());
       if (chainSweepMs > 0 && Date.now() - lastChainSweep >= chainSweepMs) {
-        lastChainSweep = Date.now();
-        try {
-          options.metrics?.recordChainSweep(await repository.sweepSilentChains(options.chainSweep));
-        } catch (error) {
-          options.metrics?.recordChainSweepFailure();
-          options.onError?.(error);
-        }
+        const swept = await guard.run(
+          'chain_sweep', async () => repository.sweepSilentChains(options.chainSweep)
+        );
+        if (swept.status !== 'skipped') lastChainSweep = Date.now();
+        if (swept.status === 'ok') options.metrics?.recordChainSweep(swept.value);
+        if (swept.status === 'failed') options.metrics?.recordChainSweepFailure();
       }
-      const jobs = await repository.claimFairJobs(
+      const claimed = await guard.run('claim_jobs', async () => repository.claimFairJobs(
         worker, 1, options.jobLeaseMs ?? 30_000, options.interactiveBurst ?? 3, 'dispatcher'
-      );
-      for (const job of jobs) {
-        const claimed = asClaimedJob(job);
-        const handler = handlers.get(claimed.kind);
-        if (!handler) {
-          const error = new UnknownJobKindError(claimed.kind);
-          const deadLettered = await deadLetterUnknownJob(pool, claimed.id, worker, claimed.claim_token, error.message);
-          options.metrics?.recordJob(claimed.lane, deadLettered ? 'unknown_kind' : 'fenced');
-          options.onError?.(error);
-          continue;
-        }
-        try {
-          await handler(claimed);
-          if (!await repository.completeJob(claimed.id, worker, claimed.claim_token)) {
-            throw new Error('job completion fenced');
-          }
-          options.metrics?.recordJob(claimed.lane, 'done');
-        } catch (error) {
-          const result = await repository.failJob(
-            claimed.id, worker, error instanceof Error ? error.message : 'unknown job error', claimed.claim_token
-          );
-          options.metrics?.recordJob(claimed.lane, result);
-          options.onError?.(error);
-        }
-      }
-      // Periodic observability pruning with error isolation.
+      ));
+      if (claimed.status === 'ok') await runClaimedJobs(claimed.value);
       if (retentionIntervalMs > 0 && Date.now() >= nextPruneAtMs) {
         nextPruneAtMs = Date.now() + retentionIntervalMs;
-        try {
+        await guard.run('retention', async () => {
           const pruned = await repository.pruneObservability(options.retention ?? {});
           if (pruned.ack_renewals + pruned.acks + pruned.audit_renewals + pruned.audit_events > 0) {
             console.log(JSON.stringify({ event: 'observability_pruned', ...pruned }));
           }
-        } catch (error) {
-          options.onError?.(error);
-        }
+        });
       }
-      options.metrics?.recordTick('ok');
+      const degraded = [stale, expired, claimed].some((outcome) => outcome.status !== 'ok');
+      options.metrics?.recordTick(degraded ? 'error' : 'ok');
     } catch (error) {
       options.metrics?.recordTick('error');
       throw error;
@@ -110,7 +124,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
 
   const timer = setInterval(() => {
     void tick().catch((error: unknown) => options.onError?.(error));
-  }, options.pollMs ?? 250);
+  }, pollMs);
   timer.unref();
   return { stop: () => { clearInterval(timer); }, tick };
 }
@@ -157,3 +171,4 @@ async function deadLetterUnknownJob(
 export * from './handlers.js';
 export * from './config.js';
 export * from './metrics.js';
+export * from './phases.js';

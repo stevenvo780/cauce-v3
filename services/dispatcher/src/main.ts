@@ -34,9 +34,9 @@ const dispatcher = runDispatcher(pool, {
   },
   handlers: createDefaultJobHandlerRegistry(pool),
   metrics,
-  onError: (error) => {
+  onError: (error, phase) => {
     lastError = error instanceof Error ? error.message : 'dispatcher tick failed';
-    console.error(JSON.stringify({ event: 'dispatcher_tick_failed', error: lastError }));
+    console.error(JSON.stringify({ event: 'dispatcher_tick_failed', phase: phase ?? null, error: lastError }));
   }
 });
 

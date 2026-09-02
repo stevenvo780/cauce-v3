@@ -1,4 +1,5 @@
 import type { ChainSilenceSweepResult, DatabasePool } from '@cauce/store';
+import { DISPATCHER_PHASES, type DispatcherPhase } from './phases.js';
 
 type Lane = 'interactive' | 'batch';
 type ChainSweepOutcome = 'scanned' | 'fanin_recovered' | 'notified' | 'skipped' | 'failed';
@@ -39,6 +40,7 @@ export class DispatcherMetrics {
     ['ok', 0], ['error', 0], ['fenced', 0]
   ]);
   private readonly chainSweeps = new Map<ChainSweepOutcome, number>();
+  private readonly phaseFailures = new Map<DispatcherPhase, number>();
   private readonly startedAt: number;
   private lastTickAt: number | undefined;
   private lastSuccessAt: number | undefined;
@@ -124,6 +126,10 @@ export class DispatcherMetrics {
     this.addChainSweep('skipped', result.skipped);
   }
 
+  recordPhaseFailure(phase: DispatcherPhase): void {
+    this.phaseFailures.set(phase, (this.phaseFailures.get(phase) ?? 0) + 1);
+  }
+
   recordChainSweepFailure(): void {
     this.addChainSweep('failed', 1);
   }
@@ -150,6 +156,11 @@ export class DispatcherMetrics {
     lines.push('# TYPE cauce_dispatcher_chain_sweep_total counter');
     for (const outcome of ['scanned', 'fanin_recovered', 'notified', 'skipped', 'failed'] as const) {
       lines.push(`cauce_dispatcher_chain_sweep_total{outcome="${outcome}"} ${String(this.chainSweeps.get(outcome) ?? 0)}`);
+    }
+    lines.push('# HELP cauce_dispatcher_phase_failures_total Tick phases that threw, isolated from their siblings.');
+    lines.push('# TYPE cauce_dispatcher_phase_failures_total counter');
+    for (const phase of DISPATCHER_PHASES) {
+      lines.push(`cauce_dispatcher_phase_failures_total{phase="${phase}"} ${String(this.phaseFailures.get(phase) ?? 0)}`);
     }
     const progress = this.progress();
     lines.push('# HELP cauce_dispatcher_tick_age_seconds Seconds since the dispatcher work loop last completed a tick; -1 before its first tick.');
