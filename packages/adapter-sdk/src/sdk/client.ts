@@ -23,7 +23,7 @@ import type {
   ServerFrame,
 } from './types.js';
 
-export interface AdapterClientOptions {
+interface AdapterClientOptions {
   readonly config: AdapterConfig;
   readonly connector: ConsumerConnector;
   readonly store: DurableStore;
@@ -645,7 +645,7 @@ export function siembraHabilitada(entorno: NodeJS.ProcessEnv): boolean {
 const MAX_ACK_ERROR_DETAIL = 2_000;
 const ACK_DETAIL_TRUNCATION_SUFFIX = '… [truncated]';
 
-export function clampAckDetail(detail: string | undefined): string | undefined {
+function clampAckDetail(detail: string | undefined): string | undefined {
   if (detail === undefined || detail.length <= MAX_ACK_ERROR_DETAIL) return detail;
   return detail.slice(0, MAX_ACK_ERROR_DETAIL - ACK_DETAIL_TRUNCATION_SUFFIX.length)
     + ACK_DETAIL_TRUNCATION_SUFFIX;

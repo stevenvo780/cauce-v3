@@ -53,7 +53,7 @@ export interface RuntimeProfileMeasurement {
   readonly text: string;
 }
 
-export interface HarnessRoutingTarget {
+interface HarnessRoutingTarget {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;

@@ -244,7 +244,7 @@ function parsePaneIdentity(stdout: string): PaneIdentity | undefined {
   return { sessionId, sessionName, windowId, windowName, paneId, panePid: processId };
 }
 
-export type ExactPaneInspection =
+type ExactPaneInspection =
   | { readonly state: "present"; readonly identity: PaneIdentity }
   | { readonly state: "absent" }
   | { readonly state: "unreadable" };

@@ -13,7 +13,6 @@ export {
   sessionIdStillNamed,
   withoutLifecycleIdentity,
   type CreatedSessionOwnership,
-  type ExactPaneInspection,
   type PaneHarnessIdentity,
   type PaneIdentity,
   type TmuxController,
@@ -31,8 +30,6 @@ export {
   sessionOption,
   setSessionOption,
   type PaneInputBarrier,
-  type PaneInputBarrierAcquireResult,
-  type PaneQuarantineState,
   type TmuxMutationState,
 } from "./tmux/mutation.js";
 
@@ -50,8 +47,5 @@ export {
   pastePrompt,
   repairLegacyDegradedWindow,
   sendEnter,
-  windowExists,
-  type PaneHarnessInspection,
-  type PastePromptOptions,
   type PastePromptResult,
 } from "./tmux/operations.js";

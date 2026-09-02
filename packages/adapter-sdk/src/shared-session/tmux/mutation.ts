@@ -270,7 +270,7 @@ export async function mutateUnderInputBarrier(
   return "ambiguous";
 }
 
-export type PaneInputBarrierAcquireResult =
+type PaneInputBarrierAcquireResult =
   | { readonly state: "acquired"; readonly barrier: PaneInputBarrier }
   | { readonly state: "busy" }
   | { readonly state: "not_applied" }
@@ -506,7 +506,7 @@ export async function markPaneQuarantined(
   );
 }
 
-export type PaneQuarantineState = "current" | "stale" | "absent" | "unreadable";
+type PaneQuarantineState = "current" | "stale" | "absent" | "unreadable";
 
 /** Distinguishes real absence from a failed read: in doubt the runner cannot reuse the pane. */
 export async function paneQuarantineState(

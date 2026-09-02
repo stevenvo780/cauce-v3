@@ -33,7 +33,7 @@ export function rolloutSessionId(file: string): string | undefined {
 }
 
 /** Rollouts in the tree, recursive. A missing tree is an empty list, not a failure. */
-export async function rolloutFiles(directory: string): Promise<readonly string[]> {
+async function rolloutFiles(directory: string): Promise<readonly string[]> {
   try {
     const names = await readdir(directory, { recursive: true });
     return names
@@ -45,7 +45,7 @@ export async function rolloutFiles(directory: string): Promise<readonly string[]
 }
 
 /** Reads JSON entries from the rollout starting at the given offset. */
-export async function readRolloutSince(
+async function readRolloutSince(
   file: string,
   offset: number,
 ): Promise<TranscriptSlice<RolloutLine>> {

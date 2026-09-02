@@ -1,5 +1,5 @@
 import {
-  clampToRoleBriefLimit, componerBloqueDePerfil, VERSION_CONTEXTO_FIJO,
+  canonicalJson, clampToRoleBriefLimit, componerBloqueDePerfil, VERSION_CONTEXTO_FIJO,
   type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
   type HechosDelAlias, type PermisosDelAlias,
 } from "@cauce/protocol";
@@ -94,21 +94,11 @@ export {
  *
  * `JSON.stringify` respects insertion order, so the same object built from two different sites
  * —or coming from a `JSON.parse` of another source— produces different bytes and therefore a
- * different seal. Sorting keys makes determinism not depend on how the object was assembled,
- * which is the only way it is a guarantee and not a coincidence.
+ * different seal. The key ordering is `canonicalJson` from `@cauce/protocol`, the same one the
+ * idempotency hashes are built from: a second copy here would let the two orderings drift apart.
  */
 export function serializarEstable(valor: unknown): string {
-  return JSON.stringify(ordenar(valor), null, 2);
-}
-
-function ordenar(valor: unknown): unknown {
-  if (Array.isArray(valor)) return valor.map(ordenar);
-  if (valor === null || typeof valor !== "object") return valor;
-  const entradas = Object.entries(valor as Record<string, unknown>)
-    .sort(([izquierda], [derecha]) => (izquierda < derecha ? -1 : izquierda > derecha ? 1 : 0));
-  const ordenado: Record<string, unknown> = {};
-  for (const [clave, contenido] of entradas) ordenado[clave] = ordenar(contenido);
-  return ordenado;
+  return JSON.stringify(canonicalJson(valor), null, 2);
 }
 
 /**

@@ -4,7 +4,7 @@ import { ProcessExecutionError } from "./errors.js";
 import { readBearerTokenFile } from "./secure-files.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "./types.js";
 
-export interface OpenClawApiRunnerOptions {
+interface OpenClawApiRunnerOptions {
   readonly endpoint: string;
   readonly tokenFile: string;
   readonly agentTarget?: string;

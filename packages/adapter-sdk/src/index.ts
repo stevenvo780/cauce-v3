@@ -15,13 +15,6 @@ export * from "./context/perfil-a-contexto.js";
 // The seeder is the ONLY writer of the profile on the container's disk. Exported so
 // integration tests can measure it without going through the socket.
 export * from "./context/siembra-del-perfil.js";
-// The per-harness distribution MOVED to `@cauce/protocol`: the console needs to preview the
-// same seven openclaw files and the gateway cannot import this package. Re-exported so the
-// adapter remains the natural place from which the agent runtime requests them.
-export {
-  ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, TOPES_OPENCLAW, ficherosDelArnes, nombresDelArnes,
-  type FicheroGenerado, type PoliticaDeFichero,
-} from "@cauce/protocol";
 export * from "./harnesses/index.js";
 export * from "./harnesses/shared.js";
 export * from "./shared-session/index.js";

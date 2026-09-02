@@ -7,14 +7,14 @@ import {
 } from '@cauce/protocol';
 import { rawDataText } from './sdk/raw-data.js';
 
-export interface AdapterIdentity {
+interface AdapterIdentity {
   tenant_id: Tenant;
   alias: string;
   instance_id: string;
   capabilities: string[];
 }
 
-export interface AdapterConsumer {
+interface AdapterConsumer {
   connect(url: string, headers?: Record<string, string>): Promise<number>;
   ack(
     delivery: Pick<DeliveryEnvelope, 'event_id' | 'delivery_id' | 'attempt' | 'claim_token'>,

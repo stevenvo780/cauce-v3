@@ -44,7 +44,7 @@ import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { DEFAULT_MESSAGE_TIMEOUT_MS } from "./message-timeout.js";
 
 export type {
-  AdapterEngineOptions, EventPublisher, ExecutionIntentPublisher,
+  EventPublisher,
 } from "./engine/contracts.js";
 export { profileAdoptionFor } from "./engine/contracts.js";
 

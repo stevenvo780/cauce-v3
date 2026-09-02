@@ -22,7 +22,7 @@ export const MAX_INLINED_ARTIFACT_BYTES = MAX_ATTACHMENT_BYTES;
 
 export const MAX_INLINED_ARTIFACTS_PER_RESPONSE = MAX_ATTACHMENTS_PER_MESSAGE;
 
-export const MAX_INLINED_TOTAL_BYTES = MAX_ATTACHMENTS_TOTAL_BYTES;
+const MAX_INLINED_TOTAL_BYTES = MAX_ATTACHMENTS_TOTAL_BYTES;
 
 /**
  * Maximum paths attempted to open. The parser doesn't cap the length of `artifacts`, and a turn

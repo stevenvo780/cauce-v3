@@ -7,7 +7,7 @@ import { openCodeDefinition } from "./opencode.js";
 import { openClawDefinition } from "./openclaw.js";
 
 export { HarnessAdapter, executionError } from "./shared.js";
-export { claudeDefinition, codexDefinition, fakeDefinition, hermesDefinition, openClawDefinition, openCodeDefinition };
+export { claudeDefinition, codexDefinition, fakeDefinition, openClawDefinition, openCodeDefinition };
 
 export const HARNESS_DEFINITIONS: Readonly<Record<HarnessId, HarnessDefinition>> = {
   hermes: hermesDefinition,

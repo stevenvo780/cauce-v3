@@ -28,7 +28,7 @@ export interface TranscriptEntry {
 /** Safety cap when walking up the parent chain: a corrupt transcript must not hang the turn. */
 const MAX_ANCESTRY_DEPTH = 10_000;
 
-export async function transcriptFiles(directory: string): Promise<readonly string[]> {
+async function transcriptFiles(directory: string): Promise<readonly string[]> {
   let names: readonly string[];
   try {
     names = await readdir(directory);
@@ -39,7 +39,7 @@ export async function transcriptFiles(directory: string): Promise<readonly strin
 }
 
 /** Reads the JSONL transcript file, splitting out the new entries past the given offset. */
-export async function readTranscriptSince(
+async function readTranscriptSince(
   file: string,
   offset: number,
 ): Promise<TranscriptSlice<TranscriptEntry>> {
@@ -76,7 +76,7 @@ function asString(value: unknown): string | undefined {
 }
 
 /** Extracts the text of a user entry from the transcript. */
-export function userText(entry: TranscriptEntry): string | undefined {
+function userText(entry: TranscriptEntry): string | undefined {
   const message = entry.message;
   if (typeof message !== "object" || message === null) return undefined;
   const content = (message as { content?: unknown }).content;
@@ -94,7 +94,7 @@ export function userText(entry: TranscriptEntry): string | undefined {
 }
 
 /** The visible text of an assistant entry. */
-export function assistantText(entry: TranscriptEntry): string | undefined {
+function assistantText(entry: TranscriptEntry): string | undefined {
   const message = entry.message;
   if (typeof message !== "object" || message === null) return undefined;
   const content = (message as { content?: unknown }).content;
@@ -116,7 +116,7 @@ function stopReason(entry: TranscriptEntry): string | undefined {
 }
 
 /** Locates the user entry in the transcript whose text exactly matches the prompt. */
-export function findInjectedTurn(
+function findInjectedTurn(
   entries: readonly TranscriptEntry[],
   promptText: string,
 ): { readonly uuid: string; readonly sessionId?: string } | undefined {
@@ -176,7 +176,7 @@ function crossedCompaction(
 /**
  * Position of the first occurrence of each uuid in the transcript.
  */
-export function positionByUuid(
+function positionByUuid(
   entries: readonly TranscriptEntry[],
 ): ReadonlyMap<string, number> {
   const positions = new Map<string, number>();
@@ -194,7 +194,7 @@ function parentOf(entry: TranscriptEntry): string | undefined {
   return asString(entry.parentUuid) ?? asString(entry.logicalParentUuid);
 }
 
-export interface CompactionEvent {
+interface CompactionEvent {
   readonly uuid: string;
   /** `auto` (automatic) or `manual` (`/compact`). */
   readonly trigger: string;
@@ -205,7 +205,7 @@ export interface CompactionEvent {
 /**
  * Extracts compaction events among the given entries.
  */
-export function compactBoundaries(
+function compactBoundaries(
   entries: readonly TranscriptEntry[],
 ): readonly CompactionEvent[] {
   const events: CompactionEvent[] = [];

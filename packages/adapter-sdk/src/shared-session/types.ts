@@ -10,7 +10,7 @@ export function isSharedSessionHarness(harness: HarnessId): harness is SharedSes
 /**
  * Reasons a turn could not be served via the shared session.
  */
-export type DegradationReason =
+type DegradationReason =
   /** The tmux session does not exist, or could not be created. */
   | "session_absent"
   /** The session exists but no live harness TUI is inside it. */

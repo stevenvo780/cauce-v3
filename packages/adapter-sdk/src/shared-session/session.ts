@@ -53,7 +53,7 @@ export interface EnsureOptions {
   readonly log?: (detail: string) => void;
 }
 
-export interface EnsureResult {
+interface EnsureResult {
   readonly ready: boolean;
   /** True if this call had to create the session (it did not exist). */
   readonly created: boolean;
@@ -75,7 +75,7 @@ export interface EnsureResult {
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
 const READY_POLL_MS = 1_000;
 
-export function tuiTarget(sessionId: string): string {
+function tuiTarget(sessionId: string): string {
   return `${sessionId}:${TUI_WINDOW}`;
 }
 
@@ -767,7 +767,7 @@ async function waitForTui(
   }
 }
 
-export interface SharedSessionStatus {
+interface SharedSessionStatus {
   readonly alias: string;
   readonly harness: SharedSessionHarness;
   readonly session: string;

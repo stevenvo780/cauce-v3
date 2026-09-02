@@ -6,7 +6,7 @@ import type { SharedSessionDegradation } from "./types.js";
  * Persistent log of shared-session degradation events.
  */
 
-export const DEGRADATION_LOG_NAME = "shared-session.log";
+const DEGRADATION_LOG_NAME = "shared-session.log";
 
 /** Default number of entries returned on read. */
 const DEFAULT_TAIL = 5;
@@ -14,12 +14,12 @@ const DEFAULT_TAIL = 5;
 /** Read cap so that a grown log is not loaded whole into memory. */
 const MAX_READ_BYTES = 256 * 1024;
 
-export interface DegradationRecord extends SharedSessionDegradation {
+interface DegradationRecord extends SharedSessionDegradation {
   readonly alias: string;
   readonly harness: string;
 }
 
-export function degradationLogPath(stateDirectory: string): string {
+function degradationLogPath(stateDirectory: string): string {
   return join(stateDirectory, DEGRADATION_LOG_NAME);
 }
 

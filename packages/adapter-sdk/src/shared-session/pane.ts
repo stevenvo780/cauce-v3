@@ -9,9 +9,9 @@ const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 const PROMPT_MARKS = ["❯", "›", "»", ">"];
 
 /** Input box availability classification. */
-export type InputBoxKind = "free" | "busy" | "modal";
+type InputBoxKind = "free" | "busy" | "modal";
 
-export interface InputBoxState {
+interface InputBoxState {
   readonly occupied: boolean;
   readonly kind: InputBoxKind;
   /** What was seen, for the notice detail. Already trimmed. */

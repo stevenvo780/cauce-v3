@@ -19,7 +19,7 @@ import {
  */
 
 /** Per file. Goes to the log with its reason; the turn continues regardless. */
-export type ResultadoDeFichero =
+type ResultadoDeFichero =
   | { readonly nombre: string; readonly estado: "escrito" }
   | { readonly nombre: string; readonly estado: "ya-estaba" }
   /** Existing block belongs to another alias; not overwritten. */
@@ -45,7 +45,7 @@ export interface DiscoDelArnes {
   escribirLote(escrituras: readonly EscrituraDelArnes[]): void;
 }
 
-export interface EscrituraDelArnes {
+interface EscrituraDelArnes {
   readonly ruta: string;
   readonly contenido: string;
   readonly contenidoPrevio?: string;
@@ -443,7 +443,7 @@ export function directorioDelArnes(
   return undefined;
 }
 
-export interface OpcionesDeSiembra {
+interface OpcionesDeSiembra {
   /** Without this NOTHING is written. The real client leaves it on unless `CAUCE_SEMBRAR_PERFIL=0`. */
   readonly habilitado: boolean;
   readonly disco?: DiscoDelArnes;

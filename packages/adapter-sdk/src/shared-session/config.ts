@@ -23,8 +23,8 @@ export interface SharedSessionConfig {
   readonly paneEnvironment: Readonly<Record<string, string>>;
 }
 
-export const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
-export const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
+const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
+const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
 
 const DEFAULT_WORKSPACE = "/workspace";
 

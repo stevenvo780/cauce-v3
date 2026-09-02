@@ -15,14 +15,14 @@ import type {
 
 export type JsonObject = Record<string, unknown>;
 
-export interface DeliveryOutputContractContext {
+interface DeliveryOutputContractContext {
   readonly messageType?: string;
   readonly senderAlias?: string;
   readonly selfAlias?: string;
   readonly routingTargets?: readonly DeliveryRoutingTarget[];
 }
 
-export interface DeliveryRoutingTarget {
+interface DeliveryRoutingTarget {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;
@@ -36,7 +36,7 @@ export const MAX_EXPANDED_RELAY_AGGREGATE_BYTES = 512 * 1024;
 export const MAX_RELAY_MESSAGES = 100;
 /** Proactive egress reaches a human, so its limits are an order of magnitude tighter. */
 export const MAX_NOTIFY_DIRECTIVES = 4;
-export const MAX_NOTIFY_AGGREGATE_BYTES = 8 * 1024;
+const MAX_NOTIFY_AGGREGATE_BYTES = 8 * 1024;
 export { MAX_NOTIFY_BODY_BYTES, NOTIFY_KINDS };
 export const MAX_OPENCLAW_UNWRAP_DEPTH = 8;
 // Patterns to detect OpenClaw tool warnings emitted in place of real responses.
@@ -67,7 +67,7 @@ export function parseJson(text: string, context: string): unknown {
  */
 export const REQUIRED_OUTPUT_KEYS = ["reply"] as const;
 /** Andamiaje que se normaliza cuando falta, registrando el aviso para que el agente lo aprenda. */
-export const NORMALIZED_WHEN_ABSENT = ["messages", "status", "retryable"] as const;
+const NORMALIZED_WHEN_ABSENT = ["messages", "status", "retryable"] as const;
 /** Cap on the embedded envelope scan; two are enough to declare ambiguity. */
 export const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;
 

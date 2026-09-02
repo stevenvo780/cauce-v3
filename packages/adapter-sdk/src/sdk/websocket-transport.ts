@@ -300,7 +300,7 @@ function inboundFailureMessage(error: unknown): string {
   return `Gateway frame could not be decoded and was dropped: ${error.message}`;
 }
 
-export interface WebSocketConnectorOptions {
+interface WebSocketConnectorOptions {
   /** Defaults to production so insecure ws:// must be explicitly opted into. */
   environment?: 'production' | 'development' | 'test';
   /** Path only. The bearer token is re-read for every connection attempt. */

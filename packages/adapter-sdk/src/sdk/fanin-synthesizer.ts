@@ -212,10 +212,8 @@ export function synthesizeFaninOutput(
     };
   }
 
-  // The newest locally processed reply leads: it is the last turn this adapter completed for
-  // the chain, so it reads as the answer instead of one more row of a dump. It is emitted
-  // verbatim because this adapter produced it, not read it off the wire; quoting it would
-  // collapse a multi-paragraph reply into one escaped line.
+  // The newest locally processed reply leads and is emitted verbatim: it is this adapter's own
+  // last completed turn, and quoting it would collapse a multi-paragraph reply into one line.
   const primary = processedReplies[0];
   if (primary === undefined) throw new Error("Fan-in synthesis has no primary reply");
   const others = processedReplies.slice(1);
@@ -238,13 +236,6 @@ export function synthesizeFaninOutput(
     .filter((value): value is string => value !== undefined));
   const uncovered = responses.filter((response) =>
     response.deliveryId === undefined || !covered.has(response.deliveryId));
-  const footer = process.env.CAUCE_FANIN_FOOTER === "1"
-    ? `[${String(processedReplies.length)} locally synthesized branch `
-      + `${processedReplies.length === 1 ? "reply" : "replies"}; `
-      + `${String(responses.length)} branch ${responses.length === 1 ? "response" : "responses"} `
-      + `in this chain; ${String(uncovered.length)} without local synthesis]`
-    : undefined;
-
   const sections: {
     readonly heading: string;
     readonly entries: readonly AttributedText[];
@@ -272,15 +263,18 @@ export function synthesizeFaninOutput(
     });
   }
 
+  const footer = `[${String(processedReplies.length)} locally synthesized branch `
+    + `${processedReplies.length === 1 ? "reply" : "replies"}; `
+    + `${String(responses.length)} branch ${responses.length === 1 ? "response" : "responses"} `
+    + `in this chain; ${String(uncovered.length)} without local synthesis]`;
   const separator = "\n\n";
   const separatorBytes = Buffer.byteLength(separator, "utf8");
-  const footerBytes = footer === undefined ? 0 : Buffer.byteLength(footer, "utf8");
   const availableBytes = MAX_FINAL_TEXT_BYTES
-    - footerBytes
-    - separatorBytes * (sections.length + (footer === undefined ? 0 : 1));
-  if (availableBytes <= 0) {
+    - Buffer.byteLength(footer, "utf8")
+    - separatorBytes * (sections.length + 1);
+  if (sections.length === 0 && availableBytes > 0) {
     return {
-      reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
+      reply: boundedUtf8(`${boundedUtf8(primary.text, availableBytes)}${separator}${footer}`, MAX_FINAL_TEXT_BYTES),
       messages: [],
       notify: [],
       status: "done",
@@ -288,14 +282,9 @@ export function synthesizeFaninOutput(
       artifacts: [],
     };
   }
-  if (sections.length === 0) {
+  if (availableBytes <= 0) {
     return {
-      reply: footer === undefined
-        ? boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES)
-        : boundedUtf8(
-          `${boundedUtf8(primary.text, availableBytes)}${separator}${footer}`,
-          MAX_FINAL_TEXT_BYTES,
-        ),
+      reply: boundedUtf8(primary.text, MAX_FINAL_TEXT_BYTES),
       messages: [],
       notify: [],
       status: "done",
@@ -336,7 +325,7 @@ export function synthesizeFaninOutput(
       [
         boundedUtf8(primary.text, primaryBudget),
         ...rendered,
-        ...(footer === undefined ? [] : [footer]),
+        footer,
       ].join(separator),
       MAX_FINAL_TEXT_BYTES,
     ),

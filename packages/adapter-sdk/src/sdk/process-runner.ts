@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { ProcessExecutionError } from "./errors.js";
 import type { CommandRunRequest, CommandRunResult, SafeRunnerLogger } from "./types.js";
 
-export interface ProcessRunnerOptions {
+interface ProcessRunnerOptions {
   readonly killGraceMs?: number;
   readonly maxOutputBytes?: number;
   /** Grace period for closing pipes after the child process exits. */

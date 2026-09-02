@@ -27,7 +27,6 @@ import { TerminalHistory } from "./durable-store/terminal-history.js";
 export {
   ATOMIC_STATE_FILES,
   CANONICAL_OPEN_CODE_SESSION_FILE,
-  DEFAULT_MAX_INLINE_TERMINAL_RECORDS,
   MAX_INLINE_TERMINAL_RECORDS,
   MAX_RETAINED_DELEGATION_CONTEXT_AGE_MS,
   MAX_SESSIONS_FILE_BYTES,
@@ -41,7 +40,6 @@ export type {
   DeliveryAcceptance,
   DeliveryTransitionDetails,
   DirectoryFsync,
-  DurableStoreOpenOptions,
   EventCorrelation,
   EventDeliveryFeedback,
   InboxRecord,

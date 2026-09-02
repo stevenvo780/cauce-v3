@@ -2,11 +2,6 @@ import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
 import type { CommandRunResult } from "../../sdk/types.js";
 import { HARNESS_START_MARKER } from "../../sdk/types.js";
 
-export function esInterrupcionDelDuenio(detalle: string | undefined): boolean {
-  if (detalle === undefined || detalle === "") return false;
-  return /interrup|interrupt|aborted by user|turn_aborted|cancell?ed by user/i.test(detalle);
-}
-
 export function esDiagnosticoDeArranque(detalle: string | undefined): boolean {
   if (detalle === undefined || detalle === "") return false;
   return [

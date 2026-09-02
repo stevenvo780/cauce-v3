@@ -66,7 +66,7 @@ export interface OutputArtifact {
   readonly sha256?: string;
 }
 
-export type StructuredStatus = 'done' | 'failed';
+type StructuredStatus = 'done' | 'failed';
 
 export type { NotifyKind };
 
@@ -91,7 +91,7 @@ export interface StructuredOutput {
 }
 
 /** Trusted session facts copied into a delivery by the authenticated gateway. */
-export interface DeliveryAuthenticatedContext {
+interface DeliveryAuthenticatedContext {
   readonly session_id: string;
   readonly channel: string;
   readonly origin?: Origin;
@@ -116,7 +116,7 @@ export interface CancelDelivery {
 export type HeartbeatFrame = Extract<WsInbound, { type: 'heartbeat' }>;
 
 /** Correlated receipt for one exact durable ACK event. */
-export interface AckResultFrame {
+interface AckResultFrame {
   readonly type: 'ack_result';
   readonly event_id: string;
   readonly delivery_id: string;
@@ -134,7 +134,7 @@ export interface AckResultFrame {
 }
 
 /** Every ACK is scoped to one delivery attempt and one opaque claim. */
-export interface DeliveryAckFrame {
+interface DeliveryAckFrame {
   readonly type: 'ack';
   readonly version: typeof PROTOCOL_VERSION;
   readonly event_id: string;
@@ -158,9 +158,9 @@ export type ServerFrame =
   | AckResultFrame;
 export type ClientFrame = Exclude<WsInbound, { type: 'ack' }> | DeliveryAckFrame;
 
-export type DeliveryPhase = Ack['status'];
+type DeliveryPhase = Ack['status'];
 
-export interface AdapterErrorPayload {
+interface AdapterErrorPayload {
   readonly code: string;
   readonly message: string;
   readonly retryable: boolean;
@@ -221,7 +221,7 @@ export interface BackoffConfig {
   readonly jitter: number;
 }
 
-export interface CommandInvocation {
+interface CommandInvocation {
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd?: string;
@@ -240,7 +240,7 @@ export const HARNESS_START_MARKER = '<<cauce:harness-started>>';
  *  - `stdout-first-byte`: the CLI emits events during the turn; zero bytes on stdout means it didn't start.
  *  - `stderr-marker`: the bridge writes `HARNESS_START_MARKER` on stderr before invoking execution.
  */
-export type HarnessStartWitness =
+type HarnessStartWitness =
   | { readonly kind: 'stdout-first-byte' }
   | { readonly kind: 'stderr-marker'; readonly marker: string };
 
@@ -378,7 +378,7 @@ export interface ParsedHarnessOutput {
   readonly nativeSessionId?: string;
 }
 
-export type SessionStrategy =
+type SessionStrategy =
   | { readonly kind: 'none' }
   | { readonly kind: 'generated' }
   | { readonly kind: 'observed' };

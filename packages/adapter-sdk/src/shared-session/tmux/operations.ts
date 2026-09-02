@@ -60,7 +60,7 @@ const PANE_HARNESS_FORMAT = [
   "#{pane_start_command}",
 ].join("\t");
 
-export type PaneHarnessInspection =
+type PaneHarnessInspection =
   | { readonly state: "present"; readonly pane: PaneHarnessIdentity }
   | { readonly state: "absent" }
   | { readonly state: "ambiguous" }
@@ -189,7 +189,7 @@ export async function panePid(tmux: TmuxController, target: string): Promise<str
   return /^[0-9]+$/u.test(value) ? value : undefined;
 }
 
-export async function windowExists(
+async function windowExists(
   tmux: TmuxController,
   session: string,
   window: string,
@@ -208,7 +208,7 @@ export interface PastePromptResult {
   readonly bufferScrubbed: boolean;
 }
 
-export interface PastePromptOptions extends TmuxRunControl {
+interface PastePromptOptions extends TmuxRunControl {
   /** Verifies the input box twice: before load-buffer and just before the pane mutation. */
   readonly verifyInputEmpty?: boolean;
   /** Already-acquired exclusion; mandatory when verifying the input box. */

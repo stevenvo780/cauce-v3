@@ -1,7 +1,6 @@
 export {
   MAX_EXPANDED_RELAY_AGGREGATE_BYTES,
   MAX_FINAL_TEXT_BYTES,
-  MAX_NOTIFY_AGGREGATE_BYTES,
   MAX_NOTIFY_BODY_BYTES,
   MAX_NOTIFY_DIRECTIVES,
   MAX_RELAY_AGGREGATE_BYTES,
@@ -11,10 +10,6 @@ export {
   hasNonBlankText,
   validateDeliveryOutput,
   validateStructuredOutput,
-} from "./output-parser/contract.js";
-export type {
-  DeliveryOutputContractContext,
-  DeliveryRoutingTarget,
 } from "./output-parser/contract.js";
 export { parseFinalText } from "./output-parser/envelopes.js";
 export {
