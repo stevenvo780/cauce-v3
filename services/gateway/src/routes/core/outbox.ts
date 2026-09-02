@@ -1,12 +1,11 @@
 import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { WebSocket } from 'ws';
-import { AliasSchema, TenantSchema } from '@cauce/protocol';
+import { AliasSchema, TenantSchema, isLiteralTrue, isSignalAborted } from '@cauce/protocol';
 import {
   StoreError, subscribeDeliveryWakes, type ConnectionSessionFence,
   type FencedWakeOutboxRecipient, type WakeOutboxClaimFence,
 } from '@cauce/store';
 import type { GatewayRepository, OutboxLeaseEvent } from '../../app.js';
-import { isLiteralTrue, isSignalAborted } from '../../runtime-guards.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
 import { isSocketOpen, send, sessionFence, sessionKey } from './helpers.js';
 

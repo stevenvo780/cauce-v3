@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { hasUnsafeTextCodePoint, isStrictUtcIso8601 } from '@cauce/protocol';
 import type {
   AgentFactsProbe,
   FactsSource,
@@ -342,7 +343,7 @@ export class TerminalRelayFactsProbe implements AgentFactsProbe {
           || !entryPath.startsWith(`${memoryRoot}/`)
           || seen.has(entryPath)
           || !Number.isSafeInteger(bytes) || (bytes as number) < 0
-          || !validMemoryTimestamp(modifiedAt)) {
+          || !isStrictUtcIso8601(modifiedAt, MAX_MEMORY_DATE_BYTES)) {
         return { error: 'unknown', reason: 'el relay devolvió una ruta, fecha o tamaño de memoria inválidos' };
       }
       const relative = entryPath.slice(memoryRoot.length + 1);
@@ -373,35 +374,15 @@ const MAX_MEMORY_DATE_BYTES = 64;
 function canonicalAbsoluteMemoryPath(value: unknown): value is string {
   if (typeof value !== 'string' || value === '/' || !value.startsWith('/')
       || Buffer.byteLength(value, 'utf8') > MAX_MEMORY_PATH_BYTES
-      || hasMemoryControlCharacter(value)) return false;
+      || hasUnsafeTextCodePoint(value)) return false;
   const segments = value.split('/');
   return !segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..');
 }
 
 function canonicalRelativeMemoryPath(value: string): boolean {
   if (value.length === 0 || value.startsWith('/') || Buffer.byteLength(value, 'utf8') > MAX_MEMORY_PATH_BYTES
-      || hasMemoryControlCharacter(value)) return false;
+      || hasUnsafeTextCodePoint(value)) return false;
   return !value.split('/').some((segment) => segment === '' || segment === '.' || segment === '..');
-}
-
-function hasMemoryControlCharacter(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 0x1f || code === 0x7f;
-  });
-}
-
-function validMemoryTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_MEMORY_DATE_BYTES) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/u.exec(value);
-  if (match === null || Number.isNaN(Date.parse(value))) return false;
-  const date = new Date(value);
-  return date.getUTCFullYear() === Number(match[1])
-    && date.getUTCMonth() + 1 === Number(match[2])
-    && date.getUTCDate() === Number(match[3])
-    && date.getUTCHours() === Number(match[4])
-    && date.getUTCMinutes() === Number(match[5])
-    && date.getUTCSeconds() === Number(match[6]);
 }
 
 /** `verifyWritablePath` requires kind: it derives it from the same closed set that produced the path. */

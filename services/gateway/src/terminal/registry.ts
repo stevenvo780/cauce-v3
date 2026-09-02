@@ -1,4 +1,4 @@
-import { parseCodexProjectDocumentConfig } from '@cauce/protocol';
+import { CANONICAL_UUID_V4_PATTERN, parseCodexProjectDocumentConfig } from '@cauce/protocol';
 import type { AgentPresence, PtyState } from './types.js';
 
 /**
@@ -10,7 +10,6 @@ import type { AgentPresence, PtyState } from './types.js';
 
 export const AGENT_STALE_AFTER_MS = 45_000;
 const RELAY_INSTANCE_PATTERN = /^[0-9a-f]{64}$/;
-const RELAY_BOOT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export interface RelayProcessIdentity {
   readonly relay_instance_id: string;
@@ -57,7 +56,7 @@ function key(tenantId: string, alias: string): string {
 
 function assertRelayIdentity(identity: RelayProcessIdentity): void {
   if (!RELAY_INSTANCE_PATTERN.test(identity.relay_instance_id)
-      || !RELAY_BOOT_PATTERN.test(identity.relay_boot_id)) {
+      || !CANONICAL_UUID_V4_PATTERN.test(identity.relay_boot_id)) {
     throw new Error('terminal-relay process identity is invalid');
   }
 }

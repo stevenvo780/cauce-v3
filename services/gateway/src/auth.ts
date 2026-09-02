@@ -4,17 +4,17 @@ import {
 } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
-import type { Hello, Origin, Tenant } from '@cauce/protocol';
-import { AliasSchema, OriginSchema, TenantSchema } from '@cauce/protocol';
+import type { Hello, Origin, Permission, Tenant } from '@cauce/protocol';
+import { AliasSchema, OriginSchema, PERMISSIONS, TenantSchema, isLiteralTrue } from '@cauce/protocol';
 import {
   isHostCookieName,
   scalarHeaderValue,
   uniqueCookieValue
 } from './http-auth-primitives.js';
-import { isAuthorizedTlsSocket, isLiteralTrue } from './runtime-guards.js';
+import { isAuthorizedTlsSocket } from './runtime-guards.js';
 
 export type PrincipalRole = 'agent' | 'operator' | 'adapter';
-export type PrincipalPermission = 'route' | 'read' | 'control' | 'notify';
+export type PrincipalPermission = Permission;
 
 /** Values in this context are authenticated server-side authority, not request metadata. */
 export interface Principal {
@@ -64,7 +64,7 @@ function nonEmptyString(value: unknown, name: string, max = 512): string {
 }
 
 const roles = new Set<PrincipalRole>(['agent', 'operator', 'adapter']);
-const permissions = new Set<PrincipalPermission>(['route', 'read', 'control', 'notify']);
+const permissions = new Set<PrincipalPermission>(PERMISSIONS);
 
 function stringSet<T extends string>(value: unknown, allowed: ReadonlySet<T>, name: string): T[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !allowed.has(item as T))) {

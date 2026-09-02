@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
-  ConfigMutationSchema, esFicheroDelAgente,
+  ConfigMutationSchema, esFicheroDelAgente, isRfcUuid,
   type ConfigMutation, type ProfileRuntimeContract,
 } from '@cauce/protocol';
 import {
@@ -10,9 +10,7 @@ import type { ProfileRuntimeVerification } from '../../console/agent-profile.rou
 import {
   safeCancelReceipt, safeDlqResolution, safeReplayReceipt,
 } from '../../facades.js';
-import { CONNECTION_TOKEN_PATTERN } from '../shared.js';
 
-const DLQ_ID_PATTERN = CONNECTION_TOKEN_PATTERN;
 const DLQ_EVIDENCE_PATTERN = /^[a-f0-9]{64}$/u;
 const DLQ_CURSOR_PATTERN = /^(?:[a-f0-9]{2}){1,512}$/u;
 const DLQ_RESOLUTION_KEYS = new Set([
@@ -79,7 +77,7 @@ export function parseDlqResolution(
   if (target !== 'delivery' && target !== 'outbox') {
     throw new StoreError('invalid_input', 'DLQ target is invalid');
   }
-  if (typeof id !== 'string' || !DLQ_ID_PATTERN.test(id)) {
+  if (!isRfcUuid(id)) {
     throw new StoreError('invalid_input', 'DLQ incident id is invalid');
   }
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {

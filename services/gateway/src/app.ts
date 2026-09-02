@@ -8,12 +8,14 @@ import {
   type ConsolePublishIntentPrepareResult,
   type DeliveryEnvelope, type NotifyRequest,
   type OutboxAckWithConnection,
+  type Lane, type Permission,
   type ProfileRuntimeAdoptionEvidence, type ProfileRuntimeContract,
   type QuotaSampleRequest, type Tenant,
 } from '@cauce/protocol';
 import {
   CauceRepository, type subscribeDeliveryWakes,
-  type AccountSelection, type AckResult, type DatabasePool, type DeliveryLeaseCap,
+  type AccountSelection, type AckResult, type AuthorizedAgentTarget,
+  type DatabasePool, type DeliveryLeaseCap,
   type ConnectionSessionFence, type FencedWakeOutboxRecipient, type LeaseResult,
   type NotificationVerdict, type OperationalDlqPage, type OperationalDlqResolutionRequest,
   type OperationalDlqResolutionResult, type OutboxEvent, type PublishResult,
@@ -89,8 +91,8 @@ export interface GatewayRepository {
   /** Independent durable reconciliation; receipt-contained hashes are not an authority for IDs. */
   verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult): Promise<boolean>;
   assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
-  assertPermission(tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'): Promise<void>;
-  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: ('route' | 'read' | 'control' | 'notify')[] }>;
+  assertPermission(tenantId: Tenant, alias: string, permission: Permission): Promise<void>;
+  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: Permission[] }>;
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
   listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;
   topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -112,7 +114,7 @@ export interface GatewayRepository {
     deliveryId: string, actorTenant: Tenant, actorAlias: string, reason?: string
   ): Promise<Record<string, unknown>>;
   listJobs(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  enqueueJob(tenantId: Tenant, lane: 'interactive' | 'batch', priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
+  enqueueJob(tenantId: Tenant, lane: Lane, priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
   listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined>;
@@ -130,13 +132,7 @@ export interface GatewayRepository {
     targetTenant: Tenant,
     targetAlias: string,
     permission: 'read' | 'control',
-  ): Promise<{
-    tenant_id: Tenant;
-    alias: string;
-    harness_id: string | null;
-    home_directory: string | null;
-    enabled: boolean;
-  } | undefined>;
+  ): Promise<AuthorizedAgentTarget | undefined>;
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueNotification(actorTenant: Tenant, actorAlias: string, input: NotifyRequest): Promise<NotificationVerdict>;
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;

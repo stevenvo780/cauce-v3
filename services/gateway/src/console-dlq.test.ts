@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Permission } from '@cauce/protocol';
 import type { DatabasePool, OperationalDlqPage, OperationalDlqResolutionResult } from '@cauce/store';
 import { StoreError } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
@@ -53,7 +54,7 @@ function repository() {
   return {
     principalAccess: vi.fn(async () => ({
       roles: ['operator'] as string[],
-      permissions: ['route', 'read', 'control'] as ('route' | 'read' | 'control' | 'notify')[],
+      permissions: ['route', 'read', 'control'] as Permission[],
     })),
     listOperationalDlq: vi.fn(async () => ({
       ...page,

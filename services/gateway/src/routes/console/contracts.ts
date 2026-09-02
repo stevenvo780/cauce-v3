@@ -1,9 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type {
-  ConfigMutation, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, Tenant,
+  ConfigMutation, Lane, Permission, ProfileRuntimeAdoptionEvidence, ProfileRuntimeContract, Tenant,
 } from '@cauce/protocol';
 import type {
-  DatabasePool, OperationalDlqPage, OperationalDlqResolutionRequest,
+  AuthorizedAgentTarget, DatabasePool, OperationalDlqPage, OperationalDlqResolutionRequest,
   OperationalDlqResolutionResult,
 } from '@cauce/store';
 import type { AuthProvider } from '../../auth.js';
@@ -19,14 +19,14 @@ export interface ConsoleRouteRepository {
   assertPermission(
     tenantId: Tenant,
     alias: string,
-    permission: 'route' | 'read' | 'control' | 'notify',
+    permission: Permission,
   ): Promise<void>;
   principalAccess(
     tenantId: Tenant,
     alias: string,
   ): Promise<{
     roles: string[];
-    permissions: ('route' | 'read' | 'control' | 'notify')[];
+    permissions: Permission[];
   }>;
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
   topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
@@ -57,7 +57,7 @@ export interface ConsoleRouteRepository {
   listJobs(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   enqueueJob(
     tenantId: Tenant,
-    lane: 'interactive' | 'batch',
+    lane: Lane,
     priority: number,
     kind: string,
     payload: Record<string, unknown>,
@@ -81,13 +81,7 @@ export interface ConsoleRouteRepository {
     targetTenant: Tenant,
     targetAlias: string,
     permission: 'read' | 'control',
-  ): Promise<{
-    tenant_id: Tenant;
-    alias: string;
-    harness_id: string | null;
-    home_directory: string | null;
-    enabled: boolean;
-  } | undefined>;
+  ): Promise<AuthorizedAgentTarget | undefined>;
   listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
   listAudit(

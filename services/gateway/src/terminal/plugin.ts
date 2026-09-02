@@ -3,7 +3,9 @@ import {
   CauceRepository, StoreError, type DatabaseClient, type DatabasePool,
   type AuthorizedAgentTarget,
 } from '@cauce/store';
-import { AliasSchema, TenantSchema, type Tenant } from '@cauce/protocol';
+import {
+  AliasSchema, isCanonicalUuidV4, TenantSchema, UUID_ANY_PATTERN, type Tenant,
+} from '@cauce/protocol';
 import {
   AuthError, AuthorizationError, validatePrincipal,
   type AuthProvider, type Principal
@@ -18,9 +20,7 @@ import {
 import type { TerminalConfig } from './config.js';
 import { createGovernanceProbes } from './governance-probes.js';
 import { AgentRegistry } from './registry.js';
-import {
-  CLAIM_UUID_PATTERN, registerTerminalRelayProxy, relayClaimEpoch,
-} from './relay-proxy.js';
+import { registerTerminalRelayProxy, relayClaimEpoch } from './relay-proxy.js';
 import {
   registerTerminalSessionControl, TerminalClockSkewError, type DeleteSessionBody,
   type OwnerRotationBody, type SessionRequestBody,
@@ -53,7 +53,6 @@ const COLS_MIN = 20;
 const COLS_MAX = 500;
 const ROWS_MIN = 5;
 const ROWS_MAX = 200;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SESSION_REQUEST_KEYS = [
   'alias', 'cols', 'mode', 'owner_token', 'reason', 'request_id', 'rows', 'tenant_id',
 ] as const;
@@ -127,7 +126,7 @@ function exactObjectKeys(record: Record<string, unknown>, expected: readonly str
 }
 
 function canonicalUuidV4(value: unknown, name: string): string {
-  if (typeof value !== 'string' || !CLAIM_UUID_PATTERN.test(value) || value[14] !== '4') {
+  if (!isCanonicalUuidV4(value)) {
     throw new Error(`${name} must be a canonical UUIDv4`);
   }
   return value;
@@ -271,7 +270,7 @@ export async function registerTerminalControlPlane(
     registry,
     grants,
     repository,
-    UUID_PATTERN,
+    UUID_PATTERN: UUID_ANY_PATTERN,
     principal,
     openPredicate,
     currentCohort,
@@ -315,7 +314,7 @@ export async function registerTerminalControlPlane(
     grants,
     repository,
     relayPeerInstanceId: options.relayPeerInstanceId,
-    UUID_PATTERN,
+    UUID_PATTERN: UUID_ANY_PATTERN,
     exactObjectKeys,
     boundedInteger,
     cohortLabels,

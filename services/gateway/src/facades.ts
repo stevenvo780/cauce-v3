@@ -1,3 +1,4 @@
+import { RFC_UUID_PATTERN, SHA256_HEX_PATTERN, type DeliveryState } from '@cauce/protocol';
 import { safeAuditSummary } from '@cauce/store';
 import type { Principal } from './auth.js';
 
@@ -53,6 +54,8 @@ export function visibleMessage(value: Row, principal: Principal): Row | undefine
   return messageVisible(value, principal) ? redactMessage(value, principal) : undefined;
 }
 
+const VISIBLE_PENDING_STATES: readonly DeliveryState[] = ['pending', 'leased', 'accepted', 'started'];
+
 function queueRowVisible(row: Row, principal: Principal): boolean {
   const recipientTenant = row.recipient_tenant ?? row.tenant_id;
   if (recipientTenant === principal.tenant_id && row.recipient_alias === principal.alias) return true;
@@ -68,7 +71,7 @@ export function visibleQueue(value: Row, principal: Principal): Row {
   const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((result, row) => {
     if (row.state === 'retry') result.retrying += 1;
     else if (row.state === 'dead' || row.state === 'failed') result.dead += 1;
-    else if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) result.pending += 1;
+    else if (VISIBLE_PENDING_STATES.some((state) => state === String(row.state))) result.pending += 1;
     return result;
   }, { pending: 0, retrying: 0, dead: 0 });
   // Store totals span a broader rule: forwarding them after dropping rows would headline withheld deliveries.
@@ -87,10 +90,10 @@ const DLQ_TARGETS = new Set(['delivery', 'outbox']);
 const DLQ_DISPOSITIONS = new Set([
   'ambiguous', 'safe_retry', 'missing_final', 'auth', 'expected_offline', 'unclassified',
 ]);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const SHA256 = /^[a-f0-9]{64}$/u;
 const DLQ_RULE = /^[a-z0-9_]+_v[0-9]+$/u;
-const CANCELLABLE_DELIVERY_STATES = new Set(['pending', 'retry', 'leased', 'accepted', 'started']);
+const CANCELLABLE_DELIVERY_STATES: ReadonlySet<string> = new Set<DeliveryState>([
+  'pending', 'retry', 'leased', 'accepted', 'started',
+]);
 const PARENT_NOTICE_DISPOSITIONS = new Set(['not_child', 'returned', 'denied', 'deferred', 'coalesced']);
 const AUDIT_ID = /^[1-9][0-9]{0,18}$/u;
 const AUDIT_ACTION = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
@@ -145,7 +148,7 @@ export function safeAuditPage(value: unknown): Row {
         decision: typeof item.decision === 'string' && AUDIT_DECISIONS.has(item.decision)
           ? item.decision
           : null,
-        request_id: item.request_id === null ? null : matchingString(item.request_id, UUID, 64),
+        request_id: item.request_id === null ? null : matchingString(item.request_id, RFC_UUID_PATTERN, 64),
         trace_id: item.trace_id === null ? null : boundedString(item.trace_id, 256),
         summary: safeAuditSummaryProjection(action, item.summary),
       };
@@ -169,7 +172,7 @@ export function safeDlqPage(value: unknown): Row {
   const items = Array.isArray(page.items)
     ? page.items.map(object).filter((item): item is Row => item !== undefined).map((item) => ({
       target: typeof item.target === 'string' && DLQ_TARGETS.has(item.target) ? item.target : null,
-      id: matchingString(item.id, UUID, 64),
+      id: matchingString(item.id, RFC_UUID_PATTERN, 64),
       tenantId: boundedString(item.tenantId, 128),
       kind: boundedString(item.kind, 128),
       adapter: boundedString(item.adapter, 128),
@@ -178,7 +181,7 @@ export function safeDlqPage(value: unknown): Row {
         : null,
       open: typeof item.open === 'boolean' ? item.open : null,
       actionable: typeof item.actionable === 'boolean' ? item.actionable : null,
-      evidenceSha256: matchingString(item.evidenceSha256, SHA256, 64),
+      evidenceSha256: matchingString(item.evidenceSha256, SHA256_HEX_PATTERN, 64),
       attempts: nonNegativeInteger(item.attempts),
       resolutionRule: matchingString(item.resolutionRule, DLQ_RULE, 128),
       createdAt: boundedString(item.createdAt, 64),
@@ -206,8 +209,8 @@ export function safeDlqResolution(value: unknown): Row {
     phase: result.phase === 'resolved' ? result.phase : null,
     appliedCount: nonNegativeInteger(result.appliedCount),
     alreadyApplied: typeof result.alreadyApplied === 'boolean' ? result.alreadyApplied : null,
-    evidenceSha256: matchingString(result.evidenceSha256, SHA256, 64),
-    reasonSha256: matchingString(result.reasonSha256, SHA256, 64),
+    evidenceSha256: matchingString(result.evidenceSha256, SHA256_HEX_PATTERN, 64),
+    reasonSha256: matchingString(result.reasonSha256, SHA256_HEX_PATTERN, 64),
     possibleDuplicateAcknowledged: typeof result.possibleDuplicateAcknowledged === 'boolean'
       ? result.possibleDuplicateAcknowledged
       : null,
@@ -221,8 +224,8 @@ export function safeDlqResolution(value: unknown): Row {
 export function safeReplayReceipt(value: unknown): Row {
   const result = object(value) ?? {};
   return {
-    delivery_id: matchingString(result.delivery_id, UUID, 64),
-    replayed_from_delivery_id: matchingString(result.replayed_from_delivery_id, UUID, 64),
+    delivery_id: matchingString(result.delivery_id, RFC_UUID_PATTERN, 64),
+    replayed_from_delivery_id: matchingString(result.replayed_from_delivery_id, RFC_UUID_PATTERN, 64),
     state: result.state === 'pending' ? 'pending' : null,
     replayed: typeof result.replayed === 'boolean' ? result.replayed : null,
   };
@@ -235,7 +238,7 @@ export function safeReplayReceipt(value: unknown): Row {
 export function safeCancelReceipt(value: unknown): Row {
   const result = object(value) ?? {};
   return {
-    delivery_id: matchingString(result.delivery_id, UUID, 64),
+    delivery_id: matchingString(result.delivery_id, RFC_UUID_PATTERN, 64),
     state: result.state === 'dead' ? 'dead' : null,
     cancelled: typeof result.cancelled === 'boolean' ? result.cancelled : null,
     cancelled_from_state: typeof result.cancelled_from_state === 'string'

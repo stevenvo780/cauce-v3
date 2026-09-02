@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
   AuthorizedAgentTarget, DatabaseClient, DatabasePool,
 } from '@cauce/store';
-import type { Tenant } from '@cauce/protocol';
+import { isCanonicalUuidV4, type Tenant } from '@cauce/protocol';
 import type { TerminalAuditEntry } from '../audit.js';
 import {
   GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetPlacement,
@@ -15,7 +15,6 @@ import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
 import { isAuthorizedTlsSocket } from '../../runtime-guards.js';
 
-export const CLAIM_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const POSITIVE_BIGINT_PATTERN = /^[1-9][0-9]{0,18}$/;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 const PRESENCE_KEYS = ['agents', 'relay_boot_id', 'relay_instance_id'] as const;
@@ -42,8 +41,7 @@ function relayProcessIdentity(
   const relayInstanceId = record.relay_instance_id;
   const relayBootId = record.relay_boot_id;
   if (typeof relayInstanceId !== 'string' || !/^[0-9a-f]{64}$/.test(relayInstanceId)
-      || typeof relayBootId !== 'string' || !CLAIM_UUID_PATTERN.test(relayBootId)
-      || relayBootId[14] !== '4'
+      || !isCanonicalUuidV4(relayBootId)
       || peerInstanceId !== relayInstanceId || !allowedInstanceIds.has(relayInstanceId)) {
     return undefined;
   }
@@ -51,7 +49,7 @@ function relayProcessIdentity(
 }
 
 function relayClaimToken(value: unknown): string | undefined {
-  return typeof value === 'string' && CLAIM_UUID_PATTERN.test(value) ? value : undefined;
+  return isCanonicalUuidV4(value) ? value : undefined;
 }
 
 /** Fence epochs stay decimal strings on the wire and in node-postgres; Number is never involved. */

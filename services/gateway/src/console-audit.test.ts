@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Permission } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway, type GatewayRepository } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
@@ -13,7 +14,7 @@ function repository() {
   return {
     principalAccess: vi.fn(async () => ({
       roles: ['operator'] as string[],
-      permissions: ['read'] as ('route' | 'read' | 'control' | 'notify')[],
+      permissions: ['read'] as Permission[],
     })),
     listAudit: vi.fn(async () => ({
       next_cursor: '41',

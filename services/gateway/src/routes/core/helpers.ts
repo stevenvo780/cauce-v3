@@ -1,8 +1,7 @@
 import { WebSocket, type RawData } from 'ws';
-import { ClaimedAckSchema, type Tenant } from '@cauce/protocol';
+import { ClaimedAckSchema, isRfcUuid, type Tenant } from '@cauce/protocol';
 import { StoreError, type ConnectionSessionFence } from '@cauce/store';
 import type { DeliveryClaimRecord, GatewayAck } from '../../app.js';
-import { CONNECTION_TOKEN_PATTERN } from '../shared.js';
 import type { Session, SessionClaim } from './contracts.js';
 
 const MAX_RECENT_SESSION_CLAIMS = 1_024;
@@ -23,7 +22,7 @@ export function sessionKey(tenantId: Tenant, alias: string): string {
 }
 
 export function connectionToken(value: unknown): string {
-  if (typeof value !== 'string' || !CONNECTION_TOKEN_PATTERN.test(value)) {
+  if (!isRfcUuid(value)) {
     throw new StoreError('fenced', 'connection token is required');
   }
   return value;

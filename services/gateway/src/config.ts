@@ -1,23 +1,8 @@
-import {
-  DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
+import { integerEnv } from '@cauce/protocol';
+
+export {
+  configuredAckDeadlineMs, configuredDeliveryLeaseCap, DEFAULT_ACK_DEADLINE_MS, validateAckDeadlineMs,
 } from '@cauce/store';
-
-export const DEFAULT_ACK_DEADLINE_MS = 30_000;
-
-export function validateAckDeadlineMs(value: number): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error('CAUCE_ACK_DEADLINE_MS must be a positive integer');
-  }
-  return value;
-}
-
-export function configuredAckDeadlineMs(
-  environment: NodeJS.ProcessEnv = process.env,
-): number {
-  return validateAckDeadlineMs(Number(
-    environment.CAUCE_ACK_DEADLINE_MS ?? DEFAULT_ACK_DEADLINE_MS,
-  ));
-}
 
 export const DEFAULT_LEASE_TTL_MS = 180_000;
 export const MIN_LEASE_TTL_MS = 30_000;
@@ -38,34 +23,6 @@ export function configuredLeaseTtlMs(
 }
 
 /**
- * Total lifetime cap of a delivery attempt.
- * Gateway and dispatcher share this configuration to synchronize
- * lease-cap expiration and avoid discrepancies in delivery renewals.
- */
-export function configuredDeliveryLeaseCap(
-  environment: NodeJS.ProcessEnv = process.env,
-): { leaseCapMs: number; leaseCapGraceMs: number } {
-  const leaseCapMs = Number(
-    environment.CAUCE_DELIVERY_LEASE_CAP_MS ?? DEFAULT_DELIVERY_LEASE_CAP_MS,
-  );
-  if (!Number.isSafeInteger(leaseCapMs) || leaseCapMs <= 0) {
-    throw new Error('CAUCE_DELIVERY_LEASE_CAP_MS must be a positive integer');
-  }
-  const leaseCapGraceMs = Number(
-    environment.CAUCE_DELIVERY_LEASE_CAP_GRACE_MS ?? DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS,
-  );
-  if (!Number.isSafeInteger(leaseCapGraceMs) || leaseCapGraceMs <= 0) {
-    throw new Error('CAUCE_DELIVERY_LEASE_CAP_GRACE_MS must be a positive integer');
-  }
-  if (leaseCapMs < configuredAckDeadlineMs(environment)) {
-    throw new Error(
-      'CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS',
-    );
-  }
-  return { leaseCapMs, leaseCapGraceMs };
-}
-
-/**
  * Default cap on concurrent in-flight deliveries per adapter.
  * Keeps a conservative cap to avoid accumulating timeouts in local queues.
  */
@@ -82,14 +39,6 @@ export interface DeliveryAdmissionConfig {
   readonly maxInflightDeliveries: number;
   /** Extra slot only human traffic can take. */
   readonly humanReservedDeliveries: number;
-}
-
-function nonNegativeInteger(name: string, raw: string | undefined, fallback: number): number {
-  const value = Number(raw ?? fallback);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${name} must be a non-negative integer`);
-  }
-  return value;
 }
 
 export function validateDeliveryAdmission(value: DeliveryAdmissionConfig): DeliveryAdmissionConfig {
@@ -112,15 +61,11 @@ export function configuredDeliveryAdmission(
   environment: NodeJS.ProcessEnv = process.env,
 ): DeliveryAdmissionConfig {
   return validateDeliveryAdmission({
-    maxInflightDeliveries: nonNegativeInteger(
-      'CAUCE_MAX_INFLIGHT_DELIVERIES',
-      environment.CAUCE_MAX_INFLIGHT_DELIVERIES,
-      DEFAULT_MAX_INFLIGHT_DELIVERIES,
-    ),
-    humanReservedDeliveries: nonNegativeInteger(
-      'CAUCE_HUMAN_RESERVED_DELIVERIES',
-      environment.CAUCE_HUMAN_RESERVED_DELIVERIES,
-      DEFAULT_HUMAN_RESERVED_DELIVERIES,
-    ),
+    maxInflightDeliveries: integerEnv(environment, 'CAUCE_MAX_INFLIGHT_DELIVERIES', {
+      fallback: DEFAULT_MAX_INFLIGHT_DELIVERIES, min: 0,
+    }),
+    humanReservedDeliveries: integerEnv(environment, 'CAUCE_HUMAN_RESERVED_DELIVERIES', {
+      fallback: DEFAULT_HUMAN_RESERVED_DELIVERIES, min: 0,
+    }),
   });
 }

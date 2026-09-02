@@ -1,4 +1,5 @@
 import { request as httpsRequest, type RequestOptions } from 'node:https';
+import { hasUnsafeTextCodePoint, isStrictUtcIso8601 } from '@cauce/protocol';
 import type {
   GovernanceRelayClient, GovernanceWriteError, RelayDirectoryRead, RelayFileRead, RelayFileWrite,
   RelayFileWriteBatch,
@@ -56,13 +57,6 @@ function stringField(source: Record<string, unknown>, name: string): string | un
   return typeof value === 'string' ? value : undefined;
 }
 
-function hasControlCharacter(value: string): boolean {
-  return Array.from(value).some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 0x1f || code === 0x7f;
-  });
-}
-
 function exactKeys(source: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(source).sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
@@ -70,25 +64,12 @@ function exactKeys(source: Record<string, unknown>, expected: readonly string[])
 
 function canonicalAbsolutePath(value: unknown): value is string {
   if (typeof value !== 'string' || value === '/' || !value.startsWith('/')
-      || Buffer.byteLength(value, 'utf8') > MAX_PATH_BYTES || hasControlCharacter(value)) return false;
+      || Buffer.byteLength(value, 'utf8') > MAX_PATH_BYTES || hasUnsafeTextCodePoint(value)) return false;
   return !value.split('/').slice(1).some((segment) => segment === '' || segment === '.' || segment === '..');
 }
 
 function strictDescendant(root: string, candidate: string): boolean {
   return candidate.startsWith(`${root}/`);
-}
-
-function validIsoDate(value: unknown): value is string {
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_DATE_BYTES) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/u.exec(value);
-  if (match === null || Number.isNaN(Date.parse(value))) return false;
-  const date = new Date(value);
-  return date.getUTCFullYear() === Number(match[1])
-    && date.getUTCMonth() + 1 === Number(match[2])
-    && date.getUTCDate() === Number(match[3])
-    && date.getUTCHours() === Number(match[4])
-    && date.getUTCMinutes() === Number(match[5])
-    && date.getUTCSeconds() === Number(match[6]);
 }
 
 /** A code we do not recognize is `unknown`, it is never propagated as-is. */
@@ -159,7 +140,7 @@ export function parseDirectoryOutcome(body: string): RelayDirectoryRead | Govern
     if (!exactKeys(source, ['error', 'reason']) || typeof source.error !== 'string'
         || typeof source.reason !== 'string' || source.reason.length === 0
         || Buffer.byteLength(source.reason, 'utf8') > MAX_REASON_BYTES
-        || hasControlCharacter(source.reason)) {
+        || hasUnsafeTextCodePoint(source.reason)) {
       return { error: 'unknown', reason: 'el terminal-relay contestó un fallo de índice inválido' };
     }
     return { error: normalizeCode(source.error), reason: source.reason };
@@ -191,7 +172,7 @@ export function parseDirectoryOutcome(body: string): RelayDirectoryRead | Govern
     if (!exactKeys(entry, DIRECTORY_ENTRY_KEYS) || !canonicalAbsolutePath(entry.path)
         || !strictDescendant(root, entry.path) || paths.has(entry.path)
         || !Number.isSafeInteger(entry.bytes) || (entry.bytes as number) < 0
-        || !validIsoDate(entry.modified_at)) {
+        || !isStrictUtcIso8601(entry.modified_at, MAX_DATE_BYTES)) {
       return { error: 'unknown', reason: 'el índice contiene una ruta, fecha o tamaño inválidos' };
     }
     if (hasNeverServePathSegment(entry.path)) {

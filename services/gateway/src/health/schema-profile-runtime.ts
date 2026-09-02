@@ -1,5 +1,5 @@
 import { withTransaction, type DatabasePool } from '@cauce/store';
-import { isLiteralTrue } from '../runtime-guards.js';
+import { isLiteralTrue } from '@cauce/protocol';
 
 interface ProfileRuntimeSchemaProbeRow {
   readonly migration_applied: boolean;

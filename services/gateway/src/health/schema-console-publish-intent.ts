@@ -1,5 +1,5 @@
 import { withTransaction, type DatabasePool } from '@cauce/store';
-import { isLiteralTrue } from '../runtime-guards.js';
+import { isLiteralTrue } from '@cauce/protocol';
 
 interface ConsolePublishIntentSchemaProbeRow {
   readonly migration_ledger_exact: boolean;

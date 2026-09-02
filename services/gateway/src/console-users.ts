@@ -1,3 +1,4 @@
+import { isAnyUuid } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 
 /**
@@ -84,7 +85,7 @@ export class PostgresConsoleUserStore implements ConsoleUserStore {
   async findById(id: string): Promise<ConsoleUser | undefined> {
     // The id comes from the `sub` of an already-verified JWT, but if it is not a uuid PostgreSQL
     // aborts the query with 22P02 and that would be a 500 instead of a 401. It is filtered first.
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return undefined;
+    if (!isAnyUuid(id)) return undefined;
     const result = await this.pool.query<ConsoleUserRow>(
       `SELECT ${COLUMNS} FROM console_users WHERE id=$1::uuid`, [id]
     );

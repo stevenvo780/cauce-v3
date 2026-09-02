@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { WebSocket, type RawData } from 'ws';
-import { DeliveryIdSchema, HeartbeatSchema, HelloSchema, type Hello, type Tenant } from '@cauce/protocol';
+import {
+  DeliveryIdSchema, HeartbeatSchema, HelloSchema, PROTOCOL_VERSION, isSignalAborted,
+  type Hello, type Tenant,
+} from '@cauce/protocol';
 import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResult } from '@cauce/store';
 import { requirePermission, validatePrincipal } from '../auth.js';
 import type { GatewayRepository } from '../app.js';
-import { isSignalAborted } from '../runtime-guards.js';
 import { registerCoreRuntimeHttpRoutes } from './core/http.js';
 import { createCoreOutboxRuntime } from './core/outbox.js';
 import { registerCorePublishRoutes } from './core/publish.js';
@@ -415,7 +417,7 @@ export function createCoreRoutePhases(
                 previous.socket.close(4401, 'superseded by newer connection');
               }
               send(socket, {
-                type: 'hello_ack', version: '3.0', epoch: leaseEpoch,
+                type: 'hello_ack', version: PROTOCOL_VERSION, epoch: leaseEpoch,
                 lease_expires_at: confirmedLeaseExpiresAt,
                 ...(agentProfile === undefined ? {} : { agent_profile: agentProfile })
               });

@@ -8,7 +8,7 @@ import {
 import { registerRelayPresenceRoutes } from './relay-proxy/presence.js';
 import { registerRelayResumeRoute } from './relay-proxy/resume.js';
 
-export { CLAIM_UUID_PATTERN, relayClaimEpoch } from './relay-proxy/context.js';
+export { relayClaimEpoch } from './relay-proxy/context.js';
 
 export function registerTerminalRelayProxy(
   app: FastifyInstance,

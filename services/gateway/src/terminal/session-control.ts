@@ -3,9 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   withTransaction, type AuthorizedAgentTarget, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
-import type { Tenant } from '@cauce/protocol';
+import { isLiteralTrue, type Tenant } from '@cauce/protocol';
 import { requireOperatorPermission, type Principal } from '../auth.js';
-import { isLiteralTrue } from '../runtime-guards.js';
 import {
   recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext, type TerminalAuditEntry,
 } from './audit.js';
