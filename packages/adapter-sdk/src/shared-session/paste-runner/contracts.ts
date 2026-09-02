@@ -44,8 +44,6 @@ export interface PasteSessionOptions<E> {
   readonly correlationTimeoutMs?: number;
   /** Idle time to consider a paste lost without correlation. */
   readonly quietTimeoutMs?: number;
-  /** Absolute cap on the wait for a merged turn. */
-  readonly mergedGraceMs?: number;
   readonly pollMs?: number;
   readonly readyTimeoutMs?: number;
   readonly command?: string;

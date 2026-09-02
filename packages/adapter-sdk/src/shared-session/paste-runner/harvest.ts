@@ -9,7 +9,6 @@ import {
   DEFAULT_CANCEL_DRAIN_TIMEOUT_MS,
   DEFAULT_CORRELATION_TIMEOUT_MS,
   DEFAULT_INJECT_TIMEOUT_MS,
-  DEFAULT_MERGED_GRACE_MS,
   DEFAULT_POLL_MS,
   DEFAULT_QUIET_MS,
   fileSize,
@@ -41,8 +40,6 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
     const correlationDeadline = Date.now()
       + (this.options.correlationTimeoutMs ?? DEFAULT_CORRELATION_TIMEOUT_MS);
     const quietMs = this.options.quietTimeoutMs ?? DEFAULT_QUIET_MS;
-    const mergedCeiling = correlationDeadline
-      + (this.options.mergedGraceMs ?? DEFAULT_MERGED_GRACE_MS);
     let injected: { file: string; key: string; sessionId?: string } | undefined;
     let started = false;
     // Last time the transcript grew; distinguishes "paste was lost" (nothing writes)
@@ -213,10 +210,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
         // appeared in the transcript. No degrade — that would execute twice — the delivery
         // ends AMBIGUOUS and the generation is quarantined so the queue only progresses via
         // the isolated transport or on a new generation.
-        // Also requires SILENCE: while the transcript keeps growing, what is ahead is an
-        // in-flight turn that swallowed it; killing it is throwing work away.
+        // Requires SILENCE: a growing transcript is an in-flight turn that swallowed the paste
+        // and may still emit our envelope; it is bounded only by the turn budget (`deadline`).
         if (injected === undefined && !started && Date.now() >= correlationDeadline
-          && (Date.now() - lastActivityAt >= quietMs || Date.now() >= mergedCeiling)) {
+          && Date.now() - lastActivityAt >= quietMs) {
           // Last sweep before giving up on it: if the envelope arrived, the delivery does not die.
           const rescued = await beforeAbort(
             () => this.lastEnvelope(baseline, injected, correlationId),

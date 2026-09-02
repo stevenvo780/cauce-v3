@@ -12,7 +12,6 @@ export const LIVENESS_EVERY = 8;
 export const ACQUIRE_MODAL_TIMEOUT_MS = 15_000;
 export const DEFAULT_CORRELATION_TIMEOUT_MS = 25 * 60_000;
 export const DEFAULT_QUIET_MS = 5 * 60_000;
-export const DEFAULT_MERGED_GRACE_MS = 30 * 60_000;
 
 export function turnBudgetMs(requestTimeoutMs: number, turnTimeoutMs?: number): number {
   return turnTimeoutMs === undefined

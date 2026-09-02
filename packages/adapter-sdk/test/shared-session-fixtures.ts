@@ -787,7 +787,6 @@ export function claudeRunner(
     injectTimeoutMs?: number;
     correlationTimeoutMs?: number;
     quietTimeoutMs?: number;
-    mergedGraceMs?: number;
   },
 ): PasteSessionRunner<TranscriptEntry> {
   options.tmux.sessionName = `cauce-${options.alias}`;
@@ -819,7 +818,6 @@ export function claudeRunner(
       ? {}
       : { correlationTimeoutMs: options.correlationTimeoutMs }),
     ...(options.quietTimeoutMs === undefined ? {} : { quietTimeoutMs: options.quietTimeoutMs }),
-    ...(options.mergedGraceMs === undefined ? {} : { mergedGraceMs: options.mergedGraceMs }),
   });
 }
 

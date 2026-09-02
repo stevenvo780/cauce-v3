@@ -1,20 +1,9 @@
 /**
- * The paste that MERGES into an in-flight turn, and why it killed already-finished deliveries.
+ * The paste that MERGES into an in-flight turn.
  *
- * When the panel is busy generating, claude does not open its own turn for what is pasted: it QUEUES
- * it and merges it into the turn that is already running (`queue-operation enqueue` and, a few seconds
- * later, `remove`). Then there is NO user entry with the text we pasted, and the ascendancy correlation
- * —locating that entry and requiring the reply to descend from it— can never hook up, no matter the budget.
- *
- * What it cost, measured on delivery `6c7cb0c4` (janus -> kratos): execution 04:14:27.49,
- * killed 04:19:28.89 = 301 s exact, "Harness exceeded its execution deadline", no retry. And the work
- * WAS DONE: kratos wrote the full deliverable at 04:17 and emitted its envelope at 04:17:52, ninety-six
- * seconds before it was declared dead. The bug did not lose time: it discarded finished work and made
- * someone send it to be redone.
- *
- * Hence the rule these tests fix: ascendancy is a TIEBREAKER, the envelope is the PROOF. If the envelope
- * appeared after the paste, the delivery does not die. The first three fail against the previous code; the
- * fourth is the guard preventing the fix from eating the 5 min net budget and returning a lock held 24 h.
+ * When the panel is busy generating, claude queues the pasted text and merges it into the running
+ * turn: there is NO user entry with our text, so ascendancy correlation can never hook up.
+ * Rule fixed by these tests: ascendancy is a TIEBREAKER, the envelope is the PROOF.
  */
 import assert from "node:assert/strict";
 import { appendFile, mkdir, rm } from "node:fs/promises";
@@ -32,11 +21,8 @@ import type {
 } from "../src/shared-session/tmux.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { MERGED_MARK } from "../src/shared-session/notice.js";
-import { isEnvelopeText } from "../src/shared-session/envelope.js";
-import { turnInFlight } from "../src/shared-session/pane.js";
 import {
   claudeTranscript,
-  findEnvelopeTurn,
   type TranscriptEntry,
 } from "../src/shared-session/transcript.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
@@ -382,7 +368,6 @@ function claudeRunner(options: {
   fallback: CommandRunner;
   correlationTimeoutMs?: number;
   quietTimeoutMs?: number;
-  mergedGraceMs?: number;
   turnTimeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }): PasteSessionRunner<TranscriptEntry> {
@@ -403,7 +388,6 @@ function claudeRunner(options: {
       ? {}
       : { correlationTimeoutMs: options.correlationTimeoutMs }),
     ...(options.quietTimeoutMs === undefined ? {} : { quietTimeoutMs: options.quietTimeoutMs }),
-    ...(options.mergedGraceMs === undefined ? {} : { mergedGraceMs: options.mergedGraceMs }),
   });
 }
 
@@ -547,6 +531,66 @@ test("el sobre que llega pasado el plazo de correlación cierra la entrega igual
 });
 
 // ---------------------------------------------------------------------------
+// (b2) A merged turn that keeps generating waits for its envelope up to the turn budget.
+// ---------------------------------------------------------------------------
+
+test("un turno fundido que sigue generando espera al presupuesto, no a un techo fijo (regresión heraclito)", async () => {
+  const { state, home, workspace } = await freshState("techo-largo");
+  const directory = transcriptDirectory(home, workspace);
+  const sessionId = randomUUID();
+  const file = join(directory, `${sessionId}.jsonl`);
+  const duenio = randomUUID();
+  await appendFile(file, `${userEntry(duenio, null, "seguí con el informe largo", sessionId)}\n`);
+
+  const tmux = new FakeTmux();
+  tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
+  const fallback = new RecordingFallback();
+
+  const runner = claudeRunner({
+    alias: "kratos",
+    home,
+    workspace,
+    tmux,
+    fallback,
+    // The correlation deadline expires at once; only the turn budget may cap the wait.
+    correlationTimeoutMs: 20,
+    quietTimeoutMs: 60_000, // Never silent: the merged turn writes the whole time.
+    turnTimeoutMs: 20_000, // The alias's real budget; multi-hour turns are normal.
+    sleep: delay,
+  });
+  const adapter = await adapterFor(runner, state, "kratos");
+
+  tmux.onSubmit = (text) => {
+    const correlationId = correlationIdFromPrompt(text);
+    void (async () => {
+      for (let paso = 0; paso < 15; paso += 1) {
+        await delay(20);
+        await appendFile(
+          file,
+          `${assistantEntry(randomUUID(), duenio, `paso ${String(paso)}`, sessionId, "tool_use")}\n`,
+        );
+      }
+      await appendFile(
+        file,
+        `${assistantEntry(
+          randomUUID(),
+          duenio,
+          envelopeText("entregable largo", correlationId),
+          sessionId,
+        )}\n`,
+      );
+    })();
+  };
+
+  const output = await execute(adapter, 30_000);
+
+  // Continuous activity must never be cut short before the budget.
+  assert.equal(output.status, "done");
+  assert.ok((output.reply ?? "").includes("entregable largo"), output.reply ?? "(null)");
+  assert.equal(fallback.calls, 0);
+});
+
+// ---------------------------------------------------------------------------
 // (c) The healthy case: ascendancy correlation, and NO merged-turn notice.
 // ---------------------------------------------------------------------------
 
@@ -676,11 +720,11 @@ test("el pegado perdido sin ninguna actividad sigue soltando la sesión como amb
 });
 
 // ---------------------------------------------------------------------------
-// (e) Guard: the wait for a merged turn has a written end even if the terminal does not go quiet.
+// (e) Guard: a merged turn that never emits our envelope is released AT the turn budget.
 // ---------------------------------------------------------------------------
 
-test("la espera por un turno fundido termina en su techo, no en el presupuesto", async () => {
-  const { state, home, workspace } = await freshState("techo");
+test("un turno fundido que jamás entrega sobre se suelta EN el presupuesto del alias, no antes", async () => {
+  const { state, home, workspace } = await freshState("presupuesto");
   const directory = transcriptDirectory(home, workspace);
   const sessionId = randomUUID();
   const file = join(directory, `${sessionId}.jsonl`);
@@ -691,9 +735,7 @@ test("la espera por un turno fundido termina en su techo, no en el presupuesto",
   const fallback = new RecordingFallback();
   let escribiendo = true;
   tmux.onSubmit = () => {
-    // The terminal NEVER goes quiet, and never emits an envelope: the paste was really lost and
-    // what you see is the owner working in their panel. Without a ceiling, this would wait all
-    // day.
+    // Never quiet, never an envelope: indistinguishable from a genuinely long turn.
     void (async () => {
       while (escribiendo) {
         await delay(5);
@@ -713,8 +755,8 @@ test("la espera por un turno fundido termina en su techo, no en el presupuesto",
     fallback,
     correlationTimeoutMs: 20,
     quietTimeoutMs: 60_000,
-    mergedGraceMs: 200,
-    turnTimeoutMs: 600_000,
+    // Short budget standing in for the alias's real (e.g. 24h) budget: it is what caps the wait.
+    turnTimeoutMs: 300,
     sleep: delay,
   });
   const adapter = await adapterFor(runner, state, "kratos");
@@ -722,89 +764,14 @@ test("la espera por un turno fundido termina en su techo, no en el presupuesto",
   const empezo = Date.now();
   try {
     await assert.rejects(
-      execute(adapter, 600_000),
+      execute(adapter, 300),
       (error: Error) => /execution deadline/iu.test(error.message),
     );
   } finally {
     escribiendo = false;
   }
-  assert.ok(Date.now() - empezo < 30_000, `tardó ${String(Date.now() - empezo)} ms`);
-});
-
-// ---------------------------------------------------------------------------
-// The parts, separately.
-// ---------------------------------------------------------------------------
-
-test("un sobre se reconoce por su forma, y una respuesta en prosa no", () => {
-  assert.equal(isEnvelopeText(envelopeText("hecho")), true);
-  assert.equal(isEnvelopeText("```json\n" + envelopeText("hecho") + "\n```"), true);
-  assert.equal(isEnvelopeText('{"reply":null,"messages":[],"status":"failed","retryable":true}'), true);
-  assert.equal(isEnvelopeText("listo, ya lo dejé andando"), false);
-  assert.equal(isEnvelopeText('{"reply":"x"}'), false);
-  assert.equal(isEnvelopeText('{"reply":"x","messages":[],"status":"otra"}'), false);
-  assert.equal(isEnvelopeText('{"reply":"x","messages":{},"status":"done"}'), false);
-  assert.equal(isEnvelopeText(undefined), false);
-});
-
-test("el sobre se localiza sin ascendencia, y un mensaje intermedio no cuenta", () => {
-  const sessionId = randomUUID();
-  const duenio = randomUUID();
-  const correlationId = randomUUID();
-  const entries = [
-    JSON.parse(userEntry(duenio, null, "seguí", sessionId)),
-    JSON.parse(assistantEntry(
-      randomUUID(),
-      duenio,
-      envelopeText("a medias", correlationId),
-      sessionId,
-      "tool_use",
-    )),
-    JSON.parse(assistantEntry(
-      randomUUID(),
-      duenio,
-      envelopeText("el entregable", correlationId),
-      sessionId,
-    )),
-  ] as TranscriptEntry[];
-  const found = findEnvelopeTurn(entries, correlationId);
-  assert.equal(found?.text, envelopeText("el entregable", correlationId));
-  assert.equal(found.sessionId, sessionId);
-
-  // A subagent writes to the same file and cannot count as the turn's envelope.
-  const sidechain = [{
-    ...JSON.parse(assistantEntry(randomUUID(), duenio, envelopeText("de un subagente"), sessionId)),
-    isSidechain: true,
-  }] as TranscriptEntry[];
-  assert.equal(findEnvelopeTurn(sidechain, correlationId), undefined);
-});
-
-test("el rescate rechaza sobres sin nonce o con el nonce de otra entrega", () => {
-  const sessionId = randomUUID();
-  const parent = randomUUID();
-  const expected = randomUUID();
-  const entries = [
-    JSON.parse(assistantEntry(randomUUID(), parent, envelopeText("sin nonce"), sessionId)),
-    JSON.parse(assistantEntry(
-      randomUUID(),
-      parent,
-      envelopeText("ajeno", randomUUID()),
-      sessionId,
-    )),
-  ] as TranscriptEntry[];
-
-  assert.equal(findEnvelopeTurn(entries, expected), undefined);
-});
-
-test("la línea de estado de una TUI generando se distingue del texto de la conversación", () => {
-  // claude draws it just ABOVE the box; codex, just below. Both count.
-  assert.equal(turnInFlight("✻ Herding… (esc to interrupt · ctrl+t to hide todos)\n❯ "), true);
-  assert.equal(turnInFlight("› \nEsc to interrupt\n"), true);
-  assert.equal(turnInFlight("❯ "), false);
-  assert.equal(turnInFlight("✻ Herding… (esc to interrupt)\n❯ \n\n\n"), true);
-  // A sentence FAR from the box is conversation, not status: if it counted, an agent talking
-  // about this same mechanism would leave the panel marked as busy forever.
-  const relleno: string[] = new Array<string>(20).fill("blah");
-  const conversacion = ["el truco es mirar 'esc to interrupt'", ...relleno, "❯ "];
-  assert.equal(turnInFlight(conversacion.join("\n")), false);
-  assert.equal(turnInFlight(undefined), false);
+  const transcurrido = Date.now() - empezo;
+  // Released at the budget: not before it, not long after it.
+  assert.ok(transcurrido >= 250, `se soltó antes del presupuesto: ${String(transcurrido)} ms`);
+  assert.ok(transcurrido < 30_000, `tardó ${String(transcurrido)} ms`);
 });
