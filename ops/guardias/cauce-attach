@@ -176,7 +176,8 @@ def resolver_prefijo(sesiones, pedido):
         return candidatas[0]
     if not candidatas:
         return None
-    die('el prefijo «%s» es ambiguo: %s' % (pedido, ', '.join(f['native'] for f in candidatas)))
+    nombres = ', '.join(f['native'] for f in candidatas)
+    die(f'el prefijo «{pedido}» es ambiguo: {nombres}')
 
 
 def elegir(mod, alias, datos, preferencia, interactivo):
@@ -215,7 +216,7 @@ def elegir(mod, alias, datos, preferencia, interactivo):
         respuesta = input('  ¿cuál abro? [1] ').strip() or '1'
     except (EOFError, KeyboardInterrupt):
         print('')
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     if respuesta == '2':
         return reciente, []
     if respuesta == '3':

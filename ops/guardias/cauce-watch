@@ -4,7 +4,12 @@
 Read-only. Bounded by MAX_SECONDS. The remote `tail` carries a unique marker so it can be
 killed by marker (not by pattern) when the local process dies.
 """
-import json, os, signal, subprocess, sys, time
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
 
 OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
 MAP = os.path.join(OPS, 'container-aliases.json')

@@ -13,7 +13,11 @@ Corre por timer cada 2 minutos. Dos trabajos, en este orden de confianza:
 
 Idempotente y barato: si no hay nada que hacer, no escribe nada.
 """
-import json, os, subprocess, sys, time
+import json
+import os
+import subprocess
+import sys
+import time
 
 MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
 LOG = os.path.join(MARKERS, 'guard.log')

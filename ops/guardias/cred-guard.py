@@ -18,10 +18,14 @@ Salida: una linea por credencial + codigo de salida 1 si hay algo MUERTO o URGEN
 """
 import datetime
 import json
-import subprocess
 import sys
 
-from credential_health import LONG_LIVED, classify_fleet_guard_record, shared_fingerprints
+from credential_health import (
+    LONG_LIVED,
+    classify_fleet_guard_record,
+    probe_container,
+    shared_fingerprints,
+)
 
 # (container, path inside the container, label)
 OBJETIVOS = [
@@ -48,37 +52,11 @@ OBJETIVOS = [
     ("ctrl-infra",   "/home/dev/.codex/auth.json",  "codex/kant"),
 ]
 
-LECTOR = r'''
-import json,io,os,sys,hashlib
-p=sys.argv[1]
-if not os.path.exists(p):
-    print(json.dumps({"falta":True})); raise SystemExit
-d=json.load(io.open(p,encoding="utf-8"))
-o=d.get("claudeAiOauth") or d.get("tokens") or d
-rt=o.get("refreshToken") or o.get("refresh_token") or ""
-at=o.get("accessToken") or o.get("access_token") or ""
-print(json.dumps({
-  "huella": hashlib.sha256(rt.encode()).hexdigest()[:10] if rt else None,
-  "expiresAt": o.get("expiresAt"), "last_refresh": d.get("last_refresh"),
-  "at_len": len(at)}))
-'''
-
-def leer(contenedor, ruta):
-    try:
-        salida = subprocess.run(
-            ["docker", "exec", contenedor, "python3", "-c", LECTOR, ruta],
-            capture_output=True, text=True, timeout=25)
-        if salida.returncode != 0:
-            return {"error": (salida.stderr or "").strip()[:60] or f"rc={salida.returncode}"}
-        return json.loads(salida.stdout.strip().splitlines()[-1])
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {str(e)[:50]}"}
-
 ahora = datetime.datetime.now(datetime.timezone.utc)
 filas, credential_locations, problemas = [], [], 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:
-    d = leer(contenedor, ruta)
+    d = probe_container(contenedor, ruta)
     if d.get("falta"):
         filas.append(("-", etiqueta, contenedor, "NO EXISTE", ""))
         continue

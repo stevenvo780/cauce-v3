@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 
-from credential_health import LONG_LIVED, classify_fleet_guard_record
+from credential_health import LONG_LIVED, classify_fleet_guard_record, probe_container
 
 OBJETIVOS = [
     ("ws-isa", "/home/dev/.claude/.credentials.json", "claude/salva"),
@@ -25,38 +25,11 @@ OBJETIVOS = [
 DESTINO_REMOTO = "vps:/var/lib/cauce-v3/cred-guard-kratos.json"
 LOCAL = os.path.expanduser("~/.local/state/cauce-v3/cred-guard-kratos.json")
 
-LECTOR = r'''
-import json,io,os,sys,hashlib
-p=sys.argv[1]
-if not os.path.exists(p):
-    print(json.dumps({"falta":True})); raise SystemExit
-d=json.load(io.open(p,encoding="utf-8"))
-o=d.get("claudeAiOauth") or d.get("tokens") or d
-rt=o.get("refreshToken") or o.get("refresh_token") or ""
-at=o.get("accessToken") or o.get("access_token") or ""
-print(json.dumps({
-  "huella": hashlib.sha256(rt.encode()).hexdigest()[:10] if rt else None,
-  "expiresAt": o.get("expiresAt"), "last_refresh": d.get("last_refresh"),
-  "at_len": len(at)}))
-'''
-
-
-def leer(contenedor, ruta):
-    try:
-        s = subprocess.run(["docker", "exec", contenedor, "python3", "-c", LECTOR, ruta],
-                           capture_output=True, text=True, timeout=25)
-        if s.returncode != 0:
-            return {"error": (s.stderr or "").strip()[:60] or f"rc={s.returncode}"}
-        return json.loads(s.stdout.strip().splitlines()[-1])
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {str(e)[:50]}"}
-
-
 ahora = datetime.datetime.now(datetime.timezone.utc)
 filas, problemas = [], 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:
-    d = leer(contenedor, ruta)
+    d = probe_container(contenedor, ruta)
     if d.get("falta"):
         filas.append({"huella": "-", "etiqueta": etiqueta, "contenedor": contenedor,
                       "estado": "NO EXISTE", "detalle": "", "problema": False})

@@ -1,4 +1,19 @@
 line-length = 120
+# Extensionless Python guards: ruff only collects *.py/*.pyi, so without this every one of them
+# stays unanalysed while the gate still prints "All checks passed!". Kept in sync by
+# ops/tests/lint-shebang-coverage.test.mjs.
+extend-include = [
+  "ops/guardias/cauce-ai-live",
+  "ops/guardias/cauce-attach",
+  "ops/guardias/cauce-attach-guard",
+  "ops/guardias/cauce-credenciales",
+  "ops/guardias/cauce-esfuerzo",
+  "ops/guardias/cauce-estado",
+  "ops/guardias/cauce-quien-consume",
+  "ops/guardias/cauce-sesiones",
+  "ops/guardias/cauce-v3-medico-monitor",
+  "ops/guardias/cauce-watch",
+]
 [lint]
 select = ["E", "W", "F", "I", "B", "UP"]
 ignore = ["E501"]  # longitud: la vigila el trinquete humano, no el linter (1.737 falsos ruidos)

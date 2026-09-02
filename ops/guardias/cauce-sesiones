@@ -255,7 +255,7 @@ print(json.dumps({"error": None, "sesiones": sesiones, "otros": otros}))
 
 
 def die(msg):
-    print('cauce-sesiones: %s' % msg, file=sys.stderr)
+    print(f'cauce-sesiones: {msg}', file=sys.stderr)
     raise SystemExit(1)
 
 
@@ -270,9 +270,9 @@ def alias_info(alias):
     try:
         data = json.load(open(MAP))['aliases']
     except OSError:
-        die('no puedo leer %s' % MAP)
+        die(f'no puedo leer {MAP}')
     if alias not in data:
-        die('alias desconocido: %s\nconocidos: %s' % (alias, ', '.join(sorted(data))))
+        die(f'alias desconocido: {alias}\nconocidos: {", ".join(sorted(data))}')
     info = dict(data[alias])
     if alias in HOST_NATIVE:
         raw = sh(['systemctl', '--user', 'show', HOST_NATIVE[alias], '-p', 'Environment'])
@@ -287,7 +287,7 @@ def alias_info(alias):
 
 
 def unit_of(alias):
-    return HOST_NATIVE.get(alias, 'cauce-v3-container-%s' % alias)
+    return HOST_NATIVE.get(alias, f'cauce-v3-container-{alias}')
 
 
 def _sonda(alias, info):
@@ -330,7 +330,7 @@ def clasificar(alias, fila):
         fila['puente'] = None
         fila['puente_tenant'] = None
         fila['donde'] = 'sin origen (consola o publicación interna)' if canal in (None, 'cauce') \
-            else 'canal %s sin origen' % canal
+            else f'canal {canal} sin origen'
         return fila
     canal = origen.get('channel') or origen.get('adapter') or '?'
     conversacion = origen.get('conversation_id')
@@ -349,22 +349,22 @@ def clasificar(alias, fila):
             fila['clase'] = 'dm_sin_puente'
         else:
             fila['clase'] = 'dm_propio' if puente in (None, alias) else 'dm_ajeno'
-        fila['donde'] = 'DM Telegram %s' % conversacion
+        fila['donde'] = f'DM Telegram {conversacion}'
     elif canal == 'telegram':
         fila['clase'] = 'grupo'
-        fila['donde'] = 'Grupo Telegram %s' % conversacion
+        fila['donde'] = f'Grupo Telegram {conversacion}'
     # The two SYNTHETIC conversations the SDK fabricates when a delivery has no return route
     # (engine.ts, conversationScope). They are not channels: there's no chat to open on the
     # other side, and naming them as a channel confuses equally.
     elif str(conversacion or '').startswith('operator:'):
         fila['clase'] = 'consola'
-        fila['donde'] = 'consola/publicacion (%s)' % conversacion.split(':', 1)[1]
+        fila['donde'] = f"consola/publicacion ({conversacion.split(':', 1)[1]})"
     elif str(conversacion or '').startswith('agents:'):
         fila['clase'] = 'agentes'
-        fila['donde'] = 'agente-a-agente (tenant %s)' % conversacion.split(':', 1)[1]
+        fila['donde'] = f"agente-a-agente (tenant {conversacion.split(':', 1)[1]})"
     else:
         fila['clase'] = 'otro'
-        fila['donde'] = '%s %s' % (canal, conversacion or '')
+        fila['donde'] = f"{canal} {conversacion or ''}"
     return fila
 
 
@@ -409,7 +409,7 @@ def dm_del_dueno(sesiones):
 
 def clave_conversacion(fila):
     """Identity of a conversation for grouping. String, not tuple: this goes out via --json."""
-    return '%s|%s' % (fila.get('donde'), fila.get('carril'))
+    return f"{fila.get('donde')}|{fila.get('carril')}"
 
 
 def duplicadas(sesiones):
@@ -440,7 +440,7 @@ def gateway(alias, ruta, cuerpo=None, timeout=20):
     """(http_code, object) on a response; (None, reason) if it couldn't even be asked."""
     creds = pki_de(alias)
     if creds is None:
-        return None, 'no hay certificado mTLS para %s en %s/%s' % (alias, PKI, alias)
+        return None, f'no hay certificado mTLS para {alias} en {PKI}/{alias}'
     cert, key, ca = creds
     cmd = ['curl', '-sS', '--max-time', str(timeout), '--cert', cert, '--key', key,
            '--cacert', ca, '-o', '-', '-w', '\n%{http_code}', GATEWAY + ruta]
@@ -493,7 +493,7 @@ def linea_cola(resumen):
         return 'cola: el gateway no contestó (no puedo ver Postgres desde kratos).'
     nombres = {'pending': 'en cola', 'started': 'en vuelo', 'retrying': 'reintentando',
                'dead': 'muertas'}
-    partes = [('%d %s' % (resumen['por_estado'][k], nombres[k]))
+    partes = [f"{resumen['por_estado'][k]} {nombres[k]}"
               for k in ('pending', 'started', 'retrying', 'dead') if resumen['por_estado'].get(k)]
     return 'cola: ' + (', '.join(partes) if partes else 'nada pendiente')
 
@@ -530,8 +530,8 @@ def veredicto_cola(resumen):
     if not marcas or min(marcas) >= time.time() - RECLAMADO_SIN_EMPEZAR_MINUTOS * 60:
         return None
     return ('RECLAMÓ Y NO EMPEZÓ',
-            '%d entrega(s) reclamada(s) sin empezar a ejecutarse, la más vieja %s.'
-            % (len(vivas), hace(min(marcas))))
+            f'{len(vivas)} entrega(s) reclamada(s) sin empezar a ejecutarse, '
+            f'la más vieja {hace(min(marcas))}.')
 
 
 # --------------------------------------------------------------------------------------------
@@ -552,49 +552,49 @@ def hace(stamp):
         return ''
     delta = max(0, int(time.time()) - int(stamp))
     if delta < 90:
-        return 'hace %ds' % delta
+        return f'hace {delta}s'
     if delta < 5400:
-        return 'hace %dm' % (delta // 60)
+        return f'hace {delta // 60}m'
     if delta < 172800:
-        return 'hace %dh' % (delta // 3600)
-    return 'hace %dd' % (delta // 86400)
+        return f'hace {delta // 3600}h'
+    return f'hace {delta // 86400}d'
 
 
 def etiqueta_puente(alias, fila):
     puente = fila.get('puente')
     if puente is None:
         return '—'
-    return 'bot %s' % puente if puente == alias else 'bot %s!' % puente
+    return f'bot {puente}' if puente == alias else f'bot {puente}!'
 
 
 def tabla(datos, destino=sys.stdout):
     alias, harness = datos['alias'], datos['harness']
-    escribir = lambda linea='': print(linea, file=destino)
+    def escribir(linea=''):
+        print(linea, file=destino)
     if datos.get('error'):
-        escribir('cauce-sesiones: no pude leer las sesiones de %s: %s' % (alias, datos['error']))
+        escribir(f"cauce-sesiones: no pude leer las sesiones de {alias}: {datos['error']}")
         return
     sesiones = datos['sesiones']
     if not sesiones:
-        escribir('%s: sin sesiones registradas en %s/sessions.json'
-                 % (alias, datos['info']['stateDirectory']))
+        escribir(f"{alias}: sin sesiones registradas en {datos['info']['stateDirectory']}/sessions.json")
         return
     extra = ''
     if datos['otros']:
-        extra = ' · además %s' % ', '.join('%d de %s' % (n, m) for m, n in sorted(datos['otros'].items()))
-    escribir('sesiones de %s (%s): %d de este harness%s' % (alias, harness, len(sesiones), extra))
+        otros = ', '.join(f'{n} de {m}' for m, n in sorted(datos['otros'].items()))
+        extra = f' · además {otros}'
+    escribir(f'sesiones de {alias} ({harness}): {len(sesiones)} de este harness{extra}')
     if harness not in CON_TRANSCRIPT:
         con_origen = sum(1 for f in sesiones if f.get('origen_fuente') == 'sessions.json')
-        escribir('AVISO: %s no deja transcript reanudable por sesión: sin turnos ni último turno.'
-                 % harness)
+        escribir(f'AVISO: {harness} no deja transcript reanudable por sesión: sin turnos ni último turno.')
         if con_origen:
-            escribir('       La CONVERSACIÓN de %d de ellas sale de sessions.json, que la escribió'
-                     % con_origen)
+            escribir(f'       La CONVERSACIÓN de {con_origen} de ellas sale de sessions.json, '
+                     'que la escribió')
             escribir('       el propio adaptador. Las que dicen "sin origen" son anteriores a ese')
             escribir('       campo o entraron sin conversación: de esas no se sabe, y no se inventa.')
     escribir('')
     ancho = max(8, max(len(f.get('abrev') or '') for f in sesiones))
-    escribir('%-5s %-*s %-30s %-12s %-7s %7s  %-12s %s'
-             % ('', ancho, 'SESIÓN', 'CONVERSACIÓN', 'PUENTE', 'CARRIL', 'TURNOS', 'ÚLTIMO TURNO', ''))
+    escribir(f'{"":<5} {"SESIÓN":<{ancho}} {"CONVERSACIÓN":<30} {"PUENTE":<12} {"CARRIL":<7}'
+             f' {"TURNOS":>7}  {"ÚLTIMO TURNO":<12} ')
     dm = datos['dm']
     reciente = datos['reciente']
     for fila in sesiones:
@@ -606,27 +606,24 @@ def tabla(datos, destino=sys.stdout):
             notas.append('la más reciente')
         if fila['abiertas']:
             humanas = [t for _p, t, _e in fila['abiertas'] if t not in ('?', '-')]
-            notas.append('ABIERTA en %s' % ', '.join(humanas) if humanas else 'la está usando el adaptador')
+            notas.append(f"ABIERTA en {', '.join(humanas)}" if humanas else 'la está usando el adaptador')
         if not fila['transcripto']:
             notas.append('sin transcript')
         if fila['truncado']:
             notas.append('turnos aproximados')
-        escribir('%-5s %-*s %-30s %-12s %-7s %7s  %-12s %s'
-                 % (marca, ancho, corto(fila), fila['donde'][:30], etiqueta_puente(alias, fila)[:12],
-                    fila['carril'], fila['turnos'] or '—', cuando(fila['mtime']),
-                    ' · '.join(notas)))
+        escribir(f"{marca:<5} {corto(fila):<{ancho}} {fila['donde'][:30]:<30}"
+                 f" {etiqueta_puente(alias, fila)[:12]:<12} {fila['carril']:<7}"
+                 f" {fila['turnos'] or '—':>7}  {cuando(fila['mtime']):<12} {' · '.join(notas)}")
     escribir('')
     if dm is not None:
-        escribir('DM  = la sesión que usa el DM de Telegram del dueño (%s, %s).'
-                 % (dm['donde'], hace(dm['mtime'])))
+        escribir(f"DM  = la sesión que usa el DM de Telegram del dueño ({dm['donde']}, {hace(dm['mtime'])}).")
         if dm.get('clase') == 'dm_ajeno':
-            escribir('      OJO: ese DM entró por el bot de %s, no por el de %s.'
-                     % (dm.get('puente'), alias))
+            escribir(f"      OJO: ese DM entró por el bot de {dm.get('puente')}, no por el de {alias}.")
         elif dm.get('clase') == 'dm_sin_puente':
             escribir('      El canal y el chat constan; POR QUÉ BOT entró, no: sessions.json no')
             escribir('      guarda el puente. Sigue siendo el DM del dueño, pero no afirmo cuál bot.')
     else:
-        escribir('No hay ninguna sesión de DM de Telegram para %s todavía.' % alias)
+        escribir(f'No hay ninguna sesión de DM de Telegram para {alias} todavía.')
     if any(f.get('puente') not in (None, alias) for f in sesiones):
         escribir('!   = la conversación entró por el bot de OTRO alias: eso estrena sesión aparte.')
     if datos['duplicadas']:
@@ -635,9 +632,8 @@ def tabla(datos, destino=sys.stdout):
         escribir('       se habló en las otras — es lo que se ve como "se duplicó el agente".')
         for clave, filas in sorted(datos['duplicadas'].items()):
             donde, _, carril = clave.partition('|')
-            escribir('       %d sesiones · %s · carril %s: %s'
-                     % (len(filas), donde, carril,
-                        ' '.join(corto(f) for f in filas)))
+            escribir(f'       {len(filas)} sesiones · {donde} · carril {carril}: '
+                     + ' '.join(corto(f) for f in filas))
         escribir('       Causa: la clave de sesión hashea `attempt` y `bridge_tenant`, así que un')
         escribir('       reintento o un puente distinto estrenan sesión en blanco.')
 

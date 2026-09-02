@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import io
 import json
 import os
 import subprocess
@@ -29,7 +28,7 @@ import time
 
 BASE = "/home/stev/.local/share/cauce-ai-live"
 sys.path.insert(0, BASE)
-import cdp
+import cdp  # noqa: E402 (needs BASE on sys.path)
 
 # One browser account per CDP port. The label is neutral on purpose: the real email is
 # discovered live and only printed in --json.
@@ -50,17 +49,16 @@ CLAUDE_RESPALDO = [
 def carga_cuentas() -> list:
     """Read the account list from the shared file used by the banner probe."""
     try:
-        with io.open(CUENTAS_PATH, encoding="utf-8") as fh:
+        with open(CUENTAS_PATH, encoding="utf-8") as fh:
             crudo = json.load(fh)
         cuentas = []
         for i, c in enumerate(crudo.get("accounts") or []):
-            cuentas.append({"label": str(c.get("slot") or "claude#%d" % (i + 1)),
+            cuentas.append({"label": str(c.get("slot") or f"claude#{i + 1}"),
                             "port": int(c["port"])})
         if cuentas:
             return cuentas
     except Exception as e:
-        print("aviso: no pude leer %s (%s); uso el respaldo embebido"
-              % (CUENTAS_PATH, type(e).__name__), file=sys.stderr)
+        print(f"aviso: no pude leer {CUENTAS_PATH} ({type(e).__name__}); uso el respaldo embebido", file=sys.stderr)
     return list(CLAUDE_RESPALDO)
 
 
@@ -85,7 +83,7 @@ def _horas(iso: str | None) -> str:
     try:
         dt = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
         h = (dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds() / 3600
-        return "%.0fh" % h if h >= 0 else "vencida"
+        return f"{h:.0f}h" if h >= 0 else "vencida"
     except Exception:
         return "?"
 
@@ -108,12 +106,12 @@ def sonda_claude(cuenta: dict) -> dict:
         else:
             r["note"] = (datos or {}).get("note", "respuesta inesperada") if isinstance(datos, dict) else "sin datos"
     except Exception as e:
-        r["note"] = "%s: %s" % (type(e).__name__, str(e)[:60])
+        r["note"] = f"{type(e).__name__}: {str(e)[:60]}"
     finally:
         if tab and tab.get("id"):
             try:
                 import urllib.request
-                urllib.request.urlopen("http://127.0.0.1:%s/json/close/%s" % (cuenta["port"], tab["id"]), timeout=8)
+                urllib.request.urlopen(f'http://127.0.0.1:{cuenta["port"]}/json/close/{tab["id"]}', timeout=8)
             except Exception:
                 pass
     return r
@@ -134,7 +132,7 @@ def sonda_codex() -> dict:
         else:
             r["note"] = d.get("note", "sin datos")
     except Exception as e:
-        r["note"] = "%s: %s" % (type(e).__name__, str(e)[:60])
+        r["note"] = f"{type(e).__name__}: {str(e)[:60]}"
     return r
 
 
@@ -146,33 +144,33 @@ def recolecta() -> dict:
 
 
 def tabla(datos: dict) -> str:
-    l = ["== cuotas de la flota ==  generado %s UTC" % datos["generado"][11:19]]
+    rows = [f'== cuotas de la flota ==  generado {datos["generado"][11:19]} UTC']
     for c in datos["cuentas"]:
         if not c.get("ok"):
-            l.append("  %-9s %-8s  SIN DATO — %s" % (c["label"], c["provider"], c.get("note", "?")))
+            rows.append(f'  {c["label"]:<9} {c["provider"]:<8}  SIN DATO — {c.get("note", "?")}')
             continue
         if c["provider"] == "claude":
-            l.append("  %-9s claude   libre 5h:%3d%% (↻%s)  7d:%3d%% (↻%s)  [%s]"
-                     % (c["label"], c["libre_5h"], c["reset_5h"], c["libre_7d"], c["reset_7d"],
-                        (c.get("tier") or "").replace("default_claude_max_", "max ")))
+            tier = (c.get("tier") or "").replace("default_claude_max_", "max ")
+            rows.append(f'  {c["label"]:<9} claude   libre 5h:{int(c["libre_5h"]):3d}% (↻{c["reset_5h"]})'
+                        f'  7d:{int(c["libre_7d"]):3d}% (↻{c["reset_7d"]})  [{tier}]')
         else:
-            l.append("  %-9s codex    libre 7d:%3d%% (↻%s)" % (c["label"], c.get("libre_7d", 0), c.get("reset_7d", "?")))
-    return "\n".join(l)
+            rows.append(f'  {c["label"]:<9} codex    libre 7d:{int(c.get("libre_7d", 0)):3d}% (↻{c.get("reset_7d", "?")})')
+    return "\n".join(rows)
 
 
 def escribe_contexto(datos: dict) -> None:
     """Rewrite the file injected by the hook into each agent, WITH its absolute timestamp."""
     dst = "/home/stev/.local/share/ai-usage-live/quota-context.txt"
-    lineas = ["<ai-quotas generado=%s fuente=cauce-ai-live>" % datos["generado"]]
+    lineas = [f'<ai-quotas generado={datos["generado"]} fuente=cauce-ai-live>']
     for c in datos["cuentas"]:
         if c.get("ok") and c["provider"] == "claude":
-            lineas.append("%s: libre 5h %d%% / 7d %d%%" % (c["label"], c["libre_5h"], c["libre_7d"]))
+            lineas.append(f'{c["label"]}: libre 5h {int(c["libre_5h"])}% / 7d {int(c["libre_7d"])}%')
         elif c.get("ok"):
-            lineas.append("%s: libre 7d %d%%" % (c["label"], c.get("libre_7d", 0)))
+            lineas.append(f'{c["label"]}: libre 7d {int(c.get("libre_7d", 0))}%')
         else:
-            lineas.append("%s: SIN DATO (%s)" % (c["label"], c.get("note", "?")))
+            lineas.append(f'{c["label"]}: SIN DATO ({c.get("note", "?")})')
     lineas.append("</ai-quotas>")
-    io.open(dst, "w", encoding="utf-8").write("\n".join(lineas) + "\n")
+    open(dst, "w", encoding="utf-8").write("\n".join(lineas) + "\n")
 
 
 def main() -> int:

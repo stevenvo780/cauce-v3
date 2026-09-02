@@ -19,8 +19,8 @@ import datetime
 import importlib.machinery
 import importlib.util
 import json
-import shlex
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -30,7 +30,7 @@ HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
 
 
 def die(msg):
-    print('cauce-estado: %s' % msg, file=sys.stderr)
+    print(f'cauce-estado: {msg}', file=sys.stderr)
     raise SystemExit(1)
 
 
@@ -44,7 +44,7 @@ def sh(args, timeout=60):
 def sesiones_mod():
     ruta = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'cauce-sesiones')
     if not os.path.exists(ruta):
-        die('falta %s (se instala junto a cauce-estado)' % ruta)
+        die(f'falta {ruta} (se instala junto a cauce-estado)')
     sys.dont_write_bytecode = True
     cargador = importlib.machinery.SourceFileLoader('cauce_sesiones', ruta)
     modulo = importlib.util.module_from_spec(importlib.util.spec_from_loader('cauce_sesiones', cargador))
@@ -53,7 +53,7 @@ def sesiones_mod():
 
 
 def unit_of(alias):
-    return HOST_NATIVE.get(alias, 'cauce-v3-container-%s' % alias)
+    return HOST_NATIVE.get(alias, f'cauce-v3-container-{alias}')
 
 
 # VPS aliases run their units on the VPS itself, under the VPS user; asking `systemctl --user`
@@ -156,7 +156,7 @@ def proceso_adaptador(alias, host_native, unidad):
     for pid, edad, cpu, pcpu, args in procesos_host():
         if args.startswith('docker ') or 'cauce-container-runtime.py' not in args:
             continue
-        if ('--alias %s ' % alias) not in args + ' ':
+        if f'--alias {alias} ' not in args + ' ':
             continue
         return {'pid': pid, 'edad': edad, 'cpu': cpu, 'pcpu': pcpu,
                 'cpu_s': segundos_cpu(cpu), 'edad_s': segundos_cpu(edad),
@@ -168,7 +168,7 @@ def reloj(segundos):
     if segundos is None:
         return '?'
     segundos = int(segundos)
-    return '%02d:%02d:%02d' % (segundos // 3600, (segundos % 3600) // 60, segundos % 60)
+    return f'{segundos // 3600:02d}:{(segundos % 3600) // 60:02d}:{segundos % 60:02d}'
 
 
 def harness_vivo(info, alias):
@@ -176,16 +176,16 @@ def harness_vivo(info, alias):
     It is the only thing owned by Cauce inside; other fleets' processes share the containers
     and must not be confused with it."""
     cmd = ("ps -eo args --no-headers 2>/dev/null | grep -F 'adapter-sdk/dist/src/bin/' "
-           "| grep -F '/%s/' | grep -v grep | head -1" % alias)
+           f"| grep -F '/{alias}/' | grep -v grep | head -1")
     if info.get('alias') in LOCALES or info['container'] in ('ws-isa',):
         return bool(sh(['docker', 'exec', info['container'], 'sh', '-lc', cmd], timeout=30))
     return bool(sh(['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', VPS_SSH,
-                    'docker exec %s sh -lc %s' % (info['container'], shlex.quote(cmd))],
+                    f'docker exec {info["container"]} sh -lc {shlex.quote(cmd)}'],
                    timeout=60))
 
 
 def marcador(alias):
-    path = os.path.join(MARKERS, '%s.json' % alias)
+    path = os.path.join(MARKERS, f'{alias}.json')
     try:
         with open(path) as handle:
             datos = json.load(handle)
@@ -244,16 +244,16 @@ def actividad(mod, alias):
 def veredicto(datos, mod):
     """The conclusion, in one line. Order matters: first what explains the silence."""
     if datos['marcador'] and datos['marcador'].get('vivo'):
-        return ('MUDO A PROPÓSITO', 'hay un attach abierto (pid %s, hace %s): el adaptador está '
-                'parado y las entregas se encolan.'
-                % (datos['marcador'].get('attach_pid'),
-                   humano(int(time.time()) - int(datos['marcador'].get('started_at', 0)))))
+        espera = humano(int(time.time()) - int(datos['marcador'].get('started_at', 0)))
+        return ('MUDO A PROPÓSITO',
+                f'hay un attach abierto (pid {datos["marcador"].get("attach_pid")}, hace {espera}): '
+                'el adaptador está parado y las entregas se encolan.')
     if datos['marcador'] and not datos['marcador'].get('vivo'):
         return ('MARCADOR HUÉRFANO', 'el attach murió sin restaurar. cauce-attach-guard lo levanta '
-                'en ≤2 min; si no, systemctl --user start %s' % datos['unit'])
+                f'en ≤2 min; si no, systemctl --user start {datos["unit"]}')
     if datos['unidad'].get('ActiveState') != 'active':
-        return ('CAÍDO', 'la unit %s está %s y nadie la paró desde la consola.'
-                % (datos['unit'], datos['unidad'].get('ActiveState')))
+        return ('CAÍDO', f'la unit {datos["unit"]} está {datos["unidad"].get("ActiveState")} '
+                'y nadie la paró desde la consola.')
     if datos['proceso'] is None:
         return ('SIN ADAPTADOR', 'la unit está activa pero no hay proceso de adaptador para este '
                 'alias: arrancó y se murió sin que systemd lo note.')
@@ -262,37 +262,36 @@ def veredicto(datos, mod):
                 'proceso del harness: no puede ejecutar nada.')
     presente = datos['presencia']
     if presente is not None and not presente.get('online'):
-        return ('SIN LATIDO', 'el adaptador corre pero el gateway no lo ve online (último latido %s).'
-                % (presente.get('last_heartbeat_at') or '?'))
+        return ('SIN LATIDO', 'el adaptador corre pero el gateway no lo ve online '
+                f'(último latido {presente.get("last_heartbeat_at") or "?"}).')
     cpu, edad = datos['proceso'].get('cpu_s'), datos['proceso'].get('edad_s')
     if cpu is not None and edad and edad > 3600 and (cpu / edad) < 0.0005:
-        return ('INERTE', 'lleva %s vivo y sólo %ss de CPU: está prendido pero no procesa nada.'
-                % (datos['proceso']['edad'], int(cpu)))
+        return ('INERTE', f'lleva {datos["proceso"]["edad"]} vivo y sólo {int(cpu)}s de CPU: '
+                'está prendido pero no procesa nada.')
     atascado = mod.veredicto_cola(datos['cola'])
     if atascado is not None:
         return atascado
     vivas = len(datos['cola']['vivas']) if datos['cola'] else 0
     if vivas:
-        return ('TRABAJANDO', '%d entrega(s) en vuelo o en cola.' % vivas)
+        return ('TRABAJANDO', f'{vivas} entrega(s) en vuelo o en cola.')
     return ('VIVO Y OCIOSO', 'sin entregas pendientes.')
 
 
 def humano(segundos):
     segundos = max(0, int(segundos))
     if segundos < 90:
-        return '%ds' % segundos
+        return f'{segundos}s'
     if segundos < 5400:
-        return '%dm' % (segundos // 60)
+        return f'{segundos // 60}m'
     if segundos < 172800:
-        return '%dh' % (segundos // 3600)
-    return '%dd' % (segundos // 86400)
+        return f'{segundos // 3600}h'
+    return f'{segundos // 86400}d'
 
 
 def desde(stamp):
     if not stamp:
         return 'nunca'
-    return '%s (hace %s)' % (time.strftime('%m-%d %H:%M', time.localtime(stamp)),
-                             humano(time.time() - stamp))
+    return f"{time.strftime('%m-%d %H:%M', time.localtime(stamp))} (hace {humano(time.time() - stamp)})"
 
 
 def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
@@ -332,51 +331,50 @@ def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
 def pantalla(datos):
     alias = datos['alias']
     titulo, explicacion = datos['veredicto']
-    print('%s · %s · %s' % (alias, datos['info'].get('harness'), datos['info'].get('container')))
+    print(f'{alias} · {datos["info"].get("harness")} · {datos["info"].get("container")}')
     print('=' * 78)
-    print('  %-18s %s' % (titulo, explicacion))
+    print(f'  {titulo:<18} {explicacion}')
     print('')
     unidad = datos['unidad']
-    print('  adaptador   unit %s: %s/%s desde %s · %s reinicios'
-          % (datos['unit'], unidad.get('ActiveState', '?'), unidad.get('SubState', '?'),
-             (unidad.get('ActiveEnterTimestamp') or '?'), unidad.get('NRestarts', '?')))
+    print(f'  adaptador   unit {datos["unit"]}: {unidad.get("ActiveState", "?")}/{unidad.get("SubState", "?")}'
+          f' desde {unidad.get("ActiveEnterTimestamp") or "?"} · {unidad.get("NRestarts", "?")} reinicios')
     proceso = datos['proceso']
     if proceso:
-        print('              proceso pid %s · vivo hace %s · CPU acumulada %s (%s%%)%s'
-              % (proceso['pid'], proceso['edad'], proceso['cpu'], proceso['pcpu'],
-                 '' if datos.get('harness_vivo') is not False else ' · SIN harness adentro'))
+        sin_harness = '' if datos.get('harness_vivo') is not False else ' · SIN harness adentro'
+        print(f'              proceso pid {proceso["pid"]} · vivo hace {proceso["edad"]}'
+              f' · CPU acumulada {proceso["cpu"]} ({proceso["pcpu"]}%){sin_harness}')
     else:
         print('              proceso: NO hay adaptador corriendo para este alias')
     presente = datos['presencia']
     if presente:
-        print('  bus         %s · epoch %s · último latido %s'
-              % ('online' if presente.get('online') else 'OFFLINE', presente.get('epoch'),
-                 desde(epoca(presente.get('last_heartbeat_at')))))
+        print(f'  bus         {"online" if presente.get("online") else "OFFLINE"}'
+              f' · epoch {presente.get("epoch")}'
+              f' · último latido {desde(epoca(presente.get("last_heartbeat_at")))}')
     else:
         print('  bus         el gateway no contestó o no publica presencia de este alias')
     marca = datos['marcador']
     if marca:
-        print('  attach      %s · sesión %s · pid %s · abierto hace %s'
-              % ('ABIERTO' if marca.get('vivo') else 'MARCADOR HUÉRFANO (el pid murió)',
-                 str(marca.get('session'))[:8], marca.get('attach_pid'),
-                 humano(int(time.time()) - int(marca.get('started_at', 0)))))
+        estado_attach = 'ABIERTO' if marca.get('vivo') else 'MARCADOR HUÉRFANO (el pid murió)'
+        print(f'  attach      {estado_attach} · sesión {str(marca.get("session"))[:8]}'
+              f' · pid {marca.get("attach_pid")}'
+              f' · abierto hace {humano(int(time.time()) - int(marca.get("started_at", 0)))}')
     else:
         print('  attach      nadie adentro por consola')
-    print('  %s' % ('cola        ' + datos_cola(datos)))
+    print('  cola        ' + datos_cola(datos))
     act = datos['actividad']
     if act:
-        print('  último ACK  %s%s' % (desde(act['ultimo_ack']),
-                                      ' (%s)' % act['ack_estado'] if act['ack_estado'] else ''))
-        print('  última OK   %s' % desde(act['ultima_hecha']))
+        detalle_ack = f' ({act["ack_estado"]})' if act['ack_estado'] else ''
+        print(f'  último ACK  {desde(act["ultimo_ack"])}{detalle_ack}')
+        print(f'  última OK   {desde(act["ultima_hecha"])}')
     else:
         print('  último ACK  el gateway no contestó')
     ses = datos.get('sesiones')
     if ses:
-        print('  sesiones    %d en total · DM del dueño: %s (último turno %s) · más reciente: %s'
-              % (ses['total'], ses['dm'] or '—', desde(ses['dm_ultimo']), ses['reciente'] or '—'))
+        print(f'  sesiones    {ses["total"]} en total · DM del dueño: {ses["dm"] or "—"}'
+              f' (último turno {desde(ses["dm_ultimo"])}) · más reciente: {ses["reciente"] or "—"}')
         if ses['partidas']:
-            print('              %d de ellas son la misma conversación partida (ia %s --lista)'
-                  % (ses['partidas'], alias))
+            print(f'              {ses["partidas"]} de ellas son la misma conversación partida'
+                  f' (ia {alias} --lista)')
 
 
 def datos_cola(datos):
@@ -388,14 +386,14 @@ def datos_cola(datos):
                'leased': 'reclamadas', 'accepted': 'aceptadas', 'dead': 'muertas'}
     for clave in ('pending', 'started', 'retrying', 'leased', 'accepted', 'dead'):
         if cola['por_estado'].get(clave):
-            partes.append('%d %s' % (cola['por_estado'][clave], nombres[clave]))
+            partes.append(f'{cola["por_estado"][clave]} {nombres[clave]}')
     if not partes:
         return 'nada pendiente'
     linea = ', '.join(partes)
     esperas = [epoca(i.get('available_at')) for i in cola['vivas']]
     esperas = [e for e in esperas if e]
     if esperas:
-        linea += ' · la más vieja espera hace %s' % humano(time.time() - min(esperas))
+        linea += f' · la más vieja espera hace {humano(time.time() - min(esperas))}'
     return linea
 
 
@@ -403,14 +401,14 @@ def resumen_flota(mod):
     try:
         aliases = sorted(json.load(open(mod.MAP))['aliases'])
     except (OSError, ValueError, KeyError):
-        die('no puedo leer %s' % mod.MAP)
+        die(f'no puedo leer {mod.MAP}')
     bus = None
     for alias in aliases:
         _codigo, respuesta = mod.gateway(alias, '/v3/status')
         if isinstance(respuesta, dict) and respuesta.get('presence'):
             bus = respuesta
             break
-    print('%-10s %-18s %-9s %-7s %s' % ('ALIAS', 'ESTADO', 'CPU', 'COLA', 'DETALLE'))
+    print(f'{"ALIAS":<10} {"ESTADO":<18} {"CPU":<9} {"COLA":<7} DETALLE')
     for alias in aliases:
         try:
             datos = reunir(mod, alias, con_sesiones=False, ligero=True, bus=bus)
@@ -419,8 +417,7 @@ def resumen_flota(mod):
         titulo, explicacion = datos['veredicto']
         proceso = datos['proceso'] or {}
         vivas = len(datos['cola']['vivas']) if datos['cola'] else '?'
-        print('%-10s %-18s %-9s %-7s %s'
-              % (alias, titulo, proceso.get('cpu', '—'), vivas, explicacion[:70]))
+        print(f'{alias:<10} {titulo:<18} {proceso.get("cpu", "—"):<9} {vivas:<7} {explicacion[:70]}')
 
 
 def main():

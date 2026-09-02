@@ -22,7 +22,14 @@ QUE NO HACE
   fecha, nunca como si fuera de ahora. Tampoco copia credenciales entre contenedores.
 """
 from __future__ import annotations
-import argparse, calendar, json, os, subprocess, sys, time
+
+import argparse
+import calendar
+import json
+import os
+import subprocess
+import sys
+import time
 
 HOST_REMOTO = "vps"
 COMPARTIDO = os.environ.get("CAUCE_QC_COMPARTIDO",
@@ -142,7 +149,8 @@ def main():
     a = p.parse_args()
 
     if a.local:
-        print(json.dumps(barre_local(os.uname().nodename))); return 0
+        print(json.dumps(barre_local(os.uname().nodename)))
+        return 0
 
     filas = barre_local("kratos")
     # The other host: send THIS SAME file via stdin; no copy to keep in sync.
@@ -154,12 +162,12 @@ def main():
             f["host"] = HOST_REMOTO
             filas.append(f)
     except Exception as e:
-        print("aviso: no pude barrer %s (%s)" % (HOST_REMOTO, type(e).__name__), file=sys.stderr)
+        print(f"aviso: no pude barrer {HOST_REMOTO} ({type(e).__name__})", file=sys.stderr)
 
     cache = carga_cache()
     ahora = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     for f in filas:
-        clave = "%s/%s" % (f["host"], f["contenedor"])
+        clave = f'{f["host"]}/{f["contenedor"]}'
         if f.get("apiDice"):
             cache[clave] = {"cuenta": f["apiDice"], "verificadoEn": ahora}
         else:
@@ -178,8 +186,8 @@ def main():
         try:
             with open(os.path.expanduser("~/.local/share/ai-usage-live/discrepancias.log"), "a") as fh:
                 for f in disc:
-                    fh.write("%s %s/%s API=%s CLI=%s\n" % (ahora, f["host"], f["contenedor"],
-                                                           f["apiDice"], f["cliDice"]))
+                    fh.write(f'{ahora} {f["host"]}/{f["contenedor"]}'
+                             f' API={f["apiDice"]} CLI={f["cliDice"]}\n')
         except Exception:
             pass
 
@@ -192,23 +200,24 @@ def main():
 
     if a.json:
         print(json.dumps({"generado": ahora, "saldosDe": capturedAt, "contenedores": filas},
-                         ensure_ascii=False, indent=1)); return 0
+                         ensure_ascii=False, indent=1))
+        return 0
 
-    print("== quien gasta que cuenta Claude ==  %s UTC   (saldos de %s)" % (ahora[11:19], capturedAt or "?"))
-    print("   %-6s %-18s %-30s %-9s %-30s %s" % ("HOST", "CONTENEDOR", "CUENTA REAL (API)", "LIBRE", "EL CLI DICE", "ESTADO"))
+    print(f'== quien gasta que cuenta Claude ==  {ahora[11:19]} UTC   (saldos de {capturedAt or "?"})')
+    print(f'   {"HOST":<6} {"CONTENEDOR":<18} {"CUENTA REAL (API)":<30} {"LIBRE":<9} {"EL CLI DICE":<30} ESTADO')
     for f in sorted(filas, key=lambda x: (x["host"], x["contenedor"])):
         real = f.get("apiDice") or "?"
         if f.get("verificadoEn") and not f.get("estado", "").startswith("verificado"):
             real += "*"                                     # * = identidad de la ultima verificacion
-        libre = "?" if f.get("libre") is None else "%d%% %s" % (f["libre"], (f.get("ventana") or "")[:4])
+        libre = "?" if f.get("libre") is None else f'{int(f["libre"])}% {(f.get("ventana") or "")[:4]}'
         cli = f.get("cliDice") or "?"
         # Only MEASURED discrepancy (API != CLI) is flagged. We do not flag "newer credential
         # than cached name": a token refresh rewrites the credential without changing accounts,
         # so that warning would light up on most containers and stop meaning anything.
         marca = ("  <-- NO COINCIDE: el CLI miente"
                  if (f.get("apiDice") and cli and f["apiDice"].lower() != cli.lower()) else "")
-        print("   %-6s %-18s %-30s %-9s %-30s %s%s" % (
-            f["host"], f["contenedor"], real, libre, cli, f.get("estado") or "?", marca))
+        print(f'   {f["host"]:<6} {f["contenedor"]:<18} {real:<30} {libre:<9}'
+              f' {cli:<30} {f.get("estado") or "?"}{marca}')
     print("   * = no se pudo verificar ahora (token vencido); es la ultima identidad verificada, no una suposicion del CLI.")
     print("   LIBRE '?' = la sonda de esa cuenta no tiene lectura fresca. Un hueco, nunca un numero viejo.")
     return 0

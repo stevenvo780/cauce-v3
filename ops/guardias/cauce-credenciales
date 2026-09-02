@@ -14,7 +14,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 
 MAPA = os.path.expanduser('~/.local/share/cauce-v3/ops/container-aliases.json')

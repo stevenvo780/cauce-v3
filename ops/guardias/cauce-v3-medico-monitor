@@ -52,7 +52,7 @@ try:
     import libro_tareas
 except Exception as _e_libro:  # noqa: BLE001
     libro_tareas = None
-    _MOTIVO_SIN_LIBRO = "%s: %s" % (type(_e_libro).__name__, _e_libro)
+    _MOTIVO_SIN_LIBRO = f"{type(_e_libro).__name__}: {_e_libro}"
 
 AGORA = "root@100.64.0.6"
 VPS = "root@100.64.0.11"
@@ -122,9 +122,9 @@ def sh(host, comando, entrada=None, timeout=90):
                                timeout=timeout)
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
-        return 124, "", "timeout tras %ds" % timeout
+        return 124, "", f"timeout tras {timeout}s"
     except Exception as e:  # noqa: BLE001
-        return 1, "", "%s: %s" % (type(e).__name__, e)
+        return 1, "", f"{type(e).__name__}: {e}"
 
 
 def sql(consulta, columnas=None):
@@ -141,18 +141,17 @@ def sql(consulta, columnas=None):
     cuerpo = consulta.strip().rstrip(";").strip()
     if not cuerpo:
         raise RuntimeError("consulta vacia")
-    orden = "COPY (%s) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);" % cuerpo
+    orden = f"COPY ({cuerpo}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
     rc, out, err = sh("agora", PG, entrada=orden)
     if rc != 0:
-        raise RuntimeError("psql rc=%d: %s" % (rc, err.strip()[:200]))
+        raise RuntimeError(f"psql rc={rc}: {err.strip()[:200]}")
     filas = [f for f in csv.reader(io.StringIO(out, newline="")) if f]
     if columnas is not None:
         malas = [f for f in filas if len(f) != columnas]
         if malas:
             raise RuntimeError(
-                "la consulta declaro %d columna(s) y la base devolvio %d fila(s) con otro "
-                "ancho (la primera trae %d): revisa la CONSULTA, no el texto de los datos"
-                % (columnas, len(malas), len(malas[0])))
+                f"la consulta declaro {columnas} columna(s) y la base devolvio {len(malas)} fila(s) con otro "
+                f"ancho (la primera trae {len(malas[0])}): revisa la CONSULTA, no el texto de los datos")
     return filas
 
 
@@ -164,27 +163,24 @@ def panel_del_alias(alias):
     """
     porque = None
     for host in ("vps", "kratos"):
-        rc, out, _ = sh(host, "ps -eo args | grep 'run --alias %s ' | grep -v grep | "
-                              "grep -oE '\\-\\-container-id [a-f0-9]+' | head -1 | awk '{print $2}'"
-                        % alias, timeout=45)
+        rc, out, _ = sh(host, f"ps -eo args | grep 'run --alias {alias} ' | grep -v grep | "
+                              "grep -oE '\\-\\-container-id [a-f0-9]+' | head -1 | awk '{print $2}'", timeout=45)
         cid = (out or "").strip()
         if rc != 0 or not cid:
-            porque = ("no encontre el proceso de %s ni en el VPS ni en kratos: sin panel que leer"
-                      % alias)
+            porque = f"no encontre el proceso de {alias} ni en el VPS ni en kratos: sin panel que leer"
             continue
         rc, out, err = sh(host,
-                          "docker exec %s sh -lc \"tmux -L cauce capture-pane -p -t cauce-%s\" "
-                          "2>&1 | grep -v '^[[:space:]]*$' | tail -30" % (cid, alias), timeout=60)
+                          f"docker exec {cid} sh -lc \"tmux -L cauce capture-pane -p -t cauce-{alias}\" "
+                          "2>&1 | grep -v '^[[:space:]]*$' | tail -30", timeout=60)
         txt = (out or err or "").strip()
         if "tmux: not found" in txt:
-            return None, ("el contenedor de %s NO TIENE tmux: no hay panel, y por eso su sesion no "
-                          "puede ser compartida. Eso es una averia en si, no una falta de dato"
-                          % alias)
+            return None, (f"el contenedor de {alias} NO TIENE tmux: no hay panel, y por eso su sesion no "
+                          "puede ser compartida. Eso es una averia en si, no una falta de dato")
         if rc != 0 or not txt:
-            porque = "no pude capturar el panel de %s en %s (rc=%d)" % (alias, host, rc)
+            porque = f"no pude capturar el panel de {alias} en {host} (rc={rc})"
             continue
         return txt, None
-    return None, porque or "no pude leer el panel de %s en ningun host" % alias
+    return None, porque or f"no pude leer el panel de {alias} en ningun host"
 
 
 def causa_en_el_panel(texto):
@@ -247,13 +243,12 @@ def detalle_congelado(alias, vuelve, total, cuando):
     wrote anything after, not because the limit is still in effect. A restart is what frees
     the TUI; quota is not the actual blocker.
     """
-    return ("%s se quedo CONGELADO en el cartel de limite: su proveedor dijo que volvia el "
-            "%s UTC, esa hora YA PASO y el alias no reintenta solo -la TUI se queda en el "
-            "cartel para siempre-. NO hace falta dinero: hace falta REINICIARLO "
-            "(`cauce %s off && cauce %s on`). Comproba antes que la cuota volvio de verdad; "
+    return (f"{alias} se quedo CONGELADO en el cartel de limite: su proveedor dijo que volvia el "
+            f"{vuelve.strftime('%Y-%m-%d %H:%M')} UTC, esa hora YA PASO y el alias no reintenta solo "
+            "-la TUI se queda en el cartel para siempre-. NO hace falta dinero: hace falta REINICIARLO "
+            f"(`cauce {alias} off && cauce {alias} on`). Comproba antes que la cuota volvio de verdad; "
             "si tras el reinicio, y con saldo, sigue fallando, ENTONCES si es dinero. "
-            "(%d falla(s) en 24 h, la ultima %s UTC)"
-            % (alias, vuelve.strftime("%Y-%m-%d %H:%M"), alias, alias, total, cuando))
+            f"({total} falla(s) en 24 h, la ultima {cuando} UTC)")
 
 
 def cuanto_falta(segundos):
@@ -264,10 +259,10 @@ def cuanto_falta(segundos):
     """
     minutos = int(segundos // 60)
     if minutos < 60:
-        return "faltan %d min" % max(minutos, 0)
+        return f"faltan {max(minutos, 0)} min"
     if minutos < 60 * 24:
-        return "faltan %dh%02dm" % (minutos // 60, minutos % 60)
-    return "faltan %.0f h" % (minutos / 60.0)
+        return f"faltan {minutos // 60}h{minutos % 60:02d}m"
+    return f"faltan {minutos / 60.0:.0f} h"
 
 
 def _reset_solo_hora(texto, ahora=None):
@@ -401,9 +396,8 @@ def estado_fresco_unidad(host, unidad):
     """
     base = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if host == "kratos"
             else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
-    rc, out, _ = sh(host, "cat /proc/uptime; %s show %s -p ActiveState,SubState,Result,"
-                          "ActiveEnterTimestampMonotonic,InactiveEnterTimestampMonotonic"
-                    % (base, unidad), timeout=40)
+    rc, out, _ = sh(host, f"cat /proc/uptime; {base} show {unidad} -p ActiveState,SubState,Result,"
+                          "ActiveEnterTimestampMonotonic,InactiveEnterTimestampMonotonic", timeout=40)
     if rc != 0 or not out.strip():
         return None
     lineas = out.strip().split("\n")
@@ -444,18 +438,17 @@ def _lee_reinicio(fresco, ventana_s=VENTANA_REINICIO_S):
         # notice and is already back; (b) the chosen unit was the leftover `inactive` from
         # a host move while the real one is up. In both, with the unit active NOW, we
         # cannot conclude the alias is without adapter.
-        return True, ("la unidad %s en %s esta ACTIVA al remedirla (arriba hace %s s): la "
-                      "muestra del principio de la corrida no alcanza para declararlo mudo"
-                      % (unidad, host,
-                         int(fresco["hace_activa_s"]) if fresco["hace_activa_s"] else "?"))
+        return True, (f"la unidad {unidad} en {host} esta ACTIVA al remedirla (arriba hace "
+                      f"{int(fresco['hace_activa_s']) if fresco['hace_activa_s'] else '?'} s): la "
+                      "muestra del principio de la corrida no alcanza para declararlo mudo")
     if fresco["active"] in ("activating", "reloading", "deactivating"):
-        return True, ("la unidad %s en %s esta en '%s': esta arrancando o parando ahora mismo, "
-                      "no esta caida" % (unidad, host, fresco["active"]))
+        return True, (f"la unidad {unidad} en {host} esta en '{fresco['active']}': esta "
+                      "arrancando o parando ahora mismo, no esta caida")
     parada = fresco["hace_parada_s"]
     if fresco["result"] == "success" and parada is not None and parada < ventana_s:
-        return True, ("la unidad %s en %s se paro ORDENADAMENTE (Result=success) hace %d s, "
-                      "dentro de la ventana de reinicio de %d s: es un apagado deliberado en "
-                      "curso, no una caida" % (unidad, host, int(parada), ventana_s))
+        return True, (f"la unidad {unidad} en {host} se paro ORDENADAMENTE (Result=success) hace {int(parada)} s, "
+                      f"dentro de la ventana de reinicio de {ventana_s} s: es un apagado deliberado en "
+                      "curso, no una caida")
     return False, ""
 
 
@@ -492,18 +485,17 @@ def mapa_adaptadores(procs):
 def clientes_tmux(alias, adaptador):
     """How many tmux clients are attached to the alias's panel. Restarting or killing
     anything on an alias with its owner's TUI open drops the session: never done solo."""
-    sesion = "cauce-%s" % alias
+    sesion = f"cauce-{alias}"
     if not adaptador:
         return None
     if adaptador.get("contenedor"):
-        cmd = "docker exec %s tmux -L cauce list-clients -t %s 2>/dev/null" % (
-            adaptador["contenedor"], sesion)
+        cmd = f"docker exec {adaptador['contenedor']} tmux -L cauce list-clients -t {sesion} 2>/dev/null"
     else:
-        cmd = "tmux -L cauce list-clients -t %s 2>/dev/null" % sesion
+        cmd = f"tmux -L cauce list-clients -t {sesion} 2>/dev/null"
     rc, out, _ = sh(adaptador["host"], cmd, timeout=30)
     if rc != 0:
         return 0
-    return len([l for l in out.strip().split("\n") if l.strip()])
+    return len([line for line in out.strip().split("\n") if line.strip()])
 
 
 # ------------------------------------------------------------------------------ sondas
@@ -545,14 +537,14 @@ def sonda_telegram():
         if rc2 == 0:
             rc, out, err = rc2, out2, err2
         else:
-            return {}, ("sonda telegram rc=%d y el reintento tambien fallo (rc=%d): %s"
-                        % (rc, rc2, (err2 or err).strip()[:130]))
+            return {}, (f"sonda telegram rc={rc} y el reintento tambien fallo "
+                        f"(rc={rc2}): {(err2 or err).strip()[:130]}")
     if rc != 0:
-        return {}, "sonda telegram rc=%d: %s" % (rc, err.strip()[:150])
+        return {}, f"sonda telegram rc={rc}: {err.strip()[:150]}"
     try:
         return json.loads(out.strip().split("\n")[-1]), None
     except Exception as e:  # noqa: BLE001
-        return {}, "sonda telegram ilegible: %s" % e
+        return {}, f"sonda telegram ilegible: {e}"
 
 
 SONDA_CRED = r'''
@@ -591,7 +583,7 @@ def sonda_credenciales(adaptadores):
             credential_locations.append((vistos[ctr], alias, ctr))
             continue
         for ruta in ("/home/dev/.claude/.credentials.json", "/home/claw/.claude/.credentials.json"):
-            cmd = "docker exec -i %s python3 -c \"$(cat)\" %s" % (ctr, ruta)
+            cmd = f"docker exec -i {ctr} python3 -c \"$(cat)\" {ruta}"
             rc, out, _ = sh(ad["host"], cmd, entrada=SONDA_CRED, timeout=40)
             if rc != 0 or not out.strip():
                 continue
@@ -751,9 +743,9 @@ def respuestas_perdidas(horas=24):
         "         in regexp_replace(coalesce(m2.body::text,''),'\\s+',' ','g')) > 0)::text "
         "from deliveries d join messages m on m.id = d.message_id "
         "where d.status in ('dead','failed') "
-        "  and d.terminal_at > now() - interval '%d hours' "
+        f"  and d.terminal_at > now() - interval '{int(horas)} hours' "
         "  and coalesce(m.body->>'type','') = 'agent.response' "
-        "order by d.terminal_at desc;" % int(horas), columnas=7)
+        "order by d.terminal_at desc;", columnas=7)
     perdidas, rechazadas = {}, {}
     for f in filas:
         if len(f) < 7:
@@ -775,8 +767,8 @@ def captura_en_vuelo(alias):
         "select d.id, d.message_id, m.actor_alias, m.tenant_id, m.room_id, m.lane, "
         "m.priority, m.request_id, replace(coalesce(m.body->>'text',''), chr(10), ' ') "
         "from deliveries d join messages m on m.id = d.message_id "
-        "where d.recipient_alias = '%s' "
-        "and d.status in ('claimed','accepted','started');" % alias.replace("'", "''"),
+        "where d.recipient_alias = '{}' "
+        "and d.status in ('claimed','accepted','started');".format(alias.replace("'", "''")),
         columnas=9)
     return [{"delivery": f[0], "message": f[1], "actor": f[2], "tenant": f[3],
              "room": f[4], "lane": f[5], "priority": f[6], "request_id": f[7],
@@ -806,7 +798,7 @@ def matar_por_pid(host, pid, args_esperados, contenedor=None, alias=None):
     is known, the search and the kill both move INSIDE it (`docker exec <c> ...`), by a PID
     read from the container's own process table -- never the host's -- and scoped to `alias`.
     """
-    rc, out, _ = sh(host, "tr '\\0' ' ' < /proc/%d/cmdline 2>/dev/null" % pid, timeout=30)
+    rc, out, _ = sh(host, f"tr '\\0' ' ' < /proc/{pid}/cmdline 2>/dev/null", timeout=30)
     if rc != 0 or not out.strip():
         return False, "el proceso ya no existe"
     if not RE_PUENTE.search(out) and not RE_PUENTE_NATIVO.search(out):
@@ -815,15 +807,15 @@ def matar_por_pid(host, pid, args_esperados, contenedor=None, alias=None):
     if es_supervisor_no_puente(out):
         if contenedor and alias:
             return matar_puente_dentro_del_contenedor(host, contenedor, alias)
-        return False, ("el pid %d es el supervisor/cliente docker exec del adaptador, no la "
-                       "puente: no se toca en el host" % pid)
-    sh(host, "kill -TERM %d" % pid, timeout=30)
+        return False, (f"el pid {pid} es el supervisor/cliente docker exec del adaptador, no la "
+                       "puente: no se toca en el host")
+    sh(host, f"kill -TERM {pid}", timeout=30)
     sh(host, "sleep 10", timeout=40)
-    rc, _, _ = sh(host, "test -d /proc/%d" % pid, timeout=30)
+    rc, _, _ = sh(host, f"test -d /proc/{pid}", timeout=30)
     if rc == 0:
-        sh(host, "kill -KILL %d" % pid, timeout=30)
+        sh(host, f"kill -KILL {pid}", timeout=30)
         sh(host, "sleep 5", timeout=30)
-        rc, _, _ = sh(host, "test -d /proc/%d" % pid, timeout=30)
+        rc, _, _ = sh(host, f"test -d /proc/{pid}", timeout=30)
     return (rc != 0), ("el proceso desaparecio" if rc != 0 else "SIGUE VIVO tras SIGKILL")
 
 
@@ -834,10 +826,10 @@ def matar_puente_dentro_del_contenedor(host, contenedor, alias):
     PID, never a host PID. A container can host more than one alias's bridge (e.g.
     ws-humanizar hosts both atlas and kratos), so the path match alone is not enough --
     RE_PUENTE's own `alias` group must equal the caller's `alias` too."""
-    rc, out, _ = sh(host, "docker exec %s ps -eo pid,args --no-headers 2>/dev/null" % contenedor,
+    rc, out, _ = sh(host, f"docker exec {contenedor} ps -eo pid,args --no-headers 2>/dev/null",
                     timeout=30)
     if rc != 0 or not out.strip():
-        return False, "no pude listar procesos dentro del contenedor %s" % contenedor
+        return False, f"no pude listar procesos dentro del contenedor {contenedor}"
     objetivo = None
     for linea in out.split("\n"):
         partes = linea.strip().split(None, 1)
@@ -851,22 +843,20 @@ def matar_puente_dentro_del_contenedor(host, contenedor, alias):
             objetivo = int(cpid)
             break
     if objetivo is None:
-        return False, "no encontre la puente del alias %s DENTRO del contenedor %s" % (
-            alias, contenedor)
-    sh(host, "docker exec %s kill -TERM %d" % (contenedor, objetivo), timeout=30)
+        return False, f"no encontre la puente del alias {alias} DENTRO del contenedor {contenedor}"
+    sh(host, f"docker exec {contenedor} kill -TERM {objetivo}", timeout=30)
     sh(host, "sleep 10", timeout=40)
-    rc, _, _ = sh(host, "docker exec %s test -d /proc/%d" % (contenedor, objetivo), timeout=30)
+    rc, _, _ = sh(host, f"docker exec {contenedor} test -d /proc/{objetivo}", timeout=30)
     if rc == 0:
-        sh(host, "docker exec %s kill -KILL %d" % (contenedor, objetivo), timeout=30)
+        sh(host, f"docker exec {contenedor} kill -KILL {objetivo}", timeout=30)
         sh(host, "sleep 5", timeout=30)
-        rc, _, _ = sh(host, "docker exec %s test -d /proc/%d" % (contenedor, objetivo), timeout=30)
-    return (rc != 0), (("el proceso desaparecio dentro del contenedor (pid interno %d)"
-                        % objetivo) if rc != 0 else
-                       "SIGUE VIVO dentro del contenedor tras SIGKILL")
+        rc, _, _ = sh(host, f"docker exec {contenedor} test -d /proc/{objetivo}", timeout=30)
+    return (rc != 0), (f"el proceso desaparecio dentro del contenedor (pid interno {objetivo})"
+                       if rc != 0 else "SIGUE VIVO dentro del contenedor tras SIGKILL")
 
 
 def reiniciar_puente_telegram():
-    rc, _, err = sh("agora", "docker restart %s" % PUENTE_TELEGRAM, timeout=180)
+    rc, _, err = sh("agora", f"docker restart {PUENTE_TELEGRAM}", timeout=180)
     return rc == 0, (err.strip()[:150] if rc != 0 else "docker restart devolvio 0")
 
 
@@ -888,41 +878,40 @@ def ciclo_rescate(alias, adaptador, apuntes):
         # Not a theoretical precaution: the panel starts with `exec claude` bare and the
         # agent comes back without knowing what it was doing. REPORT it for a human.
         return {"resultado": "omitido",
-                "razon": "%s todavia PIERDE TODO SU CONTEXTO al reiniciarse (panel con `exec` "
+                "razon": f"{alias} todavia PIERDE TODO SU CONTEXTO al reiniciarse (panel con `exec` "
                          "pelado, sin reanudar sesion): reiniciarlo es amnesia, no reparacion. "
-                         "Se reporta; lo arregla el SDK, no el guardia." % alias}
+                         "Se reporta; lo arregla el SDK, no el guardia."}
     # Restarting with work in flight kills it at attempt=1 and it does NOT retry. While
     # re-injection isn't implemented, this is destroying work, not rescuing it.
     en_vuelo = captura_en_vuelo(alias)
     if en_vuelo:
         return {"resultado": "omitido", "perdido": en_vuelo,
-                "razon": "%d entrega(s) EN VUELO: reiniciar ahora las mata con attempt=1 y "
-                         "nadie las reintenta (la re-inyeccion automatica no existe todavia)"
-                         % len(en_vuelo)}
+                "razon": f"{len(en_vuelo)} entrega(s) EN VUELO: reiniciar ahora las mata con attempt=1 y "
+                         "nadie las reintenta (la re-inyeccion automatica no existe todavia)"}
     if adaptador.get("bundle") != RELEASE_CON_FIX78 or adaptador.get("digest") != DIGEST_CON_FIX78:
         return {"resultado": "omitido",
-                "razon": "release sin el fix de exit 78 (%s): reiniciarlo puede dejarlo "
-                         "en failed sin arrancar" % (adaptador.get("bundle") or "?")}
+                "razon": f"release sin el fix de exit 78 ({adaptador.get('bundle') or '?'}): reiniciarlo puede dejarlo "
+                         "en failed sin arrancar"}
     n = clientes_tmux(alias, adaptador)
     if n:
         return {"resultado": "omitido",
-                "razon": "%d cliente(s) de tmux atados: reiniciar le tumba la TUI a su dueno" % n}
+                "razon": f"{n} cliente(s) de tmux atados: reiniciar le tumba la TUI a su dueno"}
 
     perdido = captura_en_vuelo(alias)          # paso 1
     apuntes.append({"tipo": "captura_previa", "alias": alias, "entregas": perdido})
 
-    unidad = "cauce-v3-container-%s.service" % alias
+    unidad = f"cauce-v3-container-{alias}.service"
     base = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if adaptador["host"] == "kratos"
             else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
-    rc, out, err = sh(adaptador["host"], "%s restart %s 2>&1" % (base, unidad), timeout=180)
+    rc, out, err = sh(adaptador["host"], f"{base} restart {unidad} 2>&1", timeout=180)
     salida_arranque = (out + err)[-2000:]      # paso 4: se guarda ENTERA, no se filtra
     sh(adaptador["host"], "sleep 15", timeout=40)
-    _, estado, _ = sh(adaptador["host"], "%s is-active %s" % (base, unidad), timeout=40)
+    _, estado, _ = sh(adaptador["host"], f"{base} is-active {unidad}", timeout=40)
     estado = estado.strip()
     if estado != "active":                     # paso 3
         return {"resultado": "fallo", "estado": estado, "perdido": perdido,
                 "salida": salida_arranque,
-                "razon": "quedo en '%s': NO se re-inyecta nada contra un alias muerto" % estado}
+                "razon": f"quedo en '{estado}': NO se re-inyecta nada contra un alias muerto"}
 
     sin_panel = "SIN sesion compartida" in salida_arranque
     return {"resultado": "reiniciado", "estado": estado, "perdido": perdido,
@@ -932,22 +921,22 @@ def ciclo_rescate(alias, adaptador, apuntes):
 
 # ---------------------------------------------------------------------------- reportar
 
-PLANTILLA_AVISO = r'''
+PLANTILLA_AVISO = rf'''
 import json, sys, urllib.parse, urllib.request
 texto = json.load(sys.stdin)["texto"]
-tok = open("%s").read().strip()
-d = urllib.parse.urlencode({"chat_id": "%s", "text": texto}).encode()
-with urllib.request.urlopen("https://api.telegram.org/bot%%s/sendMessage" %% tok, d, timeout=25) as r:
+tok = open("{TOKEN_AVISO}").read().strip()
+d = urllib.parse.urlencode({{"chat_id": "{CHAT_STEVEN}", "text": texto}}).encode()
+with urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % tok, d, timeout=25) as r:
     r.read()
 print("enviado")
-''' % (TOKEN_AVISO, CHAT_STEVEN)
+'''
 
 
 def avisar(texto):
     """Send the notice to the owner's chat. Runs on the storage host: the token never
     leaves it. Same path as the night-watch already uses, proven."""
     rc, out, err = sh("agora", "python3 -", entrada=PLANTILLA_AVISO.replace(
-        "json.load(sys.stdin)", "json.loads(%r)" % json.dumps({"texto": texto})), timeout=60)
+        "json.load(sys.stdin)", f"json.loads({json.dumps({'texto': texto})!r})"), timeout=60)
     return rc == 0 and "enviado" in out, err.strip()[:150]
 
 
@@ -1148,9 +1137,9 @@ def avisos_propios_muertos(filas):
             continue
         salida.append({
             "tipo": "aviso_propio_muerto", "alias": alias,
-            "detalle": ("%s entrega(s) del PROPIO guardia hacia %s murieron en las ultimas "
-                        "24 h sin llegar (la ultima, %s UTC): el canal por el que el medico "
-                        "avisa de los fallos se rompio, y nadie se entero" % (n, alias, cuando)),
+            "detalle": (f"{n} entrega(s) del PROPIO guardia hacia {alias} murieron en las ultimas "
+                        f"24 h sin llegar (la ultima, {cuando} UTC): el canal por el que el medico "
+                        "avisa de los fallos se rompio, y nadie se entero"),
             "evidencia": {
                 "como se identifica": "body->>'guardia' = 'cauce-medico-monitor' (no depende "
                                        "de body->>'type', que aqui sale NULO)",
@@ -1158,8 +1147,8 @@ def avisos_propios_muertos(filas):
                 "ultima_entrega_OK": cuando_ok or "(nunca)",
                 "consulta": "select d.* from deliveries d join messages m on m.id=d.message_id "
                             "where m.body->>'guardia'='cauce-medico-monitor' and d.recipient_"
-                            "alias='%s' and d.status in ('failed','dead') order by "
-                            "d.created_at desc" % alias.replace("'", "''"),
+                            "alias='{}' and d.status in ('failed','dead') order by "
+                            "d.created_at desc".format(alias.replace("'", "''")),
             }})
     return salida
 
@@ -1219,20 +1208,18 @@ def nadie_bloqueado_por(etiqueta):
     if not filas:
         return False, "no hay censo para esta cuenta: no puedo saber a quien afecta"
     if censo_rancio():
-        return False, ("el censo es del %s, mas de %d dias: no afirmo un negativo con datos "
-                       "viejos" % (CENSO_FECHA, DIAS_CENSO_CADUCA))
+        return False, (f"el censo es del {CENSO_FECHA}, mas de {DIAS_CENSO_CADUCA} dias: no afirmo "
+                       "un negativo con datos viejos")
     medidos = []
     for alias_c, _ctr, _arnes in filas:
         panel, por_que_no = panel_del_alias(alias_c)
         if not panel:
-            return False, ("no pude leer el panel de %s (%s): sin eso no se si esta bloqueado"
-                           % (alias_c, por_que_no))
+            return False, f"no pude leer el panel de {alias_c} ({por_que_no}): sin eso no se si esta bloqueado"
         causa_c = causa_en_el_panel(panel)
         if causa_c:
-            return False, "%s SI esta bloqueado -- %s" % (alias_c, causa_c[:140])
+            return False, f"{alias_c} SI esta bloqueado -- {causa_c[:140]}"
         medidos.append(alias_c)
-    return True, ("medi el panel de %s y ninguno muestra causa de bloqueo"
-                  % ", ".join(medidos))
+    return True, f"medi el panel de {', '.join(medidos)} y ninguno muestra causa de bloqueo"
 
 
 def censo_rancio():
@@ -1255,18 +1242,17 @@ def censo_de(etiqueta):
     filas = CENSO_CUENTA.get(etiqueta)
     if not filas:
         return ("censo sin entrada para esta cuenta: levantalo a mano", "desconocido")
-    usa = ", ".join("%s (%s, arnes %s)" % f for f in filas)
+    usa = ", ".join(f"{f[0]} ({f[1]}, arnes {f[2]})" for f in filas)
     mudos = [f[0] for f in filas if f[2] == "claude"]
     if mudos:
-        sin = ("%s -- arnes `claude`, SIN escalera de modelos: si la cuenta rechaza se quedan "
-               "mudos, no caen a otro proveedor" % ", ".join(mudos))
+        sin = (f"{', '.join(mudos)} -- arnes `claude`, SIN escalera de modelos: si la cuenta "
+               "rechaza se quedan mudos, no caen a otro proveedor")
     elif censo_rancio():
         # Don't affirm a negative from a stale census; an outdated map has misattributed
         # which alias uses which account.
-        sin = ("NO VERIFICADO: segun el censo del %s ninguno se quedaria mudo, pero ese censo "
-               "tiene mas de %d dias y ya se equivoco una vez. Rehacelo antes de fiarte: "
-               "`docker exec <ctr> sh -lc 'claude auth status'` en cada contenedor"
-               % (CENSO_FECHA, DIAS_CENSO_CADUCA))
+        sin = (f"NO VERIFICADO: segun el censo del {CENSO_FECHA} ninguno se quedaria mudo, pero ese censo "
+               f"tiene mas de {DIAS_CENSO_CADUCA} dias y ya se equivoco una vez. Rehacelo antes de fiarte: "
+               "`docker exec <ctr> sh -lc 'claude auth status'` en cada contenedor")
     else:
         sin = ("ninguno: todos tienen escalera (openclaw) o no usan la cuenta Claude (codex)")
     return (usa, sin)
@@ -1326,8 +1312,7 @@ def hallazgo_cuenta_rota(etiqueta, plan, cuenta, racha_prev, capturado):
                   "o agotada")
     else:
         motivo = "no responde el sondeo (motivo sin forma conocida de fallo de instrumento)"
-    detalle = ("la cuenta %s (%s) %s, persistente en %d corridas seguidas"
-              % (etiqueta, plan, motivo, racha))
+    detalle = f"la cuenta {etiqueta} ({plan}) {motivo}, persistente en {racha} corridas seguidas"
     return racha, {"tipo": "cuenta_ia", "alias": etiqueta, "detalle": detalle,
                    "evidencia": {"fichero": CUENTAS_LIVE, "capturedAt": capturado,
                                  "racha corridas seguidas": racha, "registro": registro}}
@@ -1379,7 +1364,7 @@ def pares_de_evidencia(ev):
             elif isinstance(item, dict):
                 pares.extend((str(k), v) for k, v in item.items())
             else:
-                pares.append(("evidencia[%d]" % i, item))
+                pares.append((f"evidencia[{i}]", item))
         return pares
     return [("evidencia", ev)]
 
@@ -1485,12 +1470,11 @@ def publicar(tenant, alias, cuerpo, clave, extra=None):
         "room_id": "grp.steven",
         "recipients": [{"tenant_id": tenant, "alias": alias}],
         "body": body,
-        "idempotency_key": "medico-%s-%s" % (
-            re.sub(r"[^a-zA-Z0-9_.-]", "_", clave)[:32], huella),
+        "idempotency_key": f"medico-{re.sub(r'[^a-zA-Z0-9_.-]', '_', clave)[:32]}-{huella}",
     }
-    prog = DESPACHO.replace("json.loads(sys.stdin.read())", "json.loads(%r)" % json.dumps(payload))
+    prog = DESPACHO.replace("json.loads(sys.stdin.read())", f"json.loads({json.dumps(payload)!r})")
     rc, out, err = sh("agora", "python3 -", entrada=prog, timeout=90)
-    lineas = [l for l in out.strip().split("\n") if l.strip()]
+    lineas = [line for line in out.strip().split("\n") if line.strip()]
     estado = lineas[0] if lineas else "?"
     return (rc == 0 and estado == "202"), (out.strip() + " " + err.strip())[:400]
 
@@ -1523,18 +1507,17 @@ def git_commit(mensaje):
     """LOCAL commit of the log. The repo intentionally has no remote: an automatic, midnight,
     unreviewed push is exactly the kind of thing one must be able to undo."""
     if not os.path.isdir(os.path.join(ESTADO_DIR, ".git")):
-        sh("kratos", "git -C %s init -q" % ESTADO_DIR, timeout=40)
+        sh("kratos", f"git -C {ESTADO_DIR} init -q", timeout=40)
         with open(os.path.join(ESTADO_DIR, ".gitignore"), "w") as f:
             # Never version anything that could drag a secret.
             f.write("lock\n*.token\n*.key\n*.crt\n.env\n")
-    sh("kratos", "git -C %s add -A" % ESTADO_DIR, timeout=40)
-    rc, _, _ = sh("kratos", "git -C %s diff --cached --quiet" % ESTADO_DIR, timeout=40)
+    sh("kratos", f"git -C {ESTADO_DIR} add -A", timeout=40)
+    rc, _, _ = sh("kratos", f"git -C {ESTADO_DIR} diff --cached --quiet", timeout=40)
     if rc == 0:
         return False
     seguro = mensaje.replace("'", "").replace("\n", " ")[:400]
-    rc, _, _ = sh("kratos", "git -C %s -c user.name=cauce-medico "
-                            "-c user.email=medico@cauce.local commit -q -m '%s'"
-                            % (ESTADO_DIR, seguro), timeout=60)
+    rc, _, _ = sh("kratos", f"git -C {ESTADO_DIR} -c user.name=cauce-medico "
+                            f"-c user.email=medico@cauce.local commit -q -m '{seguro}'", timeout=60)
     return rc == 0
 
 
@@ -1581,16 +1564,16 @@ def main():
     procs_rotos = [h for h in ("kratos", "vps") if not any(p["host"] == h for p in procs)]
     for h in procs_rotos:
         escalar.append({"tipo": "sonda_procesos", "alias": "-",
-                        "detalle": "el sondeo de procesos en %s no devolvio NINGUN proceso: la "
+                        "detalle": f"el sondeo de procesos en {h} no devolvio NINGUN proceso: la "
                                    "sonda esta rota, no se puede concluir que ningun alias tenga "
-                                   "adaptador vivo" % h})
+                                   "adaptador vivo"})
     sondas_rotas = [h for h, u in unids_por_host.items() if not u] + procs_rotos
     for h in sondas_rotas:
         escalar.append({"tipo": "sonda_unidades", "alias": "-",
-                        "detalle": "el sondeo de unidades en %s no devolvio NINGUNA unidad "
+                        "detalle": f"el sondeo de unidades en {h} no devolvio NINGUNA unidad "
                                    "cauce: la sonda esta rota, no se puede concluir que "
                                    "ningun alias este sin adaptador (mirar XDG_RUNTIME_DIR "
-                                   "y `systemctl --user` para el usuario stev)" % h})
+                                   "y `systemctl --user` para el usuario stev)"})
     unids = {}
     for alias in set(unids_por_host["vps"]) | set(unids_por_host["kratos"]):
         candidatos = [u for h in ("vps", "kratos")
@@ -1619,8 +1602,8 @@ def main():
         if pend > 0 and quieto >= MIN_CURSOR_QUIETO:
             trabados.append(alias)
             hallazgos.append({"modo": 1, "alias": alias,
-                              "detalle": "poller trabado: %d pendientes en Telegram y el "
-                                         "cursor lleva %d min sin avanzar" % (pend, quieto)})
+                              "detalle": f"poller trabado: {pend} pendientes en Telegram y el "
+                                         f"cursor lleva {quieto} min sin avanzar"})
 
     if trabados and not args.solo_detectar:
         antes = {a: curs[a]["cursor"] for a in trabados}
@@ -1631,7 +1614,7 @@ def main():
                   if despues.get(a, {}).get("cursor", -1) != antes.get(a)]
         acciones.append({"accion": "reiniciar_puente_telegram", "alias": trabados,
                          "ok": ok, "detalle": det,
-                         "verificado": ("el cursor avanzo en: %s" % ", ".join(avanzo))
+                         "verificado": f"el cursor avanzo en: {', '.join(avanzo)}"
                          if avanzo else "NO VERIFICADO: ningun cursor avanzo todavia"})
 
     # --- 2) turno colgado --------------------------------------------------------------
@@ -1649,8 +1632,8 @@ def main():
         if mins < MIN_TURNO_COLGADO:
             continue
         hallazgos.append({"modo": 2, "alias": alias,
-                          "detalle": "turno colgado %d min (pid %d, cpu %.1f%%, rss %d MB)"
-                                     % (mins, p["pid"], p["pcpu"], p["rss"] // 1024)})
+                          "detalle": f"turno colgado {mins} min (pid {p['pid']}, "
+                                     f"cpu {p['pcpu']:.1f}%, rss {p['rss'] // 1024} MB)"})
         if args.solo_detectar:
             continue
         antes = [e for e in entregas_trabadas() if e["alias"] == alias]
@@ -1663,8 +1646,8 @@ def main():
             ids_antes = {e["id"] for e in antes}
             ids_despues = {e["id"] for e in despues}
             cerradas = ids_antes - ids_despues
-            efecto = ("el alias volvio a cerrar entregas (%d salieron de su estado trabado)"
-                      % len(cerradas)) if cerradas else \
+            efecto = (f"el alias volvio a cerrar entregas ({len(cerradas)} salieron de su "
+                      "estado trabado)") if cerradas else \
                      "NO VERIFICADO: las entregas siguen en el mismo estado"
         acciones.append({"accion": "matar_turno_colgado", "alias": alias, "pid": p["pid"],
                          "host": p["host"], "cmdline": p["args"][:500], "ok": ok,
@@ -1693,24 +1676,24 @@ def main():
         if progresa and e["edad_min"] >= TECHO_TURNO_LARGO:
             # "Progress" stops being reassuring past the ceiling: the lease renews by itself
             # even if the harness is stuck waiting on a key.
-            e["por_que"] = ("%s -- PERO lleva %d min: pasado el techo de %d, que la reserva "
-                            "siga viva ya no prueba que el trabajo avance"
-                            % (motivo, e["edad_min"], TECHO_TURNO_LARGO))
+            e["por_que"] = (f"{motivo} -- PERO lleva {e['edad_min']} min: pasado el techo de "
+                            f"{TECHO_TURNO_LARGO}, que la reserva siga viva ya no prueba que el "
+                            "trabajo avance")
             progresa = False
             e["zombi"] = True
         (largos if progresa else por_alias).setdefault(e["alias"], []).append(e)
     for alias, lista in sorted(largos.items()):
         # Logged, but NOT a finding and does NOT wake anyone.
         apuntes.append({"tipo": "turno_largo_sano", "alias": alias,
-                        "detalle": "%d entrega(s) de hasta %d min que SI avanzan: %s"
-                                   % (len(lista), max(x["edad_min"] for x in lista),
-                                      lista[0]["por_que"])})
+                        "detalle": f"{len(lista)} entrega(s) de hasta "
+                                   f"{max(x['edad_min'] for x in lista)} min que SI avanzan: "
+                                   f"{lista[0]['por_que']}"})
     for alias, lista in sorted(por_alias.items()):
         edad = max(x["edad_min"] for x in lista)
         estados = ", ".join(sorted({x["status"] for x in lista}))
         hallazgos.append({"modo": 3, "alias": alias,
-                          "detalle": "%d entrega(s) trabadas hasta %d min (%s); %s"
-                                     % (len(lista), edad, estados, lista[0]["por_que"])})
+                          "detalle": f"{len(lista)} entrega(s) trabadas hasta {edad} min "
+                                     f"({estados}); {lista[0]['por_que']}"})
         if args.reiniciar_adaptadores and not args.solo_detectar:
             r = ciclo_rescate(alias, adaptadores.get(alias), apuntes)
             r.update({"accion": "ciclo_rescate", "alias": alias})
@@ -1722,27 +1705,26 @@ def main():
                 # report die there is worse than no doctor. Defaults set, escalation keeps
                 # the bad news visible.
                 r.setdefault("tipo", "rescate_no_aplicado")
-                r.setdefault("detalle",
-                             "no se pudo rescatar a %s automaticamente: %s"
-                             % (alias, r.get("razon", "sin razon declarada")))
+                r.setdefault("detalle", f"no se pudo rescatar a {alias} automaticamente: "
+                                        f"{r.get('razon', 'sin razon declarada')}")
                 escalar.append(r)
         else:
             zombis = [x for x in lista if x.get("zombi")]
             if zombis and len(zombis) == len(lista):
                 escalar.append({"tipo": "turno_largo_sin_fin", "alias": alias,
-                                "detalle": "%d entrega(s) llevan hasta %d min RENOVANDO la "
+                                "detalle": f"{len(lista)} entrega(s) llevan hasta {edad} min RENOVANDO la "
                                            "reserva sin terminar. Que la reserva siga viva "
                                            "prueba que el adaptador respira, no que el trabajo "
                                            "avance: un arnes detenido en un modal renueva igual. "
                                            "MIRA EL PANEL del alias antes de reinyectar o "
                                            "reiniciar. Si llega al tope del bus (12 h) el trabajo "
-                                           "se pierde entero" % (len(lista), edad),
+                                           "se pierde entero",
                                 "evidencia": {"por que ya no cuenta como sano":
                                                lista[0].get("por_que", "-")}})
             else:
                 escalar.append({"tipo": "entrega_trabada", "alias": alias,
-                                "detalle": "%d entrega(s) hasta %d min; rescate automatico "
-                                           "deshabilitado" % (len(lista), edad)})
+                                "detalle": f"{len(lista)} entrega(s) hasta {edad} min; rescate automatico "
+                                           "deshabilitado"})
 
     # --- 3b) the response that died on the way back ---
     # Not the same as `trabajo_perdido`: here the work WAS done and answered; what was lost
@@ -1753,7 +1735,7 @@ def main():
     except Exception as e:                                        # noqa: BLE001
         mudas, rechazadas = {}, {}
         escalar.append({"tipo": "sonda_respuestas", "alias": "-",
-                        "detalle": "no pude medir las respuestas perdidas: %s" % e})
+                        "detalle": f"no pude medir las respuestas perdidas: {e}"})
     for espera in list(mudas):
         # A response that someone already manually re-injected is NOT lost work: logged
         # and does not wake anyone. Without this the same finding repeats every run for 24h.
@@ -1761,27 +1743,23 @@ def main():
         mudas[espera] = [x for x in mudas[espera] if not x.get("rescatada")]
         if ya:
             apuntes.append({"tipo": "respuesta_rescatada", "alias": espera,
-                            "detalle": "%d respuesta(s) que murieron de vuelta pero cuyo texto "
-                                       "SI llego: una entrega posterior a %s lo contiene -sea "
+                            "detalle": f"{len(ya)} respuesta(s) que murieron de vuelta pero cuyo texto "
+                                       f"SI llego: una entrega posterior a {espera} lo contiene -sea "
                                        "una reinyeccion a mano o el fan-in que se lo devolvio-. "
-                                       "Nadie quedo ciego, no se reclama. Ids: %s"
-                                       % (len(ya), espera,
-                                          ", ".join(x["id"] for x in ya[:4]))})
+                                       f"Nadie quedo ciego, no se reclama. Ids: {', '.join(x['id'] for x in ya[:4])}"})
         if not mudas[espera]:
             del mudas[espera]
     for espera, lista in sorted(mudas.items(), key=lambda kv: -len(kv[1])):
         muestra = lista[0]
-        detalle = ("%d respuesta(s) que %s ESPERABA murieron en el camino de vuelta en 24 h. "
+        detalle = (f"{len(lista)} respuesta(s) que {espera} ESPERABA murieron en el camino de vuelta en 24 h. "
                    "El que pregunto sigue esperando y el que contesto cree que entrego: nadie "
-                   "va a reintentar solo. La mas reciente [%s] la contesto %s a las %s UTC, y "
-                   "el transporte anoto: %s"
-                   % (len(lista), espera, muestra["id"], muestra["contesto"],
-                      muestra["cuando"], muestra["error"] or "sin error registrado"))
+                   f"va a reintentar solo. La mas reciente [{muestra['id']}] la contesto "
+                   f"{muestra['contesto']} a las {muestra['cuando']} UTC, y "
+                   f"el transporte anoto: {muestra['error'] or 'sin error registrado'}")
         hallazgos.append({"modo": 3, "alias": espera, "detalle": detalle})
         escalar.append({"tipo": "respuesta_perdida", "alias": espera, "detalle": detalle,
                         "evidencia": {"respuestas muertas (id, quien contesto, cuando)":
-                                      "; ".join("%s de %s %s" % (x["id"], x["contesto"],
-                                                                 x["cuando"])
+                                      "; ".join(f"{x['id']} de {x['contesto']} {x['cuando']}"
                                                 for x in lista[:3])}})
     # --- 3c) the response that was NOT lost: the recipient rejected it ---
     # Same data, different authorship, different phrasing. `last_error` was written by the
@@ -1790,19 +1768,16 @@ def main():
     # Not silenced (the responder may not know it was rejected), but doesn't shout.
     for destinatario, lista in sorted(rechazadas.items(), key=lambda kv: -len(kv[1])):
         muestra = lista[0]
-        detalle = ("%d respuesta(s) dirigidas a %s no quedaron entregadas, pero NO se "
-                   "perdieron en el camino: %s las rechazo y dejo escrito el motivo. La mas "
-                   "reciente [%s] la contesto %s a las %s UTC, y el motivo que escribio %s "
-                   "fue: %s"
-                   % (len(lista), destinatario, destinatario, muestra["id"],
-                      muestra["contesto"], muestra["cuando"], destinatario,
-                      muestra["error"] or "sin motivo registrado"))
+        detalle = (f"{len(lista)} respuesta(s) dirigidas a {destinatario} no quedaron entregadas, pero NO se "
+                   f"perdieron en el camino: {destinatario} las rechazo y dejo escrito el motivo. La mas "
+                   f"reciente [{muestra['id']}] la contesto {muestra['contesto']} a las "
+                   f"{muestra['cuando']} UTC, y el motivo que escribio {destinatario} "
+                   f"fue: {muestra['error'] or 'sin motivo registrado'}")
         hallazgos.append({"modo": 3, "alias": destinatario, "detalle": detalle})
         escalar.append({"tipo": "respuesta_rechazada", "alias": destinatario,
                         "detalle": detalle,
                         "evidencia": {"respuestas rechazadas (id, quien contesto, cuando)":
-                                      "; ".join("%s de %s %s" % (x["id"], x["contesto"],
-                                                                 x["cuando"])
+                                      "; ".join(f"{x['id']} de {x['contesto']} {x['cuando']}"
                                                 for x in lista[:3])}})
 
     # --- 4) credencial rota que miente -------------------------------------------------
@@ -1811,8 +1786,7 @@ def main():
         hallazgos.append({"modo": 4, "alias": p["alias"], "detalle": p["detalle"]})
         escalar.append({"tipo": "credencial", "alias": p["alias"], "detalle": p["detalle"]})
     for h, quienes in sorted(compartidas.items()):
-        d = "credencial COMPARTIDA (huella %s) entre: %s; al rotar se pisan" % (
-            h, ", ".join(sorted(set(quienes))))
+        d = f"credencial COMPARTIDA (huella {h}) entre: {', '.join(sorted(set(quienes)))}; al rotar se pisan"
         hallazgos.append({"modo": 4, "alias": ",".join(sorted(set(quienes))), "detalle": d})
         escalar.append({"tipo": "credencial", "alias": ",".join(sorted(set(quienes))),
                         "detalle": d})
@@ -1835,7 +1809,7 @@ def main():
             _racha_estado = {}
         racha_prev_cuentas = (_racha_estado.get("cuenta_ia_racha_ok_false")
                               if isinstance(_racha_estado, dict) else None) or {}
-        rc_c, out_c, _ = sh("kratos", "cat %s" % CUENTAS_LIVE, timeout=30)
+        rc_c, out_c, _ = sh("kratos", f"cat {CUENTAS_LIVE}", timeout=30)
         if rc_c == 0 and out_c.strip():
             datos = json.loads(out_c)
             capturado = datos.get("capturedAt", "?")
@@ -1849,8 +1823,8 @@ def main():
             try:
                 cap = datetime.datetime.fromisoformat(capturado.replace("Z", "+00:00"))
                 mins = int((ahora() - cap).total_seconds() // 60)
-                antiguedad_txt = ("%d min%s" % (mins, "  <-- DATO VIEJO, re-medir antes de mover"
-                                                " nada" if mins > 30 else ""))
+                antiguedad_txt = (f"{mins} min"
+                                  f"{'  <-- DATO VIEJO, re-medir antes de mover nada' if mins > 30 else ''}")
             except Exception:  # noqa: BLE001
                 pass
             agotadas = []
@@ -1862,11 +1836,9 @@ def main():
                     # The WINDOW must always be in the line. Without it, the row invites
                     # comparing a 16% 5-hour block to a 0% weekly as if they measured the
                     # same thing — exactly the error previously recommended.
-                    libres.append("%s %d%% (%s, ventana %s, vuelve en %d min)"
-                                  % (et_l, pct_l,
-                                     PLAN_CUENTA.get(et_l, "plan desconocido"),
-                                     c.get("window", "?"),
-                                     (c.get("resetInSeconds") or 0) // 60))
+                    libres.append(f"{et_l} {pct_l}% ({PLAN_CUENTA.get(et_l, 'plan desconocido')}, "
+                                  f"ventana {c.get('window', '?')}, "
+                                  f"vuelve en {(c.get('resetInSeconds') or 0) // 60} min)")
 
             for c in datos.get("accounts", []):
                 etiqueta = c.get("label", "?")
@@ -1888,19 +1860,19 @@ def main():
                         and reset_s > (UMBRAL_RESET_LEJOS_SESION_S
                                        if c.get("window") == "session"
                                        else UMBRAL_RESET_LEJOS_S)):
-                    agotadas.append("%s %d%% (%s, ventana %s, vuelve en %d min)"
-                                    % (etiqueta, pct, plan, c.get("window", "?"), reset_s // 60))
+                    agotadas.append(f"{etiqueta} {pct}% ({plan}, ventana {c.get('window', '?')}, "
+                                    f"vuelve en {reset_s // 60} min)")
                     escalar.append({
                         "tipo": "cuenta_ia", "alias": etiqueta,
-                        "detalle": "la cuenta %s (%s) esta al %d%% en ventana %s y no resetea "
-                                   "hasta dentro de %d min: los contenedores que la usan se van "
-                                   "a quedar sin poder trabajar"
-                                   % (etiqueta, plan, pct, c.get("window", "?"), reset_s // 60),
+                        "detalle": f"la cuenta {etiqueta} ({plan}) esta al {pct}% en ventana "
+                                   f"{c.get('window', '?')} y no resetea "
+                                   f"hasta dentro de {reset_s // 60} min: los contenedores que la usan se van "
+                                   "a quedar sin poder trabajar",
                         "evidencia": {"fichero": CUENTAS_LIVE, "capturedAt": capturado,
                                       "antiguedad del dato": antiguedad_txt,
                                       "registro": json.dumps(c),
                                       "cuentas con holgura": ", ".join(libres) or "NINGUNA",
-                                      "quien usa esta cuenta (censo %s)" % CENSO_FECHA:
+                                      f"quien usa esta cuenta (censo {CENSO_FECHA})":
                                           censo_de(etiqueta)[0],
                                       "sin escalera de modelos":
                                           censo_de(etiqueta)[1],
@@ -1922,8 +1894,8 @@ def main():
                     if sin_bloqueo:
                         movido = escalar.pop()
                         movido["detalle"] += (
-                            " — pero NINGUN consumidor esta bloqueado ahora mismo: %s. El "
-                            "porcentaje no predice el bloqueo; el panel si. No se escala." % por_que)
+                            f" — pero NINGUN consumidor esta bloqueado ahora mismo: {por_que}. El "
+                            "porcentaje no predice el bloqueo; el panel si. No se escala.")
                         movido["evidencia"]["EFECTO medido en los consumidores"] = por_que
                         apuntes.append(movido)
                     elif censo_de(etiqueta)[1].startswith("ninguno"):
@@ -1934,7 +1906,7 @@ def main():
                         apuntes.append(movido)
     except Exception as e:  # noqa: BLE001
         escalar.append({"tipo": "sonda_cuentas", "alias": "-",
-                        "detalle": "no se pudieron leer las cuentas de IA: %s" % e})
+                        "detalle": f"no se pudieron leer las cuentas de IA: {e}"})
 
     # --- 5bis) THE LOOP THAT BURNS THE QUOTA ---
     # Why it exists: an audit found an agent had self-scheduled a 5-min cron asking itself
@@ -1989,21 +1961,20 @@ def main():
                 escaso = bool(re.match(r"(anthropic|claude|codex|gpt)", proveedor, re.IGNORECASE))
                 if escaso:
                     tipo_b = "bucle_de_cuota"
-                    detalle_b = ("hay un cron de openclaw cada %d min en %s que abre turno de agente "
-                                 "sobre cuota ESCASA (%s). Ese es EXACTAMENTE el patron que el "
-                                 "2026-08-10 se llevo el 69,7%% de 115 M de tokens de argos: 380 "
+                    detalle_b = (f"hay un cron de openclaw cada {minutos} min en {cont} que abre turno de agente "
+                                 f"sobre cuota ESCASA ({proveedor}). Ese es EXACTAMENTE el patron que el "
+                                 "2026-08-10 se llevo el 69,7% de 115 M de tokens de argos: 380 "
                                  "disparos, 378 cerrando 'HEARTBEAT_OK' sin cambiar nada. Miralo y "
                                  "matalo si pregunta ESTADO en vez de encargar trabajo; subirle el "
-                                 "intervalo NO alcanza" % (minutos, cont, proveedor))
+                                 "intervalo NO alcanza")
                 else:
                     tipo_b = "bucle_de_cuota_barato"
-                    detalle_b = ("hay un cron de openclaw cada %d min en %s sobre un proveedor "
-                                 "barato (%s). No es el incidente de argos —aquel quemaba Claude— "
-                                 "pero sigue abriendo un turno de agente cada %d min: revisalo si "
+                    detalle_b = (f"hay un cron de openclaw cada {minutos} min en {cont} sobre un proveedor "
+                                 f"barato ({proveedor}). No es el incidente de argos —aquel quemaba Claude— "
+                                 f"pero sigue abriendo un turno de agente cada {minutos} min: revisalo si "
                                  "no produce un artefacto nuevo en cada corrida. Para decidir, mira "
                                  "`openclaw cron show <id> --json`: si `delivery.mode` es none y el "
-                                 "prompt escribe un fichero, es una ETL silenciosa legitima"
-                                 % (minutos, cont, proveedor, minutos))
+                                 "prompt escribe un fichero, es una ETL silenciosa legitima")
                 hallazgo_b = {
                     "tipo": tipo_b, "alias": cont,
                     "detalle": detalle_b,
@@ -2013,7 +1984,7 @@ def main():
                         "por que no lo ve la base": "un cron de openclaw abre el turno dentro del "
                                                     "contenedor y NO crea entrega: en `deliveries` "
                                                     "no aparece ni una",
-                        "umbral": "%d min" % UMBRAL_CRON_MIN,
+                        "umbral": f"{UMBRAL_CRON_MIN} min",
                     },
                 }
                 # AUTOMATIC ADJUDICATION. Asking about the interval does not distinguish the
@@ -2028,48 +1999,47 @@ def main():
                 if mid:
                     rc_s, salida_s, _ = sh(
                         "vps",
-                        "docker exec %s bash -lc 'openclaw cron show %s --json' 2>/dev/null"
-                        % (cont, mid.group(1)),
+                        f"docker exec {cont} bash -lc 'openclaw cron show {mid.group(1)} --json' 2>/dev/null",
                         timeout=60,
                     )
                     if rc_s == 0 and salida_s.strip():
                         try:
                             cron = json.loads(salida_s)
                             modo = ((cron.get("delivery") or {}).get("mode") or "").lower()
-                            prompt = str(((cron.get("payload") or {}).get("message") or ""))
+                            prompt = str((cron.get("payload") or {}).get("message") or "")
                             escribe = bool(re.search(r"\bWrite\b|cat\s*>|sobrescrib|>>\s*/|"
                                                      r"/[\w./-]+\.(md|json|csv|txt)", prompt))
                             if modo == "none" and escribe:
                                 adjudicado = True
                                 apuntes.append({
                                     "tipo": "bucle_de_cuota_adjudicado", "alias": cont,
-                                    "detalle": "cron %s cada %d min en %s (%s): ETL silenciosa "
+                                    "detalle": f"cron {mid.group(1)[:8]} cada {minutos} min en "
+                                               f"{cont} ({proveedor}): ETL silenciosa "
                                                "legitima, no bucle. delivery.mode=none y el prompt "
                                                "escribe un fichero. Adjudicado midiendo, no "
                                                "suponiendo; queda en bitacora y no despierta a "
                                                "nadie. Si algun dia empieza a entregar mensajes o "
-                                               "deja de escribir, vuelve a saltar solo."
-                                               % (mid.group(1)[:8], minutos, cont, proveedor),
+                                               "deja de escribir, vuelve a saltar solo.",
                                 })
                         except Exception as e:  # noqa: BLE001
                             escalar.append({"tipo": "sonda_bucle", "alias": cont,
-                                            "detalle": "no se pudo leer la definicion del cron %s "
-                                                       "para adjudicarlo (%s): se escala sin "
-                                                       "adjudicar" % (mid.group(1)[:8], e)})
+                                            "detalle": f"no se pudo leer la definicion del cron {mid.group(1)[:8]} "
+                                                       f"para adjudicarlo ({e}): se escala sin "
+                                                       "adjudicar"})
                     else:
                         escalar.append({"tipo": "sonda_bucle", "alias": cont,
-                                        "detalle": "`openclaw cron show %s --json` no devolvio nada "
-                                                   "(rc=%d): no se pudo adjudicar, se escala igual"
-                                                   % (mid.group(1)[:8], rc_s)})
+                                        "detalle": f"`openclaw cron show {mid.group(1)[:8]} --json` no devolvio nada "
+                                                   f"(rc={rc_s}): no se pudo adjudicar, se escala igual"})
                 if not adjudicado:
                     escalar.append(hallazgo_b)
         else:
             escalar.append({"tipo": "sonda_bucle", "alias": "-",
                             "detalle": "no se pudieron listar los crons de openclaw en el VPS "
-                                       "(rc=%d): %s" % (rc_c, (err_c or "sin stderr").strip().replace("\n", " ")[:200])})
+                                       "(rc={}): {}".format(
+                                           rc_c, (err_c or "sin stderr").strip().replace("\n", " ")[:200])})
     except Exception as e:  # noqa: BLE001
         escalar.append({"tipo": "sonda_bucle", "alias": "-",
-                        "detalle": "no se pudo revisar el bucle de cuota: %s" % e})
+                        "detalle": f"no se pudo revisar el bucle de cuota: {e}"})
 
     # --- 6) work really lost: dead-letters and `failed` that no one retries ---
     # A `failed` delivery with attempt=1 does NOT retry itself: it's a person's work that
@@ -2166,36 +2136,34 @@ def main():
                     sin_reconfirmar = False
             if bloqueo and sin_reconfirmar:
                 apuntes.append({"tipo": "bloqueado_por_acceso_sin_reconfirmar", "alias": alias,
-                                "detalle": "%s declaro a las %s UTC que le faltaba un acceso "
-                                           "(%s). Fue hace mas de %d h y desde entonces cerro "
-                                           "%d entrega(s): la declaracion NO se reconfirmo y "
+                                "detalle": f"{alias} declaro a las {cuando} UTC que le faltaba un acceso "
+                                           f"({por_que}). Fue hace mas de "
+                                           f"{HORAS_DECLARACION_CADUCA} h y desde entonces cerro "
+                                           f"{recuperadas} entrega(s): la declaracion NO se reconfirmo y "
                                            "puede estar ya resuelta, asi que no despierta a "
                                            "nadie. Para reconfirmarla hay que MEDIR el acceso "
                                            "dentro de su contenedor; releer el last_error solo "
-                                           "repite la declaracion vieja"
-                                           % (alias, cuando, por_que,
-                                              HORAS_DECLARACION_CADUCA, recuperadas)})
+                                           "repite la declaracion vieja"})
             elif bloqueo:
                 # Checked BEFORE the recovery on purpose: the alias continuing to close other
                 # deliveries does NOT unblock THIS one. The access is still missing.
                 evidencia["por que se clasifica asi"] = (
-                    "el agente %s: no es un fallo suyo ni trabajo perdido, es un acceso que no "
-                    "tiene. NO se reintenta: la puerta sigue cerrada" % por_que)
+                    f"el agente {por_que}: no es un fallo suyo ni trabajo perdido, es un acceso que no "
+                    "tiene. NO se reintenta: la puerta sigue cerrada")
                 escalar.append({"tipo": "bloqueado_por_acceso", "alias": alias,
-                                "detalle": "%s declara que le falta un acceso para poder "
-                                           "trabajar (%s): NECESITA UNA PERSONA, no un "
-                                           "reintento" % (alias, por_que),
+                                "detalle": f"{alias} declara que le falta un acceso para poder "
+                                           f"trabajar ({por_que}): NECESITA UNA PERSONA, no un "
+                                           "reintento",
                                 "evidencia": evidencia})
             elif recuperadas:
                 # Same treatment as `turno_largo_sano`: logged, but NOT a finding and does
                 # NOT wake anyone.
                 apuntes.append({"tipo": "trabajo_perdido_recuperado", "alias": alias,
-                                "detalle": "%s fallo(s) en 24 h, la ultima a las %s UTC, y %s "
-                                           "cerro %d entrega(s) DESPUES de esa: el sintoma ya "
+                                "detalle": f"{n} fallo(s) en 24 h, la ultima a las {cuando} UTC, y {alias} "
+                                           f"cerro {recuperadas} entrega(s) DESPUES de esa: el sintoma ya "
                                            "no persiste, no se reporta como fallo actual. Si "
                                            "alguna de esas tareas quedo sin hacer, la levanta "
-                                           "el libro de tareas por su lado"
-                                           % (n, cuando, alias, recuperadas)})
+                                           "el libro de tareas por su lado"})
             else:
                 # PROCESS_EXIT_AMBIGUOUS is not a cause: it's "died and we don't know why".
                 # Publishing it as lost work orders a re-injection that won't run.
@@ -2245,32 +2213,29 @@ def main():
                 reales = max(0, min(mudas, total))
                 respondidas = max(0, total - sondas - reales)
                 evidencia["de esas fallas, cuantas eran SONDAS"] = (
-                    "%d de %d (pruebas de vida: `Prueba de vida...`, `PROBAR-...`). "
-                    "Reinyectar una sonda es ruido: mira el `body` del mensaje, no el conteo"
-                    % (sondas, total))
+                    f"{sondas} de {total} (pruebas de vida: `Prueba de vida...`, `PROBAR-...`). "
+                    "Reinyectar una sonda es ruido: mira el `body` del mensaje, no el conteo")
                 if respondidas:
                     evidencia["OJO: cuantas CONTESTARON igual"] = (
-                        "%d de %d traen `result->output->reply` no vacio: el agente marco el "
+                        f"{respondidas} de {total} traen `result->output->reply` no vacio: el agente marco el "
                         "turno `failed` A PROPOSITO -bloqueo permanente- y el que pregunto SI "
                         "recibio la respuesta. Eso no es trabajo perdido, y su texto es lo que "
-                        "aparece arriba como `last_error`" % (respondidas, total))
+                        "aparece arriba como `last_error`")
 
                 if causa and causa.startswith(("SIN CREDENCIAL", "CADENA DE MODELOS AGOTADA")):
                     # Same criterion as PROVEEDOR SIN CREDITO and CREDENCIAL REVOCADA: the
                     # cause is already known, so the title must name it. Calling this
                     # `trabajo_perdido` orders a re-injection that will die again.
                     evidencia["por que se clasifica asi"] = (
-                        "el alias no puede EJECUTAR: %s. Reinyectar es gastar un reintento en "
-                        "balde. Se repara la cadena o la credencial, y se prueba POR EFECTO "
-                        "-`claude -p ok` dentro del contenedor- antes de darlo por bueno"
-                        % causa.split(":")[0])
+                        f"el alias no puede EJECUTAR: {causa.split(':')[0]}. Reinyectar es gastar "
+                        "un reintento en balde. Se repara la cadena o la credencial, y se prueba "
+                        "POR EFECTO -`claude -p ok` dentro del contenedor- antes de darlo por bueno")
                     escalar.append({"tipo": ("credencial_vacia"
                                              if causa.startswith("SIN CREDENCIAL")
                                              else "cadena_de_modelos_agotada"),
                                     "alias": alias,
-                                    "detalle": "%s no puede ejecutar (%d falla(s) en 24 h, la "
-                                               "ultima %s UTC). %s"
-                                               % (alias, total, cuando, causa),
+                                    "detalle": f"{alias} no puede ejecutar ({total} falla(s) en 24 h, la "
+                                               f"ultima {cuando} UTC). {causa}",
                                     "evidencia": evidencia})
                 elif causa and causa.startswith("CREDENCIAL REVOCADA"):
                     # Same fix as PROVEEDOR SIN CREDITO: the cause was already computed and
@@ -2283,13 +2248,12 @@ def main():
                         "a la victima revoca al otro alias que comparte la cuenta y muda el "
                         "problema en vez de resolverlo")
                     escalar.append({"tipo": "credencial_revocada", "alias": alias,
-                                    "detalle": "%s no puede ejecutar: su credencial fue REVOCADA "
-                                               "(%d falla(s) en 24 h, la ultima %s UTC). No "
+                                    "detalle": f"{alias} no puede ejecutar: su credencial fue REVOCADA "
+                                               f"({total} falla(s) en 24 h, la ultima {cuando} UTC). No "
                                                "reinyectes: sin credencial todo reintento muere "
                                                "igual. Adjudica comparando `account_id` y el mtime "
                                                "de `~/.codex/auth.json` entre los alias de arnes "
-                                               "codex -leyendo el FICHERO, nunca el CLI-"
-                                               % (alias, total, cuando),
+                                               "codex -leyendo el FICHERO, nunca el CLI-",
                                     "evidencia": evidencia})
                 elif causa and causa.startswith("PROVEEDOR SIN CREDITO"):
                     # The doctor already knew it and wrote it; what was missing was CLASSIFYING it as such.
@@ -2305,25 +2269,24 @@ def main():
                     if vuelve and vuelve > ahora_utc:
                         faltan = cuanto_falta((vuelve - ahora_utc).total_seconds())
                         evidencia["cuando vuelve, segun el PROPIO panel"] = (
-                            "%s UTC (%s). Zona asumida UTC: el panel no la dice"
-                            % (vuelve.strftime("%Y-%m-%d %H:%M"), faltan))
+                            f"{vuelve.strftime('%Y-%m-%d %H:%M')} UTC ({faltan}). "
+                            "Zona asumida UTC: el panel no la dice")
                         apuntes.append({"tipo": "proveedor_sin_credito_con_fecha",
                                         "alias": alias,
-                                        "detalle": "%s esta sin credito y su proveedor dice que "
-                                                   "vuelve el %s UTC (%s). No se "
+                                        "detalle": f"{alias} esta sin credito y su proveedor dice "
+                                                   f"que vuelve el {vuelve.strftime('%Y-%m-%d %H:%M')} "
+                                                   f"UTC ({faltan}). No se "
                                                    "escala: no hay nada que hacer hasta esa hora. "
                                                    "Si llega la fecha y sigue fallando, entonces "
-                                                   "SI es una alarma"
-                                                   % (alias, vuelve.strftime("%Y-%m-%d %H:%M"),
-                                                      faltan),
+                                                   "SI es una alarma",
                                         "evidencia": evidencia})
                     else:
                         if vuelve:
                             evidencia["la fecha que dio el proveedor YA PASO"] = (
-                                "dijo que volvia el %s UTC. El panel es SCROLLBACK, no estado "
+                                f"dijo que volvia el {vuelve.strftime('%Y-%m-%d %H:%M')} UTC. "
+                                "El panel es SCROLLBACK, no estado "
                                 "actual: el cartel sigue ahi porque nadie escribio nada despues, "
-                                "no porque el limite siga vigente. Ya no prueba falta de credito"
-                                % vuelve.strftime("%Y-%m-%d %H:%M"))
+                                "no porque el limite siga vigente. Ya no prueba falta de credito")
                             escalar.append({"tipo": "congelado_tras_recuperar_credito",
                                             "alias": alias,
                                             "detalle": detalle_congelado(alias, vuelve, total,
@@ -2331,26 +2294,23 @@ def main():
                                             "evidencia": evidencia})
                         else:
                             escalar.append({"tipo": "proveedor_sin_credito", "alias": alias,
-                                            "detalle": "%s no puede ejecutar: su proveedor esta "
-                                                       "sin credito (%d falla(s) en 24 h, la "
-                                                       "ultima %s UTC) y el panel NO dice cuando "
+                                            "detalle": f"{alias} no puede ejecutar: su proveedor esta "
+                                                       f"sin credito ({total} falla(s) en 24 h, la "
+                                                       f"ultima {cuando} UTC) y el panel NO dice cuando "
                                                        "vuelve. NECESITA UNA PERSONA -y dinero-, "
-                                                       "no un reintento ni un reinicio"
-                                                       % (alias, total, cuando),
+                                                       "no un reintento ni un reinicio",
                                             "evidencia": evidencia})
                 elif total and reales == 0:
                     # Nothing to rescue: either probes, or the agent answered anyway. Noted.
                     if respondidas and not sondas:
-                        detalle = ("%s marco %d turno(s) como `failed` en 24 h pero CONTESTO en "
+                        detalle = (f"{alias} marco {respondidas} turno(s) como `failed` en 24 h pero CONTESTO en "
                                    "todos: hay `reply` estructurado y el que pregunto lo "
                                    "recibio. No es trabajo perdido -es un bloqueo declarado-. "
-                                   "Reinyectarlo repite la misma respuesta y quema un turno"
-                                   % (alias, respondidas))
+                                   "Reinyectarlo repite la misma respuesta y quema un turno")
                     else:
-                        detalle = ("%s fallo %d vez/veces en 24 h: %d eran SONDAS y %d "
+                        detalle = (f"{alias} fallo {total} vez/veces en 24 h: {sondas} eran SONDAS y {respondidas} "
                                    "contestaron igual. No se perdio ningun trabajo real. El "
-                                   "alias puede estar caido, pero eso lo dice otro hallazgo"
-                                   % (alias, total, sondas, respondidas))
+                                   "alias puede estar caido, pero eso lo dice otro hallazgo")
                     # The label must tell the truth even when there were NO probes: calling
                     # a declared block "fallas_solo_de_sondas" would be lying in the title.
                     tipo_ap = ("fallo_declarado_con_respuesta"
@@ -2363,11 +2323,10 @@ def main():
                                     # below. `cuando` already travelled, but only inside a
                                     # phrase, and nobody can compare dates against a phrase.
                                     "ultimo_fallo": cuando,
-                                    "detalle": "%s entrega(s) failed/dead con attempt<=1 en 24 h "
-                                               "y NINGUNA cerrada desde la ultima (%s UTC): no se "
-                                               "reintentan solas, son trabajo perdido. %d de esas "
-                                               "%d NO eran sondas"
-                                               % (n, cuando, reales, total),
+                                    "detalle": f"{n} entrega(s) failed/dead con attempt<=1 en 24 h "
+                                               f"y NINGUNA cerrada desde la ultima ({cuando} UTC): no se "
+                                               f"reintentan solas, son trabajo perdido. {reales} de esas "
+                                               f"{total} NO eran sondas",
                                     "evidencia": evidencia})
         # THERE ARE TWO DEAD-LETTER QUEUES, AND THE DOCTOR WAS WATCHING THE LESS IMPORTANT ONE.
         #   dead_letters         bus deliveries that died: WORK that didn't happen.
@@ -2406,25 +2365,23 @@ def main():
                              "nuevas en las ultimas 24 h": str(n_dia),
                              "media diaria de los 6 dias anteriores": bus_base
                              if tabla == "dead_letters" else "(no se mide para esta cola)",
-                             "consulta": "select * from %s where resolved_at is null "
-                                         "order by created_at desc" % tabla}
+                             "consulta": f"select * from {tabla} where resolved_at is null "
+                                         "order by created_at desc"}
                 if n_dia > UMBRAL_DLQ_DIA:
                     escalar.append({"tipo": tipo, "alias": "-",
-                                    "detalle": "%d carta(s) muerta(s) NUEVAS en 24 h en `%s` "
-                                               "(%s); el regimen normal es <= %d/dia: esto es "
-                                               "una fuga viva, no la cicatriz vieja"
-                                               % (n_dia, tabla, etiqueta, UMBRAL_DLQ_DIA),
+                                    "detalle": f"{n_dia} carta(s) muerta(s) NUEVAS en 24 h en `{tabla}` "
+                                               f"({etiqueta}); el regimen normal es <= {UMBRAL_DLQ_DIA}/dia: esto es "
+                                               "una fuga viva, no la cicatriz vieja",
                                     "evidencia": evidencia})
                 else:
                     apuntes.append({"tipo": tipo, "alias": "-",
-                                    "detalle": "`%s`: %d sin resolver en total (%s), pero solo "
-                                               "%d en las ultimas 24 h: dentro del regimen "
-                                               "normal (<= %d/dia). El acumulado es historico; "
-                                               "no se despierta a nadie por el"
-                                               % (tabla, n_ab, etiqueta, n_dia, UMBRAL_DLQ_DIA)})
+                                    "detalle": f"`{tabla}`: {n_ab} sin resolver en total ({etiqueta}), pero solo "
+                                               f"{n_dia} en las ultimas 24 h: dentro del regimen "
+                                               f"normal (<= {UMBRAL_DLQ_DIA}/dia). El acumulado es historico; "
+                                               "no se despierta a nadie por el"})
     except Exception as e:  # noqa: BLE001
         escalar.append({"tipo": "sonda_cola", "alias": "-",
-                        "detalle": "no se pudo medir la cola perdida: %s" % e})
+                        "detalle": f"no se pudo medir la cola perdida: {e}"})
 
     # --- 6.5) GAP 2: the doctor's own deliveries can also die silently ---
     # See the long comment next to `avisos_propios_muertos()`: this does NOT reuse the
@@ -2453,8 +2410,7 @@ def main():
     except Exception as e:  # noqa: BLE001
         escalar.append({"tipo": "sonda_propias_muertas", "alias": "-",
                         "detalle": "no se pudo medir si el guardia se avisa a si mismo (y por "
-                                   "eso mismo esto puede estar rompiendose en silencio): %s"
-                                   % e})
+                                   f"eso mismo esto puede estar rompiendose en silencio): {e}"})
 
 # --- extra: downed adapters (reported, not touched without the rescue cycle) ---
     for alias, u in sorted(unids.items()):
@@ -2471,17 +2427,16 @@ def main():
         # the textual `exit 78` and the journal let you start from the right place.
         base_ctl = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if u["host"] == "kratos"
                     else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
-        _, ev_show, _ = sh(u["host"], "%s show %s -p ActiveState,SubState,ExecMainStatus,"
-                                      "Result,NRestarts,InactiveEnterTimestamp"
-                            % (base_ctl, u["unidad"]), timeout=40)
-        _, ev_log, _ = sh(u["host"], "%s status %s --no-pager -n 25 2>&1 | tail -25"
-                          % (base_ctl, u["unidad"]), timeout=40)
+        _, ev_show, _ = sh(u["host"], f"{base_ctl} show {u['unidad']} -p ActiveState,SubState,"
+                                      "ExecMainStatus,Result,NRestarts,InactiveEnterTimestamp", timeout=40)
+        _, ev_log, _ = sh(u["host"], f"{base_ctl} status {u['unidad']} --no-pager -n 25 2>&1 | tail -25",
+                          timeout=40)
         evidencia = {
             "host": u["host"],
             "systemctl show": ev_show.strip(),
             "systemctl status (ultimas 25)": ev_log.strip(),
-            "adaptador vivo": ("pid %d, %d s de vida, bundle %s" % (
-                ad["pid"], ad["etimes"], ad.get("bundle", "?")) if ad else "NINGUNO"),
+            "adaptador vivo": (f"pid {ad['pid']}, {ad['etimes']} s de vida, "
+                               f"bundle {ad.get('bundle', '?')}" if ad else "NINGUNO"),
         }
         # RE-CHECK: the DECISION above uses the unit sample taken at the start of the run,
         # but the evidence is measured NOW. Minutes pass between them, and an alias restarted
@@ -2491,12 +2446,11 @@ def main():
         if "ActiveState=active" in ev_show and "SubState=failed" not in ev_show:
             continue
         if huerfano:
-            det = ("unidad %s en failed (exit 78) pero el adaptador ANTERIOR sigue vivo "
-                   "(pid %d, %d h) y atendiendo: el alias contesta pero quedo SIN supervisor"
-                   % (u["unidad"], ad["pid"], ad["etimes"] // 3600))
+            det = (f"unidad {u['unidad']} en failed (exit 78) pero el adaptador ANTERIOR sigue vivo "
+                   f"(pid {ad['pid']}, {ad['etimes'] // 3600} h) y atendiendo: el alias contesta "
+                   "pero quedo SIN supervisor")
         else:
-            det = "unidad %s en %s y no se ve adaptador vivo: el alias esta MUDO" % (
-                u["unidad"], u["active"])
+            det = f"unidad {u['unidad']} en {u['active']} y no se ve adaptador vivo: el alias esta MUDO"
         hallazgos.append({"modo": 0, "alias": alias, "detalle": det})
         escalar.append({"tipo": "adaptador_huerfano" if huerfano else "adaptador_caido",
                         "alias": alias, "detalle": det, "evidencia": evidencia})
@@ -2523,11 +2477,11 @@ def main():
                 break
         if reinicio:
             apuntes.append({"tipo": "reinicio_en_curso", "alias": alias,
-                            "detalle": "NO se avisa 'sin adaptador': %s" % reinicio})
+                            "detalle": f"NO se avisa 'sin adaptador': {reinicio}"})
             continue
         detalle_fresco = "; ".join(
-            "%s/%s -> %s" % (h, u, "no se pudo remedir" if f is None
-                             else "%s/%s Result=%s" % (f["active"], f["sub"], f["result"]))
+            f"{h}/{u} -> " + ("no se pudo remedir" if f is None
+                              else f"{f['active']}/{f['sub']} Result={f['result']}")
             for h, u, f in fresco_por_unidad)
         escalar.append({"tipo": "sin_adaptador", "alias": alias,
                         "detalle": "no se ve adaptador vivo ni unidad activa en ningun host",
@@ -2541,7 +2495,7 @@ def main():
     resumen_libro = None
     if libro_tareas is None:
         escalar.append({"tipo": "sonda_libro", "alias": "-",
-                        "detalle": "no se pudo cargar el libro de tareas: %s" % _MOTIVO_SIN_LIBRO})
+                        "detalle": f"no se pudo cargar el libro de tareas: {_MOTIVO_SIN_LIBRO}"})
     else:
         try:
             # Who can receive a re-send: adapter ALIVE and with no open problem. Sending
@@ -2591,11 +2545,11 @@ def main():
                         and _cerr and _cerr[:19] > str(_h["ultimo_fallo"])[:19]):
                     _ev = dict(_h.get("evidencia") or {})
                     _ev["por que baja a apunte"] = (
-                        "el libro tiene un encargo de %s en `cumplido` cerrado el %s UTC, "
-                        "POSTERIOR al ultimo fallo (%s UTC). `cumplido` no es que alguien lo "
+                        f"el libro tiene un encargo de {_h.get('alias')} en `cumplido` cerrado el "
+                        f"{_cerr} UTC, POSTERIOR al ultimo fallo ({_h['ultimo_fallo']} UTC). "
+                        "`cumplido` no es que alguien lo "
                         "diga: es que la evidencia declarada en evidencia-esperada.json se "
-                        "COMPROBO. El trabajo esta hecho; reinyectar seria rehacerlo"
-                        % (_h.get("alias"), _cerr, _h["ultimo_fallo"]))
+                        "COMPROBO. El trabajo esta hecho; reinyectar seria rehacerlo")
                     apuntes.append({"tipo": "trabajo_perdido_con_evidencia",
                                     "alias": _h.get("alias"),
                                     "detalle": _h.get("detalle", ""), "evidencia": _ev})
@@ -2610,29 +2564,24 @@ def main():
                 hallazgos.append({"modo": 7, "alias": h["alias"], "detalle": h["detalle"]})
             for f in fundidos:
                 apuntes.append({"tipo": "hallazgo_fundido", "alias": f["alias"],
-                                "detalle": "%s se avisa DENTRO de %s (no se duplica)"
-                                           % (f["tipo"], f["dentro_de"])})
+                                "detalle": f"{f['tipo']} se avisa DENTRO de {f['dentro_de']} (no se duplica)"})
             for r in resumen_libro["reenviados"]:
                 acciones.append({"accion": "retomar_encargo", "alias": r["alias"],
                                  "ok": r["ok"],
-                                 "verificado": ("entrega publicada (intento %d/%d): %s"
-                                                % (r["intento"], libro_tareas.MAX_REINTENTOS,
-                                                   r["detalle"])) if r["ok"]
-                                 else "NO SE PUDO REENVIAR: %s" % r["detalle"]})
+                                 "verificado": (f"entrega publicada (intento {r['intento']}/"
+                                                f"{libro_tareas.MAX_REINTENTOS}): {r['detalle']}") if r["ok"]
+                                 else f"NO SE PUDO REENVIAR: {r['detalle']}"})
+            cuentas_txt = ", ".join(f"{k}={v}" for k, v in
+                                    sorted(resumen_libro["cuentas"].items()) if v)
             apuntes.append({"tipo": "libro_de_tareas", "alias": "-",
-                            "detalle": "%d encargo(s) en el libro; %s; reenviados %d, "
-                                       "saltados %d"
-                                       % (resumen_libro["total"],
-                                          ", ".join("%s=%d" % (k, v) for k, v in
-                                                    sorted(resumen_libro["cuentas"].items())
-                                                    if v),
-                                          len(resumen_libro["reenviados"]),
-                                          len(resumen_libro["plan"]["saltados"]))})
+                            "detalle": f"{resumen_libro['total']} encargo(s) en el libro; "
+                                       f"{cuentas_txt}; "
+                                       f"reenviados {len(resumen_libro['reenviados'])}, "
+                                       f"saltados {len(resumen_libro['plan']['saltados'])}"})
         except Exception as e:  # noqa: BLE001
             # The book must NEVER cost the mute-failure checks, which keep the fleet alive.
             escalar.append({"tipo": "sonda_libro", "alias": "-",
-                            "detalle": "el libro de tareas fallo: %s: %s"
-                                       % (type(e).__name__, str(e)[:200])})
+                            "detalle": f"el libro de tareas fallo: {type(e).__name__}: {str(e)[:200]}"})
 
     # --- THE BLIND DOCTOR: a probe that explodes is SHOUTED, not whispered ---
     # When a probe fails, what is lost is NOT its line in the report — it's EVERYTHING that
@@ -2647,17 +2596,17 @@ def main():
         _robo = robo_cpu_agora()
         if _robo is not None and _robo >= 50.0:
             aviso_ciego = (
-                "!! GUARDIA CIEGO POR FALTA DE CPU, NO POR UNA SONDA ROTA: %d sonda(s) no "
-                "pudieron medir (%s). El hipervisor le esta robando el %.1f%% de la CPU a agora, "
+                f"!! GUARDIA CIEGO POR FALTA DE CPU, NO POR UNA SONDA ROTA: {len(ciegas)} sonda(s) no "
+                f"pudieron medir ({_nombres}). El hipervisor le esta robando el {_robo:.1f}% de la CPU a agora, "
                 "asi que TODA consulta expira. NO hay nada que arreglar en el guardia: lo que "
                 "falta es procesador, y eso no se arregla desde dentro ni subiendo el timeout. "
                 "Aun asi, lo que esas sondas miden SIGUE sin aparecer aqui: no lo leas como "
-                "'sin novedad' ni como una lista completa." % (len(ciegas), _nombres, _robo))
+                "'sin novedad' ni como una lista completa.")
         else:
             aviso_ciego = (
-                "!! GUARDIA CIEGO: %d sonda(s) reventaron en esta corrida (%s). Lo que esas "
+                f"!! GUARDIA CIEGO: {len(ciegas)} sonda(s) reventaron en esta corrida ({_nombres}). Lo que esas "
                 "sondas miden NO ESTA en este informe: no lo leas como 'sin novedad' ni como "
-                "una lista completa. Arreglar la sonda va PRIMERO." % (len(ciegas), _nombres))
+                "una lista completa. Arreglar la sonda va PRIMERO.")
 
     # --- bitacora ----------------------------------------------------------------------
     registro = {"ts": t0.isoformat(), "modo": "detectar" if args.solo_detectar else "reparar",
@@ -2669,8 +2618,8 @@ def main():
         f.write(json.dumps(registro, ensure_ascii=False) + "\n")
 
     lineas = ["", "=" * 78,
-              "MEDICO CAUCE V3 - %s UTC (%s)" % (t0.strftime("%Y-%m-%d %H:%M"), registro["modo"]),
-              "alias en la base: %d | adaptadores vivos: %d" % (len(inv), len(adaptadores))]
+              f"MEDICO CAUCE V3 - {t0.strftime('%Y-%m-%d %H:%M')} UTC ({registro['modo']})",
+              f"alias en la base: {len(inv)} | adaptadores vivos: {len(adaptadores)}"]
     if aviso_ciego:
         lineas += ["  " + aviso_ciego, "  " + "!" * 74]
     # una_linea() on every `detalle`/`razon`/`verificado`: they are free text — may come from
@@ -2680,11 +2629,11 @@ def main():
     # finding (see comment next to `una_linea()` for the rate-limit banner that triggered
     # this).
     for h in hallazgos:
-        lineas.append("  HALLAZGO[%s] %-11s %s" % (h["modo"], h["alias"], una_linea(h["detalle"])))
+        lineas.append(f"  HALLAZGO[{h['modo']}] {h['alias']!s:<11} {una_linea(h['detalle'])}")
     for a in acciones:
-        lineas.append("  ACCION    %-11s %s -> ok=%s | %s"
-                      % (a.get("alias"), a.get("accion"), a.get("ok", a.get("resultado")),
-                         una_linea(a.get("verificado", a.get("razon", "")))))
+        lineas.append(f"  ACCION    {a.get('alias')!s:<11} {a.get('accion')} -> "
+                      f"ok={a.get('ok', a.get('resultado'))} | "
+                      f"{una_linea(a.get('verificado', a.get('razon', '')))}")
     for e in escalar:
         # `.get()` with visible padding, not hard subscript. A finding missing a key must
         # come out UGLY, not make the entire report disappear.
@@ -2695,9 +2644,8 @@ def main():
                      + json.dumps({k: v for k, v in e.items()
                                    if k not in ("tipo", "alias")},
                                   ensure_ascii=False, default=str)[:400])
-        lineas.append("  %-9s %-11s %s: %s"
-                      % ("CIEGO!!" if es_sonda_rota(tipo_e) else "ESCALAR",
-                         e.get("alias", "-"), tipo_e, una_linea(det_e)))
+        lineas.append(f"  {('CIEGO!!' if es_sonda_rota(tipo_e) else 'ESCALAR')!s:<9} "
+                      f"{e.get('alias', '-')!s:<11} {tipo_e}: {una_linea(det_e)}")
     # Notes were not being written ANYWHERE. The list was filled from 14 sites and the
     # renderer only iterated hallazgos/acciones/escalar, so "lowering something to a note"
     # wasn't degrading it — it was deleting it. Notes go at the end, silently, but EXIST.
@@ -2709,8 +2657,7 @@ def main():
             detalle = una_linea(json.dumps(
                 {k: v for k, v in ap.items() if k not in ("tipo", "alias")},
                 ensure_ascii=False)[:300])
-        lineas.append("  apunte    %-11s %s: %s"
-                      % (ap.get("alias", "-"), ap.get("tipo", "?"), una_linea(detalle)))
+        lineas.append(f"  apunte    {ap.get('alias', '-')!s:<11} {ap.get('tipo', '?')}: {una_linea(detalle)}")
     if not hallazgos and not escalar and not apuntes:
         lineas.append("  sin novedad")
     texto_log = "\n".join(lineas)
@@ -2747,7 +2694,7 @@ def main():
     visto_ahora, a_despachar = {}, []
     for e in escalar:
         tipo = e.get("tipo", "?")
-        clave = "%s|%s" % (tipo, e.get("alias", "-"))
+        clave = f"{tipo}|{e.get('alias', '-')}"
         grav = gravedad(tipo)
         antes = visto_antes.get(clave) or {}
         veces = int(antes.get("veces", 0)) + 1
@@ -2791,9 +2738,8 @@ def main():
         # lista de abajo esta INCOMPLETA y leerla como completa es la trampa.
         if aviso_ciego:
             partes += [aviso_ciego, ""]
-        for grav, veces, e in elegidos:
-            partes.append("### %s / %s  (gravedad %d)"
-                          % (e.get("alias", "-"), e.get("tipo"), grav))
+        for grav, _veces, e in elegidos:
+            partes.append(f"### {e.get('alias', '-')} / {e.get('tipo')}  (gravedad {grav})")
             # una_linea(): `detalle` is free text that may come from a `last_error` in the
             # base or subprocess output (see comment next to `una_linea()`). Without this,
             # an embedded newline is sent as-is to the target — appears as a stray line in the
@@ -2802,17 +2748,16 @@ def main():
             # the findings.
             partes.append(una_linea(e.get("detalle", "")))
             for k, v in pares_de_evidencia(e.get("evidencia")):
-                partes.append("  $ %s" % k)
+                partes.append(f"  $ {k}")
                 for linea in str(v).strip().split("\n"):
                     partes.append("    " + linea)
             partes.append("")
         if sobrantes:
-            partes.append("(+%d hallazgo(s) mas, de menor gravedad, en la bitacora)" % sobrantes)
+            partes.append(f"(+{sobrantes} hallazgo(s) mas, de menor gravedad, en la bitacora)")
         partes += ["", "Lo que el guardia YA reparo solo en esta corrida:"]
-        partes += (["  - %s: %s -> %s" % (a.get("alias"), a.get("accion"),
-                                          una_linea(a.get("verificado")))
+        partes += ([f"  - {a.get('alias')}: {a.get('accion')} -> {una_linea(a.get('verificado'))}"
                     for a in acciones] or ["  (nada: no habia nada de la lista auto-reparable)"])
-        partes += ["", "Bitacora completa: kratos:%s" % BITACORA_LOG,
+        partes += ["", f"Bitacora completa: kratos:{BITACORA_LOG}",
                    "El guardia NO reinicia adaptadores (falta la re-inyeccion del trabajo en "
                    "vuelo); si hace falta reiniciar, es tuyo."]
         partes += ["", RECORDATORIO_PARALELO]
@@ -2828,21 +2773,21 @@ def main():
                                            "+".join(sorted(e.get("alias", "-")
                                                            for _, _, e in elegidos)))
             acciones.append({"accion": "despachar_a_zeus", "alias": "zeus", "ok": ok_d,
-                             "verificado": ("entrega publicada (202): %s" % det_d[:120]) if ok_d
-                             else "NO SE PUDO PUBLICAR: %s" % det_d[:200]})
-            print("despacho a zeus: ok=%s %s" % (ok_d, det_d[:200]))
+                             "verificado": f"entrega publicada (202): {det_d[:120]}" if ok_d
+                             else f"NO SE PUDO PUBLICAR: {det_d[:200]}"})
+            print(f"despacho a zeus: ok={ok_d} {det_d[:200]}")
 
     # The dispatch seal applies to what WENT OUT, not what was meant to.
     if elegidos and ok_d and not args.sin_entrega:
         for _, _, e in elegidos:
-            clave_e = "%s|%s" % (e.get("tipo", "?"), e.get("alias", "-"))
+            clave_e = f"{e.get('tipo', '?')}|{e.get('alias', '-')}"
             if clave_e in visto_ahora:
                 visto_ahora[clave_e]["ultimo_despacho"] = t0.isoformat()
 
     # Signature is (mode, alias): stable on purpose. If it were built from the detail
     # text, the counters inside (minutes, pid, hours) would change every run and the
     # doctor would re-alert on the SAME problem every hour, which is how it becomes noise.
-    firma = " || ".join(sorted("%s:%s" % (h["modo"], h["alias"]) for h in hallazgos))
+    firma = " || ".join(sorted(f"{h['modo']}:{h['alias']}" for h in hallazgos))
 
     # ONE ALERT PER FINDING. The path is the delivery to the target, nothing else. The bridge
     # already shows that delivery to the owner in chat, and the target's reply comes after:
@@ -2857,14 +2802,14 @@ def main():
     # With --sin-entrega nothing was published ON PURPOSE: that's not a channel failure,
     # and treating it as such would fire the emergency Telegram on every inspection run.
     if elegidos and not ok_d and not args.sin_entrega:
-        motivos_zeus.append("la entrega a zeus NO se pudo publicar: %s" % det_d[:200])
+        motivos_zeus.append(f"la entrega a zeus NO se pudo publicar: {det_d[:200]}")
     for e in escalar:
         if (e.get("tipo") in TIPOS_ZEUS_CAIDO
                 and "zeus" in str(e.get("alias", "")).split(",")):
-            motivos_zeus.append("%s: %s" % (e.get("tipo"), str(e.get("detalle", ""))[:180]))
+            motivos_zeus.append(f"{e.get('tipo')}: {str(e.get('detalle', ''))[:180]}")
     for h in hallazgos:                      # modo 2 = turno colgado: zeus vivo pero mudo
         if h.get("modo") == 2 and h.get("alias") == "zeus":
-            motivos_zeus.append("turno colgado: %s" % str(h.get("detalle", ""))[:180])
+            motivos_zeus.append(f"turno colgado: {str(h.get('detalle', ''))[:180]}")
     # The reasons above cover "the target down" and "the target took and didn't close", but NOT the case
     # in which the target is actually working and meanwhile a PERSON's message has been sitting in
     # its queue for half an hour. A doctor that only checks if the doctor is breathing
@@ -2889,8 +2834,8 @@ def main():
         # minute counter would make this fire every 15 min for the SAME problem. Buckets.
         tramo = "mas de 3 h" if min_h >= 180 else ("mas de 1 h" if min_h >= 60 else "mas de 20 min")
         motivos_zeus.append(
-            "hay %d mensaje(s) de una PERSONA esperando en la cola de zeus hace %s: "
-            "zeus puede estar trabajando, pero quien escribio no lo sabe" % (n_h, tramo))
+            f"hay {n_h} mensaje(s) de una PERSONA esperando en la cola de zeus hace {tramo}: "
+            "zeus puede estar trabajando, pero quien escribio no lo sabe")
 
     # To WAKE A PERSON requires POSITIVE evidence that the target isn't alive, not the mere
     # absence of progress. A taken and unclosed delivery is what you ALWAYS see while
@@ -2899,9 +2844,9 @@ def main():
     # leases have expired.
     lista_zeus = turnos_muertos_de_zeus(por_alias.get("zeus") or [])
     if lista_zeus:
-        motivos_zeus.append("zeus tomo %d entrega(s), no las cerro y la reserva VENCIO "
-                            "(hasta %d min): no es un turno largo, es un turno muerto"
-                            % (len(lista_zeus), max(x["edad_min"] for x in lista_zeus)))
+        motivos_zeus.append(f"zeus tomo {len(lista_zeus)} entrega(s), no las cerro y la reserva VENCIO "
+                            f"(hasta {max(x['edad_min'] for x in lista_zeus)} min): "
+                            "no es un turno largo, es un turno muerto")
     motivos_zeus = list(dict.fromkeys(motivos_zeus))
 
     if motivos_zeus and not args.sin_aviso:
@@ -2911,14 +2856,14 @@ def main():
         for m in motivos_zeus[:4]:
             cuerpo.append("- " + m)
         cuerpo.append("")
-        cuerpo.append("Esperando a alguien: %d hallazgo(s) para revisar, %d reparado(s) solos."
-                      % (len(elegidos), len(reparados)))
-        cuerpo.append("log: kratos:%s" % BITACORA_LOG)
+        cuerpo.append(f"Esperando a alguien: {len(elegidos)} hallazgo(s) para revisar, "
+                      f"{len(reparados)} reparado(s) solos.")
+        cuerpo.append(f"log: kratos:{BITACORA_LOG}")
         ok, det = avisar("\n".join(cuerpo))
         if not ok:
-            print("AVISO NO ENVIADO: %s" % det)
+            print(f"AVISO NO ENVIADO: {det}")
         else:
-            print("aviso DIRECTO a Steven (zeus caido/mudo): %d motivo(s)" % len(motivos_zeus))
+            print(f"aviso DIRECTO a Steven (zeus caido/mudo): {len(motivos_zeus)} motivo(s)")
     elif args.sin_aviso:
         print("--sin-aviso: no se manda Telegram")
     elif elegidos or reparados:
@@ -2933,12 +2878,12 @@ def main():
                "fallos_seguidos": 0}, open(ESTADO_JSON, "w"))
 
     if acciones:
-        git_commit("medico: %d reparacion(es) - %s | verificado por efecto; detalle en bitacora"
-                   % (len(acciones),
-                      ", ".join("%s/%s" % (a.get("alias"), a.get("accion")) for a in acciones)))
+        reparado_txt = ", ".join(f"{a.get('alias')}/{a.get('accion')}" for a in acciones)
+        git_commit(f"medico: {len(acciones)} reparacion(es) - {reparado_txt} | verificado por "
+                   "efecto; detalle en bitacora")
     else:
-        git_commit("medico: corrida %s - %d hallazgo(s), %d a escalar"
-                   % (t0.strftime("%Y-%m-%dT%H:%M"), len(hallazgos), len(escalar)))
+        git_commit(f"medico: corrida {t0.strftime('%Y-%m-%dT%H:%M')} - "
+                   f"{len(hallazgos)} hallazgo(s), {len(escalar)} a escalar")
     return 0
 
 
@@ -2955,21 +2900,19 @@ def con_disyuntor():
         return main()
     except Exception as e:  # noqa: BLE001
         fallos += 1
-        detalle = "%s: %s" % (type(e).__name__, str(e)[:300])
+        detalle = f"{type(e).__name__}: {str(e)[:300]}"
         try:
             os.makedirs(ESTADO_DIR, exist_ok=True)
             with open(BITACORA_LOG, "a") as f:
-                f.write("\n%s UTC EL GUARDIA FALLO (%d seguidas): %s\n"
-                        % (ahora().strftime("%Y-%m-%d %H:%M"), fallos, detalle))
+                f.write(f"\n{ahora().strftime('%Y-%m-%d %H:%M')} UTC EL GUARDIA FALLO ({fallos} seguidas): {detalle}\n")
             prev["fallos_seguidos"] = fallos
             json.dump(prev, open(ESTADO_JSON, "w"))
         except Exception:  # noqa: BLE001
             pass
         if fallos == MAX_FALLOS_SEGUIDOS:
-            avisar("MEDICO CAUCE - el guardia se rompio %d veces seguidas y se calla hasta "
-                   "que alguien lo mire.\n\n%s\n\nlog: kratos:%s"
-                   % (fallos, detalle, BITACORA_LOG))
-        print("EL GUARDIA FALLO (%d seguidas): %s" % (fallos, detalle), file=sys.stderr)
+            avisar(f"MEDICO CAUCE - el guardia se rompio {fallos} veces seguidas y se calla hasta "
+                   f"que alguien lo mire.\n\n{detalle}\n\nlog: kratos:{BITACORA_LOG}")
+        print(f"EL GUARDIA FALLO ({fallos} seguidas): {detalle}", file=sys.stderr)
         return 1
 
 
