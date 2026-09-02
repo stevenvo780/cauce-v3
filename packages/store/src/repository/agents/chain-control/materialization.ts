@@ -1,13 +1,13 @@
 import {
-  clampAgentPriority, MAX_DELEGATION_FEEDBACK_ITEMS, SYSTEM_PRINCIPAL_ALIASES, type Ack, type Tenant
+  clampAgentPriority, isAlias, isRfcUuid, MAX_DELEGATION_FEEDBACK_ITEMS, persistedString,
+  SYSTEM_PRINCIPAL_ALIASES, type Ack, type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
-import { persistedString } from '../../../runtime-values.js';
 import {
   boundedRejectionTarget, describeDelegationRejection, fanoutCapForTurn, HUMAN_GATE_TARGET,
   rejectionText, type RejectionNotice
 } from '../../../delegation-guard.js';
-import { chainNode, uuidPattern } from '../fanin.js';
+import { chainNode } from '../fanin.js';
 import { reservedInternalMessageTypes, sha256 } from '../../config.js';
 import {
   maxAgentOutputMessages, type AgentOutputEntry, type AgentOutputOutcome,
@@ -16,7 +16,7 @@ import {
 import { StoreError } from '../../errors.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
-  aliasPattern, originRelayTenant, truncateUtf8, type ChainPolicy, type DeliveryRow
+  originRelayTenant, truncateUtf8, type ChainPolicy, type DeliveryRow
 } from '../../observability.js';
 import { objectRecord, visibleText } from '../../outbox.js';
 import {
@@ -40,8 +40,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
   ): Promise<AgentOutputLineage | undefined> {
     if (row.body.type !== 'agent.response') return undefined;
     const correlation = objectRecord(row.body.correlation);
-    const claimed = typeof correlation?.response_to_delivery_id === 'string'
-      && uuidPattern.test(correlation.response_to_delivery_id)
+    const claimed = isRfcUuid(correlation?.response_to_delivery_id)
       ? correlation.response_to_delivery_id
       : undefined;
     if (claimed === undefined) return undefined;
@@ -147,18 +146,15 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
     );
     const hopCount = inheritedHopCount + 1;
     const parentCorrelation = objectRecord(parentMaterialization?.correlation) ?? bodyCorrelation;
-    const rootRequestId = typeof parentCorrelation?.root_request_id === 'string'
-      && uuidPattern.test(parentCorrelation.root_request_id)
+    const rootRequestId = isRfcUuid(parentCorrelation?.root_request_id)
       ? parentCorrelation.root_request_id
       : row.request_id;
     const rootMessageId = persistedString(
-      typeof parentCorrelation?.root_message_id === 'string'
-        && uuidPattern.test(parentCorrelation.root_message_id)
+      isRfcUuid(parentCorrelation?.root_message_id)
         ? parentCorrelation.root_message_id
         : row.message_id
     );
-    const rootDeliveryId = typeof parentCorrelation?.root_delivery_id === 'string'
-      && uuidPattern.test(parentCorrelation.root_delivery_id)
+    const rootDeliveryId = isRfcUuid(parentCorrelation?.root_delivery_id)
       ? parentCorrelation.root_delivery_id
       : row.id;
     // visited_path mirrors hop_count: fall back to trusted body correlation only when the
@@ -343,7 +339,7 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
           continue;
         }
       }
-      if (!rejection && (!targetAlias || !aliasPattern.test(targetAlias))) {
+      if (!rejection && !isAlias(targetAlias)) {
         await reject('unroutable_alias');
         continue;
       }

@@ -1,4 +1,4 @@
-import type { DeliveryState, Tenant } from '@cauce/protocol';
+import { isRfcUuid, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
 import { reservedInternalMessageTypes } from '../../config.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
@@ -8,7 +8,7 @@ import {
 import { objectRecord, visibleText } from '../../outbox.js';
 import {
   agentFaninInstruction, agentFaninMaxAggregateBytes, agentFaninMaxResponseBytes,
-  agentFaninRequestId, agentResponseText, uuidPattern
+  agentFaninRequestId, agentResponseText
 } from './helpers.js';
 import { AgentResponseRepository } from './response.js';
 
@@ -24,8 +24,8 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
     const correlatedRoot = typeof correlation?.root_message_id === 'string'
       ? correlation.root_message_id
       : undefined;
-    if (correlatedRoot && uuidPattern.test(correlatedRoot)) return correlatedRoot;
-    return uuidPattern.test(row.message_id) ? row.message_id : undefined;
+    if (correlatedRoot !== undefined && isRfcUuid(correlatedRoot)) return correlatedRoot;
+    return isRfcUuid(row.message_id) ? row.message_id : undefined;
   }
 
   protected async materializeAgentFanin(

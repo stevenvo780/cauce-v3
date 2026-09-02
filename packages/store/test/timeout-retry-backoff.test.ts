@@ -1,6 +1,7 @@
 import type { DatabasePool } from '../src/db.js';
 import { describe, expect, it } from 'vitest';
 import { CauceRepository, timeoutRetryBackoffSeconds } from '../src/repository.js';
+import { ackFailureBackoffSeconds } from '../src/repository/observability/policy.js';
 
 /**
  * The retry wait for an expired claim. It does not need Postgres: it is pure arithmetic, and it is
@@ -25,9 +26,8 @@ describe('ACK-timeout retry backoff', () => {
   it('espera más que un fallo declarado por el agente, que llega a 60 s', () => {
     // A declared failure means the agent answered; an expired claim means it stayed mute for the
     // whole deadline. The second case deserves more patience, not less.
-    const falloDeclarado = (attempt: number): number => Math.min(60, 2 ** Math.max(0, attempt - 1));
     for (let attempt = 1; attempt <= 6; attempt += 1) {
-      expect(timeoutRetryBackoffSeconds(attempt)).toBeGreaterThan(falloDeclarado(attempt));
+      expect(timeoutRetryBackoffSeconds(attempt)).toBeGreaterThan(ackFailureBackoffSeconds(attempt));
     }
   });
 

@@ -1,10 +1,10 @@
-import type { DeliveryState, Origin, Tenant } from '@cauce/protocol';
+import { isAlias, type DeliveryState, type Origin, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import type {
   ChainSilenceClosureReason, ChainSilenceSweepOptions, ChainSilenceSweepResult
 } from './contracts.js';
-import { aliasPattern, originRelayTenant, truncateUtf8 } from './helpers.js';
+import { originRelayTenant, truncateUtf8 } from './helpers.js';
 import { ObservabilityMaintenanceRepository } from './maintenance.js';
 
 const chainSilenceIdleMs = 6 * 60 * 60 * 1_000;
@@ -97,7 +97,7 @@ function sanitizedDiagnostic(value: string): string {
 
 function originBridgeAlias(origin: Origin): string {
   const alias = origin.metadata.bridge_alias;
-  return typeof alias === 'string' && aliasPattern.test(alias) ? alias : origin.adapter;
+  return isAlias(alias) ? alias : origin.adapter;
 }
 
 export abstract class ObservabilityChainSweepRepository extends ObservabilityMaintenanceRepository {

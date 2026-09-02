@@ -1,4 +1,4 @@
-import type { DeliveryState, Origin, Tenant } from '@cauce/protocol';
+import type { DeliveryState, Lane, Origin, Tenant } from '@cauce/protocol';
 import { DISABLED_DELEGATION_CAPS, type DelegationCaps } from '../../delegation-guard.js';
 
 export interface DeliveryRow {
@@ -16,7 +16,7 @@ export interface DeliveryRow {
   room_id: string;
   actor_alias: string;
   body: Record<string, unknown>;
-  lane: 'interactive' | 'batch';
+  lane: Lane;
   priority: number;
   origin: Origin | null;
   auth_session_id: string | null;

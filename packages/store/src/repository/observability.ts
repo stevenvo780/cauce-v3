@@ -1,4 +1,4 @@
-import type { Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error" */
+import { isRfcUuid, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
@@ -9,7 +9,6 @@ import { StoreError } from './errors.js';
 import type {
   OperationalDlqPage, OperationalDlqResolutionRequest, OperationalDlqResolutionResult
 } from './observability/contracts.js';
-import { UUID_PATTERN } from './observability/helpers.js';
 import { ObservabilityChainSweepRepository } from './observability/chain-sweep.js';
 
 export {
@@ -29,7 +28,7 @@ export {
   type OperationalDlqResolutionRequest, type OperationalDlqResolutionResult
 } from './observability/contracts.js';
 export {
-  agentDeploymentStatus, UUID_PATTERN, aliasPattern, originRelayTenant, tenantPattern, truncateUtf8
+  agentDeploymentStatus, originRelayTenant, truncateUtf8
 } from './observability/helpers.js';
 
 export abstract class ObservabilityRepository extends ObservabilityChainSweepRepository {
@@ -252,7 +251,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
   ): Promise<OperationalDlqResolutionResult> {
     const reason = request.reason.trim();
     if ((request.target !== 'delivery' && request.target !== 'outbox') // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Runtime callers can violate the target union.
-      || !UUID_PATTERN.test(request.id)
+      || !isRfcUuid(request.id)
       || !/^[a-f0-9]{64}$/.test(request.evidenceSha256)
       || reason.length < 1 || reason.length > 1_000
       || Array.from(reason).some((character) => {

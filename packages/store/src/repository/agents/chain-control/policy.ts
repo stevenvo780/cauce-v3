@@ -1,11 +1,13 @@
 import {
   DelegationMaterializationSchema,
   DelegationRejectionSchema,
+  isAlias,
+  isLiteralTrue,
+  isTenant,
   MAX_DELEGATION_FEEDBACK_ITEMS,
   type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
-import { isLiteralTrue } from '../../../runtime-values.js';
 import {
   DISABLED_DELEGATION_CAPS,
   sanitizedDelegationCaps,
@@ -20,9 +22,7 @@ import type {
 } from '../../deliveries.js';
 import { StoreError } from '../../errors.js';
 import {
-  aliasPattern,
   disabledChainPolicy,
-  tenantPattern,
   type ChainPolicy
 } from '../../observability.js';
 import { objectRecord } from '../../outbox.js';
@@ -66,7 +66,7 @@ export function sanitizedVisitedPath(value: unknown): string[] {
     if (separator < 0) continue;
     const tenant = entry.slice(0, separator);
     const alias = entry.slice(separator + 1);
-    if (!tenantPattern.test(tenant) || !aliasPattern.test(alias)) continue;
+    if (!isTenant(tenant) || !isAlias(alias)) continue;
     path.push(entry);
     if (path.length === maxVisitedPathEntries) break;
   }

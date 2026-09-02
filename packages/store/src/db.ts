@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { isAbsolute } from 'node:path';
 import pg from 'pg';
+import { isSignalAborted, readMutableBoolean } from '@cauce/protocol';
 import {
   ensureMigrationIntegrityTables,
   inspectMigrationIntegrity,
@@ -8,7 +9,6 @@ import {
   migrationSourcesForApply,
   recordLegacy024Verification,
 } from './migration-integrity.js';
-import { isSignalAborted, readMutableBoolean } from './runtime-values.js';
 
 const { Pool } = pg;
 export type DatabasePool = pg.Pool;

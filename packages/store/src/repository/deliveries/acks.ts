@@ -13,6 +13,7 @@ import {
   type DeliveryRow,
   type LateRelayDisposition,
 } from '../observability.js';
+import { ackFailureBackoffSeconds } from '../observability/policy.js';
 import {
   ackRank,
   agentNotifyEntries,
@@ -308,7 +309,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           terminalErrorCode = 'MISSING_FINAL_REPLY';
         }
       }
-      const backoffSeconds = Math.min(60, 2 ** Math.max(0, row.attempt - 1));
+      const backoffSeconds = ackFailureBackoffSeconds(row.attempt);
       // The FIRST 'started' moves the deadline just like a renewal: gateway and database must
       // date the same lease from the same fact, the applied ACK.
       await client.query(

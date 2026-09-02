@@ -1,5 +1,9 @@
-import type { Origin, OutboxAck as ProtocolOutboxAck, Tenant } from '@cauce/protocol';
-import { UUID_PATTERN } from '../observability.js';
+import {
+  isRfcUuid, objectRecord, visibleText,
+  type Origin, type OutboxAck as ProtocolOutboxAck, type Tenant
+} from '@cauce/protocol';
+
+export { objectRecord, visibleText };
 
 export interface OutboxEvent {
   id: string;
@@ -77,18 +81,7 @@ export interface WakeOutboxClaimFence {
 }
 
 export function validConnectionToken(value: unknown): value is string {
-  return typeof value === 'string' && UUID_PATTERN.test(value);
-}
-
-export function objectRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-export function visibleText(value: unknown): string {
-  if (typeof value !== 'string' || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(value)) return '';
-  return value.trim();
+  return isRfcUuid(value);
 }
 
 export function textualReply(result: Record<string, unknown> | undefined): string {

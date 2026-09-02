@@ -1,8 +1,7 @@
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
-import { HUMAN_PRIORITY_FLOOR, PROTOCOL_VERSION } from '@cauce/protocol';
+import { HUMAN_PRIORITY_FLOOR, isLiteralTrue, PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
-import { isLiteralTrue } from '../../runtime-values.js';
 import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { validConnectionToken } from '../outbox.js';

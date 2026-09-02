@@ -1,7 +1,6 @@
-import type { DeliveryState } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
+import { isLiteralTrue, type DeliveryState } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
-import { isLiteralTrue } from '../../runtime-values.js';
 import { BaseRepository } from '../base.js';
 import { StoreError } from '../errors.js';
 import type {

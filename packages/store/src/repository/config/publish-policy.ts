@@ -1,32 +1,16 @@
-import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type {
   ConsolePublishIntentRateLimited, PublishMessage, Tenant
+} from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
+import {
+  RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_PRINCIPAL_ALIASES, sha256Hex
 } from '@cauce/protocol';
-import { RESERVED_INTERNAL_MESSAGE_TYPES, SYSTEM_PRINCIPAL_ALIASES } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { StoreError } from '../errors.js';
 import { objectRecord } from '../outbox.js';
-export function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonical(child)])
-    );
-  }
-  return value;
-}
-export function canonicallyEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
-}
+
+export { canonicallyEqual, sha256Hex as sha256 } from '@cauce/protocol';
 
 export const reservedInternalMessageTypes = new Set<string>(RESERVED_INTERNAL_MESSAGE_TYPES);
-
-export function sha256(value: unknown): string {
-  const encoded = typeof value === 'string' ? value : JSON.stringify(canonical(value)) ?? 'undefined'; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Runtime values can make JSON.stringify return undefined.
-  return createHash('sha256').update(encoded).digest('hex');
-}
 
 export const MAX_OPEN_CONSOLE_PUBLISH_INTENTS = 32;
 
@@ -207,7 +191,7 @@ export function consolePublishConversationHash(input: PublishRouteCommand): stri
   const recipients = [...input.recipients].sort((left, right) => (
     `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
   ));
-  return sha256({
+  return sha256Hex({
     version: 1,
     tenant_id: input.tenant_id,
     actor_alias: input.actor_alias,
@@ -217,7 +201,7 @@ export function consolePublishConversationHash(input: PublishRouteCommand): stri
 }
 
 export function consolePublishIntentNonceHash(nonce: string): string {
-  return sha256(`cauce-v3:console-publish-intent-nonce:v1\n${nonce}`);
+  return sha256Hex(`cauce-v3:console-publish-intent-nonce:v1\n${nonce}`);
 }
 
 export function validConsoleOperatorScope(scope: string): boolean {

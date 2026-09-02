@@ -1,6 +1,7 @@
-import { clampAgentPriority, type DeliveryState, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
+import {
+  clampAgentPriority, isLiteralTrue, isRfcUuid, type DeliveryState, type Tenant
+} from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
-import { isLiteralTrue } from '../../../runtime-values.js';
 import { postgresTextSafe } from '../../deliveries.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
@@ -9,7 +10,7 @@ import {
 import { objectRecord } from '../../outbox.js';
 import {
   agentResponseRequestId, agentResponseText, aggregatedFailureText, failureSignature,
-  lateResultText, maxAgentResponseTextBytes, uuidPattern, type FailureNoticeReservation
+  lateResultText, maxAgentResponseTextBytes, type FailureNoticeReservation
 } from './helpers.js';
 import { AgentProgressRepository } from './progress.js';
 
@@ -28,8 +29,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     const responseCorrelation = row.body.type === 'agent.response'
       ? objectRecord(row.body.correlation)
       : undefined;
-    const claimedResponseToDeliveryId = typeof responseCorrelation?.response_to_delivery_id === 'string'
-      && uuidPattern.test(responseCorrelation.response_to_delivery_id)
+    const claimedResponseToDeliveryId = isRfcUuid(responseCorrelation?.response_to_delivery_id)
       ? responseCorrelation.response_to_delivery_id
       : null;
     const trustedResponse = claimedResponseToDeliveryId === null
@@ -319,7 +319,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
 
   private relationshipRoot(relationship: { correlation: Record<string, unknown> }): string | undefined {
     const root = relationship.correlation.root_message_id;
-    return typeof root === 'string' && uuidPattern.test(root) ? root : undefined;
+    return isRfcUuid(root) ? root : undefined;
   }
 
   /**
@@ -350,7 +350,7 @@ export abstract class AgentResponseRepository extends AgentProgressRepository {
     // Without a root declared by the store, the parent's return is still a valid grouper: it is
     // the concrete turn that opened those branches. Coalescing is never skipped for lack of root.
     const root = this.relationshipRoot(relationship) ?? relationship.source_message_id;
-    if (!uuidPattern.test(root)) return undefined;
+    if (!isRfcUuid(root)) return undefined;
     const signature = failureSignature(outcome, error, errorCode);
 
     // Retry of the SAME ACK: the (delivery, attempt) key of the ledger is already taken, so this

@@ -7,7 +7,7 @@ import {
 import { AgentFaninMaterializationRepository } from './fanin/materialization.js';
 
 export {
-  failureSignature, uuidPattern, type AgentChainProgressStage
+  failureSignature, type AgentChainProgressStage
 } from './fanin/helpers.js';
 export { chainNode };
 

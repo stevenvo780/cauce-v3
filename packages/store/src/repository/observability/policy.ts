@@ -1,4 +1,4 @@
-import { MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from '@cauce/protocol';
+import { exponentialBackoff, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from '@cauce/protocol';
 import { StoreError } from '../errors.js';
 
 /** Total lifetime ceiling of a delivery attempt when the message does not declare `body.timeout_ms`. */
@@ -208,5 +208,13 @@ export interface StaleDeliveryPolicy extends DeliveryLeaseCap {
  * deaths.
  */
 export function timeoutRetryBackoffSeconds(attempt: number): number {
-  return Math.min(300, 30 * 2 ** Math.max(0, attempt - 1));
+  return exponentialBackoff(attempt, { baseSeconds: 30, capSeconds: 300 });
+}
+
+export function ackFailureBackoffSeconds(attempt: number): number {
+  return exponentialBackoff(attempt, { baseSeconds: 1, capSeconds: 60 });
+}
+
+export function jobRetryBackoffSeconds(attempt: number): number {
+  return exponentialBackoff(attempt, { baseSeconds: 1, capSeconds: 300 });
 }

@@ -1,4 +1,4 @@
-import type { Tenant } from '@cauce/protocol';
+import { isTenant, type Tenant } from '@cauce/protocol';
 import type { DeliveryRow } from './contracts.js';
 
 /** Deployment status derived from registry + presence only; no host-side reporter exists yet
@@ -10,12 +10,6 @@ export function agentDeploymentStatus(row: Record<string, unknown>): string {
   if (row.online === false) return 'offline';
   return 'unknown';
 }
-
-export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-export const aliasPattern = /^[a-z][a-z0-9_-]{0,63}$/u;
-
-export const tenantPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
 
 export function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return { value, truncated: false };
@@ -34,7 +28,5 @@ export function truncateUtf8(value: string, maxBytes: number): { value: string; 
 
 export function originRelayTenant(row: Pick<DeliveryRow, 'tenant_id' | 'origin'>): Tenant {
   const trustedTenant = row.origin?.metadata.bridge_tenant;
-  return typeof trustedTenant === 'string' && tenantPattern.test(trustedTenant)
-    ? trustedTenant
-    : row.tenant_id;
+  return isTenant(trustedTenant) ? trustedTenant : row.tenant_id;
 }

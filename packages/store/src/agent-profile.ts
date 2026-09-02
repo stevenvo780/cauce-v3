@@ -1,11 +1,10 @@
 import {
-  emptyAgentProfile, normalizeAgentProfile,
+  emptyAgentProfile, isLiteralTrue, normalizeAgentProfile,
   type AgentProfile, type ArnesDelAlias, type ContextoDeAlias, type CuotaDelAlias,
   type HechosDelAlias, type PermisosDelAlias
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
-import { isLiteralTrue } from './runtime-values.js';
 
 /**
  * Repository for reading, persistence, and context of agent profiles (agent_profiles).

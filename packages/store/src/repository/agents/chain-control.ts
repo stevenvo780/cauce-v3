@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Origin, Tenant } from '@cauce/protocol';
+import { isRfcUuid, type Origin, type Tenant } from '@cauce/protocol';
 import { type DatabaseClient, withTransaction } from '../../db.js';
-import { uuidPattern } from './fanin.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
 import { insertDelivery, insertMessage } from '../messages/_insert.js';
@@ -97,7 +96,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
     actorAlias: string
   ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'route');
-    if (!uuidPattern.test(gateId)) {
+    if (!isRfcUuid(gateId)) {
       throw new StoreError('invalid_input', 'gate id must be a uuid');
     }
     const text = postgresTextSafe(answer) ?? '';
@@ -242,7 +241,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
     actorAlias: string
   ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'route');
-    if (!uuidPattern.test(gateId)) {
+    if (!isRfcUuid(gateId)) {
       throw new StoreError('invalid_input', 'gate id must be a uuid');
     }
     return withTransaction(this.pool, async (client) => {

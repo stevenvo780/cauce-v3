@@ -1,4 +1,4 @@
-import type { ConfigMutation, Tenant } from '@cauce/protocol';
+import type { ConfigMutation, Permission, Tenant } from '@cauce/protocol';
 import { selectAccountForAlias, type AccountSelection } from '../accounts.js';
 import type { DatabaseClient } from '../db.js';
 import {
@@ -6,6 +6,10 @@ import {
 } from '../configuration.js';
 import { StoreError } from './errors.js';
 import { OutboxRepository } from './outbox.js';
+
+const PERMISSION_COLUMNS: Record<Permission, string> = {
+  route: 'allow_route', read: 'allow_read', control: 'allow_control', notify: 'allow_notify',
+};
 
 export * from './config/publish-policy.js';
 
@@ -50,13 +54,9 @@ export abstract class ConfigRepository extends OutboxRepository {
   }
 
   override async assertPermission(
-    tenantId: Tenant, alias: string, permission: 'route' | 'read' | 'control' | 'notify'
+    tenantId: Tenant, alias: string, permission: Permission
   ): Promise<void> {
-    const column = permission === 'route'
-      ? 'allow_route'
-      : permission === 'read'
-        ? 'allow_read'
-        : permission === 'control' ? 'allow_control' : 'allow_notify';
+    const column = PERMISSION_COLUMNS[permission];
     const result = await this.pool.query(
       `SELECT 1 FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
@@ -121,7 +121,7 @@ export abstract class ConfigRepository extends OutboxRepository {
   }
 
   async principalAccess(tenantId: Tenant, alias: string): Promise<{
-    roles: string[]; permissions: ('route' | 'read' | 'control' | 'notify')[];
+    roles: string[]; permissions: Permission[];
   }> {
     const result = await this.pool.query<{
       roles: string[] | null; allow_route: boolean; allow_read: boolean; allow_control: boolean;
