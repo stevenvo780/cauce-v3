@@ -23,6 +23,7 @@ import type { AuthProvider } from './auth.js';
 import { createConsoleSecurityHook } from './console-security.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
 import {
+  configuredLeaseTtlMs,
   DEFAULT_ACK_DEADLINE_MS, DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES,
   validateAckDeadlineMs, validateDeliveryAdmission, type DeliveryAdmissionConfig
 } from './config.js';
@@ -295,6 +296,7 @@ export interface GatewayOptions {
 const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
 const DEFAULT_WAKE_PUMP_CONCURRENCY = 4;
 const DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS = 1_000;
+const GATEWAY_WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 
 export async function buildGateway(options: GatewayOptions): Promise<FastifyInstance> {
@@ -318,7 +320,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   if (options.authProvider.mode === 'production' && repository.liveDeliveryClaims === undefined) {
     throw new Error('production gateway requires durable live-delivery claim recovery');
   }
-  const leaseTtlMs = options.leaseTtlMs ?? 30_000;
+  const leaseTtlMs = options.leaseTtlMs ?? configuredLeaseTtlMs();
   const outboxPollMs = options.outboxPollMs ?? 100;
   const outboxLeaseMs = options.outboxLeaseMs ?? 30_000;
   const outboxWakeConcurrency = options.outboxWakeConcurrency ?? DEFAULT_WAKE_PUMP_CONCURRENCY;
@@ -365,7 +367,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     workerId,
   });
 
-  await app.register(websocket);
+  await app.register(websocket, { options: { maxPayload: GATEWAY_WS_MAX_PAYLOAD_BYTES } });
   app.addHook('onRequest', createConsoleSecurityHook({
     ...(options.consoleOrigins === undefined ? {} : { allowedOrigins: options.consoleOrigins })
   }));

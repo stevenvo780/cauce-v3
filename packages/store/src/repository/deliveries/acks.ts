@@ -138,11 +138,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           receipt: 'ownership_lost',
         };
       }
-      // Live-claim foreign identity → correlated ownership_lost below; only a dead claim fences.
-      if (row.claim_token === ack.claim_token && row.attempt === ack.attempt && !row.claim_live &&
-          (row.consumer_instance_id !== ack.instance_id || Number(row.consumer_epoch) !== ack.epoch)) {
-        throw new StoreError('fenced', 'ACK identity does not own this delivery claim');
-      }
+      // A foreign identity never fences: it falls through to the salvage and gets the correlated
+      // receipt. Ownership is enforced by the lease check and by `lateTerminalSalvage`.
       const exactClaim = row.claim_token === ack.claim_token
         && row.attempt === ack.attempt
         && row.claim_live
@@ -266,13 +263,14 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
           receipt: repeatedAck ? 'duplicate' : 'applied',
         };
       }
-      if (terminal(row.status) || rank <= row.last_ack_rank) {
+      // `exactClaim` already restricted the row to 'leased', 'accepted' or 'started'.
+      if (rank <= row.last_ack_rank) {
         await this.insertAck(client, row, ack, false, persistedResult);
         return {
           delivery_id: deliveryId,
           status: row.status,
           applied: false,
-          receipt: terminal(row.status) ? 'ownership_lost' : 'superseded',
+          receipt: 'superseded',
         };
       }
 
@@ -311,11 +309,8 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         }
       }
       const backoffSeconds = Math.min(60, 2 ** Math.max(0, row.attempt - 1));
-      // The FIRST 'started' now also runs the deadline, just like renewals. Previously it did
-      // not move it, and the database kept counting from the claim while the gateway, which
-      // does run it upon seeing the ACK applied, thought the slot was alive longer than it
-      // really was: the two views of the same lease drifted apart by however long startup took.
-      // Now the reference instant is the same fact (the applied ACK) on both sides.
+      // The FIRST 'started' moves the deadline just like a renewal: gateway and database must
+      // date the same lease from the same fact, the applied ACK.
       await client.query(
          `UPDATE deliveries SET status=$2,last_ack_rank=$3,last_error=$4,result=$5::jsonb,
             available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,

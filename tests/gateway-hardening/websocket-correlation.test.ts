@@ -86,7 +86,7 @@ describe('gateway WebSocket ACK correlation', () => {
       'midas',
       'serial-consumer',
       ['acks.v3', 'renewable_delivery_claims_v1'],
-      30_000,
+      180_000,
       { resume: true, resumeWindowMs: 600_000, requireDeclaredCapacity: true, requireEnabledAgent: true }
     );
     const delivered = [await nextFrame(), await nextFrame()];
@@ -533,7 +533,7 @@ describe('gateway WebSocket ACK correlation', () => {
     socket.send(JSON.stringify({ type: 'heartbeat', instance_id: 'durable-consumer', epoch: 2 }));
     expect(await nextFrame()).toMatchObject({ type: 'heartbeat_ack' });
     expect(repository.heartbeat).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'durable-consumer', 2, 30_000,
+      'Pablo', 'midas', 'durable-consumer', 2, 180_000,
       '90000000-0000-4000-8000-000000000002', expect.any(AbortSignal),
     );
 

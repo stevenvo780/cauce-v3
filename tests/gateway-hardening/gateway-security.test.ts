@@ -83,7 +83,7 @@ describe('gateway hardening facades and RBAC', () => {
     });
     expect(heartbeat.statusCode).toBe(200);
     expect(repository.heartbeat).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'http-fenced-consumer', lease.epoch, 30_000,
+      'Pablo', 'midas', 'http-fenced-consumer', lease.epoch, 180_000,
       lease.connection_token,
     );
   });

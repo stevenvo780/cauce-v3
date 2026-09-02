@@ -19,6 +19,24 @@ export function configuredAckDeadlineMs(
   ));
 }
 
+export const DEFAULT_LEASE_TTL_MS = 180_000;
+export const MIN_LEASE_TTL_MS = 30_000;
+
+export function validateLeaseTtlMs(value: number): number {
+  if (!Number.isSafeInteger(value) || value < MIN_LEASE_TTL_MS) {
+    throw new Error(`CAUCE_LEASE_TTL_MS must be a safe integer of at least ${String(MIN_LEASE_TTL_MS)}`);
+  }
+  return value;
+}
+
+export function configuredLeaseTtlMs(
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  return validateLeaseTtlMs(Number(
+    environment.CAUCE_LEASE_TTL_MS ?? DEFAULT_LEASE_TTL_MS,
+  ));
+}
+
 /**
  * Total lifetime cap of a delivery attempt.
  * Gateway and dispatcher share this configuration to synchronize

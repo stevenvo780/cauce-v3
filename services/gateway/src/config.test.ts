@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  configuredAckDeadlineMs, configuredDeliveryAdmission, DEFAULT_ACK_DEADLINE_MS,
-  DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_MAX_INFLIGHT_DELIVERIES
+  configuredAckDeadlineMs, configuredDeliveryAdmission, configuredLeaseTtlMs, DEFAULT_ACK_DEADLINE_MS,
+  DEFAULT_HUMAN_RESERVED_DELIVERIES, DEFAULT_LEASE_TTL_MS, DEFAULT_MAX_INFLIGHT_DELIVERIES, MIN_LEASE_TTL_MS
 } from './config.js';
 
 describe('gateway delivery deadline configuration', () => {
@@ -15,6 +15,23 @@ describe('gateway delivery deadline configuration', () => {
     (value) => {
       expect(() => configuredAckDeadlineMs({ CAUCE_ACK_DEADLINE_MS: value })).toThrow(
         /CAUCE_ACK_DEADLINE_MS must be a positive integer/u,
+      );
+    },
+  );
+});
+
+describe('gateway lease ttl configuration', () => {
+  it('defaults to the production trigger value and honors an environment override', () => {
+    expect(configuredLeaseTtlMs({})).toBe(DEFAULT_LEASE_TTL_MS);
+    expect(configuredLeaseTtlMs({ CAUCE_LEASE_TTL_MS: '90000' })).toBe(90_000);
+    expect(configuredLeaseTtlMs({ CAUCE_LEASE_TTL_MS: String(MIN_LEASE_TTL_MS) })).toBe(MIN_LEASE_TTL_MS);
+  });
+
+  it.each(['0', '1000', '29999', '-1', '1.5', 'not-a-number'])(
+    'fails closed for CAUCE_LEASE_TTL_MS=%j below twice the heartbeat cadence',
+    (value) => {
+      expect(() => configuredLeaseTtlMs({ CAUCE_LEASE_TTL_MS: value })).toThrow(
+        /CAUCE_LEASE_TTL_MS must be a safe integer of at least 30000/u,
       );
     },
   );

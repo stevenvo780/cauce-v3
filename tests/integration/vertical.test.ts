@@ -342,7 +342,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     expect((await pool.query('SELECT 1 FROM deliveries WHERE id=$1 AND status=$2', [deliveryId, 'done'])).rowCount).toBe(1);
   });
 
-  it('fences a new consumer from ACKing work claimed under an older epoch', async () => {
+  it('answers a new consumer ACKing work of an older epoch with a correlated ownership_lost', async () => {
     const firstLease = await repository.acquireLease('Jhon', 'hegel', 'epoch-a', [], 10_000);
     expect(firstLease.epoch).toBeDefined();
     if (firstLease.epoch === undefined) throw new Error('expected firstLease.epoch');
@@ -358,7 +358,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     await expect(repository.ackDelivery(firstClaimed.delivery_id, 'Jhon', 'hegel', {
       version: '3.0', event_id: randomUUID(), status: 'done', instance_id: 'epoch-b', epoch: secondLease.epoch,
       attempt: firstClaimed.attempt, claim_token: firstClaimed.claim_token, retryable: false
-    })).rejects.toMatchObject({ code: 'fenced' });
+    })).resolves.toMatchObject({ applied: false, receipt: 'ownership_lost', status: 'leased' });
 
     expect(await repository.retryStaleDeliveries(0)).toEqual({ retried: 1, dead: 0, parked: 0 });
     await assertAndElapseTimeoutBackoff(firstClaimed.delivery_id);

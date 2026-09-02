@@ -127,7 +127,7 @@ export function createCoreRoutePhases(
         let allFramesQueued = true;
         for (const delivery of deliveries) {
           const claim = claimFromDelivery(delivery, ackDeadlineMs);
-          session.recentClaims.delete(delivery.delivery_id);
+          // The previous attempt stays in `recentClaims`: it is what correlates its late ACK.
           session.claims.set(delivery.delivery_id, claim);
           allFramesQueued = send(session.socket, delivery) && allFramesQueued;
         }
@@ -504,10 +504,10 @@ export function createCoreRoutePhases(
                 deliveryLeaseCap
               );
             } catch (error) {
-              // The old terminal event did reach the durable authority. If it was not an exact
-              // duplicate, the store may fence it against the new claim: for this frame that is
-              // conclusive evidence of ownership_lost, not a reason to close the epoch N+1 socket.
-              if (!staleTerminalReplay || !(error instanceof StoreError) || error.code !== 'fenced') throw error;
+              // The event reached the durable authority, which is the only one that decides whether
+              // it still owns the delivery. A fence there is conclusive evidence of ownership_lost
+              // for this frame, not a reason to close a socket whose lease is alive.
+              if (!(error instanceof StoreError) || error.code !== 'fenced') throw error;
               result = {
                 delivery_id: deliveryId,
                 status: incoming.status,

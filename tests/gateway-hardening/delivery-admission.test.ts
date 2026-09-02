@@ -640,7 +640,7 @@ describe('gateway delivery admission control', () => {
       error: 'conflict', message: 'delivery consumer is missing its durable agent capacity',
     });
     expect(repository.acquireLease).toHaveBeenCalledWith(
-      'Pablo', 'midas', 'undeclared-http-consumer', ['acks.v3'], 30_000,
+      'Pablo', 'midas', 'undeclared-http-consumer', ['acks.v3'], 180_000,
       { requireDeclaredCapacity: true, requireEnabledAgent: true },
     );
     expect(repository.releaseLease).not.toHaveBeenCalled();

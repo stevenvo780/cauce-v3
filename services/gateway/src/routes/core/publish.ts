@@ -4,14 +4,24 @@ import {
   SYSTEM_GATE_PROBE_MESSAGE_TYPE, SystemGateProbeBodySchema,
 } from '@cauce/protocol';
 import { PublishIntentExpiredError, StoreError } from '@cauce/store';
-import { AuthorizationError, requireOperatorPermission, requirePermission } from '../../auth.js';
+import {
+  AuthorizationError, requireOperatorPermission, requirePermission, type AuthProvider,
+} from '../../auth.js';
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { GatewayRepository } from '../../app.js';
+import { PasswordAuthProvider } from '../../password-auth.js';
 import {
   consolePublishOperatorScope, principal, publicPublish, replyError, trustedPublishSemantics,
   validatedPublishReceipt, type TrustedPublishCommand,
 } from '../shared.js';
 import type { CorePublishHandler, CoreRouteOptions } from './contracts.js';
+
+function requestAuthMechanism(authProvider: AuthProvider, request: FastifyRequest): string | undefined {
+  if (authProvider instanceof PasswordAuthProvider) {
+    return authProvider.handles(request) ? authProvider.name : authProvider.fallback?.name;
+  }
+  return authProvider.name;
+}
 
 export function registerCorePublishRoutes(
   app: FastifyInstance,
@@ -31,7 +41,7 @@ export function registerCorePublishRoutes(
         const exactRole = actor.roles.length === 1 && actor.roles[0] === 'agent';
         const exactPermissions = actor.permissions.length === 2
           && actor.permissions.includes('route') && actor.permissions.includes('read');
-        if (options.authProvider.name !== 'mtls' || actor.tenant_id !== 'Steven' ||
+        if (requestAuthMechanism(options.authProvider, request) !== 'mtls' || actor.tenant_id !== 'Steven' ||
             actor.alias !== 'gate-probe' || actor.session_id !== 'gate-probe' ||
             actor.channel !== 'gate' || actor.origin !== undefined || !exactRole || !exactPermissions) {
           throw new AuthorizationError('system gate probe requires the exact dedicated mTLS identity');
