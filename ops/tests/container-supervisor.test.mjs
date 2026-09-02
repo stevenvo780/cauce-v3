@@ -126,6 +126,8 @@ async function preparePki(alias, { bearer = true } = {}) {
   }
 }
 
+const bind = (source, destination) => ({ Type: "bind", Source: `${mountSourceRoot}/${source}`, Destination: destination, RW: true });
+
 async function dockerState(alias, overrides = {}) {
   const statePath = path.join(temporary, `docker-${alias}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
   const state = {
@@ -146,52 +148,12 @@ async function dockerState(alias, overrides = {}) {
     labelKey,
     labelValue,
     mounts: [
-      {
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}`,
-        Destination: aliasMount[alias],
-        RW: true,
-      },
-      ...(alias === "kant" ? [{
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-home`,
-        Destination: "/home/stev",
-        RW: true,
-      }, {
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-workspace`,
-        Destination: "/workspace",
-        RW: true,
-      }] : []),
-      ...(alias === "atlas" || alias === "kratos" ? [{
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-codex`,
-        Destination: "/home/dev/.codex",
-        RW: true,
-      }] : []),
-      ...(alias === "zeus" ? [{
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-claude`,
-        Destination: "/home/dev/.claude",
-        RW: true,
-      }, {
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-claude-json`,
-        Destination: "/home/dev/.claude.json",
-        RW: true,
-      }] : []),
-      ...(alias === "argos" ? [{
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-workspace`,
-        Destination: "/home/dev/clawd",
-        RW: true,
-      }] : []),
-      ...(alias === "iza" || alias === "jarvis" ? [{
-        Type: "bind",
-        Source: `${mountSourceRoot}/${alias}-workspace`,
-        Destination: "/home/claw/clawd",
-        RW: true,
-      }] : []),
+      bind(alias, aliasMount[alias]),
+      ...(alias === "kant" ? [bind(`${alias}-home`, "/home/stev"), bind(`${alias}-workspace`, "/workspace")] : []),
+      ...(alias === "atlas" || alias === "kratos" ? [bind(`${alias}-codex`, "/home/dev/.codex")] : []),
+      ...(alias === "zeus" ? [bind(`${alias}-claude`, "/home/dev/.claude"), bind(`${alias}-claude-json`, "/home/dev/.claude.json")] : []),
+      ...(alias === "argos" ? [bind(`${alias}-workspace`, "/home/dev/clawd")] : []),
+      ...(alias === "iza" || alias === "jarvis" ? [bind(`${alias}-workspace`, "/home/claw/clawd")] : []),
     ],
     bundleDigest,
     controlExists: true,
@@ -733,6 +695,25 @@ try {
   await writeConfig("iza");
   await writeConfig("kant");
   process.stdout.write("shared session: switch exported with TERM for claude/codex, rejected elsewhere and for non-1 values\n");
+
+  const nativeProfileContextGatedByValueNotByPresence = [
+    ["zeus", "1", true], ["argos", "1", true], ["kant", "0", true], ["kant", "1", false],
+  ];
+  for (const [alias, value, starts] of nativeProfileContextGatedByValueNotByPresence) {
+    await writeConfig(alias, [`CAUCE_NATIVE_PROFILE_CONTEXT=${value}`]);
+    await clearLog();
+    result = runSupervisor("start", alias, await dockerState(alias));
+    assert.equal(result.status === 0, starts, `${alias} con el flag en ${value} decide por VALOR, no por presencia de la clave: ${result.stderr}`);
+    if (starts) {
+      const nativeFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes(`CAUCE_ALIAS=${alias}`));
+      assert(nativeFinal?.argv.includes(`CAUCE_NATIVE_PROFILE_CONTEXT=${value}`), `el valor validado llega al adaptador de ${alias}`);
+    } else {
+      assert.match(result.stderr, /CAUCE_NATIVE_PROFILE_CONTEXT requires the claude or openclaw harness/u);
+      assert.equal((await records()).length, 0, "el SDK construye ese contexto en el constructor del adaptador y lanza fuera de claude/openclaw: la compuerta cierra antes de tocar Docker");
+    }
+    await writeConfig(alias);
+  }
+  process.stdout.write("native profile context: el 1 solo arranca en claude/openclaw; un 0 ya escrito en el .env sigue arrancando en cualquier arnes\n");
 
   // ---- Per-alias configuration: each alias with its OWN configuration directory. ----
   // kratos and atlas run in the SAME container with the same HOME, and their ~/.codex/AGENTS.md is the

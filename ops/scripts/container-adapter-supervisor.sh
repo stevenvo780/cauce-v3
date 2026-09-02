@@ -272,6 +272,8 @@ validate_config_values() {
   if [[ -v CONFIG[SHARED_SESSION] && ${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]:-0} == 1 ]]; then
     die 'CAUCE_NATIVE_PROFILE_CONTEXT is incompatible with SHARED_SESSION'
   fi
+  [[ ${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]:-0} != 1 || $harness == claude || $harness == openclaw ]] \
+    || die 'CAUCE_NATIVE_PROFILE_CONTEXT requires the claude or openclaw harness'
   # By the same criterion as SHARED_SESSION: only the exact value 1. A `CONFIG_POR_ALIAS=true` read as
   # on by one side and off by another would leave the alias copying to one directory and reading from
   # another — exactly the state this work exists to eliminate.
@@ -707,12 +709,10 @@ ensure_claude_binary() {
 
       # Extract version from binary output (--version returns "X.Y.Z ...")
       actual_ver=$("$claude_bin" --version 2>&1 | head -1 | grep -oE "^[0-9]+\.[0-9]+\.[0-9]+" || echo "unknown")
-
       if [[ "$actual_ver" != "$required_ver" ]]; then
         echo "FATAL: claude version mismatch: expected $required_ver but got $actual_ver from $claude_bin"
         exit 78
       fi
-
       exit 0
     ' || die "claude binary verification failed for $alias_name harness=claude; see log above"
   fi

@@ -82,7 +82,13 @@ COMMON_REQUIRED = frozenset(
 )
 HARNESS_ALLOWED: dict[str, frozenset[str]] = {
     "claude": frozenset(
-        {"EXPECTED_CLI_VERSION", "SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "CONFIG_POR_ALIAS"}
+        {
+            "EXPECTED_CLI_VERSION",
+            "SHARED_SESSION",
+            "SHARED_SESSION_WORKSPACE",
+            "CONFIG_POR_ALIAS",
+            "CAUCE_NATIVE_PROFILE_CONTEXT",
+        }
     ),
     "codex": frozenset({"SHARED_SESSION", "SHARED_SESSION_WORKSPACE", "CONFIG_POR_ALIAS"}),
     "hermes": frozenset(
@@ -96,6 +102,7 @@ HARNESS_ALLOWED: dict[str, frozenset[str]] = {
             "OPENCLAW_AGENT_TARGET",
             "OPENCLAW_DIST_DIR",
             "OPENCLAW_WORKSPACE",
+            "CAUCE_NATIVE_PROFILE_CONTEXT",
         }
     ),
 }
@@ -423,6 +430,10 @@ def validate_policy(document: EnvDocument, policy: AliasPolicy, pki_root: pathli
         raise ConfigUpdateError("RELAY_URL declara un puerto invalido")
     if "SHARED_SESSION" in values and values["SHARED_SESSION"] != "1":
         raise ConfigUpdateError("SHARED_SESSION debe ser exactamente 1")
+    if values.get("CAUCE_NATIVE_PROFILE_CONTEXT", "0") not in {"0", "1"}:
+        raise ConfigUpdateError("CAUCE_NATIVE_PROFILE_CONTEXT debe ser 0 o 1")
+    if values.get("CAUCE_NATIVE_PROFILE_CONTEXT") == "1" and "SHARED_SESSION" in values:
+        raise ConfigUpdateError("CAUCE_NATIVE_PROFILE_CONTEXT es incompatible con SHARED_SESSION")
     if "SHARED_SESSION_WORKSPACE" in values:
         if values.get("SHARED_SESSION") != "1":
             raise ConfigUpdateError("SHARED_SESSION_WORKSPACE requiere SHARED_SESSION=1")

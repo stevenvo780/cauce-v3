@@ -119,5 +119,84 @@ class LoadInventoryMessageTests(unittest.TestCase):
         self.assertFalse(policy.requires_isolated_config)
 
 
+class NativeProfileContextPolicyTests(unittest.TestCase):
+    """The second gate for the native profile context flag: the sanctioned writer of <alias>.env.
+
+    The writer mirrors both supervisor rules BY VALUE and never by the presence of the key, so an
+    alias whose .env already carries the flag switched off keeps receiving configuration updates
+    instead of being locked out of every future write.
+    """
+
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        self.root = pathlib.Path(self._temp.name)
+        self.pki_root = self.root / "pki"
+        self.inventory = self.root / "container-aliases.json"
+        self.hermes = self.root / "hermes-runtime.json"
+
+    def _policy(self, harness: str) -> UPDATE.AliasPolicy:
+        entry = dict(ENTRY, harness=harness)
+        if harness == "openclaw":
+            entry["workspace"] = "/home/dev/clawd"
+        self.inventory.write_text(
+            json.dumps({"schemaVersion": 2, "aliases": {"fixture": entry}}), encoding="utf-8"
+        )
+        self.inventory.chmod(0o644)
+        return UPDATE.load_inventory(self.inventory, "fixture", self.hermes)
+
+    def _validate(self, harness: str, *extra: str) -> None:
+        lines = [
+            "BUNDLE_RELEASE=release-1",
+            f"BUNDLE_SHA256=sha256:{'a' * 64}",
+            f"PKI_DIR={self.pki_root / 'fixture'}",
+            "RELAY_URL=wss://gateway.example.invalid/v3/ws",
+            f"EXPECTED_IMAGE_ID=sha256:{'b' * 64}",
+            "CAUCE_SEMBRAR_PERFIL=1",
+        ]
+        if harness == "claude":
+            lines.append("EXPECTED_CLI_VERSION=2.1.220")
+        if harness == "openclaw":
+            lines.append("OPENCLAW_WORKSPACE=/home/dev/clawd")
+        lines.extend(extra)
+        document = UPDATE.parse_document("".join(f"{line}\n" for line in lines).encode("utf-8"))
+        UPDATE.validate_policy(document, self._policy(harness), self.pki_root)
+
+    def test_the_supported_harnesses_admit_the_flag(self) -> None:
+        for harness in ("claude", "openclaw"):
+            for value in ("0", "1"):
+                with self.subTest(harness=harness, value=value):
+                    self._validate(harness, f"CAUCE_NATIVE_PROFILE_CONTEXT={value}")
+
+    def test_the_baseline_configuration_stays_valid_without_the_flag(self) -> None:
+        for harness in ("claude", "codex", "openclaw"):
+            with self.subTest(harness=harness):
+                self._validate(harness)
+
+    def test_an_unsupported_harness_rejects_the_flag(self) -> None:
+        with self.assertRaises(UPDATE.ConfigUpdateError) as captured:
+            self._validate("codex", "CAUCE_NATIVE_PROFILE_CONTEXT=1")
+        self.assertEqual(
+            str(captured.exception),
+            "la configuracion conserva claves incompatibles: CAUCE_NATIVE_PROFILE_CONTEXT",
+        )
+
+    def test_a_value_outside_zero_or_one_is_rejected(self) -> None:
+        with self.assertRaises(UPDATE.ConfigUpdateError) as captured:
+            self._validate("claude", "CAUCE_NATIVE_PROFILE_CONTEXT=true")
+        self.assertEqual(str(captured.exception), "CAUCE_NATIVE_PROFILE_CONTEXT debe ser 0 o 1")
+
+    def test_the_flag_switched_on_beside_shared_session_is_rejected(self) -> None:
+        with self.assertRaises(UPDATE.ConfigUpdateError) as captured:
+            self._validate("claude", "SHARED_SESSION=1", "CAUCE_NATIVE_PROFILE_CONTEXT=1")
+        self.assertEqual(
+            str(captured.exception),
+            "CAUCE_NATIVE_PROFILE_CONTEXT es incompatible con SHARED_SESSION",
+        )
+
+    def test_the_flag_switched_off_beside_shared_session_stays_updatable(self) -> None:
+        self._validate("claude", "SHARED_SESSION=1", "CAUCE_NATIVE_PROFILE_CONTEXT=0")
+
+
 if __name__ == "__main__":
     unittest.main()
