@@ -12,6 +12,7 @@ import type {
   Delivery,
   DeliveryEvent,
 } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
 /**
  * P0-2 — a parked delivery must be neither invisible nor immortal.
@@ -23,7 +24,7 @@ import type {
  * it heartbeats as 'accepted' with a ceiling; when it actually runs, it heartbeats as 'started'.
  */
 
-const root = resolve(".test-state");
+const root = testStateRoot();
 
 async function storeFor(name: string): Promise<DurableStore> {
   const directory = resolve(root, name);

@@ -19,13 +19,14 @@ import {
   nuncaEmpezoElTurno,
   sinMarcaDeArranque,
 } from "../src/harnesses/shared.js";
+import { testStateRoot } from "./test-state.js";
 
 /**
  *
  *
  */
 
-const stateRoot = resolve(".test-state");
+const stateRoot = testStateRoot();
 
 async function freshStore(name: string): Promise<DurableStore> {
   const directory = resolve(stateRoot, name);

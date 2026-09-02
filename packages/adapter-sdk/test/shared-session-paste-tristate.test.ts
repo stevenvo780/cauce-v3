@@ -23,6 +23,21 @@ import {
   userEntry,
 } from "./shared-session-fixtures.js";
 
+async function armings(state: string): Promise<string[]> {
+  return (await readdir(state)).filter((name) => name.endsWith(".arming"));
+}
+
+async function waitForSettled(
+  condition: () => Promise<boolean>,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  }
+}
+
 for (const mutationResult of [
   { name: "testigo wait-for negativo exacto", kind: "not_applied" },
   { name: "exit 78 legado e incierto", kind: "exit_78" },
@@ -473,12 +488,11 @@ test("persist pre-paste vencido sólo publica arming y su cleanup exacto no bloq
 
   // The non-cooperative operation really does finish late and write to disk; its causal continuation
   // withdraws only ITS preparation. The arming of another token survives byte for byte.
-  await new Promise((resolveWait) => setTimeout(resolveWait, 140));
-  assert.equal(latePreparationPublished, true);
-  assert.deepEqual(
-    (await readdir(state)).filter((name) => name.endsWith(".arming")),
-    [basename(foreignArming)],
+  await waitForSettled(
+    async () => latePreparationPublished && (await armings(state)).length === 1,
   );
+  assert.equal(latePreparationPublished, true);
+  assert.deepEqual(await armings(state), [basename(foreignArming)]);
   assert.equal(await readFile(foreignArming, "utf8"), foreignBytes);
 
   tmux.onSubmit = async (text) => {

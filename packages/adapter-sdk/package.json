@@ -25,7 +25,7 @@
     "cauce-shared-session": "./dist/src/bin/shared-session.js"
   },
   "scripts": {
-    "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist','.test-state'].map(path => fs.rm(path,{recursive:true,force:true,maxRetries:5,retryDelay:50}))))\"",
+    "clean": "node --eval \"import('node:fs/promises').then(fs => Promise.all(['dist'].map(path => fs.rm(path,{recursive:true,force:true,maxRetries:5,retryDelay:50}))))\"",
     "lint": "tsc --noEmit && node --check bridge/openclaw-stdin-bridge.mjs && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('bridge/hermes-stdin-bridge.py').read_text(encoding='utf-8'))\"",
     "typecheck": "tsc --noEmit",
     "build": "pnpm clean && tsc && node scripts/copy-bridges.mjs && node scripts/chmod-bins.mjs",

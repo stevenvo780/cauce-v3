@@ -8,9 +8,10 @@ import {systemClock} from '../src/sdk/backoff.js';
 import {AdapterClient} from '../src/sdk/client.js';
 import {DurableStore} from '../src/sdk/durable-store.js';
 import type {AdapterLogger, BackoffConfig, ClientFrame, Clock, CommandRunRequest, CommandRunResult, CommandRunner, ConsumerConnection, ConsumerConnector, HarnessDefinition, ServerFrame} from '../src/sdk/types.js';
+import { testStateRoot } from "./test-state.js";
 export type HelloAgentProfile = NonNullable<Extract<ServerFrame, { type: "hello_ack" }>["agent_profile"]>;
 
-export const root = resolve(".test-state");
+export const root = testStateRoot();
 
 export class NoopRunner implements CommandRunner {
   async run(_request: CommandRunRequest): Promise<CommandRunResult> {
@@ -313,9 +314,13 @@ export async function makeClient(
 }
 
 export async function waitUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   while (!predicate()) {
-    if (Date.now() > deadline) throw new Error("condition timeout");
+    if (Date.now() > deadline) {
+      const elapsed = Date.now() - startedAt;
+      throw new Error(`condition timeout after ${String(elapsed)}ms: ${predicate.toString()}`);
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 2));
   }
 }

@@ -8,7 +8,8 @@ import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
 import { DurableStore } from "../src/sdk/durable-store.js";
 import {AdapterEngine} from '../src/sdk/engine.js';
 import type {CommandRunRequest, CommandRunResult, CommandRunner, Delivery, DeliveryEvent} from '../src/sdk/types.js';
-export const root = resolve(".test-state");
+import { testStateRoot } from "./test-state.js";
+export const root = testStateRoot();
 
 export async function storeFor(name: string): Promise<DurableStore> {
   const directory = resolve(root, name);

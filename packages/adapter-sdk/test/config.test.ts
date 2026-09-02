@@ -4,8 +4,9 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { loadCliRuntimeConfig } from "../src/bin/config.js";
+import { testStateRoot } from "./test-state.js";
 
-const root = resolve(".test-state/cli-config");
+const root = testStateRoot("cli-config");
 
 test.beforeEach(async () => {
   await rm(root, { recursive: true, force: true });

@@ -16,10 +16,11 @@ import type {
   Delivery,
   DeliveryEvent,
 } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
 // Under `.test-state/`, which is the ignored path every other suite uses; the old sibling
 // directory was not covered by .gitignore and showed up as untracked noise.
-const root = resolve(".test-state/observability");
+const root = testStateRoot("observability");
 
 async function storeFor(name: string): Promise<DurableStore> {
   const directory = resolve(root, name);

@@ -15,8 +15,9 @@ import {
   protocolPrompt,
   type HarnessRequestContext,
 } from "../src/harnesses/shared.js";
+import { testStateRoot } from "./test-state.js";
 
-const stateRoot = resolve(".test-state");
+const stateRoot = testStateRoot();
 
 function context(overrides: Partial<HarnessRequestContext> = {}): HarnessRequestContext {
   return {

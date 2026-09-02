@@ -1,17 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { HarnessAdapter } from "../src/harnesses/shared.js";
 import { claudeDefinition, codexDefinition } from "../src/harnesses/index.js";
 import type { CommandRunRequest, CommandRunResult, CommandRunner } from "../src/sdk/types.js";
-import type {
-  TmuxController,
-  TmuxResult,
-  TmuxRunControl,
-} from "../src/shared-session/tmux.js";
+import type { TmuxController, TmuxResult, TmuxRunControl } from "../src/shared-session/tmux.js";
 
 export type { TmuxController, TmuxResult, TmuxRunControl };
 import {
@@ -21,8 +17,9 @@ import {
 } from "../src/shared-session/paste-runner.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
 import { claudeTranscript, type TranscriptEntry } from "../src/shared-session/transcript.js";
+import { testStateRoot } from "./test-state.js";
 
-export const stateRoot = resolve(".test-state/shared-session");
+export const stateRoot = testStateRoot("shared-session");
 
 for (const [command, args] of [["tmux", ["-V"]], ["script", ["--version"]]] as const) {
   const result = spawnSync(command, args, { stdio: "ignore" });

@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { appendFile, mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { DurableStore } from "../src/sdk/durable-store.js";
@@ -26,8 +26,9 @@ import {
   type TranscriptEntry,
 } from "../src/shared-session/transcript.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
+import { testStateRoot } from "./test-state.js";
 
-const stateRoot = resolve(".test-state/shared-session-turn-merge");
+const stateRoot = testStateRoot("shared-session-turn-merge");
 
 function envelopeText(reply: string, correlationId?: string): string {
   return JSON.stringify({

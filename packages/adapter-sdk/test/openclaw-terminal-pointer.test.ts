@@ -5,8 +5,9 @@ import test from "node:test";
 import { HarnessAdapter, openClawDefinition } from "../src/harnesses/index.js";
 import { DurableStore, type SessionRecord } from "../src/sdk/durable-store.js";
 import type { CommandRunResult, CommandRunner } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
-const root = resolve(".test-state", "openclaw-terminal-pointer-contract");
+const root = testStateRoot("openclaw-terminal-pointer-contract");
 const alias = "jarvis";
 const pointerKey = `openclaw:${alias}:shared:${alias}`;
 

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test, { after } from "node:test";
 import {
@@ -25,6 +25,7 @@ import type {
   OutputArtifact,
   StructuredOutput,
 } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
 /**
  * Attachment egress, measured by its EFFECT: which `uri` actually leaves toward the bus.
@@ -420,7 +421,7 @@ test("CONTROL NEGATIVO: el PNG de Miguel llegaba al ACK como file:// y ahora lle
   assert.equal(antesUri.startsWith("data:"), false);
 
   // NEW BRANCH.
-  const state = resolve(".test-state", "artifact-inliner-ack");
+  const state = testStateRoot("artifact-inliner-ack");
   await rm(state, { recursive: true, force: true });
   const store = await DurableStore.open(state);
   const events: DeliveryEvent[] = [];
@@ -457,7 +458,7 @@ test("un adjunto ilegible no le cuesta el turno a nadie: el ACK sale igual, con 
     retryable: false,
     artifacts: [{ name: "pantallazo.png", uri: pathToFileURL(inexistente).href }],
   });
-  const state = resolve(".test-state", "artifact-inliner-ack-roto");
+  const state = testStateRoot("artifact-inliner-ack-roto");
   await rm(state, { recursive: true, force: true });
   const store = await DurableStore.open(state);
   const events: DeliveryEvent[] = [];

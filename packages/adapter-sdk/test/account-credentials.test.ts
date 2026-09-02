@@ -9,8 +9,9 @@ import type {
   CommandRunner,
 } from "../src/sdk/types.js";
 import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
+import { testStateRoot } from "./test-state.js";
 
-const stateRoot = resolve(".test-state");
+const stateRoot = testStateRoot();
 
 async function freshStore(name: string): Promise<DurableStore> {
   const directory = resolve(stateRoot, name);

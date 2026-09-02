@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
 import type { CommandRunResult, SafeRunnerLog } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
 /**
  * BUG 1 — `terminate()` was a no-op when the child had already exited and its pipes were still
@@ -16,7 +17,7 @@ import type { CommandRunResult, SafeRunnerLog } from "../src/sdk/types.js";
  * instead of leaving the runner stuck.
  */
 const FIXTURE = resolve("test/fixtures/orphan-pipe-tree.mjs");
-const stateRoot = resolve(".test-state/orphan-pipes");
+const stateRoot = testStateRoot("orphan-pipes");
 const skipOnWindows = { skip: process.platform === "win32" };
 
 async function markerPath(name: string): Promise<string> {

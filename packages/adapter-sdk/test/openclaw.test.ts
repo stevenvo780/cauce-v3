@@ -8,8 +8,9 @@ import { openClawDefinition, HarnessAdapter } from "../src/harnesses/index.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterError } from "../src/sdk/errors.js";
 import { OpenClawApiRunner } from "../src/sdk/openclaw-api-runner.js";
+import { testStateRoot } from "./test-state.js";
 
-const root = resolve(".test-state/openclaw-api");
+const root = testStateRoot("openclaw-api");
 const STRUCTURED = {
   reply: "openclaw success",
   messages: [],

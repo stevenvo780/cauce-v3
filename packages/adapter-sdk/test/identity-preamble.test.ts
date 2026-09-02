@@ -17,8 +17,9 @@ import {
   PRIMARY_DUTY_HEADER,
   type HarnessRequestContext,
 } from "../src/harnesses/shared.js";
+import { testStateRoot } from "./test-state.js";
 
-const stateRoot = resolve(".test-state");
+const stateRoot = testStateRoot();
 const definitions = Object.values(HARNESS_DEFINITIONS);
 
 function fixture(definition: HarnessDefinition): string {

@@ -8,8 +8,9 @@ import { PROTOCOL_VERSION } from "@cauce/protocol";
 import { SecureFileError } from "../src/sdk/secure-files.js";
 import { WebSocketConsumerConnector } from "../src/sdk/websocket-transport.js";
 import type { AdapterLog, ClientFrame } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
-const root = resolve(".test-state/websocket-auth");
+const root = testStateRoot("websocket-auth");
 
 async function credential(name: string, value: string, mode = 0o600): Promise<string> {
   await mkdir(root, { recursive: true, mode: 0o700 });

@@ -8,8 +8,9 @@ import { AdapterEngine } from '../src/sdk/engine.js';
 import type {
   AdapterLog, CommandRunRequest, CommandRunResult, CommandRunner, Delivery, DeliveryEvent,
 } from '../src/sdk/types.js';
+import { testStateRoot } from "./test-state.js";
 
-const root = resolve('.test-state');
+const root = testStateRoot();
 
 class ForbiddenRunner implements CommandRunner {
   calls = 0;

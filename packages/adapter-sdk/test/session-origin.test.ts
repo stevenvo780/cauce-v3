@@ -11,6 +11,7 @@ import type {
   Delivery,
   DeliveryEvent,
 } from "../src/sdk/types.js";
+import { testStateRoot } from "./test-state.js";
 
 /**
  * Which conversation each session came from, written next to the `native_id`.
@@ -24,7 +25,7 @@ import type {
  * `DurableStore`), not by calling the private function: what is pinned is what ends up on disk.
  */
 
-const root = resolve(".test-state");
+const root = testStateRoot();
 
 const SUCCESS = JSON.stringify({
   reply: "listo",
