@@ -5,7 +5,7 @@ import {
   ConfigurationError, ConfigurationRepository, type ConfigurationChangeResult
 } from '../configuration.js';
 import { StoreError } from './errors.js';
-import { OutboxRepository } from './outbox.js';
+import { OutboxOperatorRepository } from './outbox.js';
 
 const PERMISSION_COLUMNS: Record<Permission, string> = {
   route: 'allow_route', read: 'allow_read', control: 'allow_control', notify: 'allow_notify',
@@ -23,7 +23,7 @@ export interface AuthorizedAgentTarget {
   readonly home_directory: string | null;
   readonly enabled: boolean;
 }
-export abstract class ConfigRepository extends OutboxRepository {
+export abstract class ConfigRepository extends OutboxOperatorRepository {
   protected async assertRuntimeRoute(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<void> {
     const memberships = await client.query<{ allow_route: boolean }>(
       `SELECT policy.allow_route FROM memberships membership
@@ -81,10 +81,11 @@ export abstract class ConfigRepository extends OutboxRepository {
     actorAlias: string,
     targetTenant: Tenant,
     targetAlias: string,
-    permission: AgentTargetPermission
+    permission: AgentTargetPermission,
+    client?: DatabaseClient
   ): Promise<AuthorizedAgentTarget | undefined> {
     const permissionColumn = permission === 'read' ? 'allow_read' : 'allow_control';
-    const result = await this.pool.query<AuthorizedAgentTarget>(
+    const result = await (client ?? this.pool).query<AuthorizedAgentTarget>(
       `SELECT agent.tenant_id,agent.alias,agent.harness_id,agent.home_directory,agent.enabled
          FROM agents agent
          JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id

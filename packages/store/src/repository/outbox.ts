@@ -1,5 +1,3 @@
-import { OutboxOperatorRepository } from './outbox/operator.js';
-
 export {
   objectRecord, textualReply, validConnectionToken, visibleText
 } from './outbox/contracts.js';
@@ -14,4 +12,4 @@ export type {
   WakeOutboxRecipient,
 } from './outbox/contracts.js';
 
-export abstract class OutboxRepository extends OutboxOperatorRepository {}
+export { OutboxOperatorRepository } from './outbox/operator.js';

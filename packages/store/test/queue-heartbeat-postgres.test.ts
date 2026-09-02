@@ -7,6 +7,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { deliveryRow as selectDeliveryRow } from './helpers/consumer.js';
 
 /**
  * P0-2 — the heartbeat of a QUEUED delivery.
@@ -51,28 +52,18 @@ function ack(delivery: DeliveryEnvelope, epoch: number, status: Ack['status']): 
   };
 }
 
-async function deliveryRow(id: string): Promise<{
-  status: string;
-  last_ack_rank: number;
-  ack_deadline_at: Date;
+interface HeartbeatRow {
+  status: string; last_ack_rank: number; ack_deadline_at: Date;
   execution_started_at: Date | null;
-}> {
-  const row = (await pool.query<{
-    status: string;
-    last_ack_rank: number;
-    ack_deadline_at: Date;
-    execution_started_at: Date | null;
-  }>(
-    // `execution_started_at` only exists from 012_execution_started_marker.sql onward; in a tree
-    // without that migration the column reads as NULL and assertions about it still hold.
-    `SELECT status,last_ack_rank,ack_deadline_at,
-            (to_jsonb(d)->>'execution_started_at')::timestamptz AS execution_started_at
-     FROM deliveries d WHERE id=$1`,
-    [id]
-  )).rows[0];
-  if (!row) throw new Error(`delivery ${id} not found`);
-  return row;
 }
+
+// `execution_started_at` only exists from 012_execution_started_marker.sql onward; in a tree
+// without that migration the column reads as NULL and assertions about it still hold.
+const deliveryRow = (id: string): Promise<HeartbeatRow> => selectDeliveryRow<HeartbeatRow>(
+  pool, id,
+  `status,last_ack_rank,ack_deadline_at,
+   (to_jsonb(d)->>'execution_started_at')::timestamptz AS execution_started_at`
+);
 
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();

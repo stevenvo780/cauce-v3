@@ -1,12 +1,15 @@
 import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { requireValue } from './helpers.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import {
+  ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
+  terminalAck as buildTerminalAck, type Consumer
+} from './helpers/consumer.js';
 
 let database: TestDatabase;
 let databaseStarted = false;
@@ -39,68 +42,24 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   };
 }
 
-interface Consumer {
-  tenant: Tenant;
-  alias: string;
-  instanceId: string;
-  epoch: number;
-}
+const consumer = (tenant: Tenant, alias: string): Promise<Consumer> =>
+  leaseConsumer(repository, tenant, alias);
 
-async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
-  const instanceId = `${alias}-${randomUUID()}`;
-  const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
-}
+const nextDelivery = (
+  target: Consumer, predicate?: (delivery: DeliveryEnvelope) => boolean
+): Promise<DeliveryEnvelope> => claimNext(repository, target, predicate);
 
-async function nextDelivery(
-  target: Consumer,
-  predicate: (delivery: DeliveryEnvelope) => boolean = () => true
-): Promise<DeliveryEnvelope> {
-  const claimed = await repository.claimDeliveries(
-    target.tenant, target.alias, target.instanceId, target.epoch, 10, 30_000
-  );
-  const delivery = claimed.find(predicate);
-  if (!delivery) {
-    throw new Error(`no matching delivery for ${target.alias}: ${JSON.stringify(
-      claimed.map((item) => item.body.type ?? 'request')
-    )}`);
-  }
-  return delivery;
-}
+const terminalAck = (
+  delivery: DeliveryEnvelope, target: Consumer, messages: unknown[],
+  reply: string | null = 'done', eventId = randomUUID()
+): Ack => buildTerminalAck(delivery, target, { messages, reply, eventId });
 
-function terminalAck(
-  delivery: DeliveryEnvelope,
-  target: Consumer,
-  messages: unknown[],
-  reply: string | null = 'done',
-  eventId = randomUUID()
-): Ack {
-  return {
-    version: '3.0',
-    event_id: eventId,
-    status: 'done',
-    instance_id: target.instanceId,
-    epoch: target.epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: { output: { reply, messages, status: 'done', retryable: false, artifacts: [] } }
-  };
-}
-
-async function ackWith(
-  target: Consumer,
-  delivery: DeliveryEnvelope,
-  messages: unknown[],
-  reply: string | null = 'done',
-  eventId = randomUUID()
-): Promise<void> {
-  const result = await repository.ackDelivery(
-    delivery.delivery_id, target.tenant, target.alias,
-    terminalAck(delivery, target, messages, reply, eventId)
-  );
-  expect(result.applied).toBe(true);
-}
+const ackWith = async (
+  target: Consumer, delivery: DeliveryEnvelope, messages: unknown[],
+  reply: string | null = 'done', eventId = randomUUID()
+): Promise<void> => {
+  await applyTerminalAck(repository, target, delivery, { messages, reply, eventId });
+};
 
 async function setChainPolicy(values: {
   progress_relay_enabled?: boolean;

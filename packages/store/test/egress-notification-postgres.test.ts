@@ -7,6 +7,7 @@ import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import { requireValue } from './helpers.js';
+import { ackEnvelope } from './helpers/consumer.js';
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
@@ -77,27 +78,10 @@ async function claim(
   return { delivery, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
-function ackWith(
-  delivery: DeliveryEnvelope,
-  instanceId: string,
-  epoch: number,
-  result: Record<string, unknown>,
-  overrides: Partial<Ack> = {}
-): Ack {
-  return {
-    version: '3.0',
-    event_id: randomUUID(),
-    status: 'done',
-    instance_id: instanceId,
-    epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result,
-    ...overrides
-  };
-}
-
+const ackWith = (
+  delivery: DeliveryEnvelope, instanceId: string, epoch: number,
+  result: Record<string, unknown>, overrides: Partial<Ack> = {}
+): Ack => ackEnvelope(delivery, { instanceId, epoch }, result, overrides);
 function notifyOutput(
   notify: unknown[],
   overrides: Record<string, unknown> = {}

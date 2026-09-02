@@ -10,6 +10,7 @@ import {
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { deliveryRow as selectDeliveryRow } from './helpers/consumer.js';
 
 let database: TestDatabase;
 let databaseStarted = false;
@@ -75,18 +76,10 @@ async function claimAndStart(
   return claimed;
 }
 
-async function deliveryRow(id: string): Promise<{
-  status: string;
-  last_error: string | null;
-  ack_deadline_at: Date | null;
-}> {
-  const result = await pool.query<{
-    status: string; last_error: string | null; ack_deadline_at: Date | null;
-  }>('SELECT status,last_error,ack_deadline_at FROM deliveries WHERE id=$1', [id]);
-  const row = result.rows[0];
-  if (!row) throw new Error(`delivery ${id} not found`);
-  return row;
-}
+interface LeaseCapRow { status: string; last_error: string | null; ack_deadline_at: Date | null }
+
+const deliveryRow = (id: string): Promise<LeaseCapRow> =>
+  selectDeliveryRow<LeaseCapRow>(pool, id, 'status,last_error,ack_deadline_at');
 
 /** Ages the cap ANCHOR, not the deadline: that is what separates this guard from the ACK-expired one. */
 async function ageExecutionStart(id: string, ms: number): Promise<void> {

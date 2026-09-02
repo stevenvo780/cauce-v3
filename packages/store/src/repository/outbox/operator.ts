@@ -1,6 +1,7 @@
 import type { Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
+import { hubEdgeExistsSql } from '../acl-edges.js';
 import { StoreError } from '../errors.js';
 import { insertDelivery, MESSAGE_INSERT_COLUMNS } from '../messages/_insert.js';
 import { OutboxSettlementRepository } from './settlement.js';
@@ -61,14 +62,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
 
     if (row.tenant_id !== row.recipient_tenant) {
       const route = await client.query(
-        `SELECT 1 FROM acl_edges edge
-         JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
-         JOIN tenants target_tenant ON target_tenant.id=edge.to_tenant
-         WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-           AND edge.enabled AND edge.allow_route
-           AND source_tenant.enabled AND target_tenant.enabled
-           AND (source_tenant.is_hub OR target_tenant.is_hub)
-         FOR SHARE OF edge,source_tenant,target_tenant`,
+        hubEdgeExistsSql('allow_route', 1, 2),
         [row.tenant_id, row.recipient_tenant]
       );
       if (route.rowCount === 0) denied();
@@ -89,14 +83,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
     }
 
     const controlEdge = await client.query(
-      `SELECT 1 FROM acl_edges edge
-       JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
-       JOIN tenants target_tenant ON target_tenant.id=edge.to_tenant
-       WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-         AND edge.enabled AND edge.allow_control
-         AND source_tenant.enabled AND target_tenant.enabled
-         AND (source_tenant.is_hub OR target_tenant.is_hub)
-       FOR SHARE OF edge,source_tenant,target_tenant`,
+      hubEdgeExistsSql('allow_control', 1, 2),
       [actorTenant, row.recipient_tenant]
     );
     if (controlEdge.rowCount === 0) denied();

@@ -7,6 +7,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { deliveryRow as selectDeliveryRow } from './helpers/consumer.js';
 
 /**
  * Handling of failures with ambiguous codes:
@@ -77,27 +78,14 @@ function ambiguousFailureAck(
   };
 }
 
-async function deliveryRow(id: string): Promise<{
-  status: string;
-  attempt: number;
-  max_attempts: number;
-  terminal: boolean;
-  execution_started_at: Date | null;
-}> {
-  const row = (await pool.query<{
-    status: string;
-    attempt: number;
-    max_attempts: number;
-    terminal: boolean;
-    execution_started_at: Date | null;
-  }>(
-    `SELECT status,attempt,max_attempts,terminal_at IS NOT NULL AS terminal,execution_started_at
-     FROM deliveries WHERE id=$1`,
-    [id]
-  )).rows[0];
-  if (!row) throw new Error(`delivery ${id} not found`);
-  return row;
+interface AmbiguousRow {
+  status: string; attempt: number; max_attempts: number;
+  terminal: boolean; execution_started_at: Date | null;
 }
+
+const deliveryRow = (id: string): Promise<AmbiguousRow> => selectDeliveryRow<AmbiguousRow>(
+  pool, id, 'status,attempt,max_attempts,terminal_at IS NOT NULL AS terminal,execution_started_at'
+);
 
 async function deadLetterCount(id: string): Promise<number> {
   return (await pool.query(

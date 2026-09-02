@@ -10,6 +10,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { terminalAck as buildTerminalAck } from './helpers/consumer.js';
 
 /**
  * The measured failure this file pins down: with every producer writing priority 0, the claim's
@@ -58,25 +59,10 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   };
 }
 
-function terminalAck(
-  delivery: DeliveryEnvelope,
-  instanceId: string,
-  epoch: number,
-  messages: unknown[],
+const terminalAck = (
+  delivery: DeliveryEnvelope, instanceId: string, epoch: number, messages: unknown[],
   reply: string | null = 'done'
-): Ack {
-  return {
-    version: '3.0',
-    event_id: randomUUID(),
-    status: 'done',
-    instance_id: instanceId,
-    epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: { output: { reply, messages, status: 'done', retryable: false, artifacts: [] } }
-  };
-}
+): Ack => buildTerminalAck(delivery, { instanceId, epoch }, { messages, reply });
 
 async function priorityOf(messageId: string): Promise<number> {
   const row = await pool.query<{ priority: number }>(

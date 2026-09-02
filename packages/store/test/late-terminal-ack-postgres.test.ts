@@ -7,6 +7,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { deliveryRow as selectDeliveryRow } from './helpers/consumer.js';
 
 /**
  * Handling of late terminal ACKs:
@@ -115,25 +116,15 @@ async function expire(deliveryId: string): Promise<void> {
   );
 }
 
-async function deliveryRow(deliveryId: string): Promise<{
-  status: string;
-  attempt: number;
-  reply: string | null;
-  last_error: string | null;
-  late_result_at: Date | null;
-  late_result_attempt: number | null;
-}> {
-  const result = await pool.query<{
-    status: string; attempt: number; reply: string | null; last_error: string | null;
-    late_result_at: Date | null; late_result_attempt: number | null;
-  }>(
-    `SELECT status,attempt,result#>>'{output,reply}' AS reply,last_error,
-            late_result_at,late_result_attempt
-     FROM deliveries WHERE id=$1`,
-    [deliveryId]
-  );
-  return requireValue(result.rows[0], 'result.rows');
+interface LateAckRow {
+  status: string; attempt: number; reply: string | null; last_error: string | null;
+  late_result_at: Date | null; late_result_attempt: number | null;
 }
+
+const deliveryRow = (deliveryId: string): Promise<LateAckRow> => selectDeliveryRow<LateAckRow>(
+  pool, deliveryId,
+  `status,attempt,result#>>'{output,reply}' AS reply,last_error,late_result_at,late_result_attempt`
+);
 
 async function relayRows(deliveryId: string): Promise<{
   idempotency_key: string; status: string; outcome: string | null; reply: string | null;

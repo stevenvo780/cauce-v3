@@ -7,6 +7,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { deliveryRow as selectDeliveryRow } from './helpers/consumer.js';
 
 /**
  * Retry policy: R1 (preflight code), R3 (do not burn attempts against an adapter-less alias),
@@ -56,16 +57,11 @@ function ack(
   };
 }
 
-async function deliveryRow(id: string): Promise<{
+interface RetryRow {
   status: string; attempt: number; last_error: string | null; terminal_at: Date | null;
-}> {
-  const result = await pool.query<{
-    status: string; attempt: number; last_error: string | null; terminal_at: Date | null;
-  }>('SELECT status,attempt,last_error,terminal_at FROM deliveries WHERE id=$1', [id]);
-  const row = result.rows[0];
-  if (!row) throw new Error(`delivery ${id} not found`);
-  return row;
 }
+
+const deliveryRow = (id: string): Promise<RetryRow> => selectDeliveryRow<RetryRow>(pool, id);
 
 /**
  * Spends the `max_attempts` with REAL claims, without touching the counter.

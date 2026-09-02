@@ -29,6 +29,7 @@ import {
   type PublishResult,
 } from './contracts.js';
 import { reconstructPublishReceipt } from './receipts.js';
+import type { MessageDetailRow } from '../visibility-rows.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
 const telegramRelayAcknowledgement = 'Recibido por el bus; en cola para el agente.';
@@ -361,7 +362,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
   }
 
   async getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    const result = await this.pool.query<Record<string, unknown>>(
+    const result = await this.pool.query<MessageDetailRow>(
       `SELECT m.id,m.version,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               m.body,m.origin,m.lane,m.priority,m.created_at,
               COALESCE(jsonb_agg(jsonb_build_object(

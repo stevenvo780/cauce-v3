@@ -7,6 +7,10 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import {
+  consumer as leaseConsumer, nextDelivery as claimNext, terminalAck as buildTerminalAck,
+  type Consumer
+} from './helpers/consumer.js';
 
 /**
  * A chain gate is addressed by id alone. Without a tenant check on the loaded row, any actor with
@@ -19,13 +23,6 @@ let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
-
-interface Consumer {
-  tenant: Tenant;
-  alias: string;
-  instanceId: string;
-  epoch: number;
-}
 
 function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   return {
@@ -44,37 +41,15 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   };
 }
 
-async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
-  const instanceId = `${alias}-${randomUUID()}`;
-  const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
-}
+const consumer = (tenant: Tenant, alias: string): Promise<Consumer> =>
+  leaseConsumer(repository, tenant, alias);
 
-async function nextDelivery(
-  target: Consumer,
-  predicate: (delivery: DeliveryEnvelope) => boolean = () => true
-): Promise<DeliveryEnvelope> {
-  const claimed = await repository.claimDeliveries(
-    target.tenant, target.alias, target.instanceId, target.epoch, 10, 30_000
-  );
-  const delivery = claimed.find(predicate);
-  if (!delivery) throw new Error(`no matching delivery for ${target.alias}`);
-  return delivery;
-}
+const nextDelivery = (
+  target: Consumer, predicate?: (delivery: DeliveryEnvelope) => boolean
+): Promise<DeliveryEnvelope> => claimNext(repository, target, predicate);
 
-function terminalAck(delivery: DeliveryEnvelope, target: Consumer, messages: unknown[]): Ack {
-  return {
-    version: '3.0',
-    event_id: randomUUID(),
-    status: 'done',
-    instance_id: target.instanceId,
-    epoch: target.epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: { output: { reply: 'done', messages, status: 'done', retryable: false, artifacts: [] } }
-  };
-}
+const terminalAck = (delivery: DeliveryEnvelope, target: Consumer, messages: unknown[]): Ack =>
+  buildTerminalAck(delivery, target, { messages });
 
 /** Opens ONE gate through the real path: a delivery ACKed with a `@human` output. */
 async function openGate(

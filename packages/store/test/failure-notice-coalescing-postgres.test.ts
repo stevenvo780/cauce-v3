@@ -14,6 +14,10 @@ import { failureSignature } from '../src/repository.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import {
+  ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
+  type Consumer
+} from './helpers/consumer.js';
 
 let database: TestDatabase;
 let databaseStarted = false;
@@ -37,18 +41,8 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   };
 }
 
-interface Consumer {
-  tenant: Tenant;
-  alias: string;
-  instanceId: string;
-  epoch: number;
-}
-
-async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
-  const instanceId = `${alias}-${randomUUID()}`;
-  const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
-}
+const consumer = (tenant: Tenant, alias: string): Promise<Consumer> =>
+  leaseConsumer(repository, tenant, alias);
 
 async function claimAll(target: Consumer, limit = 20): Promise<DeliveryEnvelope[]> {
   return repository.claimDeliveries(
@@ -56,31 +50,15 @@ async function claimAll(target: Consumer, limit = 20): Promise<DeliveryEnvelope[
   );
 }
 
-async function nextDelivery(target: Consumer): Promise<DeliveryEnvelope> {
-  const claimed = await claimAll(target, 10);
-  const delivery = claimed[0];
-  if (!delivery) throw new Error(`no delivery for ${target.alias}`);
-  return delivery;
-}
+const nextDelivery = (target: Consumer): Promise<DeliveryEnvelope> =>
+  claimNext(repository, target);
 
 /** Terminal `done` ACK, with delegations. */
-async function ackDone(
+const ackDone = async (
   target: Consumer, delivery: DeliveryEnvelope, messages: unknown[], reply: string | null = 'listo'
-): Promise<void> {
-  const ack: Ack = {
-    version: '3.0',
-    event_id: randomUUID(),
-    status: 'done',
-    instance_id: target.instanceId,
-    epoch: target.epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: { output: { reply, messages, status: 'done', retryable: false, artifacts: [] } }
-  };
-  const result = await repository.ackDelivery(delivery.delivery_id, target.tenant, target.alias, ack);
-  expect(result.applied).toBe(true);
-}
+): Promise<void> => {
+  await applyTerminalAck(repository, target, delivery, { messages, reply });
+};
 
 /** Terminal non-retryable `failed` ACK: exactly what the notice to the parent produces. */
 async function ackFailed(

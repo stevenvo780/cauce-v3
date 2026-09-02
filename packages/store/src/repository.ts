@@ -38,6 +38,10 @@ export {
 export {
   PublishIntentRateLimitedError, type AgentTargetPermission, type AuthorizedAgentTarget
 } from './repository/config.js';
+export {
+  type MessageDetailDeliveryRow, type MessageDetailRow, type MessageListDeliveryRow,
+  type MessageListRow, type QueueSnapshotItem
+} from './repository/visibility-rows.js';
 
 export class CauceRepository extends QuotasRepository {
 }

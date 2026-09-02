@@ -3,7 +3,7 @@ import { ProfileRuntimeContractSchema, PROTOCOL_VERSION, SYSTEM_PRINCIPAL_ALIASE
 import type { DatabaseClient } from '../db.js';
 import { withTransaction } from '../db.js';
 import { canonicallyEqual } from './config.js';
-import { DeliveriesRepository, type RoutingTarget } from './deliveries.js';
+import { DeliveryAcksRepository, type RoutingTarget } from './deliveries.js';
 import { StoreError } from './errors.js';
 import { agentDeploymentStatus, type DeliveryRow } from './observability.js';
 
@@ -21,7 +21,7 @@ function canonicalProfileRuntimeContract(value: unknown): ProfileRuntimeContract
   };
 }
 
-export abstract class AgentsRepository extends DeliveriesRepository {
+export abstract class AgentsRepository extends DeliveryAcksRepository {
 
   async recordProfileRuntimeExpectation(
     tenantId: Tenant,

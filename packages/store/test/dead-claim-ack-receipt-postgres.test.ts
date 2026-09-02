@@ -7,6 +7,7 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import { deliveryRow as selectDeliveryRow } from './helpers/consumer.js';
 
 /**
  * A dead claim plus an ACK identity the row does not recognise used to raise `fenced`. The
@@ -80,15 +81,11 @@ async function reconnectedOverALiveClaim(): Promise<{
   return { delivery, instanceId, epoch };
 }
 
-async function deliveryRow(deliveryId: string): Promise<{
-  status: string; attempt: number; reply: string | null;
-}> {
-  const result = await pool.query<{ status: string; attempt: number; reply: string | null }>(
-    `SELECT status,attempt,result#>>'{output,reply}' AS reply FROM deliveries WHERE id=$1`,
-    [deliveryId]
-  );
-  return requireValue(result.rows[0], 'result.rows');
-}
+interface ReceiptRow { status: string; attempt: number; reply: string | null }
+
+const deliveryRow = (deliveryId: string): Promise<ReceiptRow> => selectDeliveryRow<ReceiptRow>(
+  pool, deliveryId, `status,attempt,result#>>'{output,reply}' AS reply`
+);
 
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();

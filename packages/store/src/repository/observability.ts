@@ -1,4 +1,4 @@
-import { isRfcUuid, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error" */
+import { isRfcUuid, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/consistent-type-definitions: "off" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
   FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
@@ -10,6 +10,18 @@ import type {
   OperationalDlqPage, OperationalDlqResolutionRequest, OperationalDlqResolutionResult
 } from './observability/contracts.js';
 import { ObservabilityChainSweepRepository } from './observability/chain-sweep.js';
+import type { QueueSnapshotItem } from './visibility-rows.js';
+
+type QueueSnapshotTotals = {
+  total_pending: string;
+  total_retrying: string;
+  total_dead: string;
+  total_visible: string;
+};
+
+type QueueSnapshotQueryRow =
+  | (QueueSnapshotItem & QueueSnapshotTotals)
+  | (QueueSnapshotTotals & { delivery_id: null });
 
 export {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
@@ -278,14 +290,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
 
   async queueSnapshot(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
-    interface QueueSnapshotRow extends Record<string, unknown> {
-      delivery_id: string | null;
-      total_pending: string;
-      total_retrying: string;
-      total_dead: string;
-      total_visible: string;
-    }
-    const result = await this.pool.query<QueueSnapshotRow>(
+    const result = await this.pool.query<QueueSnapshotQueryRow>(
       `WITH visible_deliveries AS MATERIALIZED (
          SELECT d.id AS delivery_id,d.message_id,d.recipient_tenant AS tenant_id,d.recipient_alias,
                 m.tenant_id AS message_tenant_id,m.actor_alias,m.lane,d.status AS state,
@@ -334,7 +339,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     const counts = items.reduce<{ pending: number; retrying: number; dead: number }>((value, row) => {
       if (row.state === 'retry') value.retrying += 1;
       if (row.state === 'dead' || row.state === 'failed') value.dead += 1;
-      if (['pending', 'leased', 'accepted', 'started'].includes(String(row.state))) value.pending += 1;
+      if (['pending', 'leased', 'accepted', 'started'].includes(row.state)) value.pending += 1;
       return value;
     }, { pending: 0, retrying: 0, dead: 0 });
     const fila = result.rows[0];

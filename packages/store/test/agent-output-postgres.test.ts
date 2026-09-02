@@ -10,6 +10,7 @@ import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import { PostgresTelegramBridgeRepository } from '../../../services/telegram-bridge/src/repository.js';
+import { terminalAck as buildTerminalAck } from './helpers/consumer.js';
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
@@ -51,34 +52,10 @@ async function claim(
   return { delivery, epoch: requireValue(lease.epoch, 'lease.epoch') };
 }
 
-function terminalAck(
-  delivery: DeliveryEnvelope,
-  instanceId: string,
-  epoch: number,
-  messages: unknown[],
-  eventId = randomUUID(),
-  reply: string | null = 'done'
-): Ack {
-  return {
-    version: '3.0',
-    event_id: eventId,
-    status: 'done',
-    instance_id: instanceId,
-    epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: {
-      output: {
-        reply,
-        messages,
-        status: 'done',
-        retryable: false,
-        artifacts: []
-      }
-    }
-  };
-}
+const terminalAck = (
+  delivery: DeliveryEnvelope, instanceId: string, epoch: number, messages: unknown[],
+  eventId = randomUUID(), reply: string | null = 'done'
+): Ack => buildTerminalAck(delivery, { instanceId, epoch }, { messages, eventId, reply });
 
 async function claimFanin(
   tenant: Tenant,

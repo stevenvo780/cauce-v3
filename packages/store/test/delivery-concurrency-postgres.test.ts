@@ -7,6 +7,9 @@ import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import {
+  consumer as leaseConsumer, terminalAck as buildTerminalAck, type Consumer
+} from './helpers/consumer.js';
 
 // Per-agent concurrency cap (agents.max_concurrent_deliveries).
 //
@@ -58,18 +61,8 @@ function command(overrides: Partial<PublishMessage> = {}): PublishMessage {
   };
 }
 
-interface Consumer {
-  tenant: Tenant;
-  alias: string;
-  instanceId: string;
-  epoch: number;
-}
-
-async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
-  const instanceId = `${alias}-${randomUUID()}`;
-  const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
-  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
-}
+const consumer = (tenant: Tenant, alias: string): Promise<Consumer> =>
+  leaseConsumer(repository, tenant, alias, 60_000);
 
 /**
  * `resetTestDatabase` truncates `agents`, so by default no alias has a row. Claiming in that
@@ -103,19 +96,9 @@ async function statusCounts(alias: string): Promise<Record<string, number>> {
   return Object.fromEntries(result.rows.map((row) => [row.status, Number(row.total)]));
 }
 
-function terminalAck(target: Consumer, delivery: { claim_token: string; attempt: number }): Ack {
-  return {
-    version: '3.0',
-    event_id: randomUUID(),
-    status: 'done',
-    instance_id: target.instanceId,
-    epoch: target.epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: { output: { reply: 'ok', messages: [], status: 'done', retryable: false, artifacts: [] } }
-  };
-}
+const terminalAck = (
+  target: Consumer, delivery: { claim_token: string; attempt: number }
+): Ack => buildTerminalAck(delivery, target, { reply: 'ok' });
 
 function progressAck(
   target: Consumer,

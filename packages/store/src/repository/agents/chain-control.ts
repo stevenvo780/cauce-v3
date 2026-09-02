@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isRfcUuid, type Origin, type Tenant } from '@cauce/protocol';
 import { type DatabaseClient, withTransaction } from '../../db.js';
+import { hubEdgeExistsSql } from '../acl-edges.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
 import { insertDelivery, insertMessage } from '../messages/_insert.js';
@@ -24,14 +25,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
   ): Promise<void> {
     if (gateTenant === actorTenant) return;
     const edge = await client.query(
-      `SELECT 1 FROM acl_edges edge
-       JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
-       JOIN tenants target_tenant ON target_tenant.id=edge.to_tenant
-       WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-         AND edge.enabled AND edge.allow_control
-         AND source_tenant.enabled AND target_tenant.enabled
-         AND (source_tenant.is_hub OR target_tenant.is_hub)
-       FOR SHARE OF edge,source_tenant,target_tenant`,
+      hubEdgeExistsSql('allow_control', 1, 2),
       [actorTenant, gateTenant]
     );
     if (edge.rowCount === 0) throw new StoreError('not_found', 'chain gate not found');

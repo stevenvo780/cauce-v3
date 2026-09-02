@@ -41,6 +41,7 @@ import { StoreError } from './errors.js';
 import { PublishIntentReconciliationRequired } from './messages/contracts.js';
 import { MessagePublishingRepository } from './messages/publishing.js';
 import { reconstructCommittedConsoleIntentReceipt } from './messages/receipts.js';
+import type { MessageListRow } from './visibility-rows.js';
 
 export {
   PublishIntentExpiredError,
@@ -539,7 +540,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
 
   async listMessages(actorTenant: Tenant, actorAlias: string, limit = 100): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
-    const result = await this.pool.query<Record<string, unknown>>(
+    const result = await this.pool.query<MessageListRow>(
       `SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               left(COALESCE(m.body->>'text',m.body->>'prompt',m.body::text),240) AS body_preview,
               m.lane,m.created_at,

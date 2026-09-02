@@ -1,5 +1,3 @@
-import { DeliveryAcksRepository } from './deliveries/acks.js';
-
 export {
   isEgressHandle,
   maxAgentOutputMessages,
@@ -24,4 +22,4 @@ export type {
   RoutingTarget,
 } from './deliveries/contracts.js';
 
-export abstract class DeliveriesRepository extends DeliveryAcksRepository {}
+export { DeliveryAcksRepository } from './deliveries/acks.js';

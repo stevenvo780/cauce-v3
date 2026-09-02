@@ -1,12 +1,15 @@
 import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { requireValue } from './helpers.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
+import type { DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
+import {
+  ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
+  type Consumer
+} from './helpers/consumer.js';
 
 /**
  * Silence sweep in delegation chains: ensures a task started by a human receives a reply even when intermediate
@@ -47,58 +50,19 @@ function telegramCommand(conversation: string, overrides: Partial<PublishMessage
   };
 }
 
-interface Consumer {
-  tenant: Tenant;
-  alias: string;
-  instanceId: string;
-  epoch: number;
-}
+const consumer = (tenant: Tenant, alias: string): Promise<Consumer> =>
+  leaseConsumer(repository, tenant, alias);
 
-async function consumer(tenant: Tenant, alias: string): Promise<Consumer> {
-  const instanceId = `${alias}-${randomUUID()}`;
-  const lease = await repository.acquireLease(tenant, alias, instanceId, [], 30_000);
-  return { tenant, alias, instanceId, epoch: requireValue(lease.epoch, 'lease.epoch') };
-}
+const nextDelivery = (
+  target: Consumer, predicate?: (delivery: DeliveryEnvelope) => boolean
+): Promise<DeliveryEnvelope> => claimNext(repository, target, predicate, 20);
 
-async function nextDelivery(
-  target: Consumer,
-  predicate: (delivery: DeliveryEnvelope) => boolean = () => true
-): Promise<DeliveryEnvelope> {
-  const claimed = await repository.claimDeliveries(
-    target.tenant, target.alias, target.instanceId, target.epoch, 20, 30_000
-  );
-  const delivery = claimed.find(predicate);
-  if (!delivery) {
-    throw new Error(`no matching delivery for ${target.alias}: ${JSON.stringify(
-      claimed.map((item) => item.body.type ?? 'request')
-    )}`);
-  }
-  return delivery;
-}
-
-async function ackWith(
-  target: Consumer,
-  delivery: DeliveryEnvelope,
-  messages: unknown[] = [],
-  reply: string | null = 'listo',
-  status: 'done' | 'failed' = 'done'
-): Promise<void> {
-  const ack: Ack = {
-    version: '3.0',
-    event_id: randomUUID(),
-    status,
-    instance_id: target.instanceId,
-    epoch: target.epoch,
-    claim_token: delivery.claim_token,
-    attempt: delivery.attempt,
-    retryable: false,
-    result: { output: { reply, messages, status, retryable: false, artifacts: [] } }
-  };
-  const result = await repository.ackDelivery(
-    delivery.delivery_id, target.tenant, target.alias, ack
-  );
-  expect(result.applied).toBe(true);
-}
+const ackWith = async (
+  target: Consumer, delivery: DeliveryEnvelope, messages: unknown[] = [],
+  reply: string | null = 'listo', status: 'done' | 'failed' = 'done'
+): Promise<void> => {
+  await applyTerminalAck(repository, target, delivery, { messages, reply, status });
+};
 
 /**
  * The parent is dead: its harness does not return, so the continuation it was supposed to consume is finished off by
