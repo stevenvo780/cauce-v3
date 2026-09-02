@@ -77,21 +77,27 @@ test("materializa attachments_v1 para el harness, verifica contenido y limpia el
 });
 
 /**
- * DELIVERY must accept the same text formats as INGEST.
+ * DELIVERY must accept every format INGEST accepts.
  *
- * `SUPPORTED_MIME` is an allowlist owned by this package, unrelated to the protocol enum. While
- * it only knew `.txt`, broadening the protocol moved the failure from ingest to here: the .md
- * entered the bus, was stored, and on delivery `materializeAttachments` threw `INVALID_ATTACHMENT`
- * (non-retryable), ending in `finishError` BEFORE invoking the harness. The agent saw neither
- * the file NOR the human's text.
+ * This package used to own an allowlist of its own, unrelated to the protocol one. Anything the
+ * bridge accepted but it did not know entered the bus, was stored, and then died on delivery with
+ * a non-retryable `INVALID_ATTACHMENT` BEFORE the harness ran: the agent saw neither the file NOR
+ * the human's text. Both ends now agree that no format is turned away.
  */
-test("los textos que la ingesta acepta tambien se materializan en la entrega", async () => {
+test("cualquier formato que la ingesta acepta tambien se materializa en la entrega", async () => {
   const casos: readonly (readonly [string, string])[] = [
     ["notas.md", "text/markdown"],
     ["notas.md", "text/x-markdown"],
     ["notas.md", "text/plain"],
     ["tabla.csv", "text/csv"],
     ["tabla.csv", "text/plain"],
+    ["desplegar.sh", "application/x-sh"],
+    ["evidencia.zip", "application/zip"],
+    ["captura.mp4", "video/mp4"],
+    ["cauce.db", "application/vnd.sqlite3"],
+    ["volcado", "application/octet-stream"],
+    ["informe con espacios y acentos.txt", "text/plain"],
+    ["diagrama.svg", "image/svg+xml"],
   ];
   const payload = Buffer.from("# informe\nuna linea\n", "utf8");
   for (const [indice, [name, mime]] of casos.entries()) {
