@@ -2,6 +2,7 @@
 """Contrato de escritura gobernada: CAS, creación explícita y E/S sin shell."""
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(AGENT_DIR) not in sys.path:
@@ -67,6 +69,38 @@ def write(
     if len(emitted) != 1:
         raise AssertionError(f"expected one terminal outcome, got {emitted!r}")
     return emitted[0]
+
+
+class DeviceMismatch:
+    """Real stat that reports its directory on another device, like a mount point does."""
+
+    def __init__(self, real: os.stat_result) -> None:
+        self._real = real
+        self.st_dev = real.st_dev + 1
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def parent_on_another_device():
+    """Makes every parent directory look like another filesystem: the target reads as a mount."""
+    real_fstat = os.fstat
+
+    def fstat(fd):
+        info = real_fstat(fd)
+        return DeviceMismatch(info) if stat.S_ISDIR(info.st_mode) else info
+
+    return mock.patch.object(agent.os, "fstat", side_effect=fstat)
+
+
+def mountinfo_line(path: str) -> str:
+    """A mount point field as the kernel writes it: space and backslash in three octal digits."""
+    escaped = path.replace("\\", "\\134").replace(" ", "\\040")
+    return f"31 30 0:35 / {escaped} rw,relatime shared:1 - tmpfs tmpfs rw\n"
+
+
+def mountinfo_listing(path: str):
+    return mock.patch.object(agent, "_read_mountinfo", return_value=mountinfo_line(path))
 
 
 class WriteGovernanceTests(unittest.TestCase):
@@ -251,6 +285,231 @@ class WriteGovernanceTests(unittest.TestCase):
         self.assertEqual(tag, agent.TAG_WRITE_OK)
         self.assertEqual(body["bytes"], 0)
         self.assertEqual(pathlib.Path(self.path).read_bytes(), b"")
+
+
+    def test_bind_mounted_target_is_written_in_place_through_its_descriptor(self) -> None:
+        """A file bind mount is a destination, not a name: renaming over it detaches the mount."""
+        old = b"montado\n"
+        pathlib.Path(self.path).write_bytes(old)
+        os.chmod(self.path, 0o640)
+        before = os.stat(self.path)
+        content = b"reemplazo dentro del mismo inodo\n"
+        renames: list[tuple[object, object]] = []
+        fsynced: list[int] = []
+        real_replace = os.replace
+        real_fsync = os.fsync
+
+        def spy_replace(source, destination, *args, **kwargs):
+            renames.append((source, destination))
+            return real_replace(source, destination, *args, **kwargs)
+
+        def spy_fsync(fd):
+            fsynced.append(os.fstat(fd).st_ino)
+            return real_fsync(fd)
+
+        with parent_on_another_device(), \
+                mock.patch.object(agent.os, "replace", side_effect=spy_replace), \
+                mock.patch.object(agent.os, "fsync", side_effect=spy_fsync):
+            tag, body = write(
+                self.instance, "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                self.path, content, "replace", sha(old),
+            )
+
+        self.assertEqual(tag, agent.TAG_WRITE_OK)
+        self.assertEqual(body["sha"], sha(content))
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), content)
+        after = os.stat(self.path)
+        self.assertEqual(after.st_ino, before.st_ino)
+        self.assertEqual(stat.S_IMODE(after.st_mode), 0o640)
+        self.assertEqual(renames, [])
+        self.assertIn(before.st_ino, fsynced)
+        self.assertEqual(list(pathlib.Path(self.config).glob(".cauce-governance-*")), [])
+
+    def test_ordinary_target_still_commits_with_an_atomic_rename(self) -> None:
+        """Without a mount underneath, the crash-atomic rename stays the mechanism."""
+        old = b"normal\n"
+        pathlib.Path(self.path).write_bytes(old)
+        before = os.stat(self.path)
+        content = b"nuevo\n"
+        renames: list[tuple[object, object]] = []
+        real_replace = os.replace
+
+        def spy_replace(source, destination, *args, **kwargs):
+            renames.append((source, destination))
+            return real_replace(source, destination, *args, **kwargs)
+
+        with mock.patch.object(agent.os, "replace", side_effect=spy_replace):
+            tag, _ = write(
+                self.instance, "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                self.path, content, "replace", sha(old),
+            )
+
+        self.assertEqual(tag, agent.TAG_WRITE_OK)
+        self.assertEqual(len(renames), 1)
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), content)
+        self.assertNotEqual(os.stat(self.path).st_ino, before.st_ino)
+
+    def test_the_in_place_commit_truncates_a_document_that_shrinks(self) -> None:
+        """The rename gave truncation for free; in place it has to be the last step."""
+        old = b"un documento de gobierno largo, con varias lineas y contexto\n"
+        pathlib.Path(self.path).write_bytes(old)
+        before = os.stat(self.path)
+        content = b"corto\n"
+
+        with mountinfo_listing(self.path):
+            tag, body = write(
+                self.instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1",
+                self.path, content, "replace", sha(old),
+            )
+
+        self.assertEqual(tag, agent.TAG_WRITE_OK)
+        self.assertEqual(body["sha"], sha(content))
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), content)
+        self.assertEqual(os.stat(self.path).st_size, len(content))
+        self.assertEqual(os.stat(self.path).st_ino, before.st_ino)
+
+    def test_a_failed_in_place_write_leaves_the_previous_bytes_on_disk(self) -> None:
+        """A half-written document is a directive the harness would obey: restore or nothing."""
+        old = b"documento de gobierno vigente\n"
+        pathlib.Path(self.path).write_bytes(old)
+        before = os.stat(self.path)
+        real_pwrite = os.pwrite
+        offsets: list[int] = []
+
+        def failing_pwrite(fd, data, offset):
+            offsets.append(offset)
+            if len(offsets) == 1:
+                return real_pwrite(fd, bytes(data)[:4], offset)
+            if len(offsets) == 2:
+                raise OSError(errno.ENOSPC, "no space left on device")
+            return real_pwrite(fd, data, offset)
+
+        with mountinfo_listing(self.path), \
+                mock.patch.object(agent.os, "pwrite", side_effect=failing_pwrite):
+            tag, body = write(
+                self.instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2",
+                self.path, b"contenido nuevo y bastante mas largo\n", "replace", sha(old),
+            )
+
+        self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_ERR, "unknown"))
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), old)
+        self.assertEqual(os.stat(self.path).st_size, len(old))
+        self.assertEqual(os.stat(self.path).st_ino, before.st_ino)
+        self.assertGreaterEqual(len(offsets), 3)
+
+    def test_the_in_place_descriptor_is_revalidated_after_the_open(self) -> None:
+        """The stat and the open are two syscalls; only the descriptor's own identity counts."""
+        old = b"original\n"
+        pathlib.Path(self.path).write_bytes(old)
+        decoy = os.path.join(self.config, "decoy")
+        pathlib.Path(decoy).write_bytes(b"decoy\n")
+        real_open = os.open
+
+        def swapped_open(path, flags, *args, **kwargs):
+            if path == "CLAUDE.md" and flags & os.O_RDWR:
+                return real_open(decoy, os.O_RDWR)
+            return real_open(path, flags, *args, **kwargs)
+
+        with mountinfo_listing(self.path), \
+                mock.patch.object(agent.os, "open", side_effect=swapped_open):
+            tag, body = write(
+                self.instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3",
+                self.path, b"redirigido\n", "replace", sha(old),
+            )
+
+        self.assertEqual(pathlib.Path(decoy).read_bytes(), b"decoy\n")
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), old)
+        self.assertEqual((tag, body.get("error")), (agent.TAG_WRITE_ERR, "conflict"))
+
+    def test_a_same_filesystem_file_bind_is_detected_through_mountinfo(self) -> None:
+        """st_dev cannot see a bind onto its own filesystem; the mount point field can."""
+        with tempfile.TemporaryDirectory(suffix=" con espacio") as raw:
+            home = os.path.realpath(raw)
+            config = os.path.join(home, ".claude")
+            os.mkdir(config)
+            path = os.path.join(config, "CLAUDE.md")
+            old = b"montado sobre el mismo sistema de ficheros\n"
+            pathlib.Path(path).write_bytes(old)
+            before = os.stat(path)
+            instance = make_agent(home)
+            renames: list[tuple[object, object]] = []
+            real_replace = os.replace
+
+            def spy_replace(source, destination, *args, **kwargs):
+                renames.append((source, destination))
+                return real_replace(source, destination, *args, **kwargs)
+
+            with mountinfo_listing(path), \
+                    mock.patch.object(agent.os, "replace", side_effect=spy_replace):
+                tag, _ = write(
+                    instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee4",
+                    path, b"nuevo\n", "replace", sha(old),
+                )
+
+            self.assertEqual(tag, agent.TAG_WRITE_OK)
+            self.assertEqual(os.stat(path).st_ino, before.st_ino)
+            self.assertEqual(renames, [])
+            self.assertEqual(list(pathlib.Path(config).glob(".cauce-governance-*")), [])
+
+    def test_st_dev_still_decides_when_mountinfo_cannot_be_read(self) -> None:
+        old = b"sin proc montado\n"
+        pathlib.Path(self.path).write_bytes(old)
+        before = os.stat(self.path)
+
+        with parent_on_another_device(), \
+                mock.patch.object(agent, "_read_mountinfo", return_value=None):
+            tag, _ = write(
+                self.instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee5",
+                self.path, b"nuevo\n", "replace", sha(old),
+            )
+
+        self.assertEqual(tag, agent.TAG_WRITE_OK)
+        self.assertEqual(os.stat(self.path).st_ino, before.st_ino)
+
+    def test_the_mount_branch_writes_with_a_read_only_parent_directory(self) -> None:
+        """Deciding before staging: a mounted destination needs no name created beside it."""
+        old = b"padre de solo lectura\n"
+        pathlib.Path(self.path).write_bytes(old)
+        before = os.stat(self.path)
+        content = b"nuevo contenido\n"
+
+        os.chmod(self.config, 0o500)
+        try:
+            with mountinfo_listing(self.path):
+                tag, body = write(
+                    self.instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee6",
+                    self.path, content, "replace", sha(old),
+                )
+        finally:
+            os.chmod(self.config, 0o700)
+
+        self.assertEqual((tag, body.get("error")), (agent.TAG_WRITE_OK, None))
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), content)
+        self.assertEqual(os.stat(self.path).st_ino, before.st_ino)
+
+    def test_an_edit_during_staging_is_caught_before_the_commit(self) -> None:
+        """The precondition is read before staging; the identity is re-read right before the rename."""
+        old = b"base\n"
+        pathlib.Path(self.path).write_bytes(old)
+        real_fsync = os.fsync
+        intruded: list[bool] = []
+
+        def fsync_then_intrude(fd):
+            result = real_fsync(fd)
+            if not intruded:
+                intruded.append(True)
+                pathlib.Path(self.path).write_bytes(b"escrito por otro\n")
+            return result
+
+        with mock.patch.object(agent.os, "fsync", side_effect=fsync_then_intrude):
+            tag, body = write(
+                self.instance, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee7",
+                self.path, b"nuevo\n", "replace", sha(old),
+            )
+
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), b"escrito por otro\n")
+        self.assertEqual((tag, body.get("error")), (agent.TAG_WRITE_ERR, "conflict"))
+        self.assertEqual(list(pathlib.Path(self.config).glob(".cauce-governance-*")), [])
 
 
 if __name__ == "__main__":

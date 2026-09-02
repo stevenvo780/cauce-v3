@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import stat
 import sys
 import tempfile
 import unittest
@@ -73,6 +74,28 @@ def run_batch(instance: agent.PtyAgent, request_id: str, entries: list[dict]) ->
     for chunk in chunks:
         instance._on_write_batch_data(request_id, chunk)
     return emitted(instance)
+
+
+class DeviceMismatch:
+    """Real stat that reports its directory on another device, like a mount point does."""
+
+    def __init__(self, real: os.stat_result) -> None:
+        self._real = real
+        self.st_dev = real.st_dev + 1
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+def parent_on_another_device():
+    """Makes every parent directory look like another filesystem: the target reads as a mount."""
+    real_fstat = os.fstat
+
+    def fstat(fd):
+        info = real_fstat(fd)
+        return DeviceMismatch(info) if stat.S_ISDIR(info.st_mode) else info
+
+    return mock.patch.object(agent.os, "fstat", side_effect=fstat)
 
 
 class WriteGovernanceBatchTests(unittest.TestCase):
@@ -179,6 +202,45 @@ class WriteGovernanceBatchTests(unittest.TestCase):
         self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "permission_denied"))
         self.assertIn("never served", body.get("reason", ""))
         self.assertFalse(os.path.exists(self.path("openclaw.json")))
+
+
+    def test_bind_mounted_target_refuses_the_batch_instead_of_breaking_the_mount(self) -> None:
+        """The rollback restores the ORIGINAL inode by hardlink; over a mount there is nothing
+        to restore, so the profile refuses as a whole rather than detaching it."""
+        soul = self.path("SOUL.md")
+        tools = self.path("TOOLS.md")
+        pathlib.Path(soul).write_bytes(b"old soul")
+        before = os.stat(soul)
+
+        with parent_on_another_device():
+            tag, body = run_batch(self.instance, "77777777-7777-7777-7777-777777777777", [
+                write_entry(soul, b"new soul", "replace", sha(b"old soul")),
+                write_entry(tools, b"tools", "create"),
+            ])
+
+        self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "bind_mount_target"))
+        self.assertIn("SOUL.md", body.get("reason", ""))
+        self.assertEqual(pathlib.Path(soul).read_bytes(), b"old soul")
+        self.assertEqual(os.stat(soul).st_ino, before.st_ino)
+        self.assertFalse(os.path.exists(tools))
+        self.assertEqual(list(pathlib.Path(self.workspace).glob(".cauce-profile-*")), [])
+
+    def test_a_same_filesystem_bind_refuses_the_batch_through_mountinfo(self) -> None:
+        """The batch and the single write decide the mount question with the same routine."""
+        soul = self.path("SOUL.md")
+        pathlib.Path(soul).write_bytes(b"old soul")
+        before = os.stat(soul)
+        listing = f"31 30 0:35 / {soul} rw,relatime shared:1 - tmpfs tmpfs rw\n"
+
+        with mock.patch.object(agent, "_read_mountinfo", return_value=listing):
+            tag, body = run_batch(self.instance, "88888888-8888-8888-8888-888888888888", [
+                write_entry(soul, b"new soul", "replace", sha(b"old soul")),
+            ])
+
+        self.assertEqual((tag, body["error"]), (agent.TAG_WRITE_BATCH_ERR, "bind_mount_target"))
+        self.assertEqual(pathlib.Path(soul).read_bytes(), b"old soul")
+        self.assertEqual(os.stat(soul).st_ino, before.st_ino)
+        self.assertEqual(list(pathlib.Path(self.workspace).glob(".cauce-profile-*")), [])
 
 
 if __name__ == "__main__":

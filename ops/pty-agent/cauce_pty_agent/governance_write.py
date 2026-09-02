@@ -26,6 +26,70 @@ from .governance_paths import (
     SHA256_RE,
 )
 
+MOUNTINFO_PATH = "/proc/self/mountinfo"
+_OCTAL_DIGITS = frozenset("01234567")
+
+
+class GovernanceBindMountError(Exception):
+    """The destination is a bind-mounted file and the caller cannot commit it with a rename."""
+
+
+def _read_mountinfo() -> str | None:
+    try:
+        with open(MOUNTINFO_PATH, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _unescape_mountinfo(field: str) -> str:
+    """mountinfo escapes space, tab, newline and backslash as a backslash and three octal digits."""
+    if "\\" not in field:
+        return field
+    out: list[str] = []
+    index = 0
+    while index < len(field):
+        digits = field[index + 1:index + 4]
+        if field[index] == "\\" and len(digits) == 3 and _OCTAL_DIGITS.issuperset(digits):
+            out.append(chr(int(digits, 8)))
+            index += 4
+            continue
+        out.append(field[index])
+        index += 1
+    return "".join(out)
+
+
+def _mountinfo_lists_path(path: str) -> bool:
+    """Exact match against the mount point field; unreadable mountinfo answers False, not a guess."""
+    raw = _read_mountinfo()
+    if raw is None:
+        return False
+    for line in raw.splitlines():
+        fields = line.split(" ")
+        if len(fields) > 4 and _unescape_mountinfo(fields[4]) == path:
+            return True
+    return False
+
+
+def _read_at(fd: int, size: int) -> bytes:
+    data = bytearray()
+    while len(data) < size:
+        chunk = os.pread(fd, size - len(data), len(data))
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _write_at(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    written = 0
+    while written < len(view):
+        amount = os.pwrite(fd, view[written:], written)
+        if amount <= 0:
+            raise OSError("short in-place governance write")
+        written += amount
+
 
 class GovernanceWrite:
     """Una escritura correlacionada y acotada que todavía no llegó completa."""
@@ -313,6 +377,8 @@ class GovernanceWriteMixin:
                 return
         try:
             acknowledgements = self._apply_governance_batch(pending)
+        except GovernanceBindMountError as error:
+            self._write_batch_error(pending.request_id, "bind_mount_target", str(error))
         except FileExistsError:
             self._write_batch_error(pending.request_id, "conflict", "an absent precondition failed")
         except FileNotFoundError:
@@ -373,6 +439,13 @@ class GovernanceWriteMixin:
                         raise FileNotFoundError(basename)
                     if current_sha != entry.expected_sha:
                         raise ValueError(f"{basename} changed; SHA-256 precondition failed")
+                    if self._target_is_mount_point(directory, entry.path, current_info):
+                        # The rollback of this transaction is a hardlink to the ORIGINAL inode
+                        # restored with os.replace: over a mounted destination there is no inode
+                        # to link and no name to put back. Refusing keeps the mount whole.
+                        raise GovernanceBindMountError(
+                            f"{basename} is a bind-mounted file; a transactional profile cannot commit it",
+                        )
                 plan["ack_operation"] = entry.operation
 
             # COMPLETE STAGING. Temporaries are not served names and do not change destinations.
@@ -567,6 +640,12 @@ class GovernanceWriteMixin:
         return None
 
     def _apply_governance_write(self, pending: GovernanceWrite, content: bytes) -> None:
+        """Commits with the mechanism the destination needs, decided once before anything is staged.
+
+        `create` commits with link(2), which fails with EEXIST and never overwrites a creation
+        that won the race. A mounted destination must keep its inode, so it is written in place
+        and no temporary is staged: its parent directory may not be writable.
+        """
         directory, basename = self._open_governance_parent(pending.path)
         temporary = f".cauce-governance-{pending.request_id}.tmp"
         temp_fd: int | None = None
@@ -590,27 +669,29 @@ class GovernanceWriteMixin:
                 if current_sha != pending.expected_sha:
                     raise ValueError("the file changed; SHA-256 precondition failed")
 
-            temp_fd = os.open(
-                temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-                dir_fd=directory,
-            )
-            temp_exists = True
-            view = memoryview(content)
-            written = 0
-            while written < len(view):
-                amount = os.write(temp_fd, view[written:])
-                if amount <= 0:
-                    raise OSError("short governance write")
-                written += amount
-            if current_info is not None:
-                os.fchmod(temp_fd, stat.S_IMODE(current_info.st_mode))
-                if current_info.st_uid != os.geteuid() or current_info.st_gid != os.getegid():
-                    os.fchown(temp_fd, current_info.st_uid, current_info.st_gid)
-            os.fsync(temp_fd)
-            os.close(temp_fd)
-            temp_fd = None
+            in_place = exists and self._target_is_mount_point(directory, pending.path, current_info)
+            if not in_place:
+                temp_fd = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=directory,
+                )
+                temp_exists = True
+                view = memoryview(content)
+                written = 0
+                while written < len(view):
+                    amount = os.write(temp_fd, view[written:])
+                    if amount <= 0:
+                        raise OSError("short governance write")
+                    written += amount
+                if current_info is not None:
+                    os.fchmod(temp_fd, stat.S_IMODE(current_info.st_mode))
+                    if current_info.st_uid != os.geteuid() or current_info.st_gid != os.getegid():
+                        os.fchown(temp_fd, current_info.st_uid, current_info.st_gid)
+                os.fsync(temp_fd)
+                os.close(temp_fd)
+                temp_fd = None
 
             if pending.operation == "create":
                 # linkat fails with EEXIST: unlike replace(), it never overwrites a creation that
@@ -625,18 +706,14 @@ class GovernanceWriteMixin:
                 # Revalidate the SAME identity right before commit. Serialises this agent's writes
                 # and catches external edits that happened during staging.
                 latest = os.stat(basename, dir_fd=directory, follow_symlinks=False)
-                expected_identity = (
-                    current_info.st_dev, current_info.st_ino, current_info.st_size,
-                    current_info.st_mtime_ns, current_info.st_ctime_ns,
-                )
-                actual_identity = (
-                    latest.st_dev, latest.st_ino, latest.st_size,
-                    latest.st_mtime_ns, latest.st_ctime_ns,
-                )
-                if expected_identity != actual_identity or not stat.S_ISREG(latest.st_mode):
+                if (self._stat_identity(latest) != self._stat_identity(current_info)
+                        or not stat.S_ISREG(latest.st_mode)):
                     raise ValueError("the file changed before the atomic commit")
-                os.replace(temporary, basename, src_dir_fd=directory, dst_dir_fd=directory)
-                temp_exists = False
+                if in_place:
+                    self._commit_in_place(directory, basename, latest, content)
+                else:
+                    os.replace(temporary, basename, src_dir_fd=directory, dst_dir_fd=directory)
+                    temp_exists = False
             os.fsync(directory)
             self._write_ok(pending)
         finally:
@@ -648,6 +725,49 @@ class GovernanceWriteMixin:
                 except OSError:
                     pass
             os.close(directory)
+
+    @staticmethod
+    def _target_is_mount_point(directory: int, path: str, info: os.stat_result) -> bool:
+        """True when the destination is mounted, by either of two independent signals.
+
+        mountinfo answers exactly, including the `mount --bind` of a file onto the SAME
+        filesystem, which st_dev cannot see. The st_dev comparison is the only signal left
+        when /proc is not mounted, so neither replaces the other.
+        """
+        if _mountinfo_lists_path(path):
+            return True
+        return info.st_dev != os.fstat(directory).st_dev
+
+    @staticmethod
+    def _commit_in_place(directory: int, basename: str, expected: os.stat_result, content: bytes) -> None:
+        """Overwrites a mounted destination through its own descriptor, keeping its inode.
+
+        The document is never observed empty and its old bytes are never lost: the previous
+        content is read first, the new content is written at offset 0, and the truncation is
+        last; a failure after the first write restores the previous bytes through the same
+        descriptor. The identity is re-checked on the descriptor already opened O_RDWR, so a
+        swap between the stat and the open cannot redirect these bytes.
+        """
+        fd = os.open(basename, os.O_RDWR | os.O_NOFOLLOW, dir_fd=directory)
+        try:
+            opened = os.fstat(fd)
+            if ((opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino)
+                    or not stat.S_ISREG(opened.st_mode)):
+                raise ValueError("the file changed before the in-place commit")
+            if opened.st_size > MAX_DOCUMENT_BYTES:
+                raise ValueError("the destination exceeds the governance document cap")
+            previous = _read_at(fd, opened.st_size)
+            try:
+                _write_at(fd, content)
+                os.fsync(fd)
+                os.ftruncate(fd, len(content))
+            except BaseException:
+                _write_at(fd, previous)
+                os.ftruncate(fd, len(previous))
+                os.fsync(fd)
+                raise
+        finally:
+            os.close(fd)
 
     def _write_ok(self, pending: GovernanceWrite) -> None:
         self._queue(encode_json(TAG_WRITE_OK, {
