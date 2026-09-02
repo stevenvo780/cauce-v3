@@ -1,10 +1,14 @@
 import { AlertTriangle, CheckCircle2, CircleHelp, Gauge } from 'lucide-react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { LoadingState, Metric, PageHeader, RefreshButton, Time } from '../../components/ui';
+import { LoadingState, Metric, PageHeader, RefreshButton, Time, Unknown } from '../../components/ui';
 import { onNavClick } from '../../router';
 import { HarnessStrip } from './HarnessStrip';
-import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
+import {
+  agruparAlertas, ALCANCE_DE_LA_CIFRA, conteoPorEstado, desgloseDeColas, GRUPOS_DE_COLA,
+  puedeDecirSinIncidencias, resumenPortada, ROTULO_DE_COLA, saldosPorProveedor,
+  type ConteoDeEstado, type DesgloseDeColas, type SaldoDeProveedor,
+} from './landing';
 import './landing.css';
 
 /**
@@ -52,6 +56,9 @@ export function LandingPage() {
     activity: activity.data,
   });
   const totals = activity.data?.totals;
+  const colas = desgloseDeColas(queues.data);
+  const saldos = saldosPorProveedor(quotas.data);
+  const flota = conteoPorEstado(totals);
 
   return (
     <>
@@ -63,9 +70,9 @@ export function LandingPage() {
       />
 
       <div className="metrics-grid">
-        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail="leases vigentes" />
+        <Metric label="Agentes en línea" value={status.data?.online} tone="positive" detail={ALCANCE_DE_LA_CIFRA.leases} />
         <Metric label="En vuelo" value={totals?.in_flight} detail="tomadas por un agente" />
-        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail="pendientes y en reintento" />
+        <Metric label="Esperando turno" value={totals?.queued} tone="warning" detail={`según ${ALCANCE_DE_LA_CIFRA.actividad}`} />
         <Metric label="Entregas muertas" value={queues.data?.dead} tone="danger" detail="nadie las va a contestar" />
       </div>
 
@@ -130,6 +137,23 @@ export function LandingPage() {
         ) : null}
       </section>
 
+      {asentadas ? (
+        <section className="landing-tiras" aria-label="El detalle de lo que ya se leyó">
+          <article className="panel landing-tira">
+            <h2>Colas por carril</h2>
+            <TiraDeColas colas={colas} />
+          </article>
+          <article className="panel landing-tira">
+            <h2>Saldo por proveedor</h2>
+            <TiraDeSaldos saldos={saldos} />
+          </article>
+          <article className="panel landing-tira">
+            <h2>Flota por estado</h2>
+            <TiraDeFlota flota={flota} />
+          </article>
+        </section>
+      ) : null}
+
       <div className="observation-line">
         <Gauge size={16} aria-hidden="true" />
         Flota observada: <Time value={activity.data?.observed_at} />
@@ -139,8 +163,122 @@ export function LandingPage() {
         Cuotas: <Time value={quotas.data?.observed_at} />
       </div>
 
-
       <HarnessStrip adapters={adapters.data?.items ?? []} error={adapters.data ? undefined : adapters.error} />
+    </>
+  );
+}
+
+function SinLectura({ fuente }: { fuente: string }) {
+  return <p className="landing-tira-nota" data-sin-lectura="true">{fuente} no contestó: acá no va un cero.</p>;
+}
+
+function TiraDeColas({ colas }: { colas?: DesgloseDeColas }) {
+  if (!colas) return <SinLectura fuente="Colas y DLQ" />;
+  return (
+    <>
+      <dl className="landing-cifras">
+        {GRUPOS_DE_COLA.map((grupo) => (
+          <div key={grupo}>
+            <dt>{ROTULO_DE_COLA[grupo]}</dt>
+            <dd><Unknown value={colas.totalesDelServidor[grupo]} /></dd>
+          </div>
+        ))}
+      </dl>
+      {colas.carrilesDeLaPagina.length > 0 ? (
+        <table className="landing-tabla">
+          <thead>
+            <tr>
+              <th scope="col">Carril</th>
+              {GRUPOS_DE_COLA.map((grupo) => <th scope="col" key={grupo}>{ROTULO_DE_COLA[grupo]}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {colas.carrilesDeLaPagina.map((carril) => (
+              <tr key={carril.lane ?? 'sin-carril'}>
+                <th scope="row"><Unknown value={carril.lane} /></th>
+                {GRUPOS_DE_COLA.map((grupo) => <td key={grupo}>{carril.cuenta[grupo]}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      <p className="landing-tira-nota">
+        Las tres cifras de arriba las cuenta el servidor de colas sobre {ALCANCE_DE_LA_CIFRA.colaEntera};
+        «Esperando turno» de la cabecera lo cuenta {ALCANCE_DE_LA_CIFRA.actividad}, que es otra
+        lectura y no tiene por qué dar el mismo número. El desglose por carril cuenta las
+        {' '}{colas.enPagina} entregas que trajo la página
+        {colas.recortada ? ', que el servidor declara recortada' : ''}: es una muestra, no la cola.
+      </p>
+    </>
+  );
+}
+
+function tituloDelSaldo(saldo: SaldoDeProveedor): string {
+  if (saldo.efectivo === undefined) return 'El peor porcentaje de las ventanas de este proveedor.';
+  return `El servidor publica effective_remaining_percent = ${String(saldo.efectivo)} %, que es lo que el `
+    + 'enrutador usa para elegir cuenta. Acá va el peor porcentaje de sus ventanas, que es el que va con la '
+    + 'severidad de al lado.';
+}
+
+function TiraDeSaldos({ saldos }: { saldos?: SaldoDeProveedor[] }) {
+  if (!saldos) return <SinLectura fuente="Consumo de cuotas" />;
+  if (saldos.length === 0) return <p className="landing-tira-nota">El recolector devolvió cero proveedores.</p>;
+  return (
+    <>
+      <ul className="landing-lista">
+        {saldos.map((saldo) => (
+          <li
+            key={`${saldo.host ?? ''}/${saldo.proveedor ?? ''}`}
+            data-severidad={saldo.severidad}
+            data-conflicto={saldo.conflicto ? 'true' : undefined}
+          >
+            <span className="landing-lista-rotulo">
+              <Unknown value={saldo.proveedor} />
+              <small>
+                <Unknown value={saldo.host} />
+                {saldo.conflicto && saldo.efectivo !== undefined ? ` · efectivo ${String(saldo.efectivo)} %` : null}
+              </small>
+            </span>
+            <span className="landing-barra" aria-hidden="true">
+              <i style={{ inlineSize: `${String(saldo.restante ?? 0)}%` }} />
+            </span>
+            <span className="landing-lista-cifra" title={tituloDelSaldo(saldo)}>
+              {saldo.restante === undefined ? <Unknown value={undefined} /> : `${String(saldo.restante)} %`}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="landing-tira-nota">
+        Cada cifra es {ALCANCE_DE_LA_CIFRA.peorVentana}, la que lo deja sin turno y la que va con el
+        color; el peor, primero. El porcentaje efectivo que publica el servidor mira el conjunto
+        entero y se anota junto al proveedor cuando los dos no cuentan lo mismo.
+      </p>
+    </>
+  );
+}
+
+function TiraDeFlota({ flota }: { flota?: ConteoDeEstado[] }) {
+  if (!flota) return <SinLectura fuente="Actividad de la flota" />;
+  if (flota.length === 0) return <p className="landing-tira-nota">El servidor no desglosó la flota por estado.</p>;
+  return (
+    <>
+      <ul className="landing-lista">
+        {flota.map((fila) => (
+          <li key={fila.label}>
+            <span className="landing-lista-rotulo">{fila.label}</span>
+            <span className="landing-barra" aria-hidden="true">
+              <i style={{ inlineSize: `${String(Math.round(fila.parte * 100))}%` }} />
+            </span>
+            <span className="landing-lista-cifra">{fila.valor}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="landing-tira-nota">
+        Los agentes que vio {ALCANCE_DE_LA_CIFRA.actividad}, por estado; «Agentes en línea» de la
+        cabecera cuenta {ALCANCE_DE_LA_CIFRA.leases}, que es otra lectura y no tiene por qué dar el
+        mismo número. «Trabajando» junta los que van sobrados y los saturados: la consola los llama
+        igual y separarlos acá sería inventar una palabra.
+      </p>
     </>
   );
 }

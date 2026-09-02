@@ -1,6 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { expect, it } from 'vitest';
+import { ALCANCE_DE_LA_CIFRA } from './landing';
 import { LandingPage } from './LandingPage';
 import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
@@ -132,4 +133,74 @@ it('con TODO sano y leído entero sí se permite decir «sin incidencias»', asy
   const banda = await screen.findByRole('region', { name: /lo que exige atención/i });
   expect(await within(banda).findByText(/^Sin incidencias/)).toBeInTheDocument();
   expect(within(banda).queryByText(/no contestó/i)).not.toBeInTheDocument();
+});
+
+it('llena el pliegue con lo que ya había leído: colas por carril, saldo por proveedor y flota por estado', async () => {
+  renderWithApi(<LandingPage />);
+
+  const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
+  await within(tiras).findByRole('heading', { name: /colas por carril/i });
+
+  const carril = within(tiras).getByRole('row', { name: /interactive/i });
+  expect(within(carril).getAllByRole('cell').map((celda) => celda.textContent)).toEqual(['1', '0', '1']);
+
+  const trabajando = within(tiras).getByText('Trabajando').closest('li');
+  expect(trabajando?.textContent).toMatch(/9$/);
+
+  const claude = within(tiras).getByText('claude').closest('li');
+  expect(claude?.textContent).toMatch(/14 %/);
+});
+
+it('el saldo lo manda la peor ventana: el proveedor agotado va primero y a cero, aunque publique 100 % efectivo', async () => {
+  renderWithApi(<LandingPage />);
+
+  const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
+  const saldos = within(tiras).getByRole('heading', { name: /saldo por proveedor/i }).closest('article');
+  const filas = [...(saldos?.querySelectorAll('.landing-lista li') ?? [])];
+  expect(filas.map((fila) => fila.querySelector('.landing-lista-rotulo > span')?.textContent))
+    .toEqual(['codex', 'claude', 'antigravity', 'opencode']);
+
+  const codex = filas[0];
+  expect(codex.querySelector('.landing-lista-cifra')?.textContent).toBe('0 %');
+  expect(codex.getAttribute('data-severidad')).toBe('exhausted');
+  expect(codex.getAttribute('data-conflicto')).toBe('true');
+  expect(codex.textContent).toMatch(/efectivo 100 %/);
+  expect(codex.querySelector('.landing-lista-cifra')?.getAttribute('title'))
+    .toMatch(/effective_remaining_percent = 100 %/);
+  expect(filas[1].getAttribute('data-conflicto')).toBeNull();
+  expect(saldos?.textContent).toContain(ALCANCE_DE_LA_CIFRA.peorVentana);
+});
+
+it('las cifras que no cuadran declaran de qué lectura sale cada una', async () => {
+  renderWithApi(<LandingPage />);
+  const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
+
+  const enLinea = screen.getByText('Agentes en línea').closest('.metric');
+  const flota = within(tiras).getByRole('heading', { name: /flota por estado/i }).closest('article');
+  const porEstado = [...(flota?.querySelectorAll('.landing-lista-cifra') ?? [])]
+    .reduce((suma, celda) => suma + Number(celda.textContent), 0);
+  expect(enLinea?.textContent).toContain('99');
+  expect(porEstado).toBe(15);
+  expect(enLinea?.textContent).toContain(ALCANCE_DE_LA_CIFRA.leases);
+  expect(flota?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
+  expect(flota?.textContent).toContain(ALCANCE_DE_LA_CIFRA.leases);
+
+  const esperando = screen.getByText('Esperando turno').closest('.metric');
+  const colas = within(tiras).getByRole('heading', { name: /colas por carril/i }).closest('article');
+  expect(esperando?.textContent).toContain('29');
+  expect(colas?.querySelector('.landing-cifras div')?.textContent).toBe('Pendientes4');
+  expect(esperando?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
+  expect(colas?.textContent).toContain(ALCANCE_DE_LA_CIFRA.colaEntera);
+  expect(colas?.textContent).toContain(ALCANCE_DE_LA_CIFRA.actividad);
+});
+
+it('una tira cuya fuente no contestó lo dice: no dibuja una barra a cero', async () => {
+  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({ error: 'boom' }, { status: 503 })));
+  renderWithApi(<LandingPage />);
+
+  const tiras = await screen.findByRole('region', { name: /el detalle de lo que ya se leyó/i });
+  const saldos = within(tiras).getByRole('heading', { name: /saldo por proveedor/i }).closest('article');
+  expect(saldos?.textContent).toMatch(/Consumo de cuotas no contestó/i);
+  expect(saldos?.querySelector('.landing-barra')).toBeNull();
+  expect(within(tiras).getByRole('heading', { name: /flota por estado/i })).toBeInTheDocument();
 });

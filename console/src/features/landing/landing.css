@@ -3,33 +3,33 @@
 
 /* --- Adaptadores y arneses --- */
 .adapter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
-.adapter-head { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; }
+.adapter-head { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); }
 .adapter-head h2 { margin: 0; font-size: var(--tipo-panel); }
-.adapter-icon { display: grid; width: 43px; height: 43px; place-items: center; border: 1px solid #305c76; border-radius: 12px; background: var(--blue-dim); color: var(--blue); }
-.adapter-detail { min-height: 42px; margin: 17px 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
-.adapter-meta { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: #0b1320; }
-.adapter-meta dt { display: flex; align-items: center; gap: 6px; }
+.adapter-icon { display: grid; width: 43px; height: 43px; place-items: center; border: 1px solid #305c76; border-radius: var(--radius-md); background: var(--blue-dim); color: var(--blue); }
+.adapter-detail { min-height: 42px; margin: var(--space-4) 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
+.adapter-meta { display: grid; grid-template-columns: 1fr 1.4fr; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: #0b1320; }
+.adapter-meta dt { display: flex; align-items: center; gap: var(--space-2); }
 .adapter-meta div { min-width: 0; }
 
 /* `.panel` en el selector: esta hoja la importa `LandingPage`, que NO es una ruta diferida, así que
    se inyecta ANTES de `styles.css` y una regla de una sola clase perdería contra `.panel`. */
 .panel.harness-strip { padding: 0; }
 .harness-strip > summary {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 15px 18px; color: var(--text); cursor: pointer; font-size: var(--tipo-rotulo); font-weight: 700;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-4); color: var(--text); cursor: pointer; font-size: var(--tipo-rotulo); font-weight: 700;
 }
-.harness-strip > summary span { display: flex; align-items: center; gap: 8px; }
+.harness-strip > summary span { display: flex; align-items: center; gap: var(--space-2); }
 .harness-strip > summary small { color: var(--muted); font-weight: 500; }
-.harness-strip > *:not(summary) { margin: 0 18px 18px; }
+.harness-strip > *:not(summary) { margin: 0 var(--space-4) var(--space-4); }
 .harness-note { max-width: var(--measure-prose); color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
-.harness-strip .adapter-card { padding: 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.harness-strip .adapter-card { padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
 .harness-strip .adapter-head h3 { margin: 0; font-size: var(--tipo-panel); }
 
 /* --- Lo que exige atención --- */
-.landing-alertas { display: grid; gap: 9px; margin-bottom: 18px; }
+.landing-alertas { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
 .landing-veredicto, .landing-alerta {
-  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
-  margin: 0; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px;
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3);
+  margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md);
   background: var(--surface); font-size: var(--tipo-rotulo);
 }
 .landing-veredicto { grid-template-columns: auto 1fr; border-color: #1f5346; background: var(--mint-dim); color: var(--mint); }
@@ -37,15 +37,53 @@
 .landing-alerta[data-tono="warning"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
 .landing-alerta[data-tono="desconocido"] { border-color: var(--border-strong); color: var(--muted); }
 .landing-alerta svg, .landing-veredicto svg { flex: none; }
-.landing-alerta > span { display: grid; gap: 3px; min-width: 0; }
+.landing-alerta > span { display: grid; gap: var(--space-1); min-width: 0; }
 .landing-alerta strong { color: var(--text); }
 .landing-alerta small { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.5; }
 .landing-alerta > a { color: inherit; font-size: var(--tipo-rotulo); font-weight: 700; white-space: nowrap; }
 
+/* --- Colas, cuotas y flota, con lo que la portada ya había leído --- */
+.landing-tiras { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4); }
+.landing-tira { display: grid; align-content: start; gap: var(--space-3); margin-bottom: 0; padding: var(--space-4); }
+.landing-tira h2 { margin: 0; font-size: var(--tipo-panel); letter-spacing: -.015em; }
+.landing-tira-nota { max-width: var(--measure-prose); margin: 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.5; }
+.landing-tira-nota[data-sin-lectura="true"] { color: var(--amber); }
+/* `auto-fit` drops to two columns on a phone: the labels are single words and a narrower track
+   spills them over the next column. */
+.landing-cifras { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: var(--space-2); margin: 0; }
+.landing-cifras dt { color: var(--muted); font-size: var(--tipo-apunte); }
+.landing-cifras dd { margin: var(--space-1) 0 0; color: var(--text); font-size: var(--tipo-panel); font-weight: 700; }
+/* Columns size to content: four equal columns leave 54px of text for a 69px word. `anywhere` keeps
+   a long lane name from widening the table past its container. */
+.landing-tabla { width: 100%; border-collapse: collapse; font-size: var(--tipo-rotulo); }
+.landing-tabla th, .landing-tabla td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); overflow-wrap: anywhere; white-space: normal; text-align: right; }
+/* The global `th` chrome uppercases and tracks out the header, widening it past the words it
+   prints; the row header carries a lane name, which is data and goes as it comes. `break-word`
+   keeps the header's intrinsic width at the whole word, so the column comes out wide enough. */
+.landing-tabla th { letter-spacing: normal; text-transform: none; }
+.landing-tabla thead th { color: var(--muted); font-weight: 500; overflow-wrap: break-word; }
+.landing-tabla th:first-child { color: var(--text-2); font-weight: 500; text-align: left; }
+.landing-tabla tbody td { color: var(--text); font-variant-numeric: tabular-nums; }
+.landing-lista { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.landing-lista li { display: grid; grid-template-columns: minmax(0, 1fr) 72px auto; align-items: center; gap: var(--space-3); font-size: var(--tipo-rotulo); }
+.landing-lista-rotulo { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; color: var(--text); }
+.landing-lista-rotulo small { color: var(--faint); font-size: var(--tipo-apunte); }
+.landing-lista-cifra { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 700; }
+.landing-barra { display: block; overflow: hidden; height: var(--space-2); border-radius: var(--radius-pill); background: var(--surface-3); }
+.landing-barra i { display: block; height: 100%; background: var(--blue); }
+.landing-lista li[data-severidad="warn"] .landing-barra i { background: var(--amber); }
+.landing-lista li[data-severidad="critical"] .landing-barra i,
+.landing-lista li[data-severidad="exhausted"] .landing-barra i { background: var(--red); }
+.landing-lista li[data-severidad="unknown"] .landing-barra i { background: var(--border-strong); }
+
 @media (max-width: 760px) {
   .adapter-grid, .adapter-meta { grid-template-columns: 1fr; }
+  .landing-lista li { grid-template-columns: minmax(0, 1fr) auto; }
+  .landing-barra { display: none; }
 }
 
 @media (prefers-color-scheme: light) {
-  .adapter-meta { background: #f8fafd; }
+  :root:not([data-theme="dark"]) .adapter-meta { background: #f8fafd; }
 }
+
+:root[data-theme="light"] .adapter-meta { background: #f8fafd; }

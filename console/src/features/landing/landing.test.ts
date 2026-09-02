@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { EntradaPortada } from './landing';
-import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
+import {
+  agruparAlertas, ALCANCE_DE_LA_CIFRA, conteoPorEstado, desgloseDeColas, puedeDecirSinIncidencias,
+  resumenPortada, saldosPorProveedor,
+} from './landing';
 
 /**
  * A healthy fleet, read end to end. This is the NEGATIVE CONTROL of this whole file: if
@@ -221,5 +224,110 @@ describe('ninguna alerta imprime la ruta del endpoint en su texto visible', () =
       // But the source is NOT lost: there is still something to cross-check the number against.
       expect(alerta.fuente, `${alerta.id}.fuente`).toMatch(/^GET \/v3\/console\//);
     }
+  });
+});
+
+describe('las tres tiras se pintan con lo que el servidor dijo, y con nada más', () => {
+  it('una fuente que no contestó devuelve `undefined`, que es lo único que no se puede pintar como un cero', () => {
+    expect(desgloseDeColas(undefined)).toBeUndefined();
+    expect(saldosPorProveedor(undefined)).toBeUndefined();
+    expect(conteoPorEstado(undefined)).toBeUndefined();
+    expect(conteoPorEstado({ agents: 3 })).toBeUndefined();
+  });
+
+  it('los totales de cola salen del recuento del servidor, no de las filas que cupieron en la página', () => {
+    const desglose = desgloseDeColas({
+      pending: 4, retrying: 2, dead: 1,
+      totals: { pending: 900, retrying: 40, dead: 7 },
+      items: [{ lane: 'interactive', state: 'pending' }],
+    });
+    expect(desglose?.totalesDelServidor).toEqual({ pendientes: 900, retry: 40, revision: 7 });
+    expect(desglose?.enPagina).toBe(1);
+  });
+
+  it('sin `totals` cae a las cifras de la página, y un campo ausente queda ausente', () => {
+    const desglose = desgloseDeColas({ pending: 4, retrying: null, dead: 1, items: [] });
+    expect(desglose?.totalesDelServidor).toEqual({ pendientes: 4, retry: undefined, revision: 1 });
+  });
+
+  it('el desglose por carril cuenta la muestra: `failed` entra en revisión y el carril desconocido no se inventa', () => {
+    const desglose = desgloseDeColas({
+      dead: 2,
+      muestra_recortada: true,
+      items: [
+        { lane: 'interactive', state: 'pending' },
+        { lane: 'interactive', state: 'failed' },
+        { lane: 'batch', state: 'retry' },
+        { lane: 'raro' as never, state: 'dead' },
+      ],
+    });
+    expect(desglose?.recortada).toBe(true);
+    expect(desglose?.carrilesDeLaPagina).toEqual([
+      { lane: 'batch', cuenta: { pendientes: 0, retry: 1, revision: 0 } },
+      { lane: 'interactive', cuenta: { pendientes: 1, retry: 0, revision: 1 } },
+      { lane: undefined, cuenta: { pendientes: 0, retry: 0, revision: 1 } },
+    ]);
+  });
+
+  it('la cifra es la peor ventana, no el efectivo: un proveedor agotado que publica 100 % va primero y a cero', () => {
+    const saldos = saldosPorProveedor({
+      providers: [
+        { host: 'kratos', provider: 'sin-lectura', effective_remaining_percent: null, severity: 'unknown' },
+        {
+          host: 'kratos', provider: 'codex', effective_remaining_percent: 100, severity: 'exhausted',
+          limiting_groups: ['codex'],
+          groups: [
+            { group_key: 'codex', windows: [{ window_key: 'semana', remaining_percent: 0 }] },
+            { group_key: 'codex_bengalfox', windows: [{ window_key: 'semana', remaining_percent: 100 }] },
+          ],
+        },
+        {
+          host: 'kratos', provider: 'claude', effective_remaining_percent: 14, severity: 'warn',
+          groups: [{ windows: [{ remaining_percent: 55 }, { remaining_percent: 14 }, { remaining_percent: 100 }] }],
+        },
+      ],
+    });
+    expect(saldos?.map((saldo) => saldo.proveedor)).toEqual(['codex', 'claude', 'sin-lectura']);
+    expect(saldos?.[0]).toEqual({
+      proveedor: 'codex', host: 'kratos', restante: 0, efectivo: 100, conflicto: true, severidad: 'exhausted',
+    });
+    expect(saldos?.[1].conflicto).toBe(false);
+    expect(saldos?.[2].restante).toBeUndefined();
+  });
+
+  it('un cero de saldo SÍ es una lectura: se pinta en cabeza y no se confunde con la ausencia', () => {
+    const saldos = saldosPorProveedor({
+      providers: [
+        { provider: 'sin-lectura', effective_remaining_percent: null },
+        { provider: 'seco', effective_remaining_percent: 0, severity: 'exhausted', groups: [{ windows: [{ remaining_percent: 0 }] }] },
+      ],
+    });
+    expect(saldos?.map((saldo) => saldo.restante)).toEqual([0, undefined]);
+    expect(saldos?.[1].severidad).toBe('unknown');
+  });
+
+  it('«Trabajando» suma `working` y `saturated` en UNA fila: dos filas con la misma palabra se leen como un doble recuento', () => {
+    const filas = conteoPorEstado({ by_state: { idle: 3, queued: 1, working: 8, saturated: 1, stalled: 2 } });
+    expect(filas?.map((fila) => [fila.label, fila.valor])).toEqual([
+      ['Libre', 3], ['Recibiendo', 1], ['Trabajando', 9], ['Trabado', 2],
+    ]);
+    expect(filas?.find((fila) => fila.label === 'Trabajando')?.estados).toEqual(['working', 'saturated']);
+    expect(filas?.reduce((suma, fila) => suma + fila.parte, 0)).toBeCloseTo(1);
+  });
+
+  it('un estado que el servidor no mandó no aparece con un cero, y sin ninguno la barra no se divide por cero', () => {
+    expect(conteoPorEstado({ by_state: { stalled: 2 } })?.map((fila) => fila.label)).toEqual(['Trabado']);
+    expect(conteoPorEstado({ by_state: {} })).toEqual([]);
+    expect(conteoPorEstado({ by_state: { idle: 0 } })).toEqual([
+      { label: 'Libre', valor: 0, parte: 0, estados: ['idle'] },
+    ]);
+  });
+});
+
+describe('el alcance de cada cifra', () => {
+  it('nombra una lectura distinta por frase: dos cifras que no cuadran no pueden decir lo mismo', () => {
+    const alcances = Object.values(ALCANCE_DE_LA_CIFRA);
+    expect(new Set(alcances).size).toBe(alcances.length);
+    for (const alcance of alcances) expect(alcance.trim()).toBe(alcance);
   });
 });

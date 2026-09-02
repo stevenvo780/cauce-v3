@@ -1,9 +1,19 @@
 import type {
   FleetActivitySnapshot,
+  FleetActivityTotals,
+  FleetWorkState,
+  JobLane,
   QueueSnapshot,
+  QuotaSeverity,
   QuotaSnapshot,
   SystemStatus,
 } from '../../api/types';
+import { safeJobLane } from '../../lib';
+import { peorPorcentajeDelProveedor, porcentajesEnConflicto } from '../accounts/quotas';
+import { WORK_STATE_LABEL } from '../live/activity';
+import {
+  ESTADOS_DEL_GRUPO, muestraRecortada, totalDelGrupo, type GrupoDeEstado,
+} from '../queues/filtro-de-colas';
 
 /**
  * PURE derivation of the landing. Lives outside the component for a specific reason: it is the
@@ -21,13 +31,8 @@ interface Alerta {
   titulo: string;
   /** What it means, in plain language. This is what gets read. */
   detalle: string;
-  /**
-   * Which server reading the number comes from.
-   *
-   * This used to live INSIDE `detalle` —"GET /v3/console/activity → totals.overdue_in_flight"—
-   * and was painted on the operator's first screen, eight times. An API path is debug info: it
-   * is needed to cross-check a dubious number and for nothing else. It goes in `title=`.
-   */
+  /** Which server reading the number comes from. An API path is debug info: it is needed to
+   *  cross-check a dubious number and for nothing else, so it goes in `title=`, not on the screen. */
   fuente: string;
   /** Where the resolution happens. Always a live console route. */
   ruta: string;
@@ -36,11 +41,9 @@ interface Alerta {
 
 interface ResumenPortada {
   alertas: Alerta[];
-  /**
-   * The sources that did NOT answer. This is the half that is almost always missing: without
-   * it, a landing where `/v3/console/quotas` has died draws zero alerts and reads exactly like a
-   * healthy fleet. "I don't know" and "nothing is wrong" cannot be painted the same colour.
-   */
+  /** The sources that did NOT answer. This is the half that is almost always missing: without it, a
+   *  landing where `/v3/console/quotas` has died draws zero alerts and reads exactly like a healthy
+   *  fleet. "I don't know" and "nothing is wrong" cannot be painted the same colour. */
   fuentesAusentes: string[];
 }
 
@@ -69,7 +72,6 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
 
   if (!entrada.status) fuentesAusentes.push('Estado del sistema');
   if (!entrada.queues) fuentesAusentes.push('Colas y DLQ');
-  // Identifies the missing quotas reading.
   if (!entrada.quotas) fuentesAusentes.push('Consumo de cuotas');
   if (!entrada.activity) fuentesAusentes.push('Actividad de la flota');
 
@@ -153,10 +155,8 @@ export function resumenPortada(entrada: EntradaPortada): ResumenPortada {
     });
   }
 
-  /**
-   * A stale collector is not an infrastructure detail: it means ALL the percentages above may
-   * be lying, and without this notice they would be read as fresh.
-   */
+  /** A stale collector is not an infrastructure detail: it means ALL the percentages above may be
+   *  lying, and without this notice they would be read as fresh. */
   const rancios = (entrada.quotas?.collectors ?? []).filter((collector) => collector.stale === true);
   if (rancios.length > 0) {
     alertas.push({
@@ -194,10 +194,6 @@ export function puedeDecirSinIncidencias(resumen: ResumenPortada): boolean {
   return resumen.alertas.length === 0 && resumen.fuentesAusentes.length === 0;
 }
 
-/* ============================================================================================ *
- * Group alerts by their destination.
- * ============================================================================================ */
-
 interface GrupoDeAlertas {
   ruta: string;
   rutaLabel: string;
@@ -221,4 +217,126 @@ export function agruparAlertas(alertas: readonly Alerta[]): GrupoDeAlertas[] {
     grupos.push({ ruta: alerta.ruta, rutaLabel: alerta.rutaLabel, tono: alerta.tono, alertas: [alerta] });
   }
   return grupos;
+}
+
+/**
+ * The fold reads one idea from sources that legitimately disagree: `status.online` counts leases
+ * while the fleet strip counts the agents activity observed, the activity `queued` total is capped
+ * per agent while the queue strip counts the whole queue, and a provider's effective percent looks
+ * at the whole set while the window that ran out is the one that stops the work. Every figure
+ * states its scope with one of these, so a pair that does not add up reads as two readings.
+ */
+export const ALCANCE_DE_LA_CIFRA = {
+  leases: 'leases vigentes',
+  actividad: 'la actividad de la flota',
+  colaEntera: 'la cola entera',
+  peorVentana: 'la peor ventana del proveedor',
+} as const;
+
+export type GrupoDeCola = Exclude<GrupoDeEstado, 'todas'>;
+
+export const GRUPOS_DE_COLA: readonly GrupoDeCola[] = ['pendientes', 'retry', 'revision'];
+
+export const ROTULO_DE_COLA: Record<GrupoDeCola, string> = {
+  pendientes: 'Pendientes',
+  retry: 'En reintento',
+  revision: 'Dead letters',
+};
+
+export interface CarrilDeCola {
+  lane?: JobLane;
+  cuenta: Record<GrupoDeCola, number>;
+}
+
+export interface DesgloseDeColas {
+  totalesDelServidor: Record<GrupoDeCola, number | undefined>;
+  carrilesDeLaPagina: CarrilDeCola[];
+  enPagina: number;
+  recortada: boolean;
+}
+
+function carrilVacio(lane: JobLane | undefined): CarrilDeCola {
+  return { lane, cuenta: { pendientes: 0, retry: 0, revision: 0 } };
+}
+
+export function desgloseDeColas(queues: QueueSnapshot | undefined): DesgloseDeColas | undefined {
+  if (!queues) return undefined;
+  const items = queues.items ?? [];
+  const porCarril = new Map<string, CarrilDeCola>();
+  for (const item of items) {
+    const lane = safeJobLane(item.lane);
+    const carril = porCarril.get(lane ?? '') ?? carrilVacio(lane);
+    for (const grupo of GRUPOS_DE_COLA) {
+      if (item.state && ESTADOS_DEL_GRUPO[grupo].has(item.state)) carril.cuenta[grupo] += 1;
+    }
+    porCarril.set(lane ?? '', carril);
+  }
+  return {
+    totalesDelServidor: {
+      pendientes: totalDelGrupo(queues, 'pendientes'),
+      retry: totalDelGrupo(queues, 'retry'),
+      revision: totalDelGrupo(queues, 'revision'),
+    },
+    carrilesDeLaPagina: [...porCarril.values()]
+      .sort((izquierda, derecha) => (izquierda.lane ?? '\uffff').localeCompare(derecha.lane ?? '\uffff')),
+    enPagina: items.length,
+    recortada: muestraRecortada(queues),
+  };
+}
+
+export interface SaldoDeProveedor {
+  proveedor?: string;
+  host?: string;
+  /** The worst of the provider's windows: the reading the severity beside it is about. */
+  restante?: number;
+  /** What the server publishes for the router, said out loud only when it contradicts `restante`. */
+  efectivo?: number;
+  conflicto: boolean;
+  severidad: QuotaSeverity;
+}
+
+function porcentajeLeido(value: number | null | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/** The figure is the worst window, the way /accounts prints it: `effective_remaining_percent` says
+ *  100 % for a provider whose limiting window is at 0, and the severity follows the window. */
+export function saldosPorProveedor(quotas: QuotaSnapshot | undefined): SaldoDeProveedor[] | undefined {
+  if (!quotas) return undefined;
+  const saldos: SaldoDeProveedor[] = (quotas.providers ?? []).map((provider) => ({
+    proveedor: provider.provider ?? undefined,
+    host: provider.host ?? undefined,
+    restante: porcentajeLeido(peorPorcentajeDelProveedor(provider)),
+    efectivo: porcentajeLeido(provider.effective_remaining_percent),
+    conflicto: porcentajesEnConflicto(provider),
+    severidad: provider.severity ?? 'unknown',
+  }));
+  return saldos.sort((izquierda, derecha) => (izquierda.restante ?? 101) - (derecha.restante ?? 101));
+}
+
+export interface ConteoDeEstado {
+  label: string;
+  valor: number;
+  parte: number;
+  estados: FleetWorkState[];
+}
+
+/** Collapsed by LABEL: `working` and `saturated` are both "Trabajando" and would read as two counts. */
+export function conteoPorEstado(totals: FleetActivityTotals | null | undefined): ConteoDeEstado[] | undefined {
+  const porEstado = totals?.by_state;
+  if (!porEstado) return undefined;
+  const filas: ConteoDeEstado[] = [];
+  for (const estado of Object.keys(WORK_STATE_LABEL) as FleetWorkState[]) {
+    const valor = porEstado[estado];
+    if (typeof valor !== 'number' || !Number.isFinite(valor)) continue;
+    const previa = filas.find((fila) => fila.label === WORK_STATE_LABEL[estado]);
+    if (previa) {
+      previa.valor += valor;
+      previa.estados.push(estado);
+      continue;
+    }
+    filas.push({ label: WORK_STATE_LABEL[estado], valor, parte: 0, estados: [estado] });
+  }
+  const suma = filas.reduce((total, fila) => total + fila.valor, 0);
+  return filas.map((fila) => ({ ...fila, parte: suma > 0 ? fila.valor / suma : 0 }));
 }
