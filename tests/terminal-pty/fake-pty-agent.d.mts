@@ -32,7 +32,22 @@ export interface FakeAgentOptions {
   image_id?: string;
   runtime_user?: string;
   runtime_uid?: number;
+  /**
+   * Advertised session modes. `harness_rw` — the mode that is a TUI and writable at once —
+   * is understood by this double only: the real relay narrows the hello to `shell`/`harness`
+   * and rejects the whole hello for any other entry, so advertising it there disconnects the
+   * agent. Use it against a scratch server until the relay learns the mode.
+   */
   modes?: string[];
+  /** When set, STDIN is answered with INPUT_REFUSED instead of being typed into the pane. */
+  refuse_input_while?: 'governance_write_in_flight' | 'pane_input_barrier' | null;
+  /**
+   * When set, a GEOMETRY frame follows every OPEN_OK with the real size of the remote TUI.
+   * Both sides are validated against `GEOMETRY_CLAMP` and a value outside it — or a
+   * non-integer, which `JSON.stringify` would put on the wire as `null` — throws `bad_config`
+   * instead of reaching the socket.
+   */
+  geometry?: { cols: number; rows: number } | null;
   /** Serve READ/WRITE/WRITE_BATCH from a private mkdtemp and advertise the features. */
   governance?: boolean;
   governance_harness?: string;
@@ -61,3 +76,11 @@ export interface FakeAgentHandle {
 }
 
 export declare function startFakeAgent(options: FakeAgentOptions): FakeAgentHandle;
+
+/**
+ * Reads the same options out of the environment the standalone CLI uses (`AGENT_MODES`,
+ * `AGENT_REFUSE_INPUT`, `AGENT_GEOMETRY=<cols>x<rows>`, ...). Exported so a test can drive
+ * the CLI's own parsing in process instead of only the option object.
+ * `RELAY_PORT` missing or unparseable exits the process: it is the CLI's entry point.
+ */
+export declare function fromEnvironment(): FakeAgentOptions;

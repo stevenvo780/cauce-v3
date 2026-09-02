@@ -47,8 +47,8 @@ test time. No new dependencies; `pnpm-lock.yaml` is not touched.
 
 The file is one JSON object, not a bare array: `contract`, `frozen`, `note`, `master_key_b64`,
 `hkdf` (hash/salt/info template/length), `framing` (header shape, max payload, the tag numbers,
-`prefixed_tags`), `geometry`, `limits`, `ttls`, `ws_close_codes`, `keys` (per-`tenant:alias`
-derived key, precomputed) and `cases` — the frozen vectors themselves.
+`prefixed_tags`), `geometry`, `limits`, `ttls`, `modes`, `ws_close_codes`, `keys`
+(per-`tenant:alias` derived key, precomputed) and `cases` — the frozen vectors themselves.
 Each case is `{name, kind, input, expected, must_fail}`.
 The first three come from the spec (derived key, full ticket, and STDOUT frame);
 the rest were generated with the same algorithm to cover edges: expired ticket,
@@ -80,6 +80,21 @@ module and constant name — the agent is a package and line numbers rot on the 
 the same numbers; the value they carry is only as good as the assertions that compare them with
 the real constant (`ops/pty-agent/tests/test_vectors_contract.py` does exactly that for the
 agent).
+
+`modes` is the same kind of shared declaration for the three session modes, and it exists because
+the gates that separate them are written with different polarities in different legs. `read_only`
+is exactly `{harness}` and does not move: it is the set whose STDIN the agent drops before touching
+the descriptor (`ops/pty-agent/cauce_pty_agent/session.py:READ_ONLY_MODES`). `writable` is the set
+whose STDIN reaches the pty. `tui` is the set allowed to send `TERMINAL_RESPONSE`, and today both
+the agent (`mode not in READ_ONLY_MODES`) and the relay (`mode !== 'harness'`) express it as the
+complement of read-only — so a writable TUI mode such as `harness_rw` would silently lose the
+emulator response channel its TUI needs to render. `all` is the union of `writable` and `tui`, and
+`harness_rw` is the only mode in both. `vectors.test.ts` asserts those four relations and, for
+`read_only`, re-reads the `READ_ONLY_MODES` literal out of
+`ops/pty-agent/cauce_pty_agent/session.py` and compares it with the array, so that one set cannot
+drift from the agent either. The other three are internal relations only: `all` is a forward
+declaration — nothing in the tree implements `harness_rw` yet — and neither the agent's `MODES`
+tuple nor the relay's hello has widened to it.
 
 Two of these numbers do not fit together and the vectors say so instead of hiding it:
 `limits.max_write_batch_files` is 7, but a whole batch may announce at most
@@ -120,7 +135,17 @@ Standalone Node executable that speaks like the Python agent against a real
 relay: sends `AGENT_HELLO`, replies `PONG` to `PING`, **verifies each `OPEN`
 ticket with the same rules as the real agent** (signature, window, sid, tenant,
 alias, container, generation, mode) and instead of opening a PTY emulates a
-trivial shell.
+trivial shell. Two options serve the writable-TUI half of the contract: `refuse_input_while`
+makes the double answer `INPUT_REFUSED` to STDIN instead of echoing it (`AGENT_REFUSE_INPUT`),
+and `geometry` makes it emit `GEOMETRY` right after each `OPEN_OK`
+(`AGENT_GEOMETRY=120x40`, both sides validated against the `geometry` clamp — a malformed value
+is a `bad_config` exit, never a `null` on the wire). Every other tag is still an `unexpected_tag`
+abort. `modes` may name `harness_rw` for these tests, but **not against the real relay**: today
+`services/terminal-relay/src/agent-hello.ts` accepts only `shell` and `harness` and one foreign
+entry invalidates the whole hello, so an agent advertising `harness_rw` is disconnected instead of
+being given a writable TUI. Widening that check is the job of the later W3b task that teaches the
+relay the mode (W3B-06); until it lands, `harness_rw` lives between this double and a scratch
+server.
 
 ```bash
 RELAY_HOST=127.0.0.1 RELAY_PORT=8600 \
@@ -139,12 +164,25 @@ Variables: `RELAY_HOST`, `RELAY_PORT`, `RELAY_SERVERNAME`, `AGENT_CERT`,
 `AGENT_KEY`, `AGENT_CA`, `AGENT_TLS_INSECURE=1`, `TENANT`, `ALIAS`, `ALIAS_KEY_HEX`,
 `CONTAINER_ID`, `GENERATION`, `IMAGE_ID`, `RUNTIME_USER`, `RUNTIME_UID`,
 `AGENT_MODES`, `AGENT_BANNER=1`, `AGENT_ONESHOT=1`, `AGENT_FLOOD_BYTES`,
-`AGENT_QUIET=1`, `AGENT_SIMULATE_EUID`, `AGENT_GOVERNANCE=1`, `AGENT_GOVERNANCE_HARNESS`.
+`AGENT_QUIET=1`, `AGENT_SIMULATE_EUID`, `AGENT_GOVERNANCE=1`, `AGENT_GOVERNANCE_HARNESS`,
+`AGENT_REFUSE_INPUT`, `AGENT_GEOMETRY`.
 
 With `AGENT_GOVERNANCE=1` (or `governance: true`) the hello advertises `read_governance`,
 `write_governance_v1`, `write_governance_batch_v1` and `read_governance_done_v1`, and the agent
 serves `READ` / `WRITE` / `WRITE_BATCH` from `governance-double.mjs`. Without it those tags stay
 what they were: an unexpected tag that closes the connection as a protocol error.
+
+### `fake-agent-writable.test.ts` — the writable-TUI branches of the double
+
+The two new tags are frozen bytes in `vectors.json`, and this file is where they are behaviour:
+it stands a scratch TLS listener up in place of the relay's agent port, drives the double through
+`startFakeAgent` and through `fromEnvironment()` (the standalone CLI's own parsing of
+`AGENT_REFUSE_INPUT` / `AGENT_GEOMETRY` / `AGENT_MODES`), and asserts the frames that come back:
+`GEOMETRY` immediately after `OPEN_OK` with the configured size, and `INPUT_REFUSED` with the
+configured reason for STDIN, with no echo behind it. It also pins the two `bad_config` exits, so a
+malformed geometry stops at the constructor instead of putting `null` columns on the wire. The
+scratch listener is not the relay and does not pretend to be one — it only frames and unframes, so
+these cases say what the double does, never what the relay accepts.
 
 ### `governance-double.mjs` — the governed file plane, in a temp directory
 
@@ -267,6 +305,8 @@ names, adjust here, this is the only place that mentions them):
 | `0x23` | TERMINAL_RESPONSE | relay -> agent | DATA (a DA/DSR answer, read-only session) |
 | `0x24` | PAUSE_OUTPUT | relay -> agent | JSON `{session_id}` |
 | `0x25` | RESUME_OUTPUT | relay -> agent | JSON `{session_id}` |
+| `0x26` | INPUT_REFUSED | agent -> browser | JSON `{session_id, reason}`, reason `governance_write_in_flight` or `pane_input_barrier` |
+| `0x27` | GEOMETRY | agent -> browser | JSON `{session_id, cols, rows}` |
 | `0x30` | CLOSE | relay -> agent | JSON `{session_id, reason}` |
 | `0x31` | CLOSED | agent -> relay | JSON `{session_id, exit_code, signal, reason}` |
 | `0x40` | PING | relay -> agent | empty |
@@ -295,6 +335,22 @@ family is only sent to an agent whose hello advertised the matching feature. An
 unknown tag is not ignored: the connection is closed as protocol error (4400).
 The version is bumped, never guessed.
 
+A new tag lands in four places, and **its direction decides the order**. `vectors.json` is always
+first (the tag number, and a case that pins its bytes). After that, a relay -> agent tag may go to
+`fake-pty-agent.mjs` and the Python agent before the relay learns to send it. An **agent -> relay**
+tag is the opposite: the relay must learn it first, because its agent leg has no default arm —
+`services/terminal-relay/src/agent-connection.ts` throws `FramingError` for any frame it does not
+recognise, and that tears down the alias's whole multiplexed leg, not one session. Both tags below
+are agent -> browser and therefore cross the relay, so for them the order is: `vectors.json`, the
+relay, then the emitters (`fake-pty-agent.mjs` and the Python agent).
+`INPUT_REFUSED` is what the agent sends instead of typing while a paste or a governed write holds
+the pane, and it never closes the session; `GEOMETRY` carries the real size of the remote TUI so
+the console can fit the font instead of printing a sign about how many columns fit. The Python side
+consumes the table through `ops/pty-agent/tests/test_vectors_contract.py`, which compares the
+**whole** tag set against the `TAG_*` constants in both directions: a tag added here without its
+constant in `ops/pty-agent/cauce_pty_agent/framing.py` fails that test in the same commit, which is
+the point.
+
 **Ticket**:
 `v1.<b64url(payload_json)>.<b64url(hmac_sha256(k_alias, ascii('v1.'+b64url_payload)))>`,
 b64url without padding. `k_alias = HKDF-SHA256(IKM=master32, salt='cauce-v3/pty-ticket/v1',
@@ -309,8 +365,9 @@ be JSON text `{"type":"attach", session_id, ticket, cols, rows}`; then `input`
 frames, the control is **always** in JSON text (`ready` / `notice` / `closed`).
 
 Close codes: `4400` protocol_error, `4401` ticket_invalid, `4403` revoked,
-`4404` agent_offline, `4408` idle_timeout, `4409` session_conflict, `4413`
-output_flood, `4423` ttl_expired, `1011` internal_error.
+`4404` agent_offline, `4408` idle_timeout, `4409` session_conflict, `4410`
+control_released (the operator's control hold on a `harness_rw` session was released or
+expired), `4413` output_flood, `4423` ttl_expired, `1011` internal_error.
 
 ## Rules for this directory
 

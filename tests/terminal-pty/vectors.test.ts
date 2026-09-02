@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createGovernanceSandbox, type GovernanceOutput, type GovernanceSandbox } from './governance-double.mjs';
 import {
-  CLOSE_CODE, FrameDecoder, MAX_FRAME_PAYLOAD, PREFIXED_TAGS, TAG, TICKET_HKDF_SALT,
+  CLOSE_CODE, FrameDecoder, GEOMETRY_CLAMP, MAX_FRAME_PAYLOAD, PREFIXED_TAGS, TAG, TICKET_HKDF_SALT,
   b64urlDecode, b64urlEncode, canonicalTicketPayload, closeCodeForTicketReason,
   decodeDataPayload, decodeSingleFrame, deriveAliasKey, encodeDataFrame, encodeFrame,
   encodeJsonFrame, mintTicket, verifyTicket,
@@ -42,6 +42,7 @@ interface VectorFile {
   geometry: Record<string, unknown>;
   limits: Record<string, number>;
   ttls: Record<string, number>;
+  modes: { all: string[]; writable: string[]; tui: string[]; read_only: string[] };
   ws_close_codes: Record<string, number>;
   keys: Record<string, string>;
   cases: VectorCase[];
@@ -50,6 +51,17 @@ interface VectorFile {
 const vectorsPath = fileURLToPath(new URL('./vectors.json', import.meta.url));
 const vectorsRaw = readFileSync(vectorsPath, 'utf8');
 const vectors = JSON.parse(vectorsRaw) as VectorFile;
+
+const agentSessionPath = fileURLToPath(new URL('../../ops/pty-agent/cauce_pty_agent/session.py', import.meta.url));
+
+function readOnlyModesOfAgent(): string[] {
+  const source = readFileSync(agentSessionPath, 'utf8');
+  const declaration = /^READ_ONLY_MODES\s*=\s*frozenset\(\{([^}]*)\}\)/m.exec(source);
+  if (declaration === null) {
+    throw new Error('the agent no longer declares READ_ONLY_MODES as a frozenset literal; pin modes.read_only again by hand');
+  }
+  return [...(declaration[1] ?? '').matchAll(/["']([^"']+)["']/g)].map((match) => String(match[1]));
+}
 
 // The three values below come from the frozen specification, not from this harness. They are
 // spelled out here so a "helpful" regeneration of vectors.json cannot silently move the contract.
@@ -601,6 +613,7 @@ describe('pty wire vectors: governed reading and writing', () => {
 describe('pty wire vectors: the governance limits the four legs share', () => {
   it('declares the geometry clamp, the byte ceilings and the deadlines', () => {
     expect(vectors.geometry).toMatchObject({ min_cols: 20, max_cols: 500, min_rows: 5, max_rows: 200 });
+    expect(vectors.geometry).toMatchObject(GEOMETRY_CLAMP);
     const limits = vectors.limits as Record<string, unknown>;
     const ttls = vectors.ttls as Record<string, unknown>;
     expect(integer(limits, 'max_frame')).toBe(MAX_FRAME_PAYLOAD);
@@ -614,6 +627,17 @@ describe('pty wire vectors: the governance limits the four legs share', () => {
     }));
     expect([...declared].sort(), 'a tag the harness prefixes and the file omits would be misdecoded')
       .toEqual([...PREFIXED_TAGS].sort());
+  });
+
+  it('pins read_only to the agent constant and keeps the four mode sets consistent', () => {
+    const { all, writable, tui, read_only: readOnly } = vectors.modes;
+    expect(new Set([...writable, ...tui])).toStrictEqual(new Set(all));
+    expect(readOnly).toStrictEqual(['harness']);
+    expect([...readOnlyModesOfAgent()].sort(), 'session.py:READ_ONLY_MODES moved without the vectors')
+      .toStrictEqual([...readOnly].sort());
+    expect(readOnly.every((mode) => tui.includes(mode))).toBe(true);
+    expect(writable.filter((mode) => tui.includes(mode))).toStrictEqual(['harness_rw']);
+    expect(all.filter((mode) => !writable.includes(mode))).toStrictEqual(readOnly);
   });
 
   it('gives every governance tag of the agent the same byte the harness uses', () => {

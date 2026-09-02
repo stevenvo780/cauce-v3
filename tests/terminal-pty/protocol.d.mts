@@ -7,11 +7,21 @@ export declare const SESSION_ID_BYTES: 36;
 export declare const FRAME_HEADER_BYTES: 5;
 export declare const TICKET_HKDF_SALT: string;
 export declare const TICKET_PREFIX: string;
+/**
+ * The one geometry clamp of the four legs, the same numbers `vectors.json` declares under
+ * `geometry` and the agent enforces in `ops/pty-agent/cauce_pty_agent/session.py`. It lives
+ * here so a double that emits a GEOMETRY frame validates against the contract rather than
+ * against its own idea of a plausible terminal.
+ */
+export declare const GEOMETRY_CLAMP: {
+  min_cols: number; max_cols: number; min_rows: number; max_rows: number;
+};
 
 export declare const TAG: {
   AGENT_HELLO: number; HELLO_ACK: number; OPEN: number; OPEN_OK: number; OPEN_ERR: number;
   STDIN: number; STDOUT: number; RESIZE: number; TERMINAL_RESPONSE: number;
-  PAUSE_OUTPUT: number; RESUME_OUTPUT: number; CLOSE: number; CLOSED: number;
+  PAUSE_OUTPUT: number; RESUME_OUTPUT: number; INPUT_REFUSED: number; GEOMETRY: number;
+  CLOSE: number; CLOSED: number;
   PING: number; PONG: number;
   READ: number; READ_OK: number; READ_ERR: number; READ_DATA: number; READ_DONE: number;
   WRITE: number; WRITE_DATA: number; WRITE_OK: number; WRITE_ERR: number; WRITE_CANCEL: number;

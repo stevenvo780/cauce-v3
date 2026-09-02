@@ -20,6 +20,7 @@ export const SESSION_ID_BYTES = 36;
 export const FRAME_HEADER_BYTES = 5;
 export const TICKET_HKDF_SALT = 'cauce-v3/pty-ticket/v1';
 export const TICKET_PREFIX = 'v1';
+export const GEOMETRY_CLAMP = { min_cols: 20, max_cols: 500, min_rows: 5, max_rows: 200 };
 
 export const TAG = {
   AGENT_HELLO: 0x01,
@@ -33,6 +34,8 @@ export const TAG = {
   TERMINAL_RESPONSE: 0x23,
   PAUSE_OUTPUT: 0x24,
   RESUME_OUTPUT: 0x25,
+  INPUT_REFUSED: 0x26,
+  GEOMETRY: 0x27,
   CLOSE: 0x30,
   CLOSED: 0x31,
   PING: 0x40,
@@ -66,7 +69,8 @@ export const PREFIXED_TAGS = new Set([
 /** Payloads carrying UTF-8 JSON. */
 export const JSON_TAGS = new Set([
   TAG.AGENT_HELLO, TAG.HELLO_ACK, TAG.OPEN, TAG.OPEN_OK, TAG.OPEN_ERR,
-  TAG.RESIZE, TAG.PAUSE_OUTPUT, TAG.RESUME_OUTPUT, TAG.CLOSE, TAG.CLOSED,
+  TAG.RESIZE, TAG.PAUSE_OUTPUT, TAG.RESUME_OUTPUT, TAG.INPUT_REFUSED, TAG.GEOMETRY,
+  TAG.CLOSE, TAG.CLOSED,
   TAG.READ, TAG.READ_OK, TAG.READ_ERR, TAG.READ_DONE,
   TAG.WRITE, TAG.WRITE_OK, TAG.WRITE_ERR, TAG.WRITE_CANCEL,
   TAG.WRITE_BATCH, TAG.WRITE_BATCH_OK, TAG.WRITE_BATCH_ERR, TAG.WRITE_BATCH_CANCEL,
@@ -80,6 +84,7 @@ export const CLOSE_CODE = {
   agent_offline: 4404,
   idle_timeout: 4408,
   session_conflict: 4409,
+  control_released: 4410,
   output_flood: 4413,
   ttl_expired: 4423,
   internal_error: 1011,

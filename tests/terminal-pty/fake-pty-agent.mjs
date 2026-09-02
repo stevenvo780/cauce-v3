@@ -24,7 +24,7 @@ import { pathToFileURL } from 'node:url';
 
 import { GOVERNANCE_FEATURES, createGovernanceSandbox } from './governance-double.mjs';
 import {
-  FrameDecoder, MAX_FRAME_PAYLOAD, SESSION_ID_BYTES, TAG, TAG_NAME,
+  FrameDecoder, GEOMETRY_CLAMP, MAX_FRAME_PAYLOAD, SESSION_ID_BYTES, TAG, TAG_NAME,
   decodeDataPayload, decodeJsonPayload, encodeDataFrame, encodeFrame, encodeJsonFrame,
   verifyTicket,
 } from './protocol.mjs';
@@ -42,6 +42,7 @@ export const EXIT = {
 
 const AGENT_VERSION = 'fake-pty-agent/1.0.0';
 const MAX_DATA_BYTES = MAX_FRAME_PAYLOAD - SESSION_ID_BYTES;
+const REFUSAL_REASONS = ['governance_write_in_flight', 'pane_input_barrier'];
 
 /** Tickets and keys never reach a log line; this is what goes instead. */
 function fingerprint(value) {
@@ -276,6 +277,10 @@ export function startFakeAgent(options) {
     sessions.set(sessionId, session);
     send(encodeJsonFrame(TAG.OPEN_OK, { session_id: sessionId, pid: process.pid }));
     emit('open_ok', { session_id: sessionId, mode: session.mode, cols: session.cols, rows: session.rows });
+    if (config.geometry !== null) {
+      send(encodeJsonFrame(TAG.GEOMETRY, { session_id: sessionId, cols: config.geometry.cols, rows: config.geometry.rows }));
+      emit('geometry', { session_id: sessionId, cols: config.geometry.cols, rows: config.geometry.rows });
+    }
     if (config.banner) {
       write(session, `${config.runtime_user}@${config.container_id}:~$ `);
     }
@@ -291,6 +296,11 @@ export function startFakeAgent(options) {
     }
     if (session.mode === 'readonly') {
       emit('stdin_dropped_readonly', { session_id: sessionId, bytes: data.length });
+      return;
+    }
+    if (config.refuse_input_while !== null) {
+      send(encodeJsonFrame(TAG.INPUT_REFUSED, { session_id: sessionId, reason: config.refuse_input_while }));
+      emit('input_refused', { session_id: sessionId, reason: config.refuse_input_while, bytes: data.length });
       return;
     }
     // A real PTY echoes what it receives; so do we, byte for byte.
@@ -411,6 +421,13 @@ function normalise(options) {
     error.exit_code = EXIT.bad_config;
     throw error;
   }
+  const refusal = options.refuse_input_while ?? null;
+  if (refusal !== null && !REFUSAL_REASONS.includes(refusal)) {
+    const error = new Error(`refuse_input_while must be one of ${REFUSAL_REASONS.join(', ')}`);
+    error.exit_code = EXIT.bad_config;
+    throw error;
+  }
+  const geometry = checkedGeometry(options.geometry ?? null);
   return {
     host: options.host ?? '127.0.0.1',
     port: Number(options.port),
@@ -428,6 +445,8 @@ function normalise(options) {
     runtime_user: options.runtime_user ?? 'claw',
     runtime_uid: options.runtime_uid ?? 1000,
     modes: options.modes ?? ['shell', 'readonly'],
+    refuse_input_while: refusal,
+    geometry,
     governance: options.governance ?? false,
     governance_harness: options.governance_harness ?? 'claude',
     banner: options.banner ?? false,
@@ -441,7 +460,29 @@ function normalise(options) {
   };
 }
 
-function fromEnvironment() {
+function checkedGeometry(value) {
+  if (value === null) return null;
+  const within = (side, low, high) => Number.isInteger(side) && side >= low && side <= high;
+  const cols = value.cols;
+  const rows = value.rows;
+  if (!within(cols, GEOMETRY_CLAMP.min_cols, GEOMETRY_CLAMP.max_cols)
+    || !within(rows, GEOMETRY_CLAMP.min_rows, GEOMETRY_CLAMP.max_rows)) {
+    const error = new Error(
+      `geometry must be whole cols in [${GEOMETRY_CLAMP.min_cols}, ${GEOMETRY_CLAMP.max_cols}] `
+      + `and rows in [${GEOMETRY_CLAMP.min_rows}, ${GEOMETRY_CLAMP.max_rows}], got ${JSON.stringify(value)}`,
+    );
+    error.exit_code = EXIT.bad_config;
+    throw error;
+  }
+  return { cols, rows };
+}
+
+function geometryOf(value) {
+  const [cols, rows] = String(value).split('x');
+  return { cols: Number(cols), rows: Number(rows) };
+}
+
+export function fromEnvironment() {
   const environment = process.env;
   const port = Number(environment.RELAY_PORT);
   if (!Number.isInteger(port) || port <= 0) {
@@ -466,6 +507,8 @@ function fromEnvironment() {
     runtime_user: environment.RUNTIME_USER ?? 'claw',
     runtime_uid: Number(environment.RUNTIME_UID ?? 1000),
     modes: (environment.AGENT_MODES ?? 'shell,readonly').split(',').filter(Boolean),
+    refuse_input_while: environment.AGENT_REFUSE_INPUT ?? null,
+    geometry: environment.AGENT_GEOMETRY === undefined ? null : geometryOf(environment.AGENT_GEOMETRY),
     governance: environment.AGENT_GOVERNANCE === '1',
     governance_harness: environment.AGENT_GOVERNANCE_HARNESS ?? 'claude',
     banner: environment.AGENT_BANNER === '1',

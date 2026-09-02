@@ -16,7 +16,8 @@
     "tags": {
       "AGENT_HELLO": 1, "HELLO_ACK": 2, "OPEN": 16, "OPEN_OK": 17, "OPEN_ERR": 18,
       "STDIN": 32, "STDOUT": 33, "RESIZE": 34, "TERMINAL_RESPONSE": 35,
-      "PAUSE_OUTPUT": 36, "RESUME_OUTPUT": 37, "CLOSE": 48, "CLOSED": 49,
+      "PAUSE_OUTPUT": 36, "RESUME_OUTPUT": 37, "INPUT_REFUSED": 38, "GEOMETRY": 39,
+      "CLOSE": 48, "CLOSED": 49,
       "PING": 64, "PONG": 65,
       "READ": 80, "READ_OK": 81, "READ_ERR": 82, "READ_DATA": 83,
       "WRITE": 84, "WRITE_DATA": 85, "WRITE_OK": 86, "WRITE_ERR": 87, "WRITE_CANCEL": 88,
@@ -95,9 +96,23 @@
     "agent_offline": 4404,
     "idle_timeout": 4408,
     "session_conflict": 4409,
+    "control_released": 4410,
     "output_flood": 4413,
     "ttl_expired": 4423,
     "internal_error": 1011
+  },
+  "modes": {
+    "note": "The three session modes and the gates that differ between them. `read_only` is EXACTLY {harness} and does not change: it is the set whose STDIN the agent discards before touching the descriptor. `writable` is the set whose STDIN reaches the pty. `tui` is the set allowed to send TERMINAL_RESPONSE, the DA/DSR answer the emulator owes the remote TUI; today both implementations write that gate with the OPPOSITE polarity -- `mode not in READ_ONLY_MODES` in the agent and `mode !== 'harness'` in the relay -- so a writable TUI mode would silently lose the channel its TUI needs to render. harness_rw is tui and writable at once, which is why those two sets overlap on it and only on it. Only `read_only` is bound to an implementation today: vectors.test.ts re-reads READ_ONLY_MODES out of session.py and compares it with this array, so the two cannot drift apart. `all` is a forward declaration and nothing enforces it yet: the agent's MODES tuple still lists two modes, and the relay narrows a hello to shell|harness -- one entry outside that pair invalidates the WHOLE hello and disconnects the agent -- so advertising harness_rw to the real relay today does not enable a writable TUI, it drops the leg. Widening both is a later task and this block is the declaration it lands against. Python is cited by module and constant, never by line.",
+    "all": ["shell", "harness", "harness_rw"],
+    "writable": ["shell", "harness_rw"],
+    "tui": ["harness", "harness_rw"],
+    "read_only": ["harness"],
+    "sources": {
+      "read_only": "ops/pty-agent/cauce_pty_agent/session.py:READ_ONLY_MODES",
+      "writable": "ops/pty-agent/cauce_pty_agent/session.py:READ_ONLY_MODES (complement, _on_stdin)",
+      "tui": "ops/pty-agent/cauce_pty_agent/session.py:_on_terminal_response · services/terminal-relay/src/session-instance.ts:SessionInstance",
+      "all": "declared here first; the two places that must widen are ops/pty-agent/cauce_pty_agent/framing.py:MODES and services/terminal-relay/src/agent-hello.ts:modesField, both still shell|harness"
+    }
   },
   "keys": {
     "Steven:jarvis": "33ab99cc766ee43031f9c22b8db78aeae5b04bc0ebedddfe8539330af7233efa",
@@ -903,6 +918,60 @@
         "files_after": [
           { "basename": "CLAUDE.md", "sha": "5b1b410aa1d9784c304fd2629d164fbd2474707a93f5cb43bbb3453a6a51ac35" }
         ]
+      }
+    },
+    {
+      "name": "frame/input-refused-while-a-governance-write-holds-the-pane",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": {
+        "tag": "INPUT_REFUSED",
+        "payload": { "type": "json", "value": { "session_id": "11111111-2222-3333-4444-555555555555", "reason": "governance_write_in_flight" } }
+      },
+      "expected": { "frame_hex": "260000005b7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22726561736f6e223a22676f7665726e616e63655f77726974655f696e5f666c69676874227d" }
+    },
+    {
+      "name": "frame/geometry-of-the-remote-tui",
+      "kind": "encode_frame",
+      "must_fail": false,
+      "input": {
+        "tag": "GEOMETRY",
+        "payload": { "type": "json", "value": { "session_id": "11111111-2222-3333-4444-555555555555", "cols": 120, "rows": 40 } }
+      },
+      "expected": { "frame_hex": "270000004a7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22636f6c73223a3132302c22726f7773223a34307d" }
+    },
+    {
+      "name": "decode/input-refused-carries-the-pane-input-barrier-reason",
+      "kind": "decode_frame",
+      "must_fail": false,
+      "input": { "frame_hex": "26000000537b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22726561736f6e223a2270616e655f696e7075745f62617272696572227d" },
+      "expected": {
+        "note": "Informational: the session stays open, so no close code belongs to this frame.",
+        "tag": "INPUT_REFUSED",
+        "known": true,
+        "payload_hex": "7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22726561736f6e223a2270616e655f696e7075745f62617272696572227d"
+      }
+    },
+    {
+      "name": "decode/geometry-carries-the-columns-the-console-must-fit",
+      "kind": "decode_frame",
+      "must_fail": false,
+      "input": { "frame_hex": "270000004a7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22636f6c73223a3132302c22726f7773223a34307d" },
+      "expected": { "tag": "GEOMETRY", "known": true, "payload_hex": "7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22636f6c73223a3132302c22726f7773223a34307d" }
+    },
+    {
+      "name": "stream/stdout-input-refused-and-geometry-in-one-burst",
+      "kind": "decode_stream",
+      "must_fail": false,
+      "input": { "stream_hex": "210000002631313131313131312d323232322d333333332d343434342d3535353535353535353535356f6b26000000537b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22726561736f6e223a2270616e655f696e7075745f62617272696572227d270000004a7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22636f6c73223a3132302c22726f7773223a34307d", "chunk_size": 7 },
+      "expected": {
+        "note": "The mixed burst is the shape the console really receives: bytes of the pane, one refusal and the geometry, framed independently.",
+        "frames": [
+          { "tag": "STDOUT", "session_id": "11111111-2222-3333-4444-555555555555", "data_utf8": "ok" },
+          { "tag": "INPUT_REFUSED", "payload_hex": "7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22726561736f6e223a2270616e655f696e7075745f62617272696572227d" },
+          { "tag": "GEOMETRY", "payload_hex": "7b2273657373696f6e5f6964223a2231313131313131312d323232322d333333332d343434342d353535353535353535353535222c22636f6c73223a3132302c22726f7773223a34307d" }
+        ],
+        "pending": 0
       }
     }
   ]

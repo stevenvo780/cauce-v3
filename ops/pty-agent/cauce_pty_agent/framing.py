@@ -34,6 +34,10 @@ TAG_TERMINAL_RESPONSE = 0x23
 # and the other terminals of the same agent.
 TAG_PAUSE_OUTPUT = 0x24
 TAG_RESUME_OUTPUT = 0x25
+# Keyboard the agent refuses instead of typing: a paste or a governance write holds the pane.
+TAG_INPUT_REFUSED = 0x26
+# Real geometry of the remote TUI, so the console fits the font instead of guessing columns.
+TAG_GEOMETRY = 0x27
 TAG_CLOSE = 0x30
 TAG_CLOSED = 0x31
 TAG_PING = 0x40
