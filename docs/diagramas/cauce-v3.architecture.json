@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/stevenvo780/cauce-v3",
-      "revision": "1bbfd10a23432ce325c4696ae167aa22271e3497"
+      "revision": "4d70436b1be9f69ea7acbcca6ac41a5978154e6a"
     },
     "viewBox": [1120, 620],
     "views": [
@@ -142,7 +142,7 @@
       "pos": [20, 520],
       "size": [170, 70],
       "sources": [
-        { "path": "ops/pty-agent/cauce_pty_agent.py", "label": "agente saliente" }
+        { "path": "ops/pty-agent/cauce_pty_agent/agent.py", "label": "agente saliente" }
       ]
     },
     {
