@@ -98,6 +98,7 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
   assert.match(outcome.stderr, /correlated boundary.*cuarentena/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
+  tmux.paneContent = "✻ Herding… (esc to interrupt)\n❯ ";
   await runner.run({
     command: "claude",
     args: [],
@@ -106,8 +107,8 @@ test("un pegado que nunca aparece en el registro suelta la sesion en vez de rete
     timeoutMs: 24 * 60 * 60_000,
     signal: new AbortController().signal,
   });
-  assert.equal(fallback.calls, 1);
-  assert.equal(tmux.submittedCount, 1);
+  assert.equal(fallback.calls, 1, "el pane sigue generando: la cuarentena no se levanta sola");
+  assert.equal(tmux.submittedCount, 1, "no se pega nada en una generacion que no prueba estar ociosa");
 });
 
 test("el timeout general con turno correlacionado bloquea la generación hasta un límite terminal", async () => {

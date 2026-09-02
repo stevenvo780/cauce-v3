@@ -17,7 +17,7 @@ import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
 
 const stateRoot = resolve(".test-state");
 const definitions = Object.values(HARNESS_DEFINITIONS);
-const canonicalScope = `auth-v1:${"A".repeat(43)}`;
+const canonicalScope = `auth-v3:${"A".repeat(43)}`;
 
 function requirePosixProcessGroups(): void {
   assert.notEqual(process.platform, "win32", "POSIX process-group tests require a POSIX runner");
@@ -385,7 +385,7 @@ test("Kant OpenCode persists its mapping before publishing a sticky canonical po
     session_id: "ses_opencode_native",
   });
 
-  const otherScope = `auth-v1:${"B".repeat(43)}`;
+  const otherScope = `auth-v3:${"B".repeat(43)}`;
   await adapter.execute({
     prompt: "SCENARIO:success",
     sessionKey: otherScope,

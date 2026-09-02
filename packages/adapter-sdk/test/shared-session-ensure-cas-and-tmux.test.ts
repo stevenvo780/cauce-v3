@@ -460,3 +460,43 @@ test("un reemplazo con el mismo nombre falla cerrado y nunca se adopta ni se mat
   assert.equal(tmux.used("kill-session"), false);
   assert.equal(tmux.calls.filter((call) => call[0] === "new-session").length, 1);
 });
+
+test("tmux ignora el -c pedido: el pane recién creado se mata y degrada workspace_mismatch", async () => {
+  const { workspace } = await freshState("workspace-mismatch");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = false;
+  tmux.windows = [];
+  tmux.paneCurrentPathOverride = "/otro/workspace";
+
+  const outcome = await ensureSharedSession(
+    tmux,
+    { alias: "kratos", harness: "claude", workspace, command: "claude" },
+    { sleep: immediate, readyTimeoutMs: 30 },
+  );
+
+  assert.equal(outcome.ready, false);
+  assert.equal(outcome.failure, "workspace_mismatch");
+  assert.ok(outcome.detail.includes(workspace), outcome.detail);
+  assert.ok(outcome.detail.includes("/otro/workspace"), outcome.detail);
+  assert.equal(tmux.sessionExists, false, "la generación recién creada debe morir, no quedar viva con otro cwd");
+  assert.equal(tmux.used("kill-session"), true);
+  assert.equal(tmux.calls.filter((call) => call[0] === "new-session").length, 1);
+});
+
+test("un workspace honrado por tmux (mismo -c) nunca degrada por workspace_mismatch", async () => {
+  const { workspace } = await freshState("workspace-honrado");
+  const tmux = new FakeTmux();
+  tmux.sessionExists = false;
+  tmux.windows = [];
+
+  const outcome = await ensureSharedSession(
+    tmux,
+    { alias: "kratos", harness: "claude", workspace, command: "claude" },
+    { sleep: immediate, readyTimeoutMs: 30 },
+  );
+
+  assert.equal(outcome.ready, true);
+  assert.equal(outcome.created, true);
+  assert.equal(tmux.sessionExists, true);
+  assert.equal(tmux.used("kill-session"), false);
+});

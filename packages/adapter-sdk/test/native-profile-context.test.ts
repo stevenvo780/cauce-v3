@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -143,7 +144,7 @@ test("native profile flag accepts only absent, 0, or 1", () => {
   }), false);
 });
 
-test("native profile flag rejects unsupported and shared harnesses before disk access", async () => {
+test("native profile flag rejects an unsupported harness before disk access", async () => {
   const state = mkdtempSync(join(tmpdir(), "cauce-native-options-"));
   try {
     const store = await DurableStore.open(state);
@@ -151,13 +152,6 @@ test("native profile flag rejects unsupported and shared harnesses before disk a
     assert.throws(() => new HarnessAdapter({
       definition: definition("fake"), runner, store, environment: nativeEnvironment(),
     }), /only supported by claude and openclaw/u);
-    assert.throws(() => new HarnessAdapter({
-      definition: definition("claude"),
-      runner,
-      store,
-      environment: nativeEnvironment(),
-      sharedSession: { alias: "zeus", harness: "claude", stateDirectory: state },
-    }), /fresh harness process/u);
     assert.doesNotThrow(() => new HarnessAdapter({
       definition: definition("fake"), runner, store, environment: nativeEnvironment("0"),
     }));
@@ -173,6 +167,50 @@ test("native profile flag rejects unsupported and shared harnesses before disk a
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
+});
+
+function captureStderr(): { readonly lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const original = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk: string): boolean => { lines.push(chunk); return true; };
+  return { lines, restore: () => { process.stderr.write = original; } };
+}
+
+test("native profile flag on a shared-session alias warns loudly instead of aborting the process", async (t) => {
+  const state = mkdtempSync(join(tmpdir(), "cauce-native-shared-session-"));
+  t.after(() => { rmSync(state, { recursive: true, force: true }); });
+  const store = await DurableStore.open(state);
+  const { runner, requests } = spyRunner();
+  const capture = captureStderr();
+  let adapter: HarnessAdapter | undefined;
+  try {
+    assert.doesNotThrow(() => {
+      adapter = new HarnessAdapter({
+        definition: definition("claude"),
+        runner,
+        store,
+        environment: nativeEnvironment(),
+        sharedSession: { alias: "zeus", harness: "claude", stateDirectory: state },
+      });
+    });
+  } finally {
+    capture.restore();
+  }
+  const warning = capture.lines
+    .map((line) => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return undefined; } })
+    .find((entry) => entry?.event === "native_profile_context_shared_session_disabled");
+  assert.ok(warning, "expected a loud stderr warning when the flag is forced off");
+  assert.equal(warning.alias, "zeus");
+  assert.equal(warning.harness, "claude");
+  assert.ok(adapter, "adapter was not constructed");
+  await adapter.execute({
+    prompt: "Shared session stays on the legacy path.",
+    context: context("zeus"),
+    timeoutMs: 2_000,
+    signal: AbortSignal.timeout(2_000),
+  });
+  assert.equal(requests.length, 1);
+  assert.doesNotMatch(requests[0]?.stdin ?? "", /native_profile_(?:context|measurement|contract)/u);
 });
 
 test("absent and zero native flags preserve the legacy prompt byte for byte", async (t) => {
@@ -614,7 +652,8 @@ test("a contract sealed with the presence generation of THIS incarnation is acce
     timeoutMs: 2_000,
     signal: AbortSignal.timeout(2_000),
   }), (error: unknown) => {
-    assert.equal((error as { code?: unknown }).code, "NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED");
+    assert.equal((error as { code?: unknown }).code, "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH");
+    assert.equal((error as { retryable?: unknown }).retryable, false);
     return true;
   });
   assert.equal(requests.length, 0);
@@ -646,13 +685,29 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     mutateContract?: boolean;
     mutateGeneration?: boolean;
     omitContract?: boolean;
+    omitFile?: boolean;
+    expectedCode?: string;
+    expectedRetryable?: boolean;
   }[] = [
     {
       name: "stale",
       file: profileFile("zeus", 11, "CURRENT"),
       mutateContract: true,
     },
-    { name: "absent contract", file: profileFile("zeus", 11, "CURRENT"), omitContract: true },
+    {
+      name: "absent contract",
+      file: profileFile("zeus", 11, "CURRENT"),
+      omitContract: true,
+      expectedCode: "NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING",
+      expectedRetryable: false,
+    },
+    {
+      name: "profile file missing",
+      file: profileFile("zeus", 11, "CURRENT"),
+      omitFile: true,
+      expectedCode: "NATIVE_PROFILE_CONTEXT_FILE_MISSING",
+      expectedRetryable: false,
+    },
     { name: "foreign", file: profileFile("kant", 11, "FOREIGN") },
     {
       name: "malformed",
@@ -674,6 +729,8 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
       name: "another runtime generation",
       file: profileFile("zeus", 11, "CURRENT"),
       mutateGeneration: true,
+      expectedCode: "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH",
+      expectedRetryable: false,
     },
     {
       name: "repeated fixed",
@@ -709,6 +766,7 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
     const selected = scenario.mutateGeneration
       ? { ...selectedBySha, generation: "another-runtime" }
       : selectedBySha;
+    if (scenario.omitFile) rmSync(path, { force: true });
     const { runner, requests } = spyRunner();
     const adapter = new HarnessAdapter({
       definition: definition("claude"),
@@ -725,11 +783,16 @@ test("stale, absent, foreign, and malformed projections fail before the runner",
       timeoutMs: 2_000,
       signal: AbortSignal.timeout(2_000),
     }), (error: unknown) => {
-      assert.equal((error as { code?: unknown }).code, "NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED");
-      assert.equal((error as { retryable?: unknown }).retryable, true);
+      const expectedCode = scenario.expectedCode ?? "NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED";
+      assert.equal((error as { code?: unknown }).code, expectedCode, scenario.name);
+      assert.equal((error as { retryable?: unknown }).retryable, scenario.expectedRetryable ?? true, scenario.name);
       return true;
     }, scenario.name);
     assert.equal(requests.length, 0, scenario.name);
-    assert.equal(readFileSync(path, "utf8"), bytesBeforePreflight, scenario.name);
+    if (scenario.omitFile) {
+      assert.equal(existsSync(path), false, scenario.name);
+    } else {
+      assert.equal(readFileSync(path, "utf8"), bytesBeforePreflight, scenario.name);
+    }
   }
 });

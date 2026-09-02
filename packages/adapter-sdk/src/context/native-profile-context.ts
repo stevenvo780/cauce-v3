@@ -36,6 +36,10 @@ const AUTHORED_OPENCLAW_FILES: ReadonlySet<string> = new Set<string>(
 const MAX_CLAUDE_DOCUMENT_BYTES = 4 * 1024 * 1024;
 const MAX_OPENCLAW_DOCUMENT_BYTES = 1024 * 1024;
 
+const NATIVE_PROFILE_CONTEXT_FILE_MISSING = "NATIVE_PROFILE_CONTEXT_FILE_MISSING";
+const NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING = "NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING";
+const NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH = "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH";
+
 interface NativeProfilePath {
   readonly path: string;
   readonly authored: boolean;
@@ -105,7 +109,12 @@ export class NativeProfileContext {
       this.assertContract(context, projected);
       const instructionPath = this.instructionPath();
       const original = this.read(instructionPath);
-      if (original === undefined) throw new Error(`${instructionPath} does not exist`);
+      if (original === undefined) {
+        throw this.deterministicFailure(
+          NATIVE_PROFILE_CONTEXT_FILE_MISSING,
+          `${instructionPath} does not exist`,
+        );
+      }
 
       const fixed = textoNativoDelSobre(context);
       const merged = conBloqueGestionado(original, fixed);
@@ -183,6 +192,14 @@ export class NativeProfileContext {
     );
   }
 
+  private deterministicFailure(code: string, detail: string): AdapterError {
+    return new AdapterError(
+      code,
+      `Native profile context preflight failed: ${detail}`,
+      false,
+    );
+  }
+
   private instructionPath(): string {
     if (this.harness === "openclaw") {
       const workspace = this.requireAbsolute(this.openClawWorkspace, "CAUCE_OPENCLAW_WORKSPACE");
@@ -236,7 +253,12 @@ export class NativeProfileContext {
     for (const entry of this.paths()) {
       if (!entry.authored) continue;
       const file = entry.path === instructionPath ? mergedInstruction : this.read(entry.path);
-      if (file === undefined) throw new Error(`${entry.path} does not exist`);
+      if (file === undefined) {
+        throw this.deterministicFailure(
+          NATIVE_PROFILE_CONTEXT_FILE_MISSING,
+          `${entry.path} does not exist`,
+        );
+      }
       const units = measureStrictestUnits(file);
       if (units > TOPES_OPENCLAW.porFichero) {
         throw new Error(`${entry.path} exceeds the OpenClaw per-file limit after fixed context`);
@@ -279,14 +301,22 @@ export class NativeProfileContext {
     const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;
     const expectedRevision = context.native_profile_contract?.revision;
     if (expectedRevision === undefined) {
-      throw new Error("delivery has no native profile revision contract");
+      throw this.deterministicFailure(
+        NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING,
+        "delivery has no native profile revision contract",
+      );
     }
     const documents: { path: string; sha256: string }[] = [];
     const blocks: { path: string; block: string }[] = [];
     const instructionPath = this.instructionPath();
     for (const entry of this.paths()) {
       const file = this.read(entry.path);
-      if (file === undefined) throw new Error(`${entry.path} does not exist`);
+      if (file === undefined) {
+        throw this.deterministicFailure(
+          NATIVE_PROFILE_CONTEXT_FILE_MISSING,
+          `${entry.path} does not exist`,
+        );
+      }
       const fixedStarts = occurrences(file, MARCA_INICIO);
       const fixedEnds = occurrences(file, MARCA_FIN);
       const hasNoFixedMarkers = fixedStarts === 0 && fixedEnds === 0;
@@ -334,11 +364,19 @@ export class NativeProfileContext {
     measurement: RuntimeProfileMeasurement,
   ): void {
     const contract = context.native_profile_contract;
-    if (contract === undefined) throw new Error("delivery has no native profile revision contract");
+    if (contract === undefined) {
+      throw this.deterministicFailure(
+        NATIVE_PROFILE_CONTEXT_CONTRACT_MISSING,
+        "delivery has no native profile revision contract",
+      );
+    }
     if (contract.generation !== this.runtimeGeneration
       && (this.presenceGeneration === undefined
         || contract.generation !== this.presenceGeneration)) {
-      throw new Error("native profile contract belongs to another runtime generation");
+      throw this.deterministicFailure(
+        NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH,
+        "native profile contract belongs to another runtime generation",
+      );
     }
     const paths = this.paths();
     if (contract.documents.length !== paths.length) {

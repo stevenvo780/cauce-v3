@@ -19,6 +19,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   session_alias_mismatch: "la sesión tmux declara un alias distinto",
   session_harness_mismatch: "la sesión tmux pertenece a otro harness",
   session_identity_unverified: "la identidad alias+harness de la sesión no pudo acreditarse",
+  workspace_mismatch: "tmux arrancó el panel fuera del workspace pedido y esa generación se mató",
   input_busy: "la caja de entrada quedó ocupada con texto a medio escribir",
   modal_blocking: "la TUI está esperando que el dueño conteste un diálogo",
   handshake_failed: "el mecanismo de sesión compartida no respondió",

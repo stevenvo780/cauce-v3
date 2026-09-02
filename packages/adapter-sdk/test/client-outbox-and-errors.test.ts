@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {DurableStore} from '../src/sdk/durable-store.js';
-import type {DeliveryEvent} from '../src/sdk/types.js';
-import {CountingRunner, FakeConnection, ScriptedConnector, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
+import type {AdapterLog, DeliveryEvent} from '../src/sdk/types.js';
+import {CountingRunner, FakeConnection, RejectingConnection, ScriptedConnector, SequenceConnector, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
 test("pending durable outbox is replayed after hello_ack", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection);
@@ -302,3 +302,69 @@ test("an inconclusive terminal result stays durable and ownership_lost releases 
   }
 });
 
+
+/**
+ * A frame the transport refuses locally never reaches the socket, so every reconnect replayed it
+ * and lost the connection again. The entry is quarantined — kept, never resent — and the rest of
+ * the outbox still goes out over the same connection.
+ */
+test("un marco que el transporte rechaza en local se pone en cuarentena y no tira la conexión", async () => {
+  const poison: DeliveryEvent = {
+    event_id: "50000000-0000-4000-8000-000000000201",
+    delivery_id: "20000000-0000-4000-8000-000000000201",
+    attempt: 1,
+    claim_token: "40000000-0000-4000-8000-000000000201",
+    epoch: 1,
+    phase: "failed",
+    occurred_at: new Date(0).toISOString(),
+  };
+  const healthy: DeliveryEvent = {
+    ...poison,
+    event_id: "50000000-0000-4000-8000-000000000202",
+    delivery_id: "20000000-0000-4000-8000-000000000202",
+    claim_token: "40000000-0000-4000-8000-000000000202",
+    phase: "accepted",
+  };
+  const first = new RejectingConnection([poison.event_id]);
+  const second = new RejectingConnection([poison.event_id]);
+  const connector = new SequenceConnector([first, second]);
+  const logs: AdapterLog[] = [];
+  const errors: string[] = [];
+  const context = await makeClient("outbox-quarantine", connector, {
+    logger: (entry) => logs.push(entry),
+    onError: (code) => errors.push(code),
+  });
+  await context.store.enqueue(poison);
+  await context.store.enqueue(healthy);
+  const stop = new AbortController();
+  const running = context.client.run(stop.signal);
+  try {
+    await waitUntil(() => first.sent.some(
+      (frame) => frame.type === "ack" && frame.event_id === healthy.event_id,
+    ));
+    assert.deepEqual(first.refused, [poison.event_id]);
+    assert.equal(connector.calls, 1, "el marco inválido volvió a costar la conexión");
+    assert.deepEqual(errors, ["OUTBOX_ENTRY_QUARANTINED"]);
+    const quarantine = logs.find((entry) => entry.reason === "outbox_entry_quarantined");
+    assert.ok(quarantine, "la cuarentena no dejó rastro");
+    assert.equal(quarantine.event, "outbound_frame_invalid");
+    assert.equal(quarantine.error_code, "OUTBOX_ENTRY_QUARANTINED");
+    assert.equal(quarantine.delivery_id, poison.delivery_id);
+    assert.equal(quarantine.attempt, poison.attempt);
+    assert.equal(quarantine.phase, poison.phase);
+    // Marked, not deleted: the durable evidence of the rejected result survives.
+    assert.equal(
+      context.store.pendingEvents().some((event) => event.event_id === poison.event_id),
+      true,
+    );
+
+    first.end();
+    await waitUntil(() => second.sent.some(
+      (frame) => frame.type === "ack" && frame.event_id === healthy.event_id,
+    ));
+    assert.deepEqual(second.refused, [], "la entrada en cuarentena se reenvió al reconectar");
+  } finally {
+    stop.abort();
+    await running;
+  }
+});

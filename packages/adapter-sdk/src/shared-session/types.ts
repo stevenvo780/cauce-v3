@@ -1,8 +1,6 @@
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
-/**
- * Harnesses compatible with the shared session mechanism.
- */
+/** Harnesses compatible with the shared session mechanism. */
 export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex">;
 
 export function isSharedSessionHarness(harness: HarnessId): harness is SharedSessionHarness {
@@ -23,6 +21,8 @@ export type DegradationReason =
   | "session_harness_mismatch"
   /** A legacy session gave insufficient evidence to credit alias+harness. */
   | "session_identity_unverified"
+  /** tmux started the freshly created pane outside `spec.workspace`; that generation was killed. */
+  | "workspace_mismatch"
   /** The owner had half-typed text in the box and never let it go within the deadline. */
   | "input_busy"
   /** The TUI is blocked waiting for an answer in a modal dialog. */

@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import {rm} from 'node:fs/promises';
 import { resolve } from "node:path";
 import {HarnessAdapter, fakeDefinition} from '../src/harnesses/index.js';
+import {systemClock} from '../src/sdk/backoff.js';
 import {AdapterClient} from '../src/sdk/client.js';
 import {DurableStore} from '../src/sdk/durable-store.js';
-import type {ClientFrame, CommandRunRequest, CommandRunResult, CommandRunner, ConsumerConnection, ConsumerConnector, HarnessDefinition, ServerFrame} from '../src/sdk/types.js';
+import type {AdapterLogger, BackoffConfig, ClientFrame, Clock, CommandRunRequest, CommandRunResult, CommandRunner, ConsumerConnection, ConsumerConnector, HarnessDefinition, ServerFrame} from '../src/sdk/types.js';
 export type HelloAgentProfile = NonNullable<Extract<ServerFrame, { type: "hello_ack" }>["agent_profile"]>;
 
 export const root = resolve(".test-state");
@@ -159,6 +160,81 @@ export class FakeConnection implements ConsumerConnection {
   }
 }
 
+export class FrameSchemaError extends Error {
+  readonly issues = [
+    { path: ["result", "output", "status"], code: "invalid_value", message: "Invalid option" },
+  ];
+
+  constructor() {
+    super("Outbound frame rejected by the Cauce V3 schema");
+    this.name = "FrameSchemaError";
+  }
+}
+
+export class RejectingConnection extends FakeConnection {
+  readonly refused: string[] = [];
+
+  constructor(
+    private readonly refusedEventIds: readonly string[],
+    private readonly failure: () => Error = () => new FrameSchemaError(),
+  ) {
+    super(1);
+  }
+
+  override async send(frame: ClientFrame): Promise<void> {
+    if (frame.type === "ack" && this.refusedEventIds.includes(frame.event_id)) {
+      this.refused.push(frame.event_id);
+      throw this.failure();
+    }
+    await super.send(frame);
+  }
+}
+
+export class ClosingConnection extends FakeConnection {
+  constructor(private readonly withHeartbeatAck: boolean) {
+    super(1);
+  }
+
+  override async send(frame: ClientFrame): Promise<void> {
+    await super.send(frame);
+    if (frame.type !== "hello") return;
+    if (this.withHeartbeatAck) {
+      this.push({
+        type: "heartbeat_ack",
+        lease_expires_at: new Date(Date.now() + 30_000).toISOString(),
+      });
+    }
+    this.end();
+  }
+}
+
+export class FactoryConnector implements ConsumerConnector {
+  calls = 0;
+
+  constructor(private readonly build: (call: number) => ConsumerConnection) {}
+
+  async connect(_signal: AbortSignal): Promise<ConsumerConnection> {
+    this.calls += 1;
+    return this.build(this.calls);
+  }
+}
+
+export class ReconnectDelayClock implements Clock {
+  readonly delays: number[] = [];
+
+  constructor(private readonly heartbeatMs: number) {}
+
+  now(): Date {
+    return new Date();
+  }
+
+  async sleep(ms: number, signal: AbortSignal): Promise<void> {
+    if (ms === this.heartbeatMs) return systemClock.sleep(ms, signal);
+    this.delays.push(ms);
+    return systemClock.sleep(1, signal);
+  }
+}
+
 export class ScriptedConnector implements ConsumerConnector {
   calls = 0;
   constructor(
@@ -197,6 +273,9 @@ export async function makeClient(
     onError?: (code: string) => void;
     claimRenewalMs?: number;
     claimWatchdogMs?: number;
+    reconnect?: BackoffConfig;
+    clock?: Clock;
+    logger?: AdapterLogger;
   } = {},
 ): Promise<{ client: AdapterClient; store: DurableStore; directory: string }> {
   const directory = resolve(root, name);
@@ -218,11 +297,13 @@ export async function makeClient(
         instanceId: `instance-${name}`,
         stateDirectory: directory,
         heartbeatMs: options.heartbeatMs ?? 10_000,
-        reconnect: { initialMs: 1, maxMs: 2, factor: 2, jitter: 0 },
+        reconnect: options.reconnect ?? { initialMs: 1, maxMs: 2, factor: 2, jitter: 0 },
       },
       connector,
       store,
       harness,
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
       ...(options.onError === undefined ? {} : { onError: options.onError }),
       ...(options.onLeaseAcquired === undefined ? {} : { onLeaseAcquired: options.onLeaseAcquired }),
       ...(options.claimRenewalMs === undefined ? {} : { claimRenewalMs: options.claimRenewalMs }),

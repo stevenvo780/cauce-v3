@@ -5,8 +5,8 @@ import { resolve } from "node:path";
 import {CANONICAL_OPEN_CODE_SESSION_FILE, DurableStore, type CanonicalOpenCodeSessionPointer} from '../src/sdk/durable-store.js';
 import type {Delivery, StructuredOutput} from '../src/sdk/types.js';
 export const root = resolve(".test-state/canonical-open-code-store");
-export const scopeA = `auth-v1:${"A".repeat(43)}`;
-export const scopeB = `auth-v1:${"B".repeat(43)}`;
+export const scopeA = `auth-v3:${"A".repeat(43)}`;
+export const scopeB = `auth-v3:${"B".repeat(43)}`;
 
 export type AtomicCrashWindow = "tmp" | "backup-tmp" | "backup" | "committed";
 

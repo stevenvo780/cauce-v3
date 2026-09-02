@@ -116,11 +116,7 @@ export function assistantEntry(
   });
 }
 
-/**
- * Simulated tmux with the fidelity these tests need: which commands it received, what was in the
- * input box, and what ended up pasted. The transcript is written by the test itself when the "TUI"
- * receives an Enter, the same way claude does it.
- */
+/** Simulated tmux with the fidelity these tests need: commands received, input box, what ended up pasted. The transcript is written by the test itself when the "TUI" receives an Enter, like claude does. */
 export class FakeTmux implements TmuxController {
   readonly calls: string[][] = [];
   readonly sessionOptions = new Map<string, string>();
@@ -144,6 +140,9 @@ export class FakeTmux implements TmuxController {
   private readonly waiters = new Map<string, Set<(result: TmuxResult) => void>>();
   /** Original panel command, used to accredit sessions prior to the markers. */
   paneStartCommand = "exec claude";
+  /** `pane_current_path`, tracked from `new-session -c`; `paneCurrentPathOverride` wins over it when set, modeling tmux accepting a bad `-c` and starting the pane elsewhere instead of failing. */
+  paneCurrentPath = "/workspace";
+  paneCurrentPathOverride: string | undefined = undefined;
   /** Additional panes inside the TUI window, a situation that must fail closed. */
   extraPaneCount = 0;
   failQuarantineRead = false;
@@ -156,12 +155,7 @@ export class FakeTmux implements TmuxController {
   failBufferScrub = false;
   failBufferInspection = false;
   newSessionFails = false;
-  /**
-   * Substring of the panel argv that makes the process exit immediately.
-   *
-   * Models the case where `claude --continue` with no prior conversation
-   * writes "No conversation found to continue" and exits with code 1.
-   */
+  /** Substring of the panel argv that makes the process exit immediately, modeling `claude --continue` with no prior conversation writing "No conversation found to continue" and exiting 1. */
   fatalPaneArguments: string | undefined;
   readonly buffers = new Map<string, string>();
   inputContent = "";
@@ -475,6 +469,7 @@ export class FakeTmux implements TmuxController {
         this.pasted = undefined;
         this.inputOff = false;
         this.paneOptions.clear();
+        if (args.includes("-c")) this.paneCurrentPath = args[args.indexOf("-c") + 1] ?? this.paneCurrentPath;
       }
       const nameIndex = args.indexOf("-n");
       const created = nameIndex >= 0 ? args[nameIndex + 1] : undefined;
@@ -575,6 +570,11 @@ export class FakeTmux implements TmuxController {
           + `\t${this.paneId}\t${this.panePid}\t0\n`,
         stderr: "",
       };
+    }
+    if (command === "display-message" && args[1] === "-p" && args.at(-1) === "#{pane_current_path}") {
+      const target = args[args.indexOf("-t") + 1];
+      if (!this.targetExists(target)) return ok(1);
+      return { exitCode: 0, stdout: `${this.paneCurrentPathOverride ?? this.paneCurrentPath}\n`, stderr: "" };
     }
     if (command === "display-message" && args[1] === "-p") {
       const target = args[args.indexOf("-t") + 1];

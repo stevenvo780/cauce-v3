@@ -245,7 +245,7 @@ export async function readSessionsSecure(path: string): Promise<SessionsFile> {
 }
 
 export function isCanonicalOpenCodeScopeKey(value: string): boolean {
-  return /^auth-v1:[A-Za-z0-9_-]{43}$/u.test(value);
+  return /^auth-v3:[A-Za-z0-9_-]{43}$/u.test(value);
 }
 
 export function isCanonicalOpenCodeSessionId(value: string): boolean {

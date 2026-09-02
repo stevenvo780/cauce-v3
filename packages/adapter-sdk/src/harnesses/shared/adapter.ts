@@ -84,7 +84,17 @@ export class HarnessAdapter {
     this.canonicalOpenCodeSession = options.canonicalOpenCodeSession === true;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
     const environment = options.environment ?? process.env;
-    const nativeEnabled = nativeProfileContextEnabled(environment.CAUCE_NATIVE_PROFILE_CONTEXT);
+    let nativeEnabled = nativeProfileContextEnabled(environment.CAUCE_NATIVE_PROFILE_CONTEXT);
+    if (nativeEnabled && this.sharedSession !== undefined) {
+      process.stderr.write(`${JSON.stringify({
+        event: "native_profile_context_shared_session_disabled",
+        alias: this.sharedSession.alias,
+        harness: this.definition.id,
+        message: "CAUCE_NATIVE_PROFILE_CONTEXT=1 is not supported for a shared-session alias;"
+          + " forcing it off instead of aborting the process",
+      })}\n`);
+      nativeEnabled = false;
+    }
     this.nativeProfileContext = nativeEnabled
       ? new NativeProfileContext(this.definition.id, this.sharedSession !== undefined, environment)
       : undefined;

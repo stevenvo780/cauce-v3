@@ -122,6 +122,7 @@ export class AdapterClient {
   private sendTail: Promise<void> = Promise.resolve();
   private readonly failedConnections = new WeakSet<ConsumerConnection>();
   private readonly executionIntentWaiters = new Map<string, ExecutionIntentWaiter>();
+  private readonly quarantinedEvents = new Set<string>();
   private running = false;
   private perfilAdoptado = true; // False once a hello profile could not be written.
   private readonly onError: (code: string) => void;
@@ -232,12 +233,13 @@ export class AdapterClient {
           if (welcomed) throw new Error('Gateway sent duplicate hello_ack');
           await this.engine.activateEpoch(frame.epoch);
           welcomed = true;
-          this.backoff.reset(); // Before seeding: `hello_ack` already proves the transport.
           this.sembrarPerfil(frame);
           heartbeat = this.heartbeatLoop(heartbeatAbort.signal).catch(async () => {
             await connection.close().catch(() => undefined);
           });
-          await this.flushOutbox();
+          // Only real traffic credits reconnect pacing; the greeting alone proves nothing.
+          const delivered = await this.flushOutbox();
+          if (delivered > 0) this.backoff.reset();
           void this.engine.recover().catch(() => undefined);
           continue;
         }
@@ -253,10 +255,6 @@ export class AdapterClient {
     }
   }
 
-  /**
-   * Writes the profile received in the greeting into the harness files or fails the connection.
-   * `CAUCE_SEMBRAR_PERFIL=0` disables the sync.
-   */
   /** Applies the hello profile. NEVER throws: see «Siembra no fatal» in docs/adapter-sdk.md. */
   private sembrarPerfil(frame: Extract<ServerFrame, { type: 'hello_ack' }>): void {
     const perfil = frame.agent_profile;
@@ -368,13 +366,46 @@ export class AdapterClient {
         }
         return;
       case 'heartbeat_ack':
+        this.backoff.reset();
+        return;
       case 'wake':
         return;
     }
   }
 
-  private async flushOutbox(): Promise<void> {
-    for (const event of this.store.pendingEvents()) await this.sendEvent(event);
+  /** Replays the outbox; an entry the transport refuses locally is quarantined, never replayed. */
+  private async flushOutbox(): Promise<number> {
+    let delivered = 0;
+    for (const event of this.store.pendingEvents()) {
+      if (this.quarantinedEvents.has(event.event_id)) continue;
+      try {
+        await this.sendEvent(event);
+        delivered += 1;
+      } catch (error) {
+        if (!localFrameRejection(error)) throw error;
+        this.quarantineOutboxEntry(event, error);
+      }
+    }
+    return delivered;
+  }
+
+  private quarantineOutboxEntry(event: DeliveryEvent, error: unknown): void {
+    this.quarantinedEvents.add(event.event_id);
+    this.onError('OUTBOX_ENTRY_QUARANTINED');
+    this.logger({
+      event: 'outbound_frame_invalid',
+      timestamp: this.clock.now().toISOString(),
+      reason: 'outbox_entry_quarantined',
+      frame_type: 'ack',
+      alias: this.config.alias,
+      delivery_id: event.delivery_id,
+      attempt: event.attempt,
+      phase: event.phase,
+      error_code: 'OUTBOX_ENTRY_QUARANTINED',
+      error_message: error instanceof Error
+        ? `Local transport validation refused the entry: ${error.message.slice(0, MAX_REJECTION_DETAIL)}`
+        : 'Local transport validation refused the entry',
+    });
   }
 
   private sendEvent(event: DeliveryEvent, deadline?: SendDeadline): Promise<void> {
@@ -618,6 +649,15 @@ export function clampAckDetail(detail: string | undefined): string | undefined {
   if (detail === undefined || detail.length <= MAX_ACK_ERROR_DETAIL) return detail;
   return detail.slice(0, MAX_ACK_ERROR_DETAIL - ACK_DETAIL_TRUNCATION_SUFFIX.length)
     + ACK_DETAIL_TRUNCATION_SUFFIX;
+}
+
+const MAX_REJECTION_DETAIL = 200;
+
+/** Structural check instead of importing the validator: a refused frame never left the process. */
+function localFrameRejection(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const issues = (error as { issues?: unknown }).issues;
+  return Array.isArray(issues) && issues.length > 0;
 }
 
 function connectionErrorCode(error: unknown): string {

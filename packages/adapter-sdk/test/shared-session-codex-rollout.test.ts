@@ -250,7 +250,7 @@ test("codex avisa cuando compacta durante el turno", async () => {
 test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado", async () => {
   // Accepting Enter is the commit: that the rollout hasn't yet recorded it does NOT prove it
   // didn't run. The old fallback could run the same request twice and free the same pane.
-  const { state: _state, codexHome } = await codexWorkspace("codex-sin-registro");
+  const { state: _state, codexHome, rollout } = await codexWorkspace("codex-sin-registro");
   const tmux = new FakeTmux();
   const fallback = new RecordingFallback("{}");
   // The Enter produces nothing: the rollout doesn't grow.
@@ -273,6 +273,7 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
   assert.equal(tmux.submittedCount, 1);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
 
+  tmux.paneContent = "› \nEsc to interrupt\n";
   const second = await runner.run({
     command: "codex",
     args: [],
@@ -282,8 +283,29 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
     signal: new AbortController().signal,
   });
   assert.equal(second.cancelled, false);
-  assert.equal(fallback.calls, 1);
+  assert.equal(fallback.calls, 1, "codex sigue generando: la cuarentena no se levanta sola");
   assert.equal(tmux.submittedCount, 1, "el segundo pedido no entra en el pane ambiguo");
+
+  tmux.paneContent = "› ";
+  tmux.onSubmit = async (text) => {
+    await appendFile(rollout, `${[
+      codexStarted("t-sano"),
+      codexUser(text, "t-sano"),
+      codexComplete("t-sano", envelopeText("codex recuperado")),
+    ].join("\n")}\n`);
+  };
+  const third = await runner.run({
+    command: "codex",
+    args: [],
+    harness: "codex",
+    stdin: "la caja de codex volvió a estar libre",
+    timeoutMs: 2_000,
+    signal: new AbortController().signal,
+  });
+  assert.equal(fallback.calls, 1, "codex ocioso recupera su pane sin que nadie lo respawnee");
+  assert.equal(tmux.submittedCount, 2, "el tercer pedido sí entra por la caja de codex");
+  assert.match(third.stdout, /codex recuperado/u);
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
 });
 
 test("un turno que el dueño interrumpe no se cobra como respuesta", async () => {

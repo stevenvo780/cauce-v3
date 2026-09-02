@@ -4,11 +4,15 @@ import test from "node:test";
 import {claudeDefinition, fakeDefinition} from '../src/harnesses/index.js';
 import {capabilityStrings, siembraAplicada, siembraHabilitada} from '../src/sdk/client.js';
 import {ConsumerLease} from '../src/sdk/durable-store.js';
-import type {ConsumerConnector} from '../src/sdk/types.js';
+import type {ConsumerConnector, DeliveryEvent} from '../src/sdk/types.js';
 import {
   root,
+  ClosingConnection,
+  FactoryConnector,
   FakeConnection,
   HelloAgentProfile,
+  ReconnectDelayClock,
+  RejectingConnection,
   ScriptedConnector,
   makeClient,
   waitUntil,
@@ -160,3 +164,64 @@ test("heartbeat uses the established consumer instead of an ephemeral socket", a
   await running;
 });
 
+/**
+ * The backoff used to be reset by `hello_ack`, so every failure after the greeting reconnected at
+ * the initial delay forever: 7570 epochs in 99 minutes on one alias. Pacing is now credited only
+ * by evidence the connection carries traffic — a drained outbox entry or a heartbeat round trip.
+ */
+test("el saludo ya no reinicia el backoff: sólo un heartbeat_ack lo devuelve al arranque", async () => {
+  const heartbeatMs = 60_000;
+  const clock = new ReconnectDelayClock(heartbeatMs);
+  const acknowledgedCall = 4;
+  const connector = new FactoryConnector(
+    (call) => new ClosingConnection(call === acknowledgedCall),
+  );
+  const { client } = await makeClient("backoff-hello-ack", connector, {
+    heartbeatMs,
+    clock,
+    reconnect: { initialMs: 100, maxMs: 10_000, factor: 2, jitter: 0 },
+  });
+  const stop = new AbortController();
+  const running = client.run(stop.signal);
+  try {
+    await waitUntil(() => clock.delays.length >= 5);
+    assert.deepEqual(clock.delays.slice(0, 5), [100, 200, 400, 100, 200]);
+  } finally {
+    stop.abort();
+    await running;
+  }
+});
+
+/** A connection that dies while replaying the outbox proves nothing: the delay has to grow. */
+test("un outbox que no puede vaciarse hace crecer la espera de reconexión", async () => {
+  const heartbeatMs = 60_000;
+  const clock = new ReconnectDelayClock(heartbeatMs);
+  const event: DeliveryEvent = {
+    event_id: "50000000-0000-4000-8000-000000000101",
+    delivery_id: "20000000-0000-4000-8000-000000000101",
+    attempt: 1,
+    claim_token: "40000000-0000-4000-8000-000000000101",
+    epoch: 1,
+    phase: "accepted",
+    occurred_at: new Date(0).toISOString(),
+  };
+  const connector = new FactoryConnector(() => new RejectingConnection(
+    [event.event_id],
+    () => new Error("gateway write closed"),
+  ));
+  const context = await makeClient("backoff-outbox-stuck", connector, {
+    heartbeatMs,
+    clock,
+    reconnect: { initialMs: 100, maxMs: 10_000, factor: 2, jitter: 0 },
+  });
+  await context.store.enqueue(event);
+  const stop = new AbortController();
+  const running = context.client.run(stop.signal);
+  try {
+    await waitUntil(() => clock.delays.length >= 3);
+    assert.deepEqual(clock.delays.slice(0, 3), [100, 200, 400]);
+  } finally {
+    stop.abort();
+    await running;
+  }
+});
