@@ -457,12 +457,13 @@ for line in sys.stdin:
   fi
 
   # 2) conversacion aparte, sin parar al agente
+  wsa=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$a.env" 2>/dev/null | head -1)
   if [[ $ad == active ]]; then
     printf "  modo: ${c_warn}${c_b}APARTE${c_reset} — TUI real, pero conversacion nueva: NO comparte con Telegram.\n"
     printf "  ${c_dim}el agente sigue respondiendo Telegram y el bus. salir: Ctrl-D${c_reset}\n\n"
     case "$harness" in
-      claude) exec docker exec -it --user "$cuser" -w /workspace "$ctr" claude ;;
-      codex)  exec docker exec -it --user "$cuser" -w /workspace "$ctr" codex ;;
+      claude) exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" claude ;;
+      codex)  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" codex ;;
       openclaw)
               printf "  ${c_dim}openclaw SI tiene TUI propia, pero no te la abro aca: en modo local${c_reset}\n"
               printf "  ${c_dim}comparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del${c_reset}\n"
@@ -470,7 +471,7 @@ for line in sys.stdin:
               printf "  ${c_dim}Te abro un shell; para la TUI compartida hace falta gateway.${c_reset}\n\n"
               exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" bash -l ;;
       *)      printf "  ${c_dim}sin TUI propia: te abro un shell${c_reset}\n\n"
-              exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
+              exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" bash -l ;;
     esac
   fi
 
@@ -478,7 +479,7 @@ for line in sys.stdin:
   printf "  modo: ${c_err}${c_b}EXCLUSIVA${c_reset} — su adaptador esta parado.\n"
   printf "  ${c_dim}lo que le escriban por Telegram se ENCOLA y entra cuando salgas.${c_reset}\n\n"
   if [[ -x $BIN/cauce-attach ]]; then exec python3 "$BIN/cauce-attach" "$a"; fi
-  exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l
+  exec docker exec -it --user "$cuser" -w "${wsa:-/workspace}" "$ctr" bash -l
 }
 
 # ---------- resto ----------
@@ -1415,7 +1416,6 @@ cmd_retirar() {  # $1=alias
   printf "    python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json\n"
   printf "    ./ops/scripts/regenerate-fleet.sh   ${c_dim}(purga manifest/unit/telegram del alias)${c_reset}\n\n"
 }
-
 
 case "${1:-}" in
   ""|flota|estado) [[ ${1:-} == estado ]] && cmd_estado "${2:-}" || cmd_flota ;;
