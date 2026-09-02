@@ -1,0 +1,36 @@
+{
+ "console/src": {
+  "lineas_pct": 94.84
+ },
+ "packages/adapter-sdk": {
+  "lineas_pct": 91.06
+ },
+ "packages/mcp-fleet-monitor/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
+ "packages/protocol/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
+ "packages/store/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
+ "services/dispatcher/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
+ "services/gateway/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
+ "services/telegram-bridge/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ },
+ "services/terminal-relay/src": {
+  "lineas_pct": null,
+  "pendiente_de_siembra": true
+ }
+}
