@@ -11,13 +11,11 @@ import { readQuarantineMarker } from "./persistence.js";
 import { beforeDeadline } from "./runtime.js";
 
 /**
- * What the PANE says about the generation, as opposed to the transcript file. Every answer
- * fails closed: a capture that could not be taken is never evidence of life nor of health.
+ * What the PANE says about the generation, not the transcript file; every answer fails closed.
  */
 export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBase<E> {
   /**
-   * The pane is still generating, so a merged turn is alive however quiet the transcript file is
-   * (a long thinking or tool block writes nothing). An unreadable capture returns false.
+   * A generating pane keeps a merged turn alive however quiet the transcript file is; unreadable is false.
    */
   protected async paneStillGenerating(
     identity: PaneIdentity,
