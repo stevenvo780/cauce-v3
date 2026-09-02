@@ -1,8 +1,9 @@
 import { DoorClosed, Filter, Inbox, Search, Wifi, WifiOff } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
+import { LEASE_LABEL } from '../../vocabulario';
 import { filterFleetAgents } from '../terminal/fleet';
-import { cifrasVivas, formaDeLaCola, ROTULO_DE_LEASE } from './fila-de-agente';
+import { cifrasVivas, formaDeLaCola } from './fila-de-agente';
 import { colaNecesitaAtencion, ordenarPorSaludDeCola, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 
@@ -149,7 +150,7 @@ export function AgentRoster({ agents, salud, activeAgentId, onSelect, loading, e
                     data-active={activeAgentId === agent.id || undefined}
                     data-attention={colaNecesitaAtencion(salud[agent.id]) || undefined}
                     onClick={() => { onSelect(agent); }}
-                    aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${ROTULO_DE_LEASE[agent.leaseState]}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
+                    aria-label={`Conversación con ${agent.alias}, ${agent.tenantId}, lease ${LEASE_LABEL[agent.leaseState]}${fueraDeLaTopologia(agent) ? ', sin sala declarada' : ''}`}
                     aria-current={activeAgentId === agent.id ? 'true' : undefined}
                   >
                     <span className={`messenger-presence ${agent.leaseState}`} aria-hidden="true">

@@ -8,15 +8,7 @@ import { isLowercaseSha256, isUuidV1ToV8 } from '../../api/contract-guards';
 import { useResource } from '../../api/use-resource';
 import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown } from '../../components/ui';
 import { compactId } from '../../lib';
-
-const DISPOSITION: Readonly<Record<DlqDisposition, string>> = {
-  ambiguous: 'EFECTO INCIERTO',
-  safe_retry: 'REINTENTO SEGURO',
-  missing_final: 'FINAL AUSENTE',
-  auth: 'AUTORIZACIÓN',
-  expected_offline: 'OFFLINE ESPERADO',
-  unclassified: 'SIN CLASIFICAR',
-};
+import { DLQ_DISPOSITION_LABEL, DLQ_DISPOSITION_TONE } from '../../vocabulario';
 
 const RESOLVABLE: ReadonlySet<DlqDisposition> = new Set([
   'ambiguous', 'safe_retry', 'missing_final', 'auth',
@@ -33,7 +25,7 @@ interface ResolutionDraft {
 }
 
 function disposition(value: unknown): DlqDisposition | undefined {
-  return typeof value === 'string' && Object.hasOwn(DISPOSITION, value)
+  return typeof value === 'string' && Object.hasOwn(DLQ_DISPOSITION_LABEL, value)
     ? value as DlqDisposition
     : undefined;
 }
@@ -86,14 +78,6 @@ function hasControlCharacter(value: string): boolean {
     const code = character.codePointAt(0) ?? 0;
     return code <= 31 || code === 127;
   });
-}
-
-function tone(value: DlqDisposition | undefined): 'danger' | 'warning' | 'info' | 'done' | 'unknown' {
-  if (value === 'ambiguous' || value === 'missing_final') return 'danger';
-  if (value === 'safe_retry' || value === 'auth') return 'warning';
-  if (value === 'expected_offline') return 'done';
-  if (value === 'unclassified') return 'info';
-  return 'unknown';
 }
 
 export function OperationalDlqPanel() {
@@ -314,7 +298,7 @@ export function OperationalDlqPanel() {
           Disposición
           <select value={selectedDisposition} onChange={(event) => { setSelectedDisposition(event.target.value as 'all' | DlqDisposition); }}>
             <option value="all">Todas</option>
-            {Object.entries(DISPOSITION).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {Object.entries(DLQ_DISPOSITION_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
         <span className="dlq-total">{rows.length} visible{rows.length === 1 ? '' : 's'} · {allItems.length} cargado{allItems.length === 1 ? '' : 's'} de <Unknown value={resource.data?.total} />{nextCursor ? ' · quedan páginas' : ''}</span>
@@ -385,7 +369,7 @@ export function OperationalDlqPanel() {
                   <td data-label="Incidente"><span className="mono" title={item.id ?? undefined}>{compactId(item.id)}</span><small className="subline"><Unknown value={target(item.target)} /></small></td>
                   <td data-label="Tenant"><Unknown value={item.tenantId} /></td>
                   <td data-label="Origen"><Unknown value={item.kind} /><small className="subline"><Unknown value={item.adapter} ausente="no-aplica" /></small></td>
-                  <td data-label="Disposición"><Badge tone={tone(itemDisposition)}><Unknown value={itemDisposition ? DISPOSITION[itemDisposition] : undefined} /></Badge></td>
+                  <td data-label="Disposición"><Badge tone={itemDisposition ? DLQ_DISPOSITION_TONE[itemDisposition] : 'unknown'}><Unknown value={itemDisposition ? DLQ_DISPOSITION_LABEL[itemDisposition] : undefined} /></Badge></td>
                   <td data-label="Intentos"><Unknown value={item.attempts} /></td>
                   <td data-label="Evidencia"><span className="mono" title={item.evidenceSha256 ?? undefined}>{item.evidenceSha256?.slice(0, 12) ?? 'UNKNOWN'}</span></td>
                   <td data-label="Creado"><Time value={item.createdAt} relativo /></td>

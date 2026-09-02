@@ -3,12 +3,15 @@ import { leerCss } from '../../test/leer-css';
 import { cuerposDeSelector as cuerpos, sinComentarios } from '../../test/css-parser';
 
 /**
- * Verification of flex wrapping for the agent drawer tab strip:
- * ensures `.agent-drawer-tabs` declares `flex-wrap: wrap` to prevent horizontal overflow.
+ * The drawer's tab strip is the shared `<ViewTabs variant="panel">`, so the two things that keep it
+ * inside a 420px drawer are now checked on `styles.css` and not on a skin of its own.
  */
-const HOJA = leerCss('features/live/live.css');
+const GLOBAL = sinComentarios(leerCss('styles.css'));
 /** Without comments: otherwise a `flex-wrap: wrap` quoted in prose would count as a declaration. */
-const SIN_COMENTARIOS = sinComentarios(HOJA);
+const CAJON = sinComentarios(leerCss('features/live/live.css'));
+
+const TIRA = ".view-tabs[data-variant='panel']";
+const PESTANA = `${TIRA} .view-tab`;
 
 /** Effective value of a property: the one of the LAST rule declaring it. */
 function valor(css: string, selector: string, propiedad: string): string | undefined {
@@ -19,14 +22,14 @@ function valor(css: string, selector: string, propiedad: string): string | undef
 }
 
 describe('la tira de pestañas del cajón cabe en el cajón', () => {
-  it('hay una regla para .agent-drawer-tabs donde mirar', () => {
-    expect(cuerpos(SIN_COMENTARIOS, '.agent-drawer-tabs')).not.toHaveLength(0);
+  it('hay una regla para la variante de panel donde mirar', () => {
+    expect(cuerpos(GLOBAL, TIRA)).not.toHaveLength(0);
+    expect(cuerpos(GLOBAL, PESTANA)).not.toHaveLength(0);
   });
 
   it('declara un mecanismo para caber: envuelve o desplaza, pero no se desborda', () => {
-    const envuelve = valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'flex-wrap');
-    const desplaza = valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'overflow-x')
-      ?? valor(SIN_COMENTARIOS, '.agent-drawer-tabs', 'overflow');
+    const envuelve = valor(GLOBAL, TIRA, 'flex-wrap');
+    const desplaza = valor(GLOBAL, TIRA, 'overflow-x') ?? valor(GLOBAL, TIRA, 'overflow');
     const contiene = envuelve === 'wrap'
       || envuelve === 'wrap-reverse'
       || /\b(auto|scroll)\b/.test(desplaza ?? '');
@@ -35,12 +38,12 @@ describe('la tira de pestañas del cajón cabe en el cajón', () => {
   });
 
   it('la pestaña no se encoge ni parte el rótulo a mitad de palabra', () => {
-    expect(valor(SIN_COMENTARIOS, '.agent-drawer-tab', 'flex')).toBe('none');
-    expect(valor(SIN_COMENTARIOS, '.agent-drawer-tab', 'white-space')).toBe('nowrap');
+    expect(valor(GLOBAL, PESTANA, 'flex')).toBe('none');
+    expect(valor(GLOBAL, '.view-tab', 'white-space')).toBe('nowrap');
   });
 
   it('el cajón sigue midiendo 420 px, que es lo que hace falta contener', () => {
-    expect(valor(SIN_COMENTARIOS, '.live-page.has-drawer', 'grid-template-columns'))
+    expect(valor(CAJON, '.live-page.has-drawer', 'grid-template-columns'))
       .toContain('420px');
   });
 });

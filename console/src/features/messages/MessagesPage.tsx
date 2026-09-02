@@ -1,7 +1,8 @@
 import { MessagesSquare, ShieldCheck } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
+import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { EmptyState, PageHeader, PermissionBadge, RefreshButton } from '../../components/ui';
 import { permissionState } from '../../lib';
@@ -24,38 +25,19 @@ import { construirRosterDeMensajeria } from './roster';
  */
 export const VAR_TOPE_MENSAJERIA = '--messenger-tope';
 
-function suscribirRuta(callback: () => void): () => void {
-  window.addEventListener('popstate', callback);
-  return () => { window.removeEventListener('popstate', callback); };
-}
-
-function rutaActual(): string {
-  return window.location.pathname;
-}
-
-function decodificar(segmento: string): string {
-  try {
-    return decodeURIComponent(segmento);
-  } catch {
-    return segmento;
-  }
-}
-
-/** `/messages/:tenant/:alias` identifies the open conversation; plain `/messages`, none. */
-function agenteDeLaRuta(path: string): { tenantId: string; alias: string } | undefined {
-  const segmentos = path.split('/').filter(Boolean).map(decodificar);
-  if (segmentos[0] !== 'messages' || segmentos.length < 3) return undefined;
-  return { tenantId: segmentos[1], alias: segmentos[2] };
+interface MessagesPageProps {
+  /** Segments past the route id: `/messages/:tenant/:alias` is the open conversation. */
+  params?: readonly string[];
 }
 
 /**
  * Interactive messaging view with fleet agents and queue monitoring.
  */
-export function MessagesPage() {
-  return <ConsoleAccessBoundary><MessagesPageContent /></ConsoleAccessBoundary>;
+export function MessagesPage({ params }: MessagesPageProps = {}) {
+  return <ConsoleAccessBoundary><MessagesPageContent params={params} /></ConsoleAccessBoundary>;
 }
 
-function MessagesPageContent() {
+function MessagesPageContent({ params }: MessagesPageProps) {
   const api = useApi();
   const status = useResource('messages-status', () => api.getStatus());
   const topology = useResource('messages-topology', () => api.getTopology());
@@ -64,13 +46,12 @@ function MessagesPageContent() {
   const activity = useResource('messages-activity', () => api.getFleetActivity());
   const queues = useResource('messages-queues', () => api.getQueues());
 
-  useIntervalo(messages.reload, 2_500, messages.loading);
-  useIntervalo(status.reload, 5_000, status.loading);
-  useIntervalo(activity.reload, 5_000, activity.loading);
-  useIntervalo(queues.reload, 15_000, queues.loading);
-  useIntervalo(topology.reload, 30_000, topology.loading);
+  usePolling(messages.reload, 2_500, { pausedWhile: messages.loading });
+  usePolling(status.reload, 5_000, { pausedWhile: status.loading });
+  usePolling(activity.reload, 5_000, { pausedWhile: activity.loading });
+  usePolling(queues.reload, 15_000, { pausedWhile: queues.loading });
+  usePolling(topology.reload, 30_000, { pausedWhile: topology.loading });
 
-  const path = useSyncExternalStore(suscribirRuta, rutaActual, () => '/messages');
   /**
    * The roster is NOT built only from `memberships ∪ presence`. See `roster.ts`: with that single
    * source, a message addressed to an alias without membership or lease showed up nowhere on this
@@ -91,7 +72,7 @@ function MessagesPageContent() {
     [activity.data, activity.error, queues.data, queues.error],
   );
 
-  const pedido = agenteDeLaRuta(path);
+  const pedido = params?.length === 2 ? { tenantId: params[0], alias: params[1] } : undefined;
   const seleccionado = pedido ? agents.find((agent) => agent.id === fleetAgentId(pedido.tenantId, pedido.alias)) : undefined;
   const accesoVerificado = access.error ? undefined : access.data;
   const topologiaVerificada = topology.error ? undefined : topology.data;
@@ -220,12 +201,4 @@ function MessagesPageContent() {
       </p>
     </>
   );
-}
-
-function useIntervalo(reload: () => void, milisegundos: number, cargando: boolean) {
-  useEffect(() => {
-    if (cargando) return;
-    const intervalo = window.setInterval(reload, milisegundos);
-    return () => { window.clearInterval(intervalo); };
-  }, [cargando, milisegundos, reload]);
 }

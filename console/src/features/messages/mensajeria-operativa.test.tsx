@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { QueueItem } from '../../api/types';
 import { mockMessages, topology } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { renderRouted } from '../../test/render';
 import { MessagesPage } from './MessagesPage';
 
 /**
@@ -62,7 +62,7 @@ describe('el room de origen cuando hay más de uno', () => {
     dosSalasCompartidas();
     const enviados = capturarPublish();
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     const selector = await within(hilo).findByRole('combobox', { name: /room de origen/i });
@@ -79,7 +79,7 @@ describe('el room de origen cuando hay más de uno', () => {
 
   it('con una sola sala no hay selector: se dice cuál es y de dónde sale', async () => {
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     expect(within(hilo).queryByRole('combobox', { name: /room de origen/i })).toBeNull();
@@ -93,7 +93,7 @@ describe('el compositor', () => {
   it('Enter publica y Shift+Enter escribe una línea nueva sin publicar', async () => {
     const enviados = capturarPublish();
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     const caja = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
@@ -112,7 +112,7 @@ describe('el compositor', () => {
   it('un borrador de puros espacios no sale a la red', async () => {
     const enviados = capturarPublish();
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     const enviar = within(hilo).getByRole('button', { name: /^enviar$/i });
@@ -128,7 +128,7 @@ describe('el compositor', () => {
     // It used to live in the `placeholder`, so it erased itself at the first keystroke — exactly
     // when it starts to matter. `kratos` is the fixture agent whose lease is already expired.
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'kratos');
     const aviso = within(hilo).getAllByRole('note').find((nota) => /lease de kratos/i.test(nota.textContent));
@@ -154,7 +154,7 @@ describe('la cola al lado de la conversación', () => {
       totals: { pending: 0, retrying: 0, dead: 4_312 }, muestra_recortada: true, items: filas,
     })));
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     // `dl` carries no list role: the strip is read by its own class, which the stylesheet also uses.
@@ -169,7 +169,7 @@ describe('la cola al lado de la conversación', () => {
       return HttpResponse.json(mockMessages());
     }));
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     const antes = lecturas;
@@ -184,7 +184,7 @@ describe('cambiar de conversación y volver a leer', () => {
     // The feed re-reads itself every 2.5 s: if the selection lived in the array's index instead of
     // in the `message_id`, the detail would jump to another message on its own while being read.
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const hilo = await abrirConversacion(user, 'argos');
     const burbujas = hilo.querySelector<HTMLElement>('.terminal-transcript');
@@ -209,7 +209,7 @@ describe('cambiar de conversación y volver a leer', () => {
     // The pane is remounted by its `key`: a draft written for argos appearing in socrates' box is
     // the kind of mistake that gets sent before it is noticed.
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
 
     const argos = await abrirConversacion(user, 'argos');
     await user.type(within(argos).getByRole('textbox', { name: /mensaje para argos/i }), 'esto es para argos');
@@ -225,7 +225,7 @@ describe('cambiar de conversación y volver a leer', () => {
 describe('el roster como conmutador', () => {
   it('la búsqueda deja sólo a quien se busca, y decirlo mal no inventa a nadie', async () => {
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
     await screen.findByRole('button', { name: /conversación con argos,/i });
 
     const busqueda = screen.getByRole('textbox', { name: /buscar agente/i });
@@ -242,7 +242,7 @@ describe('el roster como conmutador', () => {
 
   it('el filtro por cliente deja sólo los alias de ese tenant', async () => {
     const user = userEvent.setup();
-    renderWithApi(<MessagesPage />);
+    renderRouted(MessagesPage);
     await screen.findByRole('button', { name: /conversación con argos,/i });
 
     await user.selectOptions(screen.getByRole('combobox', { name: /cliente/i }), 'Jhon');

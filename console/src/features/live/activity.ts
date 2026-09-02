@@ -1,5 +1,6 @@
 import type { FleetActivityAgent, FleetActivityFlag, FleetWorkState } from '../../api/types';
 import { formatDurationSeconds, leaseState } from '../../lib';
+import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import { LIVE_STATE_META, type LiveState } from './agent-state';
 
 export { formatDurationSeconds } from '../../lib';
@@ -171,9 +172,10 @@ export function sortByUrgency(
  *  distinguishing "never had presence" (missing presence) from "presence with unreadable epoch/expiry". */
 export function presenceBadge(agent: FleetActivityAgent): { tone: BadgeTone; label: string } {
   const state = leaseState(agent.presence?.lease_until);
-  if (state === 'online') return { tone: 'online', label: 'Conectado' };
-  if (state === 'expired') return { tone: 'offline', label: 'Caído' };
-  return { tone: 'unknown', label: agent.presence ? 'Sin dato' : 'Nunca conectó' };
+  if (state === 'unknown' && !agent.presence) {
+    return { tone: LEASE_TONE.unknown, label: FLAG_LABEL.never_connected };
+  }
+  return { tone: LEASE_TONE[state], label: LEASE_LABEL[state] };
 }
 
 export function agentRowKey(agent: FleetActivityAgent): string {

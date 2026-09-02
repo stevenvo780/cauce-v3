@@ -533,3 +533,54 @@ describe('el token CSRF viaja en toda escritura del plano PTY', () => {
     expect(csrf).toBe('mock-csrf-token');
   });
 });
+
+it('surfaces a 403 whose body only carries reason, with no message key', async () => {
+  server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
+    { reason: 'attribution_required' }, { status: 403 },
+  )));
+
+  await expect(createTerminalSession(sessionInput({ reason: 'sólo reason' })))
+    .rejects.toMatchObject({ status: 403, code: undefined, message: 'attribution_required' });
+});
+
+it('reports a caller abort as an abort, never as a fabricated 504 timeout', async () => {
+  const controller = new AbortController();
+  server.use(http.get('*/v3/console/terminal/targets', () => HttpResponse.json({ items: [] })));
+
+  const outcome = terminalRequest('/v3/console/terminal/targets', { signal: controller.signal })
+    .catch((error: unknown) => error);
+  controller.abort();
+
+  const error = await outcome;
+  expect(error).not.toBeInstanceOf(TerminalApiError);
+  expect(error).toMatchObject({ name: 'AbortError' });
+});
+
+it('demands the exact 201 receipt and refuses any other successful status', async () => {
+  server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(mockTerminalGrant({
+    sessionId: 'sess-200', tenantId: 'Steven', alias: 'jarvis', container: 'claw',
+    runtimeUser: 'claw', mode: 'shell', requestId: REQUEST_ID,
+  }), { status: 200 })));
+
+  await expect(createTerminalSession(sessionInput({ reason: 'recibo 200' })))
+    .rejects.toMatchObject({ status: 409, code: 'invalid_grant_receipt' });
+});
+
+it('demands an empty 204 receipt and refuses a 204 that carries a body', async () => {
+  server.use(http.delete('*/v3/console/terminal/sessions/sess-body', () => new HttpResponse(
+    JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } },
+  )));
+
+  await expect(deleteTerminalSession('sess-body', OWNER))
+    .rejects.toMatchObject({ status: 409, code: 'invalid_release_receipt' });
+});
+
+it('demands the exact 200 receipt on a takeover and refuses a 201', async () => {
+  server.use(http.post('*/v3/console/terminal/sessions/sess-201/owner', () => HttpResponse.json(
+    { session_id: 'sess-201', request_id: REQUEST_ID, owner_generation: '2' }, { status: 201 },
+  )));
+
+  await expect(rotateTerminalSessionOwner(
+    'sess-201', { request_id: REQUEST_ID, owner_generation: '1' }, NEXT_OWNER_TOKEN,
+  )).rejects.toMatchObject({ status: 409, code: 'invalid_owner_receipt' });
+});

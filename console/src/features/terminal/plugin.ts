@@ -1,6 +1,6 @@
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import { permissionState } from '../../lib';
-import type { TerminalTargetsSnapshot } from './api';
+import type { TerminalTarget, TerminalTargetsSnapshot } from './api';
 import {
   resolveLiveTui, resolveTerminalTarget, SHELL_MODE,
   type FleetAgent, type LiveTuiStatus, type TerminalAccessStatus,
@@ -51,81 +51,78 @@ export function ultimateTerminalGate(capability: TerminalCapability | undefined,
 }
 
 /** `blocked` means the plugin gate itself is closed, before any destination is even considered. */
-interface TerminalChannelGate {
+interface CanalGate<S> {
   enabled: boolean;
-  status: TerminalAccessStatus | 'blocked';
+  status: S | 'blocked';
   reason: string;
   websocketPath?: string;
 }
 
+interface CanalResolution<S> {
+  status: S;
+  reason: string;
+  target?: TerminalTarget;
+}
+
 /**
- * Full gate for one destination: the plugin gate (RBAC + capability + same-origin endpoint)
- * AND the server's per-target authority. Both must be explicit allows; the client only paints
- * grey buttons, the real authority is always the server's, re-checked on every session request.
+ * The single body behind both public gates: the plugin gate (RBAC + capability + same-origin
+ * endpoint), then the endpoint the inventory may publish held to that SAME rule, and only then
+ * the server's per-target authority. Sharing it is what stops the two channels from ever
+ * disagreeing about same-origin. The client only paints grey buttons; the real authority is
+ * always the server's, re-checked on every session request.
  */
+function canalGate<S>(
+  capability: TerminalCapability | undefined,
+  access: ConsoleAccess | undefined,
+  targets: TerminalTargetsSnapshot | undefined,
+  agent: FleetAgent,
+  resolve: (items: TerminalTarget[] | null | undefined, agent: FleetAgent) => CanalResolution<S>,
+  openStatus: S,
+): { gate: CanalGate<S>; target?: TerminalTarget } {
+  const plugin = ultimateTerminalGate(capability, access);
+  if (!plugin.enabled) return { gate: { enabled: false, status: 'blocked', reason: plugin.reason } };
+  const declared = targets?.websocket_path ?? plugin.websocketPath;
+  if (!sameOriginWebsocketPath(declared)) {
+    return { gate: { enabled: false, status: 'blocked', reason: 'Endpoint WebSocket inválido o no same-origin.' } };
+  }
+  const resolution = resolve(targets?.items, agent);
+  return {
+    gate: {
+      enabled: resolution.status === openStatus,
+      status: resolution.status,
+      reason: resolution.reason,
+      websocketPath: declared,
+    },
+    ...(resolution.target ? { target: resolution.target } : {}),
+  };
+}
+
+/** Full gate for one destination, plus the refusal to present a read-only TUI as a shell. */
 export function terminalChannelGate(
   capability: TerminalCapability | undefined,
   access: ConsoleAccess | undefined,
   targets: TerminalTargetsSnapshot | undefined,
   agent: FleetAgent,
-): TerminalChannelGate {
-  const gate = ultimateTerminalGate(capability, access);
-  if (!gate.enabled) return { enabled: false, status: 'blocked', reason: gate.reason };
-
-  // The inventory may publish its own endpoint; it is held to the same same-origin rule.
-  const declared = targets?.websocket_path ?? gate.websocketPath;
-  if (!sameOriginWebsocketPath(declared)) {
-    return { enabled: false, status: 'blocked', reason: 'Endpoint WebSocket inválido o no same-origin.' };
-  }
-
-  const resolution = resolveTerminalTarget(targets?.items, agent);
-  if (resolution.status === 'allowed' && !resolution.target?.modes.includes(SHELL_MODE)) {
+): CanalGate<TerminalAccessStatus> {
+  const { gate, target } = canalGate(capability, access, targets, agent, resolveTerminalTarget, 'allowed');
+  if (gate.status === 'allowed' && !target?.modes.includes(SHELL_MODE)) {
     return {
       enabled: false,
       status: 'unknown',
       reason: `El agente PTY de ${agent.alias} está conectado, pero no publica el modo shell. `
         + 'La consola no convierte una TUI de solo lectura en una terminal interactiva.',
-      websocketPath: declared,
+      websocketPath: gate.websocketPath,
     };
   }
-  return {
-    enabled: resolution.status === 'allowed',
-    status: resolution.status,
-    reason: resolution.reason,
-    websocketPath: declared,
-  };
+  return gate;
 }
 
 /** Same as `terminalChannelGate`, but for the agent's live TUI (`harness` mode). */
-interface LiveTuiGate {
-  enabled: boolean;
-  status: LiveTuiStatus | 'blocked';
-  reason: string;
-  websocketPath?: string;
-}
-
-/**
- * Full gate for the live TUI: the plugin gate (RBAC + capability + same-origin endpoint),
- * the per-target authority AND that the server publishes `harness` mode.
- * Any link that is not an explicit permission keeps the TUI closed, with its reason.
- */
 export function liveTuiGate(
   capability: TerminalCapability | undefined,
   access: ConsoleAccess | undefined,
   targets: TerminalTargetsSnapshot | undefined,
   agent: FleetAgent,
-): LiveTuiGate {
-  const gate = ultimateTerminalGate(capability, access);
-  if (!gate.enabled) return { enabled: false, status: 'blocked', reason: gate.reason };
-  const declared = targets?.websocket_path ?? gate.websocketPath;
-  if (!sameOriginWebsocketPath(declared)) {
-    return { enabled: false, status: 'blocked', reason: 'Endpoint WebSocket inválido o no same-origin.' };
-  }
-  const live = resolveLiveTui(targets?.items, agent);
-  return {
-    enabled: live.status === 'available',
-    status: live.status,
-    reason: live.reason,
-    websocketPath: declared,
-  };
+): CanalGate<LiveTuiStatus> {
+  return canalGate(capability, access, targets, agent, resolveLiveTui, 'available').gate;
 }

@@ -4,6 +4,7 @@ import { TIEMPO_MAXIMO_MS } from '../api/client';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
 import { PageHelp } from './PageHelp';
+import { useRovingTabs } from './use-roving-tabs';
 
 // Re-export so the rest of the console keeps importing its visual vocabulary from a single place.
 export { FloatingTooltip, Tooltip, TOOLTIP_DELAY_MS } from './Tooltip';
@@ -224,24 +225,38 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
 /**
  * Accessible tabs component to switch views within a page.
  */
-export function ViewTabs<T extends string>({ tabs, active, onSelect, label }: {
-  tabs: readonly { id: T; label: string; badge?: ReactNode }[];
+export interface ViewTab<T extends string> {
+  id: T;
+  label: ReactNode;
+  badge?: ReactNode;
+}
+
+export function ViewTabs<T extends string>({
+  tabs, active, onSelect, label, variant = 'page', panelId,
+}: {
+  tabs: readonly ViewTab<T>[];
   active: T;
   onSelect: (id: T) => void;
   label: string;
+  variant?: 'page' | 'panel' | 'chip';
+  panelId?: string;
 }) {
+  const roving = useRovingTabs(tabs.length, (index) => { onSelect(tabs[index].id); });
   return (
-    <div className="view-tabs" role="tablist" aria-label={label}>
-      {tabs.map((tab) => (
+    <div className="view-tabs" role="tablist" aria-label={label} data-variant={variant}>
+      {tabs.map((tab, index) => (
         <button
           key={tab.id}
           type="button"
           role="tab"
           id={`view-tab-${tab.id}`}
           aria-selected={active === tab.id}
-          aria-controls={`view-panel-${tab.id}`}
+          aria-controls={panelId ?? `view-panel-${tab.id}`}
+          tabIndex={active === tab.id ? 0 : -1}
           className="view-tab"
+          ref={roving.tabRef(index)}
           onClick={() => { onSelect(tab.id); }}
+          onKeyDown={(event) => { roving.onKeyDown(event, index); }}
         >
           {tab.label}
           {tab.badge == null ? null : <span className="view-tab-badge">{tab.badge}</span>}

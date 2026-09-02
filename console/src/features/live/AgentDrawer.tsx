@@ -1,11 +1,11 @@
 import { ExternalLink, X } from 'lucide-react';
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useRef } from 'react';
 import { useApi } from '../../api/context';
 import { useResource, type Resource } from '../../api/use-resource';
 import type {
   AgentDocumentKind, AgentPerfilCampos, ConfigurationSnapshot, FleetActivityItem,
 } from '../../api/types';
-import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
+import { Badge, EmptyState, Time, Unknown, ViewTabs } from '../../components/ui';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { UNKNOWN, compactId, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
@@ -74,7 +74,6 @@ export function AgentDrawer({
 }: AgentDrawerProps) {
   const cajon = useRef<HTMLElement>(null);
   const cerrar = useRef<HTMLButtonElement>(null);
-  const pestanas = useRef<(HTMLButtonElement | null)[]>([]);
   const focoDeVuelta = useRef<HTMLElement | null>(
     typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
       ? document.activeElement
@@ -111,18 +110,6 @@ export function AgentDrawer({
   }, [onClose]);
 
   const atraparFoco = useFocusTrap(cajon);
-  const moverPestana = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
-    let siguiente: number | undefined;
-    if (event.key === 'ArrowRight') siguiente = (index + 1) % DRAWER_TABS.length;
-    if (event.key === 'ArrowLeft') siguiente = (index - 1 + DRAWER_TABS.length) % DRAWER_TABS.length;
-    if (event.key === 'Home') siguiente = 0;
-    if (event.key === 'End') siguiente = DRAWER_TABS.length - 1;
-    if (siguiente === undefined) return;
-    event.preventDefault();
-    onTab(DRAWER_TABS[siguiente].id);
-    pestanas.current[siguiente]?.focus();
-  };
-
   const meta = LIVE_STATE_META[view.state];
 
   return (
@@ -147,31 +134,20 @@ export function AgentDrawer({
         </button>
       </header>
 
-      <div className="agent-drawer-tabs" role="tablist" aria-label="Secciones del detalle">
-        {DRAWER_TABS.map((entry, index) => (
-          <button
-            key={entry.id}
-            id={`agent-drawer-tab-${entry.id}`}
-            type="button"
-            role="tab"
-            aria-selected={tab === entry.id}
-            aria-controls="agent-drawer-panel"
-            tabIndex={tab === entry.id ? 0 : -1}
-            className="agent-drawer-tab"
-            onClick={() => { onTab(entry.id); }}
-            onKeyDown={(event) => { moverPestana(event, index); }}
-            ref={(element) => { pestanas.current[index] = element; }}
-          >
-            {entry.label}
-          </button>
-        ))}
-      </div>
+      <ViewTabs
+        tabs={DRAWER_TABS}
+        active={tab}
+        onSelect={onTab}
+        label="Secciones del detalle"
+        variant="panel"
+        panelId="agent-drawer-panel"
+      />
 
       <div
         className="agent-drawer-body"
         id="agent-drawer-panel"
         role="tabpanel"
-        aria-labelledby={`agent-drawer-tab-${tab}`}
+        aria-labelledby={`view-tab-${tab}`}
       >
         {tab === 'ahora' ? <TabAhora view={view} /> : null}
         {tab === 'conexion' ? <TabConexion view={view} /> : null}

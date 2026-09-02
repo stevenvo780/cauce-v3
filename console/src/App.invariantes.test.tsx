@@ -34,6 +34,14 @@ const RUTA_DIRECTA: Record<string, string> = {
   ayuda: '/ayuda',
 };
 
+/** The deep link of every route that declares an `arity`, as the segments past its id. */
+const ENLACE_PROFUNDO: Record<string, readonly string[]> = {
+  messages: ['Steven', 'kant'],
+  terminal: ['Steven', 'kant'],
+};
+
+const CON_ARIDAD = ROUTE_TABLE.filter((route) => route.arity !== undefined);
+
 async function verDestino(id: string) {
   const destino: Destino | undefined = (DESTINOS as Partial<Record<string, Destino>>)[id];
   if (!destino) throw new Error(`the DESTINOS table does not declare what is shown at "/${id}"`);
@@ -112,6 +120,18 @@ describe('the alias table', () => {
   });
 });
 
+describe('the routes that accept a deep link', () => {
+  it('🔴 every route with an arity declares a deep link of exactly that length', () => {
+    const sinEnlace = CON_ARIDAD.filter((route) => ENLACE_PROFUNDO[route.id]?.length !== route.arity);
+    expect(sinEnlace.map((route) => route.id)).toEqual([]);
+  });
+
+  it('no deep link is declared for a route that would reject every segment', () => {
+    const conAridad = new Set(CON_ARIDAD.map((route) => route.id));
+    expect(Object.keys(ENLACE_PROFUNDO).filter((id) => !conAridad.has(id))).toEqual([]);
+  });
+});
+
 // ================================================================================================
 // Level 2 · mounting the App. "It is in the list" is not "it gets drawn".
 // ================================================================================================
@@ -170,12 +190,30 @@ describe('every declared ALIAS reaches its heir and rewrites the address bar', (
   );
 });
 
-/**
- * The NEGATIVE CONTROL of everything above.
- *
- * Without it, the suite would not demonstrate that an address outside the tables keeps its URL
- * and is distinguishable from a valid view. These cases fix the face of the explicit 404.
- */
+describe('a deep link draws its view, and any other arity the explicit 404', () => {
+  const casos = CON_ARIDAD.map((route) => [route.id, ENLACE_PROFUNDO[route.id]] as const);
+
+  it.each(casos)('/%s/… reaches the view that declares the arity', async (id, segmentos) => {
+    window.history.pushState({}, '', `/${id}/${segmentos.join('/')}`);
+    renderWithApi(<App />);
+
+    expect(await verDestino(id)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeNull();
+  });
+
+  it.each(casos)('CONTROL — /%s/… with one extra segment keeps the address as a 404', async (id, segmentos) => {
+    const ruta = `/${id}/${segmentos.join('/')}/sobrante`;
+    window.history.pushState({}, '', ruta);
+    renderWithApi(<App />);
+
+    expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 }))
+      .toBeInTheDocument();
+    expect(window.location.pathname).toBe(ruta);
+  });
+});
+
+/** The NEGATIVE CONTROL of everything above: without it the suite would not demonstrate that an
+    address outside the tables keeps its URL and is distinguishable from a valid view. */
 describe('the explicit state for unknown addresses', () => {
   it('an id that DOES NOT exist keeps the URL and does not invent the cover', async () => {
     window.history.pushState({}, '', '/ruta-que-nadie-declaro');

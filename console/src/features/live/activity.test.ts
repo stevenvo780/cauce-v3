@@ -6,6 +6,7 @@ import {
   presenceBadge, resumirSenales, rowUrgency, sortByUrgency,
 } from './activity';
 import { LIVE_STATE_META } from './agent-state';
+import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 
 function agent(overrides: Partial<FleetActivityAgent>): FleetActivityAgent {
   return { tenant_id: 'Steven', alias: 'kant', ...overrides };
@@ -123,6 +124,13 @@ describe('presenceBadge', () => {
     // "Caido" and not "EXPIRADO": it is exactly what the verdict above calls down and what
     // the footer legend explains as down. Three words for the same fact.
     expect(presenceBadge(expired).label).toBe('Caído');
+  });
+
+  it('toma la palabra y el tono del vocabulario, no de una segunda copia', () => {
+    const expired = agent({ presence: { lease_until: new Date(Date.now() - 60_000).toISOString() } });
+    expect(presenceBadge(expired)).toEqual({ tone: LEASE_TONE.expired, label: LEASE_LABEL.expired });
+    expect(presenceBadge(agent({ presence: { lease_until: null } })))
+      .toEqual({ tone: LEASE_TONE.unknown, label: LEASE_LABEL.unknown });
   });
 });
 

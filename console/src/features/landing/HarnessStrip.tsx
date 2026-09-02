@@ -1,7 +1,8 @@
 import { Bot, Braces, Cable, Radio } from 'lucide-react';
-import type { AdapterView, CapabilityState } from '../../api/types';
+import type { AdapterView } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { safeCapabilityState } from '../../lib';
+import { CAPABILITY_LABEL, CAPABILITY_TONE } from '../../vocabulario';
 
 /**
  * What used to be the **"Adapters"** view, now folded into the landing page.
@@ -15,20 +16,6 @@ import { safeCapabilityState } from '../../lib';
  * It folds into a `<details>` collapsed by default: present and one click away, without spending
  * the top-of-page space the landing owes to alerts.
  */
-
-/** The harness state, in Spanish: it used to be the raw value of the API's `state` field. */
-const ESTADO_ARNES: Readonly<Record<string, string | undefined>> = {
-  available: 'Disponible',
-  degraded: 'Degradado',
-  unavailable: 'No disponible',
-};
-
-function tone(state?: CapabilityState | null): 'online' | 'warning' | 'danger' | 'unknown' {
-  if (state === 'available') return 'online';
-  if (state === 'degraded') return 'warning';
-  if (state === 'unavailable') return 'danger';
-  return 'unknown';
-}
 
 export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; error?: Error }) {
   return (
@@ -56,7 +43,7 @@ export function HarnessStrip({ adapters, error }: { adapters: AdapterView[]; err
                   <div className="adapter-head">
                     <span className="adapter-icon"><Bot aria-hidden="true" /></span>
                     <div><p className="eyebrow"><Unknown value={adapter.id} /></p><h3><Unknown value={adapter.label} /></h3></div>
-                    <Badge tone={tone(safeCapabilityState(adapter.state))}><Unknown value={ESTADO_ARNES[safeCapabilityState(adapter.state) ?? '']} /></Badge>
+                    <Badge tone={CAPABILITY_TONE[safeCapabilityState(adapter.state) ?? 'unknown']}>{CAPABILITY_LABEL[safeCapabilityState(adapter.state) ?? 'unknown']}</Badge>
                   </div>
                   <p className="adapter-detail"><Unknown value={adapter.detail} /></p>
                   <dl className="adapter-meta">

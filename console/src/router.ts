@@ -1,10 +1,32 @@
-import type { MouseEvent } from 'react';
+import { useMemo, useSyncExternalStore, type MouseEvent } from 'react';
 import type { TerminalRelayState } from './features/terminal/relay-status';
 
-/**
- * Navigates without reloading the page. `pushState` does not trigger `popstate` on its own, so we
- * must dispatch it by hand so the router —which subscribes to `popstate`— notices the change.
- */
+function subscribeToRoute(callback: () => void): () => void {
+  window.addEventListener('popstate', callback);
+  return () => { window.removeEventListener('popstate', callback); };
+}
+
+/** Snapshot for `useSyncExternalStore`: a stable primitive, never a freshly built array. */
+function currentRoutePath(): string {
+  return window.location.pathname.replace(/^\//, '');
+}
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+/** The only subscription to the address bar: `/terminal/Steven/kant` → ['terminal','Steven','kant']. */
+export function useRouteSegments(): readonly string[] {
+  const path = useSyncExternalStore(subscribeToRoute, currentRoutePath, () => '');
+  return useMemo(() => path.split('/').filter(Boolean).map(decodeSegment), [path]);
+}
+
+/** Navigates without reloading. `pushState` does not fire `popstate` on its own, so we dispatch it
+    by hand so the router —which subscribes to `popstate`— notices the change. */
 export function navigate(path: string): void {
   if (window.location.pathname === path) return;
   window.history.pushState({}, '', path);

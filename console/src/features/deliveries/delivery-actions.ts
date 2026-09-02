@@ -13,7 +13,7 @@ interface DeliveryMutationApi {
   cancelDelivery: (deliveryId: string) => Promise<CancelResult>;
 }
 
-export type SafeDeliveryActionOutcome =
+type SafeDeliveryActionOutcome =
   | { kind: 'confirmed'; notice: string; rereadCompleted: boolean }
   | {
     kind: 'uncertain';
@@ -90,7 +90,7 @@ export function rereadProvesDeliveryEffect(
  * real, distinct row with a recognizable state or attempt count, rather than leaving the row
  * locked forever for a fact the snapshot can never carry.
  */
-export function rereadProvesReplayFromUnverifiedReceipt(
+function rereadProvesReplayFromUnverifiedReceipt(
   reconciliation: DeliveryReconciliation,
   unverifiedReceipt: unknown,
   snapshot: unknown,

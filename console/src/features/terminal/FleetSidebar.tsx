@@ -3,9 +3,10 @@ import { useMemo, useState } from 'react';
 import type { AdapterView } from '../../api/types';
 import { Badge, EmptyState, LoadingState } from '../../components/ui';
 import { haceCuanto } from '../../lib';
+import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import type { TerminalTargetsSnapshot } from './api';
 import { traducirCodigosEnTexto } from './denegaciones';
-import { adapterBreakdownText, fleetTerminalChip, filterFleetAgents, LEASE_STATE_LABEL, type FleetAgent } from './fleet';
+import { adapterBreakdownText, fleetTerminalChip, filterFleetAgents, type FleetAgent } from './fleet';
 
 interface FleetSidebarProps {
   agents: FleetAgent[];
@@ -16,10 +17,6 @@ interface FleetSidebarProps {
   error?: Error;
   /** Optional: absent inventory renders every alias as an explicit UNKNOWN, never as a spinner. */
   targets?: TerminalTargetsSnapshot;
-}
-
-function agentTone(state: FleetAgent['leaseState']): 'online' | 'offline' | 'unknown' {
-  return state === 'online' ? 'online' : state === 'expired' ? 'offline' : 'unknown';
 }
 
 function fichaTecnica(agent: FleetAgent, capabilities: string[]): string {
@@ -105,7 +102,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
               type="button"
               title={fichaTecnica(agent, capabilities)}
               onClick={() => { onOpenAgent(agent); }}
-              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${LEASE_STATE_LABEL[agent.leaseState]}, PTY: ${pty.label}, ${fichaTecnica(agent, capabilities)}`}
+              aria-label={`Abrir sesión con ${agent.alias}, ${agent.tenantId}, ${LEASE_LABEL[agent.leaseState]}, PTY: ${pty.label}, ${fichaTecnica(agent, capabilities)}`}
             >
               <span className="agent-name">
                 <span className={`agent-presence ${agent.leaseState}`} aria-hidden="true">
@@ -113,7 +110,7 @@ export function FleetSidebar({ agents, adapters, activeAgentId, onOpenAgent, loa
                 </span>
                 <strong>{agent.alias}</strong>
                 <small>{agent.tenantId}</small>
-                <Badge tone={agentTone(agent.leaseState)}>{LEASE_STATE_LABEL[agent.leaseState]}</Badge>
+                <Badge tone={LEASE_TONE[agent.leaseState]}>{LEASE_LABEL[agent.leaseState]}</Badge>
               </span>
               <span className="agent-meta">
                 {/* `pty.label` ya viene en castellano de `fleetTerminalChip`; lo que faltaba era

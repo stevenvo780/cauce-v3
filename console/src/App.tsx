@@ -10,11 +10,13 @@ import {
   type ComponentType,
 } from 'react';
 import { ConsoleAccessProvider } from './api/console-access';
+import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from './breakpoints';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LandingPage } from './features/landing/LandingPage';
 import { NAV_ENTRIES, useNavAvailability } from './nav';
-import { onNavClick, redirect } from './router';
+import { onNavClick, redirect, useRouteSegments } from './router';
 
 /**
  * Every operational view used to be imported into the landing bundle. That made opening the
@@ -39,11 +41,10 @@ function deferredPage<P extends object>(
   };
 }
 
-/** Optional state carried by routed views: audit tab or an exact Terminal agent identity. */
+/** Optional state carried by routed views: the audit tab and the segments past the route id. */
 interface RoutePageProps {
   initialTab?: 'senales' | 'auditoria';
-  tenantId?: string;
-  alias?: string;
+  params?: readonly string[];
 }
 
 const LiveFleetPage = deferredPage(async () => ({
@@ -75,7 +76,10 @@ interface Route {
   label: string;
   icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
   component: ComponentType<RoutePageProps>;
+  arity?: number;
 }
+
+const DEEP_ROUTE_ARITY: Partial<Record<string, number>> = { messages: 2, terminal: 2 };
 
 const PAGES: Record<string, ComponentType<RoutePageProps>> = {
   '': LandingPage,
@@ -95,6 +99,7 @@ const routes: Route[] = [
     label: entry.label,
     icon: entry.icon,
     component: PAGES[entry.id],
+    arity: DEEP_ROUTE_ARITY[entry.id],
   })),
   { id: 'ayuda', label: '', icon: Boxes, component: PAGES.ayuda },
 ];
@@ -103,11 +108,6 @@ const routes: Route[] = [
 const MENU = routes.filter((route) => route.label !== '');
 
 /** Redirects of obsolete or consolidated routes to their canonical views. */
-/* Routes that accept segments past the id, with their exact arity. A view that navigates to a
-   subroute not declared here ends up at "Route not found", and no test catches it: theirs assert
-   on `pathname`, which looks the same when the destination does not exist. */
-const SUBDETALLES: Partial<Record<string, number>> = { fleet: 2, messages: 2, terminal: 2 };
-
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
   licenses: 'accounts',
   quotas: 'accounts',
@@ -119,6 +119,9 @@ const ROUTE_ALIASES: Partial<Record<string, string>> = {
   topology: 'live',
   help: 'ayuda',
 };
+
+/** Retired DETAIL routes: only their deep form redirects, at the arity of the heir that absorbed it. */
+const LEGACY_DETAIL_REDIRECTS: Partial<Record<string, string>> = { fleet: 'terminal' };
 
 /** Route and alias tables exported for navigation verification and invariant tests. */
 export const ROUTE_TABLE: readonly Readonly<Route>[] = routes;
@@ -157,40 +160,19 @@ interface RouteMatch {
   notFoundPath?: string;
 }
 
-/** Raw snapshot for useSyncExternalStore: must be a stable primitive, not a freshly-created object. */
-function currentPath(): string {
-  return window.location.pathname.replace(/^\//, '');
-}
-
-function decodeSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-}
-
-function matchRoute(path: string): RouteMatch {
-  const segments = path.split('/').filter(Boolean).map(decodeSegment);
+/** ONE map resolves a deep address —`LEGACY_DETAIL_REDIRECTS`— and another a bare one. A segment
+    count that is neither zero (the bare id is always valid) nor the route's `arity` fails closed,
+    so a link to an undeclared subroute is an explicit 404 and never another view. */
+function matchRoute(segments: readonly string[]): RouteMatch {
   const requested = segments[0] ?? '';
-  const aridad = SUBDETALLES[requested];
   const params = segments.slice(1);
-  const detalleFleetLegado = requested === 'fleet' && params.length === aridad;
-  const alias = detalleFleetLegado
-    ? 'terminal'
-    : segments.length > 1 && aridad !== undefined ? undefined : ROUTE_ALIASES[requested];
-  const id = alias ?? requested;
-  const subdetalle = aridad !== undefined && alias === undefined && params.length === aridad;
-  const existe = detalleFleetLegado || subdetalle || routes.some((route) => route.id === id);
-  const aridadInvalida = params.length > 0 && !subdetalle && !detalleFleetLegado;
-  return existe && !aridadInvalida
-    ? { id, params, aliasedFrom: alias !== undefined ? requested : undefined }
-    : { id: requested, params, notFoundPath: `/${path}` };
-}
-
-function subscribe(callback: () => void): () => void {
-  window.addEventListener('popstate', callback);
-  return () => { window.removeEventListener('popstate', callback); };
+  const target = params.length > 0 ? LEGACY_DETAIL_REDIRECTS[requested] : ROUTE_ALIASES[requested];
+  const id = target ?? requested;
+  const route = routes.find((candidate) => candidate.id === id);
+  const arityMatches = params.length === 0 || params.length === route?.arity;
+  return route && arityMatches
+    ? { id, params, aliasedFrom: target !== undefined ? requested : undefined }
+    : { id: requested, params, notFoundPath: `/${segments.join('/')}` };
 }
 
 /** Rail (78px, icons only) or full bar (248px, with labels). */
@@ -198,9 +180,6 @@ type SidebarState = 'rail' | 'expanded';
 
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
 const NAV_ID = 'nav-principal';
-/** Breakpoints from `responsive.css`: the viewport forces the rail, and below that the bar moves below. */
-const RAIL_VIEWPORT = '(max-width: 1100px)';
-const BOTTOM_BAR_VIEWPORT = '(max-width: 760px)';
 const CONSOLE_TITLE = 'Cauce V3 Console';
 const NOT_FOUND_TITLE = 'Ruta no encontrada';
 
@@ -224,9 +203,10 @@ export function App() {
 }
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
-  const path = useSyncExternalStore(subscribe, currentPath, () => '');
+  const segments = useRouteSegments();
+  const path = segments.join('/');
   const navAvailability = useNavAvailability();
-  const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(path);
+  const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(segments);
   const route = routes.find((candidate) => candidate.id === routeId);
   const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
@@ -270,11 +250,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   else if (routeId !== 'observability') auditoriaPedida.current = false;
 
   const Page = route?.component;
-  const terminalTarget = !notFoundPath && routeId === 'terminal' && params.length === 2
-    ? { tenantId: params[0], alias: params[1] }
-    : undefined;
-  const terminalTargetAlias = terminalTarget?.alias;
+  const terminalTargetAlias = !notFoundPath && routeId === 'terminal' ? params[1] : undefined;
   const viewTitle = notFoundPath ? NOT_FOUND_TITLE : terminalTargetAlias ?? route?.label;
+  const boundaryLabel = route && route.label !== '' ? route.label : 'Esta vista';
 
   useEffect(() => {
     document.title = viewTitle ? `${viewTitle} · ${CONSOLE_TITLE}` : CONSOLE_TITLE;
@@ -357,11 +335,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             ? <RouteNotFound path={notFoundPath} />
             : Page
             ? (
-              <Page
-                initialTab={auditoriaPedida.current ? 'auditoria' : undefined}
-                tenantId={terminalTarget?.tenantId}
-                alias={terminalTarget?.alias}
-              />
+              <ErrorBoundary label={boundaryLabel} resetKey={path}>
+                <Page initialTab={auditoriaPedida.current ? 'auditoria' : undefined} params={params} />
+              </ErrorBoundary>
             )
             : null}
         </main>

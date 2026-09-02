@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { mockActivity, mockMessages, mockStatus, topology } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { renderRouted } from '../../test/render';
 import { MessagesPage } from './MessagesPage';
 
 beforeEach(() => {
@@ -66,7 +66,7 @@ function notaQueDice(hilo: HTMLElement, texto: RegExp): boolean {
 }
 
 it('lista a los agentes con el estado de su cola al lado del nombre', async () => {
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const argos = await screen.findByRole('button', { name: /conversación con argos,/i });
   // From the /v3/console/activity fixture: argos has 1 queued and 1 in flight.
@@ -94,7 +94,7 @@ it('un agente que /activity no informa sale UNKNOWN en su cola, nunca en cero', 
     ...sinArgos,
     agents: (sinArgos.agents ?? []).filter((agent) => agent.alias !== 'argos'),
   })));
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const argos = await screen.findByRole('button', { name: /conversación con argos,/i });
   await waitFor(() => { expect(within(argos).getByText('UNKNOWN en cola')).toBeInTheDocument(); });
@@ -105,7 +105,7 @@ it('un agente que /activity no informa sale UNKNOWN en su cola, nunca en cero', 
 
 it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', async () => {
   const user = userEvent.setup();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
 
@@ -122,7 +122,7 @@ it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', asy
 it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a mano', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   // There is no field where to write the recipient or the room: that is part of the fix.
@@ -151,7 +151,7 @@ it('no inventa éxito ni borra el borrador ante un 202 sin recibo durable exacto
     keys.push(input.idempotency_key);
     return HttpResponse.json({ message_id: '10000000-0000-4000-8000-000000000001' }, { status: 202 });
   }));
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
@@ -188,7 +188,7 @@ it('conserva el borrador y no reintenta cuando el servidor prueba que la reserva
       return HttpResponse.json({});
     }),
   );
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
@@ -211,7 +211,7 @@ it('reconcilia un lost-202 reintentando una sola vez con la misma clave y sin du
     if (enviados.length === 1) return HttpResponse.error();
     return HttpResponse.json(publishReceipt(input, true), { status: 202 });
   }));
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
@@ -250,7 +250,7 @@ it('recupera el journal sin body al cerrar y reabrir la conversación tras dos r
       );
     }),
   );
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   let hilo = await abrirConversacion(user, 'argos');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'retry exacto al reabrir');
@@ -298,7 +298,7 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
     }),
   );
 
-  const firstView = renderWithApi(<MessagesPage />);
+  const firstView = renderRouted(MessagesPage);
   let hilo = await abrirConversacion(user, 'argos');
   await user.type(
     within(hilo).getByRole('textbox', { name: /mensaje para argos/i }),
@@ -309,7 +309,7 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
   expect(publishes).toBe(2);
 
   firstView.unmount();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
   hilo = await abrirConversacion(user, 'argos');
   await user.type(
     within(hilo).getByRole('textbox', { name: /mensaje para argos/i }),
@@ -331,7 +331,7 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
 it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar publicar', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'salva');
 
@@ -344,7 +344,7 @@ it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar pu
 
 it('ofrece el salto a la terminal del agente, apuntando a su detalle real', async () => {
   const user = userEvent.setup();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   expect(within(hilo).getByRole('link', { name: /abrir tui/i })).toHaveAttribute('href', '/terminal/Steven/argos');
@@ -352,7 +352,7 @@ it('ofrece el salto a la terminal del agente, apuntando a su detalle real', asyn
 
 it('un enlace profundo a un alias que el servidor no observa lo dice, en vez de inventar el agente', async () => {
   window.history.pushState({}, '', '/messages/Steven/fantasma');
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   expect(await screen.findByText(/no observa a/i)).toBeInTheDocument();
   expect(screen.getByText('Steven:fantasma')).toBeInTheDocument();
@@ -360,7 +360,7 @@ it('un enlace profundo a un alias que el servidor no observa lo dice, en vez de 
 
 it('declara el techo de 100 mensajes del servidor en vez de presentar el hilo como completo', async () => {
   const user = userEvent.setup();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   expect(within(hilo).getByText(/sin filtro por par/i)).toBeInTheDocument();
@@ -408,7 +408,7 @@ function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
 it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso gaia', async () => {
   const user = userEvent.setup();
   servidorConGaia({ enElRegistro: true });
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   // 1) It has a row in the roster, labelled as what it is: registered and without a room.
   const fila = await screen.findByRole('button', { name: /conversación con gaia,.*sin sala declarada/i });
@@ -425,7 +425,7 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
 it('con el registro caído, el hilo sigue existiendo porque el propio feed lo sostiene', async () => {
   const user = userEvent.setup();
   servidorConGaia({ enElRegistro: false });
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const fila = await screen.findByRole('button', { name: /conversación con gaia,/i });
   await user.click(fila);
@@ -442,7 +442,7 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
 it('un alias que ninguna fuente menciona sigue sin existir, y se dice por qué', async () => {
   servidorConGaia({ enElRegistro: true });
   window.history.pushState({}, '', '/messages/Steven/fantasma');
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   expect(await screen.findByText(/ni en el registro de agentes/i)).toBeInTheDocument();
   expect(screen.getByText('Steven:fantasma')).toBeInTheDocument();
@@ -478,7 +478,7 @@ function feedConFanOut() {
 it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del publish', async () => {
   const user = userEvent.setup();
   feedConFanOut();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
@@ -529,7 +529,7 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
 it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuja del hilo', async () => {
   const user = userEvent.setup();
   feedConFanOut();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
@@ -542,7 +542,7 @@ it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuj
 it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   await user.selectOptions(within(hilo).getByLabelText(/^carril$/i), 'batch');
@@ -561,7 +561,7 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
 it('sin tocar el selector sigue publicando interactive con prioridad 10', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirConversacion(user, 'argos');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
@@ -582,7 +582,7 @@ it('sin tocar el selector sigue publicando interactive con prioridad 10', async 
  */
 it('marca la envoltura con data-conversacion sólo cuando hay un hilo abierto', async () => {
   const user = userEvent.setup();
-  const { container } = renderWithApi(<MessagesPage />);
+  const { container } = renderRouted(MessagesPage);
 
   const envoltura = container.querySelector('.messenger-shell');
   await screen.findByRole('button', { name: /conversación con argos,/i });

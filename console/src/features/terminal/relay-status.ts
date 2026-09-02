@@ -9,9 +9,10 @@
  * `no-desplegado`; upstream failures and transport errors mean `sin-comprobar` because they do
  * not reveal whether the relay exists. A check in flight remains `checking`.
  */
-import { createContext, createElement, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, createElement, useContext, type ReactNode } from 'react';
 import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
+import { usePolling } from '../../api/use-polling';
 import type { TerminalCapability } from '../../api/types';
 import { useResource, type Resource } from '../../api/use-resource';
 
@@ -136,11 +137,7 @@ export function TerminalRelayProvider({ children, pollMs = 30_000 }: {
   const capabilityLoading = capability.loading;
   const reloadCapability = capability.reload;
 
-  useEffect(() => {
-    if (capabilityLoading) return;
-    const interval = window.setInterval(() => { void reloadCapability(); }, pollMs);
-    return () => { window.clearInterval(interval); };
-  }, [capabilityLoading, pollMs, reloadCapability]);
+  usePolling(reloadCapability, pollMs, { pausedWhile: capabilityLoading });
 
   return createElement(TerminalCapabilityContext.Provider, { value: capability }, children);
 }

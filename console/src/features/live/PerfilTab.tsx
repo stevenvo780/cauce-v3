@@ -4,7 +4,7 @@ import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
-import { EmptyState, Unknown } from '../../components/ui';
+import { EmptyState, Unknown, ViewTabs } from '../../components/ui';
 import type { PermissionState } from '../../lib';
 import { MedidorDeRol } from './MedidorDeRol';
 import {
@@ -454,22 +454,28 @@ export function PerfilTab({
 
         {ficheros.length > 0 ? (
           <>
-            <div className="perfil-ficheros" role="tablist" aria-label="Ficheros del arnés">
-              {ficheros.map((fichero) => (
-                <button
-                  key={fichero.nombre}
-                  type="button"
-                  role="tab"
-                  aria-selected={abierto.nombre === fichero.nombre}
-                  className="perfil-fichero-tab"
-                  onClick={() => { setFicheroAbierto(fichero.nombre); }}
-                >
-                  {fichero.nombre}
-                  {fichero.politica === 'solo-si-falta' ? <span className="perfil-del-agente"> · del agente</span> : null}
-                </button>
-              ))}
-            </div>
-            <div className="perfil-fichero-cuerpo" role="tabpanel">
+            <ViewTabs
+              tabs={ficheros.map((fichero) => ({
+                id: fichero.nombre,
+                label: (
+                  <>
+                    {fichero.nombre}
+                    {fichero.politica === 'solo-si-falta' ? <span className="perfil-del-agente"> · del agente</span> : null}
+                  </>
+                ),
+              }))}
+              active={abierto.nombre}
+              onSelect={setFicheroAbierto}
+              label="Ficheros del arnés"
+              variant="chip"
+              panelId="perfil-fichero-panel"
+            />
+            <div
+              className="perfil-fichero-cuerpo"
+              id="perfil-fichero-panel"
+              role="tabpanel"
+              aria-labelledby={`view-tab-${abierto.nombre}`}
+            >
               {abierto.politica === 'solo-si-falta' ? (
                 <p className="muted">
                   {abierto.nombre} es del agente: lo escribe él. Si ya existe NO se toca ni para

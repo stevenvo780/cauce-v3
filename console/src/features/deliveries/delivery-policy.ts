@@ -1,10 +1,10 @@
 import type { DeliveryState } from '../../api/types';
 
-export type DeliveryTone = 'done' | 'danger' | 'warning' | 'running';
+type DeliveryTone = 'done' | 'danger' | 'warning' | 'running';
 export type DeliveryGroup = 'pending' | 'retry' | 'review' | 'complete';
-export type DeliveryErrorExpectation = 'absent' | 'required';
+type DeliveryErrorExpectation = 'absent' | 'required';
 
-export interface DeliveryPolicy {
+interface DeliveryPolicy {
   readonly label: string;
   readonly tone: DeliveryTone;
   readonly group: DeliveryGroup;
@@ -51,12 +51,12 @@ export const DELIVERY_POLICY = {
 
 export const DELIVERY_STATES = Object.freeze(Object.keys(DELIVERY_POLICY) as DeliveryState[]);
 
-export interface KnownDeliveryPolicy extends DeliveryPolicy {
+interface KnownDeliveryPolicy extends DeliveryPolicy {
   readonly known: true;
   readonly state: DeliveryState;
 }
 
-export interface UnknownDeliveryPolicy {
+interface UnknownDeliveryPolicy {
   readonly known: false;
   readonly state: undefined;
   readonly label: 'UNKNOWN';

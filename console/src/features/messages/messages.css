@@ -285,6 +285,17 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
  * El corte es 761 px porque de 760 para abajo manda el otro arreglo: ahí el compositor es `fixed`
  * contra la ventana y el panel NO lleva alto, porque quien scrollea es la página.
  */
+/* --- El compositor: `.terminal-composer` y `.composer-*` sólo los escribe esta vista --- */
+.terminal-composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); background: #0b1320; }
+.terminal-composer > label { display: block; margin-bottom: 6px; color: var(--faint); font-size: var(--tipo-rotulo); letter-spacing: .06em; text-transform: uppercase; }
+.terminal-composer textarea { min-height: 74px; margin: 0; border-color: #2a4565; background: #070d16; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-cuerpo); }
+.terminal-composer textarea:focus { border-color: var(--blue); }
+.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; color: var(--faint); font-size: var(--tipo-apunte); }
+.composer-blocked { display: flex; align-items: center; gap: 5px; margin: 8px 0 0; color: var(--red); font-size: var(--tipo-apunte); }
+.room-select-wrap { position: relative; display: block; }
+.room-select-wrap select { min-width: 120px; min-height: 33px; margin-top: 3px; padding: 5px 25px 5px 7px; appearance: none; font-size: var(--tipo-rotulo); }
+.room-select-wrap svg { position: absolute; top: 50%; right: 7px; color: var(--faint); pointer-events: none; }
+
 @media (min-width: 761px) {
   .messenger-shell {
     /* `vh` primero como red para un navegador sin `dvh`; el segundo gana donde existe. */
@@ -400,16 +411,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
 
   .messenger-composer .composer-footer > span { display: none; }
   .messenger-composer textarea { min-height: 54px; }
-}
-
-@media (max-width: 460px) {
-  /*
-   * El corte de 460 px de styles.css apila el pie del compositor en columna y estira el botón al
-   * 100 %: en un compositor anclado eso son dos filas más de alto robadas al hilo. Acá se
-   * devuelve a una sola fila; el pie de esta vista sólo tiene el atajo (ya oculto) y el botón.
-   */
-  .messenger-composer .composer-footer { align-items: center; flex-direction: row; }
-  .messenger-composer .composer-footer .button { width: auto; }
+  .room-select-wrap select { width: 100%; }
 }
 
 @media (prefers-color-scheme: light) {
@@ -417,5 +419,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
   .messenger-presence { background: #e6edf6; }
   .messenger-avatar { background: #e6edf6; color: #3a4a60; }
   .messenger-pill { background: #ffffff; }
+  .terminal-composer { background: #f8fafc; }
+  .terminal-composer textarea { background: #ffffff; }
   .messenger-agent:hover, .messenger-agent[data-active] { background: #ffffff; }
 }

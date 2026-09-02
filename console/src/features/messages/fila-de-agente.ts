@@ -1,12 +1,4 @@
-import { UNKNOWN, type LeaseState } from '../../lib';
 import { colaNecesitaAtencion, type SaludDeCola } from './queue-health';
-
-/** Lease state in the words of the rest of the console; `unknown` reuses the single word `lib.ts` gives every absence. */
-export const ROTULO_DE_LEASE: Readonly<Record<LeaseState, string>> = {
-  online: 'en línea',
-  expired: 'vencido',
-  unknown: UNKNOWN,
-};
 
 /** `detallada` = one chip per figure, known zeros included; `breve` = a single line with only what is above zero. */
 type FormaDeLaCola = 'detallada' | 'breve';

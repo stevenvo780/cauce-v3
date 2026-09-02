@@ -5,6 +5,8 @@
  * Ensures strict CSRF token propagation (`X-CSRF-Token`) matching the shared client configuration.
  */
 import { ApiError, cauceApi, type CauceApi } from '../../api/client';
+import { errorBody, isUnsafeMethod, safeBase } from '../../api/client/core';
+import { hasExactKeys, isCanonicalUuidV4 } from '../../api/contract-guards';
 
 type PtyTargetState = 'online' | 'agent_offline' | 'not_installed' | 'unknown';
 
@@ -108,34 +110,6 @@ function terminalTimeout(method: string, path: string): TerminalApiError {
   );
 }
 
-function safeBase(baseUrl: string): string {
-  if (!baseUrl) return '';
-  const currentOrigin = typeof globalThis.location !== 'undefined' ? globalThis.location.origin : 'http://localhost';
-  const parsed = new URL(baseUrl, currentOrigin);
-  if (parsed.username || parsed.password) {
-    throw new Error('VITE_CAUCE_API_BASE must not contain credentials');
-  }
-  if (import.meta.env.PROD && typeof globalThis.location !== 'undefined' && parsed.origin !== globalThis.location.origin) {
-    throw new Error('Production OIDC BFF API base must be same-origin');
-  }
-  return baseUrl.replace(/\/$/, '');
-}
-
-function errorBody(value: unknown): { message?: string; error?: string; reason?: string } {
-  if (!value || typeof value !== 'object') return {};
-  const record = value as Record<string, unknown>;
-  return {
-    ...(typeof record.message === 'string' ? { message: record.message } : {}),
-    ...(typeof record.error === 'string' ? { error: record.error } : {}),
-    ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
-  };
-}
-
-/** Write = whatever the gateway's `onRequest` hook considers unsafe. Same list, same source. */
-function esEscritura(method: string | undefined): boolean {
-  return !['GET', 'HEAD', 'OPTIONS'].includes((method ?? 'GET').toUpperCase());
-}
-
 /**
  * The minimum this module needs from the session. It is a `Pick`, not the whole `CauceApi`, so a
  * component or test can pass its own without building the full client.
@@ -184,7 +158,7 @@ async function terminalResponse(
   });
 
   const operation = async (): Promise<{ status: number; body: unknown }> => {
-    const csrf = esEscritura(init.method) ? await csrfParaEscritura(session) : undefined;
+    const csrf = isUnsafeMethod(init.method) ? await csrfParaEscritura(session) : undefined;
     const requestHeaders: Record<string, string> = {
       Accept: 'application/json',
       'X-Cauce-Console': '1',
@@ -271,7 +245,7 @@ function exactIdentityList(value: unknown, legacyTenant: string): TerminalFleetI
     } else {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined;
       const record = item as Record<string, unknown>;
-      if (!exactKeys(record, ['tenant_id', 'alias'])
+      if (!hasExactKeys(record, ['tenant_id', 'alias'])
           || typeof record.tenant_id !== 'string' || typeof record.alias !== 'string'
           || !record.tenant_id.trim() || !record.alias.trim()) return undefined;
       identity = { tenant_id: record.tenant_id, alias: record.alias };
@@ -407,20 +381,8 @@ function boundedOpaque(value: unknown, maximum: number): string | undefined {
   return value;
 }
 
-function exactKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(record).sort();
-  const sortedExpected = [...expected].sort();
-  return actual.length === sortedExpected.length
-    && actual.every((key, index) => key === sortedExpected[index]);
-}
-
-const CANONICAL_UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const POSITIVE_BIGINT = /^[1-9][0-9]{0,18}$/u;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
-
-function canonicalUuidV4(value: unknown): string | undefined {
-  return typeof value === 'string' && CANONICAL_UUID_V4.test(value) ? value : undefined;
-}
 
 function positiveBigint(value: unknown): string | undefined {
   if (typeof value !== 'string' || !POSITIVE_BIGINT.test(value)) return undefined;
@@ -476,7 +438,7 @@ function exactBrowserTicketClaims(ticket: string): BrowserTicketClaims | undefin
   }
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const row = value as Record<string, unknown>;
-  if (!exactKeys(row, ['v', 'sid', 'op', 'sub', 'tgt', 'mode', 'iat', 'exp']) || row.v !== 1
+  if (!hasExactKeys(row, ['v', 'sid', 'op', 'sub', 'tgt', 'mode', 'iat', 'exp']) || row.v !== 1
       || !Number.isSafeInteger(row.iat) || !Number.isSafeInteger(row.exp)
       || Number(row.exp) <= Number(row.iat)) return undefined;
   const sid = boundedOpaque(row.sid, 256);
@@ -486,7 +448,7 @@ function exactBrowserTicketClaims(ticket: string): BrowserTicketClaims | undefin
   if (!sid || !operator || !subject || !mode
       || row.tgt === null || typeof row.tgt !== 'object' || Array.isArray(row.tgt)) return undefined;
   const target = row.tgt as Record<string, unknown>;
-  if (!exactKeys(target, ['tenant', 'alias', 'container', 'generation', 'image', 'uid', 'user'])
+  if (!hasExactKeys(target, ['tenant', 'alias', 'container', 'generation', 'image', 'uid', 'user'])
       || !Number.isSafeInteger(target.uid)) return undefined;
   const tenant = boundedOpaque(target.tenant, 64);
   const alias = boundedOpaque(target.alias, 64);
@@ -514,7 +476,7 @@ function exactGrantCohort(value: unknown, target: CreateTerminalSessionInput): T
   for (const item of value) {
     if (item === null || typeof item !== 'object' || Array.isArray(item)) return undefined;
     const row = item as Record<string, unknown>;
-    if (!exactKeys(row, ['tenant_id', 'alias'])) return undefined;
+    if (!hasExactKeys(row, ['tenant_id', 'alias'])) return undefined;
     const tenantId = boundedOpaque(row.tenant_id, 64);
     const alias = boundedOpaque(row.alias, 64);
     if (!tenantId || !alias || (tenantId === target.tenant_id && alias === target.alias)) return undefined;
@@ -533,14 +495,14 @@ function exactTerminalSessionGrant(
 ): TerminalSessionGrant | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
-  if (!exactKeys(record, [
+  if (!hasExactKeys(record, [
     'session_id', 'ticket', 'websocket_path', 'expires_at', 'ttl_seconds',
     'receipt_recovered', 'request_id', 'owner_generation', 'target',
   ])) return undefined;
   const target = record.target;
   if (target === null || typeof target !== 'object' || Array.isArray(target)) return undefined;
   const targetRow = target as Record<string, unknown>;
-  if (!exactKeys(targetRow, [
+  if (!hasExactKeys(targetRow, [
     'tenant_id', 'alias', 'container', 'runtime_user', 'mode', 'shares_container_with',
   ])) return undefined;
   const sessionId = boundedOpaque(record.session_id, 256);
@@ -549,7 +511,7 @@ function exactTerminalSessionGrant(
   const expiresAt = boundedOpaque(record.expires_at, 64);
   const expiry = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
   const ttl = record.ttl_seconds;
-  const requestId = canonicalUuidV4(record.request_id);
+  const requestId = isCanonicalUuidV4(record.request_id) ? record.request_id : undefined;
   const ownerGeneration = positiveBigint(record.owner_generation);
   const ticketClaims = ticket === undefined ? undefined : exactBrowserTicketClaims(ticket);
   const cohort = exactGrantCohort(targetRow.shares_container_with, requested);
@@ -651,7 +613,7 @@ export function rotateTerminalSessionOwner(
     const record = body as Record<string, unknown>;
     const generation = positiveBigint(record.owner_generation);
     const expected = positiveBigint(current.owner_generation);
-    if (!exactKeys(record, ['owner_generation', 'request_id', 'session_id'])
+    if (!hasExactKeys(record, ['owner_generation', 'request_id', 'session_id'])
         || record.session_id !== sessionId
         || record.request_id !== current.request_id
         || generation === undefined
@@ -689,22 +651,22 @@ export interface TerminalSessionListItem {
 export async function listTerminalSessions(session?: SesionConToken): Promise<TerminalSessionListItem[]> {
   const payload = await terminalRequest<unknown>('/v3/console/terminal/sessions', {}, session);
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)
-      || !exactKeys(payload as Record<string, unknown>, ['items'])
-      || !Array.isArray((payload as Record<string, unknown>).items)) {
+      || !hasExactKeys(payload, ['items'])
+      || !Array.isArray(payload.items)) {
     throw new TerminalApiError(
       'El gateway no devolvió un inventario verificable de sesiones PTY.', 409, 'invalid_sessions_receipt',
     );
   }
   const result: TerminalSessionListItem[] = [];
   const seen = new Set<string>();
-  for (const item of (payload as Record<string, unknown>).items as unknown[]) {
+  for (const item of payload.items as unknown[]) {
     if (item === null || typeof item !== 'object' || Array.isArray(item)) {
       throw new TerminalApiError(
         'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
       );
     }
     const record = item as Record<string, unknown>;
-    if (!exactKeys(record, [
+    if (!hasExactKeys(record, [
       'session_id', 'tenant_id', 'alias', 'mode', 'opened_at', 'expires_at', 'state',
       'request_id', 'owner_generation',
     ])) {
@@ -719,7 +681,7 @@ export async function listTerminalSessions(session?: SesionConToken): Promise<Te
     const openedAt = boundedOpaque(record.opened_at, 64);
     const expiresAt = boundedOpaque(record.expires_at, 64);
     const state = record.state;
-    const requestId = canonicalUuidV4(record.request_id);
+    const requestId = isCanonicalUuidV4(record.request_id) ? record.request_id : undefined;
     const ownerGeneration = positiveBigint(record.owner_generation);
     if (!sessionId || !tenantId || !alias || !mode || !openedAt || !expiresAt
         || !Number.isFinite(Date.parse(openedAt)) || !Number.isFinite(Date.parse(expiresAt))

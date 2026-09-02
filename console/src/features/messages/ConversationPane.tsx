@@ -5,6 +5,7 @@ import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
 import { compactId, safeJobLane } from '../../lib';
+import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import { onNavClick } from '../../router';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
@@ -14,7 +15,6 @@ import { transcriptForSession, type OperatorRoute, type OperatorSession, type Tr
 import { TerminalTranscript } from '../terminal/TerminalTranscript';
 import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
 import { publishDurably } from './durable-publish';
-import { ROTULO_DE_LEASE } from './fila-de-agente';
 import { MessageTimeline } from './MessageTimeline';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
@@ -268,7 +268,7 @@ export function ConversationPane({
             <h2>{agent.alias}</h2>
             <p className="eyebrow">{agent.tenantId} · epoch {agent.presence?.epoch ?? 'UNKNOWN'} · lease <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} /></p>
           </div>
-          <Badge tone={agent.leaseState === 'online' ? 'online' : agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{ROTULO_DE_LEASE[agent.leaseState]}</Badge>
+          <Badge tone={LEASE_TONE[agent.leaseState]}>{LEASE_LABEL[agent.leaseState]}</Badge>
         </div>
         <div className="messenger-thread-actions">
           <a

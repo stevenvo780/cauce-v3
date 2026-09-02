@@ -1,5 +1,6 @@
 import { ShieldCheck, X } from 'lucide-react';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
+import { useRovingTabs } from '../../components/use-roving-tabs';
 import type { TerminalSessionGrant, TerminalTargetsSnapshot } from './api';
 import { TEXTO_DOCTRINA } from './doctrina';
 import type { FleetAgent } from './fleet';
@@ -46,10 +47,11 @@ export function GridContainer({
   onReconciliarPlazas,
 }: GridContainerProps) {
   const visible = sessions.find((session) => session.id === activeId) ?? sessions[0];
+  const roving = useRovingTabs(sessions.length, (index) => { onActivate(sessions[index].id); });
   return (
     <div className="terminal-grid-wrapper">
       <nav className="terminal-session-tabs" role="tablist" aria-label="Sesiones abiertas">
-        {sessions.map((session) => (
+        {sessions.map((session, index) => (
           <span className="terminal-session-tab" key={session.id} data-active={session.id === visible.id || undefined}>
             <button
               className="terminal-panel-title-btn"
@@ -57,6 +59,9 @@ export function GridContainer({
               role="tab"
               aria-selected={session.id === visible.id}
               aria-controls={`terminal-session-${session.id}`}
+              tabIndex={session.id === visible.id ? 0 : -1}
+              ref={roving.tabRef(index)}
+              onKeyDown={(event) => { roving.onKeyDown(event, index); }}
               onClick={() => { onActivate(session.id); }}
             >
               <span className={`tab-live-dot ${session.agent.leaseState}`} aria-hidden="true" />

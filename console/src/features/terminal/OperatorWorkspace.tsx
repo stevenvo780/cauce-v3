@@ -2,6 +2,7 @@ import { AlertTriangle, MonitorPlay } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { AdapterView, ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { EmptyState, LoadingState } from '../../components/ui';
 import { ControlPlanePanel } from './AdapterInspector';
 import { FleetSidebar } from './FleetSidebar';
@@ -465,28 +466,30 @@ export function OperatorWorkspace({ agents, initialAgentId, adapters, access, to
           onOpenAgent={openAgent}
         />
       ) : (
-        <GridContainer
-          sessions={liveSessions}
-          sessionTokens={sessionTokensRef.current}
-          activeId={activeId}
-          agents={agents}
-          access={access}
-          capability={terminalCapability}
-          targets={terminalTargets}
-          grants={grants}
-          closedChannels={closedChannels}
-          onActivate={setActiveId}
-          onClose={closeSession}
-          onUpdate={updateSession}
-          onRequestGrant={requestTerminalGrant}
-          onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
-          onReleaseChannel={releaseChannel}
-          onReconciliarPlazas={(motivo) => {
-            setTopeAlcanzado(true);
-            setMotivoReconciliacionPlaza(motivo);
-            void revisarPlazas();
-          }}
-        />
+        <ErrorBoundary label="La terminal del agente">
+          <GridContainer
+            sessions={liveSessions}
+            sessionTokens={sessionTokensRef.current}
+            activeId={activeId}
+            agents={agents}
+            access={access}
+            capability={terminalCapability}
+            targets={terminalTargets}
+            grants={grants}
+            closedChannels={closedChannels}
+            onActivate={setActiveId}
+            onClose={closeSession}
+            onUpdate={updateSession}
+            onRequestGrant={requestTerminalGrant}
+            onChannelClosed={(id) => { setClosedChannels((current) => ({ ...current, [id]: true })); }}
+            onReleaseChannel={releaseChannel}
+            onReconciliarPlazas={(motivo) => {
+              setTopeAlcanzado(true);
+              setMotivoReconciliacionPlaza(motivo);
+              void revisarPlazas();
+            }}
+          />
+        </ErrorBoundary>
       )}
       </div>
     </>

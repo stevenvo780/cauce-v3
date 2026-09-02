@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mockMessages } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { renderRouted } from '../../test/render';
 import { CARACTERES_DE_PREVISUALIZACION } from '../terminal/cuerpo-del-mensaje';
 import { MessagesPage } from './MessagesPage';
 
@@ -95,7 +95,7 @@ function burbujas(hilo: HTMLElement): HTMLElement[] {
 it('🔴 sin un solo clic NINGUNA burbuja queda marcada como seleccionada', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   await waitFor(() => { expect(burbujas(hilo)).toHaveLength(3); });
@@ -109,7 +109,7 @@ it('🔴 sin un solo clic NINGUNA burbuja queda marcada como seleccionada', asyn
 it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin entrega', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
@@ -129,7 +129,7 @@ it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin en
 it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
@@ -144,7 +144,7 @@ it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () =>
 it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nada', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
@@ -187,7 +187,7 @@ it('🔴 abre la conversación por el FINAL, no por el mensaje más viejo', asyn
   const llamadas = espiarDesplazamiento();
   const user = userEvent.setup();
   feedDeArgos();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const caja = hilo.querySelector('.messenger-thread-scroll');
@@ -202,7 +202,7 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
   espiarDesplazamiento();
   const user = userEvent.setup();
   feedDeArgos();
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const caja = hilo.querySelector<HTMLElement>('.messenger-thread-scroll');
@@ -227,7 +227,7 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
 it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', async () => {
   const user = userEvent.setup();
   feedDeArgos({ recorte: true });
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const recortada = await waitFor(() => {
@@ -249,7 +249,7 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
   }));
   const user = userEvent.setup();
   feedDeArgos({ recorte: true });
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
@@ -272,7 +272,7 @@ it('🔴 si el gateway no publica la ruta todavía, lo dice con esas palabras', 
   )));
   const user = userEvent.setup();
   feedDeArgos({ recorte: true });
-  renderWithApi(<MessagesPage />);
+  renderRouted(MessagesPage);
 
   const hilo = await abrirArgos(user);
   const detalle = await within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });

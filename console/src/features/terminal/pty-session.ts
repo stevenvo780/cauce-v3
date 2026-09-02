@@ -8,6 +8,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './xterm-csp.css';
+import 'virtual:cauce/xterm-ansi.css';
 
 import {
   openSocket,
@@ -49,14 +50,6 @@ export {
   ptyCloseMessage,
   websocketUrl,
 } from './pty-types';
-
-export {
-  FUENTE_TERMINAL,
-  PTY_COLUMNAS_MINIMAS,
-  PTY_CUERPO_BASE,
-  PTY_CUERPO_MINIMO,
-  TEMA_TERMINAL,
-} from './pty-theme';
 
 const IDLE_VIEW: PtySessionView = { state: 'connecting', notices: [], seguirAlFinal: true };
 const entries = new Map<string, PtyEntry>();

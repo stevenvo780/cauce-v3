@@ -5,9 +5,9 @@
  * cannot assert that the TUI is read. What it CAN, and what is asked of it, is that the
  * bundled file does not fall short or desync from the two things it copies:
  *
- *   · from `@xterm/xterm`, the 256 ANSI colors: they are re-derived by reading the literals of
- *     ITS bundle, not from my memory. If xterm changes the palette, this goes red.
- *   · from `pty-session.ts`, the theme and the family: the default value of each `var()` in
+ *   · from `@xterm/xterm`, the 256 ANSI colors: re-derived here from ITS bundle, on its own and
+ *     never through the build-time generator. Two derivations that disagree turn this red.
+ *   · from `pty-theme.ts`, the theme and the family: the default value of each `var()` in
  *     the CSS must be the same as the TypeScript constant. That default is the safety net
  *     for when the JS fails to paint the `style` attribute, and a lying net is worse than no
  *     net at all.
@@ -21,21 +21,21 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { FUENTE_TERMINAL, PTY_CUERPO_BASE, PTY_CUERPO_MINIMO, TEMA_TERMINAL } from './pty-session';
+import { ansiPaletteCss, xtermAnsiPalette } from '../../../vite/ansi-palette';
+import { CUERPO_BASE, CUERPO_MINIMO, FUENTE_TERMINAL, TEMA_TERMINAL } from './pty-theme';
 import { leerCss } from '../../test/leer-css';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
+const BUNDLE_XTERM = readFileSync(createRequire(import.meta.url).resolve('@xterm/xterm'), 'utf8');
 
-const PIEL = leerCss(resolve(AQUI, 'xterm-csp.css'));
+const PIEL = leerCss(resolve(AQUI, 'xterm-csp.css')) + ansiPaletteCss(xtermAnsiPalette(BUNDLE_XTERM));
 const SESION = readFileSync(resolve(AQUI, 'pty-session.ts'), 'utf8');
 
 /** The palette literals come from xterm's bundle, so a change there is noticed here. */
 function paletaDeXterm(): string[] {
-  const require_ = createRequire(import.meta.url);
-  const fuente = readFileSync(require_.resolve('@xterm/xterm'), 'utf8');
-  const inicio = fuente.indexOf('DEFAULT_ANSI_COLORS=Object.freeze');
+  const inicio = BUNDLE_XTERM.indexOf('DEFAULT_ANSI_COLORS=Object.freeze');
   expect(inicio, 'no se encontró DEFAULT_ANSI_COLORS en el bundle de @xterm/xterm').toBeGreaterThan(0);
-  const trozo = fuente.slice(inicio, inicio + 900);
+  const trozo = BUNDLE_XTERM.slice(inicio, inicio + 900);
   const base = [...trozo.matchAll(/toColor\("(#[0-9a-f]{6})"\)/g)].map((m) => m[1]);
   expect(base, 'los 16 colores base de xterm ya no son 16 literales seguidos').toHaveLength(16);
   const niveles = JSON.parse(((/\[0,95,135,175,215,255\]/.exec(trozo)) ?? ['null'])[0]) as number[] | null;
@@ -46,6 +46,16 @@ function paletaDeXterm(): string[] {
   for (let i = 0; i < 216; i += 1) todos.push(hex(niveles[((i / 36) | 0) % 6], niveles[((i / 6) | 0) % 6], niveles[i % 6]));
   for (let t = 0; t < 24; t += 1) { const v = 8 + 10 * t; todos.push(hex(v, v, v)); }
   return todos;
+}
+
+function reglasAusentes(css: string, esperada: readonly string[]): string[] {
+  const faltan: string[] = [];
+  for (let i = 0; i < esperada.length; i += 1) {
+    if (!css.includes(`.pty-host .xterm-fg-${String(i)} { color: ${esperada[i]}; }`)) faltan.push(`fg-${String(i)}`);
+    if (!css.includes(`.pty-host .xterm-bg-${String(i)} { background-color: ${esperada[i]}; }`)) faltan.push(`bg-${String(i)}`);
+    if (!css.includes(`.pty-host .xterm-fg-${String(i)}.xterm-dim {`)) faltan.push(`dim-${String(i)}`);
+  }
+  return faltan;
 }
 
 function canal(hex: string): [number, number, number] {
@@ -61,20 +71,23 @@ function contraste(a: string, b: string): number {
 }
 
 describe('la piel empaquetada del terminal', () => {
-  it('la carga `pty-session.ts`: sin el import no viaja en el bundle', () => {
+  it('la carga `pty-session.ts`: sin los dos imports no viaja en el bundle', () => {
     expect(SESION).toContain("import './xterm-csp.css';");
+    expect(SESION).toContain("import 'virtual:cauce/xterm-ansi.css';");
   });
 
   it('trae los 256 colores ANSI de xterm, sin huecos y con el valor que dice xterm', () => {
     const esperada = paletaDeXterm();
     expect(esperada).toHaveLength(256);
-    const faltan: string[] = [];
-    for (let i = 0; i < esperada.length; i += 1) {
-      if (!PIEL.includes(`.pty-host .xterm-fg-${String(i)} { color: ${esperada[i]}; }`)) faltan.push(`fg-${String(i)}`);
-      if (!PIEL.includes(`.pty-host .xterm-bg-${String(i)} { background-color: ${esperada[i]}; }`)) faltan.push(`bg-${String(i)}`);
-      if (!PIEL.includes(`.pty-host .xterm-fg-${String(i)}.xterm-dim {`)) faltan.push(`dim-${String(i)}`);
-    }
+    const faltan = reglasAusentes(PIEL, esperada);
     expect(faltan, `reglas ANSI ausentes o con otro color: ${faltan.slice(0, 8).join(', ')}`).toEqual([]);
+  });
+
+  it('el chequeo sigue pudiendo ponerse rojo: una paleta truncada deja huecos', () => {
+    const esperada = paletaDeXterm();
+    const faltan = reglasAusentes(ansiPaletteCss(esperada.slice(0, 200)), esperada);
+    expect(faltan).toContain('fg-200');
+    expect(faltan).toHaveLength((256 - 200) * 3);
   });
 
   it('cubre el vídeo inverso (257), que es lo que usan las barras de tmux', () => {
@@ -115,11 +128,11 @@ describe('la piel empaquetada del terminal', () => {
     // Measured in Chrome at 360x800: with the floor at 7 px, 65 columns fit — it cut off THE SAME,
     // because 80 are needed — and on top of that it was unreadable. Lowering the font only pays
     // while it stays readable.
-    expect(PTY_CUERPO_MINIMO).toBeGreaterThanOrEqual(10);
+    expect(CUERPO_MINIMO).toBeGreaterThanOrEqual(10);
     // And it must not go so high that it breaks the desktop: at 1400 px of viewport the gap is
     // 535 px and at 10 px exactly 80 columns fit. At 11 it would drop to 72 and warn about truncation.
-    expect(PTY_CUERPO_MINIMO).toBeLessThanOrEqual(10);
-    expect(PTY_CUERPO_BASE).toBeGreaterThan(PTY_CUERPO_MINIMO);
+    expect(CUERPO_MINIMO).toBeLessThanOrEqual(10);
+    expect(CUERPO_BASE).toBeGreaterThan(CUERPO_MINIMO);
   });
 
   it('el terminal es SIEMPRE oscuro y con contraste de sobra: no depende del tema de la página', () => {

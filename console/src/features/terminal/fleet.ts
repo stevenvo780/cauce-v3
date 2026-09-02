@@ -149,28 +149,6 @@ export function adapterBreakdownText(adapters: AdapterView[]): string {
   ].filter(Boolean).join(' · ');
 }
 
-/** State of an adapter in the operator's words. `unknown` is NOT said "unavailable". */
-export const ADAPTER_STATE_LABELS: Readonly<Record<'available' | 'degraded' | 'unavailable' | 'unknown', string>> = {
-  available: 'Disponible',
-  degraded: 'Degradado',
-  unavailable: 'No disponible',
-  unknown: 'Sin reportar',
-};
-
-/**
- * The lease state, with the SAME words as `/live`.
- *
- * The raw field value was painted —`online` / `expired` / `unknown`, in English and in
- * uppercase by CSS— on the badges of the fleet list and the session header. It is the same
- * fact that "The fleet now" calls "Connected" and "Down": two views of the same product can't
- * call it differently. See `presenceBadge` in `../activity/activity.ts`.
- */
-export const LEASE_STATE_LABEL: Readonly<Record<LeaseState, string>> = {
-  online: 'Conectado',
-  expired: 'Caído',
-  unknown: 'Sin dato',
-};
-
 /** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
 export type TerminalAccessStatus = 'allowed' | 'denied' | 'offline' | 'not_installed' | 'unknown';
 

@@ -1,7 +1,8 @@
 import { Activity, ChevronDown, MonitorPlay, RadioTower, RefreshCw, ShieldCheck, TerminalSquare, Wifi } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
+import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { Badge, EmptyState, PageHeader } from '../../components/ui';
 import { permissionState } from '../../lib';
@@ -25,29 +26,22 @@ import {
 } from './relay-status';
 import './terminal-panel.css';
 
-function useRefreshInterval(reload: () => void, milliseconds: number, loading: boolean) {
-  useEffect(() => {
-    if (loading) return;
-    const interval = window.setInterval(reload, milliseconds);
-    return () => { window.clearInterval(interval); };
-  }, [loading, milliseconds, reload]);
-}
-
 interface TerminalPageProps {
-  tenantId?: string;
-  alias?: string;
+  params?: readonly string[];
 }
 
-export function TerminalPage(props: TerminalPageProps = {}) {
+export function TerminalPage({ params }: TerminalPageProps = {}) {
   return (
     <ConsoleAccessBoundary>
-      <TerminalRelayBoundary><TerminalPageContent {...props} /></TerminalRelayBoundary>
+      <TerminalRelayBoundary><TerminalPageContent params={params} /></TerminalRelayBoundary>
     </ConsoleAccessBoundary>
   );
 }
 
-function TerminalPageContent({ tenantId, alias }: TerminalPageProps) {
+function TerminalPageContent({ params }: TerminalPageProps) {
   const api = useApi();
+  const tenantId = params?.[0];
+  const alias = params?.[1];
   /**
    * With an open session the page enters observation mode: the terminal keeps the height and the
    * six counters collapse into a single strip. Without this the terminal started at y=856 on a
@@ -61,11 +55,11 @@ function TerminalPageContent({ tenantId, alias }: TerminalPageProps) {
   const capability = useTerminalCapability();
   const targets = useResource('ultimate-terminal-targets', () => listTerminalTargets());
 
-  useRefreshInterval(status.reload, 5_000, status.loading);
-  useRefreshInterval(adapters.reload, 15_000, adapters.loading);
-  useRefreshInterval(targets.reload, 15_000, targets.loading);
-  useRefreshInterval(topology.reload, 30_000, topology.loading);
-  useRefreshInterval(access.reload, 30_000, access.loading);
+  usePolling(status.reload, 5_000, { pausedWhile: status.loading });
+  usePolling(adapters.reload, 15_000, { pausedWhile: adapters.loading });
+  usePolling(targets.reload, 15_000, { pausedWhile: targets.loading });
+  usePolling(topology.reload, 30_000, { pausedWhile: topology.loading });
+  usePolling(access.reload, 30_000, { pausedWhile: access.loading });
 
   const agents = useMemo(() => buildFleetAgents(status.data, topology.data), [status.data, topology.data]);
   const initialAgentId = tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;

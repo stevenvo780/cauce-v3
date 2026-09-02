@@ -142,7 +142,7 @@ it('abre sesiones simultáneas, deja el feed en solo lectura y deriva cada escri
 }, 20_000);
 
 it('abre automáticamente el agente pedido por el deep-link sin una segunda vista acotada', async () => {
-  renderWithApi(<TerminalPage tenantId="Steven" alias="kant" />);
+  renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
 
   expect(await screen.findByRole('tab', { name: /kant/i })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByRole('link', { name: /escribir a kant en mensajes/i })).toHaveAttribute(

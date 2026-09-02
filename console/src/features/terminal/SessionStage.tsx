@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useApi } from '../../api/context';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
+import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { Badge, LoadingState, Time, Unknown } from '../../components/ui';
 import { AckInspector } from './AckInspector';
@@ -29,8 +30,8 @@ import {
   type TerminalSessionGrant,
   type TerminalTargetsSnapshot,
 } from './api';
+import { LEASE_LABEL, LEASE_TONE } from '../../vocabulario';
 import {
-  LEASE_STATE_LABEL,
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
   SHELL_MODE,
@@ -118,11 +119,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   const readChannel = useCallback(() => channelSessionId ? readPtySession(channelSessionId) : undefined, [channelSessionId]);
   const channelView = useSyncExternalStore(subscribeChannel, readChannel);
 
-  useEffect(() => {
-    if (messages.loading || ptyChannelLive) return;
-    const interval = window.setInterval(messages.reload, 2_500);
-    return () => { window.clearInterval(interval); };
-  }, [messages.loading, messages.reload, ptyChannelLive]);
+  usePolling(messages.reload, 2_500, { pausedWhile: messages.loading || ptyChannelLive });
 
   useEffect(() => {
     if (!ptyChannelLive || channelView?.state === 'open') return;
@@ -265,7 +262,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
           <div className="session-identity">
             <span className={`session-avatar ${liveSession.agent.leaseState}`}><Braces size={20} aria-hidden="true" /></span>
             <div className="session-identity-text"><p className="eyebrow">{liveSession.agent.tenantId} · epoch <Unknown value={liveSession.agent.presence?.epoch} /></p><h2>{liveSession.agent.alias}</h2></div>
-            <Badge tone={liveSession.agent.leaseState === 'online' ? 'online' : liveSession.agent.leaseState === 'expired' ? 'offline' : 'unknown'}>{LEASE_STATE_LABEL[liveSession.agent.leaseState]}</Badge>
+            <Badge tone={LEASE_TONE[liveSession.agent.leaseState]}>{LEASE_LABEL[liveSession.agent.leaseState]}</Badge>
           </div>
           <div className="session-controls">
              <div className="terminal-mode-switch" aria-label="Canal de sesión">

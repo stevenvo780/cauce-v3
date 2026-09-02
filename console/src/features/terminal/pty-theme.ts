@@ -21,10 +21,6 @@ export const COLUMNAS_MINIMAS = 80;
 export const CUERPO_BASE = 13;
 export const CUERPO_MINIMO = 10;
 
-export const PTY_COLUMNAS_MINIMAS = COLUMNAS_MINIMAS;
-export const PTY_CUERPO_MINIMO = CUERPO_MINIMO;
-export const PTY_CUERPO_BASE = CUERPO_BASE;
-
 let detachedHolder: HTMLDivElement | undefined;
 
 export function holder(): HTMLDivElement {

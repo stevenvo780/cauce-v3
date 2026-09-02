@@ -3,6 +3,182 @@
  * and reuses the tokens and the shell of the existing panel so it stays one single app.
  */
 
+/* =============================================================================================
+ * LA VISTA, DE ARRIBA ABAJO: la forma de cada caja, y debajo sus dos cortes.
+ *
+ * Este bloque va PRIMERO y el resto del fichero lo corrige: media docena de reglas de más abajo
+ * empatan en especificidad con éstas y ganan por orden. Moverlo de sitio cambia la vista.
+ * ========================================================================================== */
+
+/* --- PTY --- */
+.pty-shell { overflow: hidden; border: 1px solid var(--border-strong); border-radius: 11px; background: #070b13; }
+.pty-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: #0e1725; color: var(--muted); font-size: var(--tipo-apunte); }
+.pty-status button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--blue); font-size: var(--tipo-apunte); font-weight: 700; cursor: pointer; }
+.connection-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--amber); }
+.connection-dot.open { background: var(--mint); }
+.connection-dot.error, .connection-dot.closed { background: var(--red); }
+.pty-host { height: min(560px, 65vh); padding: 8px; }
+
+/* --- La página y su tira de contadores --- */
+.ultimate-terminal-page { --terminal-inset: #080e18; --terminal-raised: #101a2a; --terminal-soft: #bdcbe0; }
+.ultimate-terminal-page .page-header { margin-bottom: 20px; }
+.terminal-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 9px; margin-bottom: var(--space-3); }
+.terminal-overview article { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 12px; background: rgb(13 20 34 / 78%); }
+.terminal-overview article > div { display: grid; min-width: 0; gap: 2px; }
+.terminal-overview article > .badge { grid-column: 2; justify-self: start; }
+.terminal-overview small { color: var(--faint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.terminal-overview strong { overflow: visible; color: var(--terminal-soft); font-size: var(--tipo-rotulo); text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.overview-icon { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 9px; background: var(--blue-dim); color: var(--blue); }
+.overview-icon.online { background: var(--mint-dim); color: var(--mint); }
+.terminal-degraded { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; padding: 11px 13px; border: 1px solid #725622; border-radius: 10px; background: var(--amber-dim); color: var(--amber); }
+.terminal-degraded > div { flex: 1; }
+.terminal-degraded strong { display: block; color: var(--text); font-size: var(--tipo-rotulo); }
+.terminal-degraded p { margin: 3px 0 0; font-size: var(--tipo-apunte); }
+
+/* --- La caja y el raíl de la flota --- */
+.ultimate-terminal-shell { display: grid; grid-template-columns: minmax(0, 236px) minmax(0, 1fr); position: relative; min-height: 690px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 18px; background: var(--surface); box-shadow: 0 26px 80px rgb(0 0 0 / 30%); }
+.terminal-fleet-sidebar { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); background: linear-gradient(180deg, #0e1726, #0a111c); }
+.terminal-fleet-head { display: grid; gap: 3px; padding: 11px 14px 8px; }
+.terminal-fleet-head h2 { margin: 0; font-size: var(--tipo-panel); white-space: nowrap; }
+.terminal-fleet-head .eyebrow { margin: 0; white-space: nowrap; }
+.fleet-head-count { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fleet-health-strip { display: grid; gap: 1px; margin: 0 12px 9px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 9px; background: #0a121f; color: var(--muted); font-size: var(--tipo-apunte); }
+.fleet-health-strip > span { display: flex; align-items: center; gap: 6px; }
+.fleet-health-strip svg { color: var(--blue); }
+.fleet-health-strip strong { color: var(--text); }
+.fleet-filters { display: grid; gap: 6px; padding: 0 12px 9px; border-bottom: 1px solid var(--border); }
+.terminal-search { display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--terminal-inset); color: var(--faint); }
+.terminal-search input { min-height: 36px; margin: 0; padding: 6px 0; border: 0; background: transparent; font-size: var(--tipo-cuerpo); }
+.fleet-filter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.fleet-filter-row label > span { display: flex; align-items: center; gap: 4px; color: var(--faint); font-size: var(--tipo-rotulo); letter-spacing: .05em; text-transform: uppercase; }
+.fleet-filter-row select { min-height: 32px; margin-top: 2px; padding: 4px 24px 4px 7px; font-size: var(--tipo-rotulo); }
+.fleet-list-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 13px 4px; color: var(--faint); font-size: var(--tipo-apunte); text-transform: uppercase; white-space: nowrap; }
+.terminal-syncing { display: inline-flex; align-items: center; gap: 4px; }
+.terminal-syncing .spinner { width: 10px; height: 10px; border-width: 1px; }
+.terminal-agent-list { display: grid; align-content: start; gap: 2px; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+.terminal-agent-list .empty-state { padding: 18px 10px; font-size: var(--tipo-cuerpo); }
+/*
+ * Dos renglones por agente, no cinco. El raíl medía 161 px por fila —nombre, ficha con epoch,
+ * fecha de lease en dos renglones, ficha PTY y fichas de capacidad— y con quince agentes entraban
+ * DOS por encima del pliegue a 1920x1080. Lo que baja de renglón no se pierde ni se calla: el
+ * vencimiento del lease, el epoch y las capacidades se dicen enteros en el `title` y en el
+ * `aria-label` del propio botón, y las fichas de capacidad vuelven a la vista en cuanto se escribe
+ * en el buscador, que es cuando hacen falta para saber por qué coincidió esa fila.
+ */
+.terminal-agent { display: grid; gap: 2px; width: 100%; padding: 5px 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text); text-align: left; cursor: pointer; transition: .16s ease; }
+.terminal-agent:hover { border-color: var(--border); background: var(--surface-2); }
+.terminal-agent[data-active="true"] { border-color: #2b685b; background: linear-gradient(100deg, #15352f, #102035); box-shadow: inset 3px 0 var(--mint); }
+.agent-presence { display: grid; width: 18px; height: 18px; flex: none; place-items: center; border-radius: 6px; background: var(--surface-3); color: var(--faint); }
+.agent-presence.online { background: var(--mint-dim); color: var(--mint); }
+.agent-presence.expired { background: var(--red-dim); color: var(--red); }
+.agent-name { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.agent-name strong { overflow: hidden; font-size: var(--tipo-rotulo); text-overflow: ellipsis; white-space: nowrap; }
+.agent-name small { overflow: hidden; color: var(--faint); font-size: var(--tipo-apunte); text-overflow: ellipsis; white-space: nowrap; }
+.agent-name .badge { min-height: 17px; flex: none; margin-left: auto; padding: 0 6px; font-size: var(--tipo-apunte); }
+.agent-meta { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.agent-capabilities { display: flex; flex-wrap: wrap; min-width: 0; gap: 3px; }
+.agent-capabilities .chip { padding: 1px 4px; font-size: var(--tipo-apunte); white-space: nowrap; }
+.agent-capabilities .unknown { font-size: var(--tipo-apunte); }
+
+/* --- El escenario: pestañas, cabecera de sesión y consola --- */
+.terminal-stage { display: flex; min-width: 0; flex-direction: column; background: var(--terminal-inset); }
+.terminal-session-tabs { display: flex; min-height: 53px; align-items: stretch; gap: 4px; overflow-x: auto; padding: 7px 8px 0; border-bottom: 1px solid var(--border); background: #0d1624; }
+.tab-live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); }
+.tab-live-dot.online { background: var(--mint); box-shadow: 0 0 8px var(--mint); }
+.tab-live-dot.expired { background: var(--red); }
+.terminal-active-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 254px); }
+.terminal-console { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--border); }
+/* `flex-wrap` va acá y no en un bloque aparte: a 1280 px el panel del centro se queda en 428 y los
+   controles se llevan casi todo, así que la cabecera envuelve en vez de aplastar a un hijo. */
+.terminal-session-head { display: flex; min-height: 73px; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: #0b1320; }
+.session-identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.session-avatar { display: grid; width: 37px; height: 37px; flex: none; place-items: center; border-radius: 10px; background: var(--amber-dim); color: var(--amber); }
+.session-avatar.online { background: var(--mint-dim); color: var(--mint); }
+.session-avatar.expired { background: var(--red-dim); color: var(--red); }
+.session-identity .eyebrow { margin-bottom: 2px; font-size: var(--tipo-apunte); }
+.session-identity h2 { margin: 0; font-size: var(--tipo-panel); }
+.session-controls { display: flex; align-items: end; gap: 8px; }
+.session-controls > label { font-size: var(--tipo-rotulo); letter-spacing: .05em; text-transform: uppercase; }
+.terminal-mode-switch { display: flex; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--terminal-inset); }
+.terminal-mode-switch button { display: inline-flex; min-height: 28px; align-items: center; gap: 4px; padding: 4px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; cursor: pointer; }
+.terminal-mode-switch button[data-active="true"] { background: var(--surface-3); color: var(--text); }
+.terminal-mode-switch button:disabled { cursor: not-allowed; opacity: .4; }
+.terminal-connection-bar { display: flex; min-height: 32px; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: #080e18; color: var(--faint); font-size: var(--tipo-apunte); }
+.terminal-connection-bar strong { color: var(--terminal-soft); font-size: var(--tipo-apunte); letter-spacing: .08em; }
+.terminal-connection-bar button { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; border: 0; background: transparent; color: var(--blue); font-size: var(--tipo-apunte); cursor: pointer; }
+
+/* --- El inspector --- */
+.terminal-inspector { min-width: 0; overflow-y: auto; background: #0d1624; }
+.terminal-inspector-section { padding: 15px 13px; border-bottom: 1px solid var(--border); }
+.inspector-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; color: var(--blue); }
+.inspector-title .eyebrow { margin-bottom: 2px; font-size: var(--tipo-apunte); }
+.inspector-title h3 { margin: 0; color: var(--text); font-size: var(--tipo-panel); }
+.ack-meta { display: grid; grid-template-columns: 1.4fr .6fr; gap: 7px; margin-bottom: 13px; }
+.ack-meta div { padding: 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--terminal-inset); }
+.ack-timeline { display: grid; margin: 0; padding: 0; list-style: none; }
+.ack-timeline li { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 49px; gap: 7px; margin-left: 5px; padding: 0 0 9px 17px; border-left: 1px solid var(--border-strong); }
+.ack-timeline li:last-child { min-height: auto; border-left-color: transparent; }
+.ack-node { position: absolute; top: 2px; left: -5px; width: 9px; height: 9px; border: 2px solid var(--blue); border-radius: 50%; background: var(--terminal-inset); }
+.ack-timeline li[data-state="done"] .ack-node { border-color: var(--mint); box-shadow: 0 0 8px rgb(99 222 185 / 45%); }
+.ack-timeline li[data-state="failed"] .ack-node { border-color: var(--red); }
+.ack-timeline strong { display: block; color: var(--terminal-soft); font-size: var(--tipo-apunte); letter-spacing: .06em; }
+.ack-timeline time, .ack-timeline small { color: var(--faint); font-size: var(--tipo-apunte); }
+.ack-timeline p { margin: 4px 0 0; color: var(--red); font-size: var(--tipo-apunte); }
+.ack-unknown { display: flex !important; align-items: start; gap: 6px !important; color: var(--faint); font-size: var(--tipo-apunte); }
+.terminal-permissions { display: grid; gap: 6px; }
+.terminal-permission-row { display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--terminal-inset); }
+.terminal-permission-row .mono { overflow: hidden; font-size: var(--tipo-mono); text-overflow: ellipsis; white-space: normal; overflow-wrap: anywhere; }
+.terminal-permission-row .badge { flex: none; }
+.inspector-footnote { margin: 9px 0 0; color: var(--faint); font-size: var(--tipo-apunte); line-height: 1.55; }
+.terminal-adapter-list { display: grid; gap: 6px; }
+.terminal-adapter-list article { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 7px; padding: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--terminal-inset); }
+.terminal-adapter-list article > .badge { grid-column: 2; justify-self: start; margin-top: 3px; }
+.adapter-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.adapter-state-dot.available { background: var(--mint); }
+.adapter-state-dot.degraded { background: var(--amber); }
+.adapter-state-dot.unavailable { background: var(--red); }
+.terminal-adapter-list strong, .terminal-adapter-list small { display: block; }
+.terminal-adapter-list strong { overflow: visible; font-size: var(--tipo-apunte); text-overflow: clip; overflow-wrap: anywhere; }
+.terminal-adapter-list small { margin-top: 2px; color: var(--faint); font-size: var(--tipo-apunte); }
+.terminal-adapter-list .badge { min-height: 19px; padding: 2px 5px; font-size: var(--tipo-apunte); white-space: normal; overflow-wrap: anywhere; }
+.terminal-pty-capability dl, .session-facts dl { display: grid; gap: 7px; }
+.terminal-pty-capability dl div, .session-facts dl div { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.terminal-pty-capability dd, .session-facts dd { margin-top: 0; font-size: var(--tipo-rotulo); }
+.session-facts .inspector-footnote { display: flex; gap: 5px; }
+.terminal-doctrine { display: flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 5px 10px; border-top: 1px solid var(--border); color: var(--faint); font-size: var(--tipo-apunte); text-align: center; }
+.terminal-pty-pane .pty-host { height: min(500px, 57vh); }
+.terminal-channel-unavailable { display: grid; min-height: 430px; place-items: center; align-content: center; padding: 30px; color: var(--faint); text-align: center; }
+.terminal-channel-unavailable h3 { margin: 10px 0 0; color: var(--text); }
+.terminal-channel-unavailable p { margin: 7px 0 0; font-size: var(--tipo-rotulo); }
+
+@media (max-width: 1100px) {
+  .ultimate-terminal-shell { grid-template-columns: minmax(0, 250px) minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .ultimate-terminal-shell { display: block; min-height: 0; overflow: visible; }
+  .terminal-fleet-sidebar { max-height: 480px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .terminal-agent-list { max-height: 270px; }
+  .terminal-stage { min-height: 580px; }
+  .terminal-session-tabs { min-height: 50px; }
+  .terminal-active-grid { display: block; grid-template-columns: minmax(0, 1fr); }
+  .terminal-console { border-right: 0; }
+  .terminal-inspector { display: block; border-top: 1px solid var(--border); }
+  .terminal-session-head { align-items: start; flex-direction: column; flex-wrap: nowrap; }
+  .session-controls { width: 100%; align-items: stretch; flex-direction: column; justify-content: space-between; }
+  .terminal-overview article { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .terminal-degraded { align-items: start; flex-wrap: wrap; }
+  .terminal-degraded .button { width: 100%; }
+}
+
+@media (prefers-color-scheme: light) {
+  .ultimate-terminal-page { --terminal-inset: #f6f8fb; --terminal-raised: #ffffff; --terminal-soft: #34455d; }
+  .terminal-overview article, .terminal-fleet-sidebar, .terminal-session-tabs, .terminal-session-head, .terminal-inspector, .pty-status { background: #f8fafc; }
+  .fleet-health-strip, .terminal-connection-bar { background: #ffffff; }
+  .terminal-agent[data-active="true"] { border-color: #79b5a6; background: linear-gradient(100deg, #dff3ed, #eaf3fb); }
+  .pty-shell { background: #ffffff; }
+}
+
 /* Off-screen home for terminals whose panel is hidden. Kept rendered so the node survives. */
 .pty-detached-holder { position: absolute; top: 0; left: -10000px; width: 900px; height: 480px; overflow: hidden; visibility: hidden; pointer-events: none; }
 
@@ -17,7 +193,7 @@
 .ultimate-terminal-page .terminal-overview { grid-template-columns: repeat(auto-fit, minmax(184px, 1fr)); }
 .ultimate-terminal-page .terminal-overview article > div { min-width: 0; }
 /*
- * Y el VALOR envuelve en vez de recortarse. `styles.css` le pone `white-space: nowrap` con
+ * Y el VALOR envuelve en vez de recortarse. La regla base de arriba le pone `white-space: nowrap` con
  * puntos suspensivos: a 1366 px eso dejaba «CONCEDIDO» cortado dentro de 70 px. Una cifra o un
  * veredicto recortados no se pueden leer, y aquí no hay nada tan largo como para necesitar el
  * recorte: envolver a dos líneas cuesta 14 px y se lee entero.
@@ -44,7 +220,7 @@
  * fuente, alcanzable igual a 360 que a 2560.
  *
  * Lo que sobrevive del bloque viejo es el reparto del carril IZQUIERDO: la lista de la flota lleva
- * alias que envuelven, así que por encima de 1343 px toma una parte del ancho de sobra en vez de
+ * alias que envuelven, así que a partir del paso ancho toma una parte del ancho de sobra en vez de
  * quedarse clavada en 236.
  *
  * EL RAÍL PASA DE 236 A 272 px, Y LO QUE CUESTA, EN COLUMNAS. Medido con una sesión abierta a
@@ -61,12 +237,12 @@
  * su contenido en él, así que a 1920x1080 lo que se veía era su tercio de arriba: en blanco. Con el
  * alto acotado a lo que sobra de la ventana, el escenario vuelve al pliegue y la lista scrollea.
  */
-@media (min-width: 1343px) {
+@media (min-width: 1101px) {
   .ultimate-terminal-page .ultimate-terminal-shell { grid-template-columns: minmax(0, clamp(272px, 14vw, 320px)) minmax(0, 1fr); }
 }
 
 /*
- * El tope de alto va desde 761 px, que es donde `responsive.css` deja de apilar la caja y vuelve a
+ * El tope de alto va desde 761 px, que es donde el paso compacto deja de apilar la caja y vuelve a
  * ser rejilla de dos pistas. `grid-template-rows: minmax(0, 1fr)` es obligatorio: sin él la única
  * fila sigue siendo `auto` —o sea, del alto de su contenido— y la lista de la flota vuelve a
  * desbordar la caja por dentro de su `overflow: hidden`, que es peor que desbordarla a la vista.
@@ -171,7 +347,6 @@
 .pty-notices li[data-level="warn"] { color: var(--amber); }
 .pty-notices li[data-level="error"] { color: var(--red); }
 .pty-reconnect-note { margin: 0; padding: 9px 12px; border-top: 1px solid var(--border); color: var(--faint); font-size: .61rem; line-height: 1.55; }
-.pty-status button { display: inline-flex; align-items: center; gap: 4px; }
 
 /* Consent dialog: the blast radius has to be read before a shell exists. */
 .pty-dialog-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(3 6 12 / 72%); }
@@ -196,16 +371,12 @@
 }
 
 @media (max-width: 760px) {
-  .ultimate-terminal-page .terminal-overview { grid-template-columns: 1fr 1fr; }
+  .ultimate-terminal-page .terminal-overview { grid-template-columns: 1fr; }
   .terminal-channel-state { align-items: start; flex-direction: column; gap: 4px; }
   .pty-session-bar { font-size: .6rem; }
   .pty-bar-close { width: 100%; margin-left: 0; justify-content: center; }
-  .pty-dialog-facts div { grid-template-columns: 1fr; gap: 2px; }
-}
-
-@media (max-width: 460px) {
-  .ultimate-terminal-page .terminal-overview { grid-template-columns: 1fr; }
   .pty-dialog { padding: 15px; }
+  .pty-dialog-facts div { grid-template-columns: 1fr; gap: 2px; }
   .pty-dialog-actions { flex-direction: column-reverse; }
   .pty-dialog-actions .button { width: 100%; justify-content: center; }
 }
@@ -226,7 +397,7 @@
  * hueco que la tira de pestañas deja a su derecha —que por eso le reserva sitio— y sobre la
  * esquina del cartel «Ningún agente seleccionado» cuando todavía no hay ninguna sesión.
  *
- * `position: relative` en el shell lo da `views.css`; sin él este `absolute` se iría a la ventana.
+ * `position: relative` lo declara `.ultimate-terminal-shell` arriba; sin él este `absolute` se iría a la ventana.
  * ------------------------------------------------------------------------------------------ */
 .terminal-inspector-launcher { position: absolute; z-index: var(--layer-raised); top: var(--space-2); right: var(--space-2); }
 .terminal-inspector-boton { display: inline-flex; min-height: 30px; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-3); border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: var(--tipo-rotulo); font-weight: 700; cursor: pointer; }
@@ -238,7 +409,7 @@
 .ultimate-terminal-page .terminal-session-tabs { padding-right: 176px; }
 
 /*
- * A 760 px el shell deja de ser rejilla y se apila (`responsive.css`): sin ninguna sesión abierta
+ * A 760 px el shell deja de ser rejilla y se apila (el paso compacto): sin ninguna sesión abierta
  * lo primero que se ve es la cabecera de la flota, con su insignia «N en línea» pegada a la
  * derecha —justo debajo del control—. Ahí, y sólo ahí, el control vuelve a la fila. En modo
  * observación no hace falta: el terminal sube al principio del shell y la esquina vuelve a ser la
@@ -257,7 +428,7 @@
 .terminal-inspector-modal-cuerpo .terminal-inspector-section:last-child { border-bottom: 0; }
 /*
  * Y dentro del diálogo el ancho deja de ser escaso, así que la insignia de cada adaptador vuelve a
- * su renglón en vez de bajar a una segunda línea: ese apilado de `views.css` existe para un carril
+ * su renglón en vez de bajar a una segunda línea: ese apilado de arriba existe para un carril
  * de 264 px, no para una caja de 560.
  */
 .terminal-inspector-modal-cuerpo .terminal-adapter-list article { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
@@ -299,7 +470,6 @@
 
 .terminal-panel {
   display: flex;
-  /* Another sheet floors this at 420px for the tiled grid that no longer exists. */
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -404,7 +574,7 @@
  *
  * El `.eyebrow` con «Steven · epoch 14» medía 11 px de ANCHO por 190 px de alto: una letra por
  * línea, corriendo en vertical por encima de «ROOM DE ORIGEN». `.session-identity` ya tenía
- * `min-width: 0` en styles.css, pero el `<div>` de dentro no, y a 1280 el panel del centro se
+ * `min-width: 0` en la regla base, pero el `<div>` de dentro no, y a 1280 el panel del centro se
  * queda en 428 px: los controles (selector de room + cuatro botones de modo) se llevan casi todo y
  * al bloque de identidad no le sobra nada donde ponerse.
  *
@@ -412,9 +582,7 @@
  *  1. la cabecera envuelve (`flex-wrap`) en vez de aplastar a un hijo hasta 9 px;
  *  2. el bloque de texto recorta con puntos suspensivos en vez de partir palabra por palabra.
  *
- * Va en este fichero y no en `styles.css`: `styles.css` tiene dueño en otro carril.
  * ------------------------------------------------------------------------------------------- */
-.terminal-session-head { flex-wrap: wrap; }
 .terminal-session-head .session-identity { min-width: 0; flex: 1 1 200px; }
 .session-identity-text { min-width: 0; flex: 1 1 auto; }
 .session-identity-text .eyebrow,
@@ -438,8 +606,8 @@
   .pty-negativa { background: #fdf2f4; }
   /*
    * El `--amber` del tema claro sobre este fondo da 4,48:1 — medido con el navegador— y el texto
-   * es de 0.68rem, o sea que necesita 4,5:1. Se oscurece SÓLO acá: `styles.css` tiene dueño en
-   * otro carril y el token global lo usan otras diez cosas con otros fondos.
+   * es de 0.68rem, o sea que necesita 4,5:1. Se oscurece SÓLO acá: el token global lo usan otras
+   * diez cosas con otros fondos.
    */
   .pty-negativa .pty-negativa-quien { color: #8a5a00; }
 }
@@ -645,7 +813,7 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
  * Y `flex: 1` en la consola, que es donde se perdía el ancho ganado.**
  *
  * `.terminal-active-grid` lleva `display: flex` en un `style` en línea (OperatorWorkspace), así
- * que `.terminal-console` NO es una celda de rejilla sino un hijo de flex, y `styles.css` no le
+ * que `.terminal-console` NO es una celda de rejilla sino un hijo de flex, y su regla base no le
  * da `flex`: se queda en `0 1 auto`, o sea del ancho de SU CONTENIDO. Y su contenido es el
  * terminal, cuyo ancho lo fija el renderer en píxeles a partir de las columnas que ya tenía. La
  * pescadilla: el hueco mide lo que mide el terminal y el terminal mide lo que mide el hueco, así
@@ -669,12 +837,11 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
  * ------------------------------------------------------------------------------------------ */
 .terminal-pty-pane { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; padding: 8px 10px 10px; }
 /*
- * `.ultimate-terminal-page .pty-shell` y no `.pty-shell` a secas: `styles.css` pinta esta caja de
- * BLANCO bajo `prefers-color-scheme: light`, que es lo que trae un navegador recién abierto. Lo
- * que se ve acá no lo compone la consola sino la TUI del agente, con la paleta ANSI de 16 colores
- * pensada para fondo oscuro: sobre blanco los amarillos y los cianes del agente desaparecían. Con
- * la especificidad de dos clases gana esta regla haya cargado antes o después el otro fichero,
- * que tiene dueño en otro carril.
+ * `.ultimate-terminal-page .pty-shell` y no `.pty-shell` a secas: el bloque de tema claro de más
+ * arriba pinta esta caja de BLANCO, que es lo que trae un navegador recién abierto. Lo que se ve
+ * acá no lo compone la consola sino la TUI del agente, con la paleta ANSI de 16 colores pensada
+ * para fondo oscuro: sobre blanco los amarillos y los cianes del agente desaparecían. Con la
+ * especificidad de dos clases gana esta regla sin depender del orden.
  */
 .ultimate-terminal-page .pty-shell {
   display: flex;
@@ -703,11 +870,12 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
 /*
  * El nodo del terminal se ciñe al hueco: su alto lo manda el layout, no sus filas.
  *
- * Los dos selectores hacen falta. `styles.css` fija el alto del terminal a mano en DOS sitios
+ * Los dos selectores hacen falta. El alto del terminal está fijado a mano en DOS sitios de esta
+ * misma hoja
  * —`.pty-host { height: min(560px, 65vh) }` y `.terminal-pty-pane .pty-host { height: min(500px,
  * 57vh) }`— y ese `min(500px, 57vh)` es exactamente el «500» que medí desbordando un hueco de
  * 230 px. Con una sola clase de ventaja empatan y gana el otro por orden de fichero, así que la
- * regla lleva la cadena entera. `styles.css` tiene dueño en otro carril y no se toca desde acá.
+ * regla lleva la cadena entera.
  */
 .pty-mount > .pty-host,
 .terminal-pty-pane .pty-mount > .pty-host { height: 100%; padding: 0; }
@@ -770,7 +938,7 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
  * Móvil. A 360x800 el terminal estaba a y=1.952: fuera de la pantalla por completo. En vertical
  * el escenario va primero y se queda con algo más de media pantalla.
  * ------------------------------------------------------------------------------------------ */
-@media (width <= 900px) {
+@media (max-width: 760px) {
   .ultimate-terminal-page[data-tui="abierta"] .ultimate-terminal-shell { height: auto; display: flex; flex-direction: column; }
   /* El terminal ARRIBA: en vertical, la lista de 14 agentes por encima lo mandaba a y=1.952. */
   .ultimate-terminal-page[data-tui="abierta"] .terminal-grid-wrapper { order: -1; }
@@ -784,7 +952,7 @@ main:has(> .ultimate-terminal-page[data-tui="abierta"]) {
   .ultimate-terminal-page[data-tui="abierta"] .terminal-overview { display: flex; flex-wrap: nowrap; overflow-x: auto; }
   .ultimate-terminal-page[data-tui="abierta"] .terminal-overview article { flex: none; }
   /*
-   * La cabecera de la sesión medía 282 px en vertical: `styles.css` la pone en columna y el
+   * La cabecera de la sesión medía 282 px en vertical: el paso compacto la pone en columna y el
    * conmutador de cuatro modos se parte en dos filas. Sumada a la barra del canal (88 px) y a las
    * pestañas, dejaba el terminal empezando en y=736 de una pantalla de 800. Acá vuelve a ser una
    * fila: el avatar y el «tenant · epoch» se van (el alias ya está en la pestaña de arriba) y el

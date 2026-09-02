@@ -4,12 +4,12 @@ import {
   attachPtySession,
   detachPtySession,
   ensurePtySession,
-  PTY_COLUMNAS_MINIMAS,
   ptySessionVolverAlFinal,
   readPtySession,
   subscribePtySession,
   type PtySessionView,
 } from './pty-session';
+import { COLUMNAS_MINIMAS } from './pty-theme';
 
 interface PtyTerminalProps {
   websocketPath: string;
@@ -91,7 +91,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, readOnly
         Measured at 360x800 before this: `"tenan`, `"socr`, `mes` — lines cut against the edge,
         no scrollbar and not a word saying so. That is a view that lies.
       */}
-      {view.columnas !== undefined && view.columnas < PTY_COLUMNAS_MINIMAS ? (
+      {view.columnas !== undefined && view.columnas < COLUMNAS_MINIMAS ? (
         <p
           className="pty-estrecho"
           role="status"

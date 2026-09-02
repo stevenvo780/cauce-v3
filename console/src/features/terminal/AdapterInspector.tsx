@@ -5,7 +5,7 @@ import type { AdapterView, ConsoleAccess, TerminalCapability } from '../../api/t
 import { Badge, EmptyState, Unknown } from '../../components/ui';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { permissionState, safeCapabilityState } from '../../lib';
-import { ADAPTER_STATE_LABELS } from './fleet';
+import { CAPABILITY_LABEL, CAPABILITY_TONE } from '../../vocabulario';
 
 interface ControlPlaneProps {
   adapters: AdapterView[];
@@ -41,8 +41,8 @@ function AdapterInspector({ adapters, access, capability }: ControlPlaneProps) {
             <article key={adapter.id ?? index}>
               <span className={`adapter-state-dot ${adapter.state ?? 'unknown'}`} aria-hidden="true" />
               <div><strong><Unknown value={adapter.label ?? adapter.id} /></strong><small>{adapter.capabilities?.length ?? 'sin dato de'} capacidades</small></div>
-              <Badge tone={adapter.state === 'available' ? 'online' : adapter.state === 'degraded' ? 'warning' : adapter.state === 'unavailable' ? 'offline' : 'unknown'}>
-                {ADAPTER_STATE_LABELS[safeCapabilityState(adapter.state) ?? 'unknown']}
+              <Badge tone={CAPABILITY_TONE[safeCapabilityState(adapter.state) ?? 'unknown']}>
+                {CAPABILITY_LABEL[safeCapabilityState(adapter.state) ?? 'unknown']}
               </Badge>
             </article>
           )) : <EmptyState>Adaptadores no informados.</EmptyState>}
@@ -51,7 +51,7 @@ function AdapterInspector({ adapters, access, capability }: ControlPlaneProps) {
       <section className="terminal-inspector-section terminal-pty-capability">
         <header className="inspector-title"><div><p className="eyebrow">Canal opcional</p><h3>PTY directo</h3></div><TerminalSquare size={18} aria-hidden="true" /></header>
         <dl>
-          <div><dt>Estado</dt><dd>{capability?.available === true ? 'Disponible' : capability?.available === false ? 'No disponible' : 'sin dato'}</dd></div>
+          <div><dt>Estado</dt><dd>{CAPABILITY_LABEL[capability?.available === true ? 'available' : capability?.available === false ? 'unavailable' : 'unknown']}</dd></div>
           <div><dt>Destino</dt><dd><Unknown value={capability?.target_label} /></dd></div>
           <div><dt>Ruta WebSocket</dt><dd className="mono"><Unknown value={capability?.websocket_path} /></dd></div>
         </dl>
