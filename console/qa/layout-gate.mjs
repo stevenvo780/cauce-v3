@@ -2,15 +2,10 @@
 /**
  * Layout ratchet for the console, measured in a real browser.
  *
- * The 654 unit tests run in jsdom, which applies no CSS and computes no geometry: a menu whose
- * labels overlap and a view that wastes a third of the screen both pass green. The CSS guards that
- * do exist read the stylesheet as TEXT and match strings, so they cannot see the rendered box
- * either. This gate is the missing measurement: it drives Chromium over every declared route at
- * every breakpoint and compares real numbers against a recorded baseline.
- *
- * Baseline semantics match scripts/calidad.mjs: the numbers may only improve. A regression fails
- * with the measured value next to the budget it broke; an improvement fails too, asking for the
- * baseline to be tightened, so a fix cannot silently stop being enforced.
+ * The unit tests run in jsdom, which applies no CSS and computes no geometry, and the CSS guards
+ * read the stylesheet as TEXT: neither can see the rendered box. This gate drives Chromium over
+ * every declared route at every breakpoint and compares real numbers against a recorded baseline.
+ * Semantics match scripts/calidad.mjs: the numbers may only improve, in both directions.
  */
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -25,13 +20,19 @@ const VITE_ENTRY = resolve(CONSOLE_ROOT, 'node_modules/vite/bin/vite.js');
 const PORT = 4188;
 const ORIGIN = `http://127.0.0.1:${String(PORT)}`;
 
-const ROUTES = ['/', '/live', '/accounts', '/messages', '/queues', '/observability', '/config', '/terminal'];
+/* Opened through the deep link the console already supports, never by clicking the first row: the
+   fleet table sorts by state, so the row under the cursor —and the height it measures— changes. */
+const ALIAS_MEDIDO = 'Steven/jarvis';
 
-/**
- * The two narrow widths are the shipped breakpoints; 1440 is the common laptop; 1920 and 2560 are
- * the desks this console is actually operated from and the widths the layout has never answered.
- */
+/* The bare /messages shows the roster and no thread: the primary object of that view exists only
+   with a conversation open, so it is measured through the deep link the roster itself navigates to. */
+const HILO = `/messages/${ALIAS_MEDIDO}`;
+
+const ROUTES = ['/', '/live', '/accounts', '/messages', HILO, '/queues', '/observability', '/config', '/terminal', '/ayuda'];
+
+/** The narrow widths are the shipped breakpoints; 1440 is the laptop, 1920 and 2560 the desks. */
 const VIEWPORTS = [360, 760, 1100, 1440, 1920, 2560];
+const ALTO = 1000;
 
 /** Noise floor per budget. Scroll depth is a ratio, so a pixel tolerance there would wave through
     a view that grew from one screen to three. */
@@ -46,15 +47,19 @@ const TOLERANCIA = {
   pantallasMaximas: 0.1,
 };
 
+/** Same ratchet, applied to each route instead of the viewport's worst case. The tops are looser
+    than a pixel budget on purpose: the mock clock ages the relative-time column between runs. */
+const TOLERANCIA_RUTA = {
+  pantallas: 0.2,
+  foldDesaprovechado: 8,
+  objetoPrincipalTop: 64,
+  objetoPrincipalBajoElPliegue: 0,
+};
+
 /** Drawer states, measured apart from the plain route: the fleet table is only clipped once the
     drawer takes its share of the width, and Perfil is the tab that takes the most. */
 const CAJON = '/live#cajon';
 const PERFIL = '/live#perfil';
-
-/* Opened through the deep link the console already supports, never by clicking the first row: the
-   fleet table sorts by state, so the row under the cursor changes between runs and so does the
-   height it measures. A ratchet that flaps is worse than no ratchet. */
-const ALIAS_MEDIDO = 'Steven/jarvis';
 
 const SIN_MOVIMIENTO = '*,*::before,*::after{animation:none!important;transition:none!important}';
 
@@ -77,13 +82,13 @@ async function esperarServidor(salida, intentos = 60) {
   throw new Error(`the console did not answer at ${ORIGIN}\n${salida() || '(the dev server printed nothing)'}`);
 }
 
-/**
- * Runs inside the page. Returns raw geometry only: every judgement is made on this side, so the
- * failure message can name the budget that broke.
- */
+/** Runs inside the page. Returns raw geometry only: every judgement is made on this side, so the
+    failure message can name the budget that broke. */
 function medirEnLaPagina() {
   const raiz = document.documentElement;
   const main = document.querySelector('main');
+  window.scrollTo(0, 0);
+  if (main) main.scrollTop = 0;
   const barra = document.querySelector('.sidebar');
   const ancho = window.innerWidth;
   const caja = (nodo) => (nodo ? nodo.getBoundingClientRect() : null);
@@ -152,8 +157,24 @@ function medirEnLaPagina() {
     }
   }
 
+  // The dead band BELOW the content, the one `hueco` never saw. A collapsed `details` still reports
+  // a box for its hidden content, so only what is actually painted counts towards the bottom.
+  let fondo = 0;
+  const pintado = (nodo) => !nodo.checkVisibility
+    || nodo.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true });
+  for (const nodo of (main ? main.querySelectorAll('*') : [])) {
+    if (!pintado(nodo)) continue;
+    const r = nodo.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && r.bottom > fondo) fondo = r.bottom;
+  }
+  const principal = document.querySelector('[data-objeto-principal]');
+  const cajaPrincipal = caja(principal);
+
   return {
     desborde: Math.round(raiz.scrollWidth - ancho),
+    foldDesaprovechado: Math.max(0, Math.round(window.innerHeight - fondo)),
+    objetoPrincipalTop: cajaPrincipal ? Math.round(cajaPrincipal.top) : null,
+    objetoPrincipalBajoElPliegue: cajaPrincipal && cajaPrincipal.top >= window.innerHeight ? 1 : 0,
     hueco: Math.max(0, hueco),
     recorte,
     recorteSelector,
@@ -169,10 +190,8 @@ function medirEnLaPagina() {
   };
 }
 
-/**
- * Drives the two clicked states of /live. A state that cannot be reached is recorded and the run
- * continues: losing one state must not cost the other five viewports.
- */
+/** Drives the two clicked states of /live. A state that cannot be reached is recorded and the run
+    continues: losing one state must not cost the other five viewports. */
 async function medirEstadosDeLive(pagina, viewport, medidas, sinMedir) {
   const medir = async (etiqueta, accion) => {
     try {
@@ -215,7 +234,15 @@ async function medirRuta(pagina, ruta) {
 }
 
 async function medirPortadores(pagina) {
-  await pagina.locator('details.live-fold > summary').filter({ hasText: 'Roles declarados' }).click();
+  const summary = pagina.locator('details.live-fold > summary').filter({ hasText: 'Roles declarados' });
+  // A collapsed ancestor renders its children unreachable; the click would time out and take the
+  // whole viewport's remaining budgets down with it.
+  await summary.evaluate((nodo) => {
+    for (let padre = nodo.parentElement; padre; padre = padre.parentElement) {
+      if (padre.tagName === 'DETAILS' && padre !== nodo.parentElement) padre.open = true;
+    }
+  });
+  await summary.click();
   return pagina.locator('.rol-portador').evaluateAll((botones) => botones.filter((boton) => {
     const caja = boton.getBoundingClientRect();
     return caja.width > 0 && caja.height > 0 && (caja.width < 24 || caja.height < 24);
@@ -223,7 +250,7 @@ async function medirPortadores(pagina) {
 }
 
 async function medirViewport(navegador, viewport) {
-  const contexto = await navegador.newContext({ viewport: { width: viewport, height: 1000 } });
+  const contexto = await navegador.newContext({ viewport: { width: viewport, height: ALTO } });
   const pagina = await contexto.newPage();
   const medidas = [];
   const sinMedir = [];
@@ -258,10 +285,8 @@ async function medirTodo() {
   }
 }
 
-/**
- * Collapses the per-route measurements into the numbers the baseline tracks. Everything here is a
- * worst case: a budget that only records the best route would let the worst one rot.
- */
+/** Collapses the per-route measurements into the numbers the baseline tracks. Every budget is a
+    worst case; `rutas` keeps the per-route numbers a per-route objective cannot be stated without. */
 function resumir(medidas) {
   const porViewport = {};
   for (const viewport of VIEWPORTS) {
@@ -270,6 +295,7 @@ function resumir(medidas) {
     const peorRecorte = delViewport.reduce((peor, m) => (m.recorte > peor.recorte ? m : peor), delViewport[0]);
     const peorSinTeclado = delViewport.reduce(
       (peor, m) => (m.recorteSinTeclado > peor.recorteSinTeclado ? m : peor), delViewport[0]);
+    const peorPantallas = delViewport.reduce((peor, m) => (m.pantallas > peor.pantallas ? m : peor), delViewport[0]);
     porViewport[String(viewport)] = {
       huecoMaximo: peorHueco.hueco,
       huecoMaximoEn: peorHueco.ruta,
@@ -283,19 +309,129 @@ function resumir(medidas) {
       enlacesSinNombre: Math.max(...delViewport.map((m) => m.enlacesSinNombre)),
       solapesDeRotulo: Math.max(...delViewport.map((m) => m.solapesDeRotulo)),
       portadoresBajos: Math.max(...delViewport.map((m) => m.portadoresBajos)),
-      pantallasMaximas: Math.max(...delViewport.map((m) => m.pantallas)),
+      pantallasMaximas: peorPantallas.pantallas,
+      pantallasMaximasEn: peorPantallas.ruta,
+      rutas: Object.fromEntries(delViewport.map((m) => [m.ruta, {
+        pantallas: m.pantallas,
+        foldDesaprovechado: m.foldDesaprovechado,
+        objetoPrincipalTop: m.objetoPrincipalTop,
+        objetoPrincipalBajoElPliegue: m.objetoPrincipalBajoElPliegue,
+      }])),
     };
   }
   return porViewport;
 }
 
 const CLAVES = Object.keys(TOLERANCIA);
+const CLAVES_RUTA = Object.keys(TOLERANCIA_RUTA);
 
 const DONDE = {
   huecoMaximo: (v) => v.huecoMaximoEn,
+  pantallasMaximas: (v) => v.pantallasMaximasEn,
   recorteMaximo: (v) => `${v.recorteMaximoEn} ${v.recorteMaximoQue}`,
   recorteSinTeclado: (v) => `${v.recorteSinTecladoEn} ${v.recorteSinTecladoQue}`,
 };
+
+/** The v3.1 acceptance criteria, stated per route because a per-viewport worst case cannot express
+    them. PENDIENTES lists what misses them today, with the value measured when it was recorded: an
+    unrecorded miss fails, and so does an entry that now passes and must therefore be deleted. */
+const OBJETIVOS = {
+  pantallas: { rutas: ['/live', '/accounts', CAJON, PERFIL], viewports: [1440, 1920, 2560], tope: 2, margen: 0.2 },
+  foldDesaprovechado: { rutas: ['/'], viewports: VIEWPORTS, tope: Math.round(ALTO * 0.4), margen: 8 },
+  objetoPrincipalBajoElPliegue: {
+    rutas: ['/live', HILO, '/terminal'], viewports: VIEWPORTS, tope: 0, margen: 0,
+  },
+};
+
+const PENDIENTES = {
+  '1440./live.pantallas': 2.66,
+  '1440./live#cajon.pantallas': 2.66,
+  '1920./live#cajon.pantallas': 2.29,
+  '1440./live#perfil.pantallas': 2.66,
+  '1440./accounts.pantallas': 3.66,
+  '1920./accounts.pantallas': 3.39,
+  '2560./accounts.pantallas': 3.34,
+  '360./live.objetoPrincipalBajoElPliegue': 1,
+  '760./live.objetoPrincipalBajoElPliegue': 1,
+};
+
+function revisarObjetivos(resumen) {
+  const nuevos = [];
+  const cumplidos = [];
+  const vistos = new Set();
+  for (const [clave, objetivo] of Object.entries(OBJETIVOS)) {
+    for (const viewport of objetivo.viewports) {
+      for (const ruta of objetivo.rutas) {
+        const id = `${String(viewport)}.${ruta}.${clave}`;
+        const medida = resumen[String(viewport)]?.rutas?.[ruta];
+        if (!medida) {
+          nuevos.push(`${id}: the route was not measured, so the objective went unchecked`);
+          continue;
+        }
+        vistos.add(id);
+        const valor = medida[clave];
+        const pendiente = PENDIENTES[id];
+        // Without a primary object the fold measure is 0 for want of anything to measure, which
+        // would read as a pass: a named route that declares none misses the objective.
+        if (clave.startsWith('objetoPrincipal') && medida.objetoPrincipalTop === null) {
+          nuevos.push(`${id}: the route declares no [data-objeto-principal], so nothing meets the objective`);
+          continue;
+        }
+        if (valor <= objetivo.tope) {
+          if (pendiente !== undefined) {
+            cumplidos.push(`${id}: ${String(valor)} meets the objective of ${String(objetivo.tope)}`);
+          }
+        } else if (pendiente === undefined) {
+          nuevos.push(`${id}: ${String(valor)} against the v3.1 objective of ${String(objetivo.tope)}`);
+        } else if (valor > pendiente + objetivo.margen) {
+          nuevos.push(`${id}: ${String(valor)}, worse than the ${String(pendiente)} recorded as pending`);
+        }
+      }
+    }
+  }
+  for (const id of Object.keys(PENDIENTES)) {
+    if (!vistos.has(id)) nuevos.push(`${id}: recorded as pending, but no objective measures it`);
+  }
+  return { nuevos, cumplidos };
+}
+
+const PERMITE_REGRESION = new Set(process.argv
+  .filter((argumento) => argumento.startsWith('--allow-regression='))
+  .flatMap((argumento) => argumento.slice('--allow-regression='.length).split(',')));
+
+/** `--update` used to blanket-write every viewport, so a regression on one budget rode in beside an
+    improvement on another and became the new floor. Raising a recorded value now takes naming it. */
+function filtrarRegresiones(resumen, base) {
+  const rechazos = [];
+  for (const viewport of Object.keys(resumen)) {
+    const anterior = base[viewport];
+    if (!anterior) continue;
+    for (const clave of CLAVES) {
+      const valor = resumen[viewport][clave];
+      const tope = anterior[clave];
+      if (typeof tope !== 'number' || typeof valor !== 'number' || valor <= tope) continue;
+      const id = `${viewport}.${clave}`;
+      if (PERMITE_REGRESION.has(id)) continue;
+      resumen[viewport][clave] = tope;
+      rechazos.push(`${id}: kept ${String(tope)} instead of ${String(valor)}; pass --allow-regression=${id} to raise it`);
+    }
+    // Per route the tolerance applies here too: refusing raises inside the noise band would print a
+    // wall of refusals with nothing to act on, and the compare pass waves those through anyway.
+    for (const [ruta, medida] of Object.entries(resumen[viewport].rutas)) {
+      const grabada = anterior.rutas?.[ruta];
+      for (const clave of CLAVES_RUTA) {
+        const valor = medida[clave];
+        const tope = grabada?.[clave];
+        if (typeof tope !== 'number' || typeof valor !== 'number' || valor <= tope + TOLERANCIA_RUTA[clave]) continue;
+        const id = `${viewport}.${ruta}.${clave}`;
+        if (PERMITE_REGRESION.has(id)) continue;
+        medida[clave] = tope;
+        rechazos.push(`${id}: kept ${String(tope)} instead of ${String(valor)}; pass --allow-regression=${id} to raise it`);
+      }
+    }
+  }
+  return rechazos;
+}
 
 function comparar(actual, base) {
   const peores = [];
@@ -321,16 +457,49 @@ function comparar(actual, base) {
         mejores.push(`${viewport}px ${clave}: ${String(valor)}, better than the recorded ${String(tope)}`);
       }
     }
+    compararRutas(viewport, actual[viewport].rutas, esperado.rutas, peores, mejores);
   }
   return { peores, mejores };
 }
 
+/** The worst case per viewport hides a route that got worse behind another that got better, and it
+    cannot see a route that lost its primary object at all. Both are ratcheted here, route by route. */
+function compararRutas(viewport, rutas, grabadas, peores, mejores) {
+  for (const [ruta, medida] of Object.entries(rutas)) {
+    const grabada = grabadas?.[ruta];
+    if (!grabada) {
+      peores.push(`${viewport}px ${ruta}: the baseline does not record this route`);
+      continue;
+    }
+    for (const clave of CLAVES_RUTA) {
+      const valor = medida[clave];
+      const tope = grabada[clave];
+      if (valor === null || tope === null) {
+        if (valor === tope) continue;
+        const linea = `${viewport}px ${ruta} ${clave}: ${String(valor)} against the recorded ${String(tope)}`;
+        if (valor === null) peores.push(`${linea} — the route lost its [data-objeto-principal]`);
+        else mejores.push(linea);
+        continue;
+      }
+      const margen = TOLERANCIA_RUTA[clave];
+      if (valor > tope + margen) {
+        peores.push(`${viewport}px ${ruta} ${clave}: ${String(valor)} against a budget of ${String(tope)}`);
+      } else if (valor < tope - margen) {
+        mejores.push(`${viewport}px ${ruta} ${clave}: ${String(valor)}, better than the recorded ${String(tope)}`);
+      }
+    }
+  }
+}
+
 function imprimirTabla(medidas) {
-  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'sin nombre', 'solapes', 'portadores bajos'];
+  const cabecera = ['ruta', 'ancho', 'main', 'hueco', 'fold libre', 'desborde', 'recorte', 'recortado en', 'sin teclado', 'inalcanzable en', 'pantallas', 'objeto top', 'bajo pliegue', 'sin nombre', 'solapes', 'portadores bajos'];
   const filas = medidas.map((m) => [
-    m.ruta, m.viewport, m.anchoMain, m.hueco, m.desborde, m.recorte, m.recorteSelector || '-',
+    m.ruta, m.viewport, m.anchoMain, m.hueco, m.foldDesaprovechado, m.desborde, m.recorte, m.recorteSelector || '-',
     m.recorteSinTeclado, m.recorteSinTecladoSelector || '-',
-    m.pantallas, m.enlacesSinNombre, m.solapesDeRotulo, m.portadoresBajos,
+    m.pantallas,
+    m.objetoPrincipalTop === null ? '-' : m.objetoPrincipalTop,
+    m.objetoPrincipalTop === null ? '-' : m.objetoPrincipalBajoElPliegue,
+    m.enlacesSinNombre, m.solapesDeRotulo, m.portadoresBajos,
   ].map(String));
   const anchos = cabecera.map((titulo, i) => Math.max(titulo.length, ...filas.map((f) => f[i].length)));
   const esNumero = (celda) => /^-?\d+(\.\d+)?$/.test(celda);
@@ -338,6 +507,9 @@ function imprimirTabla(medidas) {
   const linea = (celdas) => celdas.map((c, i) => (texto[i] ? c.padEnd(anchos[i]) : c.padStart(anchos[i]))).join('  ');
   console.log(linea(cabecera));
   for (const fila of filas) console.log(linea(fila));
+  // Named under the table so the `-` of a route without a primary object is not read as a zero.
+  const sinObjeto = [...new Set(medidas.filter((m) => m.objetoPrincipalTop === null).map((m) => m.ruta))];
+  if (sinObjeto.length > 0) console.log(`\nsin [data-objeto-principal]: ${sinObjeto.join(' ')}`);
 }
 
 async function principal() {
@@ -369,13 +541,24 @@ async function principal() {
   }
 
   if (escribirBaseline) {
+    let anterior = {};
+    try { anterior = JSON.parse(await readFile(BASELINE, 'utf8')); } catch { /* first run */ }
+    const rechazos = filtrarRegresiones(resumen, anterior);
+    if (rechazos.length > 0) {
+      console.error('\nlayout: --update kept the recorded value for these budgets instead of raising it:');
+      for (const linea of rechazos) console.error(`  - ${linea}`);
+    }
     await writeFile(BASELINE, `${JSON.stringify(resumen, null, 2)}\n`, 'utf8');
     console.log(`\nlayout: baseline written to ${BASELINE}`);
+    // A refused raise means the file just written does not describe this run: exiting 0 here would
+    // hand that baseline over as if it did.
+    if (rechazos.length > 0) process.exit(1);
     return;
   }
 
   const base = JSON.parse(await readFile(BASELINE, 'utf8'));
   const { peores, mejores } = comparar(resumen, base);
+  const { nuevos, cumplidos } = revisarObjetivos(resumen);
 
   if (mejores.length > 0) {
     console.error('\nlayout: these numbers improved and the baseline still allows the old value:');
@@ -386,7 +569,15 @@ async function principal() {
     console.error('\nlayout: the rendered layout got worse:');
     for (const linea of peores) console.error(`  - ${linea}`);
   }
-  if (peores.length > 0 || mejores.length > 0 || sinMedir.length > 0) process.exit(1);
+  if (cumplidos.length > 0) {
+    console.error('\nlayout: these v3.1 objectives are met now; delete their PENDIENTES entry:');
+    for (const linea of cumplidos) console.error(`  - ${linea}`);
+  }
+  if (nuevos.length > 0) {
+    console.error('\nlayout: these v3.1 objectives are missed and not recorded in PENDIENTES:');
+    for (const linea of nuevos) console.error(`  - ${linea}`);
+  }
+  if (peores.length + mejores.length + sinMedir.length + nuevos.length + cumplidos.length > 0) process.exit(1);
   console.log('\nlayout: every measured budget holds.');
 }
 

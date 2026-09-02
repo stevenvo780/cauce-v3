@@ -6,6 +6,10 @@
 
 El proyecto emplea un sistema **ratchet**: los números de calidad solo pueden mejorar, nunca retroceder. Las listas de excepciones congeladas registran la deuda técnica actual y solo pueden reducirse.
 
+Cuando un número tiene que subir —a veces tiene que subir— no se sube de tapadillo: se nombra.
+`pnpm qa:layout` es el único gate con una vía explícita para eso (`--allow-regression`, abajo), y
+está hecha para incomodar. Los demás solo aceptan bajadas.
+
 ## Jerarquía de gates
 
 Todo commit que toque código **debe pasar el gate antes de hacer commit**. Commits que solo tocan archivos `.md` están exentos.
@@ -19,7 +23,7 @@ Todo commit que toque código **debe pasar el gate antes de hacer commit**. Comm
 | `pnpm test` (`scripts/test-all.mjs`) | Gate completo: orquesta 9 suites secuenciales, verifica que no haya scripts `test:*` huérfanos | Gate completo |
 | `pnpm test:ops` | Descubre y ejecuta en serie las 31 pruebas directas de `ops/tests`; no abandona al primer rojo | Al tocar ops |
 | `ops/scripts/validate.sh` | Sintaxis de `.sh`/`.mjs` en ops+deploy, ShellCheck obligatorio, YAML/JSON Schema de manifiestos, paridad byte-a-byte G-SNAP | Al tocar fleet/ops |
-| `pnpm qa:layout` (`qa/layout-gate.mjs`) | Regresión visual en Chromium a 360/760/1100/1440/1920/2560 px — mide ancho útil, espacio muerto, overflow, scroll, enlaces sin nombre, etiquetas superpuestas | Al tocar console |
+| `pnpm qa:layout` (`console/qa/layout-gate.mjs`) | Regresión de maquetado en Chromium a 360/760/1100/1440/1920/2560 px — desperdicio horizontal, accesibilidad de la nav, desperdicio vertical y objetivos de pliegue por ruta (abajo) | Al tocar console |
 | `pnpm arch:validate` / `pnpm arch:visual-check` | Valida la especificación Archify fijada y revisa el mapa navegable en temas y viewports múltiples | Al cambiar límites o dependencias |
 | `pnpm arch:refresh` | Sella la revisión fijada del mapa con el `HEAD` actual y re-renderiza el HTML | Al commitear un cambio en alguna ruta citada como fuente por un componente del mapa |
 
@@ -33,7 +37,82 @@ Ratchet determinista controlado por `scripts/calidad-base.json`:
 | **Fechas en comentarios** | Detecta patrones de fecha — excepciones congeladas solo se reducen. |
 | **Densidad de comentarios** | Medida por archivo — solo puede disminuir. |
 
-Excepciones congeladas actuales: **21** archivos en `lineas`, **11** en `fechas`, **922** entradas acotadas en `comentarios`. Los valores existentes solo pueden bajar o conservarse; `--update` recoge una poda revisada de la línea base y las ampliaciones fallan.
+Las excepciones congeladas viven en `scripts/calidad-base.json` y el gate imprime sus tres conteos
+en cada corrida; aquí no se fija un número que envejece con cada tramo. Los valores existentes solo
+pueden bajar o conservarse; `--update` recoge una poda revisada de la línea base y las ampliaciones
+fallan.
+
+## Gate de maquetado (`pnpm qa:layout`)
+
+Los tests unitarios de la consola corren en jsdom, que no aplica CSS ni calcula geometría, y las
+guardas de hoja leen el CSS como **texto**: ninguna de las dos ve la caja renderizada. Este gate
+levanta la consola con mocks y la recorre con Chromium de verdad: las diez rutas de `ROUTES` —`/`,
+`/live`, `/accounts`, `/messages`, el hilo `/messages/<tenant>/<alias>`, `/queues`,
+`/observability`, `/config`, `/terminal`, `/ayuda`— más los dos estados del cajón de `/live`, a
+360/760/1100/1440/1920/2560 px sobre una ventana de 1000 px de alto.
+Necesita Chromium, así que no forma parte de `pnpm test`: está declarado en `SEPARATELY_GATED` de
+`scripts/test-all.mjs` y se corre aparte al tocar `console/`.
+
+Vigila dos cosas distintas, con dos mecanismos distintos.
+
+### Presupuestos: por viewport y por ruta
+
+`console/qa/layout-baseline.json` registra dos capas. Para cada ancho, el **peor caso** de hueco
+lateral, desborde, recorte, recorte fuera del alcance del teclado, enlaces de nav sin nombre,
+rótulos solapados, portadores pequeños y pantallas de scroll, con la ruta y el selector culpables.
+Y, dentro de cada ancho, los mismos números **ruta a ruta**: `pantallas`, `foldDesaprovechado`,
+`objetoPrincipalTop` y `objetoPrincipalBajoElPliegue`. Las dos capas hacen de trinquete: el peor
+caso por viewport esconde una ruta que empeora detrás de otra que mejora, y no puede ver una ruta
+que pierde su objeto principal.
+
+Cada presupuesto tiene su tolerancia de ruido. La de `pantallasMaximas` va en proporción (0,1 de
+pantalla) y no en píxeles, porque una tolerancia en píxeles dejaría pasar una vista que crece de una
+pantalla a tres; las de ruta son más flojas a propósito (0,2 pantallas, 64 px en
+`objetoPrincipalTop`) porque el reloj de los mocks envejece la columna de tiempos entre corridas.
+
+`foldDesaprovechado` es la banda muerta **bajo** el contenido —la que el hueco lateral nunca vio—,
+medida hasta lo último realmente pintado dentro de `main`: un `<details>` plegado sigue reportando
+caja para lo que oculta, así que solo cuenta lo visible. `objetoPrincipalTop` y
+`objetoPrincipalBajoElPliegue` miden el elemento que la vista marca con `data-objeto-principal`; una
+ruta que tenía objeto principal en la línea base y aparece sin él sale en rojo, porque su medida
+pasa a ser nula y no cero.
+
+### Objetivos de v3.1
+
+Un peor caso por viewport no sabe expresar un criterio de aceptación por ruta, así que `OBJETIVOS`
+los declara aparte, en el propio gate:
+
+| Objetivo | Dónde | Tope |
+|---|---|---|
+| `pantallas` | `/live`, `/accounts` y los dos estados del cajón, a 1440/1920/2560 | ≤ 2 pantallas de scroll |
+| `foldDesaprovechado` | `/` en los seis anchos | ≤ 400 px de banda muerta |
+| `objetoPrincipalBajoElPliegue` | `/live`, el hilo de `/messages` y `/terminal` | 0: el objeto principal empieza sobre el pliegue |
+
+`PENDIENTES` lista lo que hoy no llega, con el valor medido cuando se registró. De ahí salen cuatro
+rojos y ninguno es opinable:
+
+- un incumplimiento que **no** está en `PENDIENTES` — regresión nueva;
+- una entrada de `PENDIENTES` que empeora más allá de su margen;
+- una entrada que **ya cumple** el objetivo — roja hasta que se borre, para que la deuda saldada no
+  siga reservada;
+- una ruta que el objetivo nombra y no declara `data-objeto-principal` — sin objeto la medida vale
+  cero por falta de qué medir, y ese cero se leería como aprobado.
+
+### Subir un valor registrado
+
+`pnpm qa:layout:update` lee primero la línea base y **se niega** a subir ningún presupuesto:
+imprime cada rechazo, conserva el valor registrado y termina en rojo, porque el fichero que acaba de
+escribir ya no describe esa corrida. La única vía sancionada es nombrar lo que sube:
+
+```bash
+node console/qa/layout-gate.mjs --update --allow-regression=1920.recorteMaximo
+```
+
+La clave es `<viewport>.<presupuesto>` para el peor caso y `<viewport>.<ruta>.<presupuesto>` para
+una medida de ruta, y admite lista separada por comas. Es deliberadamente incómodo: `--update`
+reescribía antes todos los viewports de golpe, así que una regresión entraba de polizón junto a una
+mejora y se convertía en el suelo nuevo. Una mejora también obliga a actualizar: el gate falla si el
+número mejoró y la línea base sigue tolerando el valor viejo.
 
 ## Suites de test (9 suites en `scripts/test-all.mjs`)
 
