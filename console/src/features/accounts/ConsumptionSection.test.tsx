@@ -200,9 +200,10 @@ it('conserva entero el inventario de licencias: identidad, pagador, asignaciones
     const detailText = detail.textContent;
     expect(detailText).toContain('zeus');
     expect(detailText).toContain('claw-zeus');
-    expect(within(detail).getAllByText('PRIMARIA').length).toBeGreaterThan(0);
+    expect(within(detail).getByText('FALLBACK #1')).toBeInTheDocument();
+    expect(detailText).not.toContain('PRIMARIA');
     expect(detailText).toMatch(/Techo de ruteo/);
-    expect(detailText).toMatch(/está limitado a esta cuenta/);
+    expect(detailText).toMatch(/puede alcanzar esta cuenta/);
   }
 });
 

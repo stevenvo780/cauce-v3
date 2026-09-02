@@ -245,7 +245,10 @@ async function medirViewport(navegador, viewport) {
 async function medirTodo() {
   const navegador = await chromium.launch();
   try {
-    const pasadas = await Promise.all(VIEWPORTS.map((viewport) => medirViewport(navegador, viewport)));
+    const pasadas = [];
+    for (const viewport of VIEWPORTS) {
+      pasadas.push(await medirViewport(navegador, viewport));
+    }
     return {
       medidas: pasadas.flatMap((pasada) => pasada.medidas),
       sinMedir: pasadas.flatMap((pasada) => pasada.sinMedir),

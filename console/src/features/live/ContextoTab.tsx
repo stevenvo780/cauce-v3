@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type {
   AgentDocumentKind, AgentPerfilCampos, ConfigurationSnapshot,
 } from '../../api/types';
+import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import type { Resource } from '../../api/use-resource';
+import { permissionState } from '../../lib';
 import { DirectivaTab } from './DirectivaTab';
 import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
 import { PerfilTab } from './PerfilTab';
@@ -28,11 +30,17 @@ interface ContextoTabProps {
  * Canonical fields and the site manual keep their separate API contracts and acknowledgements;
  * putting them in one place does not pretend that one write applies the other.
  */
-export function ContextoTab({
+export function ContextoTab(props: ContextoTabProps) {
+  return <ConsoleAccessBoundary><ContextoTabContent {...props} /></ConsoleAccessBoundary>;
+}
+
+function ContextoTabContent({
   tenantId, alias, configuracion, borradorPerfil, onBorradorPerfil,
   borradoresFicheros, onBorradorFichero, focusTarget, profileWriteInFlight,
   onProfileWriteInFlightChange, runtimeRefreshRevision, onRuntimeRefresh,
 }: ContextoTabProps) {
+  const access = useConsoleAccess();
+  const configWritePermission = permissionState(access.error ? undefined : access.data, 'config.write');
   const campos = useRef<HTMLElement>(null);
   const manual = useRef<HTMLElement>(null);
   const [manualAppliedNotice, setManualAppliedNotice] = useState<string>();
@@ -95,6 +103,7 @@ export function ContextoTab({
             onBorradorPerfil({ ...borradorPerfil, role_summary: texto });
             enfocar(campos);
           }}
+          configWritePermission={configWritePermission}
         />
       </section>
 
@@ -121,6 +130,7 @@ export function ContextoTab({
           writeInFlight={profileWriteInFlight}
           blockedByManualDraft={borradoresFicheros?.directive !== undefined}
           runtimeRefreshRevision={runtimeRefreshRevision}
+          configWritePermission={configWritePermission}
         />
       </section>
 
@@ -150,6 +160,7 @@ export function ContextoTab({
           mode="manual-editor"
           onApplied={alAplicarManual}
           mutationBlocked={profileWriteInFlight}
+          configWritePermission={configWritePermission}
         />
       </section>
     </div>

@@ -44,7 +44,9 @@ beforeEach(() => {
       observed_at: new Date().toISOString(), websocket_path: WS_PATH,
       items: [target({ tenant_id: 'Steven', alias: 'zeus' })],
     })),
-    http.post('*/v3/console/terminal/sessions', () => new HttpResponse(null, { status: 409 })),
+    http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
+      { error: 'conflict', reason: 'container_busy' }, { status: 409 },
+    )),
   );
 });
 

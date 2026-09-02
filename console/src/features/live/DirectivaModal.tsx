@@ -2,10 +2,10 @@ import { BookOpen, Brain, IdCard, X } from 'lucide-react';
 import { useEffect, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useApi } from '../../api/context';
-import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { RoleBriefTab, type RoleBriefTabProps } from './RoleBriefTab';
+import { selectAgentRegistryEntry } from './agent-registry-entry';
 import { ubicacionDeclarada } from './capas-pendientes';
 import { avisosDeCapas } from './directiva';
 import { AvisosDeSolapamiento } from './directiva-modal/AvisosDeSolapamiento';
@@ -19,16 +19,9 @@ interface DirectivaModalProps extends RoleBriefTabProps {
   onCerrar: () => void;
 }
 
-function briefGuardado(snapshot: ConfigurationSnapshot | undefined, tenantId: string, alias: string): string | undefined {
-  const agents = snapshot?.agents;
-  if (!Array.isArray(agents)) return undefined;
-  const fila = agents.find((row) => row.tenant_id === tenantId && row.alias === alias);
-  return typeof fila?.role_brief === 'string' ? fila.role_brief : undefined;
-}
-
 export function DirectivaModal({
   tenantId, alias, configuration, onEditarEnPerfil, onRestaurarEnPerfil, onEditarEnFicheros,
-  devolverFocoA, onCerrar,
+  configWritePermission, devolverFocoA, onCerrar,
 }: DirectivaModalProps) {
   const api = useApi();
   const directiva = useResource(
@@ -78,8 +71,9 @@ export function DirectivaModal({
     onRestaurarEnPerfil(texto);
   };
 
+  const registro = selectAgentRegistryEntry(configuration.data, tenantId, alias);
   const avisos = avisosDeCapas(
-    briefGuardado(configuration.data, tenantId, alias),
+    registro.state === 'found' ? registro.roleBrief : undefined,
     directiva.error ? undefined : directiva.data,
   );
 
@@ -135,6 +129,7 @@ export function DirectivaModal({
                 configuration={configuration}
                 onEditarEnPerfil={cerrarYEnfocarCampos}
                 onRestaurarEnPerfil={restaurarYEnfocarCampos}
+                configWritePermission={configWritePermission}
               />
             </section>
 

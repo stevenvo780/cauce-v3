@@ -191,13 +191,6 @@ export function agentDisplayName(agent: FleetActivityAgent): string {
   return agent.display_name ?? agent.alias;
 }
 
-/** started moved further than leased/accepted; soft nuance, not a single alarm on its own. */
-export function inFlightItemTone(status: string | null | undefined): BadgeTone {
-  if (status === 'started') return 'running';
-  if (status === 'leased' || status === 'accepted') return 'info';
-  return 'unknown';
-}
-
 /* ============================================================================================ *
  * Per-row signal summary: deduplication of signals visible in the table.
  * ============================================================================================ */

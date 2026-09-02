@@ -93,7 +93,7 @@ describe('destinos que el servidor publica a medias', () => {
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus.*PTY: PTY desconocido/i }));
-    await screen.findByRole('textbox', { name: /entrada para zeus/i });
+    await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
     await waitFor(() => { expect(screen.getByRole('button', { name: /^PTY$/i })).toBeDisabled(); });
     expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled();

@@ -5,7 +5,7 @@ import { useApi } from '../../api/context';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { EmptyState, Unknown } from '../../components/ui';
-import { permissionState } from '../../lib';
+import type { PermissionState } from '../../lib';
 import { MedidorDeRol } from './MedidorDeRol';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, ETIQUETAS, camposQueNoEntran, camposVigentes, contarUnidades,
@@ -50,22 +50,23 @@ interface PerfilTabProps {
   writeInFlight?: boolean;
   blockedByManualDraft?: boolean;
   runtimeRefreshRevision?: number;
+  configWritePermission: PermissionState;
 }
 
 export function PerfilTab({
   tenantId, alias, borrador, onBorrador, onMutationSettled, onWriteInFlightChange,
   writeInFlight = false, blockedByManualDraft = false, runtimeRefreshRevision = 0,
+  configWritePermission,
 }: PerfilTabProps) {
   const api = useApi();
   const perfil = useResource(
     `perfil-${tenantId}-${alias}`, () => api.getAgentPerfil(tenantId, alias),
   );
-  const access = useResource('console-access', () => api.getConsoleAccess());
   const [localBusy, setLocalBusy] = useState(false);
   const [aviso, setAviso] = useState<{ text: string; tone: TonoAviso }>();
   const [ficheroAbierto, setFicheroAbierto] = useState<string>();
 
-  const estadoPermiso = permissionState(access.data, 'config.write');
+  const estadoPermiso = configWritePermission;
   // Absence, error or a stale response from the access endpoint never enable a mutation.
   const soloLectura = estadoPermiso !== 'allowed';
   const campos = camposVigentes(perfil.data, borrador);

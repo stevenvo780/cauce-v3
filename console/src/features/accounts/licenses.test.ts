@@ -1,20 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  accountAssignments,
-  extractAgents,
-  extractBindings,
-  extractCeiling,
-  extractProviderAccounts,
   formatResetIn,
   freshness,
   orphans,
-  type Agent,
-  type AgentAccountBinding,
   type Collector,
-  type ProviderAccount,
 } from './licenses';
-import type { ConfigurationSnapshot, QuotaSnapshot, QuotaThresholds } from '../../api/types';
+import type { QuotaSnapshot, QuotaThresholds } from '../../api/types';
 import { UNKNOWN } from '../../lib';
+import type { AccountBinding, AgentRegistration, ProviderAccount } from './registry';
 
 describe('freshness', () => {
   const thresholds: QuotaThresholds = {
@@ -78,138 +71,34 @@ describe('freshness', () => {
   });
 });
 
-describe('accountAssignments', () => {
-  const agents: Agent[] = [
-    {
-      tenant_id: 'grp.steven',
-      alias: 'kant',
-      harness_id: 'harness-1',
-      display_name: 'Kant',
-      enabled: true,
-      container_name: 'kant-primary',
-    },
-    {
-      tenant_id: 'grp.steven',
-      alias: 'socrates',
-      harness_id: 'harness-2',
-      display_name: 'Socrates',
-      enabled: true,
-      container_name: 'socrates-backup',
-    },
-  ];
-
-  it('ordena por prioridad y marca primary', () => {
-    const bindings: AgentAccountBinding[] = [
-      {
-        tenant_id: 'grp.steven',
-        agent_alias: 'socrates',
-        account_id: 'codex-steven',
-        priority: 1,
-        enabled: true,
-      },
-      {
-        tenant_id: 'grp.steven',
-        agent_alias: 'kant',
-        account_id: 'codex-steven',
-        priority: 0,
-        enabled: true,
-      },
-    ];
-
-    const result = accountAssignments('codex-steven', bindings, agents);
-    expect(result).toHaveLength(2);
-    expect(result[0].alias).toBe('kant');
-    expect(result[0].isPrimary).toBe(true);
-    expect(result[1].alias).toBe('socrates');
-    expect(result[1].isPrimary).toBe(false);
-  });
-
-  it('marca enabled=false como inactivo', () => {
-    const bindings: AgentAccountBinding[] = [
-      {
-        tenant_id: 'grp.steven',
-        agent_alias: 'kant',
-        account_id: 'codex-steven',
-        priority: 0,
-        enabled: false,
-      },
-    ];
-
-    const result = accountAssignments('codex-steven', bindings, agents);
-    expect(result[0].enabled).toBe(false);
-  });
-
-  /*
-   * The fleet repeats aliases across clients (`claude` lives under more than one). Crossing binding against
-   * agent by alias alone showed the account as assigned to the homonym of ANOTHER client: a wrong container
-   * name, a wrong display name, and no way to tell from the screen.
-   */
-  it('cruza por tenant y alias: con el alias repetido no trae al agente del otro cliente', () => {
-    const homonimos: Agent[] = [
-      {
-        tenant_id: 'Steven', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Steven',
-        enabled: true, container_name: 'claw-steven-claude',
-      },
-      {
-        tenant_id: 'Miguel', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Miguel',
-        enabled: true, container_name: 'claw-miguel-claude',
-      },
-    ];
-    // The binding is the FIRST agent's, so an index by alias alone —where the last one registered wins— brings
-    // back the other client's homonym. Otherwise this would pass by accident.
-    const bindings: AgentAccountBinding[] = [
-      { tenant_id: 'Steven', agent_alias: 'claude', account_id: 'claude-max', priority: 0, enabled: true },
-    ];
-
-    const result = accountAssignments('claude-max', bindings, homonimos);
-    expect(result).toHaveLength(1);
-    expect(result[0].tenant_id).toBe('Steven');
-    expect(result[0].display_name).toBe('Claude de Steven');
-    expect(result[0].container_name).toBe('claw-steven-claude');
-  });
-
-  it('incluye container_name del agente', () => {
-    const bindings: AgentAccountBinding[] = [
-      {
-        tenant_id: 'grp.steven',
-        agent_alias: 'kant',
-        account_id: 'codex-steven',
-        priority: 0,
-        enabled: true,
-      },
-    ];
-
-    const result = accountAssignments('codex-steven', bindings, agents);
-    expect(result[0].container_name).toBe('kant-primary');
-  });
-});
-
 describe('orphans', () => {
   it('encuentra cuentas sin datos de cuota', () => {
     const accounts: ProviderAccount[] = [
       {
         id: 'codex-steven',
         provider: 'codex',
-        payer_tenant_id: 'grp.steven',
+        payerTenant: 'Steven',
         label: 'Steven',
-        shared_with_pool: true,
+        sharedWithPool: true,
         enabled: true,
-        external_account_id: null,
-        credential_ref_kind: null,
-        created_at: null,
-        updated_at: null,
+        externalAccountId: null,
+        credentialRefKind: null,
+        payerFields: 'redacted',
+        createdAt: null,
+        updatedAt: null,
       },
       {
         id: 'gemini-steven',
         provider: 'gemini',
-        payer_tenant_id: 'grp.steven',
+        payerTenant: 'Steven',
         label: 'Steven Gemini',
-        shared_with_pool: true,
+        sharedWithPool: true,
         enabled: true,
-        external_account_id: null,
-        credential_ref_kind: null,
-        created_at: null,
-        updated_at: null,
+        externalAccountId: null,
+        credentialRefKind: null,
+        payerFields: 'redacted',
+        createdAt: null,
+        updatedAt: null,
       },
     ];
     const quotas: QuotaSnapshot = {
@@ -252,8 +141,8 @@ describe('orphans', () => {
       unbound_groups: [],
       paused_accounts: [],
     };
-    const bindings: AgentAccountBinding[] = [];
-    const agents: Agent[] = [];
+    const bindings: AccountBinding[] = [];
+    const agents: AgentRegistration[] = [];
 
     const result = orphans(accounts, quotas, bindings, agents);
     expect(result.accountsWithoutQuotas).toHaveLength(1);
@@ -279,8 +168,8 @@ describe('orphans', () => {
       ],
       paused_accounts: [],
     };
-    const bindings: AgentAccountBinding[] = [];
-    const agents: Agent[] = [];
+    const bindings: AccountBinding[] = [];
+    const agents: AgentRegistration[] = [];
 
     const result = orphans(accounts, quotas, bindings, agents);
     expect(result.unboundGroups).toHaveLength(1);
@@ -297,31 +186,33 @@ describe('orphans', () => {
       unbound_groups: [],
       paused_accounts: [],
     };
-    const bindings: AgentAccountBinding[] = [
+    const bindings: AccountBinding[] = [
       {
-        tenant_id: 'grp.steven',
-        agent_alias: 'kant',
-        account_id: 'codex-steven',
+        tenantId: 'Steven',
+        agentAlias: 'kant',
+        accountId: 'codex-steven',
         priority: 0,
         enabled: true,
       },
     ];
-    const agents: Agent[] = [
+    const agents: AgentRegistration[] = [
       {
-        tenant_id: 'grp.steven',
+        tenantId: 'Steven',
         alias: 'kant',
-        harness_id: 'harness-1',
-        display_name: 'Kant',
+        harnessId: 'harness-1',
+        displayName: 'Kant',
         enabled: true,
-        container_name: 'kant-primary',
+        containerName: 'kant-primary',
+        runtimeUser: null,
       },
       {
-        tenant_id: 'grp.steven',
+        tenantId: 'Steven',
         alias: 'orphan',
-        harness_id: 'harness-2',
-        display_name: 'Orphan',
+        harnessId: 'harness-2',
+        displayName: 'Orphan',
         enabled: true,
-        container_name: 'orphan-solo',
+        containerName: 'orphan-solo',
+        runtimeUser: null,
       },
     ];
 
@@ -336,31 +227,31 @@ describe('orphans, con el alias repetido entre clientes', () => {
     observed_at: null, thresholds: null, collectors: [], providers: [],
     unbound_groups: [], paused_accounts: [],
   };
-  const agents: Agent[] = [
+  const agents: AgentRegistration[] = [
     {
-      tenant_id: 'Steven', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Steven',
-      enabled: true, container_name: 'claw-steven-claude',
+      tenantId: 'Steven', alias: 'claude', harnessId: 'claude', displayName: 'Claude de Steven',
+      enabled: true, containerName: 'claw-steven-claude', runtimeUser: null,
     },
     {
-      tenant_id: 'Miguel', alias: 'claude', harness_id: 'claude', display_name: 'Claude de Miguel',
-      enabled: true, container_name: 'claw-miguel-claude',
+      tenantId: 'Miguel', alias: 'claude', harnessId: 'claude', displayName: 'Claude de Miguel',
+      enabled: true, containerName: 'claw-miguel-claude', runtimeUser: null,
     },
   ];
 
   it('el binding de un cliente no tapa al homónimo del otro, que sí está huérfano', () => {
-    const bindings: AgentAccountBinding[] = [
-      { tenant_id: 'Steven', agent_alias: 'claude', account_id: 'claude-max', priority: 0, enabled: true },
+    const bindings: AccountBinding[] = [
+      { tenantId: 'Steven', agentAlias: 'claude', accountId: 'claude-max', priority: 0, enabled: true },
     ];
 
     const result = orphans([], quotas, bindings, agents);
-    expect(result.agentsWithoutBindings.map((agent) => agent.tenant_id)).toEqual(['Miguel']);
+    expect(result.agentsWithoutBindings.map((agent) => agent.tenantId)).toEqual(['Miguel']);
   });
 
   it('con los dos atados, ninguno queda como huérfano', () => {
     // Negative control: without it, a version that reported everyone as an orphan would pass the test above.
-    const bindings: AgentAccountBinding[] = [
-      { tenant_id: 'Miguel', agent_alias: 'claude', account_id: 'claude-max', priority: 0, enabled: true },
-      { tenant_id: 'Steven', agent_alias: 'claude', account_id: 'claude-max', priority: 1, enabled: true },
+    const bindings: AccountBinding[] = [
+      { tenantId: 'Miguel', agentAlias: 'claude', accountId: 'claude-max', priority: 0, enabled: true },
+      { tenantId: 'Steven', agentAlias: 'claude', accountId: 'claude-max', priority: 1, enabled: true },
     ];
 
     expect(orphans([], quotas, bindings, agents).agentsWithoutBindings).toEqual([]);
@@ -383,70 +274,5 @@ describe('formatResetIn', () => {
 
   it('devuelve UNKNOWN para Infinity', () => {
     expect(formatResetIn(Infinity)).toBe(UNKNOWN);
-  });
-});
-
-describe('extractors', () => {
-  it('extrae provider_accounts correctamente', () => {
-    const config: ConfigurationSnapshot = {
-      revision: null,
-      observed_at: null,
-      tenants: null,
-      rooms: null,
-      memberships: null,
-      acl_edges: null,
-      harness_definitions: null,
-      role_policies: null,
-      chain_policies: null,
-      egress_destinations: null,
-      agents: null,
-      provider_accounts: [
-        {
-          id: 'codex-steven',
-          provider: 'codex',
-          payer_tenant_id: 'grp.steven',
-          label: 'Steven',
-          shared_with_pool: true,
-          enabled: true,
-          external_account_id: null,
-          credential_ref_kind: 'env_path',
-          created_at: '2026-01-01T00:00:00Z',
-          updated_at: '2026-01-01T00:00:00Z',
-        },
-      ],
-      alias_routing_ceiling: null,
-      agent_account_bindings: null,
-      revisions: null,
-    };
-
-    const result = extractProviderAccounts(config);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('codex-steven');
-    expect(result[0].provider).toBe('codex');
-  });
-
-  it('devuelve array vacío si no hay datos', () => {
-    const config: ConfigurationSnapshot = {
-      revision: null,
-      observed_at: null,
-      tenants: null,
-      rooms: null,
-      memberships: null,
-      acl_edges: null,
-      harness_definitions: null,
-      role_policies: null,
-      chain_policies: null,
-      egress_destinations: null,
-      agents: null,
-      provider_accounts: null,
-      alias_routing_ceiling: null,
-      agent_account_bindings: null,
-      revisions: null,
-    };
-
-    expect(extractProviderAccounts(config)).toEqual([]);
-    expect(extractAgents(config)).toEqual([]);
-    expect(extractBindings(config)).toEqual([]);
-    expect(extractCeiling(config)).toEqual([]);
   });
 });

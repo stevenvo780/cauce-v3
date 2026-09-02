@@ -229,7 +229,7 @@ const HOMONIMOS = {
   ],
 };
 
-it('«Asignada a» nombra al agente del cliente que TIENE el binding, no a su homónimo', async () => {
+it('el detalle de fallback nombra al agente del cliente que TIENE el binding, no a su homónimo', async () => {
   mock({ providers: [provider('claude-max', 60, 'ok')] }, HOMONIMOS);
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);

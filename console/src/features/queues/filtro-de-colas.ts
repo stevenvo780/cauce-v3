@@ -1,5 +1,7 @@
 import type { DeliveryState, QueueItem, QueueSnapshot } from '../../api/types';
-import { safeDeliveryState } from '../../lib';
+import {
+  DELIVERY_POLICY, DELIVERY_STATES, deliveryPolicy, type DeliveryGroup,
+} from '../deliveries/delivery-policy';
 
 /**
  * Grouping of queue states for filtering and for pinning the set of states of each group.
@@ -13,10 +15,20 @@ export type GrupoDeEstado = 'todas' | 'revision' | 'retry' | 'pendientes';
  * `replayDelivery` accepts it and the server's `dead` counter sums it, so leaving it out would
  * hide rescuable deliveries behind a filter that says there is nothing to do.
  */
+const GRUPO_DE_POLITICA: Record<Exclude<GrupoDeEstado, 'todas'>, DeliveryGroup> = {
+  revision: 'review',
+  retry: 'retry',
+  pendientes: 'pending',
+};
+
+function statesIn(group: DeliveryGroup): ReadonlySet<DeliveryState> {
+  return new Set(DELIVERY_STATES.filter((state) => DELIVERY_POLICY[state].group === group));
+}
+
 export const ESTADOS_DEL_GRUPO: Record<Exclude<GrupoDeEstado, 'todas'>, ReadonlySet<DeliveryState>> = {
-  revision: new Set<DeliveryState>(['dead', 'failed']),
-  retry: new Set<DeliveryState>(['retry']),
-  pendientes: new Set<DeliveryState>(['pending', 'leased', 'accepted', 'started']),
+  revision: statesIn(GRUPO_DE_POLITICA.revision),
+  retry: statesIn(GRUPO_DE_POLITICA.retry),
+  pendientes: statesIn(GRUPO_DE_POLITICA.pendientes),
 };
 
 export const ROTULO_DEL_GRUPO: Record<GrupoDeEstado, string> = {
@@ -44,11 +56,11 @@ function coincideElTexto(item: QueueItem, buscado: string): boolean {
 export function filtrarEntregas(items: readonly QueueItem[], filtro: FiltroDeColas): QueueItem[] {
   return items.filter((item) => {
     if (filtro.grupo !== 'todas') {
-      const estado = safeDeliveryState(item.state);
+      const policy = deliveryPolicy(item.state);
       // A state the console does not recognize does NOT enter any specific group: putting it in
       // "pendientes" or "revision" would be guessing, and guessing here sends an operator to
       // re-inject something they cannot identify.
-      if (estado === undefined || !ESTADOS_DEL_GRUPO[filtro.grupo].has(estado)) return false;
+      if (!policy.known || policy.group !== GRUPO_DE_POLITICA[filtro.grupo]) return false;
     }
     return coincideElTexto(item, filtro.texto);
   });

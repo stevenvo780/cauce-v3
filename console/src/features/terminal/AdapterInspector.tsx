@@ -13,7 +13,8 @@ interface ControlPlaneProps {
   capability?: TerminalCapability;
 }
 
-function PermissionState({ access, permission }: { access?: ConsoleAccess; permission: 'ultimate-terminal.connect' | 'message.publish' | 'delivery.replay' }) {
+function PermissionState({ access }: { access?: ConsoleAccess }) {
+  const permission = 'ultimate-terminal.connect';
   const state = permissionState(access, permission);
   return (
     <div className="terminal-permission-row">
@@ -29,9 +30,7 @@ function AdapterInspector({ adapters, access, capability }: ControlPlaneProps) {
       <section className="terminal-inspector-section">
         <header className="inspector-title"><div><p className="eyebrow">Autorización</p><h3>Permisos efectivos</h3></div><ShieldCheck size={18} aria-hidden="true" /></header>
         <div className="terminal-permissions">
-          <PermissionState access={access} permission="ultimate-terminal.connect" />
-          <PermissionState access={access} permission="message.publish" />
-          <PermissionState access={access} permission="delivery.replay" />
+          <PermissionState access={access} />
         </div>
         <p className="inspector-footnote">Roles: {access?.roles?.length ? access.roles.join(', ') : 'sin dato'}. La UI no eleva permisos faltantes.</p>
       </section>

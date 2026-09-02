@@ -9,6 +9,7 @@ import {
   lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore,
   type ComponentType,
 } from 'react';
+import { ConsoleAccessProvider } from './api/console-access';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LandingPage } from './features/landing/LandingPage';
@@ -38,9 +39,11 @@ function deferredPage<P extends object>(
   };
 }
 
-/** What a route receives from the router: only `/audit` uses it, to land on the audit tab. */
+/** Optional state carried by routed views: audit tab or an exact Terminal agent identity. */
 interface RoutePageProps {
   initialTab?: 'senales' | 'auditoria';
+  tenantId?: string;
+  alias?: string;
 }
 
 const LiveFleetPage = deferredPage(async () => ({
@@ -65,9 +68,7 @@ const TerminalPage = deferredPage(async () => ({
   default: (await import('./features/terminal/TerminalPage')).TerminalPage,
 }));
 import { HelpPage } from './features/help/HelpPage';
-const FleetAgentDetailPage = lazy(async () => ({
-  default: (await import('./features/fleet/FleetAgentDetailPage')).FleetAgentDetailPage,
-}));
+import { TerminalRelayProvider } from './features/terminal/relay-status';
 
 interface Route {
   id: string;
@@ -105,7 +106,7 @@ const MENU = routes.filter((route) => route.label !== '');
 /* Routes that accept segments past the id, with their exact arity. A view that navigates to a
    subroute not declared here ends up at "Route not found", and no test catches it: theirs assert
    on `pathname`, which looks the same when the destination does not exist. */
-const SUBDETALLES: Partial<Record<string, number>> = { fleet: 2, messages: 2 };
+const SUBDETALLES: Partial<Record<string, number>> = { fleet: 2, messages: 2, terminal: 2 };
 
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
   licenses: 'accounts',
@@ -148,7 +149,7 @@ function RouteNotFound({ path }: { path: string }) {
 
 interface RouteMatch {
   id: string;
-  /** Segments past the route id, e.g. `#/fleet/:tenant/:alias` → ['tenant', 'alias']. */
+  /** Segments past the route id, e.g. `/terminal/:tenant/:alias` → ['tenant', 'alias']. */
   params: string[];
   /** Id as it appeared in the URL when it was a removed alias; `undefined` if the route is canonical. */
   aliasedFrom?: string;
@@ -173,12 +174,15 @@ function matchRoute(path: string): RouteMatch {
   const segments = path.split('/').filter(Boolean).map(decodeSegment);
   const requested = segments[0] ?? '';
   const aridad = SUBDETALLES[requested];
-  const alias = segments.length > 1 && aridad !== undefined ? undefined : ROUTE_ALIASES[requested];
-  const id = alias ?? requested;
   const params = segments.slice(1);
+  const detalleFleetLegado = requested === 'fleet' && params.length === aridad;
+  const alias = detalleFleetLegado
+    ? 'terminal'
+    : segments.length > 1 && aridad !== undefined ? undefined : ROUTE_ALIASES[requested];
+  const id = alias ?? requested;
   const subdetalle = aridad !== undefined && alias === undefined && params.length === aridad;
-  const existe = subdetalle || routes.some((route) => route.id === id);
-  const aridadInvalida = params.length > 0 && !subdetalle;
+  const existe = detalleFleetLegado || subdetalle || routes.some((route) => route.id === id);
+  const aridadInvalida = params.length > 0 && !subdetalle && !detalleFleetLegado;
   return existe && !aridadInvalida
     ? { id, params, aliasedFrom: alias !== undefined ? requested : undefined }
     : { id: requested, params, notFoundPath: `/${path}` };
@@ -210,7 +214,13 @@ function useMediaQuery(query: string): boolean {
 }
 
 export function App() {
-  return <AuthGate>{(gate) => <ConsoleShell gate={gate} />}</AuthGate>;
+  return (
+    <AuthGate>{(gate) => (
+      <ConsoleAccessProvider>
+        <TerminalRelayProvider><ConsoleShell gate={gate} /></TerminalRelayProvider>
+      </ConsoleAccessProvider>
+    )}</AuthGate>
+  );
 }
 
 function ConsoleShell({ gate }: { gate: AuthGateState }) {
@@ -249,8 +259,9 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
 
   useEffect(() => {
     if (!aliasedFrom) return;
-    redirect(`/${routeId}`);
-  }, [aliasedFrom, routeId]);
+    const detalle = params.map((param) => encodeURIComponent(param)).join('/');
+    redirect(`/${routeId}${detalle ? `/${detalle}` : ''}`);
+  }, [aliasedFrom, params, routeId]);
 
   /* The rewrite of `/audit` to `/observability` used to take the requested tab with it. The intent
      survives it —the view is still loading— and is dropped on leaving the route. */
@@ -259,13 +270,11 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   else if (routeId !== 'observability') auditoriaPedida.current = false;
 
   const Page = route?.component;
-  // Sub-detail /fleet/:tenant/:alias reuses the terminal workspace.
-  const requestedSegment = path.split('/').filter(Boolean).map(decodeSegment)[0] ?? '';
-  const fleetAgentTarget = !notFoundPath && requestedSegment === 'fleet' && params.length === 2
+  const terminalTarget = !notFoundPath && routeId === 'terminal' && params.length === 2
     ? { tenantId: params[0], alias: params[1] }
     : undefined;
-  const fleetAgentAlias = fleetAgentTarget?.alias;
-  const viewTitle = notFoundPath ? NOT_FOUND_TITLE : fleetAgentAlias ?? route?.label;
+  const terminalTargetAlias = terminalTarget?.alias;
+  const viewTitle = notFoundPath ? NOT_FOUND_TITLE : terminalTargetAlias ?? route?.label;
 
   useEffect(() => {
     document.title = viewTitle ? `${viewTitle} · ${CONSOLE_TITLE}` : CONSOLE_TITLE;
@@ -273,12 +282,12 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
 
   useEffect(() => {
     // The first paint does not steal focus: only the route change is announced.
-    const key = `${routeId}\u0000${notFoundPath ?? ''}\u0000${fleetAgentAlias ?? ''}`;
+    const key = `${routeId}\u0000${notFoundPath ?? ''}\u0000${terminalTargetAlias ?? ''}`;
     if (focusedRoute.current === null) { focusedRoute.current = key; return; }
     if (focusedRoute.current === key) return;
     focusedRoute.current = key;
     mainRef.current?.focus({ preventScroll: true });
-  }, [routeId, notFoundPath, fleetAgentAlias]);
+  }, [routeId, notFoundPath, terminalTargetAlias]);
 
   return (
     <div className="app-shell" data-sidebar={rail ? 'rail' : 'expanded'}>
@@ -346,17 +355,14 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
           {notFoundPath
             ? <RouteNotFound path={notFoundPath} />
-            : fleetAgentTarget
-            ? (
-              <Suspense fallback={<p className="muted" role="status">Cargando agente…</p>}>
-                <FleetAgentDetailPage
-                  tenantId={fleetAgentTarget.tenantId}
-                  alias={fleetAgentTarget.alias}
-                />
-              </Suspense>
-            )
             : Page
-            ? <Page initialTab={auditoriaPedida.current ? 'auditoria' : undefined} />
+            ? (
+              <Page
+                initialTab={auditoriaPedida.current ? 'auditoria' : undefined}
+                tenantId={terminalTarget?.tenantId}
+                alias={terminalTarget?.alias}
+              />
+            )
             : null}
         </main>
       </div>

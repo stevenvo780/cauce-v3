@@ -5,7 +5,7 @@ import { useApi } from '../../api/context';
 import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import { EmptyState } from '../../components/ui';
-import { permissionState } from '../../lib';
+import type { PermissionState } from '../../lib';
 import {
   avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
   modoDeDocumento, preserveSourceLineEndings,
@@ -29,24 +29,24 @@ interface FicherosTabProps {
   onApplied?: (message: string) => void;
   onOpenContext?: () => void;
   mutationBlocked?: boolean;
+  configWritePermission?: PermissionState;
 }
 
 export function FicherosTab({
   tenantId, alias, mode, borradores, onBorrador, onApplied, onOpenContext,
-  mutationBlocked = false,
+  mutationBlocked = false, configWritePermission,
 }: FicherosTabProps) {
   const api = useApi();
   const mapa = useResource(
     `ficheros-${tenantId}-${alias}`, () => api.getAgentDocuments(tenantId, alias),
   );
-  const access = useResource('console-access', () => api.getConsoleAccess());
   const [abierto, setAbierto] = useState<AgentDocumentKind | undefined>(undefined);
 
   const aviso = mapa.data ? avisoDeFuente(mapa.data) : undefined;
   const items = (mapa.data?.items ?? []).filter(
     (item) => mode === 'inventory' || item.kind === 'directive',
   );
-  const estadoPermiso = permissionState(access.data, 'config.write');
+  const estadoPermiso = mode === 'manual-editor' ? (configWritePermission ?? 'unknown') : 'denied';
   const canWrite = estadoPermiso === 'allowed';
   const canEdit = mode === 'manual-editor' && canWrite;
 

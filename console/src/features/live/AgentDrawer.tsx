@@ -7,8 +7,10 @@ import type {
 } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { UNKNOWN, compactId, safeDeliveryState, safeJobLane } from '../../lib';
+import { UNKNOWN, compactId, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
+import { queueDeliveryPath } from '../deliveries/delivery-links';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { AgentAvatar } from './AgentAvatar';
 import { ContextoTab } from './ContextoTab';
 import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
@@ -209,10 +211,10 @@ export function AgentDrawer({
       <footer className="agent-drawer-foot">
         <a
           className="button small secondary"
-          href={`/fleet/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`}
-          onClick={(event) => { onNavClick(event, `/fleet/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`); }}
+          href={`/terminal/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`}
+          onClick={(event) => { onNavClick(event, `/terminal/${encodeURIComponent(view.tenantId)}/${encodeURIComponent(view.alias)}`); }}
         >
-          <ExternalLink size={14} aria-hidden="true" /> Abrir la Terminal acotada a este agente
+          <ExternalLink size={14} aria-hidden="true" /> Abrir este agente en Terminal
         </a>
       </footer>
     </aside>
@@ -338,11 +340,18 @@ function DeliveryCard({ item, origen }: {
   item: FleetActivityItem;
   origen: OrigenEncargo | undefined;
 }) {
+  const policy = deliveryPolicy(item.status);
+  const queuePath = queueDeliveryPath(item.delivery_id);
   return (
     <article className="drawer-delivery">
       <header>
         <span className="mono">{compactId(item.delivery_id)}</span>
-        <Badge tone="info"><Unknown value={safeDeliveryState(item.status)} /></Badge>
+        <Badge tone={policy.tone}><Unknown
+          value={policy.known ? policy.label : undefined}
+          motivo={item.status && !policy.known
+            ? `El servidor mandó un estado que esta consola no conoce: ${item.status}`
+            : undefined}
+        /></Badge>
       </header>
       <dl>
         <dt>Mensaje</dt><dd><span className="mono">{compactId(item.message_id)}</span></dd>
@@ -354,13 +363,13 @@ function DeliveryCard({ item, origen }: {
       </dl>
       <div className="drawer-delivery-actions">
         {/* Enlace, no botón: en esta vista no se destruye nada. Ver la cabecera del fichero. */}
-        <a
+        {queuePath ? <a
           className="button small secondary"
-          href={`/queues?delivery=${encodeURIComponent(item.delivery_id ?? '')}`}
-          onClick={(event) => { onNavClick(event, `/queues?delivery=${encodeURIComponent(item.delivery_id ?? '')}`); }}
+          href={queuePath}
+          onClick={(event) => { onNavClick(event, queuePath); }}
         >
           Ver en Queues
-        </a>
+        </a> : null}
       </div>
     </article>
   );

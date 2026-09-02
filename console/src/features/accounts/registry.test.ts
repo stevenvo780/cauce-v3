@@ -2,8 +2,8 @@ import { ApiError } from '../../api/client';
 import type { ConfigurationSnapshot } from '../../api/types';
 import {
   accountDraftError, bindingMutation, buildAssignmentMatrix, ceilingMutation, credentialRefError,
-  createAccountMutation, describeRegistryError, readAgents, readBindings, readCeiling,
-  readProviderAccounts, redactPreview, updateAccountMutation, viewerTenant,
+  createAccountMutation, deleteAccountMutation, describeRegistryError, readCeiling,
+  readProviderAccounts, readRegistry, redactPreview, updateAccountMutation, viewerTenant,
   type AccountDraft, type RegistryContext,
 } from './registry';
 
@@ -29,18 +29,35 @@ const snapshot: ConfigurationSnapshot = {
 };
 
 function contextFrom(source: ConfigurationSnapshot = snapshot): RegistryContext {
-  return {
-    accounts: readProviderAccounts(source).items,
-    agents: readAgents(source).items,
-    ceiling: readCeiling(source).items,
-    bindings: readBindings(source).items,
-    tenantIds: (source.tenants ?? []).map((row) => String(row.id)),
-  };
+  return readRegistry(source).context;
 }
 
 it('distingue una clave ausente del snapshot de una lista vacía', () => {
-  expect(readProviderAccounts({ revision: 1 })).toEqual({ available: false, items: [] });
-  expect(readProviderAccounts({ revision: 1, provider_accounts: [] })).toEqual({ available: true, items: [] });
+  expect(readRegistry({ revision: 1 }).accounts).toEqual({ available: false, items: [] });
+  expect(readRegistry({ revision: 1, provider_accounts: [] }).accounts).toEqual({ available: true, items: [] });
+});
+
+it('filtra identidades inválidas una sola vez antes de construir cualquiera de las vistas', () => {
+  const registry = readRegistry({
+    tenants: [{ id: 'Steven' }, { id: 'tenant inválido' }],
+    provider_accounts: [{ id: 'Cuenta Mala', provider: 'codex' }, snapshot.provider_accounts?.[0] ?? {}],
+    agents: [{ tenant_id: 'Steven', alias: 'Alias Malo' }, snapshot.agents?.[0] ?? {}],
+    alias_routing_ceiling: [
+      { tenant_id: 'Steven', alias: 'Alias Malo', account_id: 'codex-steven' },
+      snapshot.alias_routing_ceiling?.[0] ?? {},
+    ],
+    agent_account_bindings: [
+      { tenant_id: 'Steven', agent_alias: 'Alias Malo', account_id: 'codex-steven' },
+      snapshot.agent_account_bindings?.[1] ?? {},
+    ],
+  });
+
+  expect(registry.tenantIds).toEqual(['Steven']);
+  expect(registry.accounts.items.map((item) => item.id)).toEqual(['codex-steven']);
+  expect(registry.agents.items.map((item) => item.alias)).toEqual(['kant']);
+  expect(registry.ceiling.items).toHaveLength(1);
+  expect(registry.bindings.items).toHaveLength(1);
+  expect(registry.routing.matrix).toHaveLength(1);
 });
 
 it('marca como redactado —y no como vacío— el campo que el servidor anula por ser de otro pagador', () => {
@@ -126,6 +143,12 @@ it('el update sólo manda los tres campos mutables: identidad y locator son inmu
   expect(updateAccountMutation('codex-steven', { label: null, sharedWithPool: false, enabled: true })).toEqual({
     resource: 'provider_account', action: 'update', id: 'codex-steven',
     value: { label: null, shared_with_pool: false, enabled: true },
+  });
+});
+
+it('arma el borrado que permite retiro o rotación sin inventar campos', () => {
+  expect(deleteAccountMutation('codex-steven')).toEqual({
+    resource: 'provider_account', action: 'delete', id: 'codex-steven',
   });
 });
 

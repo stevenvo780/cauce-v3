@@ -133,7 +133,7 @@ describe('volver a una pestaña de terminal', () => {
     expect(posts).toEqual(['zeus']);
 
     await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('textbox', { name: /entrada para salva/i });
+    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
     // While the other tab is on screen, the live terminal is not mounted anywhere...
     expect(document.querySelector('.pty-mount')).toBeNull();
 
@@ -170,9 +170,9 @@ describe('volver a una pestaña de terminal', () => {
     await waitFor(() => { expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true'); });
 
     await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('textbox', { name: /entrada para salva/i });
+    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
     await user.click(screen.getByRole('tab', { name: /zeus/i }));
-    await screen.findByRole('textbox', { name: /entrada para zeus/i });
+    await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
     // The panel is alive and keeps refreshing; what it does NOT do is ask for the channel again.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
@@ -197,9 +197,9 @@ describe('volver a una pestaña de terminal', () => {
     expect(await screen.findByRole('alert')).toHaveAttribute('data-codigo', 'no_grant');
 
     await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('textbox', { name: /entrada para salva/i });
+    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
     await user.click(screen.getByRole('tab', { name: /zeus/i }));
-    await screen.findByRole('textbox', { name: /entrada para zeus/i });
+    await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
     expect(attempts).toBe(1);
@@ -208,21 +208,23 @@ describe('volver a una pestaña de terminal', () => {
 });
 
 describe('la rejilla de pestañas', () => {
-  it('cambia el panel visible sin mezclar el borrador de una sesión con el de la otra', async () => {
+  it('cambia el panel visible y mantiene cada enlace canónico asociado a su sesión', async () => {
     const user = userEvent.setup();
     serveTwoAgents();
     serveSessions([], []);
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    await user.type(await screen.findByRole('textbox', { name: /entrada para salva/i }), 'para salva');
+    expect(await screen.findByRole('link', { name: /escribir a salva en mensajes/i })).toHaveAttribute(
+      'href', '/messages/Isa/salva',
+    );
 
     await user.click(screen.getByRole('button', { name: /abrir sesión con kant/i }));
-    const otro = await screen.findByRole('textbox', { name: /entrada para kant/i });
+    const otro = await screen.findByRole('link', { name: /escribir a kant en mensajes/i });
 
-    // One stage on screen, and it is the other one: the draft does not travel between panels.
-    expect(otro).toHaveValue('');
-    expect(screen.queryByRole('textbox', { name: /entrada para salva/i })).not.toBeInTheDocument();
+    expect(otro).toHaveAttribute('href', '/messages/Steven/kant');
+    expect(screen.queryByRole('link', { name: /escribir a salva en mensajes/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /entrada para/i })).not.toBeInTheDocument();
     expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
     expect(screen.getAllByRole('tab')).toHaveLength(2);
     expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('kant');
@@ -237,7 +239,7 @@ describe('la rejilla de pestañas', () => {
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('textbox', { name: /entrada para salva/i });
+    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
     await openTui(user);
     expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('zeus');
 
@@ -247,7 +249,7 @@ describe('la rejilla de pestañas', () => {
     await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
     await waitFor(() => { expect(screen.queryByRole('tab', { name: /zeus/i })).not.toBeInTheDocument(); });
     expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('salva');
-    expect(await screen.findByRole('textbox', { name: /entrada para salva/i })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: /escribir a salva en mensajes/i })).toBeInTheDocument();
   }, 20_000);
 
   it('cerrar la última pestaña devuelve el escenario vacío, no un panel muerto', async () => {
@@ -257,7 +259,7 @@ describe('la rejilla de pestañas', () => {
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con salva/i }));
-    await screen.findByRole('textbox', { name: /entrada para salva/i });
+    await screen.findByRole('link', { name: /escribir a salva en mensajes/i });
 
     await user.click(screen.getByRole('button', { name: /cerrar sesión salva/i }));
 

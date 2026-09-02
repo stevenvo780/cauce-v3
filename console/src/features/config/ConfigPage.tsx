@@ -1,5 +1,6 @@
 import { Braces, RotateCcw, Save, SearchCheck, ShieldOff } from 'lucide-react';
 import { useMemo, useState, type SyntheticEvent } from 'react';
+import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import type {
   AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource, ConsoleAccess,
@@ -19,7 +20,7 @@ import { ArnesesPanel } from './ArnesesPanel';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import {
-  describeConfigError, esNegativaDePermiso, textoRecarga,
+  describeConfigError, esNegativaDePermiso, executeConfigurationChange, textoRecarga,
   type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
 } from './config-change';
 import { exactConfigurationReceipt } from './config-receipt';
@@ -63,15 +64,52 @@ function actionsFor(resource: ConfigResource): readonly ConfigAction[] {
 }
 
   /**
-   * Everything `ConfigMutationSchema` accepts on the server, including registry resources that have their own screen.
-   * The console must not be a second allowlist that lags behind the protocol: here we only discard what the server
-   * would reject anyway, and the authority is still the gateway's zod plus the RBAC of `authorizeMutation`.
+   * Everything `ConfigMutationSchema` accepts on the server. `parseMutation` deliberately rejects the three account
+   * registry resources after recognizing them: their typed and confirmed authority is `/accounts`, while `agent`
+   * remains available here for fields that have no specialized editor.
    */
 const RESOURCES: readonly AnyConfigResource[] = [
   'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy',
   'chain_policy', 'egress_destination',
   'agent', 'provider_account', 'alias_routing_ceiling', 'agent_account_binding',
 ];
+
+const ACCOUNT_RESOURCES = new Set<AnyConfigResource>([
+  'provider_account', 'alias_routing_ceiling', 'agent_account_binding',
+]);
+
+type RollbackPolicy =
+  | { allowed: true }
+  | { allowed: false; accountResource: boolean; message: string };
+
+function rollbackPolicy(operation: unknown): RollbackPolicy {
+  if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
+    return {
+      allowed: false,
+      accountResource: false,
+      message: 'Bloqueado: la revisión no publica una operación reconocible y no se puede acreditar que sea segura de revertir.',
+    };
+  }
+  const candidate = operation as Record<string, unknown>;
+  const resource = typeof candidate.resource === 'string' ? candidate.resource : undefined;
+  if (resource && ACCOUNT_RESOURCES.has(resource as AnyConfigResource)) {
+    return {
+      allowed: false,
+      accountResource: true,
+      message: `Bloqueado: esta revisión modifica ${resource}; su única autoridad es Cuentas y cuotas.`,
+    };
+  }
+  if (!resource || !RESOURCES.includes(resource as AnyConfigResource)
+    || typeof candidate.action !== 'string'
+    || !allActions.includes(candidate.action as ConfigAction)) {
+    return {
+      allowed: false,
+      accountResource: false,
+      message: 'Bloqueado: la revisión no publica una operación reconocible y no se puede acreditar que sea segura de revertir.',
+    };
+  }
+  return { allowed: true };
+}
 
 function mutationText(resource: ConfigResource, action: ConfigAction): string {
   const mutation = structuredClone(templates[resource]);
@@ -86,6 +124,12 @@ function parseMutation(text: string): ConfigMutation {
   const mutation = value as Partial<ConfigMutation>;
   if (!RESOURCES.includes(String(mutation.resource) as AnyConfigResource)) {
     throw new Error('resource no reconocido.');
+  }
+  if (ACCOUNT_RESOURCES.has(String(mutation.resource) as AnyConfigResource)) {
+    throw new Error(
+      'Las cuentas, sus techos y sus bindings se modifican únicamente en «Cuentas y cuotas». '
+      + 'Abrí /accounts para usar formularios tipados, confirmación y dry-run.',
+    );
   }
   if (!allActions.includes(String(mutation.action) as ConfigAction)) throw new Error('action no reconocida.');
   const rawValue = (value as Record<string, unknown>).value;
@@ -129,9 +173,13 @@ function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number
 }
 
 export function ConfigPage() {
+  return <ConsoleAccessBoundary><ConfigPageContent /></ConsoleAccessBoundary>;
+}
+
+function ConfigPageContent() {
   const api = useApi();
   const config = useResource('configuration', () => api.getConfiguration());
-  const access = useResource('console-access', () => api.getConsoleAccess());
+  const access = useConsoleAccess();
   const [resource, setResource] = useState<ConfigResource>('acl_edge');
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
@@ -147,10 +195,9 @@ export function ConfigPage() {
   // is painted next to the control that fired it, without opening anything.
   const [avisoDeRollback, setAvisoDeRollback] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
   const [previewDeRollback, setPreviewDeRollback] = useState<string>();
-  // The open tab. `/config` used to be A single scroll with sixteen panels in a row—the onboarding, the wizard, the
-  // raw editor, twelve tables, and the audit trail—and touching an ACL edge required scrolling past the AI
-  // subscription pool. What changes is the ORDER, not the scope: no collection is hidden, each one gets its own tab,
-  // and unknown ones fall under "Others".
+  // The open tab. `/config` used to be one scroll with onboarding, wizard, raw editor, every table, and audit trail.
+  // General configuration stays grouped here; the account registry is intentionally absent because `/accounts` is
+  // its typed authority. Unknown collections still fall under "Others".
   const [area, setArea] = useState<ConfigAreaId>(AREA_POR_DEFECTO);
   // Navigating and reading remain available under RBAC `unknown`, but writing fails closed. A reload error also
   // invalidates a previous ALLOW: keeping it would enable mutations precisely when we can no longer attest that
@@ -244,31 +291,21 @@ export function ConfigPage() {
     }
     setBusy(true);
     try {
-      const result = await api.changeConfiguration(mutation, {
+      const outcome = await executeConfigurationChange({
+        mutation,
         dryRun,
-        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+        expectedRevision,
+        change: (next, options) => api.changeConfiguration(next, options),
+        reload: config.reload,
+        fallback: 'Cambio rechazado: UNKNOWN',
+        camino,
       });
-      if (!exactConfigurationReceipt(result, dryRun, mutation)) {
-        const recarga = dryRun ? undefined : await releer();
-        return {
-          ok: false,
-          conflict: false,
-          uncertain: !dryRun,
-          message: dryRun
-            ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
-            : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verificá la relectura antes de repetirla.',
-          ...(recarga === undefined ? {} : { recarga }),
-        };
+      if (outcome.ok) {
+        if (!dryRun && typeof outcome.result.revision === 'number') setChainedRevision(outcome.result.revision);
+      } else if (outcome.conflict) {
+        setChainedRevision(undefined);
       }
-      // A dry-run does not write anything, so there is no snapshot to reread nor a reread to count.
-      if (dryRun) return { ok: true, result };
-      if (typeof result.revision === 'number') setChainedRevision(result.revision);
-      return { ok: true, result, recarga: await releer() };
-    } catch (error) {
-      const described = describeConfigError(error, 'Cambio rechazado: UNKNOWN', camino);
-      if (!described.conflict) return { ok: false, ...described };
-      setChainedRevision(undefined);
-      return { ok: false, ...described, recarga: await releer() };
+      return outcome;
     } finally {
       setBusy(false);
     }
@@ -345,7 +382,13 @@ export function ConfigPage() {
    * which are painted INSIDE the audit trail panel itself, next to the buttons that fired it: `notice`/`preview` live
    * inside the raw editor's `<details>`, and there an outcome goes unread.
    */
-  async function rollback(revisionId: string, dryRun: boolean) {
+  async function rollback(revisionId: string, operation: unknown, dryRun: boolean) {
+    const policy = rollbackPolicy(operation);
+    if (!policy.allowed) {
+      setPreviewDeRollback(undefined);
+      setAvisoDeRollback({ tone: 'error', text: policy.message });
+      return;
+    }
     if (motivoDeSoloLectura) {
       setPreviewDeRollback(undefined);
       setAvisoDeRollback({
@@ -476,6 +519,16 @@ export function ConfigPage() {
           pick it—. Placed after, it would read as a footnote to something the operator has already misinterpreted. */}
       {areaVisible === 'agentes' ? <ArnesesPanel /> : null}
 
+      {areaVisible === 'agentes' ? <Panel
+        title="Cuentas y ruteo de suscripciones"
+        subtitle="El inventario de provider_account, los techos y los bindings tienen una única autoridad de lectura y escritura."
+      >
+        <p>Se administran junto con su consumo y su orden de fallback en «Cuentas y cuotas»; estas tablas no se repiten en Ajustes.</p>
+        <a className="button secondary" href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>
+          Ir a Cuentas y cuotas
+        </a>
+      </Panel> : null}
+
       {(activa?.colecciones ?? []).map((coleccion) => {
         const pedido = pendiente?.coleccion === coleccion.key ? pendiente : undefined;
         // A pending confirmation is valid for the revision on which it was requested. If the snapshot moved
@@ -535,12 +588,15 @@ export function ConfigPage() {
       {previewDeRollback ? <pre className="config-preview" aria-label="Preview del rollback">{previewDeRollback}</pre> : null}
 
       {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className="table-wrap config-audit"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
-        {config.data.revisions.map((revision, index) => <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id ? <span className="config-actions"><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, true); }}>Preview</button><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, false); }}><RotateCcw size={14} />Rollback</button></span> : <Unknown value={null} />}</td></tr>)}
+        {config.data.revisions.map((revision, index) => {
+          const policy = rollbackPolicy(revision.operation);
+          return <tr key={revision.id ?? index}><td><Badge tone="info"><Unknown value={revision.id} /></Badge></td><td><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td><td><Unknown value={revision.summary} /></td><td><Time value={revision.created_at} /></td><td>{revision.id && policy.allowed ? <span className="config-actions"><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, revision.operation, true); }}>Preview</button><button className="button small" disabled={soloLectura || busy} onClick={() => { if (revision.id) void rollback(revision.id, revision.operation, false); }}><RotateCcw size={14} />Rollback</button></span> : revision.id && !policy.allowed ? <span>{policy.message}{policy.accountResource ? <> <a href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Abrir Cuentas y cuotas</a>.</> : null}</span> : <Unknown value={null} />}</td></tr>;
+        })}
       </tbody></table></Desplazable>}
     </Panel>
 
-    {/* The escape hatch: still alive and whole for everything that has no form (harness, role_policy, chain_policy,
-        egress, and the four registry resources), but no longer the first thing the operator sees. */}
+    {/* The escape hatch remains for resources without forms. Account registry mutations are rejected here because
+        their sole authority is /accounts; `agent` remains available, except for its read-only role_brief projection. */}
     <details className="config-editor">
       <summary><Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario</summary>
       <Panel title="Mutation editor" subtitle={`Revisión esperada: ${String(expectedRevision ?? 'UNKNOWN')}`}>

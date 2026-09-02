@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
 import { useMemo, useState, useSyncExternalStore } from 'react';
+import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import {
@@ -28,9 +29,13 @@ type Pestana = (typeof PESTANAS)[number]['id'];
 
 /** Control and rescue view of deliveries in queues, retries and dead letter queue. */
 export function QueuesPage() {
+  return <ConsoleAccessBoundary><QueuesPageContent /></ConsoleAccessBoundary>;
+}
+
+function QueuesPageContent() {
   const api = useApi();
   const resource = useResource('queues', () => api.getQueues());
-  const access = useResource('console-access', () => api.getConsoleAccess());
+  const access = useConsoleAccess();
   const [filtro, setFiltro] = useState(FILTRO_VACIO);
   const [pestana, setPestana] = useState<Pestana>('entregas');
   /**
@@ -45,7 +50,8 @@ export function QueuesPage() {
 
   const items = useMemo(() => resource.data?.items ?? [], [resource.data]);
   const porGrupo = useMemo(() => contarPorGrupo(items), [items]);
-  const dlqAccess = permissionState(access.data, 'dlq.resolve');
+  const verifiedAccess = access.error ? undefined : access.data;
+  const dlqAccess = permissionState(verifiedAccess, 'dlq.resolve');
 
   if (resource.loading && !resource.data) return <LoadingState label="Leyendo queues, retries y DLQ…" />;
   if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
@@ -76,8 +82,8 @@ export function QueuesPage() {
           <>
             <p><strong>Replay:</strong> {EXPLICACION_REPLAY} <strong>Cancelar:</strong> {EXPLICACION_CANCEL} Las dos piden confirmación antes de salir al servidor.</p>
             <div className="queues-permisos">
-              <PermissionBadge access={access.data} permission="delivery.replay" />
-              <PermissionBadge access={access.data} permission="dlq.resolve" />
+              <PermissionBadge access={verifiedAccess} permission="delivery.replay" />
+              <PermissionBadge access={verifiedAccess} permission="dlq.resolve" />
             </div>
           </>
         }
@@ -165,8 +171,8 @@ export function QueuesPage() {
           <DeliveryTable
             rows={filas}
             resaltada={foco.deliveryId}
-            canReplay={permissionState(access.data, 'delivery.replay') === 'allowed'}
-            canCancel={permissionState(access.data, 'delivery.cancel') === 'allowed'}
+            canReplay={permissionState(verifiedAccess, 'delivery.replay') === 'allowed'}
+            canCancel={permissionState(verifiedAccess, 'delivery.cancel') === 'allowed'}
             onChanged={resource.reload}
             snapshotVersion={snapshot?.observed_at}
             empty={foco.estado === 'ausente'

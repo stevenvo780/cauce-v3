@@ -30,19 +30,22 @@ export function HelpPage() {
             <div>
               <strong>Cuentas y cuotas (<code>/accounts</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                Inventario de proveedores de IA, límites de tasa y consumo por cuenta y asignación a agentes.
+                Único lugar para registrar o retirar cuentas de proveedores y modificar sus techos
+                y bindings de fallback, además de consultar límites y consumo.
               </p>
             </div>
             <div>
               <strong>Mensajes (<code>/messages</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                Visor de conversaciones durables con agentes de la flota y estado detallado de entregas.
+                Único lugar para redactar y publicar mensajes durables. Muestra el estado de sus
+                entregas y deriva cualquier rescate operativo a Colas.
               </p>
             </div>
             <div>
               <strong>Queues &amp; DLQ (<code>/queues</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                Supervisión de colas de mensajes pendientes, reintentos programados y dead-letter queue con operaciones de reenvío y cancelación.
+                Único lugar para reinyectar, cancelar o resolver entregas, con confirmación,
+                recibo exacto y relectura ante un resultado incierto.
               </p>
             </div>
             <div>
@@ -55,13 +58,15 @@ export function HelpPage() {
               <strong>Ajustes y altas (<code>/config</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
                 Control atómico de topología: tenants, salas, membresías, roles de permisos y ACL,
-                con historial de revisiones y reversión segura. No edita el contexto de los agentes.
+                con historial de revisiones y reversión segura. No edita contextos ni el pool de
+                cuentas: esas escrituras pertenecen a Contexto y Cuentas y cuotas.
               </p>
             </div>
             <div>
               <strong>Terminal de agentes (<code>/terminal</code>)</strong>
               <p className="muted" style={{ margin: '4px 0 0' }}>
-                Consola interactiva PTY por agente con feed durable respaldado por PostgreSQL para auditoría completa.
+                Consola PTY por agente con feed durable y ACK en sólo lectura. Sus enlaces profundos
+                llevan a Mensajes para publicar y a Colas para rescatar una entrega.
               </p>
             </div>
           </div>

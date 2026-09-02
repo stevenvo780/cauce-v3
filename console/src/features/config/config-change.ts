@@ -1,5 +1,7 @@
 import { ApiError } from '../../api/client';
-import type { ConfigurationChangeResult } from '../../api/types';
+import type { ConfigMutation, ConfigurationChangeResult, ConfigurationSnapshot } from '../../api/types';
+import type { RecargaResultado } from '../../api/use-resource';
+import { exactConfigurationReceipt } from './config-receipt';
 
 /**
  * What happened with the RELOAD of the snapshot that follows a write. It exists because
@@ -14,6 +16,20 @@ export type EstadoRecarga =
 export type ConfigChangeOutcome =
   | { ok: true; result: ConfigurationChangeResult; recarga?: EstadoRecarga }
   | { ok: false; message: string; conflict: boolean; uncertain?: boolean; recarga?: EstadoRecarga };
+
+interface ConfigurationChangeTransport {
+  mutation: ConfigMutation;
+  dryRun: boolean;
+  expectedRevision?: number;
+  change: (
+    mutation: ConfigMutation,
+    options: { dryRun: boolean; expectedRevision?: number },
+  ) => Promise<ConfigurationChangeResult>;
+  reload: () => Promise<RecargaResultado<ConfigurationSnapshot>>;
+  describeError?: (error: unknown) => { message: string; conflict: boolean };
+  fallback?: string;
+  camino?: CaminoDeCambio;
+}
 
 /**
  * Sentence that is ADDED to the notice to describe the reload outcome. `undefined` (a dry-run,
@@ -80,6 +96,44 @@ export function describeConfigError(
     };
   }
   return { conflict: false, message: error instanceof Error ? error.message : fallback };
+}
+
+export async function executeConfigurationChange(
+  options: ConfigurationChangeTransport,
+): Promise<ConfigChangeOutcome> {
+  async function reload(): Promise<EstadoRecarga> {
+    const result = await options.reload();
+    if (result.error) return { releido: false, motivo: result.error.message };
+    const revision = typeof result.data.revision === 'number' ? result.data.revision : undefined;
+    return { releido: true, ...(revision === undefined ? {} : { revision }) };
+  }
+
+  try {
+    const result = await options.change(options.mutation, {
+      dryRun: options.dryRun,
+      ...(options.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
+    });
+    if (!exactConfigurationReceipt(result, options.dryRun, options.mutation)) {
+      const recarga = options.dryRun ? undefined : await reload();
+      return {
+        ok: false,
+        conflict: false,
+        uncertain: !options.dryRun,
+        message: options.dryRun
+          ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
+          : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verificá la relectura antes de repetirla.',
+        ...(recarga === undefined ? {} : { recarga }),
+      };
+    }
+    if (options.dryRun) return { ok: true, result };
+    return { ok: true, result, recarga: await reload() };
+  } catch (error) {
+    const described = options.describeError?.(error)
+      ?? describeConfigError(error, options.fallback ?? 'Cambio rechazado: UNKNOWN', options.camino);
+    return described.conflict
+      ? { ok: false, ...described, recarga: await reload() }
+      : { ok: false, ...described };
+  }
 }
 
 /**

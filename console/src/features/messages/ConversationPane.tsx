@@ -4,9 +4,10 @@ import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { JobLane, MessagePage } from '../../api/types';
 import { Badge, EmptyState, LoadingState, Time, Unknown } from '../../components/ui';
-import { compactId, safeDeliveryState, safeJobLane } from '../../lib';
-import { rotuloDeEstado } from '../queues/estado-de-entrega';
+import { compactId, safeJobLane } from '../../lib';
 import { onNavClick } from '../../router';
+import { queueDeliveryPath } from '../deliveries/delivery-links';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { fleetAgentId } from '../terminal/fleet';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
@@ -41,7 +42,7 @@ interface ConversationPaneProps {
 
 /** Bot detail route, where its terminal lives (durable feed + PTY when it exists). */
 function rutaDeTui(agent: AgenteDeMensajeria): string {
-  return `/fleet/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
+  return `/terminal/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}`;
 }
 
 /** What the console knows about the full body of a message: nothing, requesting it, the text, or a failure. */
@@ -92,6 +93,7 @@ export function ConversationPane({
   ));
   const itemSeleccionado = elegidoPorElOperador ?? hilo.at(-1);
   const seleccionada = itemSeleccionado?.delivery;
+  const rutaDeEntregaSeleccionada = queueDeliveryPath(seleccionada?.delivery_id);
   const mensajeSeleccionado = itemSeleccionado?.message;
   // SIBLING deliveries of the same publish: the complete fan-out. The previous flat list showed all of them and the
   // thread-by-pair had left them out, so from here it was impossible to know who else the same message went to or how it went.
@@ -349,7 +351,14 @@ export function ConversationPane({
           </summary>
           <p className="eyebrow">
             {seleccionada
-              ? <>Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_tenant ?? 'UNKNOWN'}:{seleccionada.recipient_alias ?? 'UNKNOWN'}</>
+              ? <>
+                Entrega {compactId(seleccionada.delivery_id)} → {seleccionada.recipient_tenant ?? 'UNKNOWN'}:{seleccionada.recipient_alias ?? 'UNKNOWN'}
+                {rutaDeEntregaSeleccionada ? <>{' '}· <a
+                  href={rutaDeEntregaSeleccionada}
+                  onClick={(event) => { onNavClick(event, rutaDeEntregaSeleccionada); }}
+                  aria-label={`Gestionar delivery ${seleccionada.delivery_id ?? 'UNKNOWN'} en Colas`}
+                >Gestionar en Colas</a></> : null}
+              </>
               : <>Mensaje {compactId(mensajeSeleccionado.message_id)} · sin entrega para este par</>}
           </p>
 
@@ -405,23 +414,28 @@ export function ConversationPane({
               </p>
             ) : (
               <ul className="messenger-fanout-list">
-                {hermanas.map((entrega, indice) => (
-                  <li key={entrega.delivery_id ?? indice}>
+                {hermanas.map((entrega, indice) => {
+                  const policy = deliveryPolicy(entrega.status);
+                  const queuePath = queueDeliveryPath(entrega.delivery_id);
+                  return <li key={entrega.delivery_id ?? indice}>
                     <strong>{entrega.recipient_tenant ?? 'UNKNOWN'}:{entrega.recipient_alias ?? 'UNKNOWN'}</strong>
-                    <Badge tone={safeDeliveryState(entrega.status) === 'done' ? 'done'
-                      : safeDeliveryState(entrega.status) === 'failed' || safeDeliveryState(entrega.status) === 'dead' ? 'danger'
-                        : entrega.status ? 'running' : 'unknown'}>
+                    <Badge tone={policy.tone}>
                       <Unknown
-                        value={rotuloDeEstado(safeDeliveryState(entrega.status))}
-                        motivo={entrega.status && !safeDeliveryState(entrega.status)
+                        value={policy.known ? policy.label : undefined}
+                        motivo={entrega.status && !policy.known
                           ? `El servidor mandó un estado que esta consola no conoce: ${entrega.status}`
                           : undefined}
                       />
                     </Badge>
                     <span className="mono">{compactId(entrega.delivery_id)}</span>
                     <span>intento {entrega.attempt ?? 'UNKNOWN'}</span>
-                  </li>
-                ))}
+                    {queuePath ? <a
+                      href={queuePath}
+                      onClick={(event) => { onNavClick(event, queuePath); }}
+                      aria-label={`Gestionar delivery ${entrega.delivery_id ?? 'UNKNOWN'} en Colas`}
+                    >Gestionar en Colas</a> : null}
+                  </li>;
+                })}
               </ul>
             )}
           </section>

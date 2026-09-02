@@ -1,5 +1,5 @@
 import { ShieldCheck, X } from 'lucide-react';
-import type { ConsoleAccess, TerminalCapability, TopologySnapshot } from '../../api/types';
+import type { ConsoleAccess, TerminalCapability } from '../../api/types';
 import type { TerminalSessionGrant, TerminalTargetsSnapshot } from './api';
 import { TEXTO_DOCTRINA } from './doctrina';
 import type { FleetAgent } from './fleet';
@@ -14,7 +14,6 @@ interface GridContainerProps {
   activeId?: string;
   agents: FleetAgent[];
   access?: ConsoleAccess;
-  topologyAccess?: TopologySnapshot;
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
   grants: Record<string, TerminalSessionGrant>;
@@ -34,7 +33,6 @@ export function GridContainer({
   activeId,
   agents,
   access,
-  topologyAccess,
   capability,
   targets,
   grants,
@@ -83,7 +81,6 @@ export function GridContainer({
               sessionToken={sessionTokens.get(visible.id) ?? 0}
               agents={agents}
               access={access}
-              topologyAccess={topologyAccess}
               capability={capability}
               targets={targets}
               grants={grants}

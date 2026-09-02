@@ -1,27 +1,26 @@
 import { ArrowDownLeft, ArrowUpRight, CheckCircle2, CircleDashed, Clock3, Scissors } from 'lucide-react';
-import type { DeliveryState, DeliveryView } from '../../api/types';
+import type { DeliveryView } from '../../api/types';
 import { Badge, EmptyState, Time, Unknown } from '../../components/ui';
-import { compactId, safeDeliveryState } from '../../lib';
+import { compactId } from '../../lib';
+import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { CARACTERES_DE_PREVISUALIZACION, previsualizacionRecortada } from './cuerpo-del-mensaje';
 import type { TranscriptItem } from './session';
 
-function deliveryTone(state?: DeliveryState): 'done' | 'danger' | 'warning' | 'running' | 'unknown' {
-  if (state === 'done') return 'done';
-  if (state === 'dead' || state === 'failed') return 'danger';
-  if (state === 'retry') return 'warning';
-  return state ? 'running' : 'unknown';
-}
-
 function DeliveryProgress({ delivery, onSelect }: { delivery: DeliveryView; onSelect: () => void }) {
-  const state = safeDeliveryState(delivery.status);
+  const policy = deliveryPolicy(delivery.status);
   const events = delivery.timeline ?? [];
   const last = events.at(-1);
   return (
     <button className="transcript-delivery" type="button" data-delivery-id={delivery.delivery_id ?? undefined} onClick={onSelect}>
       <span className="delivery-state-icon" aria-hidden="true">
-        {state === 'done' ? <CheckCircle2 size={14} /> : state ? <CircleDashed size={14} /> : <Clock3 size={14} />}
+        {policy.state === 'done' ? <CheckCircle2 size={14} /> : policy.known ? <CircleDashed size={14} /> : <Clock3 size={14} />}
       </span>
-      <Badge tone={deliveryTone(state)}><Unknown value={state} /></Badge>
+      <Badge tone={policy.tone}><Unknown
+        value={policy.known ? policy.label : undefined}
+        motivo={delivery.status && !policy.known
+          ? `El servidor mandó un estado que esta consola no conoce: ${delivery.status}`
+          : undefined}
+      /></Badge>
       <span className="mono">{compactId(delivery.delivery_id)}</span>
       <span>{events.length} ACK · intento {delivery.attempt ?? last?.attempt ?? 'sin dato'}</span>
     </button>
@@ -41,7 +40,7 @@ export function TerminalTranscript({ items, selectedMessageId, onSelectItem }: {
     return (
       <div className="terminal-transcript-empty">
         <EmptyState>
-          No hay mensajes de servidor para esta combinación agente/room. Enviá una instrucción o esperá el próximo polling.
+          No hay mensajes de servidor para este agente. Publicá desde Mensajes o esperá el próximo polling.
         </EmptyState>
       </div>
     );
