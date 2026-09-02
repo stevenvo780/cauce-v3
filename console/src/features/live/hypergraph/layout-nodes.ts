@@ -125,12 +125,10 @@ export function collect(tenants: TenantNode[]): { nodes: Map<string, RawNode>; e
  */
 export function relax(
   nodes: RawNode[],
-  edges: RawEdge[],
   anchors: Map<string, Point>,
   options: Required<LayoutOptions>,
 ): Map<string, Point> {
   const positions = new Map<string, Point>();
-  const edgeById = new Map(edges.map((edge) => [edge.key, edge]));
 
   for (const node of nodes) {
     const incident = node.edges.map((key) => anchors.get(key)).filter((point): point is Point => Boolean(point));
@@ -204,7 +202,6 @@ export function relax(
     const position = positions.get(node.key);
     if (position) result.set(node.key, { x: round(position.x), y: round(position.y) });
   }
-  void edgeById;
   return result;
 }
 

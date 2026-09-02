@@ -224,7 +224,7 @@ export function layoutHypergraph(
 
   const anchors = anchorEdges(rawEdges, settings);
   const nodeList = [...rawNodes.values()];
-  const positions = relax(nodeList, rawEdges, anchors, settings);
+  const positions = relax(nodeList, anchors, settings);
 
   // Relaxation leaves a *tendency* to not overlap; this guarantees it. It runs before computing the envelopes so regions are drawn on the final positions and still contain their members.
   const box = settings.footprint;

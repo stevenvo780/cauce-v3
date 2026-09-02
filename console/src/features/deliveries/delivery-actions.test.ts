@@ -72,6 +72,65 @@ describe('safe delivery commands', () => {
     expect(client.replayDelivery).toHaveBeenCalledTimes(1);
   });
 
+  it('proves an ambiguous replay from its own unverified receipt when the snapshot carries no lineage', async () => {
+    // Mirrors production `queueSnapshot`: items never carry `replayed_from_delivery_id`.
+    const client = api({ replayDelivery: vi.fn(async () => ({
+      delivery_id: REPLAY,
+      replayed_from_delivery_id: SOURCE,
+      state: 'pending' as const,
+      replayed: true,
+      extra: 'forces ambiguous receipt',
+    })) });
+    const outcome = await replayDeliverySafely({
+      api: client,
+      deliveryId: SOURCE,
+      reread: async () => ({ data: { items: [{ delivery_id: REPLAY, state: 'pending', attempts: 0 }] } }),
+    });
+    expect(outcome).toMatchObject({ kind: 'uncertain', effectProven: true });
+    expect(outcome.notice).toMatch(/demostró el efecto durable/i);
+    expect(client.replayDelivery).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not credit an unverified replay receipt whose candidate never surfaces in the reread', async () => {
+    const client = api({ replayDelivery: vi.fn(async () => ({
+      delivery_id: REPLAY,
+      replayed_from_delivery_id: SOURCE,
+      state: 'pending' as const,
+      replayed: true,
+      extra: 'forces ambiguous receipt',
+    })) });
+    const outcome = await replayDeliverySafely({
+      api: client,
+      deliveryId: SOURCE,
+      reread: async () => ({ data: { items: [] } }),
+    });
+    expect(outcome).toMatchObject({ kind: 'uncertain', effectProven: false });
+  });
+
+  it('never credits an unverified receipt whose delivery_id equals the source', async () => {
+    const client = api({ replayDelivery: vi.fn(async () => ({
+      delivery_id: SOURCE, replayed_from_delivery_id: SOURCE, state: 'pending' as const, replayed: true,
+    })) });
+    const outcome = await replayDeliverySafely({
+      api: client,
+      deliveryId: SOURCE,
+      reread: async () => ({ data: { items: [{ delivery_id: SOURCE, state: 'dead', attempts: 1 }] } }),
+    });
+    expect(outcome).toMatchObject({ kind: 'uncertain', effectProven: false });
+  });
+
+  it('ignores an unverified receipt for a cancellation instead of crediting an unrelated match', async () => {
+    const client = api({ cancelDelivery: vi.fn(async () => ({
+      delivery_id: SOURCE, state: 'dead' as const, cancelled: true, extra: 'forces ambiguous receipt',
+    })) });
+    const outcome = await cancelDeliverySafely({
+      api: client,
+      deliveryId: SOURCE,
+      reread: async () => ({ data: { items: [{ delivery_id: SOURCE, state: 'dead', last_error: 'max attempts exhausted' }] } }),
+    });
+    expect(outcome).toMatchObject({ kind: 'uncertain', effectProven: false });
+  });
+
   it('keeps uncertainty explicit when the reread also fails', async () => {
     const client = api({ replayDelivery: vi.fn(async () => { throw new Error('connection lost'); }) });
     const outcome = await replayDeliverySafely({

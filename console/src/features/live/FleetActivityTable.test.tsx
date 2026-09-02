@@ -185,3 +185,20 @@ it('reflects totals.flagged without inventing zeroes for absent keys, and keeps 
 
   expect(screen.queryByText('Por estado')).not.toBeInTheDocument();
 });
+
+it('shows claimed_not_started in "Señales activas" with its danger tone', async () => {
+  mockActivityOnce({
+    ...BASE,
+    totals: { ...BASE.totals, flagged: { ...BASE.totals?.flagged, claimed_not_started: 3 } },
+  });
+  renderWithApi(<LiveFleetPage />);
+
+  const fold = (await screen.findAllByText('Señales activas'))
+    .map((nodo) => nodo.closest('section'))
+    .find((seccion): seccion is HTMLElement => seccion !== null);
+  expect(fold).toBeDefined();
+  if (!fold) throw new Error('fold section not found');
+  const chip = within(fold).getByText('Tomó y no empezó').closest('.chip');
+  expect(chip).toHaveTextContent('3');
+  expect(within(fold).getByText('Tomó y no empezó')).toHaveClass('badge-danger');
+});

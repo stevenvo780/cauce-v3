@@ -25,6 +25,7 @@ import {
 
 const FLAG_ORDER: FleetActivityFlag[] = [
   'saturated', 'ack_stalled', 'overdue_acks', 'lease_expired', 'never_connected', 'unregistered', 'queued_without_consumer',
+  'claimed_not_started',
 ];
 
 interface FleetActivityTableProps {

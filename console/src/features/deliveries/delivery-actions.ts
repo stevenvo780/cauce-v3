@@ -82,6 +82,31 @@ export function rereadProvesDeliveryEffect(
   ));
 }
 
+/**
+ * `queueSnapshot` never publishes `replayed_from_delivery_id`, so lineage can never be matched
+ * against a production reread. When the command's own response named a clone id but still failed
+ * exact-receipt validation for an unrelated reason (an extra field, a stray null), that id is
+ * corroborated against the reread instead of discarded: it counts as proof once it surfaces as a
+ * real, distinct row with a recognizable state or attempt count, rather than leaving the row
+ * locked forever for a fact the snapshot can never carry.
+ */
+export function rereadProvesReplayFromUnverifiedReceipt(
+  reconciliation: DeliveryReconciliation,
+  unverifiedReceipt: unknown,
+  snapshot: unknown,
+): boolean {
+  if (reconciliation.action !== 'replay') return false;
+  if (unverifiedReceipt === null || typeof unverifiedReceipt !== 'object') return false;
+  const candidateId = (unverifiedReceipt as Record<string, unknown>).delivery_id;
+  if (typeof candidateId !== 'string' || !isCanonicalUuidV4(candidateId) || candidateId === reconciliation.deliveryId) {
+    return false;
+  }
+  const items = records(snapshot);
+  if (!items) return false;
+  const found = items.find((item) => item.delivery_id === candidateId);
+  return found !== undefined && (deliveryPolicy(found.state).known || typeof found.attempts === 'number');
+}
+
 function detail(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'el servidor no dijo por qué';
 }
@@ -99,9 +124,14 @@ async function runDeliveryCommandSafely(
   { reread, onUncertain }: SafeDeliveryActionInput,
   command: SafeDeliveryCommand,
 ): Promise<SafeDeliveryActionOutcome> {
+  /** Set only when `run()` returned a body that failed the exact-receipt check, never on a throw. */
+  let unverifiedReceipt: { present: true; value: unknown } | { present: false } = { present: false };
   try {
     const result = await command.run();
-    if (!command.exactReceipt(result)) throw new Error(command.missingReceipt);
+    if (!command.exactReceipt(result)) {
+      unverifiedReceipt = { present: true, value: result };
+      throw new Error(command.missingReceipt);
+    }
     const snapshot = await rereadSnapshot(reread);
     return {
       kind: 'confirmed',
@@ -116,7 +146,9 @@ async function runDeliveryCommandSafely(
     );
     const snapshot = await rereadSnapshot(reread);
     const effectProven = snapshot.completed
-      && rereadProvesDeliveryEffect(command.reconciliation, snapshot.data);
+      && (rereadProvesDeliveryEffect(command.reconciliation, snapshot.data)
+        || (unverifiedReceipt.present
+          && rereadProvesReplayFromUnverifiedReceipt(command.reconciliation, unverifiedReceipt.value, snapshot.data)));
     return {
       kind: 'uncertain',
       effectProven,
