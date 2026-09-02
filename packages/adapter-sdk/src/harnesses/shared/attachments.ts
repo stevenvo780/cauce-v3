@@ -1,5 +1,10 @@
 import type { HarnessAttachment, HarnessId } from "../../sdk/types.js";
 
+/** Decodable by a native image input; `image/*` is wider and feeding it the rest fails the turn. */
+const NATIVE_IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+]);
+
 export function planAttachments(
   harness: HarnessId,
   attachments: readonly HarnessAttachment[],
@@ -7,7 +12,8 @@ export function planAttachments(
   const args: string[] = [];
   const lines: string[] = [];
   for (const [index, attachment] of attachments.entries()) {
-    const native = harness === "codex" && attachment.kind === "image";
+    const native = harness === "codex" && attachment.kind === "image" &&
+      NATIVE_IMAGE_MEDIA_TYPES.has(attachment.mimeType.toLowerCase());
     if (native) {
       args.push("--image", attachment.path);
       lines.push(`attachment_${String(index + 1)} delivery_mode=native metadata=${JSON.stringify({

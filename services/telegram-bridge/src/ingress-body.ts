@@ -152,7 +152,7 @@ export function screenAttachments(
   for (const attachment of dropped) {
     const mime = attachment.mime_type.slice(0, 128);
     const name = attachment.name.slice(0, 255);
-    errors.push(`adjunto descartado: tipo no soportado ${mime} (${name})`);
+    errors.push(`adjunto descartado: no pasó la validación de la plataforma (${mime}, ${name})`);
     try {
       logJsonLine({
         event: 'telegram_attachment_dropped',
@@ -206,7 +206,7 @@ export async function normalizedBody(
     : spoken === undefined ? typed : `${typed}\n\n${spoken}`;
   const problems = [
     ...(prepared.errors.length === 0
-      ? [] : [`No pude procesar el adjunto: ${prepared.errors.join('; ')}. Explicá este error al usuario y pedile un archivo compatible.`]),
+      ? [] : [`No pude procesar el adjunto: ${prepared.errors.join('; ')}. Explicá este error al usuario y pedile que lo mande de nuevo.`]),
     ...(voice.error === undefined
       ? [] : [`${voice.error} Decíselo al usuario y pedile que lo escriba o lo mande de nuevo.`])
   ];

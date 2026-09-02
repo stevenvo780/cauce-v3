@@ -13,15 +13,15 @@ graph LR
   node_scripts["scripts"] -->|80| node_services_gateway["services/gateway"]
   node_scripts["scripts"] -->|68| node_ops_scripts["ops/scripts"]
   node_tests_unit["tests/unit"] -->|57| node_services_gateway["services/gateway"]
-  node_services_gateway["services/gateway"] -->|50| node_packages_store["packages/store"]
+  node_services_gateway["services/gateway"] -->|54| node_packages_store["packages/store"]
   node_scripts["scripts"] -->|48| node_tests_unit["tests/unit"]
   node_packages_store["packages/store"] -->|44| node_tests_helpers["tests/helpers"]
-  node_services_gateway["services/gateway"] -->|39| node_packages_protocol["packages/protocol"]
+  node_services_gateway["services/gateway"] -->|40| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|36| node_ops_tests["ops/tests"]
+  node_packages_adapter_sdk["packages/adapter-sdk"] -->|34| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|33| node_services_telegram_bridge["services/telegram-bridge"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|33| node_services_gateway["services/gateway"]
   node_tests_unit["tests/unit"] -->|33| node_ops_scripts["ops/scripts"]
-  node_packages_adapter_sdk["packages/adapter-sdk"] -->|30| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|29| node_ops_pty_agent["ops/pty-agent"]
   node_scripts["scripts"] -->|25| node_services_terminal_relay["services/terminal-relay"]
   node_ops_tests["ops/tests"] -->|21| node_ops_scripts["ops/scripts"]
@@ -34,6 +34,7 @@ graph LR
   node_tests_unit["tests/unit"] -->|14| node_packages_protocol["packages/protocol"]
   node_tests_unit["tests/unit"] -->|14| node_ops_observability["ops/observability"]
   node__raiz_["(raiz)"] -->|13| node_scripts["scripts"]
+  node_services_telegram_bridge["services/telegram-bridge"] -->|13| node_packages_protocol["packages/protocol"]
   node_ops_scripts["ops/scripts"] -->|12| node_ops["ops"]
   node_ops_tests["ops/tests"] -->|12| node_ops_harness["ops/harness"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|11| node_packages_store["packages/store"]
@@ -41,7 +42,6 @@ graph LR
   node_console["console"] -->|10| node_packages_protocol["packages/protocol"]
   node_services_dispatcher["services/dispatcher"] -->|10| node_packages_store["packages/store"]
   node_services_telegram_bridge["services/telegram-bridge"] -->|10| node_packages_store["packages/store"]
-  node_services_telegram_bridge["services/telegram-bridge"] -->|10| node_packages_protocol["packages/protocol"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|10| node_packages_protocol["packages/protocol"]
   node_ops_scripts["ops/scripts"] -->|9| node_deploy["deploy"]
   node_scripts["scripts"] -->|9| node_ops_guardias["ops/guardias"]
@@ -78,6 +78,7 @@ graph LR
   node__raiz_["(raiz)"] -->|3| node_ops_harness["ops/harness"]
   node_packages_mcp_fleet_monitor["packages/mcp-fleet-monitor"] -->|3| node_packages_store["packages/store"]
   node_scripts["scripts"] -->|3| node_tests_integration["tests/integration"]
+  node_services_terminal_relay["services/terminal-relay"] -->|3| node_packages_protocol["packages/protocol"]
   node_tests_e2e["tests/e2e"] -->|3| node_tests_helpers["tests/helpers"]
   node_tests_unit["tests/unit"] -->|3| node_ops_schemas["ops/schemas"]
   node_ops_pty_agent["ops/pty-agent"] -->|2| node_ops_scripts["ops/scripts"]
@@ -104,6 +105,7 @@ graph LR
   node_tests_integration["tests/integration"] -->|2| node_services_gateway["services/gateway"]
   node_tests_store_hardening["tests/store-hardening"] -->|2| node_ops_scripts["ops/scripts"]
   node_tests_terminal_pty["tests/terminal-pty"] -->|2| node_services_gateway["services/gateway"]
+  node_tests_unit["tests/unit"] -->|2| node_ops_harness["ops/harness"]
   node_tests_unit["tests/unit"] -->|2| node_ops_guardias["ops/guardias"]
 ```
 
@@ -118,15 +120,15 @@ graph LR
 | scripts | services/gateway | 80 |
 | scripts | ops/scripts | 68 |
 | tests/unit | services/gateway | 57 |
-| services/gateway | packages/store | 50 |
+| services/gateway | packages/store | 54 |
 | scripts | tests/unit | 48 |
 | packages/store | tests/helpers | 44 |
-| services/gateway | packages/protocol | 39 |
+| services/gateway | packages/protocol | 40 |
 | scripts | ops/tests | 36 |
+| packages/adapter-sdk | packages/protocol | 34 |
 | scripts | services/telegram-bridge | 33 |
 | tests/gateway-hardening | services/gateway | 33 |
 | tests/unit | ops/scripts | 33 |
-| packages/adapter-sdk | packages/protocol | 30 |
 | scripts | ops/pty-agent | 29 |
 | scripts | services/terminal-relay | 25 |
 | ops/tests | ops/scripts | 21 |
@@ -139,6 +141,7 @@ graph LR
 | tests/unit | packages/protocol | 14 |
 | tests/unit | ops/observability | 14 |
 | (raiz) | scripts | 13 |
+| services/telegram-bridge | packages/protocol | 13 |
 | ops/scripts | ops | 12 |
 | ops/tests | ops/harness | 12 |
 | tests/gateway-hardening | packages/store | 11 |
@@ -146,7 +149,6 @@ graph LR
 | console | packages/protocol | 10 |
 | services/dispatcher | packages/store | 10 |
 | services/telegram-bridge | packages/store | 10 |
-| services/telegram-bridge | packages/protocol | 10 |
 | tests/gateway-hardening | packages/protocol | 10 |
 | ops/scripts | deploy | 9 |
 | scripts | ops/guardias | 9 |
@@ -183,6 +185,7 @@ graph LR
 | (raiz) | ops/harness | 3 |
 | packages/mcp-fleet-monitor | packages/store | 3 |
 | scripts | tests/integration | 3 |
+| services/terminal-relay | packages/protocol | 3 |
 | tests/e2e | tests/helpers | 3 |
 | tests/unit | ops/schemas | 3 |
 | ops/pty-agent | ops/scripts | 2 |
@@ -209,6 +212,7 @@ graph LR
 | tests/integration | services/gateway | 2 |
 | tests/store-hardening | ops/scripts | 2 |
 | tests/terminal-pty | services/gateway | 2 |
+| tests/unit | ops/harness | 2 |
 | tests/unit | ops/guardias | 2 |
 | console | scripts | 1 |
 | deploy/runtime | packages/protocol | 1 |
@@ -245,7 +249,6 @@ graph LR
 | scripts | ops/openclaw-gateway | 1 |
 | scripts | tests/helpers | 1 |
 | services/dispatcher | deploy | 1 |
-| services/terminal-relay | packages/protocol | 1 |
 | services/terminal-relay | tests/terminal-pty | 1 |
 | tests/e2e | packages/adapter-sdk | 1 |
 | tests/e2e | services/dispatcher | 1 |
@@ -263,7 +266,6 @@ graph LR
 | tests/unit | deploy/console | 1 |
 | tests/unit | tests/terminal-pty | 1 |
 | tests/unit | ops/pty-agent | 1 |
-| tests/unit | ops/harness | 1 |
 | tests/unit | tests/e2e | 1 |
 | tests/unit | console | 1 |
 | (raiz) | packages/protocol | 1 |
@@ -271,8 +273,8 @@ graph LR
 
 ## Hubs (los 15 ficheros más referenciados)
 
-- packages/protocol/src/index.ts ← 193
-- packages/store/src/index.ts ← 154
+- packages/protocol/src/index.ts ← 206
+- packages/store/src/index.ts ← 158
 - console/src/api/types.ts ← 133
 - packages/adapter-sdk/src/sdk/types.ts ← 93
 - tests/helpers/postgres.ts ← 75
@@ -296,6 +298,7 @@ graph LR
 - ops/flota-fisica.json
 - ops/generated/fleet.json
 - ops/guardias/catalogo-mouseion-health.sh
+- ops/guardias/credential_health.py
 - ops/guardias/telegram-bridge.override.yaml
 - ops/manifests/argos.yaml
 - ops/manifests/atlas.yaml
@@ -331,26 +334,26 @@ graph LR
 | Nodo | Ficheros |
 |---|---|
 | console | 334 |
-| packages/adapter-sdk | 186 |
+| packages/adapter-sdk | 192 |
 | packages/store | 112 |
-| services/gateway | 102 |
-| tests/unit | 83 |
+| services/gateway | 105 |
+| tests/unit | 84 |
 | ops/scripts | 67 |
+| ops/tests | 44 |
 | services/telegram-bridge | 44 |
-| ops/tests | 43 |
 | services/terminal-relay | 35 |
+| packages/protocol | 28 |
 | ops/pty-agent | 27 |
-| packages/protocol | 22 |
 | tests/gateway-hardening | 20 |
 | deploy/runtime | 18 |
 | ops/manifests | 14 |
 | services/dispatcher | 13 |
-| ops/guardias | 11 |
+| ops/guardias | 12 |
 | scripts | 11 |
 | tests/terminal-pty | 10 |
+| ops/harness | 9 |
 | tests/store-hardening | 9 |
 | deploy | 8 |
-| ops/harness | 8 |
 | (raiz) | 7 |
 | packages/mcp-fleet-monitor | 7 |
 | ops | 5 |

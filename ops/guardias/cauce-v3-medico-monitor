@@ -39,13 +39,15 @@ import fcntl
 import hashlib
 import io
 import json
-import time
 import os
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from credential_health import classify_doctor_record, shared_fingerprints  # noqa: E402
+
 try:
     import libro_tareas
 except Exception as _e_libro:  # noqa: BLE001
@@ -56,25 +58,20 @@ AGORA = "root@100.64.0.6"
 VPS = "root@100.64.0.11"
 PG = ("docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce "
       "-At -v ON_ERROR_STOP=1 -f -")
-
 csv.field_size_limit(16 * 1024 * 1024)
 PUENTE_TELEGRAM = "cauce-v3-prod-telegram-bridge-1"
 TOKEN_DIR = "/etc/cauce-v3/telegram-runtime"
 TOKEN_AVISO = TOKEN_DIR + "/zeus.token"
 CHAT_STEVEN = "6979524541"
-
 MIN_TURNO_COLGADO = 30
 MIN_ENTREGA_TRABADA = 20
 TECHO_TURNO_LARGO = 180
 MIN_CURSOR_QUIETO = 15
 UMBRAL_DLQ_DIA = 40
 SILENCIO_MIN = 90
-
 RELEASE_CON_FIX78 = "bus-v3-20260806-tmux-identidad"
 DIGEST_CON_FIX78 = "sha256:4bf530650a579d9ffa70bc40dd49a9e4bc4668701a404b0dc1f6d24ef2d00874"
-
 ALIAS_PIERDEN_CONTEXTO = ("zeus", "socrates", "kratos", "atlas", "vulcano", "dedalo", "salva")
-
 ESTADO_DIR = os.path.expanduser("~/.local/state/cauce-medico")
 BITACORA_JSONL = os.path.join(ESTADO_DIR, "bitacora.jsonl")
 BITACORA_LOG = os.path.join(ESTADO_DIR, "bitacora.log")
@@ -585,13 +582,13 @@ def sonda_credenciales(adaptadores):
     this rule exists to catch is two DISTINCT containers holding copies of the same
     refresh_token: when one refreshes, it invalidates the other. `compartidas` therefore
     fires only when the SAME fingerprint appears in MORE THAN ONE container."""
-    vistos, huellas, problemas = {}, {}, []
+    vistos, credential_locations, problemas = {}, [], []
     for alias, ad in sorted(adaptadores.items()):
         ctr = ad.get("contenedor")
         if not ctr:
             continue
         if ctr in vistos:
-            huellas.setdefault(vistos[ctr], []).append((alias, ctr))
+            credential_locations.append((vistos[ctr], alias, ctr))
             continue
         for ruta in ("/home/dev/.claude/.credentials.json", "/home/claw/.claude/.credentials.json"):
             cmd = "docker exec -i %s python3 -c \"$(cat)\" %s" % (ctr, ruta)
@@ -604,29 +601,25 @@ def sonda_credenciales(adaptadores):
                 continue
             if d.get("falta"):
                 continue
-            h = d.get("huella")
+            health = classify_doctor_record(d, now_epoch=time.time())
+            h = health.fingerprint
             if h is None:
                 # setup-token: no refreshToken BY DESIGN (~364d), fine unless access is
                 # already expired. Absent/0 "exp" is an unreadable expiry, NOT epoch 1970 --
                 # treating it as such would false-alert a healthy alias.
-                exp_ms = int(d.get("exp") or 0)
-                if exp_ms <= 0:
-                    continue
-                horas = (exp_ms/1000.0 - time.time())/3600.0
-                if horas > 168:
-                    continue  # token largo vigente: sano, y sin refresh no hay carrera que perder
-                problemas.append({"alias": alias, "contenedor": ctr,
-                                  "detalle": "sin refreshToken y el access vence en %.0f h: "
-                                             "no puede renovar, enmudece" % horas})
+                if health.problem:
+                    horas = health.hours_until_expiry
+                    problemas.append({"alias": alias, "contenedor": ctr,
+                                      "detalle": f"sin refreshToken y el access vence en {horas:.0f} h: "
+                                                 "no puede renovar, enmudece"})
             else:
                 vistos[ctr] = h
-                huellas.setdefault(h, []).append((alias, ctr))
+                credential_locations.append((h, alias, ctr))
             break
-    compartidas = {}
-    for h, quienes in huellas.items():
-        contenedores = {c for _, c in quienes}
-        if len(contenedores) > 1:
-            compartidas[h] = sorted({a for a, _ in quienes})
+    compartidas = {
+        fingerprint: sorted(subjects)
+        for fingerprint, subjects in shared_fingerprints(credential_locations).items()
+    }
     return problemas, compartidas
 
 

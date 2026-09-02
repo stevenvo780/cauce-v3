@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
-import { clampToRoleBriefLimit, isAgentToAgentBody } from "@cauce/protocol";
+import {
+  clampToRoleBriefLimit,
+  isAgentToAgentBody,
+  MAX_MESSAGE_TIMEOUT_MS,
+  messageTimeoutMs,
+} from "@cauce/protocol";
 import type { SessionLane } from "../../contracts/harness.js";
 import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
 import { AdapterError } from "../errors.js";
 import type { Delivery } from "../types.js";
-import { MAX_AGENT_EXECUTION_TIMEOUT_MS } from "./contracts.js";
 
 const MAX_ACK_COMPLETION_MARGIN_MS = 30_000;
 const MIN_ACK_COMPLETION_MARGIN_MS = 1_000;
@@ -307,19 +311,14 @@ export function sessionFromDelivery(
 }
 
 export function timeoutFromBody(body: Record<string, unknown>, fallback: number): number {
-  const value = body.timeout_ms;
-  if (value === undefined) return fallback;
-  if (typeof value !== "number"
-    || !Number.isSafeInteger(value)
-    || value <= 0
-    || value > MAX_AGENT_EXECUTION_TIMEOUT_MS) {
-    throw new AdapterError(
-      "INVALID_TIMEOUT",
-      "body.timeout_ms must be an integer between 1 and 604800000",
-      false,
-    );
-  }
-  return value;
+  const parsed = messageTimeoutMs(body);
+  if (parsed !== undefined) return parsed;
+  if (body.timeout_ms === undefined) return fallback;
+  throw new AdapterError(
+    "INVALID_TIMEOUT",
+    `body.timeout_ms must be an integer between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`,
+    false,
+  );
 }
 
 export interface ExecutionBudget {

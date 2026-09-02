@@ -194,6 +194,8 @@ describe('el hello declara qué sabe hacer el agente', () => {
       { ...base, project_doc_fallback_filenames: ['SECRET.PEM'] },
       { ...base, project_doc_fallback_filenames: ['Auth.Json'] },
       { ...base, project_doc_fallback_filenames: ['private.KEY'] },
+      { ...base, project_doc_fallback_filenames: ['Agents.MD'] },
+      { ...base, project_doc_fallback_filenames: ['TEAM.md', 'team.md'] },
       { ...base, project_doc_fallback_filenames: undefined },
       { ...base, harness: 'claude' },
     ]) {

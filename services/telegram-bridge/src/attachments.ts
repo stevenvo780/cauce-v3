@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
+import {
+  hasUnsafeTextCodePoint, imageSignature, mediaTypeForExtension, normalizeMediaType
+} from '@cauce/protocol';
 import { TelegramApiError } from './telegram.js';
 import { transcribeAudio, type TranscriptionConfig } from './transcription.js';
 import type {
   PreparedTelegramAttachment, TelegramApi, TelegramFile, TelegramMessage
 } from './types.js';
-import { hasUnsafeCodePoint } from './validation.js';
 
 export const MAX_TELEGRAM_ATTACHMENT_BYTES = 10_000_000;
 
@@ -18,57 +20,23 @@ export const MAX_TELEGRAM_ATTACHMENT_BYTES = 10_000_000;
  */
 export const MAX_TELEGRAM_AUDIO_BYTES = 25_000_000;
 
+interface PreparedType {
+  readonly kind: 'image' | 'document';
+  readonly mime: string;
+}
+
 interface Candidate {
-  kind: 'image' | 'document';
-  file: TelegramFile;
-}
-
-interface AttachmentType {
-  mime: string;
-  extension: string;
-  matches(payload: Buffer): boolean;
-}
-
-const TYPES: readonly AttachmentType[] = [
-  { mime: 'image/jpeg', extension: '.jpg', matches: (value) => value.length >= 3 && value[0] === 0xff && value[1] === 0xd8 && value[2] === 0xff },
-  { mime: 'image/png', extension: '.png', matches: (value) => value.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
-  { mime: 'image/webp', extension: '.webp', matches: (value) => value.length >= 12 && value.toString('ascii', 0, 4) === 'RIFF' && value.toString('ascii', 8, 12) === 'WEBP' },
-  { mime: 'application/pdf', extension: '.pdf', matches: (value) => value.subarray(0, 5).toString('ascii') === '%PDF-' },
-  { mime: 'text/plain', extension: '.txt', matches: validUtf8Text },
-  // The fleet works on .md and Telegram does not send a stable mime for them: depending on the
-  // client they arrive as `text/markdown`, `text/x-markdown` or directly `text/plain`. The three
-  // pairs are declared because the match requires (mime, extension) and any mismatch rejects it.
-  // The safety check is not given by the extension but by `validUtf8Text`: the content must be
-  // real UTF-8 without null bytes, so a binary renamed to .md still does not get in.
-  { mime: 'text/markdown', extension: '.md', matches: validUtf8Text },
-  { mime: 'text/x-markdown', extension: '.md', matches: validUtf8Text },
-  { mime: 'text/plain', extension: '.md', matches: validUtf8Text },
-  { mime: 'text/csv', extension: '.csv', matches: validUtf8Text },
-  { mime: 'text/plain', extension: '.csv', matches: validUtf8Text },
-  {
-    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    extension: '.docx',
-    matches: (value) => value.length >= 4 && value[0] === 0x50 && value[1] === 0x4b && value[2] === 0x03 && value[3] === 0x04 &&
-      value.includes(Buffer.from('[Content_Types].xml')) && value.includes(Buffer.from('word/document.xml'))
-  }
-];
-
-function validUtf8Text(payload: Buffer): boolean {
-  if (payload.includes(0)) return false;
-  try {
-    new TextDecoder('utf-8', { fatal: true }).decode(payload);
-    return true;
-  } catch {
-    return false;
-  }
+  readonly photo: boolean;
+  readonly file: TelegramFile;
 }
 
 function candidate(message: TelegramMessage): Candidate | undefined {
   if (Array.isArray(message.photo) && message.photo.length > 0) {
     const file = message.photo.at(-1);
-    return file === undefined ? undefined : { kind: 'image', file };
+    return file === undefined ? undefined : { photo: true, file };
   }
-  return message.document === undefined ? undefined : { kind: 'document', file: message.document };
+  const file = message.document ?? message.video ?? message.animation;
+  return file === undefined ? undefined : { photo: false, file };
 }
 
 function safeFileId(file: TelegramFile): boolean {
@@ -88,24 +56,34 @@ function safeRemotePath(value: string): boolean {
  * another for free text— and two validators of the same field drifting apart is exactly how a
  * value ends up accepted by one layer and rejected by the next.
  */
-export { hasUnsafeCodePoint as hasUnsafeAttachmentCodePoint } from './validation.js';
+export { hasUnsafeTextCodePoint as hasUnsafeAttachmentCodePoint } from '@cauce/protocol';
 
 function safeName(value: string): boolean {
   return value.length >= 1 && value.length <= 255 && basename(value) === value &&
-    // Reject controls, bidi/invisible formatting and path separators in attacker-controlled names.
     value !== '.' && value !== '..' &&
-    !value.includes('/') && !value.includes('\\') && !hasUnsafeCodePoint(value);
+    !value.includes('/') && !value.includes('\\') && !hasUnsafeTextCodePoint(value);
 }
 
-function declaredType(item: Candidate, remotePath: string): { type?: AttachmentType; name: string } {
-  const originalName = item.file.file_name ?? basename(remotePath);
-  if (!safeName(originalName)) return { name: originalName };
-  const mime = item.kind === 'image' ? 'image/jpeg' : item.file.mime_type;
-  const rawExtension = extname(originalName).toLowerCase();
-  const extension = rawExtension === '.jpeg' ? '.jpg' : rawExtension;
-  const name = rawExtension === '.jpeg' ? `${originalName.slice(0, -5)}.jpg` : originalName;
-  const type = TYPES.find((entry) => entry.mime === mime && entry.extension === extension);
-  return { ...(type === undefined ? {} : { type }), name };
+function declaredName(item: Candidate, remotePath: string): string {
+  const original = item.file.file_name ?? basename(remotePath);
+  return extname(original).toLowerCase() === '.jpeg' ? `${original.slice(0, -5)}.jpg` : original;
+}
+
+/**
+ * Type of the file, read from the bytes first and from the declaration second.
+ *
+ * No answer here turns anything away: a format nobody recognises travels as
+ * `application/octet-stream`. `kind` is `image` only when the bytes really are a raster image,
+ * because that is what lets a harness hand the file to a native image input.
+ */
+function resolveType(item: Candidate, name: string, payload: Buffer): PreparedType {
+  const sniffed = imageSignature(payload);
+  if (sniffed !== undefined) return { kind: 'image', mime: sniffed };
+  const declared = normalizeMediaType(item.file.mime_type);
+  return {
+    kind: 'document',
+    mime: declared ?? mediaTypeForExtension(extname(name).toLowerCase()) ?? 'application/octet-stream'
+  };
 }
 
 function usefulError(name: string, detail: string): string {
@@ -118,7 +96,7 @@ export async function prepareTelegramAttachments(
 ): Promise<{ media: PreparedTelegramAttachment[]; errors: string[] }> {
   const item = candidate(message);
   if (item === undefined) return { media: [], errors: [] };
-  const earlyName = item.file.file_name ?? (item.kind === 'image' ? 'foto.jpg' : 'archivo');
+  const earlyName = item.file.file_name ?? (item.photo ? 'foto.jpg' : 'archivo');
   if (!safeFileId(item.file)) return { media: [], errors: [usefulError(earlyName, 'identificador de Telegram inválido')] };
   if (Number.isSafeInteger(item.file.file_size) && Number(item.file.file_size) > MAX_TELEGRAM_ATTACHMENT_BYTES) {
     return { media: [], errors: [usefulError(earlyName, 'excede el límite de 10 MB')] };
@@ -133,29 +111,24 @@ export async function prepareTelegramAttachments(
     if (Number.isSafeInteger(remoteSize) && Number(remoteSize) > MAX_TELEGRAM_ATTACHMENT_BYTES) {
       return { media: [], errors: [usefulError(earlyName, 'excede el límite de 10 MB')] };
     }
-    const declared = declaredType(item, remote.file_path);
-    if (!safeName(declared.name)) {
+    const name = declaredName(item, remote.file_path);
+    if (!safeName(name)) {
       return { media: [], errors: [usefulError(earlyName, 'nombre no seguro')] };
-    }
-    if (declared.type === undefined) {
-      return { media: [], errors: [usefulError(declared.name, 'tipo o extensión no admitido')] };
     }
     const payload = await api.downloadFile(remote.file_path, MAX_TELEGRAM_ATTACHMENT_BYTES);
     if (payload.length > MAX_TELEGRAM_ATTACHMENT_BYTES) {
-      return { media: [], errors: [usefulError(declared.name, 'excede el límite de 10 MB')] };
+      return { media: [], errors: [usefulError(name, 'excede el límite de 10 MB')] };
     }
     if (remoteSize !== undefined && payload.length !== remoteSize) {
-      return { media: [], errors: [usefulError(declared.name, 'tamaño descargado inconsistente')] };
+      return { media: [], errors: [usefulError(name, 'tamaño descargado inconsistente')] };
     }
-    if (!declared.type.matches(payload)) {
-      return { media: [], errors: [usefulError(declared.name, `el contenido no coincide con ${declared.type.mime}`)] };
-    }
+    const resolved = resolveType(item, name, payload);
     return {
       errors: [],
       media: [{
-        kind: declared.type.mime.startsWith('image/') ? 'image' : 'document',
-        name: declared.name,
-        mime_type: declared.type.mime,
+        kind: resolved.kind,
+        name,
+        mime_type: resolved.mime,
         file_size: payload.length,
         sha256: createHash('sha256').update(payload).digest('hex'),
         content_base64: payload.toString('base64')
@@ -261,7 +234,6 @@ export async function prepareTelegramVoice(
     if (payload.length > MAX_TELEGRAM_AUDIO_BYTES) {
       return { ...base, error: audioError(item.kind, 'pesa más de 25 MB') };
     }
-    // The name coming from Telegram is not used: the format is inferred from the bytes.
     const type = AUDIO_TYPES.find((entry) => entry.matches(payload));
     if (type === undefined) {
       return { ...base, error: audioError(item.kind, 'el archivo no parece audio en un formato conocido') };

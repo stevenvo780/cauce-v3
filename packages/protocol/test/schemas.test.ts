@@ -273,7 +273,6 @@ describe('attachment transport contract', () => {
   it.each([
     { ...attachment, name: '../report.pdf' },
     { ...attachment, name: 'report\u202Efdp.exe' },
-    { ...attachment, mime_type: 'application/x-sh' },
     { ...attachment, file_size: 10_000_001 },
     { ...attachment, content_base64: 'not-base64!' },
     { ...attachment, sha256: 'token=secret-value' }
@@ -281,34 +280,48 @@ describe('attachment transport contract', () => {
     expect(PublishMessageSchema.safeParse({ ...publishBase, body: { attachments_v1: [invalid] } }).success).toBe(false);
   });
 
-  // Validate that valid MIME variants are accepted for text, markdown, and csv attachments.
   it.each([
-    { mime_type: 'text/markdown', name: 'notas.md' },
-    { mime_type: 'text/x-markdown', name: 'notas.md' },
-    { mime_type: 'text/plain', name: 'notas.md' },
-    { mime_type: 'text/plain', name: 'tabla.csv' },
-    { mime_type: 'text/csv', name: 'tabla.csv' },
-    { mime_type: 'text/plain', name: 'notas.txt' }
-  ])('accepts the text attachments the Telegram bridge already produces %#', (text) => {
+    { mime_type: 'application/x-sh', name: 'deploy.sh' },
+    { mime_type: 'application/zip', name: 'evidencia.zip' },
+    { mime_type: 'video/mp4', name: 'captura.mp4' },
+    { mime_type: 'application/vnd.sqlite3', name: 'cauce.db' },
+    { mime_type: 'font/woff2', name: 'tipografia.woff2' },
+    { mime_type: 'application/octet-stream', name: 'volcado' },
+    { mime_type: 'text/markdown', name: 'notas.csv' },
+    { mime_type: 'text/csv', name: 'notas.md' },
+    { mime_type: 'text/plain', name: 'informe con espacios y acentos.txt' },
+    { mime_type: 'image/svg+xml', name: 'diagrama.svg' }
+  ])('accepts any format, whatever its extension says %#', (any) => {
     const content = Buffer.from('# informe\n', 'utf8');
     expect(PublishMessageSchema.safeParse({
       ...publishBase,
       body: {
         attachments_v1: [{
-          ...attachment, ...text, file_size: content.length, content_base64: content.toString('base64')
+          ...attachment, ...any, file_size: content.length, content_base64: content.toString('base64')
         }]
       }
     }).success).toBe(true);
   });
 
   it.each([
-    { mime_type: 'text/markdown', name: 'notas.csv' },
-    { mime_type: 'text/csv', name: 'notas.md' },
-    { mime_type: 'text/markdown', name: 'notas.md', kind: 'image' }
-  ])('still rejects a text attachment whose MIME, extension and kind disagree %#', (invalid) => {
+    { mime_type: 'sin-barra' },
+    { mime_type: 'text/plain; charset=utf-8' },
+    { mime_type: 'text /plain' },
+    { mime_type: '' },
+    { mime_type: `application/${'x'.repeat(120)}` },
+    // `image` is the one routing decision left, so it may not be claimed over a non-image type.
+    { mime_type: 'application/zip', kind: 'image' }
+  ])('rejects a media type that is not a token, or an image kind over a non-image type %#', (invalid) => {
     expect(PublishMessageSchema.safeParse({
       ...publishBase, body: { attachments_v1: [{ ...attachment, ...invalid }] }
     }).success).toBe(false);
+  });
+
+  it('accepts the image kind when the media type is an image', () => {
+    expect(PublishMessageSchema.safeParse({
+      ...publishBase,
+      body: { attachments_v1: [{ ...attachment, kind: 'image', mime_type: 'image/png', name: 'captura.png' }] }
+    }).success).toBe(true);
   });
 
   it('rejects excessive attachment count and aggregate size', () => {

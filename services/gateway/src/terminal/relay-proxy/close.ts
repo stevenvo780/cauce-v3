@@ -1,3 +1,4 @@
+import { withTransaction } from '@cauce/store';
 import { terminalAuditMetadata } from '../audit.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
@@ -33,11 +34,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
       const malformedClaim = (rawClaimToken !== undefined || rawClaimEpoch !== undefined)
         && (claimToken === undefined || claimEpoch === undefined);
       const claimSha256 = claimToken === undefined ? undefined : ticketSha256(claimToken);
-      const client = await pool.connect();
-      let transactionOpen = false;
-      try {
-        await client.query('BEGIN');
-        transactionOpen = true;
+      await withTransaction(pool, async (client) => {
         const locked = await client.query<TerminalSessionRow>(
           `SELECT * FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
           [request.params.sid],
@@ -133,14 +130,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
             }
           }
         }
-        await client.query('COMMIT');
-        transactionOpen = false;
-      } catch (error) {
-        if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        client.release();
-      }
+      });
       return await reply.code(200).send({
         ok: true,
         relay_instance_id: identity.relay_instance_id,

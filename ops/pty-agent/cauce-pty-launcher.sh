@@ -473,12 +473,9 @@ for name in os.listdir("/proc"):
     try:
         cwd = os.readlink(f"/proc/{name}/cwd")
     except OSError:
-        # The process may have exited between environ and cwd. It is not evidence for a fact.
         continue
     profile = "" if wire_for_harness is None else environment.get(wire_for_harness[0], "")
     workspace_root = environment.get("CAUCE_SHARED_SESSION_WORKSPACE", "")
-    # Keep the process cwd even for a shared adapter. Without a validated tmux pane it is the
-    # only cwd actually observed; may be used only when it lies inside the shared workspace.
     observed.add((profile, cwd, workspace_root))
 
 def safe_directory(path, *, below_home=False):
@@ -495,7 +492,6 @@ def safe_directory(path, *, below_home=False):
         return False
 
 def project_root_within(workspace_root, cwd):
-    """Nearest real `.git` marker, bounded strictly by the accredited workspace root."""
     current = cwd
     for _ in range(65):
         marker = f"{current.rstrip('/')}/.git"
@@ -517,11 +513,14 @@ def project_root_within(workspace_root, cwd):
         if parent == current or not (parent == workspace_root or parent.startswith(workspace_root + "/")):
             raise SystemExit(2)
         current = parent
-    # No marker was measured. Exact cwd is the only non-invented project boundary.
     return cwd
 
+unsafe_text_code_point_ranges = (
+    (0x00, 0x1f), (0x7f, 0x9f), (0x61c, 0x61c), (0x200b, 0x200f),
+    (0x2028, 0x202e), (0x2060, 0x206f), (0xfeff, 0xfeff), (0xfff9, 0xfffb),
+)
+
 def codex_instruction_config(codex_home):
-    """Proyecta sólo dos knobs no sensibles; nunca publica el resto de config.toml."""
     config_path = f"{codex_home.rstrip('/')}/config.toml"
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
@@ -567,7 +566,8 @@ def codex_instruction_config(codex_home):
         normalized = name.casefold() if isinstance(name, str) else ""
         if (not isinstance(name, str) or not name or js_length > 128 or normalized in seen
                 or "/" in name or "\\" in name or "\0" in name or ".." in name
-                or any(ord(character) <= 0x1f or ord(character) == 0x7f for character in name)
+                or any(lower <= ord(character) <= upper for character in name
+                       for lower, upper in unsafe_text_code_point_ranges)
                 or normalized in forbidden
                 or normalized.endswith((".pem", ".key", ".p12", ".pfx"))):
             return None

@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, extname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isValidMediaType, mediaTypeForExtension } from "@cauce/protocol";
 import type { OutputArtifact, StructuredOutput } from "./types.js";
 
 /**
@@ -40,27 +41,6 @@ const MAX_BASE64_CHARACTERS = Math.ceil(MAX_INLINED_ARTIFACT_BYTES / 3) * 4 + 64
  * The agent never wants to attach those.
  */
 const FORBIDDEN_ROOTS: readonly string[] = ["/proc/", "/sys/", "/dev/"];
-
-/**
- * Type deduction by extension: short explicit list, mirroring the bridge's table. In doubt,
- * `application/octet-stream`; NEVER guessed by reading the content — that's the bridge's job
- * with real signatures to decide photo vs document.
- */
-const MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
-  [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"],
-  [".webp", "image/webp"], [".gif", "image/gif"], [".svg", "image/svg+xml"],
-  [".pdf", "application/pdf"],
-  [".txt", "text/plain"], [".log", "text/plain"], [".md", "text/markdown"],
-  [".csv", "text/csv"], [".html", "text/html"], [".json", "application/json"],
-  [".yaml", "text/plain"], [".yml", "text/plain"],
-  [".zip", "application/zip"], [".gz", "application/gzip"],
-  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
-  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-  [".mp4", "video/mp4"], [".mp3", "audio/mpeg"], [".ogg", "audio/ogg"],
-]);
-
-/** `type/subtype` using characters RFC 2045 allows in a token. No `,`, `;`, or spaces. */
-const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,62}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,62}$/iu;
 
 const HEX_SHA256 = /^[0-9a-f]{64}$/u;
 
@@ -148,8 +128,8 @@ async function readRegularFile(path: string): Promise<Buffer | undefined> {
 /** The type declared by the agent wins; if not declared (or declared garbage), inferred from the extension. */
 function mediaTypeFor(artifact: OutputArtifact, path: string): string {
   const declared = artifact.media_type?.trim() ?? "";
-  if (MEDIA_TYPE.test(declared)) return declared;
-  return MIME_BY_EXTENSION.get(extname(path).toLowerCase()) ?? "application/octet-stream";
+  if (isValidMediaType(declared)) return declared;
+  return mediaTypeForExtension(extname(path).toLowerCase()) ?? "application/octet-stream";
 }
 
 /**

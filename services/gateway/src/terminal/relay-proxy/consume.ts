@@ -1,3 +1,4 @@
+import { withTransaction } from '@cauce/store';
 import {
   terminalAuditMetadata, type TerminalAuditContext,
 } from '../audit.js';
@@ -38,16 +39,12 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
         database_now: Date;
       }
       interface ClaimedSession extends TerminalSessionRow { database_now: Date }
-      const client = await pool.connect();
-      let transactionOpen = false;
       let session: TerminalSessionRow | undefined;
       let databaseNow: Date | undefined;
       let recovered = false;
       let takenOver = false;
       let refusal: { status: 401 | 403 | 409; reason: string; retry_after_ms?: number } | undefined;
-      try {
-        await client.query('BEGIN');
-        transactionOpen = true;
+      await withTransaction(pool, async (client) => {
         const locked = await client.query<LockedSession>(
           `SELECT terminal_sessions.*,
                   consumed_at IS NULL AND revoked_at IS NULL AND closed_at IS NULL
@@ -263,14 +260,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
             }
           }
         }
-        await client.query('COMMIT');
-        transactionOpen = false;
-      } catch (error) {
-        if (transactionOpen) await client.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        client.release();
-      }
+      });
       if (session === undefined) {
         if (refusal?.status === 403) {
           await reply.code(403).send({ ok: false, reason: refusal.reason });

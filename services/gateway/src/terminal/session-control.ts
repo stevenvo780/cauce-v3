@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type {
-  AuthorizedAgentTarget, DatabaseClient, DatabasePool,
+import {
+  withTransaction, type AuthorizedAgentTarget, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
 import { requireOperatorPermission, type Principal } from '../auth.js';
@@ -22,6 +22,8 @@ import {
 import { type TerminalMode, type TerminalSessionRow } from './types.js';
 
 const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
+
+class TerminalTransactionNoop extends Error {}
 
 export class TerminalClockSkewError extends Error {
   constructor() {
@@ -335,13 +337,9 @@ export function registerTerminalSessionControl(
       });
       const browserOwnerSha256 = ticketSha256(body.owner_token);
       const sessionId = randomUUID();
-      const admissionClient = await pool.connect();
-      let transactionOpen = false;
       let conflict: 'session_limit' | 'container_busy' | 'request_conflict' | undefined;
       let receipt: { row: TerminalSessionRow; ticket: string; recovered: boolean } | undefined;
-      try {
-        await admissionClient.query('BEGIN');
-        transactionOpen = true;
+      await withTransaction(pool, async (admissionClient) => {
         await admissionClient.query(
           `SELECT pg_advisory_xact_lock(hashtextextended('terminal:operator:' || $1, 0))`,
           [operatorLockIdentity(operator, consoleSubject)],
@@ -529,14 +527,7 @@ export function registerTerminalSessionControl(
             conflict = admission?.reason === 'session_limit' ? 'session_limit' : 'container_busy';
           }
         }
-        await admissionClient.query('COMMIT');
-        transactionOpen = false;
-      } catch (error) {
-        if (transactionOpen) await admissionClient.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        admissionClient.release();
-      }
+      });
       if (receipt === undefined) {
         await deny(409, conflict ?? 'container_busy');
         return;
@@ -611,65 +602,59 @@ export function registerTerminalSessionControl(
       const consoleSubject = subjectFor(actor);
       if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = parseOwnerRotation(request.body);
-      const ownerClient = await pool.connect();
-      let ownerTransactionOpen = false;
       let row: TerminalSessionRow | undefined;
       try {
-        await ownerClient.query('BEGIN');
-        ownerTransactionOpen = true;
-        const rotated = await ownerClient.query<TerminalSessionRow>(
-          `UPDATE terminal_sessions
-              SET browser_owner_sha256=$4,
-                  browser_owner_generation=browser_owner_generation+1
-            WHERE id=$1 AND request_id=$2 AND browser_owner_generation=$3::bigint
-              AND ${operatorScopePredicate(5, 6, 7)}
-              AND browser_owner_generation<9223372036854775807
-              AND revoked_at IS NULL AND closed_at IS NULL
-            RETURNING *`,
-          [
-            request.params.sid,
-            body.request_id,
-            body.expected_owner_generation,
-            ticketSha256(body.owner_token),
-            operator.operator_id,
-            operator.attributed,
-            consoleSubject,
-          ],
-        );
-        row = rotated.rows[0];
-        if (row === undefined) {
-          await ownerClient.query('ROLLBACK');
-          ownerTransactionOpen = false;
-        } else {
+        row = await withTransaction(pool, async (ownerClient) => {
+          const rotated = await ownerClient.query<TerminalSessionRow>(
+            `UPDATE terminal_sessions
+                SET browser_owner_sha256=$4,
+                    browser_owner_generation=browser_owner_generation+1
+              WHERE id=$1 AND request_id=$2 AND browser_owner_generation=$3::bigint
+                AND ${operatorScopePredicate(5, 6, 7)}
+                AND browser_owner_generation<9223372036854775807
+                AND revoked_at IS NULL AND closed_at IS NULL
+              RETURNING *`,
+            [
+              request.params.sid,
+              body.request_id,
+              body.expected_owner_generation,
+              ticketSha256(body.owner_token),
+              operator.operator_id,
+              operator.attributed,
+              consoleSubject,
+            ],
+          );
+          const rotatedRow = rotated.rows[0];
+          if (rotatedRow === undefined) throw new TerminalTransactionNoop();
           await recordTransactionalTerminalAudit(ownerClient, {
             tenant_id: actor.tenant_id,
             actor_alias: actor.alias,
             action: 'terminal.session.owner_rotated',
             decision: 'info',
-            ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
+            ...(rotatedRow.trace_id === null ? {} : { trace_id: rotatedRow.trace_id }),
             metadata: terminalAuditMetadata({
-              operator_id: row.operator_id,
-              attributed: row.attributed,
-              target_tenant: row.tenant_id,
-              target_alias: row.alias,
-              container: row.container,
-              cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, ownerClient)),
-              mode: row.mode,
+              operator_id: rotatedRow.operator_id,
+              attributed: rotatedRow.attributed,
+              target_tenant: rotatedRow.tenant_id,
+              target_alias: rotatedRow.alias,
+              container: rotatedRow.container,
+              cohort: cohortLabels(await currentCohort(
+                rotatedRow.tenant_id,
+                rotatedRow.alias,
+                ownerClient,
+              )),
+              mode: rotatedRow.mode,
             }, {
-              session_id: row.id,
-              request_id: row.request_id,
-              owner_generation: row.browser_owner_generation,
+              session_id: rotatedRow.id,
+              request_id: rotatedRow.request_id,
+              owner_generation: rotatedRow.browser_owner_generation,
               reason: 'operator_owner_takeover',
             }),
           });
-          await ownerClient.query('COMMIT');
-          ownerTransactionOpen = false;
-        }
+          return rotatedRow;
+        });
       } catch (error) {
-        if (ownerTransactionOpen) await ownerClient.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        ownerClient.release();
+        if (!(error instanceof TerminalTransactionNoop)) throw error;
       }
       if (row === undefined) {
         await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
@@ -699,41 +684,16 @@ export function registerTerminalSessionControl(
       const body = parseDeleteSession(request.body);
       // Revocation is a flag, not a socket kill: terminal-relay revalidates every few seconds
       // and closes the WebSocket with 4403 once /authz stops answering ok.
-      const releaseClient = await pool.connect();
-      let releaseTransactionOpen = false;
-      let row: TerminalSessionRow | undefined;
-      let settled = false;
+      let outcome: { row: TerminalSessionRow | undefined; settled: boolean } | undefined;
       try {
-        await releaseClient.query('BEGIN');
-        releaseTransactionOpen = true;
-        const revoked = await releaseClient.query<TerminalSessionRow>(
-          `UPDATE terminal_sessions SET revoked_at=now()
-            WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
-              AND request_id=$5
-              AND browser_owner_generation=$6::bigint
-              AND browser_owner_sha256=$7
-              AND revoked_at IS NULL AND closed_at IS NULL RETURNING *`,
-          [
-            request.params.sid,
-            operator.operator_id,
-            operator.attributed,
-            consoleSubject,
-            body.request_id,
-            body.owner_generation,
-            ticketSha256(body.owner_token),
-          ]
-        );
-        row = revoked.rows[0];
-        if (row === undefined) {
-          // A lost 204 is safe to retry with the exact same owner. A stale owner, another subject
-          // or a different request all receive the same conflict and can mutate nothing.
-          const existing = await releaseClient.query<{ settled: boolean }>(
-            `SELECT EXISTS(
-               SELECT 1 FROM terminal_sessions
-                WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
-                  AND request_id=$5 AND browser_owner_generation=$6::bigint
-                  AND browser_owner_sha256=$7 AND (revoked_at IS NOT NULL OR closed_at IS NOT NULL)
-             ) AS settled`,
+        outcome = await withTransaction(pool, async (releaseClient) => {
+          const revoked = await releaseClient.query<TerminalSessionRow>(
+            `UPDATE terminal_sessions SET revoked_at=now()
+              WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
+                AND request_id=$5
+                AND browser_owner_generation=$6::bigint
+                AND browser_owner_sha256=$7
+                AND revoked_at IS NULL AND closed_at IS NULL RETURNING *`,
             [
               request.params.sid,
               operator.operator_id,
@@ -742,46 +702,61 @@ export function registerTerminalSessionControl(
               body.request_id,
               body.owner_generation,
               ticketSha256(body.owner_token),
-            ],
+            ]
           );
-          settled = existing.rows[0]?.settled === true;
-        } else {
-          await recordTransactionalTerminalAudit(releaseClient, {
-            tenant_id: actor.tenant_id,
-            actor_alias: actor.alias,
-            action: 'terminal.session.revoked',
-            decision: 'info',
-            ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-            metadata: terminalAuditMetadata({
-              operator_id: row.operator_id,
-              attributed: row.attributed,
-              target_tenant: row.tenant_id,
-              target_alias: row.alias,
-              container: row.container,
-              cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, releaseClient)),
-              mode: row.mode
-            }, {
-              session_id: row.id,
-              request_id: row.request_id,
-              owner_generation: row.browser_owner_generation,
-              reason: 'operator_revoked',
-            })
-          });
-        }
-        if (row === undefined && !settled) {
-          await releaseClient.query('ROLLBACK');
-          releaseTransactionOpen = false;
-        } else {
-          await releaseClient.query('COMMIT');
-          releaseTransactionOpen = false;
-        }
+          const row = revoked.rows[0];
+          let settled = false;
+          if (row === undefined) {
+            // A lost 204 is safe to retry with the exact same owner. A stale owner, another subject
+            // or a different request all receive the same conflict and can mutate nothing.
+            const existing = await releaseClient.query<{ settled: boolean }>(
+              `SELECT EXISTS(
+                 SELECT 1 FROM terminal_sessions
+                  WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
+                    AND request_id=$5 AND browser_owner_generation=$6::bigint
+                    AND browser_owner_sha256=$7 AND (revoked_at IS NOT NULL OR closed_at IS NOT NULL)
+               ) AS settled`,
+              [
+                request.params.sid,
+                operator.operator_id,
+                operator.attributed,
+                consoleSubject,
+                body.request_id,
+                body.owner_generation,
+                ticketSha256(body.owner_token),
+              ],
+            );
+            settled = existing.rows[0]?.settled === true;
+          } else {
+            await recordTransactionalTerminalAudit(releaseClient, {
+              tenant_id: actor.tenant_id,
+              actor_alias: actor.alias,
+              action: 'terminal.session.revoked',
+              decision: 'info',
+              ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
+              metadata: terminalAuditMetadata({
+                operator_id: row.operator_id,
+                attributed: row.attributed,
+                target_tenant: row.tenant_id,
+                target_alias: row.alias,
+                container: row.container,
+                cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, releaseClient)),
+                mode: row.mode
+              }, {
+                session_id: row.id,
+                request_id: row.request_id,
+                owner_generation: row.browser_owner_generation,
+                reason: 'operator_revoked',
+              })
+            });
+          }
+          if (row === undefined && !settled) throw new TerminalTransactionNoop();
+          return { row, settled };
+        });
       } catch (error) {
-        if (releaseTransactionOpen) await releaseClient.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      } finally {
-        releaseClient.release();
+        if (!(error instanceof TerminalTransactionNoop)) throw error;
       }
-      if (row === undefined && !settled) {
+      if (outcome === undefined) {
         await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
         return;
       }

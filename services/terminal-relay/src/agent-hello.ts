@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
+import { parseCodexProjectDocumentConfig } from '@cauce/protocol';
 import { decodeJsonFrame } from './framing.js';
 import type { TerminalMode } from './gateway-client.js';
 import { errorLabel, logEvent } from './log.js';
-import { hasControlCharacter, integerField, stringField } from './validation.js';
+import { integerField, stringField } from './validation.js';
 
 export const AGENT_PING_INTERVAL_MS = 10_000;
 export const AGENT_PONG_TIMEOUT_MS = 45_000;
@@ -149,42 +150,19 @@ function featuresField(source: Record<string, unknown>): readonly string[] {
   return (value as readonly unknown[]).filter((entry): entry is string => typeof entry === 'string');
 }
 
-const MAX_CODEX_PROJECT_DOC_BYTES = 16 * 1024 * 1024;
-const MAX_CODEX_FALLBACKS = 16;
-const CODEX_NEVER_SERVE_BASENAMES = new Set([
-  '.credentials.json', 'auth.json', '.claude.json', 'openclaw.json', '.env', '.netrc',
-  'id_ed25519', 'id_rsa', 'known_hosts', 'authorized_keys',
-]);
-const CODEX_NEVER_SERVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
-
-function validCodexFallbackFilename(value: string): boolean {
-  const normalized = value.toLowerCase();
-  return value.length > 0 && value.length <= 128 && !value.includes('/') && !value.includes('\\')
-    && !value.includes('..') && !hasControlCharacter(value)
-    && !CODEX_NEVER_SERVE_BASENAMES.has(normalized)
-    && !CODEX_NEVER_SERVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
-}
-
 function codexProjectDocumentFields(
   source: Record<string, unknown>,
   harness: string,
 ): Pick<AgentHello, 'project_doc_max_bytes' | 'project_doc_fallback_filenames'> {
-  const maxBytes = source.project_doc_max_bytes;
-  const rawFallbacks = source.project_doc_fallback_filenames;
-  if (harness !== 'codex' || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes)
-      || maxBytes < 1 || maxBytes > MAX_CODEX_PROJECT_DOC_BYTES
-      || !Array.isArray(rawFallbacks) || rawFallbacks.length > MAX_CODEX_FALLBACKS) return {};
-  const seen = new Set<string>(['AGENTS.override.md', 'AGENTS.md']);
-  const fallbacks: string[] = [];
-  for (const candidate of rawFallbacks) {
-    if (typeof candidate !== 'string' || !validCodexFallbackFilename(candidate)
-        || seen.has(candidate)) return {};
-    seen.add(candidate);
-    fallbacks.push(candidate);
-  }
+  const parsed = parseCodexProjectDocumentConfig({
+    harness,
+    maxBytes: source.project_doc_max_bytes,
+    fallbackFilenames: source.project_doc_fallback_filenames,
+  });
+  if (parsed === undefined) return {};
   return {
-    project_doc_max_bytes: maxBytes,
-    project_doc_fallback_filenames: fallbacks,
+    project_doc_max_bytes: parsed.maxBytes,
+    project_doc_fallback_filenames: parsed.fallbackFilenames,
   };
 }
 

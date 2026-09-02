@@ -1,5 +1,5 @@
 import {
-  createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual
+  createCipheriv, createDecipheriv, createHash, randomBytes
 } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Hello } from '@cauce/protocol';
@@ -9,6 +9,10 @@ import {
   validatePrincipal,
   type AuthProvider, type JwtClaims, type Principal
 } from './auth.js';
+import {
+  clearHostSessionCookie, constantTimeText, hasCookie, hostSessionCookie, isHostCookieName,
+  scalarHeaderValue, uniqueCookieValue
+} from './http-auth-primitives.js';
 
 const SESSION_KIND = 'session';
 const LOGIN_KIND = 'login';
@@ -199,41 +203,6 @@ function sha256Base64Url(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('base64url');
 }
 
-function headerValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function cookieValue(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined;
-  const values = header.split(';').map((item) => item.trim()).filter((item) => item.startsWith(`${name}=`));
-  const [match] = values;
-  if (values.length !== 1 || match === undefined) return undefined;
-  const value = match.slice(name.length + 1);
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function hasCookie(header: string | undefined, name: string): boolean {
-  return header?.split(';').some((item) => item.trim().startsWith(`${name}=`)) === true;
-}
-
-function constantTimeText(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, 'utf8');
-  const rightBuffer = Buffer.from(right, 'utf8');
-  return leftBuffer.byteLength === rightBuffer.byteLength && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function sessionCookie(name: string, value: string, maxAgeSeconds: number, sameSite: 'Strict' | 'Lax'): string {
-  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=${sameSite}; Max-Age=${String(Math.max(0, Math.floor(maxAgeSeconds)))}`;
-}
-
-function clearCookie(name: string, sameSite: 'Strict' | 'Lax'): string {
-  return sessionCookie(name, '', 0, sameSite);
-}
-
 function requiredString(value: unknown, name: string, maximum = 16_384): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > maximum) throw new AuthError(`OIDC ${name} is invalid`);
   return value;
@@ -300,7 +269,7 @@ export class OidcBffAuthProvider implements AuthProvider {
     if (!this.postLoginPath.startsWith('/') || this.postLoginPath.startsWith('//')) throw new Error('OIDC post-login path must be relative to this origin');
     this.sessionCookieName = options.sessionCookieName ?? '__Host-cauce_session';
     this.loginCookieName = options.loginCookieName ?? '__Host-cauce_login';
-    if (!/^__Host-[A-Za-z0-9_-]+$/.test(this.sessionCookieName) || !/^__Host-[A-Za-z0-9_-]+$/.test(this.loginCookieName)) {
+    if (!isHostCookieName(this.sessionCookieName) || !isHostCookieName(this.loginCookieName)) {
       throw new Error('OIDC cookies must use the __Host- prefix');
     }
     if (this.sessionCookieName === this.loginCookieName) throw new Error('OIDC session and login cookies must differ');
@@ -324,13 +293,13 @@ export class OidcBffAuthProvider implements AuthProvider {
   }
 
   private sessionId(request: FastifyRequest): string | undefined {
-    if (headerValue(request.headers.authorization) !== undefined) throw new AuthError('browser bearer credentials are not accepted');
-    return cookieValue(headerValue(request.headers.cookie), this.sessionCookieName);
+    if (scalarHeaderValue(request.headers.authorization) !== undefined) throw new AuthError('browser bearer credentials are not accepted');
+    return uniqueCookieValue(scalarHeaderValue(request.headers.cookie), this.sessionCookieName);
   }
 
   private usesBearerProvider(request: FastifyRequest): boolean {
-    return !hasCookie(headerValue(request.headers.cookie), this.sessionCookieName)
-      && headerValue(request.headers.authorization) !== undefined;
+    return !hasCookie(scalarHeaderValue(request.headers.cookie), this.sessionCookieName)
+      && scalarHeaderValue(request.headers.authorization) !== undefined;
   }
 
   private async tokenRequest(parameters: URLSearchParams): Promise<TokenResponse> {
@@ -477,7 +446,7 @@ export class OidcBffAuthProvider implements AuthProvider {
 
   async requireCsrf(request: FastifyRequest): Promise<void> {
     const { session } = await this.load(request);
-    const presented = headerValue(request.headers['x-csrf-token']);
+    const presented = scalarHeaderValue(request.headers['x-csrf-token']);
     if (!presented || !constantTimeText(presented, session.csrfToken)) throw new AuthorizationError('valid CSRF token is required');
   }
 
@@ -516,15 +485,15 @@ export class OidcBffAuthProvider implements AuthProvider {
     authorization.searchParams.set('code_challenge_method', 'S256');
     reply
       .header('Cache-Control', 'no-store')
-      .header('Set-Cookie', sessionCookie(this.loginCookieName, handle, this.loginMaxAgeMs / 1_000, 'Lax'))
+      .header('Set-Cookie', hostSessionCookie(this.loginCookieName, handle, this.loginMaxAgeMs / 1_000, 'Lax'))
       .code(302)
       .header('Location', authorization.toString())
       .send();
   }
 
   async completeLogin(request: FastifyRequest, reply: FastifyReply, code: unknown, state: unknown): Promise<void> {
-    const handle = cookieValue(headerValue(request.headers.cookie), this.loginCookieName);
-    const clearLogin = clearCookie(this.loginCookieName, 'Lax');
+    const handle = uniqueCookieValue(scalarHeaderValue(request.headers.cookie), this.loginCookieName);
+    const clearLogin = clearHostSessionCookie(this.loginCookieName, 'Lax');
     if (!handle) {
       reply.header('Set-Cookie', clearLogin).code(400).send({ error: 'invalid_login', message: 'OIDC login cookie is missing' });
       return;
@@ -543,7 +512,7 @@ export class OidcBffAuthProvider implements AuthProvider {
       }));
       const verified = await this.verifiedTokens(tokens, pending.nonce);
       if (verified.idToken === undefined) throw new AuthError('OIDC ID token is required');
-      const oldId = cookieValue(headerValue(request.headers.cookie), this.sessionCookieName);
+      const oldId = uniqueCookieValue(scalarHeaderValue(request.headers.cookie), this.sessionCookieName);
       if (oldId) await this.store.deleteSession(oldId);
       const id = randomOpaque();
       const now = this.now();
@@ -563,7 +532,7 @@ export class OidcBffAuthProvider implements AuthProvider {
         .header('Cache-Control', 'no-store')
         .header('Set-Cookie', [
           clearLogin,
-          sessionCookie(this.sessionCookieName, id, this.sessionMaxAgeMs / 1_000, 'Strict')
+          hostSessionCookie(this.sessionCookieName, id, this.sessionMaxAgeMs / 1_000, 'Strict')
         ])
         .code(302)
         .header('Location', pending.returnTo)
@@ -579,7 +548,7 @@ export class OidcBffAuthProvider implements AuthProvider {
     await this.store.deleteSession(id);
     reply
       .header('Cache-Control', 'no-store')
-      .header('Set-Cookie', clearCookie(this.sessionCookieName, 'Strict'))
+      .header('Set-Cookie', clearHostSessionCookie(this.sessionCookieName, 'Strict'))
       .code(204)
       .send();
   }
@@ -592,7 +561,7 @@ function isUnsafe(method: string): boolean {
 export function registerOidcBff(app: FastifyInstance, provider: OidcBffAuthProvider): void {
   app.addHook('onRequest', async (request, reply) => {
     const dataMutation = request.url.startsWith('/v3/') && isUnsafe(request.method);
-    const sessionCookie = hasCookie(headerValue(request.headers.cookie), provider.sessionCookieName);
+    const sessionCookie = hasCookie(scalarHeaderValue(request.headers.cookie), provider.sessionCookieName);
     if (!dataMutation || !sessionCookie) return;
     try {
       await provider.requireCsrf(request);
@@ -609,7 +578,7 @@ export function registerOidcBff(app: FastifyInstance, provider: OidcBffAuthProvi
   app.get<{ Querystring: { code?: string; state?: string; error?: string } }>('/v3/auth/callback', async (request, reply) => {
     if (request.query.error !== undefined) {
       reply
-        .header('Set-Cookie', clearCookie(provider.loginCookieName, 'Lax'))
+        .header('Set-Cookie', clearHostSessionCookie(provider.loginCookieName, 'Lax'))
         .code(401)
         .send({ error: 'unauthorized', message: 'OIDC provider rejected login' });
       return;

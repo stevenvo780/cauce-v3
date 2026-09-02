@@ -11,33 +11,17 @@ import {
   TenantSchema,
   TraceIdSchema,
 } from './core.js';
+import { hasUnsafeTextCodePoint } from '../content-safety.js';
+import { isValidMediaType } from './media-types.js';
 
 export const MAX_ATTACHMENT_BYTES = 10_000_000;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
-/** MIME types accepted for attachments in platform messages. */
-export const ATTACHMENT_MIME_TYPES = [
-  'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain',
-  'text/markdown', 'text/x-markdown', 'text/csv',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-] as const;
-
-function hasUnsafeAttachmentCodePoint(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0);
-    if (code === undefined) continue;
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x61c ||
-      (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) ||
-      (code >= 0x2060 && code <= 0x206f) || code === 0xfeff || (code >= 0xfff9 && code <= 0xfffb)) {
-      return true;
-    }
-  }
-  return false;
-}
+export const MAX_ATTACHMENT_MEDIA_TYPE_LENGTH = 127;
 
 const AttachmentNameSchema = z.string().min(1).max(255).superRefine((name, context) => {
   if (name === '.' || name === '..' || name.includes('/') || name.includes('\\') ||
-      hasUnsafeAttachmentCodePoint(name)) {
+      hasUnsafeTextCodePoint(name)) {
     context.addIssue({ code: 'custom', message: 'attachment name is unsafe' });
   }
 });
@@ -45,27 +29,18 @@ const AttachmentNameSchema = z.string().min(1).max(255).superRefine((name, conte
 export const AttachmentContentSchema = z.object({
   kind: z.enum(['image', 'document']),
   name: AttachmentNameSchema,
-  mime_type: z.enum(ATTACHMENT_MIME_TYPES),
+  mime_type: z.string().max(MAX_ATTACHMENT_MEDIA_TYPE_LENGTH)
+    .refine(isValidMediaType, 'attachment media type is not a valid MIME token'),
   file_size: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   content_base64: z.string().max(Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4)
     .regex(/^[A-Za-z0-9+/]*={0,2}$/u)
     .refine((value) => value.length % 4 === 0, 'attachment content is not valid base64')
 }).strict().superRefine((attachment, context) => {
-  const extension = (/\.[^.]+$/u.exec(attachment.name.toLowerCase()))?.[0];
-  // Maps MIME type to the accepted extensions and the category (image | document).
-  const expected = new Map<string, readonly [readonly string[], 'image' | 'document']>([
-    ['image/jpeg', [['.jpg'], 'image']], ['image/png', [['.png'], 'image']],
-    ['image/webp', [['.webp'], 'image']], ['application/pdf', [['.pdf'], 'document']],
-    ['text/plain', [['.txt', '.md', '.csv'], 'document']],
-    ['text/markdown', [['.md'], 'document']],
-    ['text/x-markdown', [['.md'], 'document']],
-    ['text/csv', [['.csv'], 'document']],
-    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', [['.docx'], 'document']]
-  ]).get(attachment.mime_type);
-  if (expected === undefined || extension === undefined || !expected[0].includes(extension) ||
-      attachment.kind !== expected[1]) {
-    context.addIssue({ code: 'custom', message: 'attachment kind, MIME and extension do not agree' });
+  // The only agreement still demanded, and it is an implication: `image` needs an `image/*` type,
+  // while `document` carries any format. The extension is free and may be absent altogether.
+  if (attachment.kind === 'image' && !attachment.mime_type.toLowerCase().startsWith('image/')) {
+    context.addIssue({ code: 'custom', message: 'attachment kind and MIME do not agree' });
   }
   const padding = attachment.content_base64.endsWith('==') ? 2 : attachment.content_base64.endsWith('=') ? 1 : 0;
   const decodedSize = attachment.content_base64.length / 4 * 3 - padding;

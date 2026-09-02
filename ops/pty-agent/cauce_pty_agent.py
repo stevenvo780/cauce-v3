@@ -450,17 +450,7 @@ def validate_bundle(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, Any]:
-    """Validate only non-secret paths measured from the live adapter environment.
-
-    The object is optional during rolling upgrades. Profile roots must name a real alias-owned
-    directory below HOME. Project context is different: a measured cwd/workspace can legitimately
-    live at `/workspace`, outside HOME, but it must be canonical, non-symlinked, and an advertised
-    workspace root must contain the measured cwd. The root `/` is never accepted.
-    """
-    # These facts enrich terminal presence; they are not the transport identity. A launcher from a
-    # newer rolling release may publish an unknown optional fact and a measured directory can
-    # disappear between bundle assembly and agent startup. Neither event may permanently stop the
-    # shell. Ignore an unrecognised document and let the gateway render context as unmeasured.
+    """Validate measured non-secret runtime facts."""
     if not isinstance(value, dict) or not set(value).issubset(RUNTIME_FACT_KEYS):
         return {}
     expected = {
@@ -546,6 +536,17 @@ def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, Any]
     return validated
 
 
+UNSAFE_TEXT_CODE_POINT_RANGES = (
+    (0x00, 0x1F), (0x7F, 0x9F), (0x61C, 0x61C), (0x200B, 0x200F),
+    (0x2028, 0x202E), (0x2060, 0x206F), (0xFEFF, 0xFEFF), (0xFFF9, 0xFFFB),
+)
+
+
+def _has_unsafe_text_code_point(value: str) -> bool:
+    return any(lower <= code <= upper for code in map(ord, value)
+               for lower, upper in UNSAFE_TEXT_CODE_POINT_RANGES)
+
+
 def _valid_project_doc_fallback(value: Any, seen: set[str] | None = None) -> bool:
     """A Codex fallback is one bounded basename, never a path or credential-shaped file."""
     if not isinstance(value, str) or not value:
@@ -560,7 +561,7 @@ def _valid_project_doc_fallback(value: Any, seen: set[str] | None = None) -> boo
         return False
     if value in (".", "..") or ".." in value or "/" in value or "\\" in value or "\0" in value:
         return False
-    if any(ord(character) <= 0x1f or ord(character) == 0x7f for character in value):
+    if _has_unsafe_text_code_point(value):
         return False
     normalized = value.casefold()
     if normalized in NEVER_SERVE_BASENAMES or normalized.endswith(NEVER_SERVE_SUFFIXES):
@@ -2134,7 +2135,7 @@ class PtyAgent:
     def _safe_memory_entry_name(name: str) -> bool:
         if not name or name in (".", "..") or "/" in name or "\0" in name:
             return False
-        if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in name):
+        if _has_unsafe_text_code_point(name):
             return False
         try:
             name.encode("utf-8")

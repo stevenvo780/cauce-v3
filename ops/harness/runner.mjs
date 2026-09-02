@@ -3,13 +3,13 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { runAdapterRoundTrip } from './adapter-roundtrip.mjs';
 import { topology } from './fleet.mjs';
+import { redactUrl, waitUntil, writeHarnessArtifacts } from './harness-utils.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -319,19 +319,6 @@ function publish(actor, recipient, options = {}) {
   });
 }
 
-async function waitUntil(operation, timeoutMs = wsTimeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      const value = await operation();
-      if (value) return value;
-    } catch (error) { lastError = error; }
-    await sleep(30);
-  }
-  throw lastError || new Error(`condition timeout after ${timeoutMs}ms`);
-}
-
 async function heartbeatWhile(client, operation) {
   let active = true;
   let heartbeatError;
@@ -384,7 +371,7 @@ const tests = [
       const after = await api(identity('Steven', 'kant'), 'GET', '/v3/status');
       return allIdentities.every((entry) => after.data.presence.some(
         (row) => row.tenant_id === entry.tenant && row.alias === entry.alias && row.online === false));
-    });
+    }, wsTimeoutMs);
   }, { doubles: true, evidenceClass: 'protocol-double' }],
 
   ...(adapterProcessRoundTrip
@@ -706,44 +693,17 @@ async function main() {
     },
     tests: results,
   };
-  await writeArtifacts(report);
+  await writeHarnessArtifacts(artifactDir, report, {
+    suiteName: 'cauce-v3-real-e2e',
+    className: 'cauce.real',
+    includeSkipped: false,
+  });
   process.exitCode = report.summary.failed || report.summary.criticalSkipped ? 1 : 0;
-}
-
-function redactUrl(value) {
-  const url = new URL(value);
-  url.username = '';
-  url.password = '';
-  for (const key of [...url.searchParams.keys()]) if (/token|key|secret|auth/i.test(key)) url.searchParams.set(key, 'REDACTED');
-  return url.toString();
 }
 
 function loopbackUrl(value) {
   const hostname = new URL(value).hostname;
   return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1';
-}
-
-function xmlEscape(value) {
-  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
-}
-
-async function writeArtifacts(report) {
-  await mkdir(artifactDir, { recursive: true });
-  const json = `${JSON.stringify(report, null, 2)}\n`;
-  const totalSeconds = report.tests.reduce((sum, item) => sum + item.durationMs, 0) / 1_000;
-  const cases = report.tests.map((test) => {
-    const detail = test.status === 'failed'
-      ? `<failure message="${xmlEscape(test.error)}">${xmlEscape(test.stack || test.error)}</failure>`
-      : '';
-    return `  <testcase classname="cauce.real" name="${xmlEscape(test.name)}" time="${(test.durationMs / 1_000).toFixed(3)}">${detail}</testcase>`;
-  }).join('\n');
-  const junit = `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="cauce-v3-real-e2e" tests="${report.summary.tests}" failures="${report.summary.failed}" skipped="${report.summary.skipped}" time="${totalSeconds.toFixed(3)}" timestamp="${report.startedAt}">\n${cases}\n</testsuite>\n`;
-  const reportPath = path.join(artifactDir, 'report.json');
-  const junitPath = path.join(artifactDir, 'junit.xml');
-  await writeFile(reportPath, json, { mode: 0o644 });
-  await writeFile(junitPath, junit, { mode: 0o644 });
-  const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
-  await writeFile(path.join(artifactDir, 'SHA256SUMS'), `${digest(json)}  report.json\n${digest(junit)}  junit.xml\n`, { mode: 0o644 });
 }
 
 executeWithClientCleanup(main).catch((error) => {

@@ -3,10 +3,10 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tenantAgents } from './fleet.mjs';
+import { redactUrl, waitUntil, writeHarnessArtifacts } from './harness-utils.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -117,19 +117,6 @@ async function ack(client, message, expected = 'accepted') {
   const result = await client.next((frame) => frame.type === 'ack_result' && frame.deliveryId === message.deliveryId);
   assert.equal(result.status, expected);
   return result;
-}
-
-async function waitUntil(operation, timeoutMs = wsTimeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      const value = await operation();
-      if (value) return value;
-    } catch (error) { lastError = error; }
-    await sleep(30);
-  }
-  throw lastError || new Error(`condition timeout after ${timeoutMs}ms`);
 }
 
 async function expectWsRejected(url) {
@@ -334,7 +321,7 @@ async function main() {
       const item = await waitUntil(async () => {
         const dlq = await api(context, 'GET', '/v3/dlq/miguel', undefined, 200);
         return dlq.data.items.find((entry) => entry.messageId === sent.data.messageId);
-      });
+      }, wsTimeoutMs);
       assert.equal(item.reason, 'ack_timeout');
       assert.equal(item.attempts, 3);
       await recipient.close();
@@ -365,7 +352,7 @@ async function main() {
         const down = await api(context, 'GET', '/health/ready');
         assert.equal(down.status, 503);
         await api(context, 'POST', '/__control/db', { up: true }, 200);
-        await waitUntil(async () => (await api(context, 'GET', '/health/ready')).status === 200);
+        await waitUntil(async () => (await api(context, 'GET', '/health/ready')).status === 200, wsTimeoutMs);
         return;
       }
       if (context.faultMode !== 'compose') throw new SkipError('set CAUCE_FAULT_MODE=compose for a disposable stack');
@@ -428,7 +415,11 @@ async function main() {
     },
     tests: results,
   };
-  await writeArtifacts(report);
+  await writeHarnessArtifacts(artifactDir, report, {
+    suiteName: 'cauce-v3-contract-e2e',
+    className: 'cauce.contract',
+    includeSkipped: true,
+  });
   if (mockMode) await stopMock();
   // This suite has no optional cases: any skip is a broken contract-double gate.
   process.exitCode = report.summary.failed || report.summary.skipped ? 1 : 0;
@@ -439,38 +430,6 @@ function runComposeFault(service) {
   const script = path.join(here, '..', 'scripts', 'fault-compose.sh');
   const result = spawnSync(script, [service], { env: process.env, encoding: 'utf8', timeout: 120000 });
   if (result.status !== 0) throw new Error(`compose fault failed for ${service}: ${result.stderr.trim()}`);
-}
-
-function redactUrl(value) {
-  const url = new URL(value);
-  url.username = '';
-  url.password = '';
-  for (const key of [...url.searchParams.keys()]) if (/token|key|secret|auth/i.test(key)) url.searchParams.set(key, 'REDACTED');
-  return url.toString();
-}
-
-function xmlEscape(value) {
-  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
-}
-
-async function writeArtifacts(report) {
-  await mkdir(artifactDir, { recursive: true });
-  const json = `${JSON.stringify(report, null, 2)}\n`;
-  const totalSeconds = report.tests.reduce((sum, item) => sum + item.durationMs, 0) / 1000;
-  const cases = report.tests.map((test) => {
-    const detail = test.status === 'failed'
-      ? `<failure message="${xmlEscape(test.error)}">${xmlEscape(test.stack || test.error)}</failure>`
-      : test.status === 'skipped' ? `<skipped message="${xmlEscape(test.error)}"/>` : '';
-    return `  <testcase classname="cauce.contract" name="${xmlEscape(test.name)}" time="${(test.durationMs / 1000).toFixed(3)}">${detail}</testcase>`;
-  }).join('\n');
-  const junit = `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="cauce-v3-contract-e2e" tests="${report.summary.tests}" failures="${report.summary.failed}" skipped="${report.summary.skipped}" time="${totalSeconds.toFixed(3)}" timestamp="${report.startedAt}">\n${cases}\n</testsuite>\n`;
-  const reportPath = path.join(artifactDir, 'report.json');
-  const junitPath = path.join(artifactDir, 'junit.xml');
-  await writeFile(reportPath, json, { mode: 0o644 });
-  await writeFile(junitPath, junit, { mode: 0o644 });
-  const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
-  const manifest = `${digest(json)}  report.json\n${digest(junit)}  junit.xml\n`;
-  await writeFile(path.join(artifactDir, 'SHA256SUMS'), manifest, { mode: 0o644 });
 }
 
 main().catch(async (error) => {

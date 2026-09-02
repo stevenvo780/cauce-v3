@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { scalarHeaderValue } from './http-auth-primitives.js';
 
 export interface ConsoleSecurityOptions {
   /** Exact trusted browser origins. Empty means the request's own scheme+Host. */
@@ -21,12 +22,6 @@ function ownOrigin(request: FastifyRequest): string | undefined {
   return normalizedOrigin(`${request.protocol}://${host}`);
 }
 
-function headerValue(value: unknown): string | undefined {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
-  return undefined;
-}
-
 export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) {
   const configured = new Set((options.allowedOrigins ?? []).map(normalizedOrigin).filter((item): item is string => item !== undefined));
   if (configured.size !== (options.allowedOrigins ?? []).length) throw new Error('console origins must be exact URL origins');
@@ -39,13 +34,13 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
     // transient cookie authenticate the cross-site top-level redirect from the identity provider.
     if (!consoleRoute && !browserAuthRoute) return;
     reply.header('Vary', 'Origin');
-    const origin = headerValue(request.headers.origin);
+    const origin = scalarHeaderValue(request.headers.origin);
     const allowed = configured.size > 0 ? configured : new Set([ownOrigin(request)].filter((item): item is string => item !== undefined));
     if (origin !== undefined && (!normalizedOrigin(origin) || !allowed.has(origin))) {
       await reply.code(403).send({ error: 'forbidden', message: 'cross-origin console request rejected' });
       return;
     }
-    const fetchSite = headerValue(request.headers['sec-fetch-site']);
+    const fetchSite = scalarHeaderValue(request.headers['sec-fetch-site']);
     if (fetchSite === 'cross-site') {
       await reply.code(403).send({ error: 'forbidden', message: 'cross-site console request rejected' });
       return;

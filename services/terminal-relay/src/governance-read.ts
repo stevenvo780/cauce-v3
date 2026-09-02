@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { hasGovernanceSensitivePathSegment } from '@cauce/protocol';
 import type { AgentConnection } from './agent-leg.js';
 import { logEvent } from './log.js';
 import { hasControlCharacter, integerField, stringField } from './validation.js';
@@ -75,12 +76,6 @@ const DIRECTORY_OK_KEYS = [
   'entries', 'kind', 'observed_at_least', 'path', 'request_id', 'total', 'truncated',
 ];
 const DIRECTORY_ENTRY_KEYS = ['bytes', 'modified_at', 'path'];
-const DIRECTORY_SENSITIVE_BASENAMES = new Set([
-  '.credentials.json', 'auth.json', '.claude.json', 'openclaw.json', '.env', '.netrc',
-  'id_ed25519', 'id_rsa', 'known_hosts', 'authorized_keys',
-]);
-const DIRECTORY_SENSITIVE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
-
 function hasExactKeys(source: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(source).sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
@@ -99,8 +94,7 @@ function strictDescendant(root: string, candidate: string): boolean {
 }
 
 function sensitiveDirectoryPath(path: string): boolean {
-  return path.split('/').some((segment) => DIRECTORY_SENSITIVE_BASENAMES.has(segment)
-    || DIRECTORY_SENSITIVE_SUFFIXES.some((suffix) => segment.endsWith(suffix)));
+  return hasGovernanceSensitivePathSegment(path);
 }
 
 function validIsoDate(value: unknown): value is string {

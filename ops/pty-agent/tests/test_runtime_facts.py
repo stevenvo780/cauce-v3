@@ -19,12 +19,19 @@ if str(AGENT_DIR) not in sys.path:
 
 import cauce_pty_agent as agent  # noqa: E402
 
+UNSAFE_GOVERNANCE_RANGES = (
+    (0x00, 0x1F), (0x7F, 0x9F), (0x61C, 0x61C), (0x200B, 0x200F),
+    (0x2028, 0x202E), (0x2060, 0x206F), (0xFEFF, 0xFEFF), (0xFFF9, 0xFFFB),
+)
+UNSAFE_GOVERNANCE_CODE_POINTS = tuple(
+    code_point for lower, upper in UNSAFE_GOVERNANCE_RANGES
+    for code_point in range(lower, upper + 1)
+)
+
 
 def _function_source(name: str) -> str:
     text = LAUNCHER.read_text(encoding="utf-8")
     start = text.index(f"{name}() {{")
-    # This function embeds Python dictionaries in a heredoc, so the first textual `}\n` is not
-    # the Bash function terminator. Its next top-level function is a stable extraction boundary.
     boundary = "\n}\n\npublish_bundle() {"
     end = text.index(boundary, start) + len("\n}\n")
     return text[start:end]
@@ -168,20 +175,26 @@ class RuntimeFactsTest(unittest.TestCase):
         self.assertEqual(measured["project_doc_max_bytes"], 65536)
         self.assertEqual(measured["project_doc_fallback_filenames"], ["TEAM.md", "LOCAL.md"])
 
-    def test_unsafe_codex_instruction_knobs_are_omitted_without_losing_path_facts(self) -> None:
+    def test_unsafe_codex_instruction_names_are_omitted_without_losing_path_facts(self) -> None:
         codex_home = self.home / ".codex"
         codex_home.mkdir()
-        (codex_home / "config.toml").write_text(
-            'project_doc_max_bytes = 65536\nproject_doc_fallback_filenames = ["SECRET.PEM"]\n',
-            encoding="utf-8",
-        )
         self._spawn_adapter({"CODEX_HOME": str(codex_home)})
-        measured = self._measured("codex")
-        self.assertIsNotNone(measured)
-        assert measured is not None
-        self.assertEqual(measured["codex_home"], str(codex_home))
-        self.assertNotIn("project_doc_max_bytes", measured)
-        self.assertNotIn("project_doc_fallback_filenames", measured)
+        unsafe_names = ("SECRET.PEM",) + tuple(
+            f"TEAM\\u{code_point:04X}.md" for code_point in UNSAFE_GOVERNANCE_CODE_POINTS
+        )
+        for name in unsafe_names:
+            with self.subTest(name=name):
+                (codex_home / "config.toml").write_text(
+                    "project_doc_max_bytes = 65536\n"
+                    f'project_doc_fallback_filenames = ["{name}"]\n',
+                    encoding="utf-8",
+                )
+                measured = self._measured("codex")
+                self.assertIsNotNone(measured)
+                assert measured is not None
+                self.assertEqual(measured["codex_home"], str(codex_home))
+                self.assertNotIn("project_doc_max_bytes", measured)
+                self.assertNotIn("project_doc_fallback_filenames", measured)
 
     def test_required_profile_path_missing_degrades_to_empty_facts(self) -> None:
         self._spawn_adapter({})
@@ -349,11 +362,9 @@ class AdapterGenerationParityTest(unittest.TestCase):
     def test_launcher_recomputes_the_supervisor_generation_formula(self) -> None:
         launcher = LAUNCHER.read_text(encoding="utf-8")
         supervisor = (REPO / "ops/scripts/container-adapter-supervisor.sh").read_text(encoding="utf-8")
-        # The supervisor's formula, verbatim, is the one the launcher must reproduce.
         formula = """printf '%s\\0%s\\0%s\\0%s'"""
         self.assertIn(formula, supervisor, "supervisor generation formula moved")
         self.assertIn(formula, launcher, "launcher must recompute the supervisor generation formula")
-        # And the measurement must pass THAT value, never the launcher's own ticket generation.
         self.assertIn('CAUCE_PTY_MEASURE_GENERATION=$adapter_generation', launcher)
         self.assertNotIn('CAUCE_PTY_MEASURE_GENERATION=$container_generation', launcher)
 
@@ -381,8 +392,6 @@ class AdapterGenerationParityTest(unittest.TestCase):
 
     def test_the_two_generations_are_computed_from_the_same_container_facts(self) -> None:
         launcher = LAUNCHER.read_text(encoding="utf-8")
-        # Both digests read id/started/restart from the same inspect; only the adapter form adds the
-        # init start time. A launcher that stopped tracking either field could not rebuild the match.
         self.assertIn('container_started=$started', launcher)
         self.assertIn('container_restart=$restart', launcher)
         self.assertIn('/proc/1/stat', launcher)
@@ -457,6 +466,34 @@ class RuntimeFactsBundleValidationTest(unittest.TestCase):
             "project_doc_fallback_filenames": ["TEAM.md", "TEAM.md"],
         })
         self.assertNotIn("project_doc_fallback_filenames", duplicate)
+
+    def test_unsafe_governance_code_points_match_the_protocol_authority(self) -> None:
+        for code_point in UNSAFE_GOVERNANCE_CODE_POINTS:
+            name = f"TEAM{chr(code_point)}.md"
+            with self.subTest(code_point=f"U+{code_point:04X}"):
+                self.assertTrue(agent._has_unsafe_text_code_point(name))
+                self.assertFalse(agent.PtyAgent._safe_memory_entry_name(name))
+                result = self._validate({
+                    "project_doc_max_bytes": 32768,
+                    "project_doc_fallback_filenames": [name],
+                })
+                self.assertNotIn("project_doc_max_bytes", result)
+                self.assertNotIn("project_doc_fallback_filenames", result)
+
+    def test_neighbors_outside_the_protocol_unsafe_ranges_remain_accepted(self) -> None:
+        for code_point in (
+            0x20, 0x7E, 0xA0, 0x61B, 0x61D, 0x200A, 0x2010,
+            0x2027, 0x202F, 0x205F, 0x2070, 0xFEFE, 0xFF00, 0xFFF8, 0xFFFC,
+        ):
+            name = f"TEAM{chr(code_point)}.md"
+            with self.subTest(code_point=f"U+{code_point:04X}"):
+                self.assertFalse(agent._has_unsafe_text_code_point(name))
+                self.assertTrue(agent.PtyAgent._safe_memory_entry_name(name))
+                result = self._validate({
+                    "project_doc_max_bytes": 32768,
+                    "project_doc_fallback_filenames": [name],
+                })
+                self.assertEqual(result["project_doc_fallback_filenames"], [name])
 
     def test_codex_knobs_on_another_harness_are_omitted(self) -> None:
         result = self._validate({

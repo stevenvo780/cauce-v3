@@ -100,6 +100,12 @@ describe('production authentication providers', () => {
         cookie: `__Host-cauce_session=${encodeURIComponent(pilotToken)}`,
         authorization: `Bearer ${pilotToken}`
       }))).rejects.toThrow('exactly one');
+      await expect(provider.authenticateHttp(request({
+        cookie: `__Host-cauce_session=${encodeURIComponent(pilotToken)}; __Host-cauce_session=attacker-value`
+      }))).rejects.toThrow('exactly one pilot token credential is required');
+      await expect(provider.authenticateHttp(request({
+        cookie: '__Host-cauce_session=%E0%A4%A'
+      }))).rejects.toThrow('exactly one pilot token credential is required');
 
       await writeFile(path, JSON.stringify({
         version: 1,
