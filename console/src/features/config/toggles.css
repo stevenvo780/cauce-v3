@@ -3,27 +3,27 @@
 .config-area .table-wrap { position: relative; min-width: 0; max-width: 100%; }
 
 .config-area table { font-size: var(--tipo-cuerpo); }
-.config-area td { padding: 11px 12px; }
-.config-area th { padding: 10px 12px; }
+.config-area td { padding: var(--space-3); }
+.config-area th { padding: var(--space-2) var(--space-3); }
 .config-area td .badge { white-space: nowrap; }
 .config-area td .button.small { white-space: nowrap; }
-.config-area td .config-actions { gap: 5px; flex-wrap: nowrap; }
+.config-area td .config-actions { gap: var(--space-1); flex-wrap: nowrap; }
 
 /*
  * El `<select>` del rol heredaba `min-height: 41px` de la regla global de campos de texto y dejaba
  * la fila de memberships en 65 px cuando el resto de las tablas ya estaba en 40. Un control de una
  * sola línea dentro de una celda no necesita la altura de un campo de formulario.
  */
-.config-area td select { max-width: 150px; min-height: 30px; padding: 4px 8px; font-size: var(--tipo-rotulo); }
+.config-area td select { max-width: 150px; min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--tipo-rotulo); }
 /* Motivo de inhabilitación de control. */
-.config-area td select + .unknown { display: block; max-width: 260px; margin-top: 5px; font-size: var(--tipo-rotulo); font-weight: 600; line-height: 1.4; }
+.config-area td select + .unknown { display: block; max-width: 260px; margin-top: var(--space-1); font-size: var(--tipo-rotulo); font-weight: 600; line-height: 1.4; }
 
 /* Una columna de fecha no tiene por qué reservar el ancho de `1 jul 2026, 10:00:00`. */
 .fecha-relativa { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --- El interruptor ------------------------------------------------------------------------ */
 
-.interruptor-caja { display: inline-flex; align-items: center; gap: 8px; }
+.interruptor-caja { display: inline-flex; align-items: center; gap: var(--space-2); }
 
 /*
  * Un `<input type="checkbox">` de verdad, repintado. No es un `<div>` con `onClick`: así el
@@ -66,7 +66,7 @@
   width: 36px;
   height: 20px;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-3);
   appearance: none;
   cursor: pointer;
@@ -118,7 +118,7 @@
 /* --- Cabecera con ayuda -------------------------------------------------------------------- */
 
 .cabecera-ayuda { cursor: help; }
-.cabecera-ayuda > span { display: inline-flex; align-items: center; gap: 4px; }
+.cabecera-ayuda > span { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 .cabecera-ayuda-marca {
   display: inline-flex;
@@ -142,7 +142,7 @@
 /* --- El fallo de un interruptor, pegado a su fila ------------------------------------------- */
 
 .interruptor-fallo > td {
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--red);
   background: var(--red-dim);
 }
@@ -150,35 +150,35 @@
 .interruptor-fallo p {
   display: flex;
   align-items: start;
-  gap: 8px;
-  margin: 0 0 8px;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
   color: #ffb7bc;
   font-size: var(--tipo-rotulo);
   line-height: 1.5;
 }
 
-.interruptor-fallo svg { flex: none; margin-top: 2px; }
+.interruptor-fallo svg { flex: none; margin-top: var(--space-1); }
 
 /* --- La única confirmación que queda -------------------------------------------------------- */
 
 .interruptor-confirmacion {
-  margin-top: 14px;
-  padding: 12px 14px;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
   border: 1px solid var(--amber);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--amber-dim);
 }
 
 .interruptor-confirmacion p {
   display: flex;
   align-items: start;
-  gap: 8px;
-  margin: 0 0 10px;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
   font-size: var(--tipo-rotulo);
   line-height: 1.55;
 }
 
-.interruptor-confirmacion svg { flex: none; margin-top: 2px; }
+.interruptor-confirmacion svg { flex: none; margin-top: var(--space-1); }
 
 /* --- Casillas de los formularios de alta ---------------------------------------------------- */
 
@@ -190,7 +190,7 @@
 .config-area .config-form label.casilla {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-2);
   align-self: end;
   min-height: 41px;
   font-weight: 600;
@@ -212,16 +212,25 @@
    navegación de la página— y pasó a ser un segmentado dentro del panel. Ver `AltaDeEspacios`. */
 
 /* El JSON crudo deja de estar abierto por defecto: es la verdad literal, no lo primero que mirar. */
-.config-crudo > summary { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
-.config-crudo[open] > summary { margin-bottom: 2px; }
+.config-crudo > summary { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
+.config-crudo[open] > summary { margin-bottom: var(--space-1); }
 
 @media (prefers-color-scheme: light) {
-  .config-area input[type="checkbox"].interruptor { background: #e4eaf2; }
-  .config-area input[type="checkbox"].interruptor::after { background: #7d8ca0; }
-  .config-area input[type="checkbox"].interruptor:checked { background: var(--mint-dim); }
-  .config-area input[type="checkbox"].interruptor:checked::after { background: var(--mint); }
-  .interruptor-fallo p { color: #8f2734; }
+  :root:not([data-theme="dark"]) .config-area input[type="checkbox"].interruptor { background: #e4eaf2; }
+  :root:not([data-theme="dark"]) .config-area input[type="checkbox"].interruptor::after { background: #7d8ca0; }
+  :root:not([data-theme="dark"]) .config-area input[type="checkbox"].interruptor:checked { background: var(--mint-dim); }
+  :root:not([data-theme="dark"]) .config-area input[type="checkbox"].interruptor:checked::after { background: var(--mint); }
+  :root:not([data-theme="dark"]) .interruptor-fallo p { color: #8f2734; }
 }
+
+/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
+   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
+:root[data-theme="light"] .config-area input[type="checkbox"].interruptor { background: #e4eaf2; }
+:root[data-theme="light"] .config-area input[type="checkbox"].interruptor::after { background: #7d8ca0; }
+:root[data-theme="light"] .config-area input[type="checkbox"].interruptor:checked { background: var(--mint-dim); }
+:root[data-theme="light"] .config-area input[type="checkbox"].interruptor:checked::after { background: var(--mint); }
+:root[data-theme="light"] .interruptor-fallo p { color: #8f2734; }
+
 
 /* --- La marca de una columna SIN EFECTO ------------------------------------------------------
  *
@@ -237,9 +246,9 @@
 .cabecera-inerte {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--amber);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--amber-dim);
   color: var(--on-amber);
   font-size: var(--tipo-apunte);

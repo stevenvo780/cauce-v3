@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { leerCss } from './test/leer-css';
+import { NAV_ENTRIES } from './nav';
 import {
   bloqueMedia,
   declaraciones,
@@ -67,10 +68,53 @@ export function anchoMinimoDeLaReja(valorCss: string): number {
   return total;
 }
 
+function mediaAplica(media: string, viewport: number): boolean {
+  const topes = [...media.matchAll(/max-width:\s*(\d+)px/g)].map((m) => Number(m[1]));
+  const pisos = [...media.matchAll(/min-width:\s*(\d+)px/g)].map((m) => Number(m[1]));
+  if (topes.length && viewport > Math.min(...topes)) return false;
+  return !(pisos.length && viewport < Math.max(...pisos));
+}
+
+/** The last declaration that wins at `viewport`, walking the sheet in cascade order. */
+function declaracionEfectiva(
+  css: string, coincide: (parte: string) => boolean, propiedad: string, viewport: number,
+): string | undefined {
+  let ultima: string | undefined;
+  for (const regla of reglasDe(css)) {
+    if (!mediaAplica(regla.media, viewport)) continue;
+    if (!regla.selector.split(',').some((parte) => coincide(parte.trim()))) continue;
+    const encontrado = valor(regla.cuerpo, propiedad);
+    if (encontrado !== undefined) ultima = encontrado;
+  }
+  return ultima;
+}
+
+/* The two numbers the budget is made of used to be typed in here, so moving the sidebar or the page
+   padding left every figure in this file quietly wrong. They are READ from the sheet instead: the
+   first track of `.app-shell` when it is still a grid —at the compact step it is a block and the
+   nav goes to the bottom— and the horizontal half of `main { padding }`. `[data-sidebar="rail"]`
+   is deliberately not matched: that is the operator folding the bar, not the width the view has. */
+const ES_ARMAZON = (parte: string) => parte === '.app-shell' || parte === '.app-shell[data-sidebar]';
+const ES_MAIN = (parte: string) => parte === 'main';
+
+export function anchoDeLaBarra(css: string, viewport: number): number {
+  if (declaracionEfectiva(css, ES_ARMAZON, 'display', viewport) !== 'grid') return 0;
+  const columnas = declaracionEfectiva(css, ES_ARMAZON, 'grid-template-columns', viewport);
+  return columnas ? minimoDeUnaPista(partirEnPistas(columnas)[0]) : 0;
+}
+
+export function rellenoDelMain(css: string, viewport: number): number {
+  const pistas = partirEnPistas(declaracionEfectiva(css, ES_MAIN, 'padding', viewport) ?? '');
+  const horizontal = pistas.length >= 2 ? pistas[1] : pistas[0];
+  return 2 * minimoDeUnaPista(horizontal ?? '0');
+}
+
+export function presupuestoDe(css: string, viewport: number): number {
+  return viewport - anchoDeLaBarra(css, viewport) - rellenoDelMain(css, viewport);
+}
+
 function presupuesto(viewport: number): number {
-  if (viewport <= 760) return viewport - 30;
-  if (viewport <= 1100) return viewport - 78 - 76;
-  return viewport - 248 - 76;
+  return presupuestoDe(GLOBAL, viewport);
 }
 
 function rejasEfectivas(hojas: { hoja: string; css: string }[], viewport: number): Map<string, { regla: ReglaCss; minimo: number }> {
@@ -108,8 +152,25 @@ function hojasReales(): { hoja: string; css: string }[] {
 }
 
 describe('ninguna reja exige más ancho del que su vista tiene', () => {
-  it.each([360, 760, 1100, 1265, 1440])('a %ipx de ventana, todas las rejas caben', (viewport) => {
+  it.each([360, 760, 1100, 1265, 1440, 1920, 2560])('a %ipx de ventana, todas las rejas caben', (viewport) => {
     expect(rejasQueNoCaben(hojasReales(), viewport)).toEqual([]);
+  });
+
+  it('el hueco sale de la hoja: la barra y el relleno son los que `base.css` declara', () => {
+    expect([anchoDeLaBarra(GLOBAL, 1440), rellenoDelMain(GLOBAL, 1440)]).toEqual([248, 76]);
+    expect([anchoDeLaBarra(GLOBAL, 1100), rellenoDelMain(GLOBAL, 1100)]).toEqual([78, 76]);
+    // Al paso compacto el armazón deja de ser una reja: la navegación baja y no ocupa ancho.
+    expect([anchoDeLaBarra(GLOBAL, 360), rellenoDelMain(GLOBAL, 360)]).toEqual([0, 30]);
+  });
+
+  it('CONTROL NEGATIVO — ensanchar la barra en la hoja mueve el hueco, no lo deja escrito acá', () => {
+    const ancha = GLOBAL.replace(
+      '.app-shell { display: grid; min-height: 100vh; grid-template-columns: 248px minmax(0, 1fr); }',
+      '.app-shell { display: grid; min-height: 100vh; grid-template-columns: 420px minmax(0, 1fr); }',
+    );
+    expect(ancha).not.toBe(GLOBAL);
+    expect(anchoDeLaBarra(ancha, 1440)).toBe(420);
+    expect(presupuestoDe(ancha, 1440)).toBe(presupuestoDe(GLOBAL, 1440) - 172);
   });
 
   it('CONTROL NEGATIVO — marca la reja de /terminal de antes: 1018px de mínimo en 941 de hueco', () => {
@@ -165,7 +226,27 @@ export function defectosDeAnchoPuntuales(global: string, config: string): string
   return defectos;
 }
 
-export function defectosDelMenuMovil(global: string): string[] {
+function tokens(css: string): Record<string, string> {
+  const tabla: Record<string, string> = {};
+  for (const [, nombre, valorCrudo] of declaraciones(sinComentarios(css), ':root').matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g)) {
+    tabla[nombre] = valorCrudo.trim();
+  }
+  return tabla;
+}
+
+function pixeles(expresion: string | undefined, tabla: Record<string, string>, saltos = 0): number {
+  if (!expresion || saltos > 6) return Number.NaN;
+  const referencia = /^var\(\s*(--[\w-]+)\s*\)$/.exec(expresion.trim());
+  if (referencia) return pixeles(tabla[referencia[1]], tabla, saltos + 1);
+  const px = /^(\d+(?:\.\d+)?)px$/.exec(expresion.trim());
+  return px ? Number(px[1]) : Number.NaN;
+}
+
+/* The bar is a fixed strip `--nav-inferior-alto` tall with `overflow: visible`, so a row that does
+   not fit is not cut: it is painted over the page and over the row above it. How many rows there
+   are is not written anywhere — it comes out of the entry count divided by the declared columns —
+   so the height is DERIVED here instead of being trusted to a comment. */
+export function defectosDelMenuMovil(global: string, entradas = NAV_ENTRIES.length): string[] {
   const defectos: string[] = [];
   const estrecho = bloqueMedia(global, '@media (max-width: 760px)');
   if (!estrecho) return ['no hay bloque @media (max-width: 760px) en styles.css'];
@@ -181,8 +262,26 @@ export function defectosDelMenuMovil(global: string): string[] {
   const repeticion = columnas ? /repeat\(\s*(\d+)\s*,/.exec(columnas) : null;
   const cuantas = repeticion ? Number(repeticion[1]) : (columnas ? partirEnPistas(columnas).length : 0);
   if (cuantas < 3) {
-    defectos.push(`el menú de móvil declara ${String(cuantas)} columnas: con ocho entradas no caben sin pisarse`);
+    defectos.push(`el menú de móvil declara ${String(cuantas)} columnas: con ${String(entradas)} entradas no caben sin pisarse`);
   }
+
+  const tabla = tokens(global);
+  const filas = cuantas > 0 ? Math.ceil(entradas / cuantas) : 0;
+  const altoFila = pixeles(valor(lista, 'grid-auto-rows'), tabla);
+  const hueco = pixeles(valor(lista, 'gap'), tabla);
+  const relleno = pixeles(valor(declaraciones(estrecho, '.sidebar'), 'padding'), tabla);
+  const disponible = pixeles(tabla['--nav-inferior-alto'], tabla);
+  const necesario = filas * altoFila + Math.max(0, filas - 1) * hueco + 2 * relleno;
+  if ([altoFila, hueco, relleno, disponible].some(Number.isNaN) || filas === 0) {
+    defectos.push('la barra inferior ya no declara alto de fila, hueco, relleno o `--nav-inferior-alto`: no se puede derivar si cabe');
+  } else if (necesario > disponible) {
+    defectos.push(
+      `${String(entradas)} entradas en ${String(cuantas)} columnas son ${String(filas)} filas: `
+      + `hacen falta ${String(necesario)}px y --nav-inferior-alto reserva ${String(disponible)}px, `
+      + 'así que la fila sobrante se pinta encima de la página',
+    );
+  }
+
   const rotulo = declaraciones(estrecho, '.sidebar nav a span');
   if (valor(rotulo, 'white-space') !== 'normal') {
     defectos.push(
@@ -222,8 +321,20 @@ describe('que quepa en la pantalla', () => {
     expect(defectosDeAnchoPuntuales(roto, CONFIG)).toContainEqual(expect.stringContaining('`.panel` recuperó'));
   });
 
-  it('el menú de móvil muestra las ocho entradas sin pisarse ni esconderse', () => {
+  it('el menú de móvil muestra sus entradas sin pisarse ni esconderse', () => {
     expect(defectosDelMenuMovil(GLOBAL)).toEqual([]);
+  });
+
+  it('CONTROL NEGATIVO — una entrada más de las que caben en dos filas se denuncia', () => {
+    expect(defectosDelMenuMovil(GLOBAL, NAV_ENTRIES.length + 2))
+      .toContainEqual(expect.stringContaining('filas'));
+  });
+
+  it('CONTROL NEGATIVO — marca volver a cuatro columnas, que con nueve entradas son tres filas', () => {
+    const roto = GLOBAL.replace('grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: 57px;',
+      'grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 57px;');
+    expect(roto).not.toBe(GLOBAL);
+    expect(defectosDelMenuMovil(roto)).toContainEqual(expect.stringContaining('--nav-inferior-alto reserva 130px'));
   });
 
   it('CONTROL NEGATIVO — marca la vuelta a la tira `flex` que se arrastra', () => {

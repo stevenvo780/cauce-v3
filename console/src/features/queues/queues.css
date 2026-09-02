@@ -24,18 +24,18 @@
  * Los dos permisos de la vista, en una sola fila y con el mismo aspecto. `.permission-line` trae
  * un margen negativo pensado para colgar del título: acá lo pone la fila, una vez.
  */
-.queues-permisos { display: flex; flex-wrap: wrap; gap: 9px; margin: 0; }
+.queues-permisos { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
 .queues-permisos .permission-line { margin: 0; }
 
 /* ---------------------------------------------------------------------------- el filtro */
 
-.queues-filtros { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.queues-filtros { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
 
 .queues-busqueda { position: relative; display: block; min-width: 0; flex: 1 1 320px; }
 .queues-busqueda svg { position: absolute; z-index: 1; top: 13px; left: 10px; color: var(--faint); }
-.queues-busqueda input { margin-top: 0; padding-left: 32px; }
+.queues-busqueda input { margin-top: 0; padding-left: var(--space-6); }
 
-.queues-conteo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); }
+.queues-conteo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); }
 
 /*
  * «sin error» NO es UNKNOWN y por eso NO usa `.unknown`, que es ámbar y en negrita. Ver
@@ -47,52 +47,51 @@
 /* --------------------------------------------------------------- la confirmación de la acción */
 
 .confirmacion-de-entrega {
-  margin-bottom: 14px;
-  padding: 14px 15px;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--amber);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: rgb(208 135 0 / 10%);
 }
 
-.confirmacion-titulo { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0; color: #ffd9a0; font-size: var(--tipo-rotulo); font-weight: 700; }
+.confirmacion-titulo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: #ffd9a0; font-size: var(--tipo-rotulo); font-weight: 700; }
 .confirmacion-titulo svg { flex: none; }
-.confirmacion-detalle { margin: 8px 0 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
-.confirmacion-acciones { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 13px; }
+.confirmacion-detalle { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
+.confirmacion-acciones { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 
 /* ------------------------------------------------------- DLQ causal, separado de deliveries */
 
-.dlq-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
-.dlq-toolbar label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.dlq-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); margin-bottom: var(--space-3); }
+.dlq-toolbar label { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--tipo-rotulo); }
 .dlq-toolbar select { width: auto; min-width: 180px; margin: 0; }
-.dlq-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.dlq-toolbar-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
 .dlq-toolbar-actions .button { margin-left: 0; }
 .dlq-total { color: var(--faint); font-size: var(--tipo-rotulo); }
 
 .dlq-confirmation {
-  margin-bottom: 14px;
-  padding: 14px 15px;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--amber);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: rgb(208 135 0 / 10%);
 }
 .dlq-confirmation > p:not(.confirmacion-titulo) { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
-.dlq-confirmation > label:not(.dlq-ack) { display: grid; gap: 6px; margin-top: 12px; color: var(--text); font-size: var(--tipo-rotulo); font-weight: 650; }
+.dlq-confirmation > label:not(.dlq-ack) { display: grid; gap: var(--space-2); margin-top: var(--space-3); color: var(--text); font-size: var(--tipo-rotulo); font-weight: 650; }
 .dlq-confirmation textarea { width: 100%; min-height: 78px; resize: vertical; }
-.dlq-ack { display: flex; align-items: flex-start; gap: 8px; margin-top: 11px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.45; }
-.dlq-ack input { flex: none; margin-top: 3px; }
-.tabla-dlq .subline { display: block; margin-top: 4px; color: var(--faint); font-size: var(--tipo-apunte); }
+.dlq-ack { display: flex; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-3); color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.45; }
+.dlq-ack input { flex: none; margin-top: var(--space-1); }
+.tabla-dlq .subline { display: block; margin-top: var(--space-1); color: var(--faint); font-size: var(--tipo-apunte); }
 
 /*
  * ------------------------------------------------------------------ pantalla estrecha (teléfono)
  *
- * Dos defectos medidos a 360x800 el 2026-08-23, y los dos son de la MISMA causa —una vista pensada
+ * Dos defectos medidos a 360x800, y los dos son de la MISMA causa —una vista pensada
  * a 1280 aplicada tal cual—:
  *
  * 1. «DEAD LETTERS 7» quedaba bajo el pliegue. `styles.css` apila `.metrics-grid.three` a una sola
- *    columna en este corte y le da 115 px de alto a cada `.metric`: tres tarjetas apiladas son
- *    345 px que, con la cabecera de la página encima, dejan la tercera fuera de pantalla. Y la
- *    tercera es justo la que un operador viene a ver. Acá se quedan en fila, compactas: caben las
- *    tres, y ninguna necesita más que su número y su rótulo.
+ *    columna en este corte, y tres tarjetas apiladas, con la cabecera de la página encima, dejan la
+ *    tercera fuera de pantalla. Y la tercera es justo la que un operador viene a ver. Acá se quedan
+ *    en fila, compactas: caben las tres, y ninguna necesita más que su número y su rótulo.
  *
  * 2. La columna «Estado» quedaba fuera de pantalla: la tabla tiene ocho columnas y
  *    `.table-wrap { overflow-x: auto }` la deja arrastrable en horizontal, así que en el teléfono
@@ -111,23 +110,23 @@
    * tres. Una hoja puede decir una cosa y el navegador hacer otra, dos veces seguidas: por eso
    * esto se comprobó abriendo la página en Chrome, no leyendo el fichero.
    */
-  .metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .metricas-de-cola .metric { min-height: 0; padding: 12px 10px; }
-  .metricas-de-cola .metric p { margin-bottom: 8px; font-size: var(--tipo-apunte); letter-spacing: .02em; }
+  .metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+  .metricas-de-cola .metric { padding: var(--space-3) var(--space-2); }
+  .metricas-de-cola .metric p { margin-bottom: var(--space-2); font-size: var(--tipo-apunte); letter-spacing: .02em; }
   .metricas-de-cola .metric strong { font-size: 1.5rem; }
-  .metricas-de-cola .metric span { margin-top: 5px; font-size: var(--tipo-apunte); }
+  .metricas-de-cola .metric span { margin-top: var(--space-1); font-size: var(--tipo-apunte); }
 
   .tabla-entregas, .tabla-entregas tbody, .tabla-entregas tr, .tabla-entregas td { display: block; width: 100%; }
   .tabla-entregas thead { position: absolute; overflow: hidden; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
-  .tabla-entregas tr { margin-bottom: 10px; padding: 4px 0; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
-  .tabla-entregas td { display: grid; align-items: baseline; padding: 7px 12px; border-bottom: 0; gap: 4px 12px; grid-template-columns: 96px minmax(0, 1fr); }
+  .tabla-entregas tr { margin-bottom: var(--space-2); padding: var(--space-1) 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+  .tabla-entregas td { display: grid; align-items: baseline; padding: var(--space-2) var(--space-3); border-bottom: 0; gap: var(--space-1) var(--space-3); grid-template-columns: 96px minmax(0, 1fr); }
   .tabla-entregas td::before { color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
   .tabla-entregas td .subline { grid-column: 2; }
 
   .tabla-dlq, .tabla-dlq tbody, .tabla-dlq tr, .tabla-dlq td { display: block; width: 100%; }
   .tabla-dlq thead { position: absolute; overflow: hidden; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
-  .tabla-dlq tr { margin-bottom: 10px; padding: 4px 0; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); }
-  .tabla-dlq td { display: grid; align-items: baseline; padding: 7px 12px; border-bottom: 0; gap: 4px 12px; grid-template-columns: 96px minmax(0, 1fr); }
+  .tabla-dlq tr { margin-bottom: var(--space-2); padding: var(--space-1) 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+  .tabla-dlq td { display: grid; align-items: baseline; padding: var(--space-2) var(--space-3); border-bottom: 0; gap: var(--space-1) var(--space-3); grid-template-columns: 96px minmax(0, 1fr); }
   .tabla-dlq td::before { color: var(--faint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; content: attr(data-label); }
   .tabla-dlq td .subline { grid-column: 2; }
   .dlq-toolbar-actions { margin-left: 0; }

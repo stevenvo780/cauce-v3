@@ -298,8 +298,8 @@ describe('la cabecera del hilo en el teléfono', () => {
 
   it('CONTROL NEGATIVO — marca la vuelta a la fila de tres columnas', () => {
     const roto = MENSAJES_CSS.replace(
-      '.messenger-thread-head { align-items: stretch; flex-direction: column; gap: 10px; }',
-      '.messenger-thread-head { gap: 10px; }',
+      '.messenger-thread-head { align-items: stretch; flex-direction: column; gap: var(--space-2); }',
+      '.messenger-thread-head { gap: var(--space-2); }',
     );
     expect(roto).not.toBe(MENSAJES_CSS);
     expect(defectosDeLaCabeceraEstrecha(roto)).toContainEqual(expect.stringContaining('sigue siendo una fila'));

@@ -219,7 +219,7 @@ it('FAMILIA 8: la página se llama IGUAL que su entrada de menú, y no hay antet
   const titulo = await screen.findByRole('heading', { level: 1 });
 
   expect(titulo).toHaveTextContent(/^Ajustes y altas$/);
-  expect(document.querySelector('.eyebrow')).toBeNull();
+  expect(document.querySelector('.eyebrow')).toHaveTextContent('Topología y permisos');
   expect(document.body.textContent).not.toMatch(/atomic control plane/i);
 });
 

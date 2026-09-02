@@ -31,6 +31,14 @@ export function PageHeader({ eyebrow, title, description, notes, actions }: {
   );
 }
 
+export function PageShell({ kind, className = '', children }: {
+  kind: 'documento' | 'aplicacion';
+  className?: string;
+  children: ReactNode;
+}) {
+  return <div className={`page-shell-${kind} ${className}`.trim()}>{children}</div>;
+}
+
 export function Panel({ title, subtitle, children, className = '' }: {
   title?: string;
   subtitle?: string;

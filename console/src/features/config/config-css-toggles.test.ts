@@ -32,24 +32,38 @@ export function especificidad(selector: string): number {
 describe('el tope de medida de /config', () => {
   const propia = sinComentarios(PROPIA);
 
-  it('la página tiene un tope de ancho de entre 1000 y 1250 px', () => {
-    const ancho = enPixeles(declaraciones(propia, '.config-pagina')['max-width'] ?? '', new Map());
-    expect(ancho, '.config-pagina no declara max-width').toBeDefined();
-    expect(ancho).toBeGreaterThanOrEqual(1000);
-    expect(ancho).toBeLessThanOrEqual(1250);
+  /* The page used to cap itself at `clamp(1180px, 100%, 1760px)` with a `--medida: 74ch` of its
+     own, which is one of the four container strategies the page contract replaced: the width now
+     comes from the shell and the line length from `--measure-prose`, the same token the rest of the
+     console reads. What is still pinned is that the prose of the view HAS a line cap. */
+  it('la vista no declara ancho ni medida propios: los toma del armazón', () => {
+    expect(declaraciones(propia, '.config-pagina')['max-width']).toBeUndefined();
+    expect(propia).not.toMatch(/--medida\b/);
+    /* Ni la reescribe en su subárbol: un `--measure-prose` propio dentro de /config le cambia el
+       valor del token a cualquier regla global que caiga dentro de la vista, que es un acople más
+       fuerte que la variable privada que se retiró. Se leen DECLARACIONES (`--measure-prose:`), no
+       los `var(--measure-prose)`, que la hoja usa a propósito en cada bloque de prosa. */
+    expect(propia).not.toMatch(/--measure-prose\s*:/);
+  });
+
+  it('CONTROL NEGATIVO — detecta que la vista vuelva a atar `--measure-prose` a lo suyo', () => {
+    const roto = `${propia}\n@media (max-width: 760px) { .config-pagina { --measure-prose: 100%; } }`;
+    expect(roto).toMatch(/--measure-prose\s*:/);
   });
 
   it.each([
-    ['.config-intro', 'la frase de la cabecera'],
     ['.config-area-descripcion', 'la frase que orienta cada pestaña'],
     ['.config-detalle', 'lo que se pliega'],
     ['.config-permiso', 'el permiso dicho en castellano'],
   ])('%s tiene tope de renglón (%s)', (selector) => {
-    expect(declaraciones(propia, selector)['max-width']).toBe('var(--medida)');
+    expect(declaraciones(propia, selector)['max-width']).toBe('var(--measure-prose)');
   });
 
-  it('`--medida` está declarada y es un tope de caracteres, no de píxeles', () => {
-    expect(declaraciones(propia, '.config-pagina')['--medida']).toMatch(/^\d+ch$/);
+  it('`--measure-prose` es un tope en píxeles y lo declara la hoja global', () => {
+    const px = enPixeles(declaraciones(sinComentarios(GLOBAL), ':root')['--measure-prose'] ?? '', new Map());
+    expect(px, '--measure-prose no está declarada en el :root global').toBeDefined();
+    expect(px).toBeGreaterThanOrEqual(600);
+    expect(px).toBeLessThanOrEqual(900);
   });
 
   it('CONTROL NEGATIVO — detecta que se le quite el tope a la descripción del área', () => {
@@ -105,7 +119,7 @@ describe('los párrafos de /config son párrafos', () => {
   it('un `<p class="muted">` vuelve a ser bloque dentro de la vista', () => {
     const regla = declaraciones(sinComentarios(PROPIA), 'p.muted');
     expect(regla.display, 'no hay regla para p.muted dentro de .config-pagina').toBe('block');
-    expect(regla['max-width']).toBe('var(--medida)');
+    expect(regla['max-width']).toBe('var(--measure-prose)');
   });
 
   it('CONTROL NEGATIVO — `.muted` global sigue siendo inline-flex, que es lo que hay que tapar', () => {

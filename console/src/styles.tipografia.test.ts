@@ -1,9 +1,16 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { leerCss as leer } from './test/leer-css';
 import { sinComentarios } from './test/css-parser';
 
 /** Validation of the typography scale over the stylesheets: ensures tokens are available in `:root` and no rule falls below the minimum threshold. */
 
+/**
+ * The stylesheets this guard reads. `leerCss` inlines every `@import`, so naming a sheet covers what
+ * it imports. What is named NOWHERE is a sheet nobody measures: that is how `/terminal` shipped
+ * 8.96px text. The completeness guard at the end of this file makes that impossible to repeat.
+ */
 const HOJAS = [
   'styles.css',
   'features/live/live.css',
@@ -14,7 +21,45 @@ const HOJAS = [
   'features/auth/auth.css',
   'features/config/config.css',
   'features/config/toggles.css',
+  'features/landing/landing.css',
+  'features/audit/audit.css',
+  'features/help/help.css',
+  'features/terminal/terminal-panel.css',
 ] as const;
+
+const RAIZ_CSS = resolve(process.cwd(), 'src');
+
+/** No letter of their own to judge. A sheet earns this by declaring no measurable `font-size`. */
+const SIN_LETRA: readonly { hoja: string; porque: string }[] = [
+  { hoja: 'features/terminal/xterm-csp.css', porque: 'only an `@import` of the sheet below' },
+  { hoja: 'features/terminal/xterm-csp-terminal.css', porque: 'its only body is `var(--pty-cuerpo, 13px)`, which the renderer sets' },
+];
+
+function hojasEnDisco(directorio = RAIZ_CSS): string[] {
+  const salida: string[] = [];
+  for (const nombre of readdirSync(directorio)) {
+    const ruta = join(directorio, nombre);
+    if (statSync(ruta).isDirectory()) salida.push(...hojasEnDisco(ruta));
+    else if (ruta.endsWith('.css')) salida.push(relative(RAIZ_CSS, ruta));
+  }
+  return salida;
+}
+
+/** The sheets a list reaches: the ones named, plus everything they pull in through `@import`. */
+function alcanzadas(hojas: readonly string[]): Set<string> {
+  const vistas = new Set<string>();
+  const pendientes = [...hojas];
+  while (pendientes.length) {
+    const hoja = pendientes.pop() ?? '';
+    if (vistas.has(hoja)) continue;
+    vistas.add(hoja);
+    const crudo = readFileSync(resolve(RAIZ_CSS, hoja), 'utf8');
+    for (const imp of crudo.matchAll(/@import\s+['"]([^'"]+)['"];/g)) {
+      pendientes.push(relative(RAIZ_CSS, resolve(RAIZ_CSS, hoja, '..', imp[1])));
+    }
+  }
+  return vistas;
+}
 
 function tamanosDeLetra(css: string): { selector: string; valor: string }[] {
   const salida: { selector: string; valor: string }[] = [];
@@ -52,11 +97,7 @@ function enPixeles(valor: string, escala: Map<string, string>, saltos = 0): numb
   if (px) return Number(px[1]);
   const rem = /^(\d*\.?\d+)rem$/.exec(bruto);
   if (rem) return Number(rem[1]) * 16;
-  /*
-   * `clamp(min, preferred, max)` is judged by its MINIMUM, the worst case for readability: if the minimum bottoms out,
-   * there is no viewport width at which that text goes lower. Judging it by the preferred value would be measuring
-   * against a width nobody guarantees.
-   */
+  // `clamp()` is judged by its MINIMUM: the preferred value is measured against a width nobody guarantees.
   const clamp = /^clamp\(\s*([^,]+),/.exec(bruto);
   if (clamp) return enPixeles(clamp[1], escala, saltos + 1);
   return undefined;
@@ -66,15 +107,12 @@ function enPixeles(valor: string, escala: Map<string, string>, saltos = 0): numb
 const SUELO = 12.5;
 
 /**
- * THE HAND-WRITTEN EXCEPTION, and the only one.
+ * THE HAND-WRITTEN EXCEPTION, and the only one. `.sidebar nav a` at `.6875rem` inside
+ * `@media (max-width: 760px)` is the mobile nav bar, measured against the width of its eight entries
+ * at 360px: raising it makes the labels collide again, which is the bug that block fixed.
  *
- * `.sidebar nav a` at `.6875rem` (11 px) inside `@media (max-width: 760px)` is the mobile navigation bar. It does NOT
- * fall below the scale and is not touched: it was measured against the actual width of the eight entries at 360 px
- * —four grid columns, two rows per label— and raising it makes the labels collide again, which is the bug that block
- * was written to have fixed.
- *
- * It is recorded as an EXACT (selector, value) pair and not as "forgive everything under `.sidebar nav a`": the same
- * selector has another declaration in the base block (`.9rem`), and a per-selector forgiveness would let that one sneak in.
+ * An EXACT (selector, value) pair and not "forgive everything under `.sidebar nav a`": the same
+ * selector declares `.9rem` in the base block, and a per-selector amnesty would let that one in.
  */
 const EXCEPCIONES: readonly { selector: string; valor: string }[] = [
   { selector: '.sidebar nav a', valor: '.6875rem' },
@@ -84,10 +122,8 @@ const esExcepcion = (selector: string, valor: string) =>
   EXCEPCIONES.some((e) => e.selector === selector && e.valor === valor);
 
 /**
- * Every letter below the floor of a set of stylesheets.
- *
- * The stylesheets are passed as TEXT —not read from disk— precisely so a mutated stylesheet can be fed in and forced to
- * fail again. A guard that only knows how to look at the real file cannot test itself.
+ * Every letter below the floor. The sheets are passed as TEXT —not read from disk— so a mutated one
+ * can be fed in and forced to fail: a guard that only reads the real file cannot test itself.
  */
 function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
   const escala = tokensDeRoot(hojas.join('\n'));
@@ -111,9 +147,8 @@ function letraPorDebajoDelSuelo(hojas: string[], suelo = SUELO): string[] {
 }
 
 /**
- * This is NOT decoration. It is the reason this file has no overflow test, and it is written as an executable
- * assertion so it is a PROVEN FACT on every run, not a belief inherited from a comment. If someday jsdom (or the vitest
- * environment) starts doing layout, this test turns red and tells us the overflow test can finally be written here.
+ * The reason this file has no overflow test, written as an executable assertion so it is a proven
+ * fact on every run. If jsdom ever starts doing layout, this turns red and says so.
  */
 describe('la premisa: por qué la prueba de desborde NO vive en jsdom', () => {
   it('jsdom NO calcula layout: una caja forzada a desbordar 50 veces informa 0 y 0', () => {
@@ -138,11 +173,9 @@ describe('la premisa: por qué la prueba de desborde NO vive en jsdom', () => {
 });
 
 /**
- * It used to be declared in `.config-pagina`, meaning it only existed inside /config. That is not a styling detail:
- * `features/config/toggles.css` already cited `var(--tipo-rotulo)` and `var(--tipo-apunte)` in five rules, and those
- * rules also apply to components used outside /config, where the variable did not exist and the whole `font-size` was
- * dropped without a single warning. An undeclared variable does not inherit: the declaration falls through and the
- * cascade next door wins.
+ * It used to be declared in `.config-pagina`, so it only existed inside /config while five rules of
+ * `toggles.css` cited it from components used elsewhere. An undeclared variable does not inherit:
+ * the whole declaration falls through and the cascade next door wins, without a single warning.
  */
 const ESCALA = ['--tipo-titulo', '--tipo-panel', '--tipo-cuerpo', '--tipo-rotulo', '--tipo-apunte'];
 
@@ -186,9 +219,8 @@ describe('la escala tipográfica es GLOBAL', () => {
   });
 
   /**
-   * NEGATIVE CONTROL. The most likely regression is not deleting the tokens: it is putting them back inside a page
-   * selector "because that's where they were". We mutate `:root` to `.config-pagina` and require the reader to stop
-   * finding them — which is exactly what happened to the browser in the other seven views.
+   * NEGATIVE CONTROL. The likely regression is not deleting the tokens but putting them back inside
+   * a page selector, so the reader has to stop finding them when `:root` becomes `.config-pagina`.
    */
   it('CONTROL NEGATIVO — encerrar la escala en `.config-pagina` la vuelve invisible para el resto', () => {
     const roto = global.replace(/(^|\n):root \{/, '$1.config-pagina {');
@@ -215,10 +247,8 @@ describe('ninguna hoja de la consola declara letra por debajo del suelo', () => 
   });
 
   /**
-   * NEGATIVE CONTROL BY MUTATION, with the EXACT values that were deployed and measured: `.53rem` = 8.48 px on the
-   * adapter badges, `.58rem` = 9.28 px on the connection bar, `.68rem` = 10.88 px on the table headers. Without this,
-   * `letraPorDebajoDelSuelo()` could be returning `[]` because it does NOT find ANY rule, and it would pass any
-   * stylesheet.
+   * NEGATIVE CONTROL BY MUTATION, with values that were deployed and measured. Without it,
+   * `letraPorDebajoDelSuelo()` could return `[]` for finding NO rule and approve any sheet.
    */
   it('CONTROL NEGATIVO — marca los tamaños que estaban desplegados', () => {
     expect(letraPorDebajoDelSuelo(['.x { font-size: .53rem; }'])).toHaveLength(1);
@@ -230,24 +260,65 @@ describe('ninguna hoja de la consola declara letra por debajo del suelo', () => 
   });
 
   /**
-   * NEGATIVE CONTROL of the reader, not the stylesheet: if `tamanosDeLetra()` stopped seeing the rules inside an
-   * `@media`, the guard would go green on a broken stylesheet. The mobile exception lives there, so this is where it
-   * costs the most to stop looking.
+   * NEGATIVE CONTROL of the reader: if `tamanosDeLetra()` stopped entering `@media` blocks the guard
+   * would go green on a broken sheet, and three of /terminal's sub-floor sizes lived inside one.
    */
   it('CONTROL NEGATIVO — el lector SÍ entra en los bloques `@media`', () => {
     expect(letraPorDebajoDelSuelo(['@media (max-width: 760px) { .x { font-size: .58rem; } }']))
       .toHaveLength(1);
   });
 
-  /**
-   * NEGATIVE CONTROL of token resolution: if `var(--tipo-apunte)` stopped resolving, the guard would report it as
-   * "cannot be resolved" instead of swallowing it silently. A value that is not understood cannot count as approved.
-   */
+  /** NEGATIVE CONTROL of token resolution: a value that is not understood cannot count as approved. */
   it('CONTROL NEGATIVO — un `var()` que no existe se denuncia, no se aprueba', () => {
     expect(letraPorDebajoDelSuelo(['.x { font-size: var(--tipo-inventado); }']))
       .toContainEqual(expect.stringContaining('no se sabe resolver'));
     const conRoot = ':root { --tipo-apunte: 12.5px; }\n.x { font-size: var(--tipo-apunte); }';
     expect(letraPorDebajoDelSuelo([conRoot])).toEqual([]);
+  });
+});
+
+/**
+ * THE HOLE THIS GUARD HAD. `HOJAS` was hand-written, so a sheet was measured only if somebody
+ * remembered to add it: three were not, and `/terminal` shipped 8.96px text with both typographic
+ * guards green. A list that can silently be incomplete measures whatever it happens to name.
+ */
+function hojasSinMedir(hojas: readonly string[], exentas: readonly { hoja: string }[]): string[] {
+  const cubiertas = alcanzadas(hojas);
+  const perdonadas = new Set(exentas.map((e) => e.hoja));
+  return hojasEnDisco().filter((hoja) => !cubiertas.has(hoja) && !perdonadas.has(hoja));
+}
+
+describe('el reparto de hojas está COMPLETO: ninguna se queda sin medir', () => {
+  it('cada `.css` de la consola está en `HOJAS`, llega por `@import` o está en `SIN_LETRA`', () => {
+    expect(hojasSinMedir(HOJAS, SIN_LETRA)).toEqual([]);
+  });
+
+  it('las exentas siguen sin declarar una letra que este guardián sepa juzgar', () => {
+    for (const { hoja, porque } of SIN_LETRA) {
+      expect(porque.length, `${hoja} está exenta sin decir por qué`).toBeGreaterThan(10);
+      for (const { valor } of tamanosDeLetra(leer(hoja))) {
+        expect(/^var\(--pty-cuerpo/.test(valor), `${hoja} declara ${valor}: ya no está exenta`).toBe(true);
+      }
+    }
+  });
+
+  /**
+   * NEGATIVE CONTROL. Without it `hojasSinMedir()` could return `[]` because it finds nothing on
+   * disk, and would approve any list. Dropping the guilty sheet has to bring it back by name.
+   */
+  it('CONTROL NEGATIVO — quitar una hoja del reparto hace fallar al guardián', () => {
+    const sinTerminal = HOJAS.filter((h) => h !== 'features/terminal/terminal-panel.css');
+    expect(hojasSinMedir(sinTerminal, SIN_LETRA)).toEqual(['features/terminal/terminal-panel.css']);
+    // And an `@import` counts as coverage: `styles.css` is what covers the three sheets it pulls in.
+    expect(hojasSinMedir(HOJAS.filter((h) => h !== 'styles.css'), SIN_LETRA))
+      .toEqual(expect.arrayContaining(['styles.css', 'styles/base.css']));
+  });
+
+  /** NEGATIVE CONTROL — and an exemption is a name, not a blanket: an invented one covers nothing. */
+  it('CONTROL NEGATIVO — perdonar una hoja que no existe no tapa a la que falta', () => {
+    const sinAudit = HOJAS.filter((h) => h !== 'features/audit/audit.css');
+    expect(hojasSinMedir(sinAudit, [{ hoja: 'features/audit/inventada.css' }]))
+      .toContain('features/audit/audit.css');
   });
 });
 
@@ -288,9 +359,8 @@ describe('la barra de navegación de móvil conserva su excepción medida', () =
   });
 
   /**
-   * The comment is NOT decoration: it is the only place that records why that number does not go up with the rest.
-   * Without it, the next typography sweep will "fix" it and the eight labels will collide again at 360 px. The measured
-   * text is kept, not the lone word.
+   * The comment is the only place that records why that number does not go up with the rest: without
+   * it the next sweep "fixes" it and the eight labels collide again at 360px.
    */
   it('el comentario que explica por qué NO se toca sigue en la hoja', () => {
     expect(global).toContain('360');

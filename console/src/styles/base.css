@@ -21,47 +21,52 @@
    list; a fifth needs a measurement first. */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #070b13;
-  --surface: #0d1422;
-  --surface-2: #111b2c;
-  --surface-3: #17243a;
-  --border: #22324c;
-  --border-strong: #304766;
-  --text: #e9f0fc;
-  --muted: #97a6be;
-  --faint: #7d8da4;
+  --bg: #f3f6fa;
+  --surface: #ffffff;
+  --surface-2: #edf2f7;
+  --surface-3: #e2eaf3;
+  --border: #d5deea;
+  --border-strong: #b8c7d9;
+  --text: #142033;
+  --muted: #57677c;
+  --faint: #59677a;
   /* Texto secundario sobre superficie. */
-  --text-2: #c7d2e4;
+  --text-2: #33455c;
   /* Texto sobre fondos tenues (--*-dim). */
-  --on-mint: #8ff0d3;
-  --on-blue: #a8d1ff;
-  --on-amber: #f5c86c;
-  --on-red: #ffafb5;
-  --on-neutral: #8e9aad;
-  --mint: #63deb9;
-  --mint-dim: #183f39;
-  --blue: #7ab8ff;
-  --blue-dim: #193652;
-  --amber: #f5c86c;
-  --amber-dim: #4a3716;
-  --red: #ff8a92;
-  --red-dim: #4a2029;
+  --on-mint: #087860;
+  --on-blue: #1668b2;
+  --on-amber: #8c5c00;
+  --on-red: #b72d3a;
+  --on-neutral: #5b6779;
+  --mint: #07735c;
+  --mint-dim: #d8f3ea;
+  --blue: #1668b2;
+  --blue-dim: #dfedfb;
+  --amber: #8c5c00;
+  --amber-dim: #fff2cf;
+  --red: #b72d3a;
+  --red-dim: #fde3e5;
   /* Acentos de delegación (violeta) y respuesta (lima). */
-  --violet: #b39bff;
-  --violet-dim: #2e2452;
-  --lime: #c6f36a;
-  --lime-dim: #2f3d16;
-  --tooltip-bg: #16243a;
+  --violet: #6742c9;
+  --violet-dim: #e9e2fd;
+  --lime: #49710f;
+  --lime-dim: #eaf6d2;
+  --tooltip-bg: #ffffff;
+  --shadow: 0 18px 45px rgb(38 63 92 / 12%);
   --radius: 16px;
-  --shadow: 0 18px 50px rgb(0 0 0 / 24%);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-pill: 999px;
   /* Alto de barra de navegación inferior en viewport móvil. */
   --nav-inferior-alto: 130px;
 
-  /* Spacing scale for new rules. A gap that is not on this scale has to justify itself. */
+  /* THE SPACING SCALE. It rules the whole console, not only new rules: every padding, margin and
+     gap of every sheet comes from here, and `styles.espaciado.test.ts` fails on a raw px that is
+     not on it. A measurement that has to stay off the scale carries its number beside the rule. */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -101,51 +106,94 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: radial-gradient(circle at 85% -10%, rgb(111 177 222 / 20%), transparent 35rem), var(--bg);
+  color: var(--text);
+}
+
+/* THE THEME, IN THREE PATHS. The light palette is the bare `:root` above, so a colour never has
+   its only definition inside a media query. The dark one is written twice with the same values:
+   once for the operating-system preference —skipped when the operator forced light— and once for
+   the `data-theme="dark"` the theme control stamps. `styles.legibilidad-themes.test.ts` reads the
+   three paths and requires the same token set and AA in all of them; `ThemeControl.tsx` is what
+   stamps and removes the attribute. Per-component corrections stay in the sheet they correct. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #070b13;
+    --surface: #0d1422;
+    --surface-2: #111b2c;
+    --surface-3: #17243a;
+    --border: #22324c;
+    --border-strong: #304766;
+    --text: #e9f0fc;
+    --muted: #97a6be;
+    --faint: #7d8da4;
+    --text-2: #c7d2e4;
+    --on-mint: #8ff0d3;
+    --on-blue: #a8d1ff;
+    --on-amber: #f5c86c;
+    --on-red: #ffafb5;
+    --on-neutral: #8e9aad;
+    --mint: #63deb9;
+    --mint-dim: #183f39;
+    --blue: #7ab8ff;
+    --blue-dim: #193652;
+    --amber: #f5c86c;
+    --amber-dim: #4a3716;
+    --red: #ff8a92;
+    --red-dim: #4a2029;
+    --violet: #b39bff;
+    --violet-dim: #2e2452;
+    --lime: #c6f36a;
+    --lime-dim: #2f3d16;
+    --tooltip-bg: #16243a;
+    --shadow: 0 18px 50px rgb(0 0 0 / 24%);
+  }
+  :root:not([data-theme="light"]) body {
+    background:
+      radial-gradient(circle at 85% -10%, rgb(37 90 119 / 18%), transparent 35rem),
+      radial-gradient(circle at 10% 110%, rgb(23 103 80 / 12%), transparent 30rem),
+      var(--bg);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #070b13;
+  --surface: #0d1422;
+  --surface-2: #111b2c;
+  --surface-3: #17243a;
+  --border: #22324c;
+  --border-strong: #304766;
+  --text: #e9f0fc;
+  --muted: #97a6be;
+  --faint: #7d8da4;
+  --text-2: #c7d2e4;
+  --on-mint: #8ff0d3;
+  --on-blue: #a8d1ff;
+  --on-amber: #f5c86c;
+  --on-red: #ffafb5;
+  --on-neutral: #8e9aad;
+  --mint: #63deb9;
+  --mint-dim: #183f39;
+  --blue: #7ab8ff;
+  --blue-dim: #193652;
+  --amber: #f5c86c;
+  --amber-dim: #4a3716;
+  --red: #ff8a92;
+  --red-dim: #4a2029;
+  --violet: #b39bff;
+  --violet-dim: #2e2452;
+  --lime: #c6f36a;
+  --lime-dim: #2f3d16;
+  --tooltip-bg: #16243a;
+  --shadow: 0 18px 50px rgb(0 0 0 / 24%);
+}
+:root[data-theme="dark"] body {
   background:
     radial-gradient(circle at 85% -10%, rgb(37 90 119 / 18%), transparent 35rem),
     radial-gradient(circle at 10% 110%, rgb(23 103 80 / 12%), transparent 30rem),
     var(--bg);
-  color: var(--text);
-}
-
-/* The light theme is the same set of tokens with the other values: it lives beside the dark one so
-   the two can be compared in a single screen. `styles.legibilidad-themes.test.ts` reads the FIRST
-   light block of `styles.css` for both the tokens and the body tint, so the two rules stay
-   together. Per-component light overrides stay in the sheet of the component they correct. */
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-    --bg: #f3f6fa;
-    --surface: #ffffff;
-    --surface-2: #edf2f7;
-    --surface-3: #e2eaf3;
-    --border: #d5deea;
-    --border-strong: #b8c7d9;
-    --text: #142033;
-    --muted: #57677c;
-    --faint: #59677a;
-    --text-2: #33455c;
-    --on-mint: #087860;
-    --on-blue: #1668b2;
-    --on-amber: #8c5c00;
-    --on-red: #b72d3a;
-    --on-neutral: #5b6779;
-    --mint: #07735c;
-    --mint-dim: #d8f3ea;
-    --blue: #1668b2;
-    --blue-dim: #dfedfb;
-    --amber: #8c5c00;
-    --amber-dim: #fff2cf;
-    --red: #b72d3a;
-    --red-dim: #fde3e5;
-    --violet: #6742c9;
-    --violet-dim: #e9e2fd;
-    --lime: #49710f;
-    --lime-dim: #eaf6d2;
-    --tooltip-bg: #ffffff;
-    --shadow: 0 18px 45px rgb(38 63 92 / 12%);
-  }
-  body { background: radial-gradient(circle at 85% -10%, rgb(111 177 222 / 20%), transparent 35rem), var(--bg); }
 }
 
 /* A token rebound for one component, so it belongs with the tokens and not with the terminal:
@@ -168,8 +216,8 @@ a { color: inherit; }
   top: 12px;
   left: 12px;
   transform: translateY(-160%);
-  padding: 10px 14px;
-  border-radius: 8px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
   background: var(--text);
   color: var(--bg);
   font-weight: 700;
@@ -190,60 +238,103 @@ main:focus, main:focus-visible { outline: none; }
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 22px 16px;
+  padding: var(--space-5) var(--space-4);
   border-right: 1px solid var(--border);
   background: rgb(8 13 23 / 88%);
   backdrop-filter: blur(18px);
 }
 
-.sidebar-toggle { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; text-align: left; cursor: pointer; transition: .18s ease; }
+.sidebar-toggle { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: var(--tipo-rotulo); font-weight: 600; text-align: left; cursor: pointer; transition: .18s ease; }
 .sidebar-toggle:hover { border-color: var(--border-strong); background: var(--surface-2); color: var(--text); }
 
-.brand { display: flex; align-items: center; gap: 12px; padding: 0 9px 25px; }
-.brand-mark { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid #2f6b61; border-radius: 13px; background: linear-gradient(145deg, #163d37, #112338); color: var(--mint); box-shadow: 0 8px 25px rgb(31 168 130 / 14%); }
+.brand { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-2) var(--space-5); }
+.brand-mark { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid #2f6b61; border-radius: var(--radius-md); background: linear-gradient(145deg, #163d37, #112338); color: var(--mint); box-shadow: 0 8px 25px rgb(31 168 130 / 14%); }
 .brand strong, .brand small { display: block; }
 .brand strong { letter-spacing: .04em; }
-.brand small { margin-top: 2px; color: var(--muted); font-size: var(--tipo-rotulo); text-transform: uppercase; letter-spacing: .13em; }
+.brand small { margin-top: var(--space-1); color: var(--muted); font-size: var(--tipo-rotulo); text-transform: uppercase; letter-spacing: .13em; }
 
-.sidebar nav ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.sidebar nav a { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border: 1px solid transparent; border-radius: 10px; color: var(--muted); font-size: var(--tipo-cuerpo); font-weight: 600; text-decoration: none; transition: .18s ease; }
+.sidebar nav ul { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.sidebar nav a { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--muted); font-size: var(--tipo-cuerpo); font-weight: 600; text-decoration: none; transition: .18s ease; }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); }
 .sidebar nav a[aria-current="page"] { border-color: #28584f; background: linear-gradient(90deg, #153a35, #101d2c); color: #b7f7e4; box-shadow: inset 3px 0 var(--mint); }
 
-.authority-note { display: flex; gap: 9px; margin-top: auto; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--mint); }
+.authority-note { display: flex; gap: var(--space-2); margin-top: auto; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--mint); }
 .authority-note p { margin: 0; }
 .authority-note strong, .authority-note span { display: block; }
 .authority-note strong { color: var(--text); font-size: var(--tipo-rotulo); }
-.authority-note span { margin-top: 3px; color: var(--muted); font-size: var(--tipo-apunte); }
+.authority-note span { margin-top: var(--space-1); color: var(--muted); font-size: var(--tipo-apunte); }
 
 .workspace { min-width: 0; }
-.topbar { display: flex; min-height: 58px; align-items: center; justify-content: space-between; padding: 0 32px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--tipo-rotulo); }
-.topbar > div { display: flex; align-items: center; gap: 9px; }
-.topbar-meta { gap: 15px !important; }
+/* 44px and not 58: the bar carries a label, the mock flag and the session badge, none of which is
+   taller than a 40px control. The 14 it gives back are 14 of the first screen on every route. */
+.topbar { display: flex; min-height: 44px; align-items: center; justify-content: space-between; padding: 0 var(--space-6); border-bottom: 1px solid var(--border); color: var(--muted); font-size: var(--tipo-rotulo); }
+.topbar > div { display: flex; align-items: center; gap: var(--space-2); }
+.topbar-meta { gap: var(--space-4) !important; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgb(99 222 185 / 10%), 0 0 14px var(--mint); }
-.mock-flag { padding: 4px 8px; border: 1px solid #785c23; border-radius: 999px; background: var(--amber-dim); color: var(--on-amber); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .08em; }
-.auth-state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.mock-flag { padding: var(--space-1) var(--space-2); border: 1px solid #785c23; border-radius: var(--radius-pill); background: var(--amber-dim); color: var(--on-amber); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .08em; }
+.auth-state { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); }
 .auth-state.authenticated > span { display: grid; line-height: 1.25; text-align: right; }
 .auth-state.authenticated strong { color: var(--mint); font-size: var(--tipo-apunte); letter-spacing: .06em; text-transform: uppercase; }
 .auth-state.auth-unknown { color: var(--amber); }
 .auth-action { text-decoration: none; }
 
-main { width: min(var(--shell-max), 100%); margin: 0 auto; padding: 42px 38px 70px; }
-/* The header is one measure-wide block: title row on top —action included, so it lines up with the
-   title and not with the last line of the paragraph— and the prose underneath at its own measure.
-   `auto-fit` is what puts the action back under the title when the two no longer fit side by side,
-   without asking for a breakpoint of its own. */
-.page-header { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: end; gap: var(--space-3) var(--space-5); width: min(100%, var(--measure-prose)); margin-bottom: 28px; }
+/* The tail is the only part of this padding that comes from the scale: the top and the sides are the
+   numbers `presupuesto()` has written in `styles.legibilidad.test.ts`, but nothing answers for the
+   dead air under the last panel, and 70px of it cost 38px of scroll depth on every route. */
+main { width: min(var(--shell-max), 100%); margin: 0 auto; padding: 42px 38px var(--space-6); }
+/* The header spans the CONTENT width, not the prose measure: `PageHeader` renders no paragraph —the
+   description lives in the `PageHelp` modal— so a 760px cap bought nothing and left every title and
+   its action floating in the left half of a 1596px block, aligned to nothing below them. Two tracks:
+   the title takes what is left and the action sits at the right edge. An inline description, if one
+   is ever added, is the only part that keeps `max-width: var(--measure-prose)`.
+
+   Sticky so the title of the view stays readable while a three-screen table scrolls: `--bg` is
+   opaque on purpose, the rows have to disappear UNDER it. `responsive.css` collapses it to one
+   track at 640, where the action no longer fits beside the title. */
+.page-header {
+  position: sticky;
+  z-index: var(--layer-sticky);
+  top: 0;
+  display: grid;
+  width: 100%;
+  align-items: end;
+  gap: var(--space-3) var(--space-5);
+  /* The air of a STUCK header: the top pad replaces the `main` padding that scrolls away —without
+     it the eyebrow starts 2px from the viewport edge and reads as cut— and the bottom pad plus the
+     border are what tell the rows they are passing UNDER the header instead of being clipped by it.
+     The bottom pad comes out of the margin, so what is left below the header does not change. */
+  margin-bottom: var(--space-3);
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 .page-title { min-width: 0; }
-.eyebrow { margin: 0 0 7px; color: var(--mint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.eyebrow { margin: 0 0 var(--space-2); color: var(--mint); font-size: var(--tipo-apunte); font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
 h1, h2, h3, p { overflow-wrap: anywhere; }
 h1 { margin: 0; font-size: var(--tipo-titulo); line-height: 1.08; letter-spacing: -.045em; }
 .page-actions { justify-self: end; flex: none; }
 
+/* THE PAGE CONTRACT. Two kinds of block, and a view picks one per region instead of inventing a
+   container of its own — the four that existed (the shell's `min(--shell-max, 100%)`, /config's own
+   clamp, the measured app shell of /messages and the hard-coded height of /terminal) disagreed on
+   what "the width of the page" meant, and the header ended up aligned to none of them.
+
+     documento    prose measure: forms, help text, anything read line by line.
+     aplicacion   one viewport tall with its own scroll; `--shell-tope` is what the view above it
+                  occupies, WRITTEN AT RUNTIME by whoever owns the view because it depends on the
+                  rendered height of the header (see `--messenger-tope` in /messages).
+   `PageShell` in `components/ui.tsx` is what writes these classes, and `styles.armazon.test.ts`
+   refuses a kind without a consumer: a third one that pairs short panels was declared, measured
+   worse on the only view that could take it (/config, see `config.css`) and deleted. */
+.page-shell-documento { width: min(100%, var(--measure-prose)); }
+.page-shell-aplicacion { display: flex; min-height: 0; height: calc(100dvh - var(--shell-tope, 0px)); flex-direction: column; }
+
 /* Separador de secciones de la vista. */
-.section-header { margin: 44px 0 22px; padding-top: 26px; border-top: 1px solid var(--border-strong); }
+.section-header { margin: var(--space-7) 0 var(--space-5); padding-top: var(--space-5); border-top: 1px solid var(--border-strong); }
 .section-header h2 { margin: 0; font-size: clamp(1.25rem, 2.4vw, 1.6rem); letter-spacing: -.03em; }
-.section-header p { max-width: var(--measure-prose); margin: 9px 0 0; color: var(--muted); line-height: 1.6; }
+.section-header p { max-width: var(--measure-prose); margin: var(--space-2) 0 0; color: var(--muted); line-height: 1.6; }
 
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; }
 
@@ -266,39 +357,39 @@ h1 { margin: 0; font-size: var(--tipo-titulo); line-height: 1.08; letter-spacing
    sheet of its own. These are the rules that answer for both, and the only reason they are global.
    ========================================================================== */
 
-.observation-line { display: flex; align-items: center; gap: 8px; margin: -10px 0 20px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.observation-line { display: flex; align-items: center; gap: var(--space-2); margin: calc(var(--space-2) * -1) 0 var(--space-5); color: var(--muted); font-size: var(--tipo-rotulo); }
 
-.capabilities { margin-top: 16px; }
-.capabilities > p { display: flex; align-items: center; gap: 6px; margin: 0 0 9px; color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; text-transform: uppercase; }
+.capabilities { margin-top: var(--space-4); }
+.capabilities > p { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; text-transform: uppercase; }
 
-kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-2); color: var(--terminal-soft); font: inherit; }
+kbd { padding: var(--space-1); border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--terminal-soft); font: inherit; }
 
 /* --- Formularios de configuración: /config y /accounts --- */
-.config-form { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; }
+.config-form { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: var(--space-3); }
 .config-json { grid-column: 1 / -1; }
 .config-json textarea, .config-preview, .config-records code { font-family: "SFMono-Regular", Consolas, monospace; }
-.config-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: var(--text-2); font-size: var(--tipo-rotulo); white-space: pre-wrap; }
-.config-records { display: grid; gap: 7px; max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
-.config-records li { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: #0a111d; }
+.config-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.config-preview { max-height: 440px; overflow: auto; margin: var(--space-4) 0 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: #070b13; color: var(--text-2); font-size: var(--tipo-rotulo); white-space: pre-wrap; }
+.config-records { display: grid; gap: var(--space-2); max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.config-records li { padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: #0a111d; }
 .config-records code { color: var(--text-2); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
 
 /* --- La transcripción: `TerminalTranscript` la dibujan /terminal y /messages --- */
-.terminal-transcript { display: flex; min-height: 360px; max-height: 53vh; flex: 1; flex-direction: column; gap: 10px; overflow-y: auto; padding: 18px 16px; scroll-behavior: smooth; }
-.terminal-transcript-empty { display: grid; min-height: 360px; flex: 1; place-items: center; padding: 25px; }
+.terminal-transcript { display: flex; min-height: 360px; max-height: 53vh; flex: 1; flex-direction: column; gap: var(--space-2); overflow-y: auto; padding: var(--space-4); scroll-behavior: smooth; }
+.terminal-transcript-empty { display: grid; min-height: 360px; flex: 1; place-items: center; padding: var(--space-5); }
 .terminal-transcript-empty .empty-state { max-width: 430px; }
-.transcript-entry { position: relative; width: min(88%, 720px); padding: 12px 13px; border: 1px solid var(--border); border-radius: 4px 13px 13px 13px; background: var(--terminal-raised); }
-.transcript-entry.input { align-self: flex-end; border-color: #27594f; border-radius: 13px 4px 13px 13px; background: linear-gradient(145deg, #102a27, #102030); }
+.transcript-entry { position: relative; width: min(88%, 720px); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm) var(--radius-md) var(--radius-md) var(--radius-md); background: var(--terminal-raised); }
+.transcript-entry.input { align-self: flex-end; border-color: #27594f; border-radius: var(--radius-md) var(--radius-sm) var(--radius-md) var(--radius-md); background: linear-gradient(145deg, #102a27, #102030); }
 .transcript-entry.output { align-self: flex-start; }
 .transcript-entry[data-selected="true"] { box-shadow: 0 0 0 1px var(--blue), 0 10px 30px rgb(0 0 0 / 18%); }
-.transcript-entry header, .transcript-entry footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--faint); font-size: var(--tipo-apunte); }
-.transcript-direction { display: inline-flex; align-items: center; gap: 5px; color: var(--mint); font-weight: 700; text-transform: uppercase; }
+.transcript-entry header, .transcript-entry footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--faint); font-size: var(--tipo-apunte); }
+.transcript-direction { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--mint); font-weight: 700; text-transform: uppercase; }
 .transcript-entry.output .transcript-direction { color: var(--blue); }
-.transcript-entry p { margin: 10px 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.65; white-space: pre-wrap; }
-.transcript-delivery { display: flex; width: 100%; align-items: center; gap: 6px; margin-top: 10px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: #09111d; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
+.transcript-entry p { margin: var(--space-2) 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.65; white-space: pre-wrap; }
+.transcript-delivery { display: flex; width: 100%; align-items: center; gap: var(--space-2); margin-top: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: #09111d; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
 .transcript-delivery > span:last-child { margin-left: auto; }
 .delivery-state-icon { color: var(--blue); }
-.transcript-output-note { display: inline-block; margin-top: 7px; padding: 0; border: 0; border-bottom: 1px dotted var(--border-strong); background: none; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
+.transcript-output-note { display: inline-block; margin-top: var(--space-2); padding: 0; border: 0; border-bottom: 1px dotted var(--border-strong); background: none; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
 .transcript-output-note:hover { color: var(--muted); }
-.transcript-truncado { display: flex; gap: 5px; align-items: flex-start; margin: -4px 0 8px; color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.5; }
-.transcript-truncado svg { flex: none; margin-top: 2px; }
+.transcript-truncado { display: flex; gap: var(--space-1); align-items: flex-start; margin: calc(var(--space-1) * -1) 0 var(--space-2); color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.5; }
+.transcript-truncado svg { flex: none; margin-top: var(--space-1); }

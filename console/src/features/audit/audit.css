@@ -1,18 +1,18 @@
 /* La auditoría: se monta dentro de /observability, así que trae su hoja con ella. */
 
 .audit-list { display: grid; }
-.audit-row { display: grid; grid-template-columns: auto minmax(180px, 1fr) 1.2fr; align-items: start; gap: 14px; padding: 15px 3px; border-bottom: 1px solid var(--border); }
+.audit-row { display: grid; grid-template-columns: auto minmax(180px, 1fr) 1.2fr; align-items: start; gap: var(--space-3); padding: var(--space-4) var(--space-1); border-bottom: 1px solid var(--border); }
 .audit-row:last-child { border-bottom: 0; }
-.audit-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; background: var(--surface-3); color: var(--muted); }
+.audit-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: var(--radius-sm); background: var(--surface-3); color: var(--muted); }
 .audit-icon.allow { background: var(--mint-dim); color: var(--mint); }
 .audit-icon.deny { background: var(--red-dim); color: var(--red); }
 .audit-icon.info { background: var(--blue-dim); color: var(--blue); }
 .audit-icon svg { width: 17px; }
-.audit-main > div { display: flex; align-items: center; gap: 8px; }
-.audit-main p { margin: 7px 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
-.audit-row dl { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.audit-main > div { display: flex; align-items: center; gap: var(--space-2); }
+.audit-main p { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
+.audit-row dl { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2); }
 
 @media (max-width: 760px) {
   .audit-row { grid-template-columns: auto 1fr; }
-  .audit-row dl { grid-column: 1 / -1; grid-template-columns: 1fr; padding-left: 48px; }
+  .audit-row dl { grid-column: 1 / -1; grid-template-columns: 1fr; padding-left: var(--space-7); }
 }

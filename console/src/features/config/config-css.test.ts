@@ -9,15 +9,17 @@ const GLOBAL = leerCss('styles.css');
 const PROPIA = leerCss(join('features', 'config', 'config.css'));
 const INTERRUPTORES = leerCss(join('features', 'config', 'toggles.css'));
 
-function bloqueClaro(css: string): string {
-  const inicio = css.indexOf('@media (prefers-color-scheme: light)');
-  expect(inicio).toBeGreaterThan(-1);
+/** The light palette is the bare `:root` of `base.css`: the dark one is what lives behind a query. */
+function paletaClara(css: string): string {
+  const inicio = /(^|\n):root\s*\{/.exec(css);
+  expect(inicio, 'styles.css ya no declara la paleta clara en su `:root`').not.toBeNull();
+  if (!inicio) throw new Error('sin bloque :root');
   let profundidad = 0;
-  for (let i = css.indexOf('{', inicio); i < css.length; i += 1) {
+  for (let i = css.indexOf('{', inicio.index); i < css.length; i += 1) {
     if (css[i] === '{') profundidad += 1;
     if (css[i] === '}') {
       profundidad -= 1;
-      if (profundidad === 0) return css.slice(inicio, i);
+      if (profundidad === 0) return css.slice(inicio.index, i);
     }
   }
   throw new Error('el bloque de modo claro no cierra');
@@ -35,7 +37,7 @@ function resolver(valor: string, vars: Map<string, string>): string {
   const referencia = /var\((--[\w-]+)\)/.exec(valor);
   if (!referencia) return valor;
   const resuelto = vars.get(referencia[1]);
-  expect(resuelto, `${referencia[1]} no está definida en el modo claro`).toBeDefined();
+  expect(resuelto, `${referencia[1]} no está declarada en la paleta clara`).toBeDefined();
   return resuelto ?? '';
 }
 
@@ -69,14 +71,14 @@ const PASTILLAS: readonly [string, string, string][] = [
 ];
 
 describe('las pastillas de estado en modo claro', () => {
-  const claro = sinComentarios(bloqueClaro(sinComentarios(GLOBAL)));
+  const claro = paletaClara(sinComentarios(GLOBAL));
   const vars = variables(claro);
 
   it.each(PASTILLAS)('%s se lee: contraste AA (>= 4,5:1) sobre su propio fondo', (clase, token, fondo) => {
     const base = declaraciones(sinComentarios(GLOBAL), clase);
     expect(base.color, `${clase} no toma su color de un token`).toBe(`var(${token})`);
     const texto = vars.get(token);
-    expect(texto, `${token} no está redefinido en el modo claro`).toBeDefined();
+    expect(texto, `${token} no está declarado en la paleta clara`).toBeDefined();
     if (texto) {
       expect(contraste(texto, resolver(fondo.startsWith('#') ? fondo : `var(${fondo})`, vars)))
         .toBeGreaterThanOrEqual(4.5);
@@ -100,7 +102,7 @@ describe('las pastillas de estado en modo claro', () => {
 });
 
 describe('el texto del tema claro', () => {
-  const claro = sinComentarios(bloqueClaro(sinComentarios(GLOBAL)));
+  const claro = paletaClara(sinComentarios(GLOBAL));
   const vars = variables(claro);
   const SOBRE: readonly [string, string, string][] = [
     ['--faint', 'var(--surface-2)', 'cabeceras de columna (`th`) y `.muted`'],
@@ -109,7 +111,7 @@ describe('el texto del tema claro', () => {
 
   it.each(SOBRE)('%s se lee sobre %s (%s)', (que, fondo) => {
     const texto = vars.get(que);
-    expect(texto, `${que} no está redefinido en el modo claro`).toBeDefined();
+    expect(texto, `${que} no está declarado en la paleta clara`).toBeDefined();
     if (texto) {
       expect(contraste(resolver(texto, vars), resolver(fondo, vars))).toBeGreaterThanOrEqual(4.5);
     }

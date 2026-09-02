@@ -46,9 +46,12 @@ function hojasDeLaConsola(directorio = RAIZ_CSS): Hoja[] {
   return salida;
 }
 
-/** `@media` preludes only: an `@container` width is the width of a BOX, not of the window. */
+/** One entry per comma-separated `@media` query: an `@container` width is a BOX, not the window. */
 function consultasDeVentana(css: string): string[] {
-  return [...css.matchAll(/@media([^{]+)\{/g)].map((m) => m[1].trim());
+  return [...css.matchAll(/@media([^{]+)\{/g)]
+    .flatMap((m) => m[1].split(','))
+    .map((parte) => parte.trim())
+    .filter((parte) => parte !== '');
 }
 
 function anchosDeclarados(consulta: string): { topes: number[]; pisos: number[] } {
@@ -64,13 +67,29 @@ function anchosDeclarados(consulta: string): { topes: number[]; pisos: number[] 
   };
 }
 
+/**
+ * `not all and (max-width: N)` is a floor of N+1 dressed up as a cut: the negation inverts what the
+ * feature says, so the widths it names are read as floors and never as `topes` — otherwise a sheet
+ * with a measured exception for N could smuggle in the complementary floor and this guard would
+ * wave it through. Judged one query at a time, because `not` only negates the query it heads and a
+ * comma list would otherwise hide a negated one behind an innocent first query.
+ */
+function estaNegada(consulta: string): boolean {
+  return /^not\b/.test(consulta.trim());
+}
+
 export function defectosDeEscala(hojas: Hoja[]): string[] {
   const defectos: string[] = [];
   for (const { hoja, css } of hojas) {
     const permitidos = new Set([...ESCALA, ...(EXCEPCIONES.get(hoja) ?? [])]);
     const pisosPermitidos = new Set(ESCALA.map((paso) => paso + 1));
     for (const consulta of consultasDeVentana(css)) {
-      const { topes, pisos } = anchosDeclarados(consulta);
+      const declarados = anchosDeclarados(consulta);
+      const negada = estaNegada(consulta);
+      const topes = negada ? [] : declarados.topes;
+      const pisos = negada
+        ? [...declarados.pisos, ...declarados.topes.map((tope) => tope + 1)]
+        : declarados.pisos;
       for (const tope of topes) {
         if (!permitidos.has(tope)) {
           defectos.push(
@@ -120,6 +139,22 @@ describe('la escala de cortes de pantalla', () => {
     }];
     expect(defectosDeEscala(inventado)).toContainEqual(expect.stringContaining('1343px'));
     expect(defectosDeEscala(inventado)).toContainEqual(expect.stringContaining('640px'));
+  });
+
+  it('CONTROL NEGATIVO — un piso escrito como consulta NEGADA sale marcado, aunque la hoja tenga excepción', () => {
+    const negada: Hoja[] = [{
+      hoja: 'features/live/live-drawer.css',
+      css: '@media not all and (max-width: 1479px) { .x { color: red; } }',
+    }];
+    expect(defectosDeEscala(negada)).toContainEqual(expect.stringContaining('piso de 1480px'));
+  });
+
+  it('CONTROL NEGATIVO — en una lista con coma cada consulta se juzga por separado', () => {
+    const lista: Hoja[] = [{
+      hoja: 'features/live/live-drawer.css',
+      css: '@media screen, not all and (max-width: 1479px) { .x { color: red; } }',
+    }];
+    expect(defectosDeEscala(lista)).toContainEqual(expect.stringContaining('piso de 1480px'));
   });
 
   it('CONTROL NEGATIVO — la excepción medida NO tapa la misma anchura en otra hoja', () => {

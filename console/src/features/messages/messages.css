@@ -10,7 +10,7 @@
   min-height: 0;
   grid-template-columns: clamp(310px, 20%, 420px) minmax(0, 1fr);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -29,44 +29,44 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 16px 15px 12px;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-3);
 }
 
-.messenger-roster-head h2 { margin: 3px 0 0; font-size: var(--tipo-panel); }
+.messenger-roster-head h2 { margin: var(--space-1) 0 0; font-size: var(--tipo-panel); }
 
-.messenger-roster-filters { display: grid; gap: 9px; padding: 0 15px 11px; }
+.messenger-roster-filters { display: grid; gap: var(--space-2); padding: 0 var(--space-4) var(--space-3); }
 
 .messenger-search { position: relative; display: block; }
 .messenger-search svg { position: absolute; z-index: 1; top: 13px; left: 10px; color: var(--faint); }
-.messenger-search input { margin-top: 0; padding-left: 32px; }
+.messenger-search input { margin-top: 0; padding-left: var(--space-6); }
 
-.messenger-tenant-filter > span { display: inline-flex; align-items: center; gap: 5px; }
+.messenger-tenant-filter > span { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 .messenger-roster-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
-  padding: 0 15px 10px;
+  padding: 0 var(--space-4) var(--space-2);
   border-bottom: 1px solid var(--border);
   color: var(--faint);
   font-size: var(--tipo-apunte);
 }
 
-.messenger-agent-list { display: grid; overflow-y: auto; align-content: start; gap: 3px; padding: 9px; }
+.messenger-agent-list { display: grid; overflow-y: auto; align-content: start; gap: var(--space-1); padding: var(--space-2); }
 
 .messenger-agent {
   display: grid;
   width: 100%;
   align-items: start;
-  padding: 10px;
+  padding: var(--space-2);
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: none;
   color: inherit;
   cursor: pointer;
-  gap: 10px;
+  gap: var(--space-2);
   grid-template-columns: auto minmax(0, 1fr);
   text-align: left;
 }
@@ -80,8 +80,8 @@
 .messenger-presence.online { background: var(--mint-dim); color: var(--mint); }
 .messenger-presence.expired { background: var(--red-dim); color: var(--red); }
 
-.messenger-agent-copy { display: grid; min-width: 0; gap: 6px; }
-.messenger-agent-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px; }
+.messenger-agent-copy { display: grid; min-width: 0; gap: var(--space-2); }
+.messenger-agent-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); }
 .messenger-agent-name strong { font-size: var(--tipo-rotulo); }
 .messenger-agent-name small { color: var(--faint); font-size: var(--tipo-apunte); }
 
@@ -97,23 +97,23 @@
  * fila con una cifra que el servidor no informó: un UNKNOWN abreviado es un UNKNOWN escondido, o
  * sea el mismo cero falso que esta vista existe para no cometer.
  */
-.messenger-agent[data-cola="breve"] { padding: 8px 10px; }
+.messenger-agent[data-cola="breve"] { padding: var(--space-2); }
 .messenger-agent[data-cola="breve"] .messenger-presence { width: 24px; height: 24px; }
 .messenger-agent[data-cola="breve"] .messenger-presence svg { width: 14px; height: 14px; }
 
-.messenger-cola-breve { display: flex; flex-wrap: wrap; margin-left: auto; gap: 4px 7px; }
+.messenger-cola-breve { display: flex; flex-wrap: wrap; margin-left: auto; gap: var(--space-1) var(--space-2); }
 .messenger-cifra-viva, .messenger-cola-limpia { color: var(--faint); font-size: var(--tipo-apunte); white-space: nowrap; }
 .messenger-cifra-viva[data-kind="pending"] { color: var(--muted); }
 /* Separador de adorno: sin él «1 en cola 1 en curso» se lee como una sola frase. */
-.messenger-cifra-viva + .messenger-cifra-viva::before { margin-right: 7px; color: var(--border-strong); content: "·"; }
+.messenger-cifra-viva + .messenger-cifra-viva::before { margin-right: var(--space-2); color: var(--border-strong); content: "·"; }
 .messenger-cola-limpia { border-bottom: 1px dotted currentcolor; cursor: help; }
 
-.messenger-queue-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.messenger-queue-pills { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 
 .messenger-pill {
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: #101c2c;
   color: var(--muted);
   font-size: var(--tipo-apunte);
@@ -146,30 +146,30 @@
 .messenger-al-final { position: relative; z-index: 2; display: flex; height: 0; justify-content: center; }
 .messenger-al-final .button { transform: translateY(-46px); border-color: var(--blue); background: var(--surface-3); box-shadow: 0 10px 24px rgb(0 0 0 / 45%); }
 
-.messenger-detalle-origen { margin: 0; padding: 2px 0; color: var(--muted); cursor: pointer; font-size: var(--tipo-apunte); }
+.messenger-detalle-origen { margin: 0; padding: var(--space-1) 0; color: var(--muted); cursor: pointer; font-size: var(--tipo-apunte); }
 .messenger-detalle-origen::marker { color: var(--faint); }
 .messenger-detalle-origen:hover { color: var(--text); }
-details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bottom: 9px; }
+details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bottom: var(--space-2); }
 
 /* El cuerpo del mensaje, que el detalle no mostraba. `pre` porque los agentes escriben con saltos
    de línea y con sangría, y una `<p>` los aplasta a un párrafo que no es lo que se publicó. */
-.messenger-cuerpo { margin: 0 0 12px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
-.messenger-cuerpo-texto { max-height: 220px; overflow: auto; margin: 5px 0 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.messenger-cuerpo-texto[data-recortado] { border-bottom: 1px dashed var(--amber); padding-bottom: 6px; }
-.messenger-cuerpo-aviso { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin: 8px 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
+.messenger-cuerpo { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.messenger-cuerpo-texto { max-height: 220px; overflow: auto; margin: var(--space-1) 0 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.messenger-cuerpo-texto[data-recortado] { border-bottom: 1px dashed var(--amber); padding-bottom: var(--space-2); }
+.messenger-cuerpo-aviso { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: var(--space-2) 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
 
 .messenger-thread-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 14px 16px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
-.messenger-thread-identity { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.messenger-thread-identity { display: flex; min-width: 0; align-items: center; gap: var(--space-3); }
 .messenger-thread-identity h2 { margin: 0; font-size: var(--tipo-panel); }
-.messenger-thread-identity .eyebrow { margin: 3px 0 0; }
+.messenger-thread-identity .eyebrow { margin: var(--space-1) 0 0; }
 
 .messenger-avatar {
   display: grid;
@@ -177,7 +177,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
   height: 38px;
   flex: none;
   place-items: center;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: #16283c;
   color: var(--muted);
   font-size: var(--tipo-rotulo);
@@ -187,23 +187,23 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
 .messenger-avatar.online { background: var(--mint-dim); color: var(--mint); }
 .messenger-avatar.expired { background: var(--red-dim); color: var(--red); }
 
-.messenger-thread-actions { display: flex; flex: none; gap: 7px; }
+.messenger-thread-actions { display: flex; flex: none; gap: var(--space-2); }
 
 .messenger-queue-strip {
   display: grid;
-  gap: 1px;
+  gap: var(--space-1);
   grid-template-columns: repeat(4, minmax(0, 1fr));
   background: var(--border);
   border-bottom: 1px solid var(--border);
 }
 
-.messenger-queue-strip > div { padding: 9px 14px; background: var(--surface); }
-.messenger-queue-strip dd { margin: 4px 0 0; font-size: var(--tipo-cuerpo); font-weight: 700; }
+.messenger-queue-strip > div { padding: var(--space-2) var(--space-3); background: var(--surface); }
+.messenger-queue-strip dd { margin: var(--space-1) 0 0; font-size: var(--tipo-cuerpo); font-weight: 700; }
 .messenger-queue-strip > div[data-alarm] dd { color: var(--red); }
 
 .messenger-window-note {
   margin: 0;
-  padding: 8px 16px;
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
   color: var(--faint);
   font-size: var(--tipo-apunte);
@@ -211,57 +211,57 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
 
 .messenger-window-note[data-truncated] { background: rgba(208, 135, 0, .1); color: #ffd9a0; }
 
-.messenger-delivery-detail { padding: 12px 16px 4px; border-top: 1px solid var(--border); }
+.messenger-delivery-detail { padding: var(--space-3) var(--space-4) var(--space-1); border-top: 1px solid var(--border); }
 /*
- * La rejilla es PROPIA, no `.metadata-grid`: esa regla salió de styles.css el 2026-08-22 con la
+ * La rejilla es PROPIA, no `.metadata-grid`: esa regla salió de styles.css con la
  * lista plana de tarjetas que la usaba. Reusar el nombre de una clase que ya no existe deja un
  * `dl` sin rejilla y no lo avisa nadie.
  */
 .messenger-message-meta {
   display: grid;
-  gap: 10px;
-  margin: 6px 0 12px;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-3);
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .messenger-message-meta > div { min-width: 0; }
 .messenger-message-meta dd.mono { overflow-wrap: anywhere; font-size: var(--tipo-mono); }
 
-.messenger-fanout { margin: 10px 0 4px; padding-top: 9px; border-top: 1px dashed var(--border); }
-.messenger-fanout-none { margin: 4px 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
-.messenger-fanout-list { display: grid; gap: 5px; margin: 5px 0 0; padding: 0; list-style: none; }
-.messenger-fanout-list li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: var(--tipo-apunte); }
+.messenger-fanout { margin: var(--space-2) 0 var(--space-1); padding-top: var(--space-2); border-top: 1px dashed var(--border); }
+.messenger-fanout-none { margin: var(--space-1) 0 0; color: var(--faint); font-size: var(--tipo-apunte); }
+.messenger-fanout-list { display: grid; gap: var(--space-1); margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+.messenger-fanout-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; font-size: var(--tipo-apunte); }
 .messenger-fanout-list strong { font-weight: 650; }
 .messenger-fanout-list span { color: var(--faint); }
 
 /* Un alias sin sala se ROTULA, no se esconde: ver el porqué en roster.ts. */
 .messenger-loose-tag {
-  display: inline-flex; gap: 3px; align-items: center;
-  padding: 1px 5px; border: 1px solid var(--border); border-radius: 999px;
+  display: inline-flex; gap: var(--space-1); align-items: center;
+  padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-pill);
   color: var(--faint); font-size: var(--tipo-apunte); text-transform: uppercase; letter-spacing: .04em;
 }
 
 .messenger-loose-count { border-bottom: 1px dotted currentcolor; cursor: help; }
 
 .messenger-loose-note {
-  display: flex; gap: 7px; align-items: flex-start;
-  margin: 0; padding: 9px 16px;
+  display: flex; gap: var(--space-2); align-items: flex-start;
+  margin: 0; padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border);
   background: rgba(208, 135, 0, .1);
   color: #ffd9a0; font-size: var(--tipo-apunte);
 }
 
-.messenger-loose-note svg { flex: none; margin-top: 1px; }
+.messenger-loose-note svg { flex: none; margin-top: var(--space-1); }
 
-.messenger-lane-select { display: block; margin-bottom: 9px; }
+.messenger-lane-select { display: block; margin-bottom: var(--space-2); }
 
 .messenger-composer { flex: none; margin-top: auto; }
 .messenger-composer .room-select-wrap { position: relative; display: block; }
 .messenger-composer .room-select-wrap svg { position: absolute; top: 21px; right: 10px; pointer-events: none; }
-.messenger-room-fixed { margin: 0 0 8px; color: var(--faint); font-size: var(--tipo-apunte); }
-.messenger-room-select { display: block; margin-bottom: 9px; }
+.messenger-room-fixed { margin: 0 0 var(--space-2); color: var(--faint); font-size: var(--tipo-apunte); }
+.messenger-room-select { display: block; margin-bottom: var(--space-2); }
 
-.messenger-empty { display: grid; min-height: 420px; align-content: center; justify-items: center; gap: 9px; padding: 40px 30px; text-align: center; }
+.messenger-empty { display: grid; min-height: 420px; align-content: center; justify-items: center; gap: var(--space-2); padding: var(--space-6); text-align: center; }
 .messenger-empty h2 { margin: 0; font-size: var(--tipo-panel); }
 .messenger-empty > span { color: var(--faint); }
 .messenger-empty p { max-width: 460px; margin: 0; color: var(--muted); font-size: var(--tipo-rotulo); }
@@ -286,14 +286,14 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
  * contra la ventana y el panel NO lleva alto, porque quien scrollea es la página.
  */
 /* --- El compositor: `.terminal-composer` y `.composer-*` sólo los escribe esta vista --- */
-.terminal-composer { padding: 12px 14px 14px; border-top: 1px solid var(--border); background: #0b1320; }
-.terminal-composer > label { display: block; margin-bottom: 6px; color: var(--faint); font-size: var(--tipo-rotulo); letter-spacing: .06em; text-transform: uppercase; }
+.terminal-composer { padding: var(--space-3); border-top: 1px solid var(--border); background: #0b1320; }
+.terminal-composer > label { display: block; margin-bottom: var(--space-2); color: var(--faint); font-size: var(--tipo-rotulo); letter-spacing: .06em; text-transform: uppercase; }
 .terminal-composer textarea { min-height: 74px; margin: 0; border-color: #2a4565; background: #070d16; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-cuerpo); }
 .terminal-composer textarea:focus { border-color: var(--blue); }
-.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; color: var(--faint); font-size: var(--tipo-apunte); }
-.composer-blocked { display: flex; align-items: center; gap: 5px; margin: 8px 0 0; color: var(--red); font-size: var(--tipo-apunte); }
+.composer-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-2); color: var(--faint); font-size: var(--tipo-apunte); }
+.composer-blocked { display: flex; align-items: center; gap: var(--space-1); margin: var(--space-2) 0 0; color: var(--red); font-size: var(--tipo-apunte); }
 .room-select-wrap { position: relative; display: block; }
-.room-select-wrap select { min-width: 120px; min-height: 33px; margin-top: 3px; padding: 5px 25px 5px 7px; appearance: none; font-size: var(--tipo-rotulo); }
+.room-select-wrap select { min-width: 120px; min-height: 33px; margin-top: var(--space-1); padding: var(--space-1) var(--space-5) var(--space-1) var(--space-2); appearance: none; font-size: var(--tipo-rotulo); }
 .room-select-wrap svg { position: absolute; top: 50%; right: 7px; color: var(--faint); pointer-events: none; }
 
 @media (min-width: 761px) {
@@ -381,7 +381,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
    * si algún día el hueco se estrecha otra vez — parte entre palabras, o desborda, pero no
    * escribe en vertical.
    */
-  .messenger-thread-head { align-items: stretch; flex-direction: column; gap: 10px; }
+  .messenger-thread-head { align-items: stretch; flex-direction: column; gap: var(--space-2); }
   .messenger-thread-identity { flex-wrap: wrap; }
   .messenger-thread-identity > div { min-width: 0; flex: 1 1 150px; }
   .messenger-thread-identity h2, .messenger-thread-identity .eyebrow { overflow-wrap: break-word; }
@@ -396,7 +396,7 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
     z-index: 6;
     right: 0;
     /* El ancla sale del MISMO token que dimensiona la barra inferior (`styles.css`). Era un 66
-       copiado a mano, y el 2026-08-23 la barra pasó a dos filas —los ocho rótulos se pisaban a
+       copiado a mano, y después la barra pasó a dos filas —los ocho rótulos se pisaban a
        360 px— y ese 66 habría metido el botón «Enviar» debajo del menú. */
     bottom: var(--nav-inferior-alto);
     left: 0;
@@ -415,11 +415,24 @@ details.messenger-delivery-detail[open] > .messenger-detalle-origen { margin-bot
 }
 
 @media (prefers-color-scheme: light) {
-  .messenger-loose-note { color: #7a4b00; }
-  .messenger-presence { background: #e6edf6; }
-  .messenger-avatar { background: #e6edf6; color: #3a4a60; }
-  .messenger-pill { background: #ffffff; }
-  .terminal-composer { background: #f8fafc; }
-  .terminal-composer textarea { background: #ffffff; }
-  .messenger-agent:hover, .messenger-agent[data-active] { background: #ffffff; }
+  :root:not([data-theme="dark"]) .messenger-loose-note { color: #7a4b00; }
+  :root:not([data-theme="dark"]) .messenger-presence { background: #e6edf6; }
+  :root:not([data-theme="dark"]) .messenger-avatar { background: #e6edf6; color: #3a4a60; }
+  :root:not([data-theme="dark"]) .messenger-pill { background: #ffffff; }
+  :root:not([data-theme="dark"]) .terminal-composer { background: #f8fafc; }
+  :root:not([data-theme="dark"]) .terminal-composer textarea { background: #ffffff; }
+  :root:not([data-theme="dark"]) .messenger-agent:hover,
+  :root:not([data-theme="dark"]) .messenger-agent[data-active] { background: #ffffff; }
 }
+
+/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
+   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
+:root[data-theme="light"] .messenger-loose-note { color: #7a4b00; }
+:root[data-theme="light"] .messenger-presence { background: #e6edf6; }
+:root[data-theme="light"] .messenger-avatar { background: #e6edf6; color: #3a4a60; }
+:root[data-theme="light"] .messenger-pill { background: #ffffff; }
+:root[data-theme="light"] .terminal-composer { background: #f8fafc; }
+:root[data-theme="light"] .terminal-composer textarea { background: #ffffff; }
+:root[data-theme="light"] .messenger-agent:hover,
+:root[data-theme="light"] .messenger-agent[data-active] { background: #ffffff; }
+

@@ -7,8 +7,8 @@ import type {
 } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import {
-  Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown,
-  ViewTabs,
+  Badge, Desplazable, EmptyState, ErrorState, LoadingState, PageHeader, PageShell, Panel,
+  RefreshButton, Time, Unknown, ViewTabs,
 } from '../../components/ui';
 import { permissionState } from '../../lib';
 import {
@@ -435,27 +435,28 @@ function ConfigPageContent() {
   }
 
   return <div className="config-pagina">
-    <header className="config-encabezado">
-      <div>
-        <h1>Ajustes y altas</h1>
-        <p className="config-intro">
-          Topología y permisos: el contexto de cada agente se modifica sólo en «La flota ahora» → «Contexto».
-        </p>
-      </div>
-      <RefreshButton onClick={config.reload} loading={config.loading} />
-    </header>
+    {/* The shared header, not one of its own: the title, its help and the reread button line up
+        with the content block the way they do on the other seven views. */}
+    <PageHeader
+      eyebrow="Topología y permisos"
+      title="Ajustes y altas"
+      description="Topología y permisos: el contexto de cada agente se modifica sólo en «La flota ahora» → «Contexto»."
+      actions={<RefreshButton onClick={config.reload} loading={config.loading} />}
+    />
 
     {/* Without permission, NOTHING is hidden: the tables look the same and the buttons stay inert with the reason
         written out. An absent panel does not distinguish "I don't have permission" from "this does not exist". The
         reason goes INSIDE the permission line, not on a separate notice below: those were two stacked notices saying
         the same thing in different words, and two notices in a row that say the same thing train people to skip both. */}
-    <PermisoDeEscritura access={access.data} estado={estadoPermisoDeEscritura} />
+    <PageShell kind="documento">
+      <PermisoDeEscritura access={access.data} estado={estadoPermisoDeEscritura} />
 
-    {/* `useResource` keeps the last good data when a reread fails: without this notice, a failing GET went unnoticed anywhere, and the screen kept showing stale data with a fresh look. */}
-    {config.error ? <p className="notice error" role="alert">
-      La última relectura de la configuración falló ({config.error.message}): lo que ves es la
-      ÚLTIMA lectura buena, no lo que el servidor tiene ahora.
-    </p> : null}
+      {/* `useResource` keeps the last good data when a reread fails: without this notice, a failing GET went unnoticed anywhere, and the screen kept showing stale data with a fresh look. */}
+      {config.error ? <p className="notice error" role="alert">
+        La última relectura de la configuración falló ({config.error.message}): lo que ves es la
+        ÚLTIMA lectura buena, no lo que el servidor tiene ahora.
+      </p> : null}
+    </PageShell>
 
     {/* The one tab strip of the console: `aria-controls`, roving tabIndex and arrow keys come with it. The list comes
         from `areas.ts`, which derives it from the snapshot—a new collection from the server falls under "Others" and
@@ -475,13 +476,13 @@ function ConfigPageContent() {
         Open goes ONE sentence. The rest—what explains why the tab matters—goes folded: the operator who enters
         twenty times a day already knows it and was paying for the scroll twenty times. It is a `<details>` on purpose,
         not a tooltip: the folded content can be read with the keyboard, can be copied, and does not depend on the mouse. */}
-    {activa ? <>
+    {activa ? <PageShell kind="documento">
       <p className="config-area-descripcion">{activa.area.descripcion}</p>
       <details className="config-detalle">
         <summary>Qué es exactamente «{activa.area.label}»</summary>
         <p>{activa.area.detalle}</p>
       </details>
-    </> : null}
+    </PageShell> : null}
 
     <div className="config-area" id={PANEL_DE_AREA} role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
       {areaVisible === 'espacios'

@@ -97,6 +97,15 @@ describe('el filtro de la tabla', () => {
  * stay above the fold. That is measured with a Chrome at 360 px, not here.
  */
 const QUEUES_CSS = readFileSync(resolve(process.cwd(), 'src/features/queues/queues.css'), 'utf8');
+const GLOBAL_CSS = readFileSync(resolve(process.cwd(), 'src/styles/components.css'), 'utf8');
+
+/** Un `min-height` en `.metric` —venga de donde venga— es lo que apilaba las tres tarjetas. */
+function altoFijoDeLaTarjeta(css: string): boolean {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some((regla) => {
+    const alto = /min-height:\s*([^;\s]+)/.exec(regla[2])?.[1];
+    return /\.metric\b/.test(regla[1]) && alto !== undefined && !/^0[a-z]*$/.test(alto);
+  });
+}
 
 function bloqueEstrecho(css: string): string {
   const limpio = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
@@ -115,16 +124,14 @@ function bloqueEstrecho(css: string): string {
   return '';
 }
 
-export function defectosDeColasEnElTelefono(css: string): string[] {
+export function defectosDeColasEnElTelefono(css: string, global = GLOBAL_CSS): string[] {
   const defectos: string[] = [];
   const estrecho = bloqueEstrecho(css);
   if (!estrecho) return ['queues.css no tiene bloque @media (max-width: 760px): la vista sale como a 1280'];
 
-  /*
-   * `styles.css` stacks `.metrics-grid.three` to ONE column at this breakpoint and gives 115 px
-   * of height to each `.metric`. Three stacked cards are 345 px and, with the header on top,
-   * "DEAD LETTERS 7" — which is what an operator enters — was below the fold. Measured.
-   */
+  /* `styles.css` stacks `.metrics-grid.three` to ONE column at this breakpoint, and three stacked
+     cards, with the header on top, put "DEAD LETTERS 7" —what an operator enters for— below the
+     fold. Measured. */
   /*
    * The selector has to WIN against `.metrics-grid.three`, which at this same breakpoint
    * declares ONE column in `styles.css`. With one class it did not apply; with two it tied on
@@ -135,8 +142,11 @@ export function defectosDeColasEnElTelefono(css: string): string[] {
   if (!/\.metrics-grid\.three\.metricas-de-cola\s*\{[^}]*grid-template-columns:\s*repeat\(3/.test(estrecho)) {
     defectos.push('las tres tarjetas se apilan en el teléfono: la tercera («Dead letters») queda bajo el pliegue');
   }
-  if (!/\.metricas-de-cola \.metric\s*\{[^}]*min-height:\s*0/.test(estrecho)) {
-    defectos.push('las tarjetas conservan los 115 px de alto de styles.css: en fila de tres no caben');
+  /* The 115 px that stacked them are gone from `components.css`: a `.metric` is its padding and
+     the subgrid rows. What is still required is that NOBODY puts a height back without this view
+     cancelling it — with three in a row, a fixed height is what pushes the third off screen. */
+  if (altoFijoDeLaTarjeta(global) && !/\.metricas-de-cola \.metric\s*\{[^}]*min-height:\s*0/.test(estrecho)) {
+    defectos.push('alguien le repuso alto fijo a `.metric`: en fila de tres no caben');
   }
 
   /*
@@ -163,11 +173,17 @@ describe('/queues en el teléfono', () => {
    */
   it('CONTROL NEGATIVO — marca las tarjetas apiladas, que es el defecto medido', () => {
     const roto = QUEUES_CSS.replace(
-      '.metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }',
-      '.metrics-grid.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }',
+      '.metrics-grid.three.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }',
+      '.metrics-grid.metricas-de-cola { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }',
     );
     expect(roto).not.toBe(QUEUES_CSS);
     expect(defectosDeColasEnElTelefono(roto)).toContainEqual(expect.stringContaining('bajo el pliegue'));
+  });
+
+  it('CONTROL NEGATIVO — marca que le repongan alto fijo a la tarjeta', () => {
+    expect(defectosDeColasEnElTelefono(QUEUES_CSS, '.metric { min-height: 115px; }'))
+      .toContainEqual(expect.stringContaining('alto fijo'));
+    expect(defectosDeColasEnElTelefono(QUEUES_CSS, '.metric { min-height: 0; }')).toEqual([]);
   });
 
   it('CONTROL NEGATIVO — marca la tabla sin apilar, con «Estado» fuera de pantalla', () => {

@@ -6,10 +6,7 @@ import { leerCss } from './test/leer-css';
 import { sinComentarios } from './test/css-parser';
 import './styles.css';
 
-/**
- * Mounted-views typographic floor check: validates the effective font-size computation
- * by resolving the winning declarations of the cascade.
- */
+/** Mounted-views typographic floor check: resolves the winning declaration of the cascade. */
 
 const SUELO = 12.5;
 
@@ -24,9 +21,8 @@ const TOKENS: Map<string, string> = (() => {
 })();
 
 /**
- * CSS size keywords. An element coming out with one of these means NO sheet of ours gave it a
- * size — the user agent decides — which is exactly the defect of `.subline`, so it is treated as
- * a failure, not as "unknown".
+ * CSS size keywords. One of these means NO sheet of ours gave the element a size — the user agent
+ * decides, the defect of `.subline` — so it is a failure, not an "unknown".
  */
 const PALABRAS_UA = /^(smaller|larger|xx-small|x-small|small|medium|large|x-large|xx-large)$/;
 
@@ -37,10 +33,8 @@ function textoPropio(el: Element): string {
 }
 
 /**
- * An element's size in pixels, resolving the string jsdom returns.
- *
- * Returns `{ px }` or `{ problema }`. `problema` is not "could not": it is a named failure,
- * because a size we cannot resolve is a size nobody controls.
+ * An element's size in pixels. `problema` is not "could not": it is a named failure, because a size
+ * we cannot resolve is a size nobody controls.
  */
 function tamanoEnPx(el: Element, profundidad = 0): { px?: number; problema?: string; bruto?: string } {
   if (profundidad > 30) return { problema: 'herencia demasiado profunda' };
@@ -67,10 +61,7 @@ function tamanoEnPx(el: Element, profundidad = 0): { px?: number; problema?: str
 
 function resolverLongitud(valor: string, el: Element, profundidad: number): number | undefined {
   const limpio = valor.replace(/\s*!important\s*$/, '');
-  /*
-   * `clamp(min, preferred, max)` is judged by its MINIMUM, the worst case for legibility: if the
-   * minimum reaches the floor, no window width makes that text drop below it.
-   */
+  // `clamp()` is judged by its MINIMUM: if that reaches the floor, no window width goes below it.
   const clamp = /^clamp\(\s*([^,]+),/.exec(limpio);
   if (clamp) return resolverLongitud(clamp[1].trim(), el, profundidad);
   let m = /^(\d*\.?\d+)px$/.exec(limpio);
@@ -116,6 +107,12 @@ export function textoPorDebajoDelSuelo(raiz: Element, suelo = SUELO): string[] {
   return fallos;
 }
 
+/**
+ * `minimo` is a floor on the mounted element count: it makes the guard wait for the page to be THERE
+ * before measuring, so an empty `main` cannot pass as "nothing below the floor". /terminal is a
+ * regression net only — its `.pty-dialog-*`, `.pty-bar-readonly` and `.pty-plazas` chrome needs a
+ * live PTY session, so what catches those is `terminal-panel.css` in `styles.tipografia.test.ts`.
+ */
 const VISTAS: readonly { ruta: string; titulo: RegExp; minimo: number }[] = [
   { ruta: '/', titulo: /Cauce en una pantalla/i, minimo: 200 },
   { ruta: '/live', titulo: /La flota ahora/i, minimo: 1200 },
@@ -124,6 +121,8 @@ const VISTAS: readonly { ruta: string; titulo: RegExp; minimo: number }[] = [
   { ruta: '/queues', titulo: /Colas y DLQ operativo/i, minimo: 120 },
   { ruta: '/observability', titulo: /Señales y auditoría/i, minimo: 100 },
   { ruta: '/config', titulo: /Ajustes y altas/i, minimo: 500 },
+  { ruta: '/terminal', titulo: /Terminal de agentes/i, minimo: 370 },
+  { ruta: '/ayuda', titulo: /Ayuda y documentación/i, minimo: 90 },
 ];
 
 describe('ningún texto de las páginas montadas baja del suelo tipográfico', () => {
@@ -148,15 +147,10 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
   }
 
   /**
-   * NEGATIVE CONTROL of the meter, on a hand-crafted DOM carrying the EXACT defects that were
-   * deployed. Without it, `textoPorDebajoDelSuelo()` could return `[]` simply because it cannot
-   * read anything, and would approve any page.
-   *
-   * The four cases are the four ways a text ends up small; each must fail for its own reason:
-   *   1. a `px` below the floor, written by hand;
-   *   2. a `rem` below the floor (those were the 177 declarations of this change);
-   *   3. the INHERITED size from a small parent, which the element does not declare;
-   *   4. the size the BROWSER sets because nobody declared it — the `.subline` case.
+   * NEGATIVE CONTROL of the meter, on a DOM carrying the EXACT defects that were deployed: without
+   * it `textoPorDebajoDelSuelo()` could return `[]` for reading nothing and approve any page. The
+   * four cases are the four ways a text ends up small — a hand-written `px`, a `rem`, the size
+   * INHERITED from a small parent, and the size the BROWSER sets because nobody declared one.
    */
   it('CONTROL NEGATIVO — el medidor marca los cuatro caminos por los que un texto se queda chico', () => {
     const caja = document.createElement('div');
@@ -167,13 +161,10 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
       <p id="d">tamaño del navegador</p>`;
     document.body.appendChild(caja);
     /*
-     * The fourth case is declared EXPLICITLY (`font-size: smaller`) rather than fabricated with a
-     * raw `<small>`, and the reason matters: since `styles.css` put a floor on `small`, a
-     * classless `<small>` no longer falls back to the UA — i.e. the original defect can no longer
-     * be reproduced that way. A negative control that depends on the sheet still being broken
-     * turns itself off the day it is fixed, and from then on the guard approves without anyone
-     * noticing. This one tests the METER: that it can denounce a browser-decided size, no matter
-     * where it comes from.
+     * The fourth case is declared EXPLICITLY rather than fabricated with a raw `<small>`: since
+     * `styles.css` put a floor on `small` the original defect cannot be reproduced that way, and a
+     * negative control that depends on the sheet still being broken turns itself off the day it is
+     * fixed. This one tests the METER: that it can denounce a browser-decided size.
      */
     const ua = caja.querySelector('#d');
     expect(ua).not.toBeNull();
@@ -199,10 +190,8 @@ describe('ningún texto de las páginas montadas baja del suelo tipográfico', (
   });
 
   /**
-   * NEGATIVE CONTROL of token resolution: if `var(--tipo-apunte)` stopped resolving, the meter
-   * must DENOUNCE it, not swallow it. A variable that does not exist makes the browser drop the
-   * entire declaration and fall through to the next cascade — which is exactly what was happening
-   * to `toggles.css` outside /config.
+   * NEGATIVE CONTROL of token resolution: a variable that does not exist makes the browser drop the
+   * whole declaration and fall through to the next cascade, so the meter must DENOUNCE it.
    */
   it('CONTROL NEGATIVO — un `var()` que no existe se denuncia, no se aprueba', () => {
     const caja = document.createElement('div');

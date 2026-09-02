@@ -260,7 +260,7 @@ export function ConversationPane({
   const recorteSeleccionado = previsualizacionRecortada(mensajeSeleccionado?.body_preview);
 
   return (
-    <section className="messenger-thread" ref={hiloRef} aria-label={`Conversación con ${agent.alias}`}>
+    <section className="messenger-thread" data-objeto-principal="hilo" ref={hiloRef} aria-label={`Conversación con ${agent.alias}`}>
       <header className="messenger-thread-head">
         <div className="messenger-thread-identity">
           <span className={`messenger-avatar ${agent.leaseState}`} aria-hidden="true">{agent.alias.slice(0, 2).toUpperCase()}</span>

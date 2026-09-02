@@ -1,59 +1,41 @@
 /* Banner de advertencia */
 .banner {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: flex-start;
-  padding: 14px 16px;
-  border-radius: 6px;
-  margin-bottom: 20px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-5);
   font-size: var(--tipo-rotulo);
   line-height: 1.5;
 }
 
 .banner-error {
-  background-color: hsl(0 84% 94%);
-  border: 1px solid hsl(0 84% 85%);
-  color: hsl(0 70% 30%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .banner-error {
-    background-color: hsl(0 84% 15%);
-    border: 1px solid hsl(0 84% 25%);
-    color: hsl(0 70% 70%);
-  }
+  border: 1px solid #74313c;
+  background: var(--red-dim);
+  color: var(--on-red);
 }
 
 .banner-warning {
-  background-color: hsl(40 90% 94%);
-  border: 1px solid hsl(40 90% 82%);
-  color: hsl(35 80% 26%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .banner-warning {
-    background-color: hsl(40 60% 14%);
-    border: 1px solid hsl(40 60% 26%);
-    color: hsl(40 90% 72%);
-  }
+  border: 1px solid #725622;
+  background: var(--amber-dim);
+  color: var(--on-amber);
 }
 
 /* El texto del cartel se queda con el ancho sobrante y el botón no se deforma. */
 .banner > span { flex: 1; min-width: 0; }
 .banner > .button { flex: none; align-self: center; }
 
-
-
 .account-body {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .account-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .account-section h4 {
@@ -62,33 +44,19 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: hsl(0 0% 50%);
+  color: var(--muted);
 }
-
-@media (prefers-color-scheme: dark) {
-  .account-section h4 {
-    color: hsl(0 0% 55%);
-  }
-}
-
-
 
 .detail-row {
   display: grid;
   grid-template-columns: 120px 1fr;
-  gap: 8px;
+  gap: var(--space-2);
   font-size: var(--tipo-rotulo);
 }
 
 .detail-row dt {
   font-weight: 500;
-  color: hsl(0 0% 55%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .detail-row dt {
-    color: hsl(0 0% 50%);
-  }
+  color: var(--muted);
 }
 
 .detail-row dd {
@@ -103,40 +71,27 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .assignment-item {
-  padding: 8px 12px;
-  border: 1px solid hsl(0 0% 80%);
-  border-radius: 4px;
-  background-color: hsl(0 0% 98%);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   font-size: var(--tipo-rotulo);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-item {
-    border-color: hsl(0 0% 25%);
-    background-color: hsl(0 0% 12%);
-  }
 }
 
 .assignment-item.disabled {
   opacity: 0.6;
-  background-color: hsl(0 0% 93%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-item.disabled {
-    background-color: hsl(0 0% 15%);
-  }
+  background: var(--surface-3);
 }
 
 .assignment-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
   flex-wrap: wrap;
 }
 
@@ -145,85 +100,46 @@
 }
 
 .agent-display {
-  color: hsl(0 0% 55%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .agent-display {
-    color: hsl(0 0% 50%);
-  }
+  color: var(--muted);
 }
 
 .assignment-container {
   font-size: var(--tipo-apunte);
-  color: hsl(0 0% 55%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .assignment-container {
-    color: hsl(0 0% 50%);
-  }
+  color: var(--muted);
 }
 
 /* Techo de ruteo */
 .ceiling-info {
   font-size: var(--tipo-rotulo);
-  padding: 8px;
-  border-left: 3px solid hsl(240 100% 50%);
-  background-color: hsl(240 100% 97%);
-  border-radius: 0 4px 4px 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .ceiling-info {
-    border-left-color: hsl(240 100% 45%);
-    background-color: hsl(240 30% 15%);
-  }
+  padding: var(--space-2);
+  border-left: 3px solid var(--blue);
+  background: var(--blue-dim);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .ceiling-note {
   font-size: var(--tipo-apunte);
-  color: hsl(0 0% 55%);
-  margin-top: 4px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .ceiling-note {
-    color: hsl(0 0% 50%);
-  }
+  color: var(--muted);
+  margin-top: var(--space-1);
 }
 
 /* Aviso */
 .account-notice {
   display: flex;
-  gap: 8px;
-  padding: 8px;
-  border-left: 3px solid hsl(0 100% 50%);
-  background-color: hsl(0 100% 97%);
-  border-radius: 0 4px 4px 0;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-left: 3px solid var(--red);
+  background: var(--red-dim);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   font-size: var(--tipo-rotulo);
-  color: hsl(0 70% 30%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .account-notice {
-    border-left-color: hsl(0 100% 45%);
-    background-color: hsl(0 50% 15%);
-    color: hsl(0 70% 70%);
-  }
+  color: var(--on-red);
 }
 
 /* Hallazgos */
 .finding-section {
-  margin-bottom: 20px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid hsl(0 0% 85%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .finding-section {
-    border-bottom-color: hsl(0 0% 20%);
-  }
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border);
 }
 
 .finding-section:last-child {
@@ -235,29 +151,17 @@
 .finding-section h4 {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 8px 0;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
   font-size: var(--tipo-rotulo);
   font-weight: 600;
-  color: hsl(0 70% 40%);
-}
-
-@media (prefers-color-scheme: dark) {
-  .finding-section h4 {
-    color: hsl(0 70% 60%);
-  }
+  color: var(--red);
 }
 
 .finding-section p {
-  margin: 0 0 8px 0;
+  margin: 0 0 var(--space-2);
   font-size: var(--tipo-rotulo);
   color: var(--muted);
-}
-
-@media (prefers-color-scheme: dark) {
-  .finding-section p {
-    color: var(--muted);
-  }
 }
 
 .finding-list {
@@ -266,35 +170,22 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .finding-list li {
   font-size: var(--tipo-rotulo);
-  padding: 6px 8px;
-  background-color: hsl(0 0% 97%);
-  border-left: 3px solid hsl(40 100% 50%);
-  border-radius: 0 3px 3px 0;
-}
-
-@media (prefers-color-scheme: dark) {
-  .finding-list li {
-    background-color: hsl(0 0% 12%);
-    border-left-color: hsl(40 100% 45%);
-  }
+  padding: var(--space-2);
+  background: var(--surface-2);
+  border-left: 3px solid var(--amber);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .finding-reason {
   font-size: var(--tipo-apunte);
   color: var(--muted);
-  margin-top: 2px;
-  margin-left: 16px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .finding-reason {
-    color: var(--muted);
-  }
+  margin-top: var(--space-1);
+  margin-left: var(--space-4);
 }
 
 /* Row actions: one line, not a stack. Four full-width pills wrapping one under the other made
@@ -302,11 +193,11 @@
 .row-actions {
   display: inline-flex;
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .row-actions .button.small.icon-action {
-  padding: 6px 8px;
+  padding: var(--space-2);
 }
 
 /* The direction that takes something away —deshabilitar, despublicar— is not a neutral button. */
@@ -317,27 +208,27 @@
 
 .row-actions .button.small.icon-action.is-undo:hover:not(:disabled) {
   border-color: var(--amber);
-  background-color: var(--amber-dim);
+  background: var(--amber-dim);
 }
 
 /* ==========================================================================
    Cuotas por proveedor y el detalle de ruteo de una fila del inventario
    ========================================================================== */
 
-.quota-provider { margin-bottom: 20px; padding: 16px; border: 1px solid var(--border); border-radius: 13px; background: #0c1422; }
+.quota-provider { margin-bottom: var(--space-5); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
 .quota-provider:last-child { margin-bottom: 0; }
 .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #74313c; }
 .quota-provider[data-severity="warn"] { border-color: #725622; }
-.quota-provider-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.quota-provider-head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-2); }
 .quota-provider-head h3 { margin: 0; font-size: var(--tipo-panel); }
 .quota-provider-head p { max-width: var(--measure-prose); margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
-.quota-provider-head-right { display: flex; flex-direction: column; align-items: end; gap: 6px; }
+.quota-provider-head-right { display: flex; flex-direction: column; align-items: end; gap: var(--space-2); }
 .quota-effective { color: var(--blue); font-size: var(--tipo-cuerpo); }
-.quota-groups-line { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; color: var(--muted); font-size: var(--tipo-rotulo); }
-.chip-list.inline { display: inline-flex; margin-left: 6px; }
+.quota-groups-line { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--tipo-rotulo); }
+.chip-list.inline { display: inline-flex; margin-left: var(--space-2); }
 
-.account-detail-row > td { padding: 0 14px 14px; background: var(--surface-2); }
-.account-detail-row .account-body { display: grid; gap: 14px; padding-top: 12px; }
+.account-detail-row > td { padding: 0 var(--space-3) var(--space-3); background: var(--surface-2); }
+.account-detail-row .account-body { display: grid; gap: var(--space-3); padding-top: var(--space-3); }
 
 /* Fuera de la escala a propósito, y con la medición que lo paga: el título del proveedor y su
    columna de cifras todavía caben uno al lado del otro a 760px. Apilarlos ya en el paso compacto
@@ -347,10 +238,4 @@
 @media (max-width: 720px) {
   .quota-provider-head { flex-direction: column; }
   .quota-provider-head-right { align-items: start; }
-}
-
-@media (prefers-color-scheme: light) {
-  .quota-provider { background: #ffffff; }
-  .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
-  .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
 }
