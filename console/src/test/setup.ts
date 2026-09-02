@@ -53,9 +53,11 @@ if (typeof HTMLCanvasElement !== 'undefined') {
     } : null,
   });
 }
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { server } from '../mocks/server';
+
+configure({ asyncUtilTimeout: 5_000 }); // 1 s is the cliff under StrictMode + forked parallelism, not `testTimeout`.
 
 beforeAll(() => { server.listen({ onUnhandledRequest: 'error' }); });
 afterEach(() => {

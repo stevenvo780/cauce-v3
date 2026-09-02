@@ -19,6 +19,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mockMessages } from '../../mocks/data';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import { renderWithApi } from '../../test/render';
@@ -84,6 +85,15 @@ function serveSessions(posts: string[], deletes: string[]) {
       return new HttpResponse(null, { status: 204 });
     }),
   );
+}
+
+function contarRefrescosDelFeed(): () => number {
+  let ticks = 0; // the feed poll (2.5 s, paused while a PTY channel is live) is the barrier a sleep only faked
+  server.use(http.get('*/v3/console/messages', () => {
+    ticks += 1;
+    return HttpResponse.json(mockMessages());
+  }));
+  return () => ticks;
 }
 
 /** Two aliases: one that emits its TUI and one that only offers a shell, so it never auto-opens. */
@@ -161,6 +171,7 @@ describe('volver a una pestaña de terminal', () => {
     const deletes: string[] = [];
     serveTwoAgents();
     serveSessions(posts, deletes);
+    const refrescos = contarRefrescosDelFeed();
     renderWithApi(<TerminalPage />);
 
     await openTui(user);
@@ -175,7 +186,8 @@ describe('volver a una pestaña de terminal', () => {
     await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
     // The panel is alive and keeps refreshing; what it does NOT do is ask for the channel again.
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    const antes = refrescos();
+    await waitFor(() => { expect(refrescos()).toBeGreaterThan(antes + 1); }, { timeout: 12_000 });
     expect(posts).toEqual(['zeus']);
     expect(StubWebSocket.instances).toHaveLength(1);
     expect(screen.getByRole('button', { name: /^Feed$/i })).toHaveAttribute('aria-pressed', 'true');
@@ -190,6 +202,7 @@ describe('volver a una pestaña de terminal', () => {
       attempts += 1;
       return HttpResponse.json({ error: 'forbidden', reason: 'no_grant' }, { status: 403 });
     }));
+    const refrescos = contarRefrescosDelFeed();
     renderWithApi(<TerminalPage />);
 
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
@@ -201,7 +214,8 @@ describe('volver a una pestaña de terminal', () => {
     await user.click(screen.getByRole('tab', { name: /zeus/i }));
     await screen.findByRole('link', { name: /escribir a zeus en mensajes/i });
 
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    const antes = refrescos(); // two more feed reloads, instead of a sleep: the remount's effects already ran
+    await waitFor(() => { expect(refrescos()).toBeGreaterThan(antes + 1); }, { timeout: 12_000 });
     expect(attempts).toBe(1);
     expect(StubWebSocket.instances).toHaveLength(0);
   }, 20_000);

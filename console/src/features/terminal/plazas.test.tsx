@@ -290,7 +290,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     await user.click(await screen.findByRole('button', { name: /abrir sesión con zeus/i }));
     await waitFor(() => { expect(posts).toEqual(['zeus']); });
     await user.click(screen.getByRole('button', { name: /abrir sesión con salva/i }));
-    await waitFor(() => { expect(posts).toEqual(['zeus', 'salva']); });
+    await waitFor(() => { expect(posts).toEqual(['zeus', 'salva']); }); // order IS the contract: the operator's click sequence
     await user.click(screen.getByRole('tab', { name: /zeus/i }));
     await waitFor(() => { expect(screen.getByRole('button', { name: /^TUI$/i })).toBeDisabled(); });
     expect(posts).toEqual(['zeus', 'salva']);

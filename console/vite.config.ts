@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
@@ -58,6 +59,10 @@ export default defineConfig(({ mode }) => {
       ],
       environment: 'jsdom',
       globals: true,
+      pool: 'forks',
+      poolOptions: { // a cap below the CPU count: uncapped, 149 jsdom files starve each other under load
+        forks: { minForks: 1, maxForks: Math.max(2, Math.floor(cpus().length / 4)) },
+      },
       setupFiles: './src/test/setup.ts',
       css: true,
       restoreMocks: true,

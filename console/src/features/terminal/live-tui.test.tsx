@@ -21,6 +21,7 @@ import { TerminalPage } from './TerminalPage';
 
 const PTY_SESSION_ID = 'pty-tui-1';
 const WS_PATH = '/v3/console/terminal/ws';
+const DA_PRIMARIA = '\x1b[?1;2c'; // the terminal's own DA reply: the only data read-only lets through
 /** A real chunk of Claude Code's TUI, as tmux paints it. */
 const TUI_FRAME = '[2J[H> zeus esta corriendo pnpm test --run\r\n  esc to interrupt\r\n';
 
@@ -118,7 +119,9 @@ it('transmite la TUI viva del agente en cuanto se elige el alias, sin diálogo y
 
   // Read-only FOR REAL: a keystroke through xterm's real path does not produce an input frame.
   act(() => { ptySessionType(PTY_SESSION_ID, 'rm -rf /\r'); });
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  act(() => { ptySessionType(PTY_SESSION_ID, DA_PRIMARIA); }); // a DA reply DOES cross the read-only channel
+  await new Promise((resolve) => setTimeout(resolve, 30)); // keystrokes coalesce behind an 8 ms timer
+  expect(socket.framesOfType('terminal_response')).toHaveLength(1);
   expect(socket.framesOfType('input')).toHaveLength(0);
 }, 20_000);
 
