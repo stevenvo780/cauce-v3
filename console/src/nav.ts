@@ -1,5 +1,5 @@
 import {
-  CreditCard, Gauge, LayoutDashboard, ListRestart, MessageSquareText,
+  BookOpen, CreditCard, Gauge, LayoutDashboard, ListRestart, MessageSquareText,
   Settings2, Sparkles, TerminalSquare,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
@@ -36,6 +36,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge, que: 'Las señales del gateway, el egress al origen y quién autorizó cada cosa.' },
   { id: 'config', label: 'Ajustes y altas', icon: Settings2, que: 'Tenants, salas, membresías, roles y altas — con reversión por revisión.' },
   { id: 'terminal', label: 'Terminal de agentes', icon: TerminalSquare, que: 'La terminal de cada bot, con su feed durable aunque el relay PTY no esté.' },
+  { id: 'ayuda', label: 'Ayuda', icon: BookOpen, que: 'Qué contesta cada vista, qué significa cada estado de la flota y los atajos de teclado.' },
 ];
 
 /**

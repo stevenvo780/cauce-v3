@@ -29,11 +29,6 @@ const DESTINOS: Record<string, Destino> = {
   ayuda: { encabezado: /^ayuda y documentación$/i },
 };
 
-/** How each hidden route is reached: they have no menu entry. */
-const RUTA_DIRECTA: Record<string, string> = {
-  ayuda: '/ayuda',
-};
-
 /** The deep link of every route that declares an `arity`, as the segments past its id. */
 const ENLACE_PROFUNDO: Record<string, readonly string[]> = {
   messages: ['Steven', 'kant'],
@@ -159,15 +154,11 @@ describe('every MENU entry resolves to a real view', () => {
   );
 });
 
-describe('every HIDDEN route resolves to its own, which is not the fallback', () => {
-  it.each(
-    ROUTE_TABLE.filter((route) => route.label === '').map((route) => [route.id] as const),
-  )('/%s does not fall into the cover', async (id) => {
-    window.history.pushState({}, '', RUTA_DIRECTA[id] ?? `/${id}`);
-    renderWithApi(<App />);
-
-    expect(await verDestino(id)).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
+describe('no route stays out of the menu', () => {
+  it('every declared route is reachable from the sidebar: /ayuda was the last one that was not', () => {
+    // A label-less route renders only for whoever already knows its address. `RUTA_DIRECTA` and the
+    // walk over hidden routes existed for exactly one entry; restoring either takes restoring both.
+    expect(ROUTE_TABLE.filter((route) => route.label === '').map((route) => route.id)).toEqual([]);
   });
 });
 

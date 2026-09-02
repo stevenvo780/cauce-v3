@@ -14,6 +14,7 @@ import { AccountsPage } from './features/accounts/AccountsPage';
 import { QueuesPage } from './features/queues/QueuesPage';
 import { ObservabilityPage } from './features/observability/ObservabilityPage';
 import { TerminalPage } from './features/terminal/TerminalPage';
+import { HelpPage } from './features/help/HelpPage';
 
 const VISTAS = [
   ['la portada', LandingPage, /cauce en una pantalla/i],
@@ -22,6 +23,7 @@ const VISTAS = [
   ['/queues', QueuesPage, /colas y dlq operativo/i],
   ['/observability', ObservabilityPage, /señales y auditoría/i],
   ['/terminal', TerminalPage, 'Terminal de agentes'],
+  ['/ayuda', HelpPage, /ayuda y documentación/i],
 ] as const;
 
 /**

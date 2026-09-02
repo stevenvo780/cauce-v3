@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
@@ -10,9 +11,8 @@ if (!root || !path.isAbsolute(root)) {
   process.exit(2);
 }
 
-// Console publish recovery is server-side. These APIs can silently recreate a durable browser
-// journal containing identity, message semantics or idempotency material. Cookies are transported
-// automatically by the BFF; direct document.cookie access is forbidden separately below.
+// These APIs silently recreate a durable browser journal of identity, message semantics or idempotency
+// material, and cookies travel on the BFF. A theme name is none of those, so `exemptions` clears it.
 const forbiddenNames = new Set([
   'localStorage',
   'sessionStorage',
@@ -28,6 +28,17 @@ const forbiddenNames = new Set([
   'IDBKeyRange',
 ]);
 const failures = new Map();
+
+const exemptions = new Map([
+  ['components/ThemeControl.tsx', { api: 'localStorage', keys: ['cauce.tema'] }],
+  ['components/ThemeControl.test.tsx', { api: 'localStorage', keys: ['cauce.tema'] }],
+  ['tema-bootstrap.test.ts', { api: 'localStorage', keys: ['cauce.tema'] }],
+  ['../public/tema.js', { api: 'localStorage', keys: ['cauce.tema'] }],
+]);
+// The anti-flash bootstrap is served, not bundled, so it sits outside `root` and the walk misses it.
+const extraFiles = ['../public/tema.js'];
+const exemptMethods = new Set(['getItem', 'setItem', 'removeItem']);
+const stringConstants = new Map();
 
 const canonicalRoots = new Set(['document', 'globalThis', 'navigator', 'window']);
 
@@ -146,33 +157,114 @@ function forbiddenMember(node, aliases) {
   return forbiddenCanonical(canonicalExpression(node, aliases));
 }
 
-async function scanTree(directory) {
+function harvestStringConstants(sourceFile) {
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+      const value = unwrappedExpression(node.initializer);
+      if (ts.isStringLiteralLike(value)) {
+        const bound = stringConstants.get(node.name.text) ?? new Set();
+        bound.add(value.text);
+        stringConstants.set(node.name.text, bound);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+function argumentKeys(node) {
+  if (node === undefined) return ['(sin argumento)'];
+  const value = unwrappedExpression(node);
+  if (ts.isStringLiteralLike(value)) return [value.text];
+  if (ts.isIdentifier(value) && stringConstants.has(value.text)) return [...stringConstants.get(value.text)];
+  return ['(clave no resoluble)'];
+}
+
+function apiReference(node, aliases, api) {
+  const current = unwrappedExpression(node);
+  if (ts.isIdentifier(current)) {
+    return current.text === api || (aliases.get(current.text) ?? '').endsWith(`.${api}`);
+  }
+  if (ts.isPropertyAccessExpression(current)) return current.name.text === api;
+  return ts.isElementAccessExpression(current)
+    && current.argumentExpression !== undefined
+    && ts.isStringLiteralLike(current.argumentExpression)
+    && current.argumentExpression.text === api;
+}
+
+function exemptNodes(sourceFile, aliases, exemption, rejected) {
+  const allowed = new Set();
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && apiReference(node.expression.expression, aliases, exemption.api)) {
+      const method = node.expression.name.text;
+      const keys = exemptMethods.has(method) ? argumentKeys(node.arguments[0]) : [];
+      const fuera = keys.filter((key) => !exemption.keys.includes(key));
+      if (!exemptMethods.has(method)) rejected.add(`${exemption.api}.${method}`);
+      else if (fuera.length > 0) rejected.add(`${exemption.api} clave ${fuera.sort().join(' ')}`);
+      else {
+        const reference = unwrappedExpression(node.expression.expression);
+        allowed.add(reference);
+        if (ts.isPropertyAccessExpression(reference)) allowed.add(reference.name);
+        if (ts.isElementAccessExpression(reference)) allowed.add(reference.argumentExpression);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return allowed;
+}
+
+async function collectSources(directory, out) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      await scanTree(absolute);
+      await collectSources(absolute, out);
       continue;
     }
     if (!entry.isFile() || (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx'))) continue;
-    const source = await readFile(absolute, 'utf8');
-    const kind = entry.name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-    const sourceFile = ts.createSourceFile(absolute, source, ts.ScriptTarget.Latest, true, kind);
-    const rejected = new Set();
-    const aliases = collectAliases(sourceFile, rejected);
-    const visit = (node) => {
+    out.push(await readSource(absolute));
+  }
+  return out;
+}
+
+const scriptKinds = new Map([['.tsx', ts.ScriptKind.TSX], ['.js', ts.ScriptKind.JS]]);
+
+async function readSource(absolute) {
+  const source = await readFile(absolute, 'utf8');
+  const kind = scriptKinds.get(path.extname(absolute)) ?? ts.ScriptKind.TS;
+  return {
+    relative: path.relative(root, absolute),
+    sourceFile: ts.createSourceFile(absolute, source, ts.ScriptTarget.Latest, true, kind),
+  };
+}
+
+const sources = await collectSources(root, []);
+for (const extra of extraFiles) {
+  const absolute = path.resolve(root, extra);
+  if (existsSync(absolute)) sources.push(await readSource(absolute));
+}
+for (const { sourceFile } of sources) harvestStringConstants(sourceFile);
+for (const { relative, sourceFile } of sources) {
+  const rejected = new Set();
+  const aliases = collectAliases(sourceFile, rejected);
+  const exemption = exemptions.get(relative);
+  const allowed = exemption === undefined
+    ? new Set()
+    : exemptNodes(sourceFile, aliases, exemption, rejected);
+  const visit = (node) => {
+    if (!allowed.has(node)) {
       if (ts.isIdentifier(node) && forbiddenNames.has(node.text)) rejected.add(node.text);
       // A computed lookup must not bypass the identifier gate (`globalThis['indexedDB']`).
       if (ts.isStringLiteralLike(node) && forbiddenNames.has(node.text)) rejected.add(node.text);
       const member = forbiddenMember(node, aliases);
       if (member !== undefined) rejected.add(member);
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-    if (rejected.size > 0) failures.set(path.relative(root, absolute), [...rejected].sort());
-  }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (rejected.size > 0) failures.set(relative, [...rejected].sort());
 }
-
-await scanTree(root);
 if (failures.size > 0) {
   for (const [file, APIs] of [...failures].sort(([left], [right]) => left.localeCompare(right))) {
     console.error(`browser durable storage usage is forbidden: ${file} (${APIs.join(', ')})`);

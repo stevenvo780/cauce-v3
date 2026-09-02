@@ -203,7 +203,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
   expect(window.location.pathname).toBe('/accounts');
 });
 
-it('el menú contiene la portada más siete entradas consolidadas', async () => {
+it('el menú contiene la portada más ocho entradas consolidadas', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -219,6 +219,7 @@ it('el menú contiene la portada más siete entradas consolidadas', async () => 
     'Señales y auditoría',
     'Ajustes y altas',
     'Terminal de agentes',
+    'Ayuda',
   ]);
   expect(entradas).not.toContain('Fleet');
   expect(entradas).not.toContain('Tenants & ACL');

@@ -21,6 +21,17 @@ export default tseslint.config(
     },
   },
   {
+    // The anti-flash bootstrap ships as a classic browser script, outside the bundle: ES5 syntax
+    // only, and its catch swallows the private-window throw because there is nothing to do with it.
+    files: ['public/tema.js'],
+    languageOptions: {
+      ecmaVersion: 5,
+      sourceType: 'script',
+      globals: { ...globals.browser },
+    },
+    rules: { 'no-unused-vars': ['error', { caughtErrors: 'none' }] },
+  },
+  {
     files: ['src/**/*.{ts,tsx}'],
     extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
     languageOptions: {

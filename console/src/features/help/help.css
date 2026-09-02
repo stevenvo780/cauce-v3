@@ -1,0 +1,13 @@
+/* El mapa de vistas nombra rutas, no rótulos de dato: el `dt` en versalitas de la consola las
+   volvía ilegibles («LA FLOTA AHORA (/LIVE)»). El resto del vocabulario sí conserva su forma. */
+.help-mapa dt {
+  color: var(--text);
+  font-size: var(--tipo-rotulo);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.help-mapa dt code { color: var(--muted); font-size: var(--tipo-apunte); }
+
+.help-lista { display: grid; gap: var(--space-3); }
+.help-lista dd + dt { margin-top: var(--space-3); }
+.help-atajos dt { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }

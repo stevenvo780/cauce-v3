@@ -17,7 +17,7 @@ vi.mock('../features/terminal/GridContainer', () => ({
   GridContainer: () => { throw new TypeError('marco PTY con forma inesperada'); },
 }));
 
-/* The route-level boundary needs a routed view that throws; `/ayuda` is the one with no label. */
+/* The route-level boundary needs a routed view that throws, and the notice has to name it. */
 vi.mock('../features/help/HelpPage', () => ({
   HelpPage: () => { throw new TypeError(MENSAJE_CRUDO); },
 }));
@@ -108,12 +108,12 @@ it('en la terminal del operador, un fallo del grid deja viva la flota de al lado
   expect(screen.getByRole('button', { name: /abrir sesión con zeus/i })).toBeInTheDocument();
 });
 
-it('en el armazón, una vista que revienta no se lleva la navegación ni el rótulo por defecto', async () => {
+it('en el armazón, una vista que revienta no se lleva la navegación y el aviso la nombra', async () => {
   window.history.pushState({}, '', '/ayuda');
   renderWithApi(<App />);
 
   const aviso = await screen.findByRole('alert');
-  expect(aviso).toHaveTextContent('Esta vista no se pudo dibujar');
+  expect(aviso).toHaveTextContent('Ayuda no se pudo dibujar');
   expect(aviso).toHaveTextContent('/ayuda');
   expect(aviso).not.toHaveTextContent(MENSAJE_CRUDO);
   expect(screen.getByRole('navigation', { name: /navegación principal/i })).toBeInTheDocument();

@@ -94,7 +94,7 @@ export function defectosDelMenuMovil(global: string): string[] {
 }
 
 describe('el menú de móvil de la consola', () => {
-  it('muestra las ocho entradas sin pisarse ni esconderse detrás de un arrastre', () => {
+  it('muestra sus nueve entradas sin pisarse ni esconderse detrás de un arrastre', () => {
     expect(defectosDelMenuMovil(GLOBAL)).toEqual([]);
   });
 

@@ -3,9 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#080d18" />
+    <meta name="theme-color" content="#f3f6fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#070b13" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="Consola operativa cliente de Cauce V3" />
     <title>Cauce V3 · Console</title>
+    <!-- Same-origin and blocking on purpose: it has to stamp the forced theme before the first
+         paint, and an inline block would be refused by `script-src 'self'`. -->
+    <script src="/tema.js"></script>
   </head>
   <body>
     <div id="root"></div>

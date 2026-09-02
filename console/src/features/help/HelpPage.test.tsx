@@ -21,7 +21,7 @@ it('describe TODAS las vistas del menú, con la dirección real de cada una', ()
 it('documenta el atajo que la consola declara en su propia barra lateral', () => {
   // `App.tsx` publishes `aria-keyshortcuts="Alt+Shift+B"` on the toggle: a shortcut announced by the interface and ab
   render(<HelpPage />);
-  const atajos = screen.getByRole('heading', { name: /atajos de teclado/i }).closest('.card');
+  const atajos = screen.getByRole('heading', { name: /atajos de teclado/i }).closest('.panel');
 
   expect(atajos).not.toBeNull();
   expect(atajos?.textContent).toMatch(/Alt \+ Shift \+ B/);
@@ -39,7 +39,7 @@ it('abre con su propio encabezado, igual que su entrada de ruta', () => {
 it('separa el contexto declarado de capacidades y permisos, con un solo lugar de edición', () => {
   render(<HelpPage />);
   const seccion = screen.getByRole('heading', { name: /contexto, capacidades y permisos/i })
-    .closest('.card');
+    .closest('.panel');
 
   expect(seccion).not.toBeNull();
   expect(seccion).toHaveTextContent(/herramientas declaradas/i);

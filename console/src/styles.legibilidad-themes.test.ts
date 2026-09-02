@@ -61,7 +61,7 @@ function tokensDe(bloque: string): Record<string, string> {
   return tabla;
 }
 
-function resolver(expresion: string, tabla: Record<string, string>, saltos = 0): Rgb | undefined {
+export function resolver(expresion: string, tabla: Record<string, string>, saltos = 0): Rgb | undefined {
   if (saltos > 8) return undefined;
   const ref = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\)$/.exec(expresion.trim());
   if (ref) {
@@ -106,17 +106,42 @@ function soloNivelSuperior(css: string): string {
   return salida;
 }
 
-interface Tema { nombre: string; tokens: Record<string, string>; tintes: Rgb[] }
+export interface Tema { nombre: string; tokens: Record<string, string>; tintes: Rgb[] }
 
-function temas(css: string): [Tema, Tema] {
+const OSCURO_MEDIA = ':root:not([data-theme="light"])';
+const OSCURO_ATRIBUTO = ':root[data-theme="dark"]';
+
+/* The three paths the palette takes: the bare `:root` is light, and the same dark values are
+   written once for the system preference and once for the attribute the theme control stamps. */
+export function temas(css: string): Tema[] {
   const superior = soloNivelSuperior(css);
-  const raizOscura = tokensDe(declaraciones(superior, ':root'));
-  const bloqueClaro = bloqueMedia(css, '@media (prefers-color-scheme: light)');
-  const raizClara = { ...raizOscura, ...tokensDe(declaraciones(bloqueClaro, ':root')) };
+  const claro = tokensDe(declaraciones(superior, ':root'));
+  const media = bloqueMedia(css, '@media (prefers-color-scheme: dark)');
+  const construir = (nombre: string, propios: string, cuerpoBody: string): Tema => {
+    const tokens = { ...claro, ...tokensDe(propios) };
+    return { nombre, tokens, tintes: tintesDelFondo(cuerpoBody, tokens) };
+  };
   return [
-    { nombre: 'oscuro', tokens: raizOscura, tintes: tintesDelFondo(declaraciones(superior, 'body'), raizOscura) },
-    { nombre: 'claro', tokens: raizClara, tintes: tintesDelFondo(declaraciones(bloqueClaro, 'body'), raizClara) },
+    construir('claro', '', declaraciones(superior, 'body')),
+    construir('oscuro', declaraciones(media, OSCURO_MEDIA), declaraciones(media, `${OSCURO_MEDIA} body`)),
+    construir(
+      'oscuro-forzado',
+      declaraciones(superior, OSCURO_ATRIBUTO),
+      declaraciones(superior, `${OSCURO_ATRIBUTO} body`),
+    ),
   ];
+}
+
+/** The custom properties each path declares for itself, to compare the three sets. */
+export function tokensPorCamino(css: string): Record<string, string[]> {
+  const superior = soloNivelSuperior(css);
+  const media = bloqueMedia(css, '@media (prefers-color-scheme: dark)');
+  const claves = (bloque: string) => Object.keys(tokensDe(bloque)).sort();
+  return {
+    claro: claves(declaraciones(superior, ':root')),
+    oscuro: claves(declaraciones(media, OSCURO_MEDIA)),
+    'oscuro-forzado': claves(declaraciones(superior, OSCURO_ATRIBUTO)),
+  };
 }
 
 function tintesDelFondo(cuerpoBody: string, tabla: Record<string, string>): Rgb[] {
@@ -187,7 +212,8 @@ export function parejasBajoAA(css: string): string[] {
   const fallos: string[] = [];
   for (const tema of temas(css)) {
     for (const pareja of PAREJAS) {
-      if (pareja.soloTema && pareja.soloTema !== tema.nombre) continue;
+      const familia = tema.nombre.startsWith('oscuro') ? 'oscuro' : 'claro';
+      if (pareja.soloTema && pareja.soloTema !== familia) continue;
       const texto = resolver(`var(${pareja.texto})`, tema.tokens);
       if (!texto) {
         fallos.push(`[${tema.nombre}] ${pareja.texto} no está declarado o no resuelve a un color`);
@@ -214,21 +240,31 @@ export function parejasBajoAA(css: string): string[] {
 }
 
 describe('contraste de los tokens de color (WCAG 2.1 AA)', () => {
-  it('ninguna pareja (texto, fondo) que la consola usa de verdad baja de 4,5:1, en los DOS temas', () => {
+  it('ninguna pareja (texto, fondo) que la consola usa de verdad baja de 4,5:1, en los TRES caminos', () => {
     expect(parejasBajoAA(GLOBAL)).toEqual([]);
   });
 
+  it('los tres caminos declaran EL MISMO juego de tokens: ninguno vive sólo dentro de una consulta', () => {
+    const { claro, oscuro, 'oscuro-forzado': forzado } = tokensPorCamino(GLOBAL);
+    expect(oscuro).toEqual(forzado);
+    expect(oscuro.length).toBeGreaterThan(20);
+    expect(oscuro.filter((token) => !claro.includes(token))).toEqual([]);
+  });
+
+  it('CONTROL NEGATIVO — marca que un token se declare sólo en un camino', () => {
+    const roto = GLOBAL.replace(/(:root\[data-theme="dark"\] \{[\s\S]*?)\n\s*--violet: #[0-9a-f]{6};/, '$1');
+    expect(roto).not.toBe(GLOBAL);
+    expect(tokensPorCamino(roto).oscuro).not.toEqual(tokensPorCamino(roto)['oscuro-forzado']);
+  });
+
   it('CONTROL NEGATIVO — marca el `--faint` de antes, que dejaba las cabeceras de tabla a 3,66:1', () => {
-    const roto = GLOBAL.replace(
-      /(@media \(prefers-color-scheme: light\)[\s\S]*?)--faint: #[0-9a-f]{6};/,
-      '$1--faint: #718198;',
-    );
+    const roto = GLOBAL.replace(/--faint: #59677a;/, '--faint: #718198;');
     expect(roto).not.toBe(GLOBAL);
     expect(parejasBajoAA(roto)).toContainEqual(expect.stringContaining('[claro] --faint sobre'));
   });
 
   it('CONTROL NEGATIVO — marca la insignia ONLINE de antes: verde claro sobre verde claro, 1,15:1', () => {
-    const roto = GLOBAL.replace(/(@media \(prefers-color-scheme: light\)[\s\S]*?)--on-mint: #[0-9a-f]{6};/, '$1--on-mint: #8ff0d3;');
+    const roto = GLOBAL.replace(/--on-mint: #087860;/, '--on-mint: #8ff0d3;');
     expect(roto).not.toBe(GLOBAL);
     expect(parejasBajoAA(roto)).toContainEqual(expect.stringContaining('[claro] --on-mint sobre --mint-dim'));
   });
@@ -239,18 +275,28 @@ describe('contraste de los tokens de color (WCAG 2.1 AA)', () => {
     expect(parejasBajoAA(roto)).toContainEqual(expect.stringContaining('--text-2 no está declarado'));
   });
 
+  it('CONTROL NEGATIVO — el camino del atributo se LEE: romperlo sólo ahí también falla', () => {
+    const roto = GLOBAL.replace(
+      /(:root\[data-theme="dark"\] \{[\s\S]*?)--text: #e9f0fc;/,
+      '$1--text: #2a3446;',
+    );
+    expect(roto).not.toBe(GLOBAL);
+    const fallos = parejasBajoAA(roto);
+    expect(fallos).toContainEqual(expect.stringContaining('[oscuro-forzado] --text sobre'));
+    expect(fallos.filter((fallo) => fallo.startsWith('[oscuro]'))).toEqual([]);
+  });
+
   it('la fila del agente seleccionado sube el énfasis de su texto secundario', () => {
     const limpio = sinComentarios(GLOBAL);
     expect(valor(declaraciones(limpio, '.terminal-agent[data-active="true"]'), '--faint')).toBe('var(--muted)');
   });
 
   it('el degradado decorativo del body ENTRA en la cuenta: es un fondo real de la página', () => {
-    const [oscuro, claro] = temas(GLOBAL);
-    for (const tema of [oscuro, claro]) {
+    for (const tema of temas(GLOBAL)) {
       const base = resolver('var(--bg)', tema.tokens);
-      expect(base).toBeDefined();
+      expect(base, tema.nombre).toBeDefined();
       if (base) {
-        expect(tema.tintes.length).toBeGreaterThan(1);
+        expect(tema.tintes.length, tema.nombre).toBeGreaterThan(1);
         expect(tema.tintes.slice(1).some((t) => Math.abs(luminancia(t) - luminancia(base)) > 0.005)).toBe(true);
       }
     }

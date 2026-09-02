@@ -1,6 +1,5 @@
 import {
   Activity,
-  Boxes,
   PanelLeftClose,
   PanelLeftOpen,
   ShieldCheck,
@@ -12,6 +11,7 @@ import {
 import { ConsoleAccessProvider } from './api/console-access';
 import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from './breakpoints';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ThemeControl } from './components/ThemeControl';
 import { AuthGate, SessionBadge, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import type { AuthGateState } from './features/auth/auth-session';
 import { LandingPage } from './features/landing/LandingPage';
@@ -68,7 +68,9 @@ const ConfigPage = deferredPage(async () => ({
 const TerminalPage = deferredPage(async () => ({
   default: (await import('./features/terminal/TerminalPage')).TerminalPage,
 }));
-import { HelpPage } from './features/help/HelpPage';
+const HelpPage = deferredPage(async () => ({
+  default: (await import('./features/help/HelpPage')).HelpPage,
+}));
 import { TerminalRelayProvider } from './features/terminal/relay-status';
 
 interface Route {
@@ -93,19 +95,13 @@ const PAGES: Record<string, ComponentType<RoutePageProps>> = {
   ayuda: HelpPage,
 };
 
-const routes: Route[] = [
-  ...NAV_ENTRIES.map((entry) => ({
-    id: entry.id,
-    label: entry.label,
-    icon: entry.icon,
-    component: PAGES[entry.id],
-    arity: DEEP_ROUTE_ARITY[entry.id],
-  })),
-  { id: 'ayuda', label: '', icon: Boxes, component: PAGES.ayuda },
-];
-
-/** Entries visible in the navigation sidebar. */
-const MENU = routes.filter((route) => route.label !== '');
+const routes: Route[] = NAV_ENTRIES.map((entry) => ({
+  id: entry.id,
+  label: entry.label,
+  icon: entry.icon,
+  component: PAGES[entry.id],
+  arity: DEEP_ROUTE_ARITY[entry.id],
+}));
 
 /** Redirects of obsolete or consolidated routes to their canonical views. */
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
@@ -252,7 +248,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const Page = route?.component;
   const terminalTargetAlias = !notFoundPath && routeId === 'terminal' ? params[1] : undefined;
   const viewTitle = notFoundPath ? NOT_FOUND_TITLE : terminalTargetAlias ?? route?.label;
-  const boundaryLabel = route && route.label !== '' ? route.label : 'Esta vista';
+  const boundaryLabel = route?.label ?? 'Esta vista';
 
   useEffect(() => {
     document.title = viewTitle ? `${viewTitle} · ${CONSOLE_TITLE}` : CONSOLE_TITLE;
@@ -292,7 +288,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
         ) : null}
         <nav id={NAV_ID} aria-label="Navegación principal">
           <ul>
-            {MENU.map((item) => {
+            {routes.map((item) => {
               const Icon = item.icon;
               const disponible = navAvailability(item.id);
               if (disponible.hidden) return null;
@@ -323,9 +319,10 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <div><span className="live-dot" aria-hidden="true" /> Control plane client</div>
+          <div><span className="live-dot" aria-hidden="true" /><span className="topbar-rotulo">Control plane client</span></div>
           <div className="topbar-meta">
             {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag">MOCK API</span> : null}
+            <ThemeControl />
             <SessionBadge state={gate.state} status={gate.status} busy={gate.busy} onLogout={() => void gate.logout()} />
           </div>
         </header>
