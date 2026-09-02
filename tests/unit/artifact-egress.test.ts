@@ -16,10 +16,7 @@ import {
   planArtifacts,
 } from '../../services/telegram-bridge/src/artifacts.js';
 
-/**
- * Unit-level integration test of the attachment flow: the adapter converts the local path
- * into a data URI in the container and the Telegram bridge handles the egress.
- */
+/** Attachment flow end to end: the adapter inlines the local path, the bridge handles egress. */
 
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -58,7 +55,8 @@ describe('adjuntos salientes: del disco del agente al chat', () => {
   it('los topes del adaptador son los mismos que los del puente', () => {
     // If anyone moves just one, the adapter would convert attachments that the bridge later
     // discards, and the human would receive "stayed in the agent's workspace" without explanation.
-    expect(MAX_INLINED_ARTIFACT_BYTES).toBe(MAX_EGRESS_ATTACHMENT_BYTES);
+    // A bridge cap below the protocol is Telegram's physical limit binding, not drift; above it is.
+    expect(MAX_INLINED_ARTIFACT_BYTES).toBeLessThanOrEqual(MAX_EGRESS_ATTACHMENT_BYTES);
     expect(MAX_INLINED_ARTIFACTS_PER_RESPONSE).toBe(MAX_UPLOADS_PER_RELAY);
   });
 

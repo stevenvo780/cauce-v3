@@ -17,6 +17,7 @@ import {
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
 import { StoreError } from '@cauce/store';
+import { UUID_ANY_PATTERN } from '@cauce/protocol';
 
 /**
  * Hermetic tests for the terminal-plane orchestrator.
@@ -38,8 +39,9 @@ import { StoreError } from '@cauce/store';
  * integration/e2e.
  */
 
+export { UUID_ANY_PATTERN as UUID_PATTERN } from '@cauce/protocol';
+
 export const RELAY_INSTANCE_ID = 'a'.repeat(64);
-export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const UUID_OK = '11111111-1111-4111-8111-111111111111';
 export const REQUEST_ID_OK = '22222222-2222-4222-8222-222222222222';
 export const OWNER_TOKEN_OK = '33333333-3333-4333-8333-333333333333';
@@ -188,7 +190,7 @@ export function buildContext(options: ContextOptions = {}): Context {
     registry,
     grants: grants as never,
     repository,
-    UUID_PATTERN,
+    UUID_PATTERN: UUID_ANY_PATTERN,
     principal: options.principal ?? (async () => consolePrincipal()),
     openPredicate: (ttlParameter: number) =>
       `closed_at IS NULL AND revoked_at IS NULL AND ((consumed_at IS NULL AND expires_at > now()) OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${String(ttlParameter)}) > now()))`,

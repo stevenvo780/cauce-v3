@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildPublishReceipt } from '@cauce/protocol';
+import { buildPublishReceipt, type Permission } from '@cauce/protocol';
 import {
   buildGateway, type AuthProvider, type GatewayRepository, type Principal,
 } from '../../services/gateway/src/index.js';
@@ -828,7 +828,7 @@ describe('proactive egress endpoint', () => {
     const repository = fakeRepository();
     repository.principalAccess = vi.fn(async () => ({
       roles: ['agent'],
-      permissions: ['route', 'read', 'notify'] as ('route' | 'read' | 'control' | 'notify')[]
+      permissions: ['route', 'read', 'notify'] as Permission[]
     }));
     repository.listNotifications = vi.fn(async () => ({
       items: [

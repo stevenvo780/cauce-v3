@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeHarness } from '@cauce/adapter-sdk';
 import {
-  publishReceiptCausalHash, PublishResultSchema, type Ack, type DeliveryEnvelope,
+  publishReceiptCausalHash, PublishResultSchema, type Ack, type DeliveryEnvelope, type Lane,
 } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/app.js';
@@ -38,7 +38,7 @@ interface TestPublish {
   recipients: { tenant_id: 'Steven' | 'Isa' | 'Jhon' | 'Pablo' | 'Miguel'; alias: string }[];
   body: Record<string, unknown>;
   idempotency_key: string;
-  lane: 'interactive' | 'batch';
+  lane: Lane;
   priority: number;
   origin?: { adapter: string; channel: string; conversation_id: string; external_message_id?: string };
 }
