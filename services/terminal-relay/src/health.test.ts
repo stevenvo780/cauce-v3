@@ -32,10 +32,10 @@ describe('terminal relay readiness', () => {
       presenceMaxStaleMs: 30_000,
       now: () => now,
     });
-    const server = createRelayHealthServer(state);
+    const server = createRelayHealthServer(state, { port: 0, host: '127.0.0.1' });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(0, '127.0.0.1', resolve);
+      server.once('listening', resolve);
     });
     cleanup.push(async () => new Promise<void>((resolve) => server.close(() => { resolve(); })));
     const address = server.address() as AddressInfo;
@@ -65,12 +65,23 @@ describe('terminal relay readiness', () => {
     state.beginShutdown();
     expect(await (await request()).json()).toEqual({ status: 'not_ready', reason: 'stopping' });
     expect((await request('/health/live')).status).toBe(200);
+    const metrics = await request('/metrics');
+    expect(metrics.status).toBe(404);
+    expect(await metrics.json()).toEqual({ status: 'not_found' });
+    const rejected = await fetch(`http://127.0.0.1:${String(address.port)}/health/live`, {
+      method: 'POST',
+    });
+    expect(rejected.status).toBe(405);
+    expect(await rejected.json()).toEqual({ status: 'method_not_allowed' });
   });
 
   it('binds the production health endpoint to loopback, never to the published data interfaces', async () => {
     const main = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
-    expect(main).toContain("healthServer.listen(config.healthPort, '127.0.0.1'");
-    expect(main).not.toMatch(/healthServer\.listen\([^\n]*'0\.0\.0\.0'/u);
+    expect(main).toMatch(
+      /createRelayHealthServer\(healthState, \{\s*port: config\.healthPort,\s*host: '127\.0\.0\.1',/u,
+    );
+    expect(main).not.toMatch(/healthServer\.listen\(/u);
+    expect(main).not.toMatch(/createRelayHealthServer\([^)]*'0\.0\.0\.0'/su);
   });
 });
 

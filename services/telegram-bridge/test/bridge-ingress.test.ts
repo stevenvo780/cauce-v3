@@ -3,7 +3,7 @@ import { TelegramPoller } from '../src/poller.js';
 import type { TelegramIngressMessage, TelegramUpdate, TelegramUser } from '../src/types.js';
 import {
   config, DeduplicatingIngress, FakeTelegram, GROUP_CHAT_ID, groupUpdate,
-  legacyGroupConfig, MemoryCursorRepository, TENANT, update
+  legacyGroupConfig, MemoryCursorRepository, TENANT, update, noopActivity, noopObserver
 } from './bridge-fixtures.js';
 
 describe('Telegram group routing (poller integration)', () => {
@@ -18,6 +18,7 @@ describe('Telegram group routing (poller integration)', () => {
     })]);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({
         alias: 'kant',
         allowed_chat_ids: [String(GROUP_CHAT_ID)],
@@ -73,6 +74,7 @@ describe('Telegram group routing (poller integration)', () => {
     const suppressed: unknown[] = [];
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({
         alias: 'kant',
         allowed_chat_ids: [String(GROUP_CHAT_ID)],
@@ -116,6 +118,7 @@ describe('Telegram group routing (poller integration)', () => {
     const suppressed: unknown[] = [];
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({
         alias: 'kant',
         allowed_chat_ids: [String(GROUP_CHAT_ID)],
@@ -155,6 +158,7 @@ describe('Telegram group routing (poller integration)', () => {
     const suppressed: { reason: string; chat_id: string }[] = [];
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({
         alias: 'kant',
         allowed_chat_ids: [String(GROUP_CHAT_ID)],
@@ -181,6 +185,7 @@ describe('Telegram group routing (poller integration)', () => {
     const api = new FakeTelegram([groupUpdate(70, { text: 'no destinatario aquí' })]);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: legacyGroupConfig({
         alias: 'kant',
         allowed_chat_ids: [String(GROUP_CHAT_ID)]
@@ -207,6 +212,7 @@ describe('Telegram group routing (poller integration)', () => {
     const metrics: string[] = [];
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({
         alias: 'kant',
         allowed_chat_ids: [String(GROUP_CHAT_ID)],
@@ -233,6 +239,7 @@ describe('Telegram human authorship', () => {
     const api = new FakeTelegram([update(11)]);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api, repository, ingress
     }).runOnce();
 
@@ -258,6 +265,7 @@ describe('Telegram human authorship', () => {
     }]);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api, repository, ingress
     }).runOnce();
 
@@ -275,6 +283,7 @@ describe('Telegram human authorship', () => {
     })]);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({
         bot_username: 'kantbot',
         allowed_chat_ids: ['201', String(GROUP_CHAT_ID)],
@@ -325,6 +334,7 @@ describe('Telegram DM identity (poller integration)', () => {
     const ingress = new DeduplicatingIngress();
     const api = new FakeTelegram([updateEntry]);
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config({ alias: 'kant', bot_username: 'kant_bot' }),
       botId: '900001',
       api,

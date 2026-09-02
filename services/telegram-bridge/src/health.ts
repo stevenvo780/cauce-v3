@@ -1,4 +1,5 @@
-import { createServer, type Server } from 'node:http';
+import type { Server } from 'node:http';
+import { renderCounters, startHealthServer } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import type { BridgeMetric } from './types.js';
 import type { TelegramBridgeProgress } from './progress.js';
@@ -25,22 +26,18 @@ const METRICS: readonly BridgeMetric[] = [
   'ingress_secret_redacted'
 ];
 
+const METRIC_NAME = 'cauce_telegram_bridge_events_total';
+const METRIC_HELP = 'Telegram bridge outcomes without identifying labels.';
+
 export class TelegramBridgeMetrics {
-  private readonly counters = new Map<BridgeMetric, number>();
+  private readonly counters = new Map<BridgeMetric, number>(METRICS.map((metric) => [metric, 0]));
 
   increment(metric: BridgeMetric): void {
     this.counters.set(metric, (this.counters.get(metric) ?? 0) + 1);
   }
 
   render(): string {
-    const lines = [
-      '# HELP cauce_telegram_bridge_events_total Telegram bridge outcomes without identifying labels.',
-      '# TYPE cauce_telegram_bridge_events_total counter'
-    ];
-    for (const metric of METRICS) {
-      lines.push(`cauce_telegram_bridge_events_total{result="${metric}"} ${String(this.counters.get(metric) ?? 0)}`);
-    }
-    return `${lines.join('\n')}\n`;
+    return renderCounters(METRIC_NAME, METRIC_HELP, this.counters);
   }
 }
 
@@ -50,50 +47,40 @@ export function startTelegramHealthServer(
   metrics: TelegramBridgeMetrics,
   progress: TelegramBridgeProgress
 ): Server {
-  const server = createServer(async (request, response) => {
-    if (request.method !== 'GET') {
-      response.writeHead(405).end();
-      return;
-    }
-    if (request.url === '/health/live') {
+  return startHealthServer({
+    port,
+    // The service has no published host port; binding the internal backend interface is required
+    // for Prometheus in its sibling container to scrape it. Docker's own health probe still uses
+    // 127.0.0.1 from inside this container.
+    host: '0.0.0.0',
+    live: () => {
       const state = progress.snapshot();
-      response.writeHead(state.live ? 200 : 503, {
-        'content-type': 'application/json', 'cache-control': 'no-store'
-      }).end(JSON.stringify({
-        status: state.live ? 'live' : 'not_live', reason: state.reason,
-        pollers: state.pollers, stale_pollers: state.stale_pollers,
-        fenced_pollers: state.fenced_pollers, egress_stale: state.egress_stale,
-        egress_fenced: state.egress_fenced
-      }));
-      return;
-    }
-    if (request.url === '/health/ready') {
+      return {
+        ok: state.live,
+        body: {
+          status: state.live ? 'live' : 'not_live', reason: state.reason,
+          pollers: state.pollers, stale_pollers: state.stale_pollers,
+          fenced_pollers: state.fenced_pollers, egress_stale: state.egress_stale,
+          egress_fenced: state.egress_fenced
+        }
+      };
+    },
+    ready: async () => {
       try {
         await pool.query('SELECT 1');
-        const state = progress.snapshot();
-        response.writeHead(state.ready ? 200 : 503, {
-          'content-type': 'application/json', 'cache-control': 'no-store'
-        }).end(JSON.stringify({
+      } catch {
+        return { ok: false, body: { status: 'not_ready', reason: 'database' } };
+      }
+      const state = progress.snapshot();
+      return {
+        ok: state.ready,
+        body: {
           status: state.ready ? 'ready' : 'not_ready', reason: state.reason,
           aliases: state.pollers, healthy_aliases: state.healthy_pollers,
           egress_configured: state.egress_configured
-        }));
-      } catch {
-        response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-          .end('{"status":"not_ready","reason":"database"}');
-      }
-      return;
-    }
-    if (request.url === '/metrics') {
-      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' })
-        .end(`${metrics.render()}${progress.renderMetrics()}`);
-      return;
-    }
-    response.writeHead(404).end();
+        }
+      };
+    },
+    metrics: () => `${metrics.render()}${progress.renderMetrics()}`
   });
-  // The service has no published host port; binding the internal backend interface is required
-  // for Prometheus in its sibling container to scrape it. Docker's own health probe still uses
-  // 127.0.0.1 from inside this container.
-  server.listen(port, '0.0.0.0');
-  return server;
 }

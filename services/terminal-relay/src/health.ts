@@ -1,26 +1,27 @@
-import { createServer, type Server } from 'node:http';
+import type { Server } from 'node:http';
+import { startHealthServer, type HealthAnswer } from '@cauce/protocol';
 
 /**
  * Readiness for the relay data plane. A listening TCP socket alone is not useful: the process is
  * only routable after both TLS listeners are up and the gateway has accepted a current presence
- * publication. All state is aggregate and identity-free.
+ * publication. All state is aggregate and identity-free, and the relay exposes no `/metrics`.
  */
 
-export type RelayNotReadyReason =
+type RelayNotReadyReason =
   | 'stopping'
   | 'listener_down'
   | 'presence_not_published'
   | 'presence_publish_failed'
   | 'presence_stale';
 
-export interface RelayHealthStateOptions {
+interface RelayHealthStateOptions {
   readonly listenersReady: () => boolean;
   readonly presenceMaxStaleMs: number;
   /** Test seam; production uses the wall clock because the value is process-local only. */
   readonly now?: () => number;
 }
 
-export type RelayReadiness =
+type RelayReadiness =
   | { readonly ready: true }
   | { readonly ready: false; readonly reason: RelayNotReadyReason };
 
@@ -72,36 +73,23 @@ export class RelayHealthState {
   }
 }
 
-function sendJson(response: import('node:http').ServerResponse, status: number, body: unknown): void {
-  const payload = Buffer.from(`${JSON.stringify(body)}\n`, 'utf8');
-  response.writeHead(status, {
-    'cache-control': 'no-store',
-    'content-length': String(payload.byteLength),
-    'content-type': 'application/json; charset=utf-8',
-  });
-  response.end(payload);
+interface RelayHealthServerOptions {
+  readonly port: number;
+  readonly host: string;
 }
 
-export function createRelayHealthServer(state: RelayHealthState): Server {
-  return createServer((request, response) => {
-    if (request.method !== 'GET') {
-      sendJson(response, 405, { status: 'method_not_allowed' });
-      return;
-    }
-    const path = (request.url ?? '/').split('?', 1)[0];
-    if (path === '/health/live') {
-      sendJson(response, 200, { status: 'live' });
-      return;
-    }
-    if (path === '/health/ready') {
+export function createRelayHealthServer(
+  state: RelayHealthState,
+  options: RelayHealthServerOptions,
+): Server {
+  return startHealthServer({
+    port: options.port,
+    host: options.host,
+    live: (): HealthAnswer => ({ ok: true, body: { status: 'live' } }),
+    ready: (): HealthAnswer => {
       const readiness = state.readiness();
-      if (readiness.ready) {
-        sendJson(response, 200, { status: 'ready' });
-      } else {
-        sendJson(response, 503, { status: 'not_ready', reason: readiness.reason });
-      }
-      return;
-    }
-    sendJson(response, 404, { status: 'not_found' });
+      if (readiness.ready) return { ok: true, body: { status: 'ready' } };
+      return { ok: false, body: { status: 'not_ready', reason: readiness.reason } };
+    },
   });
 }

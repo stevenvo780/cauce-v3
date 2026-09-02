@@ -5,6 +5,7 @@ import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramIngress,
   TelegramIngressMessage, TelegramRemoteFile, TelegramSendResult, TelegramUpdate
 } from '../src/types.js';
+import { noopActivity, noopObserver } from './bridge-fixtures.js';
 
 const TENANT = 'Steven';
 const CHAT = 201;
@@ -122,6 +123,7 @@ function poller(
   metrics: string[] = []
 ): TelegramPoller {
   return new TelegramPoller({
+    activity: noopActivity(), observer: noopObserver(),
     config: config(),
     botId: 'synthetic-bot',
     api,

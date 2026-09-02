@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { errorLabel, logEvent } from '@cauce/protocol';
 import {
   claimEpoch,
   isClaimToken,
@@ -6,7 +7,6 @@ import {
   type TerminalGatewayClient,
   type TerminalSessionGrant,
 } from './gateway-client.js';
-import { errorLabel, logEvent } from './log.js';
 import {
   SessionManagerDelegate,
   TerminalSession,
@@ -31,7 +31,7 @@ import {
 export * from './session-limits.js';
 export * from './session-instance.js';
 
-export interface SessionManagerOptions {
+interface SessionManagerOptions {
   readonly gateway: TerminalGatewayClient;
   readonly limits: SessionLimits;
   readonly now?: () => number;

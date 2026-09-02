@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TelegramPoller } from '../src/poller.js';
 import type { TelegramIngress, TelegramIngressMessage } from '../src/types.js';
-import { config, FakeTelegram, MemoryCursorRepository, update } from './bridge-fixtures.js';
+import { config, FakeTelegram, MemoryCursorRepository, update, noopActivity, noopObserver } from './bridge-fixtures.js';
 
 /**
  * Shaped exactly like the store's idempotency-key conflict: same `request_id`
@@ -32,6 +32,7 @@ describe('poller idempotency-conflict resolution', () => {
     const metrics: string[] = [];
 
     const poller = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(),
       botId: '900001',
       api,
@@ -62,6 +63,7 @@ describe('poller idempotency-conflict resolution', () => {
       }
     }
     const poller = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(),
       botId: '900001',
       api: new FakeTelegram([update(80)]),

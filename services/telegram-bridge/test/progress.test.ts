@@ -95,4 +95,64 @@ describe('Telegram progress health endpoints', () => {
     now += 5_001;
     expect((await fetch(`http://127.0.0.1:${String(port)}/health/live`)).status).toBe(503);
   });
+
+  it('routes a probe carrying a query string and refuses a non-GET method', async () => {
+    const progress = new TelegramBridgeProgress(() => 1_000);
+    progress.registerPoller('one', 5_000);
+    progress.registerEgress(5_000);
+    const pool = { async query() { return { rows: [], rowCount: 1 }; } } as unknown as DatabasePool;
+    const server = startTelegramHealthServer(0, pool, new TelegramBridgeMetrics(), progress);
+    servers.push(server);
+    await once(server, 'listening');
+    const port = (server.address() as AddressInfo).port;
+
+    // A scraper that appends a cache-buster must reach the probe, not a 404.
+    const ready = await fetch(`http://127.0.0.1:${String(port)}/health/ready?x=1`);
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toMatchObject({ status: 'not_ready', reason: 'starting' });
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health/live?x=1`)).status).toBe(200);
+    expect((await fetch(`http://127.0.0.1:${String(port)}/metrics?x=1`)).status).toBe(200);
+    expect((await fetch(`http://127.0.0.1:${String(port)}/nope`)).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${String(port)}/health/live`, { method: 'POST' })).status).toBe(405);
+  });
+
+  it('answers not_ready with the database reason when the probe query fails', async () => {
+    const progress = new TelegramBridgeProgress(() => 1_000);
+    progress.registerPoller('one', 5_000);
+    progress.registerEgress(5_000);
+    progress.pollCycleStarted('one'); progress.pollCycleSucceeded('one', 0);
+    progress.egressCycleStarted(); progress.egressCycleSucceeded(0);
+    const pool = { query() { return Promise.reject(new Error('down')); } } as unknown as DatabasePool;
+    const server = startTelegramHealthServer(0, pool, new TelegramBridgeMetrics(), progress);
+    servers.push(server);
+    await once(server, 'listening');
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${String(port)}/health/ready`);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ status: 'not_ready', reason: 'database' });
+  });
+});
+
+describe('Telegram bridge counters', () => {
+  it('publishes every declared series, zeros included, in a stable order', () => {
+    const metrics = new TelegramBridgeMetrics();
+    const rendered = metrics.render();
+    const lines = rendered.split('\n');
+
+    expect(lines[0]).toBe(
+      '# HELP cauce_telegram_bridge_events_total Telegram bridge outcomes without identifying labels.'
+    );
+    expect(lines[1]).toBe('# TYPE cauce_telegram_bridge_events_total counter');
+    expect(lines[2]).toBe('cauce_telegram_bridge_events_total{result="updates_allowed"} 0');
+    // A series that vanishes while it is zero breaks rate() over a restart.
+    expect(rendered).toContain('cauce_telegram_bridge_events_total{result="ingress_secret_redacted"} 0');
+
+    metrics.increment('egress_sent');
+    metrics.increment('egress_sent');
+    const after = metrics.render().split('\n');
+    expect(after).toContain('cauce_telegram_bridge_events_total{result="egress_sent"} 2');
+    // Incrementing must not reorder the family.
+    expect(after.map((line) => line.split('"')[1])).toEqual(lines.map((line) => line.split('"')[1]));
+  });
 });

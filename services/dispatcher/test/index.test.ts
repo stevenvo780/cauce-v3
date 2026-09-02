@@ -3,8 +3,10 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   dockerTestRequirement, resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
-import { JobHandlerRegistry } from '../src/handlers.js';
-import { runDispatcher, UnknownJobKindError } from '../src/index.js';
+import type { JobHandlers } from '../src/handlers.js';
+import {
+  createDefaultJobHandlerRegistry, runDispatcher, UnknownJobKindError
+} from '../src/index.js';
 import { DispatcherMetrics } from '../src/metrics.js';
 
 const postgresRequirement = dockerTestRequirement(
@@ -39,9 +41,9 @@ describe('bucle durable del dispatcher', () => {
   it('completa sólo el job cuyo handler registrado termina bien', async () => {
     const handled: Readonly<Record<string, unknown>>[] = [];
     const errors: unknown[] = [];
-    const handlers = new JobHandlerRegistry().register('qa.success', async (job) => {
-      handled.push(job.payload);
-    });
+    const handlers: JobHandlers = {
+      'qa.success': async (job) => { handled.push(job.payload); },
+    };
     const metrics = new DispatcherMetrics(pool, () => 1_000);
     const jobId = await repository.enqueueJob(
       'Steven', 'interactive', 7, 'qa.success', { marker: 'handled' }
@@ -76,9 +78,9 @@ describe('bucle durable del dispatcher', () => {
 
   it('reintenta el job que falla sin convertir el tick en fallo del bucle', async () => {
     const errors: unknown[] = [];
-    const handlers = new JobHandlerRegistry().register('qa.retry', async () => {
-      throw new Error('handler falló');
-    });
+    const handlers: JobHandlers = {
+      'qa.retry': async () => { throw new Error('handler falló'); },
+    };
     const metrics = new DispatcherMetrics(pool, () => 1_000);
     const jobId = await repository.enqueueJob('Steven', 'batch', 3, 'qa.retry', { attempt: 1 });
     const dispatcher = runDispatcher(pool, {
@@ -120,7 +122,7 @@ describe('bucle durable del dispatcher', () => {
       pollMs: 60_000,
       chainSweepMs: 0,
       retentionIntervalMs: 0,
-      handlers: new JobHandlerRegistry(),
+      handlers: {},
       metrics,
       onError: (error) => { errors.push(error); },
     });
@@ -153,9 +155,11 @@ describe('bucle durable del dispatcher', () => {
 
   it('cuenta una sola vez el fencing que impide completar el job', async () => {
     const errors: unknown[] = [];
-    const handlers = new JobHandlerRegistry().register('qa.fenced', async (job) => {
-      await pool.query('UPDATE jobs SET claim_token=gen_random_uuid() WHERE id=$1', [job.id]);
-    });
+    const handlers: JobHandlers = {
+      'qa.fenced': async (job) => {
+        await pool.query('UPDATE jobs SET claim_token=gen_random_uuid() WHERE id=$1', [job.id]);
+      },
+    };
     const metrics = new DispatcherMetrics(pool, () => 1_000);
     const jobId = await repository.enqueueJob('Steven', 'interactive', 5, 'qa.fenced', {});
     const dispatcher = runDispatcher(pool, {
@@ -194,13 +198,15 @@ describe('bucle durable del dispatcher', () => {
     const firstEntered = new Promise<void>((resolve) => { markEntered = resolve; });
     const firstRelease = new Promise<void>((resolve) => { releaseFirst = resolve; });
     const handled: string[] = [];
-    const handlers = new JobHandlerRegistry().register('qa.serial', async (job) => {
-      handled.push(job.id);
-      if (handled.length === 1) {
-        markEntered?.();
-        await firstRelease;
-      }
-    });
+    const handlers: JobHandlers = {
+      'qa.serial': async (job) => {
+        handled.push(job.id);
+        if (handled.length === 1) {
+          markEntered?.();
+          await firstRelease;
+        }
+      },
+    };
     await repository.enqueueJob('Steven', 'interactive', 2, 'qa.serial', { order: 1 });
     await repository.enqueueJob('Steven', 'interactive', 1, 'qa.serial', { order: 2 });
     const metrics = new DispatcherMetrics(pool, () => 1_000);
@@ -238,5 +244,38 @@ describe('bucle durable del dispatcher', () => {
     expect(completed.rows[0]?.count).toBe('2');
     expect(handled).toHaveLength(2);
     expect(metrics.progress()).toMatchObject({ ticks: 2, successfulTicks: 2 });
+  });
+
+  it('manda a dead letter un kind heredado de Object.prototype sin ejecutarlo', async () => {
+    const errors: unknown[] = [];
+    const metrics = new DispatcherMetrics(pool, () => 1_000);
+    const jobId = await repository.enqueueJob(
+      'Steven', 'interactive', 1, 'toString', { poison: true }
+    );
+    const dispatcher = runDispatcher(pool, {
+      pollMs: 60_000,
+      chainSweepMs: 0,
+      retentionIntervalMs: 0,
+      handlers: createDefaultJobHandlerRegistry(pool, 'production'),
+      metrics,
+      onError: (error) => { errors.push(error); },
+    });
+
+    try {
+      await dispatcher.tick();
+    } finally {
+      dispatcher.stop();
+    }
+
+    const result = await pool.query<{ status: string; reason: string }>(
+      `SELECT j.status,dl.reason FROM jobs j JOIN dead_letters dl ON dl.job_id=j.id WHERE j.id=$1`,
+      [jobId]
+    );
+    expect(result.rows[0]).toEqual({ status: 'dead', reason: 'unknown job kind: toString' });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(UnknownJobKindError);
+    expect(await metrics.render(false)).toContain(
+      'cauce_dispatcher_jobs_processed_total{lane="interactive",result="unknown_kind"} 1'
+    );
   });
 });

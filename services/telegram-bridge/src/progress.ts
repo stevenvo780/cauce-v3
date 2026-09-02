@@ -25,9 +25,9 @@ interface LoopState {
   lastResult: 'success' | 'error' | 'fenced' | undefined;
 }
 
-export type TelegramHealthReason = 'starting' | 'loop_stale' | 'loop_errors' | 'fenced' | 'ready';
+type TelegramHealthReason = 'starting' | 'loop_stale' | 'loop_errors' | 'fenced' | 'ready';
 
-export interface TelegramProgressSnapshot {
+interface TelegramProgressSnapshot {
   readonly live: boolean;
   readonly ready: boolean;
   readonly reason: TelegramHealthReason;

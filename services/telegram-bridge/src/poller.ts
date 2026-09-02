@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Origin } from '@cauce/protocol';
+import { logEvent, type Origin } from '@cauce/protocol';
 import type { TelegramActivity } from './activity.js';
 import type {
   AddressingDecision, AddressingSelf, FleetDirectory, SuppressionReason
@@ -11,7 +11,6 @@ import {
   id,
   isPrivateChatId,
   isRequestConflict,
-  logJsonLine,
   normalizedBody,
   privateContext,
   session,
@@ -32,16 +31,16 @@ import { safeInline, safeText, untrustedAuthor } from './untrusted.js';
 
 export { normalizedBody, telegramSessionId, type BodyContext };
 
-export interface TelegramPollerOptions {
+interface TelegramPollerOptions {
   config: TelegramAliasConfig;
   botId: string;
   api: TelegramApi;
   repository: TelegramCursorRepository;
   ingress: TelegramIngress;
-  activity?: TelegramActivity;
+  activity: TelegramActivity;
   ownerId?: string;
   onMetric?: (metric: BridgeMetric) => void;
-  observer?: TelegramLoopObserver;
+  observer: TelegramLoopObserver;
   /** Usernames/bot ids of the whole fleet. Defaults to a directory holding only this bot. */
   fleet?: FleetDirectory;
   /** Verified `getMe` username of this bot, used to match `@self` mentions. */
@@ -70,7 +69,7 @@ export interface TelegramPollerOptions {
  * invisibly and irreversibly. This record is ids and enums only — no message text, no display
  * name — so it stays safe to emit to the container log.
  */
-export interface SuppressedUpdate {
+interface SuppressedUpdate {
   readonly event: 'telegram_group_update_suppressed';
   readonly alias: string;
   readonly tenant_id: string;
@@ -84,7 +83,8 @@ export interface SuppressedUpdate {
 }
 
 function logSuppressedUpdate(record: SuppressedUpdate): void {
-  logJsonLine({ ...record });
+  const { event, ...fields } = record;
+  logEvent(event, fields);
 }
 
 
@@ -94,10 +94,10 @@ export class TelegramPoller {
   private readonly api: TelegramApi;
   private readonly repository: TelegramCursorRepository;
   private readonly ingress: TelegramIngress;
-  private readonly activity: TelegramActivity | undefined;
+  private readonly activity: TelegramActivity;
   private readonly ownerId: string;
   private readonly onMetric: (metric: BridgeMetric) => void;
-  private readonly observer: TelegramLoopObserver | undefined;
+  private readonly observer: TelegramLoopObserver;
   private readonly fleet: FleetDirectory;
   private readonly self: AddressingSelf;
   private readonly participants: ((chatId: string, threadId: string) => ReadonlySet<string>) | undefined;
@@ -149,7 +149,7 @@ export class TelegramPoller {
 
   private markPollFenced(): void {
     this.onMetric('poll_fenced');
-    this.observer?.pollCycleFenced(this.config.alias);
+    this.observer.pollCycleFenced(this.config.alias);
   }
 
   /**
@@ -383,7 +383,7 @@ export class TelegramPoller {
     }
     if (!result.duplicate && !signal?.aborted) {
       try {
-        this.activity?.begin({
+        this.activity.begin({
           alias: this.config.alias,
           api: this.api,
           chatId,
@@ -472,7 +472,7 @@ export class TelegramPoller {
       this.currentLease = current;
       // This is real per-update progress.  Lease renewal by itself must not keep health green
       // while the same update is hung forever.
-      this.observer?.pollCycleHeartbeat(this.config.alias);
+      this.observer.pollCycleHeartbeat(this.config.alias);
     }
     return updates.length;
   }
@@ -480,22 +480,21 @@ export class TelegramPoller {
   async run(signal: AbortSignal, idleMs = 250): Promise<void> {
     let failures = 0;
     while (!signal.aborted) {
-      this.observer?.pollCycleStarted(this.config.alias);
+      this.observer.pollCycleStarted(this.config.alias);
       try {
         const count = await this.runOnce(signal);
-        this.observer?.pollCycleSucceeded(this.config.alias, count);
+        this.observer.pollCycleSucceeded(this.config.alias, count);
         failures = 0;
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
         // An operator-requested shutdown is not a failed poll. The cursor remains at the last
         // completely handled update, so the first unhandled update is replayed after restart.
         if ((signal as unknown as { aborted: boolean }).aborted) break;
-        this.observer?.pollCycleFailed(this.config.alias);
+        this.observer.pollCycleFailed(this.config.alias);
         this.onMetric('poll_error');
         failures += 1;
         // Error log entry for the polling cycle.
-        logJsonLine({
-          event: 'telegram_poll_error',
+        logEvent('telegram_poll_error', {
           bot_id: this.botId,
           alias: this.config.alias,
           tenant_id: this.config.tenant_id,

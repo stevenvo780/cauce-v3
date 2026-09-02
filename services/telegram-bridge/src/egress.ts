@@ -21,7 +21,7 @@ export class EgressCrash extends Error {
   }
 }
 
-export interface TelegramEgressHooks {
+interface TelegramEgressHooks {
   beforeBegin?: (effectId: string) => void | Promise<void>;
   /** Runs after the durable sending transition and immediately before sendText. */
   beforeSend?: (effectId: string) => void | Promise<void>;
@@ -29,7 +29,7 @@ export interface TelegramEgressHooks {
   afterComplete?: (effectId: string) => void | Promise<void>;
 }
 
-export interface TelegramEgressWorkerOptions {
+interface TelegramEgressWorkerOptions {
   repository: TelegramEgressRepository;
   aliases: readonly TelegramAliasConfig[];
   apis: ReadonlyMap<string, TelegramApi>;
@@ -37,9 +37,9 @@ export interface TelegramEgressWorkerOptions {
   leaseMs?: number;
   baseRetryMs?: number;
   hooks?: TelegramEgressHooks;
-  activity?: TelegramActivity;
+  activity: TelegramActivity;
   onMetric?: (metric: BridgeMetric) => void;
-  observer?: TelegramLoopObserver;
+  observer: TelegramLoopObserver;
 }
 
 class EgressLeaseLost extends Error {
@@ -273,9 +273,9 @@ export class TelegramEgressWorker {
   private readonly leaseMs: number;
   private readonly baseRetryMs: number;
   private readonly hooks: TelegramEgressHooks;
-  private readonly activity: TelegramActivity | undefined;
+  private readonly activity: TelegramActivity;
   private readonly onMetric: (metric: BridgeMetric) => void;
-  private readonly observer: TelegramLoopObserver | undefined;
+  private readonly observer: TelegramLoopObserver;
 
   constructor(options: TelegramEgressWorkerOptions) {
     this.repository = options.repository;
@@ -297,7 +297,7 @@ export class TelegramEgressWorker {
   private async ensureLease(event: TelegramOriginRelay): Promise<void> {
     try {
       if (await this.repository.renew(event, this.leaseMs)) {
-        this.observer?.egressCycleHeartbeat();
+        this.observer.egressCycleHeartbeat();
         return;
       }
     } catch {
@@ -309,7 +309,7 @@ export class TelegramEgressWorker {
 
   private markEgressFenced(): void {
     this.onMetric('egress_fenced');
-    this.observer?.egressCycleFenced();
+    this.observer.egressCycleFenced();
   }
 
   private async durableAck(
@@ -425,7 +425,7 @@ export class TelegramEgressWorker {
       messageId
     };
     try {
-      this.activity?.finish(target, outcome);
+      this.activity.finish(target, outcome);
     } catch {
       // Reactions are best-effort and must never change a durable relay ACK.
     }
@@ -605,13 +605,13 @@ export class TelegramEgressWorker {
 
   async run(signal: AbortSignal, idleMs = 250): Promise<void> {
     while (!signal.aborted) {
-      this.observer?.egressCycleStarted();
+      this.observer.egressCycleStarted();
       try {
         const count = await this.runOnce();
-        this.observer?.egressCycleSucceeded(count);
+        this.observer.egressCycleSucceeded(count);
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
-        this.observer?.egressCycleFailed();
+        this.observer.egressCycleFailed();
         this.onMetric('egress_loop_error');
         if (error instanceof EgressCrash) throw error;
         await sleep(1_000, signal);

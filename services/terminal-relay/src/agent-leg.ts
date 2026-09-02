@@ -1,4 +1,5 @@
 import { createServer, type Server as TlsServer, type TLSSocket } from 'node:tls';
+import { errorLabel, logEvent, shortFingerprint } from '@cauce/protocol';
 import { AgentConnection } from './agent-connection.js';
 import {
   HELLO_TIMEOUT_MS,
@@ -17,12 +18,11 @@ import {
   type Frame,
 } from './framing.js';
 import type { AgentPresence } from './gateway-client.js';
-import { errorLabel, logEvent, shortFingerprint } from './log.js';
 
 export * from './agent-hello.js';
 export * from './agent-connection.js';
 
-export interface AgentTlsMaterial {
+interface AgentTlsMaterial {
   readonly cert: Buffer | string;
   readonly key: Buffer | string;
   readonly ca: Buffer | string;
@@ -43,7 +43,7 @@ export function createAgentTlsServer(material: AgentTlsMaterial): TlsServer {
   });
 }
 
-export interface AgentLegOptions {
+interface AgentLegOptions {
   readonly server: TlsServer;
   readonly registryFile: string;
   readonly now?: () => number;

@@ -1,4 +1,6 @@
 import type { Origin, Tenant } from '@cauce/protocol';
+import type { TelegramActivity } from '../src/activity.js';
+import type { TelegramLoopObserver } from '../src/progress.js';
 import { TelegramApiError } from '../src/telegram.js';
 import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramEffect,
@@ -8,6 +10,25 @@ import type {
 } from '../src/types.js';
 
 export const TENANT = 'Steven';
+
+export function noopActivity(): TelegramActivity {
+  return { begin: () => undefined, finish: () => undefined, stop: () => undefined };
+}
+
+export function noopObserver(): TelegramLoopObserver {
+  return {
+    pollCycleStarted: () => undefined,
+    pollCycleHeartbeat: () => undefined,
+    pollCycleFenced: () => undefined,
+    pollCycleSucceeded: () => undefined,
+    pollCycleFailed: () => undefined,
+    egressCycleStarted: () => undefined,
+    egressCycleHeartbeat: () => undefined,
+    egressCycleFenced: () => undefined,
+    egressCycleSucceeded: () => undefined,
+    egressCycleFailed: () => undefined
+  };
+}
 
 export function config(overrides: Partial<TelegramAliasConfig> = {}): TelegramAliasConfig {
   return {

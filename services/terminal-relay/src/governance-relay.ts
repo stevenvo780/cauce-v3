@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
-import { AliasSchema, TenantSchema } from '@cauce/protocol';
+import { AliasSchema, errorLabel, logEvent, TenantSchema } from '@cauce/protocol';
 import type { AgentLookup } from './agent-leg.js';
 import {
   MAX_GOVERNANCE_BYTES, requestDirectoryRead, requestFileRead, requestFileWrite,
@@ -9,7 +9,6 @@ import {
   type GovernanceWriteBatchEntry,
   type GovernanceWriteBatchOutcome, type GovernanceWritePrecondition,
 } from './gateway-client.js';
-import { errorLabel, logEvent } from './log.js';
 import { hasControlCharacter } from './validation.js';
 
 /**
@@ -46,7 +45,7 @@ const MAX_REQUEST_BYTES = 512 * 1024;
 
 const MAX_PATH_LENGTH = 4096;
 
-export interface GovernanceRelayOptions {
+interface GovernanceRelayOptions {
   /** The same browser-side server; a `request` listener is added to it, not a new one. */
   readonly server: HttpsServer;
   readonly agents: AgentLookup;
@@ -120,7 +119,7 @@ async function readBody(request: IncomingMessage): Promise<string | undefined> {
 }
 
 /** The request, or the rejection reason. Fail-closed: a field that does not match is not corrected, it is rejected. */
-export function parseReadRequest(raw: string): ReadRequest | { readonly rejected: string } {
+function parseReadRequest(raw: string): ReadRequest | { readonly rejected: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

@@ -3,6 +3,7 @@ import { createServer as createHttpsServer, type Server as HttpsServer } from 'n
 import { performance } from 'node:perf_hooks';
 import { TLSSocket } from 'node:tls';
 import type { Duplex } from 'node:stream';
+import { errorLabel, logEvent } from '@cauce/protocol';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type { AgentLookup } from './agent-leg.js';
 import { isSessionId } from './framing.js';
@@ -16,7 +17,6 @@ import {
   type TerminalGatewayClient,
   type TerminalSessionGrant,
 } from './gateway-client.js';
-import { errorLabel, logEvent } from './log.js';
 import { isRelayInstanceId } from './relay-identity.js';
 import {
   clampTerminalGeometry, CLOSE_CODES, MAX_EARLY_CLIENT_BYTES, rawDataByteLength, rawText,
@@ -30,7 +30,7 @@ import {
  * asks the gateway to consume the ticket instead.
  */
 
-export const BROWSER_WS_PATH_PREFIX = '/v3/console/terminal/relays';
+const BROWSER_WS_PATH_PREFIX = '/v3/console/terminal/relays';
 export function browserWebSocketPath(relayInstanceId: string): string {
   if (!isRelayInstanceId(relayInstanceId)) throw new Error('terminal relay instance id is invalid');
   return `${BROWSER_WS_PATH_PREFIX}/${relayInstanceId}/ws`;
@@ -43,7 +43,7 @@ const CLAIM_RETRY_MAX_MS = 1_000;
 const MAX_QUEUED_MESSAGES = 32;
 const WS_OPEN = 1;
 
-export interface InitialAttachRequest {
+interface InitialAttachRequest {
   readonly type: 'attach';
   readonly session_id: string;
   readonly ticket: string;
@@ -51,7 +51,7 @@ export interface InitialAttachRequest {
   readonly rows: number;
 }
 
-export interface ResumeAttachRequest {
+interface ResumeAttachRequest {
   readonly type: 'resume';
   readonly session_id: string;
   readonly resume_token: string;
@@ -62,7 +62,7 @@ export interface ResumeAttachRequest {
   readonly rows: number;
 }
 
-export type AttachRequest = InitialAttachRequest | ResumeAttachRequest;
+type AttachRequest = InitialAttachRequest | ResumeAttachRequest;
 
 /** The first frame is text JSON or the connection is not ours. */
 export function parseAttachRequest(data: RawData, isBinary: boolean): AttachRequest | undefined {
@@ -99,7 +99,7 @@ export function parseAttachRequest(data: RawData, isBinary: boolean): AttachRequ
   };
 }
 
-export interface BrowserTlsMaterial {
+interface BrowserTlsMaterial {
   readonly cert: Buffer | string;
   readonly key: Buffer | string;
   /** CA of the console nginx client certificate. */
@@ -122,7 +122,7 @@ export function createBrowserHttpsServer(material: BrowserTlsMaterial): HttpsSer
 }
 
 /** Common name of the verified peer, or undefined when the transport is not trusted mTLS. */
-export function consoleCommonName(socket: Duplex): string | undefined {
+function consoleCommonName(socket: Duplex): string | undefined {
   if (!(socket instanceof TLSSocket) || !socket.authorized) return undefined;
   const subject: unknown = socket.getPeerCertificate().subject;
   if (subject === null || typeof subject !== 'object') return undefined;
@@ -130,7 +130,7 @@ export function consoleCommonName(socket: Duplex): string | undefined {
   return typeof commonName === 'string' && commonName.length > 0 ? commonName : undefined;
 }
 
-export interface BrowserLegOptions {
+interface BrowserLegOptions {
   readonly server: HttpsServer;
   readonly relayInstanceId: string;
   readonly consoleCommonNames: readonly string[];

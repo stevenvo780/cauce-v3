@@ -11,6 +11,7 @@ import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramRemoteFile,
   TelegramSendResult, TelegramUpdate
 } from '../src/types.js';
+import { noopActivity, noopObserver } from './bridge-fixtures.js';
 
 const postgresRequirement = dockerTestRequirement(
   'PostgreSQL Telegram publish-before-cursor replay, idempotency and durable cursor contracts',
@@ -102,6 +103,7 @@ describe('Telegram PostgreSQL ingress boundary', () => {
     await cursor.initializeCursor(botId, 'Steven', 'kant');
     const metrics: string[] = [];
     const worker = new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config,
       botId,
       api: new OneUpdateTelegram({

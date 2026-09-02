@@ -1,10 +1,10 @@
 import type { TLSSocket } from 'node:tls';
+import { errorLabel, logEvent } from '@cauce/protocol';
 import {
   decodeDataFrame, decodeJsonFrame, encodeDataFrame, encodeFrame, encodeJsonFrame,
   FramingError, FRAME_TAGS, MAX_DATA_BYTES, type Frame
 } from './framing.js';
 import type { AgentPresence, TerminalMode } from './gateway-client.js';
-import { errorLabel, logEvent } from './log.js';
 import {
   AGENT_PING_INTERVAL_MS,
   AGENT_PONG_TIMEOUT_MS,

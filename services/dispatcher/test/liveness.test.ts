@@ -168,7 +168,28 @@ describe('dispatcher liveness: the probe must go red when the loop stops', () =>
 
     const missing = await fetch(`${baseUrl}/missing`);
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toEqual({ error: 'not_found' });
+    expect(await missing.json()).toEqual({ status: 'not_found' });
+  });
+
+  it('answers the probe path with a query string and rejects a non-GET method', async () => {
+    const metrics = new DispatcherMetrics(idlePool);
+    const baseUrl = await listenHealth({
+      pool: idlePool,
+      metrics,
+      healthStaleMs: 1_000,
+      environment: 'test',
+      lastError: () => undefined,
+    });
+
+    const queried = await fetch(`${baseUrl}/health/live?probe=kubelet`);
+    expect(queried.status).toBe(200);
+    expect(queried.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(queried.headers.get('content-length')).not.toBeNull();
+    expect(await queried.json()).toMatchObject({ status: 'live', reason: 'starting' });
+
+    const posted = await fetch(`${baseUrl}/health/live`, { method: 'POST' });
+    expect(posted.status).toBe(405);
+    expect(await posted.json()).toEqual({ status: 'method_not_allowed' });
   });
 
   it('reports database failures without disguising them as loop progress failures', async () => {

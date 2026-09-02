@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  hasGovernanceSensitivePathSegment, hasUnsafeTextCodePoint, isStrictUtcIso8601
+  hasGovernanceSensitivePathSegment, hasUnsafeTextCodePoint, isStrictUtcIso8601, logEvent
 } from '@cauce/protocol';
 import type { AgentConnection } from './agent-leg.js';
-import { logEvent } from './log.js';
 import { hasControlCharacter, integerField, stringField } from './validation.js';
 
 /**
@@ -30,7 +29,7 @@ const READ_CODES: readonly GovernanceReadCode[] = [
   'too_large', 'timeout', 'cancelled', 'busy', 'unavailable', 'unknown'
 ];
 
-export interface GovernanceFileRead {
+interface GovernanceFileRead {
   readonly path: string;
   /** REAL size of the file, even when `content` is truncated. */
   readonly bytes: number;
@@ -41,7 +40,7 @@ export interface GovernanceFileRead {
   readonly content: string;
 }
 
-export interface GovernanceReadFailure {
+interface GovernanceReadFailure {
   readonly error: GovernanceReadCode;
   readonly reason: string;
 }
@@ -49,13 +48,13 @@ export interface GovernanceReadFailure {
 export type FileReadOutcome = GovernanceFileRead | GovernanceReadFailure;
 
 /** The directory index only transports metadata; never the bytes of the files. */
-export interface GovernanceDirectoryEntry {
+interface GovernanceDirectoryEntry {
   readonly path: string;
   readonly bytes: number;
   readonly modified_at: string;
 }
 
-export interface GovernanceDirectoryRead {
+interface GovernanceDirectoryRead {
   /** Absolute path the agent authenticated as the root of the sweep. */
   readonly path: string;
   /** Exact total only if the sweep finished; null when the cap left a lower bound. */
@@ -69,7 +68,7 @@ export interface GovernanceDirectoryRead {
 export type DirectoryReadOutcome = GovernanceDirectoryRead | GovernanceReadFailure;
 
 /** It's the same ceiling the pty-agent uses when building its index. */
-export const MAX_GOVERNANCE_DIRECTORY_ENTRIES = 200;
+const MAX_GOVERNANCE_DIRECTORY_ENTRIES = 200;
 const MAX_GOVERNANCE_PATH_BYTES = 4_096;
 const MAX_GOVERNANCE_DATE_BYTES = 64;
 const MAX_GOVERNANCE_REASON_BYTES = 2_048;

@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { logEvent } from '@cauce/protocol';
 import {
   CauceRepository, type ChainSilenceSweepOptions, type DatabasePool,
   type ObservabilityRetentionPolicy,
 } from '@cauce/store';
-import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlerRegistry } from './handlers.js';
+import { asClaimedJob, createDefaultJobHandlerRegistry, type JobHandlers } from './handlers.js';
 import type { DispatcherMetrics } from './metrics.js';
 import { type DispatcherPhase, PhaseGuard } from './phases.js';
 
-export interface DispatcherOptions {
+interface DispatcherOptions {
   pollMs?: number;
   staleAckMs?: number;
   interactiveBurst?: number;
@@ -23,7 +24,7 @@ export interface DispatcherOptions {
   /** Silent-chain watchdog clock (P0-4). 0 disables it. */
   chainSweepMs?: number;
   chainSweep?: ChainSilenceSweepOptions;
-  handlers?: JobHandlerRegistry;
+  handlers?: JobHandlers;
   metrics?: DispatcherMetrics;
   onError?: (error: unknown, phase?: DispatcherPhase) => void;
 }
@@ -50,7 +51,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
   const runClaimedJobs = async (jobs: readonly Readonly<Record<string, unknown>>[]): Promise<void> => {
     for (const job of jobs) {
       const claimed = asClaimedJob(job);
-      const handler = handlers.get(claimed.kind);
+      const handler = Object.hasOwn(handlers, claimed.kind) ? handlers[claimed.kind] : undefined;
       if (!handler) {
         const error = new UnknownJobKindError(claimed.kind);
         const deadLettered = await deadLetterUnknownJob(
@@ -108,7 +109,7 @@ export function runDispatcher(pool: DatabasePool, options: DispatcherOptions = {
         await guard.run('retention', async () => {
           const pruned = await repository.pruneObservability(options.retention ?? {});
           if (pruned.ack_renewals + pruned.acks + pruned.audit_renewals + pruned.audit_events > 0) {
-            console.log(JSON.stringify({ event: 'observability_pruned', ...pruned }));
+            logEvent('observability_pruned', { ...pruned }, { level: 'info' });
           }
         });
       }

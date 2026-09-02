@@ -1,23 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { logEvent } from '@cauce/protocol';
 import type { AgentConnection, AgentGovernanceBatchEntry } from './agent-leg.js';
 import { MAX_GOVERNANCE_BYTES, type GovernanceReadCode } from './governance-read.js';
-import { logEvent } from './log.js';
 import { integerField, stringField } from './validation.js';
 
-export type GovernanceWriteOperation = 'replace' | 'create';
+type GovernanceWriteOperation = 'replace' | 'create';
 
 export type GovernanceWritePrecondition =
   | { readonly state: 'present'; readonly sha256: string }
   | { readonly state: 'absent' };
 
-export interface GovernanceFileWrite {
+interface GovernanceFileWrite {
   readonly path: string;
   readonly operation: GovernanceWriteOperation;
   readonly sha: string;
   readonly bytes: number;
 }
 
-export interface GovernanceWriteFailure {
+interface GovernanceWriteFailure {
   readonly error: GovernanceReadCode | 'conflict';
   readonly reason: string;
 }
@@ -137,9 +137,9 @@ export type GovernanceWriteBatchEntry =
       readonly precondition: GovernanceWritePrecondition;
     };
 
-export type GovernanceBatchAckOperation = 'create' | 'replace' | 'unchanged' | 'absent';
+type GovernanceBatchAckOperation = 'create' | 'replace' | 'unchanged' | 'absent';
 
-export interface GovernanceBatchFileAck {
+interface GovernanceBatchFileAck {
   readonly path: string;
   readonly operation: GovernanceBatchAckOperation;
   readonly sha: string | null;
@@ -150,7 +150,7 @@ export type GovernanceWriteBatchOutcome =
   | { readonly files: readonly GovernanceBatchFileAck[] }
   | GovernanceWriteFailure;
 
-export const MAX_GOVERNANCE_BATCH_FILES = 7;
+const MAX_GOVERNANCE_BATCH_FILES = 7;
 
 /**
  * Multi-file governed profile. `verify` accredits state without opening for writing or changing

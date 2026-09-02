@@ -1,4 +1,4 @@
-import { DELIVERY_STATES, type DeliveryState, type Lane } from '@cauce/protocol';
+import { DELIVERY_STATES, renderCounters, type DeliveryState, type Lane } from '@cauce/protocol';
 import type { ChainSilenceSweepResult, DatabasePool } from '@cauce/store';
 import { DISPATCHER_PHASES, type DispatcherPhase } from './phases.js';
 
@@ -13,7 +13,7 @@ interface CountRow {
   oldest_seconds?: number | string;
 }
 
-export interface DispatcherProgress {
+interface DispatcherProgress {
   ticks: number;
   successfulTicks: number;
   failedTicks: number;
@@ -142,9 +142,9 @@ export class DispatcherMetrics {
 
   async render(databaseAllowed = true): Promise<string> {
     const lines = [
-      '# HELP cauce_dispatcher_ticks_total Dispatcher polling ticks by result.',
-      '# TYPE cauce_dispatcher_ticks_total counter',
-      ...(['ok', 'error', 'fenced'] as const).map((result) => `cauce_dispatcher_ticks_total{result="${result}"} ${String(this.ticks.get(result) ?? 0)}`),
+      ...counterLines(
+        'cauce_dispatcher_ticks_total', 'Dispatcher polling ticks by result.', this.ticks,
+      ),
       '# HELP cauce_dispatcher_jobs_processed_total Jobs whose registered handler was selected, by outcome.',
       '# TYPE cauce_dispatcher_jobs_processed_total counter',
     ];
@@ -236,6 +236,10 @@ export class DispatcherMetrics {
     }
     return `${lines.join('\n')}\n`;
   }
+}
+
+function counterLines(name: string, help: string, counters: ReadonlyMap<string, number>): string[] {
+  return renderCounters(name, help, counters).split('\n').slice(0, -1);
 }
 
 function appendMatrix(

@@ -1,3 +1,4 @@
+import { errorLabel, logEvent } from '@cauce/protocol';
 import type { RawData, WebSocket } from 'ws';
 import type { AgentConnection } from './agent-leg.js';
 import {
@@ -6,7 +7,6 @@ import {
   type TerminalGatewayClient,
   type TerminalSessionGrant,
 } from './gateway-client.js';
-import { errorLabel, logEvent } from './log.js';
 import {
   BACKPRESSURE_HIGH_BYTES,
   BACKPRESSURE_LOW_BYTES,

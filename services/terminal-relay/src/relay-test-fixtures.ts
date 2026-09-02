@@ -17,7 +17,7 @@ import type { AgentHello } from './agent-hello.js';
 export type { AgentHello };
 import { CLOSE_CODES, SessionManager, type SessionLimits } from './sessions.js';
 
-export const TEST_CA_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+const TEST_CA_CERTIFICATE = `-----BEGIN CERTIFICATE-----
 MIIDPzCCAiegAwIBAgIUb+WnuMaYt0OTYaQemgPtnN+2sBswDQYJKoZIhvcNAQEL
 BQAwJzElMCMGA1UEAwwcY2F1Y2UtdGVybWluYWwtcmVsYXktdGVzdC1jYTAeFw0y
 NjA3MjUxODAwNDhaFw00NjA3MjAxODAwNDhaMCcxJTAjBgNVBAMMHGNhdWNlLXRl
@@ -39,7 +39,7 @@ WDB5Yh0A3Qch2b7bPnesKiLzygtqD6vPaw6Ztj8m+mcCf+LZWUV1Fl/GDnZoquco
 -----END CERTIFICATE-----
 `;
 
-export const TEST_SERVER_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+const TEST_SERVER_CERTIFICATE = `-----BEGIN CERTIFICATE-----
 MIIDQTCCAimgAwIBAgIUKdWBLdF9aIWJwWgaYK5IgjZgY6AwDQYJKoZIhvcNAQEL
 BQAwJzElMCMGA1UEAwwcY2F1Y2UtdGVybWluYWwtcmVsYXktdGVzdC1jYTAeFw0y
 NjA3MjUxODAwNDhaFw00NjA3MjAxODAwNDhaMBkxFzAVBgNVBAMMDnRlcm1pbmFs
@@ -61,7 +61,7 @@ YMxpLgeDet0igWO3A18HTKKf+WBe
 -----END CERTIFICATE-----
 `;
 
-export const TEST_SERVER_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+const TEST_SERVER_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDgvNoYeZ1MlKfT
 OC9Zi0qVuKrVgM5SBW6ygCFWBQo5U61oSk5xUZT7VQ2ojGidKlEk8nvIaDTjnC7N
 A4KUxvIy+UwrUB/KIBV30dmqY65uSGiAJ/n2x1qAbLEDs2Aapb5Mj9NGpqw0gfCr
@@ -247,7 +247,7 @@ VbuY1WcOsIxcwvyUBBnxHB0G
 export const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 export const CLAIM_TOKEN = '12345678-1234-4234-8234-123456789abc';
 export const RELAY_INSTANCE_ID = 'a'.repeat(64);
-export const RELAY_BOOT_ID = '11111111-1111-4111-8111-111111111111';
+const RELAY_BOOT_ID = '11111111-1111-4111-8111-111111111111';
 export const AGENT_FINGERPRINT = new X509Certificate(TEST_AGENT_CERTIFICATE).fingerprint256;
 
 export const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -299,7 +299,7 @@ export function agentHello(overrides: Partial<AgentHello> = {}): AgentHello {
   };
 }
 
-export class ScriptedGateway implements TerminalGatewayClient {
+class ScriptedGateway implements TerminalGatewayClient {
   consume: ConsumeOutcome = { status: 'granted', grant: grant() };
   consumeCalls = 0;
   readonly consumeClaimTokens: string[] = [];
@@ -453,7 +453,7 @@ export class FakePtyAgent {
   }
 }
 
-export interface Harness {
+interface Harness {
   readonly browserPort: number;
   readonly agentPort: number;
   readonly leg: AgentLeg;
@@ -536,7 +536,7 @@ export async function startHarness(overrides: Partial<SessionLimits> = {}): Prom
   return harness;
 }
 
-export interface BrowserClient {
+interface BrowserClient {
   readonly socket: WebSocket;
   readonly text: Record<string, unknown>[];
   readonly binary: Buffer[];

@@ -12,6 +12,7 @@ import { PostgresTelegramBridgeRepository } from '../src/repository.js';
 import type {
   TelegramAliasConfig, TelegramApi, TelegramSendResult, TelegramUpdate
 } from '../src/types.js';
+import { noopActivity, noopObserver } from './bridge-fixtures.js';
 
 const EVENT_ID = '11111111-1111-4111-8111-111111111111';
 const postgresRequirement = dockerTestRequirement(
@@ -106,6 +107,7 @@ describe('Telegram PostgreSQL crash recovery', () => {
     const api = new RecordingTelegram();
     const firstRepository = new PostgresTelegramBridgeRepository(database.pool);
     await expect(new TelegramEgressWorker({
+      activity: noopActivity(), observer: noopObserver(),
       repository: firstRepository,
       aliases: [alias],
       apis: new Map([['kant', api]]),
@@ -121,6 +123,7 @@ describe('Telegram PostgreSQL crash recovery', () => {
 
     const restartedRepository = new PostgresTelegramBridgeRepository(database.pool);
     await new TelegramEgressWorker({
+      activity: noopActivity(), observer: noopObserver(),
       repository: restartedRepository,
       aliases: [alias],
       apis: new Map([['kant', api]])
@@ -169,6 +172,7 @@ describe('Telegram PostgreSQL crash recovery', () => {
     )).rowCount).toBe(1);
 
     await new TelegramEgressWorker({
+      activity: noopActivity(), observer: noopObserver(),
       repository: restartedRepository,
       aliases: [alias],
       apis: new Map([['kant', api]])

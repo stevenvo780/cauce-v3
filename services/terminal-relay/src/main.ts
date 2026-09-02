@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
+import { errorLabel, logEvent } from '@cauce/protocol';
 import { AgentLeg, createAgentTlsServer } from './agent-leg.js';
 import { BrowserLeg, createBrowserHttpsServer } from './browser-leg.js';
 import { loadRelayConfig } from './config.js';
 import { HttpsTerminalGatewayClient } from './gateway-client.js';
 import { setupGovernanceRelay } from './governance-relay.js';
 import { createRelayHealthServer, RelayHealthState } from './health.js';
-import { errorLabel, logEvent } from './log.js';
 import { relayProcessIdentity } from './relay-identity.js';
 import { CLOSE_CODES, SessionManager } from './sessions.js';
 
@@ -104,7 +104,10 @@ const browser = new BrowserLeg({
   agents,
   sessions
 });
-const healthServer = createRelayHealthServer(healthState);
+const healthServer = createRelayHealthServer(healthState, {
+  port: config.healthPort,
+  host: '127.0.0.1',
+});
 // Governance reads share the browser-side listener: it is regular HTTP, not a WebSocket, so it
 // coexists with `BrowserLeg` (which only listens on `upgrade`) without colliding. The token is
 // the SAME file the relay uses to authenticate against the gateway, just in the opposite
@@ -130,7 +133,7 @@ browserServer.listen(config.browserPort, '0.0.0.0', () => {
 healthServer.on('error', (error: unknown) => {
   logEvent('terminal_relay_health_server_error', { error: errorLabel(error) });
 });
-healthServer.listen(config.healthPort, '127.0.0.1', () => {
+healthServer.once('listening', () => {
   logEvent('terminal_relay_health_listening', { port: config.healthPort });
 });
 

@@ -7,6 +7,7 @@ import type {
   TelegramAliasConfig, TelegramApi, TelegramEffect, TelegramEffectInput, TelegramEgressRepository,
   TelegramOriginRelay, TelegramOriginRelayAck, TelegramSendResult, TelegramUpload
 } from '../src/types.js';
+import { noopActivity, noopObserver } from './bridge-fixtures.js';
 
 /** Real 1x1 PNG: end-to-end byte path probe. */
 const PNG = Buffer.from(
@@ -289,6 +290,7 @@ function fakeApi(
 
 function worker(repository: TelegramEgressRepository, api: TelegramApi): TelegramEgressWorker {
   return new TelegramEgressWorker({
+    activity: noopActivity(), observer: noopObserver(),
     repository, aliases: [ALIAS], apis: new Map([['seneca', api]])
   });
 }

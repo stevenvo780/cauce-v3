@@ -5,7 +5,7 @@ import { telegramTextChunks } from '../src/egress.js';
 import { StoreTelegramIngress } from '../src/ingress.js';
 import { TelegramPoller } from '../src/poller.js';
 import {
-  config, DeduplicatingIngress, FakeTelegram, MemoryCursorRepository, TENANT
+  config, DeduplicatingIngress, FakeTelegram, MemoryCursorRepository, TENANT, noopActivity, noopObserver
 } from './bridge-fixtures.js';
 
 describe('Telegram single-recipient configuration', () => {
@@ -195,6 +195,7 @@ describe('Telegram durable polling (core)', () => {
     api.filePayloads.set('photos/photo-id.jpg', photo);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api, repository, ingress
     }).runOnce();
 
@@ -223,6 +224,7 @@ describe('Telegram durable polling (core)', () => {
     }]);
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api, repository, ingress
     }).runOnce();
 
@@ -259,6 +261,7 @@ describe('Telegram durable polling (core)', () => {
     api.filePayloads.set('documents/notas.txt', Buffer.alloc(0));
 
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api, repository, ingress
     }).runOnce();
 
@@ -273,6 +276,7 @@ describe('Telegram durable polling (core)', () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();
     await new TelegramPoller({
+      activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api: new FakeTelegram([{
         update_id: 3,
         message: {

@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
-import { isCanonicalUuidV4 } from '@cauce/protocol';
-import { errorLabel, logEvent } from './log.js';
+import { errorLabel, isCanonicalUuidV4, logEvent } from '@cauce/protocol';
 import {
   isRelayBootId,
   isRelayInstanceId,
@@ -123,7 +122,7 @@ interface HttpResult {
   readonly body: string;
 }
 
-export interface HttpsTerminalGatewayClientOptions {
+interface HttpsTerminalGatewayClientOptions {
   readonly gatewayUrl: string;
   readonly tokenFile: string;
   readonly timeoutMs?: number;

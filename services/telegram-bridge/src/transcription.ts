@@ -1,5 +1,5 @@
 /** Transcripcion de audio contra un servicio compatible con la API de OpenAI. */
-import { logJsonLine } from './logging.js';
+import { logEvent } from '@cauce/protocol';
 
 /** Cuanto del cuerpo de error del servicio se conserva para el registro. */
 const MAX_ERROR_BODY_CHARS = 500;
@@ -119,8 +119,7 @@ export async function transcribeAudio(
       signal: control.signal
     });
     if (!respuesta.ok) {
-      logJsonLine({
-        event: 'telegram_transcription_failed',
+      logEvent('telegram_transcription_failed', {
         status: respuesta.status,
         model: config.model,
         bytes: payload.length,
@@ -137,8 +136,7 @@ export async function transcribeAudio(
     const causa = error instanceof Error && error.name === 'AbortError'
       ? `no respondió en ${String(Math.round(config.timeoutMs / 1_000))} s`
       : 'no está accesible';
-    logJsonLine({
-      event: 'telegram_transcription_failed',
+    logEvent('telegram_transcription_failed', {
       status: null,
       model: config.model,
       bytes: payload.length,

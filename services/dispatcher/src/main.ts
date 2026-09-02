@@ -1,3 +1,4 @@
+import { logEvent } from '@cauce/protocol';
 import { createPool } from '@cauce/store';
 import { configuredDispatcher } from './config.js';
 import { startDispatcherHealthServer } from './health.js';
@@ -36,7 +37,7 @@ const dispatcher = runDispatcher(pool, {
   metrics,
   onError: (error, phase) => {
     lastError = error instanceof Error ? error.message : 'dispatcher tick failed';
-    console.error(JSON.stringify({ event: 'dispatcher_tick_failed', phase: phase ?? null, error: lastError }));
+    logEvent('dispatcher_tick_failed', { phase: phase ?? null, error: lastError });
   }
 });
 

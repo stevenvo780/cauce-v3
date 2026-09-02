@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { AttachmentContentSchema, AttachmentsV1Schema } from '@cauce/protocol';
+import { AttachmentContentSchema, AttachmentsV1Schema, logEvent } from '@cauce/protocol';
 import type { SuppressionReason } from './addressing.js';
 import { prepareTelegramAttachments, prepareTelegramVoice } from './attachments.js';
-import { logJsonLine } from './logging.js';
 import { redactSecretsDeep } from './redaction.js';
 import type { transcribeAudio, TranscriptionConfig } from './transcription.js';
 import type {
@@ -16,7 +15,6 @@ import type {
 import { safeText } from './untrusted.js';
 
 export { positiveTelegramId as id } from './validation.js';
-export { logJsonLine };
 
 /** Injection point for tests; in production it is always the real HTTP client. */
 export type Transcriber = typeof transcribeAudio;
@@ -153,8 +151,7 @@ export function screenAttachments(
     const name = attachment.name.slice(0, 255);
     errors.push(`adjunto descartado: no pasó la validación de la plataforma (${mime}, ${name})`);
     try {
-      logJsonLine({
-        event: 'telegram_attachment_dropped',
+      logEvent('telegram_attachment_dropped', {
         alias: meta?.alias,
         tenant_id: meta?.tenant_id,
         update_id: updateId,

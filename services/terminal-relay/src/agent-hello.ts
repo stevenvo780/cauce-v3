@@ -1,8 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { parseCodexProjectDocumentConfig } from '@cauce/protocol';
+import { errorLabel, logEvent, parseCodexProjectDocumentConfig } from '@cauce/protocol';
 import { decodeJsonFrame } from './framing.js';
 import type { TerminalMode } from './gateway-client.js';
-import { errorLabel, logEvent } from './log.js';
 import { integerField, stringField } from './validation.js';
 
 export const AGENT_PING_INTERVAL_MS = 10_000;

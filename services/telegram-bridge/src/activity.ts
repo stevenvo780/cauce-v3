@@ -16,7 +16,7 @@ export interface TelegramActivity {
   stop(): void;
 }
 
-export interface TelegramActivityIndicatorOptions {
+interface TelegramActivityIndicatorOptions {
   typingIntervalMs?: number;
   maxLifetimeMs?: number;
   terminalTombstoneMs?: number;

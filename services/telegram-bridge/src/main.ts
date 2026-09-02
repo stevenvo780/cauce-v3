@@ -1,4 +1,4 @@
-import { integerEnv, portEnv, requiredEnv } from '@cauce/protocol';
+import { integerEnv, logEvent, portEnv, requiredEnv, type LogField } from '@cauce/protocol';
 import { CauceRepository, createPool } from '@cauce/store';
 import { TelegramActivityIndicator } from './activity.js';
 import {
@@ -30,11 +30,10 @@ function selected(configs: readonly TelegramAliasConfig[]): TelegramAliasConfig[
  * behaviour the bridge has always had.
  */
 const transcription = transcriptionConfig();
-console.error(JSON.stringify({
-  event: 'telegram_transcription_config',
+logEvent('telegram_transcription_config', {
   enabled: transcription !== undefined,
   ...(transcription === undefined ? {} : { model: transcription.model, language: transcription.language })
-}));
+});
 
 const pool = createPool(requiredEnv(process.env, 'DATABASE_URL'));
 const repository = new PostgresTelegramBridgeRepository(pool);
@@ -52,9 +51,9 @@ let health: ReturnType<typeof startTelegramHealthServer> | undefined;
 /**
  * A group-configuration problem is reported and degraded with a structured trace rather than halting the process.
  */
-function degraded(reason: string, detail: Record<string, unknown>): void {
+function degraded(reason: string, detail: Readonly<Record<string, LogField>>): void {
   metrics.increment('group_config_degraded');
-  console.error(JSON.stringify({ event: 'telegram_group_config_degraded', reason, ...detail }));
+  logEvent('telegram_group_config_degraded', { reason, ...detail });
 }
 
 try {

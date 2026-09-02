@@ -87,4 +87,17 @@ describe('gauges PostgreSQL del dispatcher', () => {
     expect(exposition).not.toContain('# HELP cauce_dispatcher_job_queue_depth');
     expect(exposition.match(/# HELP cauce_dispatcher_metrics_query_success/gu)).toHaveLength(1);
   });
+
+  it('publica las tres series del contador de ticks aunque alguna valga cero', async () => {
+    const metrics = new DispatcherMetrics(pool);
+    metrics.recordTick('error');
+
+    expect(await metrics.render(false)).toContain([
+      '# HELP cauce_dispatcher_ticks_total Dispatcher polling ticks by result.',
+      '# TYPE cauce_dispatcher_ticks_total counter',
+      'cauce_dispatcher_ticks_total{result="ok"} 0',
+      'cauce_dispatcher_ticks_total{result="error"} 1',
+      'cauce_dispatcher_ticks_total{result="fenced"} 0',
+    ].join('\n'));
+  });
 });
