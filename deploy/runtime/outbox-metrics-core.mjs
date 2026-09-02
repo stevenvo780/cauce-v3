@@ -3,6 +3,11 @@ const statuses = ['pending', 'processing', 'sent', 'failed', 'dead'];
 const dispositions = [
   'ambiguous', 'safe_retry', 'missing_final', 'auth', 'expected_offline', 'unclassified',
 ];
+const actionableDispositions = ['ambiguous', 'safe_retry', 'missing_final', 'auth']; // must mirror cauce_dlq_inventory_030/cauce_list_dlq_030 in 030_dlq_causal_reconciliation.sql
+
+function isActionable(disposition) {
+  return actionableDispositions.includes(disposition);
+}
 
 function number(value) {
   if (value === undefined || value === null) return 0;
@@ -47,12 +52,12 @@ export async function collectOutboxMetrics(pool) {
          OR (status='processing' AND claim_expires_at<=now())
       GROUP BY kind, status`),
     pool.query(`SELECT kind, disposition,
-        (disposition<>'expected_offline') AS actionable,
+        (disposition IN ('ambiguous','safe_retry','missing_final','auth')) AS actionable,
         count(*)::bigint AS value
       FROM outbox_dead_letters WHERE resolved_at IS NULL
       GROUP BY kind, disposition, actionable`),
     pool.query(`SELECT kind, disposition,
-        (disposition<>'expected_offline') AS actionable,
+        (disposition IN ('ambiguous','safe_retry','missing_final','auth')) AS actionable,
         count(*)::bigint AS value
       FROM outbox_dead_letters
       WHERE resolved_at IS NULL AND created_at>=now()-interval '10 minutes'
@@ -61,7 +66,7 @@ export async function collectOutboxMetrics(pool) {
         extract(epoch FROM greatest(interval '0 seconds',
           now()-min(COALESCE(disposition_at,created_at))))::float8 AS value
       FROM outbox_dead_letters
-      WHERE resolved_at IS NULL AND disposition<>'expected_offline'
+      WHERE resolved_at IS NULL AND disposition IN ('ambiguous','safe_retry','missing_final','auth')
       GROUP BY kind, disposition`),
   ]);
   const depthMap = new Map(depth.rows.map((candidate) => {
@@ -86,7 +91,7 @@ export async function collectOutboxMetrics(pool) {
       throw new Error('dead-letter query returned an unknown disposition');
     }
     const actionable = exactBoolean(row.actionable, 'dead-letter');
-    if (actionable !== (row.disposition !== 'expected_offline')) {
+    if (actionable !== isActionable(row.disposition)) {
       throw new Error('dead-letter query returned an inconsistent actionable flag');
     }
     const value = number(row.value);
@@ -100,7 +105,7 @@ export async function collectOutboxMetrics(pool) {
       throw new Error('new dead-letter query returned an unknown disposition');
     }
     const actionable = exactBoolean(row.actionable, 'new dead-letter');
-    if (actionable !== (row.disposition !== 'expected_offline')) {
+    if (actionable !== isActionable(row.disposition)) {
       throw new Error('new dead-letter query returned an inconsistent actionable flag');
     }
     return [dlqKey(row.kind, row.disposition, actionable), number(row.value)];
@@ -110,7 +115,7 @@ export async function collectOutboxMetrics(pool) {
     if (!kinds.includes(row.kind)) {
       throw new Error('oldest actionable dead-letter query returned an unknown outbox kind');
     }
-    if (!dispositions.includes(row.disposition) || row.disposition === 'expected_offline') {
+    if (!isActionable(row.disposition)) {
       throw new Error('oldest actionable dead-letter query returned an unknown or inactive disposition');
     }
     return [`${row.kind}:${row.disposition}`, number(row.value)];
@@ -133,16 +138,23 @@ export async function collectOutboxMetrics(pool) {
     lines.push(`cauce_outbox_oldest_seconds{kind="${kind}",status="${status}"} ${oldestMap.get(`${kind}:${status}`) ?? 0}`);
   }
   lines.push(
-    '# HELP cauce_outbox_dead_letters_open Unresolved adapter outbox incident inventory, including expected-offline history.',
+    '# HELP cauce_outbox_dead_letters_open Unresolved adapter outbox incident inventory, including expected-offline and unclassified history.',
     '# TYPE cauce_outbox_dead_letters_open gauge',
   );
   for (const kind of kinds) lines.push(`cauce_outbox_dead_letters_open{kind="${kind}"} ${deadMap.get(kind) ?? 0}`);
+  lines.push(
+    '# HELP cauce_outbox_dead_letters_unclassified Unresolved adapter outbox incidents still awaiting causal disposition classification.',
+    '# TYPE cauce_outbox_dead_letters_unclassified gauge',
+  );
+  for (const kind of kinds) {
+    lines.push(`cauce_outbox_dead_letters_unclassified{kind="${kind}"} ${deadDispositionMap.get(dlqKey(kind, 'unclassified', false)) ?? 0}`);
+  }
   lines.push(
     '# HELP cauce_outbox_dead_letters_open_by_disposition Unresolved adapter outbox incidents by durable disposition and actionability.',
     '# TYPE cauce_outbox_dead_letters_open_by_disposition gauge',
   );
   for (const kind of kinds) for (const disposition of dispositions) {
-    const actionable = disposition !== 'expected_offline';
+    const actionable = isActionable(disposition);
     lines.push(`cauce_outbox_dead_letters_open_by_disposition{kind="${kind}",disposition="${disposition}",actionable="${String(actionable)}"} ${deadDispositionMap.get(dlqKey(kind, disposition, actionable)) ?? 0}`);
   }
   lines.push(
@@ -150,7 +162,7 @@ export async function collectOutboxMetrics(pool) {
     '# TYPE cauce_outbox_dead_letters_new gauge',
   );
   for (const kind of kinds) for (const disposition of dispositions) {
-    const actionable = disposition !== 'expected_offline';
+    const actionable = isActionable(disposition);
     lines.push(`cauce_outbox_dead_letters_new{kind="${kind}",disposition="${disposition}",actionable="${String(actionable)}"} ${newDeadMap.get(dlqKey(kind, disposition, actionable)) ?? 0}`);
   }
   lines.push(
@@ -158,7 +170,7 @@ export async function collectOutboxMetrics(pool) {
     '# TYPE cauce_outbox_dead_letter_oldest_actionable_seconds gauge',
   );
   for (const kind of kinds) for (const disposition of dispositions) {
-    if (disposition === 'expected_offline') continue;
+    if (!isActionable(disposition)) continue;
     lines.push(`cauce_outbox_dead_letter_oldest_actionable_seconds{kind="${kind}",disposition="${disposition}"} ${oldestActionableMap.get(`${kind}:${disposition}`) ?? 0}`);
   }
   return `${lines.join('\n')}\n`;

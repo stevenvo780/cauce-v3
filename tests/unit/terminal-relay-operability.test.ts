@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -61,7 +61,9 @@ describe('production terminal relay operability contract', () => {
     expect(nginx).not.toMatch(/proxy_pass[^\n]*(?:\$uri|\$request_uri|\$arg_|\$host)/u);
     expect(dockerfile).toContain('ARG CAUCE_TERMINAL_RELAY_INSTANCE_ID=""');
     expect(dockerfile).toContain('LABEL io.cauce.terminal-relay.instance-id=${CAUCE_TERMINAL_RELAY_INSTANCE_ID}');
-    expect(dockerfile).toContain('ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=037_console_publish_intent_indexes.sql');
+    const ultimaMigracion = (await readdir(new URL('../../packages/store/migrations/', import.meta.url)))
+      .filter((name) => /^\d{3}_.*\.sql$/u.test(name)).sort().at(-1);
+    expect(dockerfile).toContain(`ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=${String(ultimaMigracion)}`);
 
     const instanceId = 'a'.repeat(64);
     const rendered = nginx.replaceAll('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', instanceId);

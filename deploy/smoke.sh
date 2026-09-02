@@ -36,14 +36,19 @@ for intento in 1 2 3 4 5 6; do
 done
 if [ "${vivos:-0}" -ge 8 ]; then echo "OK  flota: $vivos arriendos frescos"; else echo "ROJO flota: solo ${vivos:-0} arriendos frescos"; fallo=1; fi
 
-# 5) Bus moves messages (6h window: nights are legitimately quiet)
-done6h=0
-for intento in 1 2 3 4 5 6; do
-  done6h="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > now() - interval '6 hours'" 2>/dev/null)"
-  [ "${done6h:-0}" -ge 1 ] && break
-  [ "$intento" -lt 6 ] && sleep 20
-done
-if [ "${done6h:-0}" -ge 1 ]; then echo "OK  bus: $done6h entregas done en 6h"; else echo "ROJO bus: 0 entregas done en 6h"; fallo=1; fi
+# 5) Bus moves messages after THIS deployment booted: baseline = gateway start, capped at 6h back because nights are legitimately quiet
+arranque="$(docker inspect --format '{{.State.StartedAt}}' cauce-v3-prod-gateway-1 2>/dev/null || echo '')"
+if [[ ! "$arranque" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+  echo "ROJO bus: no pude leer el instante de arranque del gateway (linea base)"; fallo=1
+else
+  hechas=0
+  for intento in 1 2 3 4 5 6; do
+    hechas="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE status='done' AND updated_at > GREATEST('$arranque'::timestamptz, now() - interval '6 hours')" 2>/dev/null)"
+    [ "${hechas:-0}" -ge 1 ] && break
+    [ "$intento" -lt 6 ] && sleep 20
+  done
+  if [ "${hechas:-0}" -ge 1 ]; then echo "OK  bus: $hechas entregas done desde el arranque ($arranque)"; else echo "ROJO bus: 0 entregas done desde el arranque del despliegue ($arranque)"; fallo=1; fi
+fi
 
 # 6) Relay NOT in a loop: <30 agent connections in 2 min
 conn="$(docker logs cauce-v3-prod-terminal-relay-1 --since 2m 2>/dev/null | grep -c 'terminal_relay_agent_connected"')"

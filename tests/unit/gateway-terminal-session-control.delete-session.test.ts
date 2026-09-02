@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseClient, DatabasePool } from '@cauce/store';
-import { UUID_OK, buildContext, type Context, consolePrincipal, validDeleteSession, makeRow } from './gateway-terminal-session-control-fixtures.js';
+import type { DatabasePool } from '@cauce/store';
+import {
+  UUID_OK, buildContext, type Context, consolePrincipal, validDeleteSession, makeRow, transactionClient,
+} from './gateway-terminal-session-control-fixtures.js';
 
 describe('DELETE /v3/console/terminal/sessions/:sid: pre-validación', () => {
   let ctx: Context;
@@ -43,14 +45,10 @@ describe('DELETE /v3/console/terminal/sessions/:sid: pre-validación', () => {
   it('responde 204 cuando el UPDATE marca revoked_at y devuelve la fila', async () => {
     const issuedAt = new Date('2026-01-01T00:00:00Z');
     const revokedRow = makeRow({ id: UUID_OK, issued_at: issuedAt, expires_at: new Date('2026-01-01T01:00:00Z') });
-    const releasedClient: DatabaseClient = {
-      query: vi.fn(async (text: string) => {
-        if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
-        if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [revokedRow], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      }),
-      release: vi.fn()
-    } as unknown as DatabaseClient;
+    const releasedClient = transactionClient((text) => {
+      if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [revokedRow], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
     const pool: DatabasePool = {
       query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
       connect: vi.fn(async () => releasedClient)
@@ -66,16 +64,12 @@ describe('DELETE /v3/console/terminal/sessions/:sid: pre-validación', () => {
   });
 
   it('responde 409 conflict cuando el UPDATE no devuelve filas ni settled', async () => {
-    const releasedClient: DatabaseClient = {
-      query: vi.fn(async (text: string) => {
-        if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
-        // Empty UPDATE + SELECT settled: false
-        if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [], rowCount: 0 };
-        if (text.includes('SELECT EXISTS')) return { rows: [{ settled: false }], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      }),
-      release: vi.fn()
-    } as unknown as DatabaseClient;
+    const releasedClient = transactionClient((text) => {
+      // Empty UPDATE + SELECT settled: false
+      if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [], rowCount: 0 };
+      if (text.includes('SELECT EXISTS')) return { rows: [{ settled: false }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
     const pool: DatabasePool = {
       query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
       connect: vi.fn(async () => releasedClient)
@@ -91,15 +85,11 @@ describe('DELETE /v3/console/terminal/sessions/:sid: pre-validación', () => {
   });
 
   it('responde 204 cuando el UPDATE no devuelve filas pero settled=true (idempotente)', async () => {
-    const releasedClient: DatabaseClient = {
-      query: vi.fn(async (text: string) => {
-        if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
-        if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [], rowCount: 0 };
-        if (text.includes('SELECT EXISTS')) return { rows: [{ settled: true }], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-      }),
-      release: vi.fn()
-    } as unknown as DatabaseClient;
+    const releasedClient = transactionClient((text) => {
+      if (text.includes('UPDATE terminal_sessions SET revoked_at')) return { rows: [], rowCount: 0 };
+      if (text.includes('SELECT EXISTS')) return { rows: [{ settled: true }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
     const pool: DatabasePool = {
       query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
       connect: vi.fn(async () => releasedClient)

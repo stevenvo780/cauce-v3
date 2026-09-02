@@ -27,6 +27,8 @@ REV="$(git rev-parse --short HEAD)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNTIME_TAG="$REGISTRY/cauce-v3-runtime:$REV"
 CONSOLE_TAG="$REGISTRY/cauce-v3-console:$REV"
+LAST_MIGRATION="$(find "$REPO/packages/store/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' -printf '%f\n' | sort -V | tail -1)" # never hardcode this: derive from what is actually bundled
+[ -n "$LAST_MIGRATION" ] || die "no encuentro migraciones en packages/store/migrations"
 
 echo "== Cauce V3 deploy: commit $REV ($STAMP) =="
 
@@ -44,7 +46,7 @@ CLIENT_CERT="$(sed -n 's/^CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH=//p' "$ENV_FIL
 [ -r "$CLIENT_CERT" ] || die "no puedo leer CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH ($CLIENT_CERT)"
 [ "$(openssl x509 -in "$CLIENT_CERT" -outform DER | sha256sum | awk '{print $1}')" = "$INSTANCE_ID" ] \
   || die "CAUCE_TERMINAL_RELAY_INSTANCE_ID no es el sha256 del DER de $CLIENT_CERT"
-docker build -f deploy/Dockerfile --target runtime --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
+docker build -f deploy/Dockerfile --target runtime --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$LAST_MIGRATION" --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
 docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
   --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
 [ "$(docker inspect --format '{{index .Config.Labels "io.cauce.terminal-relay.instance-id"}}' "$CONSOLE_TAG")" = "$INSTANCE_ID" ] \
@@ -61,16 +63,16 @@ sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FI
 
 "${COMPOSE[@]}" config >/dev/null || die "el compose canonico no renderiza con $ENV_FILE"
 
-confirmar "¿Migrar (026..037, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
+confirmar "¿Migrar hasta $LAST_MIGRATION (bundle de packages/store/migrations, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
 
 # B1 re-checked at the last instant: any terminal ticket issued meanwhile would abort schema 034.
 PG_CONTAINER="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ENV_FILE" | tail -1)-postgres-1"
 PG_USER="$(sed -n 's/^POSTGRES_USER=//p' "$ENV_FILE" | tail -1)"; PG_DB="$(sed -n 's/^POSTGRES_DB=//p' "$ENV_FILE" | tail -1)"
 fantasmas="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL")"
 [ "$fantasmas" = "0" ] || die "hay $fantasmas sesiones de terminal sin anclar: la 034 abortaria (dossier B1: repite el UPDATE y reintenta)"
-"${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico); NO se desplego nada"
+"${COMPOSE[@]}" run --rm -T migrator || die "migracion fallida (rollback automatico en BD, sigue en la version previa); pero $ENV_FILE YA apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST) y no se levanto ningun contenedor con ellos. Restaura antes de reintentar: cp -a $ENV_FILE.pre-deploy-$STAMP $ENV_FILE"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || die "up fallo; para volver: restaurar $ENV_FILE.pre-deploy-$STAMP y repetir up"
-"$REPO/deploy/smoke.sh" || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en 037."
+"$REPO/deploy/smoke.sh" || die "SMOKE ROJO: evalua rollback (restaurar $ENV_FILE.pre-deploy-$STAMP + up -d --wait). La BD ya esta en $LAST_MIGRATION."
 
 echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK |" >> "$REPO/deploy/HISTORIAL.md"
 echo "== deploy $REV COMPLETO. Registra el resultado en git (commit de HISTORIAL.md). =="

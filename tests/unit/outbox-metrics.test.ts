@@ -57,23 +57,46 @@ describe('exact outbox metrics exporter', () => {
     expect(queries[1]).not.toMatch(/now\(\)\s*-\s*min\(created_at\)/u);
   });
 
-  it('separates expected-offline inventory from actionable incidents and never pages on reclassification time as new', async () => {
+  it('separates expected-offline and unclassified inventory from actionable incidents, and never pages on reclassification time as new', async () => {
     const queries: string[] = [];
     const body = await collectOutboxMetrics({
       async query(sql: string) {
         queries.push(sql);
         if (queries.length === 3) return { rows: [
           { kind: 'wake', disposition: 'expected_offline', actionable: false, value: '4' },
-          { kind: 'wake', disposition: 'unclassified', actionable: true, value: '2' },
+          { kind: 'wake', disposition: 'unclassified', actionable: false, value: '2' },
         ] };
         return { rows: [] };
       },
     });
     expect(body).toContain('cauce_outbox_dead_letters_open{kind="wake"} 6');
+    expect(body).toContain('cauce_outbox_dead_letters_unclassified{kind="wake"} 2');
+    expect(body).toContain('cauce_outbox_dead_letters_unclassified{kind="origin_relay"} 0');
     expect(body).toContain('disposition="expected_offline",actionable="false"} 4');
-    expect(body).toContain('disposition="unclassified",actionable="true"} 2');
+    expect(body).toContain('disposition="unclassified",actionable="false"} 2');
+    expect(body).not.toMatch(/dead_letter_oldest_actionable_seconds\{kind="wake",disposition="unclassified"\}/u);
+    expect(body).not.toMatch(/dead_letter_oldest_actionable_seconds\{kind="wake",disposition="expected_offline"\}/u);
     expect(queries[3]).toContain("created_at>=now()-interval '10 minutes'");
     expect(queries[3]).not.toContain('disposition_at>=');
+  });
+
+  it('matches cauce_dlq_inventory_030/cauce_list_dlq_030: only ambiguous/safe_retry/missing_final/auth are actionable', async () => {
+    const queries: string[] = [];
+    const body = await collectOutboxMetrics({
+      async query(sql: string) {
+        queries.push(sql);
+        return { rows: [] };
+      },
+    });
+    expect(queries[2]).toContain("(disposition IN ('ambiguous','safe_retry','missing_final','auth')) AS actionable");
+    expect(queries[3]).toContain("(disposition IN ('ambiguous','safe_retry','missing_final','auth')) AS actionable");
+    expect(queries[4]).toContain("WHERE resolved_at IS NULL AND disposition IN ('ambiguous','safe_retry','missing_final','auth')");
+    for (const disposition of ['ambiguous', 'safe_retry', 'missing_final', 'auth']) {
+      expect(body).toContain(`kind="wake",disposition="${disposition}",actionable="true"`);
+    }
+    for (const disposition of ['expected_offline', 'unclassified']) {
+      expect(body).toContain(`kind="wake",disposition="${disposition}",actionable="false"`);
+    }
   });
 
   it('fails closed when the database returns a disposition or actionability outside schema 030', async () => {

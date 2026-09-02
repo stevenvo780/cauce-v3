@@ -280,20 +280,31 @@ export function buildContext(options: ContextOptions = {}): Context {
     async close() { await app.close(); }
   };
 }
-export function stubClient(): DatabaseClient {
+// `on`/`off` are required: withTransaction (packages/store/src/db.ts) attaches an 'error'
+// listener to every checkout, and a client without them fails before the first query.
+export function transactionClient(
+  handleQuery: (
+    text: string,
+    values: unknown[],
+  ) => { rows: unknown[]; rowCount: number } | Promise<{ rows: unknown[]; rowCount: number }>,
+): DatabaseClient {
   return {
-    query: vi.fn(async (text: string) => {
+    query: vi.fn(async (text: string, values: unknown[] = []) => {
       if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [], rowCount: 0 };
-      if (text.includes('clock_timestamp')) return { rows: [{ database_now: new Date('2026-01-01T00:00:00Z') }], rowCount: 1 };
-      return { rows: [], rowCount: 0 };
+      return handleQuery(text, values);
     }),
     release: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
   } as unknown as DatabaseClient;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Helpers de fixtures                                                          */
-/* -------------------------------------------------------------------------- */
+export function stubClient(): DatabaseClient {
+  return transactionClient((text) => {
+    if (text.includes('clock_timestamp')) return { rows: [{ database_now: new Date('2026-01-01T00:00:00Z') }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  });
+}
 
 export interface FleetPlacementRow {
   readonly tenant_id: string;
