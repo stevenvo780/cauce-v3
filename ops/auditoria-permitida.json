@@ -1,0 +1,4 @@
+{
+ "formato": "cada permiso declara advisory (GHSA-xxxx-xxxx-xxxx o el id numerico de pnpm), paquete, razon y revisar_antes_de (AAAA-MM-DD). Un permiso que la auditoria ya no reporta, o cuya fecha de revision ya paso, pone rojo el gate: un permiso que sobra es deuda que nadie retira.",
+ "permitidos": []
+}

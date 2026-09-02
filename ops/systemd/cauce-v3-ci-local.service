@@ -11,6 +11,6 @@ Environment=NO_COLOR=1
 ExecStart=/usr/bin/bash -lc 'umask 022 && exec /datos/workspaces/zeus/cauce-v3/ops/scripts/ci-nocturno.sh'
 StandardOutput=journal
 StandardError=journal
-# Six steps now, one of them a cold `pnpm install` on a throwaway worktree, and scripts/test-all.mjs
-# already budgets 40 min for test:integration alone: one hour killed the run before ops:validate.
+# Eight steps, one of them a cold `pnpm install` on a throwaway worktree and one a full coverage
+# run, and scripts/test-all.mjs budgets 40 min for test:integration alone: one hour was too short.
 TimeoutStartSec=14400

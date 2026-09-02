@@ -21,7 +21,33 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
    install -m 0644 ops/generated/container-systemd/rootless/cauce-v3-container-*.service "$HOME/.config/systemd/user/"
    systemctl --user daemon-reload
    ```
-3. Fijar el release mediante compare-and-swap (CAS):
+3. **Paso del dueño, fuera de este árbol**: construir el bundle `release-nuevo` y calcular su digest.
+   Este repositorio no trae —ni traerá— el script que lo construye (`/opt` está en la lista NO TOCAR
+   de `AGENTS.md`): lo hace el dueño en la máquina destino. `release-nuevo` es el nombre de un
+   directorio bajo `<raíz del bundle>/<alias>/releases/`, donde la raíz depende de quién corre el
+   supervisor: `/opt/cauce-v3-adapter` en el despliegue como root de la flota, y
+   `$XDG_DATA_HOME/cauce-v3-adapter` (`~/.local/share/cauce-v3-adapter`, lo que fijan las unidades
+   rootless generadas) cuando lo corre un usuario. El release tiene que cumplir lo que comprueba
+   `validate_bundle` (`ops/scripts/container-adapter-supervisor.sh:414-441`):
+   - contiene `packages/adapter-sdk/dist/src/bin/<harness>.js`, fichero regular, ejecutable y no
+     enlace simbólico (`<harness>` es el arnés asignado al alias);
+   - el directorio del release, todas sus entradas y todos sus enlaces simbólicos pertenecen al
+     uid que ejecuta el supervisor (`safe_owner_uid` es `$EUID`: root en la flota, el usuario del
+     servicio en rootless), sin ningún bit de escritura (`chown -R <uid> …`, `chmod -R a-w …`), y el
+     propio release no es un enlace;
+   - no hay entradas que no sean fichero, directorio o enlace simbólico (nada de sockets, FIFOs ni
+     dispositivos), y todo enlace resuelve dentro del propio release: ninguno se escapa;
+   - el digest calculado sobre el release coincide con el `BUNDLE_SHA256` que se fija en el paso 4.
+
+   El `sha256:<digest-nuevo>` sale del mismo ayudante que usan `validate_bundle` y
+   `pin-container-release.py` —cualquier otro cálculo dará un digest distinto y el arranque morirá
+   con `configured bundle digest differs from pinned immutable release`—:
+   ```sh
+   # [no ejecutable en verificación]
+   python3 ops/container-runtime/cauce-container-runtime.py bundle-digest \
+     "$HOME/.local/share/cauce-v3-adapter/kant/releases/release-nuevo"   # rootless; /opt/... como root
+   ```
+4. Fijar el release mediante compare-and-swap (CAS):
    ```sh
    # [no ejecutable en verificación]
    ops/scripts/pin-container-release.py pin kant \

@@ -9,13 +9,18 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # local user could plant a fake summary between runs.
 RESUMEN=${CAUCE_CI_RESUMEN:-$ROOT/ops/artifacts/ci-nocturno-ultimo.json}
 
-PASOS_NOMBRE=(install typecheck lint test audit ops-validate)
+# `cobertura` re-runs the whole matrix under instrumentation, so it goes after `test` and never
+# into the per-commit gate. `audit` runs the allowlist gate instead of `qa:audit`: raw
+# `pnpm audit --audit-level=high` reddens forever on the first high without an upstream patch.
+PASOS_NOMBRE=(install typecheck lint test cobertura audit layout ops-validate)
 PASOS_CMD=(
   'pnpm install --frozen-lockfile'
   'pnpm typecheck'
   'pnpm lint'
   'CAUCE_REQUIRE_TESTCONTAINERS=1 pnpm test'
-  'pnpm run qa:audit'
+  'node scripts/cobertura.mjs --trinquete'
+  'node ops/scripts/auditoria-de-dependencias.mjs'
+  'node console/qa/layout-gate.mjs'
   'CAUCE_RELEASE_VALIDATION=1 pnpm ops:validate'
 )
 
