@@ -71,7 +71,6 @@ export type BodyContext =
       readonly scope?: 'group';
       readonly threadId: string;
       readonly bucket: string;
-      readonly unttrusted?: Record<string, unknown> | undefined;
       readonly untrusted: Record<string, unknown> | undefined;
     }
   | {

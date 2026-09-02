@@ -90,7 +90,7 @@ describe('FleetReadModel', () => {
 
     const result = await new FleetReadModel(fake.pool, 'Steven').cadena(undefined, 'root-1');
 
-    expect(fake.calls[0]?.params).toEqual([null, 'root-1']);
+    expect(fake.calls[0]?.params).toEqual([null, 'root-1', 'Steven']);
     expect(result).toMatchObject({
       available: true,
       root_message_id: 'root-1',
@@ -102,8 +102,19 @@ describe('FleetReadModel', () => {
   it('uses trace_id when both chain selectors are present', async () => {
     const fake = scriptedPool({ match: /aom\.trace_id = \$1/u, rows: [] });
     const result = await new FleetReadModel(fake.pool, 'Steven').cadena('trace-1', 'root-1');
-    expect(fake.calls[0]?.params).toEqual(['trace-1', 'root-1']);
+    expect(fake.calls[0]?.params).toEqual(['trace-1', 'root-1', 'Steven']);
     expect(result).toEqual({ data: [], available: true, trace_id: 'trace-1' });
+  });
+
+  it('scopes the chain to the caller tenant so a cross-tenant delegation does not leak', async () => {
+    const fake = scriptedPool({
+      match: /source_tenant = \$3 OR aom\.target_tenant = \$3/u,
+      rows: [],
+    });
+
+    await new FleetReadModel(fake.pool, 'Miguel').cadena('trace-1');
+
+    expect(fake.calls[0]?.params).toEqual(['trace-1', null, 'Miguel']);
   });
 
   it('does not query when cadena has no selector', async () => {

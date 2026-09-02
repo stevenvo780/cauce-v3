@@ -218,12 +218,15 @@ export class FleetReadModel {
           aom.created_at,
           aom.rejection_code
         FROM agent_output_materializations aom
-        WHERE ($1::text IS NOT NULL AND aom.trace_id = $1)
-           OR ($1::text IS NULL AND aom.correlation->>'root_message_id' = $2)
+        WHERE (
+          ($1::text IS NOT NULL AND aom.trace_id = $1)
+          OR ($1::text IS NULL AND aom.correlation->>'root_message_id' = $2)
+        )
+          AND (aom.source_tenant = $3 OR aom.target_tenant = $3)
         ORDER BY aom.hop_count, aom.created_at
         LIMIT 500
         `,
-        [traceId ?? null, rootMessageId ?? null]
+        [traceId ?? null, rootMessageId ?? null, this.tenantId]
       );
 
       const mappedData = result.rows.map((row) => {

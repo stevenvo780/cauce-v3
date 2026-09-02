@@ -228,10 +228,10 @@ describe('Telegram update boundaries', () => {
     expect(repository.next).toBe(0);
   });
 
-  it('does not advance past a publish error', async () => {
+  it('does not advance past a publish error that is not an idempotency conflict', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DurableRecordingIngress();
-    ingress.error = new StoreError('conflict', 'idempotency key reused with a different request');
+    ingress.error = new Error('database offline');
     const metrics: string[] = [];
 
     await expect(poller(
@@ -239,12 +239,37 @@ describe('Telegram update boundaries', () => {
       repository,
       ingress,
       metrics
-    ).runOnce()).rejects.toThrow('idempotency key reused with a different request');
+    ).runOnce()).rejects.toThrow('database offline');
 
     expect(ingress.calls.map((call) => call.update_id)).toEqual([1]);
     expect(repository.advances).toEqual([]);
     expect(repository.next).toBe(0);
-    expect(metrics).toContain('updates_conflict');
+    expect(metrics).not.toContain('updates_conflict');
+  });
+
+  it('resolves a publish idempotency conflict by update_id instead of stalling the batch on it', async () => {
+    // `idempotency_key` is `telegram:{bot_id}:{update_id}` alone, content-free: this conflict is
+    // what a non-deterministic voice transcription produces on a retried update, and the store
+    // proves the update_id is already durably represented the moment it raises this error.
+    const repository = new MemoryCursorRepository();
+    const ingress = new DurableRecordingIngress();
+    ingress.error = new StoreError('conflict', 'idempotency key reused with a different request');
+    const metrics: string[] = [];
+
+    const count = await poller(
+      new ScriptedTelegram([[update(1, 'uno'), update(2, 'dos')]]),
+      repository,
+      ingress,
+      metrics
+    ).runOnce();
+
+    // The fence resolves by update_id for BOTH updates in the batch: neither one stalls the
+    // poller waiting for a body match it can never get twice from a non-deterministic source.
+    expect(count).toBe(2);
+    expect(ingress.calls.map((call) => call.update_id)).toEqual([1, 2]);
+    expect(repository.advances).toEqual([2, 3]);
+    expect(repository.next).toBe(3);
+    expect(metrics.filter((metric) => metric === 'updates_conflict')).toHaveLength(2);
   });
 
   it('fetches update 101 on the next page after a full Telegram batch of 100', async () => {

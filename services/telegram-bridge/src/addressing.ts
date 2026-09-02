@@ -155,6 +155,7 @@ function scanEntities(
   // The content is still untrusted network data and every field is validated below anyway.
   for (const entity of entities as readonly TelegramEntity[]) {
     if (scan.scanned >= MAX_SCANNED_ENTITIES || scan.inspected >= MAX_INSPECTED_ENTITIES) return;
+    scan.inspected += 1;
     const rawEntity = entity as unknown;
     if (rawEntity === null || typeof rawEntity !== 'object' || typeof (rawEntity as Partial<TelegramEntity>).type !== 'string') continue;
     // Decorative entities are skipped before the budget is charged: a bold run or a custom emoji

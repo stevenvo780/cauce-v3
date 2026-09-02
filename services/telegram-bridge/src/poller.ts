@@ -285,11 +285,9 @@ export class TelegramPoller {
       ...(this.participants === undefined ? {} : { participants: this.participants(chatId, threadId) })
     });
     if (!decision.addressed) {
-      // Consume the update and move the cursor without publishing: no delivery row, no wake,
-      // no model quota. The only residual cost is the long poll that already happens.
-      //
-      // The audit record is emitted BEFORE advanceCursor because the Telegram cursor is
-      // destructive: after it moves, the update cannot be fetched again from anywhere.
+      // Consume the update and move the cursor without publishing: no delivery row, no wake, no
+      // model quota. The audit record below is emitted BEFORE advanceCursor because the Telegram
+      // cursor is destructive: once it moves, the update can never be fetched again from anywhere.
       if (!isPrivateChatId(chatId)) {
         try {
           this.onSuppressed({
@@ -377,8 +375,11 @@ export class TelegramPoller {
         human: message.from?.is_bot !== true
       });
     } catch (error) {
-      if (isRequestConflict(error)) this.onMetric('updates_conflict');
-      throw error;
+      if (!isRequestConflict(error)) throw error;
+      // idempotency_key is content-free (bot_id+update_id): a conflict proves this update_id is
+      // already durable under a body a non-deterministic transcription retry won't match again.
+      this.onMetric('updates_conflict');
+      result = { duplicate: true };
     }
     if (!result.duplicate && !signal?.aborted) {
       try {
