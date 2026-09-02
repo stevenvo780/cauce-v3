@@ -59,13 +59,13 @@ describe('gateway hardening facades and RBAC', () => {
 
     const missing = await app.inject({
       method: 'POST',
-      url: '/v3/query',
+      url: '/v3/deliveries/query',
       payload: { instance_id: 'http-fenced-consumer', epoch: lease.epoch, limit: 1 },
     });
     expect(missing.statusCode).toBe(403);
     const queried = await app.inject({
       method: 'POST',
-      url: '/v3/query',
+      url: '/v3/deliveries/query',
       payload: {
         instance_id: 'http-fenced-consumer', epoch: lease.epoch, limit: 1,
         connection_token: lease.connection_token,
@@ -106,7 +106,7 @@ describe('gateway hardening facades and RBAC', () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: '/v3/query',
+      url: '/v3/deliveries/query',
       payload: {
         instance_id: 'http-deadline-consumer', epoch: 7, limit: 4,
         connection_token: ids.claim,

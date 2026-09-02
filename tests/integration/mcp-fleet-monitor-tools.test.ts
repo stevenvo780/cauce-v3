@@ -204,11 +204,11 @@ describe('MCP fleet monitor tool surface', () => {
 
   it('advertises the documented read-only fleet tools', () => {
     expect([...advertised.map((tool) => tool.name)].sort()).toEqual([
-      'cadena',
+      'chain',
       'dead_letters',
-      'entregas',
-      'estado_flota',
-      'salud',
+      'deliveries',
+      'fleet_status',
+      'health',
     ]);
   });
 
@@ -227,13 +227,13 @@ describe('MCP fleet monitor tool surface', () => {
         continue;
       }
       // Answering is not the same as working. Each read model reports whether its query
-      // actually ran, which is what caught `estado_flota` and `salud` querying a table that
+      // actually ran, which is what caught `fleet_status` and `health` querying a table that
       // does not exist while still returning a tidy empty payload.
       const payload = JSON.parse(text) as Record<string, unknown>;
       if (payload.available === false) {
         unimplemented.push(`${tool.name} -> responded but its read model could not query`);
       }
-      if (tool.name === 'salud' && String(payload.summary).includes('unavailable')) {
+      if (tool.name === 'health' && String(payload.summary).includes('unavailable')) {
         unimplemented.push(`${tool.name} -> ${String(payload.summary)}`);
       }
     }
@@ -246,7 +246,7 @@ describe('MCP fleet monitor tool surface', () => {
    * and memberships but NEVER an agent row, so `beforeAll` writes the one this asserts.
    */
   it('returns rows that were really written to the database', async () => {
-    const initial = JSON.parse(textOf(await client.callTool('estado_flota'))) as {
+    const initial = JSON.parse(textOf(await client.callTool('fleet_status'))) as {
       data: readonly Record<string, unknown>[];
     };
     expect(initial.data).toContainEqual(expect.objectContaining({ alias: 'kant', lease_alive: false }));
@@ -257,7 +257,7 @@ describe('MCP fleet monitor tool surface', () => {
       [TENANT, 'kant', 'adapter-kant-1', 7],
     );
 
-    const flota = JSON.parse(textOf(await client.callTool('estado_flota'))) as {
+    const flota = JSON.parse(textOf(await client.callTool('fleet_status'))) as {
       available: boolean;
       data: readonly Record<string, unknown>[];
     };
@@ -271,33 +271,33 @@ describe('MCP fleet monitor tool surface', () => {
 
     // Health counts the enabled catalog as its denominator and the lease as its numerator. A
     // bare stale lease must not make a disabled/historical alias part of the healthy fleet.
-    const salud = JSON.parse(textOf(await client.callTool('salud'))) as { summary: string };
+    const health = JSON.parse(textOf(await client.callTool('health'))) as { summary: string };
     const enabled = await database.pool.query<{ count: string }>(
       'SELECT count(*) FROM agents WHERE tenant_id=$1 AND enabled=true', [TENANT],
     );
-    expect(salud.summary).toContain(`${enabled.rows[0]?.count ?? '0'} alias`);
-    expect(salud.summary).toContain('1 vivos');
-    expect(salud.summary).not.toContain('unavailable');
+    expect(health.summary).toContain(`${enabled.rows[0]?.count ?? '0'} alias`);
+    expect(health.summary).toContain('1 vivos');
+    expect(health.summary).not.toContain('unavailable');
 
     // Filtering is applied by the query, not by the caller.
     const filtered = JSON.parse(
-      textOf(await client.callTool('estado_flota', { alias: 'no-such-alias' })),
+      textOf(await client.callTool('fleet_status', { alias: 'no-such-alias' })),
     ) as { data: readonly unknown[] };
     expect(filtered.data).toEqual([]);
   }, 120_000);
 
   /**
-   * An advertised input schema is part of the contract too. `entregas` used to offer
-   * `estado` values of `claimed/acked/dead`, and only `dead` is a real delivery status, so an
+   * An advertised input schema is part of the contract too. `deliveries` used to offer
+   * `status` values of `claimed/acked/dead`, and only `dead` is a real delivery status, so an
    * agent filtering by the documented values got an empty list and no explanation.
    */
   it('advertises delivery statuses the database actually allows', async () => {
-    const entregas = advertised.find((tool) => tool.name === 'entregas');
-    const properties = (entregas?.inputSchema?.properties ?? {}) as Record<
+    const deliveries = advertised.find((tool) => tool.name === 'deliveries');
+    const properties = (deliveries?.inputSchema?.properties ?? {}) as Record<
       string,
       { enum?: readonly string[] }
     >;
-    const offered = [...(properties.estado?.enum ?? [])].sort();
+    const offered = [...(properties.status?.enum ?? [])].sort();
 
     const constraint = await database.pool.query<{ definition: string }>(
       `SELECT pg_get_constraintdef(c.oid) AS definition
@@ -317,17 +317,17 @@ describe('MCP fleet monitor tool surface', () => {
 
     // And the filter really reaches the query.
     const filtered = JSON.parse(
-      textOf(await client.callTool('entregas', { estado: 'dead', limit: 5 })),
+      textOf(await client.callTool('deliveries', { status: 'dead', limit: 5 })),
     ) as { available: boolean; data: readonly unknown[] };
     expect(filtered.available).toBe(true);
     expect(filtered.data).toEqual([]);
   }, 120_000);
 
-  it('rejects an unknown estado with an explicit error, not an empty list', async () => {
-    const result = await client.callTool('entregas', { estado: 'inventado', limit: 5 });
+  it('rejects an unknown status with an explicit error, not an empty list', async () => {
+    const result = await client.callTool('deliveries', { status: 'inventado', limit: 5 });
     expect(result.isError).toBe(true);
     const text = textOf(result);
-    expect(text).toMatch(/Invalid 'estado' value 'inventado'/u);
+    expect(text).toMatch(/Invalid 'status' value 'inventado'/u);
     expect(text).not.toMatch(/"data":\s*\[\s*\]/u);
   });
 
@@ -359,7 +359,7 @@ describe('MCP fleet monitor tool surface', () => {
 });
 
 function argumentsFor(tool: string): Record<string, unknown> {
-  if (tool === 'cadena') return { trace_id: 'trace-probe' };
-  if (tool === 'entregas') return { limit: 1 };
+  if (tool === 'chain') return { trace_id: 'trace-probe' };
+  if (tool === 'deliveries') return { limit: 1 };
   return {};
 }

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildGateway, type GatewayRepository } from '../../services/gateway/src/index.js';
 import {

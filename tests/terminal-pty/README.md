@@ -46,9 +46,10 @@ test time. No new dependencies; `pnpm-lock.yaml` is not touched.
 ### `vectors.json` — the source of truth
 
 The file is one JSON object, not a bare array: `contract`, `frozen`, `note`, `master_key_b64`,
-`hkdf` (hash/salt/info template/length), `framing` (header shape, max payload, the tag numbers),
-`ws_close_codes`, `keys` (per-`tenant:alias` derived key, precomputed) and `cases` — the frozen
-vectors themselves. Each case is `{name, kind, input, expected, must_fail}`.
+`hkdf` (hash/salt/info template/length), `framing` (header shape, max payload, the tag numbers,
+`prefixed_tags`), `geometry`, `limits`, `ttls`, `ws_close_codes`, `keys` (per-`tenant:alias`
+derived key, precomputed) and `cases` — the frozen vectors themselves.
+Each case is `{name, kind, input, expected, must_fail}`.
 The first three come from the spec (derived key, full ticket, and STDOUT frame);
 the rest were generated with the same algorithm to cover edges: expired ticket,
 ticket that has not yet started, one bit flipped in the HMAC, payload mutated to
@@ -58,11 +59,37 @@ frame (65536), a frame split into 1-byte chunks, two frames in a single read plu
 an incomplete third, an unknown tag, and a length declared above the max.
 
 The `kind`s understood by the runner: `derive_alias_key`, `canonical_payload`,
-`mint_ticket`, `verify_ticket`, `encode_frame`, `decode_frame`, `decode_stream`.
+`mint_ticket`, `verify_ticket`, `encode_frame`, `decode_frame`, `decode_stream`,
+`governance_read`, `governance_write`, `governance_write_batch`.
+
+For the governance kinds `must_fail: true` does not mean "it throws": the handler is expected to
+answer the terminal error frame of its family (`READ_ERR`, `WRITE_ERR`, `WRITE_BATCH_ERR`) with
+the exact `error` code and `reason` string in `expected`, and to leave the filesystem where it
+was — that is why those cases also pin `file_text` or `files_after`. `input.harness` picks the
+profile (`claude` -> `$HOME/.claude/CLAUDE.md`; `openclaw` -> the seven workspace documents),
+`input.files` seeds the tree and every path in a case is a `basename` inside it: the vectors
+never name an absolute path, because the runner builds a fresh temporary home per case.
+
+`geometry`, `limits` and `ttls` are not vectors but the shared constants, each with a `sources`
+entry naming the file and line it was copied from. They exist so the four legs stop re-declaring
+the same numbers; the value they carry is only as good as the assertions that compare them with
+the real constant (`ops/pty-agent/tests/test_vectors_contract.py` does exactly that for the
+agent).
+
+Two of these numbers do not fit together and the vectors say so instead of hiding it:
+`limits.max_write_batch_files` is 7, but a whole batch may announce at most
+`ceil(max_document_bytes / max_data) = 5` chunks, so seven non-empty writes can never commit
+(`governance/batch-of-seven-writes-exceeds-the-total-chunk-budget` pins that answer). A batch of
+seven *entries* only succeeds when at most five of them carry content.
 
 **Do not recompute them.** If your implementation does not reproduce a vector,
 yours is wrong. Any change here is a contract change and is announced to all
 three teams.
+
+The Python side of the contract is `ops/pty-agent/tests/test_vectors_contract.py`: it loads this
+same file and walks **every** case through the agent's own code. A `kind` it does not know fails
+the test — it is never skipped — and it prints the case count so a file that shrinks is visible in
+the log.
 
 For the other two implementations the file is directly consumable — read the whole object, then
 index into `cases`:
@@ -107,7 +134,26 @@ Variables: `RELAY_HOST`, `RELAY_PORT`, `RELAY_SERVERNAME`, `AGENT_CERT`,
 `AGENT_KEY`, `AGENT_CA`, `AGENT_TLS_INSECURE=1`, `TENANT`, `ALIAS`, `ALIAS_KEY_HEX`,
 `CONTAINER_ID`, `GENERATION`, `IMAGE_ID`, `RUNTIME_USER`, `RUNTIME_UID`,
 `AGENT_MODES`, `AGENT_BANNER=1`, `AGENT_ONESHOT=1`, `AGENT_FLOOD_BYTES`,
-`AGENT_QUIET=1`, `AGENT_SIMULATE_EUID`.
+`AGENT_QUIET=1`, `AGENT_SIMULATE_EUID`, `AGENT_GOVERNANCE=1`, `AGENT_GOVERNANCE_HARNESS`.
+
+With `AGENT_GOVERNANCE=1` (or `governance: true`) the hello advertises `read_governance`,
+`write_governance_v1`, `write_governance_batch_v1` and `read_governance_done_v1`, and the agent
+serves `READ` / `WRITE` / `WRITE_BATCH` from `governance-double.mjs`. Without it those tags stay
+what they were: an unexpected tag that closes the connection as a protocol error.
+
+### `governance-double.mjs` — the governed file plane, in a temp directory
+
+`createGovernanceSandbox({harness})` creates a `mkdtemp` home with the profile directory of that
+harness inside it, and answers `READ` / `WRITE` / `WRITE_BATCH` with the same preconditions,
+error codes and reason strings as the Python agent: never-served basenames, canonical absolute
+paths, containment inside the home, `expected_sha` as the compare-and-swap precondition,
+create-if-absent, the idempotent reply to a replayed write whose bytes are already on disk, and a
+batch that stages everything before committing anything and rolls the prefix back if a commit
+fails. `dispose()` deletes the tree; nothing outside it is ever opened. `READ_DONE` is emitted
+only after a successful `READ_OK` and all its `READ_DATA`; `READ_ERR` is terminal on its own.
+
+The vector walk drives it directly (no socket); the relay contract tests drive it through the
+agent leg with `startFakeAgent({governance: true})`.
 
 Exit codes, identical to the real agent: `0` clean, `2` invalid configuration,
 `3` HELLO rejected, `4` protocol error (unknown tag, out-of-size frame), `5`
@@ -208,8 +254,26 @@ names, adjust here, this is the only place that mentions them):
 | `0x31` | CLOSED | agent -> relay | JSON `{session_id, exit_code, signal, reason}` |
 | `0x40` | PING | relay -> agent | empty |
 | `0x41` | PONG | agent -> relay | empty |
+| `0x50` | READ | relay -> agent | JSON `{request_id, kind, path}` |
+| `0x51` | READ_OK | agent -> relay | JSON `{request_id, kind, path, bytes, truncated, modified_at, sha, chunks}` |
+| `0x52` | READ_ERR | agent -> relay | JSON `{request_id, error, reason}` |
+| `0x53` | READ_DATA | agent -> relay | DATA (prefix = `request_id`) |
+| `0x54` | WRITE | relay -> agent | JSON `{request_id, path, operation, expected_sha, content_sha, bytes, chunks}` |
+| `0x55` | WRITE_DATA | relay -> agent | DATA (prefix = `request_id`) |
+| `0x56` | WRITE_OK | agent -> relay | JSON `{request_id, path, operation, sha, bytes}` |
+| `0x57` | WRITE_ERR | agent -> relay | JSON `{request_id, error, reason}` |
+| `0x58` | WRITE_CANCEL | relay -> agent | JSON `{request_id}` |
+| `0x59` | WRITE_BATCH | relay -> agent | JSON `{request_id, entries[]}` |
+| `0x5A` | WRITE_BATCH_DATA | relay -> agent | DATA (prefix = `request_id`) |
+| `0x5B` | WRITE_BATCH_OK | agent -> relay | JSON `{request_id, files[]}` |
+| `0x5C` | WRITE_BATCH_ERR | agent -> relay | JSON `{request_id, error, reason}` |
+| `0x5D` | WRITE_BATCH_CANCEL | relay -> agent | JSON `{request_id}` |
+| `0x5E` | READ_DONE | agent -> relay | JSON `{request_id}` |
 
-DATA = 36 ASCII bytes of `session_id` (UUID with dashes) + raw bytes. An
+DATA = 36 ASCII bytes of `session_id` (UUID with dashes) + raw bytes. The three governance data
+tags use the same 36-byte prefix, carrying the `request_id` instead of a session, so both legs
+reuse one decoder; `framing.prefixed_tags` in `vectors.json` is that list. The `0x50`-`0x5E`
+family is only sent to an agent whose hello advertised the matching feature. An
 unknown tag is not ignored: the connection is closed as protocol error (4400).
 The version is bumped, never guessed.
 

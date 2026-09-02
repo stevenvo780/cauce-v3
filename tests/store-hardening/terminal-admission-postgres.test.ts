@@ -84,19 +84,6 @@ async function build(maxSessionsPerOperator: number): Promise<void> {
     },
     config,
     registry,
-    repository: {
-      assertPermission: async () => undefined,
-      authorizeAgentTarget: async (_actorTenant, _actorAlias, targetTenant, targetAlias) => {
-        if (targetTenant !== 'Steven' || !['jarvis', 'socrates'].includes(targetAlias)) return undefined;
-        return {
-          tenant_id: targetTenant,
-          alias: targetAlias,
-          harness_id: null,
-          home_directory: null,
-          enabled: true,
-        };
-      },
-    },
     measuredFacts: { factsFor: async () => undefined },
     governanceRelay: { readFile: async () => ({ error: 'unavailable', reason: 'not needed' }) },
     relayPeerInstanceId: () => RELAY_INSTANCE_ID,
@@ -576,6 +563,22 @@ describe('atomic PTY admission', () => {
     expect(recovered.json()).toMatchObject({
       claim_token: CLAIM_B, claim_epoch: '2', claim_taken_over: true,
     });
+  });
+
+  it('revokes control authority from the real predicate inside the relay transaction', async () => {
+    await build(10);
+    const opened = await request('steven');
+    const issued = opened.json<{ session_id: string; ticket: string }>();
+    const consumed = await consume(issued.session_id, issued.ticket, CLAIM_A);
+    expect(consumed.statusCode).toBe(200);
+    const first = consumed.json<{ resume_token: string; claim_epoch: string }>();
+
+    await pool.query(
+      `UPDATE memberships SET enabled=false WHERE tenant_id='Steven' AND alias='kant'`,
+    );
+    const refused = await resume(issued.session_id, first.resume_token, CLAIM_A, first.claim_epoch);
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ ok: false, reason: 'control_authority_revoked' });
   });
 
   it('rolls back an exact close when its audit fails, then drains a legacy epoch-zero row', async () => {

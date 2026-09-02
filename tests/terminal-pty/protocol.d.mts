@@ -12,9 +12,19 @@ export declare const TAG: {
   AGENT_HELLO: number; HELLO_ACK: number; OPEN: number; OPEN_OK: number; OPEN_ERR: number;
   STDIN: number; STDOUT: number; RESIZE: number; CLOSE: number; CLOSED: number;
   PING: number; PONG: number;
+  READ: number; READ_OK: number; READ_ERR: number; READ_DATA: number; READ_DONE: number;
+  WRITE: number; WRITE_DATA: number; WRITE_OK: number; WRITE_ERR: number; WRITE_CANCEL: number;
+  WRITE_BATCH: number; WRITE_BATCH_DATA: number; WRITE_BATCH_OK: number;
+  WRITE_BATCH_ERR: number; WRITE_BATCH_CANCEL: number;
 };
 export declare const TAG_NAME: Record<number, string>;
 export declare const DATA_TAGS: Set<number>;
+/**
+ * Tags whose payload opens with the 36 ASCII bytes of an identifier: a session id for
+ * STDIN/STDOUT, a governance request id for READ_DATA/WRITE_DATA/WRITE_BATCH_DATA. The
+ * agent keeps one decoder for all of them (PREFIXED_TAGS in cauce_pty_agent.py).
+ */
+export declare const PREFIXED_TAGS: Set<number>;
 export declare const EMPTY_TAGS: Set<number>;
 export declare const JSON_TAGS: Set<number>;
 export declare const CLOSE_CODE: Record<string, number>;

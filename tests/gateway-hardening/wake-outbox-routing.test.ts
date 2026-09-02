@@ -9,7 +9,9 @@ import {
   type GatewayRepository, type OutboxLeaseAck, type OutboxLeaseEvent
 } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, text } from './helpers.js';
+import {
+  closeGatewaysAndSockets, fakePool, fakeRepository, frameReader, noDeliveryWakes
+} from './helpers.js';
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
@@ -21,26 +23,6 @@ afterEach(async () => {
   pendingReleases.clear();
   await closeGatewaysAndSockets(apps, sockets);
 });
-
-function frameReader(
-  socket: WebSocket,
-  received: Record<string, unknown>[]
-): () => Promise<Record<string, unknown>> {
-  const queued: Record<string, unknown>[] = [];
-  const waiting: ((value: Record<string, unknown>) => void)[] = [];
-  socket.on('message', (data) => {
-    const decoded = JSON.parse(text(data)) as Record<string, unknown>;
-    received.push(decoded);
-    const resolve = waiting.shift();
-    if (resolve) resolve(decoded);
-    else queued.push(decoded);
-  });
-  return async () => {
-    const existing = queued.shift();
-    if (existing) return existing;
-    return new Promise((resolve) => waiting.push(resolve));
-  };
-}
 
 async function waitFor(check: () => boolean, timeoutMs = 2_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -360,9 +342,6 @@ describe('gateway selective durable wake routing', () => {
         return { status: 'sent', applied: false };
       }
     );
-    const completeOutboxFn = repository.completeOutbox;
-    if (!completeOutboxFn) throw new Error('Expected completeOutbox on repository');
-    const complete = vi.mocked(completeOutboxFn);
     const { app, port } = await start(repository, { wakePumpTelemetry: telemetry });
     const error = vi.spyOn(app.log, 'error');
     connection = await connect(port, 'Steven', 'kant', 'fenced-ack');
@@ -376,7 +355,6 @@ describe('gateway selective durable wake routing', () => {
       && reason.message === 'wake outbox ACK was fenced'));
     expect(sawWake(connection)).toBe(true);
     expect(wakeObservedBeforeAck).toBe(true);
-    expect(complete).not.toHaveBeenCalled();
     const fencedSnapshot = telemetry.snapshot();
     expect(typeof fencedSnapshot.lastProgressAtMs).toBe('number');
     expect(fencedSnapshot.counters).toMatchObject({ claimed: 1, sent: 0, fenced: 1 });

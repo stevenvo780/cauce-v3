@@ -1,5 +1,9 @@
 // Types for ./fake-pty-agent.mjs.
 
+import type { GovernanceSandbox } from './governance-double.d.mts';
+
+export { GOVERNANCE, GOVERNANCE_FEATURES, createGovernanceSandbox } from './governance-double.d.mts';
+
 export declare const EXIT: {
   ok: 0; bad_config: 2; hello_rejected: 3; protocol_error: 4; transport_error: 5; refuses_root: 78;
 };
@@ -29,6 +33,9 @@ export interface FakeAgentOptions {
   runtime_user?: string;
   runtime_uid?: number;
   modes?: string[];
+  /** Serve READ/WRITE/WRITE_BATCH from a private mkdtemp and advertise the features. */
+  governance?: boolean;
+  governance_harness?: string;
   banner?: boolean;
   oneshot?: boolean;
   flood_bytes?: number;
@@ -47,6 +54,8 @@ export interface FakeAgentHandle {
   readonly sessions: number;
   readonly exit_code: number;
   readonly error?: Error;
+  /** `null` unless the agent was started with `governance: true`. */
+  readonly governance?: GovernanceSandbox | null;
   close(): void;
   destroy(): void;
 }

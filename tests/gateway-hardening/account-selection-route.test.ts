@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 /**
  * GET /v3/accounts/selection — the route the adapter uses to ask the selector which
  * subscription to spend.

@@ -6,7 +6,9 @@ import { HUMAN_PRIORITY_FLOOR } from '@cauce/protocol';
 import { StoreError } from '@cauce/store';
 import { buildGateway, type DeliveryClaimRecord, type GatewayRepository } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { closeGatewaysAndSockets, fakePool, fakeRepository, noDeliveryWakes, text } from './helpers.js';
+import {
+  closeGatewaysAndSockets, fakePool, fakeRepository, frameReader, noDeliveryWakes
+} from './helpers.js';
 
 /**
  * Tests for admission control, in-flight delivery caps, and interactive-budget reservation
@@ -21,28 +23,12 @@ afterEach(async () => {
   await closeGatewaysAndSockets(apps, sockets);
 });
 
-function frameReader(socket: WebSocket): {
+function frameSession(socket: WebSocket): {
   next: () => Promise<Record<string, unknown>>;
   seen: () => Record<string, unknown>[];
 } {
-  const queued: Record<string, unknown>[] = [];
   const all: Record<string, unknown>[] = [];
-  const waiting: ((value: Record<string, unknown>) => void)[] = [];
-  socket.on('message', (data) => {
-    const decoded = JSON.parse(text(data)) as Record<string, unknown>;
-    all.push(decoded);
-    const resolve = waiting.shift();
-    if (resolve) resolve(decoded);
-    else queued.push(decoded);
-  });
-  return {
-    next: async () => {
-      const existing = queued.shift();
-      if (existing) return existing;
-      return new Promise((resolve) => waiting.push(resolve));
-    },
-    seen: () => [...all]
-  };
+  return { next: frameReader(socket, all), seen: () => [...all] };
 }
 
 interface QueuedDelivery {
@@ -205,7 +191,7 @@ async function connect(port: number, instanceId: string): Promise<{
     headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' }
   });
   sockets.push(socket);
-  const reader = frameReader(socket);
+  const reader = frameSession(socket);
   await new Promise<void>((resolve, reject) => {
     socket.once('open', resolve);
     socket.once('error', reject);
@@ -534,9 +520,7 @@ describe('gateway delivery admission control', () => {
 
   it('fails recovery visibly without expiring renewable claims from the acquired epoch', async () => {
     const repository = fakeRepository();
-    const liveDeliveryClaims = repository.liveDeliveryClaims;
-    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
-    vi.mocked(liveDeliveryClaims).mockRejectedValueOnce(new Error('database unavailable'));
+    vi.mocked(repository.liveDeliveryClaims).mockRejectedValueOnce(new Error('database unavailable'));
     const app = await buildGateway({
       pool: fakePool(),
       repository,
@@ -551,7 +535,7 @@ describe('gateway delivery admission control', () => {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(socket);
-    const reader = frameReader(socket);
+    const reader = frameSession(socket);
     const closed = new Promise<number>((resolve) => {
       socket.once('close', (code) => { resolve(code); });
     });
@@ -591,7 +575,7 @@ describe('gateway delivery admission control', () => {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(socket);
-    const reader = frameReader(socket);
+    const reader = frameSession(socket);
     const closed = new Promise<{ code: number; reason: string }>((resolve) => {
       socket.once('close', (code, reason) => { resolve({ code, reason: reason.toString('utf8') }); });
     });
@@ -654,9 +638,7 @@ describe('gateway delivery admission control', () => {
     let firstRecoveryStarted!: () => void;
     const firstRecoveryObserved = new Promise<void>((resolve) => { firstRecoveryStarted = resolve; });
     let recoveryCalls = 0;
-    const liveDeliveryClaims = repository.liveDeliveryClaims;
-    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
-    vi.mocked(liveDeliveryClaims).mockImplementation(async () => {
+    vi.mocked(repository.liveDeliveryClaims).mockImplementation(async () => {
       recoveryCalls += 1;
       if (recoveryCalls === 1) {
         firstRecoveryStarted();
@@ -678,7 +660,7 @@ describe('gateway delivery admission control', () => {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(firstSocket);
-    const firstReader = frameReader(firstSocket);
+    const firstReader = frameSession(firstSocket);
     const firstClosed = new Promise<number>((resolve) => {
       firstSocket.once('close', (code) => { resolve(code); });
     });
@@ -739,9 +721,7 @@ describe('gateway delivery admission control', () => {
     const currentRecoveryGate = new Promise<void>((resolve) => { releaseCurrentRecovery = resolve; });
     let currentRecoveryStarted!: () => void;
     const currentRecoveryObserved = new Promise<void>((resolve) => { currentRecoveryStarted = resolve; });
-    const liveDeliveryClaims = repository.liveDeliveryClaims;
-    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
-    vi.mocked(liveDeliveryClaims).mockImplementationOnce(async () => {
+    vi.mocked(repository.liveDeliveryClaims).mockImplementationOnce(async () => {
       currentRecoveryStarted();
       await currentRecoveryGate;
       return [];
@@ -760,7 +740,7 @@ describe('gateway delivery admission control', () => {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(firstSocket);
-    const firstReader = frameReader(firstSocket);
+    const firstReader = frameSession(firstSocket);
     const firstClosed = new Promise<number>((resolve) => {
       firstSocket.once('close', (code) => { resolve(code); });
     });
@@ -779,7 +759,7 @@ describe('gateway delivery admission control', () => {
       headers: { 'x-cauce-tenant': 'Pablo', 'x-cauce-alias': 'midas' },
     });
     sockets.push(currentSocket);
-    const currentReader = frameReader(currentSocket);
+    const currentReader = frameSession(currentSocket);
     await new Promise<void>((resolve, reject) => {
       currentSocket.once('open', resolve);
       currentSocket.once('error', reject);
@@ -811,9 +791,7 @@ describe('gateway delivery admission control', () => {
     let recoveryStarted!: () => void;
     const recoveryObserved = new Promise<void>((resolve) => { recoveryStarted = resolve; });
     let calls = 0;
-    const liveDeliveryClaims = repository.liveDeliveryClaims;
-    if (!liveDeliveryClaims) throw new Error('Expected liveDeliveryClaims on repository');
-    vi.mocked(liveDeliveryClaims).mockImplementation(async () => {
+    vi.mocked(repository.liveDeliveryClaims).mockImplementation(async () => {
       calls += 1;
       if (calls === 1) {
         recoveryStarted();
@@ -877,7 +855,7 @@ describe('gateway delivery admission control', () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: '/v3/query',
+      url: '/v3/deliveries/query',
       payload: {
         instance_id: 'http-consumer', epoch: 3, limit: 100,
         connection_token: HTTP_CONNECTION_TOKEN,
@@ -907,7 +885,7 @@ describe('gateway delivery admission control', () => {
     apps.push(app);
 
     const query = () => app.inject({
-      method: 'POST', url: '/v3/query',
+      method: 'POST', url: '/v3/deliveries/query',
       payload: {
         instance_id: 'http-repeat', epoch: 3, limit: 100,
         connection_token: HTTP_CONNECTION_TOKEN,

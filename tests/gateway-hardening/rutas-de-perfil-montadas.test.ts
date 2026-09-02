@@ -126,8 +126,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
     responsibilities: [], restrictions: [], tools: [], operating_rules: [],
     revision: 1, applied_revision: 1,
   };
-  const repository = {
-    ...fakeRepository(),
+  const repository = fakeRepository({
     authorizeAgentTarget: async () => ({
       tenant_id: 'Steven', alias: 'zeus', enabled: true,
       harness_id: 'claude', home_directory: '/home/dev',
@@ -147,7 +146,7 @@ async function gatewayCanonico(supersedeAfterBatch = false) {
       documents: [...contract.documents],
       adopted_at: '2026-08-26T18:00:00.000Z',
     }),
-  };
+  });
   const app = await buildGateway({
     pool: poolDePerfil(state),
     repository,

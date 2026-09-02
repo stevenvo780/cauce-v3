@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UUID_OK, buildContext, type Context, makeRow, stubFleetPool } from './gateway-terminal-session-control-fixtures.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  UUID_OK, buildContext, configBase, type Context, makeRow, stubFleetPool,
+} from './gateway-terminal-session-control-fixtures.js';
 
 describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', () => {
   let ctx: Context;
@@ -47,17 +49,16 @@ describe('GET /v3/console/terminal/sessions: helper sessionState vía filas', ()
       expires_at: expiresAt,
       occupies_slot: true
     });
-    const sessionExpiry = vi.fn(() => expiresAt);
     const pool = stubFleetPool([], { selectList: [row] });
-    ctx = buildContext({ pool, sessionExpiry });
+    ctx = buildContext({ pool });
     const response = await ctx.app.inject({
       method: 'GET', url: '/v3/console/terminal/sessions'
     });
     expect(response.statusCode).toBe(200);
-    const body: { items: { state: string }[] } = response.json();
+    const body: { items: { state: string; expires_at: string }[] } = response.json();
     expect(body.items[0]?.state).toBe('active');
-    // sessionExpiry was consulted for a consumed session
-    expect(sessionExpiry).toHaveBeenCalledWith(row);
+    expect(body.items[0]?.expires_at)
+      .toBe(new Date(consumedAt.getTime() + configBase().sessionTtlSeconds * 1_000).toISOString());
   });
 
   it('state=closed cuando occupies_slot=false aunque issued_at/expires_at sean válidos', async () => {

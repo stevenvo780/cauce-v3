@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Principal } from '../../services/gateway/src/auth.js';
 import {
-  messageVisible,
   safeAuditPage,
   safeCancelReceipt,
   safeDlqPage,
@@ -17,12 +16,11 @@ import {
 /**
  * Tests for `services/gateway/src/facades.ts`.
  *
- * Coverage gap that motivated these tests: the `safe*Page`/`safe*Receipt` allowlist builders
- * were already exercised by `facades.dlq.test.ts`, and `visibleQueue` by `facades.test.ts`, but
- * the rest of the file — `messageVisible`, `visibleMessageList`, `visibleMessage`,
- * `sameTenantRows`, `visibleOriginRelays`, plus the `redactMessage` and `participant` helpers
- * reached through them — sat at 0 %. Each branch is exercised here without touching Postgres
- * (these are pure projection / visibility functions that consume already-shaped row objects).
+ * The invariant under test is the tenant boundary, not the column names: a principal who is
+ * neither the sender nor a delivery recipient sees nothing, and a recipient sees only their own
+ * delivery. Each of the three row shapes the store emits — `MessageListRow`, `MessageDetailRow`
+ * and `QueueSnapshotItem` — names the same participants differently, so every group also proves
+ * that the facade reading it does NOT accept the vocabulary of the other two.
  */
 
 const stevenKant: Principal = {
@@ -43,123 +41,94 @@ const miguelAtlas: Principal = {
   permissions: ['read'],
 };
 
-function delivery(recipient: { tenant: string; alias: string }): Record<string, unknown> {
+interface Party { tenant: string; alias: string }
+type Row = Record<string, unknown>;
+
+const KANT: Party = { tenant: 'Steven', alias: 'kant' };
+const ATLAS: Party = { tenant: 'Miguel', alias: 'atlas' };
+const MIDAS: Party = { tenant: 'Pablo', alias: 'midas' };
+
+function listRow(sender: Party, recipients: Party[]): Row {
   return {
-    recipient_tenant: recipient.tenant,
+    message_id: 'm-1',
+    tenant_id: sender.tenant,
+    actor_alias: sender.alias,
+    body_preview: 'hola',
+    deliveries: recipients.map((recipient, index) => ({
+      delivery_id: `d-${String(index)}`,
+      recipient_tenant: recipient.tenant,
+      recipient_alias: recipient.alias,
+      status: 'pending',
+    })),
+  };
+}
+
+function detailRow(sender: Party, recipients: Party[]): Row {
+  return {
+    id: 'm-1',
+    tenant_id: sender.tenant,
+    actor_alias: sender.alias,
+    body: { text: 'hola' },
+    deliveries: recipients.map((recipient, index) => ({
+      delivery_id: `d-${String(index)}`,
+      tenant_id: recipient.tenant,
+      alias: recipient.alias,
+      status: 'pending',
+    })),
+  };
+}
+
+function queueRow(sender: Party, recipient: Party, state: string): Row {
+  return {
+    delivery_id: 'q-1',
+    message_id: 'm-1',
+    tenant_id: recipient.tenant,
     recipient_alias: recipient.alias,
-    state: 'pending',
+    message_tenant_id: sender.tenant,
+    actor_alias: sender.alias,
+    state,
   };
 }
 
-function visibleMessageRow(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
-  return {
-    message_tenant_id: 'Steven',
-    actor_alias: 'kant',
-    body: 'hola',
-    ...overrides,
-  };
+function items(value: Row): Row[] {
+  return value.items as Row[];
 }
 
-describe('messageVisible', () => {
-  it('es visible cuando el principal es el emisor del mensaje', () => {
-    const row = visibleMessageRow();
-    expect(messageVisible(row, stevenKant)).toBe(true);
+function aliases(row: Row | undefined, key: string): unknown[] {
+  return ((row?.deliveries ?? []) as Row[]).map((delivery) => delivery[key]);
+}
+
+describe('visibleMessageList (forma MessageListRow)', () => {
+  it('el emisor recibe su mensaje con TODAS las entregas del fan-out', () => {
+    const result = visibleMessageList({ items: [listRow(KANT, [ATLAS, MIDAS])] }, stevenKant);
+    expect(items(result)).toHaveLength(1);
+    expect(aliases(items(result)[0], 'recipient_alias')).toEqual(['atlas', 'midas']);
   });
 
-  it('es visible cuando el principal aparece como participante de la conversación', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      participants: [{ tenant_id: 'Steven', alias: 'kant' }],
-      deliveries: [delivery({ tenant: 'Pablo', alias: 'midas' })],
-    };
-    expect(messageVisible(row, stevenKant)).toBe(true);
+  it('el destinatario recibe SOLO su propia entrega, no el resto del fan-out', () => {
+    const result = visibleMessageList({ items: [listRow(ATLAS, [KANT, MIDAS])] }, stevenKant);
+    expect(items(result)).toHaveLength(1);
+    expect(aliases(items(result)[0], 'recipient_alias')).toEqual(['kant']);
   });
 
-  it('es visible cuando el principal aparece en la lista de deliveries como destinatario', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      deliveries: [
-        delivery({ tenant: 'Pablo', alias: 'midas' }),
-        delivery({ tenant: 'Steven', alias: 'kant' }),
-      ],
-    };
-    expect(messageVisible(row, stevenKant)).toBe(true);
+  it('quien no es emisor ni destinatario no ve ningún item', () => {
+    const result = visibleMessageList({ items: [listRow(ATLAS, [MIDAS])] }, stevenKant);
+    expect(items(result)).toHaveLength(0);
   });
 
-  it('NO es visible cuando el principal es ajeno a emisor, participantes y destinatarios', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      participants: [{ tenant_id: 'Pablo', alias: 'midas' }],
-      deliveries: [delivery({ tenant: 'Pablo', alias: 'midas' })],
-    };
-    expect(messageVisible(row, stevenKant)).toBe(false);
+  it('no acepta el vocabulario de la forma detalle en las entregas de la lista', () => {
+    const swapped = { ...listRow(ATLAS, []), deliveries: (detailRow(ATLAS, [KANT]).deliveries) };
+    expect(items(visibleMessageList({ items: [swapped] }, stevenKant))).toHaveLength(0);
   });
 
-  it('reconoce al destinatario aunque la fila use `tenant_id`/`alias` sin prefijo recipient_', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      deliveries: [
-        { tenant_id: 'Steven', alias: 'kant', state: 'pending' },
-      ],
-    };
-    expect(messageVisible(row, stevenKant)).toBe(true);
+  it('un mismo alias de otro tenant no cuela como destinatario', () => {
+    const result = visibleMessageList({
+      items: [listRow(MIDAS, [{ tenant: 'Miguel', alias: 'kant' }])],
+    }, stevenKant);
+    expect(items(result)).toHaveLength(0);
   });
 
-  it('descarta deliveries malformados que no son objetos (strings, nulls)', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      deliveries: [
-        'no-es-objeto',
-        null,
-        delivery({ tenant: 'Steven', alias: 'kant' }),
-      ],
-    };
-    expect(messageVisible(row, stevenKant)).toBe(true);
-  });
-});
-
-describe('visibleMessageList', () => {
-  it('filtra por visibilidad y redacta las deliveries que no me pertenecen', () => {
-    const value = {
-      items: [
-        // Mensaje mío (Steven:kant) → no se redacta
-        { message_tenant_id: 'Steven', actor_alias: 'kant', body: 'mio' },
-        // Mensaje ajeno donde soy destinatario → visible y con deliveries filtradas
-        {
-          message_tenant_id: 'Miguel',
-          actor_alias: 'atlas',
-          body: 'para-kant',
-          deliveries: [
-            delivery({ tenant: 'Steven', alias: 'kant' }),
-            delivery({ tenant: 'Pablo', alias: 'midas' }),
-          ],
-        },
-        // Mensaje totalmente ajeno → descartado
-        {
-          message_tenant_id: 'Pablo',
-          actor_alias: 'midas',
-          deliveries: [delivery({ tenant: 'Pablo', alias: 'midas' })],
-        },
-      ],
-    };
-
-    const result = visibleMessageList(value, stevenKant);
-
-    const items = result.items as Record<string, unknown>[];
-    expect(items).toHaveLength(2);
-    expect(items[0]).toMatchObject({ message_tenant_id: 'Steven', actor_alias: 'kant' });
-    const incoming = items[1] ?? {};
-    const remaining = (incoming.deliveries as Record<string, unknown>[]);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]).toMatchObject({ recipient_tenant: 'Steven', recipient_alias: 'kant' });
-  });
-
-  it('devuelve items vacíos cuando `items` no es un array (no rompe)', () => {
+  it('devuelve items vacíos cuando `items` no es un array y conserva el resto', () => {
     const result = visibleMessageList({ items: 'no-array', extra: 1 }, stevenKant);
     expect(result.items).toEqual([]);
     expect(result.extra).toBe(1);
@@ -167,120 +136,113 @@ describe('visibleMessageList', () => {
 
   it('descarta entradas de items que no son objetos', () => {
     const result = visibleMessageList({
-      items: [
-        'string',
-        null,
-        visibleMessageRow(), // mío
-        42,
-      ],
+      items: ['string', null, listRow(KANT, []), 42],
     }, stevenKant);
-    expect(result.items).toHaveLength(1);
+    expect(items(result)).toHaveLength(1);
+  });
+
+  it('descarta entregas que no son objetos sin perder la fila visible', () => {
+    const row = { ...listRow(ATLAS, [KANT]), deliveries: ['no-es-objeto', null, ...(listRow(ATLAS, [KANT]).deliveries as Row[])] };
+    expect(items(visibleMessageList({ items: [row] }, stevenKant))).toHaveLength(1);
   });
 });
 
-describe('visibleMessage', () => {
-  it('devuelve la fila redacted cuando el mensaje es visible', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      body: 'hola',
-      deliveries: [
-        delivery({ tenant: 'Steven', alias: 'kant' }),
-        delivery({ tenant: 'Pablo', alias: 'midas' }),
-      ],
-    };
-    const result = visibleMessage(row, stevenKant);
-    expect(result).toBeDefined();
-    const deliveries = (result as Record<string, unknown>).deliveries as Record<string, unknown>[];
-    expect(deliveries).toHaveLength(1);
-    expect(deliveries[0]).toMatchObject({ recipient_tenant: 'Steven', recipient_alias: 'kant' });
+describe('visibleMessage (forma MessageDetailRow)', () => {
+  it('el emisor recibe el detalle con TODAS las entregas', () => {
+    const result = visibleMessage(detailRow(KANT, [ATLAS, MIDAS]), stevenKant);
+    expect(aliases(result, 'alias')).toEqual(['atlas', 'midas']);
   });
 
-  it('devuelve undefined cuando el principal no es ni emisor ni participante ni destinatario', () => {
-    const row = {
-      message_tenant_id: 'Pablo',
-      actor_alias: 'midas',
-      deliveries: [delivery({ tenant: 'Pablo', alias: 'midas' })],
-    };
+  it('el destinatario recibe SOLO su propia entrega', () => {
+    const result = visibleMessage(detailRow(ATLAS, [KANT, MIDAS]), stevenKant);
+    expect(aliases(result, 'alias')).toEqual(['kant']);
+  });
+
+  it('quien no es emisor ni destinatario no recibe nada', () => {
+    expect(visibleMessage(detailRow(ATLAS, [MIDAS]), stevenKant)).toBeUndefined();
+  });
+
+  it('no acepta el vocabulario de la forma lista en las entregas del detalle', () => {
+    const swapped = { ...detailRow(ATLAS, []), deliveries: (listRow(ATLAS, [KANT]).deliveries) };
+    expect(visibleMessage(swapped, stevenKant)).toBeUndefined();
+  });
+
+  it('el mismo detalle es visible para su emisor y opaco para un tercero', () => {
+    const row = detailRow(ATLAS, [{ tenant: 'Miguel', alias: 'janus' }, MIDAS]);
+    expect(visibleMessage(row, miguelAtlas)).toBeDefined();
     expect(visibleMessage(row, stevenKant)).toBeUndefined();
   });
 
-  it('devuelve la fila SIN filtrar deliveries cuando el principal es el emisor', () => {
-    const row = {
-      message_tenant_id: 'Steven',
-      actor_alias: 'kant',
-      deliveries: [
-        delivery({ tenant: 'Pablo', alias: 'midas' }),
-        delivery({ tenant: 'Miguel', alias: 'atlas' }),
-      ],
-    };
-    const result = visibleMessage(row, stevenKant);
-    expect(result).toBeDefined();
-    expect((result as Record<string, unknown>).deliveries).toHaveLength(2);
+  it('devuelve la fila tal cual cuando el emisor no trae entregas materializadas', () => {
+    const row = { ...detailRow(KANT, []), deliveries: null };
+    expect(visibleMessage(row, stevenKant)).toMatchObject({ id: 'm-1' });
   });
 });
 
-describe('visibleQueue', () => {
-  it('cuenta pending/retry/dead correctamente respetando visibilidad por destinatario', () => {
+describe('visibleQueue (forma QueueSnapshotItem)', () => {
+  it('cuenta pending/retry/dead de las filas dirigidas al principal', () => {
     const out = visibleQueue({
       items: [
-        // Steven:kant (mío) - estados mezclados
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'pending' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'leased' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'retry' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'dead' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'failed' },
-        // No míos - ignorados
-        { recipient_tenant: 'Miguel', recipient_alias: 'atlas', state: 'pending' },
-        { recipient_tenant: 'Pablo', recipient_alias: 'midas', state: 'dead' },
+        queueRow(ATLAS, KANT, 'pending'),
+        queueRow(ATLAS, KANT, 'leased'),
+        queueRow(ATLAS, KANT, 'retry'),
+        queueRow(ATLAS, KANT, 'dead'),
+        queueRow(ATLAS, KANT, 'failed'),
       ],
     }, stevenKant);
     expect(out).toMatchObject({ pending: 2, retrying: 1, dead: 2 });
-    expect(out.items).toHaveLength(5);
+    expect(items(out)).toHaveLength(5);
   });
 
   it('cuenta también como pending los estados leased/accepted/started', () => {
     const out = visibleQueue({
-      items: [
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'accepted' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'started' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'pending' },
-        { recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'retry' },
-      ],
+      items: ['accepted', 'started', 'pending', 'retry'].map((state) => queueRow(ATLAS, KANT, state)),
     }, stevenKant);
     expect(out).toMatchObject({ pending: 3, retrying: 1, dead: 0 });
+  });
+
+  it('descarta la fila dirigida a otro tenant y RETIENE los totales con ella', () => {
+    const out = visibleQueue({
+      items: [queueRow(ATLAS, KANT, 'dead'), queueRow(ATLAS, MIDAS, 'dead')],
+      totals: { pending: 10, retrying: 2, dead: 1847 },
+      muestra_recortada: true,
+    }, stevenKant);
+    expect(items(out)).toHaveLength(1);
+    expect(out.totals).toBeUndefined();
+    expect(out.muestra_recortada).toBeUndefined();
+    expect(out.dead).toBe(1);
+  });
+
+  it('avala los totales del store cuando no retuvo ninguna fila', () => {
+    const out = visibleQueue({
+      items: [queueRow(ATLAS, KANT, 'dead')],
+      totals: { pending: 10, retrying: 2, dead: 1847 },
+      muestra_recortada: true,
+    }, stevenKant);
+    expect(out.totals).toEqual({ pending: 10, retrying: 2, dead: 1847 });
+    expect(out.muestra_recortada).toBe(true);
+  });
+
+  it('ve la fila que emitió aunque el destinatario sea otro', () => {
+    const out = visibleQueue({
+      items: [queueRow(KANT, ATLAS, 'pending'), queueRow(MIDAS, ATLAS, 'dead')],
+    }, stevenKant);
+    expect(items(out)).toHaveLength(1);
+    expect(out).toMatchObject({ pending: 1, dead: 0 });
+  });
+
+  it('no acepta el vocabulario de los mensajes para identificar al destinatario', () => {
+    const out = visibleQueue({
+      items: [{ recipient_tenant: 'Steven', recipient_alias: 'kant', state: 'pending' }],
+    }, stevenKant);
+    expect(items(out)).toHaveLength(0);
+    expect(out.pending).toBe(0);
   });
 
   it('devuelve items=[] y contadores en cero cuando items no es array', () => {
     const out = visibleQueue({ items: 'oops' }, stevenKant);
     expect(out).toMatchObject({ pending: 0, retrying: 0, dead: 0 });
     expect(out.items).toEqual([]);
-  });
-
-  it('cuenta filas mías porque soy el emisor aunque no sea el destinatario', () => {
-    const out = visibleQueue({
-      items: [
-        // El principal Steven:kant emite el mensaje, recipient es otro.
-        { message_tenant_id: 'Steven', actor_alias: 'kant', recipient_tenant: 'Miguel', recipient_alias: 'atlas', state: 'pending' },
-        // El principal NO está ni como emisor ni como destinatario → fuera
-        { message_tenant_id: 'Pablo', actor_alias: 'midas', recipient_tenant: 'Miguel', recipient_alias: 'atlas', state: 'dead' },
-      ],
-    }, stevenKant);
-    expect(out.items).toHaveLength(1);
-    expect(out.pending).toBe(1);
-    expect(out.dead).toBe(0);
-  });
-
-  it('NO aplica el fallback de recipient_tenant a tenant_id cuando falta recipient_alias', () => {
-    // queueRowVisible solo hace fallback de recipient_tenant (no de recipient_alias).
-    // Una fila con sólo {tenant_id, alias} (sin prefijo recipient_) NO debe matchear.
-    const out = visibleQueue({
-      items: [
-        { tenant_id: 'Steven', alias: 'kant', state: 'pending' },
-      ],
-    }, stevenKant);
-    expect(out.items).toHaveLength(0);
-    expect(out.pending).toBe(0);
   });
 });
 
@@ -294,9 +256,7 @@ describe('sameTenantRows', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(2);
-    expect((result.items as Record<string, unknown>[]).every(
-      (item) => item.tenant_id === 'Steven',
-    )).toBe(true);
+    expect(items(result).every((item) => item.tenant_id === 'Steven')).toBe(true);
   });
 
   it('preserva las claves top-level del value original (no las pisa)', () => {
@@ -319,14 +279,12 @@ describe('visibleOriginRelays', () => {
   it('incluye filas cuyo emisor coincide con el principal', () => {
     const result = visibleOriginRelays({
       items: [
-        // Steven:kant es emisor → visible
         { tenant_id: 'Steven', actor_alias: 'kant', recipient_tenant: 'Miguel', recipient_alias: 'atlas' },
-        // Steven:kant NO es ni emisor ni participant ni recipient → fuera
         { tenant_id: 'Miguel', actor_alias: 'atlas', recipient_tenant: 'Pablo', recipient_alias: 'midas' },
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(1);
-    expect((result.items as Record<string, unknown>[])[0]?.actor_alias).toBe('kant');
+    expect(items(result)[0]?.actor_alias).toBe('kant');
   });
 
   it('incluye filas donde el principal figura como participante', () => {
@@ -341,7 +299,7 @@ describe('visibleOriginRelays', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(1);
-    expect((result.items as Record<string, unknown>[])[0]?.tenant_id).toBe('Pablo');
+    expect(items(result)[0]?.tenant_id).toBe('Pablo');
   });
 
   it('incluye filas donde el principal es el destinatario (recipient_tenant/recipient_alias)', () => {
@@ -352,7 +310,7 @@ describe('visibleOriginRelays', () => {
       ],
     }, stevenKant);
     expect(result.items).toHaveLength(1);
-    expect((result.items as Record<string, unknown>[])[0]?.actor_alias).toBe('atlas');
+    expect(items(result)[0]?.actor_alias).toBe('atlas');
   });
 
   it('descarta entradas que no son objetos y conserva la estructura externa', () => {
@@ -372,33 +330,6 @@ describe('visibleOriginRelays', () => {
   it('rechaza con items vacío cuando items no es array', () => {
     const result = visibleOriginRelays({ items: undefined }, stevenKant);
     expect(result.items).toEqual([]);
-  });
-});
-
-describe('principales cruzados: stevenKant NO debe ver mensajes de miguelAtlas', () => {
-  it('una fila de Miguel:atlas no es visible para Steven:kant por ninguna vía', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      deliveries: [
-        { recipient_tenant: 'Miguel', recipient_alias: 'janus', state: 'pending' },
-        { recipient_tenant: 'Pablo', recipient_alias: 'midas', state: 'pending' },
-      ],
-      participants: [{ tenant_id: 'Pablo', alias: 'midas' }],
-    };
-    expect(messageVisible(row, stevenKant)).toBe(false);
-    expect(visibleMessage(row, stevenKant)).toBeUndefined();
-  });
-
-  it('la misma fila sí es visible para miguelAtlas (su propio emisor)', () => {
-    const row = {
-      message_tenant_id: 'Miguel',
-      actor_alias: 'atlas',
-      deliveries: [
-        { recipient_tenant: 'Miguel', recipient_alias: 'janus', state: 'pending' },
-      ],
-    };
-    expect(messageVisible(row, miguelAtlas)).toBe(true);
   });
 });
 

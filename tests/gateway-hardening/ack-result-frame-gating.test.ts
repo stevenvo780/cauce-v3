@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 /**
  * ==============================================================================================
  * THE `ack_result` FRAME, SEEN THE WAY THE ADAPTER SEES IT

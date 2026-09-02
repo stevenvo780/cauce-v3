@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { buildGateway, type DeliveryClaimRecord } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes, text } from './helpers.js';
+import {
+  closeGatewaysAndSockets, fakePool, fakeRepository, frameReader, ids, noDeliveryWakes
+} from './helpers.js';
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 const sockets: WebSocket[] = [];
@@ -12,22 +14,6 @@ const sockets: WebSocket[] = [];
 afterEach(async () => {
   await closeGatewaysAndSockets(apps, sockets);
 });
-
-function frameReader(socket: WebSocket): () => Promise<Record<string, unknown>> {
-  const queued: Record<string, unknown>[] = [];
-  const waiting: ((value: Record<string, unknown>) => void)[] = [];
-  socket.on('message', (data) => {
-    const decoded = JSON.parse(text(data)) as Record<string, unknown>;
-    const resolve = waiting.shift();
-    if (resolve) resolve(decoded);
-    else queued.push(decoded);
-  });
-  return async () => {
-    const existing = queued.shift();
-    if (existing) return existing;
-    return new Promise((resolve) => waiting.push(resolve));
-  };
-}
 
 describe('gateway WebSocket ACK correlation', () => {
   it('serializes frames and correlates out-of-order delivery ACKs by event_id', async () => {

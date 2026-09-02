@@ -11,6 +11,7 @@ import { createHash, createHmac, hkdfSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { createGovernanceSandbox, type GovernanceOutput, type GovernanceSandbox } from './governance-double.mjs';
 import {
   CLOSE_CODE, FrameDecoder, MAX_FRAME_PAYLOAD, TAG, TICKET_HKDF_SALT,
   b64urlDecode, b64urlEncode, canonicalTicketPayload, closeCodeForTicketReason,
@@ -32,7 +33,15 @@ interface VectorFile {
   frozen: boolean;
   master_key_b64: string;
   hkdf: { salt_utf8: string; length: number };
-  framing: { max_payload: number; session_id_bytes: number; tags: Record<string, number> };
+  framing: {
+    max_payload: number;
+    session_id_bytes: number;
+    tags: Record<string, number>;
+    prefixed_tags: string[];
+  };
+  geometry: Record<string, unknown>;
+  limits: Record<string, number>;
+  ttls: Record<string, number>;
   ws_close_codes: Record<string, number>;
   keys: Record<string, string>;
   cases: VectorCase[];
@@ -370,3 +379,205 @@ describe('pty wire vectors: framing', () => {
 function createHash256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
+
+interface SeedFile { name: string; text?: string; fill?: { byte: number; count: number } }
+
+function sandboxFor(testCase: VectorCase): GovernanceSandbox {
+  const sandbox = createGovernanceSandbox({ harness: text(testCase.input, 'harness') });
+  sandbox.seed((testCase.input.files ?? []) as SeedFile[]);
+  return sandbox;
+}
+
+function contentOf(spec: Record<string, unknown>): Buffer {
+  return Buffer.from(text(spec, 'text'), 'utf8');
+}
+
+function chunksOf(content: Buffer): Buffer[] {
+  const size = MAX_FRAME_PAYLOAD - 36;
+  const parts: Buffer[] = [];
+  for (let offset = 0; offset < content.length; offset += size) {
+    parts.push(content.subarray(offset, offset + size));
+  }
+  return parts;
+}
+
+function writeRequest(sandbox: GovernanceSandbox, spec: Record<string, unknown>): {
+  request: Record<string, unknown>;
+  chunks: Buffer[];
+} {
+  const content = contentOf(spec);
+  const chunks = chunksOf(content);
+  const request: Record<string, unknown> = {
+    request_id: text(spec, 'request_id'),
+    path: sandbox.path(text(spec, 'basename')),
+    operation: text(spec, 'operation'),
+    content_sha: createHash256(content),
+    bytes: content.length,
+    chunks: chunks.length,
+  };
+  if (typeof spec.expected_sha === 'string') request.expected_sha = spec.expected_sha;
+  return { request, chunks };
+}
+
+function batchRequest(sandbox: GovernanceSandbox, spec: Record<string, unknown>): {
+  request: Record<string, unknown>;
+  chunks: Buffer[];
+} {
+  const raw = spec.entries;
+  if (!Array.isArray(raw)) throw new Error('batch vector needs an entries array');
+  const chunks: Buffer[] = [];
+  const entries = raw.map((item) => {
+    const entry = item as Record<string, unknown>;
+    const wire: Record<string, unknown> = {
+      path: sandbox.path(text(entry, 'basename')),
+      mode: text(entry, 'mode'),
+      operation: text(entry, 'operation'),
+      bytes: 0,
+      chunks: 0,
+    };
+    if (wire.mode === 'write') {
+      const content = contentOf(entry);
+      const parts = chunksOf(content);
+      chunks.push(...parts);
+      Object.assign(wire, { content_sha: createHash256(content), bytes: content.length, chunks: parts.length });
+    }
+    if (typeof entry.expected_sha === 'string') wire.expected_sha = entry.expected_sha;
+    return wire;
+  });
+  return { request: { request_id: text(spec, 'request_id'), entries }, chunks };
+}
+
+function terminal(outputs: GovernanceOutput[]): GovernanceOutput {
+  const last = outputs[outputs.length - 1];
+  if (last === undefined) throw new Error('the governance handler answered nothing');
+  return last;
+}
+
+function jsonOf(output: GovernanceOutput): Record<string, unknown> {
+  if (!('json' in output)) throw new Error('expected a JSON reply, got a data chunk');
+  return output.json;
+}
+
+describe('pty wire vectors: governed reading and writing', () => {
+  it.each(casesOf('governance_read'))('$name', (testCase) => {
+    const sandbox = sandboxFor(testCase);
+    try {
+      const request = record(testCase.input, 'request');
+      const outputs = sandbox.read({
+        request_id: text(request, 'request_id'),
+        kind: text(request, 'kind'),
+        path: sandbox.path(text(request, 'basename')),
+      });
+      const last = jsonOf(terminal(outputs));
+      expect(tagName(terminal(outputs).tag)).toBe(text(testCase.expected, 'terminal_tag'));
+      if (testCase.must_fail) {
+        expect(outputs).toHaveLength(1);
+        expect(last.error).toBe(text(testCase.expected, 'error'));
+        expect(last.reason).toBe(text(testCase.expected, 'reason'));
+        return;
+      }
+      const head = jsonOf(outputs[0] as GovernanceOutput);
+      expect(tagName((outputs[0] as GovernanceOutput).tag)).toBe(text(testCase.expected, 'ok_tag'));
+      expect(head.bytes).toBe(integer(testCase.expected, 'bytes'));
+      expect(head.truncated).toBe(testCase.expected.truncated);
+      expect(head.chunks).toBe(integer(testCase.expected, 'chunks'));
+      expect(head.sha).toBe(text(testCase.expected, 'sha'));
+      const data = outputs.slice(1, -1).map((output) => {
+        if ('json' in output) throw new Error('READ_DATA expected between READ_OK and READ_DONE');
+        return output.data;
+      });
+      expect(data).toHaveLength(integer(testCase.expected, 'chunks'));
+      expect(Buffer.concat(data)).toHaveLength(integer(testCase.expected, 'served_bytes'));
+      expect(last.request_id).toBe(text(request, 'request_id'));
+    } finally {
+      sandbox.dispose();
+    }
+  });
+
+  it.each(casesOf('governance_write'))('$name', (testCase) => {
+    const sandbox = sandboxFor(testCase);
+    try {
+      const spec = record(testCase.input, 'request');
+      const { request, chunks } = writeRequest(sandbox, spec);
+      const outputs = sandbox.runWrite(request, chunks);
+      expect(outputs).toHaveLength(1);
+      const body = jsonOf(terminal(outputs));
+      expect(tagName(terminal(outputs).tag)).toBe(text(testCase.expected, 'terminal_tag'));
+      const onDisk = readFileSync(sandbox.path(text(spec, 'basename')), 'utf8');
+      expect(onDisk).toBe(text(testCase.expected, 'file_text'));
+      if (testCase.must_fail) {
+        expect(body.error).toBe(text(testCase.expected, 'error'));
+        expect(body.reason).toBe(text(testCase.expected, 'reason'));
+        return;
+      }
+      expect(body.operation).toBe(text(testCase.expected, 'operation'));
+      expect(body.sha).toBe(text(testCase.expected, 'sha'));
+      expect(body.bytes).toBe(integer(testCase.expected, 'bytes'));
+    } finally {
+      sandbox.dispose();
+    }
+  });
+
+  it.each(casesOf('governance_write_batch'))('$name', (testCase) => {
+    const sandbox = sandboxFor(testCase);
+    try {
+      const { request, chunks } = batchRequest(sandbox, record(testCase.input, 'request'));
+      const outputs = sandbox.runWriteBatch(request, chunks);
+      expect(outputs).toHaveLength(1);
+      const body = jsonOf(terminal(outputs));
+      expect(tagName(terminal(outputs).tag)).toBe(text(testCase.expected, 'terminal_tag'));
+      if (testCase.must_fail) {
+        expect(body.error).toBe(text(testCase.expected, 'error'));
+        expect(body.reason).toBe(text(testCase.expected, 'reason'));
+        const after = testCase.expected.files_after;
+        if (!Array.isArray(after)) throw new Error('a failing batch vector must pin files_after');
+        for (const raw of after) {
+          const entry = raw as Record<string, unknown>;
+          expect(sandbox.sha(sandbox.path(text(entry, 'basename')))).toBe(text(entry, 'sha'));
+        }
+        return;
+      }
+      const expectedFiles = testCase.expected.files;
+      if (!Array.isArray(expectedFiles)) throw new Error('expected.files must be an array');
+      const acknowledged = body.files;
+      if (!Array.isArray(acknowledged)) throw new Error('WRITE_BATCH_OK must carry files');
+      expect(acknowledged).toHaveLength(expectedFiles.length);
+      expectedFiles.forEach((raw, index) => {
+        const entry = raw as Record<string, unknown>;
+        const ack = acknowledged[index] as Record<string, unknown>;
+        expect(ack.path).toBe(sandbox.path(text(entry, 'basename')));
+        expect(ack.operation).toBe(text(entry, 'operation'));
+        expect(ack.sha).toBe(text(entry, 'sha'));
+        expect(ack.bytes).toBe(integer(entry, 'bytes'));
+        expect(sandbox.sha(sandbox.path(text(entry, 'basename')))).toBe(text(entry, 'sha'));
+      });
+    } finally {
+      sandbox.dispose();
+    }
+  });
+});
+
+describe('pty wire vectors: the governance limits the four legs share', () => {
+  it('declares the geometry clamp, the byte ceilings and the deadlines', () => {
+    expect(vectors.geometry).toMatchObject({ min_cols: 20, max_cols: 500, min_rows: 5, max_rows: 200 });
+    const limits = vectors.limits as Record<string, unknown>;
+    const ttls = vectors.ttls as Record<string, unknown>;
+    expect(integer(limits, 'max_frame')).toBe(MAX_FRAME_PAYLOAD);
+    expect(integer(limits, 'session_id_bytes')).toBe(vectors.framing.session_id_bytes);
+    expect(integer(limits, 'max_data')).toBe(integer(limits, 'max_frame') - integer(limits, 'session_id_bytes'));
+    expect(integer(limits, 'max_write_batch_files')).toBe(7);
+    expect(integer(ttls, 'session_ttl_seconds')).toBeGreaterThan(integer(ttls, 'idle_timeout_seconds'));
+    for (const name of vectors.framing.prefixed_tags) {
+      expect(vectors.framing.tags[name], name).toBe(TAG[name as keyof typeof TAG]);
+    }
+  });
+
+  it('gives every governance tag of the agent the same byte the harness uses', () => {
+    const governance = Object.entries(vectors.framing.tags).filter(([, tag]) => tag >= 0x50 && tag <= 0x5e);
+    expect(governance).toHaveLength(15);
+    for (const [name, tag] of governance) {
+      expect(TAG[name as keyof typeof TAG], name).toBe(tag);
+      expect(tagName(tag)).toBe(name);
+    }
+  });
+});

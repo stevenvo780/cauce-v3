@@ -5,19 +5,15 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { vi } from 'vitest';
 import type { DatabaseClient, DatabasePool } from '@cauce/store';
-import {
-  AuthError, AuthorizationError
-} from '../../services/gateway/src/auth.js';
 import type { Principal } from '../../services/gateway/src/auth.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
+import { replyError } from '../../services/gateway/src/terminal/plugin.js';
 import {
-  registerTerminalSessionControl, TerminalClockSkewError,
+  registerTerminalSessionControl,
   type DeleteSessionBody, type OwnerRotationBody, type SessionRequestBody,
 } from '../../services/gateway/src/terminal/session-control.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
-import { StoreError } from '@cauce/store';
-import { UUID_ANY_PATTERN } from '@cauce/protocol';
 
 /**
  * Hermetic tests for the terminal-plane orchestrator.
@@ -38,8 +34,6 @@ import { UUID_ANY_PATTERN } from '@cauce/protocol';
  * INSERT INTO terminal_sessions are out of scope here; those are covered by
  * integration/e2e.
  */
-
-export { UUID_ANY_PATTERN as UUID_PATTERN } from '@cauce/protocol';
 
 export const RELAY_INSTANCE_ID = 'a'.repeat(64);
 export const UUID_OK = '11111111-1111-4111-8111-111111111111';
@@ -126,7 +120,6 @@ export interface ContextOptions {
   };
   readonly principal?: (request: unknown) => Promise<Principal>;
   readonly replyError?: (reply: FastifyReply, error: unknown) => void;
-  readonly sessionExpiry?: (row: TerminalSessionRow) => Date | undefined;
   readonly recordTransactionalTerminalAudit?: ReturnType<typeof vi.fn>;
 }
 
@@ -138,7 +131,6 @@ export interface Context {
   readonly repository: { assertPermission: ReturnType<typeof vi.fn>; authorizeAgentTarget: ReturnType<typeof vi.fn> };
   readonly replyError: ReturnType<typeof vi.fn>;
   readonly recordTransactionalTerminalAudit: ReturnType<typeof vi.fn>;
-  readonly sessionExpiry: ReturnType<typeof vi.fn>;
   close(): Promise<void>;
 }
 
@@ -156,33 +148,8 @@ export function buildContext(options: ContextOptions = {}): Context {
     assertPermission: options.repository?.assertPermission ?? vi.fn(async () => undefined),
     authorizeAgentTarget: options.repository?.authorizeAgentTarget ?? vi.fn(async () => undefined)
   };
-  const sessionExpiry = options.sessionExpiry ?? vi.fn(() => undefined);
   const recordTransactionalTerminalAudit = options.recordTransactionalTerminalAudit ?? vi.fn(async () => undefined);
   const app = Fastify({ logger: false });
-
-  function realReplyError(reply: FastifyReply, error: unknown): void {
-    if (error instanceof TerminalClockSkewError) {
-      void reply.code(503).send({
-        error: 'terminal_clock_skew',
-        message: 'terminal issuance is unavailable until gateway and PostgreSQL clocks agree'
-      });
-      return;
-    }
-    if (error instanceof AuthError) {
-      void reply.code(401).send({ error: error.code, message: error.message });
-      return;
-    }
-    if (error instanceof AuthorizationError) {
-      void reply.code(403).send({ error: error.code, message: error.message });
-      return;
-    }
-    if (error instanceof StoreError) {
-      void reply.code(error.code === 'not_found' ? 404 : 403).send({ error: error.code, message: error.message });
-      return;
-    }
-    const message = error instanceof Error ? error.message : 'unknown error';
-    void reply.code(400).send({ error: 'invalid_request', message });
-  }
 
   registerTerminalSessionControl(app, {
     pool,
@@ -190,15 +157,12 @@ export function buildContext(options: ContextOptions = {}): Context {
     registry,
     grants: grants as never,
     repository,
-    UUID_PATTERN: UUID_ANY_PATTERN,
     principal: options.principal ?? (async () => consolePrincipal()),
     openPredicate: (ttlParameter: number) =>
       `closed_at IS NULL AND revoked_at IS NULL AND ((consumed_at IS NULL AND expires_at > now()) OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${String(ttlParameter)}) > now()))`,
     currentCohort: async () => [{
       tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw'
     }],
-    cohortLabels: (cohort) => cohort.map((member) => `${member.tenant_id}:${member.alias}`),
-    sessionExpiry,
     parseSessionRequest: (value) => {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error('session request must be an object');
@@ -267,7 +231,7 @@ export function buildContext(options: ContextOptions = {}): Context {
       if (!/^[0-9]+$/.test(value) || value === '0') throw new Error('owner generation is invalid');
       return value;
     },
-    replyError: options.replyError ?? realReplyError,
+    replyError: options.replyError ?? replyError,
     recordTransactionalTerminalAudit
   });
   return {
@@ -276,8 +240,7 @@ export function buildContext(options: ContextOptions = {}): Context {
     registry,
     grants,
     repository,
-    replyError: (options.replyError ?? realReplyError) as unknown as ReturnType<typeof vi.fn>,
-    sessionExpiry: sessionExpiry as unknown as ReturnType<typeof vi.fn>,
+    replyError: (options.replyError ?? replyError) as unknown as ReturnType<typeof vi.fn>,
     recordTransactionalTerminalAudit,
     async close() { await app.close(); }
   };

@@ -34,6 +34,21 @@ export const TAG = {
   CLOSED: 0x31,
   PING: 0x40,
   PONG: 0x41,
+  READ: 0x50,
+  READ_OK: 0x51,
+  READ_ERR: 0x52,
+  READ_DATA: 0x53,
+  WRITE: 0x54,
+  WRITE_DATA: 0x55,
+  WRITE_OK: 0x56,
+  WRITE_ERR: 0x57,
+  WRITE_CANCEL: 0x58,
+  WRITE_BATCH: 0x59,
+  WRITE_BATCH_DATA: 0x5a,
+  WRITE_BATCH_OK: 0x5b,
+  WRITE_BATCH_ERR: 0x5c,
+  WRITE_BATCH_CANCEL: 0x5d,
+  READ_DONE: 0x5e,
 };
 
 export const TAG_NAME = Object.fromEntries(Object.entries(TAG).map(([name, tag]) => [tag, name]));
@@ -42,10 +57,16 @@ export const TAG_NAME = Object.fromEntries(Object.entries(TAG).map(([name, tag])
 export const DATA_TAGS = new Set([TAG.STDIN, TAG.STDOUT]);
 /** Payloads that must be empty on the wire. */
 export const EMPTY_TAGS = new Set([TAG.PING, TAG.PONG]);
+export const PREFIXED_TAGS = new Set([
+  ...DATA_TAGS, TAG.READ_DATA, TAG.WRITE_DATA, TAG.WRITE_BATCH_DATA,
+]);
 /** Payloads carrying UTF-8 JSON. */
 export const JSON_TAGS = new Set([
   TAG.AGENT_HELLO, TAG.HELLO_ACK, TAG.OPEN, TAG.OPEN_OK, TAG.OPEN_ERR,
   TAG.RESIZE, TAG.CLOSE, TAG.CLOSED,
+  TAG.READ, TAG.READ_OK, TAG.READ_ERR, TAG.READ_DONE,
+  TAG.WRITE, TAG.WRITE_OK, TAG.WRITE_ERR, TAG.WRITE_CANCEL,
+  TAG.WRITE_BATCH, TAG.WRITE_BATCH_OK, TAG.WRITE_BATCH_ERR, TAG.WRITE_BATCH_CANCEL,
 ]);
 
 /** WebSocket close codes browser <-> relay. */

@@ -22,11 +22,14 @@ import process from 'node:process';
 import { connect } from 'node:tls';
 import { pathToFileURL } from 'node:url';
 
+import { GOVERNANCE_FEATURES, createGovernanceSandbox } from './governance-double.mjs';
 import {
   FrameDecoder, MAX_FRAME_PAYLOAD, SESSION_ID_BYTES, TAG, TAG_NAME,
   decodeDataPayload, decodeJsonPayload, encodeDataFrame, encodeFrame, encodeJsonFrame,
   verifyTicket,
 } from './protocol.mjs';
+
+export { GOVERNANCE, GOVERNANCE_FEATURES, createGovernanceSandbox } from './governance-double.mjs';
 
 export const EXIT = {
   ok: 0,
@@ -39,6 +42,7 @@ export const EXIT = {
 
 const AGENT_VERSION = 'fake-pty-agent/1.0.0';
 const MAX_DATA_BYTES = MAX_FRAME_PAYLOAD - SESSION_ID_BYTES;
+
 
 /** Tickets and keys never reach a log line; this is what goes instead. */
 function fingerprint(value) {
@@ -76,6 +80,7 @@ export function startFakeAgent(options) {
 
   const decoder = new FrameDecoder();
   const sessions = new Map();
+  let sandbox = null;
   let exitCode = EXIT.ok;
   let settledReady = false;
   let resolveReady;
@@ -121,6 +126,7 @@ export function startFakeAgent(options) {
       harness: 'fake-pty-agent',
       agent_version: AGENT_VERSION,
       modes: config.modes,
+      ...(config.governance ? { features: GOVERNANCE_FEATURES } : {}),
     }));
   });
 
@@ -150,6 +156,10 @@ export function startFakeAgent(options) {
   });
 
   socket.on('close', () => {
+    if (sandbox !== null) {
+      sandbox.dispose();
+      sandbox = null;
+    }
     emit('disconnected', { sessions: sessions.size, exit_code: exitCode });
     if (!settledReady) { settledReady = true; rejectReady(new Error('closed before HELLO_ACK')); }
     resolveClosed(exitCode);
@@ -163,12 +173,52 @@ export function startFakeAgent(options) {
       case TAG.STDIN: return onStdin(frame);
       case TAG.RESIZE: return onResize(frame);
       case TAG.CLOSE: return onClose(frame);
+      case TAG.READ:
+      case TAG.WRITE:
+      case TAG.WRITE_CANCEL:
+      case TAG.WRITE_BATCH:
+      case TAG.WRITE_BATCH_CANCEL:
+      case TAG.WRITE_DATA:
+      case TAG.WRITE_BATCH_DATA:
+        if (!config.governance) break;
+        return onGovernance(frame);
       default:
-        // Anything else on this leg — including tags only the agent may send — is a
-        // protocol error. Forward compatibility is bought with a version bump, not silence.
-        fail(EXIT.protocol_error, 'unexpected_tag', { tag: TAG_NAME[frame.tag] ?? frame.tag });
-        return undefined;
+        break;
     }
+    // Anything else on this leg — including tags only the agent may send — is a
+    // protocol error. Forward compatibility is bought with a version bump, not silence.
+    fail(EXIT.protocol_error, 'unexpected_tag', { tag: TAG_NAME[frame.tag] ?? frame.tag });
+    return undefined;
+  }
+
+  function governance() {
+    if (sandbox === null) sandbox = createGovernanceSandbox({ harness: config.governance_harness });
+    return sandbox;
+  }
+
+  function onGovernance(frame) {
+    const store = governance();
+    let outputs;
+    if (frame.tag === TAG.WRITE_DATA || frame.tag === TAG.WRITE_BATCH_DATA) {
+      const { session_id: requestId, data } = decodeDataPayload(frame.payload);
+      outputs = frame.tag === TAG.WRITE_DATA
+        ? store.writeData(requestId, data)
+        : store.writeBatchData(requestId, data);
+    } else {
+      const body = decodeJsonPayload(frame.payload);
+      if (frame.tag === TAG.READ) outputs = store.read(body);
+      else if (frame.tag === TAG.WRITE) outputs = store.write(body);
+      else if (frame.tag === TAG.WRITE_CANCEL) outputs = store.writeCancel(String(body.request_id));
+      else if (frame.tag === TAG.WRITE_BATCH) outputs = store.writeBatch(body);
+      else outputs = store.writeBatchCancel(String(body.request_id));
+    }
+    for (const output of outputs) {
+      send(output.json === undefined
+        ? encodeDataFrame(output.tag, output.request_id, output.data)
+        : encodeJsonFrame(output.tag, output.json));
+      emit('governance_reply', { tag: TAG_NAME[output.tag] ?? output.tag });
+    }
+    return undefined;
   }
 
   function onHelloAck(frame) {
@@ -349,6 +399,7 @@ export function startFakeAgent(options) {
     closed,
     get sessions() { return sessions.size; },
     get exit_code() { return exitCode; },
+    get governance() { return config.governance ? governance() : null; },
     close() { socket.end(); },
     destroy() { socket.destroy(); },
   };
@@ -378,6 +429,8 @@ function normalise(options) {
     runtime_user: options.runtime_user ?? 'claw',
     runtime_uid: options.runtime_uid ?? 1000,
     modes: options.modes ?? ['shell', 'readonly'],
+    governance: options.governance ?? false,
+    governance_harness: options.governance_harness ?? 'claude',
     banner: options.banner ?? false,
     oneshot: options.oneshot ?? false,
     flood_bytes: options.flood_bytes ?? 4 * 1024 * 1024,
@@ -414,6 +467,8 @@ function fromEnvironment() {
     runtime_user: environment.RUNTIME_USER ?? 'claw',
     runtime_uid: Number(environment.RUNTIME_UID ?? 1000),
     modes: (environment.AGENT_MODES ?? 'shell,readonly').split(',').filter(Boolean),
+    governance: environment.AGENT_GOVERNANCE === '1',
+    governance_harness: environment.AGENT_GOVERNANCE_HARNESS ?? 'claude',
     banner: environment.AGENT_BANNER === '1',
     oneshot: environment.AGENT_ONESHOT === '1',
     flood_bytes: Number(environment.AGENT_FLOOD_BYTES ?? 4 * 1024 * 1024),

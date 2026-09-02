@@ -5,7 +5,9 @@ import { WebSocket } from 'ws';
 import { StoreError } from '@cauce/store';
 import { buildGateway, type DeliveryClaimRecord } from '../../services/gateway/src/index.js';
 import { DevOnlyAuthProvider } from '../../services/gateway/src/auth.js';
-import { closeGatewaysAndSockets, fakePool, fakeRepository, ids, noDeliveryWakes, text } from './helpers.js';
+import {
+  closeGatewaysAndSockets, fakePool, fakeRepository, frameReader, ids, noDeliveryWakes
+} from './helpers.js';
 
 // A late ACK is not an intruder: it is the result of a run this same socket delivered. The gateway
 // correlates it against the attempt it remembers and lets the store decide, instead of closing the
@@ -17,22 +19,6 @@ const sockets: WebSocket[] = [];
 afterEach(async () => {
   await closeGatewaysAndSockets(apps, sockets);
 });
-
-function frameReader(socket: WebSocket): () => Promise<Record<string, unknown>> {
-  const queued: Record<string, unknown>[] = [];
-  const waiting: ((value: Record<string, unknown>) => void)[] = [];
-  socket.on('message', (data) => {
-    const decoded = JSON.parse(text(data)) as Record<string, unknown>;
-    const resolve = waiting.shift();
-    if (resolve) resolve(decoded);
-    else queued.push(decoded);
-  });
-  return async () => {
-    const existing = queued.shift();
-    if (existing) return existing;
-    return new Promise((resolve) => waiting.push(resolve));
-  };
-}
 
 async function frameMatching(
   next: () => Promise<Record<string, unknown>>,
