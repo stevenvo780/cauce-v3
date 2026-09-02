@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { Delivery, DeliveryEvent } from "../types.js";
 import type {
-  EventCorrelation,
   InboxRecord,
   InboxState,
   LifecycleEventSlot,
@@ -77,11 +76,4 @@ export function objectRecord(value: unknown): Record<string, unknown> | undefine
 
 export function visibleText(value: unknown): value is string {
   return typeof value === "string" && /[\p{L}\p{N}\p{P}\p{S}]/u.test(value);
-}
-
-export function sameCorrelation(event: DeliveryEvent, correlation: EventCorrelation): boolean {
-  return event.event_id === correlation.event_id
-    && event.delivery_id === correlation.delivery_id
-    && event.attempt === correlation.attempt
-    && event.claim_token === correlation.claim_token;
 }

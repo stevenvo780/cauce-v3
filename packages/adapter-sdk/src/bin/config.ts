@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs } from "@cauce/protocol";
+import { DEFAULT_MESSAGE_TIMEOUT_MS } from "../sdk/message-timeout.js";
 import type { HarnessId } from "../sdk/types.js";
 
 type RuntimeEnvironment = "production" | "development" | "test";
-const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
 
 interface CliRuntimeConfig {
   readonly tenant: string;
@@ -56,8 +57,13 @@ function positiveInteger(value: unknown, context: string, fallback: number): num
   return value;
 }
 
-function defaultTimeoutMs(): number {
-  return DEFAULT_AGENTIC_TIMEOUT_MS;
+function configuredMessageTimeoutMs(value: unknown, context: string, fallback: number): number {
+  const candidate = value === undefined ? fallback : value;
+  const parsed = messageTimeoutMs({ timeout_ms: candidate });
+  if (parsed === undefined) {
+    throw new Error(`${context} must be an integer between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`);
+  }
+  return parsed;
 }
 
 function environment(value: unknown): RuntimeEnvironment {
@@ -168,10 +174,10 @@ async function fromConfigFile(path: string, alias: string, harnessId: HarnessId)
     relayUrl: string(entry.relay_url, "relay_url"),
     environment: runtimeEnvironment,
     heartbeatMs: positiveInteger(entry.heartbeat_ms, "heartbeat_ms", 15_000),
-    defaultTimeoutMs: positiveInteger(
+    defaultTimeoutMs: configuredMessageTimeoutMs(
       entry.default_timeout_ms,
       "default_timeout_ms",
-      defaultTimeoutMs(),
+      DEFAULT_MESSAGE_TIMEOUT_MS,
     ),
     ...(bearerTokenFile === undefined ? {} : { bearerTokenFile }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
@@ -193,6 +199,15 @@ function environmentInteger(name: string, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`'${name}' must be a positive integer`);
   return parsed;
+}
+
+function environmentMessageTimeoutMs(name: string): number {
+  const value = process.env[name];
+  return configuredMessageTimeoutMs(
+    value === undefined ? undefined : Number(value),
+    `'${name}'`,
+    DEFAULT_MESSAGE_TIMEOUT_MS,
+  );
 }
 
 function bridgeEnvironment(harnessId: HarnessId): Pick<CliRuntimeConfig, "harnessBridge" | "hermesPython"> {
@@ -261,10 +276,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     relayUrl: requiredEnvironment("CAUCE_RELAY_URL"),
     environment: runtimeEnvironment,
     heartbeatMs: environmentInteger("CAUCE_HEARTBEAT_MS", 15_000),
-    defaultTimeoutMs: environmentInteger(
-      "CAUCE_DEFAULT_TIMEOUT_MS",
-      defaultTimeoutMs(),
-    ),
+    defaultTimeoutMs: environmentMessageTimeoutMs("CAUCE_DEFAULT_TIMEOUT_MS"),
     ...(process.env.CAUCE_TOKEN_FILE === undefined ? {} : { bearerTokenFile: resolve(process.env.CAUCE_TOKEN_FILE) }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,

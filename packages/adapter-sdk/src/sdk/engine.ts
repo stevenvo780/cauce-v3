@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
-  isAgentToAgentBody, isAmbiguousAckErrorCode, SYSTEM_GATE_PROBE_MESSAGE_TYPE,
+  isAgentToAgentBody, isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
+  SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 } from "@cauce/protocol";
 import type { InboxRecord } from "./durable-store.js";
 import { DurableStore } from "./durable-store.js";
@@ -26,9 +27,7 @@ import type {
   AdapterEngineOptions, EventPublisher, ExecutionIntentPublisher,
 } from "./engine/contracts.js";
 import {
-  DEFAULT_AGENTIC_TIMEOUT_MS,
   DEFAULT_QUEUE_WAIT_TIMEOUT_MS,
-  MAX_AGENT_EXECUTION_TIMEOUT_MS,
   profileAdoptionFor,
 } from "./engine/contracts.js";
 import type { ExecutionBudget, HarnessSessionRequestScope } from "./engine/delivery-context.js";
@@ -42,6 +41,7 @@ import {
 } from "./engine/delivery-context.js";
 import { interruptedStartedError } from "./engine/recovery.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
+import { DEFAULT_MESSAGE_TIMEOUT_MS } from "./message-timeout.js";
 
 export type {
   AdapterEngineOptions, EventPublisher, ExecutionIntentPublisher,
@@ -85,11 +85,11 @@ export class AdapterEngine {
     this.logger = options.logger ?? (() => undefined);
     this.ownTenantId = options.ownTenantId;
     this.ownRoom = options.ownRoom;
-    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_AGENTIC_TIMEOUT_MS;
-    if (!Number.isSafeInteger(this.defaultTimeoutMs)
-      || this.defaultTimeoutMs <= 0
-      || this.defaultTimeoutMs > MAX_AGENT_EXECUTION_TIMEOUT_MS) {
-      throw new RangeError("defaultTimeoutMs must be between 1 and 604800000");
+    this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_MESSAGE_TIMEOUT_MS;
+    if (messageTimeoutMs({ timeout_ms: this.defaultTimeoutMs }) === undefined) {
+      throw new RangeError(
+        `defaultTimeoutMs must be between 1 and ${String(MAX_MESSAGE_TIMEOUT_MS)}`,
+      );
     }
     this.claimRenewalMs = options.claimRenewalMs;
     if (this.claimRenewalMs !== undefined

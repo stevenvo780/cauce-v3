@@ -13,8 +13,6 @@ export type ExecutionIntentPublisher = (
   timeoutMs: number,
 ) => Promise<void>;
 
-export const DEFAULT_AGENTIC_TIMEOUT_MS = 24 * 60 * 60_000;
-export const MAX_AGENT_EXECUTION_TIMEOUT_MS = 7 * 24 * 60 * 60_000;
 /**
  * Absolute ceiling for the session-lock wait, measured from when the delivery is accepted.
  * Also bounded by the `timeout_ms` configured in the delivery.

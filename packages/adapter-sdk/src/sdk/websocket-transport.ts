@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { createSecureContext } from 'node:tls';
-import WebSocket, { type ClientOptions, type RawData } from 'ws';
+import WebSocket, { type ClientOptions } from 'ws';
 import { WsInboundSchema, WsOutboundSchema, type Tenant } from '@cauce/protocol';
 import { signalAborted } from '../runtime-state.js';
+import { rawDataText } from './raw-data.js';
 import { readBearerTokenFile, readOwnerOnlyFile, SecureFileError } from './secure-files.js';
 import type {
   AdapterLog,
@@ -26,12 +27,6 @@ function abortError(signal: AbortSignal): Error {
   return signal.reason instanceof Error
     ? signal.reason
     : new Error('Connection aborted', { cause: signal.reason });
-}
-
-function decodeTextFrame(data: RawData): string {
-  if (Buffer.isBuffer(data)) return data.toString('utf8');
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  return Buffer.from(data).toString('utf8');
 }
 
 class AsyncFrameQueue implements AsyncIterable<ServerFrame> {
@@ -96,7 +91,7 @@ class WebSocketConsumerConnection implements ConsumerConnection {
       }
       let decoded: unknown;
       try {
-        decoded = JSON.parse(decodeTextFrame(data));
+        decoded = JSON.parse(rawDataText(data));
       } catch (error) {
         this.reportInvalidInboundFrame(undefined, error);
         return;

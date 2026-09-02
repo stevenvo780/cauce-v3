@@ -1,4 +1,5 @@
 import type { Delivery, DeliveryEvent } from "../types.js";
+import { sameDeliveryClaim, sameEventCorrelation } from "../correlation.js";
 import { clone } from "./atomic-state.js";
 import type {
   DeliveryAcceptance,
@@ -17,7 +18,6 @@ import {
   deliveryFingerprint,
   lifecycleEventFor,
   lifecycleSlot,
-  sameCorrelation,
   withLifecycleEvent,
 } from "./delivery-helpers.js";
 import { DurableStoreFanin } from "./fanin.js";
@@ -118,7 +118,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     return this.serialized(async () => {
       const existing = this.inbox.deliveries[correlation.delivery_id];
       if (existing === undefined) throw new Error(`Unknown delivery ${correlation.delivery_id}`);
-      if (existing.attempt !== correlation.attempt || existing.claim_token !== correlation.claim_token) {
+      if (!sameDeliveryClaim(existing, correlation)) {
         throw new Error(`Stale lifecycle correlation for delivery ${correlation.delivery_id}`);
       }
       return clone(await this.ensureCurrentLifecycleEventUnlocked(existing));
@@ -132,9 +132,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     if (existing.lifecycle_event_ids?.[slot] !== undefined) return existing;
 
     const pending = this.outbox.pending.find((event) => (
-      event.delivery_id === existing.delivery_id
-      && event.attempt === existing.attempt
-      && event.claim_token === existing.claim_token
+      sameDeliveryClaim(event, existing)
       && lifecycleSlot(event) === slot
       && (slot !== "terminal" || event.phase === existing.state)
     ));
@@ -269,8 +267,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     await this.serialized(async () => {
       const alreadyPending = this.outbox.pending.some((candidate) => candidate.event_id === event.event_id);
       const existing = this.inbox.deliveries[event.delivery_id];
-      const correlated = existing?.attempt === event.attempt
-        && existing.claim_token === event.claim_token
+      const correlated = existing !== undefined && sameDeliveryClaim(existing, event)
         ? withLifecycleEvent(existing, event)
         : existing;
       const markerChanged = existing !== undefined && correlated !== undefined && correlated !== existing;
@@ -308,22 +305,20 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
     feedback: EventDeliveryFeedback = {},
   ): Promise<boolean> {
     return this.serialized(async () => {
-      const acknowledgedEvent = this.outbox.pending.find((event) => sameCorrelation(event, correlation));
+      const acknowledgedEvent = this.outbox.pending.find((event) => sameEventCorrelation(event, correlation));
       if (acknowledgedEvent === undefined) return false;
-      const pending = this.outbox.pending.filter((event) => !sameCorrelation(event, correlation));
+      const pending = this.outbox.pending.filter((event) => !sameEventCorrelation(event, correlation));
       const existing = this.inbox.deliveries[correlation.delivery_id];
+      const currentClaim = existing !== undefined && sameDeliveryClaim(existing, correlation);
       const terminalFeedback = (acknowledgedEvent.phase === "done" || acknowledgedEvent.phase === "failed")
-        && existing?.attempt === correlation.attempt
-        && existing.claim_token === correlation.claim_token
+        && currentClaim
         && (feedback.delegation_rejections !== undefined
           || feedback.delegation_materializations !== undefined);
       const terminalOwnershipLost = (acknowledgedEvent.phase === "done" || acknowledgedEvent.phase === "failed")
-        && existing?.attempt === correlation.attempt
-        && existing.claim_token === correlation.claim_token
+        && currentClaim
         && feedback.terminal_receipt === "ownership_lost";
       const executionIntentConfirmed = acknowledgedEvent.execution_started === true
-        && existing?.attempt === correlation.attempt
-        && existing.claim_token === correlation.claim_token
+        && currentClaim
         && feedback.execution_intent_receipt !== undefined;
       if (feedback.execution_intent_receipt !== undefined && !executionIntentConfirmed) {
         throw new Error("Execution intent receipt does not match a current durable marker");
@@ -394,11 +389,7 @@ export class DurableStoreDeliveries extends DurableStoreFanin {
   }
 
   pendingEventsFor(correlation: Pick<EventCorrelation, "delivery_id" | "attempt" | "claim_token">): readonly DeliveryEvent[] {
-    return clone(this.outbox.pending.filter((event) => (
-      event.delivery_id === correlation.delivery_id
-      && event.attempt === correlation.attempt
-      && event.claim_token === correlation.claim_token
-    )));
+    return clone(this.outbox.pending.filter((event) => sameDeliveryClaim(event, correlation)));
   }
 
 }

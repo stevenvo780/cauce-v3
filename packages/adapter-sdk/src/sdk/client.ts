@@ -5,6 +5,7 @@ import {
 import { nativeProfileContextEnabled } from '../context/native-profile-context.js';
 import { signalAborted } from '../runtime-state.js';
 import { DEFAULT_BACKOFF, ExponentialBackoff, systemClock } from './backoff.js';
+import { sameDeliveryClaim, sameEventCorrelation } from './correlation.js';
 import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
 import { AdapterError } from './errors.js';
@@ -59,9 +60,9 @@ function matchesCapability(value: unknown, expected: string | boolean): boolean 
 }
 
 interface ExecutionIntentWaiter {
-  readonly deliveryId: string;
+  readonly delivery_id: string;
   readonly attempt: number;
-  readonly claimToken: string;
+  readonly claim_token: string;
   readonly confirm: () => void;
   readonly reject: (error: AdapterError) => void;
 }
@@ -297,10 +298,7 @@ export class AdapterClient {
           claim_token: frame.claim_token,
         };
         const pending = this.store.pendingEvents().find((event) => (
-          event.event_id === correlation.event_id
-          && event.delivery_id === correlation.delivery_id
-          && event.attempt === correlation.attempt
-          && event.claim_token === correlation.claim_token
+          sameEventCorrelation(event, correlation)
         ));
         const terminalPending = pending?.phase === 'done' || pending?.phase === 'failed';
         const terminalReceipt = frame.applied
@@ -329,9 +327,7 @@ export class AdapterClient {
             : { execution_intent_receipt: executionIntentReceipt }),
         });
         const intentWaiter = this.executionIntentWaiters.get(frame.event_id);
-        if (intentWaiter?.deliveryId === frame.delivery_id
-          && intentWaiter.attempt === frame.attempt
-          && intentWaiter.claimToken === frame.claim_token) {
+        if (intentWaiter !== undefined && sameDeliveryClaim(intentWaiter, frame)) {
           const durableReceipt = this.store.getDelivery(frame.delivery_id)
             ?.execution_intent_receipt_event_id === frame.event_id;
           if (acknowledged && executionIntentReceipt !== undefined && durableReceipt) {
@@ -466,9 +462,9 @@ export class AdapterClient {
         : new AdapterError('EXECUTION_INTENT_CONFIRMATION_FAILED', 'Execution intent was cancelled', true));
     };
     const waiter: ExecutionIntentWaiter = {
-      deliveryId: event.delivery_id,
+      delivery_id: event.delivery_id,
       attempt: event.attempt,
-      claimToken: event.claim_token,
+      claim_token: event.claim_token,
       confirm,
       reject,
     };
