@@ -22,7 +22,14 @@ export function LiveFleetLegend({
   onAbrirPerfil,
 }: LiveFleetLegendProps) {
   return (
-    <>
+    <details className="live-leyenda">
+      <summary>
+        <h2 className="live-leyenda-titulo">
+          Leyenda y referencia · señales activas, permisos y salas, roles declarados y cómo se lee
+          un muñeco
+        </h2>
+      </summary>
+
       <details className="live-fold" open>
         <summary>Señales activas</summary>
         <FleetSignals snapshot={snapshot} />
@@ -63,6 +70,6 @@ export function LiveFleetLegend({
         </div>
         <ActivityExplainers thresholds={snapshot?.thresholds} />
       </details>
-    </>
+    </details>
   );
 }

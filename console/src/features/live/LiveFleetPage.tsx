@@ -6,7 +6,7 @@ import type {
   AgentDocumentKind, AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
 } from '../../api/types';
 import {
-  ErrorState, FloatingTooltip, LoadingState, PageHeader, Panel,
+  ErrorState, FloatingTooltip, LoadingState, PageHeader,
 } from '../../components/ui';
 import { FleetActivityTable } from './FleetActivityTable';
 import { AgentDrawer, type ContextFocusTarget, type DrawerTab } from './AgentDrawer';
@@ -44,6 +44,8 @@ const STALE_FACTOR = 3;
  * Identifier of the synthetic room where record aliases without any membership go.
  */
 const SIN_SALA = '__sin_sala__';
+
+const VAR_CINTA_ALTO = '--live-cinta-alto';
 
 interface TooltipTarget {
   anchor: DOMRect;
@@ -281,12 +283,37 @@ export function LiveFleetPage() {
     void recargarTopologia();
   }, [reload, recargarTopologia]);
 
+  const observadorDeCinta = useRef<ResizeObserver | null>(null);
+  const medirCinta = useCallback((cinta: HTMLDivElement | null) => {
+    observadorDeCinta.current?.disconnect();
+    observadorDeCinta.current = null;
+    const pagina = cinta?.closest('.live-page');
+    if (!cinta || !(pagina instanceof HTMLElement)) return;
+    const anotar = () => {
+      const alto = Math.ceil(cinta.getBoundingClientRect().height);
+      if (alto > 0) pagina.style.setProperty(VAR_CINTA_ALTO, `${String(alto)}px`);
+    };
+    anotar();
+    if (typeof ResizeObserver !== 'function') return;
+    observadorDeCinta.current = new ResizeObserver(anotar);
+    observadorDeCinta.current.observe(cinta);
+  }, []);
+
+  const [culpablePendiente, setCulpablePendiente] = useState<string | null>(null);
+
   const enfocarCulpable = useCallback((key: string) => {
     setStateFilter(undefined);
+    setQuery('');
     setSelected(key);
-    document.querySelector(`[data-agent-key="${cssEscape(key)}"]`)
-      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setCulpablePendiente(key);
   }, []);
+
+  useEffect(() => {
+    if (culpablePendiente === null) return;
+    setCulpablePendiente(null);
+    document.querySelector(`tr[data-agent-key="${cssEscape(culpablePendiente)}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [culpablePendiente]);
 
   if (activity.error && !snapshot) {
     return <ErrorState error={activity.error} onRetry={activity.reload} reintentando={activity.loading} />;
@@ -306,40 +333,50 @@ export function LiveFleetPage() {
               + ' Todo lo de abajo —veredicto, cinta, mapa y lista— está acotado a este cliente.'}
         />
 
-        <LiveFleetToolbar
-          feedState={feedState}
-          intervalMs={intervalMs}
-          setIntervalMs={setIntervalMs}
-          refrescarTodo={refrescarTodo}
-          observedAt={observedAt}
-          edadSegundos={edadSegundos}
-          query={query}
-          setQuery={setQuery}
-          tenants={tenants}
-          tenantFilter={tenantFilter}
-          setTenantFilter={setTenantFilter}
-          activityError={activity.error}
-          topologyError={topology.error}
-          recargarTopologia={recargarTopologia}
-        />
+        <div className="live-command-strip" ref={medirCinta}>
+          <LiveFleetToolbar
+            feedState={feedState}
+            intervalMs={intervalMs}
+            setIntervalMs={setIntervalMs}
+            refrescarTodo={refrescarTodo}
+            observedAt={observedAt}
+            edadSegundos={edadSegundos}
+            query={query}
+            setQuery={setQuery}
+            tenants={tenants}
+            tenantFilter={tenantFilter}
+            setTenantFilter={setTenantFilter}
+            activityError={activity.error}
+            topologyError={topology.error}
+            recargarTopologia={recargarTopologia}
+          />
 
-        <FleetVerdict
-          verdict={verdict}
-          totals={snapshot?.totals}
-          onCulprit={(culprit) => { enfocarCulpable(culprit.key); }}
-        />
+          <FleetVerdict
+            verdict={verdict}
+            totals={snapshot?.totals}
+            onCulprit={(culprit) => { enfocarCulpable(culprit.key); }}
+          />
 
-        <LiveFleetTally
-          tally={tally}
-          stateFilter={stateFilter}
-          setStateFilter={setStateFilter}
-          deriva={deriva}
-        />
+          <LiveFleetTally
+            tally={tally}
+            stateFilter={stateFilter}
+            setStateFilter={setStateFilter}
+            deriva={deriva}
+          />
+        </div>
 
-        <Panel
-          title="Quién le habla a quién, ahora"
-          subtitle="Los mismos muñecos, en su sala. En «Ahora» cada flecha es una entrega en vuelo real; en «Permisos», quién tiene derecho a hablarle a quién. Nunca las dos capas a la vez: no significan lo mismo."
-        >
+        <details className="panel live-mapa">
+          <summary>
+            <div className="live-mapa-rotulo">
+              <h2 className="live-mapa-titulo">Quién le habla a quién, ahora</h2>
+              <span className="live-mapa-apunte">
+                Los mismos muñecos, en su sala. En «Ahora» cada flecha es una entrega en vuelo
+                real; en «Permisos», quién tiene derecho a hablarle a quién. Nunca las dos capas a
+                la vez: no significan lo mismo.
+              </span>
+            </div>
+          </summary>
+
           <div className="live-layer-switch" role="group" aria-label="Capa del mapa">
             {(['ahora', 'permisos'] as const).map((option) => (
               <button
@@ -392,7 +429,7 @@ export function LiveFleetPage() {
               setTip(key && anchor ? { anchor, view, alias } : null);
             }}
           />
-        </Panel>
+        </details>
 
         <FleetActivityTable
           snapshot={snapshot}

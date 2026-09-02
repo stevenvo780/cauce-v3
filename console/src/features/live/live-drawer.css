@@ -4,29 +4,51 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 420px;
   align-items: start;
-  gap: 20px;
+  gap: var(--space-5);
 }
 
-.live-main { display: grid; gap: 18px; min-width: 0; }
+.live-main { display: grid; gap: var(--space-4); min-width: 0; }
 
-.live-page.has-drawer.cajon-ancho { grid-template-columns: minmax(0, 1fr) min(980px, 52vw); }
+/*
+ * Column mode. `max-height` let the card stop at its content and leave the rest of its own track
+ * empty; `height` makes it fill the track it already reserved, and the `minmax(0, 1fr)` body row
+ * absorbs the difference. The trade is paid at the foot: the card starts below the page header, so
+ * a full viewport of height ends past the fold — at 1920x1080 the drawer runs to y=1130 and its
+ * foot row («Abrir este agente en Terminal») needs a page scroll. Below the cut the drawer is a
+ * sheet with `height: auto` and the foot is visible again.
+ *
+ * The list pays for that track: the table wants ~1163px and gets 1102, so the last cells were
+ * clipped inside `.table-wrap`. Tighter cells and headers that may wrap fit all nine columns in the
+ * narrower column instead of dropping one — «Presencia» and «ACKs recientes» stay readable. Child
+ * combinators keep the tightening off the deliveries table nested in `tr.row-detail`.
+ *
+ * The three are declared for every width and undone below, inside the cut this sheet already pays
+ * for: a floor of 1480 beside it would be a second width no gate drives.
+ */
+.live-page.has-drawer:not(.cajon-ancho) > .agent-drawer { height: calc(100vh - 36px); }
+.live-page.has-drawer table[data-objeto-principal='tabla-de-flota'] > thead > tr > th,
+.live-page.has-drawer table[data-objeto-principal='tabla-de-flota'] > tbody > tr:not(.row-detail) > td { padding: var(--space-2); }
+.live-page.has-drawer table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:nth-child(n+7) { white-space: normal; }
 
 /*
  * Side by side only while the list keeps a usable column. The fleet table is intrinsically wider
  * than the panel it sits in, so a drawer that takes its share leaves the rows cut mid-word inside
  * `.table-wrap` — clipped content, not a scrollbar anyone finds. The floor is ~716px of list: the
  * narrow drawer earns its column from 1480px of window, the wide one from 2040. Below that the
- * drawer stops being a column and becomes a sheet over the page.
- *
- * Order matters: `.cajon-ancho` scores 0-3-0, so the rule that collapses it has to come after, which
- * is also why the wide drawer used to survive the narrow-viewport collapse it was subject to.
+ * drawer stops being a column and becomes a sheet over the page: it no longer takes width from the
+ * table, so the three rules above go back to the base cells of `components.css` — the last header
+ * excepted, which wraps in `live-fleet.css` at every width and must not be given its line back.
  */
 /* The veil hangs off `.live-page`, not off the drawer: inside the drawer's own stacking context a
    negative z-index paints over its surface instead of over the page behind it. */
 @media (max-width: 1479px) {
   .live-page.has-drawer { grid-template-columns: minmax(0, 1fr); }
   .live-page.has-drawer > .agent-drawer { position: fixed; z-index: var(--layer-modal); width: min(980px, 100vw - 32px); max-height: none; border-radius: var(--radius) 0 0 var(--radius); inset: 0 0 0 auto; }
+  .live-page.has-drawer:not(.cajon-ancho) > .agent-drawer { height: auto; }
   .live-page.has-drawer::before { position: fixed; z-index: calc(var(--layer-modal) - 1); background: rgb(3 6 12 / 55%); content: ""; inset: 0; }
+  .live-page.has-drawer table[data-objeto-principal='tabla-de-flota'] > thead > tr > th,
+  .live-page.has-drawer table[data-objeto-principal='tabla-de-flota'] > tbody > tr:not(.row-detail) > td { padding: var(--space-3); }
+  .live-page.has-drawer table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:nth-child(n+7):not(:last-child) { white-space: nowrap; }
 }
 
 /* The editing tabs are not a glance at the list, they are the work: seven fields and a preview of
@@ -70,35 +92,35 @@
   display: flex;
   align-items: start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 16px 18px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 
-.agent-drawer-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.agent-drawer-identity { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .agent-drawer-identity .agent-avatar { width: 52px; flex: none; }
 .agent-drawer-identity h2 { margin: 0; font-size: var(--tipo-panel); }
-.agent-drawer-identity p { margin: 2px 0 0; font-size: var(--tipo-rotulo); }
+.agent-drawer-identity p { margin: var(--space-1) 0 0; font-size: var(--tipo-rotulo); }
 
-.agent-drawer-body { overflow-y: auto; padding: 16px 18px; }
-.agent-drawer-foot { padding: 12px 18px; border-top: 1px solid var(--border); }
+.agent-drawer-body { overflow-y: auto; padding: var(--space-4); }
+.agent-drawer-foot { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
 
-.drawer-deliveries { display: grid; gap: 12px; }
+.drawer-deliveries { display: grid; gap: var(--space-3); }
 
 .drawer-delivery {
-  padding: 12px 14px;
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--surface-2);
 }
 
-.drawer-delivery > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
-.drawer-delivery dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: var(--tipo-apunte); }
+.drawer-delivery > header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+.drawer-delivery dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; font-size: var(--tipo-apunte); }
 .drawer-delivery dt { color: var(--muted); }
 .drawer-delivery dd { margin: 0; }
-.drawer-delivery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+.drawer-delivery-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 
-.drawer-chain { display: grid; gap: 12px; }
+.drawer-chain { display: grid; gap: var(--space-3); }
 .chain-trace, .chain-counters { margin: 0; font-size: var(--tipo-rotulo); }
 .chain-hops li[data-open='true'] { border-color: var(--blue); }
 .chain-hops li[data-rejected='true'] { border-color: var(--red); }
@@ -119,18 +141,18 @@
 
 tr[data-clickable='true'] { cursor: pointer; }
 
-.agent-tip { display: grid; gap: 3px; }
+.agent-tip { display: grid; gap: var(--space-1); }
 .agent-tip p { margin: 0; }
 
 /* --- Editor del rol declarado (pestaña «Rol» del cajón) --------------------- */
 
-.role-brief { display: grid; gap: 12px; }
-.role-brief-field { display: grid; gap: 6px; font-size: var(--tipo-apunte); font-weight: 600; color: var(--muted); }
+.role-brief { display: grid; gap: var(--space-3); }
+.role-brief-field { display: grid; gap: var(--space-2); font-size: var(--tipo-apunte); font-weight: 600; color: var(--muted); }
 .role-brief-field textarea {
   min-height: 260px;
-  padding: 10px 12px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
@@ -140,7 +162,7 @@ tr[data-clickable='true'] { cursor: pointer; }
 }
 .role-brief-field textarea[readonly] { opacity: 0.75; cursor: default; }
 
-.role-brief-meter { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.role-brief-meter { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
 .role-brief-count { font-variant-numeric: tabular-nums; font-weight: 700; font-size: var(--tipo-rotulo); }
 .role-brief-count[data-tone='ok'] { color: var(--muted); }
 .role-brief-count[data-tone='cerca'] { color: var(--amber, #d08700); }
@@ -148,11 +170,11 @@ tr[data-clickable='true'] { cursor: pointer; }
 .role-brief-warn { font-size: var(--tipo-rotulo); color: var(--amber, #d08700); }
 .role-brief-count[data-tone='pasado'] + .role-brief-warn { color: var(--danger, #d64545); }
 
-.role-brief-actions { display: flex; align-items: center; gap: 8px; }
+.role-brief-actions { display: flex; align-items: center; gap: var(--space-2); }
 
 /* --- El resumen de «Directiva» dentro del cajón ---------------------------- */
 
-.directiva-resumen { display: grid; gap: 10px; align-content: start; }
+.directiva-resumen { display: grid; gap: var(--space-2); align-content: start; }
 
 .directiva-resumen-rotulo {
   margin: 0;
@@ -165,10 +187,10 @@ tr[data-clickable='true'] { cursor: pointer; }
 
 .directiva-resumen-lineas {
   display: grid;
-  gap: 3px;
-  padding: 11px 12px;
+  gap: var(--space-1);
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: var(--surface-2);
 }
 
@@ -184,9 +206,9 @@ tr[data-clickable='true'] { cursor: pointer; }
 
 .directiva-resumen-vacio {
   margin: 0;
-  padding: 11px 12px;
+  padding: var(--space-3);
   border: 1px dashed var(--border-strong);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   color: var(--muted);
   font-size: var(--tipo-rotulo);
   line-height: 1.5;
@@ -196,9 +218,16 @@ tr[data-clickable='true'] { cursor: pointer; }
 .directiva-resumen-contador[data-tono='cerca'] { color: var(--amber); }
 .directiva-resumen-contador[data-tono='pasado'] { color: var(--red); }
 
-.directiva-abrir { width: 100%; min-height: 44px; font-size: var(--tipo-cuerpo); }
+/* One action, not a banner: it keeps the 44px target and stops stretching to the sheet's width. */
+.directiva-abrir { width: auto; max-width: 320px; justify-self: start; min-height: 44px; font-size: var(--tipo-cuerpo); }
 
 @media (prefers-color-scheme: light) {
-  .agent-drawer { background: #ffffff; }
-  .drawer-delivery { background: #f8fafd; }
+  :root:not([data-theme="dark"]) .agent-drawer { background: #ffffff; }
+  :root:not([data-theme="dark"]) .drawer-delivery { background: #f8fafd; }
 }
+
+/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
+   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
+:root[data-theme="light"] .agent-drawer { background: #ffffff; }
+:root[data-theme="light"] .drawer-delivery { background: #f8fafd; }
+

@@ -102,7 +102,7 @@ export function FleetActivityTable({ snapshot, selectedKey, onlyKeys, filterLabe
         </EmptyState>
       ) : (
         <Desplazable etiqueta="Actividad en vuelo por agente">
-          <table>
+          <table data-objeto-principal="tabla-de-flota">
             <caption className="sr-only">Actividad en vuelo por agente</caption>
             <thead>
               <tr>
@@ -259,6 +259,7 @@ function FragmentRow({ agent, estado, urgency, presenceLabel, presenceTone, expa
       {/* Hovering the row highlights the doll in the hypergraph above: that is what ties the list
           to the drawing without having to draw the list again. */}
       <tr
+        data-agent-key={agentKeyOf(agent)}
         data-state={estado.live ?? agent.work_state ?? 'unknown'}
         data-urgency={urgency}
         data-highlighted={highlighted ? 'true' : undefined}

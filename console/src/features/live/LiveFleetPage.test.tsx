@@ -42,7 +42,7 @@ describe('el veredicto', () => {
     expect(within(banda).getByText(/última lectura buena/i)).toBeInTheDocument();
   });
 
-  it('nombra a los agentes que necesitan atención y su chip trae al muñeco a la vista', async () => {
+  it('nombra a los agentes que necesitan atención y su chip trae su FILA a la vista', async () => {
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderWithApi(<LiveFleetPage />);
@@ -52,18 +52,28 @@ describe('el veredicto', () => {
     expect(within(banda).getByText(/necesitan atención/i)).toBeInTheDocument();
 
     const chip = within(banda).getAllByRole('button')[0];
-    // jsdom no implementa scrollIntoView; se instala para poder afirmar que se llama sobre el
-    // nodo correcto, que es lo que hace que el chip sirva para algo.
-    const nodos = document.querySelectorAll('[data-agent-key]');
-    const llamados: string[] = [];
-    nodos.forEach((nodo) => {
-      (nodo as HTMLElement & { scrollIntoView: () => void }).scrollIntoView = () => {
-        llamados.push(nodo.getAttribute('data-agent-key') ?? '');
-      };
+    await user.type(screen.getByRole('searchbox', { name: 'Buscar un alias' }), 'kant');
+    await waitFor(() => { expect(document.querySelectorAll('tr[data-agent-key]').length).toBe(1); });
+    // The scroll target has to be the table row: the map ships folded, so its SVG node is not
+    // laid out and scrolling to it moves nothing. jsdom has no scrollIntoView, so it is stubbed.
+    const llamados: Element[] = [];
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: function stub(this: HTMLElement) { llamados.push(this); },
     });
-
-    await user.click(chip);
-    expect(llamados.length).toBeLessThanOrEqual(1);
+    try {
+      await user.click(chip);
+      await waitFor(() => { expect(llamados).toHaveLength(1); });
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
+      else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+    const fila = llamados[0];
+    expect(fila.tagName).toBe('TR');
+    expect(fila.closest('table')).not.toBeNull();
+    expect(fila).toBe(document.querySelector('tr[data-highlighted="true"]'));
+    expect(document.querySelectorAll('tr[data-agent-key]').length).toBeGreaterThan(1);
   });
 
   it('las tres cifras llevan la definición del SERVIDOR en el tooltip, no en el rótulo', async () => {

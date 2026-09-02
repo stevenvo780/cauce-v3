@@ -1,4 +1,57 @@
-.live-page { display: grid; gap: 18px; }
+.live-page { display: grid; gap: var(--space-4); }
+
+/* --- Cinta de mando: refresco, veredicto y triage ------------------------- */
+
+.live-command-strip {
+  display: grid;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+  background: var(--bg);
+}
+
+/* One row of two columns: refresh over triage on the left, the verdict spanning both on the right.
+   Three equal columns squeezed the toolbar to 34px and made the strip 385px tall. Sticking it only
+   pays while the band stays a band: measured 244px at 1920, 301px at 1680, 356px at 1440 and 495px
+   at 1101 — 46% of a 1080 viewport, the worst case still above the cut — so anything scrolled to
+   from further down has to clear the band it leaves.
+
+   The verdict's track is capped against the STRIP, not only in rem: at 1101 the content column is
+   777px, a flat 42rem left the toolbar 93px wide and stacked the strip 815px tall — a wall, not a
+   band. With the cap it is 427/338 there and still the measured 672 from 1600 up.
+
+   Everything that depends on the strip being stuck lives INSIDE this query, the header opt-out
+   included: below the cut nothing on /live is sticky, so the global sticky page header is the only
+   thing keeping the route's title reachable while a three-screen table scrolls, exactly as on every
+   other route.
+
+   The band's height cannot be written by hand: the strip grows with the toolbar's notices (activity
+   error, topology error, tenant clipping) and with the verdict's culprits. `LiveFleetPage` MEASURES
+   it and writes it into `--live-cinta-alto`. The fallback is for the browser without
+   `ResizeObserver` and for the first paint before the measurement lands: too much, never too
+   little, because a summary that lands under the band cannot be clicked at all. */
+@media (min-width: 1101px) {
+  .live-command-strip {
+    position: sticky;
+    top: 0;
+    z-index: var(--layer-sticky);
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, min(42rem, 55%));
+  }
+
+  .live-command-strip > .fleet-verdict { grid-row: span 2; }
+  .live-fold > summary,
+  .live-mapa > summary,
+  .live-leyenda > summary { scroll-margin-block-start: calc(var(--live-cinta-alto, 400px) + var(--space-3)); }
+
+  /* The culprit chip centres the agent's ROW —the map may be folded, its node is not laid out—
+     and centring it in the viewport would leave it under the stuck band: with this margin the
+     centre it lands on is that of the band-free half of the screen. */
+  [data-objeto-principal="tabla-de-flota"] tr[data-agent-key] {
+    scroll-margin-block-start: calc(var(--live-cinta-alto, 400px) + var(--space-3));
+  }
+
+  .live-page .page-header { position: static; }
+}
 
 /* ---------------------------------------------------------------- cabecera y estado del feed */
 
@@ -6,18 +59,18 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 16px;
-  padding: 12px 16px;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
 }
-.live-toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--tipo-rotulo); }
-.live-toolbar select { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); }
+.live-toolbar label { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--tipo-rotulo); }
+.live-toolbar select { padding: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); }
 .live-toolbar .notice { flex-basis: 100%; }
-.live-toolbar .notice button { margin-left: 10px; vertical-align: middle; }
+.live-toolbar .notice button { margin-left: var(--space-2); vertical-align: middle; }
 
-.live-feed-state { display: inline-flex; align-items: center; gap: 8px; font-size: var(--tipo-rotulo); font-weight: 600; }
+.live-feed-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--tipo-rotulo); font-weight: 600; }
 .live-feed-state .live-feed-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 0 rgb(99 222 185 / 55%); animation: live-ping 2.4s ease-out infinite; }
 .live-feed-state[data-feed='paused'] { color: var(--muted); }
 .live-feed-state[data-feed='paused'] .live-feed-dot { background: var(--faint); animation: none; }
@@ -34,12 +87,12 @@
 
 /* ------------------------------------------------------------------------------- resumen */
 
-.live-tally { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.live-tally { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 
 /* The row reads as a legend until something says otherwise: every chip is a filter, and a chip that
    looks passive is a control nobody finds. */
 .live-tally-rotulo {
-  margin-right: 2px;
+  margin-right: var(--space-1);
   color: var(--muted);
   font-size: var(--tipo-apunte);
   font-weight: 600;
@@ -49,10 +102,10 @@
 .live-tally-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 13px 7px 9px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
   font-size: var(--tipo-rotulo);
   cursor: pointer;
@@ -65,7 +118,7 @@
   color: var(--faint);
 }
 .live-tally-chip[data-empty='true'] .live-tally-swatch { opacity: .45; }
-.live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: 4px; background: var(--accent, var(--faint)); }
+.live-tally-chip .live-tally-swatch { width: 12px; height: 12px; border-radius: var(--radius-sm); background: var(--accent, var(--faint)); }
 .live-tally-chip strong { font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------------- lista de agentes */
@@ -73,11 +126,11 @@
 .activity-search {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 7px 12px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
   color: var(--muted);
 }
@@ -95,19 +148,26 @@ tr[data-highlighted='true'] > td {
   background: color-mix(in srgb, var(--blue) 12%, transparent);
 }
 
+/* «ACKs recientes» is the widest header of the table and its column holds a single number: with the
+   label on one line it claimed 157px for a cell that needs 18, and the nine columns asked for 1210px
+   inside the 1066px panel of a 1440px window —`.table-wrap` cut the last cells at every width. Only
+   THIS header may wrap: «Último ACK» and «Antigüedad» carry ages that would break mid-value if their
+   columns shrank. The child combinators keep it off the deliveries table nested in `tr.row-detail`. */
+table[data-objeto-principal='tabla-de-flota'] > thead > tr > th:last-child { white-space: normal; }
+
 /* ------------------------------------------------------------------------------ detalle */
 
-.live-detail { display: grid; gap: 14px; }
-.live-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.live-detail { display: grid; gap: var(--space-3); }
+.live-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .live-detail-head .agent-avatar { max-width: 108px; }
-.live-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0; font-size: var(--tipo-rotulo); }
+.live-detail dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; font-size: var(--tipo-rotulo); }
 .live-detail dt { color: var(--muted); }
 .live-detail dd { margin: 0; }
 .live-reason { margin: 0; color: var(--text); font-size: var(--tipo-cuerpo); }
-.live-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+.live-flags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
-.live-legend { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
-.live-legend-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.live-legend { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.live-legend-item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
 .live-legend-item .agent-avatar { width: 46px; flex: none; }
 .live-legend-item strong { display: block; font-size: var(--tipo-rotulo); }
 .live-legend-item span { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.35; }
@@ -124,8 +184,8 @@ tr[data-highlighted='true'] > td {
 
 .fleet-verdict {
   display: grid;
-  gap: 12px;
-  padding: 18px 20px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent, var(--faint));
   border-radius: var(--radius);
@@ -136,13 +196,13 @@ tr[data-highlighted='true'] > td {
 .fleet-verdict[data-tone='alerta'] { --accent: var(--red); }
 .fleet-verdict[data-tone='desconocido'] { --accent: var(--amber); }
 
-.fleet-verdict-main { display: flex; align-items: start; gap: 14px; }
+.fleet-verdict-main { display: flex; align-items: start; gap: var(--space-3); }
 
 .fleet-verdict-light {
   flex: none;
   width: 14px;
   height: 14px;
-  margin-top: 10px;
+  margin-top: var(--space-2);
   border-radius: 50%;
   background: var(--accent, var(--faint));
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--faint)) 22%, transparent);
@@ -156,14 +216,14 @@ tr[data-highlighted='true'] > td {
   letter-spacing: -.01em;
 }
 
-.fleet-verdict-support { margin: 6px 0 0; color: var(--muted); font-size: var(--tipo-cuerpo); }
+.fleet-verdict-support { margin: var(--space-2) 0 0; color: var(--muted); font-size: var(--tipo-cuerpo); }
 
-.fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.fleet-verdict-culprits { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
 
 .fleet-verdict-chip {
-  padding: 6px 11px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--red);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--red-dim);
   color: var(--text);
   font-size: var(--tipo-apunte);
@@ -175,7 +235,7 @@ tr[data-highlighted='true'] > td {
 
 .fleet-verdict-counts {
   margin: 0;
-  padding-top: 12px;
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: var(--tipo-rotulo);
@@ -190,10 +250,10 @@ tr[data-highlighted='true'] > td {
 .live-search {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--muted);
 }
@@ -217,18 +277,18 @@ tr[data-highlighted='true'] > td {
 
 .live-layer-switch {
   display: inline-flex;
-  gap: 2px;
-  margin-bottom: 12px;
-  padding: 3px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  padding: var(--space-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 
 .live-layer-button {
-  padding: 6px 14px;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--muted);
   font-size: var(--tipo-rotulo);
@@ -241,10 +301,10 @@ tr[data-highlighted='true'] > td {
 /* --- Estado vacío y desplegables --------------------------------------- */
 
 .live-empty-calm {
-  margin: 0 0 14px;
-  padding: 14px 16px;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--surface-2);
   color: var(--muted);
   font-size: var(--tipo-cuerpo);
@@ -259,7 +319,7 @@ tr[data-highlighted='true'] > td {
 }
 
 .live-fold > summary {
-  padding: 14px 18px;
+  padding: var(--space-3) var(--space-4);
   color: var(--text);
   font-size: var(--tipo-cuerpo);
   font-weight: 600;
@@ -267,28 +327,75 @@ tr[data-highlighted='true'] > td {
 }
 
 .live-fold[open] > summary { border-bottom: 1px solid var(--border); }
-.live-fold > *:not(summary) { margin: 14px 18px; }
+.live-fold > *:not(summary) { margin: var(--space-3) var(--space-4); }
 
-.live-legend-lead { margin: 0 0 14px; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
+/* --- El mapa, plegable y plegado -------------------------------------------
+   The drawing is 889px tall at 1546 wide (viewBox 1652x950), so with it open the fleet table starts
+   at 1770 on a 1080-tall screen and nothing that matters is above the fold. Capping it letterboxes
+   the graph and halves the label scale, so the map ships FOLDED and whoever wants the picture opens
+   it. Nothing remembers the choice: browser storage is forbidden in this console. */
+
+.live-mapa > summary { margin-bottom: var(--space-4); cursor: pointer; }
+.live-mapa-rotulo {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  width: calc(100% - var(--space-5));
+}
+/* A real `h2`, so the map keeps its place in the heading outline: the UA margin is the only thing
+   that has to go for it to sit where the old `span` sat. */
+.live-mapa-titulo { flex: none; margin: 0; font-size: var(--tipo-panel); font-weight: 650; letter-spacing: -.015em; }
+.live-mapa-apunte {
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: var(--measure-prose);
+  color: var(--muted);
+  font-size: var(--tipo-rotulo);
+  line-height: 1.5;
+}
+.live-mapa:not([open]) > summary { margin-bottom: 0; }
+
+/* --- La leyenda, plegada ------------------------------------------------- */
+
+.live-leyenda {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.live-leyenda > summary {
+  padding: var(--space-3) var(--space-4);
+  color: var(--text);
+  font-size: var(--tipo-cuerpo);
+  font-weight: 600;
+  cursor: pointer;
+}
+/* Same heading as before the fold, `display: inline` so the disclosure triangle keeps sharing the
+   first line with it instead of getting a line of its own. */
+.live-leyenda-titulo { display: inline; margin: 0; font-size: inherit; font-weight: inherit; letter-spacing: inherit; }
+.live-leyenda[open] > summary { border-bottom: 1px solid var(--border); }
+.live-leyenda > *:not(summary) { margin: var(--space-3) var(--space-4); }
+
+.live-legend-lead { margin: 0 0 var(--space-3); color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.6; }
 .live-legend-lead strong { color: var(--text); }
 
-.rol-catalogo { list-style: none; padding: 0; display: grid; gap: 10px; }
+.rol-catalogo { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
 .rol-catalogo > li {
   display: grid;
-  gap: 5px;
-  padding: 10px 12px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 .rol-medida { font-size: var(--tipo-apunte); color: var(--muted); }
 .rol-medida[data-fuera='si'] { color: var(--danger, #d64545); font-weight: 600; }
-.rol-portadores { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.rol-portadores { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); color: var(--muted); font-size: var(--tipo-rotulo); }
 .rol-portador {
   min-height: 24px;
-  padding: 2px 9px;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -302,11 +409,21 @@ tr[data-highlighted='true'] > td {
   flex: none;
   width: 14px;
   height: 14px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--accent, var(--faint));
 }
 
 @media (prefers-color-scheme: light) {
-  .live-empty-calm, .live-search, .live-layer-switch { background: #f8fafd; }
-  .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
+  :root:not([data-theme="dark"]) .live-empty-calm,
+  :root:not([data-theme="dark"]) .live-search,
+  :root:not([data-theme="dark"]) .live-layer-switch { background: #f8fafd; }
+  :root:not([data-theme="dark"]) .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
 }
+
+/* Gemela del bloque de arriba para el tema claro FORZADO: la consulta de medios no llega
+   cuando el sistema prefiere oscuro y el operador eligió «claro» en la barra superior. */
+:root[data-theme="light"] .live-empty-calm,
+:root[data-theme="light"] .live-search,
+:root[data-theme="light"] .live-layer-switch { background: #f8fafd; }
+:root[data-theme="light"] .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
+

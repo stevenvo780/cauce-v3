@@ -108,7 +108,7 @@ function ContextoTabContent({
       </section>
 
       <section
-        className="contexto-seccion"
+        className="contexto-seccion contexto-campos"
         aria-labelledby="contexto-campos-titulo"
         ref={campos}
         tabIndex={-1}
@@ -135,7 +135,7 @@ function ContextoTabContent({
       </section>
 
       <section
-        className="contexto-seccion"
+        className="contexto-seccion contexto-manual"
         aria-labelledby="contexto-manual-titulo"
         ref={manual}
         tabIndex={-1}

@@ -1,29 +1,66 @@
 /* ── La vista única de contexto ───────────────────────────────────────────── */
 
-.contexto-tab { display: grid; gap: 20px; }
+.contexto-tab { display: grid; gap: var(--space-5); }
 
 .contexto-seccion {
   display: grid;
-  gap: 14px;
+  gap: var(--space-3);
   min-width: 0;
-  padding: 16px;
+  padding: var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: var(--surface-2);
   scroll-margin-top: 16px;
 }
 
 .contexto-seccion:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
 .contexto-cabecera h3 { margin: 0; font-size: var(--tipo-panel); }
-.contexto-cabecera p { margin: 4px 0 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.45; }
+.contexto-cabecera p { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--tipo-apunte); line-height: 1.45; }
 .contexto-efectivo { grid-template-columns: minmax(0, 1fr); }
+
+/*
+ * On the sheet the three sections stacked to ~1440px inside an ~830px box, so the only thing that
+ * moved was the whole drawer body, while its right third stayed empty. The fields are the work and
+ * take the wide column; the reading and the manual share a narrower rail. Each section scrolls in
+ * its own box, so paging through the manual no longer drags the fields off screen.
+ *
+ * The rail is shared, and the reading grows with whatever the runtime reports: an auto row let a
+ * long `role_summary` take all of it and left the manual a 34px sliver with its own title out of
+ * sight. The reading keeps its content height up to 60% of the rail, and the manual keeps a floor
+ * of 160px — enough for its title, its sentence and the first lines of the file.
+ *
+ * Each box scrolls, so each one carries its own edge: the two `local` layers ride with the content
+ * and cover the line, which is therefore only visible on the side that still has text to read.
+ */
+@container cajon (min-width: 1200px) {
+  .contexto-tab {
+    height: 100%;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    grid-template-rows: fit-content(60%) minmax(160px, 1fr);
+  }
+
+  .contexto-tab > .contexto-seccion {
+    overflow: auto;
+    min-height: 0;
+    align-content: start;
+    background:
+      linear-gradient(var(--surface-2) 60%, transparent) 0 0 / 100% var(--space-5) no-repeat local,
+      linear-gradient(transparent, var(--surface-2) 40%) 0 100% / 100% var(--space-5) no-repeat local,
+      linear-gradient(var(--border-strong), transparent) 0 0 / 100% var(--space-1) no-repeat scroll,
+      linear-gradient(transparent, var(--border-strong)) 0 100% / 100% var(--space-1) no-repeat scroll,
+      var(--surface-2);
+  }
+  .contexto-campos { grid-row: 1 / -1; grid-column: 1; }
+  .contexto-efectivo { grid-row: 1; grid-column: 2; }
+  .contexto-manual { grid-row: 2; grid-column: 2; }
+}
 
 /* ── Los campos canónicos ─────────────────────────────────────────────────── */
 
 .perfil-tab {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
+  gap: var(--space-5);
   align-items: start;
 }
 
@@ -41,28 +78,28 @@
  */
 @container cajon (min-width: 1200px) {
   .perfil-tab { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
-  .perfil-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
+  .perfil-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-5); }
   .perfil-editor > :not(.perfil-campo) { grid-column: 1 / -1; }
 }
 
-.perfil-editor, .perfil-vista-previa { display: grid; gap: 12px; min-width: 0; }
+.perfil-editor, .perfil-vista-previa { display: grid; gap: var(--space-3); min-width: 0; }
 
-.perfil-cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.perfil-cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .perfil-cabecera h4, .perfil-vista-previa h4 { margin: 0; font-size: var(--tipo-cuerpo); }
-.perfil-ayuda { margin: 4px 0 0; font-size: var(--tipo-apunte); line-height: 1.4; }
+.perfil-ayuda { margin: var(--space-1) 0 0; font-size: var(--tipo-apunte); line-height: 1.4; }
 
 .perfil-medida { margin: 0; font-size: var(--tipo-rotulo); font-weight: 600; color: var(--muted); white-space: nowrap; }
 .perfil-medida-fuera { color: var(--danger, #d64545); }
 
-.perfil-campo { display: grid; gap: 4px; }
+.perfil-campo { display: grid; gap: var(--space-1); }
 .perfil-campo-titulo { font-size: var(--tipo-rotulo); font-weight: 600; }
 .perfil-campo-ayuda { font-size: var(--tipo-apunte); line-height: 1.4; }
 .perfil-campo textarea {
   width: 100%;
   min-width: 0;
-  padding: 8px 10px;
+  padding: var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
@@ -80,23 +117,23 @@
 .perfil-tramo { justify-self: end; text-align: right; font-size: var(--tipo-apunte); color: var(--muted); }
 .perfil-tramo-fuera { color: var(--danger, #d64545); font-weight: 600; }
 
-.perfil-fuera { margin: 0; padding-left: 18px; font-size: var(--tipo-apunte); color: var(--danger, #d64545); line-height: 1.5; }
+.perfil-fuera { margin: 0; padding-left: var(--space-4); font-size: var(--tipo-apunte); color: var(--danger, #d64545); line-height: 1.5; }
 
-.perfil-aviso { margin: 0; padding: 10px 12px; border-radius: 10px; font-size: var(--tipo-apunte); line-height: 1.5; }
+.perfil-aviso { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); font-size: var(--tipo-apunte); line-height: 1.5; }
 .perfil-aviso-success { background: var(--surface-3); color: var(--text); }
 .perfil-aviso-parcial { background: var(--surface-3); color: var(--text); border: 1px solid var(--warning, #c08a2e); }
 .perfil-aviso-error { background: var(--surface-3); color: var(--danger, #d64545); border: 1px solid var(--danger, #d64545); }
 
 .perfil-del-agente { font-weight: 400; opacity: .75; }
 
-.perfil-fichero-cuerpo { display: grid; gap: 8px; min-width: 0; }
+.perfil-fichero-cuerpo { display: grid; gap: var(--space-2); min-width: 0; }
 .perfil-fichero-texto {
   margin: 0;
   max-height: 480px;
   overflow: auto;
-  padding: 12px 14px;
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
