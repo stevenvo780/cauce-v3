@@ -1,11 +1,5 @@
-import { withTransaction, type DatabasePool } from '@cauce/store';
-import { isLiteralTrue } from '@cauce/protocol';
-
-interface ConsolePublishIntentSchemaProbeRow {
-  readonly migration_ledger_exact: boolean;
-  readonly indexes_exact: boolean;
-  readonly journal_permissions: boolean;
-}
+import { type DatabasePool } from '@cauce/store';
+import { probeSchemaContract } from './probe.js';
 
 // Readiness binds the installed schema to the exact source recorded atomically by the migration
 // runner. Keep this in lockstep with migration 037; the PostgreSQL focal test catches divergence.
@@ -14,12 +8,11 @@ const consolePublishIntentMigrationSha256 =
 
 /** Proves the exact schema-037 journal indexes and atomic source ledger without reading history. */
 export async function probeConsolePublishIntentPath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<ConsolePublishIntentSchemaProbeRow>(
-      `WITH expected_indices(
+  await probeSchemaContract(pool, {
+    name: 'schema-037 console publish intent',
+    required: ['migration_ledger_exact', 'indexes_exact', 'journal_permissions'],
+    params: [consolePublishIntentMigrationSha256],
+    sql: `WITH expected_indices(
          name,key_expressions,sort_options,predicate,definition
        ) AS (VALUES
          (
@@ -116,13 +109,5 @@ export async function probeConsolePublishIntentPath(pool: DatabasePool): Promise
            AND has_table_privilege(current_user,'public.audit_events','INSERT')
            AND has_sequence_privilege(current_user,'public.audit_events_id_seq','USAGE')
            AS journal_permissions`,
-      [consolePublishIntentMigrationSha256],
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_ledger_exact)
-        || !isLiteralTrue(contract?.indexes_exact)
-        || !isLiteralTrue(contract?.journal_permissions)) {
-      throw new Error('gateway schema-037 console publish intent contract is unavailable');
-    }
   });
 }

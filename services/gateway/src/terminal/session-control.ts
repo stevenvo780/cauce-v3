@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  withTransaction, type AuthorizedAgentTarget, type DatabaseClient, type DatabasePool,
+  withTransaction, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
-import { isLiteralTrue, type Tenant } from '@cauce/protocol';
+import { isLiteralTrue } from '@cauce/protocol';
 import { requireOperatorPermission, type Principal } from '../auth.js';
 import {
   recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext, type TerminalAuditEntry,
@@ -13,7 +13,12 @@ import {
   loadFleetPlacements, resolveOperator, type GrantStore, type ResolvedOperator,
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
+import {
+  cohortLabels, operatorScopePredicate, sessionExpiry, subjectFor,
+  type FleetCohort, type TerminalControlRepository,
+} from './helpers.js';
 import type { AgentRegistry } from './registry.js';
+import { registerTerminalBrowserOwnerRoutes } from './session-control/browser-owner.js';
 import { registerTerminalTargetRoute } from './session-control/targets.js';
 import {
   deriveAliasKey, issueTicket, ticketDigest, ticketSha256, type TicketPayload,
@@ -21,8 +26,6 @@ import {
 import { type TerminalMode, type TerminalSessionRow } from './types.js';
 
 const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
-
-class TerminalTransactionNoop extends Error {}
 
 export class TerminalClockSkewError extends Error {
   constructor() {
@@ -64,10 +67,6 @@ function sessionState(row: TerminalSessionRow, occupiesSlot: boolean): 'issued' 
   // A browser clock must never decide that a server-side slot does or does not exist.
   if (!occupiesSlot) return 'closed';
   return row.consumed_at === null ? 'issued' : 'active';
-}
-
-function subjectFor(actor: Pick<Principal, 'tenant_id' | 'alias'>): string {
-  return `${actor.tenant_id}:${actor.alias}`;
 }
 
 function terminalAdmissionRequestSha256(input: {
@@ -128,35 +127,12 @@ function operatorLockIdentity(operator: ResolvedOperator, consoleSubject: string
     : JSON.stringify([operator.operator_id, consoleSubject]);
 }
 
-function operatorScopePredicate(
-  operatorParameter: number,
-  attributedParameter: number,
-  subjectParameter: number,
-): string {
-  return `operator_id=$${String(operatorParameter)}
-          AND ($${String(attributedParameter)}::boolean OR console_subject=$${String(subjectParameter)})`;
-}
-
-interface TerminalSessionRepository {
-  assertPermission(tenantId: Tenant, alias: string, permission: 'control'): Promise<void>;
-  authorizeAgentTarget(
-    actorTenant: Tenant,
-    actorAlias: string,
-    targetTenant: Tenant,
-    targetAlias: string,
-    permission: 'read' | 'control',
-  ): Promise<AuthorizedAgentTarget | undefined>;
-}
-
-type FleetCohort = ReturnType<typeof containerCohort>;
-
-interface TerminalSessionControlOptions {
+export interface TerminalSessionControlOptions {
   readonly pool: DatabasePool;
   readonly config: TerminalConfig;
   readonly registry: AgentRegistry;
   readonly grants: GrantStore;
-  readonly repository: TerminalSessionRepository;
-  readonly UUID_PATTERN: RegExp;
+  readonly repository: TerminalControlRepository;
   readonly principal: (request: FastifyRequest) => Promise<Principal>;
   readonly openPredicate: (ttlParameter: number) => string;
   readonly currentCohort: (
@@ -164,8 +140,6 @@ interface TerminalSessionControlOptions {
     alias: string,
     database?: DatabasePool | DatabaseClient,
   ) => Promise<FleetCohort>;
-  readonly cohortLabels: (cohort: FleetCohort) => string[];
-  readonly sessionExpiry: (row: TerminalSessionRow) => Date | undefined;
   readonly parseSessionRequest: (value: unknown) => SessionRequestBody;
   readonly parseOwnerRotation: (value: unknown) => OwnerRotationBody;
   readonly parseDeleteSession: (value: unknown) => DeleteSessionBody;
@@ -182,9 +156,8 @@ export function registerTerminalSessionControl(
   options: TerminalSessionControlOptions,
 ): void {
   const {
-    pool, config, registry, grants, repository, UUID_PATTERN, principal, openPredicate,
-    currentCohort, cohortLabels, sessionExpiry, parseSessionRequest, parseOwnerRotation,
-    parseDeleteSession, browserOwnerGeneration, replyError, recordTransactionalTerminalAudit,
+    pool, config, registry, grants, repository, principal, openPredicate,
+    parseSessionRequest, browserOwnerGeneration, replyError, recordTransactionalTerminalAudit,
   } = options;
 
   /* ------------------------------------------------------------------ */
@@ -192,6 +165,7 @@ export function registerTerminalSessionControl(
   /* ------------------------------------------------------------------ */
 
   registerTerminalTargetRoute(app, options);
+  registerTerminalBrowserOwnerRoutes(app, options);
 
   app.post('/v3/console/terminal/sessions', async (request, reply) => {
     const traceId = `trace-${randomUUID()}`;
@@ -578,188 +552,12 @@ export function registerTerminalSessionControl(
           alias: row.alias,
           mode: row.mode,
           opened_at: row.issued_at.toISOString(),
-          expires_at: (sessionExpiry(row) ?? row.expires_at).toISOString(),
+          expires_at: (sessionExpiry(row, config.sessionTtlSeconds) ?? row.expires_at).toISOString(),
           state: sessionState(row, isLiteralTrue(row.occupies_slot)),
           request_id: row.request_id,
           owner_generation: browserOwnerGeneration(row.browser_owner_generation),
         }))
       };
-    } catch (error) { replyError(reply, error); }
-  });
-
-  app.post<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid/owner', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
-        return;
-      }
-      const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
-      if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
-      const body = parseOwnerRotation(request.body);
-      let row: TerminalSessionRow | undefined;
-      try {
-        row = await withTransaction(pool, async (ownerClient) => {
-          const rotated = await ownerClient.query<TerminalSessionRow>(
-            `UPDATE terminal_sessions
-                SET browser_owner_sha256=$4,
-                    browser_owner_generation=browser_owner_generation+1
-              WHERE id=$1 AND request_id=$2 AND browser_owner_generation=$3::bigint
-                AND ${operatorScopePredicate(5, 6, 7)}
-                AND browser_owner_generation<9223372036854775807
-                AND revoked_at IS NULL AND closed_at IS NULL
-              RETURNING *`,
-            [
-              request.params.sid,
-              body.request_id,
-              body.expected_owner_generation,
-              ticketSha256(body.owner_token),
-              operator.operator_id,
-              operator.attributed,
-              consoleSubject,
-            ],
-          );
-          const rotatedRow = rotated.rows[0];
-          if (rotatedRow === undefined) throw new TerminalTransactionNoop();
-          await recordTransactionalTerminalAudit(ownerClient, {
-            tenant_id: actor.tenant_id,
-            actor_alias: actor.alias,
-            action: 'terminal.session.owner_rotated',
-            decision: 'info',
-            ...(rotatedRow.trace_id === null ? {} : { trace_id: rotatedRow.trace_id }),
-            metadata: terminalAuditMetadata({
-              operator_id: rotatedRow.operator_id,
-              attributed: rotatedRow.attributed,
-              target_tenant: rotatedRow.tenant_id,
-              target_alias: rotatedRow.alias,
-              container: rotatedRow.container,
-              cohort: cohortLabels(await currentCohort(
-                rotatedRow.tenant_id,
-                rotatedRow.alias,
-                ownerClient,
-              )),
-              mode: rotatedRow.mode,
-            }, {
-              session_id: rotatedRow.id,
-              request_id: rotatedRow.request_id,
-              owner_generation: rotatedRow.browser_owner_generation,
-              reason: 'operator_owner_takeover',
-            }),
-          });
-          return rotatedRow;
-        });
-      } catch (error) {
-        if (!(error instanceof TerminalTransactionNoop)) throw error;
-      }
-      if (row === undefined) {
-        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
-        return;
-      }
-      return {
-        session_id: row.id,
-        request_id: row.request_id,
-        owner_generation: browserOwnerGeneration(row.browser_owner_generation),
-      };
-    } catch (error) { replyError(reply, error); }
-  });
-
-  app.delete<{ Params: { sid: string } }>('/v3/console/terminal/sessions/:sid', async (request, reply) => {
-    try {
-      const actor = await principal(request);
-      requireOperatorPermission(actor, 'control');
-      try {
-        await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
-      } catch {
-        await reply.code(403).send({ error: 'forbidden', reason: 'control_permission_required' });
-        return;
-      }
-      const operator = resolveOperator(request, actor, config);
-      const consoleSubject = subjectFor(actor);
-      if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
-      const body = parseDeleteSession(request.body);
-      // Revocation is a flag, not a socket kill: terminal-relay revalidates every few seconds
-      // and closes the WebSocket with 4403 once /authz stops answering ok.
-      let outcome: { row: TerminalSessionRow | undefined; settled: boolean } | undefined;
-      try {
-        outcome = await withTransaction(pool, async (releaseClient) => {
-          const revoked = await releaseClient.query<TerminalSessionRow>(
-            `UPDATE terminal_sessions SET revoked_at=now()
-              WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
-                AND request_id=$5
-                AND browser_owner_generation=$6::bigint
-                AND browser_owner_sha256=$7
-                AND revoked_at IS NULL AND closed_at IS NULL RETURNING *`,
-            [
-              request.params.sid,
-              operator.operator_id,
-              operator.attributed,
-              consoleSubject,
-              body.request_id,
-              body.owner_generation,
-              ticketSha256(body.owner_token),
-            ]
-          );
-          const row = revoked.rows[0];
-          let settled = false;
-          if (row === undefined) {
-            // A lost 204 is safe to retry with the exact same owner. A stale owner, another subject
-            // or a different request all receive the same conflict and can mutate nothing.
-            const existing = await releaseClient.query<{ settled: boolean }>(
-              `SELECT EXISTS(
-                 SELECT 1 FROM terminal_sessions
-                  WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
-                    AND request_id=$5 AND browser_owner_generation=$6::bigint
-                    AND browser_owner_sha256=$7 AND (revoked_at IS NOT NULL OR closed_at IS NOT NULL)
-               ) AS settled`,
-              [
-                request.params.sid,
-                operator.operator_id,
-                operator.attributed,
-                consoleSubject,
-                body.request_id,
-                body.owner_generation,
-                ticketSha256(body.owner_token),
-              ],
-            );
-            settled = existing.rows[0]?.settled === true;
-          } else {
-            await recordTransactionalTerminalAudit(releaseClient, {
-              tenant_id: actor.tenant_id,
-              actor_alias: actor.alias,
-              action: 'terminal.session.revoked',
-              decision: 'info',
-              ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-              metadata: terminalAuditMetadata({
-                operator_id: row.operator_id,
-                attributed: row.attributed,
-                target_tenant: row.tenant_id,
-                target_alias: row.alias,
-                container: row.container,
-                cohort: cohortLabels(await currentCohort(row.tenant_id, row.alias, releaseClient)),
-                mode: row.mode
-              }, {
-                session_id: row.id,
-                request_id: row.request_id,
-                owner_generation: row.browser_owner_generation,
-                reason: 'operator_revoked',
-              })
-            });
-          }
-          if (row === undefined && !settled) throw new TerminalTransactionNoop();
-          return { row, settled };
-        });
-      } catch (error) {
-        if (!(error instanceof TerminalTransactionNoop)) throw error;
-      }
-      if (outcome === undefined) {
-        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
-        return;
-      }
-      return await reply.code(204).send();
     } catch (error) { replyError(reply, error); }
   });
 }

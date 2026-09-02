@@ -3,9 +3,8 @@ import {
   AGENT_PRIORITY_CEILING, buildPublishReceipt, HUMAN_CHAT_PRIORITY, HUMAN_PRIORITY_FLOOR,
   type PublishMessage,
 } from '@cauce/protocol';
-import type { DatabasePool } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
-import { DevOnlyAuthProvider } from './auth.js';
+import type { buildGateway } from './app.js';
+import { buildTestGateway, fakePool, fakeRepository } from './test-support/gateway-doubles.js';
 
 /**
  * `/v3/messages` is the only surface where a caller chooses its own `priority`, and the only place
@@ -20,12 +19,6 @@ interface Published {
 }
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
-
-function pool(): DatabasePool {
-  return {
-    query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 }))
-  } as unknown as DatabasePool;
-}
 
 /**
  * Fastify 5 only accepts a logger CONFIGURATION here, not a logger instance, so the records are
@@ -53,11 +46,9 @@ async function gateway(): Promise<{
 }> {
   const published: Published[] = [];
   const warnings: Record<string, unknown>[] = [];
-  const app = await buildGateway({
-    pool: pool(),
-    authProvider: DevOnlyAuthProvider.forTests(),
-    repository: {
-      claimOutbox: vi.fn(async () => []),
+  const app = await buildTestGateway({
+    pool: fakePool({ ssl: true }),
+    repository: fakeRepository({
       publish: vi.fn(async (input: {
         priority: number; tenant_id: string; actor_alias: string; request_id: string; trace_id: string;
         idempotency_key: string;
@@ -76,10 +67,7 @@ async function gateway(): Promise<{
         });
       }),
       verifyPublishReceipt: vi.fn(async () => true),
-    } as unknown as GatewayRepository,
-    deliveryWakeSubscriber: async () => async () => undefined,
-    exposeHealthRoutes: false,
-    consoleOrigins: ['http://localhost'],
+    }),
     logger: recordingLogger(warnings)
   });
   apps.push(app);
@@ -160,13 +148,10 @@ describe('agent priority ceiling', () => {
     }));
   });
 
-  it('does not let an attributed operator reserve the human band through machine publish routes', async () => {
+  it('does not let an attributed operator reserve the human band on the machine publish route', async () => {
     const { app, published } = await gateway();
     expect(await publish(app, 'kant', 100)).toBe(202);
-    expect(await publish(app, 'kant', 100, '/v3/publish')).toBe(202);
-    expect(published.map((entry) => entry.priority)).toEqual([
-      AGENT_PRIORITY_CEILING, AGENT_PRIORITY_CEILING,
-    ]);
+    expect(published.map((entry) => entry.priority)).toEqual([AGENT_PRIORITY_CEILING]);
   });
 
   it('puts an authenticated console operator into the human band even when the UI requests 10', async () => {

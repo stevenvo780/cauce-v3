@@ -7,7 +7,7 @@ import { principal, replyError } from '../shared.js';
 import type { ConsoleRoutes } from './contracts.js';
 import { validatedConfigurationReceipt } from './helpers.js';
 
-export function registerConsoleRoutesPhase4(
+export function registerConsoleOperationsRoutes(
   app: FastifyInstance,
   context: ConsoleRoutes,
 ): void {

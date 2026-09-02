@@ -1,12 +1,12 @@
 import type { FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
-import { buildPublishReceipt } from '@cauce/protocol';
-import type { DatabasePool } from '@cauce/store';
+import { buildPublishReceipt, type Permission } from '@cauce/protocol';
 import { buildGateway, type GatewayRepository } from './app.js';
 import { AuthError, validatePrincipal, type AuthProvider, type Principal } from './auth.js';
 import { MemoryConsoleUserStore, type ConsoleUser } from './console-users.js';
 import { hashPassword } from './password.js';
 import { LoginThrottle, PasswordAuthProvider } from './password-auth.js';
+import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
 /**
  * Everything asserted here is asserted on the EFFECT: the real `Set-Cookie` header, the real
@@ -18,11 +18,7 @@ import { LoginThrottle, PasswordAuthProvider } from './password-auth.js';
 const TEST_SCRYPT = { cost: 1_024, blockSize: 8, parallelism: 1 };
 const PASSWORD = 'una-frase-de-paso-larga';
 
-function fakePool(): DatabasePool {
-  return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
-}
-
-function fakeRepository(): {
+function repositoryDouble(): {
   repository: GatewayRepository;
   publish: ReturnType<typeof vi.fn>;
   enqueueJob: ReturnType<typeof vi.fn>;
@@ -52,12 +48,11 @@ function fakeRepository(): {
     rollbackConfiguration,
     replayDelivery,
     cancelDelivery,
-    repository: {
-      assertPrincipal: vi.fn(async () => undefined),
-      assertPermission: vi.fn(async () => undefined),
+    repository: fakeRepository({
       status: vi.fn(async () => ({ online: 1 })),
-      listPresence: vi.fn(async () => []),
-      principalAccess: vi.fn(async () => ({ roles: ['operator'], permissions: ['route', 'read', 'control'] })),
+      principalAccess: vi.fn(async () => ({
+        roles: ['operator'], permissions: ['route', 'read', 'control'] as Permission[],
+      })),
       topology: vi.fn(async () => ({ tenants: [], acl_edges: [] })),
       listMessages: vi.fn(async () => ({ items: [], next_cursor: null })),
       queueSnapshot: vi.fn(async () => ({ pending: 0, retrying: 0, dead: 0, items: [] })),
@@ -66,9 +61,6 @@ function fakeRepository(): {
       listAdapters: vi.fn(async () => ({ items: [] })),
       fleetActivity: vi.fn(async () => ({ observed_at: new Date().toISOString(), agents: [] })),
       quotaSnapshot: vi.fn(async () => ({ observed_at: new Date().toISOString(), providers: [] })),
-      recordQuotaSample: vi.fn(async () => ({
-        collection_id: '81111111-2222-4333-8444-555555555556',
-      })),
       listAgents: vi.fn(async () => ({ items: [] })),
       getAgent: vi.fn(async (alias: string) => ({ tenant_id: 'Steven', alias })),
       getAgentByIdentity: vi.fn(async (tenantId: string, alias: string) => ({ tenant_id: tenantId, alias })),
@@ -84,12 +76,7 @@ function fakeRepository(): {
       cancelDelivery,
       publish,
       verifyPublishReceipt: vi.fn(async () => true),
-      claimOutbox: vi.fn(async () => []),
-      // PasswordAuthProvider is intentionally production-mode. Its repository double must therefore
-      // implement the same durable reconnect fence as production, even though these auth tests have
-      // no outstanding deliveries to recover.
-      liveDeliveryClaims: vi.fn(async () => []),
-    } as unknown as GatewayRepository,
+    }),
   };
 }
 
@@ -172,12 +159,12 @@ async function fixture(options: {
     ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
     ...(options.throttle === undefined ? {} : { throttle: options.throttle })
   });
-  const fake = fakeRepository();
+  const fake = repositoryDouble();
   const app = await buildGateway({
-    pool: fakePool(),
+    pool: fakePool({ ssl: true }),
     authProvider: provider,
     repository: fake.repository,
-    deliveryWakeSubscriber: async () => async () => undefined
+    deliveryWakeSubscriber: noDeliveryWakes
   });
   return {
     app,

@@ -8,7 +8,7 @@ const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
 const SCAN_ROOTS = ['packages', 'services', 'console'];
 const EXCLUDED_DIRECTORIES = new Set([
   '.git', '__fixtures__', '__tests__', 'coverage', 'dist', 'fixture', 'fixtures',
-  'node_modules', 'test', 'test-fixtures', 'tests',
+  'node_modules', 'test', 'test-fixtures', 'test-support', 'tests',
 ]);
 const NON_PRODUCTION_BASENAME = /(?:^|[._-])(?:fixture|fixtures|spec|test|tests)(?:[._-]|$)/u;
 

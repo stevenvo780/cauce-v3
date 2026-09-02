@@ -1,22 +1,15 @@
-import { withTransaction, type DatabasePool } from '@cauce/store';
-import { isLiteralTrue } from '@cauce/protocol';
-
-interface TerminalClaimSchemaProbeRow {
-  readonly migration_applied: boolean;
-  readonly columns_exact: boolean;
-  readonly constraint_exact: boolean;
-  readonly claim_permissions: boolean;
-  readonly audit_permissions: boolean;
-}
+import { type DatabasePool } from '@cauce/store';
+import { probeSchemaContract } from './probe.js';
 
 /** Validates schema-032 and its exact fenced CAS predicate without observing a session. */
 export async function probeTerminalClaimPath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<TerminalClaimSchemaProbeRow>(
-      `WITH claim_columns(name,type_name,not_null,default_expression) AS (VALUES
+  await probeSchemaContract(pool, {
+    name: 'terminal schema-032 claim',
+    required: [
+      'migration_applied', 'columns_exact', 'constraint_exact',
+      'claim_permissions', 'audit_permissions',
+    ],
+    sql: `WITH claim_columns(name,type_name,not_null,default_expression) AS (VALUES
          ('relay_claim_sha256','bytea',false,NULL::text),
          ('relay_claim_epoch','bigint',true,'0'::text),
          ('relay_claimed_at','timestamp with time zone',false,NULL::text),
@@ -63,18 +56,10 @@ export async function probeTerminalClaimPath(pool: DatabasePool): Promise<void> 
          has_table_privilege(current_user,'public.audit_events','INSERT')
            AND COALESCE(has_sequence_privilege(
              current_user,pg_get_serial_sequence('public.audit_events','id'),'USAGE'
-           ),false) AS audit_permissions`
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_applied)
-        || !isLiteralTrue(contract?.columns_exact)
-        || !isLiteralTrue(contract?.constraint_exact)
-        || !isLiteralTrue(contract?.claim_permissions)
-        || !isLiteralTrue(contract?.audit_permissions)) {
-      throw new Error('gateway terminal schema-032 claim contract is unavailable');
-    }
-    await client.query(
-      `WITH requested(id,claim_sha256,claim_epoch,claim_lease_seconds,session_ttl_seconds) AS (
+           ),false) AS audit_permissions`,
+    after: async (client) => {
+      await client.query(
+        `WITH requested(id,claim_sha256,claim_epoch,claim_lease_seconds,session_ttl_seconds) AS (
          VALUES(NULL::uuid,NULL::bytea,NULL::bigint,1::integer,1::integer)
        )
        SELECT 1
@@ -92,18 +77,10 @@ export async function probeTerminalClaimPath(pool: DatabasePool): Promise<void> 
                 session.consumed_at+make_interval(secs => requested.session_ttl_seconds),
                 now()+make_interval(secs => requested.claim_lease_seconds)
               )>now()
-        LIMIT 1`
-    );
+        LIMIT 1`,
+      );
+    },
   });
-}
-
-interface TerminalBrowserOwnerSchemaProbeRow {
-  readonly migration_applied: boolean;
-  readonly columns_exact: boolean;
-  readonly constraint_exact: boolean;
-  readonly request_index_exact: boolean;
-  readonly mutation_permissions: boolean;
-  readonly audit_permissions: boolean;
 }
 
 /**
@@ -112,12 +89,13 @@ interface TerminalBrowserOwnerSchemaProbeRow {
  * request and browser-owner fences with NULL sentinels, so no session identity is observed.
  */
 export async function probeTerminalBrowserOwnerPath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<TerminalBrowserOwnerSchemaProbeRow>(
-      `WITH browser_columns(name,type_name) AS (VALUES
+  await probeSchemaContract(pool, {
+    name: 'terminal schema-033 browser owner',
+    required: [
+      'migration_applied', 'columns_exact', 'constraint_exact', 'request_index_exact',
+      'mutation_permissions', 'audit_permissions',
+    ],
+    sql: `WITH browser_columns(name,type_name) AS (VALUES
          ('request_id','uuid'),
          ('request_sha256','bytea'),
          ('browser_owner_sha256','bytea'),
@@ -177,19 +155,10 @@ export async function probeTerminalBrowserOwnerPath(pool: DatabasePool): Promise
          has_table_privilege(current_user,'public.audit_events','INSERT')
            AND COALESCE(has_sequence_privilege(
              current_user,pg_get_serial_sequence('public.audit_events','id'),'USAGE'
-           ),false) AS audit_permissions`
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_applied)
-        || !isLiteralTrue(contract?.columns_exact)
-        || !isLiteralTrue(contract?.constraint_exact)
-        || !isLiteralTrue(contract?.request_index_exact)
-        || !isLiteralTrue(contract?.mutation_permissions)
-        || !isLiteralTrue(contract?.audit_permissions)) {
-      throw new Error('gateway terminal schema-033 browser owner contract is unavailable');
-    }
-    await client.query(
-      `WITH requested(request_id,request_sha256,browser_owner_sha256,browser_owner_generation) AS (
+           ),false) AS audit_permissions`,
+    after: async (client) => {
+      await client.query(
+        `WITH requested(request_id,request_sha256,browser_owner_sha256,browser_owner_generation) AS (
          VALUES(NULL::uuid,NULL::bytea,NULL::bytea,NULL::bigint)
        )
        SELECT 1
@@ -200,26 +169,20 @@ export async function probeTerminalBrowserOwnerPath(pool: DatabasePool): Promise
           AND session.browser_owner_sha256=requested.browser_owner_sha256
           AND session.browser_owner_generation=requested.browser_owner_generation
           AND session.revoked_at IS NULL AND session.closed_at IS NULL
-        LIMIT 1`
-    );
+        LIMIT 1`,
+      );
+    },
   });
-}
-
-interface TerminalRelayInstanceSchemaProbeRow {
-  readonly migration_applied: boolean;
-  readonly columns_exact: boolean;
-  readonly constraint_exact: boolean;
-  readonly mutation_permissions: boolean;
 }
 
 /** Schema-034: exact authenticated relay pin plus process-generation fence, with no row read. */
 export async function probeTerminalRelayInstancePath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<TerminalRelayInstanceSchemaProbeRow>(
-      `WITH relay_columns(name,type_name) AS (VALUES
+  await probeSchemaContract(pool, {
+    name: 'terminal schema-034 relay instance',
+    required: [
+      'migration_applied', 'columns_exact', 'constraint_exact', 'mutation_permissions',
+    ],
+    sql: `WITH relay_columns(name,type_name) AS (VALUES
          ('relay_instance_id','text'),
          ('relay_boot_id','uuid')
        ), checked_columns AS (
@@ -258,17 +221,10 @@ export async function probeTerminalRelayInstancePath(pool: DatabasePool): Promis
          has_table_privilege(current_user,'public.terminal_sessions','SELECT')
            AND has_table_privilege(current_user,'public.terminal_sessions','INSERT')
            AND has_table_privilege(current_user,'public.terminal_sessions','UPDATE')
-           AS mutation_permissions`
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_applied)
-        || !isLiteralTrue(contract?.columns_exact)
-        || !isLiteralTrue(contract?.constraint_exact)
-        || !isLiteralTrue(contract?.mutation_permissions)) {
-      throw new Error('gateway terminal schema-034 relay instance contract is unavailable');
-    }
-    await client.query(
-      `WITH requested(id,relay_instance_id,relay_boot_id,claim_epoch) AS (
+           AS mutation_permissions`,
+    after: async (client) => {
+      await client.query(
+        `WITH requested(id,relay_instance_id,relay_boot_id,claim_epoch) AS (
          VALUES(NULL::uuid,NULL::text,NULL::uuid,NULL::bigint)
        )
        SELECT 1
@@ -279,7 +235,8 @@ export async function probeTerminalRelayInstancePath(pool: DatabasePool): Promis
           AND session.relay_claim_epoch=requested.claim_epoch
           AND session.relay_boot_id IS NOT DISTINCT FROM requested.relay_boot_id
           AND session.revoked_at IS NULL AND session.closed_at IS NULL
-        LIMIT 1`
-    );
+        LIMIT 1`,
+      );
+    },
   });
 }

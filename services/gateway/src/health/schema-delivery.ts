@@ -1,22 +1,15 @@
-import { withTransaction, type DatabasePool } from '@cauce/store';
-import { isLiteralTrue } from '@cauce/protocol';
-
-interface DeliveryAdmissionSchemaProbeRow {
-  readonly migration_applied: boolean;
-  readonly capacity_column_exact: boolean;
-  readonly capacity_constraint_valid: boolean;
-  readonly inflight_index_valid: boolean;
-  readonly claim_permissions: boolean;
-}
+import { type DatabasePool } from '@cauce/store';
+import { probeSchemaContract } from './probe.js';
 
 /** Proves the schema and authority used by `claimDeliveries` without observing an identity. */
 export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<DeliveryAdmissionSchemaProbeRow>(
-      `SELECT
+  await probeSchemaContract(pool, {
+    name: 'schema-015 delivery admission',
+    required: [
+      'migration_applied', 'capacity_column_exact', 'capacity_constraint_valid',
+      'inflight_index_valid', 'claim_permissions',
+    ],
+    sql: `SELECT
          EXISTS (
            SELECT 1 FROM schema_migrations
             WHERE version='015_delivery_concurrency_cap.sql'
@@ -68,17 +61,9 @@ export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<vo
            AND has_table_privilege(current_user,'public.messages','SELECT')
            AND has_function_privilege(current_user,'gen_random_uuid()','EXECUTE')
            AS claim_permissions`,
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_applied)
-        || !isLiteralTrue(contract?.capacity_column_exact)
-        || !isLiteralTrue(contract?.capacity_constraint_valid)
-        || !isLiteralTrue(contract?.inflight_index_valid)
-        || !isLiteralTrue(contract?.claim_permissions)) {
-      throw new Error('gateway schema-015 delivery admission contract is unavailable');
-    }
-    await client.query(
-      `WITH requested(tenant_id,alias,human_floor) AS (
+    after: async (client) => {
+      await client.query(
+        `WITH requested(tenant_id,alias,human_floor) AS (
          VALUES(NULL::text,NULL::text,60::integer)
        )
        SELECT agent.max_concurrent_deliveries,fairness.interactive_streak,
@@ -128,14 +113,9 @@ export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<vo
          LEFT JOIN connection_leases lease
            ON lease.tenant_id=requested.tenant_id AND lease.alias=requested.alias
           AND lease.connection_token=NULL::uuid`,
-    );
+      );
+    },
   });
-}
-
-interface WakeSchemaProbeRow {
-  readonly migration_applied: boolean;
-  readonly connection_token_exact: boolean;
-  readonly claim_permissions: boolean;
 }
 
 /**
@@ -144,12 +124,10 @@ interface WakeSchemaProbeRow {
  * transaction is a second guard in case a future edit accidentally adds a mutating statement.
  */
 export async function probeWakePath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<WakeSchemaProbeRow>(
-      `SELECT
+  await probeSchemaContract(pool, {
+    name: 'wake schema-031 claim',
+    required: ['migration_applied', 'connection_token_exact', 'claim_permissions'],
+    sql: `SELECT
          EXISTS (
            SELECT 1 FROM schema_migrations
             WHERE version='031_connection_session_fencing.sql'
@@ -172,20 +150,14 @@ export async function probeWakePath(pool: DatabasePool): Promise<void> {
            AND has_table_privilege(current_user,'adapter_outbox','UPDATE')
            AND has_table_privilege(current_user,'outbox_dead_letters','INSERT')
            AND has_function_privilege(current_user,'gen_random_uuid()','EXECUTE')
-           AS claim_permissions`
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_applied)
-        || !isLiteralTrue(contract?.connection_token_exact)
-        || !isLiteralTrue(contract?.claim_permissions)) {
-      throw new Error('gateway wake schema-031 claim contract is unavailable');
-    }
+           AS claim_permissions`,
     // This is the read-only half of claimWakeOutbox's fenced claim. A NULL recipient cannot match
     // the NOT NULL lease key, so the probe is independent of the live session set and cannot read
     // an identity. PostgreSQL still parses, plans and authorizes every table, column, JSON
     // expression, UUID comparison and ordering expression used by claim/retirement.
-    await client.query(
-      `WITH requested(
+    after: async (client) => {
+      await client.query(
+        `WITH requested(
          tenant_id,alias,instance_id,epoch,connection_token,recipient_order
        ) AS (VALUES (NULL::text,NULL::text,NULL::text,NULL::bigint,NULL::uuid,0::integer))
        SELECT 1
@@ -227,6 +199,7 @@ export async function probeWakePath(pool: DatabasePool): Promise<void> {
          ) dead_letter ON true
         ORDER BY requested.recipient_order
         LIMIT 1`,
-    );
+      );
+    },
   });
 }

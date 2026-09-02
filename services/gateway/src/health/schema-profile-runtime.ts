@@ -1,14 +1,5 @@
-import { withTransaction, type DatabasePool } from '@cauce/store';
-import { isLiteralTrue } from '@cauce/protocol';
-
-interface ProfileRuntimeSchemaProbeRow {
-  readonly migration_applied: boolean;
-  readonly columns_exact: boolean;
-  readonly constraints_exact: boolean;
-  readonly functions_exact: boolean;
-  readonly triggers_exact: boolean;
-  readonly mutation_permissions: boolean;
-}
+import { type DatabasePool } from '@cauce/store';
+import { probeSchemaContract } from './probe.js';
 
 const profileDocumentsFunctionBody = `
 DECLARE
@@ -59,12 +50,14 @@ END
 
 /** Proves schema-035 topology and privileges read-only with impossible identity keys. */
 export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void> {
-  await withTransaction(pool, async (client) => {
-    await client.query('SET TRANSACTION READ ONLY');
-    await client.query("SET LOCAL lock_timeout='1000ms'");
-    await client.query("SET LOCAL statement_timeout='2000ms'");
-    const schema = await client.query<ProfileRuntimeSchemaProbeRow>(
-      `WITH expected_columns(table_name,position,name,type_name,default_expression) AS (VALUES
+  await probeSchemaContract(pool, {
+    name: 'schema-035 profile runtime',
+    required: [
+      'migration_applied', 'columns_exact', 'constraints_exact',
+      'functions_exact', 'triggers_exact', 'mutation_permissions',
+    ],
+    params: [profileDocumentsFunctionBody, profileAdoptionTriggerFunctionBody],
+    sql: `WITH expected_columns(table_name,position,name,type_name,default_expression) AS (VALUES
          ('agent_profile_runtime_expectations',1,'tenant_id','text',NULL::text),
          ('agent_profile_runtime_expectations',2,'alias','text',NULL::text),
          ('agent_profile_runtime_expectations',3,'revision','bigint',NULL::text),
@@ -242,19 +235,9 @@ export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void>
            AND has_function_privilege(
              current_user,'public.cauce_profile_runtime_adoption_matches_expectation()','EXECUTE'
            ) AS mutation_permissions`,
-      [profileDocumentsFunctionBody, profileAdoptionTriggerFunctionBody],
-    );
-    const contract = schema.rows[0];
-    if (!isLiteralTrue(contract?.migration_applied)
-        || !isLiteralTrue(contract?.columns_exact)
-        || !isLiteralTrue(contract?.constraints_exact)
-        || !isLiteralTrue(contract?.functions_exact)
-        || !isLiteralTrue(contract?.triggers_exact)
-        || !isLiteralTrue(contract?.mutation_permissions)) {
-      throw new Error('gateway schema-035 profile runtime contract is unavailable');
-    }
-    const behavior = await client.query<{ documents_contract: boolean }>(
-      `WITH requested(tenant_id,alias,revision,generation,delivery_id) AS (
+    after: async (client) => {
+      const behavior = await client.query<{ documents_contract: boolean }>(
+        `WITH requested(tenant_id,alias,revision,generation,delivery_id) AS (
          VALUES(NULL::text,NULL::text,NULL::bigint,NULL::text,NULL::uuid)
        ), documents AS (
          SELECT
@@ -284,9 +267,10 @@ export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void>
                   AND profile.revision=expectation.revision
               ) AS documents_contract
          FROM documents`,
-    );
-    if (behavior.rows[0]?.documents_contract !== true) {
-      throw new Error('gateway schema-035 profile runtime behavior is unavailable');
-    }
+      );
+      if (behavior.rows[0]?.documents_contract !== true) {
+        throw new Error('gateway schema-035 profile runtime behavior is unavailable');
+      }
+    },
   });
 }

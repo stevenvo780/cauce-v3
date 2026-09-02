@@ -18,13 +18,26 @@ import {
   runtimeContractFromVerification, validatedCancelReceipt, validatedDlqResolutionReceipt,
   validatedReplayReceipt,
 } from './console/helpers.js';
+import { registerConsoleAccessRoutes } from './console/access.js';
+import { registerConsoleOperationsRoutes } from './console/operations.js';
 
-export {
-  createConsoleRoutes, registerConsoleRoutesPhase1, registerConsoleRoutesPhase2,
-} from './console/early.js';
-export { registerConsoleRoutesPhase4 } from './console/phase4.js';
+export { createConsoleRoutes } from './console/access.js';
 
-export function registerConsoleRoutesPhase3(
+/**
+ * Mounts the whole `/v3/console` surface. The topic modules register disjoint paths, so their
+ * order is free; only the profile repository crosses module boundaries, towards the runtime routes.
+ */
+export function registerConsoleRoutes(
+  app: FastifyInstance,
+  context: ConsoleRoutes,
+  publishHandler: PublishHandler,
+): AgentProfileRepository {
+  registerConsoleAccessRoutes(app, context);
+  registerConsoleOperationsRoutes(app, context);
+  return registerConsoleAgentRoutes(app, context, publishHandler);
+}
+
+function registerConsoleAgentRoutes(
   app: FastifyInstance,
   context: ConsoleRoutes,
   publishHandler: PublishHandler,
@@ -216,41 +229,21 @@ export function registerConsoleRoutesPhase3(
       targetTenantId: string,
       targetAlias: string,
       permission: 'read' | 'control',
-      legacySameTenant: boolean,
     ) => {
-      const actorTenant = actor.tenant_id;
-      const targetTenant = targetTenantId;
-      if (repository.authorizeAgentTarget !== undefined) {
-        try {
-          return await repository.authorizeAgentTarget(
-            actorTenant, actor.alias, targetTenant, targetAlias, permission,
-          );
-        } catch (error) {
-          // This surface does not distinguish "actor without permission", "hidden target", and
-          // "missing target": all three fail closed without confirming that the identity exists.
-          if (error instanceof StoreError
-            && (error.code === 'forbidden' || error.code === 'invalid_actor')) return undefined;
-          throw error;
-        }
+      try {
+        return await repository.authorizeAgentTarget(
+          actor.tenant_id, actor.alias, targetTenantId, targetAlias, permission,
+        );
+      } catch (error) {
+        // This surface does not distinguish "actor without permission", "hidden target", and
+        // "missing target": all three fail closed without confirming that the identity exists.
+        if (error instanceof StoreError
+          && (error.code === 'forbidden' || error.code === 'invalid_actor')) return undefined;
+        throw error;
       }
-
-      /*
-       * Compatibility reserved for fake repositories that predate this primitive: only the LEGACY
-       * route, only the actor's tenant, and with the store's permission. Canonical routes never
-       * reach here; without the exact method they respond 404.
-       */
-      if (!legacySameTenant || targetTenant !== actorTenant) return undefined;
-      await repository.assertPermission(actorTenant, actor.alias, permission);
-      return {
-        tenant_id: actorTenant,
-        alias: targetAlias,
-        harness_id: null,
-        home_directory: null,
-        enabled: true,
-      };
     };
-    const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation?.bind(repository);
-    const readRuntimeAdoption = repository.readProfileRuntimeAdoption?.bind(repository);
+    const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation.bind(repository);
+    const readRuntimeAdoption = repository.readProfileRuntimeAdoption.bind(repository);
     registerAgentProfileRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
@@ -259,26 +252,14 @@ export function registerConsoleRoutesPhase3(
         perfiles.replace(profile, expectedRevision, actor),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
-      ...(recordRuntimeExpectation === undefined
-        ? {}
-        : {
-            recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
-              recordRuntimeExpectation(
-                tenantId,
-                alias,
-                runtimeContractFromVerification(revision, verification),
-              ),
-          }),
-      ...(readRuntimeAdoption === undefined
-        ? {}
-        : {
-            readRuntimeAdoption: (tenantId, alias, revision, verification) =>
-              readRuntimeAdoption(
-                tenantId,
-                alias,
-                runtimeContractFromVerification(revision, verification),
-              ),
-          }),
+      recordRuntimeExpectation: (tenantId, alias, revision, verification) =>
+        recordRuntimeExpectation(
+          tenantId, alias, runtimeContractFromVerification(revision, verification),
+        ),
+      readRuntimeAdoption: (tenantId, alias, revision, verification) =>
+        readRuntimeAdoption(
+          tenantId, alias, runtimeContractFromVerification(revision, verification),
+        ),
       markProfileApplied: (tenantId, alias, revision, actor) =>
         perfiles.markApplied(tenantId, alias, revision, actor),
     });
@@ -311,9 +292,7 @@ export function registerConsoleRoutesPhase3(
             });
           }
           const actor = await autorizarPerfil(request, 'read');
-          const target = await autorizarDestino(
-            actor, tenant.data, alias.data, 'read', false,
-          );
+          const target = await autorizarDestino(actor, tenant.data, alias.data, 'read');
           if (target?.tenant_id !== tenant.data || target.alias !== alias.data) {
             return await reply.code(404).send({
               error: 'not_found', message: 'agent not found or not visible',
@@ -359,13 +338,9 @@ export function registerConsoleRoutesPhase3(
             error: 'invalid_input', message: 'tenantId or alias is invalid',
           });
         }
-        const agent = repository.getAgentByIdentity === undefined
-          ? tenant.data === actor.tenant_id
-            ? await repository.getAgent(alias.data, actor.tenant_id, actor.alias)
-            : undefined
-          : await repository.getAgentByIdentity(
-              tenant.data, alias.data, actor.tenant_id, actor.alias,
-            );
+        const agent = await repository.getAgentByIdentity(
+          tenant.data, alias.data, actor.tenant_id, actor.alias,
+        );
         if (agent?.tenant_id !== tenant.data || agent.alias !== alias.data) {
           throw new StoreError('not_found', 'agent not found or not visible');
         }

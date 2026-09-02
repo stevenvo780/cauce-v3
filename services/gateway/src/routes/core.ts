@@ -57,7 +57,6 @@ export function createCoreRoutePhases(
    */
   async function rehydrateClaims(tenantId: Tenant, alias: string): Promise<Map<string, SessionClaim>> {
     const claims = new Map<string, SessionClaim>();
-    if (repository.liveDeliveryClaims === undefined) return claims;
     const live = await repository.liveDeliveryClaims(tenantId, alias, MAX_REHYDRATED_CLAIMS);
     for (const claim of live) {
       const deadlineMs = Date.parse(claim.ack_deadline_at);

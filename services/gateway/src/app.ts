@@ -3,23 +3,14 @@ import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
-  type ClaimedAck, type ConfigMutation,
-  type ConsolePublishIntentConfirm, type ConsolePublishIntentConfirmResult,
-  type ConsolePublishIntentPrepareResult,
-  type DeliveryEnvelope, type NotifyRequest,
-  type OutboxAckWithConnection,
-  type Lane, type Permission,
-  type ProfileRuntimeAdoptionEvidence, type ProfileRuntimeContract,
-  type QuotaSampleRequest, type Tenant,
+  type ClaimedAck, type ConfigMutation, type ConsolePublishIntentPrepareResult,
+  type DeliveryEnvelope, type OutboxAckWithConnection, type Tenant,
 } from '@cauce/protocol';
 import {
   CauceRepository, type subscribeDeliveryWakes,
-  type AccountSelection, type AckResult, type AuthorizedAgentTarget,
-  type DatabasePool, type DeliveryLeaseCap,
-  type ConnectionSessionFence, type FencedWakeOutboxRecipient, type LeaseResult,
-  type NotificationVerdict, type OperationalDlqPage, type OperationalDlqResolutionRequest,
-  type OperationalDlqResolutionResult, type OutboxEvent, type PublishResult,
-  type QuotaSampleIngestResult, type WakeOutboxClaimFence,
+  type ConnectionSessionFence, type DatabasePool, type DeliveryLeaseCap,
+  type FencedWakeOutboxRecipient, type LeaseResult, type OutboxEvent,
+  type PublishOptions, type PublishResult,
 } from '@cauce/store';
 import type { AuthProvider } from './auth.js';
 import { createConsoleSecurityHook } from './console-security.js';
@@ -35,18 +26,11 @@ import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import {
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
 } from './routes/shared.js';
-import {
-  createConsoleRoutes,
-  registerConsoleRoutesPhase1,
-  registerConsoleRoutesPhase2,
-  registerConsoleRoutesPhase3,
-  registerConsoleRoutesPhase4,
-} from './routes/console.js';
+import { createConsoleRoutes, registerConsoleRoutes } from './routes/console.js';
 import { createCoreRoutePhases } from './routes/core.js';
 import { registerConsolePublishIntentRoutes } from './routes/console-publish.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
-
-import { registerLegacyCandidateChainGateRoutes } from './routes/chain-gates-legado.js';
+import { registerChainGateRoutes } from './routes/chain-gates.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -69,114 +53,32 @@ export interface OutboxLeaseAckResult {
   applied: boolean;
 }
 
-/** Contract implemented by the hardened store; current method names remain stable. */
-export interface GatewayRepository {
-  publish(
-    input: TrustedPublishCommand,
-    options?: {
-      readonly requirePreparedConsoleIntent?: boolean;
-      readonly consoleIntentOperatorScope?: string;
-    },
-  ): Promise<PublishResult>;
-  prepareConsolePublishIntent?(
+/** Members the gateway consumes with the store's own signature. */
+type StoreDerivedRepository = Pick<CauceRepository,
+  'ackDelivery' | 'agentChain' | 'answerChainGate'
+  | 'assertPermission' | 'assertPrincipal' | 'authorizeAgentTarget' | 'cancelChainGate'
+  | 'cancelDelivery' | 'confirmConsolePublishIntent' | 'enqueueJob' | 'enqueueNotification'
+  | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity' | 'getConfiguration' | 'getMessage'
+  | 'listAdapters' | 'listAgents' | 'listAudit' | 'listChainGates' | 'listJobs' | 'listMessages'
+  | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays' | 'liveDeliveryClaims'
+  | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
+  | 'recordProfileRuntimeExpectation' | 'recordQuotaSample' | 'renewWakeOutbox' | 'replayDelivery'
+  | 'resolveOperationalDlqWithoutReplay' | 'selectAccount' | 'topology'
+>;
+
+/** Narrowed on purpose: deriving these widens an authenticated, actor-scoped or fenced signature. */
+interface GatewayNarrowedRepository {
+  publish(input: TrustedPublishCommand, options?: PublishOptions): Promise<PublishResult>;
+  prepareConsolePublishIntent(
     input: TrustedPublishIntentCommand,
     operatorScopeHash: string,
   ): Promise<ConsolePublishIntentPrepareResult>;
-  confirmConsolePublishIntent?(
-    tenantId: Tenant,
-    actorAlias: string,
-    operatorScopeHash: string,
-    input: ConsolePublishIntentConfirm,
-  ): Promise<ConsolePublishIntentConfirmResult>;
   /** Independent durable reconciliation; receipt-contained hashes are not an authority for IDs. */
   verifyPublishReceipt(input: TrustedPublishCommand, receipt: PublishResult): Promise<boolean>;
-  assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
-  assertPermission(tenantId: Tenant, alias: string, permission: Permission): Promise<void>;
-  principalAccess(tenantId: Tenant, alias: string): Promise<{ roles: string[]; permissions: Permission[] }>;
+  /** The actor is mandatory: the store skips its permission check when both arguments are absent. */
   status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
   listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;
-  topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  listMessages(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  queueSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  listOperationalDlq(
-    actorTenant: Tenant,
-    actorAlias: string,
-    limit?: number,
-    cursor?: string | null,
-  ): Promise<OperationalDlqPage>;
-  resolveOperationalDlqWithoutReplay(
-    actorTenant: Tenant,
-    actorAlias: string,
-    request: OperationalDlqResolutionRequest,
-  ): Promise<OperationalDlqResolutionResult>;
-  replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  cancelDelivery(
-    deliveryId: string, actorTenant: Tenant, actorAlias: string, reason?: string
-  ): Promise<Record<string, unknown>>;
-  listJobs(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  enqueueJob(tenantId: Tenant, lane: Lane, priority: number, kind: string, payload: Record<string, unknown>): Promise<string>;
-  listAdapters(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  listAgents(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  getAgent(alias: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown> | undefined>;
-  /** Canonical detail. Optional only so narrow pre-existing repository doubles stay usable. */
-  getAgentByIdentity?(
-    tenantId: Tenant, alias: string, actorTenant: Tenant, actorAlias: string,
-  ): Promise<Record<string, unknown> | undefined>;
-  /**
-   * Lookup authorized by canonical identity. Optional only for legacy test doubles: tenant-qualified
-   * routes fail closed when it is not implemented.
-   */
-  authorizeAgentTarget?(
-    actorTenant: Tenant,
-    actorAlias: string,
-    targetTenant: Tenant,
-    targetAlias: string,
-    permission: 'read' | 'control',
-  ): Promise<AuthorizedAgentTarget | undefined>;
-  listOriginRelays(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  enqueueNotification(actorTenant: Tenant, actorAlias: string, input: NotifyRequest): Promise<NotificationVerdict>;
-  listNotifications(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  listAudit(
-    actorTenant: Tenant,
-    actorAlias: string,
-    options?: { limit?: number; before?: string | null },
-  ): Promise<Record<string, unknown>>;
-  agentChain(traceId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  /**
-   * Optional for the same reason as `liveDeliveryClaims`: the gateway test doubles do not
-   * implement the gate primitive, and without it the route returns 404 instead of breaking
-   * startup. Implemented by `CauceRepository` since migration 019_delegation_discipline.
-   */
-  listChainGates?(
-    actorTenant: Tenant,
-    actorAlias: string,
-    options?: { status?: 'open' | 'all'; limit?: number },
-  ): Promise<Record<string, unknown>>;
-  answerChainGate?(
-    gateId: string,
-    answer: string,
-    actorTenant: Tenant,
-    actorAlias: string,
-  ): Promise<Record<string, unknown>>;
-  cancelChainGate?(
-    gateId: string,
-    actorTenant: Tenant,
-    actorAlias: string,
-  ): Promise<Record<string, unknown>>;
-  fleetActivity(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  quotaSnapshot(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult>;
-  selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection>;
-  getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  applyConfigurationChange(actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
-  rollbackConfiguration(actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean, expectedRevision?: number): Promise<unknown>;
-  getMessage(messageId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>>;
-  recordProfileRuntimeExpectation?(
-    tenantId: Tenant, alias: string, contract: ProfileRuntimeContract,
-  ): Promise<void>;
-  readProfileRuntimeAdoption?(
-    tenantId: Tenant, alias: string, contract: ProfileRuntimeContract,
-  ): Promise<(ProfileRuntimeAdoptionEvidence & { readonly adopted_at: string }) | undefined>;
+  /** No `takeover`: a console or adapter call must never fence a live consumer of the same alias. */
   acquireLease(
     tenantId: Tenant,
     alias: string,
@@ -214,25 +116,6 @@ export interface GatewayRepository {
     connectionToken?: string,
     signal?: AbortSignal,
   ): Promise<DeliveryClaimRecord[]>;
-  /**
-   * Optional only for doubles in test mode. Production does not start without this read:
-   * reconstructing claims is part of the reconnection fence and failing open would multiply the cap.
-   */
-  liveDeliveryClaims?(tenantId: Tenant, alias: string, limit?: number): Promise<readonly {
-    delivery_id: string;
-    attempt: number;
-    claim_token: string;
-    ack_deadline_at: string;
-    human_originated: boolean;
-  }[]>;
-  ackDelivery(
-    deliveryId: string,
-    tenantId: Tenant,
-    alias: string,
-    ack: GatewayAck,
-    ackDeadlineMs?: number,
-    leaseCap?: DeliveryLeaseCap,
-  ): Promise<AckResult>;
   claimOutbox(kind: 'wake', worker: string, limit?: number, leaseMs?: number): Promise<OutboxLeaseEvent[]>;
   claimWakeOutbox(
     worker: string,
@@ -241,15 +124,20 @@ export interface GatewayRepository {
     leaseMs?: number,
     signal?: AbortSignal,
   ): Promise<OutboxLeaseEvent[]>;
-  renewWakeOutbox(
-    fence: WakeOutboxClaimFence,
-    leaseMs?: number,
-    signal?: AbortSignal,
-  ): Promise<boolean>;
   ackOutbox(ack: OutboxLeaseAck, signal?: AbortSignal): Promise<OutboxLeaseAckResult>;
-  completeOutbox?(id: string, worker: string, claimToken: string): Promise<boolean>;
-  retryOutbox?(id: string, worker: string, claimToken: string, delayMs?: number, error?: string): Promise<'retry' | 'dead' | 'fenced'>;
+  /** The receipt stays `unknown`: the route re-validates it field by field before answering. */
+  applyConfigurationChange(
+    actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean,
+    expectedRevision?: number,
+  ): Promise<unknown>;
+  rollbackConfiguration(
+    actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean,
+    expectedRevision?: number,
+  ): Promise<unknown>;
 }
+
+/** Contract implemented by the hardened store; current method names remain stable. */
+export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedRepository;
 
 export interface GatewayOptions {
   pool: DatabasePool;
@@ -284,7 +172,6 @@ export interface GatewayOptions {
   terminalCapability?: Readonly<Record<string, unknown>>;
   https?: HttpsServerOptions;
   exposeHealthRoutes?: boolean;
-  enableLegacyCandidateRoutes?: boolean;
   logger?: boolean;
 }
 
@@ -293,6 +180,8 @@ const DEFAULT_DELIVERY_CLAIM_LIMIT = 20;
 const DEFAULT_WAKE_PUMP_CONCURRENCY = 4;
 const DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS = 1_000;
 const GATEWAY_WS_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+/** Fail-closed reads a JavaScript caller can still omit; without them the delivery cap multiplies. */
+const REQUIRED_REPOSITORY_METHODS = ['liveDeliveryClaims'] as const;
 
 
 export async function buildGateway(options: GatewayOptions): Promise<FastifyInstance> {
@@ -313,8 +202,13 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     ...(options.https === undefined ? {} : { https: options.https })
   });
   const repository: GatewayRepository = options.repository ?? new CauceRepository(options.pool);
-  if (options.authProvider.mode === 'production' && repository.liveDeliveryClaims === undefined) {
-    throw new Error('production gateway requires durable live-delivery claim recovery');
+  if (options.authProvider.mode === 'production') {
+    const members = repository as unknown as Record<string, unknown>;
+    for (const name of REQUIRED_REPOSITORY_METHODS) {
+      if (typeof members[name] !== 'function') {
+        throw new Error('production gateway requires durable live-delivery claim recovery');
+      }
+    }
   }
   const leaseTtlMs = options.leaseTtlMs ?? configuredLeaseTtlMs();
   const outboxPollMs = options.outboxPollMs ?? 100;
@@ -331,7 +225,6 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }
   const wakePumpTelemetry = options.wakePumpTelemetry ?? new WakePumpTelemetry();
   const consolePublishTelemetry = options.consolePublishTelemetry ?? new ConsolePublishTelemetry();
-  const enableLegacyCandidateRoutes = options.enableLegacyCandidateRoutes !== false;
   // Upper bound of a drain. It used to be `undefined` and fall back to the default 20 from
   // QueryDeliveriesSchema — a 20 nobody chose for this path and nobody could see by reading the
   // gateway. The real per-agent cap lives in agents.max_concurrent_deliveries and is enforced by
@@ -371,25 +264,15 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   if (options.authProvider instanceof PasswordAuthProvider) registerPasswordAuth(app, options.authProvider);
   registerGatewayHealthRoutes(app, options, repository);
 
-  registerConsoleRoutesPhase1(app, consoleRoutes);
-
   const publishHandler = coreRoutes.registerPublishRoutes();
 
-  registerConsoleRoutesPhase2(app, consoleRoutes);
+  const agentProfiles = registerConsoleRoutes(app, consoleRoutes, publishHandler);
 
   registerConsolePublishIntentRoutes(
     app, options, repository, consolePublishTelemetry,
   );
 
-  const agentProfiles = registerConsoleRoutesPhase3(
-    app, consoleRoutes, publishHandler,
-  );
-
-  if (enableLegacyCandidateRoutes) {
-    registerLegacyCandidateChainGateRoutes(app, options, repository);
-  }
-
-  registerConsoleRoutesPhase4(app, consoleRoutes);
+  registerChainGateRoutes(app, options, repository);
 
   await coreRoutes.registerRuntimeRoutes(agentProfiles);
 

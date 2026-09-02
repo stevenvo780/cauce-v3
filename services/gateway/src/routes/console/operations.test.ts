@@ -1,16 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
 import { DevOnlyAuthProvider } from '../../auth.js';
+import { fakePool } from '../../test-support/gateway-doubles.js';
 import type { ConsoleRouteRepository } from './contracts.js';
-import { registerConsoleRoutesPhase4 } from './phase4.js';
+import { registerConsoleOperationsRoutes } from './operations.js';
 
 const apps: FastifyInstance[] = [];
 const HEADERS = { 'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'kant' };
-
-function pool(): DatabasePool {
-  return { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) } as unknown as DatabasePool;
-}
 
 function fixture(terminalCapability?: Readonly<Record<string, unknown>>) {
   const repository = {
@@ -24,9 +20,9 @@ function fixture(terminalCapability?: Readonly<Record<string, unknown>>) {
     listOriginRelays: vi.fn(async () => ({ items: [{ relay_id: 'relay-1' }] })),
   };
   const app = Fastify({ logger: false });
-  registerConsoleRoutesPhase4(app, {
+  registerConsoleOperationsRoutes(app, {
     options: {
-      pool: pool(),
+      pool: fakePool(),
       authProvider: DevOnlyAuthProvider.forTests(),
       ...(terminalCapability === undefined ? {} : { terminalCapability }),
     },
@@ -41,7 +37,7 @@ afterEach(async () => {
   while (apps.length > 0) await apps.pop()?.close();
 });
 
-describe('fase cuatro de la consola', () => {
+describe('rutas de operación de la consola', () => {
   it('publica la capacidad terminal exacta sólo después de autorizar control', async () => {
     const capability = { available: true, backend: 'terminal-relay', protocol: 3 };
     const { app, repository } = fixture(capability);

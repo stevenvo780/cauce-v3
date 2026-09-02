@@ -92,7 +92,6 @@ export function registerCorePublishRoutes(
     }
   };
   app.post('/v3/messages', publishHandler);
-  app.post('/v3/publish', publishHandler);
 
   // Proactive egress. POST /v3/messages deliberately cannot express a channel
   // destination and must stay that way; this is the only surface that can, and

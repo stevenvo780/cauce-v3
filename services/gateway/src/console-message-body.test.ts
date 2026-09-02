@@ -1,18 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
 import { StoreError } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
-import { DevOnlyAuthProvider } from './auth.js';
+import type { buildGateway } from './app.js';
+import { buildTestGateway, fakePool, fakeRepository } from './test-support/gateway-doubles.js';
 
 /**
  * Tests for retrieving the full message body in `GET /v3/console/messages/:messageId`.
  */
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
-
-function pool(): DatabasePool {
-  return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
-}
 
 const MENSAJE = {
   id: 'cccccccc-3333-4333-8333-333333333333',
@@ -24,20 +19,15 @@ const MENSAJE = {
   body: { text: `${'a'.repeat(600)} el dominio real es stevenvallejo.com` },
   created_at: '2026-08-23T02:02:52.000Z',
   deliveries: [
-    { delivery_id: 'dddddddd-1111-4111-8111-111111111111', recipient_tenant: 'Steven', recipient_alias: 'argos', status: 'done' },
-    { delivery_id: 'eeeeeeee-2222-4222-8222-222222222222', recipient_tenant: 'Miguel', recipient_alias: 'kratos', status: 'dead' },
+    { delivery_id: 'dddddddd-1111-4111-8111-111111111111', tenant_id: 'Steven', alias: 'argos', status: 'done' },
+    { delivery_id: 'eeeeeeee-2222-4222-8222-222222222222', tenant_id: 'Miguel', alias: 'kratos', status: 'dead' },
   ],
 };
 
 async function gateway(getMessage = vi.fn(async () => MENSAJE as unknown as Record<string, unknown>)) {
-  const app = await buildGateway({
-    pool: pool(),
-    authProvider: DevOnlyAuthProvider.forTests(),
-    repository: { getMessage } as unknown as GatewayRepository,
-    deliveryWakeSubscriber: async () => async () => undefined,
-    exposeHealthRoutes: false,
-    consoleOrigins: ['http://localhost'],
-    logger: false,
+  const app = await buildTestGateway({
+    pool: fakePool({ ssl: true }),
+    repository: fakeRepository({ getMessage }),
   });
   apps.push(app);
   return { app, getMessage };
@@ -91,8 +81,8 @@ describe('GET /v3/console/messages/:messageId', () => {
     const respuesta = await leer(app, MENSAJE.id, 'argos');
 
     expect(respuesta.statusCode).toBe(200);
-    const cuerpo: { deliveries?: { recipient_alias?: string }[] } = respuesta.json();
-    expect(cuerpo.deliveries?.map((entrega) => entrega.recipient_alias)).toEqual(['argos']);
+    const cuerpo: { deliveries?: { alias?: string }[] } = respuesta.json();
+    expect(cuerpo.deliveries?.map((entrega) => entrega.alias)).toEqual(['argos']);
   });
 
   it('un mensaje que el store no encuentra se responde 404 y no 500', async () => {

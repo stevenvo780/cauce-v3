@@ -50,7 +50,7 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 
 **Ingreso** — Telegram entra por `telegram-bridge`, que persiste mediante `CauceRepository` sobre PostgreSQL; la consola web y el CLI de operador publican por el gateway autenticado.
 
-**Gateway** — `services/gateway/src/app.ts` compone `routes/{health,console,core,console-publish,chain-gates-legado}` y el plugin de terminal. `routes/core.ts` (628) + `routes/core/{contracts,helpers,http,outbox,publish}.ts` implementan `POST /v3/messages|/v3/publish` (publicar, identidad derivada del principal autenticado — el payload público es `strict`), `POST /v3/connections/hello`, `/v3/heartbeat`, `/v3/ack`, y `GET /v3/ws` (`services/gateway/src/routes/core.ts:207`) — el socket de larga vida de cada adapter.
+**Gateway** — `services/gateway/src/app.ts` compone `routes/{health,console,core,console-publish,chain-gates}` y el plugin de terminal. `routes/core.ts` (628) + `routes/core/{contracts,helpers,http,outbox,publish}.ts` implementan `POST /v3/messages` (publicar, identidad derivada del principal autenticado — el payload público es `strict`), `POST /v3/connections/hello`, `/v3/heartbeat`, `/v3/ack`, y `GET /v3/ws` (`services/gateway/src/routes/core.ts:207`) — el socket de larga vida de cada adapter.
 
 **Deliveries → claim por adaptador** — `packages/store/src/repository/deliveries/claims.ts:22` (`acquireLease`) concede el lease con `claim_token`+`epoch`; el adapter lo confirma con `packages/store/src/repository/deliveries/acks.ts:36` (`DeliveryAcksRepository`).
 

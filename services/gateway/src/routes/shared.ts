@@ -6,7 +6,7 @@ import {
   type ConsolePublishIntentCommand, type ConsolePublishIntentPrepare,
   type PublishMessage,
 } from '@cauce/protocol';
-import { StoreError, type PublishResult } from '@cauce/store';
+import { StoreError, type PublishResult, type StoreErrorCode } from '@cauce/store';
 import {
   AuthError, AuthorizationError, validatePrincipal,
   type AuthProvider, type Principal,
@@ -21,12 +21,18 @@ export type TrustedPublishIntentCommand = ConsolePublishIntentCommand & {
   authenticated_context: NonNullable<PublishMessage['authenticated_context']>;
 };
 
-function statusFor(error: StoreError): number {
-  if (error.code === 'forbidden' || error.code === 'fenced') return 403;
-  if (error.code === 'not_found') return 404;
-  if (error.code === 'conflict') return 409;
-  if (error.code === 'no_route' || error.code === 'invalid_actor' || error.code === 'invalid_input') return 422;
-  return 500;
+const STORE_ERROR_STATUS: Partial<Record<StoreErrorCode, number>> = {
+  forbidden: 403,
+  fenced: 403,
+  not_found: 404,
+  conflict: 409,
+  no_route: 422,
+  invalid_actor: 422,
+  invalid_input: 422,
+};
+
+export function errorStatus(error: unknown): number {
+  return error instanceof StoreError ? STORE_ERROR_STATUS[error.code] ?? 500 : 500;
 }
 
 export function replyError(reply: FastifyReply, error: unknown): void {
@@ -39,7 +45,7 @@ export function replyError(reply: FastifyReply, error: unknown): void {
     return;
   }
   if (error instanceof StoreError) {
-    void reply.code(statusFor(error)).send({ error: error.code, message: error.message });
+    void reply.code(errorStatus(error)).send({ error: error.code, message: error.message });
     return;
   }
   const message = error instanceof Error ? error.message : 'unknown error';

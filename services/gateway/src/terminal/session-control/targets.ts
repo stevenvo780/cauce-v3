@@ -1,31 +1,21 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AuthorizedAgentTarget, DatabasePool } from '@cauce/store';
-import type { Tenant } from '@cauce/protocol';
+import type { DatabasePool } from '@cauce/store';
 import { requireOperatorPermission, type Principal } from '../../auth.js';
 import {
   attributionAllows, containerCohort, fleetIdentity, loadFleetPlacements, resolveOperator,
   routingAuthority, type GrantStore, type RoutingAuthority,
 } from '../authority.js';
 import type { TerminalConfig } from '../config.js';
+import type { AgentTargetRepository } from '../helpers.js';
 import type { AgentRegistry, AgentResolution } from '../registry.js';
 import { isTerminalMode, type TerminalTarget } from '../types.js';
-
-interface TerminalTargetRepository {
-  authorizeAgentTarget(
-    actorTenant: Tenant,
-    actorAlias: string,
-    targetTenant: Tenant,
-    targetAlias: string,
-    permission: 'read' | 'control',
-  ): Promise<AuthorizedAgentTarget | undefined>;
-}
 
 interface TerminalTargetRouteOptions {
   readonly pool: DatabasePool;
   readonly config: TerminalConfig;
   readonly registry: AgentRegistry;
   readonly grants: GrantStore;
-  readonly repository: TerminalTargetRepository;
+  readonly repository: AgentTargetRepository;
   readonly principal: (request: FastifyRequest) => Promise<Principal>;
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
 }

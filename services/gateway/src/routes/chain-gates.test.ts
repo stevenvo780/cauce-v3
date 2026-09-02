@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { DatabasePool } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from '../app.js';
+import { buildGateway } from '../app.js';
 import { DevOnlyAuthProvider } from '../auth.js';
+import { fakePool, fakeRepository } from '../test-support/gateway-doubles.js';
 
 interface RouteKey {
   readonly method: 'GET' | 'POST';
@@ -29,17 +29,7 @@ const NEIGHBOR_ROUTES: readonly RouteKey[] = [
 
 const apps: FastifyInstance[] = [];
 
-function pool(): DatabasePool {
-  return {
-    query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })),
-  } as unknown as DatabasePool;
-}
-
-async function gateway(options: {
-  readonly enableLegacyCandidateRoutes?: boolean;
-  readonly missing?: 'answer' | 'cancel';
-  readonly routePermission?: boolean;
-} = {}) {
+async function gateway(options: { readonly routePermission?: boolean } = {}) {
   const listChainGates = vi.fn(async () => ({ items: [{ gate_id: 'gate-1' }] }));
   const answerChainGate = vi.fn(async (gateId: string, answer: string) => ({
     gate_id: gateId, answer, state: 'answered',
@@ -47,14 +37,12 @@ async function gateway(options: {
   const cancelChainGate = vi.fn(async (gateId: string) => ({
     gate_id: gateId, state: 'cancelled',
   }));
-  const repository = {
-    claimWakeOutbox: vi.fn(async () => []),
-    listChainGates,
-    ...(options.missing === 'answer' ? {} : { answerChainGate }),
-    ...(options.missing === 'cancel' ? {} : { cancelChainGate }),
-  } as unknown as GatewayRepository;
+  const repository = fakeRepository();
+  repository.listChainGates = listChainGates;
+  repository.answerChainGate = answerChainGate;
+  repository.cancelChainGate = cancelChainGate;
   const app = await buildGateway({
-    pool: pool(),
+    pool: fakePool(),
     authProvider: DevOnlyAuthProvider.forTests(options.routePermission === false ? {
       roles: ['operator'], permissions: ['read'],
     } : {}),
@@ -64,9 +52,6 @@ async function gateway(options: {
     outboxPollMs: 60_000,
     consoleOrigins: ['http://localhost'],
     logger: false,
-    ...(options.enableLegacyCandidateRoutes === undefined
-      ? {}
-      : { enableLegacyCandidateRoutes: options.enableLegacyCandidateRoutes }),
   });
   await app.ready();
   apps.push(app);
@@ -81,25 +66,12 @@ afterEach(async () => {
   while (apps.length > 0) await apps.pop()?.close();
 });
 
-describe('legacy-candidate route flag', () => {
-  it.each([
-    ['omitted', undefined],
-    ['true', true],
-  ] as const)('registers publish and chain-gate routes when the flag is %s', async (_label, flag) => {
-    const { app } = await gateway({
-      ...(flag === undefined ? {} : { enableLegacyCandidateRoutes: flag }),
-    });
+describe('chain-gate routes', () => {
+  it('mounts the chain-gate routes with no decision knob left to turn them off', async () => {
+    const { app } = await gateway();
 
     expect(CONSOLE_PUBLISH_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
     expect(CHAIN_GATE_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
-    expect(NEIGHBOR_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
-  });
-
-  it('keeps publish routes live and disables only chain-gate routes when the flag is false', async () => {
-    const { app } = await gateway({ enableLegacyCandidateRoutes: false });
-
-    expect(CONSOLE_PUBLISH_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
-    expect(CHAIN_GATE_ROUTES.every((route) => hasRoute(app, route))).toBe(false);
     expect(NEIGHBOR_ROUTES.every((route) => hasRoute(app, route))).toBe(true);
   });
 
@@ -145,25 +117,6 @@ describe('legacy-candidate route flag', () => {
     expect(cancel.statusCode).toBe(200);
     expect(cancel.json()).toEqual({ gate_id: 'gate-8', state: 'cancelled' });
     expect(cancelChainGate).toHaveBeenCalledWith('gate-8', 'Steven', 'kant');
-  });
-
-  it.each([
-    ['answer', '/v3/console/chain-gates/gate-7/answer'],
-    ['cancel', '/v3/console/chain-gates/gate-8/cancel'],
-  ] as const)('responde 404 cuando el despliegue no monta %s', async (missing, url) => {
-    const { app } = await gateway({ missing });
-    const response = await app.inject({
-      method: 'POST', url,
-      headers: {
-        'x-cauce-tenant': 'Steven', 'x-cauce-alias': 'kant', origin: 'http://localhost',
-      },
-      ...(missing === 'answer' ? { payload: { answer: 'aprobar' } } : {}),
-    });
-
-    expect(response.statusCode).toBe(404);
-    expect(response.json()).toEqual({
-      error: 'not_found', message: 'chain gates are not available in this deployment',
-    });
   });
 
   it('no alcanza el repositorio si el principal carece de route', async () => {

@@ -1,31 +1,29 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  CauceRepository, StoreError, type DatabaseClient, type DatabasePool,
-  type AuthorizedAgentTarget,
+  CauceRepository, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import {
-  AliasSchema, isCanonicalUuidV4, TenantSchema, UUID_ANY_PATTERN, type Tenant,
+  AliasSchema, isCanonicalUuidV4, TenantSchema,
 } from '@cauce/protocol';
-import {
-  AuthError, AuthorizationError, validatePrincipal,
-  type AuthProvider, type Principal
-} from '../auth.js';
+import { validatePrincipal, type AuthProvider, type Principal } from '../auth.js';
 import {
   type GovernanceRelayClient, type MeasuredFactsSource
 } from '../console/agent-documents.js';
+import { replyError as replyCanonicalError } from '../routes/shared.js';
 import type { TerminalAuditEntry } from './audit.js';
 import {
-  GrantStore, containerCohort, fleetIdentityLabel, loadFleetPlacements,
+  GrantStore, containerCohort, loadFleetPlacements,
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import { createGovernanceProbes } from './governance-probes.js';
+import { boundedInteger, exactObjectKeys, type TerminalControlRepository } from './helpers.js';
 import { AgentRegistry } from './registry.js';
 import { registerTerminalRelayProxy, relayClaimEpoch } from './relay-proxy.js';
 import {
   registerTerminalSessionControl, TerminalClockSkewError, type DeleteSessionBody,
   type OwnerRotationBody, type SessionRequestBody,
 } from './session-control.js';
-import { isTerminalMode, type TerminalSessionRow } from './types.js';
+import { isTerminalMode } from './types.js';
 
 /**
  * PTY control plane. The gateway DECIDES and AUDITS; it never carries a byte of PTY.
@@ -37,8 +35,7 @@ import { isTerminalMode, type TerminalSessionRow } from './types.js';
  * WebSocket path announced in the capability; the relay talks back here over
  * /v3/terminal/relay/* to redeem a ticket, revalidate it every few seconds and report closure.
  * Nothing in that path lets the browser name a container: it names `(tenant, alias)` and the
- * enabled PostgreSQL registry resolves placement.  The release gate separately proves that
- * registry matches the declarative operations inventory.
+ * enabled registry resolves placement; the release gate proves that registry matches the inventory.
  *
  * Route placement is deliberate:
  *  - /v3/console/terminal/*  browser routes, covered by the global console security hook
@@ -67,16 +64,7 @@ interface TerminalControlPlaneOptions {
   readonly config: TerminalConfig;
   /** Injectable for tests; production uses a fresh in-memory registry per process. */
   readonly registry?: AgentRegistry;
-  readonly repository?: {
-    assertPermission(tenantId: Tenant, alias: string, permission: 'control'): Promise<void>;
-    authorizeAgentTarget(
-      actorTenant: Tenant,
-      actorAlias: string,
-      targetTenant: Tenant,
-      targetAlias: string,
-      permission: 'read' | 'control',
-    ): Promise<AuthorizedAgentTarget | undefined>;
-  };
+  readonly repository?: TerminalControlRepository;
   /**
    * Where the measured facts of each alias (harness, HOME, CODEX_HOME) come from to resolve the
    * path to its site manual.
@@ -88,7 +76,8 @@ interface TerminalControlPlaneOptions {
   readonly relayPeerInstanceId?: (request: FastifyRequest) => string | undefined;
 }
 
-function replyError(reply: FastifyReply, error: unknown): void {
+/** Adds the only status this plane owns; everything else follows the canonical mapping. */
+export function replyError(reply: FastifyReply, error: unknown): void {
   if (error instanceof TerminalClockSkewError) {
     void reply.code(503).send({
       error: 'terminal_clock_skew',
@@ -96,33 +85,7 @@ function replyError(reply: FastifyReply, error: unknown): void {
     });
     return;
   }
-  if (error instanceof AuthError) {
-    void reply.code(401).send({ error: error.code, message: error.message });
-    return;
-  }
-  if (error instanceof AuthorizationError) {
-    void reply.code(403).send({ error: error.code, message: error.message });
-    return;
-  }
-  if (error instanceof StoreError) {
-    void reply.code(error.code === 'not_found' ? 404 : 403).send({ error: error.code, message: error.message });
-    return;
-  }
-  const message = error instanceof Error ? error.message : 'unknown error';
-  void reply.code(400).send({ error: 'invalid_request', message });
-}
-
-function boundedInteger(value: unknown, min: number, max: number, name: string): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
-    throw new Error(`${name} must be an integer between ${String(min)} and ${String(max)}`);
-  }
-  return value;
-}
-
-function exactObjectKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
-  const actual = Object.keys(record).sort();
-  return actual.length === expected.length
-    && actual.every((key, index) => key === expected[index]);
+  replyCanonicalError(reply, error);
 }
 
 function canonicalUuidV4(value: unknown, name: string): string {
@@ -254,28 +217,15 @@ export async function registerTerminalControlPlane(
     return containerCohort(placements, tenantId, alias);
   }
 
-  function cohortLabels(cohort: Awaited<ReturnType<typeof currentCohort>>): string[] {
-    return cohort.map(fleetIdentityLabel);
-  }
-
-  function sessionExpiry(row: TerminalSessionRow): Date | undefined {
-    if (row.consumed_at === null) return undefined;
-    return new Date(row.consumed_at.getTime() + config.sessionTtlSeconds * 1_000);
-  }
-
-
   registerTerminalSessionControl(app, {
     pool,
     config,
     registry,
     grants,
     repository,
-    UUID_PATTERN: UUID_ANY_PATTERN,
     principal,
     openPredicate,
     currentCohort,
-    cohortLabels,
-    sessionExpiry,
     parseSessionRequest,
     parseOwnerRotation,
     parseDeleteSession,
@@ -314,11 +264,6 @@ export async function registerTerminalControlPlane(
     grants,
     repository,
     relayPeerInstanceId: options.relayPeerInstanceId,
-    UUID_PATTERN: UUID_ANY_PATTERN,
-    exactObjectKeys,
-    boundedInteger,
-    cohortLabels,
-    sessionExpiry,
     replyError,
     recordTransactionalTerminalAudit,
   });

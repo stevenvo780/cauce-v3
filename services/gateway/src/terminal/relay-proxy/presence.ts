@@ -1,3 +1,4 @@
+import { exactObjectKeys } from '../helpers.js';
 import {
   RelayBootConflictError, parseAgentPresence,
 } from '../registry.js';
@@ -5,7 +6,7 @@ import type { RelayProxyContext } from './context.js';
 
 export function registerRelayPresenceRoutes(context: RelayProxyContext): void {
   const {
-    app, config, exactObjectKeys, PRESENCE_KEYS, registry, relayAuthorized, replyError,
+    app, config, PRESENCE_KEYS, registry, relayAuthorized, replyError,
     requestRelayIdentity,
   } = context;
   /* ------------------------------------------------------------------ */

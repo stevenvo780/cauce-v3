@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { PROTOCOL_VERSION, type Tenant } from '@cauce/protocol';
+import { PROTOCOL_VERSION } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
+import type { GatewayRepository } from '../app.js';
 import { MtlsAuthProvider, requirePermission, type AuthProvider } from '../auth.js';
 import { registerHealthRoutes } from '../health.js';
 import { principal, replyError } from './shared.js';
@@ -11,11 +12,9 @@ interface GatewayHealthRouteOptions {
   readonly exposeHealthRoutes?: boolean;
 }
 
-interface GatewayHealthRepository {
-  assertPrincipal(tenantId: Tenant, alias: string): Promise<void>;
-  status(actorTenant: Tenant, actorAlias: string): Promise<Record<string, number>>;
-  listPresence(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>[]>;
-}
+type GatewayHealthRepository = Pick<GatewayRepository,
+  'assertPrincipal' | 'listPresence' | 'status'
+>;
 
 export function registerGatewayHealthRoutes(
   app: FastifyInstance,

@@ -1,36 +1,20 @@
 import type { FastifyInstance } from 'fastify';
-import type { Tenant } from '@cauce/protocol';
-import { StoreError } from '@cauce/store';
 import { requirePermission, type AuthProvider } from '../auth.js';
+import type { GatewayRepository } from '../app.js';
 import { principal, replyError } from './shared.js';
 
-interface LegacyCandidateRouteOptions {
+interface ChainGateRouteOptions {
   readonly authProvider: AuthProvider;
 }
 
-interface LegacyCandidateRepository {
-  listChainGates?(
-    actorTenant: Tenant,
-    actorAlias: string,
-    options?: { status?: 'open' | 'all'; limit?: number },
-  ): Promise<Record<string, unknown>>;
-  answerChainGate?(
-    gateId: string,
-    answer: string,
-    actorTenant: Tenant,
-    actorAlias: string,
-  ): Promise<Record<string, unknown>>;
-  cancelChainGate?(
-    gateId: string,
-    actorTenant: Tenant,
-    actorAlias: string,
-  ): Promise<Record<string, unknown>>;
-}
+type ChainGateRepository = Pick<GatewayRepository,
+  'listChainGates' | 'answerChainGate' | 'cancelChainGate'
+>;
 
-export function registerLegacyCandidateChainGateRoutes(
+export function registerChainGateRoutes(
   app: FastifyInstance,
-  options: LegacyCandidateRouteOptions,
-  repository: LegacyCandidateRepository,
+  options: ChainGateRouteOptions,
+  repository: ChainGateRepository,
 ): void {
   // The questions the fleet left for a person. This is the VISIBLE LIST the gate promises:
   // without it, pulling the human wait out of the bus would only hide it somewhere else.
@@ -45,9 +29,6 @@ export function registerLegacyCandidateChainGateRoutes(
       try {
         const actor = await principal(request, options.authProvider);
         requirePermission(actor, 'read');
-        if (repository.listChainGates === undefined) {
-          throw new StoreError('not_found', 'chain gates are not available in this deployment');
-        }
         const limit = Number.parseInt(request.query.limit ?? '', 10);
         return await repository.listChainGates(actor.tenant_id, actor.alias, {
           status: request.query.status === 'all' ? 'all' : 'open',
@@ -65,9 +46,6 @@ export function registerLegacyCandidateChainGateRoutes(
       try {
         const actor = await principal(request, options.authProvider);
         requirePermission(actor, 'route');
-        if (repository.answerChainGate === undefined) {
-          throw new StoreError('not_found', 'chain gates are not available in this deployment');
-        }
         const body = request.body === null || typeof request.body !== 'object'
           ? {}
           : request.body as Record<string, unknown>;
@@ -85,9 +63,6 @@ export function registerLegacyCandidateChainGateRoutes(
       try {
         const actor = await principal(request, options.authProvider);
         requirePermission(actor, 'route');
-        if (repository.cancelChainGate === undefined) {
-          throw new StoreError('not_found', 'chain gates are not available in this deployment');
-        }
         return await repository.cancelChainGate(
           request.params.gateId, actor.tenant_id, actor.alias
         );

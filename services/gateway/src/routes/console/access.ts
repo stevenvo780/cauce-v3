@@ -16,7 +16,7 @@ export function createConsoleRoutes(
   return { options, repository, allowedJobKinds };
 }
 
-export function registerConsoleRoutesPhase1(
+export function registerConsoleAccessRoutes(
   app: FastifyInstance,
   context: ConsoleRoutes,
 ): void {
@@ -44,13 +44,7 @@ export function registerConsoleRoutesPhase1(
       };
     } catch (error) { replyError(reply, error); }
   });
-}
 
-export function registerConsoleRoutesPhase2(
-  app: FastifyInstance,
-  context: ConsoleRoutes,
-): void {
-  const { options, repository } = context;
   app.get('/v3/console/topology', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);

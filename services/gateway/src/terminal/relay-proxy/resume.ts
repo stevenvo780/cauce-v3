@@ -1,7 +1,9 @@
 import { withTransaction } from '@cauce/store';
+import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import {
   terminalAuditMetadata, type TerminalAuditContext,
 } from '../audit.js';
+import { cohortLabels, exactObjectKeys, sessionExpiry } from '../helpers.js';
 import {
   ticketSha256, verifyResumeTokenSignature, TicketError,
 } from '../tickets.js';
@@ -10,9 +12,9 @@ import type { RelayProxyContext } from './context.js';
 
 export function registerRelayResumeRoute(context: RelayProxyContext): void {
   const {
-    app, pool, config, UUID_PATTERN, exactObjectKeys, RESUME_KEYS, RESUME_WITH_EPOCH_KEYS,
+    app, pool, config, RESUME_KEYS, RESUME_WITH_EPOCH_KEYS,
     requestRelayIdentity, relayClaimToken, relayClaimEpoch, currentSessionPolicy, sessionActor,
-    cohortLabels, recordTransactionalTerminalAudit, sessionExpiry, relayGrant, replyError,
+    recordTransactionalTerminalAudit, relayGrant, replyError,
   } = context;
   app.post<{ Params: { sid: string } }>('/v3/terminal/relay/sessions/:sid/resume', async (request, reply) => {
     const sid = request.params.sid;
@@ -26,7 +28,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
       });
     };
     try {
-      if (!UUID_PATTERN.test(sid)) { await refuse(401, 'resume_invalid'); return; }
+      if (!UUID_ANY_PATTERN.test(sid)) { await refuse(401, 'resume_invalid'); return; }
       const body = request.body;
       const record = body !== null && typeof body === 'object' && !Array.isArray(body)
         ? body as Record<string, unknown> : undefined;
@@ -76,7 +78,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
           } catch (error) {
             if (!(error instanceof TicketError)) throw error;
           }
-          const expiry = sessionExpiry(row);
+          const expiry = sessionExpiry(row, config.sessionTtlSeconds);
           if (credential?.sid !== sid || credential.op !== row.operator_id
               || expiry === undefined || credential.exp !== Math.floor(expiry.getTime() / 1_000)) {
             refusal = { status: 401, reason: 'resume_invalid' };

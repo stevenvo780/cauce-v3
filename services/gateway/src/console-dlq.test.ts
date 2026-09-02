@@ -1,17 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Permission } from '@cauce/protocol';
-import type { DatabasePool, OperationalDlqPage, OperationalDlqResolutionResult } from '@cauce/store';
+import type { OperationalDlqPage, OperationalDlqResolutionResult } from '@cauce/store';
 import { StoreError } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
+import type { buildGateway } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
+import { buildTestGateway, fakePool, fakeRepository } from './test-support/gateway-doubles.js';
 
 const INCIDENT_ID = '8b31b078-dd9f-4da2-8d1e-f4050965db83';
 const EVIDENCE_SHA256 = 'a'.repeat(64);
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
-
-function pool(): DatabasePool {
-  return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
-}
 
 const page: OperationalDlqPage = {
   schemaVersion: 1,
@@ -51,7 +48,7 @@ const resolution: OperationalDlqResolutionResult = {
 };
 
 function repository() {
-  return {
+  return fakeRepository({
     principalAccess: vi.fn(async () => ({
       roles: ['operator'] as string[],
       permissions: ['route', 'read', 'control'] as Permission[],
@@ -72,7 +69,7 @@ function repository() {
       providerMessageId: 'DO_NOT_EXPOSE',
     }) as unknown as OperationalDlqResolutionResult),
     claimWakeOutbox: vi.fn(async () => []),
-  };
+  });
 }
 
 async function gateway(options: {
@@ -80,15 +77,11 @@ async function gateway(options: {
   repository?: ReturnType<typeof repository>;
 } = {}) {
   const store = options.repository ?? repository();
-  const app = await buildGateway({
-    pool: pool(),
+  const app = await buildTestGateway({
+    pool: fakePool({ ssl: true }),
     authProvider: options.authProvider ?? DevOnlyAuthProvider.forTests(),
-    repository: store as unknown as GatewayRepository,
-    deliveryWakeSubscriber: async () => async () => undefined,
-    exposeHealthRoutes: false,
+    repository: store,
     outboxPollMs: 60_000,
-    consoleOrigins: ['http://localhost'],
-    logger: false,
   });
   apps.push(app);
   return { app, store };
@@ -116,7 +109,8 @@ describe('operational DLQ console boundary', () => {
     expect(allowedResponse.json<{ permissions: string[] }>().permissions).toContain('dlq.resolve');
 
     const deniedStore = repository();
-    deniedStore.principalAccess.mockResolvedValueOnce({ roles: ['operator'], permissions: ['read'] });
+    vi.mocked(deniedStore.principalAccess)
+      .mockResolvedValueOnce({ roles: ['operator'], permissions: ['read'] });
     const denied = await gateway({ repository: deniedStore });
     const deniedResponse = await denied.app.inject({
       method: 'GET', url: '/v3/console/access', headers: headers(),
@@ -255,7 +249,7 @@ describe('operational DLQ console boundary', () => {
 
   it('maps a stale evidence CAS to conflict without inventing a success body', async () => {
     const store = repository();
-    store.resolveOperationalDlqWithoutReplay.mockRejectedValueOnce(
+    vi.mocked(store.resolveOperationalDlqWithoutReplay).mockRejectedValueOnce(
       new StoreError('conflict', 'DLQ evidence changed'),
     );
     const { app } = await gateway({ repository: store });
@@ -278,7 +272,7 @@ describe('operational DLQ console boundary', () => {
 
   it('never emits 2xx when the store mutation lacks an exact durable receipt', async () => {
     const store = repository();
-    store.resolveOperationalDlqWithoutReplay.mockResolvedValueOnce({
+    vi.mocked(store.resolveOperationalDlqWithoutReplay).mockResolvedValueOnce({
       ...resolution,
       appliedCount: 0,
       alreadyApplied: false,

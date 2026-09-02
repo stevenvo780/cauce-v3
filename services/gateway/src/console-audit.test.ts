@@ -1,17 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Permission } from '@cauce/protocol';
-import type { DatabasePool } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
-import { DevOnlyAuthProvider } from './auth.js';
+import type { buildGateway } from './app.js';
+import { buildTestGateway, fakePool, fakeRepository } from './test-support/gateway-doubles.js';
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
 
-function pool(): DatabasePool {
-  return { query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })) } as unknown as DatabasePool;
-}
-
 function repository() {
-  return {
+  return fakeRepository({
     principalAccess: vi.fn(async () => ({
       roles: ['operator'] as string[],
       permissions: ['read'] as Permission[],
@@ -33,20 +28,15 @@ function repository() {
       }],
     })),
     claimWakeOutbox: vi.fn(async () => []),
-  };
+  });
 }
 
 async function gateway() {
   const store = repository();
-  const app = await buildGateway({
-    pool: pool(),
-    authProvider: DevOnlyAuthProvider.forTests(),
-    repository: store as unknown as GatewayRepository,
-    deliveryWakeSubscriber: async () => async () => undefined,
-    exposeHealthRoutes: false,
+  const app = await buildTestGateway({
+    pool: fakePool({ ssl: true }),
+    repository: store,
     outboxPollMs: 60_000,
-    consoleOrigins: ['http://localhost'],
-    logger: false,
   });
   apps.push(app);
   return { app, store };

@@ -1,15 +1,16 @@
 import { createHash, timingSafeEqual } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type {
-  AuthorizedAgentTarget, DatabaseClient, DatabasePool,
-} from '@cauce/store';
-import { isCanonicalUuidV4, type Tenant } from '@cauce/protocol';
+import type { DatabaseClient, DatabasePool } from '@cauce/store';
+import { isCanonicalUuidV4 } from '@cauce/protocol';
 import type { TerminalAuditEntry } from '../audit.js';
 import {
   GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetPlacement,
   loadFleetPlacements,
 } from '../authority.js';
 import type { TerminalConfig } from '../config.js';
+import {
+  sessionExpiry, type AgentTargetRepository, type FleetCohort,
+} from '../helpers.js';
 import { AgentRegistry, type RelayProcessIdentity } from '../registry.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
@@ -88,33 +89,13 @@ function counterValue(value: string | number): number {
   return typeof value === 'number' ? value : Number(value);
 }
 
-interface TerminalRelayRepository {
-  authorizeAgentTarget(
-    actorTenant: Tenant,
-    actorAlias: string,
-    targetTenant: Tenant,
-    targetAlias: string,
-    permission: 'read' | 'control',
-  ): Promise<AuthorizedAgentTarget | undefined>;
-}
-
-type FleetCohort = ReturnType<typeof containerCohort>;
-
 export interface TerminalRelayProxyOptions {
   readonly pool: DatabasePool;
   readonly config: TerminalConfig;
   readonly registry: AgentRegistry;
   readonly grants: GrantStore;
-  readonly repository: TerminalRelayRepository;
+  readonly repository: AgentTargetRepository;
   readonly relayPeerInstanceId: ((request: FastifyRequest) => string | undefined) | undefined;
-  readonly UUID_PATTERN: RegExp;
-  readonly exactObjectKeys: (
-    record: Record<string, unknown>,
-    expected: readonly string[],
-  ) => boolean;
-  readonly boundedInteger: (value: unknown, min: number, max: number, name: string) => number;
-  readonly cohortLabels: (cohort: FleetCohort) => string[];
-  readonly sessionExpiry: (row: TerminalSessionRow) => Date | undefined;
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
   readonly recordTransactionalTerminalAudit: (
     client: DatabaseClient,
@@ -136,19 +117,6 @@ export interface RelayProxyContext {
   readonly pool: DatabasePool;
   readonly config: TerminalConfig;
   readonly registry: AgentRegistry;
-  readonly UUID_PATTERN: RegExp;
-  readonly exactObjectKeys: (
-    record: Record<string, unknown>,
-    expected: readonly string[],
-  ) => boolean;
-  readonly boundedInteger: (
-    value: unknown,
-    min: number,
-    max: number,
-    name: string,
-  ) => number;
-  readonly cohortLabels: (cohort: FleetCohort) => string[];
-  readonly sessionExpiry: (row: TerminalSessionRow) => Date | undefined;
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
   readonly recordTransactionalTerminalAudit: (
     client: DatabaseClient,
@@ -194,8 +162,7 @@ export function createRelayProxyContext(
   options: TerminalRelayProxyOptions,
 ): RelayProxyContext {
   const {
-    pool, config, registry, grants, repository, UUID_PATTERN, exactObjectKeys, boundedInteger,
-    cohortLabels, sessionExpiry, replyError, recordTransactionalTerminalAudit,
+    pool, config, registry, grants, repository, replyError, recordTransactionalTerminalAudit,
   } = options;
   const peerInstanceId = options.relayPeerInstanceId ?? authenticatedRelayInstanceId;
   function requestRelayIdentity(
@@ -215,7 +182,7 @@ export function createRelayProxyContext(
     databaseNow: Date,
     identity: RelayProcessIdentity,
   ): Record<string, unknown> {
-    const expiry = sessionExpiry(row) ?? row.expires_at;
+    const expiry = sessionExpiry(row, config.sessionTtlSeconds) ?? row.expires_at;
     if (row.relay_claim_sha256 === null || row.relay_claim_expires_at === null
         || !ticketSha256(claimToken).equals(row.relay_claim_sha256)) {
       throw new Error('database terminal claim does not match the relay receipt');
@@ -264,50 +231,6 @@ export function createRelayProxyContext(
     };
   }
 
-  /** Same canonical visibility rule as CauceRepository, executed on the already-held TX client. */
-  async function authorizeAgentTargetInTransaction(
-    database: DatabaseClient,
-    actorTenant: string,
-    actorAlias: string,
-    targetTenant: string,
-    targetAlias: string,
-  ): Promise<AuthorizedAgentTarget | undefined> {
-    const result = await database.query<AuthorizedAgentTarget>(
-      `SELECT agent.tenant_id,agent.alias,agent.harness_id,agent.home_directory,agent.enabled
-         FROM agents agent
-         JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id
-        WHERE agent.tenant_id=$3 AND agent.alias=$4 AND target_tenant.enabled
-          AND agent.enabled
-          AND EXISTS (
-            SELECT 1
-              FROM memberships actor_membership
-              JOIN role_policies actor_role ON actor_role.role=actor_membership.role
-              JOIN tenants actor_tenant ON actor_tenant.id=actor_membership.tenant_id
-              JOIN rooms actor_room
-                ON actor_room.id=actor_membership.room_id
-               AND actor_room.tenant_id=actor_membership.tenant_id
-             WHERE actor_membership.tenant_id=$1 AND actor_membership.alias=$2
-               AND actor_membership.enabled AND actor_role.allow_control
-               AND actor_tenant.enabled AND actor_room.enabled
-          )
-          AND (
-            $1=$3
-            OR EXISTS (
-              SELECT 1
-                FROM acl_edges edge
-                JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
-               WHERE edge.from_tenant=$1 AND edge.to_tenant=$3
-                 AND edge.enabled AND edge.allow_control
-                 AND source_tenant.enabled AND target_tenant.enabled
-                 AND (source_tenant.is_hub OR target_tenant.is_hub)
-            )
-          )
-        LIMIT 1`,
-      [actorTenant, actorAlias, targetTenant, targetAlias],
-    );
-    return result.rows[0];
-  }
-
   /**
    * Live canonical policy shared by consume, resume and periodic authz. `freshGrants` is used by
    * consume so withdrawing the file between issuance and redemption has no cache window at all.
@@ -336,13 +259,9 @@ export function createRelayProxyContext(
       if (!attributionAllows(row.attributed, actor.tenant_id, member.tenant_id)) {
         return { allowed: false, reason: 'attribution_required' };
       }
-      const visible = database === undefined
-        ? await repository.authorizeAgentTarget(
-          actor.tenant_id, actor.alias, member.tenant_id, member.alias, 'control',
-        )
-        : await authorizeAgentTargetInTransaction(
-          database, actor.tenant_id, actor.alias, member.tenant_id, member.alias,
-        );
+      const visible = await repository.authorizeAgentTarget(
+        actor.tenant_id, actor.alias, member.tenant_id, member.alias, 'control', database,
+      );
       if (visible === undefined) return { allowed: false, reason: 'control_authority_revoked' };
     }
     const authority = await cohortRoutingAuthority(
@@ -370,11 +289,6 @@ export function createRelayProxyContext(
     pool,
     config,
     registry,
-    UUID_PATTERN,
-    exactObjectKeys,
-    boundedInteger,
-    cohortLabels,
-    sessionExpiry,
     replyError,
     recordTransactionalTerminalAudit,
     PRESENCE_KEYS,

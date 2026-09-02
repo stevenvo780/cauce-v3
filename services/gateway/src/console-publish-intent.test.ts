@@ -6,21 +6,16 @@ import {
 } from '@cauce/protocol';
 import {
   PublishIntentExpiredError, PublishIntentRateLimitedError,
-  PublishIntentReconciliationRequired, type DatabasePool,
+  PublishIntentReconciliationRequired,
 } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
+import type { buildGateway } from './app.js';
 import {
   DevOnlyAuthProvider, type AuthProvider, type Principal,
 } from './auth.js';
 import { ConsolePublishTelemetry } from './console-publish-telemetry.js';
+import { buildTestGateway, fakePool, fakeRepository } from './test-support/gateway-doubles.js';
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
-
-function pool(): DatabasePool {
-  return {
-    query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 })),
-  } as unknown as DatabasePool;
-}
 
 async function gateway(options: {
   authProvider?: AuthProvider;
@@ -51,12 +46,11 @@ async function gateway(options: {
     } | undefined;
   }[] = [];
   const confirmations: unknown[] = [];
-  const app = await buildGateway({
-    pool: pool(),
+  const app = await buildTestGateway({
+    pool: fakePool({ ssl: true }),
     authProvider: options.authProvider ?? DevOnlyAuthProvider.forTests(),
     ...(options.telemetry === undefined ? {} : { consolePublishTelemetry: options.telemetry }),
-    repository: {
-      claimOutbox: vi.fn(async () => []),
+    repository: fakeRepository({
       prepareConsolePublishIntent: vi.fn(async (
         input: ConsolePublishIntentCommand,
         operatorScopeHash: string,
@@ -127,11 +121,7 @@ async function gateway(options: {
         confirmations.push({ tenantId, actorAlias, operatorScopeHash, input });
         return { version: 1 as const, confirmed: true as const, ...input };
       }),
-    } as unknown as GatewayRepository,
-    deliveryWakeSubscriber: async () => async () => undefined,
-    exposeHealthRoutes: false,
-    consoleOrigins: ['http://localhost'],
-    logger: false,
+    }),
   });
   apps.push(app);
   return { app, prepares, prepareScopes, publishes, confirmations };

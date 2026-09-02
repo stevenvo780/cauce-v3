@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AuthorizedAgentTarget } from '@cauce/store';
 import { requirePermission, type Principal } from '../auth.js';
 import { registerAgentDirectiveRoutes } from '../console/agent-directive.routes.js';
 import {
@@ -8,21 +7,14 @@ import {
 } from '../console/agent-documents.js';
 import { HttpGovernanceRelayClient } from '../console/relay-governance-client.js';
 import type { TerminalConfig } from './config.js';
+import type { AgentTargetRepository } from './helpers.js';
 import { hechosDelRegistro } from './hechos-del-registro.js';
 import type { AgentRegistry } from './registry.js';
 
 interface GovernanceProbeContext {
   readonly config: TerminalConfig;
   readonly registry: AgentRegistry;
-  readonly repository: {
-    authorizeAgentTarget(
-      actorTenant: string,
-      actorAlias: string,
-      targetTenant: string,
-      targetAlias: string,
-      permission: 'read' | 'control',
-    ): Promise<AuthorizedAgentTarget | undefined>;
-  };
+  readonly repository: AgentTargetRepository;
   readonly runtimeOptions: {
     readonly measuredFacts?: MeasuredFactsSource;
   };

@@ -1,18 +1,20 @@
 import { withTransaction } from '@cauce/store';
+import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata } from '../audit.js';
+import { exactObjectKeys } from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
 import type { RelayProxyContext } from './context.js';
 
 export function registerRelayAuthorizationRoute(context: RelayProxyContext): void {
   const {
-    app, pool, config, UUID_PATTERN, exactObjectKeys, AUTHZ_KEYS, requestRelayIdentity,
+    app, pool, config, AUTHZ_KEYS, requestRelayIdentity,
     relayClaimToken, relayClaimEpoch, currentSessionPolicy, recordTransactionalTerminalAudit,
     databaseClaimEpoch, boundedMilliseconds, replyError,
   } = context;
   app.post<{ Params: { sid: string } }>('/v3/terminal/relay/sessions/:sid/authz', async (request, reply) => {
     try {
-      if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
+      if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = request.body;
       const record = body !== null && typeof body === 'object' && !Array.isArray(body)
         ? body as Record<string, unknown> : undefined;

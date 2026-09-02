@@ -1,16 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { request as httpsRequest } from 'node:https';
 import type { AddressInfo } from 'node:net';
-import type { DatabasePool } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
+import { buildGateway } from './app.js';
 import { MtlsAuthProvider } from './auth.js';
 import { buildLoopbackHealthProbe } from './health.js';
-
-function pool(): DatabasePool {
-  return {
-    query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 }))
-  } as unknown as DatabasePool;
-}
+import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
 // Generated, non-production fixture with no authority outside this test.
 const testKey = readFileSync(new URL('./test-fixtures/mtls-server-private.pem', import.meta.url));
@@ -37,7 +31,7 @@ async function deniedWithoutClientCertificate(port: number): Promise<Error> {
 
 describe('mTLS health isolation', () => {
   it('keeps health on the dedicated app and denies a data route without verified TLS client identity', async () => {
-    const database = pool();
+    const database = fakePool({ ssl: true });
     const health = await buildLoopbackHealthProbe({ pool: database, requirePostgresTls: true });
     const data = await buildGateway({
       pool: database,
@@ -46,13 +40,8 @@ describe('mTLS health isolation', () => {
           throw new Error('an unverified request must never reach certificate mapping');
         })
       }),
-      repository: {
-        claimOutbox: vi.fn(async () => []),
-        // MtlsAuthProvider is production-mode, so the data-plane fixture must advertise the
-        // durable reconnect primitive instead of weakening buildGateway's production invariant.
-        liveDeliveryClaims: vi.fn(async () => []),
-      } as unknown as GatewayRepository,
-      deliveryWakeSubscriber: async () => async () => undefined,
+      repository: fakeRepository(),
+      deliveryWakeSubscriber: noDeliveryWakes,
       exposeHealthRoutes: false,
       https: {
         key: testKey,

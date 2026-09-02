@@ -14,7 +14,7 @@ import { registerTerminalControlPlane } from './terminal/plugin.js';
 import { AGENT_STALE_AFTER_MS, AgentRegistry } from './terminal/registry.js';
 import { deriveAliasKey, issueResumeToken, verifyTicketSignature } from './terminal/tickets.js';
 import { UNATTRIBUTED_OPERATOR, type AgentPresence, type TerminalSessionRow } from './terminal/types.js';
-import { instrumentFailurePool, registerBrokenClientTest } from './terminal.plugin.test-support.js';
+import { instrumentFailurePool, registerBrokenClientTest } from './test-support/terminal-plugin.js';
 
 const ORIGIN = 'https://consola.elenxos.com';
 const RELAY_TOKEN = 'relay-token-that-is-long-enough-0123456789';

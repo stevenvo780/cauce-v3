@@ -17,27 +17,36 @@ function deliveries(row: Row): Row[] {
   return Array.isArray(row.deliveries) ? row.deliveries.map(object).filter((item): item is Row => item !== undefined) : [];
 }
 
-export function messageVisible(row: Row, principal: Principal): boolean {
-  const senderTenant = row.message_tenant_id ?? row.tenant_id;
-  if (senderTenant === principal.tenant_id && row.actor_alias === principal.alias) return true;
-  if (Array.isArray(row.participants) && row.participants.some((item) => participant(item, principal))) return true;
-  return deliveries(row).some((delivery) => {
-    const tenant = delivery.recipient_tenant ?? delivery.tenant_id;
-    const alias = delivery.recipient_alias ?? delivery.alias;
-    return tenant === principal.tenant_id && alias === principal.alias;
-  });
+function sender(row: Row, principal: Principal): boolean {
+  return row.tenant_id === principal.tenant_id && row.actor_alias === principal.alias;
 }
 
-function redactMessage(row: Row, principal: Principal): Row {
-  const isSender = (row.message_tenant_id ?? row.tenant_id) === principal.tenant_id && row.actor_alias === principal.alias;
-  if (isSender || !Array.isArray(row.deliveries)) return row;
-  return {
-    ...row,
-    deliveries: deliveries(row).filter((delivery) =>
-      (delivery.recipient_tenant ?? delivery.tenant_id) === principal.tenant_id &&
-      (delivery.recipient_alias ?? delivery.alias) === principal.alias
-    )
-  };
+// `MessageListRow` prefixes the recipient `recipient_`; `MessageDetailRow` names it `tenant_id`/`alias`.
+function listRecipient(delivery: Row, principal: Principal): boolean {
+  return delivery.recipient_tenant === principal.tenant_id
+    && delivery.recipient_alias === principal.alias;
+}
+
+function detailRecipient(delivery: Row, principal: Principal): boolean {
+  return delivery.tenant_id === principal.tenant_id && delivery.alias === principal.alias;
+}
+
+function listMessageVisible(row: Row, principal: Principal): boolean {
+  return sender(row, principal) || deliveries(row).some((delivery) => listRecipient(delivery, principal));
+}
+
+function detailMessageVisible(row: Row, principal: Principal): boolean {
+  return sender(row, principal) || deliveries(row).some((delivery) => detailRecipient(delivery, principal));
+}
+
+function redactListMessage(row: Row, principal: Principal): Row {
+  if (sender(row, principal) || !Array.isArray(row.deliveries)) return row;
+  return { ...row, deliveries: deliveries(row).filter((delivery) => listRecipient(delivery, principal)) };
+}
+
+function redactDetailMessage(row: Row, principal: Principal): Row {
+  if (sender(row, principal) || !Array.isArray(row.deliveries)) return row;
+  return { ...row, deliveries: deliveries(row).filter((delivery) => detailRecipient(delivery, principal)) };
 }
 
 export function visibleMessageList(value: Row, principal: Principal): Row {
@@ -45,22 +54,21 @@ export function visibleMessageList(value: Row, principal: Principal): Row {
   return {
     ...value,
     items: value.items.map(object).filter((item): item is Row => item !== undefined)
-      .filter((item) => messageVisible(item, principal))
-      .map((item) => redactMessage(item, principal))
+      .filter((item) => listMessageVisible(item, principal))
+      .map((item) => redactListMessage(item, principal))
   };
 }
 
 export function visibleMessage(value: Row, principal: Principal): Row | undefined {
-  return messageVisible(value, principal) ? redactMessage(value, principal) : undefined;
+  return detailMessageVisible(value, principal) ? redactDetailMessage(value, principal) : undefined;
 }
 
 const VISIBLE_PENDING_STATES: readonly DeliveryState[] = ['pending', 'leased', 'accepted', 'started'];
 
+// `QueueSnapshotItem` names the recipient `tenant_id`/`recipient_alias`, the sender `message_tenant_id`.
 function queueRowVisible(row: Row, principal: Principal): boolean {
-  const recipientTenant = row.recipient_tenant ?? row.tenant_id;
-  if (recipientTenant === principal.tenant_id && row.recipient_alias === principal.alias) return true;
-  const senderTenant = row.message_tenant_id ?? row.sender_tenant_id;
-  return senderTenant === principal.tenant_id && row.actor_alias === principal.alias;
+  if (row.tenant_id === principal.tenant_id && row.recipient_alias === principal.alias) return true;
+  return row.message_tenant_id === principal.tenant_id && row.actor_alias === principal.alias;
 }
 
 export function visibleQueue(value: Row, principal: Principal): Row {
@@ -128,11 +136,10 @@ function safeAuditSummaryProjection(action: string | null, value: unknown): stri
 }
 
 /**
- * Exact browser projection for the participant-aware audit query.
- *
- * The repository deliberately returns cross-tenant rows when this principal is the sender or
- * recipient participant. This facade therefore does not filter by `tenant_id`: it repeats only
- * the privacy allowlist and never reflects raw metadata or unexpected fields from a test double.
+ * Exact browser projection for the participant-aware audit query. The repository deliberately
+ * returns cross-tenant rows when this principal is the sender or recipient participant, so this
+ * facade does not filter by `tenant_id`: it repeats only the privacy allowlist and never reflects
+ * raw metadata or unexpected fields from a test double.
  */
 export function safeAuditPage(value: unknown): Row {
   const page = object(value) ?? {};
@@ -161,11 +168,10 @@ export function safeAuditPage(value: unknown): Row {
 }
 
 /**
- * Second allowlist for the browser-facing DLQ contract.
- *
- * PostgreSQL already returns a safe schema-030 projection.  This boundary intentionally repeats
- * the projection so a regressed query or a permissive repository double cannot expose payload,
- * errors, operator reasons, origins or provider/message identifiers through `/v3/console/*`.
+ * Second allowlist for the browser-facing DLQ contract. PostgreSQL already returns a safe
+ * schema-030 projection; repeating it here stops a regressed query or a permissive repository
+ * double from exposing payload, errors, operator reasons, origins or provider/message
+ * identifiers through `/v3/console/*`.
  */
 export function safeDlqPage(value: unknown): Row {
   const page = object(value) ?? {};

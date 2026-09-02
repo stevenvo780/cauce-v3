@@ -13,6 +13,7 @@
     "**/*.fixtures.ts",
     "**/*-test-fixtures.ts",
     "**/test-fixtures/**",
+    "**/test-support/**",
     "packages/*/test/**"
   ]
 }

@@ -1,13 +1,13 @@
 import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { PROTOCOL_VERSION, type Hello } from '@cauce/protocol';
-import type { DatabasePool } from '@cauce/store';
-import { buildGateway, type GatewayRepository } from './app.js';
+import { buildGateway } from './app.js';
 import { JwksJwtAuthProvider } from './auth.js';
 import {
   OidcBffAuthProvider,
   type OidcSession, type OidcSessionStore, type PendingOidcLogin
 } from './oidc-bff.js';
+import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
 const issuer = 'https://idp.example';
 const clientId = 'cauce-console';
@@ -79,23 +79,6 @@ function cookieValue(cookie: string): string {
   return decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1));
 }
 
-function fakePool(): DatabasePool {
-  return {
-    query: vi.fn(async () => ({ rows: [{ ssl: true }], rowCount: 1 }))
-  } as unknown as DatabasePool;
-}
-
-function fakeRepository(): GatewayRepository {
-  return {
-    assertPrincipal: vi.fn(async () => undefined),
-    status: vi.fn(async () => ({ online: 1 })),
-    listPresence: vi.fn(async () => []),
-    claimOutbox: vi.fn(async () => []),
-    liveDeliveryClaims: vi.fn(async () => []),
-    heartbeat: vi.fn(async () => new Date(Date.now() + 60_000).toISOString()),
-  } as unknown as GatewayRepository;
-}
-
 async function fixture(idTokenClaims: Record<string, unknown> = {}) {
   let providerNow = Date.now();
   let nonce = '';
@@ -165,10 +148,10 @@ async function fixture(idTokenClaims: Record<string, unknown> = {}) {
     sessionMaxAgeMs: 60 * 60 * 1_000
   });
   const app = await buildGateway({
-    pool: fakePool(),
+    pool: fakePool({ ssl: true }),
     authProvider: provider,
-    repository: fakeRepository(),
-    deliveryWakeSubscriber: async () => async () => undefined
+    repository: fakeRepository({ status: vi.fn(async () => ({ online: 1 })) }),
+    deliveryWakeSubscriber: noDeliveryWakes
   });
   const login = await app.inject({ method: 'GET', url: '/v3/auth/login' });
   const location = login.headers.location;

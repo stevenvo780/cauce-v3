@@ -1,18 +1,20 @@
 import { withTransaction } from '@cauce/store';
+import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata } from '../audit.js';
+import { boundedInteger, exactObjectKeys } from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
 import type { RelayProxyContext } from './context.js';
 
 export function registerRelayCloseRoute(context: RelayProxyContext): void {
   const {
-    app, pool, UUID_PATTERN, exactObjectKeys, CLOSE_KEYS, CLOSE_WITH_CLAIM_KEYS,
-    requestRelayIdentity, relayClaimToken, relayClaimEpoch, boundedInteger,
+    app, pool, CLOSE_KEYS, CLOSE_WITH_CLAIM_KEYS,
+    requestRelayIdentity, relayClaimToken, relayClaimEpoch,
     recordTransactionalTerminalAudit, counterValue, replyError,
   } = context;
   app.post<{ Params: { sid: string } }>('/v3/terminal/relay/sessions/:sid/close', async (request, reply) => {
     try {
-      if (!UUID_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
+      if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
       const body = request.body;
       if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('body must be an object');
       const record = body as Record<string, unknown>;

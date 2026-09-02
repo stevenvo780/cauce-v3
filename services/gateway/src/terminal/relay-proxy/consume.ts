@@ -1,7 +1,9 @@
 import { withTransaction } from '@cauce/store';
+import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import {
   terminalAuditMetadata, type TerminalAuditContext,
 } from '../audit.js';
+import { cohortLabels, exactObjectKeys, sessionExpiry } from '../helpers.js';
 import {
   deriveAliasKey, issueResumeToken, ticketDigest, ticketSha256,
   verifyTicketSignature, TicketError, type TicketPayload,
@@ -11,9 +13,9 @@ import type { RelayProxyContext } from './context.js';
 
 export function registerRelayConsumeRoute(context: RelayProxyContext): void {
   const {
-    app, pool, config, UUID_PATTERN, exactObjectKeys, CONSUME_KEYS, requestRelayIdentity,
-    relayClaimToken, relayClaimEpoch, currentSessionPolicy, sessionActor, cohortLabels,
-    recordTransactionalTerminalAudit, sessionExpiry, relayGrant, replyError,
+    app, pool, config, CONSUME_KEYS, requestRelayIdentity,
+    relayClaimToken, relayClaimEpoch, currentSessionPolicy, sessionActor,
+    recordTransactionalTerminalAudit, relayGrant, replyError,
   } = context;
   app.post<{ Params: { sid: string } }>('/v3/terminal/relay/sessions/:sid/consume', async (request, reply) => {
     const sid = request.params.sid;
@@ -21,7 +23,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
       await reply.code(401).send({ ok: false, reason: 'ticket_invalid' });
     };
     try {
-      if (!UUID_PATTERN.test(sid)) { await invalid(); return; }
+      if (!UUID_ANY_PATTERN.test(sid)) { await invalid(); return; }
       const body = request.body;
       const record = body !== null && typeof body === 'object' && !Array.isArray(body)
         ? body as Record<string, unknown> : undefined;
@@ -275,7 +277,7 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
         }
         return;
       }
-      const expiry = sessionExpiry(session) ?? session.expires_at;
+      const expiry = sessionExpiry(session, config.sessionTtlSeconds) ?? session.expires_at;
       if (session.consumed_at === null) {
         throw new Error('database consumed a terminal session without a consumed_at timestamp');
       }
