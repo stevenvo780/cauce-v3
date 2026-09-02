@@ -1,0 +1,82 @@
+{
+  "status": "success",
+  "data": {
+    "alerts": [
+      {
+        "labels": {
+          "alertname": "CauceOutboxBacklogGrowing",
+          "severity": "warning",
+          "job": "cauce-outbox",
+          "instance": "outbox-metrics:8084"
+        },
+        "annotations": {
+          "summary": "Outbox backlog has been growing for 10 minutes"
+        },
+        "state": "firing",
+        "startsAt": "2026-09-02T09:14:00.000Z",
+        "fingerprint": "b7c1d0e2f3a45566",
+        "value": "17e+00"
+      },
+      {
+        "labels": {
+          "alertname": "CauceDispatcherLoopStale",
+          "severity": "critical",
+          "job": "cauce-dispatcher",
+          "instance": "dispatcher:8082"
+        },
+        "annotations": {
+          "summary": "Dispatcher process exists but its work loop is not progressing"
+        },
+        "state": "firing",
+        "startsAt": "2026-09-02T09:02:00.000Z",
+        "fingerprint": "1a2b3c4d5e6f7081",
+        "value": "1e+00"
+      },
+      {
+        "labels": {
+          "alertname": "CauceGatewayDown",
+          "severity": "critical",
+          "job": "cauce-gateway",
+          "instance": "gateway:8081"
+        },
+        "annotations": {
+          "summary": "Gateway metrics endpoint is unavailable"
+        },
+        "state": "firing",
+        "startsAt": "2026-09-02T08:58:30.000Z",
+        "fingerprint": "9f8e7d6c5b4a3021",
+        "value": "0e+00"
+      },
+      {
+        "labels": {
+          "alertname": "CauceReaperIdle",
+          "severity": "critical",
+          "job": "cauce-dispatcher",
+          "instance": "dispatcher:8082"
+        },
+        "annotations": {
+          "summary": "Reaper has not swept an expired claim in the last window"
+        },
+        "state": "pending",
+        "startsAt": "2026-09-02T09:19:00.000Z",
+        "fingerprint": "44556677889900aa",
+        "value": "1e+00"
+      },
+      {
+        "labels": {
+          "alertname": "CauceTelegramBridgeDown",
+          "severity": "critical",
+          "job": "cauce-telegram",
+          "instance": "telegram-bridge:8086"
+        },
+        "annotations": {
+          "summary": "Telegram bridge stopped exposing metrics"
+        },
+        "state": "resolved",
+        "startsAt": "2026-09-02T07:40:00.000Z",
+        "fingerprint": "ccddeeff00112233",
+        "value": "0e+00"
+      }
+    ]
+  }
+}

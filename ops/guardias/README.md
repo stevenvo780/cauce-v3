@@ -13,6 +13,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | Archivo | Dónde va instalado | Qué hace |
 |---|---|---|
 | `cauce-ai-live` | `kratos:~/.local/bin/` + timer 10min | Cuota REAL por cuenta vía CDP (no estimada) |
+| `cauce-alertas-al-bus.py` | `kratos:~/.local/bin/` + timer 5min | Lleva al bus (zeus+kant) UNA entrega con las alertas `firing` de Prometheus: sin Alertmanager nadie las lee |
 | `cauce-attach` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | Entra a LA sesión real del agente (claude --resume / codex resume) con guardas |
 | `cauce-attach-guard` | `kratos:~/.local/bin/` + timer 2min | Repone adaptadores parados por un attach mal cerrado |
 | `cauce-codex-sync` | `kratos:~/.local/bin/` + path-unit | Propaga auth.json compartido de codex a los agentes sin bind-mount |
@@ -36,6 +37,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `polidin-guard.sh` | `kratos:~/.local/bin/` | Repone el túnel `ws-zeus:12222 → 10.88.88.31:22` cuando muere |
 | `systemd/cred-guard.*` | `VPS:/etc/systemd/system/cauce-cred-guard.{service,timer}` (system, no `--user`) | Dispara el agregador de credenciales cada 30 min |
 | `systemd/{cauce-cred-guard-kratos,cauce-v3-medico-monitor,polidin-guard}.*` | `kratos:~/.config/systemd/user/` | Dispara las sondas remotas, el médico y el guardia del túnel |
+| `systemd/cauce-alertas-al-bus.{service,timer}` | `kratos:~/.config/systemd/user/` | Consulta `/api/v1/alerts` cada 5 min; el guardia avisa aparte si lleva tres periodos sin LEER y si lleva tres periodos sin PUBLICAR |
 | `contenedor/polidin-fwd.sh` | `ws-zeus:/home/dev/` | El túnel en sí; corre **dentro** del contenedor |
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
 | `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Wrapper compatible del comando canónico `ops/cli/cauce-huerfanas` |
@@ -63,6 +65,26 @@ La excepción es `cred-guard.py`: agrega en el VPS las mediciones locales y el d
 `ops/scripts/install-cauce-cli.sh` junto al CLI —siete ficheros, comprobando la sintaxis de cada
 uno según su shebang y guardando copia del anterior—. Tienen que caer en el **mismo** directorio:
 `cauce-estado` y `cauce-attach` resuelven `cauce-sesiones` **al lado del propio ejecutable**.
+
+## El guardia de alertas lee Prometheus por `docker exec`, no por HTTP
+
+`deploy/compose.yaml` deja `prometheus` en la red `backend` **sin `ports:`** y detrás de
+`profiles: [observability]`; `docs/arquitectura.md` lo dice en la tabla de puertos (publicado
+«—», interno 9090). O sea: `127.0.0.1:9090` **no responde ni en kratos ni en agora-storage**, y
+un guardia que lo consultara así fallaría en el 100 % de las corridas. Por eso
+`cauce-alertas-al-bus.py` entra a la red del compose desde fuera: `ssh root@100.64.0.6` y
+`docker exec cauce-v3-prod-prometheus-1 wget -q -O - .../api/v1/alerts` (`wget` es el cliente
+que la propia imagen usa en su healthcheck; `curl` no está). `--http-directo` existe sólo para
+correrlo desde un contenedor que ya esté en `backend`, y `--desde-fichero` para las pruebas.
+
+Requisitos de instalación, entonces: la cuenta que dispara el timer en `kratos` necesita
+**ssh sin contraseña a `root@100.64.0.6`** (el guardia usa `BatchMode=yes`; no hay alias `Host`
+de por medio, la dirección va literal en el script) y ese destino necesita acceso al `docker`
+de la máquina. Son los mismos dos permisos que ya usa el médico.
+
+Y cuando la lectura falla —Prometheus apagado por el perfil, ssh caído, JSON ilegible— el
+guardia **publica igual** una entrega diciendo que está ciego. Callarse ahí sería repetir, una
+capa más arriba, el fallo que este guardia viene a tapar: nadie lee el journal del timer.
 
 ## El check-in diario de hegel corre en agora-storage, no en kratos
 
@@ -118,18 +140,21 @@ systemctl enable --now cauce-cred-guard.timer
 install -d -m755 ~/.local/bin ~/.config/systemd/user
 install -m644 ops/guardias/credential_health.py ~/.local/bin/
 install -m755 ops/guardias/cauce-cred-guard-kratos.py \
+  ops/guardias/cauce-alertas-al-bus.py \
   ops/guardias/cauce-v3-medico-monitor ~/.local/bin/
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
 ./ops/scripts/install-cauce-cli.sh   # cauce + panel/huerfanas/reponer + estado/sesiones/attach
 install -m644 ops/guardias/systemd/cauce-cred-guard-kratos.service \
   ops/guardias/systemd/cauce-cred-guard-kratos.timer \
+  ops/guardias/systemd/cauce-alertas-al-bus.service \
+  ops/guardias/systemd/cauce-alertas-al-bus.timer \
   ops/guardias/systemd/cauce-v3-medico-monitor.service \
   ops/guardias/systemd/cauce-v3-medico-monitor.timer \
   ops/guardias/systemd/polidin-guard.service \
   ops/guardias/systemd/polidin-guard.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now cauce-cred-guard-kratos.timer \
-  cauce-v3-medico-monitor.timer polidin-guard.timer
+  cauce-v3-medico-monitor.timer polidin-guard.timer cauce-alertas-al-bus.timer
 ```
 
 Y dentro de `ws-zeus`: `install -m755 ops/guardias/contenedor/polidin-fwd.sh /home/dev/`.

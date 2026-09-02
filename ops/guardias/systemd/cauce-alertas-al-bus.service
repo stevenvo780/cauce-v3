@@ -1,0 +1,16 @@
+[Unit]
+Description=Publica al bus las alertas firing de Prometheus (la ruta que dejo vacante Alertmanager)
+Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Va en kratos, como el medico, pero NADA se hace en kratos: Prometheus no publica puerto
+# (compose lo deja en la red `backend`), asi que la lectura es un `docker exec` en
+# agora-storage por ssh, y el despacho tambien va ahi porque el cert mTLS no sale de ese host.
+ExecStart=%h/.local/bin/cauce-alertas-al-bus.py
+# Una corrida son una lectura por ssh y como mucho 4 publicaciones; si tarda mas que el
+# periodo del timer, el problema es la red y no vale la pena arrastrarlo a la siguiente.
+TimeoutStartSec=4min
+Nice=10

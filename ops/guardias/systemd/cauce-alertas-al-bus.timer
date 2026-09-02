@@ -1,0 +1,17 @@
+[Unit]
+Description=Corre el reenvio de alertas de Prometheus al bus cada 5 minutos
+
+[Timer]
+# Cadencia de 5 min: las reglas criticas de alerts.yaml usan `for: 1m`/`2m`, asi que este
+# periodo mantiene el retraso maximo de aviso por debajo de los 10 min. El guardia lo conoce
+# (PERIODO_TIMER_SEG) y avisa si su ultima LECTURA es mas vieja que tres periodos.
+OnCalendar=*-*-* *:0/5:00 UTC
+Persistent=true
+# El despacho sale por ssh a agora-storage, igual que el del medico (minutos 07,22,37,52):
+# el retraso aleatorio evita que ambos guardias abran conexion en el mismo segundo.
+RandomizedDelaySec=45s
+AccuracySec=15s
+Unit=cauce-alertas-al-bus.service
+
+[Install]
+WantedBy=timers.target
