@@ -1,16 +1,16 @@
 import { readFile } from 'node:fs/promises';
 
 const serviceUrl = new URL('../../ops/systemd/cauce-v3-ci-local.service', import.meta.url);
+const scriptUrl = new URL('../../ops/scripts/ci-nocturno.sh', import.meta.url);
 
 describe('local CI systemd contract', () => {
-  it('runs only on main after a fast-forward pull and executes every required gate', async () => {
+  it('delegates the nightly gate to the disposable-worktree script', async () => {
     const service = await readFile(serviceUrl, 'utf8');
 
     expect(service).toContain(
-      'ExecStart=/usr/bin/bash -lc \'umask 022 && test -z "$(git status --porcelain=v1)" && test "$(git branch --show-current)" = main && git pull --ff-only origin main && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && pnpm typecheck && pnpm lint && CAUCE_REQUIRE_TESTCONTAINERS=1 pnpm test && CAUCE_RELEASE_VALIDATION=1 pnpm ops:validate\'',
+      "ExecStart=/usr/bin/bash -lc 'umask 022 && exec /datos/workspaces/zeus/cauce-v3/ops/scripts/ci-nocturno.sh'",
     );
-    expect(service).toContain('git status --porcelain=v1');
-    expect(service).toContain('git rev-parse origin/main');
+    expect(service).toContain('TimeoutStartSec=14400');
   });
 
   it('sets a non-interactive, color-free environment so pnpm never waits on a TTY', async () => {
@@ -21,13 +21,15 @@ describe('local CI systemd contract', () => {
   });
 
   it('rejects history rewriting, hidden worktree changes, and partial test gates', async () => {
-    const service = await readFile(serviceUrl, 'utf8');
+    const script = await readFile(scriptUrl, 'utf8');
 
-    expect(service).not.toContain('--rebase');
-    expect(service).not.toContain('--autostash');
-    expect(service).not.toContain('pnpm test:unit');
-    expect(service).not.toContain('pnpm test:pty');
-    expect(service).not.toContain('ops/scripts/validate.sh');
-    expect(service).toContain('CAUCE_REQUIRE_TESTCONTAINERS=1 pnpm test');
+    expect(script).not.toContain('--rebase');
+    expect(script).not.toContain('--autostash');
+    expect(script).not.toContain('pnpm test:unit');
+    expect(script).not.toContain('pnpm test:pty');
+    expect(script).not.toContain('ops/scripts/validate.sh');
+    expect(script).toContain('CAUCE_REQUIRE_TESTCONTAINERS=1 pnpm test');
+    expect(script).toContain('CAUCE_RELEASE_VALIDATION=1 pnpm ops:validate');
+    expect(script).toContain('git worktree add --detach');
   });
 });

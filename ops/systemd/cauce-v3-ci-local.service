@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3: CI local nocturno — el gate completo + validate sobre main (GitHub Actions prohibido por el dueño)
+Description=Cauce V3: CI local nocturno — gate completo + validate sobre un worktree desechable (la rama la fija el script, GitHub Actions prohibido por el dueño)
 
 [Service]
 Type=oneshot
@@ -8,7 +8,9 @@ WorkingDirectory=/datos/workspaces/zeus/cauce-v3
 # pnpm aborts purging node_modules without a TTY unless CI is set; NO_COLOR keeps journal output parseable.
 Environment=CI=true
 Environment=NO_COLOR=1
-ExecStart=/usr/bin/bash -lc 'umask 022 && test -z "$(git status --porcelain=v1)" && test "$(git branch --show-current)" = main && git pull --ff-only origin main && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && pnpm typecheck && pnpm lint && CAUCE_REQUIRE_TESTCONTAINERS=1 pnpm test && CAUCE_RELEASE_VALIDATION=1 pnpm ops:validate'
+ExecStart=/usr/bin/bash -lc 'umask 022 && exec /datos/workspaces/zeus/cauce-v3/ops/scripts/ci-nocturno.sh'
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=3600
+# Six steps now, one of them a cold `pnpm install` on a throwaway worktree, and scripts/test-all.mjs
+# already budgets 40 min for test:integration alone: one hour killed the run before ops:validate.
+TimeoutStartSec=14400

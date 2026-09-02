@@ -59,6 +59,7 @@
     "qa:opencode-cli": "CAUCE_OPENCODE_CLI_SMOKE=metadata-only node ops/harness/opencode-cli-smoke.mjs",
     "qa:testcontainers": "./ops/scripts/run-testcontainers.sh",
     "qa:runtime-packaging": "./deploy/smoke-runtime-packaging.sh",
+    "qa:audit": "pnpm audit --audit-level=high --prod",
     "ops:validate": "./ops/scripts/validate.sh",
     "ops:manifests": "python3 ops/scripts/validate-manifests.py && python3 ops/scripts/generate-units.py && python3 ops/scripts/generate-container-units.py --rootless --home /home/dev --output ops/generated/container-systemd/rootless",
     "test:container-supervisor": "node ops/tests/container-supervisor.test.mjs",

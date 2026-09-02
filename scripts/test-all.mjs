@@ -10,6 +10,8 @@ export const SUITES = [
   'test:terminal-pty',
   'test:pty',
   'test:ops',
+  'test:container-supervisor',
+  'test:container-cutover',
   'test:services',
   'test:gateway-hardening',
   'test:store-hardening',
@@ -19,8 +21,6 @@ export const SUITES = [
 
 /* Kept out of the matrix, each for a reason no automated check can see from the script alone. */
 export const SEPARATELY_GATED = new Map([
-  ['test:container-supervisor', 'covered by test:ops discovery (ops/tests/run-all.mjs); direct entry point only'],
-  ['test:container-cutover', 'covered by test:ops discovery (ops/tests/run-all.mjs); direct entry point only'],
   ['test:coverage', 're-runs this whole matrix under instrumentation, so the matrix cannot contain it'],
   ['qa:real', 'the live fleet: talks to the real bus and real agent adapters'],
   ['qa:contract', 'the live fleet: exercises the harness against the fleet topology, mocked responses only'],
@@ -29,13 +29,16 @@ export const SEPARATELY_GATED = new Map([
   ['qa:runtime-packaging', 'root/packaging: builds and boots the release Docker image, needs a normal-user identity'],
   ['qa:layout', 'Playwright/Chromium: renders the console in a real browser at fixed viewports'],
   ['qa:layout:update', 'Playwright/Chromium: same renderer as qa:layout, writing the baseline instead of checking it'],
+  ['qa:audit', 'the npm advisory feed: turns red on a new CVE with no code change, so the nightly runs it as its own step'],
 ]);
 
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
-const TIEMPOS = new Map([
+const TIMEOUTS = new Map([
   ['test:e2e', 40 * 60_000],
   ['test:integration', 40 * 60_000],
   ['test:store-hardening', 40 * 60_000],
+  ['test:container-supervisor', 10 * 60_000],
+  ['test:container-cutover', 10 * 60_000],
 ]);
 const GRACE_KILL_MS = 10_000;
 
@@ -90,7 +93,7 @@ function verdictFor(result) {
 function runSuite(name) {
   return new Promise((settle, fail) => {
     const startedAt = Date.now();
-    const timeoutMs = TIEMPOS.get(name) ?? DEFAULT_TIMEOUT_MS;
+    const timeoutMs = TIMEOUTS.get(name) ?? DEFAULT_TIMEOUT_MS;
     process.stdout.write(`\n${'='.repeat(72)}\n=== ${name}\n${'='.repeat(72)}\n`);
     // Own process group so a wedged suite dies with its grandchildren, not just its pnpm wrapper.
     const child = spawn('pnpm', ['run', name], { cwd: root, stdio: 'inherit', detached: true });
