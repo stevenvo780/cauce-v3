@@ -127,16 +127,40 @@ def alive(pid):
     return True
 
 
+def stat_fields(pid):
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            raw = fh.read().decode("utf-8", "replace")
+        tail = raw[raw.rindex(")") + 2:].split()
+        comm = raw[raw.index("(") + 1:raw.rindex(")")]
+        return tail, comm
+    except Exception:
+        return None
+
+
+def ppid_of(pid):
+    fields = stat_fields(pid)
+    if fields is None:
+        return None
+    tail, _comm = fields
+    return int(tail[1])
+
+
+def identity(pid):  # (comm, starttime): the OS never reuses this pair for a live PID, unlike a bare PID number
+    fields = stat_fields(pid)
+    if fields is None:
+        return None
+    tail, comm = fields
+    return (comm, tail[19])
+
+
 def descendants(root):
     children = {}
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
-        try:
-            with open(f"/proc/{entry}/stat", "rb") as fh:
-                raw = fh.read().decode("utf-8", "replace")
-            ppid = int(raw[raw.rindex(")") + 2:].split()[1])
-        except Exception:
+        ppid = ppid_of(entry)
+        if ppid is None:
             continue
         children.setdefault(ppid, []).append(int(entry))
     out, stack = [], [root]
@@ -154,11 +178,27 @@ if not alive(root):
 
 targets = [root] + descendants(root)
 print(f"KILL_TREE: objetivo raiz={root} descendientes={targets[1:]}")
-for pid in targets:
+identities = {pid: identity(pid) for pid in targets}  # snapshot now, while the walk just proved these are the intended PIDs
+
+
+def kill_if_still_same(pid, sig, label):
+    expected = identities.get(pid)
+    if expected is None:
+        return
+    current = identity(pid)
+    if current is None:
+        return
+    if current != expected:
+        print(f"KILL_TREE: omito {label} a pid {pid}: identidad cambio (PID reciclado), no lo toco")
+        return
     try:
-        os.kill(pid, signal.SIGTERM)
+        os.kill(pid, sig)
     except Exception:
         pass
+
+
+for pid in targets:
+    kill_if_still_same(pid, signal.SIGTERM, "SIGTERM")
 
 deadline = time.time() + 12
 while time.time() < deadline:
@@ -170,10 +210,7 @@ while time.time() < deadline:
 leftovers = [pid for pid in targets if alive(pid)]
 print(f"KILL_TREE: SIGKILL a los que sobrevivieron: {leftovers}")
 for pid in leftovers:
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except Exception:
-        pass
+    kill_if_still_same(pid, signal.SIGKILL, "SIGKILL")
 time.sleep(0.5)
 still = [pid for pid in targets if alive(pid)]
 print(f"KILL_TREE: quedan vivos: {still}")

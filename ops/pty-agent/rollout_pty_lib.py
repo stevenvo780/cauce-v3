@@ -609,8 +609,6 @@ class ManagerWorker:
         delay: float = 1.0,
         enable: bool = True,
     ) -> dict[str, Any]:
-        if alias == "zeus" and enable:
-            pass
         if attempts < 1 or delay < 0:
             fail("parametros de health invalidos")
         release, fleet = self.validate_release(release_sha)

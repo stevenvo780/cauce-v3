@@ -249,28 +249,58 @@ def check_dead_failed_deliveries(
 
 
 def check_dead_letters(database_url: str) -> dict[str, Any]:
-    """Check for excessive open dead letters."""
+    """Check for excessive open dead letters, across BOTH dead-letter tables.
+
+    `dead_letters` holds deliveries that exhausted retries; `outbox_dead_letters` holds what
+    never left the sender's outbox. Counting only one hides the other table's backlog, and a
+    missing row for either one fails closed instead of reporting a silent partial total.
+    """
     check = {
         'status': 'ok',
         'message': '',
         'open_count': 0,
+        'by_table': {},
     }
 
-    query = 'SELECT COUNT(*) as open_count FROM outbox_dead_letters WHERE resolved_at IS NULL;'
+    query = """
+        SELECT 'dead_letters' AS table_name, COUNT(*) AS open_count
+        FROM dead_letters WHERE resolved_at IS NULL
+        UNION ALL
+        SELECT 'outbox_dead_letters', COUNT(*)
+        FROM outbox_dead_letters WHERE resolved_at IS NULL;
+    """
 
     try:
         output = run_psql(database_url, query)
         rows = parse_psql_rows(output)
-        if rows:
-            check['open_count'] = int(rows[0].get('open_count', 0))
     except ValueError as error:
         check['status'] = 'read-error'
         check['message'] = str(error)
         return check
 
-    if check['open_count'] > THRESHOLDS['dead_letters_threshold']:
+    missing = {'dead_letters', 'outbox_dead_letters'} - {row.get('table_name') for row in rows}
+    if missing:
+        check['status'] = 'read-error'
+        check['message'] = f'missing count for {", ".join(sorted(missing))}'
+        return check
+
+    total = 0
+    for row in rows:
+        try:
+            open_count = int(row['open_count'])
+        except (ValueError, KeyError):
+            check['status'] = 'read-error'
+            check['message'] = f'unreadable count in {row.get("table_name", "?")}'
+            return check
+        check['by_table'][row['table_name']] = open_count
+        total += open_count
+
+    check['open_count'] = total
+
+    if total > THRESHOLDS['dead_letters_threshold']:
         check['status'] = 'warning'
-        check['message'] = f'{check["open_count"]} open (threshold: {THRESHOLDS["dead_letters_threshold"]})'
+        breakdown = ' + '.join(f'{name}={count}' for name, count in sorted(check['by_table'].items()))
+        check['message'] = f'{total} open ({breakdown}; threshold: {THRESHOLDS["dead_letters_threshold"]})'
 
     return check
 
@@ -432,47 +462,54 @@ def check_claimed_not_started(database_url: str, now: datetime.datetime) -> dict
     return check
 
 
+SYSTEMD_SCOPES = (
+    ('system', 'cauce-v3-alias-', ['ssh', 'kratos', 'systemctl', 'list-units', '--all', '--output=json']),
+    ('user', 'cauce-v3-', ['ssh', 'kratos', 'systemctl', '--user', 'list-units', '--all', '--output=json']),
+)
+
+
 def check_systemd() -> dict[str, Any]:
-    """Check systemd units in kratos (optional, requires ssh)."""
+    """Check systemd units in kratos (optional, requires ssh), at both system and user scope:
+    each entry in SYSTEMD_SCOPES is (scope label, unit name prefix, systemctl args). Container
+    and pty adapters run as user units, so a system-only check never sees them fail.
+    """
     check = {
         'status': 'ok',
         'message': '',
         'failed_units': [],
     }
 
-    try:
-        result = subprocess.run(
-            ['ssh', 'kratos', 'systemctl', 'list-units', '--all', '--output=json'],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+    for scope, prefix, args in SYSTEMD_SCOPES:
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as error:
+            check['status'] = 'read-error'
+            check['message'] = f'systemd check failed ({scope}): {str(error)}'
+            return check
 
         if result.returncode != 0:
             check['status'] = 'read-error'
-            check['message'] = f'ssh kratos failed: {result.stderr.strip()}'
+            check['message'] = f'ssh kratos failed ({scope}): {result.stderr.strip()}'
             return check
 
         try:
             units = json.loads(result.stdout)
-            for unit in units:
-                unit_name = unit.get('unit', '')
-                if (
-                    unit_name.startswith('cauce-v3-alias-')
-                    and (unit.get('active') == 'failed' or unit.get('sub') == 'failed')
-                ):
-                    check['failed_units'].append(unit_name)
-
-            if check['failed_units']:
-                check['status'] = 'critical'
-                check['message'] = f'{len(check["failed_units"])} systemd units failed'
         except json.JSONDecodeError:
             check['status'] = 'read-error'
-            check['message'] = 'failed to parse systemctl output'
+            check['message'] = f'failed to parse systemctl output ({scope})'
+            return check
 
-    except (FileNotFoundError, subprocess.TimeoutExpired) as error:
-        check['status'] = 'read-error'
-        check['message'] = f'systemd check failed: {str(error)}'
+        for unit in units:
+            unit_name = unit.get('unit', '')
+            if (
+                unit_name.startswith(prefix)
+                and (unit.get('active') == 'failed' or unit.get('sub') == 'failed')
+            ):
+                check['failed_units'].append(f'{scope}:{unit_name}')
+
+    if check['failed_units']:
+        check['status'] = 'critical'
+        check['message'] = f'{len(check["failed_units"])} systemd units failed'
 
     return check
 
@@ -566,7 +603,7 @@ def main() -> None:
         sys.exit(2)
 
     state_file = os.getenv('CAUCE_WATCHDOG_STATE_FILE', '/tmp/cauce-watchdog.state')
-    check_systemd = os.getenv('CAUCE_CHECK_SYSTEMD') == '1'
+    systemd_enabled = os.getenv('CAUCE_CHECK_SYSTEMD') == '1'
 
     # Load previous state
     previous_state = load_state(state_file)
@@ -582,7 +619,7 @@ def main() -> None:
         'claimed_not_started': check_claimed_not_started(database_url, now),
     }
 
-    if check_systemd:
+    if systemd_enabled:
         checks['systemd'] = check_systemd()
 
     # Determine overall status

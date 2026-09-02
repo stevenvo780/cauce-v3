@@ -39,9 +39,8 @@ die() {
   exit "${2:-2}"
 }
 
-# Every short-lived control-plane Docker call is bounded so a hung daemon/exec
-# cannot wedge the supervisor. The long-running adapter exec at the end of start
-# is intentionally NOT wrapped (it must run unbounded).
+# Every short-lived control-plane Docker call is bounded so a hung daemon/exec cannot wedge the
+# supervisor. The long-running adapter exec at the end of start is intentionally NOT wrapped.
 docker_control() { timeout -k 5 "$DOCKER_CALL_TIMEOUT" docker "$@"; }
 
 if [[ ${CAUCE_CONTAINER_TEST_MODE:-0} == 1 ]]; then
@@ -136,9 +135,8 @@ IFS=$'\t' read -r tenant room container_name container_user container_home state
 valid_absolute_path "$container_home" || die 'mapped container home is invalid'
 valid_absolute_path "$state_directory" || die 'mapped state directory is invalid'
 
-# Policy facts that cannot fit in the seven-field legacy stdout above. They come from the same
-# validated inventory, not from the alias .env: physical-container cardinality decides whether
-# isolation is mandatory, and the OpenClaw workspace is compared byte-for-byte with inventory.
+# Policy facts that cannot fit in the seven-field legacy stdout above, from the same validated
+# inventory (not the alias .env): cardinality decides isolation, workspace is compared byte-for-byte.
 mapfile -t inventory_policy < <(PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" "$alias_name" <<'PY'
 import pathlib
 import sys
@@ -177,9 +175,8 @@ load_config() {
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
-      # Shared session: the SAME conversation in the owner's terminal and in Telegram. It only
-      # exists for claude and codex, which are the two harnesses with a shareable TUI; for the rest
-      # the switch would mean nothing and accepting it would be lying about which mode it runs in.
+      # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex
+      # (the two harnesses with a shareable TUI); elsewhere it would lie about which mode it runs in.
       SHARED_SESSION|SHARED_SESSION_WORKSPACE)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
         ;;
@@ -262,15 +259,18 @@ validate_config_values() {
     (( default_timeout_ms >= 60000 && default_timeout_ms <= 604800000 )) \
       || die 'DEFAULT_TIMEOUT_MS must be a decimal integer between 60000 and 604800000'
   fi
-  # The switch only accepts the exact value 1. A `SHARED_SESSION=true` accepted as "on" on one side
-  # and "off" on the other would give an alias that thinks it shares and does not share: precisely the
-  # state this work exists to eliminate.
+  # Only the exact value 1: accepted as "on" by one side and "off" by the other would give an alias
+  # that thinks it shares and does not — precisely the state this work exists to eliminate.
   if [[ -v CONFIG[SHARED_SESSION] ]]; then
     [[ ${CONFIG[SHARED_SESSION]} == 1 ]] || die 'SHARED_SESSION must be exactly 1'
   fi
   if [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]]; then
     [[ -v CONFIG[SHARED_SESSION] ]] || die 'SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1'
     valid_absolute_path "${CONFIG[SHARED_SESSION_WORKSPACE]}" || die 'SHARED_SESSION_WORKSPACE must be a canonical absolute path'
+  fi
+  # Both rewrite the same harness config directory live, racing the seeded profile against the owner.
+  if [[ -v CONFIG[SHARED_SESSION] && ${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]:-0} == 1 ]]; then
+    die 'CAUCE_NATIVE_PROFILE_CONTEXT is incompatible with SHARED_SESSION'
   fi
   # By the same criterion as SHARED_SESSION: only the exact value 1. A `CONFIG_POR_ALIAS=true` read as
   # on by one side and off by another would leave the alias copying to one directory and reading from
@@ -576,7 +576,7 @@ docker_id_mutate() {
 discovered_mount_destination=''
 validate_container_identity_and_mount() {
   local before image label template mount_json after runtime_path runtime_mount
-  local mount_args=() runtime_paths=()
+  local mount_args=() runtime_paths=() shared_session_workspace=''
   before=$(read_state_signature) || die 'cannot inspect selected container ID' 75
   [[ $before == "$container_state_signature" ]] || die 'container changed before policy validation' 75
   image=$(docker_control inspect --format '{{.Image}}' "$container_id") || die 'cannot inspect container image' 75
@@ -604,12 +604,10 @@ validate_container_identity_and_mount() {
     [[ ${CONFIG[MOUNT_DESTINATION]} == "$discovered_mount_destination" ]] || die 'declared MOUNT_DESTINATION differs from the discovered persistent mount'
   fi
 
-  # State persistence alone is insufficient.  A recreate must also preserve every harness path
-  # that carries identity/configuration and every workspace that is explicitly promised as
-  # durable.  Validate these paths against the same immutable inspect snapshot, without reading
-  # their contents.  In particular this catches a Dédalo-style layout where /workspace survives
-  # but CODEX_HOME accidentally lives in the container writable layer, and a Hermes layout where
-  # the profile survives but the pinned source or venv does not.
+  # State persistence alone is insufficient: a recreate must also preserve every harness identity path
+  # and every promised-durable workspace, validated against the same immutable inspect snapshot. This
+  # catches /workspace surviving while CODEX_HOME lives in the writable layer, or a Hermes profile
+  # surviving while its pinned source/venv does not.
   if [[ $harness == codex ]]; then
     runtime_paths+=("$container_home/.codex/auth.json" "$container_home/.codex/config.toml")
   elif [[ $harness == claude ]]; then
@@ -626,8 +624,10 @@ validate_container_identity_and_mount() {
       || { rm -f "$mount_json"; die 'cannot derive persistent alias configuration directory'; }
     runtime_paths+=("$runtime_path")
   fi
-  if [[ -v CONFIG[SHARED_SESSION_WORKSPACE] ]]; then
-    runtime_paths+=("${CONFIG[SHARED_SESSION_WORKSPACE]}")
+  # SHARED_SESSION always pins a workspace: undeclared gets the SDK's own default (config.ts).
+  if [[ -v CONFIG[SHARED_SESSION] ]]; then
+    shared_session_workspace=${CONFIG[SHARED_SESSION_WORKSPACE]:-/workspace}
+    runtime_paths+=("$shared_session_workspace")
   fi
   for runtime_path in "${runtime_paths[@]}"; do
     runtime_mount=$(PYTHONDONTWRITEBYTECODE=1 python3 "$MOUNT_VALIDATOR" "$mount_json" "$runtime_path") \
@@ -636,6 +636,11 @@ validate_container_identity_and_mount() {
       || { rm -f "$mount_json"; die 'a required harness mount is invalid' 75; }
   done
   rm -f "$mount_json"
+  # On persistent storage does not mean created there; tmux accepts a bad `-c` and starts elsewhere.
+  if [[ -n $shared_session_workspace ]]; then
+    docker_id_exec test -d "$shared_session_workspace" >/dev/null 2>&1 \
+      || die "SHARED_SESSION workspace does not exist inside the container: $shared_session_workspace"
+  fi
   after=$(read_state_signature) || die 'container disappeared during policy validation' 75
   [[ $after == "$before" ]] || die 'container generation changed during policy validation' 75
 }
@@ -678,11 +683,9 @@ prepare_state_securely() {
 }
 
 ensure_claude_binary() {
-  # For claude harness adapters: verify the binary against the alias-specific version observed
-  # and approved during release evidence. Containers update independently, so a source-global
-  # version would make healthy aliases fail merely because another image carries a newer build.
-  # This does NOT install; installation must be pre-built into the container.
-  # Fail loudly if version is wrong to prevent silent misconfiguration.
+  # For claude adapters: verify the binary against the alias-specific approved version. Containers
+  # update independently, so a source-global version would fail healthy aliases on a newer image.
+  # This does NOT install (pre-built into the container); it fails loudly on a version mismatch.
   if [[ $harness == claude ]]; then
     # shellcheck disable=SC2016
     docker_id_exec --user "$container_user" bash -c '
@@ -717,9 +720,8 @@ ensure_claude_binary() {
 
 ensure_hermes_runtime() {
   [[ $harness == hermes ]] || return 0
-  # The exact same executable verifier is used by provisioning and every supervisor preflight.
-  # It checks commit, ignored/untracked entries, uv bytes, the publish-last marker, ownership,
-  # modes, symlink containment and the final editable import location without touching auth.
+  # The exact same executable verifier is used by provisioning and every supervisor preflight: commit,
+  # ignored/untracked entries, uv bytes, publish-last marker, ownership, modes, symlinks, import location.
   [[ -f $HERMES_RUNTIME_VERIFIER && ! -L $HERMES_RUNTIME_VERIFIER ]] \
     || die "Hermes runtime verifier is unavailable for $alias_name" 78
   docker_id_exec_stdin --user 0 /usr/bin/python3 - \
@@ -760,10 +762,9 @@ ensure_isolated_config() {
     *) die "isolated configuration is unsupported for $harness" 78 ;;
   esac
 
-  # Probe only file types, ownership/mode and exact link destinations; never read a credential or
-  # print a path supplied by the container.  The destination identity must be its own regular
-  # inode, while credential/config files remain single-source symlinks so atomic login rotation is
-  # immediately visible to every alias without copying secret bytes.
+  # Probe only file types, ownership/mode and link destinations; never read a credential or print a
+  # container-supplied path. The destination is its own regular inode; credential/config files stay
+  # single-source symlinks so atomic login rotation is visible to every alias without copying bytes.
   docker_id_exec --user "$container_user" /usr/bin/python3 -c '
 import os, stat, sys
 
@@ -911,14 +912,13 @@ start_adapter() {
     # and the TUI renders broken for the owner, who is the one who joins afterwards.
     environment+=('TERM=xterm-256color')
   fi
-  # HERE is where the per-alias configuration is exported: inside the `environment` array, which is
-  # Travels whole to the `/usr/bin/env -i` below. After the shared-session block on purpose: the TUI
-  # panel inherits this env, so adapter and owner terminal resolve the SAME dir (harnessConfigDirectory
-  # in packages/adapter-sdk/src/shared-session/config.ts). OFF BY DEFAULT: without CONFIG_POR_ALIAS=1
-  # nothing is exported. Turned on per alias AFTER copying the files (aplicar-separacion-config.sh):
-  # switching it on over an empty dir leaves the alias without identity —and claude without MCP— silently.
+  # Per-alias config is exported here, after the shared-session block: the TUI panel inherits this env,
+  # so adapter and owner terminal resolve the SAME dir. OFF BY DEFAULT: over an empty dir it strips identity.
+  # `env -i` keeps only the LAST repeat: the per-alias directory wins over CREDENTIAL_HOME, announced on stderr.
   if [[ -v CONFIG[CONFIG_POR_ALIAS] ]]; then
-    environment+=("$(config_por_alias_variable "$harness")=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name")")
+    per_alias_directory=$(config_por_alias_directorio "$harness" "$container_home" "$alias_name")
+    [[ -v CONFIG[CREDENTIAL_HOME] && ${CONFIG[CREDENTIAL_HOME]} != "$per_alias_directory" ]] && printf 'warning: CONFIG_POR_ALIAS overrides CREDENTIAL_HOME for %s: %s -> %s\n' "$alias_name" "${CONFIG[CREDENTIAL_HOME]}" "$per_alias_directory" >&2
+    environment+=("$(config_por_alias_variable "$harness")=$per_alias_directory")
   elif [[ ( $harness == claude || $harness == codex ) && ! -v CONFIG[CREDENTIAL_HOME] ]]; then
     # Without isolation, claude/codex use their default but do NOT EXPORT the var, and the pty-agent
     # runtime_facts measurement (it scans /proc for the observed profile) does not see it → 503 profile.

@@ -38,10 +38,15 @@ set -u
 umask 077
 
 restore_container=""
+verify_data_dir=""
 cleanup() {
   if [ -n "$restore_container" ]; then
     docker rm -f "$restore_container" >/dev/null 2>&1 || true
     restore_container=""
+  fi
+  if [ -n "$verify_data_dir" ]; then
+    rm -rf "$verify_data_dir" 2>/dev/null || true
+    verify_data_dir=""
   fi
 }
 trap cleanup EXIT
@@ -136,9 +141,19 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
     restore_image=$(docker inspect -f '{{.Image}}' "$CAUCE_DB_CONTAINER" 2>>"$tmperr" || true)
     restore_container="cauce-v3-backup-verify-${stamp}-$$"
     printf '%s\n' "$restore_image" | grep -Eq '^sha256:[0-9a-f]{64}$' || restore_image=""
+    RESTORE_TMPFS_BYTES=2147483648
+    tmp_size=$(wc -c <"$tmp" | tr -d ' ')
+    if [ "${tmp_size:-0}" -ge $((RESTORE_TMPFS_BYTES / 2)) ]; then # restored cluster needs more room than its compressed dump; past half the tmpfs budget, verify on disk instead
+      verify_data_dir="${RESTORE_VERIFY_DIR:-$DB_BACKUP_DIR/.restore-verify}/$stamp-$$"
+      mkdir -p "$verify_data_dir" && chmod 700 "$verify_data_dir"
+      set -- -v "$verify_data_dir:/var/lib/postgresql/data:rw"
+      log "[db] dump is $tmp_size bytes (>= half of the $RESTORE_TMPFS_BYTES-byte verify tmpfs); verifying restore on disk at $verify_data_dir"
+    else
+      set -- --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=$RESTORE_TMPFS_BYTES
+    fi
     if [ -n "$restore_image" ] \
        && docker run -d --name "$restore_container" --network none \
-            --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,size=2147483648 \
+            "$@" \
             -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=cauce_restore \
             -e POSTGRES_USER=postgres "$restore_image" >/dev/null 2>>"$tmperr"
     then
@@ -172,10 +187,10 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$CAUCE_DB_CONTAINER" 2>/dev/null
     fi
     cleanup
 
+    mv "$tmp" "$final" # keep the dump even on a failed restore check: pg_restore --list already proved the archive header readable above; only the status differs below
+    (cd "$DB_BACKUP_DIR" && sha256sum "$(basename "$final")" >"$(basename "$final").sha256")
+    restore_evidence_file="$final.restore.json"
     if [ "$restore_status" = ok ]; then
-      mv "$tmp" "$final"
-      (cd "$DB_BACKUP_DIR" && sha256sum "$(basename "$final")" >"$(basename "$final").sha256")
-      restore_evidence_file="$final.restore.json"
       cat >"$restore_evidence_file" <<JSON
 {
   "schema_version": 1,
@@ -196,9 +211,26 @@ JSON
       db_file=$final
       log "[db] OK -> $final ($(wc -c <"$final" | tr -d ' ') bytes, isolated restore verified)"
     else
+      cat >"$restore_evidence_file" <<JSON
+{
+  "schema_version": 1,
+  "suite": "cauce-v3-host-backup-restore",
+  "verified_at_utc": "$(ts)",
+  "dump_file": "$(basename "$final")",
+  "dump_sha256": "$(cut -d' ' -f1 "$final.sha256")",
+  "database_image_digest": "$restore_image",
+  "isolated": true,
+  "network": "none",
+  "full_restore": false,
+  "core_table_count": null,
+  "applied_migration_count": null
+}
+JSON
+      chmod 0600 "$restore_evidence_file"
       db_status=failed
+      db_file=$final
       db_detail="$restore_detail: $(tail -c 1000 "$tmperr" 2>/dev/null | tr '\n' ' ')"
-      err "[db] $db_detail"
+      err "[db] $db_detail (dump PRESERVED at $final, restore check FAILED -- do not treat as verified)"
       overall_rc=1
     fi
   else

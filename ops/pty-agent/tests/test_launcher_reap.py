@@ -15,6 +15,15 @@ def _extract_reap_function() -> str:
     return text[start:end]
 
 
+def _extract_docker_control_function() -> str:
+    """reap_orphan_agents calls docker_control, not docker exec directly: the sandboxed
+    runner script needs the real one-line definition, not a hand-copied stand-in."""
+    for line in LAUNCHER.read_text(encoding="utf-8").splitlines():
+        if line.startswith("docker_control()"):
+            return line
+    raise AssertionError("docker_control() definition not found in launcher")
+
+
 def _create_fake_docker(tmp_dir: pathlib.Path) -> pathlib.Path:
     script_path = tmp_dir / "docker"
     body = r"""#!/usr/bin/env bash
@@ -61,6 +70,8 @@ class LauncherReapTest(unittest.TestCase):
             runner_script = f"""
 alias_name={alias}
 container_id={container_id}
+DOCKER_CALL_TIMEOUT=30
+{_extract_docker_control_function()}
 export alias_name container_id
 {_extract_reap_function()}
 reap_orphan_agents
@@ -145,6 +156,8 @@ exit 0
             runner_script = f"""
 alias_name=zeus
 container_id=deadbeef
+DOCKER_CALL_TIMEOUT=30
+{_extract_docker_control_function()}
 export alias_name container_id
 {_extract_reap_function()}
 reap_orphan_agents

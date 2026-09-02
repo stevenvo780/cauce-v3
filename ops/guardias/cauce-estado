@@ -241,7 +241,7 @@ def actividad(mod, alias):
     return {'ultimo_ack': ultimo_ack, 'ack_estado': ack_estado, 'ultima_hecha': ultima_hecha}
 
 
-def veredicto(datos):
+def veredicto(datos, mod):
     """The conclusion, in one line. Order matters: first what explains the silence."""
     if datos['marcador'] and datos['marcador'].get('vivo'):
         return ('MUDO A PROPÓSITO', 'hay un attach abierto (pid %s, hace %s): el adaptador está '
@@ -268,6 +268,9 @@ def veredicto(datos):
     if cpu is not None and edad and edad > 3600 and (cpu / edad) < 0.0005:
         return ('INERTE', 'lleva %s vivo y sólo %ss de CPU: está prendido pero no procesa nada.'
                 % (datos['proceso']['edad'], int(cpu)))
+    atascado = mod.veredicto_cola(datos['cola'])
+    if atascado is not None:
+        return atascado
     vivas = len(datos['cola']['vivas']) if datos['cola'] else 0
     if vivas:
         return ('TRABAJANDO', '%d entrega(s) en vuelo o en cola.' % vivas)
@@ -322,7 +325,7 @@ def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
             'reciente': (inventario['reciente'] or {}).get('abrev'),
             'partidas': sum(len(v) for v in inventario['duplicadas'].values()),
         }
-    datos['veredicto'] = veredicto(datos)
+    datos['veredicto'] = veredicto(datos, mod)
     return datos
 
 
@@ -382,8 +385,8 @@ def datos_cola(datos):
         return 'el gateway no contestó (no hay Postgres alcanzable desde kratos)'
     partes = []
     nombres = {'pending': 'en cola', 'started': 'en vuelo', 'retrying': 'reintentando',
-               'dead': 'muertas'}
-    for clave in ('pending', 'started', 'retrying', 'dead'):
+               'leased': 'reclamadas', 'accepted': 'aceptadas', 'dead': 'muertas'}
+    for clave in ('pending', 'started', 'retrying', 'leased', 'accepted', 'dead'):
         if cola['por_estado'].get(clave):
             partes.append('%d %s' % (cola['por_estado'][clave], nombres[clave]))
     if not partes:

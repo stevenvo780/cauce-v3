@@ -783,13 +783,13 @@ PYTHON
 # by exact script name so no other process is targeted).
 reap_orphan_agents() {
   local victims
-  victims=$(docker exec "$container_id" sh -c \
+  victims=$(docker_control exec "$container_id" sh -c \
     "ps -eo pid,args | awk -v s=\"cauce-pty-agent-$alias_name.py\" 'index(\$0, s) && \$2 != \"awk\" {print \$1}'" 2>/dev/null) || true
   [[ -n ${victims:-} ]] || return 0
   printf 'cauce-pty-launcher: reaping orphan agents alias=%s pids=%s\n' "$alias_name" "$(tr '\n' ' ' <<<"$victims")" >&2
   while IFS= read -r pid; do
     [[ $pid =~ ^[0-9]+$ ]] || continue
-    docker exec "$container_id" sh -c \
+    docker_control exec "$container_id" sh -c \
       "ps -o args= -p $pid 2>/dev/null | grep -qF 'cauce-pty-agent-$alias_name.py' && kill $pid" 2>/dev/null || true
   done <<<"$victims"
 }

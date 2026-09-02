@@ -13,11 +13,10 @@ const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const supervisor = path.join(ops, "scripts/container-adapter-supervisor.sh");
 const runtimeHelper = path.join(ops, "container-runtime/cauce-container-runtime.py");
 const fakeDockerSource = path.join(ops, "tests/fake-docker.mjs");
-// The lifecycle half of this suite is an UNPRIVILEGED-controller suite: the helper refuses
-// to change identity when it is not root, and refuses a root adapter when it is, so a root
-// controller can never satisfy the fixture. Release hosts run the gate as root, so drop the
-// whole test process to a deterministic non-root identity before any fixture exists. Never
-// relax the runtime's own UID/GID 0 rejection to make this pass instead.
+// The lifecycle half of this suite is an UNPRIVILEGED-controller suite: the helper refuses to change
+// identity when not root, and refuses a root adapter when it is, so a root controller can never satisfy
+// the fixture. Release hosts run the gate as root, so drop to a deterministic non-root identity before
+// any fixture exists — never relax the runtime's own UID/GID 0 rejection to make this pass instead.
 const droppedFromRoot = typeof process.getuid === "function" && process.getuid() === 0;
 if (droppedFromRoot) {
   const testUid = Number.parseInt(process.env.CAUCE_TEST_RUNTIME_UID ?? process.env.SUDO_UID ?? "65534", 10);
@@ -49,9 +48,8 @@ const firstGenerationStartedAt = "2026-07-22T10:00:00.000000000Z";
 const secondGenerationStartedAt = "2026-07-22T10:01:00.000000000Z";
 const labelKey = "com.example.runtime";
 const labelValue = "approved-runtime";
-// kant is the host-branch operator alias (stev/ctrl-infra); atlas/kratos are the codex
-// pair co-located on ws-humanizar; iza/jarvis are openclaw agents under /home/claw; argos moved to /home/dev (ctrl-infra);
-// zeus is the fleet's only claude-harness alias.
+// kant is the host-branch operator alias (stev/ctrl-infra); atlas/kratos are the codex pair co-located
+// on ws-humanizar; iza/jarvis are openclaw agents under /home/claw; argos moved to /home/dev (ctrl-infra); zeus is the fleet's only claude-harness alias.
 const aliasState = {
   kant: "/var/lib/cauce-v3/aliases/kant", argos: "/home/dev/.local/state/cauce-v3/argos",
   atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
@@ -241,9 +239,8 @@ async function records(options) {
   return parseRecords(await readFile(log, "utf8"), options);
 }
 
-// A live JSONL reader may observe the final append after its body is visible but before the
-// terminating newline. Only that in-flight tail is retryable; completed malformed records and
-// post-exit truncation must remain hard failures so the fixture cannot manufacture a green gate.
+// A live JSONL reader may observe the final append after its body is visible but before the terminating
+// newline. Only that in-flight tail is retryable; malformed or post-exit-truncated records stay hard failures.
 assert.deepEqual(
   parseRecords('{"call":1}\n{"call":', { allowIncompleteTail: true }),
   [{ call: 1 }],
@@ -290,9 +287,8 @@ async function waitForLogOrExit(child, predicate, timeoutMs = 15000) {
   while (Date.now() - started < timeoutMs) {
     if (predicate(await records({ allowIncompleteTail: true }))) return;
     if (child.exitCode !== null || child.signalCode !== null) {
-      // The producer may have committed its final newline between the live read above and the
-      // exit observation. Re-read strictly once: accept a completed barrier, but surface an
-      // actually truncated or malformed post-exit log instead of converting it into a timeout.
+      // The producer may have committed its final newline between the live read and the exit observation.
+      // Re-read strictly once: accept a completed barrier, but surface a truncated/malformed log as such.
       if (predicate(await records())) return;
       throw new Error(`supervisor exited before fake Docker barrier: status=${child.exitCode} signal=${child.signalCode}`);
     }
@@ -354,9 +350,8 @@ const lifecycleContainerId = "b".repeat(64);
 const lifecycleGeneration = "c".repeat(64);
 const replacementGeneration = "d".repeat(64);
 
-// The adapter always runs under a non-root identity, so the fixture must request one
-// too. An unprivileged run can only request its own identity; a root run (the release
-// gate) must name a real unprivileged account, because child_credentials() rejects 0.
+// The adapter always runs non-root: an unprivileged run can only request its own identity; a root run
+// (the release gate) must name a real unprivileged account, because child_credentials() rejects 0.
 const runningAsRoot = process.getuid() === 0;
 const testIdentity = (() => {
   if (!runningAsRoot) return { uid: process.getuid(), gid: process.getgid() };
@@ -368,9 +363,8 @@ const testIdentity = (() => {
 })();
 const runtimeUid = String(testIdentity.uid);
 const runtimeGid = String(testIdentity.gid);
-// Under root the mkdtemp fixture root is root-owned 0700, so the dropped adapter child
-// could neither traverse it nor write its PID files. Hand that single directory to the
-// same unprivileged identity: root keeps full access and no mode is widened for anyone.
+// Under root the mkdtemp fixture root is root-owned 0700, so the dropped adapter child could neither
+// traverse it nor write PID files; hand it to the same unprivileged identity, widening no mode.
 if (runningAsRoot) await chown(temporary, testIdentity.uid, testIdentity.gid);
 const metadataName = "cauce-v3-adapter.json";
 const lockName = "cauce-v3-adapter.lock";
@@ -603,9 +597,8 @@ try {
   assert.equal(result.status, 0, `mTLS-only kant stop must succeed: ${result.stderr}`);
   process.stdout.write("mTLS-only kant: start and stop passed without bearer token\n");
 
-  // Adapter execution defaults to 24 hours, accepts a bounded per-alias override, and rejects
-  // every malformed/ambiguous value before Docker. The effective value is explicitly carried
-  // through the clean `env -i` boundary so no host environment can silently select another timeout.
+  // Adapter execution defaults to 24 hours, accepts a bounded per-alias override, and rejects every
+  // malformed/ambiguous value before Docker, carried through the clean `env -i` boundary explicitly.
   await writeConfig("kant", [], { DEFAULT_TIMEOUT_MS: "480000" });
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -633,9 +626,8 @@ try {
   await writeConfig("kant");
   process.stdout.write("default timeout: 86400000 default and 480000 override exported; invalid values rejected before Docker\n");
 
-  // Claude containers are upgraded independently.  The version pin therefore belongs to each
-  // alias config and must be exact; a source-global version would reject two healthy containers
-  // whenever their prebuilt images differ.
+  // Claude containers are upgraded independently, so the version pin belongs to each alias config and
+  // must be exact; a source-global version would reject two healthy containers whose images differ.
   await writeConfig("zeus", [], {}, ["EXPECTED_CLI_VERSION"]);
   await clearLog();
   result = runSupervisor("start", "zeus", await dockerState("zeus"));
@@ -680,9 +672,8 @@ try {
   process.stdout.write("argos openclaw defaults: workspace-only persistence starts under cli transport\n");
 
   // ---- Shared session: a single conversation in the terminal and in Telegram. ----
-  // The switch only exists for claude and codex, only accepts the exact value 1, and when on it
-  // must reach the adapter along with a usable TERM: without TERM tmux creates the session with
-  // an unknown terminal and the TUI renders broken for the owner.
+  // The switch only exists for claude and codex, only accepts the exact value 1, and when on it must
+  // reach the adapter with a usable TERM (else tmux creates the session unknown-terminal and broken).
   await writeConfig("kant", ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace"]);
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -692,6 +683,16 @@ try {
   assert(sharedFinal?.argv.includes("CAUCE_SHARED_SESSION_WORKSPACE=/workspace"));
   assert(sharedFinal?.argv.includes("TERM=xterm-256color"),
     "con sesión compartida el adaptador necesita un TERM utilizable para crear la sesión tmux");
+  const workspaceExistsCall = (await records()).find(({ argv }) => argv[0] === "exec"
+    && argv.includes("test") && argv.includes("-d") && argv.includes("/workspace"));
+  assert(workspaceExistsCall, "SHARED_SESSION debe comprobar que el workspace existe (docker exec test -d)");
+
+  await writeConfig("zeus", ["SHARED_SESSION=1"]);
+  await clearLog();
+  result = runSupervisor("start", "zeus", await dockerState("zeus"));
+  assert.notEqual(result.status, 0, "sin SHARED_SESSION_WORKSPACE debe validar igual el default /workspace");
+  assert.match(result.stderr, /required harness path/u);
+  await writeConfig("zeus");
 
   // Without the switch, the behavior is byte-for-byte the same as always.
   await writeConfig("kant");
@@ -710,6 +711,9 @@ try {
       /SHARED_SESSION_WORKSPACE must be a canonical absolute path/u],
     ["workspace sin interruptor", ["SHARED_SESSION_WORKSPACE=/workspace"],
       /SHARED_SESSION_WORKSPACE requires SHARED_SESSION=1/u],
+    ["perfil nativo con sesión compartida",
+      ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/workspace", "CAUCE_NATIVE_PROFILE_CONTEXT=1"],
+      /CAUCE_NATIVE_PROFILE_CONTEXT is incompatible with SHARED_SESSION/u],
   ]) {
     await writeConfig("kant", extra);
     await clearLog();
@@ -733,10 +737,8 @@ try {
   // ---- Per-alias configuration: each alias with its OWN configuration directory. ----
   // kratos and atlas run in the SAME container with the same HOME, and their ~/.codex/AGENTS.md is the
   // same INODE: per-file it is impossible to give them distinct identities. CODEX_HOME/CLAUDE_CONFIG_DIR
-  // already govern where each CLI looks, so the supervisor can point each alias to its own.
-  //
-  // In every physical container with more than one alias, the separation is mandatory. Omitting
-  // the switch must fail before Docker: never silently fall back to the shared HOME.
+  // already govern where each CLI looks, so the supervisor points each alias to its own; mandatory in
+  // every multi-alias container. Omitting the switch must fail before Docker, never falling back silently.
   await writeConfig("kant", [], {}, ["CONFIG_POR_ALIAS"]);
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant"));
@@ -756,6 +758,15 @@ try {
   assert(!conInterruptor?.argv.some((value) => value.startsWith("CLAUDE_CONFIG_DIR=")),
     "un alias codex no puede recibir además la variable de claude");
 
+  await writeConfig("kant", ["CREDENTIAL_HOME=/mnt/kant-credentials/.codex"]);
+  await clearLog();
+  result = runSupervisor("start", "kant", await dockerState("kant"));
+  assert.equal(result.status, 0, `CONFIG_POR_ALIAS + CREDENTIAL_HOME debe arrancar: ${result.stderr}`);
+  assert.match(result.stderr, /CONFIG_POR_ALIAS overrides CREDENTIAL_HOME for kant/u, "el solapamiento se anuncia");
+  const credentialFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=kant"));
+  assert.equal(credentialFinal?.argv.filter((value) => value.startsWith("CODEX_HOME=")).at(-1), "CODEX_HOME=/home/stev/.local/share/cauce-v3/config/kant/.codex", "gana el directorio por alias");
+  await writeConfig("kant");
+
   for (const [name, value, expected] of [
     ["valor distinto de 1", "true", /CONFIG_POR_ALIAS must be exactly 1/u],
     ["valor 0", "0", /CONFIG_POR_ALIAS must be exactly 1/u],
@@ -769,8 +780,7 @@ try {
   }
 
   // A harness that does not read any directory governed by a variable cannot declare the switch:
-  // exporting the variable to it would move a directory no one reads and leave someone convinced
-  // that alias is already separated.
+  // exporting it would move a directory no one reads and leave someone convinced it is separated.
   await writeConfig("iza", ["CONFIG_POR_ALIAS=1"]);
   await clearLog();
   result = runSupervisor("start", "iza", await dockerState("iza"));
@@ -797,9 +807,8 @@ try {
   process.stdout.write("config por alias: mandatory for multi-alias containers, derived per alias, rejected outside claude/codex\n");
 
   // ---- Bundle layout regression guard: mini-monorepo vs legacy root layout. ----
-  // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js;
-  // the supervisor must resolve exactly that path. Positive: the standard fixture uses that
-  // layout and validate_bundle accepts it (a full start succeeds).
+  // The real production bundle ships adapters at packages/adapter-sdk/dist/src/bin/<harness>.js; the
+  // supervisor must resolve exactly that path. Positive: the standard fixture uses that layout.
   await clearLog();
   assert.equal(runSupervisor("start", "kant", await dockerState("kant")).status, 0,
     "packages/adapter-sdk/dist/src/bin layout must pass validate_bundle");
@@ -861,9 +870,8 @@ try {
   assert.equal(jarvisFinal?.argv.some((value) => value.includes("FAKE_OPENCLAW_TOKEN")), false);
 
   // OpenClaw CLI transport with a GLOBAL dist dir: openclaw can be installed system-wide, so
-  // OPENCLAW_DIST_DIR need not live below the mapped user home. A canonical absolute path such as
-  // /usr/lib/node_modules/openclaw/dist is accepted and exported verbatim. CLI transport also
-  // requires the PKI directory to carry no openclaw-token, so it is removed for this scenario.
+  // OPENCLAW_DIST_DIR need not live below the mapped user home — any canonical absolute path is
+  // accepted and exported verbatim. CLI transport also requires no openclaw-token in the PKI dir.
   await rm(path.join(pkiRoot, "jarvis/openclaw-token"));
   await writeConfig("jarvis", ["OPENCLAW_TRANSPORT=cli", "OPENCLAW_DIST_DIR=/usr/lib/node_modules/openclaw/dist"]);
   await clearLog();
@@ -913,9 +921,8 @@ try {
   await writeConfig("iza");
   process.stdout.write("per-alias release pin: iza release-2 selected directly without a current symlink\n");
 
-  // Image is mandatory; the label and MOUNT_* keys are optional reinforcement. When declared,
-  // each must match. The persistent mount is the bind/volume that CONTAINS the state dir, so
-  // an ephemeral/read-write-off ancestor or a missing ancestor fails before any PKI copy.
+  // Image is mandatory; the label and MOUNT_* keys are optional reinforcement, each must match when
+  // declared. The persistent mount CONTAINS the state dir, so a bad/missing ancestor fails before PKI.
   for (const [name, override, expected] of [
     ["image", { imageId: `sha256:${"f".repeat(64)}` }, /image ID/u],
     ["label", { labelValue: "wrong" }, /label/u],
@@ -932,9 +939,8 @@ try {
     assert.equal((await records()).some(({ argv }) => argv[0] === "cp"), false);
   }
 
-  // A persistent state mount does not make an ephemeral harness home acceptable.  Codex
-  // auth/config live on a separate mounted home and must survive the same container
-  // recreation as the state.
+  // A persistent state mount does not make an ephemeral harness home acceptable: Codex auth/config
+  // live on a separate mounted home and must survive the same container recreation as the state.
   await clearLog();
   statePath = await dockerState("kant", { mounts: [{
     Type: "bind", Source: `${mountSourceRoot}/kant`, Destination: aliasMount.kant, RW: true,
@@ -945,9 +951,8 @@ try {
   assert.equal((await records()).some(({ mutating }) => mutating), false,
     "harness persistence must fail before any Docker mutation");
 
-  // The on-disk isolated layout is rechecked by start/check, not trusted merely because the env
-  // points to its directory.  The fake models a broken/missing identity or a link redirected away
-  // from the authorized single source.
+  // The on-disk isolated layout is rechecked by start/check, not trusted merely because the env points
+  // to its directory. The fake models a broken/missing identity or a link redirected away from source.
   await clearLog();
   result = runSupervisor("start", "kant", await dockerState("kant", { isolatedConfigOk: false }));
   assert.notEqual(result.status, 0, "a broken isolated config must fail closed");
@@ -1019,9 +1024,8 @@ try {
   assert.equal((await records()).length, 0);
   await writeConfig("kant");
 
-  // atlas and kratos share ONE persistent bind (/home/dev/.local, one Source) in ws-humanizar.
-  // Each alias state dir is a disjoint subtree, so both discover the same mount without
-  // colliding: disjoint /opt trees and disjoint prepared state dirs prove the isolation.
+  // atlas and kratos share ONE persistent bind (/home/dev/.local, one Source) in ws-humanizar. Each
+  // alias state dir is a disjoint subtree, so both discover the same mount without colliding.
   await clearLog();
   const sharedSource = `${mountSourceRoot}/ws-humanizar-dot-local`;
   const sharedBind = [
@@ -1165,9 +1169,8 @@ time.sleep(60)
   const lifecycleControl = await makeControl("lifecycle");
   await mkdir(lifecycleState, { mode: 0o700 });
 
-  // A child may fail transiently after successful exec but before the controller
-  // samples two stable identity snapshots. Propagate its outcome through the
-  // restartable adapter code instead of stranding systemd on permanent exit 78.
+  // A child may fail transiently after successful exec but before the controller samples two stable
+  // identity snapshots; propagate its outcome instead of stranding systemd on permanent exit 78.
   const earlyExitState = path.join(temporary, "early-exit-state");
   const earlyExitControl = await makeControl("early-exit");
   await mkdir(earlyExitState, { mode: 0o700 });
@@ -1279,9 +1282,8 @@ time.sleep(60)
   await waitProcessGone(reexecManaged.document.pid);
   process.stdout.write("same-lineage real re-exec: terminated and gone before stop returned\n");
 
-  // Pin the complete observed target set before the first signal. While stop is
-  // gated, kill the controller and move a child to a new session with an empty
-  // environment. The pre-opened pidfd must still target that exact child.
+  // Pin the complete observed target set before the first signal. While stop is gated, kill the controller
+  // and move a child to a new session with an empty environment: the pre-opened pidfd must still target it.
   const atomicState = path.join(temporary, "atomic-stop-state");
   const atomicControl = await makeControl("atomic-stop");
   const atomicMove = path.join(temporary, "atomic-stop.move");
@@ -1360,9 +1362,8 @@ time.sleep(60)
   await waitProcessGone(alienPid);
   process.stdout.write("PGID reuse after leader reap: alien in the freed process group was not signalled\n");
 
-  // PID-reuse analogue: metadata points at a genuinely different live process
-  // whose starttime and process group differ. It remains untouched and metadata
-  // remains preserved with a permanent (78) refusal.
+  // PID-reuse analogue: metadata points at a genuinely different live process whose starttime and
+  // process group differ. It remains untouched and metadata preserved with a permanent (78) refusal.
   const reusedState = path.join(temporary, "different-process-state");
   const reusedControl = await makeControl("different-process");
   await mkdir(reusedState, { mode: 0o700 });
@@ -1388,9 +1389,8 @@ time.sleep(60)
   await waitProcessGone(differentProcess.pid);
   process.stdout.write("different-process PID-reuse mismatch: preserved with exit 78\n");
 
-  // Environment identity is an ambiguity detector, never targeting authority.
-  // A same-UID process in another session can copy every CAUCE identity variable;
-  // stop/stopped must refuse with 78 without touching it or the real leader.
+  // Environment identity is an ambiguity detector, never targeting authority: a same-UID process in
+  // another session can copy every CAUCE identity variable; stop/stopped must refuse (78) untouched.
   const forgedEnvState = path.join(temporary, "forged-env-state");
   const forgedEnvControl = await makeControl("forged-env");
   await mkdir(forgedEnvState, { mode: 0o700 });

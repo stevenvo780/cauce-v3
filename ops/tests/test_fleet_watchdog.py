@@ -179,6 +179,104 @@ def test_claimed_not_started():
     print('✓ Claimed-but-never-started aliases are reported as critical')
 
 
+def test_dead_letters_both_tables():
+    """`dead_letters` (retries exhausted) and `outbox_dead_letters` (never left the sender's
+    outbox) are two different tables; counting only one hides the other's backlog, and a
+    missing table must fail closed rather than report a silent partial total."""
+    watchdog_module = load_watchdog_module()
+    original = watchdog_module.run_psql
+    try:
+        watchdog_module.run_psql = lambda *_args, **_kwargs: (
+            'table_name|open_count\n'
+            'dead_letters|7\n'
+            'outbox_dead_letters|5\n'
+        )
+        check = watchdog_module.check_dead_letters('postgres://x')
+        assert check['status'] == 'warning', f'12 open beats the threshold (got {check["status"]})'
+        assert check['open_count'] == 12, check['open_count']
+        assert check['by_table'] == {'dead_letters': 7, 'outbox_dead_letters': 5}, check['by_table']
+
+        watchdog_module.run_psql = lambda *_args, **_kwargs: 'table_name|open_count\ndead_letters|7\n'
+        partial = watchdog_module.check_dead_letters('postgres://x')
+        assert partial['status'] == 'read-error', f'a missing table must fail closed (got {partial})'
+    finally:
+        watchdog_module.run_psql = original
+    print('✓ Dead letters are counted across both tables and fail closed when one is missing')
+
+
+def test_check_systemd_covers_user_scope():
+    """Container and pty adapters run as user units (`cauce-v3-container-*`, `cauce-v3-pty@*`);
+    a check that only asks systemctl at system scope never sees them fail."""
+    watchdog_module = load_watchdog_module()
+
+    class FakeCompletedProcess:
+        def __init__(self, stdout, returncode=0, stderr=''):
+            self.stdout = stdout
+            self.returncode = returncode
+            self.stderr = stderr
+
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if '--user' in args:
+            return FakeCompletedProcess(json.dumps([
+                {'unit': 'cauce-v3-container-argos.service', 'active': 'failed', 'sub': 'failed'},
+            ]))
+        return FakeCompletedProcess('[]')
+
+    original = watchdog_module.subprocess.run
+    try:
+        watchdog_module.subprocess.run = fake_run
+        check = watchdog_module.check_systemd()
+        assert check['status'] == 'critical', check
+        assert any('--user' in call for call in calls), 'must ask systemctl --user, not only system scope'
+        assert 'user:cauce-v3-container-argos.service' in check['failed_units'], check['failed_units']
+    finally:
+        watchdog_module.subprocess.run = original
+    print('✓ check_systemd checks both system and user scope')
+
+
+def test_check_systemd_env_var_does_not_shadow_function():
+    """CAUCE_CHECK_SYSTEMD=1 used to be stashed in a local variable named `check_systemd`
+    inside main(), shadowing the module-level function of the same name: `checks['systemd']
+    = check_systemd()` then tried to call a bool and crashed with TypeError."""
+    watchdog_module = load_watchdog_module()
+
+    class FakeCompletedProcess:
+        def __init__(self, stdout='[]', returncode=0, stderr=''):
+            self.stdout = stdout
+            self.returncode = returncode
+            self.stderr = stderr
+
+    original_run_psql = watchdog_module.run_psql
+    original_subprocess_run = watchdog_module.subprocess.run
+    original_argv = sys.argv[:]
+    original_environ = os.environ.copy()
+
+    try:
+        watchdog_module.run_psql = lambda *_args, **_kwargs: ''
+        watchdog_module.subprocess.run = lambda *_args, **_kwargs: FakeCompletedProcess()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.environ['CAUCE_DATABASE_URL'] = 'postgres://fake'
+            os.environ['CAUCE_CHECK_SYSTEMD'] = '1'
+            os.environ['CAUCE_WATCHDOG_STATE_FILE'] = str(pathlib.Path(tmpdir) / 'state.json')
+            sys.argv = ['fleet-watchdog.py']
+            try:
+                watchdog_module.main()
+            except SystemExit as exit_error:
+                assert exit_error.code in (0, None), f'main() must exit 0 (got {exit_error.code})'
+            else:
+                raise AssertionError('main() must call sys.exit')
+    finally:
+        watchdog_module.run_psql = original_run_psql
+        watchdog_module.subprocess.run = original_subprocess_run
+        sys.argv[:] = original_argv
+        os.environ.clear()
+        os.environ.update(original_environ)
+    print('✓ CAUCE_CHECK_SYSTEMD=1 no longer shadows check_systemd()')
+
+
 if __name__ == '__main__':
     test_script_exists()
     test_missing_database_url()
@@ -186,4 +284,7 @@ if __name__ == '__main__':
     test_state_file()
     test_output_formats()
     test_claimed_not_started()
+    test_dead_letters_both_tables()
+    test_check_systemd_covers_user_scope()
+    test_check_systemd_env_var_does_not_shadow_function()
     print('\n✓ All tests passed')

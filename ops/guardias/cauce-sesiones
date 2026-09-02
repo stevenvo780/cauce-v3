@@ -22,6 +22,7 @@ when was the last turn.
 
 Also importable: `inventario(alias)` returns the raw dict.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -426,7 +427,7 @@ def duplicadas(sesiones):
 # ssh to the storage host). Only the gateway via mTLS with per-alias certs under
 # ~/.config/cauce-v3/container-pki; that covers queue, presence and timeline.
 # --------------------------------------------------------------------------------------------
-VIVAS = ('pending', 'started', 'retrying')
+VIVAS = ('pending', 'started', 'retrying', 'leased', 'accepted')
 
 
 def pki_de(alias):
@@ -495,6 +496,42 @@ def linea_cola(resumen):
     partes = [('%d %s' % (resumen['por_estado'][k], nombres[k]))
               for k in ('pending', 'started', 'retrying', 'dead') if resumen['por_estado'].get(k)]
     return 'cola: ' + (', '.join(partes) if partes else 'nada pendiente')
+
+
+RECLAMADO_SIN_EMPEZAR_MINUTOS = 5
+CLAIMADAS_SIN_EMPEZAR = ('leased', 'accepted')
+
+
+def _epoca(texto):
+    """ISO-8601 from the gateway -> local epoch. None if it can't be parsed."""
+    if not isinstance(texto, str) or not texto:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(texto.replace('Z', '+00:00')).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def veredicto_cola(resumen):
+    """None when there is nothing to flag; ('RECLAMÓ Y NO EMPEZÓ', explicación) when every
+    live delivery of this alias is claimed (leased/accepted) and has been waiting past
+    RECLAMADO_SIN_EMPEZAR_MINUTOS -- the same threshold fleet-watchdog.py uses for
+    claimed_not_started (healthy is milliseconds; minutes means a deaf adapter). `available_at`
+    is the closest signal /v3/console/queues exposes to claim age (claimed_at never reaches
+    that payload): it is set when a delivery becomes claimable and the claim itself never
+    touches it, so it is an upper bound on how long ago the claim happened.
+    """
+    if resumen is None:
+        return None
+    vivas = resumen.get('vivas') or []
+    if not vivas or any(estado_entrega(item) not in CLAIMADAS_SIN_EMPEZAR for item in vivas):
+        return None
+    marcas = [m for m in (_epoca(item.get('available_at')) for item in vivas) if m is not None]
+    if not marcas or min(marcas) >= time.time() - RECLAMADO_SIN_EMPEZAR_MINUTOS * 60:
+        return None
+    return ('RECLAMÓ Y NO EMPEZÓ',
+            '%d entrega(s) reclamada(s) sin empezar a ejecutarse, la más vieja %s.'
+            % (len(vivas), hace(min(marcas))))
 
 
 # --------------------------------------------------------------------------------------------
