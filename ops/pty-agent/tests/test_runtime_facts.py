@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ import uuid
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 LAUNCHER = AGENT_DIR / "cauce-pty-launcher.sh"
 REPO = AGENT_DIR.parents[1]
+SUPERVISOR = REPO / "ops/scripts/container-adapter-supervisor.sh"
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
@@ -351,6 +353,54 @@ class RuntimeFactsTest(unittest.TestCase):
         self.assertEqual(self._measured("codex"), {})
 
 
+RUNTIME_GENERATION_FORMAT = "printf '%s\\0%s\\0%s\\0%s'"
+PRESENCE_GENERATION_FORMAT = "printf '%s|%s|%s'"
+EXPECTED_RUNTIME_GENERATION = "71545ffb984e9bfd230fae487afc4e8c0abe30ab6fc44e309b0c04b42a354456"
+EXPECTED_PRESENCE_GENERATION = "017bbdcb9ef06d413b7ce0b09fe50b1cf8213bf73c85b7ba052881d613f075b3"
+GENERATION_FACTS = {
+    "container_id": "0123456789abcdef" * 4,
+    "started": "2026-01-02T03:04:05.678901234Z",
+    "restart": "7",
+    "init_starttime": "918273",
+}
+GENERATION_FACT_NAMES = {
+    "container_id": ("container_id", "id"),
+    "started": ("started", "container_started"),
+    "restart": ("restart", "container_restart"),
+    "init_starttime": ("init_starttime", "container_init_starttime"),
+}
+
+
+def _generation_pipeline(script: pathlib.Path, formula: str) -> str:
+    """The single self-contained `printf ... | sha256sum` pipeline applying one formula."""
+    found = re.findall(
+        re.escape(formula) + r"[^\n|]*\| sha256sum", script.read_text(encoding="utf-8"),
+    )
+    if len(found) != 1:
+        raise AssertionError(f"{script.name} applies {formula} {len(found)} times, expected once")
+    return found[0]
+
+
+def _generation_digest(script: pathlib.Path, formula: str) -> str:
+    """Run one script's own pipeline over a fixed fact tuple, without sourcing the script.
+
+    Each script names the same four container facts differently, so the tuple is bound under every
+    name a call site may use: the roles have to line up, not the spellings.
+    """
+    environment = {"PATH": "/usr/bin:/bin"}
+    for role, names in GENERATION_FACT_NAMES.items():
+        for name in names:
+            environment[name] = GENERATION_FACTS[role]
+    completed = subprocess.run(
+        ["bash", "-c", "set -u\ndigest=$(" + _generation_pipeline(script, formula) + ")\n"
+         'printf %s "${digest%% *}"\n'],
+        capture_output=True, text=True, env=environment, check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(f"{script.name} generation pipeline failed: {completed.stderr}")
+    return completed.stdout
+
+
 class AdapterGenerationParityTest(unittest.TestCase):
     """Measurement matches the adapter by the generation the SUPERVISOR stamps, not the ticket one.
 
@@ -360,11 +410,17 @@ class AdapterGenerationParityTest(unittest.TestCase):
     """
 
     def test_launcher_recomputes_the_supervisor_generation_formula(self) -> None:
+        """Executed, not matched: the same format literal fed the wrong arguments, or the right
+        ones in the wrong order, reads identical but yields a digest that never matches.
+        """
+        launcher_digest = _generation_digest(LAUNCHER, RUNTIME_GENERATION_FORMAT)
+        supervisor_digest = _generation_digest(SUPERVISOR, RUNTIME_GENERATION_FORMAT)
+        self.assertEqual(
+            launcher_digest, supervisor_digest,
+            "launcher must recompute the supervisor generation over the same facts in the same order",
+        )
+        self.assertEqual(supervisor_digest, EXPECTED_RUNTIME_GENERATION)
         launcher = LAUNCHER.read_text(encoding="utf-8")
-        supervisor = (REPO / "ops/scripts/container-adapter-supervisor.sh").read_text(encoding="utf-8")
-        formula = """printf '%s\\0%s\\0%s\\0%s'"""
-        self.assertIn(formula, supervisor, "supervisor generation formula moved")
-        self.assertIn(formula, launcher, "launcher must recompute the supervisor generation formula")
         self.assertIn('CAUCE_PTY_MEASURE_GENERATION=$adapter_generation', launcher)
         self.assertNotIn('CAUCE_PTY_MEASURE_GENERATION=$container_generation', launcher)
 
@@ -377,11 +433,15 @@ class AdapterGenerationParityTest(unittest.TestCase):
         them with "belongs to another runtime generation". The supervisor therefore recomputes the
         launcher's formula and exports it, so the adapter knows both names of its own incarnation.
         """
+        launcher_digest = _generation_digest(LAUNCHER, PRESENCE_GENERATION_FORMAT)
+        supervisor_digest = _generation_digest(SUPERVISOR, PRESENCE_GENERATION_FORMAT)
+        self.assertEqual(
+            supervisor_digest, launcher_digest,
+            "supervisor must recompute the ticket generation over the same facts in the same order",
+        )
+        self.assertEqual(launcher_digest, EXPECTED_PRESENCE_GENERATION)
         launcher = LAUNCHER.read_text(encoding="utf-8")
-        supervisor = (REPO / "ops/scripts/container-adapter-supervisor.sh").read_text(encoding="utf-8")
-        ticket_formula = """printf '%s|%s|%s'"""
-        self.assertIn(ticket_formula, launcher, "launcher ticket generation formula moved")
-        self.assertIn(ticket_formula, supervisor, "supervisor must recompute the ticket formula")
+        supervisor = SUPERVISOR.read_text(encoding="utf-8")
         self.assertIn("container_generation=${digest:0:32}", launcher)
         self.assertIn(
             "container_presence_generation=${container_presence_generation:0:32}", supervisor

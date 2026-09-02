@@ -13,7 +13,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | Archivo | Dónde va instalado | Qué hace |
 |---|---|---|
 | `cauce-ai-live` | `kratos:~/.local/bin/` + timer 10min | Cuota REAL por cuenta vía CDP (no estimada) |
-| `cauce-attach` | `kratos:~/.local/bin/` | Entra a LA sesión real del agente (claude --resume / codex resume) con guardas |
+| `cauce-attach` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | Entra a LA sesión real del agente (claude --resume / codex resume) con guardas |
 | `cauce-attach-guard` | `kratos:~/.local/bin/` + timer 2min | Repone adaptadores parados por un attach mal cerrado |
 | `cauce-codex-sync` | `kratos:~/.local/bin/` + path-unit | Propaga auth.json compartido de codex a los agentes sin bind-mount |
 | `cauce-cred-guard-kratos.py` | `kratos:~/.local/bin/` + timer 15min | Mide credenciales de los alias que viven EN kratos y empuja huellas al VPS |
@@ -21,15 +21,15 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `cauce-credenciales` | `kratos:~/.local/bin/` | Audita y renueva credenciales OAuth de toda la flota (detecta bind-mounts compartidos) |
 | `cauce-destrabar-telegram` | `kratos:~/.local/bin/` | Destraba el cursor de Telegram atascado por un adjunto no descargable |
 | `cauce-directo` | `kratos:~/.local/bin/` | Abre un alias sin los 4 saltos de pty (evita ptys huérfanas) |
-| `cauce-esfuerzo` | `kratos:~/.local/bin/` | Ve/cambia modelo y nivel de esfuerzo por agente/harness/todos |
-| `cauce-estado` | `kratos:~/.local/bin/` | ¿Trabaja o está muerto? — systemd+CPU+attach+latido del gateway por alias o flota |
+| `cauce-esfuerzo` | `kratos:~/.local/bin/` (+ espejo de `ops/` en `~/.local/share/cauce-v3/ops` o `CAUCE_OPS_ROOT`) | Ve/cambia modelo y nivel de esfuerzo por agente/harness/todos; lee el inventario del espejo y sin él avisa y no corre |
+| `cauce-estado` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | ¿Trabaja o está muerto? — systemd+CPU+attach+latido del gateway por alias o flota |
 | `cauce-modal-sweeper` | `kratos:~/.local/bin/` | Destraba el modal 'Update available' de codex (agente vivo pero mudo) |
 | `cauce-panel-guard` | `kratos:~/.local/bin/` + timer | Repone la sesión tmux compartida (panel) si muere sola |
 | `cauce-quien-consume` | `kratos:~/.local/bin/` + timer | Mapa contenedor→cuenta REAL de Claude (el auth status puede mentir) |
-| `cauce-sesiones` | `kratos:~/.local/bin/` | Lista sesiones reales por agente |
+| `cauce-sesiones` | `kratos:~/.local/bin/`, vía `install-cauce-cli.sh` | Lista sesiones reales por agente |
 | `cauce-soltar` | `kratos:~/.local/bin/` | Suelta una sesión/plaza tomada |
 | `cauce-tmux-panel` | `kratos:~/.local/bin/` | Panel tmux de un alias |
-| `cauce-v3-medico-monitor` | `kratos:~/.local/bin/` + timer | El MÉDICO de la flota (3.207 líneas): vigila, adjudica y avisa — 55 iteraciones rescatadas de .bak |
+| `cauce-v3-medico-monitor` | `kratos:~/.local/bin/` + timer | El MÉDICO de la flota: vigila, adjudica y avisa — 55 iteraciones rescatadas de .bak |
 | `cauce-watch` | `kratos:~/.local/bin/` | Watch de la flota |
 | `cred-guard.py` | `VPS:/usr/local/sbin/cauce-cred-guard.py`, unit de sistema `cauce-cred-guard.service` (root) | Revisa las 14 credenciales de la flota: quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores |
 | `cred-guard.sh` | `VPS:~/.local/bin/` | Envoltorio del anterior: deja estado en `~/.local/state/cred-guard.{txt,log}` |
@@ -54,6 +54,15 @@ de Antigravity, los dos caídos días sin que nadie lo notara.
 La excepción es `cred-guard.py`: agrega en el VPS las mediciones locales y el documento que
 `cauce-cred-guard-kratos.py` empuja desde `kratos`. Ambos hosts necesitan su propia copia de
 `credential_health.py` junto al ejecutable que la importa.
+
+## Tres de estos guardias los instala el CLI, no el bloque de restauración
+
+`cauce-estado`, `cauce-sesiones` y `cauce-attach` no son sólo herramientas sueltas: `cauce` las
+**ejecuta** (`cauce <alias> estado|sesiones`, y el attach exclusivo de `cauce <alias>`). Instalar
+`cauce` sin ellas deja esos subcomandos muriendo con «no such file», así que las publica
+`ops/scripts/install-cauce-cli.sh` junto al CLI —siete ficheros, comprobando la sintaxis de cada
+uno según su shebang y guardando copia del anterior—. Tienen que caer en el **mismo** directorio:
+`cauce-estado` y `cauce-attach` resuelven `cauce-sesiones` **al lado del propio ejecutable**.
 
 ## El check-in diario de hegel corre en agora-storage, no en kratos
 
@@ -111,7 +120,7 @@ install -m644 ops/guardias/credential_health.py ~/.local/bin/
 install -m755 ops/guardias/cauce-cred-guard-kratos.py \
   ops/guardias/cauce-v3-medico-monitor ~/.local/bin/
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
-install -m755 ops/cli/cauce  ~/.local/bin/cauce   # fuente única del CLI (1.138 líneas reales)
+./ops/scripts/install-cauce-cli.sh   # cauce + panel/huerfanas/reponer + estado/sesiones/attach
 install -m644 ops/guardias/systemd/cauce-cred-guard-kratos.service \
   ops/guardias/systemd/cauce-cred-guard-kratos.timer \
   ops/guardias/systemd/cauce-v3-medico-monitor.service \

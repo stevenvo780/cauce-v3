@@ -21,7 +21,7 @@ DIAS=${1:-7}
 case "$DIAS" in ''|*[!0-9]*) echo "uso: cauce-huerfanas [dias]" >&2; exit 2;; esac
 
 ssh -o BatchMode=yes agora-storage \
-  "docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -f -" <<SQL
+  "docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -v dias=$DIAS -f -" <<'SQL'
 \pset border 2
 \pset format aligned
 SELECT
@@ -36,7 +36,7 @@ SELECT
 FROM deliveries d
 JOIN messages m ON m.id = d.message_id
 WHERE d.status IN ('dead','failed')
-  AND d.created_at > now() - interval '$DIAS days'
+  AND d.created_at > now() - make_interval(days => :dias)
   AND m.origin->>'conversation_id' IS NOT NULL
 ORDER BY d.created_at DESC;
 SQL

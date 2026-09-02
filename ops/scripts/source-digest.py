@@ -31,9 +31,10 @@ console  Everything the `console` image stage is built from. Console evidence is
          regenerate, so over-coverage here costs nothing.
 
 testcontainers  The source-executed PostgreSQL/Testcontainers QA apparatus: its real-gateway runner,
-         E2E suites, disposable database helper, evidence schema/validator and wrapper.  Reports
-         carry this independently from the runtime digest and from the immutable PostgreSQL image
-         they actually started.
+         E2E suites, disposable database helper, evidence schema/validator and wrapper, plus the
+         shared schema-diagnostics module the validator renders its failures with -- everything
+         that decides whether a report is accepted.  Reports carry this independently from the
+         runtime digest and from the immutable PostgreSQL image they actually started.
 
 verification  The root and ops test trees plus lint/typecheck/test orchestration and every
          operational source family those gates execute or inspect.  This domain is not used to
@@ -94,15 +95,23 @@ domain. Paths and bytes are both hashed, so renames are observable.
 from __future__ import annotations
 
 import argparse
-import hashlib
+import os
 import pathlib
-import subprocess
 import sys
+
+_scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from digest_lib import (  # noqa: E402  (sys.path shim above must run first)
+    DigestError,
+    fold_digest,
+    tracked_files,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-class SourceDigestError(RuntimeError):
+class SourceDigestError(DigestError):
     """A sanitized source-selection failure safe to report without path or target details."""
 
 
@@ -161,6 +170,7 @@ DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
         "ops/harness/runner.mjs",
         "ops/scripts/run-testcontainers.sh",
         "ops/scripts/validate-testcontainers-evidence.py",
+        "ops/scripts/schema_diagnostics.py",
         "ops/schemas/testcontainers-evidence.schema.json",
     ),
     "verification": SHARED_MANIFESTS
@@ -207,59 +217,6 @@ def under_prefix(
     return any(local == prefix or prefix in local.parents for prefix in prefixes)
 
 
-def git_ignored(
-    root: pathlib.Path, paths: list[pathlib.Path]
-) -> set[pathlib.PurePosixPath]:
-    """Return ignored, untracked paths for a real worktree without dropping other untracked source.
-
-    A git archive and the hermetic synthetic trees used by tests have no `.git`, so every path in
-    them is already an explicit input and no ignore lookup is needed.  `git check-ignore` omits
-    tracked paths by default; this is important for committed fixtures whose names match an ignore
-    pattern.  Operator-global excludes are disabled so a local preference cannot hide repository
-    source, while repository `.gitignore` and `.git/info/exclude` keep their normal worktree role.
-    """
-
-    if not paths or not (root / ".git").exists():
-        return set()
-    probe = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if probe.returncode != 0:
-        raise SourceDigestError(
-            "source digest could not resolve worktree ignore policy"
-        )
-    if pathlib.Path(probe.stdout.strip()).resolve() != root:
-        raise SourceDigestError(
-            "source digest root differs from the resolved Git worktree"
-        )
-
-    relative = [path.relative_to(root).as_posix() for path in paths]
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(root),
-            "-c",
-            "core.excludesFile=/dev/null",
-            "check-ignore",
-            "--stdin",
-            "-z",
-        ],
-        input="\0".join(relative) + "\0",
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode not in {0, 1}:
-        raise SourceDigestError("source digest could not apply worktree ignore policy")
-    return {
-        pathlib.PurePosixPath(value) for value in result.stdout.split("\0") if value
-    }
-
-
 def domain_inputs(domain: str) -> tuple[str, ...]:
     if domain == "full":
         merged: list[str] = []
@@ -271,53 +228,39 @@ def domain_inputs(domain: str) -> tuple[str, ...]:
     return DOMAIN_INPUTS[domain]
 
 
+def covered(path: pathlib.Path, local: pathlib.PurePosixPath) -> bool:
+    """Decide whether one enumerated path is source for any domain.
+
+    Symlinks are kept here on purpose so that files() can reject them fail-closed instead of
+    letting one pass unhashed; an ignored symlink is dropped earlier by the worktree policy.
+    """
+
+    if any(part in EXCLUDED_PARTS for part in local.parts):
+        return False
+    if path.suffix in EXCLUDED_FILE_SUFFIXES:
+        return False
+    if under_prefix(local, EXCLUDED_SOURCE_PREFIXES):
+        return False
+    if under_prefix(local, MUTABLE_OUTPUT_PREFIXES):
+        return False
+    if path.name == ".env" or path.name.startswith(".env."):
+        return False
+    return True
+
+
 def files(root: pathlib.Path, domain: str) -> list[pathlib.Path]:
-    selected: list[pathlib.Path] = []
-    for relative in domain_inputs(domain):
-        candidate = root / relative
-        paths = (
-            [candidate]
-            if candidate.is_file() or candidate.is_symlink()
-            else candidate.rglob("*")
-        )
-        for path in paths:
-            if not path.is_symlink() and not path.is_file():
-                continue
-            local = path.relative_to(root)
-            if any(part in EXCLUDED_PARTS for part in local.parts):
-                continue
-            if path.suffix in EXCLUDED_FILE_SUFFIXES:
-                continue
-            local_posix = pathlib.PurePosixPath(local.as_posix())
-            if under_prefix(local_posix, EXCLUDED_SOURCE_PREFIXES):
-                continue
-            if under_prefix(local_posix, MUTABLE_OUTPUT_PREFIXES):
-                continue
-            if path.name == ".env" or path.name.startswith(".env."):
-                continue
-            selected.append(path)
-    ordered = sorted(set(selected), key=lambda item: item.relative_to(root).as_posix())
-    ignored = git_ignored(root, ordered)
-    covered = [
-        path
-        for path in ordered
-        if pathlib.PurePosixPath(path.relative_to(root).as_posix()) not in ignored
-    ]
-    if any(path.is_symlink() for path in covered):
+    selected = tracked_files(
+        root, domain_inputs(domain), keep=covered, worktree_root=True
+    )
+    if any(path.is_symlink() for path in selected):
         raise SourceDigestError("source digest rejects symlinks in covered inputs")
-    return covered
+    return selected
 
 
 def compute(root: pathlib.Path, domain: str) -> str:
-    digest = hashlib.sha256()
-    for path in files(root, domain):
-        relative = path.relative_to(root).as_posix().encode("utf-8")
-        content = path.read_bytes()
-        digest.update(len(relative).to_bytes(8, "big"))
-        digest.update(relative)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return f"sha256:{digest.hexdigest()}"
+    return fold_digest(
+        (path.relative_to(root).as_posix(), path) for path in files(root, domain)
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -356,7 +299,7 @@ def main(argv: list[str]) -> int:
                 print(path.relative_to(root).as_posix())
             return 0
         value = compute(root, args.domain)
-    except SourceDigestError as error:
+    except DigestError as error:
         print(str(error), file=sys.stderr)
         return 2
     if args.output is None:

@@ -22,10 +22,11 @@ done
 [[ -n $alias_name && $# == 0 ]] || { printf 'uso: provision-hermes-runtime.sh [--check] <alias>\n' >&2; exit 2; }
 [[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'provision-hermes-runtime: alias inválido\n' >&2; exit 2; }
 
-ops_root=${CAUCE_CONTAINER_OPS_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+ops_root=${CAUCE_CONTAINER_OPS_ROOT:-$(cd -- "$script_dir/.." && pwd -P)}
 
 read_metadata() {
-  python3 - "$ops_root" "$alias_name" <<'PY'
+  python3 - "$ops_root" "$alias_name" "$script_dir" <<'PY'
 import json
 import pathlib
 import re
@@ -33,14 +34,16 @@ import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
 alias = sys.argv[2]
-inventory = json.loads((root / "container-aliases.json").read_text(encoding="utf-8"))["aliases"]
+sys.path.insert(0, sys.argv[3])  # installed reader: an overridden ops root supplies data only
+from container_alias_lib import load_container_aliases  # noqa: E402  sys.path set above
+
 runtime = json.loads((root / "hermes-runtime.json").read_text(encoding="utf-8"))
-entry = inventory.get(alias)
-if not isinstance(entry, dict):
+entry = load_container_aliases(root).get(alias)
+if entry is None:
     sys.exit("alias no declarado")
-if entry.get("harness") != "hermes":
+if entry["harness"] != "hermes":
     sys.exit("el alias no usa Hermes")
-if entry.get("dockerHost", "local") != "local":
+if entry["dockerHost"] != "local":
     sys.exit("el provisionador Hermes sólo opera sobre el Docker local")
 commit = runtime.get("commit")
 repository = runtime.get("repository")
@@ -79,7 +82,7 @@ if uv_archive_url != expected_archive_url:
 if not isinstance(uv_archive_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", uv_archive_sha256):
     sys.exit("digest archive uv inválido")
 fields = (
-    entry.get("container"), entry.get("user"), entry.get("home"), repository, commit, version,
+    entry["container"], entry["user"], entry["home"], repository, commit, version,
     runtime_root, runtime_id, uv_version, uv_target, uv_sha256, uv_lock_sha256,
     uv_archive_url, uv_archive_sha256,
 )

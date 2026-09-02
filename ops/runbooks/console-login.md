@@ -304,7 +304,7 @@ sesión** y sin ninguna otra credencial — es decir, exactamente lo que tiene u
 | sonda | resultado |
 |---|---|
 | **24 rutas** `GET` de datos (`/v3/status`, `/v3/accounts/selection`, los 20 `/v3/console/*`, incluida `/v3/console/terminal/*`) | **401** en todas, 83 bytes, `se requiere la cookie de sesión de la consola` |
-| `POST /v3/deliveries/query`, `/v3/query`, `/v3/publish`, `/v3/messages`, `/v3/heartbeat`, `/v3/ack`, `/v3/quotas/samples` | **401** |
+| `POST /v3/deliveries/query`, `/v3/query`, `/v3/messages`, `/v3/heartbeat`, `/v3/ack`, `/v3/quotas/samples` | **401** |
 | `POST /v3/connections/hello` con un cuerpo **válido** y una identidad que no casa con el certificado del proxy | **401**. Es la sonda que discrimina: si la auth hubiera pasado, el `hello` habría muerto más adelante en `403 authenticated identity does not match hello`. Murió antes. |
 | `POST /v3/console/messages`, `/v3/console/jobs`, `/v3/console/config/changes` **con `Origin` same-origin** | **401** (sin `Origin` dan `403` por CSRF, que tapa la señal: hay que mandarlo para medir la auth) |
 | `/v3/terminal/relay/*` (se autoriza con su token, no pasa por el proveedor de consola) | **401** |
@@ -388,7 +388,7 @@ Medido desde internet después del `systemctl reload caddy`:
 | sonda | antes | después |
 |---|---|---|
 | `GET /v3/accounts/selection?provider=claude` | 200 con datos reales | **404** `not found` (cuerpo del borde, no JSON del gateway) |
-| `POST /v3/messages`, `/v3/publish`, `/v3/ack` | 202 / 400 del gateway | **404** del borde |
+| `POST /v3/messages`, `/v3/ack` | 202 / 400 del gateway | **404** del borde |
 | `GET /v3/heartbeat`, `/v3/query`, `/v3/deliveries`, `/v3/connections`, `/v3/quotas/samples`, `/v3/ws` | llegaban al gateway | **404** del borde |
 | evasiones: `/v3/console/../accounts/…`, `%2e%2e`, `/V3/…`, `/v3/%61ccounts/…`, `//v3/…`, `/v3//accounts/…` | — | **404** en las 8 (Caddy normaliza y decodifica **antes** de casar, así que falla cerrado) |
 | `/`, `/assets/*.js`, ruta del router (`/cuentas`) | 200 | **200** |

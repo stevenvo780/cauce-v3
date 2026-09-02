@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -8,6 +9,7 @@ import math
 import os
 import pathlib
 import runpy
+import subprocess
 import sys
 import tempfile
 import time
@@ -19,6 +21,7 @@ sys.path.insert(0, str(GUARDS))
 
 import credential_health  # noqa: E402
 from credential_health import (  # noqa: E402
+    CREDENTIAL_PROBE_SOURCE,
     LONG_LIVED,
     REFRESHABLE,
     UNKNOWN_EXPIRY,
@@ -26,6 +29,7 @@ from credential_health import (  # noqa: E402
     classify_doctor_record,
     classify_fleet_guard_record,
     hours_until_expiry,
+    probe_container,
     shared_fingerprints,
 )
 
@@ -263,6 +267,154 @@ class TestSharedFingerprints(unittest.TestCase):
         ]
 
         self.assertEqual(shared_fingerprints(observations), {"fingerprint-a": ["alpha"]})
+
+
+class TestCredentialProbe(unittest.TestCase):
+    """The probe is the half of the guards that reads; it must not leak the token it reads."""
+
+    @staticmethod
+    def completed(returncode=0, stdout="", stderr=""):
+        return mock.Mock(returncode=returncode, stdout=stdout, stderr=stderr)
+
+    @staticmethod
+    def run_probe(argument):
+        return subprocess.run(
+            [sys.executable, "-c", CREDENTIAL_PROBE_SOURCE, argument],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_probe_emits_every_field_its_consumers_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            credentials = pathlib.Path(directory) / "credentials.json"
+            credentials.write_text(
+                json.dumps(
+                    {
+                        "claudeAiOauth": {
+                            "refreshToken": "refresh-token-that-must-not-be-printed",
+                            "accessToken": "access-token-that-must-not-be-printed",
+                            "expiresAt": 1_700_000_000_000,
+                        },
+                        "last_refresh": "2000-01-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_probe(str(credentials))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(
+            set(record),
+            {"huella", "huella_acc", "expiresAt", "last_refresh", "at_len"},
+        )
+        self.assertEqual(record["expiresAt"], 1_700_000_000_000)
+        self.assertEqual(record["at_len"], len("access-token-that-must-not-be-printed"))
+        self.assertEqual(len(record["huella"]), 10)
+        self.assertEqual(len(record["huella_acc"]), 10)
+        self.assertNotIn("refresh-token-that-must-not-be-printed", result.stdout)
+        self.assertNotIn("access-token-that-must-not-be-printed", result.stdout)
+
+    def test_probe_reports_an_absent_file(self):
+        result = self.run_probe("/synthetic/path/that/does/not/exist.json")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout.strip()), {"falta": True})
+
+    def test_wrapper_parses_the_last_line_of_a_successful_probe(self):
+        record = fleet_record("fingerprint-a", 1_700_000_000_000)
+        with mock.patch(
+            "subprocess.run",
+            return_value=self.completed(stdout="warning noise\n" + json.dumps(record)),
+        ) as runner:
+            self.assertEqual(
+                probe_container("synthetic-container", "/synthetic/credentials.json"),
+                record,
+            )
+
+        command = runner.call_args.args[0]
+        self.assertEqual(command[:3], ["docker", "exec", "synthetic-container"])
+        self.assertEqual(command[3:6], ["python3", "-c", CREDENTIAL_PROBE_SOURCE])
+        self.assertEqual(command[6], "/synthetic/credentials.json")
+        self.assertEqual(runner.call_args.kwargs["timeout"], 25)
+
+    def test_non_zero_return_code_becomes_a_short_error(self):
+        with mock.patch(
+            "subprocess.run",
+            return_value=self.completed(returncode=7, stderr="x" * 200),
+        ):
+            failure = probe_container("synthetic-container", "/synthetic/credentials.json")
+        with mock.patch("subprocess.run", return_value=self.completed(returncode=7)):
+            silent = probe_container("synthetic-container", "/synthetic/credentials.json")
+
+        self.assertEqual(failure, {"error": "x" * 60})
+        self.assertEqual(silent, {"error": "rc=7"})
+
+    def test_every_failure_is_reported_as_an_error_field(self):
+        for failure in (OSError("boom"), subprocess.TimeoutExpired("docker", 25)):
+            with self.subTest(failure=type(failure).__name__):
+                with mock.patch("subprocess.run", side_effect=failure):
+                    result = probe_container("synthetic-container", "/synthetic/credentials.json")
+                self.assertEqual(set(result), {"error"})
+                self.assertIn(type(failure).__name__, result["error"])
+
+        with mock.patch("subprocess.run", return_value=self.completed(stdout="not json")):
+            unparsable = probe_container("synthetic-container", "/synthetic/credentials.json")
+        self.assertEqual(set(unparsable), {"error"})
+
+    def test_the_docker_command_is_overridable(self):
+        with mock.patch(
+            "subprocess.run",
+            return_value=self.completed(stdout=json.dumps({"falta": True})),
+        ) as runner:
+            self.assertEqual(
+                probe_container(
+                    "synthetic-container",
+                    "/synthetic/credentials.json",
+                    timeout=3,
+                    docker=("sudo", "docker"),
+                ),
+                {"falta": True},
+            )
+
+        self.assertEqual(runner.call_args.args[0][:3], ["sudo", "docker", "exec"])
+        self.assertEqual(runner.call_args.kwargs["timeout"], 3)
+
+    def test_neither_guard_keeps_its_own_copy_of_the_probe(self):
+        for filename in ("cred-guard.py", "cauce-cred-guard-kratos.py"):
+            with self.subTest(filename=filename):
+                source = (GUARDS / filename).read_text(encoding="utf-8")
+                self.assertIn("probe_container(contenedor, ruta)", source)
+                self.assertNotIn("hashlib", source)
+
+
+class TestGuardInventory(unittest.TestCase):
+    """OBJETIVOS is hand-written on purpose: its labels carry shared-credential facts the
+    inventory does not model, and deleting a row is what once left an alias unmonitored.
+    This gate does not shrink it, it only catches a container renamed out from under it."""
+
+    def test_every_targeted_container_exists_in_the_alias_inventory(self):
+        source = (GUARDS / "cred-guard.py").read_text(encoding="utf-8")
+        targets = None
+        for node in ast.parse(source).body:
+            names = getattr(node, "targets", [])
+            if any(isinstance(name, ast.Name) and name.id == "OBJETIVOS" for name in names):
+                targets = ast.literal_eval(node.value)
+        self.assertIsNotNone(targets, "cred-guard.py no declara OBJETIVOS")
+
+        inventory = json.loads(
+            (GUARDS.parent / "container-aliases.json").read_text(encoding="utf-8")
+        )
+        known = {
+            alias["container"]
+            for alias in inventory["aliases"].values()
+            if alias.get("container")
+        }
+        self.assertGreater(len(targets), 0)
+        for container, _path, label in targets:
+            with self.subTest(label=label):
+                self.assertIn(container, known)
 
 
 if __name__ == "__main__":

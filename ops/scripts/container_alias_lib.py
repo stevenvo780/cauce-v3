@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
+import stat
 from typing import Any
 
 FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harness")
@@ -16,10 +18,24 @@ TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ROOM_RE = re.compile(r"^grp\.[a-z][a-z0-9_-]{0,63}$")
 HARNESS = {"openclaw", "opencode", "claude", "hermes", "codex"}
 MEMBERSHIP_ROLES = {"agent", "agent_notify", "operator"}
+MAX_INVENTORY_BYTES = 1024 * 1024
+READ_CHUNK_BYTES = 65536
 
 
 class ContainerAliasError(ValueError):
     pass
+
+
+class InventoryAccessError(ContainerAliasError):
+    """The inventory file itself was rejected by a hardened read."""
+
+
+class InventorySizeError(InventoryAccessError):
+    """The inventory is larger than the hardened read accepts."""
+
+
+class AliasNotDeclaredError(ContainerAliasError):
+    """The inventory parses but declares no entry for the requested alias."""
 
 
 def _mapping(value: Any, label: str) -> dict[str, Any]:
@@ -37,9 +53,58 @@ def _absolute_path(value: Any, label: str) -> str:
     return value
 
 
-def _document(root: pathlib.Path) -> dict[str, Any]:
+def _read_source(source: pathlib.Path, hardened: bool) -> str:
+    """Return the inventory text, optionally through a hardened open.
+
+    A hardened read refuses a symlinked final component and refuses an inventory that group or
+    others can rewrite between this read and the action it authorises. Callers that act on the
+    fleet opt in; callers that only render generated artefacts keep the plain read.
+    """
+    if not hardened:
+        return source.read_text(encoding="utf-8")
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_mode & 0o022:
+            raise InventoryAccessError(
+                f"{source} must be a regular file that neither group nor others can write"
+            )
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = os.read(descriptor, READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_INVENTORY_BYTES:
+                raise InventorySizeError(f"{source} exceeds the inventory size limit")
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    return b"".join(chunks).decode("utf-8")
+
+
+def read_alias_entry(
+    source: pathlib.Path, alias: str, *, hardened: bool = False
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the raw ``aliases`` mapping of ``source`` plus the entry declared for ``alias``.
+
+    Shape only: this is the reader for callers that derive their own policy from the inventory
+    and cannot pay for the fleet-wide contract that ``load_container_aliases`` enforces.
+    """
+    document = json.loads(_read_source(source, hardened))
+    if not isinstance(document, dict) or not isinstance(document.get("aliases"), dict):
+        raise ContainerAliasError(f"{source} does not declare an aliases object")
+    aliases: dict[str, Any] = document["aliases"]
+    entry = aliases.get(alias)
+    if not isinstance(entry, dict):
+        raise AliasNotDeclaredError(f"{alias} is not declared in {source}")
+    return aliases, entry
+
+
+def _document(root: pathlib.Path, *, hardened: bool = False) -> dict[str, Any]:
     source = root / "container-aliases.json"
-    document = _mapping(json.loads(source.read_text(encoding="utf-8")), str(source))
+    document = _mapping(json.loads(_read_source(source, hardened)), str(source))
     if (
         set(document)
         != {"schemaVersion", "systemPrincipals", "historicalAliases", "aliases"}
@@ -51,8 +116,10 @@ def _document(root: pathlib.Path) -> dict[str, Any]:
     return document
 
 
-def load_container_aliases(root: pathlib.Path) -> dict[str, dict[str, str]]:
-    document = _document(root)
+def load_container_aliases(
+    root: pathlib.Path, *, hardened: bool = False
+) -> dict[str, dict[str, str]]:
+    document = _document(root, hardened=hardened)
     aliases = _mapping(document["aliases"], "aliases")
     if not aliases:
         raise ContainerAliasError("container alias mapping must not be empty")

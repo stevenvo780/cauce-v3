@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """cauce-esfuerzo — view/change each agent's effort level, run from the control host.
 
-    cauce-esfuerzo                          status of all 15 aliases
+    cauce-esfuerzo                          status of every alias in the fleet inventory
     cauce-esfuerzo <alias> <level>          change one alias
     cauce-esfuerzo @<harness> <level>       all aliases on that harness
     cauce-esfuerzo all      <level>         entire fleet
@@ -15,22 +15,70 @@ Per-harness:
     openclaw  agents.defaults.model.primary, validated against the models declared in
               the file; if the space has a Claude settings.json, its effortLevel too
     hermes    no effort knob: shows HERMES_INFERENCE_MODEL and does not touch it
+    opencode  no knob known here: the alias is refused by name, never written to
+
+The alias list, each tenant and each harness come from container-aliases.json, the reconciled fleet
+inventory, read through the ops root's scripts/container_alias_lib.py. Keeping a second copy here is
+what let four harness labels, three live aliases and a whole retired tenant rot unnoticed. The ops
+root is looked up in order: $CAUCE_OPS_ROOT, the ops/ directory of the checkout this file sits in,
+and ~/.local/share/cauce-v3/ops, the mirror every other guard already reads on the control host.
+Installed into ~/.local/bin with none of the three reachable, the command says so and exits instead
+of dying with a ModuleNotFoundError traceback.
+
+Only the configuration file an alias writes to stays local: no inventory field carries it. CONFIG
+holds the aliases whose file is known on this host; any other alias shows up as unknown in the table
+and is refused by name when selected, because a silent skip looks exactly like a successful change.
+Two entries worth stating: kratos shares container ws-humanizar and its home with atlas, so it reads
+the same /datos/agents/shared tree, as claude rather than codex; and salva's container runs on
+another docker host (dockerHost in the inventory), so no path on this host can be its configuration.
 
 Takes effect on the alias's next delivery; nothing is restarted. Each write leaves a .bak-<date>.
 """
-import json, os, re, shutil, sys, time
+import json
+import os
+import pathlib
+import re
+import shutil
+import sys
+import time
 
 HOME = os.path.expanduser('~')
+OPS_ROOT_ENV = 'CAUCE_OPS_ROOT'
+OPS_ROOT_CANDIDATES = (
+    os.environ.get(OPS_ROOT_ENV),
+    pathlib.Path(__file__).resolve().parents[1],
+    f'{HOME}/.local/share/cauce-v3/ops',
+)
+
+
+def find_ops_root(candidates):
+    """Return the first candidate carrying both the inventory and its reader, or refuse legibly."""
+    for candidate in candidates:
+        if not candidate:
+            continue
+        root = pathlib.Path(candidate)
+        if (root / 'container-aliases.json').is_file() and (root / 'scripts' / 'container_alias_lib.py').is_file():
+            return root
+    tried = ', '.join(str(candidate) for candidate in candidates if candidate) or '(ningún candidato)'
+    raise SystemExit(
+        'no encuentro el inventario de la flota (container-aliases.json y scripts/container_alias_lib.py). '
+        f'Probé: {tried}. Instalá el espejo en ~/.local/share/cauce-v3/ops o exportá {OPS_ROOT_ENV}=<ruta a ops/>.'
+    )
+
+
+OPS_ROOT = find_ops_root(OPS_ROOT_CANDIDATES)
+_scripts_dir = str(OPS_ROOT / 'scripts')
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from container_alias_lib import load_container_aliases  # noqa: E402  (sys.path shim above must run first)
+
 CODEX_SHARED = '/datos/agents/shared/.codex/config.toml'
 CODEX_HOST = f'{HOME}/.codex/config.toml'
-CODEX_PABLO = '/datos/agents/pablo-config/.codex-dev/config.toml'
 CLAUDE_SHARED = '/datos/agents/shared/.claude/settings.json'
-CLAUDE_PABLO = '/datos/agents/pablo-config/.claude/settings.json'
 OC = '/datos/claw-config/.openclaw/openclaw.json'
 OC_MIGUEL = '/datos/miguel-config/.openclaw/openclaw.json'
 OC_HEGEL = '/datos/agent-v2/tenants/jhon/agents/hegel/oc/.openclaw/openclaw.json'
-OC_MIDAS = '/datos/agent-v2/tenants/pablo/agents/marcas/oc/.openclaw/openclaw.json'
-OC_SENECA = '/datos/agent-v2/tenants/pablo/agents/personal/oc/.openclaw/openclaw.json'
 
 # Claude settings.json that accompanies an openclaw space (read by its claude-cli runtime)
 OPENCLAW_CLAUDE = {
@@ -38,25 +86,29 @@ OPENCLAW_CLAUDE = {
     OC_MIGUEL: '/datos/miguel-config/.claude/settings.json',
 }
 
-# alias -> (tenant, harness, configuration file)
-FLEET = {
-    'kant':     ('Steven', 'codex',    CODEX_HOST),
-    'socrates': ('Steven', 'codex',    CODEX_SHARED),
-    'zeus':     ('Steven', 'claude',   CLAUDE_SHARED),
-    'jarvis':   ('Steven', 'openclaw', OC),
-    'argos':    ('Steven', 'hermes',   f'{HOME}/.config/cauce-v3/container-aliases/argos.env'),
-    'kratos':   ('Miguel', 'codex',    CODEX_SHARED),
-    'atlas':    ('Miguel', 'codex',    CODEX_SHARED),
-    'iza':      ('Miguel', 'hermes',   f'{HOME}/.config/cauce-v3/container-aliases/iza.env'),
-    'janus':    ('Miguel', 'openclaw', OC_MIGUEL),
-    'dedalo':   ('Pablo',  'codex',    CODEX_PABLO),
-    'vulcano':  ('Pablo',  'claude',   CLAUDE_PABLO),
-    'midas':    ('Pablo',  'openclaw', OC_MIDAS),
-    'seneca':   ('Pablo',  'openclaw', OC_SENECA),
-    'salva':    ('Isa',    'codex',    CODEX_SHARED),
-    'hegel':    ('Jhon',   'openclaw', OC_HEGEL),
+# alias -> configuration file on this host; tenant and harness come from the inventory instead
+CONFIG = {
+    'atlas': CODEX_SHARED,
+    'hegel': OC_HEGEL,
+    'janus': OC_MIGUEL,
+    'jarvis': OC,
+    'kant': CODEX_HOST,
+    'kratos': CLAUDE_SHARED,
+    'socrates': CODEX_SHARED,
+    'zeus': CLAUDE_SHARED,
 }
 
+try:
+    INVENTORY = load_container_aliases(OPS_ROOT)
+except (OSError, ValueError) as error:
+    raise SystemExit(f'no puedo leer {OPS_ROOT / "container-aliases.json"}: {error}') from None
+
+FLEET = {
+    alias: (entry['tenant'], entry['harness'], CONFIG.get(alias))
+    for alias, entry in INVENTORY.items()
+}
+
+UNKNOWN_CONFIG = '(fichero desconocido)'
 LEVELS = ['low', 'medium', 'high', 'xhigh']
 OPENCLAW_BY_LEVEL = {
     'low': 'minimax/MiniMax-M3',
@@ -64,6 +116,10 @@ OPENCLAW_BY_LEVEL = {
     'high': 'anthropic/claude-opus-4-8[1m]',
     'xhigh': 'anthropic/claude-fable-5',
 }
+
+
+def unknown_config_notice(alias):
+    return f'no se conoce el fichero de configuración de {alias}'
 
 
 def backup(path):
@@ -102,7 +158,7 @@ def read_current(harness, path):
 
 
 def sharers(path, alias):
-    return sorted(a for a, (_t, _h, p) in FLEET.items() if p == path and a != alias)
+    return sorted(a for a, (_t, _h, p) in FLEET.items() if p is not None and p == path and a != alias)
 
 
 def set_codex(path, level, model):
@@ -133,7 +189,7 @@ def set_claude_settings(path, level, model):
 
 def set_openclaw(path, level, model):
     d = json.load(open(path))
-    declared = list((((d.get('agents') or {}).get('defaults') or {}).get('models') or {}))
+    declared = list(((d.get('agents') or {}).get('defaults') or {}).get('models') or {})
     value = model or OPENCLAW_BY_LEVEL[level]
     if declared and value not in declared:
         raise ValueError(f'{value} no está declarado en el archivo. Declarados: ' + ', '.join(declared))
@@ -150,7 +206,9 @@ def set_openclaw(path, level, model):
 def show():
     print(f'{"ALIAS":10} {"TENANT":7} {"HARNESS":9} {"ESFUERZO · MODELO":40} CONFIG')
     for alias, (tenant, harness, path) in FLEET.items():
-        print(f'{alias:10} {tenant:7} {harness:9} {read_current(harness, path):40} {path.replace(HOME, "~")}')
+        state = read_current(harness, path) if path else UNKNOWN_CONFIG
+        target = path.replace(HOME, '~') if path else '—'
+        print(f'{alias:10} {tenant:7} {harness:9} {state:40} {target}')
     print('\nUn archivo compartido cambia a todos los alias que lo usan (se avisa al aplicar).')
     print('Uso: cauce-esfuerzo <alias|@codex|@claude|@openclaw|all> <low|medium|high|xhigh>')
 
@@ -186,6 +244,9 @@ def main():
     done = set()
     for alias in targets(selector):
         _tenant, harness, path = FLEET[alias]
+        if path is None:
+            print(f'  ✗ {unknown_config_notice(alias)}')
+            continue
         if harness == 'hermes':
             print(f'  – {alias:9} hermes no tiene esfuerzo; modelo actual {read_current(harness, path)}')
             continue
@@ -200,8 +261,10 @@ def main():
                 value = set_codex(path, level, model)
             elif harness == 'claude':
                 value = set_claude_settings(path, level, model)
-            else:
+            elif harness == 'openclaw':
                 value = set_openclaw(path, level, model)
+            else:
+                raise ValueError(f'no sé qué mando de esfuerzo tiene el harness {harness}; no toco {path}')
         except Exception as exc:
             print(f'  ✗ {alias:9} {exc}')
             continue

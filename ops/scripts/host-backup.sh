@@ -13,9 +13,7 @@
 #   2. Optional: Ultimate Terminal's ut-nexus SQLite, via the existing WAL-consistent
 #      online-backup script (sqlite3 Connection.backup() API). A plain `cp` of
 #      nexus.db alone is stale (the newest pages live in the WAL) and copying
-#      db+wal+shm concurrently while the service writes can produce a torn
-#      copy — see ops/scripts/ut-nexus-backup.py's own header for the measured
-#      evidence.
+#      db+wal+shm concurrently while the service writes can produce a torn copy.
 #   3. An off-host mirror of both (plus checksums/manifests) to nass-stev, the
 #      operator's NAS on the tailnet — a backup that lives on the same disk as
 #      what it protects is not a backup.

@@ -26,11 +26,10 @@
 
    ```sh
    python3 ops/scripts/physical-fleet-gate.py
-   CAUCE_ENV_FILE=/etc/cauce-v3/prod.env ops/scripts/release-gate.sh
    ```
 
-   El primero sólo verifica nombres de containers Docker; el segundo incluye ese gate y la paridad
-   de catálogo. Un container inexistente, policy divergente o snapshot incompleto bloquea.
+   Verifica que cada container declarado por la flota exista realmente en su host. Un container
+   inexistente o un snapshot incompleto bloquea.
 
 5. Capturar un drain v2 del alias, después ejecutar el cutover con `CAUCE_CHANGE_ID` y confirmación
    exacta. `cutover.sh` arranca una familia, lanza el probe, captura post-cutover y deshabilita la

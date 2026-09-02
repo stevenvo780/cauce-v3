@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
+import os
 import pathlib
-import subprocess
 import sys
+
+_scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from digest_lib import fold_digest, tracked_files  # noqa: E402  (sys.path shim above must run first)
 
 OPERATIONS_SOURCES = (
     "container-aliases.json",
+    "scripts/digest_lib.py",
     "scripts/container-adapter-supervisor.sh",
     "scripts/alias-runner.sh",
     "container-runtime/cauce-container-runtime.py",
@@ -76,59 +81,32 @@ def generated_logical_path(path: pathlib.Path, generated: pathlib.Path, *, rootl
     return f"{prefix}/{path.relative_to(generated).as_posix()}"
 
 
-def tracked_tree_files(root: pathlib.Path) -> set[pathlib.Path] | None:
-    """Return operational source files below *root* when this is a Git checkout.
+def logical_path(path: pathlib.Path, root: pathlib.Path, generated: pathlib.Path, *, rootless: bool) -> str:
+    if path.is_relative_to(generated):
+        return generated_logical_path(path, generated, rootless=rootless)
+    return path.relative_to(root).as_posix()
 
-    Archives intentionally do not contain ``.git``; there the physical tree is already the source
-    tree and recursive discovery is correct. In an operator checkout, include tracked plus
-    non-ignored new source so a newly added operational script cannot evade the digest before its
-    commit. Ignored backups/editor files remain outside the domain.
+
+def operational_source(path: pathlib.Path, local: pathlib.PurePosixPath) -> bool:
+    """Interpreter and test-runner caches are never operational source, and neither is a symlink.
+
+    Recursive discovery over the operational trees is what stops a newly added script from evading
+    OPERATIONS.sha256, so the only things filtered out here are the families that are outputs of
+    running the tooling rather than inputs to it.
     """
-    try:
-        probe = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return None
-    if probe.returncode != 0:
-        return None
-    repository = pathlib.Path(probe.stdout.strip()).resolve()
-    try:
-        prefix = root.resolve().relative_to(repository).as_posix()
-    except ValueError:
-        return None
-    listed = subprocess.run(
-        ["git", "-C", str(repository), "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", prefix],
-        check=False,
-        capture_output=True,
+    return (
+        path.is_file()
+        and not path.is_symlink()
+        and "__pycache__" not in local.parts
+        and ".pytest_cache" not in local.parts
+        and path.suffix not in {".pyc", ".pyo"}
     )
-    if listed.returncode != 0:
-        raise ValueError("could not enumerate tracked operational inputs")
-    return {
-        (repository / entry.decode("utf-8")).resolve()
-        for entry in listed.stdout.split(b"\0")
-        if entry
-    }
 
 
 def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: bool = False) -> list[pathlib.Path]:
     files = [root / relative for relative in (*OPERATIONS_SOURCES, *OPERATIONAL_ROOT_FILES)]
     files.extend(root / name for name in ("flota.json", "flota-fisica.json") if (root / name).is_file())
-    tracked = tracked_tree_files(root)
-    for relative in OPERATIONAL_TREES:
-        tree = root / relative
-        files.extend(
-            path for path in tree.rglob("*")
-            if path.is_file()
-            and not path.is_symlink()
-            and (tracked is None or path.resolve() in tracked)
-            and "__pycache__" not in path.parts
-            and ".pytest_cache" not in path.parts
-            and path.suffix not in {".pyc", ".pyo"}
-        )
+    files.extend(tracked_files(root, OPERATIONAL_TREES, keep=operational_source))
     files.extend(sorted(generated.glob("cauce-v3-container-*.service")))
     files.extend(sorted((generated / "configs").glob("*.env.example")))
     if not rootless:
@@ -143,27 +121,14 @@ def operational_files(root: pathlib.Path, generated: pathlib.Path, *, rootless: 
     missing = [path for path in files if not path.is_file() or path.is_symlink()]
     if missing:
         raise ValueError(f"missing or symlinked operational input: {missing[0]}")
-    def logical(path: pathlib.Path) -> str:
-        if path.is_relative_to(generated):
-            return generated_logical_path(path, generated, rootless=rootless)
-        return path.relative_to(root).as_posix()
-    return sorted(files, key=logical)
+    return sorted(files, key=lambda path: logical_path(path, root, generated, rootless=rootless))
 
 
 def operational_digest(root: pathlib.Path, generated: pathlib.Path, *, rootless: bool = False) -> str:
-    digest = hashlib.sha256()
-    for path in operational_files(root, generated, rootless=rootless):
-        if path.is_relative_to(generated):
-            relative = generated_logical_path(path, generated, rootless=rootless)
-        else:
-            relative = path.relative_to(root).as_posix()
-        name = relative.encode("utf-8")
-        content = path.read_bytes()
-        digest.update(len(name).to_bytes(8, "big"))
-        digest.update(name)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return f"sha256:{digest.hexdigest()}"
+    return fold_digest(
+        (logical_path(path, root, generated, rootless=rootless), path)
+        for path in operational_files(root, generated, rootless=rootless)
+    )
 
 
 if __name__ == "__main__":
@@ -179,10 +144,7 @@ if __name__ == "__main__":
         generated = generated_source.resolve()
         if args.list:
             for path in operational_files(root, generated, rootless=args.rootless):
-                if path.is_relative_to(generated):
-                    print(generated_logical_path(path, generated, rootless=args.rootless))
-                else:
-                    print(path.relative_to(root).as_posix())
+                print(logical_path(path, root, generated, rootless=args.rootless))
             raise SystemExit(0)
         value = operational_digest(root, generated, rootless=args.rootless)
         if args.check:

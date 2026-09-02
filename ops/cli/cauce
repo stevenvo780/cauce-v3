@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# cauce — un solo CLI para operar la flota Cauce V3.
-# Reemplaza a: ia, ia-ver, ia-tui, ia-tui-session, cauce-attach, cauce-estado.
-# La regla: `cauce <alias>` hace LO CORRECTO sin que tengas que elegir entre variantes.
+# cauce — un CLI para la flota Cauce V3: `cauce <alias>` hace LO CORRECTO sin elegir variante.
+# Reemplaza a: ia, ia-tui, ia-tui-session. Delega en cauce-attach, cauce-estado, cauce-sesiones y ia-ver.
 # ESTE FICHERO ES LA FUENTE: se instala en kratos como ~/.local/bin/cauce con
 # `ops/scripts/install-cauce-cli.sh` (vivio catorce meses solo en el home de stev, irrevisable).
 # MODO COMPARTIDA: `cauce <alias>` abre la TUI REAL del harness dentro de una sesion tmux que el
@@ -13,7 +12,7 @@ CONFIG=$HOME/.config/cauce-v3/container-aliases
 TMUX_SOCKET=cauce
 
 c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[90m'
-c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_cy=$'\033[36m'
+c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'
 
 alias_info() {  # $1=alias -> "tenant\troom\tcontenedor\tusuario\thome\tstate\tharness"
   PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$1" 2>/dev/null
@@ -35,8 +34,7 @@ adaptador_activo() {
   fi
 }
 
-# ¿El alias tiene ENCENDIDA la sesión compartida en su configuración?
-# Es la única fuente de verdad: el mismo interruptor que lee el supervisor para el adaptador.
+# ¿Tiene ENCENDIDA la sesión compartida? Único interruptor de verdad: el que lee el supervisor.
 compartida_configurada() {
   [ -f "$CONFIG/$1.env" ] && grep -qx 'SHARED_SESSION=1' "$CONFIG/$1.env" && return 0
   # kant es host-native: no tiene contenedor y su interruptor vive en la UNIT, no en el .env.
@@ -167,7 +165,7 @@ EOF
 
 # ---------- estado de la flota ----------
 cmd_flota() {
-  printf "\n  ${c_b}%-9s %-22s %-9s %-9s %-9s %s${c_reset}\n" ALIAS CONTENEDOR HARNESS ADAPTADOR TUI MODO
+  printf "\n  %s%-9s %-22s %-9s %-9s %-9s %s%s\n" "$c_b" ALIAS CONTENEDOR HARNESS ADAPTADOR TUI MODO "$c_reset"
   printf "  %s\n" "$(printf '─%.0s' $(seq 1 76))"
   local a line ctr cuser harness ad modo color term
   local -a sin_gateway=()
@@ -200,22 +198,22 @@ cmd_flota() {
     # la torre, decirlo: si no, alguien va a hacer docker exec en un contenedor donde no hay nada.
     local ctr_txt="$ctr"
     es_host_native "$a" && ctr_txt="torre (sin docker)"
-    printf "  %-9s %-22s %-9s %-18s %-18s ${color}%s${c_reset}\n" "$a" "$ctr_txt" "$harness" "$ad" "$term" "$modo"
+    printf "  %-9s %-22s %-9s %-18s %-18s %s%s%s\n" "$a" "$ctr_txt" "$harness" "$ad" "$term" "$color" "$modo" "$c_reset"
   done
   if [ ${#sin_gateway[@]} -gt 0 ]; then
-    printf "\n  ${c_err}${c_b}SIN GATEWAY: %s${c_reset}\n" "${sin_gateway[*]}"
-    printf "  ${c_dim}siguen contestando Telegram por el camino embebido, en una conversacion que vos NO ves.${c_reset}\n"
-    printf "  ${c_dim}levantar:  systemctl --user start cauce-v3-openclaw-gateway@<alias>${c_reset}\n"
+    printf "\n  %s%sSIN GATEWAY: %s%s\n" "$c_err" "$c_b" "${sin_gateway[*]}" "$c_reset"
+    printf "  %ssiguen contestando Telegram por el camino embebido, en una conversacion que vos NO ves.%s\n" "$c_dim" "$c_reset"
+    printf "  %slevantar:  systemctl --user start cauce-v3-openclaw-gateway@<alias>%s\n" "$c_dim" "$c_reset"
   fi
   # Los alias que viven en el VPS van en su propia tabla, preguntada al `cauce` de alla, que es el
   # unico que ve su docker y su systemd. Si el VPS no contesta se dice, no se finge una tabla vacia.
   if [ -r "$MAPA_HOST" ] && awk '$2=="vps"{f=1} END{exit !f}' "$MAPA_HOST"; then
-    printf "\n  ${c_dim}--- en el VPS (100.64.0.11) ---${c_reset}\n"
+    printf "\n  %s--- en el VPS (100.64.0.11) ---%s\n" "$c_dim" "$c_reset"
     if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 vps "U=\$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/\$U HOME=/home/stev /home/stev/.local/bin/cauce flota" 2>/dev/null | sed -n '/ALIAS/,/entrar:/p' | grep -v 'entrar:'; then
-      printf "  ${c_err}no pude preguntarle al VPS${c_reset}\n"
+      printf "  %sno pude preguntarle al VPS%s\n" "$c_err" "$c_reset"
     fi
   fi
-  printf "\n  ${c_dim}entrar:  cauce <alias>      mirar:  cauce <alias> ver${c_reset}\n\n"
+  printf "\n  %sentrar:  cauce <alias>      mirar:  cauce <alias> ver%s\n\n" "$c_dim" "$c_reset"
 }
 
 # La clave de sesion que usa el bus para un alias openclaw: la entrada "openclaw:<alias>:" de su
@@ -355,20 +353,19 @@ cmd_entrar() {
   IFS=$'\t' read -r _ _ ctr cuser chome state harness _ <<<"$line"
   ad=$(adaptador_activo "$a")
 
-  printf "\n  ${c_b}%s${c_reset} · %s · %s\n" "$a" "$harness" "$ctr"
+  printf "\n  %s%s%s · %s · %s\n" "$c_b" "$a" "$c_reset" "$harness" "$ctr"
 
   # 1) sesion compartida: la TUI real, y la misma conversacion que Telegram.
   if compartida_configurada "$a"; then
-    salida=$(sesion ensure "$a" "$ctr" "$cuser" "$harness" 2>&1)
-    if [[ $? -eq 0 ]]; then
-      printf "  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real, y la misma conversacion que Telegram.\n"
-      printf "  ${c_dim}lo que llegue por el bus aparece aca EN VIVO. salir sin cerrarla: Ctrl-b d${c_reset}\n"
+    if salida=$(sesion ensure "$a" "$ctr" "$cuser" "$harness" 2>&1); then
+      printf "  modo: %s%sCOMPARTIDA%s — la TUI real, y la misma conversacion que Telegram.\n" "$c_ok" "$c_b" "$c_reset"
+      printf "  %slo que llegue por el bus aparece aca EN VIVO. salir sin cerrarla: Ctrl-b d%s\n" "$c_dim" "$c_reset"
       # Lo que se rompio mientras no estabas mirando. Si el bus tuvo que contestar por el camino
       # de siempre, se dice aca ANTES de entrar: una caida silenciosa es indistinguible del exito.
       local pendientes
       pendientes=$(avisos "$a" "$ctr" "$cuser" "$state" "$harness")
       if [ -n "$pendientes" ]; then
-        printf "\n  ${c_err}${c_b}avisos de la sesion compartida:${c_reset}\n"
+        printf "\n  %s%savisos de la sesion compartida:%s\n" "$c_err" "$c_b" "$c_reset"
         printf '%s\n' "$pendientes" | python3 -c '
 import json,sys
 for line in sys.stdin:
@@ -389,46 +386,46 @@ for line in sys.stdin:
     fi
     # El interruptor esta encendido pero la sesion no se pudo abrir. Se DICE, y se cae a lo de
     # siempre: exactamente lo contrario del fallback silencioso que mato al intento anterior.
-    printf "  ${c_err}la sesion compartida esta configurada pero NO se pudo abrir:${c_reset}\n"
-    printf "  ${c_dim}%s${c_reset}\n" "${salida:-sin detalle}"
+    printf "  %sla sesion compartida esta configurada pero NO se pudo abrir:%s\n" "$c_err" "$c_reset"
+    printf "  %s%s%s\n" "$c_dim" "${salida:-sin detalle}" "$c_reset"
   elif [[ $harness == openclaw ]]; then
     local lineas clave_oc n
     mapfile -t lineas < <(openclaw_sesiones "$a" "$ctr" "$cuser" "$state")
     if [[ ${#lineas[@]} -eq 0 ]]; then
-      printf "  ${c_dim}todavia no hay ninguna sesion del bus para %s: mandale algo y volve${c_reset}\n" "$a"
+      printf "  %stodavia no hay ninguna sesion del bus para %s: mandale algo y volve%s\n" "$c_dim" "$a" "$c_reset"
     elif ! openclaw_gateway_vivo "$ctr"; then
-      printf "  ${c_err}el gateway de openclaw NO responde en %s (127.0.0.1:18789)${c_reset}\n" "$ctr"
-      printf "  ${c_dim}sin gateway no hay a que engancharse: este alias corre por el camino embebido,${c_reset}\n"
-      printf "  ${c_dim}dentro del propio puente, asi que una TUI aca seria una conversacion aparte.${c_reset}\n"
+      printf "  %sel gateway de openclaw NO responde en %s (127.0.0.1:18789)%s\n" "$c_err" "$ctr" "$c_reset"
+      printf "  %ssin gateway no hay a que engancharse: este alias corre por el camino embebido,%s\n" "$c_dim" "$c_reset"
+      printf "  %sdentro del propio puente, asi que una TUI aca seria una conversacion aparte.%s\n" "$c_dim" "$c_reset"
     else
       local donde_oc
       if [[ ${#lineas[@]} -gt 1 ]]; then
         # openclaw abre una conversacion por canal (Telegram, consola, bus): hilos distintos
         # de verdad, y el dueño elige a cual entra. Las de Telegram van primeras y marcadas: es
         # la que el dueño casi siempre quiere y hasta hoy tenia que adivinar.
-        printf "  ${c_b}%s conversaciones${c_reset} ${c_dim}— openclaw abre una por canal. Elegi:${c_reset}\n\n" "${#lineas[@]}"
+        printf "  %s%s conversaciones%s %s— openclaw abre una por canal. Elegi:%s\n\n" "$c_b" "${#lineas[@]}" "$c_reset" "$c_dim" "$c_reset"
         local hay_dm=0
         for i in "${!lineas[@]}"; do
           IFS=$'\t' read -r nid ed tk pre dnd <<<"${lineas[$i]}"
           local marca="  " color="$c_dim"
           if [[ $dnd == DM\ Telegram* ]]; then marca="${c_ok}${c_b}>>${c_reset}"; color="$c_ok"; hay_dm=1; fi
-          printf "  %s ${c_b}%d)${c_reset} %-9s ${color}%-40s${c_reset} ${c_dim}hace %-5s · %-5s${c_reset}  %s\n" \
-            "$marca" $((i+1)) "${nid:0:8}" "${dnd:0:40}" "$ed" "$tk" "${pre:0:38}"
+          printf "  %s %s%d)%s %-9s %s%-40s%s %shace %-5s · %-5s%s  %s\n" \
+            "$marca" "$c_b" $((i+1)) "$c_reset" "${nid:0:8}" "$color" "${dnd:0:40}" "$c_reset" "$c_dim" "$ed" "$tk" "$c_reset" "${pre:0:38}"
         done
         # La leyenda sólo si hay algo que señalar. Un ">>" explicado y ausente hace buscar una
         # marca que no existe, y deja la duda de si la conversacion de Telegram esta o no.
         if [[ $hay_dm -eq 1 ]]; then
-          printf "\n  ${c_dim}>> = el DM de Telegram del dueño, segun lo que el adaptador anoto al abrirla.${c_reset}\n"
+          printf "\n  %s>> = el DM de Telegram del dueño, segun lo que el adaptador anoto al abrirla.%s\n" "$c_dim" "$c_reset"
         else
-          printf "\n  ${c_warn}ninguna conversacion consta como DM de Telegram.${c_reset}${c_dim} Las que dicen \"sin origen\"\n"
-          printf "  son anteriores al registro de origen: puede que una lo sea, pero no puedo decir cual.${c_reset}\n"
+          printf "\n  %sninguna conversacion consta como DM de Telegram.%s%s Las que dicen \"sin origen\"\n" "$c_warn" "$c_reset" "$c_dim"
+          printf "  son anteriores al registro de origen: puede que una lo sea, pero no puedo decir cual.%s\n" "$c_reset"
         fi
-        printf "  ${c_dim}numero (Enter = 1, q = salir):${c_reset} "
+        printf "  %snumero (Enter = 1, q = salir):%s " "$c_dim" "$c_reset"
         read -r n </dev/tty || n=""
         [[ $n == q ]] && { printf "\n"; exit 0; }
         [[ -z $n ]] && n=1
         if ! [[ $n =~ ^[0-9]+$ ]] || (( n < 1 || n > ${#lineas[@]} )); then
-          printf "  ${c_err}opcion invalida${c_reset}\n\n"; exit 2
+          printf "  %sopcion invalida%s\n\n" "$c_err" "$c_reset"; exit 2
         fi
       else
         n=1
@@ -436,62 +433,62 @@ for line in sys.stdin:
       IFS=$'\t' read -r clave_oc _ _ _ donde_oc <<<"${lineas[$((n-1))]}"
       # El cartel dice QUE conversacion es, no solo que "es la misma que el bus". Cuando el
       # origen no consta, se dice que no consta, en vez de afirmar que es la de Telegram.
-      printf "\n  modo: ${c_ok}${c_b}COMPARTIDA${c_reset} — la TUI real de openclaw, la MISMA conversacion que el bus.\n"
+      printf "\n  modo: %s%sCOMPARTIDA%s — la TUI real de openclaw, la MISMA conversacion que el bus.\n" "$c_ok" "$c_b" "$c_reset"
       if [[ $donde_oc == *"sin origen"* || -z $donde_oc ]]; then
-        printf "  ${c_warn}conversacion: NO CONSTA de que canal salio${c_reset}${c_dim} (entrada anterior al registro de origen).\n"
-        printf "  no puedo afirmar que sea la de Telegram; si no es, salí y elegí otra.${c_reset}\n"
+        printf "  %sconversacion: NO CONSTA de que canal salio%s%s (entrada anterior al registro de origen).\n" "$c_warn" "$c_reset" "$c_dim"
+        printf "  no puedo afirmar que sea la de Telegram; si no es, salí y elegí otra.%s\n" "$c_reset"
       else
-        printf "  ${c_dim}conversacion: %s${c_reset}\n" "$donde_oc"
+        printf "  %sconversacion: %s%s\n" "$c_dim" "$donde_oc" "$c_reset"
       fi
-      printf "  ${c_dim}salir sin cerrarla: Ctrl-b d  ·  sesion %s${c_reset}\n" "${clave_oc:0:8}"
-      printf "  ${c_warn}ojo, openclaw todavia NO esta endurecido${c_reset}${c_dim} — tres cosas medidas:\n"
+      printf "  %ssalir sin cerrarla: Ctrl-b d  ·  sesion %s%s\n" "$c_dim" "${clave_oc:0:8}" "$c_reset"
+      printf "  %sojo, openclaw todavia NO esta endurecido%s%s — tres cosas medidas:\n" "$c_warn" "$c_reset" "$c_dim"
       printf "    · el PEDIDO del bus no se pinta en vivo (la respuesta si): veras respuestas sin pregunta\n"
       printf "    · veras el sobre JSON crudo y el prompt de protocolo entero\n"
-      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)${c_reset}\n\n"
+      printf "    · el agente NO recuerda lo que EL te contesto a vos (lo que vos escribis si lo ve)%s\n\n" "$c_reset"
       exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" openclaw tui --session "$clave_oc"
     fi
   elif [[ $harness == claude || $harness == codex ]]; then
-    printf "  ${c_dim}este alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)${c_reset}\n"
+    printf "  %seste alias no tiene sesion compartida encendida (falta SHARED_SESSION=1 en su .env)%s\n" "$c_dim" "$c_reset"
   else
-    printf "  ${c_dim}el harness %s no tiene sesion compartida${c_reset}\n" "$harness"
+    printf "  %sel harness %s no tiene sesion compartida%s\n" "$c_dim" "$harness" "$c_reset"
   fi
 
   # 2) conversacion aparte, sin parar al agente
   if [[ $ad == active ]]; then
-    printf "  modo: ${c_warn}${c_b}APARTE${c_reset} — TUI real, pero conversacion nueva: NO comparte con Telegram.\n"
-    printf "  ${c_dim}el agente sigue respondiendo Telegram y el bus. salir: Ctrl-D${c_reset}\n\n"
+    printf "  modo: %s%sAPARTE%s — TUI real, pero conversacion nueva: NO comparte con Telegram.\n" "$c_warn" "$c_b" "$c_reset"
+    printf "  %sel agente sigue respondiendo Telegram y el bus. salir: Ctrl-D%s\n\n" "$c_dim" "$c_reset"
     case "$harness" in
       claude) exec docker exec -it --user "$cuser" -w /workspace "$ctr" claude ;;
       codex)  exec docker exec -it --user "$cuser" -w /workspace "$ctr" codex ;;
       openclaw)
-              printf "  ${c_dim}openclaw SI tiene TUI propia, pero no te la abro aca: en modo local${c_reset}\n"
-              printf "  ${c_dim}comparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del${c_reset}\n"
-              printf "  ${c_dim}bus nunca aparece). La conversacion mutaria debajo tuyo sin dejar rastro.${c_reset}\n"
-              printf "  ${c_dim}Te abro un shell; para la TUI compartida hace falta gateway.${c_reset}\n\n"
+              printf "  %sopenclaw SI tiene TUI propia, pero no te la abro aca: en modo local%s\n" "$c_dim" "$c_reset"
+              printf "  %scomparte el ESTADO con el bus y aun asi el panel es CIEGO (el turno del%s\n" "$c_dim" "$c_reset"
+              printf "  %sbus nunca aparece). La conversacion mutaria debajo tuyo sin dejar rastro.%s\n" "$c_dim" "$c_reset"
+              printf "  %sTe abro un shell; para la TUI compartida hace falta gateway.%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${chome:-/}" "$ctr" bash -l ;;
-      *)      printf "  ${c_dim}sin TUI propia: te abro un shell${c_reset}\n\n"
+      *)      printf "  %ssin TUI propia: te abro un shell%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l ;;
     esac
   fi
 
   # 3) el adaptador esta parado: attach exclusivo clasico
-  printf "  modo: ${c_err}${c_b}EXCLUSIVA${c_reset} — su adaptador esta parado.\n"
-  printf "  ${c_dim}lo que le escriban por Telegram se ENCOLA y entra cuando salgas.${c_reset}\n\n"
+  printf "  modo: %s%sEXCLUSIVA%s — su adaptador esta parado.\n" "$c_err" "$c_b" "$c_reset"
+  printf "  %slo que le escriban por Telegram se ENCOLA y entra cuando salgas.%s\n\n" "$c_dim" "$c_reset"
   if [[ -x $BIN/cauce-attach ]]; then exec python3 "$BIN/cauce-attach" "$a"; fi
   exec docker exec -it --user "$cuser" -w /workspace "$ctr" bash -l
 }
 
 # ---------- resto ----------
 cmd_ver()      { exec "$BIN/ia-ver" "$@"; }
-cmd_estado()   { [ $# -eq 0 ] && exec "$BIN/ia" estado || exec "$BIN/ia" "$1" estado; }
-cmd_sesiones() { exec "$BIN/ia" "$1" sesiones; }
+cmd_estado()   { if [ -n "${1:-}" ]; then exec "$BIN/cauce-estado" "$1"; fi; exec "$BIN/cauce-estado"; }
+cmd_sesiones() { exec "$BIN/cauce-sesiones" "$1"; }
 # La unit de verdad. kant no tiene "container-": es host-native. Preguntarle a la unit equivocada
 # devuelve "inactive" para un alias que esta perfectamente vivo.
 unit_del_alias() {
   es_host_native "$1" && printf 'cauce-v3-host-%s.service\n' "$1" || printf 'cauce-v3-container-%s.service\n' "$1"
 }
 systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
-  local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  ${c_err}systemctl --user %s %s fallo${c_reset}\n" "$verbo" "$unit" >&2; printf "  ${c_dim}%s${c_reset}\n" "$salida" >&2; printf "  ${c_dim}sin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M stev@ %s %s${c_reset}\n" "$verbo" "$unit" >&2; return 1
+  local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  %ssystemctl --user %s %s fallo%s\n" "$c_err" "$verbo" "$unit" "$c_reset">&2; printf "  %s%s%s\n" "$c_dim" "$salida" "$c_reset">&2; printf "  %ssin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M stev@ %s %s%s\n" "$c_dim" "$verbo" "$unit" "$c_reset">&2; return 1
 }
 
 # Los PIDs del adaptador, mirados DENTRO del contenedor (en el host se lee otro /proc, no se
@@ -501,6 +498,7 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
 #     contenedores no privilegiados (sin CAP_SYS_PTRACE root lee 2 de 23 environs).
 #   - cmdline con /cauce-v3-adapter/<alias>/: world-readable SIEMPRE. Deja fuera al agente PTY a
 #     proposito: otro canal, otra unit. El placeholder NO se llama ALIAS: el sed se lo comeria.
+# shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
 BARRIDO='for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
@@ -525,27 +523,27 @@ cmd_on() {
   local techo=120 paso=5 transcurrido=0 pids
   pids=$(pids_del_alias "$a" | tr '\n' ' ')
   if [ -z "${pids// /}" ]; then
-    printf "  ${c_dim}%s arrancando… el staging del bundle puede tardar 45-75s; sondeando hasta %ss${c_reset}\n" "$a" "$techo"
+    printf "  %s%s arrancando… el staging del bundle puede tardar 45-75s; sondeando hasta %ss%s\n" "$c_dim" "$a" "$techo" "$c_reset"
     while (( transcurrido < techo )); do
       sleep "$paso"
       transcurrido=$((transcurrido + paso))
       pids=$(pids_del_alias "$a" | tr '\n' ' ')
       [ -n "${pids// /}" ] && break
-      (( transcurrido % 20 == 0 )) && printf "  ${c_dim}%s sigue esperando (%ss/%ss)…${c_reset}\n" "$a" "$transcurrido" "$techo"
+      (( transcurrido % 20 == 0 )) && printf "  %s%s sigue esperando (%ss/%ss)…%s\n" "$c_dim" "$a" "$transcurrido" "$techo" "$c_reset"
     done
   fi
   local line ctr cuser harness
   line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr cuser _ _ harness <<<"$line"
   if [ -z "${pids// /}" ]; then
-    printf "  ${c_err}%s: todavia sin proceso vivo tras %ss${c_reset}  (systemd dice: %s)\n" "$a" "$techo" "$(adaptador_activo "$a")"
-    printf "  ${c_dim}comprobado: ningun proceso con CAUCE_ALIAS=%s (ni cmdline .../cauce-v3-adapter/%s/) en su contenedor/host.${c_reset}\n" "$a" "$a"
-    printf "  ${c_dim}puede seguir en staging si el bundle es grande, o haber fallado de verdad — no asumas que esta muerto:${c_reset}\n"
-    printf "  ${c_dim}  journalctl --user -u %s -n 40 --no-pager${c_reset}\n" "$u"
-    printf "  ${c_dim}  cauce %s estado${c_reset}\n" "$a"
+    printf "  %s%s: todavia sin proceso vivo tras %ss%s  (systemd dice: %s)\n" "$c_err" "$a" "$techo" "$c_reset" "$(adaptador_activo "$a")"
+    printf "  %scomprobado: ningun proceso con CAUCE_ALIAS=%s (ni cmdline .../cauce-v3-adapter/%s/) en su contenedor/host.%s\n" "$c_dim" "$a" "$a" "$c_reset"
+    printf "  %spuede seguir en staging si el bundle es grande, o haber fallado de verdad — no asumas que esta muerto:%s\n" "$c_dim" "$c_reset"
+    printf "  %s  journalctl --user -u %s -n 40 --no-pager%s\n" "$c_dim" "$u" "$c_reset"
+    printf "  %s  cauce %s estado%s\n" "$c_dim" "$a" "$c_reset"
     return 1
   fi
-  printf "  %s proceso vivo: ${c_ok}%s procesos${c_reset} ${c_dim}(PID %s...) tras %ss${c_reset}\n" \
-    "$a" "$(printf '%s\n' $pids | grep -c .)" "$(printf '%s' "$pids" | cut -d" " -f1)" "$transcurrido"
+  printf "  %s proceso vivo: %s%s procesos%s %s(PID %s...) tras %ss%s\n" \
+    "$a" "$c_ok" "$(printf '%s' "$pids" | wc -w)" "$c_reset" "$c_dim" "$(printf '%s' "$pids" | cut -d" " -f1)" "$transcurrido" "$c_reset"
   if compartida_configurada "$a"; then
     # Misma logica que arriba: la sesion tmux se crea DESPUES del proceso y puede tardar unos
     # segundos mas en aparecer. `ensure` es idempotente, asi que reintentarlo no hace dano.
@@ -559,14 +557,14 @@ cmd_on() {
       s_transcurrido=$((s_transcurrido + s_paso))
     done
     if printf '%s' "$tui" | grep -q '"present":true'; then
-      printf "  %s sesion compartida: ${c_ok}lista${c_reset}\n" "$a"
+      printf "  %s sesion compartida: %slista%s\n" "$a" "$c_ok" "$c_reset"
     else
-      printf "  ${c_warn}%s: proceso VIVO pero SIN sesion compartida${c_reset} tras %ss de intentos — Telegram y tu TUI quedan separados\n" "$a" "$s_techo"
-      printf "  ${c_dim}%s${c_reset}\n" "$(printf '%s' "$tui" | tail -2)"
-      printf "  ${c_dim}ya reintente 'ensure' solo varias veces; a mano: cauce %s${c_reset}\n" "$a"
+      printf "  %s%s: proceso VIVO pero SIN sesion compartida%s tras %ss de intentos — Telegram y tu TUI quedan separados\n" "$c_warn" "$a" "$c_reset" "$s_techo"
+      printf "  %s%s%s\n" "$c_dim" "$(printf '%s' "$tui" | tail -2)" "$c_reset"
+      printf "  %sya reintente 'ensure' solo varias veces; a mano: cauce %s%s\n" "$c_dim" "$a" "$c_reset"
     fi
   fi
-  printf "  ${c_dim}entrar: cauce %s${c_reset}\n" "$a"
+  printf "  %sentrar: cauce %s%s\n" "$c_dim" "$a" "$c_reset"
 }
 
 cmd_off() {
@@ -578,7 +576,7 @@ cmd_off() {
   local pids p vivo
   pids=$(pids_del_alias "$a")
   if [ -n "$pids" ]; then
-    printf "  ${c_warn}%s sobrevivio a systemd${c_reset} (PID %s) — lo mato\n" "$a" "$(echo "$pids" | tr '\n' ' ')"
+    printf "  %s%s sobrevivio a systemd%s (PID %s) — lo mato\n" "$c_warn" "$a" "$c_reset" "$(echo "$pids" | tr '\n' ' ')"
     for p in $pids; do
       # Reconfirmar la identidad JUSTO antes de senalar: los PIDs se reciclan.
       if es_host_native "$a"; then
@@ -594,7 +592,7 @@ cmd_off() {
     pids=$(pids_del_alias "$a")
   fi
   if [ -n "$pids" ]; then
-    printf "  ${c_err}%s SIGUE VIVO${c_reset} (PID %s). No se murio solo: mirar a mano.\n" "$a" "$(echo "$pids" | tr '\n' ' ')"
+    printf "  %s%s SIGUE VIVO%s (PID %s). No se murio solo: mirar a mano.\n" "$c_err" "$a" "$c_reset" "$(echo "$pids" | tr '\n' ' ')"
     return 1
   fi
   # Su servidor tmux arrastra la generacion del adaptador: si queda en pie, el proximo arranque
@@ -602,20 +600,20 @@ cmd_off() {
   # `claude --resume` sobrevivio 51 min a un `off`) reteniendo su session id — justo lo que produce
   # los dead_letters de "Session ID ... is already in use". El PID del panel se anota ANTES de
   # matar la sesion, porque despues ya no hay a quien preguntarle.
-  local matar_panel="pids=$(tmux -L $TMUX_SOCKET list-panes -t cauce-$a -F \"#{pane_pid}\" 2>/dev/null); tmux -L $TMUX_SOCKET kill-session -t cauce-$a 2>/dev/null; for p in \$pids; do kill \$p 2>/dev/null; done; true"
+  local matar_panel; matar_panel="pids=$(tmux -L "$TMUX_SOCKET" list-panes -t "cauce-$a" -F '#{pane_pid}' 2>/dev/null); tmux -L $TMUX_SOCKET kill-session -t cauce-$a 2>/dev/null; for p in \$pids; do kill \$p 2>/dev/null; done; true"
   if es_host_native "$a"; then
     sh -lc "$matar_panel" >/dev/null 2>&1
   else
     local line2 ctr2; line2=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr2 _ _ _ _ <<<"$line2"
     [ -n "$ctr2" ] && docker exec "$ctr2" sh -lc "$matar_panel" >/dev/null 2>&1
   fi
-  printf "  %s ${c_ok}adaptador del bus apagado de verdad${c_reset} ${c_dim}(su TUI tambien se fue, si no el proximo \"on\" falla con 78/CONFIG)${c_reset}\n" "$a"
+  printf "  %s %sadaptador del bus apagado de verdad%s %s(su TUI tambien se fue, si no el proximo \"on\" falla con 78/CONFIG)%s\n" "$a" "$c_ok" "$c_reset" "$c_dim" "$c_reset"
   # "off" apaga el ADAPTADOR DEL BUS. El canal PTY es otro servicio con su propia unit, y sigue
   # en pie: el alias mantiene su TLS al relay y su terminal web sigue alcanzable — no es "off" total.
   if [ "$(systemctl --user is-active "cauce-v3-pty@$a.service" 2>/dev/null)" = active ]; then
-    printf "  ${c_warn}ojo:${c_reset} su agente PTY sigue vivo y conectado al relay ${c_dim}(cauce-v3-pty@%s)${c_reset}\n" "$a"
-    printf "        ${c_dim}el terminal web de %s sigue en pie. Para bajarlo tambien:${c_reset}\n" "$a"
-    printf "        ${c_dim}systemctl --user stop cauce-v3-pty@%s${c_reset}\n" "$a"
+    printf "  %sojo:%s su agente PTY sigue vivo y conectado al relay %s(cauce-v3-pty@%s)%s\n" "$c_warn" "$c_reset" "$c_dim" "$a" "$c_reset"
+    printf "        %sel terminal web de %s sigue en pie. Para bajarlo tambien:%s\n" "$c_dim" "$a" "$c_reset"
+    printf "        %ssystemctl --user stop cauce-v3-pty@%s%s\n" "$c_dim" "$a" "$c_reset"
   fi
 }
 
@@ -635,6 +633,7 @@ remoto_cauce() {  # $1=alias, resto=argumentos tal cual
   # a cauce: medido, un `cauce <alias> login --ver` dentro de un script se comio el resto del
   # script y las ordenes siguientes no llegaron a correr nunca.
   local tty=(-n); [ -t 0 ] && [ -t 1 ] && tty=(-t)
+  # shellcheck disable=SC2029  # $a y $* se expanden aca a proposito: son el comando reenviado
   ssh "${tty[@]}" vps "U=\$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/\$U HOME=/home/stev /home/stev/.local/bin/cauce $a $*"
 }
 
@@ -719,10 +718,10 @@ pinta_credencial() {  # $1=que(claude|codex) $2=alias $3=ctr $4=usu $5=ruta-base
   local tipo huella cuenta correo
   if [ "$1" = claude ]; then
     IFS='|' read -r tipo huella <<<"$(huella_claude "$2" "$3" "$4" "$5")"
-    printf "  Claude : %-14s ${c_dim}huella=%s${c_reset}\n" "$tipo" "$huella"
+    printf "  Claude : %-14s %shuella=%s%s\n" "$tipo" "$c_dim" "$huella" "$c_reset"
   else
     IFS='|' read -r tipo cuenta correo <<<"$(huella_codex "$2" "$3" "$4" "$5")"
-    printf "  Codex  : %-14s ${c_dim}cuenta=%s %s${c_reset}\n" "$tipo" "$cuenta" "$correo"
+    printf "  Codex  : %-14s %scuenta=%s %s%s\n" "$tipo" "$c_dim" "$cuenta" "$correo" "$c_reset"
   fi
 }
 
@@ -796,44 +795,44 @@ estado_auth_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir
 
 login_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir de claude
   local opcion token
-  printf "\n  ${c_warn}Como funciona esto de verdad:${c_reset} ${c_b}claude setup-token${c_reset} SOLO IMPRIME un token.\n"
-  printf "  ${c_dim}No escribe ninguna credencial en ningun sitio. Si lo dejas en pantalla, se pierde.${c_reset}\n"
-  printf "  ${c_dim}Este CLI lo instala por vos en %s/.credentials.json,${c_reset}\n" "$4"
-  printf "  ${c_dim}que es EXACTAMENTE el fichero que comprueba despues.${c_reset}\n"
-  printf "\n  ${c_b}1)${c_reset} generar un token nuevo    ${c_dim}(lanza 'claude setup-token' y luego lo instalo)${c_reset}\n"
-  printf "  ${c_b}2)${c_reset} pegar uno que ya tengas   ${c_dim}(sk-ant-oat01-...; no gasta uno nuevo)${c_reset}\n"
+  printf "\n  %sComo funciona esto de verdad:%s %sclaude setup-token%s SOLO IMPRIME un token.\n" "$c_warn" "$c_reset" "$c_b" "$c_reset"
+  printf "  %sNo escribe ninguna credencial en ningun sitio. Si lo dejas en pantalla, se pierde.%s\n" "$c_dim" "$c_reset"
+  printf "  %sEste CLI lo instala por vos en %s/.credentials.json,%s\n" "$c_dim" "$4" "$c_reset"
+  printf "  %sque es EXACTAMENTE el fichero que comprueba despues.%s\n" "$c_dim" "$c_reset"
+  printf "\n  %s1)%s generar un token nuevo    %s(lanza 'claude setup-token' y luego lo instalo)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
+  printf "  %s2)%s pegar uno que ya tengas   %s(sk-ant-oat01-...; no gasta uno nuevo)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
   read -r -p "  opcion [1/2]: " opcion
   if [ "${opcion:-1}" != 2 ]; then
-    printf "\n  ${c_dim}-- 'claude setup-token' dentro de %s: abri la URL, autoriza, y COPIA el token --${c_reset}\n\n" "$2"
+    printf "\n  %s-- 'claude setup-token' dentro de %s: abri la URL, autoriza, y COPIA el token --%s\n\n" "$c_dim" "$2" "$c_reset"
     if es_host_native "$1"; then claude setup-token
     else docker exec -it --user "$3" "$2" claude setup-token; fi
-    printf "\n  ${c_warn}Ese token de arriba TODAVIA NO esta instalado.${c_reset} Pegalo aca y lo instalo.\n"
+    printf "\n  %sEse token de arriba TODAVIA NO esta instalado.%s Pegalo aca y lo instalo.\n" "$c_warn" "$c_reset"
   fi
-  printf "  Pega el token y ENTER ${c_dim}(no se muestra)${c_reset}: "
+  printf "  Pega el token y ENTER %s(no se muestra)%s: " "$c_dim" "$c_reset"
   read -r -s token; printf '\n'
   # Mejor no tocar nada que dejar la credencial vacia o con basura: una credencial rota se ve igual
   # que una cuenta agotada, y esa confusion ya costo dias.
   if [ -z "$token" ]; then
-    printf "  ${c_warn}token vacio: no toco nada${c_reset} ${c_dim}(la credencial anterior sigue como estaba)${c_reset}\n"
+    printf "  %stoken vacio: no toco nada%s %s(la credencial anterior sigue como estaba)%s\n" "$c_warn" "$c_reset" "$c_dim" "$c_reset"
     return 1
   fi
   case "$token" in
     *[[:space:]]*)
-      printf "  ${c_err}eso lleva espacios o saltos de linea: no es el token. No toco nada.${c_reset}\n"
+      printf "  %seso lleva espacios o saltos de linea: no es el token. No toco nada.%s\n" "$c_err" "$c_reset"
       unset token; return 1 ;;
     sk-ant-*) ;;
     *)
-      printf "  ${c_err}eso no empieza por 'sk-ant-': no lo instalo.${c_reset} ${c_dim}Pega solo el token.${c_reset}\n"
+      printf "  %seso no empieza por 'sk-ant-': no lo instalo.%s %sPega solo el token.%s\n" "$c_err" "$c_reset" "$c_dim" "$c_reset"
       unset token; return 1 ;;
   esac
   printf '%s' "$token" | instala_token_claude "$1" "$2" "$3" "$4"
   local rc=$?
   unset token
   if [ "$rc" != 0 ]; then
-    printf "  ${c_err}no pude escribir %s/.credentials.json${c_reset} ${c_dim}(rc=%s)${c_reset}\n" "$4" "$rc"
+    printf "  %sno pude escribir %s/.credentials.json%s %s(rc=%s)%s\n" "$c_err" "$4" "$c_reset" "$c_dim" "$rc" "$c_reset"
     return "$rc"
   fi
-  printf "  ${c_ok}token instalado en %s/.credentials.json${c_reset} ${c_dim}(modo 600)${c_reset}\n" "$4"
+  printf "  %stoken instalado en %s/.credentials.json%s %s(modo 600)%s\n" "$c_ok" "$4" "$c_reset" "$c_dim" "$c_reset"
 }
 
 # El flujo por defecto es --device-auth: el login de navegador levanta el callback en localhost
@@ -843,15 +842,15 @@ login_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir de claude
 # Imprime https://auth.openai.com/codex/device y un codigo de ocho letras que dura 15 minutos.
 login_codex() {  # $1=alias $2=ctr $3=usu $4=codex-home
   local opcion token
-  printf "\n  ${c_b}1)${c_reset} codigo de dispositivo   ${c_dim}(por defecto: te da una URL y un codigo de 8 letras)${c_reset}\n"
-  printf "  ${c_b}2)${c_reset} pegar un access token   ${c_dim}(si ya lo tenes a mano)${c_reset}\n"
-  printf "  ${c_dim}el flujo de navegador a secas no se ofrece: su callback vive en el localhost del${c_reset}\n"
-  printf "  ${c_dim}contenedor, no en el tuyo.${c_reset}\n"
+  printf "\n  %s1)%s codigo de dispositivo   %s(por defecto: te da una URL y un codigo de 8 letras)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
+  printf "  %s2)%s pegar un access token   %s(si ya lo tenes a mano)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
+  printf "  %sel flujo de navegador a secas no se ofrece: su callback vive en el localhost del%s\n" "$c_dim" "$c_reset"
+  printf "  %scontenedor, no en el tuyo.%s\n" "$c_dim" "$c_reset"
   read -r -p "  opcion [1/2]: " opcion
   if [ "${opcion:-1}" = 2 ]; then
-    printf "  Pega el access token y ENTER ${c_dim}(no se muestra)${c_reset}: "
+    printf "  Pega el access token y ENTER %s(no se muestra)%s: " "$c_dim" "$c_reset"
     read -r -s token; printf '\n'
-    [ -n "$token" ] || { printf "  ${c_warn}token vacio: no toco nada${c_reset}\n"; return 1; }
+    [ -n "$token" ] || { printf "  %stoken vacio: no toco nada%s\n" "$c_warn" "$c_reset"; return 1; }
     # Por stdin, NUNCA como argumento: los argumentos se leen en `ps` desde cualquier proceso.
     if es_host_native "$1"; then
       printf '%s' "$token" | CODEX_HOME="$4" codex login --with-access-token
@@ -860,7 +859,7 @@ login_codex() {  # $1=alias $2=ctr $3=usu $4=codex-home
     fi
     unset token
   else
-    printf "  ${c_dim}abri la URL que imprima y escribi el codigo; la sesion se cierra sola al autorizar.${c_reset}\n\n"
+    printf "  %sabri la URL que imprima y escribi el codigo; la sesion se cierra sola al autorizar.%s\n\n" "$c_dim" "$c_reset"
     if es_host_native "$1"; then CODEX_HOME="$4" codex login --device-auth
     else docker exec -it --user "$3" -e CODEX_HOME="$4" "$2" codex login --device-auth; fi
   fi
@@ -878,13 +877,13 @@ choques_de_codex() {  # $1=alias-que-acabo-de-tocar $2=cuenta
     [ -n "$ctr" ] || continue
     ch=$(codex_home_de "$otro" "$uhome")
     IFS='|' read -r _r cuenta _ <<<"$(huella_codex "$otro" "$ctr" "$cuser" "$ch")"
-    [ "$cuenta" = "$2" ] && printf "  ${c_err}choca con %s${c_reset} ${c_dim}(misma cuenta de codex)${c_reset}\n" "$otro"
+    [ "$cuenta" = "$2" ] && printf "  %schoca con %s%s %s(misma cuenta de codex)%s\n" "$c_err" "$otro" "$c_reset" "$c_dim" "$c_reset"
   done
 }
 
 cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   local a=$1 arg=${2:-} line ctr cuser uhome harness chome cchome
-  line=$(alias_info "$a") || { printf "  ${c_err}no conozco el alias %s${c_reset}\n" "$a"; return 2; }
+  line=$(alias_info "$a") || { printf "  %sno conozco el alias %s%s\n" "$c_err" "$a" "$c_reset"; return 2; }
   IFS=$'\t' read -r _ _ ctr cuser uhome _ harness <<<"$line"
   chome=$(codex_home_de "$a" "$uhome")
   cchome=$(claude_home_de "$a" "$uhome" "$harness")
@@ -896,21 +895,21 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
     printf "  no entiendo '%s'. Usa: cauce %s login [claude|codex|--ver]\n" "$arg" "$a"; return 2
   fi
 
-  printf "\n  ${c_b}%s${c_reset}  ${c_dim}·  contenedor %s  ·  arnes %s${c_reset}\n" \
-    "$a" "${ctr:-(host-native)}" "$harness"
-  printf "  ${c_dim}%s${c_reset}\n" "$(printf '─%.0s' $(seq 1 62))"
+  printf "\n  %s%s%s  %s·  contenedor %s  ·  arnes %s%s\n" \
+    "$c_b" "$a" "$c_reset" "$c_dim" "${ctr:-(host-native)}" "$harness" "$c_reset"
+  printf "  %s%s%s\n" "$c_dim" "$(printf '─%.0s' $(seq 1 62))" "$c_reset"
 
   if ! contenedor_alcanzable "$a" "$ctr"; then
     # Antes esto decia SIEMPRE "corre esto donde vivan los contenedores", incluso ejecutandose
     # EN la maquina donde viven: a Steven le mando a otro host cuando la verdad era que el
     # contenedor no existia en ninguno. Un mensaje que manda a un sitio equivocado cuesta mas.
-    printf "  ${c_err}el contenedor %s no aparece en el docker de esta maquina (ni parado)${c_reset}\n" "${ctr:-?}"
+    printf "  %sel contenedor %s no aparece en el docker de esta maquina (ni parado)%s\n" "$c_err" "${ctr:-?}" "$c_reset"
     if [ "$(sitio "$a")" = local ]; then
-      printf "  ${c_warn}y esta ES la maquina donde deberia vivir: no esta creado todavia.${c_reset}\n"
-      printf "  ${c_dim}%s no esta provisionada: crear el contenedor es paso PREVIO al login.${c_reset}\n" "$a"
+      printf "  %sy esta ES la maquina donde deberia vivir: no esta creado todavia.%s\n" "$c_warn" "$c_reset"
+      printf "  %s%s no esta provisionada: crear el contenedor es paso PREVIO al login.%s\n" "$c_dim" "$a" "$c_reset"
     else
-      printf "  ${c_warn}esto NO quiere decir que la credencial este vacia: quiere decir que no la puedo leer.${c_reset}\n"
-      printf "  ${c_dim}el docker de aqui no es el de la flota. Corre esto donde vivan los contenedores.${c_reset}\n"
+      printf "  %sesto NO quiere decir que la credencial este vacia: quiere decir que no la puedo leer.%s\n" "$c_warn" "$c_reset"
+      printf "  %sel docker de aqui no es el de la flota. Corre esto donde vivan los contenedores.%s\n" "$c_dim" "$c_reset"
     fi
     return 3
   fi
@@ -936,27 +935,27 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   # que no se lo ofrezco, y con palabras — nunca con el error crudo del runtime.
   for o in "${faltan[@]}"; do
     case "$o" in
-      claude) printf "  Claude : ${c_warn}%-14s${c_reset} ${c_dim}no hay binario 'claude' en %s${c_reset}\n" "NO INSTALADO" "${ctr:-(host-native)}" ;;
-      codex)  printf "  Codex  : ${c_warn}%-14s${c_reset} ${c_dim}no hay binario 'codex' en %s${c_reset}\n"  "NO INSTALADO" "${ctr:-(host-native)}" ;;
+      claude) printf "  Claude : %s%-14s%s %sno hay binario 'claude' en %s%s\n" "$c_warn" "NO INSTALADO" "$c_reset" "$c_dim" "${ctr:-(host-native)}" "$c_reset";;
+      codex)  printf "  Codex  : %s%-14s%s %sno hay binario 'codex' en %s%s\n" "$c_warn" "NO INSTALADO" "$c_reset" "$c_dim" "${ctr:-(host-native)}" "$c_reset";;
     esac
   done
 
   if [ ${#objetivos[@]} -eq 0 ]; then
     if [ ${#faltan[@]} -gt 0 ]; then
-      printf "\n  ${c_err}%s no tiene instalado ese arnes: no hay nada que renovar por aqui.${c_reset}\n" "$a"
-      printf "  ${c_dim}el binario no viene en la imagen, se instala por alias. Tenerlo es paso PREVIO${c_reset}\n"
-      printf "  ${c_dim}al login: sin binario no hay comando de login que ejecutar dentro del contenedor.${c_reset}\n"
+      printf "\n  %s%s no tiene instalado ese arnes: no hay nada que renovar por aqui.%s\n" "$c_err" "$a" "$c_reset"
+      printf "  %sel binario no viene en la imagen, se instala por alias. Tenerlo es paso PREVIO%s\n" "$c_dim" "$c_reset"
+      printf "  %sal login: sin binario no hay comando de login que ejecutar dentro del contenedor.%s\n" "$c_dim" "$c_reset"
       return 4
     fi
-    printf "  ${c_warn}no encuentro ninguna credencial que renovar en este alias${c_reset}\n"
+    printf "  %sno encuentro ninguna credencial que renovar en este alias%s\n" "$c_warn" "$c_reset"
     return 1
   fi
   [ "$solo_ver" = 1 ] && return 0
 
   # Antes de tocar: un turno a medias muere si paramos el adaptador.
   if turno_en_vuelo "$a"; then
-    printf "\n  ${c_err}%s TIENE UN TURNO EN VUELO ahora mismo${c_reset} — pararlo lo mata.\n" "$a"
-    printf "  ${c_dim}salgo sin tocar nada; reintenta cuando cierre.${c_reset}\n"
+    printf "\n  %s%s TIENE UN TURNO EN VUELO ahora mismo%s — pararlo lo mata.\n" "$c_err" "$a" "$c_reset"
+    printf "  %ssalgo sin tocar nada; reintenta cuando cierre.%s\n" "$c_dim" "$c_reset"
     return 1
   fi
 
@@ -966,17 +965,17 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   # guardia reportandolo caido con gravedad 95. Nadie tiene que adivinar esto leyendo el codigo.
   local tiene_codex=0 o2
   for o2 in "${objetivos[@]}"; do [ "$o2" = codex ] && tiene_codex=1; done
-  printf "\n  ${c_warn}AVISO — a partir de que confirmes, %s queda APAGADO hasta terminar el login.${c_reset}\n" "$a"
-  printf "  ${c_warn}Lo que le escriban mientras tanto no se pierde: se encola y lo atiende al volver.${c_reset}\n"
+  printf "\n  %sAVISO — a partir de que confirmes, %s queda APAGADO hasta terminar el login.%s\n" "$c_warn" "$a" "$c_reset"
+  printf "  %sLo que le escriban mientras tanto no se pierde: se encola y lo atiende al volver.%s\n" "$c_warn" "$c_reset"
   if [ "$tiene_codex" = 1 ]; then
-    printf "  ${c_warn}Si renovas codex por codigo de dispositivo, eso puede ser hasta 15 MINUTOS${c_reset}\n"
-    printf "  ${c_warn}(es lo que tarda en caducar el codigo). Tene el navegador abierto ANTES de seguir.${c_reset}\n"
+    printf "  %sSi renovas codex por codigo de dispositivo, eso puede ser hasta 15 MINUTOS%s\n" "$c_warn" "$c_reset"
+    printf "  %s(es lo que tarda en caducar el codigo). Tene el navegador abierto ANTES de seguir.%s\n" "$c_warn" "$c_reset"
   fi
-  printf "  ${c_dim}mientras este apagado el guardia lo va a reportar caido: es esperado, no es un fallo.${c_reset}\n"
+  printf "  %smientras este apagado el guardia lo va a reportar caido: es esperado, no es un fallo.%s\n" "$c_dim" "$c_reset"
 
   local que=${objetivos[0]}
   if [ ${#objetivos[@]} -gt 1 ]; then
-    printf "\n  este alias usa los dos. ${c_b}c${c_reset}) claude   ${c_b}x${c_reset}) codex   ${c_b}n${c_reset}) nada\n"
+    printf "\n  este alias usa los dos. %sc%s) claude   %sx%s) codex   %sn%s) nada\n" "$c_b" "$c_reset" "$c_b" "$c_reset" "$c_b" "$c_reset"
     local q; read -r -p "  opcion [c/x/n]: " q
     case "$q" in c|C) que=claude ;; x|X) que=codex ;; *) printf "  no toco nada.\n"; return 0 ;; esac
   else
@@ -989,20 +988,20 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   if [ "$que" = claude ]; then antes=$(huella_claude "$a" "$ctr" "$cuser" "$cchome")
   else antes=$(huella_codex "$a" "$ctr" "$cuser" "$chome"); fi
 
-  printf "\n  ${c_dim}-- apagando el adaptador de %s --${c_reset}\n" "$a"
-  cmd_off "$a" || { printf "  ${c_err}no lo pude apagar: no sigo${c_reset}\n"; return 1; }
+  printf "\n  %s-- apagando el adaptador de %s --%s\n" "$c_dim" "$a" "$c_reset"
+  cmd_off "$a" || { printf "  %sno lo pude apagar: no sigo%s\n" "$c_err" "$c_reset"; return 1; }
 
   if [ "$que" = claude ]; then login_claude "$a" "$ctr" "$cuser" "$cchome"
   else login_codex "$a" "$ctr" "$cuser" "$chome"; fi
 
-  printf "\n  ${c_dim}-- como quedo --${c_reset}\n"
+  printf "\n  %s-- como quedo --%s\n" "$c_dim" "$c_reset"
   if [ "$que" = claude ]; then
     despues=$(huella_claude "$a" "$ctr" "$cuser" "$cchome")
     pinta_credencial claude "$a" "$ctr" "$cuser" "$cchome"
     # El fichero puede estar y aun asi no valer: lo que decide es que el propio claude se de por
     # logueado. Sin `scopes` el fichero existe y claude dice "Not logged in" igual que si no
     # estuviera — medido. Por eso se pregunta al harness, no al inodo.
-    printf "  ${c_dim}claude dice:${c_reset} %s\n" "$(estado_auth_claude "$a" "$ctr" "$cuser" "$cchome" | head -1)"
+    printf "  %sclaude dice:%s %s\n" "$c_dim" "$c_reset" "$(estado_auth_claude "$a" "$ctr" "$cuser" "$cchome" | head -1)"
   else
     despues=$(huella_codex "$a" "$ctr" "$cuser" "$chome")
     pinta_credencial codex "$a" "$ctr" "$cuser" "$chome"
@@ -1011,12 +1010,12 @@ cmd_login() {  # $1=alias  $2=claude|codex|--ver (opcional)
   fi
   # El login puede salir con codigo 0 y no haber escrito nada. Lo que se afirma es el EFECTO.
   if [ "$antes" = "$despues" ]; then
-    printf "  ${c_err}la credencial NO cambio${c_reset} — quedo la misma de antes. El login no prendio.\n"
+    printf "  %sla credencial NO cambio%s — quedo la misma de antes. El login no prendio.\n" "$c_err" "$c_reset"
   else
-    printf "  ${c_ok}credencial nueva escrita${c_reset}\n"
+    printf "  %scredencial nueva escrita%s\n" "$c_ok" "$c_reset"
   fi
 
-  printf "\n  ${c_dim}-- levantando el adaptador de %s --${c_reset}\n" "$a"
+  printf "\n  %s-- levantando el adaptador de %s --%s\n" "$c_dim" "$a" "$c_reset"
   cmd_on "$a"
 }
 
@@ -1078,8 +1077,8 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     *) printf "  no entiendo '%s'\n" "$1"; return 2 ;;
   esac
 
-  printf "\n  ${c_b}aprovisionar %s${c_reset}" "$a"
-  [ "$dry" = 1 ] && printf "  ${c_dim}(--dry-run: nada se escribe)${c_reset}"
+  printf "\n  %saprovisionar %s%s" "$c_b" "$a" "$c_reset"
+  [ "$dry" = 1 ] && printf "  %s(--dry-run: nada se escribe)%s" "$c_dim" "$c_reset"
   printf "\n\n"
 
   # 0: la unica allowlist (ops/flota.json) y la CA contra la que firma todo lo demas.
@@ -1088,14 +1087,14 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   case $rc in
     0) IFS=$'\t' read -r ap_tenant ap_role <<<"$salida"
        printf "  [0] %s: ops/flota.json lo tiene enabled=true (tenant=%s rol=%s)\n" "$a" "$ap_tenant" "$ap_role" ;;
-    1) printf "  [0] ${c_err}%s no esta en ops/flota.json (ni fleet ni retired)${c_reset}\n" "$a"
+    1) printf "  [0] %s%s no esta en ops/flota.json (ni fleet ni retired)%s\n" "$c_err" "$a" "$c_reset"
        printf "      alta = 1 INSERT en agents+memberships, luego export-fleet-snapshot.py --out ops/flota.json\n"
        return 1 ;;
-    2) printf "  [0] ${c_err}%s esta en ops/flota.json con enabled=false${c_reset}\n" "$a"
+    2) printf "  [0] %s%s esta en ops/flota.json con enabled=false%s\n" "$c_err" "$a" "$c_reset"
        return 1 ;;
-    4) printf "  [0] ${c_err}%s esta RETIRADO en ops/flota.json${c_reset}\n" "$a"
+    4) printf "  [0] %s%s esta RETIRADO en ops/flota.json%s\n" "$c_err" "$a" "$c_reset"
        return 1 ;;
-    *) printf "  [0] ${c_err}no pude leer %s${c_reset}\n" "$FLOTA_JSON"
+    *) printf "  [0] %sno pude leer %s%s\n" "$c_err" "$FLOTA_JSON" "$c_reset"
        return 1 ;;
   esac
   local ca_cert=${CAUCE_CLIENT_CA_CERT:-$PKI_ROOT_AGENTE/ca.crt}
@@ -1105,7 +1104,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     if [ -f "$f" ]; then
       printf "      ok %s (%s)\n" "$f" "$(estampa_modo "$f")"
     else
-      printf "  [0] ${c_err}falta %s${c_reset}\n" "$f"
+      printf "  [0] %sfalta %s%s\n" "$c_err" "$f" "$c_reset"
       ca_ok=0
     fi
   done
@@ -1130,7 +1129,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
       printf "      %s -> %s\n" "$id_cert" "$(estampa_modo "$id_cert")"
       printf "      %s -> %s\n" "$id_key" "$(estampa_modo "$id_key")"
     else
-      printf "  [1] ${c_err}provision-agent-identity.sh fallo${c_reset}\n"
+      printf "  [1] %sprovision-agent-identity.sh fallo%s\n" "$c_err" "$c_reset"
       return 1
     fi
   fi
@@ -1139,7 +1138,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   # register-agent-identity.py trae su PROPIO --dry-run (de solo lectura), igual que 1.
   local register_script="$OPS/scripts/register-agent-identity.py"
   if [ ! -f "$register_script" ]; then
-    printf "  [1b] ${c_err}no encuentro %s${c_reset}\n" "$register_script"
+    printf "  [1b] %sno encuentro %s%s\n" "$c_err" "$register_script" "$c_reset"
     [ "$dry" = 1 ] || return 1
   else
     local -a register_args=(--alias "$a" --cert-dir "$PKI_ROOT_AGENTE" --identities-dir "$IDENTIDADES_DIR")
@@ -1149,7 +1148,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
       printf "  [1b] %s\n" "$salida1b"
       [ "$dry" = 1 ] || printf "      %s -> %s\n" "$IDENTIDADES_DIR/mtls_identities.json" "$(estampa_modo "$IDENTIDADES_DIR/mtls_identities.json")"
     else
-      printf "  [1b] ${c_err}%s${c_reset}\n" "$salida1b"
+      printf "  [1b] %s%s%s\n" "$c_err" "$salida1b" "$c_reset"
       return 1
     fi
   fi
@@ -1158,7 +1157,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   # asi que aca se usa tal cual en vez de simularlo.
   local issue_script="$OPS/scripts/issue-alias-token.py"
   if [ ! -f "$issue_script" ]; then
-    printf "  [2] ${c_err}no encuentro %s${c_reset} (docs/operacion.md (alta y baja), pieza 2)\n" "$issue_script"
+    printf "  [2] %sno encuentro %s%s (docs/operacion.md (alta y baja), pieza 2)\n" "$c_err" "$issue_script" "$c_reset"
     [ "$dry" = 1 ] || return 1
   else
     local -a issue_args=(--alias "$a" --tokens-dir "$TOKENS_DIR_ALIAS" --identities-dir "$IDENTIDADES_DIR")
@@ -1171,7 +1170,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
         printf "      %s -> %s\n" "$IDENTIDADES_DIR/token_hashes.json" "$(estampa_modo "$IDENTIDADES_DIR/token_hashes.json")"
       fi
     else
-      printf "  [2] ${c_err}%s${c_reset}\n" "$salida2"
+      printf "  [2] %s%s%s\n" "$c_err" "$salida2" "$c_reset"
       return 1
     fi
   fi
@@ -1192,7 +1191,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
     if [ -n "${CAUCE_PTY_MASTER_FILE:-}" ] && [ ! -f "$CAUCE_PTY_MASTER_FILE" ] \
        && [ -z "${CAUCE_PTY_MASTER_ENV:-}${CAUCE_PTY_MASTER:-}" ]; then
-      printf "  [3] ${c_err}no hay master PTY: falta %s${c_reset}\n" "$CAUCE_PTY_MASTER_FILE"
+      printf "  [3] %sno hay master PTY: falta %s%s\n" "$c_err" "$CAUCE_PTY_MASTER_FILE" "$c_reset"
       printf "      (o exporta CAUCE_PTY_MASTER_ENV=VAR / CAUCE_PTY_MASTER=valor antes de aprovisionar)\n"
       return 1
     fi
@@ -1200,7 +1199,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     if "$OPS/pty-agent/publish-alias-key.sh" --tenant "$ap_tenant" --alias "$a" --output-dir "$pty_dir"; then
       printf "  [3] %s -> %s\n" "$pty_key" "$(estampa_modo "$pty_key")"
     else
-      printf "  [3] ${c_err}publish-alias-key.sh fallo${c_reset}\n"
+      printf "  [3] %spublish-alias-key.sh fallo%s\n" "$c_err" "$c_reset"
       return 1
     fi
   fi
@@ -1229,7 +1228,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
       printf "  [3b] cert PTY emitido: %s -> %s\n" "$pty_crt" "$(estampa_modo "$pty_crt")"
     else
       rm -f -- "$pty_ckey.tmp" "$pty_crt.tmp" "$pty_dir/.pty.csr" "$pty_dir/.pty.ext" "$pty_dir/.ca.tmp"
-      printf "  [3b] ${c_err}no pude emitir el cert PTY de %s${c_reset}\n" "$a"
+      printf "  [3b] %sno pude emitir el cert PTY de %s%s\n" "$c_err" "$a" "$c_reset"
       return 1
     fi
   fi
@@ -1265,7 +1264,7 @@ PY
   then
     printf "  [3c] huella de pty-%s anexada en %s (vence %s)\n" "$a" "$reg" "$vence_pty"
   else
-    printf "  [3c] ${c_err}no pude registrar la huella en %s${c_reset}\n" "$reg"
+    printf "  [3c] %sno pude registrar la huella en %s%s\n" "$c_err" "$reg" "$c_reset"
     return 1
   fi
 
@@ -1282,7 +1281,7 @@ PY
       printf "  [3d] %s -> %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
     else
       rm -f -- "$pty_env.tmp"
-      printf "  [3d] ${c_err}no pude escribir %s${c_reset}\n" "$pty_env"
+      printf "  [3d] %sno pude escribir %s%s\n" "$c_err" "$pty_env" "$c_reset"
       return 1
     fi
   fi
@@ -1302,7 +1301,7 @@ PY
     printf "      %s -> %s\n" "$cp_dir" "$(estampa_modo "$cp_dir")"
     printf "      %s -> %s\n" "$cp_env" "$(estampa_modo "$cp_env")"
   else
-    printf "  [4] ${c_err}update-alias-config.py init fallo${c_reset}\n"
+    printf "  [4] %supdate-alias-config.py init fallo%s\n" "$c_err" "$c_reset"
     return 1
   fi
 
@@ -1320,23 +1319,23 @@ PY
     if python3 "$OPS/scripts/generate-telegram-config.py" --output "$tg_config" --aliases "$a" --reuse-existing-allowlist; then
       printf "  [5] config.json -> %s\n" "$(estampa_modo "$tg_config")"
     else
-      printf "  [5] ${c_err}generate-telegram-config.py fallo${c_reset}\n"
+      printf "  [5] %sgenerate-telegram-config.py fallo%s\n" "$c_err" "$c_reset"
       return 1
     fi
     if [ -s "$tg_token" ] && [ "$(stat -c '%a' "$tg_token")" = 600 ]; then
       printf "      %s ya esta (se salta la pregunta): %s\n" "$tg_token" "$(estampa_modo "$tg_token")"
     else
       printf "      el token de BotFather es la unica pieza que no se puede generar.\n"
-      printf "      pega el token de %s y ENTER ${c_dim}(no se muestra)${c_reset}: " "$a"
+      printf "      pega el token de %s y ENTER %s(no se muestra)%s: " "$a" "$c_dim" "$c_reset"
       local bt
       read -r -s bt </dev/tty; printf '\n'
       if [ -z "$bt" ]; then
-        printf "  [5] ${c_err}token vacio: no escribo nada${c_reset}\n"
+        printf "  [5] %stoken vacio: no escribo nada%s\n" "$c_err" "$c_reset"
         return 1
       fi
       case "$bt" in
         *[[:space:]]*)
-          printf "  [5] ${c_err}eso lleva espacios: no es el token${c_reset}\n"
+          printf "  [5] %seso lleva espacios: no es el token%s\n" "$c_err" "$c_reset"
           unset bt; return 1 ;;
       esac
       install -d -m 0750 -- "$TELEGRAM_RUNTIME_DIR"
@@ -1345,14 +1344,14 @@ PY
         unset bt
       else
         rm -f -- "$tmp_tok"; unset bt
-        printf "  [5] ${c_err}no pude escribir %s${c_reset}\n" "$tg_token"
+        printf "  [5] %sno pude escribir %s%s\n" "$c_err" "$tg_token" "$c_reset"
         return 1
       fi
     fi
     if [ -s "$tg_token" ] && [ "$(stat -c '%a' "$tg_token")" = 600 ]; then
       printf "      verificado: %s\n" "$(estampa_modo "$tg_token")"
     else
-      printf "  [5] ${c_err}%s no quedo como se esperaba${c_reset}\n" "$tg_token"
+      printf "  [5] %s%s no quedo como se esperaba%s\n" "$c_err" "$tg_token" "$c_reset"
       return 1
     fi
   fi
@@ -1365,16 +1364,16 @@ PY
     IFS=$'\t' read -r _ _ ctr cuser _ _ harness _ <<<"$linea"
     printf "      contenedor=%s usuario=%s arnes=%s adaptador=%s\n" "$ctr" "$cuser" "$harness" "$(adaptador_activo "$a")"
   else
-    printf "      ${c_warn}%s todavia no aparece en container-alias-query.py${c_reset} ${c_dim}(falta regenerate-fleet.sh?)${c_reset}\n" "$a"
+    printf "      %s%s todavia no aparece en container-alias-query.py%s %s(falta regenerate-fleet.sh?)%s\n" "$c_warn" "$a" "$c_reset" "$c_dim" "$c_reset"
   fi
-  printf "\n  ${c_ok}aprovisionar %s: terminado${c_reset}" "$a"
-  [ "$dry" = 1 ] && printf " ${c_dim}(dry-run, nada se escribio)${c_reset}"
+  printf "\n  %saprovisionar %s: terminado%s" "$c_ok" "$a" "$c_reset"
+  [ "$dry" = 1 ] && printf " %s(dry-run, nada se escribio)%s" "$c_dim" "$c_reset"
   printf "\n\n"
 }
 
 cmd_retirar() {  # $1=alias
   local a=$1
-  printf "\n  ${c_b}retirar %s${c_reset}\n\n" "$a"
+  printf "\n  %sretirar %s%s\n\n" "$c_b" "$a" "$c_reset"
 
   # 1: parar y deshabilitar la unit del alias.
   local u; u=$(unit_del_alias "$a")
@@ -1392,39 +1391,38 @@ cmd_retirar() {  # $1=alias
     if python3 "$issue_script" --revoke --alias "$a" --tokens-dir "$TOKENS_DIR_ALIAS" --identities-dir "$IDENTIDADES_DIR"; then
       printf "  [2] hash de agent-%s marcado revoked\n" "$a"
     else
-      printf "  [2] ${c_err}issue-alias-token.py --revoke fallo para %s${c_reset}\n" "$a"
+      printf "  [2] %sissue-alias-token.py --revoke fallo para %s%s\n" "$c_err" "$a" "$c_reset"
     fi
   else
-    printf "  [2] ${c_warn}issue-alias-token.py todavia no implementa --revoke${c_reset}\n"
+    printf "  [2] %sissue-alias-token.py todavia no implementa --revoke%s\n" "$c_warn" "$c_reset"
     printf "      marcalo a mano: revoked=true para agent-%s en %s/token_hashes.json\n" "$a" "$IDENTIDADES_DIR"
   fi
 
   # 2b: revocar la identidad mTLS de [1b] — mismo patron que el paso 2, con register-agent-identity.py.
-  local register_script="$OPS/scripts/register-agent-identity.py" ret_tenant=$(flota_estado_alias "$a" | cut -f1)
+  local register_script="$OPS/scripts/register-agent-identity.py" ret_tenant; ret_tenant=$(flota_estado_alias "$a" | cut -f1)
   if [ ! -f "$register_script" ] || ! grep -qE -- '--revoke' "$register_script" 2>/dev/null; then
-    printf "  [2b] ${c_warn}register-agent-identity.py todavia no implementa --revoke${c_reset}\n"
+    printf "  [2b] %sregister-agent-identity.py todavia no implementa --revoke%s\n" "$c_warn" "$c_reset"
   elif [ -n "$ret_tenant" ] && python3 "$register_script" --revoke --tenant "$ret_tenant" --alias "$a"; then
     printf "  [2b] identidad mTLS de %s marcada revoked\n" "$a"
   else
-    printf "  [2b] ${c_err}no pude revocar la identidad mTLS de %s (tenant=%s)${c_reset}\n" "$a" "${ret_tenant:-?}"
+    printf "  [2b] %sno pude revocar la identidad mTLS de %s (tenant=%s)%s\n" "$c_err" "$a" "${ret_tenant:-?}" "$c_reset"
   fi
 
   # 3: la BD queda fuera del alcance del CLI a proposito.
-  printf "\n  ${c_warn}pendiente del dueno${c_reset} ${c_dim}(este CLI NO escribe en la BD):${c_reset}\n"
+  printf "\n  %spendiente del dueno%s %s(este CLI NO escribe en la BD):%s\n" "$c_warn" "$c_reset" "$c_dim" "$c_reset"
   printf "    UPDATE agents SET enabled=false WHERE alias='%s';\n" "$a"
   printf "    python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json\n"
-  printf "    ./ops/scripts/regenerate-fleet.sh   ${c_dim}(purga manifest/unit/telegram del alias)${c_reset}\n\n"
+  printf "    ./ops/scripts/regenerate-fleet.sh   %s(purga manifest/unit/telegram del alias)%s\n\n" "$c_dim" "$c_reset"
 }
 
 
 case "${1:-}" in
-  ""|flota|estado) [[ ${1:-} == estado ]] && cmd_estado "${2:-}" || cmd_flota ;;
+  ""|flota|estado) if [[ ${1:-} == estado ]]; then cmd_estado "${2:-}"; else cmd_flota; fi ;;
   -h|--help|help|ayuda) uso ;;
   ver) shift; cmd_ver "$@" ;;
   *)
     a=$1; shift || true
     if [ "$(sitio "$a")" = vps ]; then
-      exec_remoto=1
       printf "  \033[2m%s vive en el VPS; reenvio el comando alla\033[0m\n" "$a" >&2
       remoto_cauce "$a" "${@:-}"
       exit $?

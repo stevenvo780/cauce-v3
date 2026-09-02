@@ -3,6 +3,21 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PROJECT="$ROOT/.."
 
+mapfile -t shebang_sh < <(node "$PROJECT/ops/scripts/ficheros-con-shebang.mjs" sh)
+mapfile -t shebang_py < <(node "$PROJECT/ops/scripts/ficheros-con-shebang.mjs" python)
+if [[ ${#shebang_sh[@]} -eq 0 || ${#shebang_py[@]} -eq 0 ]]; then
+  printf 'shebang discovery returned no extensionless executables\n' >&2
+  exit 1
+fi
+shell_sources=()
+for candidate in "$ROOT"/scripts/*.sh "$ROOT"/cli/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh \
+  "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$ROOT"/tests/*.sh \
+  "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh \
+  "${shebang_sh[@]/#/"$PROJECT"/}"; do
+  if [ -f "$candidate" ]; then shell_sources+=("$candidate"); fi
+done
+python_sources=("${shebang_py[@]/#/"$PROJECT"/}")
+
 if [ -f "$ROOT/flota.json" ]; then
   (
     tmp_fleet_aliases=$(mktemp -d)
@@ -39,9 +54,35 @@ if [ -f "$ROOT/flota.json" ]; then
   )
 fi
 
-for file in "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$ROOT"/tests/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh; do bash -n "$file"; done
+if [ -f "$ROOT/flota.json" ]; then
+  (
+    tmp_runtime_fleet=$(mktemp -d)
+    trap 'rm -rf "$tmp_runtime_fleet"' EXIT
+    PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-runtime-fleet.py" \
+      --snapshot "$ROOT/flota.json" --output "$tmp_runtime_fleet/fleet.json" >/dev/null
+    cmp -s "$tmp_runtime_fleet/fleet.json" "$ROOT/generated/fleet.json" || {
+      printf 'checked-in fleet.json is stale; regenerate it from ops/flota.json\n' >&2
+      exit 1
+    }
+  )
+fi
+
+if [ -f "$ROOT/flota.json" ]; then
+  (
+    tmp_telegram_config=$(mktemp -d)
+    trap 'rm -rf "$tmp_telegram_config"' EXIT
+    PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-telegram-config.py" \
+      --ops-dir "$ROOT" --output "$tmp_telegram_config/config.json" >/dev/null
+    cmp -s "$tmp_telegram_config/config.json" "$ROOT/telegram-runtime/config.json" || {
+      printf 'checked-in telegram-runtime/config.json is stale; regenerate it from ops/flota.json\n' >&2
+      exit 1
+    }
+  )
+fi
+
+for file in "${shell_sources[@]}"; do bash -n "$file"; done
 for file in "$ROOT"/scripts/*.mjs "$ROOT"/harness/*.mjs "$ROOT"/tests/*.mjs "$PROJECT"/deploy/*.mjs "$PROJECT"/deploy/runtime/*.mjs; do node --check "$file"; done
-PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" "${python_sources[@]}" <<'PY'
 import json, pathlib, sys, yaml
 from jsonschema import Draft202012Validator
 root = pathlib.Path(sys.argv[1])
@@ -61,6 +102,9 @@ for path in sorted((root / 'container-runtime').glob('*.py')):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
     print(f'python syntax ok: {path}')
 for path in sorted((root / 'guardias').glob('*.py')):
+    compile(path.read_text(encoding='utf-8'), str(path), 'exec')
+    print(f'python syntax ok: {path}')
+for path in [pathlib.Path(argument) for argument in sys.argv[2:]]:
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
     print(f'python syntax ok: {path}')
 for path in sorted((root / 'tests').glob('*.py')) + sorted((root / 'tests/fixtures').glob('*.py')):
@@ -224,6 +268,6 @@ if ! command -v shellcheck >/dev/null 2>&1; then
   printf 'static validation failed: shellcheck unavailable\n' >&2
   exit 127
 fi
-shellcheck "$ROOT"/scripts/*.sh "$ROOT"/guardias/*.sh "$ROOT"/guardias/contenedor/*.sh "$ROOT"/openclaw-gateway/*.sh "$ROOT"/patches/*.sh "$ROOT"/pty-agent/*.sh "$ROOT"/tests/*.sh "$PROJECT"/deploy/*.sh "$PROJECT"/deploy/runtime/*.sh "$PROJECT"/deploy/postgres/*.sh "$PROJECT"/scripts/*.sh
+shellcheck "${shell_sources[@]}"
 node "$PROJECT/ops/scripts/validate-console-browser-storage.mjs" "$PROJECT/console/src"
 printf 'static validation passed\n'

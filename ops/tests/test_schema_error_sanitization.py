@@ -12,11 +12,34 @@ OPS = pathlib.Path(__file__).resolve().parents[1]
 ROOT = OPS.parent
 sys.path.insert(0, str(OPS / "scripts"))
 
-from manifest_lib import safe_schema_diagnostic  # noqa: E402
+from schema_diagnostics import safe_schema_diagnostic  # noqa: E402
 
-SCRIPTS = (
-    "manifest_lib.py",
-)
+SANITIZER = "schema_diagnostics.py"
+KNOWN_CONSUMERS = frozenset({"manifest_lib.py", "validate-testcontainers-evidence.py"})
+
+
+def jsonschema_consumers() -> list[pathlib.Path]:
+    """List the ops scripts that import jsonschema, discovered rather than hardcoded.
+
+    A hardcoded roster lets the next schema consumer escape the guard entirely, so the roster
+    is derived from the imports themselves and only cross-checked against the known ones.
+    """
+    consumers = []
+    for path in sorted((OPS / "scripts").glob("*.py")):
+        if path.name == SANITIZER:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+        modules = {
+            node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        } | {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        if any((module or "").split(".")[0] == "jsonschema" for module in modules):
+            consumers.append(path)
+    return consumers
 
 
 class SchemaErrorSanitizationTests(unittest.TestCase):
@@ -69,16 +92,22 @@ class SchemaErrorSanitizationTests(unittest.TestCase):
         self.assertNotIn(uuid_key, "\n".join(diagnostics))
 
     def test_live_schema_consumers_route_jsonschema_errors_through_safe_formatter(self) -> None:
-        for name in SCRIPTS:
-            source = (OPS / "scripts" / name).read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=name)
+        consumers = jsonschema_consumers()
+        self.assertTrue(
+            KNOWN_CONSUMERS.issubset({path.name for path in consumers}),
+            "jsonschema consumer discovery stopped seeing the known consumers",
+        )
+        for path in [*consumers, OPS / "scripts" / SANITIZER]:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=path.name)
             attributes = {
                 node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
             }
-            self.assertIn("safe_schema_diagnostic", source, name)
+            if path.name != SANITIZER:
+                self.assertIn("safe_schema_diagnostic", source, path.name)
             self.assertTrue(
                 {"message", "instance", "validator_value"}.isdisjoint(attributes),
-                f"{name} accesses unsafe jsonschema rendering fields",
+                f"{path.name} accesses unsafe jsonschema rendering fields",
             )
 
 

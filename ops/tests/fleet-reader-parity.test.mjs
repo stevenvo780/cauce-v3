@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  copyFile, mkdtemp, readFile, rm,
+  chmod, copyFile, mkdtemp, readFile, rename, rm, symlink,
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -68,6 +68,22 @@ print(json.dumps(load_container_aliases(root), sort_keys=True))
 `, [ops, root], 'container_alias_lib'));
 }
 
+function hardenedRead(root) {
+  return spawnSync('python3', ['-c', `
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "scripts"))
+from container_alias_lib import load_container_aliases
+
+print(len(load_container_aliases(pathlib.Path(sys.argv[2]), hardened=True)))
+`, ops, root], {
+    cwd: ops,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+  });
+}
+
 function updatePoliciesFor(root) {
   return JSON.parse(python(`
 import json
@@ -96,18 +112,10 @@ print(json.dumps(result, sort_keys=True))
 `, [ops, root], 'update_alias_lib'));
 }
 
-const provisionSource = await readFile(path.join(scripts, 'provision-hermes-runtime.sh'), 'utf8');
-const provisionMatch = provisionSource.match(
-  /read_metadata\(\) \{\n {2}python3 - "\$ops_root" "\$alias_name" <<'PY'\n(?<program>[\s\S]*?)\nPY\n\}/u,
-);
-assert(provisionMatch?.groups?.program,
-  'could not isolate provision-hermes-runtime.sh inventory reader');
-
 async function assertParity(root) {
   const inventory = path.join(root, 'container-aliases.json');
   const canonical = canonicalFor(root);
   const updatePolicies = updatePoliciesFor(root);
-  let hermesReaders = 0;
 
   for (const [alias, entry] of Object.entries(canonical)) {
     assert.deepEqual(
@@ -132,16 +140,7 @@ async function assertParity(root) {
       workspace: entry.workspace ?? null,
       requiresIsolatedConfig: physicalCount > 1 && ['claude', 'codex'].includes(entry.harness),
     }, `update_alias_lib.py diverged from container_alias_lib for ${alias}`);
-
-    if (entry.harness === 'hermes') {
-      hermesReaders += 1;
-      const fields = python(provisionMatch.groups.program, [root, alias],
-        `provision-hermes-runtime.sh inventory reader for ${alias}`).split('\t');
-      assert.deepEqual(fields.slice(0, 3), [entry.container, entry.user, entry.home],
-        `provision-hermes-runtime.sh diverged from container_alias_lib for ${alias}`);
-    }
   }
-  return hermesReaders;
 }
 
 await assertParity(ops);
@@ -158,8 +157,23 @@ try {
   });
   checked(generated, 'synthetic reader inventory generation');
   await copyFile(path.join(ops, 'hermes-runtime.json'), path.join(temporary, 'hermes-runtime.json'));
-  assert((await assertParity(temporary)) > 0,
-    'the synthetic parity fixture must always exercise provision-hermes-runtime.sh');
+  await assertParity(temporary);
+
+  const inventory = path.join(temporary, 'container-aliases.json');
+  assert.equal(hardenedRead(temporary).status, 0, 'a private inventory must pass the hardened read');
+
+  await chmod(inventory, 0o664);
+  assert.notEqual(hardenedRead(temporary).status, 0,
+    'the hardened read must reject a group-writable inventory');
+  assert.ok(Object.keys(canonicalFor(temporary)).length > 0,
+    'the hardening is opt-in: the default read must still accept the same inventory');
+
+  await chmod(inventory, 0o644);
+  const target = path.join(temporary, 'real-container-aliases.json');
+  await rename(inventory, target);
+  await symlink(target, inventory);
+  assert.notEqual(hardenedRead(temporary).status, 0,
+    'the hardened read must refuse to follow a symlinked inventory');
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

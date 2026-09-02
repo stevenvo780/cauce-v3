@@ -8,8 +8,21 @@ import os
 import pathlib
 import re
 import stat
+import sys
 from dataclasses import dataclass
 from typing import Any
+
+_scripts_dir = str(pathlib.Path(__file__).resolve().parent)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from container_alias_lib import (  # noqa: E402  same-directory ops library (stdlib-only)
+    AliasNotDeclaredError,
+    ContainerAliasError,
+    InventoryAccessError,
+    InventorySizeError,
+    read_alias_entry,
+)
 
 MAX_CONFIG_BYTES = 1024 * 1024
 ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
@@ -311,28 +324,26 @@ def load_inventory(
     alias: str,
     hermes_runtime_path: pathlib.Path,
 ) -> AliasPolicy:
+    """Derive the runtime policy of ``alias`` from the inventory at ``path``.
+
+    The canonical reader owns the hardened open (no symlink, regular file, not writable by
+    group or others) and the alias-entry shape; the policy below stays here because only this
+    tool knows which keys each harness requires.
+    """
     try:
-        inventory_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        try:
-            details = os.fstat(inventory_fd)
-            if not stat.S_ISREG(details.st_mode) or details.st_mode & 0o022:
-                raise ConfigUpdateError(
-                    "el inventario debe ser regular y no escribible por grupo u otros"
-                )
-            inventory_body = read_all(inventory_fd, "inventario")
-        finally:
-            os.close(inventory_fd)
-        raw: Any = json.loads(inventory_body.decode("utf-8"))
-    except ConfigUpdateError:
-        raise
+        aliases, entry = read_alias_entry(path, alias, hardened=True)
+    except InventorySizeError as error:
+        raise ConfigUpdateError("inventario excede el limite permitido") from error
+    except InventoryAccessError as error:
+        raise ConfigUpdateError(
+            "el inventario debe ser regular y no escribible por grupo u otros"
+        ) from error
+    except AliasNotDeclaredError as error:
+        raise ConfigUpdateError("el alias no existe en el inventario activo") from error
+    except ContainerAliasError as error:
+        raise ConfigUpdateError("el inventario no declara aliases validos") from error
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ConfigUpdateError("no se pudo leer un inventario valido") from error
-    if not isinstance(raw, dict) or not isinstance(raw.get("aliases"), dict):
-        raise ConfigUpdateError("el inventario no declara aliases validos")
-    aliases: dict[str, Any] = raw["aliases"]
-    entry = aliases.get(alias)
-    if not isinstance(entry, dict):
-        raise ConfigUpdateError("el alias no existe en el inventario activo")
     harness = entry.get("harness")
     container = entry.get("container")
     home = entry.get("home")

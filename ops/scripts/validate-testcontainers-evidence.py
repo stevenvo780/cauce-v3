@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 from jsonschema import Draft202012Validator, FormatChecker
+from schema_diagnostics import safe_schema_diagnostic, schema_error_sort_key
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OPS = ROOT / "ops"
@@ -89,10 +90,9 @@ def validate(run_directory: pathlib.Path) -> None:
             report = json.loads(load_regular(directory / "report.json", 8 * 1024 * 1024))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise EvidenceError(f"{name} report is not UTF-8 JSON") from error
-        failures = sorted(validator.iter_errors(report), key=lambda item: list(item.absolute_path))
+        failures = sorted(validator.iter_errors(report), key=schema_error_sort_key)
         if failures:
-            location = ".".join(map(str, failures[0].absolute_path)) or "<root>"
-            raise EvidenceError(f"{name} report schema failed at {location}")
+            raise EvidenceError(f"{name} report schema failed at {safe_schema_diagnostic(failures[0])}")
         if report.get("suite") != suite:
             raise EvidenceError(f"{name} report has another suite")
         if report.get("sourceDigest") != runtime_digest or report.get("sourceDigestDomain") != "runtime":
