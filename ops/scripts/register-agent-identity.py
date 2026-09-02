@@ -11,6 +11,16 @@ pattern in update_alias_lib.py / issue-alias-token.py).
 
 This script never issues or modifies key material and never touches token_hashes.json (that is
 issue-alias-token.py's job, piece 2) — the certificate must already exist under --cert-dir.
+
+``--revoke --tenant <tenant> --alias <alias>`` reverses the above for one identity: it removes
+every mtls_identities.json record whose principal matches (tenant_id, alias) — no certificate or
+fingerprint needed, since the leaf may already be destroyed by the time an agent is retired — and
+never opens --cert-dir (so --cert-dir is required only outside --revoke). Same lock/CAS pattern as
+issue-alias-token.py::revoke(); idempotent (nothing to remove is success, not an error); --dry-run
+compatible. Invoked by `cauce <alias> retirar` alongside issue-alias-token.py --revoke, which
+calls it as exactly ``--revoke --tenant <tenant> --alias <alias>`` — no --identities-dir, so a
+--revoke with that flag omitted falls back to DEFAULT_IDENTITIES_DIR, the same
+/etc/cauce-v3/secrets/identities that ops/cli/cauce's IDENTIDADES_DIR points at.
 """
 
 from __future__ import annotations
@@ -50,6 +60,7 @@ IDENTITY_FILE_MODE = 0o400
 IDENTITY_SCHEMA_VERSION = 1
 DEFAULT_TTL_DAYS = 730  # matches the mTLS leaf validity issued by provision-agent-identity.sh
 MAX_CERT_BYTES = 16_384
+DEFAULT_IDENTITIES_DIR = pathlib.Path("/etc/cauce-v3/secrets/identities")
 
 
 class RegisterIdentityError(RuntimeError):
@@ -330,22 +341,118 @@ def describe_dry_run(
     )
 
 
+def revoke(tenant: str, alias: str, identities_dir: pathlib.Path) -> dict[str, object]:
+    if ALIAS_RE.fullmatch(alias) is None:
+        raise RegisterIdentityError("el alias tiene formato invalido")
+    if TENANT_RE.fullmatch(tenant) is None:
+        raise RegisterIdentityError("el tenant tiene formato invalido")
+    validate_absolute(identities_dir, "directorio de identidades")
+
+    identities_removed = 0
+    identities_fd = open_absolute_directory(identities_dir, "directorio de identidades")
+    try:
+        assert_secure_directory(identities_fd, "directorio de identidades")
+        lock_fd = open_regular_at(
+            identities_fd, f".{MTLS_IDENTITIES_FILE}.lock", os.O_RDWR | os.O_CREAT, mode=0o600,
+        )
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            document, original = read_identity_document(identities_fd)
+            kept: list[object] = []
+            for record in document["identities"]:  # type: ignore[union-attr]
+                principal = record.get("principal") if isinstance(record, dict) else None
+                if (
+                    isinstance(principal, dict)
+                    and principal.get("tenant_id") == tenant
+                    and principal.get("alias") == alias
+                ):
+                    identities_removed += 1
+                    continue
+                kept.append(record)
+            if identities_removed:
+                document["identities"] = kept  # type: ignore[index]
+                publish_identity_document(identities_fd, document, original)
+        finally:
+            os.close(lock_fd)
+    finally:
+        os.close(identities_fd)
+
+    return {
+        "tenant": tenant,
+        "alias": alias,
+        "identities_removed": identities_removed,
+        "identities_file": str(identities_dir / MTLS_IDENTITIES_FILE),
+    }
+
+
+def describe_revoke_dry_run(tenant: str, alias: str, identities_dir: pathlib.Path) -> str:
+    if ALIAS_RE.fullmatch(alias) is None:
+        raise RegisterIdentityError("el alias tiene formato invalido")
+    if TENANT_RE.fullmatch(tenant) is None:
+        raise RegisterIdentityError("el tenant tiene formato invalido")
+    validate_absolute(identities_dir, "directorio de identidades")
+    identities_fd = open_absolute_directory(identities_dir, "directorio de identidades")
+    try:
+        assert_secure_directory(identities_fd, "directorio de identidades")
+        document, _ = read_identity_document(identities_fd)
+    finally:
+        os.close(identities_fd)
+    matching = sum(
+        1
+        for record in document["identities"]  # type: ignore[union-attr]
+        if isinstance(record, dict)
+        and isinstance(record.get("principal"), dict)
+        and record["principal"].get("tenant_id") == tenant  # type: ignore[union-attr]
+        and record["principal"].get("alias") == alias  # type: ignore[union-attr]
+    )
+    return (
+        f"dry-run --revoke: tenant={tenant} alias={alias} identities_a_eliminar={matching} "
+        f"identities_file={identities_dir / MTLS_IDENTITIES_FILE}"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     default_flota = pathlib.Path(__file__).resolve().parents[1] / "flota.json"
     parser = argparse.ArgumentParser(
         description="Registra la identidad mTLS de un agente cuyo certificado ya fue emitido"
     )
     parser.add_argument("--alias", required=True)
-    parser.add_argument("--cert-dir", required=True, type=pathlib.Path)
-    parser.add_argument("--identities-dir", required=True, type=pathlib.Path)
+    parser.add_argument("--tenant", help="requerido con --revoke; ignorado al registrar (sale de --flota-json)")
+    parser.add_argument("--cert-dir", type=pathlib.Path)
+    parser.add_argument("--identities-dir", type=pathlib.Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--flota-json", type=pathlib.Path, default=default_flota)
     parser.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS)
+    parser.add_argument(
+        "--revoke", action="store_true",
+        help="elimina la identidad mTLS de --tenant:--alias en vez de registrar una nueva",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    arguments = build_parser().parse_args(argv)
+    parser = build_parser()
+    arguments = parser.parse_args(argv)
+
+    if arguments.revoke:
+        if arguments.tenant is None:
+            parser.error("--revoke requiere --tenant")
+        identities_dir = arguments.identities_dir or DEFAULT_IDENTITIES_DIR
+        if arguments.dry_run:
+            print(describe_revoke_dry_run(arguments.tenant, arguments.alias, identities_dir))
+            return 0
+        result = revoke(arguments.tenant, arguments.alias, identities_dir)
+        print(
+            "agent identity revoked: {tenant}:{alias} -> identities_removed={identities_removed}; "
+            "{identities_file}".format(**result)
+        )
+        return 0
+
+    if arguments.cert_dir is None:
+        parser.error("--cert-dir es requerido (fuera de --revoke)")
+    if arguments.identities_dir is None:
+        parser.error("--identities-dir es requerido (fuera de --revoke)")
+
     if arguments.dry_run:
         print(
             describe_dry_run(

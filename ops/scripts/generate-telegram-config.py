@@ -5,7 +5,7 @@ Historically only a test fixture (ops/harness/authentic-fixture-init.mjs) wrote 
 Telegram bridge config, and only for a single alias. This tool productionises that
 gap: it emits a JSON document that validates EXACTLY against the schema enforced by
 `parseTelegramBridgeConfig` in services/telegram-bridge/src/config.ts, built from the
-12-alias fleet source of truth (ops/container-aliases.json, cross-checked against
+fleet source of truth (ops/container-aliases.json, cross-checked against
 ops/manifests/*.yaml).
 
 Mapping (per alias):
@@ -75,6 +75,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import container_alias_lib  # noqa: E402  same-directory ops library (stdlib-only)
+import telegram_config_merge as merge_lib  # noqa: E402
 
 # --- constraints mirrored verbatim from services/telegram-bridge/src/config.ts ---
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")         # config.ts text(..., 64) for alias / recipient.alias
@@ -146,15 +147,14 @@ OPTIONAL_ALIAS_FIELDS = ("bot_username", "chats")
 class GeneratorError(ValueError):
     """Raised for any invalid input, source divergence, or invalid emitted config."""
 
-
 # --------------------------------------------------------------------------- sources
 def load_fleet(ops_dir: pathlib.Path, cross_check: bool = True) -> dict[str, dict[str, str]]:
-    """Return {alias: {'tenant','room','harness'}} for the exact 12-alias fleet.
+    """Return {alias: {'tenant','room','harness'}} for the fleet.
 
     container-aliases.json is the primary source (stdlib-only, carries tenant/room/
     harness). When cross_check is on, ops/manifests/*.yaml must agree exactly.
     """
-    aliases = container_alias_lib.load_container_aliases(ops_dir)  # validates the exact 12
+    aliases = container_alias_lib.load_container_aliases(ops_dir)  # validates the fleet mapping
     fleet = {
         alias: {"tenant": entry["tenant"], "room": entry["room"], "harness": entry["harness"]}
         for alias, entry in aliases.items()
@@ -172,7 +172,7 @@ def _cross_check_manifests(ops_dir: pathlib.Path, fleet: dict[str, dict[str, str
             f"manifest cross-check requires ops manifest tooling ({exc}); pass --no-cross-check to skip"
         ) from exc
     manifest_fleet: dict[str, dict[str, str]] = {}
-    for document in manifest_lib.load_manifests(ops_dir):  # validates the exact 12
+    for document in manifest_lib.load_manifests(ops_dir):  # validates the fleet mapping
         spec = document["spec"]
         manifest_fleet[spec["alias"]] = {
             "tenant": spec["tenant"],
@@ -645,7 +645,7 @@ def validate_config(config: Any) -> dict[str, Any]:
     """Replicate parseTelegramBridgeConfig (services/telegram-bridge/src/config.ts).
 
     Kept an exact mirror on purpose: this is the only gate between an operator's edit and a fleet
-    of twelve bots reading the file at boot. Anything the bridge rejects must be rejected here, and
+    of the whole bot fleet reading the file at boot. Anything the bridge rejects must be rejected here, and
     the cross-alias rules (`assertFleetUsernames`, `assertSingleAmbientHost`) matter most, because
     those are the ones a per-alias review cannot catch.
     """
@@ -715,11 +715,9 @@ def validate_config(config: Any) -> dict[str, Any]:
     _check_single_ambient_host(aliases)
     return config
 
-
 # ------------------------------------------------------------------------------ emit
 def render(config: dict[str, Any], indent: int = 2) -> str:
     return json.dumps(config, indent=indent, ensure_ascii=False, sort_keys=False) + "\n"
-
 
 def _atomic_write(destination: pathlib.Path, body: str, mode: int = 0o644) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -741,7 +739,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         prog="generate-telegram-config.py",
         description="Deterministically generate the Telegram bridge production config (no secrets).",
     )
-    parser.add_argument("--aliases", help="comma-separated subset for canary; default = all 12")
+    parser.add_argument("--aliases", help="comma-separated subset for canary; default = the whole fleet")
     parser.add_argument("--output", type=pathlib.Path, help="atomic output path; default = stdout")
     parser.add_argument(
         "--ops-dir",
@@ -791,6 +789,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "(no tokens); an alias absent from 'aliases' keeps legacy group routing",
     )
     parser.add_argument("--no-cross-check", action="store_true", help="skip ops/manifests/*.yaml cross-check")
+    parser.add_argument("--allow-placeholders", action="store_true", help="force the sentinel over real ids at --output (default: fails closed)")
+    parser.add_argument("--reuse-existing-allowlist", action="store_true", help="default an --aliases alias's allowlist to its own real ids already at --output")
     parser.add_argument("--indent", type=int, default=2)
     return parser.parse_args(argv)
 
@@ -822,9 +822,9 @@ def main(argv: list[str] | None = None) -> int:
             selected = [alias.strip() for alias in args.aliases.split(",") if alias.strip()]
             if not selected:
                 raise GeneratorError("--aliases was empty")
-        config = build_config(fleet, selected, options)
+        config = merge_lib.build_and_merge(fleet, selected, options, allowlist, args.output, args.reuse_existing_allowlist, args.allow_placeholders, build_config, validate_config)
         document = render(config, args.indent)
-    except GeneratorError as exc:
+    except (GeneratorError, merge_lib.MergeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if args.output is None:

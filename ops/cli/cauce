@@ -67,12 +67,10 @@ helper_en_contenedor() {  # $1=alias
   printf '/opt/cauce-v3-adapter/%s/releases/%s/packages/adapter-sdk/dist/src/bin/shared-session.js\n' "$1" "$release"
 }
 
-# El directorio de credenciales que el .env del alias declara para su harness, con el NOMBRE de
-# variable que ese harness entiende: misma clave (`CREDENTIAL_HOME`) y misma traduccion que el
-# supervisor en `container-adapter-supervisor.sh:571`. Existe porque el panel de la TUI y el
-# adaptador COMPITEN por crear la sesion tmux y el ganador le impone su entorno: atlas perdio un
-# turno entero por leer rollouts de un CODEX_HOME distinto al del adaptador.
-# Vacio cuando el alias no declara la clave: el panel hereda el default del harness.
+# El directorio de credenciales que el .env del alias declara, traducido al NOMBRE de variable
+# que ese harness entiende (misma clave `CREDENTIAL_HOME`, misma traduccion que el supervisor en
+# `container-adapter-supervisor.sh:571`): el panel de la TUI y el adaptador COMPITEN por crear la
+# sesion tmux y el ganador le impone su entorno. Vacio cuando el alias no declara la clave.
 credencial_env_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
   local h
   h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
@@ -128,7 +126,8 @@ sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness
   [ -n "$cred" ] && env_cred=(-e "$cred")
   modo=$(modo_permisos_de "$2" "$5")
   [ -n "$modo" ] && env_cred+=(-e "$modo")
-  docker exec --user "$4" "${env_cred[@]}" "$3" node "$helper" "$1" --alias "$2" --harness "$5" --workspace /workspace
+  ws=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$2.env" 2>/dev/null | head -1)  # misma fuente que la rama host-native de arriba
+  docker exec --user "$4" "${env_cred[@]}" "$3" node "$helper" "$1" --alias "$2" --harness "$5" --workspace "${ws:-/workspace}"
 }
 
 # Los avisos de caída que quedaron registrados mientras el dueño no estaba mirando.
@@ -640,12 +639,9 @@ remoto_cauce() {  # $1=alias, resto=argumentos tal cual
 }
 
 # ---------- login: renovar la credencial del arnes ----------
-# Esto vivio como quince scripts agente-<alias>.sh en el home, dos ya apuntando al contenedor
-# EQUIVOCADO. Aca no hay tabla que se desincronice: contenedor, usuario, home y arnes salen del
-# mismo resolvedor que usa el resto del CLI. Lo unico configurable por alias es donde vive el
-# home de credenciales, en su .env del host, y la clave se llama `CREDENTIAL_HOME`, NO
-# `CODEX_HOME`: ese nombre el allowlist de `container-adapter-supervisor.sh` ni lo acepta, y por
-# leer CODEX_HOME `cauce atlas login` renovaba la credencial en el home equivocado.
+# Contenedor, usuario, home y arnes salen del mismo resolvedor que usa el resto del CLI: no hay
+# tabla aparte que desincronizar. La clave del .env del host es `CREDENTIAL_HOME`, NO `CODEX_HOME`
+# (el allowlist de `container-adapter-supervisor.sh` no acepta ese nombre).
 codex_home_de() {  # $1=alias $2=home-del-usuario
   local h
   h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
@@ -673,12 +669,10 @@ existe_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=ruta
   else docker exec --user "$3" "$2" test -f "$4" 2>/dev/null; fi
 }
 
-# El binario del arnes NO viene garantizado en la imagen: `claw:latest` trae claude y openclaw,
-# `codex` se instala SOLO en los alias que lo usan. Sin esto, `cauce gaia login` ofrecia codex
-# —su arnes openclaw lleva pool de los dos— y elegirlo apagaba el alias y escupia el `OCI runtime
-# exec failed ... "codex": executable file not found` crudo en la cara del dueno.
-# Ojo: la credencial NO es proxy del binario (hegel TIENE `auth.json` de codex y NO tiene codex).
-# Lo que decide si se puede renovar es el BINARIO, porque la renovacion se hace ejecutandolo.
+# El binario del arnes NO viene garantizado en la imagen: `codex` se instala SOLO en los alias
+# que lo usan, y openclaw puede llevar pool de los dos sin tener ambos binarios. La credencial NO
+# es proxy del binario (puede haber auth.json sin el binario); lo que decide si se puede renovar
+# es el BINARIO, porque la renovacion se hace ejecutandolo.
 binario_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=binario
   if es_host_native "$1"; then command -v "$4" >/dev/null 2>&1
   else docker exec --user "$3" "$2" sh -lc "command -v $4" >/dev/null 2>&1; fi
@@ -757,16 +751,11 @@ objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $
   esac
 }
 
-# ESTO ESTABA CONDENADO A FALLAR SIEMPRE: `claude setup-token` IMPRIME un token y NO ESCRIBE
-# NINGUN FICHERO, asi que este CLI comprobaba `.credentials.json`, lo veia igual que antes y
-# remataba con "el login no prendio". Steven quemo asi un token de un ANO: se imprimio y se perdio.
-# SE INSTALA EN VEZ DE SOLO AVISAR porque el hermano que SI funciona ya esta montado asi (hegel:
-# `.credentials.json` tipo `setup-token`, huella ff4f377d8a74, hoy atendiendo entregas) y el token
-# entra por STDIN como en `login_codex` opcion 2 — nunca por argumento.
-# LA FORMA DEL FICHERO ESTA MEDIDA (marcador + control negativo con `claude auth status --text`):
-# sin `scopes` el fichero existe y claude dice "Not logged in." igual que sin fichero; el campo
-# que MANDA es `scopes` (con `subscriptionType`). Escribir el "minimo" cambiaria un fallo ruidoso
-# por uno SILENCIOSO. Por eso se escriben `scopes` y `subscriptionType`, y no solo el token.
+# `claude setup-token` IMPRIME un token y no escribe ningun fichero: comprobar solo
+# `.credentials.json` lo ve igual que antes de intentar el login, asi que este CLI lo INSTALA en
+# vez de solo avisar. El token entra por STDIN, como en `login_codex` opcion 2, nunca por argumento.
+# Sin `scopes` (con `subscriptionType`) el fichero existe pero `claude auth status --text` dice
+# "Not logged in." igual que sin fichero: un "minimo" cambia un fallo ruidoso por uno silencioso.
 instala_token_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir ; el TOKEN entra por STDIN
   local json
   # El JSON se arma en el HOST (aqui hay python3 seguro: lo usan las huellas). El contenedor solo
@@ -1317,18 +1306,19 @@ PY
     return 1
   fi
 
-  # 5: token de Telegram — la unica pieza que no se puede generar, entra por stdin.
+  # 5: token de Telegram, entra por stdin. --aliases toca SOLO esta entrada (demas alias intactos).
   local tg_token="$TELEGRAM_RUNTIME_DIR/$a.token"
+  local tg_config="$TELEGRAM_RUNTIME_DIR/config.json"
   if [ "$dry" = 1 ]; then
-    printf "  [5] haria: generate-telegram-config.py --output %s/config.json\n" "$TELEGRAM_RUNTIME_DIR"
+    printf "  [5] haria: generate-telegram-config.py --output %s --aliases %s --reuse-existing-allowlist\n" "$tg_config" "$a"
     if [ -s "$tg_token" ] && [ "$(stat -c '%a' "$tg_token" 2>/dev/null)" = 600 ]; then
       printf "      %s ya esta (no se preguntaria de nuevo): %s\n" "$tg_token" "$(estampa_modo "$tg_token")"
     else
       printf "      pediria por stdin el token de BotFather y lo publicaria en %s (0600)\n" "$tg_token"
     fi
   else
-    if python3 "$OPS/scripts/generate-telegram-config.py" --output "$TELEGRAM_RUNTIME_DIR/config.json"; then
-      printf "  [5] config.json -> %s\n" "$(estampa_modo "$TELEGRAM_RUNTIME_DIR/config.json")"
+    if python3 "$OPS/scripts/generate-telegram-config.py" --output "$tg_config" --aliases "$a" --reuse-existing-allowlist; then
+      printf "  [5] config.json -> %s\n" "$(estampa_modo "$tg_config")"
     else
       printf "  [5] ${c_err}generate-telegram-config.py fallo${c_reset}\n"
       return 1
@@ -1407,6 +1397,16 @@ cmd_retirar() {  # $1=alias
   else
     printf "  [2] ${c_warn}issue-alias-token.py todavia no implementa --revoke${c_reset}\n"
     printf "      marcalo a mano: revoked=true para agent-%s en %s/token_hashes.json\n" "$a" "$IDENTIDADES_DIR"
+  fi
+
+  # 2b: revocar la identidad mTLS de [1b] — mismo patron que el paso 2, con register-agent-identity.py.
+  local register_script="$OPS/scripts/register-agent-identity.py" ret_tenant=$(flota_estado_alias "$a" | cut -f1)
+  if [ ! -f "$register_script" ] || ! grep -qE -- '--revoke' "$register_script" 2>/dev/null; then
+    printf "  [2b] ${c_warn}register-agent-identity.py todavia no implementa --revoke${c_reset}\n"
+  elif [ -n "$ret_tenant" ] && python3 "$register_script" --revoke --tenant "$ret_tenant" --alias "$a"; then
+    printf "  [2b] identidad mTLS de %s marcada revoked\n" "$a"
+  else
+    printf "  [2b] ${c_err}no pude revocar la identidad mTLS de %s (tenant=%s)${c_reset}\n" "$a" "${ret_tenant:-?}"
   fi
 
   # 3: la BD queda fuera del alcance del CLI a proposito.
