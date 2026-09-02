@@ -54,7 +54,7 @@ export interface FakeAgentHandle {
   readonly sessions: number;
   readonly exit_code: number;
   readonly error?: Error;
-  /** `null` unless the agent was started with `governance: true`. */
+  /** The sandbox in use, or `null` while no governance frame has arrived yet (and after close). */
   readonly governance?: GovernanceSandbox | null;
   close(): void;
   destroy(): void;

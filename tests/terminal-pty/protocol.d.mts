@@ -10,7 +10,8 @@ export declare const TICKET_PREFIX: string;
 
 export declare const TAG: {
   AGENT_HELLO: number; HELLO_ACK: number; OPEN: number; OPEN_OK: number; OPEN_ERR: number;
-  STDIN: number; STDOUT: number; RESIZE: number; CLOSE: number; CLOSED: number;
+  STDIN: number; STDOUT: number; RESIZE: number; TERMINAL_RESPONSE: number;
+  PAUSE_OUTPUT: number; RESUME_OUTPUT: number; CLOSE: number; CLOSED: number;
   PING: number; PONG: number;
   READ: number; READ_OK: number; READ_ERR: number; READ_DATA: number; READ_DONE: number;
   WRITE: number; WRITE_DATA: number; WRITE_OK: number; WRITE_ERR: number; WRITE_CANCEL: number;
@@ -21,8 +22,9 @@ export declare const TAG_NAME: Record<number, string>;
 export declare const DATA_TAGS: Set<number>;
 /**
  * Tags whose payload opens with the 36 ASCII bytes of an identifier: a session id for
- * STDIN/STDOUT, a governance request id for READ_DATA/WRITE_DATA/WRITE_BATCH_DATA. The
- * agent keeps one decoder for all of them (PREFIXED_TAGS in cauce_pty_agent.py).
+ * STDIN/STDOUT/TERMINAL_RESPONSE, a governance request id for
+ * READ_DATA/WRITE_DATA/WRITE_BATCH_DATA. The agent keeps one decoder for all of them
+ * (PREFIXED_TAGS in ops/pty-agent/cauce_pty_agent/framing.py).
  */
 export declare const PREFIXED_TAGS: Set<number>;
 export declare const EMPTY_TAGS: Set<number>;

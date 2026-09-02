@@ -43,7 +43,6 @@ export const EXIT = {
 const AGENT_VERSION = 'fake-pty-agent/1.0.0';
 const MAX_DATA_BYTES = MAX_FRAME_PAYLOAD - SESSION_ID_BYTES;
 
-
 /** Tickets and keys never reach a log line; this is what goes instead. */
 function fingerprint(value) {
   return createHash('sha256').update(String(value)).digest('hex').slice(0, 12);
@@ -399,7 +398,7 @@ export function startFakeAgent(options) {
     closed,
     get sessions() { return sessions.size; },
     get exit_code() { return exitCode; },
-    get governance() { return config.governance ? governance() : null; },
+    get governance() { return sandbox; },
     close() { socket.end(); },
     destroy() { socket.destroy(); },
   };

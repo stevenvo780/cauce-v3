@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createGovernanceSandbox, type GovernanceOutput, type GovernanceSandbox } from './governance-double.mjs';
 import {
-  CLOSE_CODE, FrameDecoder, MAX_FRAME_PAYLOAD, TAG, TICKET_HKDF_SALT,
+  CLOSE_CODE, FrameDecoder, MAX_FRAME_PAYLOAD, PREFIXED_TAGS, TAG, TICKET_HKDF_SALT,
   b64urlDecode, b64urlEncode, canonicalTicketPayload, closeCodeForTicketReason,
   decodeDataPayload, decodeSingleFrame, deriveAliasKey, encodeDataFrame, encodeFrame,
   encodeJsonFrame, mintTicket, verifyTicket,
@@ -376,6 +376,28 @@ describe('pty wire vectors: framing', () => {
   });
 });
 
+function indexRows(head: Record<string, unknown>): { path: string; bytes: number }[] {
+  const entries = head.entries;
+  if (!Array.isArray(entries)) throw new Error('READ_OK for a dir must carry entries');
+  return entries
+    .map((raw) => {
+      const row = raw as Record<string, unknown>;
+      return { path: text(row, 'path'), bytes: integer(row, 'bytes') };
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function expectedRows(sandbox: GovernanceSandbox, expected: Record<string, unknown>): { path: string; bytes: number }[] {
+  const entries = expected.entries;
+  if (!Array.isArray(entries)) throw new Error('a dir vector must pin its entries');
+  return entries
+    .map((raw) => {
+      const row = raw as Record<string, unknown>;
+      return { path: `${sandbox.memory_root}/${text(row, 'path')}`, bytes: integer(row, 'bytes') };
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
 function createHash256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -385,6 +407,7 @@ interface SeedFile { name: string; text?: string; fill?: { byte: number; count: 
 function sandboxFor(testCase: VectorCase): GovernanceSandbox {
   const sandbox = createGovernanceSandbox({ harness: text(testCase.input, 'harness') });
   sandbox.seed((testCase.input.files ?? []) as SeedFile[]);
+  sandbox.seedMemory((testCase.input.memory ?? []) as SeedFile[]);
   return sandbox;
 }
 
@@ -428,6 +451,7 @@ function batchRequest(sandbox: GovernanceSandbox, spec: Record<string, unknown>)
   const chunks: Buffer[] = [];
   const entries = raw.map((item) => {
     const entry = item as Record<string, unknown>;
+    const chunksBefore = chunks.length;
     const wire: Record<string, unknown> = {
       path: sandbox.path(text(entry, 'basename')),
       mode: text(entry, 'mode'),
@@ -442,6 +466,10 @@ function batchRequest(sandbox: GovernanceSandbox, spec: Record<string, unknown>)
       Object.assign(wire, { content_sha: createHash256(content), bytes: content.length, chunks: parts.length });
     }
     if (typeof entry.expected_sha === 'string') wire.expected_sha = entry.expected_sha;
+    if (entry.announce !== undefined && entry.announce !== null) {
+      chunks.length = chunksBefore;
+      Object.assign(wire, entry.announce as Record<string, unknown>);
+    }
     return wire;
   });
   return { request: { request_id: text(spec, 'request_id'), entries }, chunks };
@@ -463,10 +491,11 @@ describe('pty wire vectors: governed reading and writing', () => {
     const sandbox = sandboxFor(testCase);
     try {
       const request = record(testCase.input, 'request');
+      const kind = text(request, 'kind');
       const outputs = sandbox.read({
         request_id: text(request, 'request_id'),
-        kind: text(request, 'kind'),
-        path: sandbox.path(text(request, 'basename')),
+        kind,
+        path: kind === 'dir' ? sandbox.memory_root : sandbox.path(text(request, 'basename')),
       });
       const last = jsonOf(terminal(outputs));
       expect(tagName(terminal(outputs).tag)).toBe(text(testCase.expected, 'terminal_tag'));
@@ -476,8 +505,20 @@ describe('pty wire vectors: governed reading and writing', () => {
         expect(last.reason).toBe(text(testCase.expected, 'reason'));
         return;
       }
-      const head = jsonOf(outputs[0] as GovernanceOutput);
-      expect(tagName((outputs[0] as GovernanceOutput).tag)).toBe(text(testCase.expected, 'ok_tag'));
+      const first = outputs[0];
+      if (first === undefined) throw new Error('the governance case produced no output frame');
+      const head = jsonOf(first);
+      expect(tagName(first.tag)).toBe(text(testCase.expected, 'ok_tag'));
+      if (kind === 'dir') {
+        expect(head.path).toBe(sandbox.memory_root);
+        expect(head.total).toBe(testCase.expected.total);
+        expect(head.observed_at_least).toBe(integer(testCase.expected, 'observed_at_least'));
+        expect(head.truncated).toBe(testCase.expected.truncated);
+        expect(outputs, 'metadata only: READ_OK then READ_DONE, never a chunk').toHaveLength(2);
+        expect(indexRows(head)).toEqual(expectedRows(sandbox, testCase.expected));
+        expect(last.request_id).toBe(text(request, 'request_id'));
+        return;
+      }
       expect(head.bytes).toBe(integer(testCase.expected, 'bytes'));
       expect(head.truncated).toBe(testCase.expected.truncated);
       expect(head.chunks).toBe(integer(testCase.expected, 'chunks'));
@@ -567,9 +608,12 @@ describe('pty wire vectors: the governance limits the four legs share', () => {
     expect(integer(limits, 'max_data')).toBe(integer(limits, 'max_frame') - integer(limits, 'session_id_bytes'));
     expect(integer(limits, 'max_write_batch_files')).toBe(7);
     expect(integer(ttls, 'session_ttl_seconds')).toBeGreaterThan(integer(ttls, 'idle_timeout_seconds'));
-    for (const name of vectors.framing.prefixed_tags) {
+    const declared = new Set(vectors.framing.prefixed_tags.map((name) => {
       expect(vectors.framing.tags[name], name).toBe(TAG[name as keyof typeof TAG]);
-    }
+      return vectors.framing.tags[name];
+    }));
+    expect([...declared].sort(), 'a tag the harness prefixes and the file omits would be misdecoded')
+      .toEqual([...PREFIXED_TAGS].sort());
   });
 
   it('gives every governance tag of the agent the same byte the harness uses', () => {

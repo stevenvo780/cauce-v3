@@ -69,9 +69,14 @@ was — that is why those cases also pin `file_text` or `files_after`. `input.ha
 profile (`claude` -> `$HOME/.claude/CLAUDE.md`; `openclaw` -> the seven workspace documents),
 `input.files` seeds the tree and every path in a case is a `basename` inside it: the vectors
 never name an absolute path, because the runner builds a fresh temporary home per case.
+`input.memory` seeds the measured memory instead (`$HOME/.claude/projects`, `.codex/memories`,
+the OpenClaw `memory`), which is the only directory a `kind: "dir"` READ may name; those names
+may carry `/` and the index case pins the rows by path, because the agent orders them by mtime
+and no vector can pin that.
 
 `geometry`, `limits` and `ttls` are not vectors but the shared constants, each with a `sources`
-entry naming the file and line it was copied from. They exist so the four legs stop re-declaring
+entry naming where it was copied from: a TypeScript or YAML file by line, and the Python agent by
+module and constant name — the agent is a package and line numbers rot on the next split. They exist so the four legs stop re-declaring
 the same numbers; the value they carry is only as good as the assertions that compare them with
 the real constant (`ops/pty-agent/tests/test_vectors_contract.py` does exactly that for the
 agent).
@@ -149,8 +154,17 @@ error codes and reason strings as the Python agent: never-served basenames, cano
 paths, containment inside the home, `expected_sha` as the compare-and-swap precondition,
 create-if-absent, the idempotent reply to a replayed write whose bytes are already on disk, and a
 batch that stages everything before committing anything and rolls the prefix back if a commit
-fails. `dispose()` deletes the tree; nothing outside it is ever opened. `READ_DONE` is emitted
+fails. A `kind: "dir"` READ answers the memory index: metadata only, never content, credential
+names never even listed, the walk cut by `max_dir_depth`, `max_dir_entries` and the byte budget.
+`dispose()` deletes the tree; nothing outside it is ever opened. `READ_DONE` is emitted
 only after a successful `READ_OK` and all its `READ_DATA`; `READ_ERR` is terminal on its own.
+
+The read and write validators are deliberately two functions, because the agent's are: the write
+shape check collapses too-long, null-byte and relative paths into `path is not a bounded absolute
+path`, and a batch entry collapses size, chunk count and their disagreement into one `too_large`.
+What the double does NOT model, and therefore no vector proves: the four-transaction ceiling
+(`max_write_transactions`), the 5000-entry scan cap and the index byte budget (`dir_scan_cap`,
+`read_index_budget`).
 
 The vector walk drives it directly (no socket); the relay contract tests drive it through the
 agent leg with `startFakeAgent({governance: true})`.
@@ -250,6 +264,9 @@ names, adjust here, this is the only place that mentions them):
 | `0x20` | STDIN | relay -> agent | DATA |
 | `0x21` | STDOUT | agent -> relay | DATA |
 | `0x22` | RESIZE | relay -> agent | JSON `{session_id, cols, rows}` |
+| `0x23` | TERMINAL_RESPONSE | relay -> agent | DATA (a DA/DSR answer, read-only session) |
+| `0x24` | PAUSE_OUTPUT | relay -> agent | JSON `{session_id}` |
+| `0x25` | RESUME_OUTPUT | relay -> agent | JSON `{session_id}` |
 | `0x30` | CLOSE | relay -> agent | JSON `{session_id, reason}` |
 | `0x31` | CLOSED | agent -> relay | JSON `{session_id, exit_code, signal, reason}` |
 | `0x40` | PING | relay -> agent | empty |
@@ -270,9 +287,10 @@ names, adjust here, this is the only place that mentions them):
 | `0x5D` | WRITE_BATCH_CANCEL | relay -> agent | JSON `{request_id}` |
 | `0x5E` | READ_DONE | agent -> relay | JSON `{request_id}` |
 
-DATA = 36 ASCII bytes of `session_id` (UUID with dashes) + raw bytes. The three governance data
-tags use the same 36-byte prefix, carrying the `request_id` instead of a session, so both legs
-reuse one decoder; `framing.prefixed_tags` in `vectors.json` is that list. The `0x50`-`0x5E`
+DATA = 36 ASCII bytes of `session_id` (UUID with dashes) + raw bytes. TERMINAL_RESPONSE is a data
+frame too, prefixed like STDIN/STDOUT. The three governance data tags use the same 36-byte prefix,
+carrying the `request_id` instead of a session, so both legs reuse one decoder;
+`framing.prefixed_tags` in `vectors.json` is that list, and it names all six. The `0x50`-`0x5E`
 family is only sent to an agent whose hello advertised the matching feature. An
 unknown tag is not ignored: the connection is closed as protocol error (4400).
 The version is bumped, never guessed.

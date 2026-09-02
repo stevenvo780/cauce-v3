@@ -23,7 +23,7 @@ import { encodeJsonFrame, FRAME_TAGS } from '../../services/terminal-relay/src/f
 import type { AgentPresence as RelayAgentPresence } from '../../services/terminal-relay/src/gateway-client.js';
 import { parseAgentPresence } from '../../services/gateway/src/terminal/registry.js';
 
-/** What the Python pty-agent on kratos actually puts on the wire (ops/pty-agent/cauce_pty_agent.py). */
+/** What the Python pty-agent on kratos actually puts on the wire (ops/pty-agent/cauce_pty_agent/agent.py). */
 const AGENT_HELLO = {
   v: 1,
   tenant_id: 'Steven',

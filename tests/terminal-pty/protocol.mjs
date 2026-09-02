@@ -30,6 +30,9 @@ export const TAG = {
   STDIN: 0x20,
   STDOUT: 0x21,
   RESIZE: 0x22,
+  TERMINAL_RESPONSE: 0x23,
+  PAUSE_OUTPUT: 0x24,
+  RESUME_OUTPUT: 0x25,
   CLOSE: 0x30,
   CLOSED: 0x31,
   PING: 0x40,
@@ -54,7 +57,7 @@ export const TAG = {
 export const TAG_NAME = Object.fromEntries(Object.entries(TAG).map(([name, tag]) => [tag, name]));
 
 /** Payloads carrying opaque bytes prefixed by the session id. */
-export const DATA_TAGS = new Set([TAG.STDIN, TAG.STDOUT]);
+export const DATA_TAGS = new Set([TAG.STDIN, TAG.STDOUT, TAG.TERMINAL_RESPONSE]);
 /** Payloads that must be empty on the wire. */
 export const EMPTY_TAGS = new Set([TAG.PING, TAG.PONG]);
 export const PREFIXED_TAGS = new Set([
@@ -63,7 +66,7 @@ export const PREFIXED_TAGS = new Set([
 /** Payloads carrying UTF-8 JSON. */
 export const JSON_TAGS = new Set([
   TAG.AGENT_HELLO, TAG.HELLO_ACK, TAG.OPEN, TAG.OPEN_OK, TAG.OPEN_ERR,
-  TAG.RESIZE, TAG.CLOSE, TAG.CLOSED,
+  TAG.RESIZE, TAG.PAUSE_OUTPUT, TAG.RESUME_OUTPUT, TAG.CLOSE, TAG.CLOSED,
   TAG.READ, TAG.READ_OK, TAG.READ_ERR, TAG.READ_DONE,
   TAG.WRITE, TAG.WRITE_OK, TAG.WRITE_ERR, TAG.WRITE_CANCEL,
   TAG.WRITE_BATCH, TAG.WRITE_BATCH_OK, TAG.WRITE_BATCH_ERR, TAG.WRITE_BATCH_CANCEL,
