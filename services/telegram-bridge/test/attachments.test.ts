@@ -125,11 +125,19 @@ describe('Telegram attachment preparation', () => {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'brief.docx',
       Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('[Content_Types].xml word/document.xml')])
-    ]
-  ])('accepts supported %s documents', async (mime, name, payload) => {
+    ],
+    ['application/x-sh', 'desplegar.sh', Buffer.from('#!/bin/sh\nexit 0\n', 'utf8')],
+    ['application/zip', 'evidencia.zip', Buffer.from([0x50, 0x4b, 0x03, 0x04, 9, 9])],
+    ['video/mp4', 'captura.mp4', Buffer.from('\u0000\u0000\u0000\u0018ftypmp42', 'binary')],
+    ['application/vnd.sqlite3', 'cauce.db', Buffer.from('SQLite format 3\u0000', 'binary')],
+    ['application/gzip', 'volcado.tar.gz', Buffer.from([0x1f, 0x8b, 0x08, 0x00])],
+    ['image/svg+xml', 'diagrama.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8')],
+    ['text/plain', 'informe con acentos y espacios.txt', Buffer.from('ñandú\n', 'utf8')]
+  ])('accepts any %s document', async (mime, name, payload) => {
     const api = new AttachmentTelegram();
-    api.files.set('doc', { file_id: 'doc', file_path: `documents/${name}`, file_size: payload.length });
-    api.payloads.set(`documents/${name}`, payload);
+    const remote = 'documents/file_42';
+    api.files.set('doc', { file_id: 'doc', file_path: remote, file_size: payload.length });
+    api.payloads.set(remote, payload);
 
     const result = await prepareTelegramAttachments(message({
       document: { file_id: 'doc', file_name: name, mime_type: mime, file_size: payload.length }
@@ -139,34 +147,97 @@ describe('Telegram attachment preparation', () => {
     expect(result.media[0]).toMatchObject({ name, mime_type: mime, file_size: payload.length });
   });
 
-  it('rejects unsupported, mismatched, oversized, and traversal-shaped files without downloading unsafe input', async () => {
+  it('rejects oversized and traversal-shaped files without downloading unsafe input', async () => {
     const api = new AttachmentTelegram();
-    api.files.set('bad-mime', { file_id: 'bad-mime', file_path: 'documents/script.sh', file_size: 10 });
     api.files.set('too-big', { file_id: 'too-big', file_path: 'documents/report.pdf', file_size: 10_000_001 });
     api.files.set('traversal', { file_id: 'traversal', file_path: '../secret.txt', file_size: 3 });
 
     for (const document of [
-      { file_id: 'bad-mime', file_name: 'script.sh', mime_type: 'text/x-shellscript', file_size: 10 },
       { file_id: 'too-big', file_name: 'report.pdf', mime_type: 'application/pdf', file_size: 10_000_001 },
       { file_id: 'traversal', file_name: '../secret.txt', mime_type: 'text/plain', file_size: 3 }
     ]) {
       const result = await prepareTelegramAttachments(message({ document }), api);
       expect(result.media).toEqual([]);
-      expect(result.errors[0]).toMatch(/no admitido|excede|nombre|ruta/u);
+      expect(result.errors[0]).toMatch(/excede|nombre|ruta/u);
     }
     expect(api.downloaded).toEqual([]);
   });
 
-  it('rejects content whose magic bytes disagree with the claimed type', async () => {
+  it('rejects a name carrying bidi control characters', async () => {
     const api = new AttachmentTelegram();
+    api.files.set('bidi', { file_id: 'bidi', file_path: 'documents/report.pdf', file_size: 3 });
+
+    const result = await prepareTelegramAttachments(message({
+      document: { file_id: 'bidi', file_name: 'report\u202Efdp.exe', mime_type: 'application/pdf', file_size: 3 }
+    }), api);
+
+    expect(result.media).toEqual([]);
+    expect(result.errors[0]).toMatch(/nombre/u);
+    expect(api.downloaded).toEqual([]);
+  });
+
+  it('carries content whose bytes disagree with the claimed type, naming what the bytes are', async () => {
+    const api = new AttachmentTelegram();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
     api.files.set('fake-pdf', { file_id: 'fake-pdf', file_path: 'documents/report.pdf', file_size: 9 });
-    api.payloads.set('documents/report.pdf', Buffer.from('not a pdf'));
+    api.payloads.set('documents/report.pdf', png);
 
     const result = await prepareTelegramAttachments(message({
       document: { file_id: 'fake-pdf', file_name: 'report.pdf', mime_type: 'application/pdf', file_size: 9 }
     }), api);
 
-    expect(result.media).toEqual([]);
-    expect(result.errors).toEqual(['report.pdf: el contenido no coincide con application/pdf']);
+    expect(result.errors).toEqual([]);
+    expect(result.media[0]).toMatchObject({ kind: 'image', name: 'report.pdf', mime_type: 'image/png' });
+  });
+
+  it('names a file that arrives with no usable type from its extension, or as a plain stream', async () => {
+    const api = new AttachmentTelegram();
+    const payload = Buffer.from('contenido cualquiera');
+    api.files.set('sin-tipo', { file_id: 'sin-tipo', file_path: 'documents/notas.md', file_size: payload.length });
+    api.payloads.set('documents/notas.md', payload);
+    api.files.set('sin-nada', { file_id: 'sin-nada', file_path: 'documents/volcado', file_size: payload.length });
+    api.payloads.set('documents/volcado', payload);
+
+    const conExtension = await prepareTelegramAttachments(message({
+      document: { file_id: 'sin-tipo', file_name: 'notas.md', file_size: payload.length }
+    }), api);
+    expect(conExtension.media[0]).toMatchObject({ kind: 'document', mime_type: 'text/markdown' });
+
+    const sinNada = await prepareTelegramAttachments(message({
+      document: { file_id: 'sin-nada', file_name: 'volcado', file_size: payload.length }
+    }), api);
+    expect(sinNada.media[0]).toMatchObject({ kind: 'document', mime_type: 'application/octet-stream' });
+  });
+
+  it('strips the parameters Telegram may append to a declared type', async () => {
+    const api = new AttachmentTelegram();
+    const payload = Buffer.from('hola\n', 'utf8');
+    api.files.set('param', { file_id: 'param', file_path: 'documents/notas.txt', file_size: payload.length });
+    api.payloads.set('documents/notas.txt', payload);
+
+    const result = await prepareTelegramAttachments(message({
+      document: { file_id: 'param', file_name: 'notas.txt', mime_type: 'text/plain; charset=utf-8', file_size: payload.length }
+    }), api);
+
+    expect(result.media[0]).toMatchObject({ mime_type: 'text/plain' });
+  });
+
+  it('takes a video and an animation, which used to leave only a trace of metadata', async () => {
+    const api = new AttachmentTelegram();
+    const payload = Buffer.from('\u0000\u0000\u0000\u0018ftypmp42rest', 'binary');
+    api.files.set('vid', { file_id: 'vid', file_path: 'videos/clip.mp4', file_size: payload.length });
+    api.payloads.set('videos/clip.mp4', payload);
+    api.files.set('gif', { file_id: 'gif', file_path: 'animations/meme.mp4', file_size: payload.length });
+    api.payloads.set('animations/meme.mp4', payload);
+
+    const video = await prepareTelegramAttachments(message({
+      video: { file_id: 'vid', file_name: 'clip.mp4', mime_type: 'video/mp4', file_size: payload.length }
+    }), api);
+    expect(video.media[0]).toMatchObject({ kind: 'document', name: 'clip.mp4', mime_type: 'video/mp4' });
+
+    const animation = await prepareTelegramAttachments(message({
+      animation: { file_id: 'gif', file_name: 'meme.mp4', mime_type: 'video/mp4', file_size: payload.length }
+    }), api);
+    expect(animation.media[0]).toMatchObject({ kind: 'document', name: 'meme.mp4' });
   });
 });

@@ -1,12 +1,6 @@
 import type { HarnessAttachment, HarnessId } from "../../sdk/types.js";
 
-/**
- * Media types a provider's native image input can actually decode.
- *
- * `image/*` is wider than this: `image/svg+xml` is markup and `image/heic` is not decodable.
- * Feeding either to the native argument fails the whole turn, and an attachment must never cost a
- * turn, so anything outside this set takes the file path route.
- */
+/** Decodable by a native image input; `image/*` is wider and feeding it the rest fails the turn. */
 const NATIVE_IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set([
   "image/jpeg", "image/png", "image/webp", "image/gif",
 ]);

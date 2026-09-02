@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
-import { hasUnsafeCodePoint, objectRecord } from './validation.js';
+import { extensionForMediaType, hasUnsafeTextCodePoint, imageSignature } from '@cauce/protocol';
+import { objectRecord } from './validation.js';
 
 /**
  * Planning and preparation of egress attachments (`output.artifacts`).
@@ -82,23 +83,13 @@ function safeFileName(value: string): boolean {
   return value.length >= 1 && value.length <= 200 && basename(value) === value &&
     value !== '.' && value !== '..' &&
     !value.includes('/') && !value.includes('\\') && !value.includes('"') && !value.includes("'") &&
-    !hasUnsafeCodePoint(value);
+    !hasUnsafeTextCodePoint(value);
 }
-
-const EXTENSIONS: ReadonlyMap<string, string> = new Map([
-  ['image/jpeg', '.jpg'], ['image/png', '.png'], ['image/webp', '.webp'], ['image/gif', '.gif'],
-  ['application/pdf', '.pdf'], ['text/plain', '.txt'], ['text/markdown', '.md'],
-  ['text/csv', '.csv'], ['text/html', '.html'], ['application/json', '.json'],
-  ['application/zip', '.zip'], ['application/gzip', '.gz'],
-  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'],
-  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'],
-  ['video/mp4', '.mp4'], ['audio/mpeg', '.mp3'], ['audio/ogg', '.ogg']
-]);
 
 function uploadName(declared: string, mime: string): string {
   const trimmed = declared.trim();
   if (safeFileName(trimmed) && extname(trimmed).length > 1) return trimmed;
-  const extension = EXTENSIONS.get(mime) ?? '.bin';
+  const extension = extensionForMediaType(mime) ?? '.bin';
   if (safeFileName(trimmed) && trimmed.length > 0) return `${trimmed}${extension}`;
   return `adjunto${extension}`;
 }
@@ -107,14 +98,12 @@ function uploadName(declared: string, mime: string): string {
  * Bytes
  * --------------------------------------------------------------------------- */
 
-/** Magic numbers Telegram knows how to render as an inline photo in the chat. */
-function sniffImage(bytes: Buffer): string | undefined {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
-  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') {
-    return 'image/webp';
-  }
-  return undefined;
+/** Inline-renderable by `sendPhoto`; a GIF is excluded because Telegram freezes it as a photo. */
+const INLINE_PHOTO_TYPES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function inlinePhotoType(bytes: Buffer): string | undefined {
+  const signature = imageSignature(bytes);
+  return signature !== undefined && INLINE_PHOTO_TYPES.has(signature) ? signature : undefined;
 }
 
 interface DecodedData {
@@ -208,7 +197,7 @@ export function planArtifacts(payload: Record<string, unknown>): ArtifactPlan {
         lines.push(`• ${label(artifact, 'adjunto')}: no pude adjuntarlo (${decoded.error ?? 'contenido inválido'})`);
         continue;
       }
-      const sniffed = sniffImage(decoded.bytes);
+      const sniffed = inlinePhotoType(decoded.bytes);
       const mime = sniffed ?? (decoded.mime ?? 'application/octet-stream');
       uploads.push({
         // The photo decision is made from the BYTES, not from what the agent declares: a lied
