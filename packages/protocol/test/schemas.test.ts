@@ -57,6 +57,24 @@ describe('publish receipt correlation contract', () => {
     expect(publishRequestHash({ ...retry, tenant_id: 'Pablo' })).not.toBe(receipt.request_hash);
   });
 
+  it('pins the exact request-hash bytes: idempotency_keys.request_hash rows already carry them, so a change turns every pre-upgrade retry into a 409', () => {
+    const fixed = PublishMessageSchema.parse({
+      version: '3.0',
+      request_id: '00000000-0000-4000-8000-000000000001',
+      trace_id: 'golden-request-hash',
+      tenant_id: 'Steven',
+      room_id: 'grp.steven',
+      actor_alias: 'argos',
+      recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
+      body: { text: 'golden idempotency contract' },
+      idempotency_key: 'golden-request-hash-1',
+      lane: 'interactive',
+      priority: 10,
+    });
+    expect(publishRequestHash(fixed))
+      .toBe('6e89127f8c3957d1c8f09cc00ded2f156ea88b3c63bd8279d6ceb1a48c7d0f9f');
+  });
+
   it('keeps effect ids canonical v4 while accepting a historical deterministic v5 request id', () => {
     expect(PublishResultSchema.safeParse({ ...receipt, extra: true }).success).toBe(false);
     const deterministicRequestId = '21f7f8de-8051-5b89-8680-0195ef798b6a';

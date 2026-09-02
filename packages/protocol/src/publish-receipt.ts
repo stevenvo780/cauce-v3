@@ -1,28 +1,5 @@
-import { createHash } from 'node:crypto';
+import { canonicalJson, sha256Hex } from './canonical.js';
 import type { PublishMessage, PublishResult } from './schemas.js';
-
-/**
- * Stable JSON used by the publish idempotency contract.
- *
- * Do not add domain separation to `publishRequestHash`: rows already persisted in
- * `idempotency_keys.request_hash` were produced from exactly these canonical JSON bytes. Changing
- * those bytes would turn every valid pre-upgrade retry into a 409 after a process restart.
- */
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, child]) => [key, canonical(child)]),
-    );
-  }
-  return value;
-}
-
-function digest(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
 
 /** The semantic request hash stored durably beside an idempotency key. */
 export function publishRequestHash(input: PublishMessage): string {
@@ -30,7 +7,7 @@ export function publishRequestHash(input: PublishMessage): string {
   // A retry necessarily gets a new transport request/trace pair. Everything else is semantic.
   delete semanticCommand.request_id;
   delete semanticCommand.trace_id;
-  return digest(JSON.stringify(canonical(semanticCommand)));
+  return sha256Hex(JSON.stringify(canonicalJson(semanticCommand)));
 }
 
 export type ConsolePublishIntentCommand = Omit<PublishMessage, 'idempotency_key'> & {
@@ -56,8 +33,8 @@ export function consolePublishIntentRequestedHash(input: Pick<
     lane: input.lane,
     requested_priority: input.requested_priority,
   };
-  return digest(
-    `cauce-v3:console-publish-requested-intent:v1\n${JSON.stringify(canonical(requested))}`,
+  return sha256Hex(
+    `cauce-v3:console-publish-requested-intent:v1\n${JSON.stringify(canonicalJson(requested))}`,
   );
 }
 
@@ -82,8 +59,8 @@ export function consolePublishIntentSemanticHash(
     lane: input.lane,
     priority: input.priority,
   };
-  return digest(
-    `cauce-v3:console-publish-intent:v1\n${JSON.stringify(canonical(semanticCommand))}`,
+  return sha256Hex(
+    `cauce-v3:console-publish-intent:v1\n${JSON.stringify(canonicalJson(semanticCommand))}`,
   );
 }
 
@@ -117,7 +94,7 @@ export function publishReceiptCausalHash(receipt: PublishReceiptCausalFields): s
     tenant_id: receipt.tenant_id,
     trace_id: receipt.trace_id,
   };
-  return digest(`cauce-v3:publish-receipt:v1\n${JSON.stringify(canonical(material))}`);
+  return sha256Hex(`cauce-v3:publish-receipt:v1\n${JSON.stringify(canonicalJson(material))}`);
 }
 
 export interface DurablePublishEffect {

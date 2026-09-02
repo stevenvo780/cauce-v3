@@ -3,6 +3,7 @@ import type {
   DeliveryStateSchema,
   LaneSchema,
   OriginSchema,
+  PermissionSchema,
   RoutingTargetSchema,
   TenantSchema,
 } from './core.js';
@@ -54,6 +55,7 @@ export type Origin = z.infer<typeof OriginSchema>;
 export type RoutingTarget = z.infer<typeof RoutingTargetSchema>;
 export type Lane = z.infer<typeof LaneSchema>;
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
+export type Permission = z.infer<typeof PermissionSchema>;
 export type DeliveryEnvelope = z.infer<typeof DeliveryEnvelopeSchema>;
 export type ProfileRuntimeContract = z.infer<typeof ProfileRuntimeContractSchema>;
 export type ProfileRuntimeAdoptionEvidence = z.infer<typeof ProfileRuntimeAdoptionEvidenceSchema>;

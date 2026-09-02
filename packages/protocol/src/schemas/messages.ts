@@ -11,20 +11,15 @@ import {
   TenantSchema,
   TraceIdSchema,
 } from './core.js';
-import { hasUnsafeTextCodePoint } from '../content-safety.js';
+import {
+  base64CharacterBudget, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_MEDIA_TYPE_LENGTH,
+  MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENTS_TOTAL_BYTES,
+} from '../attachment-limits.js';
+import { isSafeBasename } from '../content-safety.js';
 import { isValidMediaType } from './media-types.js';
 
-export const MAX_ATTACHMENT_BYTES = 10_000_000;
-export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
-export const MAX_ATTACHMENTS_TOTAL_BYTES = 10_000_000;
-export const MAX_ATTACHMENT_MEDIA_TYPE_LENGTH = 127;
-
-const AttachmentNameSchema = z.string().min(1).max(255).superRefine((name, context) => {
-  if (name === '.' || name === '..' || name.includes('/') || name.includes('\\') ||
-      hasUnsafeTextCodePoint(name)) {
-    context.addIssue({ code: 'custom', message: 'attachment name is unsafe' });
-  }
-});
+const AttachmentNameSchema = z.string()
+  .refine((name) => isSafeBasename(name), 'attachment name is unsafe');
 
 export const AttachmentContentSchema = z.object({
   kind: z.enum(['image', 'document']),
@@ -33,7 +28,7 @@ export const AttachmentContentSchema = z.object({
     .refine(isValidMediaType, 'attachment media type is not a valid MIME token'),
   file_size: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  content_base64: z.string().max(Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4)
+  content_base64: z.string().max(base64CharacterBudget(MAX_ATTACHMENT_BYTES))
     .regex(/^[A-Za-z0-9+/]*={0,2}$/u)
     .refine((value) => value.length % 4 === 0, 'attachment content is not valid base64')
 }).strict().superRefine((attachment, context) => {

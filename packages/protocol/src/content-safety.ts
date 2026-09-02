@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENT_NAME_LENGTH } from './attachment-limits.js';
 export function hasUnsafeTextCodePoint(value: string): boolean {
   for (const character of value) {
     const code = character.codePointAt(0);
@@ -21,4 +22,33 @@ export function isValidUtf8Text(payload: Uint8Array): boolean {
   } catch {
     return false;
   }
+}
+
+const STRICT_UTC_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/u;
+
+/* The cap is BYTES, as in every copy this replaces. */
+export function isStrictUtcIso8601(value: unknown, maxBytes: number): value is string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > maxBytes) return false;
+  const match = STRICT_UTC_PATTERN.exec(value);
+  if (match === null || Number.isNaN(Date.parse(value))) return false;
+  const date = new Date(value);
+  return date.getUTCFullYear() === Number(match[1])
+    && date.getUTCMonth() + 1 === Number(match[2])
+    && date.getUTCDate() === Number(match[3])
+    && date.getUTCHours() === Number(match[4])
+    && date.getUTCMinutes() === Number(match[5])
+    && date.getUTCSeconds() === Number(match[6]);
+}
+
+/* The cap is UTF-16 code units, not bytes: a name of CJK or emoji characters is admissible on the
+   wire and only the on-disk name of a consumer needs a byte budget. */
+export function isSafeBasename(
+  value: unknown,
+  options: { readonly maxLength?: number } = {},
+): value is string {
+  if (typeof value !== 'string') return false;
+  const maxLength = options.maxLength ?? MAX_ATTACHMENT_NAME_LENGTH;
+  return value.length > 0 && value.length <= maxLength &&
+    value !== '.' && value !== '..' && !value.includes('/') && !value.includes('\\') &&
+    !hasUnsafeTextCodePoint(value);
 }

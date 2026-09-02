@@ -1,20 +1,21 @@
 import { z } from 'zod';
+import {
+  ALIAS_PATTERN, CANONICAL_UUID_V4_PATTERN, SHA256_HEX_PATTERN, TENANT_PATTERN,
+} from '../patterns.js';
 
 export const PROTOCOL_VERSION = '3.0' as const;
 
 /** Tenant identifiers are provisioned in PostgreSQL; the wire contract only constrains their shape. */
-export const TenantSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/);
-export const AliasSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+export const TenantSchema = z.string().regex(TENANT_PATTERN);
+export const AliasSchema = z.string().regex(ALIAS_PATTERN);
 export const MessageIdSchema = z.uuid();
 export const RequestIdSchema = z.uuid();
 export const DeliveryIdSchema = z.uuid();
 export const EventIdSchema = z.uuid();
 export const ClaimTokenSchema = z.uuid();
 export const TraceIdSchema = z.string().min(1).max(256);
-export const CanonicalUuidV4Schema = z.string().regex(
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-);
-export const Sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/u);
+export const CanonicalUuidV4Schema = z.string().regex(CANONICAL_UUID_V4_PATTERN);
+export const Sha256HexSchema = z.string().regex(SHA256_HEX_PATTERN);
 export const AckStatusSchema = z.enum(['accepted', 'started', 'done', 'failed']);
 export const AckErrorCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/);
 export const AMBIGUOUS_ACK_ERROR_CODES = [
@@ -57,6 +58,10 @@ export const DeliveryStateSchema = z.enum([
   'pending', 'leased', 'accepted', 'started', 'done', 'failed', 'retry', 'dead'
 ]);
 export const LaneSchema = z.enum(['interactive', 'batch']);
+export const PermissionSchema = z.enum(['route', 'read', 'control', 'notify']);
+export const PERMISSIONS = PermissionSchema.options;
+export const DELIVERY_STATES = DeliveryStateSchema.options;
+export const LANES = LaneSchema.options;
 
 const RelayHopSchema = z.object({
   tenant_id: TenantSchema,
