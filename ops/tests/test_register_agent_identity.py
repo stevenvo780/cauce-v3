@@ -22,6 +22,8 @@ SPEC.loader.exec_module(MODULE)
 
 
 def _write_json(path: pathlib.Path, document: object, mode: int) -> None:
+    if path.exists():
+        path.chmod(0o600)
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     path.chmod(mode)
 

@@ -161,7 +161,7 @@ class TestLaPoliticaDeclarativaEsFailClosed(unittest.TestCase):
         # The only line that puts the variable into the adapter's environment must be inside
         # the switch block, not loose.
         lineas = texto.splitlines()
-        indices = [i for i, linea in enumerate(lineas) if "config_por_alias_directorio" in linea
+        indices = [i for i, linea in enumerate(lineas) if "per_alias_directory" in linea
                    and "environment+=" in linea]
         self.assertTrue(indices, "no se encontró la exportación de la variable por alias")
         for indice in indices:

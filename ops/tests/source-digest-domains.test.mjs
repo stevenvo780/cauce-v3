@@ -115,7 +115,7 @@ for (const sentinel of [
   'ops/harness/contract-runner.mjs',
   'ops/manifests/kant.yaml',
   'ops/observability/alerts.yaml',
-  'ops/runbooks/alerting.md',
+  'ops/runbooks/container-adapters.md',
   'ops/scripts/source-digest.py',
   'eslint.config.js',
 ]) {
