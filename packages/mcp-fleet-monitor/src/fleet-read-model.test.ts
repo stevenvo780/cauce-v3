@@ -45,7 +45,7 @@ describe('FleetReadModel', () => {
       }],
     });
 
-    const result = await new FleetReadModel(fake.pool, 'Steven').estadoFlota('kant');
+    const result = await new FleetReadModel(fake.pool, 'Steven').fleetStatus('kant');
 
     expect(fake.calls[0]?.params).toEqual(['Steven', 'kant']);
     expect(result).toEqual({
@@ -68,7 +68,7 @@ describe('FleetReadModel', () => {
       }],
     });
 
-    const result = await new FleetReadModel(fake.pool, 'Steven').entregas('kant', 'done', 50_000);
+    const result = await new FleetReadModel(fake.pool, 'Steven').deliveries('kant', 'done', 50_000);
 
     expect(fake.calls[0]?.params).toEqual(['Steven', 'kant', 'done', 1_000]);
     expect(result.data[0]).toMatchObject({
@@ -88,7 +88,7 @@ describe('FleetReadModel', () => {
       }],
     });
 
-    const result = await new FleetReadModel(fake.pool, 'Steven').cadena(undefined, 'root-1');
+    const result = await new FleetReadModel(fake.pool, 'Steven').chain(undefined, 'root-1');
 
     expect(fake.calls[0]?.params).toEqual([null, 'root-1', 'Steven']);
     expect(result).toMatchObject({
@@ -101,7 +101,7 @@ describe('FleetReadModel', () => {
 
   it('uses trace_id when both chain selectors are present', async () => {
     const fake = scriptedPool({ match: /aom\.trace_id = \$1/u, rows: [] });
-    const result = await new FleetReadModel(fake.pool, 'Steven').cadena('trace-1', 'root-1');
+    const result = await new FleetReadModel(fake.pool, 'Steven').chain('trace-1', 'root-1');
     expect(fake.calls[0]?.params).toEqual(['trace-1', 'root-1', 'Steven']);
     expect(result).toEqual({ data: [], available: true, trace_id: 'trace-1' });
   });
@@ -112,14 +112,14 @@ describe('FleetReadModel', () => {
       rows: [],
     });
 
-    await new FleetReadModel(fake.pool, 'Miguel').cadena('trace-1');
+    await new FleetReadModel(fake.pool, 'Miguel').chain('trace-1');
 
     expect(fake.calls[0]?.params).toEqual(['trace-1', null, 'Miguel']);
   });
 
-  it('does not query when cadena has no selector', async () => {
+  it('does not query when chain has no selector', async () => {
     const fake = scriptedPool();
-    await expect(new FleetReadModel(fake.pool, 'Steven').cadena()).resolves.toEqual({
+    await expect(new FleetReadModel(fake.pool, 'Steven').chain()).resolves.toEqual({
       data: [], available: false,
     });
     expect(fake.calls).toEqual([]);
@@ -158,7 +158,7 @@ describe('FleetReadModel', () => {
       ] },
     );
 
-    const result = await new FleetReadModel(fake.pool, 'Steven').salud();
+    const result = await new FleetReadModel(fake.pool, 'Steven').health();
 
     expect(result.summary).toBe('Flota: 2 alias, 2 vivos (healthy), 100% entregas OK');
     expect(Number.isNaN(Date.parse(result.timestamp))).toBe(false);
@@ -166,8 +166,8 @@ describe('FleetReadModel', () => {
 
   it('fails closed on malformed database counters', async () => {
     const fake = scriptedPool({ match: /FROM agents agent/u, rows: [{ live: 'NaN', total: '2' }] });
-    await expect(new FleetReadModel(fake.pool, 'Steven').salud()).rejects.toThrow(
-      /salud read model query failed: live alias count/u,
+    await expect(new FleetReadModel(fake.pool, 'Steven').health()).rejects.toThrow(
+      /health read model query failed: live alias count/u,
     );
   });
 
@@ -175,8 +175,8 @@ describe('FleetReadModel', () => {
     const pool = {
       query: async () => { throw new Error('database offline'); },
     } as unknown as DatabasePool;
-    await expect(new FleetReadModel(pool, 'Steven').estadoFlota()).rejects.toThrow(
-      'estado_flota read model query failed: database offline',
+    await expect(new FleetReadModel(pool, 'Steven').fleetStatus()).rejects.toThrow(
+      'fleet_status read model query failed: database offline',
     );
   });
 });

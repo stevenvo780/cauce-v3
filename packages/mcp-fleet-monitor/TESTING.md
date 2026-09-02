@@ -74,25 +74,25 @@ Add to your MCP config (e.g., `~/.claude/mcp.json`):
 Then ask Claude to use the tools:
 
 ```
-@fleet-monitor estado_flota
+@fleet-monitor fleet_status
 ```
 
 Claude will respond with the current fleet state.
 
 ## Testing Specific Tools
 
-### estado_flota
+### fleet_status
 
 Get all aliases:
 
 ```
-estado_flota()
+fleet_status()
 ```
 
 Filter by one alias:
 
 ```
-estado_flota(alias="jarvis")
+fleet_status(alias="jarvis")
 ```
 
 **Expected response:**
@@ -114,18 +114,18 @@ estado_flota(alias="jarvis")
 }
 ```
 
-### entregas
+### deliveries
 
 List recent deliveries:
 
 ```
-entregas()
+deliveries()
 ```
 
 Filter by status:
 
 ```
-entregas(estado="done", limit=10)
+deliveries(status="done", limit=10)
 ```
 
 **Expected response:**
@@ -148,12 +148,12 @@ entregas(estado="done", limit=10)
 }
 ```
 
-### cadena
+### chain
 
 Follow a trace:
 
 ```
-cadena(trace_id="some-trace-id")
+chain(trace_id="some-trace-id")
 ```
 
 **Expected response:**
@@ -203,10 +203,10 @@ dead_letters()
 }
 ```
 
-### salud
+### health
 
 ```
-salud()
+health()
 ```
 
 **Expected response:**

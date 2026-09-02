@@ -46,7 +46,7 @@ const DELIVERY_STATUSES = DeliveryStateSchema.options;
 
 const TOOLS = [
   {
-    name: 'estado_flota',
+    name: 'fleet_status',
     description:
       'Get the current state of all aliases in the fleet, including lease status, harness status, and last activity',
     inputSchema: {
@@ -61,7 +61,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'entregas',
+    name: 'deliveries',
     description:
       'List deliveries filtered by alias and/or status',
     inputSchema: {
@@ -71,7 +71,7 @@ const TOOLS = [
           type: 'string',
           description: 'Optional: filter by recipient alias',
         },
-        estado: {
+        status: {
           type: 'string',
           // Matches the deliveries.status CHECK constraint in migration 001.
           enum: DELIVERY_STATUSES,
@@ -86,7 +86,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'cadena',
+    name: 'chain',
     description:
       'Get the delegation chain (A → B → C) for a given trace ID or root message ID',
     inputSchema: {
@@ -96,7 +96,7 @@ const TOOLS = [
           type: 'string',
           description: 'Trace ID to follow',
         },
-        mensaje_id_raiz: {
+        root_message_id: {
           type: 'string',
           description: 'Alternative: root message ID',
         },
@@ -115,7 +115,7 @@ const TOOLS = [
     },
   },
   {
-    name: 'salud',
+    name: 'health',
     description: 'One-line fleet health summary suitable for chat',
     inputSchema: {
       type: 'object',
@@ -149,42 +149,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: unknown;
 
     const aliasArg = typeof args.alias === 'string' ? args.alias : undefined;
-    const rawEstado = typeof args.estado === 'string' ? args.estado : undefined;
-    let estadoArg: string | undefined;
-    if (rawEstado !== undefined) {
-      const parsed = DeliveryStateSchema.safeParse(rawEstado);
+    const rawStatus = typeof args.status === 'string' ? args.status : undefined;
+    let statusArg: string | undefined;
+    if (rawStatus !== undefined) {
+      const parsed = DeliveryStateSchema.safeParse(rawStatus);
       if (!parsed.success) {
         return {
           content: [
             {
               type: 'text',
-              text: `Invalid 'estado' value '${rawEstado}'. Allowed: ${DELIVERY_STATUSES.join(', ')}`,
+              text: `Invalid 'status' value '${rawStatus}'. Allowed: ${DELIVERY_STATUSES.join(', ')}`,
             },
           ],
           isError: true,
         };
       }
-      estadoArg = rawEstado;
+      statusArg = rawStatus;
     }
     const limitArg = typeof args.limit === 'number' ? args.limit : undefined;
     const traceIdArg = typeof args.trace_id === 'string' ? args.trace_id : undefined;
-    const msgIdArg = typeof args.mensaje_id_raiz === 'string' ? args.mensaje_id_raiz : undefined;
+    const msgIdArg = typeof args.root_message_id === 'string' ? args.root_message_id : undefined;
 
     switch (toolName) {
-      case 'estado_flota':
-        result = await fleetModel.estadoFlota(aliasArg);
+      case 'fleet_status':
+        result = await fleetModel.fleetStatus(aliasArg);
         break;
-      case 'entregas':
-        result = await fleetModel.entregas(aliasArg, estadoArg, limitArg);
+      case 'deliveries':
+        result = await fleetModel.deliveries(aliasArg, statusArg, limitArg);
         break;
-      case 'cadena':
-        result = await fleetModel.cadena(traceIdArg, msgIdArg);
+      case 'chain':
+        result = await fleetModel.chain(traceIdArg, msgIdArg);
         break;
       case 'dead_letters':
         result = await fleetModel.deadLetters();
         break;
-      case 'salud':
-        result = await fleetModel.salud();
+      case 'health':
+        result = await fleetModel.health();
         break;
       default:
         return {

@@ -117,7 +117,7 @@ Claude will automatically load the server on connection.
 
 Once integrated, Claude will have access to 5 tools:
 
-### 1. estado_flota
+### 1. fleet_status
 
 Get current state of all aliases in the fleet.
 
@@ -128,7 +128,7 @@ Get current state of all aliases in the fleet.
 
 ```
 Claude: Can you check the status of jarvis?
-@fleet-monitor estado_flota(alias="jarvis")
+@fleet-monitor fleet_status(alias="jarvis")
 ```
 
 **Response:**
@@ -150,35 +150,35 @@ Claude: Can you check the status of jarvis?
 }
 ```
 
-### 2. entregas
+### 2. deliveries
 
 List deliveries filtered by alias and/or status.
 
 **Parameters:**
 - `alias` (optional): Filter by recipient alias
-- `estado` (optional): Filter by status (e.g., done, failed, dead)
+- `status` (optional): Filter by status (e.g., done, failed, dead)
 - `limit` (optional, default 100): Max results
 
 **Example:**
 
 ```
 Claude: Show me dead deliveries for atlas.
-@fleet-monitor entregas(alias="atlas", estado="dead", limit=10)
+@fleet-monitor deliveries(alias="atlas", status="dead", limit=10)
 ```
 
-### 3. cadena
+### 3. chain
 
 Follow a delegation chain from root to leaf.
 
 **Parameters:**
 - `trace_id` (optional): Trace to follow
-- `mensaje_id_raiz` (optional): Root message ID
+- `root_message_id` (optional): Root message ID
 
 **Example:**
 
 ```
 Claude: Show the delegation chain for trace abc123.
-@fleet-monitor cadena(trace_id="abc123")
+@fleet-monitor chain(trace_id="abc123")
 ```
 
 **Response:**
@@ -237,7 +237,7 @@ Claude: What's causing delivery failures?
 }
 ```
 
-### 5. salud
+### 5. health
 
 Get one-line health summary.
 
@@ -245,7 +245,7 @@ Get one-line health summary.
 
 ```
 Claude: What's the fleet health?
-@fleet-monitor salud()
+@fleet-monitor health()
 ```
 
 **Response:**
@@ -264,9 +264,9 @@ Claude: What's the fleet health?
 ```
 Claude: Check fleet health and report any critical issues.
 
-1. @fleet-monitor salud()
+1. @fleet-monitor health()
 2. @fleet-monitor dead_letters()
-3. @fleet-monitor estado_flota()
+3. @fleet-monitor fleet_status()
 ```
 
 Claude will run all three tools and provide a summary.
@@ -276,8 +276,8 @@ Claude will run all three tools and provide a summary.
 ```
 Claude: I want to debug delivery del-12345. Show me what happened.
 
-1. @fleet-monitor entregas() [to find the delivery]
-2. @fleet-monitor cadena(trace_id="...") [to see the chain]
+1. @fleet-monitor deliveries() [to find the delivery]
+2. @fleet-monitor chain(trace_id="...") [to see the chain]
 3. @fleet-monitor dead_letters() [to see error cause]
 ```
 
@@ -286,8 +286,8 @@ Claude: I want to debug delivery del-12345. Show me what happened.
 ```
 Claude: Monitor atlas in real-time. Show its status and deliveries.
 
-1. @fleet-monitor estado_flota(alias="atlas")
-2. @fleet-monitor entregas(alias="atlas")
+1. @fleet-monitor fleet_status(alias="atlas")
+2. @fleet-monitor deliveries(alias="atlas")
 ```
 
 ## Troubleshooting

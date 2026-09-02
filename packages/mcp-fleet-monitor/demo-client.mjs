@@ -120,11 +120,11 @@ async function main() {
     );
     console.log();
 
-    // Test 2: Call estado_flota
-    console.log('=== Calling estado_flota() ===');
+    // Test 2: Call fleet_status
+    console.log('=== Calling fleet_status() ===');
     try {
       const result = await client.send('tools/call', {
-        name: 'estado_flota',
+        name: 'fleet_status',
         arguments: {},
       });
       if (result.content && result.content.length > 0) {
@@ -138,11 +138,11 @@ async function main() {
     }
     console.log();
 
-    // Test 3: Call salud
-    console.log('=== Calling salud() ===');
+    // Test 3: Call health
+    console.log('=== Calling health() ===');
     try {
       const result = await client.send('tools/call', {
-        name: 'salud',
+        name: 'health',
         arguments: {},
       });
       if (result.content && result.content.length > 0) {
@@ -156,12 +156,12 @@ async function main() {
     }
     console.log();
 
-    // Test 4: Call entregas with filter
-    console.log('=== Calling entregas(estado="done", limit=5) ===');
+    // Test 4: Call deliveries with filter
+    console.log('=== Calling deliveries(status="done", limit=5) ===');
     try {
       const result = await client.send('tools/call', {
-        name: 'entregas',
-        arguments: { estado: 'done', limit: 5 },
+        name: 'deliveries',
+        arguments: { status: 'done', limit: 5 },
       });
       if (result.content && result.content.length > 0) {
         const data = JSON.parse(result.content[0].text);

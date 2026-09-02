@@ -11,7 +11,7 @@ interface AliasState {
 }
 
 // Explicitly match the response structure
-interface EstadoFlotaResult {
+interface FleetStatusResult {
   data: AliasState[];
   available: boolean;
 }
@@ -28,7 +28,7 @@ interface DeliveryRecord {
   available: boolean;
 }
 
-interface EntregasResult {
+interface DeliveriesResult {
   data: DeliveryRecord[];
   available: boolean;
 }
@@ -44,7 +44,7 @@ interface ChainNode {
   rejection_code?: string;
 }
 
-interface CadenaResult {
+interface ChainResult {
   data: ChainNode[];
   available: boolean;
   trace_id?: string;
@@ -73,7 +73,7 @@ export class FleetReadModel {
     private tenantId: string
   ) {}
 
-  async estadoFlota(alias?: string): Promise<EstadoFlotaResult> {
+  async fleetStatus(alias?: string): Promise<FleetStatusResult> {
     try {
       // Get all aliases from deliveries and leases
       const result = await this.pool.query<{
@@ -127,15 +127,15 @@ export class FleetReadModel {
 
       return { data: mappedData, available: true };
     } catch (error) {
-      throw queryFailure('estado_flota', error);
+      throw queryFailure('fleet_status', error);
     }
   }
 
-  async entregas(
+  async deliveries(
     alias?: string,
-    estado?: string,
+    status?: string,
     limit = 100
-  ): Promise<EntregasResult> {
+  ): Promise<DeliveriesResult> {
     try {
       const bounded = Math.min(Math.max(Number.isInteger(limit) ? limit : 100, 1), 1000);
 
@@ -167,7 +167,7 @@ export class FleetReadModel {
         ORDER BY d.created_at DESC
         LIMIT $4
         `,
-        [this.tenantId, alias ?? null, estado ?? null, bounded]
+        [this.tenantId, alias ?? null, status ?? null, bounded]
       );
 
       const mappedData = result.rows.map((row) => {
@@ -187,11 +187,11 @@ export class FleetReadModel {
 
       return { data: mappedData, available: true };
     } catch (error) {
-      throw queryFailure('entregas', error);
+      throw queryFailure('deliveries', error);
     }
   }
 
-  async cadena(traceId?: string, rootMessageId?: string): Promise<CadenaResult> {
+  async chain(traceId?: string, rootMessageId?: string): Promise<ChainResult> {
     try {
       if (!traceId && !rootMessageId) {
         return { data: [], available: false };
@@ -249,7 +249,7 @@ export class FleetReadModel {
         ...(traceId ? { trace_id: traceId } : { root_message_id: rootMessageId ?? '' }),
       };
     } catch (error) {
-      throw queryFailure('cadena', error);
+      throw queryFailure('chain', error);
     }
   }
 
@@ -327,7 +327,7 @@ export class FleetReadModel {
     }
   }
 
-  async salud(): Promise<HealthSummary> {
+  async health(): Promise<HealthSummary> {
     try {
       // Count live leases
       const leaseResult = await this.pool.query<{ live: string; total: string }>(
@@ -392,7 +392,7 @@ export class FleetReadModel {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      throw queryFailure('salud', error);
+      throw queryFailure('health', error);
     }
   }
 }
