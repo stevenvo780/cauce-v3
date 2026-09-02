@@ -4,6 +4,8 @@ export interface SelfSignedOptions {
   directory?: string;
   common_name?: string;
   days?: number;
+  /** Directory mode; the key and certificate become 0644 alongside it. */
+  mode?: number;
 }
 
 export interface SelfSignedCert {
