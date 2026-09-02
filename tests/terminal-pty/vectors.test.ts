@@ -43,6 +43,7 @@ interface VectorFile {
   limits: Record<string, number>;
   ttls: Record<string, number>;
   modes: { all: string[]; writable: string[]; tui: string[]; read_only: string[] };
+  input_refused: { reasons: string[] };
   ws_close_codes: Record<string, number>;
   keys: Record<string, string>;
   cases: VectorCase[];
@@ -53,14 +54,24 @@ const vectorsRaw = readFileSync(vectorsPath, 'utf8');
 const vectors = JSON.parse(vectorsRaw) as VectorFile;
 
 const agentSessionPath = fileURLToPath(new URL('../../ops/pty-agent/cauce_pty_agent/session.py', import.meta.url));
+const agentBarrierPath = fileURLToPath(new URL('../../ops/pty-agent/cauce_pty_agent/input_barrier.py', import.meta.url));
 
-function readOnlyModesOfAgent(): string[] {
+function modeSetOfAgent(name: string): string[] {
   const source = readFileSync(agentSessionPath, 'utf8');
-  const declaration = /^READ_ONLY_MODES\s*=\s*frozenset\(\{([^}]*)\}\)/m.exec(source);
+  const declaration = new RegExp(`^${name}\\s*=\\s*frozenset\\(\\{([^}]*)\\}\\)`, 'm').exec(source);
   if (declaration === null) {
-    throw new Error('the agent no longer declares READ_ONLY_MODES as a frozenset literal; pin modes.read_only again by hand');
+    throw new Error(`the agent no longer declares ${name} as a frozenset literal; pin the modes block again by hand`);
   }
   return [...(declaration[1] ?? '').matchAll(/["']([^"']+)["']/g)].map((match) => String(match[1]));
+}
+
+function refusalReasonsOfAgent(): string[] {
+  const source = readFileSync(agentBarrierPath, 'utf8');
+  const declared = [...source.matchAll(/^REFUSED_BY_[A-Z_]+\s*=\s*["']([^"']+)["']/gm)];
+  if (declared.length === 0) {
+    throw new Error('input_barrier.py no longer declares its REFUSED_BY_* reasons as literals; pin input_refused.reasons by hand');
+  }
+  return declared.map((match) => String(match[1]));
 }
 
 // The three values below come from the frozen specification, not from this harness. They are
@@ -629,15 +640,32 @@ describe('pty wire vectors: the governance limits the four legs share', () => {
       .toEqual([...PREFIXED_TAGS].sort());
   });
 
-  it('pins read_only to the agent constant and keeps the four mode sets consistent', () => {
+  it('pins read_only and tui to the agent constants and keeps the four mode sets consistent', () => {
     const { all, writable, tui, read_only: readOnly } = vectors.modes;
     expect(new Set([...writable, ...tui])).toStrictEqual(new Set(all));
     expect(readOnly).toStrictEqual(['harness']);
-    expect([...readOnlyModesOfAgent()].sort(), 'session.py:READ_ONLY_MODES moved without the vectors')
+    expect([...modeSetOfAgent('READ_ONLY_MODES')].sort(), 'session.py:READ_ONLY_MODES moved without the vectors')
       .toStrictEqual([...readOnly].sort());
+    expect([...modeSetOfAgent('TUI_MODES')].sort(), 'session.py:TUI_MODES moved without the vectors')
+      .toStrictEqual([...tui].sort());
+    const writableTui = modeSetOfAgent('TUI_MODES').filter((mode) => !modeSetOfAgent('READ_ONLY_MODES').includes(mode));
     expect(readOnly.every((mode) => tui.includes(mode))).toBe(true);
     expect(writable.filter((mode) => tui.includes(mode))).toStrictEqual(['harness_rw']);
+    expect(writable.filter((mode) => tui.includes(mode)).sort(), 'session.py:WRITABLE_TUI_MODES moved without the vectors')
+      .toStrictEqual([...writableTui].sort());
     expect(all.filter((mode) => !writable.includes(mode))).toStrictEqual(readOnly);
+  });
+
+  it('pins the INPUT_REFUSED reasons to the constants the agent emits, both ways', () => {
+    const reasons = vectors.input_refused.reasons;
+    expect(reasons).toStrictEqual(['governance_write_in_flight', 'pane_input_barrier', 'tmux_prefix']);
+    expect([...refusalReasonsOfAgent()].sort(), 'input_barrier.py and the vectors name different reasons')
+      .toStrictEqual([...reasons].sort());
+    const encoded = vectors.cases
+      .filter((testCase) => testCase.kind === 'encode_frame' && testCase.input.tag === 'INPUT_REFUSED')
+      .map((testCase) => String((record(testCase.input, 'payload').value as Record<string, unknown>).reason));
+    expect(encoded.every((reason) => reasons.includes(reason))).toBe(true);
+    expect(encoded).toContain('tmux_prefix');
   });
 
   it('gives every governance tag of the agent the same byte the harness uses', () => {

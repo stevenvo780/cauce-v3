@@ -40,7 +40,7 @@ export interface FakeAgentOptions {
    */
   modes?: string[];
   /** When set, STDIN is answered with INPUT_REFUSED instead of being typed into the pane. */
-  refuse_input_while?: 'governance_write_in_flight' | 'pane_input_barrier' | null;
+  refuse_input_while?: 'governance_write_in_flight' | 'pane_input_barrier' | 'tmux_prefix' | null;
   /**
    * When set, a GEOMETRY frame follows every OPEN_OK with the real size of the remote TUI.
    * Both sides are validated against `GEOMETRY_CLAMP` and a value outside it — or a

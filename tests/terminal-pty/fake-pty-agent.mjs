@@ -42,7 +42,7 @@ export const EXIT = {
 
 const AGENT_VERSION = 'fake-pty-agent/1.0.0';
 const MAX_DATA_BYTES = MAX_FRAME_PAYLOAD - SESSION_ID_BYTES;
-const REFUSAL_REASONS = ['governance_write_in_flight', 'pane_input_barrier'];
+const REFUSAL_REASONS = ['governance_write_in_flight', 'pane_input_barrier', 'tmux_prefix'];
 
 /** Tickets and keys never reach a log line; this is what goes instead. */
 function fingerprint(value) {

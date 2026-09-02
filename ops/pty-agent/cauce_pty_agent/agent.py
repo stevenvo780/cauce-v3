@@ -47,6 +47,7 @@ from .framing import (
 from .governance_paths import FEATURES, GovernancePathsMixin
 from .governance_read import GovernanceReadMixin
 from .governance_write import GovernanceWrite, GovernanceWriteBatch, GovernanceWriteMixin
+from .input_barrier import InputBarrier
 from .runtime_facts import load_bundle
 from .session import (
     DYNAMIC_CAPABILITY_CHECK_INTERVAL,
@@ -58,7 +59,7 @@ from .session import (
     SessionMixin,
     _cloexec,
 )
-from .tmux import resolve_openclaw_tui_command
+from .tmux import resolve_openclaw_tui_command, resolve_tmux_tui_command
 
 BACKOFF_MIN = 1.0
 BACKOFF_MAX = 30.0
@@ -78,6 +79,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
             "generation": bundle["generation"],
             "runtime_uid": bundle["runtime_uid"],
         }
+        self.input_barrier = InputBarrier(bundle)
         self.modes = self._advertised_modes()
         self.sessions: dict[str, PtySession] = {}
         self.pending_writes: dict[str, GovernanceWrite] = {}
@@ -96,7 +98,12 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         static_or_tmux = any((self.bundle.get("harness_command"), self.bundle.get("tmux_tui")))
         openclaw_ready = self.bundle.get("openclaw_tui") is not None \
             and resolve_openclaw_tui_command(self.bundle) is not None
-        return ["shell"] + (["harness"] if static_or_tmux or openclaw_ready else [])
+        modes = ["shell"] + (["harness"] if static_or_tmux or openclaw_ready else [])
+        # The writable TUI is announced only where it can actually be served: the tmux route is
+        # the only one with a pane barrier, so it is the only one whose keyboard can be governed.
+        if resolve_tmux_tui_command(self.bundle, mode="harness_rw") is not None:
+            modes.append("harness_rw")
+        return modes
 
     # -- connection lifecycle ------------------------------------------------------------------
 

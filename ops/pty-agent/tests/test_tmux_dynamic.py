@@ -218,14 +218,32 @@ class TmuxDescriptorValidationTest(unittest.TestCase):
         self.assertIn("#{==:#{window_name},agente}", argv[7])
         self.assertEqual(argv[9], 'run-shell "exit 77"')
 
+    def test_the_writable_attach_drops_the_lock_and_changes_nothing_else(self) -> None:
+        """The identity conditions and the exit 77 branch are the same bytes in both modes."""
+        viewer = agent.resolve_tmux_tui_command(_bundle("cauce"), mode="harness")
+        writable = agent.resolve_tmux_tui_command(_bundle("cauce"), mode="harness_rw")
+        self.assertEqual(writable[8], "attach-session -t cauce-zeus:agente")
+        self.assertEqual(viewer[:8], writable[:8])
+        self.assertEqual(viewer[9], writable[9])
+
+    def test_control_negativo_the_viewer_argv_still_carries_the_read_only_flag(self) -> None:
+        """Without this, an argv that had lost `-r` for EVERY mode would pass the test above."""
+        viewer = agent.resolve_tmux_tui_command(_bundle("cauce"), mode="harness")
+        writable = agent.resolve_tmux_tui_command(_bundle("cauce"), mode="harness_rw")
+        self.assertIn("attach-session -r ", viewer[8])
+        self.assertIn("ignore-size", viewer[8])
+        self.assertNotIn("attach-session -r ", writable[8])
+        self.assertNotIn("ignore-size", writable[8])
+
 
 @unittest.skipUnless(TMUX, "tmux is required to validate the descriptor")
 class ADescriptorThatCannotResolveNeverLoads(unittest.TestCase):
     """`harness` se anuncia sobre un bundle ya validado: un descriptor irresoluble muere al cargar."""
 
-    def test_a_descriptor_that_resolves_loads_and_advertises_harness(self) -> None:
+    def test_a_descriptor_that_resolves_loads_and_advertises_both_tui_modes(self) -> None:
+        """The tmux route is the only one that can be handed a keyboard, so it announces both."""
         instance = agent.PtyAgent(agent.validate_bundle(_loadable_bundle()))
-        self.assertEqual(instance.modes, ["shell", "harness"])
+        self.assertEqual(instance.modes, ["shell", "harness", "harness_rw"])
 
     def test_control_negativo_a_descriptor_the_resolver_would_refuse_is_rejected_at_load(self) -> None:
         for overrides in (

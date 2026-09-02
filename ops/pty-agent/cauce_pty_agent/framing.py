@@ -81,7 +81,9 @@ CLOCK_SKEW = 5.0
 SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 TICKET_RE = re.compile(r"^v1\.([A-Za-z0-9_-]{1,4096})\.([A-Za-z0-9_-]{43})$")
 IDENTITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-MODES = ("shell", "harness")
+# `harness` is the viewer and `harness_rw` the same TUI with the keyboard enabled; the pane
+# barrier, not the mode, is what stops a burst from landing in someone else's turn.
+MODES = ("shell", "harness", "harness_rw")
 
 
 class PermanentError(RuntimeError):

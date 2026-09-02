@@ -124,7 +124,7 @@ class EmulatorResponsesAreNotHumanInput(unittest.TestCase):
         self.assertEqual(self._deliver_response("harness", response), response)
 
     def test_the_technical_path_is_not_valid_for_an_interactive_shell(self) -> None:
-        with self.assertRaisesRegex(agent.ProtocolError, "read-only"):
+        with self.assertRaisesRegex(agent.ProtocolError, "TUI session"):
             self._deliver_response("shell", b"\x1b[0n")
 
     def test_text_paste_mouse_and_generic_ansi_fail_closed(self) -> None:

@@ -16,6 +16,8 @@ from .framing import (
     MAX_FRAME,
     SESSION_ID_RE,
     TAG_CLOSED,
+    TAG_GEOMETRY,
+    TAG_INPUT_REFUSED,
     TAG_OPEN_ERR,
     TAG_OPEN_OK,
     TAG_STDOUT,
@@ -77,6 +79,22 @@ TERMINAL_CURSOR_RESPONSE_RE = re.compile(rb"^\x1b\[(?:\?)?([1-9][0-9]{0,2});([1-
 # open a conversation: it stomps the current turn (four `input_busy` in a row, measured).
 # The tmux `-r` is kept as defence in depth.
 READ_ONLY_MODES = frozenset({"harness"})
+
+# Modes that drive a real TUI, and therefore the ones the emulator owes its DA/DSR answer to.
+# That gate used to be written as the complement of READ_ONLY_MODES, which silently denied the
+# technical channel to a writable TUI: it would attach and never learn what terminal it is on.
+TUI_MODES = frozenset({"harness", "harness_rw"})
+# Derived, so the two cannot drift: the TUI that types is the one the pane barrier governs.
+WRITABLE_TUI_MODES = TUI_MODES - READ_ONLY_MODES
+
+
+class OpenRefused(RuntimeError):
+    """The route resolved for this mode cannot serve it; `reason`/`detail` travel in OPEN_ERR."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(reason if not detail else f"{reason}:{detail}")
+        self.reason = reason
+        self.detail = detail
 
 
 # ---------------------------------------------------------------------------------------------
@@ -168,7 +186,12 @@ class SessionMixin:
         if len(self.sessions) >= MAX_SESSIONS:
             self._open_error(session_id, "too_many_sessions")
             return
-        argv = self._resolve_command(mode)
+        try:
+            argv = self._resolve_command(mode)
+        except OpenRefused as refusal:
+            log(f"OPEN refused session={session_id} reason={refusal.reason} {refusal.detail}")
+            self._open_error(session_id, refusal.reason, refusal.detail)
+            return
         if argv is None:
             self._open_error(session_id, "mode_unavailable")
             return
@@ -193,7 +216,23 @@ class SessionMixin:
             "rows": rows,
             "cols": cols,
         }))
+        if mode in TUI_MODES:
+            self._send_geometry(session)
         log(f"OPEN accepted session={session_id} mode={mode} pid={session.pid} argv0={argv[0]}")
+
+    def _send_geometry(self, session: PtySession) -> None:
+        """The measured size of the shared window, so the console fits its font to the real TUI.
+
+        Silence is the honest answer when tmux cannot be read: a guessed geometry would repaint
+        the operator's pane at a size nobody has.
+        """
+        size = self.input_barrier.window_geometry(time.monotonic())
+        if size is None:
+            return
+        rows, cols = _window({"cols": size[0], "rows": size[1]})
+        self._queue(encode_json(TAG_GEOMETRY, {
+            "session_id": session.session_id, "cols": cols, "rows": rows,
+        }))
 
     def _open_error(self, session_id: str, reason: str, detail: str = "") -> None:
         document: dict[str, Any] = {"session_id": session_id, "reason": reason}
@@ -202,11 +241,24 @@ class SessionMixin:
         self._queue(encode_json(TAG_OPEN_ERR, document))
 
     def _resolve_command(self, mode: str) -> list[str] | None:
-        if mode == "harness":
+        """Three argv sources, in order; only the tmux one can be handed the keyboard.
+
+        A writable attach is sound solely where a pane barrier exists. `HARNESS_COMMAND` is
+        hand-written in the alias `.env` and the native OpenClaw TUI has no read-only equivalent,
+        so neither route can prove that a burst will not land in the middle of someone's turn:
+        both refuse the mode by name instead of quietly attaching a keyboard.
+        """
+        if mode in TUI_MODES:
+            writable = mode in WRITABLE_TUI_MODES
             if self.bundle["harness_command"] is not None:
+                if writable:
+                    raise OpenRefused("writable_tui_unavailable", "harness_command")
                 return self.bundle["harness_command"]
-            return (resolve_tmux_tui_command(self.bundle) if self.bundle.get("tmux_tui") is not None
-                    else resolve_openclaw_tui_command(self.bundle))
+            if self.bundle.get("tmux_tui") is not None:
+                return resolve_tmux_tui_command(self.bundle, mode)
+            if writable and self.bundle.get("openclaw_tui") is not None:
+                raise OpenRefused("writable_tui_unavailable", "openclaw_tui")
+            return None if writable else resolve_openclaw_tui_command(self.bundle)
         for candidate in self.bundle["shell_candidates"]:
             if os.access(candidate[0], os.X_OK):
                 return candidate
@@ -255,6 +307,16 @@ class SessionMixin:
                 session.refused_input = True
                 log(f"input refused on a read-only session mode={session.mode} session={session_id}")
             return
+        if session.mode in WRITABLE_TUI_MODES:
+            refusal = self.input_barrier.refusal(
+                data, bool(self.pending_writes or self.pending_write_batches), time.monotonic())
+            if refusal is not None:
+                # Dropped, not queued: the burst would otherwise drain into the next turn, the
+                # very accident the barrier exists to stop. One frame per burst, never per byte.
+                self._queue(encode_json(TAG_INPUT_REFUSED, {
+                    "session_id": session_id, "reason": refusal,
+                }))
+                return
         self._enqueue_session_input(session, data)
 
     def _on_terminal_response(self, session_id: str, data: bytes) -> None:
@@ -265,8 +327,8 @@ class SessionMixin:
         session = self.sessions.get(session_id)
         if session is None:
             return
-        if session.mode not in READ_ONLY_MODES:
-            raise ProtocolError("TERMINAL_RESPONSE is only valid for a read-only session")
+        if session.mode not in TUI_MODES:
+            raise ProtocolError("TERMINAL_RESPONSE is only valid for a TUI session")
         self._enqueue_session_input(session, data)
 
     def _on_resize(self, request: dict[str, Any]) -> None:
@@ -281,6 +343,10 @@ class SessionMixin:
             set_window_size(session.fd, rows, cols)
         except OSError:
             pass
+        if session.mode in WRITABLE_TUI_MODES:
+            # The shared window follows the browser while control is held, so the size the
+            # console must fit is the one tmux ends up with, not the one it asked for.
+            self._send_geometry(session)
 
     def _on_close(self, request: dict[str, Any]) -> None:
         session_id = request.get("session_id")

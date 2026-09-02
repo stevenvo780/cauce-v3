@@ -85,16 +85,26 @@ agent).
 the gates that separate them are written with different polarities in different legs. `read_only`
 is exactly `{harness}` and does not move: it is the set whose STDIN the agent drops before touching
 the descriptor (`ops/pty-agent/cauce_pty_agent/session.py:READ_ONLY_MODES`). `writable` is the set
-whose STDIN reaches the pty. `tui` is the set allowed to send `TERMINAL_RESPONSE`, and today both
-the agent (`mode not in READ_ONLY_MODES`) and the relay (`mode !== 'harness'`) express it as the
-complement of read-only — so a writable TUI mode such as `harness_rw` would silently lose the
-emulator response channel its TUI needs to render. `all` is the union of `writable` and `tui`, and
-`harness_rw` is the only mode in both. `vectors.test.ts` asserts those four relations and, for
-`read_only`, re-reads the `READ_ONLY_MODES` literal out of
-`ops/pty-agent/cauce_pty_agent/session.py` and compares it with the array, so that one set cannot
-drift from the agent either. The other three are internal relations only: `all` is a forward
-declaration — nothing in the tree implements `harness_rw` yet — and neither the agent's `MODES`
-tuple nor the relay's hello has widened to it.
+whose STDIN reaches the pty. `tui` is the set allowed to send `TERMINAL_RESPONSE`; the agent now
+names it outright (`TUI_MODES`, with `WRITABLE_TUI_MODES` derived from it) while the relay still
+expresses it as the complement of read-only (`mode !== 'harness'`), so on the relay leg a writable
+TUI mode such as `harness_rw` still loses the emulator response channel its TUI needs to render.
+`all` is the union of `writable` and `tui`, and `harness_rw` is the only mode in both.
+`vectors.test.ts` asserts those four relations and re-reads the `READ_ONLY_MODES` and `TUI_MODES`
+frozenset literals out of `ops/pty-agent/cauce_pty_agent/session.py`, comparing them with the
+arrays, so neither set can drift from the agent.
+
+The agent side of `all` is implemented: `ops/pty-agent/cauce_pty_agent/framing.py:MODES` lists the
+three modes and the tmux route serves `harness_rw`. The relay side is not, on two counts, and both
+have to land together (W3B-06): `services/terminal-relay/src/agent-hello.ts` still narrows a hello
+to `shell|harness`, and `services/terminal-relay/src/framing.ts:FRAME_TAGS` still knows neither
+`INPUT_REFUSED` (0x26) nor `GEOMETRY` (0x27) — an unknown tag there tears down the alias's whole
+multiplexed leg, not one session.
+
+`input_refused` declares the reasons `INPUT_REFUSED` may carry, and it only grows: a new holder of
+the keyboard adds a value, it never renames one. `vectors.test.ts` compares that list with the
+`REFUSED_BY_*` literals of `ops/pty-agent/cauce_pty_agent/input_barrier.py` in both directions, so
+a reason invented on either side is red in the same commit.
 
 Two of these numbers do not fit together and the vectors say so instead of hiding it:
 `limits.max_write_batch_files` is 7, but a whole batch may announce at most
@@ -136,15 +146,18 @@ relay: sends `AGENT_HELLO`, replies `PONG` to `PING`, **verifies each `OPEN`
 ticket with the same rules as the real agent** (signature, window, sid, tenant,
 alias, container, generation, mode) and instead of opening a PTY emulates a
 trivial shell. Two options serve the writable-TUI half of the contract: `refuse_input_while`
-makes the double answer `INPUT_REFUSED` to STDIN instead of echoing it (`AGENT_REFUSE_INPUT`),
+makes the double answer `INPUT_REFUSED` to STDIN instead of echoing it (`AGENT_REFUSE_INPUT`), with
+any of the three reasons of the `input_refused` block — `governance_write_in_flight`,
+`pane_input_barrier`, `tmux_prefix` — and anything else is a `bad_config` exit;
 and `geometry` makes it emit `GEOMETRY` right after each `OPEN_OK`
 (`AGENT_GEOMETRY=120x40`, both sides validated against the `geometry` clamp — a malformed value
 is a `bad_config` exit, never a `null` on the wire). Every other tag is still an `unexpected_tag`
 abort. `modes` may name `harness_rw` for these tests, but **not against the real relay**: today
 `services/terminal-relay/src/agent-hello.ts` accepts only `shell` and `harness` and one foreign
-entry invalidates the whole hello, so an agent advertising `harness_rw` is disconnected instead of
-being given a writable TUI. Widening that check is the job of the later W3b task that teaches the
-relay the mode (W3B-06); until it lands, `harness_rw` lives between this double and a scratch
+entry invalidates the whole hello, and `services/terminal-relay/src/framing.ts:FRAME_TAGS` does not
+carry 0x26 or 0x27 either, so the first `INPUT_REFUSED` or `GEOMETRY` would drop the alias's entire
+multiplexed leg. Widening both is the job of the later W3b task that teaches the relay the mode and
+the two tags (W3B-06); until it lands, `harness_rw` lives between this double and a scratch
 server.
 
 ```bash
@@ -305,7 +318,7 @@ names, adjust here, this is the only place that mentions them):
 | `0x23` | TERMINAL_RESPONSE | relay -> agent | DATA (a DA/DSR answer, read-only session) |
 | `0x24` | PAUSE_OUTPUT | relay -> agent | JSON `{session_id}` |
 | `0x25` | RESUME_OUTPUT | relay -> agent | JSON `{session_id}` |
-| `0x26` | INPUT_REFUSED | agent -> browser | JSON `{session_id, reason}`, reason `governance_write_in_flight` or `pane_input_barrier` |
+| `0x26` | INPUT_REFUSED | agent -> browser | JSON `{session_id, reason}`, reason `governance_write_in_flight`, `pane_input_barrier` or `tmux_prefix` (the `input_refused` block of `vectors.json`) |
 | `0x27` | GEOMETRY | agent -> browser | JSON `{session_id, cols, rows}` |
 | `0x30` | CLOSE | relay -> agent | JSON `{session_id, reason}` |
 | `0x31` | CLOSED | agent -> relay | JSON `{session_id, exit_code, signal, reason}` |
@@ -344,7 +357,10 @@ recognise, and that tears down the alias's whole multiplexed leg, not one sessio
 are agent -> browser and therefore cross the relay, so for them the order is: `vectors.json`, the
 relay, then the emitters (`fake-pty-agent.mjs` and the Python agent).
 `INPUT_REFUSED` is what the agent sends instead of typing while a paste or a governed write holds
-the pane, and it never closes the session; `GEOMETRY` carries the real size of the remote TUI so
+the pane, or when the burst itself carries the tmux prefix byte — a `harness_rw` attach is a full
+tmux client, so that byte would reach the tmux command prompt, where `run-shell` runs as the
+runtime user and `set-option -pu` clears the pane barrier; it stops the prompt, not a harness that
+spawns shells of its own. It never closes the session; `GEOMETRY` carries the real size of the remote TUI so
 the console can fit the font instead of printing a sign about how many columns fit. The Python side
 consumes the table through `ops/pty-agent/tests/test_vectors_contract.py`, which compares the
 **whole** tag set against the `TAG_*` constants in both directions: a tag added here without its

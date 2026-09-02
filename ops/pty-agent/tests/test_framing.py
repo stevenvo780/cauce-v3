@@ -139,6 +139,20 @@ class EncoderGuardTests(unittest.TestCase):
         with self.assertRaises(agent.ProtocolError):
             agent.encode_data(agent.TAG_OPEN, GOLDEN_SESSION, b"hi")
 
+    def test_input_refused_and_geometry_are_json_frames_not_data_frames(self) -> None:
+        """They name a session inside the JSON, not in a 36 byte prefix; the relay decodes both
+        with its control path. Sending them through `encode_data` would misframe them."""
+        for tag in (agent.TAG_INPUT_REFUSED, agent.TAG_GEOMETRY):
+            with self.subTest(tag=tag):
+                self.assertNotIn(tag, agent.DATA_TAGS)
+                self.assertNotIn(tag, agent.PREFIXED_TAGS)
+                with self.assertRaises(agent.ProtocolError):
+                    agent.encode_data(tag, GOLDEN_SESSION, b"hi")
+
+    def test_the_writable_tui_mode_is_declared_on_the_wire(self) -> None:
+        self.assertEqual(agent.MODES, ("shell", "harness", "harness_rw"))
+        self.assertEqual((agent.TAG_INPUT_REFUSED, agent.TAG_GEOMETRY), (0x26, 0x27))
+
     def test_a_short_session_id_is_refused(self) -> None:
         with self.assertRaises(agent.ProtocolError):
             agent.encode_data(agent.TAG_STDOUT, "1111", b"hi")

@@ -77,21 +77,38 @@ def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | N
     return {"path": path, "socket": socket_name}
 
 
-def resolve_tmux_tui_command(bundle: dict[str, Any]) -> list[str] | None:
+def tmux_tui_target(bundle: dict[str, Any]) -> str | None:
+    """`cauce-<alias>:agente`, the only window this agent may ever address, or nothing.
+
+    The live probes of `input_barrier.py` name the same window the attach names, so a pane read
+    can never drift onto another alias's session while the attach stays fenced.
+    """
+    config = bundle.get("tmux_tui")
+    alias = bundle.get("alias")
+    if not isinstance(config, dict) or not isinstance(alias, str):
+        return None
+    if not TMUX_IDENTITY_RE.fullmatch(alias) or bundle.get("harness") not in ("claude", "codex"):
+        return None
+    return f"cauce-{alias}:{TMUX_TUI_WINDOW}"
+
+
+def resolve_tmux_tui_command(bundle: dict[str, Any], mode: str = "harness") -> list[str] | None:
     """Build one fail-closed tmux command that validates and attaches on the same server.
 
     `if-shell -F` evaluates the target formats and executes `attach-session` inside one tmux
     command. If the server was restarted, the mutable name was reused, a marker changed, or the
     pane died, the false branch exits 77. There is no preflight/attach TOCTOU and no frozen `$N`.
+
+    `mode` only changes the attach: the writable TUI drops `-r`, and with it `-f ignore-size`, so
+    the shared window follows the browser for as long as the operator holds control. Every
+    identity condition and the false branch stay byte for byte the same in both modes.
     """
     config = bundle.get("tmux_tui")
-    if not isinstance(config, dict):
+    target = tmux_tui_target(bundle)
+    if not isinstance(config, dict) or target is None:
         return None
     alias = bundle["alias"]
     harness = bundle["harness"]
-    if not TMUX_IDENTITY_RE.fullmatch(alias) or harness not in ("claude", "codex"):
-        return None
-    target = f"cauce-{alias}:{TMUX_TUI_WINDOW}"
     conditions = (
         f"#{{&&:#{{==:#{{session_name}},cauce-{alias}}},"
         f"#{{&&:#{{==:#{{window_name}},{TMUX_TUI_WINDOW}}},"
@@ -100,7 +117,8 @@ def resolve_tmux_tui_command(bundle: dict[str, Any]) -> list[str] | None:
         f"#{{&&:#{{==:#{{@cauce_harness}},{harness}}},"
         "#{==:#{pane_dead},0}}}}}}}}}}"
     )
-    attach = f"attach-session -r -f ignore-size -t {target}"
+    attach = (f"attach-session -t {target}" if mode == "harness_rw"
+              else f"attach-session -r -f ignore-size -t {target}")
     return [
         config["path"], "-L", config["socket"],
         "if-shell", "-F", "-t", target, conditions, attach, 'run-shell "exit 77"',
