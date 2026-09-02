@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 
+from credential_health import LONG_LIVED, classify_fleet_guard_record
+
 OBJETIVOS = [
     ("ws-isa", "/home/dev/.claude/.credentials.json", "claude/salva"),
     ("ws-isa", "/home/dev/.codex/auth.json",          "codex/salva"),
@@ -64,16 +66,17 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
                       "estado": "ILEGIBLE", "detalle": d["error"], "problema": True})
         problemas += 1
         continue
-    huella, horas, exp = d.get("huella"), None, d.get("expiresAt")
-    if isinstance(exp, (int, float)):
-        ts = exp / 1000 if exp > 1e11 else exp
-        horas = (datetime.datetime.fromtimestamp(ts, datetime.timezone.utc) - ahora).total_seconds() / 3600
+    health = classify_fleet_guard_record(d, now_epoch=ahora.timestamp())
+    huella = health.fingerprint
+    horas = health.hours_until_expiry
+    estado, problema = health.operational_state, health.problem
     # Same criterion as the VPS guard: the only thing that KILLS is running out of refreshToken.
-    if huella is None:
-        estado, detalle, problema = "MUERTO", "sin refreshToken: no puede renovar, muere al vencer el access", True
+    if health.state == LONG_LIVED:
+        detalle = f"token largo sin refreshToken (setup-token): vence en {(horas / 24):.0f} dias"
+    elif health.problem:
+        detalle = "sin refreshToken: no puede renovar, muere al vencer el access"
         problemas += 1
     else:
-        estado, problema = "OK", False
         detalle = (f"vence en {horas:.1f} h") if horas is not None else (d.get("last_refresh") or "")
     filas.append({"huella": huella or "SIN-RT", "etiqueta": etiqueta, "contenedor": contenedor,
                   "estado": estado, "detalle": detalle, "problema": problema})

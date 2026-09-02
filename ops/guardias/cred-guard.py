@@ -21,6 +21,8 @@ import json
 import subprocess
 import sys
 
+from credential_health import LONG_LIVED, classify_fleet_guard_record, shared_fingerprints
+
 # (container, path inside the container, label)
 OBJETIVOS = [
     # Claude (all fleet containers that live in THIS host, the VPS).
@@ -73,7 +75,7 @@ def leer(contenedor, ruta):
         return {"error": f"{type(e).__name__}: {str(e)[:50]}"}
 
 ahora = datetime.datetime.now(datetime.timezone.utc)
-filas, por_huella, problemas = [], {}, 0
+filas, credential_locations, problemas = [], [], 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:
     d = leer(contenedor, ruta)
@@ -84,12 +86,10 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
         filas.append(("?", etiqueta, contenedor, "ILEGIBLE", d["error"]))
         continue
 
-    huella = d.get("huella")
-    horas = None
-    exp = d.get("expiresAt")
-    if isinstance(exp, (int, float)):
-        ts = exp/1000 if exp > 1e11 else exp
-        horas = (datetime.datetime.fromtimestamp(ts, datetime.timezone.utc) - ahora).total_seconds()/3600
+    health = classify_fleet_guard_record(d, now_epoch=ahora.timestamp())
+    huella = health.fingerprint
+    horas = health.hours_until_expiry
+    estado = health.operational_state
 
     # An EXPIRED access token is NOT a problem: as long as there's a refreshToken, the CLI renews
     # it on its own. salva has been "expired" for 5 days and answers deliveries without failing
@@ -99,19 +99,17 @@ for contenedor, ruta, etiqueta in OBJETIVOS:
     # (1 year) that intentionally doesn't include refreshToken: there's nothing to renew. Marking
     # it DEAD is an expensive false positive, because it pushes a human to redo a login that
     # wasn't needed. What really kills is having no refreshToken AND an expired or about-to-expire access.
-    if huella is None and horas is not None and horas > 720:
-        estado = "TOKEN-LARGO"
+    if health.state == LONG_LIVED:
         detalle = f"token largo sin refreshToken (setup-token): vence en {(horas / 24):.0f} dias"
-    elif huella is None:
-        estado, problemas = "MUERTO", problemas + 1
+    elif health.problem:
+        problemas += 1
         detalle = "sin refreshToken y access %s: no puede renovar" % (
             f"VENCIDO hace {-horas:.0f} h" if horas is not None and horas < 0
             else (f"vence en {horas:.1f} h" if horas is not None else "sin fecha"))
     else:
-        estado = "OK"
         detalle = (f"vence en {horas:.1f} h") if horas is not None else (d.get("last_refresh") or "")
     if huella:
-        por_huella.setdefault(huella, []).append(etiqueta)
+        credential_locations.append((huella, etiqueta, contenedor))
     filas.append((huella or "SIN-RT", etiqueta, contenedor, estado, detalle))
 
 # ---- aliases that do NOT live in this host -------------------------------------------------
@@ -134,7 +132,7 @@ try:
             problemas += 1
         h = f.get("huella")
         if h and h not in ("-", "?", "SIN-RT"):
-            por_huella.setdefault(h, []).append(f["etiqueta"])
+            credential_locations.append((h, f["etiqueta"], f["contenedor"] + "@kratos"))
         filas.append((h or "SIN-RT", f["etiqueta"], f["contenedor"] + "@kratos", estado, detalle))
 except FileNotFoundError:
     problemas += 1
@@ -149,7 +147,7 @@ print(f"== credenciales de la flota == {ahora.strftime('%Y-%m-%d %H:%M')} UTC")
 for huella, etiqueta, contenedor, estado, detalle in filas:
     print(f"{huella:<9} {etiqueta:<24} {contenedor:<14} {estado:<8} {detalle}")
 
-compartidas = {h: v for h, v in por_huella.items() if len(v) > 1}
+compartidas = shared_fingerprints(credential_locations)
 if compartidas:
     print("\n== COMPARTIDAS (se van a pisar al rotar) ==")
     for huella, quienes in compartidas.items():

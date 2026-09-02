@@ -17,6 +17,7 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `cauce-attach-guard` | `kratos:~/.local/bin/` + timer 2min | Repone adaptadores parados por un attach mal cerrado |
 | `cauce-codex-sync` | `kratos:~/.local/bin/` + path-unit | Propaga auth.json compartido de codex a los agentes sin bind-mount |
 | `cauce-cred-guard-kratos.py` | `kratos:~/.local/bin/` + timer 15min | Mide credenciales de los alias que viven EN kratos y empuja huellas al VPS |
+| `credential_health.py` | `VPS` y `kratos`: `~/.local/bin/` | Autoridad pura compartida para clasificar vencimientos y huellas repetidas |
 | `cauce-credenciales` | `kratos:~/.local/bin/` | Audita y renueva credenciales OAuth de toda la flota (detecta bind-mounts compartidos) |
 | `cauce-destrabar-telegram` | `kratos:~/.local/bin/` | Destraba el cursor de Telegram atascado por un adjunto no descargable |
 | `cauce-directo` | `kratos:~/.local/bin/` | Abre un alias sin los 4 saltos de pty (evita ptys huérfanas) |
@@ -30,10 +31,11 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `cauce-tmux-panel` | `kratos:~/.local/bin/` | Panel tmux de un alias |
 | `cauce-v3-medico-monitor` | `kratos:~/.local/bin/` + timer | El MÉDICO de la flota (3.207 líneas): vigila, adjudica y avisa — 55 iteraciones rescatadas de .bak |
 | `cauce-watch` | `kratos:~/.local/bin/` | Watch de la flota |
-| `cred-guard.py` | `kratos:~/.local/bin/` | Revisa las 14 credenciales de la flota: quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores |
-| `cred-guard.sh` | `kratos:~/.local/bin/` | Envoltorio del anterior: deja estado en `~/.local/state/cred-guard.{txt,log}` |
+| `cred-guard.py` | `VPS:~/.local/bin/` | Revisa las 14 credenciales de la flota: quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores |
+| `cred-guard.sh` | `VPS:~/.local/bin/` | Envoltorio del anterior: deja estado en `~/.local/state/cred-guard.{txt,log}` |
 | `polidin-guard.sh` | `kratos:~/.local/bin/` | Repone el túnel `ws-zeus:12222 → 10.88.88.31:22` cuando muere |
-| `systemd/*.timer`, `systemd/*.service` | `kratos:~/.config/systemd/user/` | Disparan los dos guardias (credenciales cada 30 min, túnel cada 2 min) |
+| `systemd/cred-guard.*` | `VPS:~/.config/systemd/user/` | Dispara el agregador de credenciales cada 30 min |
+| `systemd/{cauce-cred-guard-kratos,cauce-v3-medico-monitor,polidin-guard}.*` | `kratos:~/.config/systemd/user/` | Dispara las sondas remotas, el médico y el guardia del túnel |
 | `contenedor/polidin-fwd.sh` | `ws-zeus:/home/dev/` | El túnel en sí; corre **dentro** del contenedor |
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
 | `cauce-huerfanas.sh` | `<contenedor>:~/.local/bin/` | Wrapper compatible del comando canónico `ops/cli/cauce-huerfanas` |
@@ -48,6 +50,10 @@ dentro no lo repone nadie, y el síntoma no dice "falta un proceso" —dice `Con
 `HTTP 000`—. `kratos` sí tiene systemd de usuario con `Linger=yes`, así que el guardián vive ahí y
 alcanza al contenedor por `docker exec`. Pasó dos veces en 48 h: el túnel de Polidinámica y el shim
 de Antigravity, los dos caídos días sin que nadie lo notara.
+
+La excepción es `cred-guard.py`: agrega en el VPS las mediciones locales y el documento que
+`cauce-cred-guard-kratos.py` empuja desde `kratos`. Ambos hosts necesitan su propia copia de
+`credential_health.py` junto al ejecutable que la importa.
 
 ## El check-in diario de hegel corre en agora-storage, no en kratos
 
@@ -81,14 +87,31 @@ Probar el efecto (crea una entrega real y hace correr a hegel):
 ## Restaurar después de una pérdida de disco
 
 ```sh
+# en el VPS, con el repo clonado
+install -d -m755 ~/.local/bin ~/.config/systemd/user
+install -m644 ops/guardias/credential_health.py ~/.local/bin/
+install -m755 ops/guardias/cred-guard.py ops/guardias/cred-guard.sh ~/.local/bin/
+install -m644 ops/guardias/systemd/cred-guard.service \
+  ops/guardias/systemd/cred-guard.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now cred-guard.timer
+
 # en kratos, con el repo clonado
-install -m755 ops/guardias/cred-guard.py    ~/.local/bin/
-install -m755 ops/guardias/cred-guard.sh    ~/.local/bin/
+install -d -m755 ~/.local/bin ~/.config/systemd/user
+install -m644 ops/guardias/credential_health.py ~/.local/bin/
+install -m755 ops/guardias/cauce-cred-guard-kratos.py \
+  ops/guardias/cauce-v3-medico-monitor ~/.local/bin/
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
 install -m755 ops/cli/cauce  ~/.local/bin/cauce   # fuente única del CLI (1.138 líneas reales)
-install -m644 ops/guardias/systemd/*        ~/.config/systemd/user/
+install -m644 ops/guardias/systemd/cauce-cred-guard-kratos.service \
+  ops/guardias/systemd/cauce-cred-guard-kratos.timer \
+  ops/guardias/systemd/cauce-v3-medico-monitor.service \
+  ops/guardias/systemd/cauce-v3-medico-monitor.timer \
+  ops/guardias/systemd/polidin-guard.service \
+  ops/guardias/systemd/polidin-guard.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now cred-guard.timer polidin-guard.timer
+systemctl --user enable --now cauce-cred-guard-kratos.timer \
+  cauce-v3-medico-monitor.timer polidin-guard.timer
 ```
 
 Y dentro de `ws-zeus`: `install -m755 ops/guardias/contenedor/polidin-fwd.sh /home/dev/`.
