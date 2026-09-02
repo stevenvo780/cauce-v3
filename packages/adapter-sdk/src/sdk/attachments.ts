@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import {
   hasUnsafeTextCodePoint,
   imageSignature,
@@ -43,10 +43,13 @@ function declaredKind(kind: unknown, mime: string): "image" | "document" | undef
 }
 
 function decodeBase64(value: unknown): Buffer | undefined {
-  if (typeof value !== "string" || value.length === 0 || value.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) {
+  if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0 ||
+      value.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 4) {
     return undefined;
   }
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) return undefined;
+  // One quantifier over a character class: a repeated group backtracks per repetition and
+  // overflows the regex stack around 4 M characters, below what the protocol admits.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value)) return undefined;
   const decoded = Buffer.from(value, "base64");
   if (decoded.length > MAX_ATTACHMENT_BYTES || decoded.toString("base64") !== value) return undefined;
   return decoded;
@@ -54,6 +57,28 @@ function decodeBase64(value: unknown): Buffer | undefined {
 
 function attachmentError(message: string): AdapterError {
   return new AdapterError("INVALID_ATTACHMENT", message, false);
+}
+
+const NAME_MAX_BYTES = 255;
+const MAX_KEPT_EXTENSION_BYTES = 32;
+
+/**
+ * Validators count characters and the filesystem counts bytes, so a name the schema accepts can
+ * still exceed NAME_MAX once prefixed. The declared name stays in the prompt; only the on-disk
+ * name is shortened, by code point and keeping the extension.
+ */
+function diskName(index: number, name: string): string {
+  const prefix = `${String(index + 1)}-`;
+  if (Buffer.byteLength(prefix + name, "utf8") <= NAME_MAX_BYTES) return prefix + name;
+  const rawExtension = extname(name);
+  const extension = Buffer.byteLength(rawExtension, "utf8") <= MAX_KEPT_EXTENSION_BYTES ? rawExtension : "";
+  const budget = NAME_MAX_BYTES - Buffer.byteLength(prefix + extension, "utf8");
+  let stem = "";
+  for (const character of name.slice(0, name.length - extension.length)) {
+    if (Buffer.byteLength(stem + character, "utf8") > budget) break;
+    stem += character;
+  }
+  return `${prefix}${stem}${extension}`;
 }
 
 export async function materializeAttachments(body: Record<string, unknown>): Promise<MaterializedAttachments | undefined> {
@@ -90,7 +115,7 @@ export async function materializeAttachments(body: Record<string, unknown>): Pro
       if (aggregateBytes > MAX_ATTACHMENTS_TOTAL_BYTES) throw attachmentError("Delivery attachments exceed aggregate size limit");
       const actualHash = createHash("sha256").update(payload).digest("hex");
       if (actualHash !== expectedHash) throw attachmentError("Delivery attachment checksum does not match");
-      const path = join(directory, `${String(index + 1)}-${name}`);
+      const path = join(directory, diskName(index, name));
       await writeFile(path, payload, { mode: 0o600, flag: "wx" });
       attachments.push({
         // A routing decision, never a rejection: `image` picks the provider's native image input,
