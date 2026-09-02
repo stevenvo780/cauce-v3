@@ -1,0 +1,11 @@
+# Config de ggshield (CLI). NO apaga los avisos del panel de GitGuardian: esos se
+# excluyen en el workspace (Settings > Secrets detection > exclusiones de ruta).
+# Regla acordada con jarvis: un literal con forma de credencial se descarta SOLO si
+# vive en un directorio de tests. Un hallazgo fuera de estas rutas es real.
+version: 2
+secret:
+  ignored_paths:
+    - 'tests/**'
+    - '**/test/**'
+    - '**/*.test.ts'
+    - '**/*.test.mjs'
