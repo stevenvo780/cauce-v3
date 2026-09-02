@@ -5,7 +5,7 @@
  * is not reused. Until now it only lifted when the pane generation CHANGED (`stale`), which in
  * practice meant a person killing and recreating the TUI: inside a live generation it was
  * permanent, and every delivery from then on came out as `session_identity_unverified` and went to
- * the isolated transport. That is what stranded heraclito for hours on 2026-09-02.
+ * the isolated transport, and the shared conversation stopped receiving anything.
  *
  * What these tests fix is that a live generation which PROVES it is healthy —not generating, free
  * and empty input box, same pane and PID— releases its own quarantine. And what they defend is the
