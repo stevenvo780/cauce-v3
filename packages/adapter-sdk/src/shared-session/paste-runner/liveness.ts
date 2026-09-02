@@ -11,7 +11,7 @@ import { readQuarantineMarker } from "./persistence.js";
 import { beforeDeadline } from "./runtime.js";
 
 /**
- * What the PANE says about the generation, not the transcript file; every answer fails closed.
+ * What the PANE says about the generation, not the transcript file; every answer fails closed. Full rationale: ./liveness.md
  */
 export abstract class PasteSessionLivenessRunner<E> extends PasteSessionRunnerBase<E> {
   /**
