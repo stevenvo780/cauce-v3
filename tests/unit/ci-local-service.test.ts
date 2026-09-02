@@ -13,6 +13,13 @@ describe('local CI systemd contract', () => {
     expect(service).toContain('git rev-parse origin/main');
   });
 
+  it('sets a non-interactive, color-free environment so pnpm never waits on a TTY', async () => {
+    const service = await readFile(serviceUrl, 'utf8');
+
+    expect(service).toContain('Environment=CI=true');
+    expect(service).toContain('Environment=NO_COLOR=1');
+  });
+
   it('rejects history rewriting, hidden worktree changes, and partial test gates', async () => {
     const service = await readFile(serviceUrl, 'utf8');
 

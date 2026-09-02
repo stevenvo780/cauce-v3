@@ -27,7 +27,6 @@ describe('tracked operational material does not inventory external identities', 
     for (const path of [
       'ops/guardias/hegel-ventas-checkin.py',
       'console/src/features/config/ConfigPage.tsx',
-      'ops/observability/alertmanager.yaml',
     ]) {
       expect(await source(path), path).not.toMatch(longDecimal);
     }

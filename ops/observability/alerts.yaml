@@ -1,34 +1,4 @@
 groups:
-  - name: cauce-v3-alert-delivery
-    rules:
-      - alert: CauceAlertmanagerDown
-        expr: absent(up{job="cauce-alertmanager"}) or up{job="cauce-alertmanager"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Alertmanager is unavailable; Cauce alerts cannot reach the operator"
-      - alert: CauceAlertDeliveryErrors
-        expr: sum(increase(prometheus_notifications_errors_total[10m])) > 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Prometheus is failing to deliver alerts"
-      - alert: CauceAlertDeliveryDropped
-        expr: sum(increase(prometheus_notifications_dropped_total[10m])) > 0
-        labels:
-          severity: critical
-        annotations:
-          summary: "Prometheus dropped queued alert notifications"
-      - alert: CauceAlertDeliveryQueueSaturated
-        expr: prometheus_notifications_queue_length / prometheus_notifications_queue_capacity > 0.8
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Prometheus alert notification queue is near capacity"
-
   - name: cauce-v3-dispatcher-availability
     rules:
       - alert: CauceDispatcherDown
@@ -303,7 +273,7 @@ groups:
         annotations:
           summary: "A new actionable wake incident exists"
       - alert: CauceOutboxDlqUnclassified
-        expr: sum(cauce_outbox_dead_letters_open_by_disposition{actionable="true",disposition="unclassified"}) > 0
+        expr: sum(cauce_outbox_dead_letters_unclassified) > 0
         for: 5m
         labels:
           severity: critical

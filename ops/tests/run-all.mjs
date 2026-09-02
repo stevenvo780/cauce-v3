@@ -8,7 +8,6 @@ const testsDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testsDirectory, '../..');
 const unprivilegedPython = new Set([
   'test_container_runtime_reaping.py',
-  'test_provision_alertmanager_config.py',
 ]);
 
 async function discover() {

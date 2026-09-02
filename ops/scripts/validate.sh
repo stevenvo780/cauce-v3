@@ -114,8 +114,6 @@ project = pathlib.Path(sys.argv[1])
 prod = (project / 'deploy/compose.yaml').read_text(encoding='utf-8')
 dev = (project / 'deploy/compose.dev.yaml').read_text(encoding='utf-8')
 overlay = (project / 'deploy/compose.postgres.yaml').read_text(encoding='utf-8')
-alert_overlay = (project / 'deploy/compose.alertmanager.yaml').read_text(encoding='utf-8')
-alert_config = (project / 'ops/observability/alertmanager.yaml').read_text(encoding='utf-8')
 console = (project / 'console/nginx.conf').read_text(encoding='utf-8')
 required = {
     'production compose must not build mutable images': 'build:' not in prod,
@@ -124,8 +122,6 @@ required = {
     'database URL must be a Compose secret': 'DATABASE_URL_FILE: /run/secrets/database_url' in prod,
     'production bind must default private': '${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}' in prod,
     'local PostgreSQL must have no published ports': '  postgres:' in overlay and '\n    ports:' not in overlay,
-    'Alertmanager must mount an explicit identity-free config path': 'CAUCE_ALERTMANAGER_CONFIG_PATH' in alert_overlay and '../ops/observability/alertmanager.yaml:' not in alert_overlay,
-    'tracked Alertmanager config must use a chat-id file and contain no inline id': 'chat_id_file: /run/secrets/alertmanager_telegram_chat_id' in alert_config and not re.search(r'^\s*chat_id:\s*', alert_config, re.MULTILINE),
     'dev compose must remain separate': 'NODE_ENV: development' in dev,
     'dev adapters must explicitly opt into non-production transport': dev.count('CAUCE_ENVIRONMENT: development') >= 2,
     'production includes Telegram bridge': 'services/telegram-bridge/dist/main.js' in prod,
@@ -194,9 +190,6 @@ PY
   export CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE="$validation_writer_snapshot"
   export CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256="$validation_writer_sha"
   export CAUCE_OTEL_IMAGE="registry.invalid/otel@sha256:$zeros" CAUCE_PROMETHEUS_IMAGE="registry.invalid/prometheus@sha256:$zeros" CAUCE_POSTGRES_IMAGE="registry.invalid/postgres@sha256:$zeros"
-  export CAUCE_ALERTMANAGER_IMAGE="registry.invalid/alertmanager@sha256:$zeros" CAUCE_ALERTMANAGER_CONFIG_PATH=/dev/null CAUCE_ALERTMANAGER_TELEGRAM_TOKEN_PATH=/dev/null
-  export CAUCE_ALERTMANAGER_TELEGRAM_CHAT_ID_PATH=/dev/null
-  export CAUCE_ALERTMANAGER_DATA_DIR=/tmp/cauce-alertmanager-validation CAUCE_ALERTMANAGER_UID=1000 CAUCE_ALERTMANAGER_GID=1000
   export CAUCE_AUTH_PROVIDER=oidc CAUCE_CONSOLE_ORIGINS=https://console.invalid
   export CAUCE_MEDIA_RUNTIME_DIR="$validation_media_dir"
   export CAUCE_DATABASE_URL_SECRET_PATH=/dev/null CAUCE_POSTGRES_CA_PATH=/dev/null
@@ -210,7 +203,6 @@ PY
   export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$zeros"
   docker compose -f "$PROJECT/deploy/compose.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.postgres.yaml" config --quiet
-  docker compose -f "$PROJECT/deploy/compose.yaml" -f "$PROJECT/deploy/compose.alertmanager.yaml" config --quiet
   docker compose -f "$PROJECT/deploy/compose.dev.yaml" config --quiet
   docker compose -f "$ROOT/compose.test.yaml" config --quiet
   printf 'compose config ok\n'

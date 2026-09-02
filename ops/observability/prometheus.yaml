@@ -5,24 +5,13 @@ global:
     service: cauce-v3
     environment: cauce-v3
 
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets: [alertmanager:9093]
-
 rule_files:
   - /etc/prometheus/alerts.yaml
 
 scrape_configs:
-  # Self-scrape is required for notification errors/drops. Without it Prometheus
-  # could spend days failing to reach Alertmanager while every application
-  # target remained green and no alert exposed the broken delivery path.
   - job_name: cauce-prometheus
     static_configs:
       - targets: [127.0.0.1:9090]
-  - job_name: cauce-alertmanager
-    static_configs:
-      - targets: [alertmanager:9093]
   - job_name: cauce-dispatcher
     metrics_path: /metrics
     static_configs:

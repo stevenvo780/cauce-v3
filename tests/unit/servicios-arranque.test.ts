@@ -17,13 +17,20 @@ const tsx = join(raiz, 'node_modules/.bin/tsx');
 const ejecutar = promisify(execFile);
 const URL_INALCANZABLE = 'postgresql://usuario@destino.invalido/db';
 
+// The relay refuses to start as root before reaching its mTLS gate, so under root every
+// service boots through setpriv as an unprivileged identity: the gates stay observable.
+const comoRoot = process.getuid?.() === 0;
+
 async function arrancar(servicio: string, entorno: Record<string, string>): Promise<string> {
   const entrada = join(raiz, 'services', servicio, 'src/main.ts');
+  const [binario, argumentos] = comoRoot
+    ? ['setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', tsx, entrada]]
+    : [tsx, [entrada]];
   try {
-    const { stdout, stderr } = await ejecutar(tsx, [entrada], {
+    const { stdout, stderr } = await ejecutar(binario, argumentos, {
       cwd: raiz,
       timeout: 60_000,
-      env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...entorno }
+      env: { PATH: process.env.PATH ?? '', HOME: comoRoot ? '/tmp' : (process.env.HOME ?? ''), ...entorno }
     });
     return `${stdout}${stderr}`;
   } catch (error) {
@@ -77,3 +84,4 @@ describe('puertas de arranque de los servicios', () => {
     expect(conCert).toContain('CAUCE_TERMINAL_RELAY_TLS_KEY_FILE is required');
   });
 });
+
