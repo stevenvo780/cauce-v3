@@ -150,6 +150,28 @@ function contenedorDesacoplado(
 }
 
 const PREFIJO_EFIMERA = `${PREFIJO_BASE_DE_PRUEBAS}_e`;
+const EDAD_MAXIMA_EFIMERA_MS = 6 * 3_600_000;
+const NOMBRE_EFIMERO = new RegExp(`^${PREFIJO_EFIMERA}_p(\\d+)_t([0-9a-z]+)_[0-9a-f]+$`);
+
+export function nombreEfimero(pid: number = process.pid, ahora: number = Date.now()): string {
+  const sufijo = randomUUID().replaceAll('-', '').slice(0, 10);
+  return `${PREFIJO_EFIMERA}_p${String(pid)}_t${ahora.toString(36)}_${sufijo}`;
+}
+
+export function creacionDeBaseEfimera(nombre: string): { creada: number; pid: number } | undefined {
+  const partes = NOMBRE_EFIMERO.exec(nombre);
+  if (!partes) return undefined;
+  return { creada: Number.parseInt(partes[2] ?? '', 36), pid: Number(partes[1]) };
+}
+
+export function basesEfimerasCaducadas(
+  nombres: string[], ahora: number, edadMaxima: number = EDAD_MAXIMA_EFIMERA_MS,
+): string[] {
+  return nombres.filter((nombre) => {
+    const datos = creacionDeBaseEfimera(nombre);
+    return datos !== undefined && ahora - datos.creada > edadMaxima;
+  });
+}
 
 function urlDeBase(servidor: string, base: string): string {
   const destino = new URL(servidor);
@@ -162,38 +184,39 @@ function urlDeBase(servidor: string, base: string): string {
  * `schema_migrations` with no ledger entry ON PURPOSE, and one shared database turns that into
  * "applied without an atomic source ledger" for every later file — measured, 49 of 82.
  */
-async function crearBaseEfimera(servidor: string): Promise<{
-  url: string; soltar: () => Promise<void>; tirarConexiones: () => Promise<void>;
-}> {
-  const nombre = `${PREFIJO_EFIMERA}${randomUUID().replaceAll('-', '').slice(0, 16)}`;
-  const admin = createPool(servidor);
+export async function crearBaseEfimera(
+  servidor: string, abrirAdmin: (servidor: string) => DatabasePool = createPool,
+): Promise<{ url: string; soltar: () => Promise<void>; tirarConexiones: () => Promise<void> }> {
+  const nombre = nombreEfimero();
+  const admin = abrirAdmin(servidor);
   try {
     await waitForDatabase(admin);
-    const viejas = await admin.query<{ datname: string }>(
-      `SELECT d.datname FROM pg_database d
-       WHERE d.datname LIKE $1 AND NOT EXISTS (
-         SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)`,
+    const efimeras = await admin.query<{ datname: string }>(
+      `SELECT d.datname FROM pg_database d WHERE d.datname LIKE $1`,
       [`${PREFIJO_EFIMERA}%`],
     );
-    for (const vieja of viejas.rows) {
-      await admin.query(`DROP DATABASE IF EXISTS ${vieja.datname} WITH (FORCE)`).catch(() => undefined);
+    const caducadas = basesEfimerasCaducadas(
+      efimeras.rows.map((fila) => fila.datname), Date.now(),
+    );
+    for (const vieja of caducadas) {
+      await admin.query(`DROP DATABASE IF EXISTS ${vieja} WITH (FORCE)`).catch(() => undefined);
     }
     await admin.query(`CREATE DATABASE ${nombre}`);
   } finally {
     await admin.end();
   }
   const soltar = async (): Promise<void> => {
-    const limpieza = createPool(servidor);
+    const limpieza = abrirAdmin(servidor);
     try {
       await limpieza.query(`DROP DATABASE IF EXISTS ${nombre} WITH (FORCE)`);
     } catch {
-      // Swept by the next run; a failing teardown would hide the real result.
+      // Only the creating process drops it, so a failed teardown leaks until the age sweep.
     } finally {
       await limpieza.end();
     }
   };
   const tirarConexiones = async (): Promise<void> => {
-    const admin = createPool(servidor);
+    const admin = abrirAdmin(servidor);
     try {
       await admin.query(
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
