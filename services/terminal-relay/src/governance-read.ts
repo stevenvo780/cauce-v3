@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { hasGovernanceSensitivePathSegment } from '@cauce/protocol';
+import {
+  hasGovernanceSensitivePathSegment, hasUnsafeTextCodePoint, isStrictUtcIso8601
+} from '@cauce/protocol';
 import type { AgentConnection } from './agent-leg.js';
 import { logEvent } from './log.js';
 import { hasControlCharacter, integerField, stringField } from './validation.js';
@@ -84,7 +86,7 @@ function hasExactKeys(source: Record<string, unknown>, expected: readonly string
 function canonicalAbsolutePath(value: unknown): value is string {
   if (typeof value !== 'string' || value === '/' || !value.startsWith('/')
       || Buffer.byteLength(value, 'utf8') > MAX_GOVERNANCE_PATH_BYTES
-      || hasControlCharacter(value)) return false;
+      || hasUnsafeTextCodePoint(value)) return false;
   const segments = value.split('/');
   return !segments.slice(1).some((segment) => segment === '' || segment === '.' || segment === '..');
 }
@@ -95,19 +97,6 @@ function strictDescendant(root: string, candidate: string): boolean {
 
 function sensitiveDirectoryPath(path: string): boolean {
   return hasGovernanceSensitivePathSegment(path);
-}
-
-function validIsoDate(value: unknown): value is string {
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_GOVERNANCE_DATE_BYTES) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/u.exec(value);
-  if (match === null || Number.isNaN(Date.parse(value))) return false;
-  const date = new Date(value);
-  return date.getUTCFullYear() === Number(match[1])
-    && date.getUTCMonth() + 1 === Number(match[2])
-    && date.getUTCDate() === Number(match[3])
-    && date.getUTCHours() === Number(match[4])
-    && date.getUTCMinutes() === Number(match[5])
-    && date.getUTCSeconds() === Number(match[6]);
 }
 
 /** A code we don't recognize is `unknown`, never propagated as-is. */
@@ -384,7 +373,7 @@ export async function requestDirectoryRead(
           const modifiedAt = entry.modified_at;
           if (!canonicalAbsolutePath(entryPath) || !strictDescendant(root, entryPath)
               || paths.has(entryPath) || !Number.isSafeInteger(bytes) || (bytes as number) < 0
-              || !validIsoDate(modifiedAt)) {
+              || !isStrictUtcIso8601(modifiedAt, MAX_GOVERNANCE_DATE_BYTES)) {
             protocolFailure('el índice contiene una ruta, fecha o tamaño inválidos');
             return;
           }

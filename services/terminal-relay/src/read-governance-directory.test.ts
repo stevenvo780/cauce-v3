@@ -302,6 +302,21 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
     });
   });
 
+  it('rechaza una entrada cuya ruta lleva un override bidi', async () => {
+    const { socket, connection } = conectar();
+    const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
+    const id = requestIdEnviado(socket);
+    connection.handleFrame(directoryOk(id, {
+      entries: [{
+        path: `${MEMORY_ROOT}/\u202Edm.sesion`, bytes: 12, modified_at: '2026-08-24T10:00:00Z',
+      }],
+    }), Date.now);
+    expect(await pending).toEqual({
+      error: 'unknown', reason: 'el índice contiene una ruta, fecha o tamaño inválidos',
+    });
+    expect(connection.alive).toBe(false);
+  });
+
   it('no acepta éxito en una microtarea: exige DONE y cierra si llega DATA después', async () => {
     const { socket, connection } = conectar();
     const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);

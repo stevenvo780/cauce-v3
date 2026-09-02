@@ -1,3 +1,4 @@
+import { integerEnv, portEnv, requiredEnv } from '@cauce/protocol';
 import { CauceRepository, createPool } from '@cauce/store';
 import { TelegramActivityIndicator } from './activity.js';
 import {
@@ -13,26 +14,6 @@ import { boundedTelegramRequestTimeoutMs, TelegramBridgeProgress } from './progr
 import { TelegramHttpClient } from './telegram.js';
 import { transcriptionConfig } from './transcription.js';
 import type { TelegramAliasConfig, TelegramApi } from './types.js';
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
-
-function positivePort(value: string | undefined): number {
-  const port = Number(value ?? '8084');
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error('PORT is invalid');
-  return port;
-}
-
-function positiveInteger(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
-  return value;
-}
 
 function selected(configs: readonly TelegramAliasConfig[]): TelegramAliasConfig[] {
   const selector = process.env.CAUCE_TELEGRAM_ALIASES;
@@ -55,17 +36,17 @@ console.error(JSON.stringify({
   ...(transcription === undefined ? {} : { model: transcription.model, language: transcription.language })
 }));
 
-const pool = createPool(required('DATABASE_URL'));
+const pool = createPool(requiredEnv(process.env, 'DATABASE_URL'));
 const repository = new PostgresTelegramBridgeRepository(pool);
 const ingress = new StoreTelegramIngress(new CauceRepository(pool));
 const metrics = new TelegramBridgeMetrics();
 const progress = new TelegramBridgeProgress();
 const controller = new AbortController();
 const activity = new TelegramActivityIndicator();
-const egressLeaseMs = positiveInteger('CAUCE_TELEGRAM_EGRESS_LEASE_MS', 90_000);
+const egressLeaseMs = integerEnv(process.env, 'CAUCE_TELEGRAM_EGRESS_LEASE_MS', { fallback: 90_000 });
 if (egressLeaseMs < 10_000) throw new Error('CAUCE_TELEGRAM_EGRESS_LEASE_MS must be at least 10000');
-const pollStaleMs = positiveInteger('CAUCE_TELEGRAM_UPDATE_STALE_MS', 180_000);
-const egressStaleMs = positiveInteger('CAUCE_TELEGRAM_EGRESS_STALE_MS', 180_000);
+const pollStaleMs = integerEnv(process.env, 'CAUCE_TELEGRAM_UPDATE_STALE_MS', { fallback: 180_000 });
+const egressStaleMs = integerEnv(process.env, 'CAUCE_TELEGRAM_EGRESS_STALE_MS', { fallback: 180_000 });
 let health: ReturnType<typeof startTelegramHealthServer> | undefined;
 
 /**
@@ -77,7 +58,7 @@ function degraded(reason: string, detail: Record<string, unknown>): void {
 }
 
 try {
-  const config = await loadTelegramBridgeConfig(required('CAUCE_TELEGRAM_CONFIG_FILE'));
+  const config = await loadTelegramBridgeConfig(requiredEnv(process.env, 'CAUCE_TELEGRAM_CONFIG_FILE'));
   const aliases = selected(config.aliases);
   // A partial fleet in a shared chat leaves mentions of the missing alias unanswered. The resolver
   // already handles it (P3 suppresses only against declared participants, and an unserved mention
@@ -125,7 +106,7 @@ try {
   // Do not advertise a live endpoint while configuration, V2 exclusion, bot identity or cursor
   // binding is still incomplete. A connection refusal during startup is more truthful than a
   // green process-only healthcheck.
-  health = startTelegramHealthServer(positivePort(process.env.PORT), pool, metrics, progress);
+  health = startTelegramHealthServer(portEnv(process.env, 'PORT', 8084), pool, metrics, progress);
   // Built from the COMPLETE file so suppression stays correct even during an incremental start.
   const fleet = fleetDirectory(config, identities);
   const pollers = running.map((alias) => {

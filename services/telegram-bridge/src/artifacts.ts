@@ -1,14 +1,18 @@
 import { createHash } from 'node:crypto';
-import { basename, extname } from 'node:path';
-import { extensionForMediaType, hasUnsafeTextCodePoint, imageSignature } from '@cauce/protocol';
+import { extname } from 'node:path';
+import {
+  base64CharacterBudget, decodeCanonicalBase64, extensionForMediaType, imageSignature,
+  isSafeBasename, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE,
+} from '@cauce/protocol';
 import { objectRecord } from './validation.js';
 
 /**
  * Planning and preparation of egress attachments (`output.artifacts`).
  */
 
-/** Symmetric to the ingest cap (`MAX_TELEGRAM_ATTACHMENT_BYTES`). */
-export const MAX_EGRESS_ATTACHMENT_BYTES = 10_000_000;
+/** `sendPhoto` refuses more, so the protocol cap is clamped to what the transport can carry. */
+const TELEGRAM_PHOTO_CEILING = 10_000_000;
+export const MAX_EGRESS_ATTACHMENT_BYTES = Math.min(MAX_ATTACHMENT_BYTES, TELEGRAM_PHOTO_CEILING);
 
 /**
  * How many files are uploaded per response.
@@ -17,11 +21,11 @@ export const MAX_EGRESS_ATTACHMENT_BYTES = 10_000_000;
  * agent returning twenty artifacts cannot turn a response into twenty notifications on someone's
  * phone.
  */
-export const MAX_UPLOADS_PER_RELAY = 4;
+export const MAX_UPLOADS_PER_RELAY = MAX_ATTACHMENTS_PER_MESSAGE;
 const MAX_ARTIFACTS_CONSIDERED = 16;
 const MAX_LISTED_LINES = 8;
 /** Cap on the base64 string before decoding, to avoid materializing an absurd buffer. */
-const MAX_DATA_URI_CHARACTERS = Math.ceil(MAX_EGRESS_ATTACHMENT_BYTES / 3) * 4 + 64;
+const MAX_DATA_URI_CHARACTERS = base64CharacterBudget(MAX_EGRESS_ATTACHMENT_BYTES, 64);
 
 export interface PlannedUpload {
   /** `photo` is rendered inline in the chat; `document` is downloaded. */
@@ -80,10 +84,8 @@ function artifactList(payload: Record<string, unknown>): readonly RawArtifact[] 
  * `Content-Disposition` header and must carry nothing that could close it.
  */
 function safeFileName(value: string): boolean {
-  return value.length >= 1 && value.length <= 200 && basename(value) === value &&
-    value !== '.' && value !== '..' &&
-    !value.includes('/') && !value.includes('\\') && !value.includes('"') && !value.includes("'") &&
-    !hasUnsafeTextCodePoint(value);
+  return isSafeBasename(value, { maxLength: 200 }) &&
+    !value.includes('"') && !value.includes("'");
 }
 
 function uploadName(declared: string, mime: string): string {
@@ -129,14 +131,8 @@ function decodeDataUri(uri: string): DecodedData {
   const raw = uri.slice(comma + 1).replace(/\s+/gu, '');
   if (raw.length === 0) return { error: 'el data: URI vino vacío' };
   if (raw.length > MAX_DATA_URI_CHARACTERS) return { error: 'supera los 10 MB' };
-  // Buffer.from silently ignores non-base64 content: without this check, a corrupt attachment
-  // would upload truncated and the human would open a broken file without knowing why.
-  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(raw) || raw.length % 4 !== 0) {
-    return { error: 'el base64 del adjunto está mal formado' };
-  }
-  const bytes = Buffer.from(raw, 'base64');
-  if (bytes.length === 0) return { error: 'el adjunto quedó vacío al decodificar' };
-  if (bytes.length > MAX_EGRESS_ATTACHMENT_BYTES) return { error: 'supera los 10 MB' };
+  const bytes = decodeCanonicalBase64(raw, MAX_EGRESS_ATTACHMENT_BYTES);
+  if (bytes === undefined) return { error: 'el base64 del adjunto está mal formado' };
   return { bytes, mime };
 }
 

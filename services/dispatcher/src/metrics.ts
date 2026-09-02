@@ -1,7 +1,7 @@
+import { DELIVERY_STATES, type DeliveryState, type Lane } from '@cauce/protocol';
 import type { ChainSilenceSweepResult, DatabasePool } from '@cauce/store';
 import { DISPATCHER_PHASES, type DispatcherPhase } from './phases.js';
 
-type Lane = 'interactive' | 'batch';
 type ChainSweepOutcome = 'scanned' | 'fanin_recovered' | 'notified' | 'skipped' | 'failed';
 type JobResult = 'done' | 'retry' | 'dead' | 'fenced' | 'unknown_kind';
 
@@ -30,7 +30,8 @@ export interface DispatcherProgress {
 }
 
 const lanes: readonly Lane[] = ['interactive', 'batch'];
-const deliveryStates = ['pending', 'retry', 'leased', 'accepted', 'started', 'done', 'failed', 'dead'] as const;
+const NON_TERMINAL_DELIVERY_STATES: readonly DeliveryState[] =
+  ['pending', 'retry', 'leased', 'accepted', 'started'];
 const relayStates = ['pending', 'processing', 'sent', 'failed', 'dead'] as const;
 
 /** Process counters plus exact, scrape-time PostgreSQL gauges. No tenant or payload labels. */
@@ -214,8 +215,8 @@ export class DispatcherMetrics {
       const gauges: string[] = [];
       appendMatrix(gauges, 'cauce_dispatcher_job_queue_depth', 'Queued jobs currently stored.', lanes, ['queued'], jobs.rows);
       appendOldest(gauges, 'cauce_dispatcher_job_oldest_seconds', 'Age of the oldest queued job.', lanes, ['queued'], jobOldest.rows);
-      appendMatrix(gauges, 'cauce_dispatcher_delivery_queue_depth', 'Deliveries currently stored by durable state.', lanes, deliveryStates, deliveries.rows);
-      appendOldest(gauges, 'cauce_dispatcher_delivery_oldest_seconds', 'Age of oldest non-terminal delivery by state.', lanes, ['pending', 'retry', 'leased', 'accepted', 'started'], deliveryOldest.rows);
+      appendMatrix(gauges, 'cauce_dispatcher_delivery_queue_depth', 'Deliveries currently stored by durable state.', lanes, DELIVERY_STATES, deliveries.rows);
+      appendOldest(gauges, 'cauce_dispatcher_delivery_oldest_seconds', 'Age of oldest non-terminal delivery by state.', lanes, NON_TERMINAL_DELIVERY_STATES, deliveryOldest.rows);
       appendTargetMatrix(gauges, dlq.rows);
       appendLaneGauge(gauges, 'cauce_dispatcher_job_leases_active', 'Non-expired running job leases.', jobLeases.rows);
       appendLaneGauge(gauges, 'cauce_dispatcher_delivery_leases_active', 'Non-expired delivery claim leases.', deliveryLeases.rows);

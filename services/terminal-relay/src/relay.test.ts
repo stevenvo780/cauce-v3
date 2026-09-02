@@ -143,6 +143,9 @@ describe('relay configuration and identity registry', () => {
     expect(parseSessionGrant(JSON.stringify({ ...valid, runtime_user: undefined }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({ ...valid, mode: 'root' }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({ ...valid, claim_token: CLAIM_TOKEN.toUpperCase() }))).toBeUndefined();
+    expect(parseSessionGrant(JSON.stringify({
+      ...valid, claim_token: '12345678-1234-1234-8234-123456789abc',
+    }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({ ...valid, claim_epoch: 1 }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({ ...valid, claim_epoch: '9223372036854775808' }))).toBeUndefined();
     expect(parseSessionGrant(JSON.stringify({ ...valid, claim_lease_ms: 150_001, claim_lease_ttl_ms: 150_000 })))

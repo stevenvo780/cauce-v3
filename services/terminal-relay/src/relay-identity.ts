@@ -1,8 +1,9 @@
 import { createHash, randomUUID, X509Certificate } from 'node:crypto';
+import { CANONICAL_UUID_V4_PATTERN } from '@cauce/protocol';
 
 /** Authenticated relay identity: SHA-256 of the exact DER leaf certificate used toward gateway. */
 export const RELAY_INSTANCE_ID_PATTERN = /^[0-9a-f]{64}$/;
-export const RELAY_BOOT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const RELAY_BOOT_ID_PATTERN = CANONICAL_UUID_V4_PATTERN;
 
 export interface RelayProcessIdentity {
   readonly relayInstanceId: string;

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import {
-  hasUnsafeTextCodePoint, imageSignature, mediaTypeForExtension, normalizeMediaType
+  imageSignature, isSafeBasename, MAX_ATTACHMENT_BYTES, mediaTypeForExtension, normalizeMediaType
 } from '@cauce/protocol';
 import { TelegramApiError } from './telegram.js';
 import { transcribeAudio, type TranscriptionConfig } from './transcription.js';
@@ -9,14 +9,13 @@ import type {
   PreparedTelegramAttachment, TelegramApi, TelegramFile, TelegramMessage
 } from './types.js';
 
-export const MAX_TELEGRAM_ATTACHMENT_BYTES = 10_000_000;
+/** `getFile` refuses to hand over anything larger, so the protocol cap is clamped to it. */
+const TELEGRAM_GETFILE_CEILING = 20_000_000;
+export const MAX_TELEGRAM_ATTACHMENT_BYTES = Math.min(MAX_ATTACHMENT_BYTES, TELEGRAM_GETFILE_CEILING);
 
 /**
- * Audio has its own cap, higher than the inline attachments one.
- *
- * It can afford it because it does not travel on the bus: it is downloaded, transcribed and
- * discarded. What is kept are the characters of the text. A 20-minute voice note lands here and
- * comes out as a paragraph.
+ * Audio has its own cap: it never travels on the bus. It is downloaded, transcribed and
+ * discarded, and only the characters of the text are kept.
  */
 export const MAX_TELEGRAM_AUDIO_BYTES = 25_000_000;
 
@@ -58,12 +57,6 @@ function safeRemotePath(value: string): boolean {
  */
 export { hasUnsafeTextCodePoint as hasUnsafeAttachmentCodePoint } from '@cauce/protocol';
 
-function safeName(value: string): boolean {
-  return value.length >= 1 && value.length <= 255 && basename(value) === value &&
-    value !== '.' && value !== '..' &&
-    !value.includes('/') && !value.includes('\\') && !hasUnsafeTextCodePoint(value);
-}
-
 function declaredName(item: Candidate, remotePath: string): string {
   const original = item.file.file_name ?? basename(remotePath);
   return extname(original).toLowerCase() === '.jpeg' ? `${original.slice(0, -5)}.jpg` : original;
@@ -87,7 +80,7 @@ function resolveType(item: Candidate, name: string, payload: Buffer): PreparedTy
 }
 
 function usefulError(name: string, detail: string): string {
-  return `${safeName(name) ? name : 'archivo'}: ${detail}`;
+  return `${isSafeBasename(name) ? name : 'archivo'}: ${detail}`;
 }
 
 export async function prepareTelegramAttachments(
@@ -112,7 +105,7 @@ export async function prepareTelegramAttachments(
       return { media: [], errors: [usefulError(earlyName, 'excede el límite de 10 MB')] };
     }
     const name = declaredName(item, remote.file_path);
-    if (!safeName(name)) {
+    if (!isSafeBasename(name)) {
       return { media: [], errors: [usefulError(earlyName, 'nombre no seguro')] };
     }
     const payload = await api.downloadFile(remote.file_path, MAX_TELEGRAM_ATTACHMENT_BYTES);

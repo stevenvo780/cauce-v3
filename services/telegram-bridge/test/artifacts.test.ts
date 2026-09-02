@@ -78,6 +78,12 @@ describe('plan de adjuntos', () => {
     expect(plan.footer).toContain('mal formado');
   });
 
+  it('rechaza un base64 no canónico en vez de subir bytes truncados', () => {
+    const plan = planArtifacts(payload([{ name: 'raro.txt', uri: 'data:text/plain;base64,QR==' }]));
+    expect(plan.uploads).toHaveLength(0);
+    expect(plan.footer).toContain('mal formado');
+  });
+
   it('corta en cuatro subidas por respuesta', () => {
     const muchos = Array.from({ length: 7 }, (_, index) => ({ name: `f${String(index)}.png`, uri: PNG_DATA_URI }));
     const plan = planArtifacts(payload(muchos));

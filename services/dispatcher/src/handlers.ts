@@ -1,9 +1,10 @@
+import type { Lane } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 
 export interface ClaimedJob extends Readonly<Record<string, unknown>> {
   readonly id: string;
   readonly kind: string;
-  readonly lane: 'interactive' | 'batch';
+  readonly lane: Lane;
   readonly payload: Readonly<Record<string, unknown>>;
   readonly claim_token: string;
 }

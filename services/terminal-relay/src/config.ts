@@ -3,6 +3,7 @@
  * of its own beyond the gateway bearer token it reads from disk at call time.
  */
 
+import { integerEnv, portEnv, requiredEnv } from '@cauce/protocol';
 import {
   CLAIM_DEADLINE_SAFETY_MARGIN_MS,
   DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
@@ -56,26 +57,6 @@ export const DEFAULT_HEALTH_PORT = 8085;
 export const DEFAULT_AGENT_REGISTRY_FILE = '/run/cauce-terminal/pty_agent_identities.json';
 export const DEFAULT_GATEWAY_URL = 'https://gateway:8443';
 
-function required(environment: NodeJS.ProcessEnv, name: string): string {
-  const value = environment[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
-
-function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  const raw = environment[name];
-  if (raw === undefined) return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`);
-  return value;
-}
-
-function port(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  const value = positiveInteger(environment, name, fallback);
-  if (value > 65_535) throw new Error(`${name} must be a valid TCP port`);
-  return value;
-}
-
 function commonNames(environment: NodeJS.ProcessEnv, name: string, fallback: string): readonly string[] {
   const values = (environment[name] ?? fallback).split(',').map((item) => item.trim());
   if (values.length === 0 || values.some((item) => item.length === 0)) {
@@ -101,7 +82,7 @@ function gatewayUrl(environment: NodeJS.ProcessEnv): string {
 }
 
 function relayInstanceId(environment: NodeJS.ProcessEnv): string {
-  const value = required(environment, 'CAUCE_TERMINAL_RELAY_INSTANCE_ID');
+  const value = requiredEnv(environment, 'CAUCE_TERMINAL_RELAY_INSTANCE_ID');
   if (!isRelayInstanceId(value)) {
     throw new Error('CAUCE_TERMINAL_RELAY_INSTANCE_ID must be 64 lowercase hexadecimal characters');
   }
@@ -109,14 +90,14 @@ function relayInstanceId(environment: NodeJS.ProcessEnv): string {
 }
 
 export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): TerminalRelayConfig {
-  const authzIntervalMs = positiveInteger(
-    environment, 'CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS', 30,
+  const authzIntervalMs = integerEnv(
+    environment, 'CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS', { fallback: 30 },
   ) * 1_000;
-  const authzGraceMs = positiveInteger(
-    environment, 'CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS', 90,
+  const authzGraceMs = integerEnv(
+    environment, 'CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS', { fallback: 90 },
   ) * 1_000;
-  const expectedClaimLeaseMs = positiveInteger(
-    environment, 'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS', 150,
+  const expectedClaimLeaseMs = integerEnv(
+    environment, 'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS', { fallback: 150 },
   ) * 1_000;
   const requiredClaimLeaseMs = authzIntervalMs + authzGraceMs
     + DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS + CLAIM_DEADLINE_SAFETY_MARGIN_MS;
@@ -125,39 +106,47 @@ export function loadRelayConfig(environment: NodeJS.ProcessEnv = process.env): T
       'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must strictly exceed authz interval, grace, gateway timeout and takeover margin',
     );
   }
-  const browserPort = port(environment, 'CAUCE_TERMINAL_RELAY_BROWSER_PORT', DEFAULT_BROWSER_PORT);
-  const agentPort = port(environment, 'CAUCE_TERMINAL_RELAY_AGENT_PORT', DEFAULT_AGENT_PORT);
-  const healthPort = port(environment, 'CAUCE_TERMINAL_RELAY_HEALTH_PORT', DEFAULT_HEALTH_PORT);
+  const browserPort = portEnv(environment, 'CAUCE_TERMINAL_RELAY_BROWSER_PORT', DEFAULT_BROWSER_PORT);
+  const agentPort = portEnv(environment, 'CAUCE_TERMINAL_RELAY_AGENT_PORT', DEFAULT_AGENT_PORT);
+  const healthPort = portEnv(environment, 'CAUCE_TERMINAL_RELAY_HEALTH_PORT', DEFAULT_HEALTH_PORT);
   if (new Set([browserPort, agentPort, healthPort]).size !== 3) {
     throw new Error('terminal relay browser, agent and health ports must be distinct');
   }
-  const presenceMaxStaleMs = positiveInteger(
-    environment, 'CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS', 30,
+  const presenceMaxStaleMs = integerEnv(
+    environment, 'CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS', { fallback: 30 },
   ) * 1_000;
   return {
     browserPort,
     agentPort,
     healthPort,
-    tlsCertFile: required(environment, 'CAUCE_TERMINAL_RELAY_TLS_CERT_FILE'),
-    tlsKeyFile: required(environment, 'CAUCE_TERMINAL_RELAY_TLS_KEY_FILE'),
-    clientCaFile: required(environment, 'CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE'),
+    tlsCertFile: requiredEnv(environment, 'CAUCE_TERMINAL_RELAY_TLS_CERT_FILE'),
+    tlsKeyFile: requiredEnv(environment, 'CAUCE_TERMINAL_RELAY_TLS_KEY_FILE'),
+    clientCaFile: requiredEnv(environment, 'CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE'),
     consoleCommonNames: commonNames(environment, 'CAUCE_TERMINAL_RELAY_CONSOLE_CN', 'console'),
-    agentCaFile: required(environment, 'CAUCE_TERMINAL_RELAY_AGENT_CA_FILE'),
+    agentCaFile: requiredEnv(environment, 'CAUCE_TERMINAL_RELAY_AGENT_CA_FILE'),
     agentRegistryFile: environment.CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE ?? DEFAULT_AGENT_REGISTRY_FILE,
     gatewayUrl: gatewayUrl(environment),
-    tokenFile: required(environment, 'CAUCE_TERMINAL_RELAY_TOKEN_FILE'),
-    gatewayClientCertFile: required(environment, 'CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE'),
-    gatewayClientKeyFile: required(environment, 'CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE'),
+    tokenFile: requiredEnv(environment, 'CAUCE_TERMINAL_RELAY_TOKEN_FILE'),
+    gatewayClientCertFile: requiredEnv(environment, 'CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE'),
+    gatewayClientKeyFile: requiredEnv(environment, 'CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE'),
     expectedRelayInstanceId: relayInstanceId(environment),
-    idleTimeoutMs: positiveInteger(environment, 'CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS', 600) * 1_000,
-    outputRateBytesPerSec: positiveInteger(environment, 'CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC', 262_144),
-    scrollbackBytes: positiveInteger(environment, 'CAUCE_TERMINAL_SCROLLBACK_BYTES', 20_480),
-    maxSessions: positiveInteger(environment, 'CAUCE_TERMINAL_MAX_SESSIONS', 16),
+    idleTimeoutMs: integerEnv(
+      environment, 'CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS', { fallback: 600 },
+    ) * 1_000,
+    outputRateBytesPerSec: integerEnv(
+      environment, 'CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC', { fallback: 262_144 },
+    ),
+    scrollbackBytes: integerEnv(
+      environment, 'CAUCE_TERMINAL_SCROLLBACK_BYTES', { fallback: 20_480 },
+    ),
+    maxSessions: integerEnv(environment, 'CAUCE_TERMINAL_MAX_SESSIONS', { fallback: 16 }),
     authzIntervalMs,
     authzGraceMs,
     presenceMaxStaleMs,
     expectedClaimLeaseMs,
-    reconnectGraceMs: positiveInteger(environment, 'CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS', 30) * 1_000,
+    reconnectGraceMs: integerEnv(
+      environment, 'CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS', { fallback: 30 },
+    ) * 1_000,
     closeSpoolFile: environment.CAUCE_TERMINAL_CLOSE_SPOOL_FILE ?? '/tmp/cauce-terminal-close-reports.json'
   };
 }

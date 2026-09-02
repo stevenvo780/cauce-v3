@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@cauce/protocol": "workspace:*",
     "@cauce/store": "workspace:*",
     "pg": "^8.16.3"
   }

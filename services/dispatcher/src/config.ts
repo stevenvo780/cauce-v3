@@ -1,10 +1,11 @@
+import { booleanEnv, integerEnv } from '@cauce/protocol';
 import {
-  DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS, DEFAULT_RETENTION_ACK_MS,
+  configuredDeliveryLeaseCap, DEFAULT_ACK_DEADLINE_MS, DEFAULT_RETENTION_ACK_MS,
   DEFAULT_RETENTION_ACK_RENEWAL_MS, DEFAULT_RETENTION_AUDIT_MS, DEFAULT_RETENTION_AUDIT_RENEWAL_MS,
   DEFAULT_RETENTION_BATCH,
 } from '@cauce/store';
 
-export const DEFAULT_ACK_DEADLINE_MS = 30_000;
+export { DEFAULT_ACK_DEADLINE_MS };
 export const DEFAULT_ACK_TIMEOUT_MS = 30_000;
 
 /** Observability retention sweep interval in ms. 0 disables the sweep. */
@@ -44,62 +45,41 @@ export interface DispatcherConfig {
   chainSweepLimit: number;
 }
 
-function positiveInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  const parsed = Number(environment[name] ?? fallback);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return parsed;
-}
-
-/** Like `positiveInteger` but allows 0 — the value that turns the watchdog off. */
-function nonNegativeInteger(environment: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  const parsed = Number(environment[name] ?? fallback);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`${name} must be a non-negative integer`);
-  }
-  return parsed;
-}
-
 export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.env): DispatcherConfig {
-  const pollMs = positiveInteger(environment, 'DISPATCHER_POLL_MS', 250);
-  const ackDeadlineMs = positiveInteger(
-    environment,
-    'CAUCE_ACK_DEADLINE_MS',
-    DEFAULT_ACK_DEADLINE_MS,
+  const pollMs = integerEnv(environment, 'DISPATCHER_POLL_MS', { fallback: 250 });
+  const ackDeadlineMs = integerEnv(
+    environment, 'CAUCE_ACK_DEADLINE_MS', { fallback: DEFAULT_ACK_DEADLINE_MS },
   );
-  const ackTimeoutMs = positiveInteger(environment, 'ACK_TIMEOUT_MS', DEFAULT_ACK_TIMEOUT_MS);
+  const ackTimeoutMs = integerEnv(
+    environment, 'ACK_TIMEOUT_MS', { fallback: DEFAULT_ACK_TIMEOUT_MS },
+  );
   if (ackTimeoutMs < ackDeadlineMs) {
     throw new Error('ACK_TIMEOUT_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS');
   }
-  const leaseCapMs = positiveInteger(
-    environment, 'CAUCE_DELIVERY_LEASE_CAP_MS', DEFAULT_DELIVERY_LEASE_CAP_MS,
+  const { leaseCapMs, leaseCapGraceMs } = configuredDeliveryLeaseCap(environment);
+  const retentionAckRenewalMs = integerEnv(
+    environment, 'CAUCE_RETENTION_ACK_RENEWAL_MS', { fallback: DEFAULT_RETENTION_ACK_RENEWAL_MS },
   );
-  // Lease cap MUST be >= ACK deadline so at least one renewal fits.
-  if (leaseCapMs < ackDeadlineMs) {
-    throw new Error(
-      'CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater than CAUCE_ACK_DEADLINE_MS',
-    );
-  }
-  const retentionAckRenewalMs = positiveInteger(
-    environment, 'CAUCE_RETENTION_ACK_RENEWAL_MS', DEFAULT_RETENTION_ACK_RENEWAL_MS,
+  const retentionAckMs = integerEnv(
+    environment, 'CAUCE_RETENTION_ACK_MS', { fallback: DEFAULT_RETENTION_ACK_MS },
   );
-  const retentionAckMs = positiveInteger(
-    environment, 'CAUCE_RETENTION_ACK_MS', DEFAULT_RETENTION_ACK_MS,
+  const retentionAuditRenewalMs = integerEnv(
+    environment, 'CAUCE_RETENTION_AUDIT_RENEWAL_MS', { fallback: DEFAULT_RETENTION_AUDIT_RENEWAL_MS },
   );
-  const retentionAuditRenewalMs = positiveInteger(
-    environment, 'CAUCE_RETENTION_AUDIT_RENEWAL_MS', DEFAULT_RETENTION_AUDIT_RENEWAL_MS,
-  );
-  const retentionAuditMs = positiveInteger(
-    environment, 'CAUCE_RETENTION_AUDIT_MS', DEFAULT_RETENTION_AUDIT_MS,
+  const retentionAuditMs = integerEnv(
+    environment, 'CAUCE_RETENTION_AUDIT_MS', { fallback: DEFAULT_RETENTION_AUDIT_MS },
   );
   if (retentionAckRenewalMs > retentionAckMs || retentionAuditRenewalMs > retentionAuditMs) {
     throw new Error(
       'renewal retention windows must be shorter than or equal to the general retention windows',
     );
   }
-  const chainIdleMs = positiveInteger(environment, 'CHAIN_IDLE_MS', DEFAULT_CHAIN_IDLE_MS);
-  const chainMaxAgeMs = positiveInteger(environment, 'CHAIN_MAX_AGE_MS', DEFAULT_CHAIN_MAX_AGE_MS);
+  const chainIdleMs = integerEnv(
+    environment, 'CHAIN_IDLE_MS', { fallback: DEFAULT_CHAIN_IDLE_MS },
+  );
+  const chainMaxAgeMs = integerEnv(
+    environment, 'CHAIN_MAX_AGE_MS', { fallback: DEFAULT_CHAIN_MAX_AGE_MS },
+  );
   // A sweep window shorter than the idle window guarantees a hole: the root ages out of the
   // sweep before it can be reaped, and the silence returns.
   if (chainMaxAgeMs < chainIdleMs) {
@@ -107,36 +87,36 @@ export function configuredDispatcher(environment: NodeJS.ProcessEnv = process.en
   }
   return {
     pollMs,
-    healthStaleMs: positiveInteger(
-      environment, 'CAUCE_DISPATCHER_STALE_MS', Math.max(5_000, pollMs * 20)
+    healthStaleMs: integerEnv(
+      environment, 'CAUCE_DISPATCHER_STALE_MS', { fallback: Math.max(5_000, pollMs * 20) },
     ),
     ackDeadlineMs,
     ackTimeoutMs,
-    interactiveBurst: positiveInteger(environment, 'INTERACTIVE_BURST', 3),
-    jobLeaseMs: positiveInteger(environment, 'JOB_LEASE_MS', 30_000),
-    // Only the explicit '1' enables it. Anything else (empty, '0', garbage) keeps the safe
-    // behavior — the one that preserves quota.
-    retryStartedDeliveries: environment.CAUCE_RETRY_STARTED_DELIVERIES === '1',
+    interactiveBurst: integerEnv(environment, 'INTERACTIVE_BURST', { fallback: 3 }),
+    jobLeaseMs: integerEnv(environment, 'JOB_LEASE_MS', { fallback: 30_000 }),
+    retryStartedDeliveries: booleanEnv(environment, 'CAUCE_RETRY_STARTED_DELIVERIES'),
     leaseCapMs,
-    leaseCapGraceMs: positiveInteger(
-      environment, 'CAUCE_DELIVERY_LEASE_CAP_GRACE_MS', DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS,
-    ),
-    retentionIntervalMs: nonNegativeInteger(
-      environment, 'CAUCE_RETENTION_INTERVAL_MS', DEFAULT_RETENTION_INTERVAL_MS,
+    leaseCapGraceMs,
+    retentionIntervalMs: integerEnv(
+      environment, 'CAUCE_RETENTION_INTERVAL_MS', { fallback: DEFAULT_RETENTION_INTERVAL_MS, min: 0 },
     ),
     retentionAckRenewalMs,
     retentionAckMs,
     retentionAuditRenewalMs,
     retentionAuditMs,
-    retentionBatch: positiveInteger(
-      environment, 'CAUCE_RETENTION_BATCH', DEFAULT_RETENTION_BATCH,
+    retentionBatch: integerEnv(
+      environment, 'CAUCE_RETENTION_BATCH', { fallback: DEFAULT_RETENTION_BATCH },
     ),
-    chainSweepMs: nonNegativeInteger(environment, 'CHAIN_SWEEP_MS', DEFAULT_CHAIN_SWEEP_MS),
+    chainSweepMs: integerEnv(
+      environment, 'CHAIN_SWEEP_MS', { fallback: DEFAULT_CHAIN_SWEEP_MS, min: 0 },
+    ),
     chainIdleMs,
-    chainSettledGraceMs: positiveInteger(
-      environment, 'CHAIN_SETTLED_GRACE_MS', DEFAULT_CHAIN_SETTLED_GRACE_MS
+    chainSettledGraceMs: integerEnv(
+      environment, 'CHAIN_SETTLED_GRACE_MS', { fallback: DEFAULT_CHAIN_SETTLED_GRACE_MS },
     ),
     chainMaxAgeMs,
-    chainSweepLimit: positiveInteger(environment, 'CHAIN_SWEEP_LIMIT', DEFAULT_CHAIN_SWEEP_LIMIT),
+    chainSweepLimit: integerEnv(
+      environment, 'CHAIN_SWEEP_LIMIT', { fallback: DEFAULT_CHAIN_SWEEP_LIMIT },
+    ),
   };
 }

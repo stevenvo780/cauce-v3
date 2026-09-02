@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
+import { isCanonicalUuidV4 } from '@cauce/protocol';
 import { errorLabel, logEvent } from './log.js';
 import {
   isRelayBootId,
@@ -138,7 +139,6 @@ export interface HttpsTerminalGatewayClientOptions {
   readonly identity: RelayProcessIdentity;
 }
 
-const CLAIM_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CLAIM_EPOCH_PATTERN = /^[1-9][0-9]{0,18}$/;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 export const MAX_CLAIM_LEASE_MS = 300_000;
@@ -146,7 +146,7 @@ export const DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS = 5_000;
 export const CLAIM_DEADLINE_SAFETY_MARGIN_MS = 5_000;
 
 export function isClaimToken(value: unknown): value is string {
-  return typeof value === 'string' && CLAIM_TOKEN_PATTERN.test(value);
+  return isCanonicalUuidV4(value);
 }
 
 export function claimEpoch(value: unknown): string | undefined {

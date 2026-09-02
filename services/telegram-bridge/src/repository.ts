@@ -1,4 +1,6 @@
-import { OriginSchema, TenantSchema, type Tenant } from '@cauce/protocol';
+import {
+  OriginSchema, RFC_UUID_PATTERN, SHA256_HEX_PATTERN, TenantSchema, type Tenant
+} from '@cauce/protocol';
 import {
   CauceRepository, withTransaction, type ClaimedOutboxEvent, type DatabasePool
 } from '@cauce/store';
@@ -50,8 +52,6 @@ interface EffectRow {
 
 const EFFECT_COLUMNS = `effect_id,outbox_id,tenant_id,bridge_alias,chunk_index,chunk_count,
   payload_hash,state,provider_message_id,diagnostic,diagnosed_at,replay_count,replayed_at`;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const SHA256 = /^[a-f0-9]{64}$/u;
 
 function durableDiagnostic(value: string): string {
   const diagnostic = value.replace(/[\r\n\t]/g, ' ').trim().slice(0, 1_000);
@@ -365,8 +365,9 @@ export class PostgresTelegramBridgeRepository implements TelegramCursorRepositor
     if (!actorTenant || !actorAlias.trim()) {
       throw new Error('Telegram manual replay requires an explicit control-authorized actor');
     }
-    if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || !SHA256.test(payloadHash)
-      || !UUID.test(requestId) || !UUID.test(deadLetterId) || !SHA256.test(incidentEvidenceSha256)
+    if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0
+      || !SHA256_HEX_PATTERN.test(payloadHash) || !SHA256_HEX_PATTERN.test(incidentEvidenceSha256)
+      || !RFC_UUID_PATTERN.test(requestId) || !RFC_UUID_PATTERN.test(deadLetterId)
       || !Number.isSafeInteger(expectedReplayCount) || expectedReplayCount < 0) {
       throw new Error('Telegram manual replay requires exact incident evidence and replay count');
     }

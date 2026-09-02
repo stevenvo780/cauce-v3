@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { hasVisibleText } from '@cauce/protocol';
 import type { TelegramActivity, TelegramActivityTarget, TelegramTerminalOutcome } from './activity.js';
 import { planArtifacts, type PlannedUpload } from './artifacts.js';
 import { effectiveChatPolicy, groupRouting } from './config.js';
@@ -48,13 +49,8 @@ class EgressLeaseLost extends Error {
   }
 }
 
-const VISIBLE_TEXT = /[\p{L}\p{N}\p{P}\p{S}]/u;
 const MISSING_FINAL_REPLY_NOTICE =
   'No pude completar una respuesta para este turno. Volvé a preguntarme para intentarlo de nuevo.';
-
-function hasVisibleText(value: unknown): value is string {
-  return typeof value === 'string' && VISIBLE_TEXT.test(value);
-}
 
 /**
  * Unwrapping of structured envelopes to extract the reply text.
