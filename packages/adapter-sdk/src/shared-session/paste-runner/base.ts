@@ -52,6 +52,7 @@ export abstract class PasteSessionRunnerBase<E> {
   protected exactSessionId: string | undefined;
   /** In-memory fallback if tmux could not persist the quarantine mark. */
   protected locallyQuarantined: PaneIdentity | undefined;
+  protected readonly heldQuarantines = new Map<string, PendingQuarantine>();
 
   protected constructor(protected readonly options: PasteSessionOptions<E>) {}
 
@@ -103,21 +104,8 @@ export abstract class PasteSessionRunnerBase<E> {
     const findEnvelope = this.options.transcript.findEnvelope?.bind(this.options.transcript);
     if (quarantineFile === undefined || findEnvelope === undefined) return;
 
-    const listed = await beforeDeadline(
-      readdir(dirname(quarantineFile)),
-      this.quarantineDeadline(),
-    );
-    if (!listed.completed || listed.value === undefined) return;
-    const prefix = `${basename(quarantineFile)}.`;
-    const suffix = ".pending";
-    const candidates = listed.value.flatMap((name) => {
-      if (!name.startsWith(prefix) || !name.endsWith(suffix)) return [];
-      const correlationId = name.slice(prefix.length, -suffix.length);
-      return /^[a-f0-9]{64}$/u.test(correlationId)
-        ? [{ correlationId, file: join(dirname(quarantineFile), name) }]
-        : [];
-    });
-    if (candidates.length === 0) return;
+    const candidates = await this.pendingQuarantineSidecars(quarantineFile);
+    if (candidates === undefined || candidates.length === 0) return;
 
     let clearedCurrent = false;
     for (const candidate of candidates) {
@@ -132,7 +120,10 @@ export abstract class PasteSessionRunnerBase<E> {
         this.quarantinePersistence().clear(candidate.file),
         this.quarantineDeadline(),
       );
-      if (cleared.completed && cleared.value === true) clearedCurrent = true;
+      if (cleared.completed && cleared.value === true) {
+        clearedCurrent = true;
+        this.heldQuarantines.delete(candidate.correlationId);
+      }
     }
     if (!clearedCurrent) return;
 
@@ -164,7 +155,27 @@ export abstract class PasteSessionRunnerBase<E> {
     );
     if (!finalFileState.completed
       || (finalFileState.value !== "absent" && finalFileState.value !== "stale")) return;
-    await clearCurrentPaneQuarantine(this.options.tmux, identity, this.tmuxControl());
+    if (!await clearCurrentPaneQuarantine(this.options.tmux, identity, this.tmuxControl())) return;
+    this.forgetLocalQuarantine(identity);
+  }
+
+  protected async pendingQuarantineSidecars(
+    quarantineFile: string,
+  ): Promise<readonly { readonly correlationId: string; readonly file: string }[] | undefined> {
+    const listed = await beforeDeadline(
+      readdir(dirname(quarantineFile)),
+      this.quarantineDeadline(),
+    );
+    if (!listed.completed || listed.value === undefined) return undefined;
+    const prefix = `${basename(quarantineFile)}.`;
+    const suffix = ".pending";
+    return listed.value.flatMap((name) => {
+      if (!name.startsWith(prefix) || !name.endsWith(suffix)) return [];
+      const correlationId = name.slice(prefix.length, -suffix.length);
+      return /^[a-f0-9]{64}$/u.test(correlationId)
+        ? [{ correlationId, file: join(dirname(quarantineFile), name) }]
+        : [];
+    });
   }
 
   protected async hasValidTerminalEnvelope(
@@ -258,6 +269,7 @@ export abstract class PasteSessionRunnerBase<E> {
 
   /** Called only after proven no-paste or a correlated/generation-aware terminal boundary. */
   protected async disarmPendingQuarantine(pending: PendingQuarantine): Promise<void> {
+    this.heldQuarantines.delete(pending.correlationId);
     if (pending.file !== undefined) {
       await beforeDeadline(
         this.quarantinePersistence().clear(pending.file),
@@ -298,6 +310,23 @@ export abstract class PasteSessionRunnerBase<E> {
     return tmuxState === "stale" || fileState === "stale" ? "stale" : "absent";
   }
 
+  protected async capturedPane(
+    identity: PaneIdentity,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    return await capturePane(this.options.tmux, identity.paneId, {
+      styled: true,
+      control: this.tmuxControl(signal),
+    });
+  }
+
+  protected forgetLocalQuarantine(identity: PaneIdentity): void {
+    if (this.locallyQuarantined !== undefined
+      && samePaneIdentity(this.locallyQuarantined, identity)) {
+      this.locallyQuarantined = undefined;
+    }
+  }
+
   protected async clearStaleQuarantine(
     identity: PaneIdentity,
     state: "stale" | "absent",
@@ -322,6 +351,7 @@ export abstract class PasteSessionRunnerBase<E> {
     forceTerminate = false,
   ): Promise<string> {
     this.locallyQuarantined = identity;
+    this.heldQuarantines.set(pending.correlationId, pending);
     const fileMarked = this.options.quarantineFile === undefined
       ? false
       : (await beforeDeadline(

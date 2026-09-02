@@ -54,7 +54,12 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const target = identity.paneId;
 
     await this.reconcileTerminalPending(identity);
-    const quarantine = await this.quarantineState(identity);
+    let quarantine = await this.quarantineState(identity);
+    if (quarantine === "current") {
+      await this.healCurrentQuarantine(identity, request.signal);
+      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+      quarantine = await this.quarantineState(identity);
+    }
     if (quarantine === "current") {
       return this.degrade(
         "session_identity_unverified",

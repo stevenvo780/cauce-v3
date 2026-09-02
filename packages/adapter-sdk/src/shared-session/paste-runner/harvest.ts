@@ -2,7 +2,7 @@ import type { CommandRunRequest, CommandRunResult } from "../../sdk/types.js"; /
 import { signalAborted } from "../../runtime-state.js";
 import { inspectExactPane, interruptPane, samePaneProcess, type PaneIdentity } from "../tmux.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
-import { PasteSessionRunnerBase } from "./base.js";
+import { PasteSessionLivenessRunner } from "./liveness.js";
 import {
   beforeAbort,
   beforeDeadline,
@@ -18,7 +18,7 @@ import {
   turnBudgetMs,
 } from "./runtime.js";
 
-export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBase<E> {
+export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessRunner<E> {
   /**
    * Extracts the envelope from the harness's structured transcript.
    */
@@ -210,33 +210,42 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionRunnerBas
         // appeared in the transcript. No degrade — that would execute twice — the delivery
         // ends AMBIGUOUS and the generation is quarantined so the queue only progresses via
         // the isolated transport or on a new generation.
-        // Requires SILENCE: a growing transcript is an in-flight turn that swallowed the paste
-        // and may still emit our envelope; it is bounded only by the turn budget (`deadline`).
+        // Requires SILENCE from the PANE too, not just from the file: a growing transcript or a
+        // pane still generating is an in-flight turn. See `paneStillGenerating`; bounded by `deadline`.
         if (injected === undefined && !started && Date.now() >= correlationDeadline
           && Date.now() - lastActivityAt >= quietMs) {
-          // Last sweep before giving up on it: if the envelope arrived, the delivery does not die.
-          const rescued = await beforeAbort(
-            () => this.lastEnvelope(baseline, injected, correlationId),
+          const alive = await beforeAbort(
+            () => this.paneStillGenerating(activeIdentity, request.signal),
             request.signal,
           );
-          if (rescued.aborted) continue;
-          const rescuedEnvelope = rescued.value;
-          if (rescuedEnvelope !== undefined) {
-            const harvested = await beforeAbort(
-              () => this.harvested(rescuedEnvelope, undefined, generating),
+          if (alive.aborted) continue;
+          if (alive.value) {
+            lastActivityAt = Date.now();
+          } else {
+            // Last sweep before giving up: if the envelope arrived, the delivery does not die.
+            const rescued = await beforeAbort(
+              () => this.lastEnvelope(baseline, injected, correlationId),
               request.signal,
             );
-            if (harvested.aborted) continue;
-            return { result: harvested.value, terminalBoundary: true };
+            if (rescued.aborted) continue;
+            const rescuedEnvelope = rescued.value;
+            if (rescuedEnvelope !== undefined) {
+              const harvested = await beforeAbort(
+                () => this.harvested(rescuedEnvelope, undefined, generating),
+                request.signal,
+              );
+              if (harvested.aborted) continue;
+              return { result: harvested.value, terminalBoundary: true };
+            }
+            return {
+              result: await this.quarantineTimedOut(
+                activeIdentity,
+                "accepted paste+Enter never reached a correlated boundary in the transcript",
+                pending,
+              ),
+              terminalBoundary: false,
+            };
           }
-          return {
-            result: await this.quarantineTimedOut(
-              activeIdentity,
-              "accepted paste+Enter never reached a correlated boundary in the transcript",
-              pending,
-            ),
-            terminalBoundary: false,
-          };
         }
 
         if (Date.now() >= deadline) {
