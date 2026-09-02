@@ -1,5 +1,5 @@
 /** Structurally valid v1 ticket for browser contract tests and the opt-in demo backend. */
-export function mockTerminalTicket(input: {
+function mockTerminalTicket(input: {
   sessionId: string;
   tenantId: string;
   alias: string;

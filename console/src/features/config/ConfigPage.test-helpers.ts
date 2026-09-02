@@ -17,7 +17,7 @@ export async function irA(user: Usuario, pestana: RegExp) {
 
 export const MEMBERSHIP_JANUS = 'Habilitado en la membresía Miguel/grp.miguel/janus';
 
-export const REVISIONES = [{
+const REVISIONES = [{
   id: '1',
   actor_tenant: 'Steven',
   actor_alias: 'kant',

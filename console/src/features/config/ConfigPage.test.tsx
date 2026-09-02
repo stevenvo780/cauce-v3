@@ -62,6 +62,25 @@ it('FAMILIA 5: /config son CINCO pestañas reales, en el orden en que se monta u
   expect(pestanas.filter((boton) => boton.getAttribute('aria-selected') === 'true')).toHaveLength(1);
 });
 
+it('FAMILIA 5: la tira de /config gobierna su panel y se recorre con las flechas', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
+
+  const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
+    .getAllByRole('tab');
+  const panel = screen.getByRole('tabpanel');
+  expect(panel.id).not.toBe('');
+  expect(pestanas[0]).toHaveAttribute('aria-controls', panel.id);
+  expect(pestanas[0]).toHaveAttribute('tabindex', '0');
+  expect(pestanas[1]).toHaveAttribute('tabindex', '-1');
+
+  pestanas[0].focus();
+  await user.keyboard('{ArrowRight}');
+  expect(screen.getByRole('heading', { name: /directed acl/i })).toBeInTheDocument();
+  expect(document.activeElement).toBe(pestanas[1]);
+});
+
 it('FAMILIA 5: el render es CONDICIONAL, no un scroll con todo pintado y un ancla', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);

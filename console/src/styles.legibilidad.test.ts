@@ -19,10 +19,14 @@ const HOJAS_DE_LA_CONSOLA = [
   'features/messages/messages.css',
   'features/terminal/terminal-panel.css',
   'features/config/config.css',
+  'features/landing/landing.css',
+  'features/audit/audit.css',
   'features/accounts/licenses.css',
   'features/auth/auth.css',
   'styles.css',
 ];
+
+const CONFIG = leerCss('features/config/config.css');
 
 function minimoDeUnaPista(pista: string): number {
   const t = pista.trim();
@@ -136,11 +140,12 @@ describe('ninguna reja exige más ancho del que su vista tiene', () => {
   });
 });
 
-export function defectosDeAnchoPuntuales(global: string): string[] {
+export function defectosDeAnchoPuntuales(global: string, config: string): string[] {
   const defectos: string[] = [];
   const limpio = sinComentarios(global);
+  const propia = sinComentarios(config);
 
-  const base = limpio.slice(0, limpio.indexOf('@media'));
+  const base = propia.slice(0, propia.indexOf('@media'));
   const areaGlobal = declaraciones(base, '.config-area');
   const columnas = valor(areaGlobal, 'grid-template-columns');
   if (!columnas || anchoMinimoDeLaReja(columnas) !== 0) {
@@ -196,16 +201,16 @@ export function defectosDelMenuMovil(global: string): string[] {
 
 describe('que quepa en la pantalla', () => {
   it('/config no puede irse de lado en un teléfono', () => {
-    expect(defectosDeAnchoPuntuales(GLOBAL)).toEqual([]);
+    expect(defectosDeAnchoPuntuales(GLOBAL, CONFIG)).toEqual([]);
   });
 
   it('CONTROL NEGATIVO — marca la vuelta a la reja implícita de `.config-area`', () => {
-    const roto = GLOBAL.replace(
+    const roto = CONFIG.replace(
       /\.config-area \{ display: grid; grid-template-columns:[^}]*\}/,
       '.config-area { display: grid; gap: 16px; }',
     );
-    expect(roto).not.toBe(GLOBAL);
-    expect(defectosDeAnchoPuntuales(roto)).toContainEqual(expect.stringContaining('.config-area no declara columnas'));
+    expect(roto).not.toBe(CONFIG);
+    expect(defectosDeAnchoPuntuales(GLOBAL, roto)).toContainEqual(expect.stringContaining('.config-area no declara columnas'));
   });
 
   it('CONTROL NEGATIVO — marca que `.panel` recupere su mínimo de contenido', () => {
@@ -214,7 +219,7 @@ describe('que quepa en la pantalla', () => {
       '.config-area > .panel, .panel { min-width: auto; }',
     );
     expect(roto).not.toBe(GLOBAL);
-    expect(defectosDeAnchoPuntuales(roto)).toContainEqual(expect.stringContaining('`.panel` recuperó'));
+    expect(defectosDeAnchoPuntuales(roto, CONFIG)).toContainEqual(expect.stringContaining('`.panel` recuperó'));
   });
 
   it('el menú de móvil muestra las ocho entradas sin pisarse ni esconderse', () => {

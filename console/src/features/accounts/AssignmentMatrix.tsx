@@ -3,11 +3,12 @@ import { useState } from 'react';
 import type { ConfigMutation, ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { Badge, Desplazable, EmptyState, Panel } from '../../components/ui';
+import { useConfigMutation } from '../config/use-config-mutation';
 import { MutationBar } from './MutationBar';
 import {
-  bindingMutation, ceilingMutation, type MatrixCell, type RegistryModel,
+  bindingMutation, ceilingMutation, describeRegistryError, redactPreview,
+  type MatrixCell, type RegistryModel,
 } from './registry';
-import { useRegistryMutation } from './use-registry-mutation';
 
 type Operation = 'grant-ceiling' | 'revoke-ceiling' | 'create-binding' | 'update-binding' | 'delete-binding';
 
@@ -59,7 +60,13 @@ export function AssignmentMatrix({ config, access, registry }: {
 }) {
   const { accounts, agents, ceiling, bindings } = registry;
   const matrix = registry.routing.matrix;
-  const runner = useRegistryMutation({ config, access, context: registry.context });
+  const runner = useConfigMutation({
+    config,
+    access,
+    canal: 'assignment-matrix',
+    describeError: (error, mutation) => describeRegistryError(error, mutation, registry.context),
+    redactar: redactPreview,
+  });
 
   const [assignment, setAssignment] = useState<Assignment>({
     agentKey: '', accountId: '', operation: 'grant-ceiling', priority: '100', enabled: true,

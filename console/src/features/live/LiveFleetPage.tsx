@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
+import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import type {
   AgentDocumentKind, AgentPerfilCampos, FleetActivitySnapshot, TenantNode, TopologySnapshot,
@@ -116,11 +117,7 @@ export function LiveFleetPage() {
   }, []);
 
   const { reload } = activity;
-  useEffect(() => {
-    if (intervalMs <= 0) return undefined;
-    const timer = window.setInterval(reload, intervalMs);
-    return () => { window.clearInterval(timer); };
-  }, [intervalMs, reload]);
+  usePolling(reload, intervalMs);
 
   const { views, edges } = useMemo(
     () => buildLiveViews(snapshot, pulses, now),

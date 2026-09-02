@@ -196,6 +196,40 @@ tr.row-detail > td { padding: 12px 12px 18px 30px; background: rgb(9 15 26 / 55%
 
 .view-tab-panel:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; border-radius: 12px; }
 
+/* Variants of the same strip: geometry plus, for each one that erases its own fill, a light-theme
+   background for the selected tab — the shared override paints it `--surface`, the same colour as
+   the page or drawer underneath. */
+.view-tabs[data-variant='panel'] {
+  gap: 2px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  overflow-x: visible;
+}
+.view-tabs[data-variant='panel'] .view-tab { flex: none; padding: 6px 12px; font-size: var(--tipo-apunte); }
+
+.view-tabs[data-variant='chip'] {
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  overflow-x: visible;
+}
+.view-tabs[data-variant='chip'] .view-tab {
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: var(--tipo-apunte);
+}
+
 /* ==========================================================================
    Ayuda de vista: la explicación y sus permisos, a un botón de distancia
    ========================================================================== */

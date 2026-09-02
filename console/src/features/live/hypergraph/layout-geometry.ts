@@ -44,7 +44,7 @@ export function footprintsOverlap(a: Point, b: Point, box: NodeFootprint = NODE_
  * string always produces the same offset, so the drawing is reproducible across refreshes,
  * sessions and machines.
  */
-export function hashString(value: string): number {
+function hashString(value: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
     hash ^= value.charCodeAt(index);
@@ -85,7 +85,7 @@ export function convexHull(points: Point[]): Point[] {
   return hull.length >= 3 ? hull : sorted;
 }
 
-export function normalize(vector: Point): Point {
+function normalize(vector: Point): Point {
   const length = Math.hypot(vector.x, vector.y);
   if (length < 1e-9) return { x: 0, y: 0 };
   return { x: vector.x / length, y: vector.y / length };

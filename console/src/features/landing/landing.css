@@ -1,0 +1,51 @@
+/* Portada: las alertas de cabecera y la tira de arneses (`HarnessStrip`, montada por
+   `LandingPage`, así que una sola importación cubre las dos). */
+
+/* --- Adaptadores y arneses --- */
+.adapter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-4); }
+.adapter-head { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; }
+.adapter-head h2 { margin: 0; font-size: var(--tipo-panel); }
+.adapter-icon { display: grid; width: 43px; height: 43px; place-items: center; border: 1px solid #305c76; border-radius: 12px; background: var(--blue-dim); color: var(--blue); }
+.adapter-detail { min-height: 42px; margin: 17px 0; color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
+.adapter-meta { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: #0b1320; }
+.adapter-meta dt { display: flex; align-items: center; gap: 6px; }
+.adapter-meta div { min-width: 0; }
+
+/* `.panel` en el selector: esta hoja la importa `LandingPage`, que NO es una ruta diferida, así que
+   se inyecta ANTES de `styles.css` y una regla de una sola clase perdería contra `.panel`. */
+.panel.harness-strip { padding: 0; }
+.harness-strip > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 15px 18px; color: var(--text); cursor: pointer; font-size: var(--tipo-rotulo); font-weight: 700;
+}
+.harness-strip > summary span { display: flex; align-items: center; gap: 8px; }
+.harness-strip > summary small { color: var(--muted); font-weight: 500; }
+.harness-strip > *:not(summary) { margin: 0 18px 18px; }
+.harness-note { max-width: var(--measure-prose); color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.55; }
+.harness-strip .adapter-card { padding: 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.harness-strip .adapter-head h3 { margin: 0; font-size: var(--tipo-panel); }
+
+/* --- Lo que exige atención --- */
+.landing-alertas { display: grid; gap: 9px; margin-bottom: 18px; }
+.landing-veredicto, .landing-alerta {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
+  margin: 0; padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); font-size: var(--tipo-rotulo);
+}
+.landing-veredicto { grid-template-columns: auto 1fr; border-color: #1f5346; background: var(--mint-dim); color: var(--mint); }
+.landing-alerta[data-tono="danger"] { border-color: #6d2b35; background: var(--red-dim); color: var(--red); }
+.landing-alerta[data-tono="warning"] { border-color: #725622; background: var(--amber-dim); color: var(--amber); }
+.landing-alerta[data-tono="desconocido"] { border-color: var(--border-strong); color: var(--muted); }
+.landing-alerta svg, .landing-veredicto svg { flex: none; }
+.landing-alerta > span { display: grid; gap: 3px; min-width: 0; }
+.landing-alerta strong { color: var(--text); }
+.landing-alerta small { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.5; }
+.landing-alerta > a { color: inherit; font-size: var(--tipo-rotulo); font-weight: 700; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .adapter-grid, .adapter-meta { grid-template-columns: 1fr; }
+}
+
+@media (prefers-color-scheme: light) {
+  .adapter-meta { background: #f8fafd; }
+}

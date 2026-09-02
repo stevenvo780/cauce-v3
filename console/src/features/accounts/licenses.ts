@@ -23,9 +23,9 @@ export interface Collector {
 
 // Freshness: is the probe stale?
 
-export type FreshnessState = 'fresh' | 'stale' | 'absent';
+type FreshnessState = 'fresh' | 'stale' | 'absent';
 
-export interface Freshness {
+interface Freshness {
   state: FreshnessState;
   ageSeconds: number | null;
   label: string;
@@ -87,7 +87,7 @@ export function freshness(
 
 // Per-account consumption: mandatory honesty
 
-export interface WindowSummary {
+interface WindowSummary {
   window_key: string | null;
   label: string | null;
   used_percent: number | string; // string = "?" for stale/missing data
@@ -108,7 +108,7 @@ export interface WindowSummary {
  * died, it has no windows. It cannot be read anywhere else on the page, so it goes on the card,
  * where it explains the gap the operator is looking at.
  */
-export type ConsumptionScope = 'global' | 'account';
+type ConsumptionScope = 'global' | 'account';
 
 export interface AccountConsumption {
   available: boolean;
@@ -255,7 +255,7 @@ function agentIdentity(tenantId: string, alias: string): string {
 
 // Orphans: the three directions
 
-export interface Orphans {
+interface Orphans {
   accountsWithoutQuotas: ProviderAccount[];
   unboundGroups: {
     host: string | null;

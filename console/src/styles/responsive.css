@@ -1,16 +1,17 @@
 /* ==========================================================================
-   Responsive & Media Queries (cortes de pantalla, tema claro, reducción de movimiento)
+   Cortes de pantalla del ARMAZÓN y de lo que escribe más de una ruta.
+
+   Cada vista trae sus propios cortes en su hoja, detrás de su regla base: una hoja de vista carga
+   DESPUÉS de ésta, así que un corte de acá sobre una regla que vive allá pierde por orden aunque
+   empate en especificidad. Acá quedan el armazón (`.app-shell`, `.sidebar`, la navegación,
+   `.page-header`), los componentes de `components.css` y las reglas de `base.css` que dibujan más
+   de una ruta. La escala de tres pasos está declarada al principio de `base.css`.
    ========================================================================== */
 
 /* --- Dimensionamiento de paneles e inputs --- */
 input, select, textarea { min-width: 0; }
 .config-area > .panel, .panel { min-width: 0; }
 .observation-line, .permission-line, .auto-refresh-toggle, .trust-callout { flex-wrap: wrap; }
-
-@media (min-width: 761px) {
-  .terminal-session-head { flex-wrap: wrap; }
-  .terminal-session-head .session-identity { flex: 1 1 auto; }
-}
 
 /* --- Riel por elección del operador: sólo donde la ventana no lo impone ya --- */
 @media (min-width: 1101px) {
@@ -21,7 +22,7 @@ input, select, textarea { min-width: 0; }
   .app-shell[data-sidebar="rail"] .authority-note { justify-content: center; }
 }
 
-/* --- Breakpoint: max-width 1100px --- */
+/* --- Paso medio --- */
 @media (max-width: 1100px) {
   .app-shell, .app-shell[data-sidebar] { grid-template-columns: 78px minmax(0, 1fr); }
   /* El control de plegado no aplica: acá el riel lo decide la ventana, no el operador. */
@@ -31,17 +32,9 @@ input, select, textarea { min-width: 0; }
   .sidebar nav a { justify-content: center; padding: 12px; }
   .authority-note { justify-content: center; }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
-  .edge-list li { grid-template-columns: 1fr auto 1fr auto; }
-  .edge-list li > span:last-child { grid-column: 1 / -1; }
-  .terminal-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ultimate-terminal-shell { grid-template-columns: minmax(0, 250px) minmax(0, 1fr); }
-  .terminal-control-inspector { display: none; }
-  .terminal-adapter-mobile { display: block; }
-  .terminal-adapter-mobile .terminal-inspector-section { display: none; }
-  .terminal-adapter-mobile .terminal-inspector-section:first-child, .terminal-adapter-mobile .terminal-pty-capability { display: block; }
 }
 
-/* --- Breakpoint: max-width 760px --- */
+/* --- Paso compacto --- */
 @media (max-width: 760px) {
   .app-shell { display: block; padding-bottom: calc(var(--nav-inferior-alto) + 14px); }
   .sidebar { position: fixed; top: auto; right: 0; bottom: 0; left: 0; z-index: 20; display: block; width: auto; height: var(--nav-inferior-alto); padding: 6px; border-top: 1px solid var(--border); border-right: 0; box-sizing: border-box; }
@@ -57,144 +50,63 @@ input, select, textarea { min-width: 0; }
   .topbar-meta span:not(.mock-flag) { display: none; }
   main { padding: 29px 15px calc(var(--nav-inferior-alto) + 16px + env(safe-area-inset-bottom, 0px)); }
   .page-header { align-items: start; flex-direction: column; }
-  .adapter-grid, .landing-atajos, .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid { grid-template-columns: 1fr; }
-  .config-area { grid-template-columns: minmax(0, 1fr); }
+  .metrics-grid, .metrics-grid.three, .explain-grid, .trust-grid { grid-template-columns: 1fr; }
   .metric { min-height: 115px; }
-  .config-form { grid-template-columns: 1fr; }
-  .config-json { grid-column: auto; }
+  .auto-refresh-toggle { margin-top: 4px; }
   .timeline { grid-template-columns: 1fr; gap: 0; }
   .timeline li { min-height: 65px; padding: 0 0 14px 27px; border-top: 0; border-left: 2px solid var(--border-strong); }
   .timeline li:not(:last-child)::after { top: 9px; right: auto; bottom: 0; left: -2px; width: 2px; height: auto; }
   .timeline-node { top: 0; left: -7px; }
-  .edge-list li { grid-template-columns: 1fr auto 1fr; }
-  .edge-list li .badge { grid-column: 1 / -1; }
-  .audit-row { grid-template-columns: auto 1fr; }
-  .audit-row dl { grid-column: 1 / -1; padding-left: 48px; }
-  .terminal-gate { grid-template-columns: auto 1fr; align-items: start; }
-  .terminal-gate > .badge { grid-column: 1 / -1; }
-  .terminal-overview { grid-template-columns: 1fr 1fr; }
-  .ultimate-terminal-shell { display: block; min-height: 0; overflow: visible; }
-  .terminal-fleet-sidebar { max-height: 480px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .terminal-agent-list { max-height: 270px; }
-  .terminal-stage { min-height: 580px; }
-  .terminal-active-grid { grid-template-columns: minmax(0, 1fr); }
-  .terminal-console { border-right: 0; }
-  .terminal-inspector { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--border); }
-  .terminal-session-head { align-items: start; flex-direction: column; flex-wrap: nowrap; }
-  .session-controls { width: 100%; justify-content: space-between; }
+  .config-form { grid-template-columns: 1fr; }
+  .config-json { grid-column: auto; }
   .terminal-transcript { max-height: 500px; }
+  .transcript-entry { width: 96%; }
+  .transcript-entry footer { align-items: start; flex-direction: column; }
+  .transcript-delivery { flex-wrap: wrap; }
+  .transcript-delivery > span:last-child { width: 100%; margin-left: 0; }
 }
 
-/* --- Breakpoint: max-width 640px --- */
-/* Por debajo de este ancho el título y su acción ya no caben en la misma línea —la barra de
-   acciones más ancha mide 200px y un título necesita unos 380 para leerse—, así que la cabecera
-   se apila en vez de partir el titular en una palabra por renglón. */
+/* --- Dos anchos de CONTENIDO, no dos pasos de la escala ---------------------------------------
+ *
+ * A 640 el título y su acción ya no caben en la misma línea: la barra de acciones más ancha mide
+ * 200px y un título necesita unos 380 para leerse. A 460 el título del panel y su frase dejan de
+ * caber uno al lado del otro. Los dos se midieron subiéndolos al paso compacto: en /accounts a
+ * 760px el documento pasaba de 5,21 a 5,37 pantallas de scroll (0,05 el primero, 0,11 el segundo),
+ * y el trinquete de `qa/layout-baseline.json` no admite ninguno de los dos. */
 @media (max-width: 640px) {
   .page-header { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-3); }
   .page-actions { grid-area: auto; }
 }
 
-/* --- Breakpoint: max-width 720px --- */
-@media (max-width: 720px) {
-  .auto-refresh-toggle { margin-top: 4px; }
-  .quota-provider-head { flex-direction: column; }
-  .quota-provider-head-right { align-items: start; }
-}
-
-/* --- Breakpoint: max-width 460px --- */
 @media (max-width: 460px) {
   .panel-header { align-items: stretch; flex-direction: column; }
-  .adapter-meta, .audit-row dl { grid-template-columns: 1fr; }
-  .terminal-gate { grid-template-columns: 1fr; }
-  .terminal-cap-meta { flex-direction: column; gap: 9px; }
-  .terminal-overview { grid-template-columns: 1fr; }
-  .terminal-overview article { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .terminal-session-tabs { min-height: 50px; }
-  .terminal-tabs-hint { display: none; }
-  .terminal-active-grid { display: block; }
-  .terminal-inspector { display: block; }
-  .session-controls { align-items: stretch; flex-direction: column; }
-  .room-select-wrap select { width: 100%; }
-  .transcript-entry { width: 96%; }
-  .transcript-entry footer { align-items: start; flex-direction: column; }
-  .transcript-delivery { flex-wrap: wrap; }
-  .transcript-delivery > span:last-child { width: 100%; margin-left: 0; }
-  .composer-footer { align-items: stretch; flex-direction: column; }
-  .composer-footer .button { width: 100%; }
-  .terminal-degraded { align-items: start; flex-wrap: wrap; }
-  .terminal-degraded .button { width: 100%; }
 }
 
-/* --- Tema Claro --- */
+/* --- Tema Claro: los tokens viven en `base.css`; acá sólo lo que hay que corregir a mano --- */
 @media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-    --bg: #f3f6fa;
-    --surface: #ffffff;
-    --surface-2: #edf2f7;
-    --surface-3: #e2eaf3;
-    --border: #d5deea;
-    --border-strong: #b8c7d9;
-    --text: #142033;
-    --muted: #57677c;
-    --faint: #59677a;
-    --text-2: #33455c;
-    --on-mint: #087860;
-    --on-blue: #1668b2;
-    --on-amber: #8c5c00;
-    --on-red: #b72d3a;
-    --on-neutral: #5b6779;
-    --mint: #07735c;
-    --mint-dim: #d8f3ea;
-    --blue: #1668b2;
-    --blue-dim: #dfedfb;
-    --amber: #8c5c00;
-    --amber-dim: #fff2cf;
-    --red: #b72d3a;
-    --red-dim: #fde3e5;
-    --violet: #6742c9;
-    --violet-dim: #e9e2fd;
-    --lime: #49710f;
-    --lime-dim: #eaf6d2;
-    --tooltip-bg: #ffffff;
-    --shadow: 0 18px 45px rgb(38 63 92 / 12%);
-  }
-  body { background: radial-gradient(circle at 85% -10%, rgb(111 177 222 / 20%), transparent 35rem), var(--bg); }
   .sidebar { background: rgb(249 251 253 / 92%); }
   .sidebar nav a[aria-current="page"] { border-color: #97c9bc; background: linear-gradient(90deg, #dff4ee, #edf5fb); color: #075f4d; }
   .panel { background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(245 248 252 / 98%)); }
   input, select, textarea { background: #fbfcfe; color: var(--text); }
-  .ultimate-terminal-page { --terminal-inset: #f6f8fb; --terminal-raised: #ffffff; --terminal-soft: #34455d; }
-  .terminal-overview article, .terminal-fleet-sidebar, .terminal-session-tabs, .terminal-session-head, .terminal-composer, .terminal-inspector, .terminal-control-inspector, .pty-status { background: #f8fafc; }
-  .fleet-health-strip, .terminal-connection-bar, .transcript-delivery, .terminal-composer textarea { background: #ffffff; }
-  .terminal-agent[data-active="true"] { border-color: #79b5a6; background: linear-gradient(100deg, #dff3ed, #eaf3fb); }
-  .transcript-entry.input { border-color: #8fc5b7; background: linear-gradient(145deg, #e2f5ef, #edf5fb); }
-  .transcript-entry p { color: #203149; }
   .explain-grid article, .trust-grid article { background: #f4f7fb; }
   .chip { background: #eef3f9; }
   .badge-offline { border-color: #ccd4de; background: #eceff4; }
   .button:hover:not(:disabled) { border-color: #9ab8d6; background: #e9f0f8; }
-  .quota-provider { background: #ffffff; }
-  .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
-  .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
-  .config-records li, .adapter-meta, .landing-atajos a { background: #f8fafd; }
+  .config-records li { background: #f8fafd; }
   .config-preview { background: #f4f7fb; }
-  .config-modal { background: #ffffff; }
-  .config-modal-fondo { background: rgb(30 45 66 / 42%); }
-  .pty-shell { background: #ffffff; }
   .notice { color: #33455c; }
   .notice.success { color: #0f6450; }
   .notice.error { color: #8f2230; }
   .notice.parcial { background: #fdf2df; color: #7a4d05; }
   .timeline-node { border-color: #4b91c8; background: #dbeaf6; }
   .timeline-missing .timeline-node { border-color: #b3bdcb; background: #e8ecf2; }
-  .tenant-card { background: #ffffff; }
-  .tenant-card > header { background: linear-gradient(90deg, #eef4fa, #f7fafd); }
-  .room { border-color: #dbe4ef; background: #f8fafd; }
-  .member { background: #e4eefb; color: #1d5f95; }
-  .edge-list li { background: #f8fafd; }
+  .transcript-delivery { background: #ffffff; }
+  .transcript-entry.input { border-color: #8fc5b7; background: linear-gradient(145deg, #e2f5ef, #edf5fb); }
+  .transcript-entry p { color: #203149; }
   .view-tabs { background: var(--surface-2); }
   .view-tab[aria-selected='true'] { background: var(--surface); box-shadow: 0 1px 2px rgb(20 32 51 / 12%); }
+  .view-tabs[data-variant='panel'] .view-tab[aria-selected='true'] { background: var(--surface-3); }
+  .view-tabs[data-variant='chip'] .view-tab[aria-selected='true'] { background: var(--surface-3); }
   .view-tab-badge { background: rgb(20 32 51 / 10%); }
 }
 
@@ -202,6 +114,3 @@ input, select, textarea { min-width: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
-
-/* Reglas de dimensionamiento y legibilidad específicas de terminal */
-.terminal-agent[data-active="true"] { --faint: var(--muted); }

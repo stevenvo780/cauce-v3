@@ -144,3 +144,33 @@ export function cancelDelivery(request: RequestFn, deliveryId: string, reason?: 
 export function listOriginRelays(request: RequestFn): Promise<OriginRelayPage> {
   return request('/v3/console/origin-relays');
 }
+
+export interface MessagingClient {
+  listMessages(): Promise<MessagePage>;
+  getMessage(messageId: string): Promise<MessageDetail>;
+  publishMessage(input: PublishMessageInput): Promise<PublishResult>;
+  preparePublishIntent(input: PreparePublishIntentInput): Promise<PreparePublishIntentResult>;
+  confirmPublishIntent(input: ConfirmPublishIntentInput): Promise<ConfirmPublishIntentResult>;
+  getQueues(): Promise<QueueSnapshot>;
+  getDlq(limit?: number, cursor?: string, signal?: AbortSignal): Promise<DlqPage>;
+  resolveDlqWithoutReplay(input: ResolveDlqWithoutReplayInput): Promise<ResolveDlqWithoutReplayResult>;
+  replayDelivery(deliveryId: string): Promise<ReplayResult>;
+  cancelDelivery(deliveryId: string, reason?: string): Promise<CancelResult>;
+  listOriginRelays(): Promise<OriginRelayPage>;
+}
+
+export function messagingClient(request: RequestFn): MessagingClient {
+  return {
+    listMessages: () => listMessages(request),
+    getMessage: (messageId) => getMessage(request, messageId),
+    publishMessage: (input) => publishMessage(request, input),
+    preparePublishIntent: (input) => preparePublishIntent(request, input),
+    confirmPublishIntent: (input) => confirmPublishIntent(request, input),
+    getQueues: () => getQueues(request),
+    getDlq: (limit, cursor, signal) => getDlq(request, limit, cursor, signal),
+    resolveDlqWithoutReplay: (input) => resolveDlqWithoutReplay(request, input),
+    replayDelivery: (deliveryId) => replayDelivery(request, deliveryId),
+    cancelDelivery: (deliveryId, reason) => cancelDelivery(request, deliveryId, reason),
+    listOriginRelays: () => listOriginRelays(request),
+  };
+}

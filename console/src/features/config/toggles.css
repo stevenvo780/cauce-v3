@@ -2,16 +2,21 @@
 .config-area > * { min-width: 0; }
 .config-area .table-wrap { position: relative; min-width: 0; max-width: 100%; }
 
+.config-area table { font-size: var(--tipo-cuerpo); }
 .config-area td { padding: 11px 12px; }
+.config-area th { padding: 10px 12px; }
+.config-area td .badge { white-space: nowrap; }
+.config-area td .button.small { white-space: nowrap; }
+.config-area td .config-actions { gap: 5px; flex-wrap: nowrap; }
 
 /*
  * El `<select>` del rol heredaba `min-height: 41px` de la regla global de campos de texto y dejaba
  * la fila de memberships en 65 px cuando el resto de las tablas ya estaba en 40. Un control de una
  * sola línea dentro de una celda no necesita la altura de un campo de formulario.
  */
-.config-area td select { min-height: 30px; padding: 4px 8px; }
-.config-area th { padding: 10px 12px; }
-.config-area td .badge { white-space: nowrap; }
+.config-area td select { max-width: 150px; min-height: 30px; padding: 4px 8px; font-size: var(--tipo-rotulo); }
+/* Motivo de inhabilitación de control. */
+.config-area td select + .unknown { display: block; max-width: 260px; margin-top: 5px; font-size: var(--tipo-rotulo); font-weight: 600; line-height: 1.4; }
 
 /* Una columna de fecha no tiene por qué reservar el ancho de `1 jul 2026, 10:00:00`. */
 .fecha-relativa { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -37,20 +42,22 @@
  * de 14 px del `::after` — o sea, el control central de esta pantalla («los permisos como
  * interruptores») no se leía como un interruptor ni decía de qué lado estaba.
  *
- * La causa: `styles.css` declara `.config-area input[type="checkbox"] { width: auto }`, que tiene
- * EXACTAMENTE la misma especificidad que `.config-area input.interruptor` (dos clases y un tipo en
- * las dos), y vite concatena `styles.css` la ÚLTIMA — comprobado sobre el bundle, las dos reglas
- * están a 30 KB de distancia y gana la de abajo. Con `[type="checkbox"]` en el selector la cuenta
- * pasa a tres y deja de depender del orden de las hojas.
+ * La causa: la regla genérica de acá abajo, `.config-area input[type="checkbox"] { width: auto }`,
+ * tenía EXACTAMENTE la misma especificidad que `.config-area input.interruptor` (dos clases y un
+ * tipo en las dos) y ganaba por orden. Con `[type="checkbox"]` en el selector la cuenta pasa a
+ * tres y deja de depender del orden — que es lo único que hay que sostener, porque las dos reglas
+ * viven ahora en la misma hoja.
  *
- * Es anterior a este cambio (medido igual sobre `consola/tira-de-pestanas-20260824`) y no lo veía
- * nadie: `getComputedStyle` en jsdom no resuelve la cascada.
+ * `getComputedStyle` en jsdom no resuelve la cascada, así que esto no lo ve ninguna prueba de DOM:
+ * lo guarda `config-css-toggles.test.ts` comparando especificidades.
  */
 .config-area input[type="checkbox"] {
   width: auto;
   min-height: 0;
   margin: 0;
   padding: 0;
+  vertical-align: middle;
+  accent-color: var(--mint);
 }
 
 .config-area input[type="checkbox"].interruptor {

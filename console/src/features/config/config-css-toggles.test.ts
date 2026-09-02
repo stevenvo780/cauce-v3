@@ -64,6 +64,9 @@ describe('el tope de medida de /config', () => {
 
 describe('el elegir-modo del alta ya no es una segunda tira de pestañas', () => {
   const todas = sinComentarios(GLOBAL) + sinComentarios(PROPIA) + sinComentarios(INTERRUPTORES);
+  /** The page's tab strip is the shared `.view-tabs`; `/config` no longer carries a skin of its own. */
+  const tira = () => declaraciones(sinComentarios(GLOBAL), '.view-tabs');
+  const firma = (d: Record<string, string>) => [d.padding, d['border-radius'], d.display].join('|');
 
   it('las clases de la tira vieja no existen en ninguna hoja', () => {
     expect(todas).not.toMatch(/\.alta-modos\b/);
@@ -71,19 +74,16 @@ describe('el elegir-modo del alta ya no es una segunda tira de pestañas', () =>
   });
 
   it('el segmentado del alta no se dibuja igual que las pestañas de la página', () => {
-    const tira = declaraciones(sinComentarios(PROPIA), '.config-tabs');
+    expect(tira().padding, '.view-tabs no existe en la hoja global').toBeDefined();
     const segmento = declaraciones(sinComentarios(PROPIA), '.alta-segmento');
     expect(segmento.display, '.alta-segmento no existe en la hoja').toBeDefined();
-    const firma = (d: Record<string, string>) => [d.padding, d['border-radius'], d.display].join('|');
-    expect(firma(segmento)).not.toBe(firma(tira));
+    expect(firma(segmento)).not.toBe(firma(tira()));
     expect(segmento.display).toBe('inline-flex');
   });
 
   it('CONTROL NEGATIVO — detecta que el segmentado vuelva a copiar la forma de la tira', () => {
-    const tira = declaraciones(sinComentarios(PROPIA), '.config-tabs');
-    const clonado = { padding: tira.padding, 'border-radius': tira['border-radius'], display: tira.display };
-    const firma = (d: Record<string, string>) => [d.padding, d['border-radius'], d.display].join('|');
-    expect(firma(clonado)).toBe(firma(tira));
+    const clonado = { padding: tira().padding, 'border-radius': tira()['border-radius'], display: tira().display };
+    expect(firma(clonado)).toBe(firma(tira()));
   });
 });
 
@@ -116,15 +116,15 @@ describe('los párrafos de /config son párrafos', () => {
   });
 });
 
-describe('el interruptor le gana a la regla de casilla de la hoja global', () => {
+describe('el interruptor le gana a la regla de casilla genérica', () => {
   it('el selector del interruptor es MÁS específico que el de la casilla genérica', () => {
     const propio = /(\.config-area\s+input(?:\[[^\]]+\])?\.interruptor)\s*\{[^{}]*width:\s*36px/
       .exec(sinComentarios(INTERRUPTORES));
     expect(propio, 'no hay ninguna regla que le dé 36px de ancho al interruptor').not.toBeNull();
 
-    const ajeno = /(\.config-area\s+input\[type="checkbox"\][^{]*)\{[^{}]*width:\s*auto/
-      .exec(sinComentarios(GLOBAL));
-    expect(ajeno, 'la regla de `width: auto` de styles.css ya no existe: revisá si hace falta esto').not.toBeNull();
+    const ajeno = /(\.config-area\s+input\[type="checkbox"\])\s*\{[^{}]*width:\s*auto/
+      .exec(sinComentarios(INTERRUPTORES));
+    expect(ajeno, 'la regla de `width: auto` ya no existe: revisá si hace falta esto').not.toBeNull();
 
     expect(especificidad(propio?.[1] ?? '')).toBeGreaterThan(especificidad('.config-area input[type="checkbox"]'));
   });

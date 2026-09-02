@@ -5,7 +5,6 @@ import type {
   ConfigurationSnapshot,
   ConfigMutation,
   ConsoleAccess,
-  ConsoleAuthState,
   ObservabilitySnapshot,
   QuotaSnapshot,
   SystemStatus,
@@ -14,47 +13,6 @@ import type {
 import { ApiError, type RequestOptions } from './core';
 
 export type RequestFn = <T>(path: string, init?: RequestInit, options?: RequestOptions) => Promise<T>;
-
-export async function login(
-  request: RequestFn,
-  email: string,
-  password: string,
-  callbacks: { setBffSessionSupported: (val: boolean) => void; setCsrfToken: (val?: string) => void },
-): Promise<ConsoleAuthState> {
-  const state = await request<ConsoleAuthState>('/v3/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  }, { requireCsrf: false });
-  callbacks.setBffSessionSupported(true);
-  callbacks.setCsrfToken(typeof state.csrf_token === 'string' ? state.csrf_token : undefined);
-  return state;
-}
-
-export async function getAuthSession(
-  request: RequestFn,
-  callbacks: { setBffSessionSupported: (val: boolean) => void; setCsrfToken: (val?: string) => void },
-): Promise<ConsoleAuthState> {
-  try {
-    const state = await request<ConsoleAuthState>('/v3/auth/session');
-    callbacks.setBffSessionSupported(true);
-    callbacks.setCsrfToken(state.authenticated && typeof state.csrf_token === 'string' ? state.csrf_token : undefined);
-    return state;
-  } catch (error) {
-    if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-      callbacks.setBffSessionSupported(false);
-      return { authenticated: null, reason: 'El gateway usa autenticación no-BFF.' };
-    }
-    throw error;
-  }
-}
-
-export async function logout(
-  request: RequestFn,
-  callbacks: { setCsrfToken: (val?: string) => void },
-): Promise<void> {
-  await request<undefined>('/v3/auth/logout', { method: 'POST' });
-  callbacks.setCsrfToken(undefined);
-}
 
 export function getStatus(request: RequestFn): Promise<SystemStatus> {
   return request('/v3/status');
@@ -140,4 +98,38 @@ export function getObservability(request: RequestFn): Promise<ObservabilitySnaps
 
 export function getQuotas(request: RequestFn): Promise<QuotaSnapshot> {
   return request('/v3/console/quotas');
+}
+
+export interface SystemClient {
+  getStatus(): Promise<SystemStatus>;
+  getConsoleAccess(): Promise<ConsoleAccess>;
+  getTopology(): Promise<TopologySnapshot>;
+  listAdapters(): Promise<AdapterPage>;
+  listAudit(options?: { limit?: number; before?: string; signal?: AbortSignal }): Promise<AuditPage>;
+  getConfiguration(): Promise<ConfigurationSnapshot>;
+  changeConfiguration(
+    mutation: ConfigMutation,
+    options: { dryRun: boolean; expectedRevision?: number },
+  ): Promise<ConfigurationChangeResult>;
+  rollbackConfiguration(
+    revisionId: string,
+    options: { dryRun: boolean; expectedRevision?: number },
+  ): Promise<ConfigurationChangeResult>;
+  getObservability(): Promise<ObservabilitySnapshot>;
+  getQuotas(): Promise<QuotaSnapshot>;
+}
+
+export function systemClient(request: RequestFn): SystemClient {
+  return {
+    getStatus: () => getStatus(request),
+    getConsoleAccess: () => getConsoleAccess(request),
+    getTopology: () => getTopology(request),
+    listAdapters: () => listAdapters(request),
+    listAudit: (options) => listAudit(request, options),
+    getConfiguration: () => getConfiguration(request),
+    changeConfiguration: (mutation, options) => changeConfiguration(request, mutation, options),
+    rollbackConfiguration: (revisionId, options) => rollbackConfiguration(request, revisionId, options),
+    getObservability: () => getObservability(request),
+    getQuotas: () => getQuotas(request),
+  };
 }

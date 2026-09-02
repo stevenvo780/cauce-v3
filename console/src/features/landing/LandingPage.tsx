@@ -5,6 +5,7 @@ import { LoadingState, Metric, PageHeader, RefreshButton, Time } from '../../com
 import { onNavClick } from '../../router';
 import { HarnessStrip } from './HarnessStrip';
 import { agruparAlertas, puedeDecirSinIncidencias, resumenPortada } from './landing';
+import './landing.css';
 
 /**
  * **The landing page.** What you see when entering the console, and the only thing worth reading

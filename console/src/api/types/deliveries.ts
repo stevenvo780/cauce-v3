@@ -162,7 +162,7 @@ export interface QueueItem {
 }
 
 /** `COUNT` over EVERY visible delivery, no `LIMIT`; absent on a gateway older than the field. */
-export interface QueueTotals {
+interface QueueTotals {
   pending?: number | null;
   retrying?: number | null;
   dead?: number | null;

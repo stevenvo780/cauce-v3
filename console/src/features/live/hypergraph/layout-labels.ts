@@ -1,7 +1,7 @@
 import type { NodeFootprint, Point } from './layout-geometry';
 import { round } from './layout-geometry';
 
-export interface LabelRect {
+interface LabelRect {
   x: number;
   y: number;
   halfWidth: number;
@@ -9,7 +9,7 @@ export interface LabelRect {
   bottom: number;
 }
 
-export function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
+function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
   return Math.abs(a.x - b.x) < a.halfWidth + b.halfWidth
     && a.y + a.top < b.y + b.bottom
     && b.y + b.top < a.y + a.bottom;

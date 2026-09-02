@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
+import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { ErrorState, LoadingState, PageHeader, PermissionBadge, RefreshButton, ViewTabPanel, ViewTabs } from '../../components/ui';
 import { ConsumptionSection } from './ConsumptionSection';
@@ -37,19 +38,12 @@ function AccountsPageContent() {
   const reloadQuotas = quotas.reload;
   const reloadConfig = config.reload;
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = window.setInterval(() => {
-      void reloadQuotas();
-      void reloadConfig();
-    }, REFRESH_MS);
-    return () => { window.clearInterval(interval); };
-  }, [autoRefresh, reloadQuotas, reloadConfig]);
-
-  function reloadAll() {
+  const reloadAll = useCallback(() => {
     void reloadQuotas();
     void reloadConfig();
-  }
+  }, [reloadQuotas, reloadConfig]);
+
+  usePolling(reloadAll, REFRESH_MS, { pausedWhile: !autoRefresh });
 
   if (quotas.loading && !quotas.data && config.loading && !config.data) {
     return <LoadingState label="Leyendo cuentas, cuotas y asignaciones…" />;

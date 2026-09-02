@@ -6,6 +6,7 @@ import type { AuditEvent, AuditPage } from '../../api/types';
 import { Badge, EmptyState, ErrorState, LoadingState, Panel, Time, Unknown } from '../../components/ui';
 import { compactId, safeAuditDecision } from '../../lib';
 import { readableAuditSummary } from './audit-summary';
+import './audit.css';
 
 /**
  * **The audit** — not a

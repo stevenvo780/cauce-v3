@@ -152,25 +152,26 @@ describe('el texto del tema claro', () => {
 
 describe('el contenedor de las pestañas de /config', () => {
   const global = sinComentarios(GLOBAL);
+  const propia = sinComentarios(PROPIA);
 
   it('declara la pista con `minmax(0, 1fr)` y no con un `1fr` pelado', () => {
-    expect(declaraciones(global, '.config-area')['grid-template-columns']).toBe('minmax(0, 1fr)');
-    for (const regla of global.matchAll(/\.config-area\s*\{([^{}]*)\}/g)) {
+    expect(declaraciones(propia, '.config-area')['grid-template-columns']).toBe('minmax(0, 1fr)');
+    for (const regla of propia.matchAll(/\.config-area\s*\{([^{}]*)\}/g)) {
       expect(regla[1]).not.toMatch(/grid-template-columns\s*:\s*1fr/);
     }
   });
 
   it('deja el panel con `min-width: 0` para que el envoltorio de tabla pueda recortar', () => {
-    expect(declaraciones(global, '.config-area')['grid-template-columns']).toBeDefined();
-    const panel = /\.config-area\s+\.panel\s*\{([^{}]*)\}/.exec(global);
+    expect(declaraciones(propia, '.config-area')['grid-template-columns']).toBeDefined();
+    const panel = /\.config-area\s+\.panel\s*\{([^{}]*)\}/.exec(propia);
     expect(panel, '.config-area .panel no existe').not.toBeNull();
     if (panel) {
       expect(panel[1]).toMatch(/min-width\s*:\s*0/);
     }
   });
 
-  it('no está redefinido en la hoja propia de la vista', () => {
-    expect(sinComentarios(PROPIA)).not.toMatch(/\.config-area\s*\{/);
+  it('lo declara la hoja de la vista y no la global, que es de quien no depende', () => {
+    expect(global).not.toMatch(/(?:^|[{},])\s*\.config-area\s*\{/);
   });
 });
 

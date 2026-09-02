@@ -1,6 +1,6 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 
-export type AgentRegistryEntry =
+type AgentRegistryEntry =
   | { state: 'registry-unavailable' }
   | { state: 'agent-missing' }
   | { state: 'found'; row: Record<string, unknown>; roleBrief: string };

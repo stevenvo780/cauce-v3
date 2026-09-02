@@ -2,6 +2,24 @@
    Base & Layout (tokens, reset, tipografía, shell de la app)
    ========================================================================== */
 
+/* THE BREAKPOINT SCALE. Three steps, and a fourth width needs a measurement of its own before it
+   may exist. A media query cannot read a custom property, so the scale is declared here in words
+   and enforced by `styles.breakpoints.test.ts`.
+
+     compact   @media (max-width: 760px)    bottom nav bar, everything in one column
+     medium    @media (max-width: 1100px)   icon rail, two columns
+     wide      no query at all              full sidebar
+
+   Their complements are `min-width: 761px` and `min-width: 1101px`; `src/breakpoints.ts` exports
+   the two strings the shell also matches from JavaScript. `qa/layout-gate.mjs` measures
+   360/760/1100/1440/1920/2560, so a step outside the scale can never be checked at its own edge.
+
+   Four widths survive outside it and none is a viewport step: they are widths at which a piece of
+   CONTENT stops fitting, each with its measurement written beside the rule — the drawer's 1479 in
+   `features/live/live-drawer.css`, the 720 of the quota header in `features/accounts/licenses.css`,
+   and the 640 and 460 of the two headers at the end of `responsive.css`. The test carries the same
+   list; a fifth needs a measurement first. */
+
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -89,6 +107,51 @@ body {
     var(--bg);
   color: var(--text);
 }
+
+/* The light theme is the same set of tokens with the other values: it lives beside the dark one so
+   the two can be compared in a single screen. `styles.legibilidad-themes.test.ts` reads the FIRST
+   light block of `styles.css` for both the tokens and the body tint, so the two rules stay
+   together. Per-component light overrides stay in the sheet of the component they correct. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f3f6fa;
+    --surface: #ffffff;
+    --surface-2: #edf2f7;
+    --surface-3: #e2eaf3;
+    --border: #d5deea;
+    --border-strong: #b8c7d9;
+    --text: #142033;
+    --muted: #57677c;
+    --faint: #59677a;
+    --text-2: #33455c;
+    --on-mint: #087860;
+    --on-blue: #1668b2;
+    --on-amber: #8c5c00;
+    --on-red: #b72d3a;
+    --on-neutral: #5b6779;
+    --mint: #07735c;
+    --mint-dim: #d8f3ea;
+    --blue: #1668b2;
+    --blue-dim: #dfedfb;
+    --amber: #8c5c00;
+    --amber-dim: #fff2cf;
+    --red: #b72d3a;
+    --red-dim: #fde3e5;
+    --violet: #6742c9;
+    --violet-dim: #e9e2fd;
+    --lime: #49710f;
+    --lime-dim: #eaf6d2;
+    --tooltip-bg: #ffffff;
+    --shadow: 0 18px 45px rgb(38 63 92 / 12%);
+  }
+  body { background: radial-gradient(circle at 85% -10%, rgb(111 177 222 / 20%), transparent 35rem), var(--bg); }
+}
+
+/* A token rebound for one component, so it belongs with the tokens and not with the terminal:
+   the selected row of the fleet list tints its own background and `--faint` stops clearing AA on
+   it. `styles.legibilidad-themes.test.ts` reads this pair from `styles.css`. */
+.terminal-agent[data-active="true"] { --faint: var(--muted); }
 
 button, input, select, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -192,3 +255,50 @@ h1 { margin: 0; font-size: var(--tipo-titulo); line-height: 1.08; letter-spacing
 .sidebar nav a.nav-inerte:hover {
   background: transparent;
 }
+
+/* ==========================================================================
+   Reglas de más de una ruta
+
+   Every route past the landing page is its own lazily loaded chunk with its own sheet
+   (`App.tsx`, `deferredPage`), so a class two chunks paint cannot live in either one's sheet:
+   /accounts writes `.config-*` without loading `config.css`, /messages renders
+   `TerminalTranscript` without loading `terminal-panel.css`, and /ayuda writes `<kbd>` without a
+   sheet of its own. These are the rules that answer for both, and the only reason they are global.
+   ========================================================================== */
+
+.observation-line { display: flex; align-items: center; gap: 8px; margin: -10px 0 20px; color: var(--muted); font-size: var(--tipo-rotulo); }
+
+.capabilities { margin-top: 16px; }
+.capabilities > p { display: flex; align-items: center; gap: 6px; margin: 0 0 9px; color: var(--faint); font-size: var(--tipo-apunte); font-weight: 700; text-transform: uppercase; }
+
+kbd { padding: 1px 4px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-2); color: var(--terminal-soft); font: inherit; }
+
+/* --- Formularios de configuración: /config y /accounts --- */
+.config-form { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; }
+.config-json { grid-column: 1 / -1; }
+.config-json textarea, .config-preview, .config-records code { font-family: "SFMono-Regular", Consolas, monospace; }
+.config-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.config-preview { max-height: 440px; overflow: auto; margin: 16px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: #070b13; color: var(--text-2); font-size: var(--tipo-rotulo); white-space: pre-wrap; }
+.config-records { display: grid; gap: 7px; max-height: 350px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.config-records li { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: #0a111d; }
+.config-records code { color: var(--text-2); font-size: var(--tipo-apunte); overflow-wrap: anywhere; }
+
+/* --- La transcripción: `TerminalTranscript` la dibujan /terminal y /messages --- */
+.terminal-transcript { display: flex; min-height: 360px; max-height: 53vh; flex: 1; flex-direction: column; gap: 10px; overflow-y: auto; padding: 18px 16px; scroll-behavior: smooth; }
+.terminal-transcript-empty { display: grid; min-height: 360px; flex: 1; place-items: center; padding: 25px; }
+.terminal-transcript-empty .empty-state { max-width: 430px; }
+.transcript-entry { position: relative; width: min(88%, 720px); padding: 12px 13px; border: 1px solid var(--border); border-radius: 4px 13px 13px 13px; background: var(--terminal-raised); }
+.transcript-entry.input { align-self: flex-end; border-color: #27594f; border-radius: 13px 4px 13px 13px; background: linear-gradient(145deg, #102a27, #102030); }
+.transcript-entry.output { align-self: flex-start; }
+.transcript-entry[data-selected="true"] { box-shadow: 0 0 0 1px var(--blue), 0 10px 30px rgb(0 0 0 / 18%); }
+.transcript-entry header, .transcript-entry footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--faint); font-size: var(--tipo-apunte); }
+.transcript-direction { display: inline-flex; align-items: center; gap: 5px; color: var(--mint); font-weight: 700; text-transform: uppercase; }
+.transcript-entry.output .transcript-direction { color: var(--blue); }
+.transcript-entry p { margin: 10px 0; color: #dae5f5; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--tipo-rotulo); line-height: 1.65; white-space: pre-wrap; }
+.transcript-delivery { display: flex; width: 100%; align-items: center; gap: 6px; margin-top: 10px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: #09111d; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
+.transcript-delivery > span:last-child { margin-left: auto; }
+.delivery-state-icon { color: var(--blue); }
+.transcript-output-note { display: inline-block; margin-top: 7px; padding: 0; border: 0; border-bottom: 1px dotted var(--border-strong); background: none; color: var(--faint); font-size: var(--tipo-apunte); text-align: left; cursor: pointer; }
+.transcript-output-note:hover { color: var(--muted); }
+.transcript-truncado { display: flex; gap: 5px; align-items: flex-start; margin: -4px 0 8px; color: var(--amber); font-size: var(--tipo-apunte); line-height: 1.5; }
+.transcript-truncado svg { flex: none; margin-top: 2px; }

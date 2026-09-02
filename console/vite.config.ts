@@ -1,11 +1,31 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { ansiPaletteCss, xtermAnsiPalette } from './vite/ansi-palette';
+
+const ANSI_CSS_ID = 'virtual:cauce/xterm-ansi.css';
+const ANSI_CSS_RESOLVED = `\0${ANSI_CSS_ID}`;
+
+function xtermAnsiCss(): Plugin {
+  return {
+    name: 'cauce-xterm-ansi-css',
+    resolveId(id) {
+      return id === ANSI_CSS_ID ? ANSI_CSS_RESOLVED : null;
+    },
+    load(id) {
+      if (id !== ANSI_CSS_RESOLVED) return null;
+      const bundle = createRequire(import.meta.url).resolve('@xterm/xterm');
+      return ansiPaletteCss(xtermAnsiPalette(readFileSync(bundle, 'utf8')));
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react()],
+    plugins: [react(), xtermAnsiCss()],
     server: {
       port: 4173,
       proxy: {

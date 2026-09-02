@@ -1,6 +1,6 @@
 import { Save, SearchCheck } from 'lucide-react';
 import type { ConfigMutation } from '../../api/types';
-import type { RegistryMutationRunner } from './use-registry-mutation';
+import type { ConfigMutationRunner } from '../config/use-config-mutation';
 
 /**
  * Shared write bar for both pool forms: dry-run first, apply after, with apply disabled until
@@ -13,7 +13,7 @@ import type { RegistryMutationRunner } from './use-registry-mutation';
  * operator never asked for.
  */
 export function MutationBar({ runner, mutation, invalid, previewLabel }: {
-  runner: RegistryMutationRunner;
+  runner: ConfigMutationRunner;
   mutation?: ConfigMutation;
   /** Reason why the mutation cannot be submitted yet (local validation). */
   invalid?: string;
@@ -39,6 +39,7 @@ export function MutationBar({ runner, mutation, invalid, previewLabel }: {
     {runner.notice ? <p
       className={runner.notice.tone === 'error' ? 'notice error' : runner.notice.tone === 'parcial' ? 'notice parcial' : 'notice success'}
       role={runner.notice.tone === 'success' ? 'status' : 'alert'}
+      data-canal={runner.canal}
     >{runner.notice.text}</p> : null}
   </>;
 }

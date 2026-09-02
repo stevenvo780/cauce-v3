@@ -53,24 +53,30 @@ export class PublishIntentRateLimitedError extends ApiError {
 
 export function safeBase(baseUrl: string): string {
   if (!baseUrl) return '';
-  const locOrigin = typeof globalThis.location.origin === 'string' ? globalThis.location.origin : 'http://localhost';
+  const locOrigin = typeof globalThis.location !== 'undefined' ? globalThis.location.origin : 'http://localhost';
   const parsed = new URL(baseUrl, locOrigin);
   if (parsed.username || parsed.password) {
     throw new Error('VITE_CAUCE_API_BASE must not contain credentials');
   }
-  if (import.meta.env.PROD && typeof globalThis.location.origin === 'string' && parsed.origin !== globalThis.location.origin) {
+  if (import.meta.env.PROD && typeof globalThis.location !== 'undefined' && parsed.origin !== globalThis.location.origin) {
     throw new Error('Production OIDC BFF API base must be same-origin');
   }
   return baseUrl.replace(/\/$/, '');
 }
 
-export function errorBody(value: unknown): { message?: string; error?: string } {
+export function errorBody(value: unknown): { message?: string; error?: string; reason?: string } {
   if (!value || typeof value !== 'object') return {};
   const record = value as Record<string, unknown>;
   return {
     ...(typeof record.message === 'string' ? { message: record.message } : {}),
     ...(typeof record.error === 'string' ? { error: record.error } : {}),
+    ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
   };
+}
+
+/** Write = whatever the gateway's `onRequest` hook considers unsafe. Same list, same source. */
+export function isUnsafeMethod(method: string | undefined): boolean {
+  return !['GET', 'HEAD', 'OPTIONS'].includes((method ?? 'GET').toUpperCase());
 }
 
 export function reconciliationBody(value: unknown): PreparePublishIntentReconciliation | undefined {
@@ -127,9 +133,7 @@ export interface RequestOptions {
   mapError?: (status: number, body: unknown) => Error | undefined;
 }
 
-/**
- * Maximum wait time for HTTP requests before aborting on timeout.
- */
+/** Maximum wait time for HTTP requests before aborting on timeout. */
 export const TIEMPO_MAXIMO_MS = 30_000;
 
 export function segundos(ms: number): string {

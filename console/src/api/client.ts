@@ -1,54 +1,18 @@
-import type {
-  AdapterPage,
-  AgentDirective,
-  AgentDocumentContent,
-  AgentDocumentGuardado,
-  AgentDocumentKind,
-  AgentDocumentsMap,
-  AgentPerfil,
-  AgentPerfilValor,
-  AuditPage,
-  CancelResult,
-  ConfigurationChangeResult,
-  ConfigurationSnapshot,
-  ConfigMutation,
-  ConfirmPublishIntentInput,
-  ConfirmPublishIntentResult,
-  ConsoleAccess,
-  ConsoleAuthState,
-  DlqPage,
-  FleetActivitySnapshot,
-  MessageDetail,
-  MessagePage,
-  ObservabilitySnapshot,
-  OriginRelayPage,
-  PreparePublishIntentInput,
-  PreparePublishIntentResult,
-  PublishMessageInput,
-  PublishResult,
-  QueueSnapshot,
-  QuotaSnapshot,
-  ReplayResult,
-  ResolveDlqWithoutReplayInput,
-  ResolveDlqWithoutReplayResult,
-  RoleBriefHistory,
-  SystemStatus,
-  TerminalCapability,
-  TopologySnapshot,
-} from './types';
+import type { ConsoleAuthState } from './types';
 import {
   ApiError,
   corteAlVencer,
   errorBody,
   esperaVencida,
+  isUnsafeMethod,
   safeBase,
   TIEMPO_MAXIMO_MS,
   type FetchLike,
   type RequestOptions,
 } from './client/core';
-import * as systemApi from './client/system-client';
-import * as messagingApi from './client/messaging-client';
-import * as agentApi from './client/agent-client';
+import { systemClient, type RequestFn, type SystemClient } from './client/system-client';
+import { messagingClient, type MessagingClient } from './client/messaging-client';
+import { agentClient, type AgentClient } from './client/agent-client';
 
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
@@ -65,6 +29,9 @@ type UnauthorizedListener = () => void;
  * not an expired session.
  */
 const AUTH_PATH = '/v3/auth/';
+
+/* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -87,6 +54,9 @@ export class CauceApi {
       throw new Error('Explicit dev auth requires VITE_CAUCE_DEV_TENANT and VITE_CAUCE_DEV_ALIAS');
     }
     this.developmentIdentity = developmentIdentity;
+    const request: RequestFn = <T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> =>
+      this.request<T>(path, init, options);
+    Object.assign(this, systemClient(request), messagingClient(request), agentClient(request));
   }
 
   private async request<T>(
@@ -95,7 +65,7 @@ export class CauceApi {
     { requireCsrf = true, mapError }: RequestOptions = {},
   ): Promise<T> {
     const method = init.method?.toUpperCase() ?? 'GET';
-    const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const unsafe = isUnsafeMethod(method);
     const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
 
     const propio = init.signal || !(this.tiempoMaximoMs > 0) ? undefined : new AbortController();
@@ -168,10 +138,8 @@ export class CauceApi {
     return body as T;
   }
 
-  /**
-   * Subscribes to the 401s. Returns the unsubscription: a listener that outlives its component
-   * would revalidate on behalf of a gate that is no longer mounted.
-   */
+  /** Subscribes to the 401s. Returns the unsubscription: a listener that outlives its component
+   * would revalidate on behalf of a gate that is no longer mounted. */
   onUnauthorized(listener: UnauthorizedListener): () => void {
     this.unauthorizedListeners.add(listener);
     return () => { this.unauthorizedListeners.delete(listener); };
@@ -194,164 +162,34 @@ export class CauceApi {
     return `${this.baseUrl}/v3/auth/login`;
   }
 
-  private boundRequest = <T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> =>
-    this.request<T>(path, init, options);
-
-  login(email: string, password: string): Promise<ConsoleAuthState> {
-    return systemApi.login(this.boundRequest, email, password, {
-      setBffSessionSupported: (v) => { this.bffSessionSupported = v; },
-      setCsrfToken: (v) => { this.csrfToken = v; },
-    });
+  async login(email: string, password: string): Promise<ConsoleAuthState> {
+    const state = await this.request<ConsoleAuthState>('/v3/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }, { requireCsrf: false });
+    this.bffSessionSupported = true;
+    this.csrfToken = typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
+    return state;
   }
 
-  getAuthSession(): Promise<ConsoleAuthState> {
-    return systemApi.getAuthSession(this.boundRequest, {
-      setBffSessionSupported: (v) => { this.bffSessionSupported = v; },
-      setCsrfToken: (v) => { this.csrfToken = v; },
-    });
+  async getAuthSession(): Promise<ConsoleAuthState> {
+    try {
+      const state = await this.request<ConsoleAuthState>('/v3/auth/session');
+      this.bffSessionSupported = true;
+      this.csrfToken = state.authenticated && typeof state.csrf_token === 'string' ? state.csrf_token : undefined;
+      return state;
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
+        this.bffSessionSupported = false;
+        return { authenticated: null, reason: 'El gateway usa autenticación no-BFF.' };
+      }
+      throw error;
+    }
   }
 
-  logout(): Promise<void> {
-    return systemApi.logout(this.boundRequest, {
-      setCsrfToken: (v) => { this.csrfToken = v; },
-    });
-  }
-
-  getStatus(): Promise<SystemStatus> {
-    return systemApi.getStatus(this.boundRequest);
-  }
-
-  getConsoleAccess(): Promise<ConsoleAccess> {
-    return systemApi.getConsoleAccess(this.boundRequest);
-  }
-
-  getTopology(): Promise<TopologySnapshot> {
-    return systemApi.getTopology(this.boundRequest);
-  }
-
-  listAdapters(): Promise<AdapterPage> {
-    return systemApi.listAdapters(this.boundRequest);
-  }
-
-  listAudit(options: { limit?: number; before?: string; signal?: AbortSignal } = {}): Promise<AuditPage> {
-    return systemApi.listAudit(this.boundRequest, options);
-  }
-
-  getConfiguration(): Promise<ConfigurationSnapshot> {
-    return systemApi.getConfiguration(this.boundRequest);
-  }
-
-  changeConfiguration(
-    mutation: ConfigMutation,
-    options: { dryRun: boolean; expectedRevision?: number },
-  ): Promise<ConfigurationChangeResult> {
-    return systemApi.changeConfiguration(this.boundRequest, mutation, options);
-  }
-
-  rollbackConfiguration(
-    revisionId: string,
-    options: { dryRun: boolean; expectedRevision?: number },
-  ): Promise<ConfigurationChangeResult> {
-    return systemApi.rollbackConfiguration(this.boundRequest, revisionId, options);
-  }
-
-  getObservability(): Promise<ObservabilitySnapshot> {
-    return systemApi.getObservability(this.boundRequest);
-  }
-
-  getQuotas(): Promise<QuotaSnapshot> {
-    return systemApi.getQuotas(this.boundRequest);
-  }
-
-  listMessages(): Promise<MessagePage> {
-    return messagingApi.listMessages(this.boundRequest);
-  }
-
-  getMessage(messageId: string): Promise<MessageDetail> {
-    return messagingApi.getMessage(this.boundRequest, messageId);
-  }
-
-  publishMessage(input: PublishMessageInput): Promise<PublishResult> {
-    return messagingApi.publishMessage(this.boundRequest, input);
-  }
-
-  preparePublishIntent(input: PreparePublishIntentInput): Promise<PreparePublishIntentResult> {
-    return messagingApi.preparePublishIntent(this.boundRequest, input);
-  }
-
-  confirmPublishIntent(input: ConfirmPublishIntentInput): Promise<ConfirmPublishIntentResult> {
-    return messagingApi.confirmPublishIntent(this.boundRequest, input);
-  }
-
-  getQueues(): Promise<QueueSnapshot> {
-    return messagingApi.getQueues(this.boundRequest);
-  }
-
-  getDlq(limit = 200, cursor?: string, signal?: AbortSignal): Promise<DlqPage> {
-    return messagingApi.getDlq(this.boundRequest, limit, cursor, signal);
-  }
-
-  resolveDlqWithoutReplay(input: ResolveDlqWithoutReplayInput): Promise<ResolveDlqWithoutReplayResult> {
-    return messagingApi.resolveDlqWithoutReplay(this.boundRequest, input);
-  }
-
-  replayDelivery(deliveryId: string): Promise<ReplayResult> {
-    return messagingApi.replayDelivery(this.boundRequest, deliveryId);
-  }
-
-  cancelDelivery(deliveryId: string, reason?: string): Promise<CancelResult> {
-    return messagingApi.cancelDelivery(this.boundRequest, deliveryId, reason);
-  }
-
-  listOriginRelays(): Promise<OriginRelayPage> {
-    return messagingApi.listOriginRelays(this.boundRequest);
-  }
-
-  getFleetActivity(): Promise<FleetActivitySnapshot> {
-    return agentApi.getFleetActivity(this.boundRequest);
-  }
-
-  getAgentDirective(tenantId: string, alias: string): Promise<AgentDirective> {
-    return agentApi.getAgentDirective(this.boundRequest, tenantId, alias);
-  }
-
-  getRoleBriefHistory(tenantId: string, alias: string): Promise<RoleBriefHistory> {
-    return agentApi.getRoleBriefHistory(this.boundRequest, tenantId, alias);
-  }
-
-  getAgentDocuments(tenantId: string, alias: string): Promise<AgentDocumentsMap> {
-    return agentApi.getAgentDocuments(this.boundRequest, tenantId, alias);
-  }
-
-  getAgentDocumentContent(tenantId: string, alias: string, kind: AgentDocumentKind): Promise<AgentDocumentContent> {
-    return agentApi.getAgentDocumentContent(this.boundRequest, tenantId, alias, kind);
-  }
-
-  putAgentDocumentContent(
-    tenantId: string,
-    alias: string,
-    kind: AgentDocumentKind,
-    content: string,
-    expectedSha: string | null,
-  ): Promise<AgentDocumentGuardado> {
-    return agentApi.putAgentDocumentContent(this.boundRequest, tenantId, alias, kind, content, expectedSha);
-  }
-
-  getAgentPerfil(tenantId: string, alias: string): Promise<AgentPerfil> {
-    return agentApi.getAgentPerfil(this.boundRequest, tenantId, alias);
-  }
-
-  putAgentPerfil(
-    tenantId: string,
-    alias: string,
-    profile: AgentPerfilValor,
-    expectedRevision: number | null,
-  ): Promise<unknown> {
-    return agentApi.putAgentPerfil(this.boundRequest, tenantId, alias, profile, expectedRevision);
-  }
-
-  getTerminalCapability(): Promise<TerminalCapability> {
-    return agentApi.getTerminalCapability(this.boundRequest);
+  async logout(): Promise<void> {
+    await this.request<undefined>('/v3/auth/logout', { method: 'POST' });
+    this.csrfToken = undefined;
   }
 }
 

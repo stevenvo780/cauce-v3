@@ -4,9 +4,38 @@ import {
   PublishIntentReconciliationError,
 } from './client';
 import type { ConfirmPublishIntentInput, PreparePublishIntentInput, PublishMessageInput } from './types';
+import { agentClient } from './client/agent-client';
+import { messagingClient } from './client/messaging-client';
+import { systemClient, type RequestFn } from './client/system-client';
 import { server } from '../mocks/server';
 
+const nunca: RequestFn = () => new Promise<never>(() => undefined);
+const metodosDeLosModulos = [systemClient(nunca), messagingClient(nunca), agentClient(nunca)]
+  .flatMap((modulo) => Object.keys(modulo));
+
 describe('CauceApi', () => {
+  it('expone en la instancia cada método de los tres módulos, atado a SU propio request', async () => {
+    // `Object.assign` en el constructor pone los métodos en la instancia, no en el prototipo: si un
+    // módulo deja de mezclarse el tipo sigue compilando y la vista revienta en tiempo de ejecución.
+    const api = new CauceApi();
+    expect(metodosDeLosModulos).toHaveLength(30);
+    for (const nombre of metodosDeLosModulos) {
+      expect(typeof (api as unknown as Record<string, unknown>)[nombre]).toBe('function');
+    }
+
+    const rutas: string[] = [];
+    const fetcher = ((entrada: RequestInfo | URL) => {
+      rutas.push(new URL(entrada instanceof Request ? entrada.url : entrada).pathname);
+      return Promise.resolve(new Response('{}', {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    }) as typeof fetch;
+    const atada = new CauceApi('http://localhost', fetcher);
+    await Promise.all([atada.getStatus(), atada.listMessages(), atada.getFleetActivity()]);
+
+    expect(rutas).toEqual(['/v3/status', '/v3/console/messages', '/v3/console/activity']);
+  });
+
   it('uses cookie credentials and strips client identity fields from publish', async () => {
     let observed: Record<string, unknown> = {};
     let credentials: RequestCredentials | undefined;

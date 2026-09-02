@@ -71,7 +71,7 @@ export interface AgentRegistration {
   runtimeUser: string | null;
 }
 
-export interface CeilingEntry {
+interface CeilingEntry {
   tenantId: string;
   alias: string;
   accountId: string;
@@ -90,7 +90,7 @@ export interface AccountBinding {
 }
 
 /** A section of the snapshot: distinguishes "the gateway does not publish this" from "there are zero rows". */
-export interface SnapshotSection<T> {
+interface SnapshotSection<T> {
   available: boolean;
   items: T[];
 }
@@ -167,7 +167,7 @@ export function readProviderAccounts(snapshot?: ConfigurationSnapshot | null): S
   });
 }
 
-export function readAgents(snapshot?: ConfigurationSnapshot | null): SnapshotSection<AgentRegistration> {
+function readAgents(snapshot?: ConfigurationSnapshot | null): SnapshotSection<AgentRegistration> {
   return section(snapshot, 'agents', (row) => {
     const tenantId = text(row, 'tenant_id');
     const alias = text(row, 'alias');
@@ -203,7 +203,7 @@ export function readCeiling(snapshot?: ConfigurationSnapshot | null): SnapshotSe
   });
 }
 
-export function readBindings(snapshot?: ConfigurationSnapshot | null): SnapshotSection<AccountBinding> {
+function readBindings(snapshot?: ConfigurationSnapshot | null): SnapshotSection<AccountBinding> {
   return section(snapshot, 'agent_account_bindings', (row) => {
     const tenantId = text(row, 'tenant_id');
     const agentAlias = text(row, 'agent_alias');
@@ -239,14 +239,14 @@ export interface MatrixCell {
   rank: number | null;
 }
 
-export interface FallbackStep {
+interface FallbackStep {
   rank: number;
   accountId: string;
   priority: number | null;
   borrowed: boolean;
 }
 
-export interface MatrixRow {
+interface MatrixRow {
   agent: AgentRegistration;
   cells: MatrixCell[];
   /** Retries, in order. Attempt 1 never goes through here: it runs without override and the CLI
@@ -328,12 +328,12 @@ export interface AccountRouteProjection {
   entries: AccountRouteEntry[];
 }
 
-export interface RegistryRoutingProjection {
+interface RegistryRoutingProjection {
   matrix: MatrixRow[];
   byAccount: ReadonlyMap<string, AccountRouteProjection>;
 }
 
-export function buildRegistryRouting(
+function buildRegistryRouting(
   agents: AgentRegistration[],
   accounts: ProviderAccount[],
   ceiling: CeilingEntry[],

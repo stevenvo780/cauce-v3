@@ -319,3 +319,38 @@
   border-color: var(--amber);
   background-color: var(--amber-dim);
 }
+
+/* ==========================================================================
+   Cuotas por proveedor y el detalle de ruteo de una fila del inventario
+   ========================================================================== */
+
+.quota-provider { margin-bottom: 20px; padding: 16px; border: 1px solid var(--border); border-radius: 13px; background: #0c1422; }
+.quota-provider:last-child { margin-bottom: 0; }
+.quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #74313c; }
+.quota-provider[data-severity="warn"] { border-color: #725622; }
+.quota-provider-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+.quota-provider-head h3 { margin: 0; font-size: var(--tipo-panel); }
+.quota-provider-head p { max-width: var(--measure-prose); margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--tipo-rotulo); }
+.quota-provider-head-right { display: flex; flex-direction: column; align-items: end; gap: 6px; }
+.quota-effective { color: var(--blue); font-size: var(--tipo-cuerpo); }
+.quota-groups-line { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; color: var(--muted); font-size: var(--tipo-rotulo); }
+.chip-list.inline { display: inline-flex; margin-left: 6px; }
+
+.account-detail-row > td { padding: 0 14px 14px; background: var(--surface-2); }
+.account-detail-row .account-body { display: grid; gap: 14px; padding-top: 12px; }
+
+/* Fuera de la escala a propósito, y con la medición que lo paga: el título del proveedor y su
+   columna de cifras todavía caben uno al lado del otro a 760px. Apilarlos ya en el paso compacto
+   lleva /accounts de 4,99 a 5,21 pantallas de scroll a 760px, y el presupuesto de
+   `qa/layout-baseline.json` es 4,92. No es un paso de ventana: es el ancho al que este encabezado
+   deja de caber. */
+@media (max-width: 720px) {
+  .quota-provider-head { flex-direction: column; }
+  .quota-provider-head-right { align-items: start; }
+}
+
+@media (prefers-color-scheme: light) {
+  .quota-provider { background: #ffffff; }
+  .quota-provider[data-severity="critical"], .quota-provider[data-severity="exhausted"] { border-color: #e0a3ab; }
+  .quota-provider[data-severity="warn"] { border-color: #e3c98d; }
+}

@@ -7,7 +7,8 @@ import type {
 } from '../../api/types';
 import { useResource } from '../../api/use-resource';
 import {
-  Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown
+  Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown,
+  ViewTabs,
 } from '../../components/ui';
 import { permissionState } from '../../lib';
 import {
@@ -19,11 +20,9 @@ import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { ArnesesPanel } from './ArnesesPanel';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
-import {
-  describeConfigError, esNegativaDePermiso, executeConfigurationChange, textoRecarga,
-  type CaminoDeCambio, type ConfigChangeOutcome, type EstadoRecarga,
-} from './config-change';
+import { describeConfigError, esNegativaDePermiso, textoRecarga, type EstadoRecarga } from './config-change';
 import { exactConfigurationReceipt } from './config-receipt';
+import { useConfigMutation, useRevisionEncadenada, type ConfigMutationNotice } from './use-config-mutation';
 import { useInterruptores } from './use-interruptores';
 import './config.css';
 
@@ -144,13 +143,12 @@ function parseMutation(text: string): ConfigMutation {
 }
 
   /**
-   * Notice for a table action, bound to the collection where the operator clicked AND to the snapshot revision under
-   * which it is true. Without the revision, the notice outlived what disproved it: it kept asserting "the tables are at
+   * What a table-action notice is true for: the collection where the operator clicked AND the snapshot revision under
+   * which it holds. Without the revision, the notice outlived what disproved it: it kept asserting "the tables are at
    * revision 2" after another write—the onboarding, the wizard, the raw editor, a rollback—moved them to 3.
    */
-interface AvisoDeAccion extends AvisoDeColeccion {
-  coleccion: string;
-  revision: number | undefined;
+function alcanceDeAccion(coleccion: string, revision: number | undefined): string {
+  return `${coleccion}@${String(revision ?? 'UNKNOWN')}`;
 }
 
   /**
@@ -172,6 +170,21 @@ function revisionTrasEscribir(recarga: EstadoRecarga | undefined, actual: number
   return actual;
 }
 
+const PANEL_DE_AREA = 'config-area-panel';
+
+  /**
+   * The outcome of a write, in the channel that produced it. Each control painting its OWN slot is what keeps the raw
+   * editor's notice from being read as a row action's; `data-canal` only names the channel the slot belongs to.
+   */
+function Aviso({ aviso, canal }: { aviso?: ConfigMutationNotice; canal: string }) {
+  if (!aviso) return null;
+  return <p
+    className={aviso.tone === 'error' ? 'notice error' : aviso.tone === 'parcial' ? 'notice parcial' : 'notice success'}
+    role={aviso.tone === 'success' ? 'status' : 'alert'}
+    data-canal={canal}
+  >{aviso.text}</p>;
+}
+
 export function ConfigPage() {
   return <ConsoleAccessBoundary><ConfigPageContent /></ConsoleAccessBoundary>;
 }
@@ -183,18 +196,7 @@ function ConfigPageContent() {
   const [resource, setResource] = useState<ConfigResource>('acl_edge');
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
-  const [preview, setPreview] = useState<string>();
-  const [chainedRevision, setChainedRevision] = useState<number>();
   const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
-  const [avisoDeAccion, setAvisoDeAccion] = useState<AvisoDeAccion>();
-  // The audit trail has its OWN notices and its own preview. Previously `rollback()` wrote to `notice`/`preview`, which
-  // render inside the raw editor's `<details>`—closed by default—: the POST went out, the server answered 201, and
-  // the screen said absolutely nothing. A failing rollback looked EXACTLY like a working one. The outcome of a write
-  // is painted next to the control that fired it, without opening anything.
-  const [avisoDeRollback, setAvisoDeRollback] = useState<{ text: string; tone: 'success' | 'error' | 'parcial' }>();
-  const [previewDeRollback, setPreviewDeRollback] = useState<string>();
   // The open tab. `/config` used to be one scroll with onboarding, wizard, raw editor, every table, and audit trail.
   // General configuration stays grouped here; the account registry is intentionally absent because `/accounts` is
   // its typed authority. Unknown collections still fall under "Others".
@@ -211,12 +213,25 @@ function ConfigPageContent() {
       ? CONFIG_WRITE_NO_ACREDITADO_REASON
       : undefined;
   const soloLectura = motivoDeSoloLectura !== undefined;
+  const encadenado = useRevisionEncadenada();
+  const escritura = {
+    config,
+    access,
+    encadenado,
+    fallback: 'Cambio rechazado: UNKNOWN',
+    ...(motivoDeSoloLectura === undefined ? {} : { bloqueo: `Cambio bloqueado. ${motivoDeSoloLectura}` }),
+  };
+  /**
+   * One channel per control that writes, because their outcomes are different assertions. The audit trail and the
+   * table actions paint theirs NEXT TO the button that fired it; the raw editor's live inside a `<details>` closed by
+   * default, where a failing rollback looked EXACTLY like a working one. All three share the same write path AND the
+   * same chained revision: what a write leaves chained is true of the server, not of the control that fired it.
+   */
+  const canalEditor = useConfigMutation({ ...escritura, canal: 'editor' });
+  const canalRollback = useConfigMutation({ ...escritura, canal: 'rollback' });
+  const canalAccion = useConfigMutation({ ...escritura, canal: 'row-action' });
+  const busy = canalEditor.busy || canalRollback.busy || canalAccion.busy;
   const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
-  // The wizard chains mutations and the snapshot reload is asynchronous: until it catches up to the revision the last apply returned, that revision is the only one expected to be true.
-  const expectedRevision = chainedRevision !== undefined
-    && (snapshotRevision === undefined || snapshotRevision < chainedRevision)
-    ? chainedRevision
-    : snapshotRevision;
   const groups = useMemo(() => configCollections(config.data), [config.data]);
   const areas = useMemo(() => agruparPorArea(groups), [groups]);
   // A tab the snapshot no longer justifies ("Others", once the unknown collection disappears) must not leave the screen blank: it falls back to the default one.
@@ -232,7 +247,7 @@ function ConfigPageContent() {
    * `camino: 'directo'`: a switch does not preview anything, so a 409 cannot redirect to "back to preview".
    */
   const interruptores = useInterruptores(
-    (mutation) => change(mutation, false, 'directo'),
+    (mutation) => canalAccion.change(mutation, false, 'directo'),
     snapshotRevision,
   );
 
@@ -246,7 +261,7 @@ function ConfigPageContent() {
   function irAArea(siguiente: ConfigAreaId) {
     setArea(siguiente);
     setPendiente(undefined);
-    setAvisoDeAccion(undefined);
+    canalAccion.informar(undefined);
     interruptores.limpiar();
   }
 
@@ -259,15 +274,13 @@ function ConfigPageContent() {
     setAction(validAction);
     setEditor(mutationText(nextResource, validAction));
     // The preview and notice were for the PREVIOUS mutation. Leaving the "applied" green under a different JSON turns it into an assertion about something the server never saw.
-    setPreview(undefined);
-    setNotice(undefined);
+    canalEditor.clear();
   }
 
   /** Editing the JSON invalidates what was said about the previous JSON: same reason as `selectTemplate`. */
   function editarMutacion(texto: string) {
     setEditor(texto);
-    setPreview(undefined);
-    setNotice(undefined);
+    canalEditor.clear();
   }
 
   /**
@@ -282,57 +295,28 @@ function ConfigPageContent() {
     return { releido: true, ...(revision === undefined ? {} : { revision }) };
   }
 
-  /** The only write path: shared by the raw editor, the wizard, the onboarding, and the tables. */
-  async function change(
-    mutation: ConfigMutation, dryRun: boolean, camino: CaminoDeCambio = 'previsualizado',
-  ): Promise<ConfigChangeOutcome> {
-    if (motivoDeSoloLectura) {
-      return { ok: false, conflict: false, message: `Cambio bloqueado. ${motivoDeSoloLectura}` };
-    }
-    setBusy(true);
-    try {
-      const outcome = await executeConfigurationChange({
-        mutation,
-        dryRun,
-        expectedRevision,
-        change: (next, options) => api.changeConfiguration(next, options),
-        reload: config.reload,
-        fallback: 'Cambio rechazado: UNKNOWN',
-        camino,
-      });
-      if (outcome.ok) {
-        if (!dryRun && typeof outcome.result.revision === 'number') setChainedRevision(outcome.result.revision);
-      } else if (outcome.conflict) {
-        setChainedRevision(undefined);
-      }
-      return outcome;
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function submit(event: SyntheticEvent, dryRun: boolean) {
     event.preventDefault();
-    setNotice(undefined);
+    canalEditor.informar(undefined);
     let mutation: ConfigMutation;
     try {
       mutation = parseMutation(editor);
     } catch (error) {
-      setNotice({ text: error instanceof Error ? error.message : 'Mutación rechazada: UNKNOWN', tone: 'error' });
+      canalEditor.informar({ text: error instanceof Error ? error.message : 'Mutación rechazada: UNKNOWN', tone: 'error' });
       return;
     }
-    const outcome = await change(mutation, dryRun);
+    const outcome = await canalEditor.change(mutation, dryRun);
     if (!outcome.ok) {
-      if (outcome.conflict) setPreview(undefined);
-      setNotice({ text: outcome.message + textoRecarga(outcome.recarga), tone: 'error' });
+      if (outcome.conflict) canalEditor.mostrar(undefined);
+      canalEditor.informar({ text: outcome.message + textoRecarga(outcome.recarga), tone: 'error' });
       return;
     }
     if (dryRun) {
-      setPreview(JSON.stringify(outcome.result, null, 2));
+      canalEditor.mostrar(JSON.stringify(outcome.result, null, 2));
       return;
     }
-    setPreview(undefined);
-    setNotice({
+    canalEditor.mostrar(undefined);
+    canalEditor.informar({
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
       text: `Cambio atómico aplicado en revisión ${String(outcome.result.revision ?? 'UNKNOWN')}: `
         + `${outcome.result.summary ?? 'UNKNOWN'}.${textoRecarga(outcome.recarga)}`,
@@ -352,101 +336,94 @@ function ConfigPageContent() {
       setPendiente(undefined);
       return;
     }
-    setAvisoDeAccion(undefined);
+    canalAccion.informar(undefined);
     // Limpiar `pendiente` ANTES del await: la guarda de arriba ya validó la revisión, y dejarlo vivo
     // mientras `change()` espera la relectura hace que la subida de revisión (1→2) lo pinte como
     // «vencido» —un alert rojo «otro operador cambió la config»— en una escritura que SÍ se aplicó.
     setPendiente(undefined);
     // `directo`: these buttons don't preview anything, so a 409 cannot redirect to "back to preview".
-    const outcome = await change(accion.mutation, false, 'directo');
+    const outcome = await canalAccion.change(accion.mutation, false, 'directo');
+    const alcance = alcanceDeAccion(coleccion, revisionTrasEscribir(outcome.recarga, snapshotRevision));
     if (!outcome.ok) {
-      setAvisoDeAccion({
-        coleccion, tone: 'error', revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),
+      canalAccion.informar({
+        alcance, tone: 'error',
         text: outcome.uncertain
           ? `No se pudo acreditar «${accion.descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`
           : `NO se aplicó «${accion.descripcion}»: ${outcome.message}${textoRecarga(outcome.recarga)}`,
       });
       return;
     }
-    setAvisoDeAccion({
-      coleccion,
-      revision: revisionTrasEscribir(outcome.recarga, snapshotRevision),
+    canalAccion.informar({
+      alcance,
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
       text: `${accion.descripcion}: aplicado en la revisión ${String(outcome.result.revision ?? 'UNKNOWN')} `
         + `(${outcome.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(outcome.recarga)}`,
     });
   }
 
-  /**
-   * Revert a revision from the audit trail. Everything it says is written to `avisoDeRollback` and `previewDeRollback`,
-   * which are painted INSIDE the audit trail panel itself, next to the buttons that fired it: `notice`/`preview` live
-   * inside the raw editor's `<details>`, and there an outcome goes unread.
-   */
+  /** Revert a revision from the audit trail. Its own channel: an outcome read inside the raw editor's `<details>` is an outcome nobody reads. */
   async function rollback(revisionId: string, operation: unknown, dryRun: boolean) {
     const policy = rollbackPolicy(operation);
     if (!policy.allowed) {
-      setPreviewDeRollback(undefined);
-      setAvisoDeRollback({ tone: 'error', text: policy.message });
+      canalRollback.mostrar(undefined);
+      canalRollback.informar({ tone: 'error', text: policy.message });
       return;
     }
     if (motivoDeSoloLectura) {
-      setPreviewDeRollback(undefined);
-      setAvisoDeRollback({
-        tone: 'error',
-        text: `Rollback bloqueado. ${motivoDeSoloLectura}`,
-      });
+      canalRollback.mostrar(undefined);
+      canalRollback.informar({ tone: 'error', text: `Rollback bloqueado. ${motivoDeSoloLectura}` });
       return;
     }
-    setBusy(true);
-    setAvisoDeRollback(undefined);
-    try {
-      const result = await api.rollbackConfiguration(revisionId, {
-        dryRun,
-        ...(expectedRevision === undefined ? {} : { expectedRevision }),
-      });
-      if (!exactConfigurationReceipt(result, dryRun, undefined, Number(revisionId))) {
-        setPreviewDeRollback(undefined);
-        const recarga = dryRun ? undefined : await releer();
-        setAvisoDeRollback({
-          tone: 'error',
-          text: dryRun
-            ? `El servidor devolvió un 2xx sin el recibo exacto del preview de rollback ${revisionId}; no se acredita.`
-            : `El servidor devolvió un 2xx sin el recibo durable exacto del rollback ${revisionId}. Puede haberse aplicado; verificá la relectura antes de repetirlo.${textoRecarga(recarga)}`,
+    const expectedRevision = canalRollback.expectedRevision;
+    canalRollback.informar(undefined);
+    await canalRollback.ocupar(async () => {
+      try {
+        const result = await api.rollbackConfiguration(revisionId, {
+          dryRun,
+          ...(expectedRevision === undefined ? {} : { expectedRevision }),
         });
-        return;
-      }
-      if (dryRun) {
-        setPreviewDeRollback(JSON.stringify(result, null, 2));
-        // A dry-run that says nothing is indistinguishable from a button that did nothing: the `<pre>` appears below, but the phrase is what gets read first.
-        setAvisoDeRollback({
-          tone: 'success',
-          text: `Preview del rollback de la revisión ${revisionId} aceptado por el servidor: `
-            + 'no se escribió nada todavía, revisá el resultado de abajo.',
+        if (!exactConfigurationReceipt(result, dryRun, undefined, Number(revisionId))) {
+          canalRollback.mostrar(undefined);
+          const recarga = dryRun ? undefined : await releer();
+          canalRollback.informar({
+            tone: 'error',
+            text: dryRun
+              ? `El servidor devolvió un 2xx sin el recibo exacto del preview de rollback ${revisionId}; no se acredita.`
+              : `El servidor devolvió un 2xx sin el recibo durable exacto del rollback ${revisionId}. Puede haberse aplicado; verificá la relectura antes de repetirlo.${textoRecarga(recarga)}`,
+          });
+          return;
+        }
+        if (dryRun) {
+          canalRollback.mostrar(JSON.stringify(result, null, 2));
+          // A dry-run that says nothing is indistinguishable from a button that did nothing: the `<pre>` appears below, but the phrase is what gets read first.
+          canalRollback.informar({
+            tone: 'success',
+            text: `Preview del rollback de la revisión ${revisionId} aceptado por el servidor: `
+              + 'no se escribió nada todavía, revisá el resultado de abajo.',
+          });
+          return;
+        }
+        canalRollback.mostrar(undefined);
+        if (typeof result.revision === 'number') canalRollback.encadenar(result.revision);
+        const recarga = await releer();
+        canalRollback.informar({
+          tone: recarga.releido ? 'success' : 'parcial',
+          text: `Rollback atómico de la revisión ${revisionId} aplicado: revisión `
+            + `${String(result.revision ?? 'UNKNOWN')}.${textoRecarga(recarga)}`,
         });
-        return;
+      } catch (error) {
+        // `rollback`: this path does not preview before applying, so a 409 cannot redirect to "back to preview"—it redirects to picking the revision again over the new state.
+        const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN', 'rollback');
+        if (!described.conflict) {
+          canalRollback.informar({ text: described.message, tone: 'error' });
+          return;
+        }
+        canalRollback.encadenar(undefined);
+        canalRollback.mostrar(undefined);
+        const recarga = await releer();
+        canalRollback.informar({ text: described.message + textoRecarga(recarga), tone: 'error' });
       }
-      setPreviewDeRollback(undefined);
-      if (typeof result.revision === 'number') setChainedRevision(result.revision);
-      const recarga = await releer();
-      setAvisoDeRollback({
-        tone: recarga.releido ? 'success' : 'parcial',
-        text: `Rollback atómico de la revisión ${revisionId} aplicado: revisión `
-          + `${String(result.revision ?? 'UNKNOWN')}.${textoRecarga(recarga)}`,
-      });
-    } catch (error) {
-      // `rollback`: this path does not preview before applying, so a 409 cannot redirect to "back to preview"—it redirects to picking the revision again over the new state.
-      const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN', 'rollback');
-      if (!described.conflict) {
-        setAvisoDeRollback({ text: described.message, tone: 'error' });
-        return;
-      }
-      setChainedRevision(undefined);
-      setPreviewDeRollback(undefined);
-      const recarga = await releer();
-      setAvisoDeRollback({ text: described.message + textoRecarga(recarga), tone: 'error' });
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   if (config.loading && !config.data) return <LoadingState label="Leyendo configuración versionada…" />;
@@ -480,20 +457,17 @@ function ConfigPageContent() {
       ÚLTIMA lectura buena, no lo que el servidor tiene ahora.
     </p> : null}
 
-    {/* The tabs are real buttons with `role="tab"`, not anchors or `<details>`: the keyboard and the screen reader must
-        be able to tell which one is open. The list comes from `areas.ts`, which derives it from the snapshot—a new
-        collection from the server falls under "Others" and shows the same way, instead of staying invisible behind a
-        console allowlist. */}
-    <div className="config-tabs" role="tablist" aria-label="Áreas de configuración">
-      {areas.map(({ area: entrada }) => <button
-        key={entrada.id}
-        type="button"
-        role="tab"
-        aria-selected={entrada.id === areaVisible}
-        className="config-tab"
-        onClick={() => { irAArea(entrada.id); }}
-      >{entrada.label}</button>)}
-    </div>
+    {/* The one tab strip of the console: `aria-controls`, roving tabIndex and arrow keys come with it. The list comes
+        from `areas.ts`, which derives it from the snapshot—a new collection from the server falls under "Others" and
+        shows the same way, instead of staying invisible behind a console allowlist. */}
+    <ViewTabs
+      variant="page"
+      label="Áreas de configuración"
+      panelId={PANEL_DE_AREA}
+      tabs={areas.map(({ area: entrada }) => ({ id: entrada.id, label: entrada.label }))}
+      active={areaVisible}
+      onSelect={irAArea}
+    />
 
     {/* The area description goes open, not in a tooltip: it is the first thing to read upon entering, and hiding
         behind a question mark exactly what orients you would repeat the defect this change is meant to fix.
@@ -509,9 +483,9 @@ function ConfigPageContent() {
       </details>
     </> : null}
 
-    <div className="config-area" role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
+    <div className="config-area" id={PANEL_DE_AREA} role="tabpanel" aria-label={activa?.area.label ?? 'Configuración'}>
       {areaVisible === 'espacios'
-        ? <AltaDeEspacios soloLectura={soloLectura} busy={busy} onChange={change} />
+        ? <AltaDeEspacios soloLectura={soloLectura} busy={busy} onChange={canalEditor.change} />
         : null}
 
       {/* Before the bot registry, and not below it: the table is precisely what induces the error this panel
@@ -537,9 +511,8 @@ function ConfigPageContent() {
         const vigente = pedido !== undefined && pedido.revision === snapshotRevision;
         const vencida = pedido !== undefined && !vigente;
         // Same criterion for the outcome notice: it is valid for the state that produced it, and as soon as that state changes, it stops being shown instead of continuing to assert it.
-        const propio = avisoDeAccion?.coleccion === coleccion.key
-          && avisoDeAccion.revision === snapshotRevision
-          ? { text: avisoDeAccion.text, tone: avisoDeAccion.tone }
+        const propio = canalAccion.notice?.alcance === alcanceDeAccion(coleccion.key, snapshotRevision)
+          ? { text: canalAccion.notice.text, tone: canalAccion.notice.tone }
           : undefined;
         const aviso: AvisoDeColeccion | undefined = vencida
           ? {
@@ -560,7 +533,7 @@ function ConfigPageContent() {
           {...(vigente ? { pendiente: pedido } : {})}
           {...(aviso ? { aviso } : {})}
           onPedir={(siguiente) => {
-            setAvisoDeAccion(undefined);
+            canalAccion.informar(undefined);
             setPendiente({ ...siguiente, revision: snapshotRevision });
           }}
           onConfirmar={() => void confirmarAccion()}
@@ -581,11 +554,8 @@ function ConfigPageContent() {
 
       {/* The rollback outcome is painted HERE, above the table and in plain sight without opening anything: it is the
           only spot the operator is looking at when they press one of these buttons. */}
-      {avisoDeRollback ? <p
-        className={avisoDeRollback.tone === 'error' ? 'notice error' : avisoDeRollback.tone === 'parcial' ? 'notice parcial' : 'notice success'}
-        role={avisoDeRollback.tone === 'success' ? 'status' : 'alert'}
-      >{avisoDeRollback.text}</p> : null}
-      {previewDeRollback ? <pre className="config-preview" aria-label="Preview del rollback">{previewDeRollback}</pre> : null}
+      <Aviso aviso={canalRollback.notice} canal={canalRollback.canal} />
+      {canalRollback.preview ? <pre className="config-preview" aria-label="Preview del rollback">{canalRollback.preview}</pre> : null}
 
       {!config.data?.revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className="table-wrap config-audit"><table><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
         {config.data.revisions.map((revision, index) => {
@@ -599,7 +569,7 @@ function ConfigPageContent() {
         their sole authority is /accounts; `agent` remains available, except for its read-only role_brief projection. */}
     <details className="config-editor">
       <summary><Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario</summary>
-      <Panel title="Mutation editor" subtitle={`Revisión esperada: ${String(expectedRevision ?? 'UNKNOWN')}`}>
+      <Panel title="Mutation editor" subtitle={`Revisión esperada: ${String(canalEditor.expectedRevision ?? 'UNKNOWN')}`}>
         <form className="config-form" onSubmit={(event) => void submit(event, false)}>
           <label>Resource<select disabled={soloLectura || busy} value={resource} onChange={(event) => { selectTemplate(event.target.value as ConfigResource, action); }}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>Action<select disabled={soloLectura || busy} value={action} onChange={(event) => { selectTemplate(resource, event.target.value as ConfigAction); }}>{actionsFor(resource).map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -609,8 +579,8 @@ function ConfigPageContent() {
             <button className="button primary" type="submit" disabled={soloLectura || busy}><Save size={16} />Aplicar atómico</button>
           </div>
         </form>
-        {preview ? <pre className="config-preview" aria-label="Resultado de preview">{preview}</pre> : null}
-        {notice ? <p className={notice.tone === 'error' ? 'notice error' : notice.tone === 'parcial' ? 'notice parcial' : 'notice success'} role={notice.tone === 'success' ? 'status' : 'alert'}>{notice.text}</p> : null}
+        {canalEditor.preview ? <pre className="config-preview" aria-label="Resultado de preview">{canalEditor.preview}</pre> : null}
+        <Aviso aviso={canalEditor.notice} canal={canalEditor.canal} />
       </Panel>
     </details>
       </> : null}

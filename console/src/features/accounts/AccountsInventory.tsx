@@ -10,17 +10,17 @@ import type { Resource } from '../../api/use-resource';
 import {
   Badge, Desplazable, EmptyState, Metric, Panel, Unknown, Time,
 } from '../../components/ui';
+import { useConfigMutation } from '../config/use-config-mutation';
 import { AccountRoutingDetail } from './AccountRoutingDetail';
 import './licenses.css';
 import { accountConsumption, type AccountConsumption } from './licenses';
 import { MutationBar } from './MutationBar';
 import {
   CREDENTIAL_REF_HINTS, CREDENTIAL_REF_KINDS, accountDraftError, createAccountMutation,
-  deleteAccountMutation, updateAccountMutation, viewerTenant,
+  deleteAccountMutation, describeRegistryError, redactPreview, updateAccountMutation, viewerTenant,
   type AccountDraft, type CredentialRefKind, type ProviderAccount, type RegistryModel,
 } from './registry';
 import { SEVERITY_TONE, balanceSeverity, formatPercent } from './quotas';
-import { useRegistryMutation } from './use-registry-mutation';
 
 const emptyDraft: AccountDraft = {
   id: 'codex-steven',
@@ -93,7 +93,13 @@ export function AccountsInventory({ config, access, quotas, registry }: {
   const [openDetail, setOpenDetail] = useState<Set<string>>(new Set());
 
   const { accounts, ceiling } = registry;
-  const runner = useRegistryMutation({ config, access, context: registry.context });
+  const runner = useConfigMutation({
+    config,
+    access,
+    canal: 'account-inventory',
+    describeError: (error, mutation) => describeRegistryError(error, mutation, registry.context),
+    redactar: redactPreview,
+  });
 
   const actorTenant = viewerTenant(access.error ? undefined : access.data?.subject);
   const pooled = accounts.available ? accounts.items.filter((item) => item.sharedWithPool === true).length : null;

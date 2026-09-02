@@ -23,7 +23,7 @@ export const DEFAULTS = {
  *  in the source makes `grep` classify the file as binary and stop finding it. */
 export const SEP = '/';
 
-export function edgeKey(tenantId: string, roomId: string): string {
+function edgeKey(tenantId: string, roomId: string): string {
   return `${encodeURIComponent(tenantId)}${SEP}${encodeURIComponent(roomId)}`;
 }
 
@@ -34,7 +34,7 @@ export function nodeKey(tenantId: string, alias: string): string {
   return `${encodeURIComponent(tenantId)}${SEP}${encodeURIComponent(alias)}`;
 }
 
-export interface RawEdge {
+interface RawEdge {
   key: string;
   tenantId: string;
   tenantLabel: string | null;
@@ -43,7 +43,7 @@ export interface RawEdge {
   unknownMembers: number;
 }
 
-export interface RawNode {
+interface RawNode {
   /** `nodeKey(tenantId, alias)`. Unique per drawn figure. */
   key: string;
   tenantId: string;

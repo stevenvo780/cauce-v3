@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConfigPage } from './ConfigPage';
@@ -10,6 +10,7 @@ import {
 } from './ConfigPage.test-helpers';
 
 const HISTORIAL = /historial y json/i;
+const ESPACIOS = /espacios y miembros/i;
 const JANUS_APAGADA = /Quitar Habilitado en la membresía Miguel\/grp\.miguel\/janus: aplicado/i;
 
 function panelDe(nombre: RegExp): HTMLElement {
@@ -480,4 +481,53 @@ it('FAMILIA 4: el 409 no manda a «volver a previsualizar» a los caminos que no
   expect(delAudit).toHaveTextContent(/pediste el rollback sobre la revisión 1/i);
   expect(delAudit).toHaveTextContent(/volvé a elegir en el audit trail la revisión a deshacer/i);
   expect(delAudit).not.toHaveTextContent(/volvé a previsualizar/i);
+});
+
+it('FAMILIA 1: una relectura fallida deja a TODOS los canales sobre la revisión que quedó aplicada', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  let lecturas = 0;
+  server.use(http.get('*/v3/console/config', () => {
+    lecturas += 1;
+    return lecturas === 1
+      ? HttpResponse.json(snapshotDeConfig(1))
+      : HttpResponse.json({ error: 'internal', message: 'el snapshot no se pudo releer' }, { status: 500 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
+
+  await irA(user, HISTORIAL);
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  await screen.findByText(/la relectura del snapshot NO llegó/i);
+  expect(changes.at(-1)?.expected_revision).toBe(1);
+
+  await irA(user, ESPACIOS);
+  await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
+  await waitFor(() => { expect(changes).toHaveLength(2); });
+  expect(changes.at(-1)?.expected_revision).toBe(2);
+}, 20_000);
+
+it('FAMILIA 1: el desenlace de una acción de tabla no pisa el del editor crudo', async () => {
+  const changes: ChangeRequest[] = [];
+  recordChanges(changes);
+  const user = userEvent.setup();
+  renderWithApi(<ConfigPage />);
+  await screen.findByRole('heading', { level: 1, name: /ajustes/i });
+
+  await irA(user, HISTORIAL);
+  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  const delEditor = await within(panelDe(/mutation editor/i)).findByRole('status');
+  const dichoPorElEditor = delEditor.textContent;
+
+  await irA(user, ESPACIOS);
+  await user.selectOptions(screen.getByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
+  await user.click(screen.getByRole('button', { name: 'Confirmar' }));
+  const deLaTabla = await within(panelDe(/memberships/i)).findByRole('status');
+  expect(deLaTabla.closest('details')).toBeNull();
+  expect(deLaTabla.textContent).not.toBe(dichoPorElEditor);
+  expect(changes).toHaveLength(2);
+
+  await irA(user, HISTORIAL);
+  expect(within(panelDe(/mutation editor/i)).getByRole('status').textContent).toBe(dichoPorElEditor);
 });

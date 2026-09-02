@@ -87,19 +87,6 @@
 .perfil-aviso-parcial { background: var(--surface-3); color: var(--text); border: 1px solid var(--warning, #c08a2e); }
 .perfil-aviso-error { background: var(--surface-3); color: var(--danger, #d64545); border: 1px solid var(--danger, #d64545); }
 
-.perfil-ficheros { display: flex; flex-wrap: wrap; gap: 6px; }
-.perfil-fichero-tab {
-  flex: none;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: none;
-  color: var(--muted);
-  font-size: var(--tipo-apunte);
-  font-weight: 600;
-  cursor: pointer;
-}
-.perfil-fichero-tab[aria-selected='true'] { background: var(--surface-3); color: var(--text); }
 .perfil-del-agente { font-weight: 400; opacity: .75; }
 
 .perfil-fichero-cuerpo { display: grid; gap: 8px; min-width: 0; }

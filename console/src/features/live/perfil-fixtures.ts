@@ -7,7 +7,7 @@ import type { AgentPerfil } from '../../api/types';
  */
 
 export const RUTA_PERFIL = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
-export const SHA_PERFIL = 'a'.repeat(64);
+const SHA_PERFIL = 'a'.repeat(64);
 
 const DOCUMENTO = { name: 'CLAUDE.md', path: '/home/stev/.claude/CLAUDE.md' };
 

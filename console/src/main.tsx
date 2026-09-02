@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { installGlobalErrorReporting } from './error-reporting';
 import './styles.css';
 
 /**
@@ -29,6 +30,8 @@ async function enableMocking(): Promise<void> {
     console.error('[mocks] no se pudo iniciar MSW; la consola se monta igual y las vistas van a fallar contra el backend real.', cause);
   }
 }
+
+installGlobalErrorReporting();
 
 void enableMocking().then(() => {
   const root = document.getElementById('root');

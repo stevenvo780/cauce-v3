@@ -9,6 +9,58 @@
   --medida: 74ch;
 }
 
+/* --- El contenedor de configuración, sus tablas y lo que se pliega dentro --- */
+.config-area { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.config-area .panel { min-width: 0; margin-bottom: 0; }
+
+/* Resumen de texto limitado a dos líneas. */
+.config-resumen {
+  display: -webkit-box;
+  max-width: 340px;
+  overflow: hidden;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Contenedor con scroll vertical para auditoría. */
+.config-audit { max-height: 420px; overflow-y: auto; }
+
+/* Diálogo de confirmación centrado. */
+.config-modal-fondo {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  padding: 20px;
+  inset: 0;
+  background: rgb(4 8 15 / 62%);
+  place-items: center;
+}
+.config-modal {
+  display: flex;
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  flex-direction: column;
+  border: 1px solid var(--amber);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 26px 70px rgb(0 0 0 / 45%);
+}
+/* Cuerpo scrollable del modal. */
+.config-modal-cuerpo { min-height: 0; padding: 16px 18px; overflow-y: auto; }
+.config-modal-cuerpo > p { margin: 0; font-size: var(--tipo-rotulo); line-height: 1.55; }
+.config-modal-detalle { margin-top: 12px; }
+.config-modal-detalle > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
+.config-modal-detalle .config-preview { max-height: 260px; margin: 10px 0 0; }
+.config-modal-pie { flex: none; padding: 12px 18px; border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; background: var(--amber-dim); }
+
+/* Desplegables de vista cruda y editor de mutaciones. */
+.config-raw { margin-top: 14px; }
+.config-raw > summary, .config-editor > summary { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; font-size: var(--tipo-rotulo); }
+.config-raw > summary { margin-bottom: 10px; }
+.config-editor { margin-bottom: 20px; }
+.config-editor > summary { margin-bottom: 6px; }
+
 /* Cabecera de la página de configuración */
 .config-encabezado {
   display: flex;
@@ -65,35 +117,6 @@
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: var(--tipo-apunte);
 }
-
-/* --- Las pestañas de la página --------------------------------------------------------------- */
-
-.config-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin: 0 0 12px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-2, #0a111d);
-}
-
-.config-tab {
-  padding: 8px 14px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--tipo-rotulo);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.config-tab:hover { color: var(--text); }
-.config-tab[aria-selected='true'] { background: var(--surface-3, #131c2b); color: var(--text); }
-.config-tab:focus-visible { outline: 2px solid var(--accent, #5b9dff); outline-offset: 1px; }
 
 /* --- La frase que orienta, y lo que se pliega ------------------------------------------------
  *
@@ -352,13 +375,7 @@
   line-height: 1.6;
 }
 
-@media (max-width: 900px) {
-  /* MEDIDO a 360 px: la tira ya era un carrusel (`flex-wrap: nowrap` + `overflow-x: auto`) pero
-     el TEXTO de cada pestaña sí se partía, y un rótulo de tres palabras salía en tres renglones
-     sobre una tira de 90 px de alto. Con `nowrap` cada rótulo se lee entero y lo que se arrastra
-     es la tira, que es lo que ya hacía igual. */
-  .config-tabs { overflow-x: auto; flex-wrap: nowrap; }
-  .config-tab { white-space: nowrap; }
+@media (max-width: 760px) {
   /* A 360 px el título y el botón «Actualizar» no caben en una fila: apilados, el botón queda
      alcanzable sin arrastrar de lado. */
   .config-encabezado { align-items: start; flex-direction: column; gap: 12px; }
@@ -372,9 +389,8 @@
 }
 
 @media (prefers-color-scheme: light) {
-  .config-tabs { background: #f4f7fb; }
-  .config-tab[aria-selected='true'] { background: #e6eef8; }
-  .config-permiso { background: #ffffff; }
+  .config-modal { background: #ffffff; }
+  .config-modal-fondo { background: rgb(30 45 66 / 42%); }
   .alta-segmento { background: #eef3f9; }
   .alta-segmento-boton[aria-pressed='true'] { background: #ffffff; box-shadow: 0 1px 2px rgb(38 63 92 / 18%); }
 }

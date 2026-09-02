@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+declare module 'virtual:cauce/xterm-ansi.css';
+
 interface ImportMetaEnv {
   readonly VITE_CAUCE_API_BASE?: string;
   readonly VITE_USE_MOCKS?: string;

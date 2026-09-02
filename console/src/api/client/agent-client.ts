@@ -196,3 +196,42 @@ export async function getTerminalCapability(request: RequestFn): Promise<Termina
     throw error;
   }
 }
+
+export interface AgentClient {
+  getFleetActivity(): Promise<FleetActivitySnapshot>;
+  getAgentDirective(tenantId: string, alias: string): Promise<AgentDirective>;
+  getRoleBriefHistory(tenantId: string, alias: string): Promise<RoleBriefHistory>;
+  getAgentDocuments(tenantId: string, alias: string): Promise<AgentDocumentsMap>;
+  getAgentDocumentContent(tenantId: string, alias: string, kind: AgentDocumentKind): Promise<AgentDocumentContent>;
+  putAgentDocumentContent(
+    tenantId: string,
+    alias: string,
+    kind: AgentDocumentKind,
+    content: string,
+    expectedSha: string | null,
+  ): Promise<AgentDocumentGuardado>;
+  getAgentPerfil(tenantId: string, alias: string): Promise<AgentPerfil>;
+  putAgentPerfil(
+    tenantId: string,
+    alias: string,
+    profile: AgentPerfilValor,
+    expectedRevision: number | null,
+  ): Promise<unknown>;
+  getTerminalCapability(): Promise<TerminalCapability>;
+}
+
+export function agentClient(request: RequestFn): AgentClient {
+  return {
+    getFleetActivity: () => getFleetActivity(request),
+    getAgentDirective: (tenantId, alias) => getAgentDirective(request, tenantId, alias),
+    getRoleBriefHistory: (tenantId, alias) => getRoleBriefHistory(request, tenantId, alias),
+    getAgentDocuments: (tenantId, alias) => getAgentDocuments(request, tenantId, alias),
+    getAgentDocumentContent: (tenantId, alias, kind) => getAgentDocumentContent(request, tenantId, alias, kind),
+    putAgentDocumentContent: (tenantId, alias, kind, content, expectedSha) =>
+      putAgentDocumentContent(request, tenantId, alias, kind, content, expectedSha),
+    getAgentPerfil: (tenantId, alias) => getAgentPerfil(request, tenantId, alias),
+    putAgentPerfil: (tenantId, alias, profile, expectedRevision) =>
+      putAgentPerfil(request, tenantId, alias, profile, expectedRevision),
+    getTerminalCapability: () => getTerminalCapability(request),
+  };
+}

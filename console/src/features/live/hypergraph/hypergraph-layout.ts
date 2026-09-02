@@ -37,41 +37,14 @@ import {
 } from './layout-nodes';
 
 export {
-  NODE_FOOTPRINT,
-  centroidOf,
-  closedSmoothPath,
   convexHull,
   footprintsOverlap,
-  hashString,
   inflateHull,
-  jitter,
-  normalize,
   pointInPolygon,
-  round,
-  type NodeFootprint,
   type Point,
 } from './layout-geometry';
 
-export {
-  aclCaption,
-  placeLabels,
-  rectsOverlap,
-  type LabelRect,
-} from './layout-labels';
-
-export {
-  DEFAULTS,
-  SEP,
-  anchorEdges,
-  arcBetween,
-  collect,
-  edgeKey,
-  nodeKey,
-  relax,
-  separate,
-  type RawEdge,
-  type RawNode,
-} from './layout-nodes';
+export { aclCaption } from './layout-labels';
 
 /**
  * An agent: the pair (tenant, alias). Exists only once even if it belongs to several rooms of its tenant.
@@ -79,7 +52,7 @@ export {
  * The same alias under two tenants gives TWO nodes, because they are two agents: fusing them drew one figure
  * hanging from rooms of both tenants and mixed their `enabled`.
  */
-export interface HyperNode {
+interface HyperNode {
   /** `nodeKey(tenantId, alias)`: the identity, unique across the whole drawing. */
   key: string;
   alias: string;
@@ -96,7 +69,7 @@ export interface HyperNode {
 }
 
 /** A room: the hyperedge itself. */
-export interface HyperEdge {
+interface HyperEdge {
   key: string;
   tenantId: string;
   tenantLabel: string | null;
@@ -129,7 +102,7 @@ export interface HyperEdge {
 }
 
 /** An ACL edge between tenants: this one IS binary and directed. */
-export interface AclArc {
+interface AclArc {
   key: string;
   fromTenant: string;
   toTenant: string;
@@ -153,7 +126,7 @@ export interface AclArc {
   angle: number;
 }
 
-export interface TenantBlob {
+interface TenantBlob {
   id: string;
   label: string | null;
   centroid: Point;

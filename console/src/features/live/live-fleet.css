@@ -112,10 +112,12 @@ tr[data-highlighted='true'] > td {
 .live-legend-item strong { display: block; font-size: var(--tipo-rotulo); }
 .live-legend-item span { color: var(--muted); font-size: var(--tipo-rotulo); line-height: 1.35; }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .live-legend { grid-template-columns: 1fr; }
   .activity-search input { min-width: 0; width: 100%; }
   .activity-search { display: flex; }
+  .fleet-verdict-phrase { font-size: 24px; }
+  .live-search input { width: 110px; }
 }
 
 /* --- La banda de veredicto ------------------------------------------------- */
@@ -304,13 +306,7 @@ tr[data-highlighted='true'] > td {
   background: var(--accent, var(--faint));
 }
 
-@media (max-width: 720px) {
-  .fleet-verdict-phrase { font-size: 24px; }
-  .live-search input { width: 110px; }
-}
-
 @media (prefers-color-scheme: light) {
-  .fleet-verdict, .live-fold { background: #ffffff; }
   .live-empty-calm, .live-search, .live-layer-switch { background: #f8fafd; }
   .live-layer-button[aria-pressed='true'] { background: #e6eef8; }
 }
