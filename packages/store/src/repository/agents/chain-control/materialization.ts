@@ -1,5 +1,5 @@
 import {
-  clampAgentPriority, MAX_DELEGATION_FEEDBACK_ITEMS, type Ack, type Tenant
+  clampAgentPriority, MAX_DELEGATION_FEEDBACK_ITEMS, SYSTEM_PRINCIPAL_ALIASES, type Ack, type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { DatabaseClient } from '../../../db.js';
 import { persistedString } from '../../../runtime-values.js';
@@ -377,9 +377,10 @@ export abstract class AgentChainMaterializationRepository extends AgentChainPoli
            JOIN tenants target ON target.id=membership.tenant_id
            JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
            WHERE membership.alias=$1 AND membership.enabled AND target.enabled AND room.enabled
+             AND NOT (membership.alias=ANY($2::text[]))
            ORDER BY membership.tenant_id,membership.room_id
            FOR SHARE OF membership,target,room`,
-          [targetAlias]
+          [targetAlias, SYSTEM_PRINCIPAL_ALIASES]
         );
         const targetCandidates = [...new Set(candidates.rows.map((candidate) => candidate.tenant_id))];
         for (const candidate of targetCandidates) {

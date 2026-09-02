@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Origin, Tenant } from '@cauce/protocol';
-import { withTransaction } from '../../db.js';
+import { type DatabaseClient, withTransaction } from '../../db.js';
 import { uuidPattern } from './fanin.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
@@ -14,13 +14,35 @@ export type { AgentOutputRejectionCode } from './chain-control/policy.js';
 
 export abstract class AgentChainControlRepository extends AgentChainMaterializationRepository {
   /**
+   * A gate is addressed by id alone: the row's tenant decides scope, never the actor's, and
+   * crossing needs a hub-anchored enabled edge with `allow_control`. Denial stays `not_found`
+   * so a gate outside that scope cannot be probed by id.
+   */
+  private async assertChainGateScope(
+    client: DatabaseClient,
+    actorTenant: Tenant,
+    gateTenant: Tenant
+  ): Promise<void> {
+    if (gateTenant === actorTenant) return;
+    const edge = await client.query(
+      `SELECT 1 FROM acl_edges edge
+       JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
+       JOIN tenants target_tenant ON target_tenant.id=edge.to_tenant
+       WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
+         AND edge.enabled AND edge.allow_control
+         AND source_tenant.enabled AND target_tenant.enabled
+         AND (source_tenant.is_hub OR target_tenant.is_hub)
+       FOR SHARE OF edge,source_tenant,target_tenant`,
+      [actorTenant, gateTenant]
+    );
+    if (edge.rowCount === 0) throw new StoreError('not_found', 'chain gate not found');
+  }
+
+  /**
    * The VISIBLE list of pending questions to a person.
    *
    * It is the counterpart of the gate: decoupling the human wait from the bus so a queryable,
    * manageable listing is available to operators or authorized agents.
-   *
-   * Open entries come first, then recently resolved ones, so the list also serves as an
-   * acknowledgment of "this was already answered".
    */
   async listChainGates(
     actorTenant: Tenant,
@@ -61,8 +83,6 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
   }
 
   /**
-   * The human answers and the chain resumes.
-   *
    * Emits EXACTLY ONE delivery, toward the agent that asked, with the suspended branch's
    * correlation restored: same root, same trace, same hop budget, and same visited path. That is
    * why resuming does not start a new chain, nor recover fuel already spent.
@@ -103,6 +123,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
       );
       const row = gate.rows[0];
       if (!row) throw new StoreError('not_found', 'chain gate not found');
+      await this.assertChainGateScope(client, actorTenant, row.tenant_id);
       if (row.status !== 'open') {
         throw new StoreError('conflict', `chain gate is already ${row.status}`);
       }
@@ -224,14 +245,44 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
     if (!uuidPattern.test(gateId)) {
       throw new StoreError('invalid_input', 'gate id must be a uuid');
     }
-    const updated = await this.pool.query<{ id: string; root_message_id: string }>(
-      `UPDATE agent_chain_gates SET status='cancelled',updated_at=now()
-       WHERE id=$1 AND status='open' RETURNING id,root_message_id`,
-      [gateId]
-    );
-    if (updated.rowCount !== 1) {
-      throw new StoreError('conflict', 'chain gate is not open');
-    }
-    return { gate_id: gateId, status: 'cancelled' };
+    return withTransaction(this.pool, async (client) => {
+      const gate = await client.query<{
+        id: string;
+        root_message_id: string;
+        tenant_id: Tenant;
+        asked_by_alias: string;
+        trace_id: string;
+        status: string;
+      }>(
+        `SELECT id,root_message_id,tenant_id,asked_by_alias,trace_id,status
+         FROM agent_chain_gates WHERE id=$1 FOR UPDATE`,
+        [gateId]
+      );
+      const row = gate.rows[0];
+      if (!row) throw new StoreError('not_found', 'chain gate not found');
+      await this.assertChainGateScope(client, actorTenant, row.tenant_id);
+      if (row.status !== 'open') {
+        throw new StoreError('conflict', 'chain gate is not open');
+      }
+      await client.query(
+        `UPDATE agent_chain_gates SET status='cancelled',updated_at=now() WHERE id=$1`,
+        [row.id]
+      );
+      await client.query(
+        `INSERT INTO audit_events(
+           tenant_id,actor_alias,action,decision,trace_id,metadata
+         ) VALUES($1,$2,'agent_chain.gate_cancelled','allow',$3,$4::jsonb)`,
+        [
+          row.tenant_id, actorAlias, row.trace_id,
+          JSON.stringify({
+            gate_id: row.id,
+            root_message_id: row.root_message_id,
+            asked_by_alias: row.asked_by_alias,
+            cancelled_by: `${actorTenant}/${actorAlias}`
+          })
+        ]
+      );
+      return { gate_id: row.id, status: 'cancelled' };
+    });
   }
 }

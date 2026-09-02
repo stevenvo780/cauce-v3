@@ -276,3 +276,62 @@ describe('materialization across tenant rooms', () => {
     expect(['dead', 'failed', 'done', 'retry']).toContain(requireValue(finalDelivery.rows[0], 'finalDelivery.rows').status);
   });
 });
+
+describe('system principal delegation targets', () => {
+  it('rejects an agent-to-agent delegation aimed at a system principal alias', async () => {
+    await pool.query(`
+      INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES
+        ('Steven','grp.steven','quota-collector','operator')
+      ON CONFLICT DO NOTHING;
+      UPDATE memberships SET enabled=true WHERE alias='quota-collector';
+    `);
+
+    const lease = await repository.acquireLease('Steven', 'kant', 'kant-sysprincipal', [], 30_000);
+    expect(lease.acquired).toBe(true);
+    await repository.publish(publishMessageCrossTenant(
+      'Steven', 'grp.steven', 'kant', 'Steven', 'kant',
+    ));
+    const [claimed] = await repository.claimDeliveries(
+      'Steven', 'kant', 'kant-sysprincipal', requireValue(lease.epoch, 'lease.epoch'), 1, 30_000,
+    );
+    expect(claimed).toBeDefined();
+    const delivery = requireValue(claimed, 'claimed');
+
+    await repository.ackDelivery(delivery.delivery_id, 'Steven', 'kant', {
+      version: '3.0',
+      event_id: randomUUID(),
+      status: 'done',
+      instance_id: 'kant-sysprincipal',
+      epoch: requireValue(lease.epoch, 'lease.epoch'),
+      claim_token: delivery.claim_token,
+      attempt: delivery.attempt,
+      retryable: false,
+      result: {
+        output: {
+          reply: null,
+          messages: [{ to: 'quota-collector', body: 'reclama trabajo del recolector de cuotas' }],
+          notify: [],
+          status: 'done',
+          retryable: false,
+          artifacts: [],
+        },
+      },
+    } as unknown as Ack);
+
+    const delivered = await pool.query<{ id: string }>(
+      `SELECT id FROM deliveries WHERE recipient_alias='quota-collector'`,
+    );
+    expect(delivered.rowCount).toBe(0);
+
+    const rejected = await pool.query<{ status: string; rejection_code: string | null }>(
+      `SELECT status, rejection_code FROM agent_output_materializations
+       WHERE source_alias='kant' AND source_delivery_id=$1`,
+      [delivery.delivery_id],
+    );
+    expect(rejected.rowCount).toBe(1);
+    expect(requireValue(rejected.rows[0], 'rejected.rows')).toMatchObject({
+      status: 'rejected',
+      rejection_code: 'unroutable_alias',
+    });
+  });
+});
