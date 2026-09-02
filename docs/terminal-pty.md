@@ -361,22 +361,20 @@ El nginx de dev (`console/nginx.conf`) tiene el mismo `location` de match
 exacto apuntando a `http://terminal-relay:8446`, sin mTLS. Dev no acredita
 producción: no hay TLS, la auth es de desarrollo y los grants son de juguete.
 
-## 6. Pendientes de integración
+## 6. Integración con el resto del árbol
 
-- `pnpm-lock.yaml` tiene que regenerarse cuando entre `services/terminal-relay`:
-  la etapa `build` de la imagen usa `pnpm install --frozen-lockfile` y falla con
-  `ERR_PNPM_OUTDATED_LOCKFILE` ante un workspace nuevo que el lockfile no
-  conoce.
-- `deploy/runtime-package-smoke.mjs` enumera servicios a mano
-  (`runtimePackages` y `runtimeModules`). El smoke corre dentro de la imagen; si
-  no se agrega `terminal-relay` a esas dos listas, la imagen se construye igual
-  pero el relay queda sin validación de dependencias ni de módulo cargable.
-- `ops/config/prod.env.example` necesita las variables nuevas
-  (`CAUCE_TERMINAL_ENABLED`, `CAUCE_TERMINAL_WS_PATH`, `CAUCE_TERMINAL_OPERATORS`,
-  `CAUCE_TERMINAL_CONSOLE_CN`, `CAUCE_TERMINAL_CONFIG_DIR`,
-  `CAUCE_TERMINAL_TICKET_KEY_PATH`, `CAUCE_TERMINAL_RELAY_TOKEN_PATH`,
-  `CAUCE_TERMINAL_RELAY_TLS_CERT_PATH`, `CAUCE_TERMINAL_RELAY_TLS_KEY_PATH`,
-  `TERMINAL_RELAY_AGENT_PORT`).
-- El relay no declara `healthcheck` porque todavía no hay contrato de puerto de
-  health. Cuando el servicio lo exponga, agregarlo con
-  `deploy/readiness-probe.mjs` como el resto.
+Las cuatro piezas que hacían falta para que `terminal-relay` empaquetara y desplegara junto al
+resto del runtime ya están cerradas:
+
+- `pnpm-lock.yaml` incluye el workspace `services/terminal-relay`: la etapa `build` de la imagen
+  (`pnpm install --frozen-lockfile`) no falla con `ERR_PNPM_OUTDATED_LOCKFILE`.
+- `deploy/runtime/runtime-package-smoke.mjs` (se movió desde `deploy/runtime-package-smoke.mjs`)
+  lista `terminal-relay` tanto en `runtimePackages` como en `runtimeModules`: el smoke que corre
+  dentro de la imagen valida sus dependencias y que `dist/main.js` cargue.
+- `ops/config/prod.env.example` ya trae las variables del plano (`CAUCE_TERMINAL_ENABLED`,
+  `CAUCE_TERMINAL_WS_PATH`, `CAUCE_TERMINAL_OPERATORS`, `CAUCE_TERMINAL_CONSOLE_CN`,
+  `CAUCE_TERMINAL_CONFIG_DIR`, `CAUCE_TERMINAL_TICKET_KEY_PATH`,
+  `CAUCE_TERMINAL_RELAY_TOKEN_PATH`, `CAUCE_TERMINAL_RELAY_TLS_CERT_PATH`,
+  `CAUCE_TERMINAL_RELAY_TLS_KEY_PATH`, `TERMINAL_RELAY_AGENT_PORT`).
+- El relay declara `healthcheck` en `deploy/compose.yaml` sobre su puerto de salud
+  (`CAUCE_TERMINAL_RELAY_HEALTH_PORT`), igual que el resto de los servicios del runtime.

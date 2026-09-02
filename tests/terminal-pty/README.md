@@ -45,7 +45,10 @@ test time. No new dependencies; `pnpm-lock.yaml` is not touched.
 
 ### `vectors.json` — the source of truth
 
-Frozen vectors of the contract. Each case is `{name, kind, input, expected, must_fail}`.
+The file is one JSON object, not a bare array: `contract`, `frozen`, `note`, `master_key_b64`,
+`hkdf` (hash/salt/info template/length), `framing` (header shape, max payload, the tag numbers),
+`ws_close_codes`, `keys` (per-`tenant:alias` derived key, precomputed) and `cases` — the frozen
+vectors themselves. Each case is `{name, kind, input, expected, must_fail}`.
 The first three come from the spec (derived key, full ticket, and STDOUT frame);
 the rest were generated with the same algorithm to cover edges: expired ticket,
 ticket that has not yet started, one bit flipped in the HMAC, payload mutated to
@@ -61,12 +64,14 @@ The `kind`s understood by the runner: `derive_alias_key`, `canonical_payload`,
 yours is wrong. Any change here is a contract change and is announced to all
 three teams.
 
-For the other two implementations the file is directly consumable:
+For the other two implementations the file is directly consumable — read the whole object, then
+index into `cases`:
 
 ```python
 # pty-agent (Python): same file, same expected result
 import json, hashlib, hmac
 vectors = json.load(open("tests/terminal-pty/vectors.json"))
+cases = vectors["cases"]
 ```
 
 ### `vectors.test.ts` — detects protocol divergence
@@ -114,7 +119,7 @@ signs it.
 
 It never prints tickets or keys: only names, lengths, and a 12-hex `ticket_fp`.
 
-### `fake-gateway.mjs` — the four endpoints, no database
+### `fake-gateway.mjs` — the five endpoints, no database
 
 Standalone HTTPS server (or HTTP with `GATEWAY_PLAINTEXT=1`) that implements:
 
@@ -122,7 +127,8 @@ Standalone HTTPS server (or HTTP with `GATEWAY_PLAINTEXT=1`) that implements:
 |---|---|
 | `POST /v3/terminal/relay/agents` | 200 if the alias is in grants, 403 `not_granted` if not |
 | `POST /v3/terminal/relay/sessions/:sid/consume` | single-use atomic redemption: **200 the first time, 409 `ticket_already_consumed` the second**; 401 `ticket_invalid` with the reason; 403 `attribution_required` if an `unattributed:*` ticket points to another tenant |
-| `GET /v3/terminal/relay/sessions/:sid/authz` | 200 while alive; 403 with `reason` = `revoked` / `ttl_expired` / `unknown_session` / `closed` |
+| `POST /v3/terminal/relay/sessions/:sid/resume` | revalidates continuity after a relay reconnect: body carries `resume_token` plus the relay's own `claim_token`/`claim_epoch`; 401 `resume_invalid`, 403 `revoked`, 409 `claim_conflict` if another relay instance still holds a live claim, else 200 with a fresh claim lease |
+| `POST /v3/terminal/relay/sessions/:sid/authz` | body carries `claim_token`/`claim_epoch`; 200 while that claim is live and matches the requesting relay instance; 403 with `reason` = `revoked` / `ttl_expired` / `unknown_session` / `closed` / `claim_fenced` |
 | `POST /v3/terminal/relay/sessions/:sid/close` | 200 and `terminal.session.close` audit row |
 
 All require `Authorization: Bearer <RELAY_TOKEN>`. Writes the audit rows that

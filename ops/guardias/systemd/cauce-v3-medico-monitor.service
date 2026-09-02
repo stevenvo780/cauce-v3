@@ -1,6 +1,6 @@
 [Unit]
 Description=Cauce V3 medico de la flota (encuentra los fallos MUDOS y repara los que puede)
-Documentation=file:/datos/workspaces/zeus/cauce-v3-sesion/ops/runbooks/manual-del-medico.md
+Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/README.md
 
 [Service]
 Type=oneshot

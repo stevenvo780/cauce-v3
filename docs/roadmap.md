@@ -62,6 +62,15 @@ lo que no se comprobó se dice, no se supone.
   y `DBUS_SESSION_BUS_ADDRESS` del socket, y si el `systemctl --user` falla lo imprime con la pista
   (`systemctl --user -M stev@`) y devuelve 1. Ya no hay `|| true` que se lo trague.
 - **Las 2 entregas atascadas de hegel** — **no verificado**: estado de la base de producción.
+- **Techo fijo de 55 min en turnos fusionados del paste-runner — cerrado en esta ronda.** La opción
+  de correlación+gracia y su constante se retiraron: un turno fundido que sigue generando ya no se
+  corta ni pone el pane en cuarentena; el único límite que queda es el presupuesto del turno.
+- **Vigía de flota ciego a un alias que reclama trabajo y nunca lo empieza — cerrado en esta
+  ronda.** El chequeo sólo miraba entregas `pending`; un adaptador que muere justo tras reclamar
+  deja sus filas en `leased`/`accepted` sin llegar nunca a `dead_letters`, y esa forma quedaba
+  invisible. `check_claimed_not_started` cubre ahora ambos estados con una antigüedad mínima (con
+  control negativo: una reclamación sana no dispara la alerta), y la consola distingue ese caso de
+  `idle` en vez de leerlo como «Libre».
 
 > **Nota medida el 30-08-2026 — hay un rojo sensible a la carga dentro de `test:unit`.** Con cuatro
 > suites de consola compitiendo, `pnpm --filter @cauce/adapter-sdk run test` cayó dos veces seguidas
@@ -138,7 +147,7 @@ Ordenados por prioridad; cada uno con su zona. Evidencia y reproducción en el h
 - **Sin resolver · incidente 08:49Z** — Los 4 supervisores recibieron SIGKILL simultáneo desde fuera; el médico queda exonerado (no existe como unit ni en la torre ni en el VPS, y no escribió bitácora ese día) aunque su bug de substring era real y ya está cerrado. Única pista: a esa hora 5 instancias IA trabajaban como root en el VPS. Si se repite: `journalctl _COMM=kill` y auditd sobre `kill()` a los MainPID de `cauce-v3-container-*`.
 - **P1 · torre (kratos)** — Instalación vieja de la flota bajo `stev`: drop-ins `pty@dedalo`/`pty@midas` (agentes de Pablo, que no existen), units `container-{atlas,kratos,dedalo}` inactivas, y `salva` corriendo el release `bus-v3-20260814-umbral-espera`. Entra en el rollout del release de adaptadores; purgar lo de Pablo.
 - **P1 · release de adaptadores** — El `container-aliases.json` instalado (release 20260825) difiere del canónico en 5 alias (argos/iza/tales harness, gaia/heraclito nuevos, y kant mapeado al contenedor de argos). Rollout con las units generadas en `ops/generated/container-systemd/rootless/` (G1 + `rollout-pty`).
-- **P1 · observabilidad** — Alertmanager no está desplegado y prometheus apunta a `alertmanager:9093`: 7 alertas críticas encendidas que nadie recibe (entre ellas `CauceOriginOutboxStalled` desde el 24-08) y un job `cauce-origin-relay` que no existe. Decisión del dueño: notificaciones tipo cron por agente en vez de Alertmanager; hasta entonces, silenciar el job inexistente.
+- **P1 · observabilidad — Alertmanager retirado, cerrado en esta ronda.** Alertmanager salió del stack entero: `deploy/compose.alertmanager.yaml`, `ops/observability/alertmanager.yaml` y `ops/scripts/provision-alertmanager-config.py` se borraron, y `ops/observability/prometheus.yaml`/`alerts.yaml` ya no lo referencian (ni el bloque `alerting:`, ni el job de scrape, ni la alerta `CauceAlertmanagerDown`). La vía que decidió el dueño —notificaciones tipo cron por agente— es la que sigue pendiente de construir (ver §2, «Notificaciones recurrentes por agente»); mientras tanto ninguna alerta crítica de Prometheus llega a un humano por esta ruta.
 - **P1 · producto (origin_relay)** — La única fila de `adapter_outbox` con `adapter='console'` lleva días sin consumidor: el worker de `origin_relay` filtra por `telegram`. O el encolado traduce el adaptador, o se registra un worker para `console` (`CAUCE_RELAY_ADAPTERS`).
 - **P2 · dead letters** — 576 entregas, 64 origin_relay y 1405 wake en cartas muertas sin triaje; las 2 de hegel de hace 12 días siguen en `failed` (el segador no las toca). Triaje por lotes con los humanos de cada tenant.
 - **P3 · seguridad de ws-zeus** — El contenedor del dueño monta `/var/run/docker.sock` y el árbol del repo (material de producción) en rw, con `claude --dangerously-skip-permissions`. Retirar el socket o proxy con scopes; decidir `ro` para lo que prod monta.

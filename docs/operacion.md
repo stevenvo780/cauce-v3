@@ -6,13 +6,16 @@ Procedimientos verificados contra producción real. Fuente de verdad de arquitec
 
 ## 1. Desplegar
 
-**Precondiciones** (`deploy/deploy.sh` las verifica y aborta si fallan):
+**Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan:**
 - `git status` limpio y `HEAD == origin/main`.
-- Gate en verde: `pnpm typecheck && pnpm lint && pnpm test:unit`.
 - Backup <24h en `/var/backups` (o confirmación explícita si no lo hay).
 - `CAUCE_TERMINAL_RELAY_INSTANCE_ID` en `prod.env` = sha256 del DER de `CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_PATH` (el relay no arranca si no coincide).
 - `docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config` renderiza sin error.
 - 0 filas en `terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL` (si no, la migración 034 aborta: revocar esas filas primero).
+
+**Precondición que el operador verifica a mano, `deploy.sh` NO la comprueba:** gate en verde
+(`pnpm typecheck && pnpm lint && pnpm test:unit`). El script no ejecuta ni un solo comando `pnpm`;
+confía en que quien despliega ya corrió el gate.
 
 **Comando** (dueño presente, root, `df -h /` con ≥60GB libres o `docker builder prune -f` antes):
 ```bash
@@ -21,7 +24,12 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 ```
 Hace, en orden: build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push y pin por digest SHA256 en `prod.env` → migrator efímero (todas las migraciones pendientes en UNA transacción) → `docker compose up -d --wait --remove-orphans` (recrea los 10 contenedores, reutiliza el volumen `cauce_pgdata` por nombre) → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` (commitear tras verificar).
 
-**Criterios de parada**: cualquier precondición falla → no arranca. Migrator falla → rollback automático de la transacción, esquema intacto, nada más se toca. `up` o smoke fallan → pasar a rollback.
+**Criterios de parada**: cualquier precondición falla → no arranca. Migrator falla → PostgreSQL
+revierte solo la transacción (esquema intacto) y el script muere ahí — pero `prod.env` YA fue
+reescrito con los digests nuevos ANTES del migrator (paso previo), así que hay que restaurarlo a
+mano desde `prod.env.pre-deploy-<STAMP>`: no es cierto que "nada más se toca". Ningún contenedor
+llega a levantarse con los digests nuevos. `up` o smoke fallan → pasar a rollback (tampoco
+automático: el script solo imprime la receta, no la ejecuta).
 
 **Rollback exacto** (nunca `docker compose down`: pararía postgres antes de restaurar):
 ```bash
@@ -129,9 +137,9 @@ cat /var/log/cauce-v3-backup/status.json   # "overall":"ok"
 ## 6. Smoke y comprobaciones rápidas de salud
 
 ```bash
-./deploy/smoke.sh   # 7 sondas: gateway ready, 5 contenedores healthy, esquema 037, leases, entregas done, relay sin bucle, rutas de gobernanza
+./deploy/smoke.sh   # 7 sondas: gateway ready, 5 contenedores healthy, esquema esperado, leases, entregas done, relay sin bucle, rutas de gobernanza
 docker exec cauce-v3-prod-gateway-1 node /app/deploy/readiness-probe.mjs http://127.0.0.1:8081/health/ready ready
-docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tAc "SELECT max(version) FROM schema_migrations"                                    # esperar 037_*
+docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tAc "SELECT max(version) FROM schema_migrations"                                    # esperar la última de packages/store/migrations (hoy 038_*)
 docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -tAc "SELECT count(*) FROM connection_leases WHERE last_heartbeat_at > now() - interval '60 seconds'"   # esperar >=8
 docker logs cauce-v3-prod-terminal-relay-1 --since 2m | grep -c 'agent_connected"'   # esperar <30
 ```

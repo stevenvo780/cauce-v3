@@ -6,7 +6,7 @@ Véase [arquitectura.md](arquitectura.md) para el contexto general del sistema.
 
 ## Enrutamiento
 
-No utiliza `react-router`. El enrutamiento se resuelve con un módulo propio en `src/router.ts` (`matchRoute`, `ROUTE_TABLE`, `ROUTE_ALIASES`) integrado en `src/App.tsx`.
+No utiliza `react-router`. El enrutamiento (`matchRoute`, `ROUTE_TABLE`, `ROUTE_ALIASES`) vive en `src/App.tsx`; `src/router.ts` aporta sólo la navegación (`navigate`, `redirect`, `onNavClick`) que `App.tsx` consume, no el enrutamiento en sí.
 
 ## Vistas
 

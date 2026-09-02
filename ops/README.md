@@ -4,7 +4,7 @@ Este árbol opera exclusivamente V3. La única migración autoritativa sigue en 
 
 ## Composes separados
 
-- `deploy/compose.dev.yaml`: desarrollo HTTP/WS, auth dev, PostgreSQL local aislado, dos adapters fake y profiles Telegram/shadow.
+- `deploy/compose.dev.yaml`: desarrollo HTTP/WS, auth dev, PostgreSQL local aislado, dos adapters fake y profiles `terminal`/`telegram`.
 - `ops/compose.test.yaml`: QA descartable con PostgreSQL real y protocol doubles.
 - `deploy/compose.yaml`: producción TLS, imágenes por digest, secretos por PATH, bind privado y PostgreSQL administrado externo por defecto.
 - `deploy/compose.postgres.yaml`: overlay opcional para PostgreSQL local con TLS real; no publica `5432`.
@@ -21,12 +21,13 @@ Producción publica solo gateway/console sobre `CAUCE_PRIVATE_BIND_IP` (default 
 
 Profiles opt-in:
 
-- `origin-relay`: worker de webhook permitido por origin/adapter;
+- `terminal`: activa `terminal-relay`, el puente PTY entre el navegador de la consola y el
+  pty-agent de cada alias (ver `docs/terminal-pty.md`); sin el profile ninguna variante de compose
+  arranca el relay;
 - `telegram`: bridge nativo con cursor/poll lease y egress cercado; config, tokens `0600` y markers V2 viven en un directorio externo read-only;
-- `shadow`: router Unix identity-free en modo shadow/compare/cutover más guard de side effects; cutover requiere interlock y dirección;
 - `observability`: Prometheus/OTel y métricas exactas de wake/outbox/relay.
 
-No registrar `telegram` también en `origin-relay`: serían egress workers competidores sobre el mismo outbox. Un profile con configuración/directorios vacíos falla cerrado.
+Un profile con configuración/directorios vacíos falla cerrado.
 
 ## Flota declarativa
 

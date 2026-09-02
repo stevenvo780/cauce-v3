@@ -31,10 +31,10 @@ hex de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstr
 | `cauce-tmux-panel` | `kratos:~/.local/bin/` | Panel tmux de un alias |
 | `cauce-v3-medico-monitor` | `kratos:~/.local/bin/` + timer | El MÉDICO de la flota (3.207 líneas): vigila, adjudica y avisa — 55 iteraciones rescatadas de .bak |
 | `cauce-watch` | `kratos:~/.local/bin/` | Watch de la flota |
-| `cred-guard.py` | `VPS:~/.local/bin/` | Revisa las 14 credenciales de la flota: quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores |
+| `cred-guard.py` | `VPS:/usr/local/sbin/cauce-cred-guard.py`, unit de sistema `cauce-cred-guard.service` (root) | Revisa las 14 credenciales de la flota: quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores |
 | `cred-guard.sh` | `VPS:~/.local/bin/` | Envoltorio del anterior: deja estado en `~/.local/state/cred-guard.{txt,log}` |
 | `polidin-guard.sh` | `kratos:~/.local/bin/` | Repone el túnel `ws-zeus:12222 → 10.88.88.31:22` cuando muere |
-| `systemd/cred-guard.*` | `VPS:~/.config/systemd/user/` | Dispara el agregador de credenciales cada 30 min |
+| `systemd/cred-guard.*` | `VPS:/etc/systemd/system/cauce-cred-guard.{service,timer}` (system, no `--user`) | Dispara el agregador de credenciales cada 30 min |
 | `systemd/{cauce-cred-guard-kratos,cauce-v3-medico-monitor,polidin-guard}.*` | `kratos:~/.config/systemd/user/` | Dispara las sondas remotas, el médico y el guardia del túnel |
 | `contenedor/polidin-fwd.sh` | `ws-zeus:/home/dev/` | El túnel en sí; corre **dentro** del contenedor |
 | `cauce-envoltorio-local.sh` | `<contenedor>:~/.local/bin/cauce` | Envoltorio que hace el `ssh kratos` por vos |
@@ -86,15 +86,24 @@ Probar el efecto (crea una entrega real y hace correr a hegel):
 
 ## Restaurar después de una pérdida de disco
 
+**El agregador del VPS corre HOY como unit de SISTEMA, no de usuario** (verificado con
+`systemctl cat cauce-cred-guard.service`): `/etc/systemd/system/cauce-cred-guard.service`
+(root, `Type=oneshot`) dispara `/usr/local/sbin/cauce-cred-guard.py` — el script se instala ahí
+con OTRO nombre que el fichero de este repo (`cred-guard.py`), y `credential_health.py` va en el
+mismo directorio para que el import relativo resuelva. Las plantillas versionadas en
+`systemd/cred-guard.*` siguen escritas para una unit `--user` de `stev`; restaurar la unit REAL es
+el rename manual de abajo, no una copia literal de esas plantillas.
+
 ```sh
-# en el VPS, con el repo clonado
-install -d -m755 ~/.local/bin ~/.config/systemd/user
-install -m644 ops/guardias/credential_health.py ~/.local/bin/
-install -m755 ops/guardias/cred-guard.py ops/guardias/cred-guard.sh ~/.local/bin/
-install -m644 ops/guardias/systemd/cred-guard.service \
-  ops/guardias/systemd/cred-guard.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now cred-guard.timer
+# en el VPS, con el repo clonado — unit de SISTEMA (root), no de usuario
+install -d -m755 /usr/local/sbin
+install -o root -g root -m750 ops/guardias/credential_health.py /usr/local/sbin/
+install -o root -g root -m750 ops/guardias/cred-guard.py /usr/local/sbin/cauce-cred-guard.py
+install -o root -g root -m644 ops/guardias/systemd/cred-guard.service /etc/systemd/system/cauce-cred-guard.service
+install -o root -g root -m644 ops/guardias/systemd/cred-guard.timer /etc/systemd/system/cauce-cred-guard.timer
+sed -i 's#^ExecStart=.*#ExecStart=/usr/local/sbin/cauce-cred-guard.py#' /etc/systemd/system/cauce-cred-guard.service
+systemctl daemon-reload
+systemctl enable --now cauce-cred-guard.timer
 
 # en kratos, con el repo clonado
 install -d -m755 ~/.local/bin ~/.config/systemd/user

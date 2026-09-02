@@ -1,6 +1,6 @@
 [Unit]
 Description=Inyecta el check-in diario de ventas de hegel (publish a Jhon:hegel via gateway mTLS)
-Documentation=file:///workspace/cauce-v3-sesion/ops/guardias/hegel-ventas-checkin.py
+Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/hegel-ventas-checkin.py
 After=network-online.target
 Wants=network-online.target
 

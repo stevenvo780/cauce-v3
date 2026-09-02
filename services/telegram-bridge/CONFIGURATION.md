@@ -144,8 +144,10 @@ dos alias como host ambiente del mismo chat, o que declare `chats` sin
 `CAUCE_TELEGRAM_ALIASES` permite seleccionar una lista separada por comas; solo los
 alias seleccionados exigen su `token_file` y marcador, lo que habilita un encendido
 incremental. También se requieren `DATABASE_URL` y la migración `005_channel_bridges.sql`.
-`PORT` usa 8084 por defecto (Compose usa 8086 para no colisionar con `outbox-metrics`)
-y escucha solo en loopback:
+`PORT` usa 8084 por defecto (Compose usa 8086 para no colisionar con `outbox-metrics`).
+El servicio no publica puerto al host; escucha en `0.0.0.0` (`health.ts`) porque Prometheus,
+en su contenedor hermano, necesita alcanzarlo por la interfaz interna — el propio healthcheck
+de Docker igual lo consulta por `127.0.0.1` desde dentro del contenedor. Rutas:
 
 - `/health/live`
 - `/health/ready`
