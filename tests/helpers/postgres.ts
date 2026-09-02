@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import type { TestContext } from 'vitest';
+import { afterAll, afterEach, expect, type TestContext } from 'vitest';
 import {
-  applyMigrations, createPool, type DatabaseClient, type DatabasePool
+  applyMigrations, createPool, migrationSourcesForApply,
+  type DatabaseClient, type DatabasePool
 } from '@cauce/store';
 
 export interface TestDatabase {
@@ -116,17 +117,91 @@ async function unavailableDockerCapability(): Promise<string | undefined> {
   }
 }
 
+export const SUITES_SIN_PLANTILLA: ReadonlySet<string> = new Set([
+  'migration-integrity-postgres.test.ts',
+  'secret-handoff-migration-postgres.test.ts',
+  'agent-profile-migration-postgres.test.ts',
+  'connection-session-fencing-migration-postgres.test.ts',
+  'dlq-causal-reconciliation-migration-postgres.test.ts',
+  'console-publish-intent-migration-postgres.test.ts',
+  'agent-profile-runtime-adoption-migration-postgres.test.ts',
+  'terminal-session-claim-fencing-migration-postgres.test.ts',
+  'terminal-browser-owner-fencing-migration-postgres.test.ts',
+  'terminal-relay-instance-fencing-migration-postgres.test.ts',
+]);
+
+const conteoPorFichero = new Map<string, { ejecutados: number; razon: string; saltados: number }>();
+let suiteActual: string | undefined; // vitest isolates this module per test file, so it is the file
+
+export function registrarSuite(fichero: string): void {
+  suiteActual = fichero;
+}
+
+function conteo(fichero: string): { ejecutados: number; razon: string; saltados: number } {
+  const actual = conteoPorFichero.get(fichero) ?? { ejecutados: 0, razon: '', saltados: 0 };
+  conteoPorFichero.set(fichero, actual);
+  return actual;
+}
+
+export function registrarSalto(fichero: string, razon: string): void {
+  const actual = conteo(fichero);
+  actual.saltados += 1;
+  actual.razon = razon;
+}
+
+export function registrarEjecucion(fichero: string): void {
+  conteo(fichero).ejecutados += 1;
+}
+
+export function resumenDeSaltos(): { fichero: string; razon: string; saltados: number }[] {
+  return [...conteoPorFichero.entries()]
+    .filter(([, actual]) => actual.ejecutados === 0 && actual.saltados > 0)
+    .map(([fichero, actual]) => ({ fichero, razon: actual.razon, saltados: actual.saltados }));
+}
+
+export function ficheroDeLaSuite(): string | undefined {
+  if (suiteActual !== undefined) return suiteActual;
+  const ruta = expect.getState().testPath; // vitest lo fija por fichero, ya al recolectar
+  return typeof ruta === 'string' ? ruta.split('/').at(-1) : undefined;
+}
+
+const veredictoAnunciado = new Set<string>();
+
+function anunciarVeredicto(fichero: string): void { // una linea por FICHERO, no por test
+  if (veredictoAnunciado.has(fichero)) return;
+  veredictoAnunciado.add(fichero);
+  afterEach((context) => { // a test that ran (not skipped) proves the file checked something
+    if (context.task.result?.state !== 'skip') registrarEjecucion(fichero);
+  });
+  afterAll(() => {
+    for (const salto of resumenDeSaltos()) {
+      if (salto.fichero !== fichero) continue;
+      console.warn(
+        `[capacidad] ${fichero}: 0 ejecutados, ${String(salto.saltados)} saltados — ${salto.razon}`,
+      );
+    }
+  });
+}
+
 export function dockerTestRequirement(
   unverifiedCoverage: string,
   probe: () => Promise<string | undefined> = unavailableDockerCapability,
 ): DockerTestRequirement {
+  const declarado = ficheroDeLaSuite();
+  if (declarado !== undefined) anunciarVeredicto(declarado);
   return {
     skipIfUnavailable: async (skipTest) => {
-      if (process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1') return;
-      const unavailableCapability = await probe();
-      if (unavailableCapability === undefined) return;
+      const fichero = declarado ?? ficheroDeLaSuite();
+      const unavailableCapability = process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1'
+        ? undefined
+        : await probe();
+      if (unavailableCapability === undefined) {
+        if (fichero !== undefined) registrarEjecucion(fichero); // no saltó: el fichero sí comprobó
+        return;
+      }
       const reason = `${unavailableCapability}; not checked: ${unverifiedCoverage}`;
       console.warn(`[docker] test skipped: ${reason}`);
+      if (fichero !== undefined) registrarSalto(fichero, unavailableCapability);
       skipTest(reason);
     },
   };
@@ -179,14 +254,109 @@ function urlDeBase(servidor: string, base: string): string {
   return destino.toString();
 }
 
+export const nombreDePlantilla = `${PREFIJO_BASE_DE_PRUEBAS}_plantilla`;
+const CERROJO_PLANTILLA = 783_003_017;
+const HUELLA_IMPRIMIBLE = /^[0-9A-Za-z_.:|-]+$/;
+
+export async function huellaDeMigracionesDelArbol(): Promise<string> {
+  const fuentes = [...await migrationSourcesForApply()]
+    .sort((una, otra) => una.version.localeCompare(otra.version));
+  const digest = createHash('sha256')
+    .update(fuentes.map((fuente) => `${fuente.version}:${fuente.sourceSha256}`).join('\n'))
+    .digest('hex');
+  return `${String(fuentes.length)}:${fuentes.at(-1)?.version ?? '-'}|${digest}`;
+}
+
+async function huellaGrabada(sesion: DatabaseClient): Promise<string | undefined> {
+  const grabada = await sesion.query<{ huella: string | null }>( // del catálogo, sin conectarse
+    `SELECT shobj_description(oid, 'pg_database') AS huella FROM pg_database WHERE datname=$1`,
+    [nombreDePlantilla],
+  );
+  return grabada.rows[0]?.huella ?? undefined;
+}
+
+async function sembrarPlantilla(
+  url: string, abrirPool: (url: string) => DatabasePool, huella: string,
+): Promise<void> {
+  const pool = abrirPool(url);
+  try {
+    await waitForDatabase(pool);
+    await applyMigrations(pool);
+    await guardarSemillaDeCatalogo(pool);
+    const aplicada = await huellaDeMigraciones(pool);
+    if (huella.startsWith(`${aplicada}|`)) return;
+    throw new Error(
+      `la plantilla aplicó "${aplicada}" y el árbol declara "${huella}": el cache se recrearía ` +
+        `en cada fichero. Revisá huellaDeMigracionesDelArbol antes de seguir.`,
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
+export interface OpcionesDePlantilla {
+  huellaEsperada?: () => Promise<string>;
+  sembrar?: (url: string, huella: string) => Promise<void>;
+}
+
+export async function asegurarPlantilla( // una sola vez por servidor, bajo cerrojo de sesión
+  servidor: string,
+  abrirAdmin: (servidor: string) => DatabasePool = createPool,
+  opciones: OpcionesDePlantilla = {},
+): Promise<string> {
+  const huella = await (opciones.huellaEsperada ?? huellaDeMigracionesDelArbol)();
+  if (!HUELLA_IMPRIMIBLE.test(huella)) {
+    throw new Error(`huella de migraciones no imprimible, no se cose al SQL: ${huella}`);
+  }
+  const sembrar = opciones.sembrar
+    ?? ((url: string, suya: string): Promise<void> => sembrarPlantilla(url, abrirAdmin, suya));
+  const admin = abrirAdmin(servidor);
+  await waitForDatabase(admin);
+  const sesion = await admin.connect();
+  try {
+    await sesion.query('SELECT pg_advisory_lock($1)', [CERROJO_PLANTILLA]);
+    if (await huellaGrabada(sesion) === huella) return nombreDePlantilla;
+    await sesion.query(`DROP DATABASE IF EXISTS ${nombreDePlantilla} WITH (FORCE)`); // cache sucio
+    await sesion.query(`CREATE DATABASE ${nombreDePlantilla}`);
+    await sembrar(urlDeBase(servidor, nombreDePlantilla), huella);
+    await sesion.query(`COMMENT ON DATABASE ${nombreDePlantilla} IS '${huella}'`);
+    return nombreDePlantilla;
+  } finally {
+    await sesion.query('SELECT pg_advisory_unlock($1)', [CERROJO_PLANTILLA])
+      .catch(() => undefined);
+    sesion.release();
+    await admin.end();
+  }
+}
+
+async function clonarPlantilla(
+  admin: DatabasePool, nombre: string, rehacerPlantilla: () => Promise<string>,
+): Promise<void> {
+  for (let intento = 1; intento <= 5; intento += 1) {
+    try {
+      await admin.query(`CREATE DATABASE ${nombre} TEMPLATE ${nombreDePlantilla}`);
+      return;
+    } catch (error) {
+      const codigo = errorField(error, 'code');
+      if (!['55006', '3D000'].includes(codigo) || intento === 5) throw error;
+      if (codigo === '3D000') await rehacerPlantilla(); // otra corrida la tiro fuera del cerrojo
+      else await new Promise((resolve) => setTimeout(resolve, intento * 100));
+    }
+  }
+}
+
 /*
  * The database is the isolation unit, not the URL: the migration-integrity suites insert into
  * `schema_migrations` with no ledger entry ON PURPOSE, and one shared database turns that into
  * "applied without an atomic source ledger" for every later file — measured, 49 of 82.
  */
 export async function crearBaseEfimera(
-  servidor: string, abrirAdmin: (servidor: string) => DatabasePool = createPool,
+  servidor: string,
+  abrirAdmin: (servidor: string) => DatabasePool = createPool,
+  opciones: { plantilla?: boolean } = {},
 ): Promise<{ url: string; soltar: () => Promise<void>; tirarConexiones: () => Promise<void> }> {
+  const conPlantilla = opciones.plantilla ?? false; // decidido por quien conoce la suite
+  if (conPlantilla) await asegurarPlantilla(servidor, abrirAdmin);
   const nombre = nombreEfimero();
   const admin = abrirAdmin(servidor);
   try {
@@ -201,7 +371,11 @@ export async function crearBaseEfimera(
     for (const vieja of caducadas) {
       await admin.query(`DROP DATABASE IF EXISTS ${vieja} WITH (FORCE)`).catch(() => undefined);
     }
-    await admin.query(`CREATE DATABASE ${nombre}`);
+    if (conPlantilla) {
+      await clonarPlantilla(admin, nombre, () => asegurarPlantilla(servidor, abrirAdmin));
+    } else {
+      await admin.query(`CREATE DATABASE ${nombre}`);
+    }
   } finally {
     await admin.end();
   }
@@ -232,7 +406,7 @@ export async function crearBaseEfimera(
 
 export async function startEmptyTestDatabase(serverUrl: string): Promise<EmptyTestDatabase> {
   assertTestDatabaseUrl(serverUrl);
-  const { url, soltar } = await crearBaseEfimera(serverUrl);
+  const { url, soltar } = await crearBaseEfimera(serverUrl, createPool, { plantilla: false });
   const pool = createPool(url, { max: 2 });
   try {
     await waitForDatabase(pool);
@@ -265,7 +439,10 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       throw new Error('CAUCE_REQUIRE_TESTCONTAINERS=1 rejects the external database fallback');
     }
     assertTestDatabaseUrl(externa);
-    const { url, soltar, tirarConexiones } = await crearBaseEfimera(externa);
+    const fichero = ficheroDeLaSuite();
+    const { url, soltar, tirarConexiones } = await crearBaseEfimera(externa, createPool, {
+      plantilla: fichero === undefined || !SUITES_SIN_PLANTILLA.has(fichero),
+    });
     const pool = createPool(url);
     try {
       await waitForDatabase(pool);

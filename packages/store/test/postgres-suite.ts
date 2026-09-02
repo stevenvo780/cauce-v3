@@ -1,5 +1,7 @@
 import { beforeEach, type TestContext } from 'vitest';
-import { dockerTestRequirement } from '../../../tests/helpers/postgres.js';
+import {
+  dockerTestRequirement, registrarEjecucion, registrarSuite,
+} from '../../../tests/helpers/postgres.js';
 
 function fileName(sourceUrl: string): string {
   const path = new URL(sourceUrl).pathname;
@@ -22,13 +24,18 @@ export function preparePostgresSuite(
   timeout?: number,
   runnableWithoutPostgres: readonly string[] = [],
 ): void {
-  const coverage = `all PostgreSQL-backed assertions in ${fileName(sourceUrl)}`;
+  const fichero = fileName(sourceUrl);
+  registrarSuite(fichero);
+  const coverage = `all PostgreSQL-backed assertions in ${fichero}`;
   const requirement = dockerTestRequirement(coverage);
   const runnableNames = new Set(runnableWithoutPostgres);
   let setupPromise: Promise<void> | undefined;
 
   beforeEach(async (context) => {
-    if (belongsToRunnableScope(context, runnableNames)) return;
+    if (belongsToRunnableScope(context, runnableNames)) {
+      registrarEjecucion(fichero);
+      return;
+    }
     if (setupPromise === undefined
         && !process.env.CAUCE_TEST_DATABASE_URL
         && process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1') {
@@ -36,5 +43,6 @@ export function preparePostgresSuite(
     }
     setupPromise ??= setup();
     await setupPromise;
+    registrarEjecucion(fichero);
   }, timeout);
 }
