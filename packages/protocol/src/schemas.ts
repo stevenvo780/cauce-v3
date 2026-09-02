@@ -1,4 +1,5 @@
 export * from './schemas/core.js';
+export * from './schemas/media-types.js';
 export * from './schemas/messages.js';
 export * from './schemas/quotas.js';
 export * from './schemas/configuration.js';
