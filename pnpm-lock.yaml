@@ -213,6 +213,9 @@ importers:
 
   services/dispatcher:
     dependencies:
+      '@cauce/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@cauce/store':
         specifier: workspace:*
         version: link:../../packages/store
