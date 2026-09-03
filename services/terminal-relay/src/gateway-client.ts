@@ -174,6 +174,21 @@ function retryAfterMs(body: string): number | undefined {
   }
 }
 
+/** The reason a `/authz` denial carries, or nothing unless the body is exactly the denial envelope (`ok` or `error`) plus that one optional key: a denial the relay cannot read exactly softens nothing. */
+function authzDenialReason(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const source = parsed as Record<string, unknown>;
+  const envelope = Object.keys(source).filter((key) => key !== 'reason');
+  if (envelope.length !== 1 || (envelope[0] !== 'ok' && envelope[0] !== 'error')) return undefined;
+  return stringField(source, 'reason');
+}
+
 /** A grant we cannot fully understand is not a grant: missing fields mean no session. */
 export function parseSessionGrant(body: string): TerminalSessionGrant | undefined {
   let parsed: unknown;
@@ -342,8 +357,11 @@ export class HttpsTerminalGatewayClient implements TerminalGatewayClient {
       }
       return { status: 'unreachable' };
     }
-    // 401/403/404/409 are all "you may not continue"; only a broken gateway earns the grace window.
+    // 401/403/404/409 are all "you may not continue"; only a broken gateway earns the grace window, and only the declared released hold earns 4410 instead of the 4403 of a revoked session.
     if (result.status >= 500) return { status: 'unreachable' };
+    if (result.status === 403 && authzDenialReason(result.body) === 'control_released') {
+      return { status: 'control_released' };
+    }
     return { status: 'revoked' };
   }
 

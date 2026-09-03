@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
+import { terminalSessionWindowExpression, type DatabasePool } from '@cauce/store';
 import {
   sessionExpiry, sessionWindowExpression,
 } from '../../services/gateway/src/terminal/helpers.js';
@@ -141,6 +141,19 @@ describe('POST /v3/console/terminal/sessions/:sid/extend', () => {
     const source = readFileSync(AUTHORIZATION_SOURCE, 'utf8');
     expect(source).toContain(sessionWindowExpression(2, 3));
     expect(source).toContain(sessionWindowExpression(4, 8));
+  });
+
+  it('la ventana la construye el store y lleva SIEMPRE el techo consumed_at + maxTotal', () => {
+    expect(sessionWindowExpression(2, 3)).toBe(terminalSessionWindowExpression(2, 3));
+    expect(sessionWindowExpression(4, 8)).toBe(
+      'LEAST(GREATEST(consumed_at + make_interval(secs => $4), '
+      + "COALESCE(window_extended_to, 'epoch'::timestamptz)), "
+      + 'consumed_at + make_interval(secs => $8))',
+    );
+    expect(sessionWindowExpression(2)).toBe(
+      'GREATEST(consumed_at + make_interval(secs => $2), '
+      + "COALESCE(window_extended_to, 'epoch'::timestamptz))",
+    );
   });
 
   it('sessionExpiry honra la prórroga y nunca pasa del techo total', () => {

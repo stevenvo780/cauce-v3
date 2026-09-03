@@ -120,7 +120,7 @@ function sessionInitiator(value: unknown, mode: TerminalMode): 'operator' | 'aut
   return initiator;
 }
 
-function parseSessionRequest(value: unknown): SessionRequestBody {
+export function parseSessionRequest(value: unknown): SessionRequestBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('session request must be an object');
   }
@@ -153,7 +153,7 @@ function parseSessionRequest(value: unknown): SessionRequestBody {
   };
 }
 
-function parseOwnerRotation(value: unknown): OwnerRotationBody {
+export function parseOwnerRotation(value: unknown): OwnerRotationBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('owner rotation request must be an object');
   }
@@ -187,15 +187,15 @@ function ownerFencedBody(value: unknown, label: string): DeleteSessionBody {
   };
 }
 
-function parseDeleteSession(value: unknown): DeleteSessionBody {
+export function parseDeleteSession(value: unknown): DeleteSessionBody {
   return ownerFencedBody(value, 'terminal session release');
 }
 
-function parseSessionExtend(value: unknown): ExtendSessionBody {
+export function parseSessionExtend(value: unknown): ExtendSessionBody {
   return ownerFencedBody(value, 'terminal session extension');
 }
 
-function parseControlRequest(value: unknown): ControlRequestBody {
+export function parseControlRequest(value: unknown): ControlRequestBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('terminal control request must be an object');
   }
@@ -222,7 +222,7 @@ function parseControlRequest(value: unknown): ControlRequestBody {
   };
 }
 
-function browserOwnerGeneration(value: string): string {
+export function browserOwnerGeneration(value: string): string {
   const generation = relayClaimEpoch(value);
   if (generation === undefined) throw new Error('database browser owner generation is invalid');
   return generation;

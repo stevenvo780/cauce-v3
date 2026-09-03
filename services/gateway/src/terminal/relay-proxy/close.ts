@@ -63,7 +63,6 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
       const malformedClaim = (rawClaimToken !== undefined || rawClaimEpoch !== undefined)
         && (claimToken === undefined || claimEpoch === undefined);
       const claimSha256 = claimToken === undefined ? undefined : ticketSha256(claimToken);
-      let closed: TerminalSessionRow | undefined;
       await withTransaction(pool, async (client) => {
         const locked = await client.query<TerminalSessionRow>(
           `SELECT * FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
@@ -130,7 +129,6 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
               ],
             );
             const row = settled.rows[0];
-            closed = row;
             if (row !== undefined) {
               await recordTransactionalTerminalAudit(client, {
                 tenant_id: row.tenant_id,
@@ -182,11 +180,17 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
                   }),
                 });
               }
+              await releaseHeldControl({
+                client,
+                row,
+                reason: 'session_closed',
+                log: app.log,
+                recordAudit: recordTransactionalTerminalAudit,
+              });
             }
           }
         }
       });
-      if (closed !== undefined) await releaseHeldControl(pool, closed, 'session_closed');
       return await reply.code(200).send({
         ok: true,
         relay_instance_id: identity.relay_instance_id,

@@ -4,7 +4,8 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PublishMessage, Tenant } from '@cauce/protocol';
 import {
   CauceRepository, CONTROL_HOLD_MAX_WINDOW_MS, currentControlHold, DEFAULT_ACK_DEADLINE_MS,
-  extendControlHold, releaseControlHold, takeControlHold, type ControlHold, type DatabasePool
+  extendControlHold, releaseControlHold, releaseSessionControlHolds, takeControlHold,
+  withTransaction, type ControlHold, type DatabasePool
 } from '../src/index.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
@@ -23,6 +24,8 @@ const NEIGHBOUR: Tenant = 'Miguel';
 const HELD = 'argos';
 const OTHER = 'socrates';
 const WINDOW_MS = 600_000;
+const SESSION_TTL_SECONDS = 900;
+const SESSION_MAX_TOTAL_SECONDS = 3_600;
 
 interface QueuedRow { id: string; status: string; attempt: number; available_at: Date }
 
@@ -59,22 +62,48 @@ async function queued(alias: string): Promise<QueuedRow[]> {
   return result.rows;
 }
 
-async function seedSession(alias: string, mode = 'harness', tenant: Tenant = TENANT): Promise<string> {
+interface SessionOptions {
+  mode?: string;
+  tenant?: Tenant;
+  consumedSecondsAgo?: number | null;
+  settled?: 'revoked_at' | 'closed_at';
+}
+
+async function seedSession(alias: string, options: SessionOptions = {}): Promise<string> {
+  const { mode = 'harness', tenant = TENANT, consumedSecondsAgo = 0, settled } = options;
   const id = randomUUID();
   const digest = randomBytes(32);
   await pool.query(
     `INSERT INTO terminal_sessions(
        id,operator_id,attributed,console_subject,tenant_id,alias,container,runtime_user,mode,
-       ticket_sha256,reason,issued_at,expires_at,
+       ticket_sha256,reason,issued_at,expires_at,consumed_at,
        request_id,request_sha256,browser_owner_sha256,browser_owner_generation,relay_instance_id
      ) VALUES(
        $1,'steven',true,'Steven:kant',$2,$3,'claw','claw',$4,
        $5,'tui control hold suite',now(),now()+interval '10 minutes',
+       CASE WHEN $7::float8 IS NULL THEN NULL ELSE now()-make_interval(secs => $7) END,
        $1,$5,$5,1,$6
      )`,
-    [id, tenant, alias, mode, digest, 'a'.repeat(64)]
+    [id, tenant, alias, mode, digest, 'a'.repeat(64), consumedSecondsAgo]
   );
+  if (settled !== undefined) {
+    await pool.query(`UPDATE terminal_sessions SET ${settled}=now() WHERE id=$1`, [id]);
+  }
   return id;
+}
+
+/** The window end migration 040 computes for a session, read back from the database clock. */
+async function sessionWindowEnd(sessionId: string): Promise<Date> {
+  const result = await pool.query<{ ends_at: Date }>(
+    `SELECT LEAST(GREATEST(consumed_at + make_interval(secs => $2),
+                           COALESCE(window_extended_to, 'epoch'::timestamptz)),
+                  consumed_at + make_interval(secs => $3)) AS ends_at
+       FROM terminal_sessions WHERE id=$1`,
+    [sessionId, SESSION_TTL_SECONDS, SESSION_MAX_TOTAL_SECONDS]
+  );
+  const row = result.rows[0];
+  if (row === undefined) throw new Error('the session row is gone');
+  return row.ends_at;
 }
 
 interface HoldOptions { expiresInSeconds?: number; takenSecondsAgo?: number }
@@ -250,8 +279,8 @@ describe('a held TUI queues the deliveries of its alias', () => {
 
 describe('migration 040 terminal control holds', () => {
   it('admits the writable TUI mode and still refuses an unknown one', async () => {
-    await expect(seedSession(HELD, 'harness_rw')).resolves.toBeTypeOf('string');
-    await expect(seedSession(HELD, 'harness_ro')).rejects.toMatchObject({ code: '23514' });
+    await expect(seedSession(HELD, { mode: 'harness_rw' })).resolves.toBeTypeOf('string');
+    await expect(seedSession(HELD, { mode: 'harness_ro' })).rejects.toMatchObject({ code: '23514' });
   });
 
   it('adds the extension window without touching the slot accounting column', async () => {
@@ -271,14 +300,28 @@ describe('the store module that takes and releases the control', () => {
   const change = (holdId: string): { tenantId: string; alias: string; holdId: string } =>
     ({ tenantId: TENANT, alias: HELD, holdId });
 
+  const takeOn = async (sessionId: string, windowMs = WINDOW_MS): Promise<ControlHold> =>
+    takeControlHold(pool, {
+      tenantId: TENANT,
+      alias: HELD,
+      sessionId,
+      operatorId: 'steven',
+      reason: 'operator typing',
+      windowMs,
+      sessionTtlSeconds: SESSION_TTL_SECONDS,
+      sessionMaxTotalSeconds: SESSION_MAX_TOTAL_SECONDS
+    });
+
   const take = async (windowMs = WINDOW_MS, tenant: Tenant = TENANT): Promise<ControlHold> =>
     takeControlHold(pool, {
       tenantId: tenant,
       alias: HELD,
-      sessionId: await seedSession(HELD, 'harness', tenant),
+      sessionId: await seedSession(HELD, { tenant }),
       operatorId: 'steven',
       reason: 'operator typing',
-      windowMs
+      windowMs,
+      sessionTtlSeconds: SESSION_TTL_SECONDS,
+      sessionMaxTotalSeconds: SESSION_MAX_TOTAL_SECONDS
     });
 
   it('re-takes the control of an alias whose browser died, releasing the dead hold as expired', async () => {
@@ -306,12 +349,66 @@ describe('the store module that takes and releases the control', () => {
     await expect(takeControlHold(pool, {
       tenantId: TENANT,
       alias: HELD,
-      sessionId: await seedSession(HELD, 'harness', NEIGHBOUR),
+      sessionId: await seedSession(HELD, { tenant: NEIGHBOUR }),
       operatorId: 'steven',
       reason: 'terminal ajena',
-      windowMs: WINDOW_MS
+      windowMs: WINDOW_MS,
+      sessionTtlSeconds: SESSION_TTL_SECONDS,
+      sessionMaxTotalSeconds: SESSION_MAX_TOTAL_SECONDS
     })).rejects.toMatchObject({ code: 'not_found' });
     expect(await currentControlHold(pool, TENANT, HELD)).toBeUndefined();
+  });
+
+  it('clamps the hold to the end of the session window, on the database clock', async () => {
+    const sessionId = await seedSession(HELD, { consumedSecondsAgo: SESSION_TTL_SECONDS - 30 });
+
+    const hold = await takeOn(sessionId, 900_000);
+
+    const written = await holdRow(hold.id);
+    expect(written.expires_at.toISOString()).toEqual((await sessionWindowEnd(sessionId)).toISOString());
+    expect(written.expires_at.getTime() - written.taken_at.getTime()).toBeLessThan(900_000);
+  });
+
+  it('keeps its own window when the session outlives it', async () => {
+    const sessionId = await seedSession(HELD, { consumedSecondsAgo: 0 });
+
+    const hold = await takeOn(sessionId, 60_000);
+
+    const written = await holdRow(hold.id);
+    expect(written.expires_at.getTime()).toBeLessThan((await sessionWindowEnd(sessionId)).getTime());
+    expect(written.expires_at.getTime() - written.taken_at.getTime()).toEqual(60_000);
+  });
+
+  it('never takes the control of a session that is not live', async () => {
+    const dead = [
+      await seedSession(HELD, { consumedSecondsAgo: null }),
+      await seedSession(HELD, { settled: 'revoked_at' }),
+      await seedSession(HELD, { settled: 'closed_at' }),
+      await seedSession(HELD, { consumedSecondsAgo: SESSION_TTL_SECONDS + 60 })
+    ];
+    for (const sessionId of dead) {
+      await expect(takeOn(sessionId)).rejects.toMatchObject({ code: 'not_found' });
+    }
+    expect(await currentControlHold(pool, TENANT, HELD)).toBeUndefined();
+  });
+
+  it('releases every live hold of a session inside the caller transaction, once', async () => {
+    const target = await consumer(HELD);
+    await repository.publish(command('encolada bajo cierre'));
+    const hold = await take();
+
+    const released = await withTransaction(pool, async (client) =>
+      releaseSessionControlHolds(client, hold.session_id, 'session_closed'));
+    const again = await withTransaction(pool, async (client) =>
+      releaseSessionControlHolds(client, hold.session_id, 'session_closed'));
+
+    expect(released.map((row) => row.id)).toEqual([hold.id]);
+    expect(released[0]?.released_reason).toEqual('session_closed');
+    expect(again).toEqual([]);
+    expect((await holdRow(hold.id)).released_at?.toISOString())
+      .toEqual(released[0]?.released_at?.toISOString());
+    const claimed = await claim(target);
+    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['encolada bajo cierre']);
   });
 
   it('rejects a window outside the ceiling the base enforces', async () => {

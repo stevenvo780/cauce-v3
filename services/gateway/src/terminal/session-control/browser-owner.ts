@@ -189,6 +189,13 @@ export function registerTerminalBrowserOwnerRoutes(
                 reason: 'operator_revoked',
               })
             });
+            await releaseHeldControl({
+              client: releaseClient,
+              row,
+              reason: 'session_revoked',
+              log: app.log,
+              recordAudit: recordTransactionalTerminalAudit,
+            });
           }
           if (row === undefined && !settled) throw new TerminalTransactionNoop();
           return { row, settled };
@@ -200,7 +207,6 @@ export function registerTerminalBrowserOwnerRoutes(
         await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
         return;
       }
-      if (outcome.row !== undefined) await releaseHeldControl(pool, outcome.row, 'session_revoked');
       return await reply.code(204).send();
     } catch (error) { replyError(reply, error); }
   });

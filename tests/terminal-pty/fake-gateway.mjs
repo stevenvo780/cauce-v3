@@ -68,6 +68,8 @@ export async function startFakeGateway(options = {}) {
   let revoked = false;
   let down = false;
   const downMode = options.down_mode ?? 'reset';
+  const releasedControl = new Set(options.control_released_sessions ?? []);
+  let controlReleased = options.control_released === true;
   const agents = new Map();
   const sessions = new Map();
   const audit = [];
@@ -393,6 +395,10 @@ export async function startFakeGateway(options = {}) {
       reply(response, 403, { ok: false, reason: 'revoked' });
       return;
     }
+    if (session.mode === 'harness_rw' && (controlReleased || releasedControl.has(sessionId))) {
+      reply(response, 403, { error: 'forbidden', reason: 'control_released' });
+      return;
+    }
     if (body.claim_token !== session.claim_token || body.claim_epoch !== session.claim_epoch
         || identity.relay_instance_id !== session.relay_instance_id
         || identity.relay_boot_id !== session.relay_boot_id
@@ -470,8 +476,12 @@ export async function startFakeGateway(options = {}) {
     session: (sessionId) => sessions.get(sessionId),
     setGrants(next) { grants = new Set(next); },
     revokeAll() { revoked = true; },
-    restore() { revoked = false; down = false; },
+    restore() { revoked = false; down = false; controlReleased = false; releasedControl.clear(); },
     goDown() { down = true; },
+    releaseControl(sessionId) {
+      if (sessionId === undefined) controlReleased = true;
+      else releasedControl.add(sessionId);
+    },
     auditOf: (event) => audit.filter((entry) => entry.event === event),
     async close() {
       for (const timer of timers) clearTimer(timer);

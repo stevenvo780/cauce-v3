@@ -1,3 +1,4 @@
+import { terminalSessionWindowExpression } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
 import type { GatewayRepository } from '../app.js';
 import type { Principal } from '../auth.js';
@@ -45,11 +46,9 @@ export function cohortLabels(cohort: FleetCohort): string[] {
   return cohort.map(fleetIdentityLabel);
 }
 
-/** Migration 040 window shared with the relay `/authz`: TTL, pushed by `window_extended_to`, clamped by the ceiling. The ceiling parameter is optional because an extension is already clamped when it is WRITTEN. */
+/** Migration 040 window shared with the relay `/authz` and with the control hold of the store, which owns the one text this delegates to. The ceiling parameter is optional because an extension is already clamped when it is WRITTEN. */
 export function sessionWindowExpression(ttlParameter: number, maxTotalParameter?: number): string {
-  const extended = `GREATEST(consumed_at + make_interval(secs => $${String(ttlParameter)}), COALESCE(window_extended_to, 'epoch'::timestamptz))`;
-  if (maxTotalParameter === undefined) return extended;
-  return `LEAST(${extended}, consumed_at + make_interval(secs => $${String(maxTotalParameter)}))`;
+  return terminalSessionWindowExpression(ttlParameter, maxTotalParameter);
 }
 
 /** JavaScript twin of `sessionWindowExpression`, for the rows already read into memory. */

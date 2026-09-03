@@ -1,11 +1,13 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import {
-  StoreError, currentControlHold, releaseControlHold, takeControlHold, type DatabasePool,
+  StoreError, currentControlHold, releaseControlHold, releaseSessionControlHolds, takeControlHold,
+  type DatabaseClient,
 } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { requireOperatorPermission, type Principal } from '../../auth.js';
 import {
-  recordTerminalAudit, terminalAuditMetadata, type TerminalAuditContext,
+  recordTerminalAudit, terminalAuditMetadata,
+  type TerminalAuditContext, type TerminalAuditEntry,
 } from '../audit.js';
 import {
   resolveOperator, writableModeRequiresAttribution, type ResolvedOperator,
@@ -78,11 +80,6 @@ export function registerTerminalControlRoute(
     session: OwnedTerminalSession,
     holdReason: string,
   ): Promise<void> {
-    const untilSessionEnds = session.session_expires_at.getTime() - Date.now();
-    const windowMs = Math.max(1, Math.min(
-      (config.controlHoldSeconds ?? 0) * 1_000,
-      untilSessionEnds,
-    ));
     let hold;
     try {
       hold = await takeControlHold(pool, {
@@ -91,9 +88,16 @@ export function registerTerminalControlRoute(
         sessionId: session.id,
         operatorId: operator.operator_id,
         reason: holdReason,
-        windowMs,
+        windowMs: Math.max(1, (config.controlHoldSeconds ?? 0) * 1_000),
+        sessionTtlSeconds: config.sessionTtlSeconds,
+        sessionMaxTotalSeconds: config.sessionMaxTotalSeconds ?? null,
       });
     } catch (error) {
+      if (error instanceof StoreError && error.code === 'not_found') {
+        // The session died between the owner fence and the take; the browser must re-open.
+        await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
+        return;
+      }
       if (!(error instanceof StoreError) || error.code !== 'conflict') throw error;
       const live = await currentControlHold(pool, session.tenant_id, session.alias);
       await reply.code(409).send({
@@ -203,39 +207,44 @@ export function registerTerminalControlRoute(
   });
 }
 
+export interface TerminalControlTeardown {
+  readonly client: DatabaseClient;
+  readonly row: TeardownSessionRow;
+  readonly reason: string;
+  readonly log: FastifyBaseLogger;
+  readonly recordAudit: (client: DatabaseClient, entry: TerminalAuditEntry) => Promise<void>;
+}
+
 /**
- * Teardown path: closing or revoking a session gives the alias its queue back at once. The hold
- * expiry is only the net under this, never the mechanism, so a lost release costs at most the
- * remaining session window.
+ * Teardown path: closing or revoking a session gives the alias its queue back at once, in the SAME
+ * transaction that settles the session. The hold expiry is only the net under this, never the
+ * mechanism. A release that fails takes the close down with it — the relay respools and retries —
+ * instead of leaving the alias muted with nothing in the log.
  */
-export async function releaseHeldControl(
-  pool: DatabasePool, row: TeardownSessionRow, reason: string,
-): Promise<void> {
+export async function releaseHeldControl(teardown: TerminalControlTeardown): Promise<void> {
+  const { client, row, reason, log, recordAudit } = teardown;
   if (row.mode !== 'harness_rw') return;
   try {
-    const hold = await currentControlHold(pool, row.tenant_id, row.alias);
-    if (hold?.session_id !== row.id) return;
-    await releaseControlHold(
-      pool, { tenantId: row.tenant_id, alias: row.alias, holdId: hold.id }, reason,
-    );
-    await recordTerminalAudit(pool, {
-      tenant_id: row.tenant_id,
-      actor_alias: row.alias,
-      action: 'terminal.control_released',
-      decision: 'info',
-      ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
-      metadata: terminalAuditMetadata({
-        operator_id: row.operator_id,
-        attributed: row.attributed,
-        target_tenant: row.tenant_id,
-        target_alias: row.alias,
-        container: row.container,
-        cohort: [],
-        mode: row.mode,
-      }, { session_id: row.id, hold_id: hold.id, reason }),
-    });
+    for (const hold of await releaseSessionControlHolds(client, row.id, reason)) {
+      await recordAudit(client, {
+        tenant_id: row.tenant_id,
+        actor_alias: row.alias,
+        action: 'terminal.control_released',
+        decision: 'info',
+        ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
+        metadata: terminalAuditMetadata({
+          operator_id: row.operator_id,
+          attributed: row.attributed,
+          target_tenant: row.tenant_id,
+          target_alias: row.alias,
+          container: row.container,
+          cohort: [],
+          mode: row.mode,
+        }, { session_id: row.id, hold_id: hold.id, reason }),
+      });
+    }
   } catch (error) {
-    // A hold released concurrently is not a failure of the close it hangs off.
-    if (!(error instanceof StoreError)) throw error;
+    log.error({ session_id: row.id, reason, err: error }, 'terminal control hold was not released');
+    throw error;
   }
 }

@@ -281,6 +281,9 @@ interface Circuit {
   stop(): Promise<void>;
 }
 
+/** Every circuit ever started, so the work tree is never removed under a relay still spooling. */
+const live: Circuit[] = [];
+
 let tls: SelfSignedCert;
 let relayInstanceId = '';
 let workDirectory = '';
@@ -313,6 +316,7 @@ async function startCircuit(label: string, recordingConfigured: boolean): Promis
   const gateway = await startFakeGateway({
     master_key_b64: MASTER_KEY_B64, relay_token: RELAY_TOKEN, relay_instance_id: relayInstanceId,
   });
+  let stopped = false;
   const gatewayCa = gateway.ca_path;
   if (isRoot && gatewayCa !== undefined) {
     chmodSync(path.dirname(gatewayCa), 0o755);
@@ -338,15 +342,18 @@ async function startCircuit(label: string, recordingConfigured: boolean): Promis
   chmodSync(tokenFile, 0o644);
   chmodSync(registryFile, 0o644);
   chmodSync(spoolFile, 0o666);
-  const wsPort = 18_100 + Math.floor(Math.random() * 200);
-  const agentPort = wsPort + 300;
+  // Browser 18100-18199, agent 18300-18399, health 18600-18699: three blocks this file owns.
+  // relay-contract-lifecycle.test.ts takes 18700-18899 for its browser leg, and sharing that
+  // block is a flake waiting for the day vitest.config.ts stops serializing these files.
+  const wsPort = 18_100 + Math.floor(Math.random() * 100);
+  const agentPort = wsPort + 200;
   const child = spawn(launch.command, launch.args, {
     cwd: fileURLToPath(repoRoot),
     env: {
       ...process.env,
       CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(wsPort),
       CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort),
-      CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(agentPort + 300),
+      CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(wsPort + 500),
       CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path,
       CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
       CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: tls.cert_path,
@@ -369,13 +376,17 @@ async function startCircuit(label: string, recordingConfigured: boolean): Promis
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   await waitForPort(wsPort, child);
-  return {
+  const circuit: Circuit = {
     gateway, wsPort, agentPort, spoolFile, recordingDir,
     async stop() {
+      if (stopped) return;
+      stopped = true;
       await stopChild(child);
       await gateway.close();
     },
   };
+  live.push(circuit);
+  return circuit;
 }
 
 /** Everything a block needs to drive one circuit; the sockets and agents it opens are its own. */
@@ -467,7 +478,8 @@ beforeAll(() => {
   if (relay !== null) launch = relayLaunch(relay, workDirectory);
 });
 
-afterAll(() => {
+afterAll(async () => {
+  while (live.length > 0) await live.pop()?.stop();
   rmSync(workDirectory, { recursive: true, force: true });
   rmSync(tls.directory, { recursive: true, force: true });
 });
@@ -612,6 +624,36 @@ describe.skipIf(relay === null)('taking control of a TUI, with a recording direc
     while (agent.sessions > 0 && Date.now() < deadline) await settle(20);
     expect(agent.sessions).toBe(0);
     expect(agent.events.filter((event) => event.event === 'closed')).toHaveLength(1);
+  });
+
+  it('7. closes with 4410 when the periodic authz says the control hold was released', async () => {
+    const agent = await drive.attachAgent();
+    const payload = ticketPayload({ mode: 'harness_rw' });
+    const { socket, stream } = await drive.attach(payload);
+    await drive.readyFrame(socket, stream, payload.sid);
+    socket.send(JSON.stringify({ type: 'input', data: 'ping\r' }));
+    await stream.binaryUntil((text) => text.includes('pong-1'));
+
+    // The hold goes while the session itself stays perfectly alive: nothing is revoked, nothing
+    // expired, the claim still matches. Only /authz changes its answer.
+    const closed = closedWith(socket);
+    circuit.gateway.releaseControl(payload.sid);
+    const end = await closed;
+    expect(end.code).toBe(CLOSE_CODE.control_released);
+    expect(end.reason).toBe('control_released');
+    const report = await spooledReport(circuit.spoolFile, payload.sid);
+    circuit.gateway.restore();
+
+    expect(report.reason).toBe('control_released');
+    expect(report.input_batches).toBe(1);
+    expect(report.bytes_in).toBe(Buffer.byteLength('ping\r'));
+    expect(report.recording_capped).toBe(false);
+    const digest = createHash('sha256').update(readFileSync(drive.castPath(payload.sid))).digest('hex');
+    expect(report.recording_sha256).toBe(digest);
+
+    const deadline = Date.now() + 5_000;
+    while (agent.sessions > 0 && Date.now() < deadline) await settle(20);
+    expect(agent.sessions).toBe(0);
   });
 });
 

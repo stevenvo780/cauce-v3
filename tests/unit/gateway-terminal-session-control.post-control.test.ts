@@ -8,8 +8,9 @@ import { sessionWindowExpression } from '../../services/gateway/src/terminal/hel
 import { ticketSha256 } from '../../services/gateway/src/terminal/tickets.js';
 import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
 import {
-  OWNER_TOKEN_OK, REQUEST_ID_OK, UUID_OK, buildContext, makeRow, stubFleetPool, transactionClient, unattributedConsolePrincipal,
-  validControlRequest, validDeleteSession, validSessionBody, type Context,
+  OWNER_TOKEN_OK, REQUEST_ID_OK, UUID_OK, buildContext, configBase, makeRow, stubFleetPool,
+  transactionClient, unattributedConsolePrincipal, validControlRequest, validDeleteSession,
+  validSessionBody, type Context,
 } from './gateway-terminal-session-control-fixtures.js';
 
 /**
@@ -67,6 +68,8 @@ interface ControlPoolOptions {
   readonly session?: OwnedRow | undefined;
   readonly hold?: HoldRow | undefined;
   readonly takeConflict?: boolean;
+  readonly takeMissing?: boolean;
+  readonly releaseFails?: boolean;
   readonly revoked?: TerminalSessionRow | undefined;
 }
 
@@ -100,12 +103,21 @@ function controlPool(
       if (text.includes('FROM terminal_sessions')) return rows(options.session);
       return { rows: [], rowCount: 0 };
     }),
-    connect: vi.fn(async () => transactionClient((text) => {
+    connect: vi.fn(async () => transactionClient((text: string, values: unknown[]) => {
+      queries.push({ text, values });
       if (text.includes('INSERT INTO terminal_control_holds')) {
         if (options.takeConflict === true) {
           throw Object.assign(new Error('duplicate key value'), { code: '23505' });
         }
-        return { rows: [holdRow()], rowCount: 1 };
+        return options.takeMissing === true ? { rows: [], rowCount: 0 } : { rows: [holdRow()], rowCount: 1 };
+      }
+      if (text.includes('UPDATE terminal_control_holds')) {
+        if (options.releaseFails === true) throw new Error('release query exploded');
+        return rows(options.hold === undefined ? undefined : {
+          ...options.hold,
+          released_at: new Date(),
+          released_reason: String(values[1]),
+        });
       }
       if (text.includes('SET revoked_at=now()')) return rows(options.revoked);
       return { rows: [], rowCount: 0 };
@@ -123,6 +135,12 @@ function auditRows(pool: { __queries: RecordedQuery[] }): Record<string, unknown
       decision: query.values[3],
       metadata: JSON.parse(String(query.values[5])) as Record<string, unknown>,
     }));
+}
+
+function transactionAudits(context: Context): Record<string, unknown>[] {
+  return context.recordTransactionalTerminalAudit.mock.calls.map(
+    (call) => call[1] as Record<string, unknown>,
+  );
 }
 
 function grantsFileWith(operator: string): string {
@@ -241,39 +259,63 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
     })]);
   });
 
-  it('la ventana del arriendo nunca sobrevive a la de su sesión', async () => {
-    const session = ownedRow();
-    const shortLived = { ...session, session_expires_at: new Date(Date.now() + 5_000) };
-    const pool = controlPool({ session: shortLived });
+  it('la ventana del arriendo la acota la base: la ruta pasa TTL y techo, no un resto de JS', async () => {
+    const pool = controlPool({ session: ownedRow() });
     ctx = buildContext({ pool });
     const response = await control(validControlRequest());
     expect(response.statusCode).toBe(200);
-    const insert = (pool.connect as unknown as {
-      mock: { results: { value: Promise<{ query: { mock: { calls: unknown[][] } } }> }[] };
-    }).mock.results[0];
-    const client = await insert?.value;
-    const inserted = client?.query.mock.calls.find(
-      (call) => String(call[0]).includes('INSERT INTO terminal_control_holds'),
+    const inserted = pool.__queries.find(
+      (query) => query.text.includes('INSERT INTO terminal_control_holds'),
     );
-    const windowMs = Number((inserted?.[1] as unknown[])[5]);
-    expect(windowMs).toBeLessThanOrEqual(5_000);
-    expect(windowMs).toBeGreaterThan(0);
+    expect(inserted?.text).toContain(`LEAST(${sessionWindowExpression(7, 8)}, now()+($6||' milliseconds')::interval)`);
+    expect(inserted?.text).toContain('consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL');
+    expect(inserted?.text).toContain('FOR UPDATE');
+    expect(inserted?.values.slice(5)).toEqual([
+      String((configBase().controlHoldSeconds ?? 0) * 1_000),
+      configBase().sessionTtlSeconds,
+      configBase().sessionMaxTotalSeconds,
+    ]);
+  });
+
+  it('responde 409 stale_terminal_owner si la sesión muere entre el vallado y la toma', async () => {
+    const pool = controlPool({ session: ownedRow(), takeMissing: true });
+    ctx = buildContext({ pool });
+    const response = await control(validControlRequest());
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'conflict', reason: 'stale_terminal_owner' });
+  });
+
+  it('exige el grant sobre la cohorte ENTERA del contenedor, no sobre un solo miembro', async () => {
+    const pool = controlPool({ session: ownedRow() });
+    const grants = new GrantStore(grantsFileWith('steven-kant'));
+    ctx = buildContext({
+      pool,
+      grants: grants as unknown as never,
+      cohort: [
+        { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw' },
+        { tenant_id: 'Steven', alias: 'socrates', container: 'claw', runtime_user: 'claw' },
+      ],
+    });
+    const response = await control(validControlRequest());
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: 'forbidden', reason: 'no_grant_for_operator' });
+    expect(pool.__queries.some((query) => query.text.includes('INSERT INTO terminal_control_holds')))
+      .toBe(false);
   });
 
   it('responde 409 control_held en la segunda toma y sólo nombra al operador', async () => {
-    const pool = controlPool({
-      session: ownedRow(),
-      takeConflict: true,
-      hold: holdRow({ operator_id: 'otro-operador' }),
-    });
+    const live = holdRow({ operator_id: 'otro-operador' });
+    const pool = controlPool({ session: ownedRow(), takeConflict: true, hold: live });
     ctx = buildContext({ pool });
     const response = await control(validControlRequest());
     expect(response.statusCode).toBe(409);
     const body = response.json<Record<string, unknown>>();
-    expect(body).toMatchObject({
-      error: 'conflict', reason: 'control_held', held_by: 'otro-operador',
+    expect(body).toEqual({
+      error: 'conflict',
+      reason: 'control_held',
+      held_by: 'otro-operador',
+      expires_at: live.expires_at.toISOString(),
     });
-    expect(JSON.stringify(body)).not.toContain('claw');
   });
 
   it('devolver un arriendo ajeno es 403 control_held', async () => {
@@ -324,10 +366,37 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
       (query) => query.text.includes('UPDATE terminal_control_holds'),
     );
     expect(released).toHaveLength(1);
-    expect(released[0]?.values[3]).toBe('session_revoked');
-    expect(auditRows(pool)).toEqual([expect.objectContaining({
-      action: 'terminal.control_released', decision: 'info',
-    })]);
+    expect(released[0]?.values).toEqual([revoked.id, 'session_revoked']);
+    expect(transactionAudits(ctx)).toEqual([
+      expect.objectContaining({ action: 'terminal.session.revoked' }),
+      expect.objectContaining({
+        action: 'terminal.control_released',
+        decision: 'info',
+        metadata: expect.objectContaining({
+          session_id: revoked.id, hold_id: HOLD_ID, reason: 'session_revoked',
+        }) as unknown,
+      }),
+    ]);
+    const outsideTransaction = (pool.query as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls.filter((call) => String(call[0]).includes('terminal_control_holds'));
+    expect(outsideTransaction).toEqual([]);
+  });
+
+  it('un arriendo que no se puede devolver tumba la revocación en vez de silenciarse', async () => {
+    const revoked = makeRow({ mode: 'harness_rw', consumed_at: new Date(Date.now() - 5_000) });
+    const pool = controlPool({ revoked, hold: holdRow(), releaseFails: true });
+    ctx = buildContext({ pool });
+    const logged = vi.spyOn(ctx.app.log, 'error');
+    const response = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/v3/console/terminal/sessions/${UUID_OK}`,
+      payload: validDeleteSession(),
+    });
+    expect(response.statusCode).toBe(400);
+    expect(logged).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: revoked.id, reason: 'session_revoked' }),
+      'terminal control hold was not released',
+    );
   });
 
   it('una sesión de sólo lectura no consulta siquiera la tabla de arriendos al revocarse', async () => {

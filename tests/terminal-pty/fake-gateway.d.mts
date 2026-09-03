@@ -22,6 +22,9 @@ export interface FakeGatewayOptions {
   /** Makes the gateway unreachable this long after start, to test fail-closed. */
   down_after_ms?: number;
   down_mode?: 'reset' | 'timeout' | '503';
+  /** Answers every writable session's authz with the released-hold denial from the first call. */
+  control_released?: boolean;
+  control_released_sessions?: string[];
 }
 
 export interface FakeGatewayAuditEntry {
@@ -70,6 +73,9 @@ export interface FakeGatewayHandle {
   revokeAll(): void;
   restore(): void;
   goDown(): void;
+  /** Flips authz for one `harness_rw` session, or for all of them when the id is omitted, to
+   * `403 {"error":"forbidden","reason":"control_released"}`; `restore()` puts the hold back. */
+  releaseControl(sessionId?: string): void;
   auditOf(event: string): FakeGatewayAuditEntry[];
   close(): Promise<void>;
 }

@@ -163,8 +163,13 @@ frozensets, and the four implementations must agree with each other.
   it, plus the operator's explicit `POST .../extend`. A read-only viewer has no keyboard, which
   is why output and ping rearm *its* idle; a writable session does have one, and a forgotten tab
   in front of a chatty process would otherwise live forever.
-- **The control hold is re-checked by the same 30 s `/authz` cycle as everything else.** When
-  the gateway reports the hold is gone, the session closes with `4410 control_released`.
+- **The control hold is re-checked by the same 30 s `/authz` cycle as everything else.** The
+  gateway answers `403` with `reason: "control_released"` once the hold that opened a
+  `harness_rw` session has been released or has expired, and only then; every other refusal
+  keeps its own reason and is read as a plain revocation, as is a denial body the relay cannot
+  parse exactly. On that one reason the session closes with `4410 control_released` — `4403` for
+  a read-only viewer, which never held anything — and the close report is spooled and delivered
+  like any other, with its `input_batches` count and recording digest.
 
 The agent may also send two informational frames the relay forwards untouched to the browser:
 `INPUT_REFUSED` (`0x26`, a paste or governance write holds the pane) and `GEOMETRY` (`0x27`, the

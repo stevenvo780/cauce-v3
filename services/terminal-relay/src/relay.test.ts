@@ -1,11 +1,15 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createSelfSignedCert } from '../../../tests/terminal-pty/certs.mjs';
 import { loadAgentRegistry } from './agent-leg.js';
 import { parseAttachRequest } from './browser-leg.js';
 import { loadRelayConfig } from './config.js';
-import { parseSessionGrant } from './gateway-client.js';
+import { HttpsTerminalGatewayClient, parseSessionGrant, type AuthzOutcome } from './gateway-client.js';
+import { relayInstanceIdFromCertificate, type RelayProcessIdentity } from './relay-identity.js';
 import {
   MAX_COLS, MAX_ROWS, MIN_COLS, MIN_ROWS
 } from './sessions.js';
@@ -283,5 +287,114 @@ describe('agent admission and identity', () => {
     expect(agent.helloAck).toEqual({ ok: true });
     await waitFor(() => harness.leg.presence().length === 1);
     expect(harness.leg.presence()[0]?.home).toBeUndefined();
+  });
+});
+
+interface StubbedResponse {
+  readonly status: number;
+  readonly body: string;
+}
+
+/** Drives the real HTTPS client against a server that answers whatever the test sets next. */
+async function gatewayStub(
+  first: StubbedResponse,
+): Promise<{
+  identity: RelayProcessIdentity;
+  answer(next: StubbedResponse): void;
+  authorize(): Promise<AuthzOutcome>;
+  close(): Promise<void>;
+}> {
+  const fixture = createSelfSignedCert();
+  const tokenFile = join(fixture.directory, 'relay-token');
+  await writeFile(tokenFile, `${'t'.repeat(64)}\n`, { mode: 0o600 });
+  const identity: RelayProcessIdentity = {
+    relayInstanceId: relayInstanceIdFromCertificate(fixture.cert),
+    relayBootId: '11111111-1111-4111-8111-111111111111',
+  };
+  let response = first;
+  const server: HttpsServer = createHttpsServer(
+    { cert: fixture.cert, key: fixture.key },
+    (request, reply) => {
+      request.resume();
+      request.once('end', () => {
+        reply.writeHead(response.status, { 'content-type': 'application/json' });
+        reply.end(response.body);
+      });
+    },
+  );
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const { port } = server.address() as AddressInfo;
+  const gateway = new HttpsTerminalGatewayClient({
+    gatewayUrl: `https://localhost:${String(port)}`,
+    tokenFile,
+    ca: fixture.cert,
+    clientCert: fixture.cert,
+    clientKey: fixture.key,
+    identity,
+  });
+  return {
+    identity,
+    answer(next: StubbedResponse) { response = next; },
+    authorize: () => gateway.authorizeSession(SESSION_ID, CLAIM_TOKEN, '7'),
+    async close() {
+      await new Promise<void>((resolve) => { server.close(() => { resolve(); }); });
+      await rm(fixture.directory, { recursive: true, force: true });
+    },
+  };
+}
+
+describe('periodic authorization outcomes', () => {
+  it('downgrades only the declared control_released denial and fails closed on every other body', async () => {
+    const stub = await gatewayStub({
+      status: 403, body: '{"error":"forbidden","reason":"control_released"}',
+    });
+    try {
+      expect(await stub.authorize()).toEqual({ status: 'control_released' });
+      // The gateway's own denial envelope is `ok:false`; the reason is what the relay reads.
+      stub.answer({ status: 403, body: '{"ok":false,"reason":"control_released"}' });
+      expect(await stub.authorize()).toEqual({ status: 'control_released' });
+
+      for (const body of [
+        '{"error":"forbidden","reason":"revoked"}',
+        '{"ok":false,"reason":"claim_fenced"}',
+        '{"ok":false}',
+        '{"reason":"control_released"}',
+        '{"ok":false,"reason":"control_released","hold_owner":"kant"}',
+        '{"error":"forbidden","ok":false,"reason":"control_released"}',
+        '["control_released"]',
+        'not json',
+        '',
+      ]) {
+        stub.answer({ status: 403, body });
+        expect(await stub.authorize()).toEqual({ status: 'revoked' });
+      }
+
+      // The reason belongs to 403 alone, and a broken gateway still earns the grace window.
+      stub.answer({ status: 401, body: '{"error":"forbidden","reason":"control_released"}' });
+      expect(await stub.authorize()).toEqual({ status: 'revoked' });
+      stub.answer({ status: 503, body: '{"error":"forbidden","reason":"control_released"}' });
+      expect(await stub.authorize()).toEqual({ status: 'unreachable' });
+
+      stub.answer({
+        status: 200,
+        body: JSON.stringify({
+          ok: true,
+          expires_at: new Date(Date.now() + 30_000).toISOString(),
+          claim_epoch: '7',
+          claim_lease_ms: 150_000,
+          claim_lease_ttl_ms: 150_000,
+          relay_instance_id: stub.identity.relayInstanceId,
+          relay_boot_id: stub.identity.relayBootId,
+        }),
+      });
+      expect(await stub.authorize()).toEqual({
+        status: 'allow', claim_epoch: '7', claim_lease_ms: 150_000, claim_lease_ttl_ms: 150_000,
+      });
+    } finally {
+      await stub.close();
+    }
   });
 });

@@ -41,8 +41,8 @@ async function build(maxSessionsPerOperator: number, sessionMaxTotalSeconds?: nu
   await writeFile(grantsFile, JSON.stringify({
     version: 1,
     grants: NAMED_OPERATORS.flatMap((operator) => [
-      { operator, tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] },
-      { operator, tenant_id: 'Steven', alias: 'socrates', modes: ['shell'] },
+      { operator, tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness', 'harness_rw'] },
+      { operator, tenant_id: 'Steven', alias: 'socrates', modes: ['shell', 'harness', 'harness_rw'] },
     ]),
   }));
   const config: TerminalConfig = {
@@ -159,6 +159,41 @@ async function authorize(sessionId: string, claimEpoch: string, claimToken = CLA
     headers: { authorization: `Bearer ${RELAY_TOKEN}` },
     payload: { claim_token: claimToken, claim_epoch: claimEpoch },
   });
+}
+
+async function takeHold(sessionId: string, window: 'live' | 'expired'): Promise<string> {
+  const taken = await pool.query<{ id: string }>(
+    `INSERT INTO terminal_control_holds(
+       session_id,tenant_id,alias,operator_id,reason,taken_at,expires_at
+     ) VALUES($1,'Steven','jarvis','steven','tomar la TUI para desatascar el turno',
+       now()-make_interval(secs => $2),now()+make_interval(secs => $3))
+     RETURNING id`,
+    [sessionId, window === 'live' ? 0 : 600, window === 'live' ? 300 : -1],
+  );
+  const row = taken.rows[0];
+  if (row === undefined) throw new Error('the control hold was not inserted');
+  return row.id;
+}
+
+async function releasedReason(holdId: string): Promise<string | null> {
+  const hold = await pool.query<{ released_reason: string | null; released_at: Date | null }>(
+    'SELECT released_reason,released_at FROM terminal_control_holds WHERE id=$1',
+    [holdId],
+  );
+  const row = hold.rows[0];
+  if (row === undefined) throw new Error('the control hold row is gone');
+  expect(row.released_at === null).toBe(row.released_reason === null);
+  return row.released_reason;
+}
+
+async function lastRefusal(sessionId: string): Promise<string | undefined> {
+  const denied = await pool.query<{ refusal: string }>(
+    `SELECT metadata->>'refusal' AS refusal FROM audit_events
+      WHERE action='terminal.session.authz_denied' AND metadata->>'session_id'=$1
+      ORDER BY id DESC LIMIT 1`,
+    [sessionId],
+  );
+  return denied.rows[0]?.refusal;
 }
 
 async function failAuditAction(action: string): Promise<void> {
@@ -455,6 +490,80 @@ describe('atomic PTY admission', () => {
     const beyondCeiling = await authorize(issued.session_id, epoch);
     expect(beyondCeiling.statusCode).toBe(403);
     expect(beyondCeiling.json()).toEqual({ ok: false, reason: 'session_expired' });
+  });
+
+  it('cierra la sesión escribible en cuanto el control deja de estar tomado', async () => {
+    await build(10);
+    const opened = await request('steven');
+    const issued = opened.json<{ session_id: string; ticket: string }>();
+    const consumed = await consume(issued.session_id, issued.ticket, CLAIM_A);
+    expect(consumed.statusCode).toBe(200);
+    const epoch = consumed.json<{ claim_epoch: string }>().claim_epoch;
+    await pool.query(`UPDATE terminal_sessions SET mode='harness_rw' WHERE id=$1`, [issued.session_id]);
+
+    const neverHeld = await authorize(issued.session_id, epoch);
+    expect(neverHeld.statusCode).toBe(200);
+
+    const holdId = await takeHold(issued.session_id, 'live');
+    expect((await authorize(issued.session_id, epoch)).statusCode).toBe(200);
+
+    await pool.query(
+      `UPDATE terminal_control_holds SET released_at=now(),released_reason='operator_released'
+        WHERE id=$1`,
+      [holdId],
+    );
+    const released = await authorize(issued.session_id, epoch);
+    expect(released.statusCode).toBe(403);
+    expect(released.json()).toEqual({ error: 'forbidden', reason: 'control_released' });
+    expect(await lastRefusal(issued.session_id)).toBe('control_released');
+
+    await takeHold(issued.session_id, 'expired');
+    const expired = await authorize(issued.session_id, epoch);
+    expect(expired.statusCode).toBe(403);
+    expect(expired.json()).toEqual({ error: 'forbidden', reason: 'control_released' });
+  });
+
+  it('el cierre del relay devuelve el arriendo en la MISMA transacción que cierra', async () => {
+    await build(10);
+    const opened = await request('steven');
+    const issued = opened.json<{ session_id: string; ticket: string }>();
+    const consumed = await consume(issued.session_id, issued.ticket, CLAIM_A);
+    const epoch = consumed.json<{ claim_epoch: string }>().claim_epoch;
+    await pool.query(`UPDATE terminal_sessions SET mode='harness_rw' WHERE id=$1`, [issued.session_id]);
+    const holdId = await takeHold(issued.session_id, 'live');
+
+    await failAuditAction('terminal.session.close');
+    expect((await closeClaim(issued.session_id, CLAIM_A, epoch)).statusCode).toBe(400);
+    expect(await releasedReason(holdId)).toBeNull();
+    await allowAuditAgain();
+
+    expect((await closeClaim(issued.session_id, CLAIM_A, epoch)).statusCode).toBe(200);
+    expect(await releasedReason(holdId)).toBe('session_closed');
+    const audited = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM audit_events
+        WHERE action='terminal.control_released' AND metadata->>'session_id'=$1
+          AND metadata->>'hold_id'=$2`,
+      [issued.session_id, holdId],
+    );
+    expect(audited.rows[0]?.count).toBe('1');
+  });
+
+  it('deja viva la sesión de sólo lectura aunque su alias tuviera un arriendo devuelto', async () => {
+    await build(10);
+    const opened = await request('steven');
+    const issued = opened.json<{ session_id: string; ticket: string }>();
+    const consumed = await consume(issued.session_id, issued.ticket, CLAIM_A);
+    const epoch = consumed.json<{ claim_epoch: string }>().claim_epoch;
+    await pool.query(`UPDATE terminal_sessions SET mode='harness' WHERE id=$1`, [issued.session_id]);
+    const holdId = await takeHold(issued.session_id, 'live');
+    await pool.query(
+      `UPDATE terminal_control_holds SET released_at=now(),released_reason='operator_released'
+        WHERE id=$1`,
+      [holdId],
+    );
+
+    const authorized = await authorize(issued.session_id, epoch);
+    expect(authorized.statusCode).toBe(200);
   });
 
   it('serializes concurrent exact consumes into one transition and one recovered receipt', async () => {
