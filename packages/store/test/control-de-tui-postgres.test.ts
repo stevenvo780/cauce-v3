@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PublishMessage, Tenant } from '@cauce/protocol';
 import {
   CauceRepository, CONTROL_HOLD_MAX_WINDOW_MS, currentControlHold, DEFAULT_ACK_DEADLINE_MS,
-  extendControlHold, releaseControlHold, releaseSessionControlHolds, takeControlHold,
+  releaseControlHold, releaseSessionControlHolds, takeControlHold,
   withTransaction, type ControlHold, type DatabasePool
 } from '../src/index.js';
 import {
@@ -436,16 +436,6 @@ describe('the store module that takes and releases the control', () => {
     await releaseControlHold(pool, change(hold.id), 'operator left');
     await expect(releaseControlHold(pool, change(hold.id), 'otra vez'))
       .rejects.toMatchObject({ code: 'not_found' });
-  });
-
-  it('extends the window forward but never past the ceiling of the CHECK', async () => {
-    const hold = await take(60_000);
-
-    const extended = await extendControlHold(pool, change(hold.id), CONTROL_HOLD_MAX_WINDOW_MS);
-
-    expect(extended.expires_at.getTime()).toBeGreaterThan(hold.expires_at.getTime());
-    expect(extended.expires_at.getTime() - extended.taken_at.getTime())
-      .toBeLessThanOrEqual(CONTROL_HOLD_MAX_WINDOW_MS);
   });
 });
 

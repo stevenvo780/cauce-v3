@@ -164,27 +164,6 @@ export async function releaseControlHold(
   return row;
 }
 
-/**
- * Moves the window forward, clamped to the ceiling of the CHECK: the base bounds the extension,
- * not the process that asks for it. The window never shrinks and never outlives `taken_at+12h`.
- */
-export async function extendControlHold(
-  pool: DatabasePool, change: ControlHoldChange, windowMs: number,
-): Promise<ControlHold> {
-  const extended = await pool.query<ControlHold>(
-    `UPDATE terminal_control_holds
-        SET expires_at=LEAST(
-              GREATEST(expires_at,now()+($4||' milliseconds')::interval),
-              taken_at+interval '12 hours')
-      WHERE id=$3::uuid AND tenant_id=$1 AND alias=$2 AND released_at IS NULL AND expires_at>now()
-      RETURNING ${holdColumns}`,
-    [change.tenantId, change.alias, change.holdId, boundedWindow(windowMs)],
-  );
-  const row = extended.rows[0];
-  if (row === undefined) throw new StoreError('not_found', 'there is no live terminal control hold');
-  return row;
-}
-
 /** The live hold of an alias, or `undefined`: an expired one no longer gates anything. */
 export async function currentControlHold(
   pool: DatabasePool, tenantId: string, alias: string,

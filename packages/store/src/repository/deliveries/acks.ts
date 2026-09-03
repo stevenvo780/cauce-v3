@@ -1,8 +1,7 @@
 import type { Ack, DeliveryState, ProfileRuntimeAdoptionEvidence, Tenant } from '@cauce/protocol';
-import { isAmbiguousAckErrorCode } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
-import { hasDeliverableArtifact, withoutInlineArtifactBytes } from '../artifact-payload.js';
+import { withoutInlineArtifactBytes } from '../artifact-payload.js';
 import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
 import { textualReply } from '../outbox.js';
@@ -35,6 +34,22 @@ import {
   type OpenChainGate,
 } from './contracts.js';
 import { DeliveryClaimsRepository } from './claims.js';
+import {
+  appliedAckResult, deriveAckTransition, isExactRepeatedAck, validateAckRequest,
+  type AckTransition, type RepeatedAckRow
+} from './acks/transition.js';
+
+type AckDeliveryRow = DeliveryRow & LateResultRow & {
+  claim_live: boolean;
+  execution_started: boolean;
+};
+
+interface TerminalAckEffects {
+  notified: { allowed: number; denied: number; errors: number };
+  delegationRejections: DelegationRejection[];
+  delegationMaterializations: DelegationMaterialization[];
+  chainGate: OpenChainGate | undefined;
+}
 
 export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
   protected abstract recordProfileRuntimeAdoption(client: DatabaseClient, tenantId: Tenant, alias: string, row: DeliveryRow, ack: Ack, evidence: ProfileRuntimeAdoptionEvidence | undefined): Promise<boolean>;
@@ -54,17 +69,10 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
     ackDeadlineMs = 30_000,
     leaseCap: DeliveryLeaseCap = {}
   ): Promise<AckResult> {
-    if (!ack.claim_token || !ack.attempt) {
-      throw new StoreError('fenced', 'ACK requires claim_token and positive attempt');
-    }
-    if (!Number.isSafeInteger(ackDeadlineMs) || ackDeadlineMs <= 0) {
-      throw new StoreError('conflict', 'ACK deadline must be a positive integer');
-    }
+    validateAckRequest(ack, ackDeadlineMs);
     return withTransaction(this.pool, async (client) => {
       await this.assertRuntimeRoute(client, tenantId, alias);
-      const selected = await client.query<
-        DeliveryRow & LateResultRow & { claim_live: boolean; execution_started: boolean }
-      >(
+      const selected = await client.query<AckDeliveryRow>(
         `SELECT d.id,d.message_id,d.recipient_tenant,d.recipient_alias,d.status,d.attempt,d.max_attempts,
                 d.last_ack_rank,d.consumer_instance_id,d.consumer_epoch,d.claim_token,d.ack_deadline_at,
                 d.late_result_at,d.cancelled_at,
@@ -84,27 +92,14 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       const runtimeAdoption = profileRuntimeAdoptionEvidence(safeAckResult);
       const persistedResult = sanitizedAckResult(safeAckResult);
       const storedResult = withoutInlineArtifactBytes(persistedResult);
-      const repeated = await client.query<{
-        delivery_id: string;
-        status: Ack['status'];
-        instance_id: string;
-        epoch: string;
-        claim_token: string;
-        attempt: number;
-        applied: boolean;
-      }>(
+      const repeated = await client.query<RepeatedAckRow>(
         `SELECT delivery_id,status,instance_id,epoch,claim_token,attempt,applied
          FROM delivery_acks WHERE event_id=$1 LIMIT 1`,
         [ack.event_id]
       );
       const repeatedAck = repeated.rows[0];
       if (repeatedAck) {
-        const exactEvent = repeatedAck.delivery_id === deliveryId
-          && repeatedAck.status === ack.status
-          && repeatedAck.instance_id === ack.instance_id
-          && Number(repeatedAck.epoch) === ack.epoch
-          && repeatedAck.claim_token === ack.claim_token
-          && repeatedAck.attempt === ack.attempt;
+        const exactEvent = isExactRepeatedAck(repeatedAck, deliveryId, ack);
         if (!exactEvent) {
           return {
             delivery_id: deliveryId,
@@ -182,91 +177,11 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
       // A later crash is ambiguous; COALESCE preserves the first commitment of the attempt.
       const executionStarted = ack.status === 'started' && ack.execution_started === true;
       const leaseCapMs = deliveryLeaseCapMs(row.body, leaseCap);
-      // Heartbeat of a queued delivery ('accepted'): extends the deadline respecting the
-      // leaseCap without altering the state or recording execution start.
-      if (ack.status === 'accepted' && row.status === 'accepted') {
-        await client.query(
-          `UPDATE deliveries
-           SET ack_deadline_at=LEAST(
-                 now()+$2*interval '1 millisecond',
-                 COALESCE(execution_started_at,claimed_at) + $3*interval '1 millisecond'),
-               claim_expires_at=LEAST(
-                 now()+$2*interval '1 millisecond',
-                 COALESCE(execution_started_at,claimed_at) + $3*interval '1 millisecond'),
-               updated_at=now()
-           WHERE id=$1 AND status='accepted'`,
-          [deliveryId, ackDeadlineMs, leaseCapMs]
-        );
-        if (!repeatedAck) await this.insertAck(client, row, ack, true, storedResult, true);
-        await client.query(
-          `INSERT INTO audit_events(
-             tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
-           ) VALUES($1,$2,'delivery.ack','allow',$3,$4,$5,$6,$7::jsonb)`,
-          [tenantId, alias, row.request_id, row.message_id, deliveryId, row.trace_id,
-            JSON.stringify({
-              ack: ack.status,
-              resulting_status: row.status,
-              epoch: ack.epoch,
-              attempt: ack.attempt,
-              lease_renewed: true,
-              queued: true,
-              ...(repeatedAck ? { duplicate_replay: true } : {})
-            })]
-        );
-        return {
-          delivery_id: deliveryId,
-          status: 'accepted',
-          applied: true,
-          receipt: repeatedAck ? 'duplicate' : 'applied',
-        };
-      }
-      if (ack.status === 'started' && row.status === 'started') {
-        // The anchor uses the post-UPDATE value because PostgreSQL evaluates SET on the old
-        // row. It must match the instant the reaper looks at, so the reason does not degrade
-        // to ACK timeout. `LEAST` ignores NULL: a row without an anchor has no ceiling.
-        await client.query(
-          `UPDATE deliveries
-           SET ack_deadline_at=LEAST(
-                 now()+$2*interval '1 millisecond',
-                 COALESCE(CASE WHEN $3::boolean THEN COALESCE(execution_started_at,now())
-                               ELSE execution_started_at END, claimed_at)
-                   + $4*interval '1 millisecond'),
-               claim_expires_at=LEAST(
-                 now()+$2*interval '1 millisecond',
-                 COALESCE(CASE WHEN $3::boolean THEN COALESCE(execution_started_at,now())
-                               ELSE execution_started_at END, claimed_at)
-                   + $4*interval '1 millisecond'),
-               execution_started_at=CASE WHEN $3::boolean
-                 THEN COALESCE(execution_started_at,now()) ELSE execution_started_at END,
-               updated_at=now()
-           WHERE id=$1`,
-          [deliveryId, ackDeadlineMs, executionStarted, leaseCapMs]
-        );
-        // If a previously rejected event is now applied, `insertAck` raises false to true.
-        // For an already-applied duplicate it remains an exact no-op.
-        await this.insertAck(client, row, ack, true, storedResult, true);
-        await client.query(
-          `INSERT INTO audit_events(
-             tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
-           ) VALUES($1,$2,'delivery.ack','allow',$3,$4,$5,$6,$7::jsonb)`,
-          [tenantId, alias, row.request_id, row.message_id, deliveryId, row.trace_id,
-            JSON.stringify({
-              ack: ack.status,
-              resulting_status: row.status,
-              epoch: ack.epoch,
-              attempt: ack.attempt,
-              lease_renewed: true,
-              ...(executionStarted ? { execution_started: true } : {}),
-              ...(repeatedAck ? { duplicate_replay: true } : {})
-            })]
-        );
-        return {
-          delivery_id: deliveryId,
-          status: 'started',
-          applied: true,
-          receipt: repeatedAck ? 'duplicate' : 'applied',
-        };
-      }
+      const renewal = await this.renewAppliedAck(
+        client, row, ack, tenantId, alias, deliveryId, ackDeadlineMs, leaseCapMs,
+        executionStarted, repeatedAck, storedResult
+      );
+      if (renewal !== undefined) return renewal;
       // `exactClaim` already restricted the row to 'leased', 'accepted' or 'started'.
       if (rank <= row.last_ack_rank) {
         await this.insertAck(client, row, ack, false, storedResult);
@@ -278,167 +193,22 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
         };
       }
 
-      let nextStatus: DeliveryState = ack.status;
-      let nextRank = rank;
-      let terminalAt = rank === 3 ? 'now()' : 'NULL';
-      let terminalError = postgresTextSafe(ack.error);
-      let terminalErrorCode = postgresTextSafe(ack.error_code);
-      // If the failure is ambiguous but execution never started (execution_started_at is null),
-      // a retry is allowed if attempts remain; otherwise it goes to dead.
-      const ambiguousFailure = ack.status === 'failed'
-        && isAmbiguousAckErrorCode(ack.error_code);
-      const ambiguousExecution = ambiguousFailure && row.execution_started;
-      if (ambiguousExecution) {
-        nextStatus = 'dead';
-        terminalAt = 'now()';
-      } else if (ack.status === 'failed' && (ack.retryable || ambiguousFailure)) {
-        if (row.attempt < row.max_attempts) {
-          nextStatus = 'retry';
-          nextRank = 0;
-          terminalAt = 'NULL';
-        } else {
-          nextStatus = 'dead';
-          terminalAt = 'now()';
-        }
-      }
-      if (nextStatus === 'done' && row.body.type === 'agent.fanin') {
-        if (outputs.length > 0) {
-          nextStatus = 'failed';
-          terminalError = 'agent.fanin cannot delegate new messages';
-          terminalErrorCode = 'FANIN_REDELEGATION_FORBIDDEN';
-        } else if (!textualReply(persistedResult) && !hasDeliverableArtifact(persistedResult)) {
-          nextStatus = 'failed';
-          terminalError = 'agent.fanin requires a non-empty final reply';
-          terminalErrorCode = 'MISSING_FINAL_REPLY';
-        }
-      }
+      const transition = deriveAckTransition(row, ack, outputs, persistedResult);
+      const {
+        nextStatus, terminalError, terminalErrorCode,
+        ambiguousFailure, ambiguousExecution
+      } = transition;
       const backoffSeconds = ackFailureBackoffSeconds(row.attempt);
-      // The FIRST 'started' moves the deadline just like a renewal: gateway and database must
-      // date the same lease from the same fact, the applied ACK.
-      await client.query(
-         `UPDATE deliveries SET status=$2,last_ack_rank=$3,last_error=$4,result=$5::jsonb,
-            available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,
-             claimed_at=CASE WHEN $2='retry' THEN NULL ELSE claimed_at END,
-             claim_expires_at=CASE WHEN $2='retry' THEN NULL
-                                   WHEN $2='started' THEN LEAST(
-                                     now()+$7*interval '1 millisecond',
-                                     COALESCE(CASE WHEN $8::boolean THEN COALESCE(execution_started_at,now())
-                                                   ELSE execution_started_at END, claimed_at)
-                                       + $9*interval '1 millisecond')
-                                   ELSE claim_expires_at END,
-             ack_deadline_at=CASE WHEN $2='retry' THEN NULL
-                                  WHEN $2='started' THEN LEAST(
-                                    now()+$7*interval '1 millisecond',
-                                    COALESCE(CASE WHEN $8::boolean THEN COALESCE(execution_started_at,now())
-                                                  ELSE execution_started_at END, claimed_at)
-                                      + $9*interval '1 millisecond')
-                                  ELSE ack_deadline_at END,
-             execution_started_at=CASE WHEN $2='retry' THEN NULL
-                                       WHEN $8::boolean THEN COALESCE(execution_started_at,now())
-                                       ELSE execution_started_at END,
-             claim_token=CASE WHEN $2='retry' THEN NULL ELSE claim_token END,
-             consumer_instance_id=CASE WHEN $2='retry' THEN NULL ELSE consumer_instance_id END,
-            consumer_epoch=CASE WHEN $2='retry' THEN NULL ELSE consumer_epoch END,
-            terminal_at=${terminalAt},updated_at=now() WHERE id=$1`,
-        [deliveryId, nextStatus, nextRank, terminalError ?? null,
-          storedResult ? JSON.stringify(storedResult) : null, backoffSeconds,
-          ackDeadlineMs, executionStarted, leaseCapMs]
-      );
-      if (nextStatus === 'done') {
-        await this.recordProfileRuntimeAdoption(
-          client, tenantId, alias, row, ack, runtimeAdoption,
-        );
-      }
-      if (nextStatus === 'retry') {
-        await client.query(
-          `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
-           VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
-           ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
-          [tenantId, `wake-retry:${deliveryId}:${String(row.attempt)}`, row.request_id, row.message_id, deliveryId,
-            row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
-            JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
-        );
-      }
-      // Every terminal error leaves a replayable trail in dead_letters, not only 'dead'.
-      //
-      // Keeping a record in dead_letters lets `replayDelivery` work both for deliveries in state 'failed'
-      // and 'dead'. The fix is NOT merging 'failed' with 'dead': both states are consumed today, with
-      // distinct meanings, by `terminal()`, the fan-in count (`status IN ('done','failed','dead')`), the
-      // CHECK on `deliveries.status`, `DeliveryStateSchema`, the dispatcher's `cauce_dispatcher_delivery_*`
-      // series, and four console views. Merging them would erase the only useful distinction left—"the
-      // agent declared a definitive error" vs "the system gave up"—and leave a metric series at zero for
-      // nothing: what makes a delivery recoverable is having a row in `dead_letters`, not its state. So
-      // the row is emitted for BOTH terminal errors and `replayDelivery`'s filter is relaxed; the rest
-      // of the system does not notice.
-      //
-      // `retryable` keeps its only legitimate job: deciding whether the bus RETRIES on its own. It stops
-      // deciding whether a human can salvage the delivery.
-      if (nextStatus === 'dead' || nextStatus === 'failed') {
-        await client.query(
-          `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
-           SELECT $1,$2,$3,${deadLetterBodySql('m.body')},$4 FROM messages m WHERE m.id=$5
-           ON CONFLICT(delivery_id) DO NOTHING`,
-          [deliveryId, tenantId,
-            terminalError ?? terminalErrorCode
-              ?? (nextStatus === 'dead'
-                ? 'max attempts exhausted'
-                : 'non-retryable failure without error text'),
-            row.attempt, row.message_id]
-        );
-      }
-      await this.insertAck(client, row, ack, true, storedResult);
-      let notified = { allowed: 0, denied: 0, errors: 0 };
-      let delegationRejections: DelegationRejection[] = [];
-      let delegationMaterializations: DelegationMaterialization[] = [];
-      let chainGate: OpenChainGate | undefined;
-      if (terminal(nextStatus)) {
-        const policy = await this.loadChainPolicy(client);
-        // Proactive egress is a terminal side effect and does not count as delegation.
-        // `ambiguousFailure` vetoes notifications when the result is uncertain even without an
-        // execution mark; `ambiguousExecution` would relax the veto once attempts are exhausted
-        // and could assert unproven effects.
-        notified = await this.materializeAgentNotifications(
-          client, row, ack, notifications, ambiguousFailure
-        );
-        let outputOutcome: AgentOutputOutcome = {
-          materialized: 0, suspended: false, rejections: [], materializations: []
-        };
-        if (nextStatus === 'done' && row.body.type !== 'agent.fanin') {
-          outputOutcome = await this.materializeAgentOutputs(client, row, ack, outputs, policy);
-        }
-        delegationRejections = [...outputOutcome.rejections]
-          .sort((left, right) => left.output_index - right.output_index);
-        delegationMaterializations = [...outputOutcome.materializations]
-          .sort((left, right) => left.output_index - right.output_index);
-        chainGate = outputOutcome.gate;
-        const materializedOutputs = outputOutcome.materialized;
-        // Delegating or suspending does not end the branch from the parent's perspective.
-        // Only the authenticated agent.response continuation can return the terminal to the
-        // parent. An open human gate keeps the chain pending and cannot be closed with this ACK.
-        const responseDisposition: AgentResponseDisposition = materializedOutputs > 0
-          || outputOutcome.suspended
-          ? 'deferred'
-          : await this.materializeAgentResponse(
-              client,
-              row,
-              ack.attempt,
-              nextStatus,
-              policy,
-              persistedResult,
-              terminalError,
-              terminalErrorCode
-            );
-        const rootMessageId = this.rootMessageId(row);
-        const fanin = await this.materializeAgentFanin(client, rootMessageId);
-        if (responseDisposition === 'not_child'
-          && (row.body.type === 'agent.fanin' || !fanin.hasFanout)) {
-          await this.insertOriginRelay(client, row, nextStatus, {
-            ...(persistedResult === undefined ? {} : { result: persistedResult }),
-            ...(terminalError === undefined ? {} : { error: terminalError }),
-            ...(terminalErrorCode === undefined ? {} : { error_code: terminalErrorCode })
-          });
-        }
-      }
+      await this.persistAckTransition(client, row, ack, {
+        tenantId, alias, deliveryId, ackDeadlineMs, leaseCapMs, executionStarted,
+        storedResult, runtimeAdoption, transition, backoffSeconds
+      });
+      const {
+        notified, delegationRejections, delegationMaterializations, chainGate
+      } = await this.applyTerminalAckEffects(client, row, ack, {
+        nextStatus, persistedResult, terminalError, terminalErrorCode, outputs, notifications,
+        ambiguousFailure
+      });
       await client.query(
         `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata)
          VALUES($1,$2,'delivery.ack','allow',$3,$4,$5,$6,$7::jsonb)`,
@@ -463,24 +233,234 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
                })
            })]
       );
-      return {
-        delivery_id: deliveryId,
-        status: nextStatus,
-        applied: true,
-        receipt: 'applied',
-        // Absent when there is nothing to say: adding empty keys would change the bytes the
-        // gateway returns to EVERY ACK, and there are older adapters comparing the response.
-        ...(delegationRejections.length === 0
-          ? {}
-          : { delegation_rejections: delegationRejections }),
-        ...(delegationMaterializations.length === 0
-          ? {}
-          : { delegation_materializations: delegationMaterializations }),
-        ...(chainGate === undefined
-          ? {}
-          : { chain_gate: { gate_id: chainGate.id, question: chainGate.question } })
-      };
+      return appliedAckResult(
+        deliveryId,
+        transition,
+        delegationRejections,
+        delegationMaterializations,
+        chainGate
+      );
     });
+  }
+
+  private async persistAckTransition(
+    client: DatabaseClient,
+    row: AckDeliveryRow,
+    ack: Ack,
+    input: {
+      tenantId: Tenant;
+      alias: string;
+      deliveryId: string;
+      ackDeadlineMs: number;
+      leaseCapMs: number;
+      executionStarted: boolean;
+      storedResult: Record<string, unknown> | undefined;
+      runtimeAdoption: ProfileRuntimeAdoptionEvidence | undefined;
+      transition: AckTransition;
+      backoffSeconds: number;
+    }
+  ): Promise<void> {
+    const {
+      tenantId, alias, deliveryId, ackDeadlineMs, leaseCapMs, executionStarted, storedResult,
+      runtimeAdoption, transition, backoffSeconds
+    } = input;
+    const { nextStatus, nextRank, terminalAt, terminalError, terminalErrorCode } = transition;
+    await client.query(
+       `UPDATE deliveries SET status=$2,last_ack_rank=$3,last_error=$4,result=$5::jsonb,
+          available_at=CASE WHEN $2='retry' THEN now()+$6*interval '1 second' ELSE available_at END,
+           claimed_at=CASE WHEN $2='retry' THEN NULL ELSE claimed_at END,
+           claim_expires_at=CASE WHEN $2='retry' THEN NULL
+                                 WHEN $2='started' THEN LEAST(
+                                   now()+$7*interval '1 millisecond',
+                                   COALESCE(CASE WHEN $8::boolean THEN COALESCE(execution_started_at,now())
+                                                 ELSE execution_started_at END, claimed_at)
+                                     + $9*interval '1 millisecond')
+                                 ELSE claim_expires_at END,
+           ack_deadline_at=CASE WHEN $2='retry' THEN NULL
+                                WHEN $2='started' THEN LEAST(
+                                  now()+$7*interval '1 millisecond',
+                                  COALESCE(CASE WHEN $8::boolean THEN COALESCE(execution_started_at,now())
+                                                ELSE execution_started_at END, claimed_at)
+                                    + $9*interval '1 millisecond')
+                                ELSE ack_deadline_at END,
+           execution_started_at=CASE WHEN $2='retry' THEN NULL
+                                     WHEN $8::boolean THEN COALESCE(execution_started_at,now())
+                                     ELSE execution_started_at END,
+           claim_token=CASE WHEN $2='retry' THEN NULL ELSE claim_token END,
+           consumer_instance_id=CASE WHEN $2='retry' THEN NULL ELSE consumer_instance_id END,
+          consumer_epoch=CASE WHEN $2='retry' THEN NULL ELSE consumer_epoch END,
+          terminal_at=${terminalAt},updated_at=now() WHERE id=$1`,
+      [deliveryId, nextStatus, nextRank, terminalError ?? null,
+        storedResult ? JSON.stringify(storedResult) : null, backoffSeconds,
+        ackDeadlineMs, executionStarted, leaseCapMs]
+    );
+    if (nextStatus === 'done') {
+      await this.recordProfileRuntimeAdoption(client, tenantId, alias, row, ack, runtimeAdoption);
+    }
+    if (nextStatus === 'retry') {
+      await client.query(
+        `INSERT INTO adapter_outbox(tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,payload,available_at)
+         VALUES($1,'gateway','wake',$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,now()+$9*interval '1 second')
+         ON CONFLICT(tenant_id,adapter,idempotency_key) DO NOTHING`,
+        [tenantId, `wake-retry:${deliveryId}:${String(row.attempt)}`, row.request_id,
+          row.message_id, deliveryId, row.trace_id, row.origin ? JSON.stringify(row.origin) : null,
+          JSON.stringify({ recipient_alias: alias, reason: 'delivery_available' }), backoffSeconds]
+      );
+    }
+    if (nextStatus === 'dead' || nextStatus === 'failed') {
+      await client.query(
+        `INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
+         SELECT $1,$2,$3,${deadLetterBodySql('m.body')},$4 FROM messages m WHERE m.id=$5
+         ON CONFLICT(delivery_id) DO NOTHING`,
+        [deliveryId, tenantId,
+          terminalError ?? terminalErrorCode
+            ?? (nextStatus === 'dead'
+              ? 'max attempts exhausted'
+              : 'non-retryable failure without error text'),
+          row.attempt, row.message_id]
+      );
+    }
+    await this.insertAck(client, row, ack, true, storedResult);
+  }
+
+  private async applyTerminalAckEffects(
+    client: DatabaseClient,
+    row: AckDeliveryRow,
+    ack: Ack,
+    input: {
+      nextStatus: DeliveryState;
+      persistedResult: Record<string, unknown> | undefined;
+      terminalError: string | undefined;
+      terminalErrorCode: string | undefined;
+      outputs: AgentOutputEntry[];
+      notifications: AgentNotifyEntry[];
+      ambiguousFailure: boolean;
+    }
+  ): Promise<TerminalAckEffects> {
+    const empty: TerminalAckEffects = {
+      notified: { allowed: 0, denied: 0, errors: 0 },
+      delegationRejections: [],
+      delegationMaterializations: [],
+      chainGate: undefined
+    };
+    if (!terminal(input.nextStatus)) return empty;
+    const policy = await this.loadChainPolicy(client);
+    const notified = await this.materializeAgentNotifications(
+      client, row, ack, input.notifications, input.ambiguousFailure
+    );
+    let outputOutcome: AgentOutputOutcome = {
+      materialized: 0, suspended: false, rejections: [], materializations: []
+    };
+    if (input.nextStatus === 'done' && row.body.type !== 'agent.fanin') {
+      outputOutcome = await this.materializeAgentOutputs(client, row, ack, input.outputs, policy);
+    }
+    const responseDisposition: AgentResponseDisposition = outputOutcome.materialized > 0
+      || outputOutcome.suspended
+      ? 'deferred'
+      : await this.materializeAgentResponse(
+          client,
+          row,
+          ack.attempt,
+          input.nextStatus,
+          policy,
+          input.persistedResult,
+          input.terminalError,
+          input.terminalErrorCode
+        );
+    const fanin = await this.materializeAgentFanin(client, this.rootMessageId(row));
+    if (responseDisposition === 'not_child'
+      && (row.body.type === 'agent.fanin' || !fanin.hasFanout)) {
+      await this.insertOriginRelay(client, row, input.nextStatus, {
+        ...(input.persistedResult === undefined ? {} : { result: input.persistedResult }),
+        ...(input.terminalError === undefined ? {} : { error: input.terminalError }),
+        ...(input.terminalErrorCode === undefined ? {} : { error_code: input.terminalErrorCode })
+      });
+    }
+    return {
+      notified,
+      delegationRejections: [...outputOutcome.rejections]
+        .sort((left, right) => left.output_index - right.output_index),
+      delegationMaterializations: [...outputOutcome.materializations]
+        .sort((left, right) => left.output_index - right.output_index),
+      chainGate: outputOutcome.gate
+    };
+  }
+
+  private async renewAppliedAck(
+    client: DatabaseClient,
+    row: AckDeliveryRow,
+    ack: Ack,
+    tenantId: Tenant,
+    alias: string,
+    deliveryId: string,
+    ackDeadlineMs: number,
+    leaseCapMs: number,
+    executionStarted: boolean,
+    repeatedAck: RepeatedAckRow | undefined,
+    storedResult: Record<string, unknown> | undefined
+  ): Promise<AckResult | undefined> {
+    if (ack.status !== 'accepted' && ack.status !== 'started') return undefined;
+    if (ack.status === 'accepted' && row.status !== 'accepted') return undefined;
+    if (ack.status === 'started' && row.status !== 'started') return undefined;
+
+    if (ack.status === 'accepted') {
+      await client.query(
+        `UPDATE deliveries
+         SET ack_deadline_at=LEAST(
+               now()+$2*interval '1 millisecond',
+               COALESCE(execution_started_at,claimed_at) + $3*interval '1 millisecond'),
+             claim_expires_at=LEAST(
+               now()+$2*interval '1 millisecond',
+               COALESCE(execution_started_at,claimed_at) + $3*interval '1 millisecond'),
+             updated_at=now()
+         WHERE id=$1 AND status='accepted'`,
+        [deliveryId, ackDeadlineMs, leaseCapMs]
+      );
+      if (!repeatedAck) await this.insertAck(client, row, ack, true, storedResult, true);
+    } else {
+      // Both deadlines use the same post-update execution anchor read by the reaper.
+      await client.query(
+        `UPDATE deliveries
+         SET ack_deadline_at=LEAST(
+               now()+$2*interval '1 millisecond',
+               COALESCE(CASE WHEN $3::boolean THEN COALESCE(execution_started_at,now())
+                             ELSE execution_started_at END, claimed_at)
+                 + $4*interval '1 millisecond'),
+             claim_expires_at=LEAST(
+               now()+$2*interval '1 millisecond',
+               COALESCE(CASE WHEN $3::boolean THEN COALESCE(execution_started_at,now())
+                             ELSE execution_started_at END, claimed_at)
+                 + $4*interval '1 millisecond'),
+             execution_started_at=CASE WHEN $3::boolean
+               THEN COALESCE(execution_started_at,now()) ELSE execution_started_at END,
+             updated_at=now()
+         WHERE id=$1`,
+        [deliveryId, ackDeadlineMs, executionStarted, leaseCapMs]
+      );
+      await this.insertAck(client, row, ack, true, storedResult, true);
+    }
+    await client.query(
+      `INSERT INTO audit_events(
+         tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
+       ) VALUES($1,$2,'delivery.ack','allow',$3,$4,$5,$6,$7::jsonb)`,
+      [tenantId, alias, row.request_id, row.message_id, deliveryId, row.trace_id,
+        JSON.stringify({
+          ack: ack.status,
+          resulting_status: row.status,
+          epoch: ack.epoch,
+          attempt: ack.attempt,
+          lease_renewed: true,
+          ...(ack.status === 'accepted' ? { queued: true } : {}),
+          ...(executionStarted ? { execution_started: true } : {}),
+          ...(repeatedAck ? { duplicate_replay: true } : {})
+        })]
+    );
+    return {
+      delivery_id: deliveryId,
+      status: ack.status,
+      applied: true,
+      receipt: repeatedAck ? 'duplicate' : 'applied',
+    };
   }
 
 

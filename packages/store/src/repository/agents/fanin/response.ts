@@ -2,6 +2,7 @@ import {
   clampAgentPriority, isLiteralTrue, isRfcUuid, type DeliveryState, type Tenant
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient } from '../../../db.js';
+import { AgentsRepository } from '../../agents.js';
 import { postgresTextSafe } from '../../deliveries.js';
 import { insertDelivery, insertMessage } from '../../messages/_insert.js';
 import {
@@ -11,11 +12,24 @@ import { objectRecord } from '../../outbox.js';
 import { artifactRefs } from '../delegated-attachments.js';
 import {
   agentResponseRequestId, agentResponseText, aggregatedFailureText, failureSignature,
-  lateResultText, maxAgentResponseTextBytes, type FailureNoticeReservation
+  lateResultText, maxAgentResponseTextBytes, type AgentChainProgressStage,
+  type FailureNoticeReservation
 } from './helpers.js';
-import { AgentProgressRepository } from './progress.js';
+import { insertProgressRelay as persistProgressRelay } from './progress.js';
 
-export abstract class AgentResponseRepository extends AgentProgressRepository {
+export abstract class AgentResponseRepository extends AgentsRepository {
+  protected async insertProgressRelay(
+    client: DatabaseClient,
+    row: DeliveryRow,
+    attempt: number,
+    policy: ChainPolicy,
+    rootMessageId: string | undefined,
+    stage: Exclude<AgentChainProgressStage, 'capped'>,
+    summary: string
+  ): Promise<void> {
+    await persistProgressRelay(client, row, attempt, policy, rootMessageId, stage, summary);
+  }
+
   protected async materializeAgentResponse(
     client: DatabaseClient,
     row: DeliveryRow,
