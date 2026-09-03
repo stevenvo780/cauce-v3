@@ -1,9 +1,8 @@
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { marcaDeRevisionDelPerfil, type ContextoDeAlias } from '@cauce/protocol';
+import { marcaDeRevisionDelPerfil, TOPES_OPENCLAW, type ContextoDeAlias } from '@cauce/protocol';
 import {
-  registerAgentProfileRoutes, type AgentProfileDeps,
-  type RespuestaDelPerfil, type TopeSuperado,
+  registerAgentProfileRoutes, type AgentProfileDeps, type RespuestaDelPerfil,
 } from './agent-profile.routes.js';
 
 /**
@@ -158,14 +157,18 @@ describe('lo que la ruta NO sabe, lo dice', () => {
 });
 
 describe('los topes del arnés se contestan con los dos números, no con un 500', () => {
-  it('un openclaw pasado de tope devuelve 422 diciendo QUÉ fichero y cuánto mide', async () => {
+  it('un openclaw pasado de tope sigue devolviendo el perfil y dice QUÉ fichero y cuánto mide', async () => {
     abierto = await servidor(contexto({ purpose: 'x'.repeat(60_001) }, 'openclaw'));
     const res = await abierto.inject({ method: 'GET', url: RUTA });
-    expect(res.statusCode).toBe(422);
-    const cuerpo = res.json<TopeSuperado>();
-    expect(cuerpo.error).toBe('tope_del_arnes');
-    expect(cuerpo.fichero).toBe('SOUL.md');
-    expect(cuerpo.medido).toBeGreaterThan(cuerpo.tope);
+    expect(res.statusCode).toBe(200);
+    const cuerpo = res.json<RespuestaDelPerfil>();
+    expect(cuerpo.perfil.purpose).toHaveLength(60_001);
+    expect(cuerpo.ficheros).toEqual([]);
+    expect(cuerpo.runtime_verification?.state).toBe('unverified');
+    const motivo = cuerpo.runtime_verification?.reason ?? '';
+    expect(motivo).toContain('SOUL.md');
+    expect(motivo).toContain('unidades UTF-16');
+    expect(motivo).toContain(String(TOPES_OPENCLAW.porFichero));
   });
 
   it('CONTROL NEGATIVO: a claude NO se le inventa un tope que su arnés no declara', async () => {

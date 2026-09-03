@@ -280,10 +280,24 @@ leen y se lo pasan a `ficherosDelArnes` como `topes`:
 | vista previa de la consola (`console/agent-profile.routes.ts`) | el presupuesto y los bytes de disco que devuelve el propio preflight |
 
 La vista previa compone contra los **bytes medidos** del contenedor, no contra un fichero vacío
-imaginado, y aplica el mismo presupuesto que la siembra: si el preflight ya rechazó por tope, la
-ruta contesta 422 con esos dos números en vez de pintar una vista previa verde que el disco
-rechazaría. Cuando no hay hecho medido rige el defecto, y el error lo dice con esas palabras
+imaginado, y aplica el mismo presupuesto que la siembra. Si el perfil no entra, el GET **sigue
+contestando 200 con el perfil** —el editor es la única pantalla que puede recortarlo— y deja los
+ficheros vacíos con el motivo en `runtime_verification` (estado `unverified`, y una razón que
+nombra el fichero, los dos números, la unidad y si el tope es el medido o el de defecto). El PUT
+sí se niega, con 422 y esos mismos números, **antes** del CAS durable: nunca se escribe media
+persona. Cuando no hay hecho medido rige el defecto, y el motivo lo dice con esas palabras
 («tope por defecto del arnés» frente a «tope medido del alias»).
+
+El hecho medido lo produce el pty-agent con `tomllib`; la siembra, que corre dentro del
+contenedor y no puede esperar al pty-agent, mantiene su propio lector del `config.toml`. Ese
+lector recorre **sólo la tabla raíz** —para en la primera cabecera `[x]`/`[[x]]`— y acepta el
+entero en cualquiera de las formas que acepta `tomllib` (decimal con guiones bajos, `+`, `0x`,
+`0o`, `0b`, con comentario al final). Ante cualquier línea de la raíz que no sepa clasificar
+—cadenas multilínea, arrays, tablas en línea, claves con punto, comillas sin cerrar, una clave
+repetida— **aborta a `undefined`** y rige el defecto: puede fallar cerrado (presupuesto más
+pequeño, no se escribe nada), nunca abierto. El corpus de
+`tope-de-codex-paridad-tomllib.test.ts` pasa las mismas muestras por los dos lectores y falla en
+cuanto el escáner lee un tope que `tomllib` no.
 
 ## Tests
 
@@ -292,3 +306,12 @@ La suite usa `node:test`. Ejecutar:
 ```bash
 pnpm --filter @cauce/adapter-sdk test
 ```
+
+`CAUCE_TEST_TIME_SCALE` (leída en `test/client-fixtures.ts`) multiplica **sólo los plazos que
+fija la propia prueba**: los del fixture (deadline del claim, timeout del arnés, lease), los
+watchdogs que cada caso configura y la espera de sus condiciones. No toca los tiempos del código
+de producción, ni los timeouts de `node:test`, ni ningún reintento real. Sirve para correr la suite en una máquina cargada —donde un plazo de 5 s se agota por
+falta de CPU y no por un fallo— sin tocar el código: `CAUCE_TEST_TIME_SCALE=4 pnpm --filter
+@cauce/adapter-sdk test`. **No enmascara un timeout de verdad**: si el arnés no arranca o el ACK
+no llega, la prueba sigue fallando, sólo que más tarde; el valor por defecto es `1` y cualquier
+valor no finito o no positivo cae a `1`.

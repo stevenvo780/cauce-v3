@@ -1,11 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContextoDeAlias } from '@cauce/protocol';
 import {
   registerAgentProfileRoutes, type AgentProfileDeps,
   type RespuestaDelPerfil, type TopeSuperado,
 } from './agent-profile.routes.js';
-import { ACTOR, contexto } from './agent-profile.fixtures.js';
+import { ACTOR, contexto, PERFIL_BODY, REPLACE_PROFILE } from './agent-profile.fixtures.js';
 
 const RUTA = '/v3/console/tenants/Steven/agents/zeus/perfil';
 
@@ -74,16 +74,23 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
     expect(Buffer.byteLength(texto, 'utf8')).toBeGreaterThan(48_000);
   });
 
-  it('sin hecho medido rige el DEFECTO y el 422 nombra la unidad y el origen', async () => {
+  it('sin hecho medido rige el DEFECTO y el GET deja editar diciendo unidad, origen y números', async () => {
     const app = await conPreflight(contextoAcentuadoAlTope(), undefined);
 
     const res = await app.inject({ method: 'GET', url: RUTA });
 
-    expect(res.statusCode).toBe(422);
-    const cuerpo = res.json<TopeSuperado>();
-    expect(cuerpo).toMatchObject({ error: 'tope_del_arnes', fichero: 'AGENTS.md', tope: 32 * 1_024 });
-    expect(cuerpo.message).toContain('bytes UTF-8');
-    expect(cuerpo.message).toContain('por defecto del arn\u00e9s');
+    expect(res.statusCode).toBe(200);
+    const cuerpo = res.json<RespuestaDelPerfil>();
+    expect(cuerpo.perfil.purpose).toMatch(/\u00e1/u);
+    expect(cuerpo.ficheros).toEqual([]);
+    expect(cuerpo.runtime_verification?.state).toBe('unverified');
+    const motivo = cuerpo.runtime_verification?.reason ?? '';
+    expect(motivo).toContain('AGENTS.md');
+    expect(motivo).toContain('bytes UTF-8');
+    expect(motivo).toContain('por defecto del arn\u00e9s');
+    expect(motivo).toContain(String(32 * 1_024));
+    expect(cuerpo.runtime_reason).toBe(motivo);
+    expect(cuerpo.aviso ?? '').toContain(String(32 * 1_024));
   });
 
   it('un preflight que ya rechazó por tope no se contesta con una vista previa verde', async () => {
@@ -101,9 +108,50 @@ describe('la vista previa y la siembra no pueden discrepar', () => {
 
     const res = await app.inject({ method: 'GET', url: RUTA });
 
+    expect(res.statusCode).toBe(200);
+    const cuerpo = res.json<RespuestaDelPerfil>();
+    expect(cuerpo.ficheros).toEqual([]);
+    expect(cuerpo.runtime_verification).toMatchObject({ state: 'unverified', documents: [] });
+    const motivo = cuerpo.runtime_verification?.reason ?? '';
+    expect(motivo).toContain('70000');
+    expect(motivo).toContain('65536');
+    expect(motivo).toContain('tope medido del alias');
+  });
+
+  it('el PUT sigue negándose con 422 ANTES del CAS durable', async () => {
+    const replaceProfile = vi.fn(REPLACE_PROFILE);
+    const app = Fastify();
+    registerAgentProfileRoutes(app, {
+      authorize: async () => ACTOR,
+      authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: true }),
+      readContext: async () => ({
+        contexto: contexto({ purpose: 'x' }, 'codex'), exists: true, revision: 1, applied_revision: 1,
+      }),
+      replaceProfile,
+      prepareRuntime: async () => {
+        throw Object.assign(
+          new Error('AGENTS.md mide 70000 bytes UTF-8 y el tope por fichero es 65536 (tope medido del alias)'),
+          {
+            code: 'too_large',
+            cause: Object.assign(new Error('tope'), {
+              name: 'ErrorDeTopeDelArnes', fichero: 'AGENTS.md', medido: 70_000, tope: 65_536,
+            }),
+          },
+        );
+      },
+    });
+    await app.ready();
+    abierto = app;
+
+    const res = await app.inject({
+      method: 'PUT', url: RUTA, payload: { expected_revision: 1, profile: PERFIL_BODY },
+    });
+
     expect(res.statusCode).toBe(422);
     expect(res.json<TopeSuperado>()).toMatchObject({
       error: 'tope_del_arnes', fichero: 'AGENTS.md', medido: 70_000, tope: 65_536,
     });
+    expect(res.json<TopeSuperado>().message).toContain('tope medido del alias');
+    expect(replaceProfile).not.toHaveBeenCalled();
   });
 });

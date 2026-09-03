@@ -158,9 +158,7 @@ export interface FicheroDeLaVistaPrevia {
   readonly nombre: string;
   readonly politica: FicheroGenerado['politica'];
   readonly texto: string;
-  /**
-   * Units of the text, in the same count used by the Postgres CHECK and the openclaw
-   */
+  /** Text length in the strictest unit: the count the Postgres CHECK and the openclaw caps use. */
   readonly unidades: number;
 }
 
@@ -215,9 +213,9 @@ export interface PerfilAplicado {
 }
 
 /**
- *
- * writing a person halfway is worse than not writing them. But the operator needs to know
- * WHICH one to trim, and a 500 with "internal error" does not tell them.
+ * Why the PUT refuses before the durable CAS: writing a person halfway is worse than not writing
+ * them, and the operator needs to know WHICH file to trim and by how much, which a 500 with
+ * "internal error" does not say. The GET keeps answering so it can be trimmed from that screen.
  */
 export interface TopeSuperado {
   readonly error: 'tope_del_arnes';
@@ -238,6 +236,13 @@ function topeSuperadoDe(
   if (esTopeSuperado(error)) return error;
   const causa = error instanceof Error ? error.cause : undefined;
   return esTopeSuperado(causa) ? causa : undefined;
+}
+
+function verificacionSinProyeccion(motivo: string): ProfileRuntimeVerification {
+  return {
+    state: 'unverified', generation: null, container_id: null, observed_at: null,
+    documents: [], reason: motivo,
+  };
 }
 
 function hasAdapterDeliveryEvidence(value: unknown): boolean {
@@ -362,6 +367,39 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         ? ''
         : contexto.perfil.role_summary.trim();
       const selfRole = normalizedRole.length === 0 ? null : clampToRoleBriefLimit(normalizedRole);
+      let ficheros: readonly FicheroDeLaVistaPrevia[] = [];
+      let tope = topeDelRuntime;
+      if (nombres.length > 0 && tope === undefined) {
+        try {
+          /* Without a live measurement `existentes` is empty and `base` says so on the screen. */
+          ficheros = prepared?.preview
+            ?? ficherosDelArnes(
+              harness, contexto, preflight?.existentes ?? new Map(),
+              {
+                ...(lectura.revision === null ? {} : { revision: lectura.revision }),
+                ...(preflight?.topes === undefined ? {} : { topes: preflight.topes }),
+              },
+            ).map((fichero) => ({
+              nombre: fichero.nombre,
+              politica: fichero.politica,
+              texto: fichero.texto,
+              unidades: measureStrictestUnits(fichero.texto),
+            }));
+        } catch (error) {
+          const superado = topeSuperadoDe(error);
+          if (superado === undefined) throw error;
+          tope = superado;
+          runtimeReason = mensajeDeError(error, superado.message);
+        }
+      }
+      /* Over budget the operator still gets the profile: the editor is the only screen that can
+       * shrink it, so the verification names the file, the numbers, the unit and the source. */
+      const motivoDelTope = tope === undefined
+        ? undefined
+        : 'el perfil no entra en el tope del arnés, así que no se compone su vista previa: '
+          + (runtimeReason ?? tope.message);
+      if (motivoDelTope !== undefined) runtimeReason = motivoDelTope;
+
       const comun = {
         tenant_id: tenantId,
         alias,
@@ -370,7 +408,8 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         revision: lectura.revision,
         applied_revision: lectura.applied_revision,
         runtime_state: runtimeState,
-        runtime_verification: prepared?.verification ?? null,
+        runtime_verification: prepared?.verification
+          ?? (motivoDelTope === undefined ? null : verificacionSinProyeccion(motivoDelTope)),
         runtime_adoption: validAdoption ?? null,
         ...(runtimeReason === undefined ? {} : { runtime_reason: runtimeReason }),
         self_role: selfRole,
@@ -393,41 +432,14 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         return respuesta;
       }
 
-      try {
-        /* Without a live measurement `existentes` is empty and `base` says so on the screen. */
-        if (topeDelRuntime !== undefined) throw topeDelRuntime;
-        const generados = prepared?.preview
-          ?? ficherosDelArnes(
-            harness, contexto, preflight?.existentes ?? new Map(),
-            {
-              ...(lectura.revision === null ? {} : { revision: lectura.revision }),
-              ...(preflight?.topes === undefined ? {} : { topes: preflight.topes }),
-            },
-          ).map((fichero) => ({
-            nombre: fichero.nombre,
-            politica: fichero.politica,
-            texto: fichero.texto,
-            unidades: measureStrictestUnits(fichero.texto),
-          }));
-        const respuesta: RespuestaDelPerfil = {
-          ...comun,
-          ficheros: generados,
-        };
-        return respuesta;
-      } catch (error) {
-        const tope = topeSuperadoDe(error);
-        if (tope !== undefined) {
-          const cuerpo: TopeSuperado = {
-            error: 'tope_del_arnes',
-            fichero: tope.fichero,
-            medido: tope.medido,
-            tope: tope.tope,
-            message: tope.message
-          };
-          return reply.code(422).send(cuerpo);
-        }
-        throw error;
-      }
+      const respuesta: RespuestaDelPerfil = {
+        ...comun,
+        ficheros,
+        ...(motivoDelTope === undefined
+          ? {}
+          : { aviso: `${motivoDelTope}. Recorta el perfil y vuelve a guardarlo.` }),
+      };
+      return respuesta;
   }
 
   const PROFILE_FIELDS = new Set([
@@ -569,6 +581,17 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         perfil: profile, hechos: current.contexto.hechos,
       });
     } catch (error) {
+      const tope = topeSuperadoDe(error);
+      if (tope !== undefined) {
+        const cuerpo: TopeSuperado = {
+          error: 'tope_del_arnes',
+          fichero: tope.fichero,
+          medido: tope.medido,
+          tope: tope.tope,
+          message: mensajeDeError(error, tope.message),
+        };
+        return reply.code(422).send(cuerpo);
+      }
       return reply.code(statusDeRuntime(error)).send({
         error: codigoDeError(error) ?? 'runtime_preflight_failed',
         message: mensajeDeError(error, 'no se pudo preparar el runtime sin modificarlo'),

@@ -327,20 +327,64 @@ export function presupuestoDeContextoMedido(
   return { unit: porDefecto.unit, porFichero: medido, fuente: "measured" };
 }
 
-const TOPE_DE_CODEX_EN_TOML = /^project_doc_max_bytes\s*=\s*\+?([0-9](?:_?[0-9])*)\s*(?:#.*)?$/u;
+const CLAVE_DEL_TOPE = "project_doc_max_bytes";
+
+const SIN_CONTROL = String.raw`\u0000-\u0008\u000a-\u001f\u007f`;
+const FUERA_DEL_JUEGO = /[\u0000-\u0008\u000a-\u001f\u007f\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/u;
+const CADENA_BASICA = String.raw`"(?:[^"\\${SIN_CONTROL}]`
+  + String.raw`|\\(?:["\\bfnrt]|u(?![dD][89a-fA-F])[0-9A-Fa-f]{4}`
+  + String.raw`|U(?:0000(?![dD][89a-fA-F])[0-9A-Fa-f]{4}|000[1-9A-Fa-f][0-9A-Fa-f]{4}|0010[0-9A-Fa-f]{4})))*"`;
+const CADENA_LITERAL = String.raw`'[^'${SIN_CONTROL}]*'`;
+const CLAVE = String.raw`(?:[A-Za-z0-9_-]+|${CADENA_BASICA}|${CADENA_LITERAL})`;
+const ENTERO = String.raw`(?:[+-]?(?:0|[1-9](?:_?[0-9])*)|0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*`
+  + String.raw`|0o[0-7](?:_?[0-7])*|0b[01](?:_?[01])*)`;
+const FLOTANTE = String.raw`(?:[+-]?(?:0|[1-9](?:_?[0-9])*)(?:\.[0-9](?:_?[0-9])*)?`
+  + String.raw`(?:[eE][+-]?[0-9](?:_?[0-9])*)?|[+-]?(?:inf|nan))`;
+const FECHA = String.raw`\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])`;
+const HORA = String.raw`(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?`;
+const DESFASE = String.raw`(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)`;
+const MOMENTO = String.raw`(?:${FECHA}(?:[Tt ]${HORA}${DESFASE}?)?|${HORA})`;
+const VALOR = String.raw`(?:${CADENA_BASICA}|${CADENA_LITERAL}|${ENTERO}|${FLOTANTE}`
+  + String.raw`|true|false|${MOMENTO})`;
+const COLA = String.raw`[ \t]*(?:#.*)?$`;
+
+const PAR_DE_LA_RAIZ = new RegExp(String.raw`^(${CLAVE})[ \t]*=[ \t]*(${VALOR})${COLA}`, "u");
+const ENTERO_COMPLETO = new RegExp(String.raw`^${ENTERO}$`, "u");
+const CABECERA_DE_TABLA = new RegExp(
+  String.raw`^\[(\[?)[ \t]*(${CLAVE})(?:[ \t]*\.[ \t]*${CLAVE})*[ \t]*\](\]?)${COLA}`, "u",
+);
+
+function claveNormalizada(bruta: string): string | undefined {
+  if (bruta.startsWith("'")) return bruta.slice(1, -1);
+  if (!bruta.startsWith("\"")) return bruta;
+  return bruta.includes("\\") ? undefined : bruta.slice(1, -1);
+}
+
+function finDeLaRaiz(linea: string, vistas: ReadonlySet<string>): boolean {
+  const cabecera = CABECERA_DE_TABLA.exec(linea);
+  if (cabecera === null || (cabecera[1] === "[") !== (cabecera[3] === "]")) return false;
+  const raiz = claveNormalizada(cabecera[2] ?? "");
+  return raiz !== undefined && !vistas.has(raiz);
+}
 
 export function topeDeCodexEnConfigToml(texto: string): number | undefined {
+  const vistas = new Set<string>();
   let valor: number | undefined;
   for (const cruda of texto.split("\n")) {
-    const linea = cruda.replace(/\r$/u, "").trim();
-    if (linea.startsWith("[")) break;
-    const encontrado = TOPE_DE_CODEX_EN_TOML.exec(linea);
-    if (encontrado === null) continue;
-    if (valor !== undefined) return undefined;
-    const numero = Number(encontrado[1]?.replaceAll("_", ""));
-    if (!Number.isSafeInteger(numero) || numero < 1 || numero > MAX_CODEX_PROJECT_DOC_BYTES) {
-      return undefined;
-    }
+    const sinRetorno = cruda.replace(/\r$/u, "");
+    if (FUERA_DEL_JUEGO.test(sinRetorno)) return undefined;
+    const linea = sinRetorno.replace(/^[ \t]+|[ \t]+$/gu, "");
+    if (linea.length === 0 || linea.startsWith("#")) continue;
+    if (linea.startsWith("[")) return finDeLaRaiz(linea, vistas) ? valor : undefined;
+    const par = PAR_DE_LA_RAIZ.exec(linea);
+    const clave = par === null ? undefined : claveNormalizada(par[1] ?? "");
+    if (clave === undefined || vistas.has(clave)) return undefined;
+    vistas.add(clave);
+    if (clave !== CLAVE_DEL_TOPE) continue;
+    const crudo = par?.[2] ?? "";
+    const numero = Number(crudo.replaceAll("_", ""));
+    if (!ENTERO_COMPLETO.test(crudo) || !Number.isSafeInteger(numero)
+      || numero < 1 || numero > MAX_CODEX_PROJECT_DOC_BYTES) return undefined;
     valor = numero;
   }
   return valor;

@@ -335,4 +335,12 @@ test("topeDeCodexEnConfigToml lee la clave de la tabla raíz y desconfía de tod
   assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 16777217\n"), undefined);
   assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 1\nproject_doc_max_bytes = 2\n"), undefined);
   assert.equal(topeDeCodexEnConfigToml("otra_clave = 1\n"), undefined);
+  assert.equal(topeDeCodexEnConfigToml("project_doc_max_bytes = 0x10000\n"), 65_536);
+  assert.equal(topeDeCodexEnConfigToml("\"project_doc_max_bytes\" = 65536\n"), 65_536);
+  assert.equal(
+    topeDeCodexEnConfigToml("model = sin comillas\nproject_doc_max_bytes = 65536\n"), undefined,
+  );
+  assert.equal(
+    topeDeCodexEnConfigToml("notes = \"\"\"\nproject_doc_max_bytes = 65536\n\"\"\"\n"), undefined,
+  );
 });

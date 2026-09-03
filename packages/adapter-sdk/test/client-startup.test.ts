@@ -81,7 +81,10 @@ test("la siembra de reconnect es default-on y sólo acepta un lote completo o co
   assert.equal(siembraAplicada({ estado: "apagado" }), true);
   assert.equal(siembraAplicada({ estado: "sin-ficheros", harness: "hermes" }), true);
   assert.equal(siembraAplicada({ estado: "sin-directorio", harness: "claude" }), false);
-  assert.equal(siembraAplicada({ estado: "no-entra", fichero: "CLAUDE.md", medido: 2, tope: 1 }), false);
+  assert.equal(siembraAplicada({
+    estado: "no-entra", fichero: "CLAUDE.md", medido: 2, tope: 1,
+    unidad: "utf16_strictest", fuente: "default",
+  }), false);
   assert.equal(siembraAplicada({
     estado: "hecho",
     ficheros: [{ nombre: "CLAUDE.md", estado: "ya-estaba" }],

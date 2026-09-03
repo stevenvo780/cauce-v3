@@ -10,12 +10,20 @@ import test from "node:test";
 import { Worker } from "node:worker_threads";
 import {
   bloqueDePerfil, ficherosDelArnes, harnessDocumentPaths, nombresDelArnes,
-  type AgentProfile, type ContextoDeAlias, type HechosDelAlias,
+  type AgentProfile, type ContextoDeAlias, type FuenteDeTope, type HechosDelAlias,
+  type UnidadDeTope,
 } from "@cauce/protocol";
 import {
   directorioDelArnes, discoReal, resumenDeLaSiembra, sembrarPerfilDelArnes,
-  type DiscoDelArnes,
+  type DiscoDelArnes, type ResultadoDeLaSiembra,
 } from "../src/context/siembra-del-perfil.js";
+
+function medidaDelTopeSuperado(
+  resultado: ResultadoDeLaSiembra,
+): { readonly unidad: UnidadDeTope; readonly fuente: FuenteDeTope } {
+  if (resultado.estado !== "no-entra") throw new Error("el resultado no es un tope superado");
+  return { unidad: resultado.unidad, fuente: resultado.fuente };
+}
 
 /**
  * THE PIECE THAT TOUCHES THE REAL DISK.
@@ -496,6 +504,8 @@ test("un tope superado NO escribe NINGUNO de los siete", () => {
   assert.equal(resultado.estado, "no-entra");
   assert.equal(d.escrituras.length, 0);
   assert.equal(resultado.fichero, "SOUL.md");
+  assert.deepEqual(medidaDelTopeSuperado(resultado),
+    { unidad: "utf16_strictest", fuente: "default" });
 });
 
 test("CONTROL NEGATIVO: un arnés sin ficheros no escribe y no es un error", () => {
@@ -584,6 +594,18 @@ test("codex sin hecho medido: rige el DEFECTO, no se escribe nada y el resumen d
   const resumen = resumenDeLaSiembra(resultado);
   assert.match(resumen, /bytes UTF-8/u);
   assert.match(resumen, /por defecto del arn\u00e9s/u);
+});
+
+test("codex con tope medido POR DEBAJO del perfil: el resumen dice que el origen es el alias", () => {
+  const d = disco({ [CONFIG_DE_CODEX]: "project_doc_max_bytes = 40000\n" });
+  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
+  });
+  assert.equal(resultado.estado, "no-entra");
+  assert.equal(resultado.tope, 40_000);
+  assert.deepEqual(medidaDelTopeSuperado(resultado), { unidad: "utf8_bytes", fuente: "measured" });
+  assert.equal(d.escrituras.length, 0);
+  assert.match(resumenDeLaSiembra(resultado), /tope medido del alias/u);
 });
 
 test("un config.toml ilegible NO inventa un tope: cae al defecto y falla cerrado", () => {

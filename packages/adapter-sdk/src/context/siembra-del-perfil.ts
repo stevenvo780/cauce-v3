@@ -37,7 +37,7 @@ export type ResultadoDeLaSiembra =
   /** A file —or the sum— exceeds the harness cap. NONE is written. */
   | {
     readonly estado: "no-entra"; readonly fichero: string; readonly medido: number;
-    readonly tope: number; readonly unidad?: UnidadDeTope; readonly fuente?: FuenteDeTope;
+    readonly tope: number; readonly unidad: UnidadDeTope; readonly fuente: FuenteDeTope;
   }
   | { readonly estado: "hecho"; readonly ficheros: readonly ResultadoDeFichero[] };
 
@@ -527,8 +527,8 @@ export function sembrarPerfilDelArnes(
     );
   } catch (error) {
     if (error instanceof ErrorDeTopeDelArnes) {
-// NONE is written. A half-persona —four files today, three not— contradicts itself, and the
-        // model has no way to know which one to believe.
+      // NONE is written. A half-persona —four files today, three not— contradicts itself, and
+      // the model has no way to know which one to believe.
       return {
         estado: "no-entra", fichero: error.fichero, medido: error.medido, tope: error.tope,
         unidad: error.unidad, fuente: error.fuente,
@@ -622,9 +622,9 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   }
   if (resultado.estado === "no-entra") {
     return `siembra del perfil: NO se escribió nada, ${resultado.fichero} mide `
-      + `${String(resultado.medido)} ${ETIQUETAS_DE_UNIDAD[resultado.unidad ?? "utf16_strictest"]} `
+      + `${String(resultado.medido)} ${ETIQUETAS_DE_UNIDAD[resultado.unidad]} `
       + `y el tope es ${String(resultado.tope)} `
-      + `(${ETIQUETAS_DE_FUENTE[resultado.fuente ?? "default"]})`;
+      + `(${ETIQUETAS_DE_FUENTE[resultado.fuente]})`;
   }
   const cuenta = new Map<string, number>();
   for (const fichero of resultado.ficheros) {
