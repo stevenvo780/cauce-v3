@@ -452,16 +452,6 @@ def _lee_reinicio(fresco, ventana_s=VENTANA_REINICIO_S):
     return False, ""
 
 
-def en_ventana_de_reinicio(host, unidad, ventana_s=VENTANA_REINICIO_S):
-    """(is_restart, reason) for ONE unit, re-measured NOW. Wrapper for `_lee_reinicio`.
-    A `None` (couldn't measure) is NOT "all is well": returns `False` and alerts as usual —
-    a broken probe proves nothing."""
-    fresco = estado_fresco_unidad(host, unidad)
-    if fresco is None:
-        return False, ""
-    return _lee_reinicio(fresco, ventana_s)
-
-
 def mapa_adaptadores(procs):
     """alias -> live adapter (host, pid, bundle, digest, container). Discovered from the
     LIVE process, not from the inventory: the inventory and unit Descriptions lie after a

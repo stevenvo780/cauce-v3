@@ -165,6 +165,10 @@ prod = (project / 'deploy/compose.yaml').read_text(encoding='utf-8')
 dev = (project / 'deploy/compose.dev.yaml').read_text(encoding='utf-8')
 overlay = (project / 'deploy/compose.postgres.yaml').read_text(encoding='utf-8')
 console = (project / 'console/nginx.conf').read_text(encoding='utf-8')
+history_rows = [
+    line for line in (project / 'deploy/HISTORIAL.md').read_text(encoding='utf-8').splitlines()
+    if line.startswith('| 20')
+]
 required = {
     'production compose must not build mutable images': 'build:' not in prod,
     'mTLS gateway health must use isolated loopback probe': 'http://127.0.0.1:8081/health/ready' in prod and 'https://gateway:8443/health/ready' not in prod,
@@ -186,6 +190,7 @@ required = {
     )),
     'production compose must wire the complete OIDC BFF': all(value in prod for value in ('CAUCE_OIDC_AUTHORIZATION_URL', 'CAUCE_OIDC_TOKEN_URL', 'CAUCE_OIDC_CLIENT_ID', 'CAUCE_OIDC_REDIRECT_URI', 'gateway_oidc_session_key')),
     'xterm CSP must allow only inline style attributes': "style-src-attr 'unsafe-inline'" in console and "style-src 'self' 'unsafe-inline'" not in console,
+    'deployment history must not contain byte-identical rows': len(history_rows) == len(set(history_rows)),
 }
 failed = [name for name, passed in required.items() if not passed]
 if failed:

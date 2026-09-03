@@ -90,6 +90,13 @@ def wait_for(predicate, timeout: float, interval: float = 0.02) -> bool:
     return predicate()
 
 
+def marker_ready(marker: pathlib.Path, expected: int) -> bool:
+    try:
+        return marker.read_text(encoding="utf-8") == str(expected)
+    except OSError:
+        return False
+
+
 def variant_scripts(root: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     """Materialize the shipped script and a baseline with only the reap call removed."""
     source = RUNTIME.read_text(encoding="utf-8")
@@ -173,7 +180,7 @@ def measure(script: pathlib.Path, root: pathlib.Path, name: str) -> tuple[int, i
     """
     supervisor, marker = launch(script, root, name, sleep=10.0)
     try:
-        if not wait_for(marker.exists, 30.0):
+        if not wait_for(lambda: marker_ready(marker, ORPHANS), 30.0):
             raise AssertionError(f"{name}: adapter never reported its orphan burst "
                                  f"({supervisor.stderr.read().decode(errors='replace')[-400:]})")
         spawned = int(marker.read_text(encoding="utf-8").strip())
@@ -216,7 +223,8 @@ def scenario_exit_code_preserved(root: pathlib.Path) -> None:
     _, patched = variant_scripts(root / "exit")
     supervisor, marker = launch(patched, root / "exit", "code", sleep=0.4)
     try:
-        wait_for(marker.exists, 20.0)
+        if not wait_for(lambda: marker_ready(marker, ORPHANS), 20.0):
+            raise AssertionError("code: adapter never completed its marker")
         status = supervisor.wait(timeout=30)
     finally:
         terminate(supervisor)

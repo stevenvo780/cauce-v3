@@ -16,6 +16,7 @@ _scripts_dir = str(pathlib.Path(__file__).resolve().parent)
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
+import secure_path as _secure_path  # noqa: E402
 from container_alias_lib import (  # noqa: E402  same-directory ops library (stdlib-only)
     AliasNotDeclaredError,
     ContainerAliasError,
@@ -23,6 +24,9 @@ from container_alias_lib import (  # noqa: E402  same-directory ops library (std
     InventorySizeError,
     read_alias_entry,
 )
+
+file_identity = _secure_path.file_identity
+open_regular_at = _secure_path.open_regular_at
 
 MAX_CONFIG_BYTES = 1024 * 1024
 ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
@@ -164,33 +168,18 @@ def content_digest(body: bytes) -> str:
 
 
 def validate_absolute(path: pathlib.Path, label: str) -> None:
-    raw = os.fspath(path)
-    if (
-        not raw.startswith("/")
-        or "//" in raw
-        or "\x00" in raw
-        or any(component in ("", ".", "..") for component in raw.split("/")[1:])
-    ):
-        raise ConfigUpdateError(f"{label} debe ser una ruta absoluta canonica")
+    try:
+        _secure_path.absolute_components(path)
+    except _secure_path.InvalidAbsolutePath as error:
+        raise ConfigUpdateError(f"{label} debe ser una ruta absoluta canonica") from error
 
 
 def open_absolute_directory(path: pathlib.Path, label: str) -> int:
     """Abre cada componente sin seguir symlinks."""
-    validate_absolute(path, label)
-    current = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
-        for component in os.fspath(path).split("/")[1:]:
-            following = os.open(
-                component,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=current,
-            )
-            os.close(current)
-            current = following
-        return current
-    except Exception:
-        os.close(current)
-        raise
+        return _secure_path.open_absolute_directory(path)
+    except _secure_path.InvalidAbsolutePath as error:
+        raise ConfigUpdateError(f"{label} debe ser una ruta absoluta canonica") from error
 
 
 def assert_secure_directory(fd: int, label: str, mode: int | None = None) -> os.stat_result:
@@ -202,19 +191,6 @@ def assert_secure_directory(fd: int, label: str, mode: int | None = None) -> os.
     if mode is not None and stat.S_IMODE(details.st_mode) != mode:
         raise ConfigUpdateError(f"{label} debe tener modo {mode:04o}")
     return details
-
-
-def open_regular_at(
-    directory_fd: int,
-    name: str,
-    flags: int,
-    *,
-    mode: int | None = None,
-) -> int:
-    options = flags | os.O_NOFOLLOW | os.O_CLOEXEC
-    if mode is None:
-        return os.open(name, options, dir_fd=directory_fd)
-    return os.open(name, options, mode, dir_fd=directory_fd)
 
 
 def assert_private_regular(fd: int, label: str) -> os.stat_result:
@@ -229,20 +205,6 @@ def assert_private_regular(fd: int, label: str) -> os.stat_result:
             f"{label} debe ser un fichero regular de un enlace, del usuario efectivo y modo 0600"
         )
     return details
-
-
-def file_identity(details: os.stat_result) -> tuple[int, ...]:
-    return (
-        details.st_dev,
-        details.st_ino,
-        details.st_size,
-        details.st_mtime_ns,
-        details.st_ctime_ns,
-        details.st_uid,
-        details.st_gid,
-        stat.S_IMODE(details.st_mode),
-        details.st_nlink,
-    )
 
 
 def read_all(fd: int, label: str) -> bytes:

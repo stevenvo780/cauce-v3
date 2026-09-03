@@ -4,10 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import pathlib
-import tempfile
 
+from atomic_file import atomic_write
 from container_alias_lib import load_container_aliases
 from container_ops_digest import operational_digest
 from fleet_derive import HARNESS_RULES
@@ -70,21 +69,6 @@ else:
     unit_pki_root = example_pki_root = args.pki_root or "/etc/cauce-v3/container-pki"
     unit_bundle_root = args.bundle_root or "/opt/cauce-v3-adapter"
     unit_lock_root = args.lock_root or "/run/lock"
-
-
-def atomic_write(destination: pathlib.Path, body: str, mode: int = 0o644) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent, text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, mode)
-        os.replace(temporary, destination)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def system_unit(alias: str, entry: dict[str, str]) -> str:

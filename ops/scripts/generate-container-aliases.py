@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import sys
-import tempfile
 from typing import Any
 
+from atomic_file import atomic_write
 from fleet_derive import alias_entry
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -107,21 +106,6 @@ def render(document: dict[str, Any]) -> str:
         "aliases": {alias: alias_entry(alias, fleet[alias], placement.get(alias, {})) for alias in sorted(fleet)},
     }
     return json.dumps(generated, indent=2, ensure_ascii=False) + "\n"
-
-
-def atomic_write(destination: pathlib.Path, body: str) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent, text=True)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, destination)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def parse_args() -> argparse.Namespace:

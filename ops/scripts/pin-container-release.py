@@ -20,6 +20,15 @@ import sys
 from collections.abc import Iterator
 
 from container_alias_lib import load_container_aliases
+from secure_path import (
+    InvalidAbsolutePath,
+    absolute_components,
+    file_identity,
+    open_regular_at,
+)
+from secure_path import (
+    open_absolute_directory as open_secure_absolute_directory,
+)
 
 ALIAS_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 RELEASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -46,32 +55,18 @@ def defaults() -> tuple[pathlib.Path, pathlib.Path]:
 
 
 def validate_absolute(path: pathlib.Path, label: str) -> None:
-    raw = os.fspath(path)
-    if not raw.startswith("/") or "//" in raw or "\x00" in raw:
-        raise PinError(f"{label} must be a canonical absolute path")
-    components = raw.split("/")[1:]
-    if not components or any(component in ("", ".", "..") for component in components):
-        raise PinError(f"{label} must be a canonical absolute path")
+    try:
+        absolute_components(path)
+    except InvalidAbsolutePath as error:
+        raise PinError(f"{label} must be a canonical absolute path") from error
 
 
 def open_absolute_directory(path: pathlib.Path, label: str) -> int:
     """Open an absolute directory without following any pathname component."""
-
-    validate_absolute(path, label)
-    current = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     try:
-        for component in os.fspath(path).split("/")[1:]:
-            following = os.open(
-                component,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=current,
-            )
-            os.close(current)
-            current = following
-        return current
-    except Exception:
-        os.close(current)
-        raise
+        return open_secure_absolute_directory(path)
+    except InvalidAbsolutePath as error:
+        raise PinError(f"{label} must be a canonical absolute path") from error
 
 
 def assert_owned_secure_directory(fd: int, label: str) -> os.stat_result:
@@ -81,19 +76,6 @@ def assert_owned_secure_directory(fd: int, label: str) -> os.stat_result:
     if details.st_uid != os.geteuid() or details.st_mode & 0o022:
         raise PinError(f"{label} must have the required owner and not be group/world writable")
     return details
-
-
-def open_regular_at(
-    directory_fd: int,
-    name: str,
-    flags: int,
-    *,
-    mode: int | None = None,
-) -> int:
-    options = flags | os.O_NOFOLLOW | os.O_CLOEXEC
-    if mode is None:
-        return os.open(name, options, dir_fd=directory_fd)
-    return os.open(name, options, mode, dir_fd=directory_fd)
 
 
 def assert_config_file(fd: int) -> os.stat_result:
@@ -106,20 +88,6 @@ def assert_config_file(fd: int) -> os.stat_result:
     ):
         raise PinError("container alias config must be a single-link regular file owned by the caller with mode 0600")
     return details
-
-
-def file_identity(details: os.stat_result) -> tuple[int, ...]:
-    return (
-        details.st_dev,
-        details.st_ino,
-        details.st_size,
-        details.st_mtime_ns,
-        details.st_ctime_ns,
-        details.st_uid,
-        details.st_gid,
-        stat.S_IMODE(details.st_mode),
-        details.st_nlink,
-    )
 
 
 def read_config(

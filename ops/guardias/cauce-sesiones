@@ -286,10 +286,6 @@ def alias_info(alias):
     return info
 
 
-def unit_of(alias):
-    return HOST_NATIVE.get(alias, f'cauce-v3-container-{alias}')
-
-
 def _sonda(alias, info):
     extra = os.path.expanduser('~') if alias in HOST_NATIVE else ''
     args = [info['stateDirectory'], info['home'], info.get('harness', ''), extra]

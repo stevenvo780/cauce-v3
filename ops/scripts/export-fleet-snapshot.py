@@ -10,9 +10,9 @@ import pathlib
 import re
 import subprocess
 import sys
-import tempfile
 from typing import Any
 
+from atomic_file import atomic_write
 from fleet_derive import runtime_state_directory
 
 PROJECT = pathlib.Path(__file__).resolve().parents[2]
@@ -383,32 +383,6 @@ def query_database(
     except OSError as exc:
         raise SnapshotError("cannot run the fleet query") from exc
     return _completed_payload(completed)
-
-
-def atomic_write(path: pathlib.Path, body: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = pathlib.Path(temporary_name)
-    try:
-        os.fchmod(descriptor, 0o644)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        directory_descriptor = os.open(
-            path.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
-        )
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
-    finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _parser() -> argparse.ArgumentParser:

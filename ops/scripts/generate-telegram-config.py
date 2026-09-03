@@ -70,12 +70,12 @@ import os
 import pathlib
 import re
 import sys
-import tempfile
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import container_alias_lib  # noqa: E402  same-directory ops library (stdlib-only)
 import telegram_config_merge as merge_lib  # noqa: E402
+from atomic_file import atomic_write as _atomic_write  # noqa: E402
 
 # --- constraints mirrored verbatim from services/telegram-bridge/src/config.ts ---
 ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")         # config.ts text(..., 64) for alias / recipient.alias
@@ -718,21 +718,6 @@ def validate_config(config: Any) -> dict[str, Any]:
 # ------------------------------------------------------------------------------ emit
 def render(config: dict[str, Any], indent: int = 2) -> str:
     return json.dumps(config, indent=indent, ensure_ascii=False, sort_keys=False) + "\n"
-
-def _atomic_write(destination: pathlib.Path, body: str, mode: int = 0o644) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent, text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, mode)
-        os.replace(temporary, destination)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(

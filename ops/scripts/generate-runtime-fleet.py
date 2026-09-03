@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import sys
-import tempfile
 from typing import Any
 
+from atomic_file import atomic_write
 from fleet_derive import alias_entry
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -59,32 +58,6 @@ def render(fleet: dict[str, dict[str, Any]], placement: dict[str, dict[str, Any]
         }
     document = {"schemaVersion": 1, "aliases": aliases}
     return (json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode()
-
-
-def atomic_write(destination: pathlib.Path, body: bytes) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
-    temporary = pathlib.Path(temporary_name)
-    try:
-        os.fchmod(descriptor, 0o644)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-        directory_descriptor = os.open(
-            destination.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
-        )
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
-    finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def parse_args() -> argparse.Namespace:

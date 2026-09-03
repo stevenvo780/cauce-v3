@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import pathlib
-import tempfile
 
+from atomic_file import atomic_write
 from container_alias_lib import load_container_aliases
 from fleet_derive import HOST_STATE_DIRECTORY
 from manifest_lib import load_manifests
@@ -103,17 +102,7 @@ for manifest in manifests:
     alias = manifest["spec"]["alias"]
     destination = args.output / f"cauce-v3-alias-{alias}.service"
     body = unit_for(manifest)
-    fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=args.output, text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, destination)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    atomic_write(destination, body)
     print(destination)
 
 if not args.alias:
@@ -127,15 +116,5 @@ if not args.alias:
     for alias in sorted(aliases):
         unit = args.output / f"cauce-v3-alias-{alias}.service"
         lines.append(f"{hashlib.sha256(unit.read_bytes()).hexdigest()}  {unit.name}")
-    fd, temporary = tempfile.mkstemp(prefix=".SHA256SUMS.", dir=args.output, text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write("\n".join(lines) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, checksum)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    atomic_write(checksum, "\n".join(lines) + "\n")
     print(checksum)

@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import sys
-import tempfile
 from typing import Any
 
+from atomic_file import atomic_write
 from fleet_derive import manifest_doc
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -91,21 +90,6 @@ spec:
 {process_text}
   stateDirectory: {spec["stateDirectory"]}
 """
-
-
-def atomic_write(destination: pathlib.Path, body: str) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent, text=True)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(body)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, destination)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
 
 
 def parse_args() -> argparse.Namespace:
