@@ -169,49 +169,31 @@ test("CONTROL NEGATIVO: un fichero sin bloque gestionado NO recorta nada", async
   }
 });
 
-test("con la siembra ENCENDIDA, el segundo turno ya va recortado", async () => {
+test("CONTROL NEGATIVO: el adaptador NUNCA escribe el fichero del arnés", async () => {
   /*
-   * This is what makes the saving happen in production without a maintenance window: the first
-   * turn after an upgrade writes the block and sends the whole envelope; from the second one
-   * onward it is trimmed. It heals itself.
+   * The seal is a pure READ. A writer used to hang off `CAUCE_SEMBRAR_CONTEXTO`, a switch the
+   * container supervisor's CLOSED env allowlist can never set, so the write branch never ran in
+   * the deployment. The variable is exported here on purpose: it is a tombstone. If the writer
+   * comes back —under this name, or because someone reads the file mtime as a licence to fix
+   * it— this test goes red instead of an alias's hand-written manual being overwritten.
    */
-  const home = mkdtempSync(join(tmpdir(), "cauce-home-siembra-"));
+  const home = mkdtempSync(join(tmpdir(), "cauce-home-sin-siembra-"));
   const previo = process.env.CAUCE_SEMBRAR_CONTEXTO;
   process.env.CAUCE_SEMBRAR_CONTEXTO = "1";
   try {
     const { mkdirSync } = await import("node:fs");
     mkdirSync(join(home, ".claude"), { recursive: true });
-    /*
-     * MEASURED: it already trims on the FIRST turn, not the second. Seeding happens before the
-     * envelope is assembled, and on the headless path the harness process starts after writing:
-     * it reads the freshly-seeded file in that very invocation. I expected two turns and it is zero.
-     */
     const primero = await correrUnTurno(home, "zeus");
-    assert.ok(!primero.includes(PRIMARY_DUTY_HEADER), "no recortó ni siquiera tras sembrar");
-    assert.ok(existsSync(join(home, ".claude", "CLAUDE.md")), "no escribió el fichero");
+    assert.ok(primero.includes(PRIMARY_DUTY_HEADER), "recortó el sobre sin que nadie escribiera el fichero");
     const segundo = await correrUnTurno(home, "zeus");
-    assert.ok(!segundo.includes(PRIMARY_DUTY_HEADER), "el segundo turno dejó de recortar");
-    assert.equal(primero.length, segundo.length, "dos turnos iguales tendrían que dar el mismo sobre");
+    assert.ok(segundo.includes(PRIMARY_DUTY_HEADER), "el segundo turno se recortó solo");
+    assert.equal(
+      existsSync(join(home, ".claude", "CLAUDE.md")), false,
+      "el adaptador escribió el fichero de instrucciones del alias",
+    );
   } finally {
     if (previo === undefined) delete process.env.CAUCE_SEMBRAR_CONTEXTO;
     else process.env.CAUCE_SEMBRAR_CONTEXTO = previo;
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("CONTROL NEGATIVO: con la siembra APAGADA, el segundo turno sigue yendo entero", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cauce-home-sin-siembra-"));
-  const previo = process.env.CAUCE_SEMBRAR_CONTEXTO;
-  delete process.env.CAUCE_SEMBRAR_CONTEXTO;
-  try {
-    const { mkdirSync } = await import("node:fs");
-    mkdirSync(join(home, ".claude"), { recursive: true });
-    await correrUnTurno(home, "zeus");
-    const segundo = await correrUnTurno(home, "zeus");
-    assert.ok(segundo.includes(PRIMARY_DUTY_HEADER), "recortó con la siembra apagada");
-    assert.equal(existsSync(join(home, ".claude", "CLAUDE.md")), false, "escribió el fichero estando apagada");
-  } finally {
-    if (previo !== undefined) process.env.CAUCE_SEMBRAR_CONTEXTO = previo;
     rmSync(home, { recursive: true, force: true });
   }
 });

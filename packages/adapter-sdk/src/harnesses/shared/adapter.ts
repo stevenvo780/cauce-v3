@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { FICHEROS_OPENCLAW, bloqueDePerfil, esFicheroDelAgente } from "@cauce/protocol";
 import {
   NativeProfileContext,
@@ -31,7 +32,6 @@ import {
 import {
   rutaDelContextoFijo,
   selloDesdeElDisco,
-  sembrarContextoFijo,
   motivoDeReenvio,
   type SelloDeContextoFijo,
 } from "../contexto-fijo.js";
@@ -59,6 +59,16 @@ import { SessionReservation } from "./session-reservation.js";
 
 /** Suffix distinguishing the agent lane's session key. */
 const AGENT_LANE_SUFFIX = ".agent-lane";
+
+function workspaceCwd(): { cwd?: string } {
+  const workspace = process.env.CAUCE_AGENT_WORKSPACE?.trim() ?? "";
+  if (workspace.length === 0 || !isAbsolute(workspace)) return {};
+  try {
+    return statSync(workspace).isDirectory() ? { cwd: workspace } : {};
+  } catch {
+    return {};
+  }
+}
 
 export class HarnessAdapter {
   readonly definition: HarnessDefinition;
@@ -206,10 +216,10 @@ export class HarnessAdapter {
    * —not in production today— and a network trip per delivery.
    *
    * Cache is by `mtime`, NOT by time: a file that didn't change isn't reread, and one that
-   * changed is noticed on the next delivery without waiting for anything to expire. Seeding the
-   * context takes effect on the next turn, which is what is expected from a config.
+   * changed is noticed on the next delivery without waiting for anything to expire.
    *
-   * If anything fails —no `HOME`, the harness has no file, the disk won't read— returns the
+   * If anything fails —no `HOME`, the harness has no file, the disk won't read— the context is
+   * returned untouched and the whole envelope travels.
    */
   private conSelloDelArnes(context: HarnessRequestContext | undefined): HarnessRequestContext | undefined {
     if (!context) return context;
@@ -223,9 +233,10 @@ export class HarnessAdapter {
      * IN SHARED SESSION THE TRIM DOES NOT HAPPEN — not out of caution: correctness.
      *
      * Trimming relies on the harness loading its instructions from the file. On the headless
-     * path that is true by construction: the process starts AFTER we write, in this same turn.
+     * path that is true by construction: the process starts AFTER the native profile engine
+     * converged the file, in this same turn.
      * In shared session it is not: the TUI was launched when the pane was created —hours or days
-     * ago— and read its `CLAUDE.md` then. Writing the file now tells nobody.
+     * ago— and read its `CLAUDE.md` then. A file written now tells nobody.
      *
      * If we trimmed anyway, the agent would be left without a contract and would NOT error: it
      * would answer wrongly and look like the model worsened. That is exactly the failure the seal
@@ -237,35 +248,21 @@ export class HarnessAdapter {
     if (!home) return context;
     const ruta = rutaDelContextoFijo(this.definition.id, home);
     if (!ruta) return context;
-    /*
-     * That the file does NOT exist is not an exit: it is exactly the case of a freshly created
-     * alias, which needs seeding most. Continue with marker -1, which never matches a prior
-     * cache and therefore forces the attempt.
-     */
+    // A missing file is not an exit: marker -1 never matches a prior cache, so the read is
+    // retried on every turn until the file appears.
     let marca = -1;
     try {
       marca = statSync(ruta).mtimeMs;
     } catch {
       marca = -1;
     }
+    /*
+     * A PURE READ. No block, or a block that is not this one, means the whole envelope travels:
+     * the file belongs to the alias, and the only writer of the managed block is the native
+     * profile engine, which converges it before the harness process starts.
+     */
     if (this.selloEnCache?.ruta !== ruta || this.selloEnCache.marca !== marca) {
-      let sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
-      if (!sello) {
-        /*
-         * There is no block, or the one there is not this one. Seeding is attempted and reread.
-         * Seeding decides for itself whether it should run (see `sembrarContextoFijo`): off, no
-         * path, or with a block from another alias, it writes nothing and this stays as before.
-         *
-         * Behind a switch because writing an alias's file is an action with effect outside this
-         * process, and turning it on is a deployment decision, not a code one.
-         */
-        const motivo = sembrarContextoFijo(ruta, textoFijoDelSobre(context), {
-          habilitado: process.env.CAUCE_SEMBRAR_CONTEXTO === "1",
-          leer: (r) => readFileSync(r, "utf8"),
-          escribir: (r, contenido) => { writeFileSync(r, contenido, "utf8"); },
-        });
-        if (motivo === "sembrado") sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
-      }
+      const sello = selloDesdeElDisco(ruta, (r) => readFileSync(r, "utf8"));
       this.selloEnCache = { ruta, marca, sello };
     }
     const sello = this.selloEnCache.sello;
@@ -372,6 +369,7 @@ export class HarnessAdapter {
       ?? (request.context === undefined ? undefined : this.perfilVivoDelRuntime(request.context));
     const result = await this.runner.run({
       ...invocation,
+      ...workspaceCwd(),
       ...(Object.keys(credentialEnv).length === 0 ? {} : { env: credentialEnv }),
       stdin: protocolPrompt(effectivePrompt, request.origin, invocationContext),
       timeoutMs: request.timeoutMs,

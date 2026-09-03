@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  bloqueGestionado as leerBloqueGestionado, conBloqueGestionado as fusionarBloqueGestionado,
+  bloqueGestionado as leerBloqueGestionado, harnessDocumentPaths,
   VERSION_CONTEXTO_FIJO,
 } from "@cauce/protocol";
 
@@ -66,22 +66,36 @@ export function renglonDeContextoFijo(): string {
 // ── Read the disk seal from inside the container ────────────────────────────────────────────
 
 /**
+ * Harnesses whose sealed block lives in a plain text document of their own config directory.
+ *
+ * An allowlist, not a lookup: `openclaw` keeps its directive inside `openclaw.json` next to
+ * `auth` and `secrets`, so it has a projection path and never a file path, and `hermes` writes
+ * its document straight into a shared `$HOME`. Both must resolve to `undefined` here.
+ */
+const ARNESES_CON_FICHERO_SELLADO: ReadonlySet<string> = new Set(["claude", "codex"]);
+
+/**
  * Resolves the path to the harness's instructions file from local environment variables.
+ *
+ * The directory, its default under HOME and the file name come from the one path table in
+ * `@cauce/protocol`; this only decides WHICH harnesses have such a file.
  */
 export function rutaDelContextoFijo(
   harness: string,
   home: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
+  if (!ARNESES_CON_FICHERO_SELLADO.has(harness)) return undefined;
+  // A relative value is dropped instead of composed: composing it would land the file outside
+  // the home, and the table's default under HOME is the safe answer.
   const absoluta = (valor: string | undefined): string | undefined =>
-    valor?.startsWith("/") ? valor : undefined;
-  if (harness === "claude") {
-    return `${absoluta(environment.CLAUDE_CONFIG_DIR) ?? `${home}/.claude`}/CLAUDE.md`;
-  }
-  if (harness === "codex") {
-    return `${absoluta(environment.CODEX_HOME) ?? `${home}/.codex`}/AGENTS.md`;
-  }
-  return undefined;
+    valor?.startsWith("/") === true ? valor : undefined;
+  const rutas = harnessDocumentPaths(harness, {
+    home,
+    claudeConfigDir: absoluta(environment.CLAUDE_CONFIG_DIR),
+    codexHome: absoluta(environment.CODEX_HOME),
+  });
+  return rutas.length === 1 ? rutas[0] : undefined;
 }
 
 /*
@@ -89,7 +103,7 @@ export function rutaDelContextoFijo(
  *
  * Reason: the console must show EXACTLY the file that will end up on disk —with the human
  * content intact around it— and the gateway cannot import this package. What remains here is
- * what the container actually needs: the seal (`node:crypto`) and the seeding (the disk).
+ * what the container actually needs: the seal (`node:crypto`) read from the local disk.
  *
  * Re-exported so anything already importing them from here doesn't have to move.
  */
@@ -122,58 +136,4 @@ export function selloDesdeElDisco(
   } catch {
     return undefined;
   }
-}
-
-/** Why the file was NOT seeded. Goes to the log; the turn continues. */
-type MotivoDeNoSembrar =
-  | "sembrado"
-  | "apagado"
-  | "sin-ruta"
-  | "ya-estaba"
-  | "ocupado-por-otro-alias"
-  | "no-se-pudo-escribir";
-
-/**
- * Inserts or updates the managed block with the fixed text in the harness file.
- * If the existing block belongs to another alias that shares the directory, returns `ocupado-por-otro-alias`.
- */
-export function sembrarContextoFijo(
-  ruta: string | undefined,
-  textoFijo: string,
-  io: {
-    leer: (ruta: string) => string;
-    escribir: (ruta: string, contenido: string) => void;
-    habilitado: boolean;
-  },
-): MotivoDeNoSembrar {
-  if (!io.habilitado) return "apagado";
-  if (!ruta) return "sin-ruta";
-
-  let original: string;
-  try {
-    original = io.leer(ruta);
-  } catch {
-    // Not existing is normal the first time: we seed over an empty file.
-    original = "";
-  }
-
-  const actual = leerBloqueGestionado(original);
-  if (actual === textoFijo) return "ya-estaba";
-  if (actual !== undefined && actual !== textoFijo) {
-    /*
-     * There's a block and it says something else. Two cases we can't tell apart from here:
-     * either the contract changed (and must be rewritten), or the file belongs to another alias
-     * sharing `$HOME` (and rewriting would start a write war). In doubt we don't overwrite,
-     * because the harm isn't symmetric: overwriting leaves two aliases without stable identity;
-     * under-writing costs one full envelope per turn, which is already the status quo.
-     */
-    return "ocupado-por-otro-alias";
-  }
-
-  try {
-    io.escribir(ruta, fusionarBloqueGestionado(original, textoFijo));
-  } catch {
-    return "no-se-pudo-escribir";
-  }
-  return "sembrado";
 }
