@@ -16,7 +16,7 @@ import { PROTOCOL_VERSION } from '@cauce/protocol';
 export { PROTOCOL_VERSION };
 export type HarnessId = 'hermes' | 'opencode' | 'claude' | 'codex' | 'openclaw' | 'fake';
 
-/** Human-readable manifest; converted to string capabilities on the V3 hello frame. */
+/** Runtime inventory; only traits with runtime or operational consumers reach the V3 hello. */
 export interface AdapterCapabilities {
   readonly protocol_version: typeof PROTOCOL_VERSION;
   readonly harness: HarnessId;

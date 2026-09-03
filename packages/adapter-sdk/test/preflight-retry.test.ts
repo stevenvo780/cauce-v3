@@ -21,11 +21,6 @@ import {
 } from "../src/harnesses/shared.js";
 import { testStateRoot } from "./test-state.js";
 
-/**
- *
- *
- */
-
 const stateRoot = testStateRoot();
 
 async function freshStore(name: string): Promise<DurableStore> {

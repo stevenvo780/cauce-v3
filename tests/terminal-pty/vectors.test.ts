@@ -11,6 +11,26 @@ import { createHash, createHmac, hkdfSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  MAX_INPUT_FRAME_BYTES,
+  MAX_PENDING_INPUT_BYTES,
+  PTY_CLOSE_MESSAGES,
+  claimReady,
+  esRespuestaTecnicaDelTerminal,
+  geometriaRemota,
+} from '../../console/src/features/terminal/pty-types.js';
+import {
+  CLOSE_CODES,
+  MAX_COLS,
+  MAX_INPUT_MESSAGE_BYTES,
+  MAX_PENDING_STDIN_BYTES,
+  MAX_ROWS,
+  MAX_TERMINAL_RESPONSE_BYTES,
+  MIN_COLS,
+  MIN_ROWS,
+  isTerminalEmulatorResponse,
+} from '../../services/terminal-relay/src/session-limits.js';
+import { MAX_CLAIM_LEASE_MS } from '../../services/terminal-relay/src/gateway-client.js';
 import { createGovernanceSandbox, type GovernanceOutput, type GovernanceSandbox } from './governance-double.mjs';
 import {
   CLOSE_CODE, FrameDecoder, GEOMETRY_CLAMP, MAX_FRAME_PAYLOAD, PREFIXED_TAGS, TAG, TICKET_HKDF_SALT,
@@ -179,6 +199,47 @@ describe('pty wire vectors: the fixture file itself', () => {
     expect(vectors.framing.max_payload).toBe(MAX_FRAME_PAYLOAD);
     expect(vectors.framing.tags).toMatchObject({ STDOUT: TAG.STDOUT, STDIN: TAG.STDIN, PING: TAG.PING });
     expect(vectors.ws_close_codes).toStrictEqual(CLOSE_CODE);
+  });
+
+  it('pins every relay/browser close code, including both flow-control failures', () => {
+    for (const [name, code] of Object.entries(vectors.ws_close_codes)) {
+      expect(CLOSE_CODES[name as keyof typeof CLOSE_CODES], name).toBe(code);
+      expect(PTY_CLOSE_MESSAGES[code], name).toBeDefined();
+    }
+    expect(vectors.ws_close_codes).toMatchObject({ input_flood: 4414, slow_consumer: 4415 });
+  });
+
+  it('pins shared browser/relay limits while preserving their distinct geometry boundary', () => {
+    expect(vectors.geometry).toMatchObject({
+      min_cols: MIN_COLS, max_cols: MAX_COLS, min_rows: MIN_ROWS, max_rows: MAX_ROWS,
+    });
+    expect(vectors.limits.max_terminal_response_bytes).toBe(MAX_TERMINAL_RESPONSE_BYTES);
+    expect(vectors.limits.max_input_message_bytes).toBe(MAX_INPUT_MESSAGE_BYTES);
+    expect(vectors.limits.max_input_message_bytes).toBe(MAX_INPUT_FRAME_BYTES);
+    expect(vectors.limits.max_pending_stdin_bytes).toBe(MAX_PENDING_STDIN_BYTES);
+    expect(vectors.limits.max_pending_stdin_bytes).toBe(MAX_PENDING_INPUT_BYTES);
+    expect(vectors.limits.max_claim_lease_ms).toBe(MAX_CLAIM_LEASE_MS);
+
+    const atLimit = '\x1b[0n'.repeat(MAX_TERMINAL_RESPONSE_BYTES / 4);
+    const aboveLimit = `${atLimit}\x1b[0n`;
+    expect(isTerminalEmulatorResponse(atLimit)).toBe(true);
+    expect(esRespuestaTecnicaDelTerminal(atLimit)).toBe(true);
+    expect(isTerminalEmulatorResponse(aboveLimit)).toBe(false);
+    expect(esRespuestaTecnicaDelTerminal(aboveLimit)).toBe(false);
+
+    expect(geometriaRemota({ cols: MAX_COLS, rows: MAX_ROWS })).toEqual({
+      cols: MAX_COLS, rows: MAX_ROWS,
+    });
+    expect(geometriaRemota({ cols: MAX_COLS + 1, rows: MAX_ROWS })).toBeUndefined();
+    expect(geometriaRemota({ cols: 1, rows: 1 })).toEqual({ cols: 1, rows: 1 });
+
+    const claim = {
+      claim_token: '11111111-2222-4333-8444-555555555555',
+      claim_epoch: '1',
+      claim_lease_ms: MAX_CLAIM_LEASE_MS,
+    };
+    expect(claimReady(claim)).toBeDefined();
+    expect(claimReady({ ...claim, claim_lease_ms: claim.claim_lease_ms + 1 })).toBeUndefined();
   });
 
   it('gives every case a unique name, a kind and an explicit must_fail', () => {

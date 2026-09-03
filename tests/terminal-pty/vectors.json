@@ -42,7 +42,7 @@
     ]
   },
   "limits": {
-    "note": "Byte and cardinality ceilings of the channel. Every value is the constant the pty-agent enforces, except stdin_coalesce_ms, which only the relay owns.",
+    "note": "Byte and cardinality ceilings of the channel. Agent, relay and browser-only limits remain explicit so their boundaries cannot drift.",
     "max_frame": 65536,
     "session_id_bytes": 36,
     "max_data": 65500,
@@ -57,6 +57,10 @@
     "dir_scan_cap": 5000,
     "read_index_budget": 49152,
     "stdin_coalesce_ms": 8,
+    "max_terminal_response_bytes": 256,
+    "max_input_message_bytes": 16384,
+    "max_pending_stdin_bytes": 65536,
+    "max_claim_lease_ms": 300000,
     "sources": {
       "max_frame": "ops/pty-agent/cauce_pty_agent/framing.py:MAX_FRAME",
       "session_id_bytes": "ops/pty-agent/cauce_pty_agent/framing.py:SESSION_ID_BYTES",
@@ -71,7 +75,11 @@
       "max_dir_depth": "ops/pty-agent/cauce_pty_agent/governance_paths.py:MAX_DIR_DEPTH",
       "dir_scan_cap": "ops/pty-agent/cauce_pty_agent/governance_paths.py:DIR_SCAN_CAP",
       "read_index_budget": "ops/pty-agent/cauce_pty_agent/governance_paths.py:READ_INDEX_BUDGET",
-      "stdin_coalesce_ms": "services/terminal-relay/src/session-limits.ts:34"
+      "stdin_coalesce_ms": "services/terminal-relay/src/session-limits.ts:STDIN_COALESCE_MS",
+      "max_terminal_response_bytes": "services/terminal-relay/src/session-limits.ts:MAX_TERMINAL_RESPONSE_BYTES and console/src/features/terminal/pty-types.ts:MAX_RESPUESTA_TECNICA",
+      "max_input_message_bytes": "services/terminal-relay/src/session-limits.ts:MAX_INPUT_MESSAGE_BYTES and console/src/features/terminal/pty-types.ts:MAX_INPUT_FRAME_BYTES",
+      "max_pending_stdin_bytes": "services/terminal-relay/src/session-limits.ts:MAX_PENDING_STDIN_BYTES and console/src/features/terminal/pty-types.ts:MAX_PENDING_INPUT_BYTES",
+      "max_claim_lease_ms": "services/terminal-relay/src/gateway-client.ts:MAX_CLAIM_LEASE_MS and console/src/features/terminal/pty-types.ts:MAX_CLAIM_LEASE_MS"
     }
   },
   "ttls": {
@@ -98,6 +106,8 @@
     "session_conflict": 4409,
     "control_released": 4410,
     "output_flood": 4413,
+    "input_flood": 4414,
+    "slow_consumer": 4415,
     "ttl_expired": 4423,
     "internal_error": 1011
   },

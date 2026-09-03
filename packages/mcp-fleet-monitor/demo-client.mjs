@@ -1,200 +1,54 @@
 #!/usr/bin/env node
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { serverEnvironment } from './src/server-environment.ts';
 
-/**
- * Simple MCP client for testing the fleet monitor server.
- * This demonstrates how to interact with the server programmatically.
- *
- * Usage:
- *   export DATABASE_URL="..."
- *   export CAUCE_TENANT_ID="Steven"
- *   node demo-client.mjs
- */
+const directory = path.dirname(fileURLToPath(import.meta.url));
+const serverScript = path.join(directory, 'dist', 'server.js');
+const REQUIRED_TOOLS = ['chain', 'dead_letters', 'deliveries', 'fleet_status', 'health'];
 
-import { spawn } from 'child_process';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const serverScript = path.join(__dirname, 'dist', 'src', 'server.js');
-
-class MCPClient {
-  constructor() {
-    this.process = null;
-    this.requestId = 1;
-    this.pendingRequests = new Map();
-  }
-
-  async start() {
-    // Spawn the server process
-    this.process = spawn('node', [serverScript], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
-    });
-
-    // Handle stderr (logs)
-    this.process.stderr.on('data', (data) => {
-      console.error(`[server] ${data.toString().trim()}`);
-    });
-
-    // Handle stdout (MCP responses)
-    this.lineBuffer = '';
-    this.process.stdout.on('data', (data) => {
-      this.lineBuffer += data.toString();
-      const lines = this.lineBuffer.split('\n');
-      this.lineBuffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            const message = JSON.parse(line);
-            this.handleResponse(message);
-          } catch (error) {
-            console.error('Failed to parse response:', line, error);
-          }
-        }
-      }
-    });
-
-    // Wait for server to be ready
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-
-  handleResponse(message) {
-    if (message.id && this.pendingRequests.has(message.id)) {
-      const { resolve, reject } = this.pendingRequests.get(message.id);
-      this.pendingRequests.delete(message.id);
-      if (message.error) {
-        reject(new Error(message.error.message));
-      } else {
-        resolve(message.result);
-      }
-    } else if (!message.id) {
-      // Handle notifications
-      console.log('[notification]', message);
-    }
-  }
-
-  async send(method, params = {}) {
-    const id = this.requestId++;
-    const request = {
-      jsonrpc: '2.0',
-      id,
-      method,
-      params,
-    };
-
-    return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new Error('Request timeout'));
-        }
-      }, 5000);
-
-      this.process.stdin.write(JSON.stringify(request) + '\n');
-    });
-  }
-
-  async close() {
-    if (this.process) {
-      this.process.kill();
-    }
-  }
+function textContent(result) {
+  const text = result.content.find((part) => part.type === 'text')?.text;
+  if (typeof text !== 'string') throw new Error('health returned no text content');
+  return text;
 }
 
 async function main() {
-  const client = new MCPClient();
-
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [serverScript],
+    env: serverEnvironment(),
+    stderr: 'inherit',
+  });
+  const client = new Client({ name: 'mcp-fleet-monitor-smoke', version: '1.0.0' });
   try {
-    console.log('Starting MCP Fleet Monitor server...');
-    await client.start();
-    console.log('✓ Server started\n');
+    await client.connect(transport);
+    await client.ping();
 
-    // Test 1: List tools
-    console.log('=== Listing available tools ===');
-    const tools = await client.send('tools/list');
-    console.log(
-      'Available tools:',
-      tools.tools.map((t) => t.name).join(', ')
-    );
-    console.log();
-
-    // Test 2: Call fleet_status
-    console.log('=== Calling fleet_status() ===');
-    try {
-      const result = await client.send('tools/call', {
-        name: 'fleet_status',
-        arguments: {},
-      });
-      if (result.content && result.content.length > 0) {
-        const data = JSON.parse(result.content[0].text);
-        console.log('Response:', JSON.stringify(data, null, 2));
-      } else {
-        console.log('No response from tool');
-      }
-    } catch (error) {
-      console.error('Error:', error.message);
+    const listed = await client.listTools();
+    const names = listed.tools.map((tool) => tool.name).sort();
+    if (JSON.stringify(names) !== JSON.stringify(REQUIRED_TOOLS)) {
+      throw new Error(`unexpected tool surface: ${names.join(', ')}`);
     }
-    console.log();
 
-    // Test 3: Call health
-    console.log('=== Calling health() ===');
-    try {
-      const result = await client.send('tools/call', {
-        name: 'health',
-        arguments: {},
-      });
-      if (result.content && result.content.length > 0) {
-        const data = JSON.parse(result.content[0].text);
-        console.log('Response:', JSON.stringify(data, null, 2));
-      } else {
-        console.log('No response from tool');
-      }
-    } catch (error) {
-      console.error('Error:', error.message);
+    const health = await client.callTool({ name: 'health', arguments: {} });
+    if (health.isError === true) throw new Error(textContent(health));
+    const payload = JSON.parse(textContent(health));
+    if (typeof payload.summary !== 'string' || Number.isNaN(Date.parse(payload.timestamp))) {
+      throw new Error('health returned a malformed payload');
     }
-    console.log();
 
-    // Test 4: Call deliveries with filter
-    console.log('=== Calling deliveries(status="done", limit=5) ===');
-    try {
-      const result = await client.send('tools/call', {
-        name: 'deliveries',
-        arguments: { status: 'done', limit: 5 },
-      });
-      if (result.content && result.content.length > 0) {
-        const data = JSON.parse(result.content[0].text);
-        console.log('Response (first 2 items):');
-        console.log(
-          JSON.stringify(
-            {
-              ...data,
-              data: data.data?.slice(0, 2),
-              total: data.data?.length,
-            },
-            null,
-            2
-          )
-        );
-      } else {
-        console.log('No response from tool');
-      }
-    } catch (error) {
-      console.error('Error:', error.message);
-    }
-    console.log();
-
-    console.log('✓ All tests completed');
-  } catch (error) {
-    console.error('Error:', error);
+    console.log(`MCP smoke passed: ${names.join(', ')}; ${payload.summary}`);
   } finally {
     await client.close();
-    process.exit(0);
   }
 }
 
-main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error('MCP smoke failed:', error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

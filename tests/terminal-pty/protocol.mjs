@@ -86,6 +86,8 @@ export const CLOSE_CODE = {
   session_conflict: 4409,
   control_released: 4410,
   output_flood: 4413,
+  input_flood: 4414,
+  slow_consumer: 4415,
   ttl_expired: 4423,
   internal_error: 1011,
 };

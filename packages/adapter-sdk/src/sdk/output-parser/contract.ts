@@ -80,11 +80,9 @@ export function parseJson(text: string, context: string): unknown {
   }
 }
 
-/**
- * Solo `reply` es obligatoria: es el trabajo del turno. `messages`, `status` y `retryable` son
- */
+/** Only `reply` is required; the remaining envelope fields are normalized when absent. */
 export const REQUIRED_OUTPUT_KEYS = ["reply"] as const;
-/** Andamiaje que se normaliza cuando falta, registrando el aviso para que el agente lo aprenda. */
+/** Optional envelope fields that receive explicit defaults. */
 const NORMALIZED_WHEN_ABSENT = ["messages", "status", "retryable"] as const;
 /** Cap on the embedded envelope scan; two are enough to declare ambiguity. */
 export const MAX_EMBEDDED_ENVELOPE_CANDIDATES = 64;

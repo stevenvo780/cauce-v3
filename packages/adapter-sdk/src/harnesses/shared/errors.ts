@@ -139,17 +139,7 @@ const ABORT_REASON_DETAIL_BUDGET = 300;
  */
 const STDERR_HEAD_SHARE = 0.6;
 
-/**
- *
- *
- *   2. `Authorization: Bearer sk-…` — `[^\s]+` used to swallow `Bearer` and leave the token in
- *      the clear. The scheme (Bearer/Basic/Token) is consumed before the value.
- *   3. `postgres://user:pass@host` — there was no pattern for URL credentials.
- *   4. `{"api_key":"…"}` — the quote between the key and the colon broke the pattern.
- *
- * As a final net, known credential prefixes are redacted even when they appear bare, without
- * a key naming them.
- */
+/** Redacts assignment, authorization, URL, JSON, known-prefix, JWT and PEM secret shapes. */
 export function sanitizeProcessOutput(stderr: string, maxLengthBytes: number = STDERR_DETAIL_BUDGET): string {
   if (!stderr || stderr.trim().length === 0) return "";
 

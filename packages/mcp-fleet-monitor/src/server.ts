@@ -1,14 +1,8 @@
 #!/usr/bin/env node
-/* eslint @typescript-eslint/no-deprecated: "error" */
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { DeliveryStateSchema } from '@cauce/protocol';
 import { createPool } from '@cauce/store';
 import { FleetReadModel } from './fleet-read-model.js';
+import { createFleetToolServer } from './tool-server.js';
 
 const tenantId = process.env.CAUCE_TENANT_ID;
 if (!tenantId) {
@@ -26,206 +20,13 @@ const ensuredTenantId: string = tenantId;
 const ensuredDatabaseUrl: string = databaseUrl;
 
 let pool: ReturnType<typeof createPool> | undefined;
-let fleetModel: FleetReadModel | undefined;
-
-// eslint-disable-next-line @typescript-eslint/no-deprecated -- Low-level handlers preserve the advertised schema and explicit tool-error contract.
-const server = new Server(
-  {
-    name: 'mcp-fleet-monitor',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
-
-/** Derived from `@cauce/protocol`'s DeliveryStateSchema; the enum the deliveries table accepts. */
-const DELIVERY_STATUSES = DeliveryStateSchema.options;
-
-const TOOLS = [
-  {
-    name: 'fleet_status',
-    description:
-      'Get the current state of all aliases in the fleet, including lease status, harness status, and last activity',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        alias: {
-          type: 'string',
-          description: 'Optional: filter by specific alias',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'deliveries',
-    description:
-      'List deliveries filtered by alias and/or status',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        alias: {
-          type: 'string',
-          description: 'Optional: filter by recipient alias',
-        },
-        status: {
-          type: 'string',
-          // Matches the deliveries.status CHECK constraint in migration 001.
-          enum: DELIVERY_STATUSES,
-          description: 'Optional: filter by delivery status',
-        },
-        limit: {
-          type: 'number',
-          description: 'Max results (default 100, max 1000)',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'chain',
-    description:
-      'Get the delegation chain (A → B → C) for a given trace ID or root message ID',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        trace_id: {
-          type: 'string',
-          description: 'Trace ID to follow',
-        },
-        root_message_id: {
-          type: 'string',
-          description: 'Alternative: root message ID',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'dead_letters',
-    description:
-      'Get dead/stuck messages grouped by cause, with counts and recent examples',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'health',
-    description: 'One-line fleet health summary suitable for chat',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-];
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOLS,
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (!fleetModel) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Error: fleet model not initialized',
-        },
-      ],
-      isError: true,
-    };
-  }
-
-  const toolName = request.params.name;
-  const args = request.params.arguments ?? {};
-
-  try {
-    let result: unknown;
-
-    const aliasArg = typeof args.alias === 'string' ? args.alias : undefined;
-    const rawStatus = typeof args.status === 'string' ? args.status : undefined;
-    let statusArg: string | undefined;
-    if (rawStatus !== undefined) {
-      const parsed = DeliveryStateSchema.safeParse(rawStatus);
-      if (!parsed.success) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Invalid 'status' value '${rawStatus}'. Allowed: ${DELIVERY_STATUSES.join(', ')}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      statusArg = rawStatus;
-    }
-    const limitArg = typeof args.limit === 'number' ? args.limit : undefined;
-    const traceIdArg = typeof args.trace_id === 'string' ? args.trace_id : undefined;
-    const msgIdArg = typeof args.root_message_id === 'string' ? args.root_message_id : undefined;
-
-    switch (toolName) {
-      case 'fleet_status':
-        result = await fleetModel.fleetStatus(aliasArg);
-        break;
-      case 'deliveries':
-        result = await fleetModel.deliveries(aliasArg, statusArg, limitArg);
-        break;
-      case 'chain':
-        result = await fleetModel.chain(traceIdArg, msgIdArg);
-        break;
-      case 'dead_letters':
-        result = await fleetModel.deadLetters();
-        break;
-      case 'health':
-        result = await fleetModel.health();
-        break;
-      default:
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Unknown tool: ${toolName}`,
-            },
-          ],
-          isError: true,
-        };
-    }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error executing ${toolName}: ${message}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-});
 
 async function main() {
   const transport = new StdioServerTransport();
 
   try {
     pool = createPool(ensuredDatabaseUrl);
-    fleetModel = new FleetReadModel(pool, ensuredTenantId);
+    const fleetModel = new FleetReadModel(pool, ensuredTenantId);
 
     // Test the connection
     const testResult = await pool.query('SELECT 1');
@@ -248,7 +49,7 @@ async function main() {
     console.error(`[mcp-fleet-monitor] Tenant: ${ensuredTenantId}`);
     console.error('[mcp-fleet-monitor] Connecting stdio transport...');
 
-    await server.connect(transport);
+    await createFleetToolServer(fleetModel).connect(transport);
     console.error('[mcp-fleet-monitor] Server running on stdio');
   } catch (error) {
     console.error('[mcp-fleet-monitor] Fatal error:', error);

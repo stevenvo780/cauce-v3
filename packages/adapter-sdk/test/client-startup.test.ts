@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { resolve } from "node:path";
 import test from "node:test";
 import {claudeDefinition, fakeDefinition} from '../src/harnesses/index.js';
-import {capabilityStrings, siembraAplicada, siembraHabilitada} from '../src/sdk/client.js';
+import {helloCapabilityStrings, siembraAplicada, siembraHabilitada} from '../src/sdk/client.js';
 import {ConsumerLease} from '../src/sdk/durable-store.js';
 import type {ConsumerConnector, DeliveryEvent} from '../src/sdk/types.js';
 import {
@@ -64,11 +64,12 @@ test("connect retries then sends the real harness capabilities in hello", async 
   assert.ok(hello, "no se envió ningún HELLO");
   assert.equal(hello.alias, "agent_reconnect");
   assert.equal(hello.instance_id, "instance-reconnect");
-  assert.deepEqual(hello.capabilities, capabilityStrings(fakeDefinition.capabilities));
+  assert.deepEqual(hello.capabilities, helloCapabilityStrings(fakeDefinition.capabilities));
   assert.equal(hello.capabilities.includes("harness.fake"), true);
   assert.equal(hello.capabilities.includes("agent_profile_v1"), true);
   assert.equal(hello.capabilities.includes("agent_profile_adoption_v1"), true);
-  assert.equal(hello.capabilities.includes("attachments_v1"), true);
+  assert.equal(hello.capabilities.includes("heartbeat"), true);
+  assert.equal(hello.capabilities.includes("attachments_v1"), false);
   stop.abort();
   await running;
 });

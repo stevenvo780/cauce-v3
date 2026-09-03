@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildGateway, type AuthProvider, type Principal,
 } from '../../services/gateway/src/index.js';
-import { MemoryConsoleUserStore } from '../../services/gateway/src/console-users.js';
+import { MemoryConsoleUserStore } from '../../services/gateway/src/test-support/console-users.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import {
   closeGatewaysAndSockets, fakePool, fakeRepository, grants, noDeliveryWakes, roles,

@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import { capabilities, capabilityStrings } from '@cauce/adapter-sdk';
+import { capabilities, helloCapabilityStrings } from '@cauce/adapter-sdk';
 import { WsOutboundSchema, type WsOutbound } from '@cauce/protocol';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway } from '../../services/gateway/src/index.js';
@@ -197,7 +197,7 @@ describe('el gateway no manda el perfil a quien no lo declaró', () => {
   });
 
   it('el adaptador codifica el mismo nombre versionado en el hello', () => {
-    const requested = capabilityStrings(capabilities('codex', true));
+    const requested = helloCapabilityStrings(capabilities('codex', true));
     expect(requested.filter((value) => value === 'agent_profile_v1')).toHaveLength(1);
     expect(requested).not.toContain('agent_profile');
   });
