@@ -4,7 +4,10 @@ import type { DatabaseClient, DatabasePool } from '@cauce/store';
 import type { Principal } from '../auth.js';
 import { scalarHeaderValue } from '../http-auth-primitives.js';
 import type { TerminalConfig } from './config.js';
-import { UNATTRIBUTED_OPERATOR, type FleetIdentity, type FleetPlacement, type TerminalMode } from './types.js';
+import {
+  UNATTRIBUTED_OPERATOR, isTerminalMode, isWritableMode,
+  type FleetIdentity, type FleetPlacement, type TerminalMode,
+} from './types.js';
 
 /**
  * Every authorization input of the PTY plane lives here: the grants file, the routing
@@ -113,6 +116,10 @@ function parseGrants(raw: string): TerminalGrant[] {
         !Array.isArray(grant.modes) || grant.modes.some((mode) => typeof mode !== 'string')) {
       throw new Error('grant fields are invalid');
     }
+    if (grant.operator === '*' && grant.modes.some(
+      (mode) => isTerminalMode(mode) && isWritableMode(mode))) {
+      throw new Error('wildcard operator cannot hold a writable mode');
+    }
     return {
       operator: grant.operator,
       tenant_id: grant.tenant_id,
@@ -127,7 +134,6 @@ function parseGrants(raw: string): TerminalGrant[] {
  * Reads grants.json on every request. The file is rotated by atomic rename onto a bind mount
  * (same shape as mtls_identities.json), so a 1 s cache is the whole budget: emptying the file
  * must shut the door in under a second without restarting anything.
- *
  * Missing, unreadable or invalid file = ZERO grants. Fail closed, logged once per minute.
  */
 export class GrantStore {
@@ -158,12 +164,12 @@ export class GrantStore {
     }
   }
 
-  /** A grant matches when the operator matches exactly or via '*', and the mode is listed. */
+  /** A grant matches on the exact operator, or via '*' when the mode is read-only. */
   async allows(
     operatorId: string, tenantId: string, alias: string, mode: TerminalMode, now: number = Date.now()
   ): Promise<boolean> {
     return (await this.grants(now)).some((grant) =>
-      (grant.operator === '*' || grant.operator === operatorId) &&
+      (grant.operator === operatorId || (grant.operator === '*' && !isWritableMode(mode))) &&
       grant.tenant_id === tenantId && grant.alias === alias && grant.modes.includes(mode));
   }
 
@@ -314,4 +320,9 @@ export function resolveOperator(
  */
 export function attributionAllows(attributed: boolean, actorTenant: string, targetTenant: string): boolean {
   return attributed || actorTenant === targetTenant;
+}
+
+/** TUI-08, decided here and nowhere else: `UNATTRIBUTED_OPERATOR` never opens a writable mode. */
+export function writableModeRequiresAttribution(mode: TerminalMode, attributed: boolean): boolean {
+  return isWritableMode(mode) && !attributed;
 }

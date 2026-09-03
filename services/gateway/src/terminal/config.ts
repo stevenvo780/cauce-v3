@@ -6,6 +6,9 @@ export const DEFAULT_TICKET_TTL_SECONDS = 30;
 export const MAX_TICKET_TTL_SECONDS = 120;
 export const DEFAULT_SESSION_TTL_SECONDS = 900;
 export const MAX_SESSION_TTL_SECONDS = 3_600;
+export const DEFAULT_SESSION_MAX_TOTAL_SECONDS = 3_600;
+export const MAX_SESSION_MAX_TOTAL_SECONDS = 14_400;
+export const DEFAULT_CONTROL_HOLD_SECONDS = 900;
 export const DEFAULT_CLAIM_LEASE_SECONDS = 150;
 /** Default relay contract: 30s authz + 90s grace + 5s HTTP + 5s takeover margin, strictly exceeded. */
 export const MIN_CLAIM_LEASE_SECONDS = 131;
@@ -32,6 +35,9 @@ export interface TerminalConfig {
   readonly grantsFile: string;
   readonly ticketTtlSeconds: number;
   readonly sessionTtlSeconds: number;
+  readonly sessionMaxTotalSeconds?: number;
+  readonly controlHoldSeconds?: number;
+  readonly writableTuiEnabled?: boolean;
   /** PostgreSQL-clock lease for one exact terminal-relay ownership generation. */
   readonly claimLeaseSeconds: number;
   readonly maxSessionsPerOperator: number;
@@ -139,6 +145,19 @@ export async function loadTerminalConfig(
       `CAUCE_TERMINAL_CLAIM_LEASE_SECONDS must be between ${String(MIN_CLAIM_LEASE_SECONDS)} and ${String(MAX_CLAIM_LEASE_SECONDS)}`,
     );
   }
+  const sessionTtlSeconds = boundedInteger(
+    environment.CAUCE_TERMINAL_SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS, MAX_SESSION_TTL_SECONDS,
+    'CAUCE_TERMINAL_SESSION_TTL_SECONDS'
+  );
+  const sessionMaxTotalSeconds = boundedInteger(
+    environment.CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS, DEFAULT_SESSION_MAX_TOTAL_SECONDS,
+    MAX_SESSION_MAX_TOTAL_SECONDS, 'CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS',
+  );
+  if (sessionMaxTotalSeconds < sessionTtlSeconds) {
+    throw new Error(
+      'CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS must not be below CAUCE_TERMINAL_SESSION_TTL_SECONDS',
+    );
+  }
   return {
     wsPath,
     ticketKey: await readTicketKey(ticketKeyPath),
@@ -153,10 +172,13 @@ export async function loadTerminalConfig(
       environment.CAUCE_TERMINAL_TICKET_TTL_SECONDS, DEFAULT_TICKET_TTL_SECONDS, MAX_TICKET_TTL_SECONDS,
       'CAUCE_TERMINAL_TICKET_TTL_SECONDS'
     ),
-    sessionTtlSeconds: boundedInteger(
-      environment.CAUCE_TERMINAL_SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS, MAX_SESSION_TTL_SECONDS,
-      'CAUCE_TERMINAL_SESSION_TTL_SECONDS'
+    sessionTtlSeconds,
+    sessionMaxTotalSeconds,
+    controlHoldSeconds: boundedInteger(
+      environment.CAUCE_TERMINAL_CONTROL_HOLD_SECONDS, DEFAULT_CONTROL_HOLD_SECONDS,
+      sessionMaxTotalSeconds, 'CAUCE_TERMINAL_CONTROL_HOLD_SECONDS',
     ),
+    writableTuiEnabled: environment.CAUCE_TERMINAL_RW_ENABLED === '1',
     claimLeaseSeconds,
     maxSessionsPerOperator: maxSessions,
     operatorHeader,

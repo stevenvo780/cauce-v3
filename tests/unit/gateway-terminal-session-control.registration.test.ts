@@ -51,4 +51,18 @@ describe('registerTerminalSessionControl: rutas registradas', () => {
     );
     expect(observed.registered).toBe(true);
   });
+
+  it('publica POST /v3/console/terminal/sessions/:sid/control', async () => {
+    const observed = await routeResponds(
+      ctx.app, 'POST', `/v3/console/terminal/sessions/${UUID_OK}/control`, {}
+    );
+    expect(observed.registered).toBe(true);
+  });
+
+  it('publica POST /v3/console/terminal/sessions/:sid/extend', async () => {
+    const observed = await routeResponds(
+      ctx.app, 'POST', `/v3/console/terminal/sessions/${UUID_OK}/extend`, {}
+    );
+    expect(observed.registered).toBe(true);
+  });
 });

@@ -8,6 +8,7 @@ import { cohortLabels, operatorScopePredicate, subjectFor } from '../helpers.js'
 import type { TerminalSessionControlOptions } from '../session-control.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
+import { releaseHeldControl } from './control.js';
 
 /** Rolls back a guarded transition without turning a no-op into a transport error. */
 class TerminalTransactionNoop extends Error {}
@@ -199,6 +200,7 @@ export function registerTerminalBrowserOwnerRoutes(
         await reply.code(409).send({ error: 'conflict', reason: 'stale_terminal_owner' });
         return;
       }
+      if (outcome.row !== undefined) await releaseHeldControl(pool, outcome.row, 'session_revoked');
       return await reply.code(204).send();
     } catch (error) { replyError(reply, error); }
   });

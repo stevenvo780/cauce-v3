@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import type { Principal } from './auth.js';
 import {
@@ -11,7 +11,15 @@ import {
 import {
   loadTerminalConfig, terminalCapabilityAnnouncement, type TerminalConfig
 } from './terminal/config.js';
-import { UNATTRIBUTED_OPERATOR, type FleetPlacement } from './terminal/types.js';
+import type { AgentTargetRepository } from './terminal/helpers.js';
+import { AgentRegistry } from './terminal/registry.js';
+import { registerTerminalTargetRoute } from './terminal/session-control/targets.js';
+import { UNATTRIBUTED_OPERATOR, type AgentPresence, type FleetPlacement } from './terminal/types.js';
+
+function exigir<T>(valor: T | undefined, que: string): T {
+  if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
+  return valor;
+}
 
 const PLACEMENTS: readonly FleetPlacement[] = [
   { tenant_id: 'Isa', alias: 'salva', container: 'ws-isa', runtime_user: 'dev' },
@@ -322,7 +330,7 @@ describe('grants file', () => {
   it('re-reads the file within a second, so emptying grants.json closes the door immediately', async () => {
     await writeFile(path, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'], note: 'pilot' }]
+      grants: [{ operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'], note: 'pilot' }]
     }));
     const store = new GrantStore(path);
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
@@ -347,7 +355,7 @@ describe('grants file', () => {
   it('SET RULE: a grant on iza alone does not open the ws-humanizar container', async () => {
     await writeFile(path, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Miguel', alias: 'iza', modes: ['shell'] }]
+      grants: [{ operator: 'steven', tenant_id: 'Miguel', alias: 'iza', modes: ['shell'] }]
     }));
     const store = new GrantStore(path);
     expect(await store.allows('steven', 'Miguel', 'iza', 'shell', 1_000)).toBe(true);
@@ -356,7 +364,7 @@ describe('grants file', () => {
     await writeFile(path, JSON.stringify({
       version: 1,
       grants: ['iza', 'atlas', 'kratos'].map((alias) => ({
-        operator: '*', tenant_id: 'Miguel', alias, modes: ['shell']
+        operator: 'steven', tenant_id: 'Miguel', alias, modes: ['shell']
       }))
     }));
     expect(await store.allowsCohort('steven', cohort, 'shell', 10_000)).toBe(true);
@@ -405,5 +413,86 @@ describe('operator attribution', () => {
       expect(attributionAllows(false, 'Steven', tenant)).toBe(false);
       expect(attributionAllows(true, 'Steven', tenant)).toBe(true);
     }
+  });
+});
+
+describe('targets route: the three causes of a refusal, told apart', () => {
+  let directory: string;
+  let grantsPath: string;
+  let app: FastifyInstance;
+
+  const FLOTA = [
+    { tenant_id: 'Steven', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw' },
+    { tenant_id: 'Steven', alias: 'zeus', container_name: 'ws-zeus', runtime_user: 'dev' },
+  ];
+
+  function presence(alias: string, modes: readonly string[]): AgentPresence {
+    return {
+      tenant_id: 'Steven', alias, container_id: alias === 'jarvis' ? 'claw' : 'ws-zeus',
+      generation: 'gen-test', image_id: `sha256:${'c'.repeat(64)}`,
+      runtime_user: alias === 'jarvis' ? 'claw' : 'dev', runtime_uid: 1000,
+      harness: 'openclaw', modes, connected_since: new Date().toISOString(),
+    };
+  }
+
+  function targetsPool(): DatabasePool {
+    const rooms = { 'Steven:kant': ['grp.steven'], 'Steven:jarvis': ['grp.steven'], 'Steven:zeus': ['grp.steven'] };
+    const query = async (text: string, values: unknown[] = []) => {
+      if (text.includes('FROM agents')) return { rows: FLOTA, rowCount: FLOTA.length };
+      return pool(rooms).pool.query(text, values);
+    };
+    return { query } as unknown as DatabasePool;
+  }
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-targets-'));
+    grantsPath = join(directory, 'grants.json');
+    await writeFile(grantsPath, JSON.stringify({
+      version: 1,
+      grants: [{ operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+    }));
+    const registry = new AgentRegistry();
+    registry.observe(
+      { relay_instance_id: 'a'.repeat(64), relay_boot_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+      [presence('jarvis', ['telepatia']), presence('zeus', ['shell'])],
+    );
+    app = Fastify({ logger: false });
+    registerTerminalTargetRoute(app, {
+      pool: targetsPool(),
+      config: terminalConfig({ operators: new Set(['steven']) }),
+      registry,
+      grants: new GrantStore(grantsPath),
+      repository: { authorizeAgentTarget: async () => ({}) } as unknown as AgentTargetRepository,
+      principal: async () => consolePrincipal(),
+      replyError: (reply, error) => {
+        void reply.code(500).send({ error: error instanceof Error ? error.message : 'unknown' });
+      },
+    });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it('blames the grant only for a mode the agent did publish, never for one the gateway ignores', async () => {
+    const response = await app.inject({
+      method: 'GET', url: '/v3/console/terminal/targets',
+      headers: { 'x-cauce-operator': 'steven' },
+    });
+    expect(response.statusCode).toBe(200);
+    const items = response.json<{
+      items: { alias: string; modes: string[]; authorized: boolean; reason: string; container: string | null }[];
+    }>().items;
+    const jarvis = exigir(items.find((item) => item.alias === 'jarvis'), 'la fila de jarvis');
+    expect(jarvis.modes).toEqual([]);
+    expect(jarvis.authorized).toBe(false);
+    expect(jarvis.container).toBeNull();
+    expect(jarvis.reason).toContain('no_recognized_mode');
+    expect(jarvis.reason).not.toContain('no_grant_for_operator');
+    const zeus = exigir(items.find((item) => item.alias === 'zeus'), 'la fila de zeus');
+    expect(zeus.authorized).toBe(false);
+    expect(zeus.reason).toContain('no_grant_for_operator');
   });
 });

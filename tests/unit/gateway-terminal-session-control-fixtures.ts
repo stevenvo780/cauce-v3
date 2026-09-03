@@ -9,8 +9,8 @@ import type { Principal } from '../../services/gateway/src/auth.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { replyError } from '../../services/gateway/src/terminal/plugin.js';
 import {
-  registerTerminalSessionControl,
-  type DeleteSessionBody, type OwnerRotationBody, type SessionRequestBody,
+  registerTerminalSessionControl, type ControlRequestBody, type DeleteSessionBody,
+  type ExtendSessionBody, type OwnerRotationBody, type SessionRequestBody,
 } from '../../services/gateway/src/terminal/session-control.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
@@ -68,6 +68,9 @@ export function configBase(): TerminalConfig {
     grantsFile: '/tmp/cauce-grants.json',
     ticketTtlSeconds: 30,
     sessionTtlSeconds: 30,
+    sessionMaxTotalSeconds: 3_600,
+    controlHoldSeconds: 900,
+    writableTuiEnabled: true,
     claimLeaseSeconds: 150,
     maxSessionsPerOperator: 2,
     operatorHeader: 'x-cauce-operator',
@@ -80,6 +83,7 @@ export function validSessionBody(overrides: Partial<SessionRequestBody> = {}): S
     tenant_id: 'Steven',
     alias: 'jarvis',
     mode: 'shell',
+    initiator: 'operator',
     reason: 'revisar el harness colgado',
     cols: 120,
     rows: 40,
@@ -107,6 +111,21 @@ export function validDeleteSession(overrides: Partial<DeleteSessionBody> = {}): 
   };
 }
 
+export function validExtendSession(overrides: Partial<ExtendSessionBody> = {}): ExtendSessionBody {
+  return validDeleteSession(overrides);
+}
+
+export function validControlRequest(overrides: Partial<ControlRequestBody> = {}): ControlRequestBody {
+  return {
+    action: 'take',
+    reason: 'tomar la TUI para desatascar el turno',
+    request_id: REQUEST_ID_OK,
+    owner_generation: '1',
+    owner_token: OWNER_TOKEN_OK,
+    ...overrides
+  };
+}
+
 export interface ContextOptions {
   readonly pool?: DatabasePool;
   readonly registry?: AgentRegistry;
@@ -121,6 +140,7 @@ export interface ContextOptions {
   readonly principal?: (request: unknown) => Promise<Principal>;
   readonly replyError?: (reply: FastifyReply, error: unknown) => void;
   readonly recordTransactionalTerminalAudit?: ReturnType<typeof vi.fn>;
+  readonly config?: Partial<TerminalConfig>;
 }
 
 export interface Context {
@@ -132,6 +152,20 @@ export interface Context {
   readonly replyError: ReturnType<typeof vi.fn>;
   readonly recordTransactionalTerminalAudit: ReturnType<typeof vi.fn>;
   close(): Promise<void>;
+}
+
+function parseOwnerFence(record: Record<string, unknown>, label: string): DeleteSessionBody {
+  if (typeof record.request_id !== 'string') throw new Error(`${label}: request_id is required`);
+  if (typeof record.owner_token !== 'string') throw new Error(`${label}: owner_token is required`);
+  if (typeof record.owner_generation !== 'string'
+      || !/^[1-9][0-9]*$/.test(record.owner_generation)) {
+    throw new Error('owner_generation is invalid');
+  }
+  return {
+    request_id: record.request_id,
+    owner_generation: record.owner_generation,
+    owner_token: record.owner_token,
+  };
 }
 
 export function buildContext(options: ContextOptions = {}): Context {
@@ -153,7 +187,7 @@ export function buildContext(options: ContextOptions = {}): Context {
 
   registerTerminalSessionControl(app, {
     pool,
-    config: configBase(),
+    config: { ...configBase(), ...options.config },
     registry,
     grants: grants as never,
     repository,
@@ -170,7 +204,16 @@ export function buildContext(options: ContextOptions = {}): Context {
       const record = value as Record<string, unknown>;
       if (typeof record.tenant_id !== 'string') throw new Error('tenant_id is required');
       if (typeof record.alias !== 'string') throw new Error('alias is invalid');
-      if (record.mode !== 'shell' && record.mode !== 'harness') throw new Error("mode must be 'shell' or 'harness'");
+      if (record.mode !== 'shell' && record.mode !== 'harness' && record.mode !== 'harness_rw') {
+        throw new Error("mode must be 'shell', 'harness' or 'harness_rw'");
+      }
+      const initiator = record.initiator ?? 'operator';
+      if (initiator !== 'operator' && initiator !== 'auto') {
+        throw new Error("initiator must be 'operator' or 'auto'");
+      }
+      if (initiator === 'auto' && record.mode !== 'harness') {
+        throw new Error('a writable mode is never opened by an automatic viewer');
+      }
       if (typeof record.reason !== 'string' || record.reason.length < 8 || record.reason.length > 280) {
         throw new Error('reason must be between 8 and 280 characters');
       }
@@ -186,6 +229,7 @@ export function buildContext(options: ContextOptions = {}): Context {
         tenant_id: record.tenant_id,
         alias: record.alias,
         mode: record.mode,
+        initiator,
         reason: record.reason,
         cols: record.cols,
         rows: record.rows,
@@ -226,6 +270,32 @@ export function buildContext(options: ContextOptions = {}): Context {
         owner_generation: record.owner_generation,
         owner_token: record.owner_token
       };
+    },
+    parseControlRequest: (value) => {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('terminal control request must be an object');
+      }
+      const record = value as Record<string, unknown>;
+      if (record.action !== 'take' && record.action !== 'release') {
+        throw new Error("action must be 'take' or 'release'");
+      }
+      if (record.action === 'take'
+          && (typeof record.reason !== 'string' || record.reason.trim().length < 8
+              || record.reason.length > 280)) {
+        throw new Error('reason must be between 8 and 280 characters');
+      }
+      const fenced = parseOwnerFence(record, 'terminal control request');
+      return {
+        action: record.action,
+        ...(typeof record.reason === 'string' ? { reason: record.reason.trim() } : {}),
+        ...fenced,
+      };
+    },
+    parseSessionExtend: (value) => {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('terminal session extension must be an object');
+      }
+      return parseOwnerFence(value as Record<string, unknown>, 'terminal session extension');
     },
     browserOwnerGeneration: (value) => {
       if (!/^[0-9]+$/.test(value) || value === '0') throw new Error('owner generation is invalid');

@@ -1,7 +1,9 @@
 import type { Tenant } from '@cauce/protocol';
 import type { GatewayRepository } from '../app.js';
 import type { Principal } from '../auth.js';
-import { fleetIdentityLabel, type containerCohort } from './authority.js';
+import { fleetIdentityLabel, type containerCohort, type ResolvedOperator } from './authority.js';
+import type { TerminalConfig } from './config.js';
+import { ticketSha256 } from './tickets.js';
 import type { TerminalSessionRow } from './types.js';
 
 /**
@@ -20,6 +22,12 @@ export interface TerminalControlRepository extends AgentTargetRepository {
 
 export type FleetCohort = ReturnType<typeof containerCohort>;
 
+/** `window_extended_to` arrives with `SELECT *` before `TerminalSessionRow` declares it. */
+export interface SessionWindowRow {
+  readonly consumed_at: Date | null;
+  readonly window_extended_to?: Date | null;
+}
+
 export function exactObjectKeys(record: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(record).sort();
   return actual.length === expected.length
@@ -37,9 +45,24 @@ export function cohortLabels(cohort: FleetCohort): string[] {
   return cohort.map(fleetIdentityLabel);
 }
 
-export function sessionExpiry(row: TerminalSessionRow, sessionTtlSeconds: number): Date | undefined {
+/** Migration 040 window shared with the relay `/authz`: TTL, pushed by `window_extended_to`, clamped by the ceiling. The ceiling parameter is optional because an extension is already clamped when it is WRITTEN. */
+export function sessionWindowExpression(ttlParameter: number, maxTotalParameter?: number): string {
+  const extended = `GREATEST(consumed_at + make_interval(secs => $${String(ttlParameter)}), COALESCE(window_extended_to, 'epoch'::timestamptz))`;
+  if (maxTotalParameter === undefined) return extended;
+  return `LEAST(${extended}, consumed_at + make_interval(secs => $${String(maxTotalParameter)}))`;
+}
+
+/** JavaScript twin of `sessionWindowExpression`, for the rows already read into memory. */
+export function sessionExpiry(
+  row: SessionWindowRow, sessionTtlSeconds: number, sessionMaxTotalSeconds?: number,
+): Date | undefined {
   if (row.consumed_at === null) return undefined;
-  return new Date(row.consumed_at.getTime() + sessionTtlSeconds * 1_000);
+  const consumedAt = row.consumed_at.getTime();
+  const ceiling = sessionMaxTotalSeconds === undefined
+    ? Number.POSITIVE_INFINITY
+    : consumedAt + sessionMaxTotalSeconds * 1_000;
+  const extended = row.window_extended_to?.getTime() ?? 0;
+  return new Date(Math.min(Math.max(consumedAt + sessionTtlSeconds * 1_000, extended), ceiling));
 }
 
 export function subjectFor(actor: Pick<Principal, 'tenant_id' | 'alias'>): string {
@@ -53,4 +76,53 @@ export function operatorScopePredicate(
 ): string {
   return `operator_id=$${String(operatorParameter)}
           AND ($${String(attributedParameter)}::boolean OR console_subject=$${String(subjectParameter)})`;
+}
+
+export interface OwnedTerminalSession extends TerminalSessionRow {
+  session_expires_at: Date;
+}
+
+export interface OwnedSessionRequest {
+  readonly sessionId: string;
+  readonly body: {
+    readonly request_id: string;
+    readonly owner_generation: string;
+    readonly owner_token: string;
+  };
+  readonly operator: ResolvedOperator;
+  readonly consoleSubject: string;
+  readonly config: TerminalConfig;
+  readonly lock?: boolean;
+}
+
+/**
+ * The fence every route that acts on a LIVE session shares: the operator scope, the browser owner
+ * digest and generation of the tab that opened it, and the migration 040 window. A stale tab, a
+ * second subject or a session already closed matches nothing and can mutate nothing.
+ */
+export function ownedLiveSessionQuery(
+  input: OwnedSessionRequest,
+): { text: string; values: unknown[] } {
+  const window = sessionWindowExpression(8, 9);
+  return {
+    text: `SELECT terminal_sessions.*, ${window} AS session_expires_at
+             FROM terminal_sessions
+            WHERE id=$1 AND ${operatorScopePredicate(2, 3, 4)}
+              AND request_id=$5
+              AND browser_owner_generation=$6::bigint
+              AND browser_owner_sha256=$7
+              AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
+              AND ${window}>now()${input.lock === true ? '\n            FOR UPDATE' : ''}`,
+    values: [
+      input.sessionId,
+      input.operator.operator_id,
+      input.operator.attributed,
+      input.consoleSubject,
+      input.body.request_id,
+      input.body.owner_generation,
+      ticketSha256(input.body.owner_token),
+      input.config.sessionTtlSeconds,
+      input.config.sessionMaxTotalSeconds ?? null,
+    ],
+  };
 }

@@ -593,7 +593,7 @@ describe('terminal control plane', () => {
   async function grant(entries: { operator?: string; tenant_id: string; alias: string; modes: string[] }[]): Promise<void> {
     await writeFile(grantsFile, JSON.stringify({
       version: 1,
-      grants: entries.map((entry) => ({ operator: entry.operator ?? '*', ...entry }))
+      grants: entries.flatMap((entry) => [UNATTRIBUTED_OPERATOR, 'steven'].map((operator) => ({ operator, ...entry })))
     }));
   }
 
@@ -703,7 +703,7 @@ describe('terminal control plane', () => {
     const jarvis = body.items.find((item) => item.alias === 'jarvis');
     expect(jarvis).toMatchObject({
       pty_state: 'online', authorized: true, container: 'claw', runtime_user: 'claw',
-      harness: 'openclaw', image: 'sha256:c0ffee', shares_container_with: [], modes: ['shell', 'harness']
+      harness: 'openclaw', image: 'sha256:c0ffee', shares_container_with: [], modes: ['shell', 'harness'], writable_modes: ['shell']
     });
     const argos = body.items.find((item) => item.alias === 'argos');
     // argos shares ctrl-infra with kant and no agent was ever reported there.
@@ -715,8 +715,8 @@ describe('terminal control plane', () => {
     // Miguel is visible through the test ACL; without operator attribution, opening is still
     // denied, but its cohort is legitimate read/control-visible metadata.
     expect(iza).toMatchObject({
-      authorized: false, container: null, runtime_user: null, harness: null, image: null,
-      reason: 'sin autoridad sobre Miguel:iza',
+      authorized: false, container: null, runtime_user: null, harness: null, image: null, modes: [], writable_modes: [],
+      reason: 'attribution_required: sin identidad por persona para alcanzar Miguel:iza',
       shares_container_with: [
         { tenant_id: 'Miguel', alias: 'atlas' }, { tenant_id: 'Miguel', alias: 'kratos' }
       ]
@@ -792,7 +792,7 @@ describe('terminal control plane', () => {
       authorized: false,
       container: null,
       shares_container_with: [],
-      reason: 'sin autoridad sobre Steven:jarvis',
+      reason: 'no_routing_authority: sin autoridad de ruteo sobre Steven:jarvis',
     });
   });
 
@@ -1521,8 +1521,8 @@ describe('terminal control plane', () => {
     expect(cut.statusCode).toBe(403);
     expect(cut.json()).toEqual({ ok: false, reason: 'no_grant' });
     expect(database.audit.at(-1)).toMatchObject({
-      action: 'terminal.session.revoked',
-      metadata: expect.objectContaining({ reason: 'no_grant' }) as unknown
+      action: 'terminal.session.authz_denied', decision: 'deny',
+      metadata: expect.objectContaining({ refusal: 'no_grant' }) as unknown
     });
   });
 

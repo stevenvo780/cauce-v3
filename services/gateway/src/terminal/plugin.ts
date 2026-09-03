@@ -16,14 +16,16 @@ import {
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import { createGovernanceProbes } from './governance-probes.js';
-import { boundedInteger, exactObjectKeys, type TerminalControlRepository } from './helpers.js';
+import {
+  boundedInteger, exactObjectKeys, sessionWindowExpression, type TerminalControlRepository,
+} from './helpers.js';
 import { AgentRegistry } from './registry.js';
 import { registerTerminalRelayProxy, relayClaimEpoch } from './relay-proxy.js';
 import {
-  registerTerminalSessionControl, TerminalClockSkewError, type DeleteSessionBody,
-  type OwnerRotationBody, type SessionRequestBody,
+  registerTerminalSessionControl, TerminalClockSkewError, type ControlRequestBody,
+  type DeleteSessionBody, type ExtendSessionBody, type OwnerRotationBody, type SessionRequestBody,
 } from './session-control.js';
-import { isTerminalMode } from './types.js';
+import { isTerminalMode, isWritableMode, type TerminalMode } from './types.js';
 
 /**
  * PTY control plane. The gateway DECIDES and AUDITS; it never carries a byte of PTY.
@@ -57,6 +59,9 @@ const OWNER_ROTATION_KEYS = [
   'expected_owner_generation', 'owner_token', 'request_id',
 ] as const;
 const DELETE_SESSION_KEYS = ['owner_generation', 'owner_token', 'request_id'] as const;
+const SESSION_REQUEST_WITH_INITIATOR_KEYS = [...SESSION_REQUEST_KEYS, 'initiator'].sort();
+const CONTROL_KEYS = ['action', 'owner_generation', 'owner_token', 'request_id'] as const;
+const CONTROL_WITH_REASON_KEYS = [...CONTROL_KEYS, 'reason'].sort();
 
 interface TerminalControlPlaneOptions {
   readonly pool: DatabasePool;
@@ -95,12 +100,33 @@ function canonicalUuidV4(value: unknown, name: string): string {
   return value;
 }
 
+// The operator reason is mandatory and hand written: it is the only human explanation the
+// audit row will ever carry, so it is never defaulted or auto-generated.
+function operatorReason(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length < REASON_MIN || value.length > REASON_MAX) {
+    throw new Error(`reason must be between ${String(REASON_MIN)} and ${String(REASON_MAX)} characters`);
+  }
+  return value.trim();
+}
+
+function sessionInitiator(value: unknown, mode: TerminalMode): 'operator' | 'auto' {
+  const initiator = value ?? 'operator';
+  if (initiator !== 'operator' && initiator !== 'auto') {
+    throw new Error("initiator must be 'operator' or 'auto'");
+  }
+  if (initiator === 'auto' && isWritableMode(mode)) {
+    throw new Error('a writable mode is never opened by an automatic viewer');
+  }
+  return initiator;
+}
+
 function parseSessionRequest(value: unknown): SessionRequestBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('session request must be an object');
   }
   const body = value as Record<string, unknown>;
-  if (!exactObjectKeys(body, SESSION_REQUEST_KEYS)) {
+  if (!exactObjectKeys(body, SESSION_REQUEST_KEYS)
+      && !exactObjectKeys(body, SESSION_REQUEST_WITH_INITIATOR_KEYS)) {
     throw new Error('session request has unexpected or missing fields');
   }
   const tenant = TenantSchema.safeParse(body.tenant_id);
@@ -111,17 +137,15 @@ function parseSessionRequest(value: unknown): SessionRequestBody {
   if (!alias.success) {
     throw new Error('alias is invalid');
   }
-  if (!isTerminalMode(body.mode)) throw new Error("mode must be 'shell' or 'harness'");
-  // The operator reason is mandatory and hand written: it is the only human explanation the
-  // audit row will ever carry, so it is never defaulted or auto-generated.
-  if (typeof body.reason !== 'string' || body.reason.trim().length < REASON_MIN || body.reason.length > REASON_MAX) {
-    throw new Error(`reason must be between ${String(REASON_MIN)} and ${String(REASON_MAX)} characters`);
+  if (!isTerminalMode(body.mode)) {
+    throw new Error("mode must be 'shell', 'harness' or 'harness_rw'");
   }
   return {
     tenant_id: tenant.data,
     alias: alias.data,
     mode: body.mode,
-    reason: body.reason.trim(),
+    initiator: sessionInitiator(body.initiator, body.mode),
+    reason: operatorReason(body.reason),
     cols: boundedInteger(body.cols, COLS_MIN, COLS_MAX, 'cols'),
     rows: boundedInteger(body.rows, ROWS_MIN, ROWS_MAX, 'rows'),
     request_id: canonicalUuidV4(body.request_id, 'request_id'),
@@ -146,13 +170,13 @@ function parseOwnerRotation(value: unknown): OwnerRotationBody {
   };
 }
 
-function parseDeleteSession(value: unknown): DeleteSessionBody {
+function ownerFencedBody(value: unknown, label: string): DeleteSessionBody {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('terminal session release must be an object');
+    throw new Error(`${label} must be an object`);
   }
   const body = value as Record<string, unknown>;
   if (!exactObjectKeys(body, DELETE_SESSION_KEYS)) {
-    throw new Error('terminal session release has unexpected or missing fields');
+    throw new Error(`${label} has unexpected or missing fields`);
   }
   const generation = relayClaimEpoch(body.owner_generation);
   if (generation === undefined) throw new Error('owner_generation is invalid');
@@ -160,6 +184,41 @@ function parseDeleteSession(value: unknown): DeleteSessionBody {
     request_id: canonicalUuidV4(body.request_id, 'request_id'),
     owner_generation: generation,
     owner_token: canonicalUuidV4(body.owner_token, 'owner_token'),
+  };
+}
+
+function parseDeleteSession(value: unknown): DeleteSessionBody {
+  return ownerFencedBody(value, 'terminal session release');
+}
+
+function parseSessionExtend(value: unknown): ExtendSessionBody {
+  return ownerFencedBody(value, 'terminal session extension');
+}
+
+function parseControlRequest(value: unknown): ControlRequestBody {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('terminal control request must be an object');
+  }
+  const body = value as Record<string, unknown>;
+  if (!exactObjectKeys(body, CONTROL_KEYS) && !exactObjectKeys(body, CONTROL_WITH_REASON_KEYS)) {
+    throw new Error('terminal control request has unexpected or missing fields');
+  }
+  if (body.action !== 'take' && body.action !== 'release') {
+    throw new Error("action must be 'take' or 'release'");
+  }
+  const reason = body.reason === undefined && body.action === 'release'
+    ? undefined : operatorReason(body.reason);
+  const { request_id, owner_generation, owner_token } = ownerFencedBody({
+    request_id: body.request_id,
+    owner_generation: body.owner_generation,
+    owner_token: body.owner_token,
+  }, 'terminal control request');
+  return {
+    action: body.action,
+    ...(reason === undefined ? {} : { reason }),
+    request_id,
+    owner_generation,
+    owner_token,
   };
 }
 
@@ -201,11 +260,11 @@ export async function registerTerminalControlPlane(
     return validatePrincipal(await authProvider.authenticateHttp(request));
   }
 
-  /** Open = neither closed nor revoked, and still inside its ticket or session window. */
-  function openPredicate(ttlParameter: number): string {
+  /** Open = neither closed nor revoked, and still inside its ticket or extended session window. */
+  function openPredicate(ttlParameter: number, maxTotalParameter?: number): string {
     return `closed_at IS NULL AND revoked_at IS NULL
             AND ((consumed_at IS NULL AND expires_at > now())
-                 OR (consumed_at IS NOT NULL AND consumed_at + make_interval(secs => $${String(ttlParameter)}) > now()))`;
+                 OR (consumed_at IS NOT NULL AND ${sessionWindowExpression(ttlParameter, maxTotalParameter)} > now()))`;
   }
 
   async function currentCohort(
@@ -229,6 +288,8 @@ export async function registerTerminalControlPlane(
     parseSessionRequest,
     parseOwnerRotation,
     parseDeleteSession,
+    parseControlRequest,
+    parseSessionExtend,
     browserOwnerGeneration,
     replyError,
     recordTransactionalTerminalAudit,

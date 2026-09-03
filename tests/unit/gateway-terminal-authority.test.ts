@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyRequest } from 'fastify';
 import type { DatabasePool } from '@cauce/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,10 +10,14 @@ import type { Principal } from '../../services/gateway/src/auth.js';
 import {
   GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort,
   fleetIdentity, fleetIdentityLabel, fleetPlacement, loadFleetPlacements,
-  resolveOperator, routingAuthority,
+  resolveOperator, routingAuthority, writableModeRequiresAttribution,
 } from '../../services/gateway/src/terminal/authority.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
-import { UNATTRIBUTED_OPERATOR, type FleetPlacement } from '../../services/gateway/src/terminal/types.js';
+import {
+  UNATTRIBUTED_OPERATOR, WRITABLE_MODES, isTerminalMode, isWritableMode, type FleetPlacement,
+} from '../../services/gateway/src/terminal/types.js';
+
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
  * Estrecha un opcional sin `!` ni `as`.
@@ -98,6 +104,30 @@ function pool(
   };
   return { query } as unknown as DatabasePool;
 }
+
+describe('vocabulario de modos escribibles (TUI-08)', () => {
+  it('WRITABLE_MODES es exactamente {shell, harness_rw} y deja harness fuera', () => {
+    expect([...WRITABLE_MODES].sort()).toEqual(['harness_rw', 'shell']);
+    expect(isWritableMode('shell')).toBe(true);
+    expect(isWritableMode('harness_rw')).toBe(true);
+    expect(isWritableMode('harness')).toBe(false);
+  });
+
+  it('isTerminalMode admite los tres modos y sigue rechazando cualquier otra cosa', () => {
+    for (const mode of ['shell', 'harness', 'harness_rw']) expect(isTerminalMode(mode)).toBe(true);
+    for (const value of ['root', 'rw', 'live-tui', '', null, undefined, 3, { mode: 'shell' }]) {
+      expect(isTerminalMode(value)).toBe(false);
+    }
+  });
+
+  it('un modo escribible exige atribución: el operador sin nombre nunca teclea', () => {
+    expect(writableModeRequiresAttribution('shell', false)).toBe(true);
+    expect(writableModeRequiresAttribution('harness_rw', false)).toBe(true);
+    expect(writableModeRequiresAttribution('shell', true)).toBe(false);
+    expect(writableModeRequiresAttribution('harness_rw', true)).toBe(false);
+    expect(writableModeRequiresAttribution('harness', false)).toBe(false);
+  });
+});
 
 describe('loadFleetPlacements', () => {
   it('solo lee filas enabled y mapea los nombres de columna al shape interno', async () => {
@@ -217,7 +247,7 @@ describe('GrantStore: archivo de grants rotable', () => {
   it('relee el archivo cuando vence el cache de 1 segundo', async () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+      grants: [{ operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
     }));
     const store = new GrantStore(grantsPath);
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
@@ -228,13 +258,13 @@ describe('GrantStore: archivo de grants rotable', () => {
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 2_100)).toBe(false);
   });
 
-  it('allows: el wildcard "*" atribuye a cualquier operator; de lo contrario matchea exacto', async () => {
+  it('allows: el wildcard "*" atribuye a cualquier operator en solo lectura; si no, matchea exacto', async () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['harness'] }]
     }));
     const wildcard = new GrantStore(grantsPath);
-    expect(await wildcard.allows('cualquiera', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
+    expect(await wildcard.allows('cualquiera', 'Steven', 'jarvis', 'harness', 1_000)).toBe(true);
 
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
@@ -248,7 +278,7 @@ describe('GrantStore: archivo de grants rotable', () => {
   it('allows: rechaza cuando el modo solicitado no está en la lista modes', async () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+      grants: [{ operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
     }));
     const store = new GrantStore(grantsPath);
     expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
@@ -258,7 +288,7 @@ describe('GrantStore: archivo de grants rotable', () => {
   it('allows: rechaza con un grant sobre otro tenant o alias', async () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+      grants: [{ operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
     }));
     const store = new GrantStore(grantsPath);
     expect(await store.allows('steven', 'Miguel', 'jarvis', 'shell', 1_000)).toBe(false);
@@ -268,7 +298,7 @@ describe('GrantStore: archivo de grants rotable', () => {
   it('SET RULE: allowsCohort requiere un grant por cada miembro del container compartido', async () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Miguel', alias: 'iza', modes: ['shell'] }]
+      grants: [{ operator: 'steven', tenant_id: 'Miguel', alias: 'iza', modes: ['shell'] }]
     }));
     const partial = new GrantStore(grantsPath);
     const cohort = containerCohort(PLACEMENTS, 'Miguel', 'iza');
@@ -277,7 +307,7 @@ describe('GrantStore: archivo de grants rotable', () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
       grants: ['iza', 'atlas', 'kratos'].map((alias) => ({
-        operator: '*', tenant_id: 'Miguel', alias, modes: ['shell']
+        operator: 'steven', tenant_id: 'Miguel', alias, modes: ['shell']
       }))
     }));
     const complete = new GrantStore(grantsPath);
@@ -287,10 +317,70 @@ describe('GrantStore: archivo de grants rotable', () => {
   it('allowsCohort devuelve false para un cohort vacío', async () => {
     await writeFile(grantsPath, JSON.stringify({
       version: 1,
-      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['harness'] }]
     }));
     const store = new GrantStore(grantsPath);
-    expect(await store.allowsCohort('steven', [], 'shell', 1_000)).toBe(false);
+    expect(await store.allowsCohort('steven', [], 'harness', 1_000)).toBe(false);
+  });
+
+  it('FAIL-CLOSED: una sola fila con campos inválidos deja el archivo ENTERO en cero concesiones', async () => {
+    await writeFile(grantsPath, JSON.stringify({
+      version: 1,
+      grants: [
+        { operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] },
+        { operator: 'steven', tenant: 'Steven', alias: 'kant', modes: ['harness'] }
+      ]
+    }));
+    const store = new GrantStore(grantsPath);
+    expect(await store.grants(1_000)).toEqual([]);
+    expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
+  });
+
+  it('rechaza un comodín "*" con un modo escribible, y con él todo el archivo', async () => {
+    await writeFile(grantsPath, JSON.stringify({
+      version: 1,
+      grants: [
+        { operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['harness'] },
+        { operator: '*', tenant_id: 'Steven', alias: 'kant', modes: ['harness_rw'] }
+      ]
+    }));
+    const store = new GrantStore(grantsPath);
+    expect(await store.grants(1_000)).toEqual([]);
+    expect(await store.allows('cualquiera', 'Steven', 'jarvis', 'harness', 1_000)).toBe(false);
+  });
+
+  it('rechaza también el comodín con shell: escribir en un pty exige nombrar al operador', async () => {
+    await writeFile(grantsPath, JSON.stringify({
+      version: 1,
+      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+    }));
+    expect(await new GrantStore(grantsPath).grants(1_000)).toEqual([]);
+  });
+
+  it('el comodín "*" sigue sirviendo un modo de solo lectura y nada más', async () => {
+    await writeFile(grantsPath, JSON.stringify({
+      version: 1,
+      grants: [{ operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['harness'] }]
+    }));
+    const store = new GrantStore(grantsPath);
+    expect(await store.allows('cualquiera', 'Steven', 'jarvis', 'harness', 1_000)).toBe(true);
+    expect(await store.allows('cualquiera', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
+    expect(await store.allows('cualquiera', 'Steven', 'jarvis', 'harness_rw', 1_000)).toBe(false);
+  });
+
+  it('cada fila literal del runbook (§1.4 y el paso 4 del despliegue) parsea tal como está escrita', async () => {
+    const runbook = readFileSync(join(RAIZ, 'docs', 'terminal-pty.md'), 'utf8');
+    const literales = [...runbook.matchAll(/^\{"version":1,"grants":\[\{.+\}\]\}$/gmu)]
+      .map((fila) => fila[0]);
+    expect(literales.length).toBeGreaterThanOrEqual(2);
+    for (const literal of literales) {
+      await writeFile(grantsPath, literal);
+      const concesiones = await new GrantStore(grantsPath).grants(1_000);
+      expect(concesiones).toHaveLength(1);
+      expect(exigir(concesiones[0], `la concesión de ${literal}`)).toMatchObject({
+        tenant_id: 'Steven', alias: 'jarvis', modes: ['shell', 'harness']
+      });
+    }
   });
 });
 

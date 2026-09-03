@@ -25,6 +25,11 @@ const RESUME_KEYS = ['claim_token', 'relay_boot_id', 'relay_instance_id', 'resum
 const RESUME_WITH_EPOCH_KEYS = [...RESUME_KEYS, 'claim_epoch'].sort();
 const CLOSE_KEYS = ['bytes_in', 'bytes_out', 'exit_code', 'reason', 'relay_boot_id', 'relay_instance_id'] as const;
 const CLOSE_WITH_CLAIM_KEYS = [...CLOSE_KEYS, 'claim_epoch', 'claim_token'].sort();
+const CLOSE_RECORDING_KEYS = ['input_batches', 'recording_capped', 'recording_sha256'] as const;
+const CLOSE_WITH_RECORDING_KEYS = [...CLOSE_KEYS, ...CLOSE_RECORDING_KEYS].sort();
+const CLOSE_WITH_CLAIM_AND_RECORDING_KEYS = [
+  ...CLOSE_WITH_CLAIM_KEYS, ...CLOSE_RECORDING_KEYS,
+].sort();
 
 function authenticatedRelayInstanceId(request: FastifyRequest): string | undefined {
   const socket = request.raw.socket;
@@ -129,6 +134,8 @@ export interface RelayProxyContext {
   readonly RESUME_WITH_EPOCH_KEYS: typeof RESUME_WITH_EPOCH_KEYS;
   readonly CLOSE_KEYS: typeof CLOSE_KEYS;
   readonly CLOSE_WITH_CLAIM_KEYS: typeof CLOSE_WITH_CLAIM_KEYS;
+  readonly CLOSE_WITH_RECORDING_KEYS: typeof CLOSE_WITH_RECORDING_KEYS;
+  readonly CLOSE_WITH_CLAIM_AND_RECORDING_KEYS: typeof CLOSE_WITH_CLAIM_AND_RECORDING_KEYS;
   readonly requestRelayIdentity: (
     request: FastifyRequest,
     record: Record<string, unknown>,
@@ -182,7 +189,8 @@ export function createRelayProxyContext(
     databaseNow: Date,
     identity: RelayProcessIdentity,
   ): Record<string, unknown> {
-    const expiry = sessionExpiry(row, config.sessionTtlSeconds) ?? row.expires_at;
+    const expiry = sessionExpiry(row, config.sessionTtlSeconds, config.sessionMaxTotalSeconds)
+      ?? row.expires_at;
     if (row.relay_claim_sha256 === null || row.relay_claim_expires_at === null
         || !ticketSha256(claimToken).equals(row.relay_claim_sha256)) {
       throw new Error('database terminal claim does not match the relay receipt');
@@ -298,6 +306,8 @@ export function createRelayProxyContext(
     RESUME_WITH_EPOCH_KEYS,
     CLOSE_KEYS,
     CLOSE_WITH_CLAIM_KEYS,
+    CLOSE_WITH_RECORDING_KEYS,
+    CLOSE_WITH_CLAIM_AND_RECORDING_KEYS,
     requestRelayIdentity,
     relayGrant,
     sessionActor,

@@ -2,13 +2,36 @@ import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata } from '../audit.js';
 import { boundedInteger, exactObjectKeys } from '../helpers.js';
+import { releaseHeldControl } from '../session-control/control.js';
 import { ticketSha256 } from '../tickets.js';
-import type { TerminalSessionRow } from '../types.js';
+import { isWritableMode, type TerminalSessionRow } from '../types.js';
 import type { RelayProxyContext } from './context.js';
+
+interface SessionRecording {
+  readonly input_batches: number;
+  readonly recording_sha256: string;
+  readonly recording_capped: boolean;
+}
+
+function sessionRecording(record: Record<string, unknown>): SessionRecording {
+  const digest = record.recording_sha256;
+  if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) {
+    throw new Error('recording_sha256 must be 64 lowercase hexadecimal characters');
+  }
+  if (typeof record.recording_capped !== 'boolean') {
+    throw new Error('recording_capped must be a boolean');
+  }
+  return {
+    input_batches: boundedInteger(record.input_batches, 0, Number.MAX_SAFE_INTEGER, 'input_batches'),
+    recording_sha256: digest,
+    recording_capped: record.recording_capped,
+  };
+}
 
 export function registerRelayCloseRoute(context: RelayProxyContext): void {
   const {
-    app, pool, CLOSE_KEYS, CLOSE_WITH_CLAIM_KEYS,
+    app, pool, CLOSE_KEYS, CLOSE_WITH_CLAIM_KEYS, CLOSE_WITH_RECORDING_KEYS,
+    CLOSE_WITH_CLAIM_AND_RECORDING_KEYS,
     requestRelayIdentity, relayClaimToken, relayClaimEpoch,
     recordTransactionalTerminalAudit, counterValue, replyError,
   } = context;
@@ -18,9 +41,13 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
       const body = request.body;
       if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('body must be an object');
       const record = body as Record<string, unknown>;
-      if (!exactObjectKeys(record, CLOSE_KEYS) && !exactObjectKeys(record, CLOSE_WITH_CLAIM_KEYS)) {
+      const recorded = exactObjectKeys(record, CLOSE_WITH_RECORDING_KEYS)
+        || exactObjectKeys(record, CLOSE_WITH_CLAIM_AND_RECORDING_KEYS);
+      if (!recorded && !exactObjectKeys(record, CLOSE_KEYS)
+          && !exactObjectKeys(record, CLOSE_WITH_CLAIM_KEYS)) {
         throw new Error('terminal close report has unexpected or missing fields');
       }
+      const recording = recorded ? sessionRecording(record) : undefined;
       const identity = requestRelayIdentity(request, record);
       if (identity === undefined) return await reply.code(401).send();
       const reason = typeof record.reason === 'string' && record.reason.length > 0
@@ -36,6 +63,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
       const malformedClaim = (rawClaimToken !== undefined || rawClaimEpoch !== undefined)
         && (claimToken === undefined || claimEpoch === undefined);
       const claimSha256 = claimToken === undefined ? undefined : ticketSha256(claimToken);
+      let closed: TerminalSessionRow | undefined;
       await withTransaction(pool, async (client) => {
         const locked = await client.query<TerminalSessionRow>(
           `SELECT * FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
@@ -77,7 +105,7 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
               }),
             });
           } else {
-            const closed = await client.query<TerminalSessionRow>(
+            const settled = await client.query<TerminalSessionRow>(
               `UPDATE terminal_sessions
                   SET closed_at=now(), close_reason=$2, bytes_in=$3, bytes_out=$4
                 WHERE id=$1 AND closed_at IS NULL
@@ -101,7 +129,8 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
                 legacy ? null : identity.relay_boot_id,
               ],
             );
-            const row = closed.rows[0];
+            const row = settled.rows[0];
+            closed = row;
             if (row !== undefined) {
               await recordTransactionalTerminalAudit(client, {
                 tenant_id: row.tenant_id,
@@ -129,10 +158,35 @@ export function registerRelayCloseRoute(context: RelayProxyContext): void {
                   claim_epoch: row.relay_claim_epoch,
                 }),
               });
+              if (recording !== undefined && isWritableMode(row.mode)) {
+                await recordTransactionalTerminalAudit(client, {
+                  tenant_id: row.tenant_id,
+                  actor_alias: row.alias,
+                  action: 'terminal.session.input',
+                  decision: 'info',
+                  ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
+                  metadata: terminalAuditMetadata({
+                    operator_id: row.operator_id,
+                    attributed: row.attributed,
+                    target_tenant: row.tenant_id,
+                    target_alias: row.alias,
+                    container: row.container,
+                    cohort: [],
+                    mode: row.mode,
+                  }, {
+                    session_id: row.id,
+                    bytes_in: counterValue(row.bytes_in),
+                    input_batches: recording.input_batches,
+                    recording_sha256: recording.recording_sha256,
+                    recording_capped: recording.recording_capped,
+                  }),
+                });
+              }
             }
           }
         }
       });
+      if (closed !== undefined) await releaseHeldControl(pool, closed, 'session_closed');
       return await reply.code(200).send({
         ok: true,
         relay_instance_id: identity.relay_instance_id,

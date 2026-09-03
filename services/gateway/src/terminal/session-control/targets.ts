@@ -8,7 +8,9 @@ import {
 import type { TerminalConfig } from '../config.js';
 import type { AgentTargetRepository } from '../helpers.js';
 import type { AgentRegistry, AgentResolution } from '../registry.js';
-import { isTerminalMode, type TerminalTarget } from '../types.js';
+import {
+  isTerminalMode, isWritableMode, type TerminalDenial, type TerminalMode, type TerminalTarget,
+} from '../types.js';
 
 interface TerminalTargetRouteOptions {
   readonly pool: DatabasePool;
@@ -20,9 +22,7 @@ interface TerminalTargetRouteOptions {
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
 }
 
-/**
- * Authority and reachability are independent: an authorized target may be offline, not installed or unknown.
- */
+/** Authority and reachability are independent: an authorized target may be offline, not installed or unknown. */
 function terminalTargetStateReason(resolution: AgentResolution, container: string): string {
   switch (resolution.status) {
     case 'online':
@@ -35,6 +35,20 @@ function terminalTargetStateReason(resolution: AgentResolution, container: strin
       return `El agente PTY figura como no instalado: el terminal-relay nunca registró este destino en ${container}.`;
     case 'unknown':
       return 'El estado del agente PTY es desconocido: el terminal-relay todavía no publicó un snapshot verificable.';
+  }
+}
+
+/** The causes of a refused target, told apart: only the missing grant row is the operator's own. */
+function terminalTargetDenialReason(denial: TerminalDenial | undefined, target: string): string {
+  switch (denial) {
+    case 'no_grant_for_operator':
+      return `no_grant_for_operator: no hay concesión en grants.json para tu operador sobre ${target}`;
+    case 'no_recognized_mode':
+      return `no_recognized_mode: el agente PTY de ${target} no publica ningún modo que este gateway conozca`;
+    case 'attribution_required':
+      return `attribution_required: sin identidad por persona para alcanzar ${target}`;
+    default:
+      return `no_routing_authority: sin autoridad de ruteo sobre ${target}`;
   }
 }
 
@@ -92,25 +106,31 @@ export function registerTerminalTargetRoute(
           ? resolution.observation
           : undefined;
         const state = registry.state(placement.tenant_id, placement.alias, now);
-        let authorized = cohortVisible
-          && attributionAllows(operator.attributed, actor.tenant_id, placement.tenant_id);
+        let denial: TerminalDenial | undefined = cohortVisible ? undefined : 'no_routing_authority';
+        if (denial === undefined
+            && !attributionAllows(operator.attributed, actor.tenant_id, placement.tenant_id)) {
+          denial = 'attribution_required';
+        }
         for (const member of cohort) {
-          if (!authorized) break;
+          if (denial !== undefined) break;
           if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
-            authorized = false;
+            denial = 'attribution_required';
             break;
           }
-          authorized = (await authorityFor(member.tenant_id, member.alias)).allowed;
-        }
-        const reported = observation?.presence.modes ?? ['shell'];
-        const modes: string[] = [];
-        if (authorized) {
-          for (const mode of reported) {
-            if (!isTerminalMode(mode)) continue;
-            if (await grants.allowsCohort(operator.operator_id, cohort, mode, now)) modes.push(mode);
+          if (!(await authorityFor(member.tenant_id, member.alias)).allowed) {
+            denial = 'no_routing_authority';
           }
         }
-        const usable = authorized && modes.length > 0;
+        const reported = (observation?.presence.modes ?? ['shell']).filter(isTerminalMode);
+        const modes: TerminalMode[] = [];
+        if (denial === undefined) {
+          for (const mode of reported) {
+            if (await grants.allowsCohort(operator.operator_id, cohort, mode, now)) modes.push(mode);
+          }
+          // A missing grant row is only possible for a mode this gateway knows; no known mode is a refusal.
+          if (modes.length === 0) denial = reported.length > 0 ? 'no_grant_for_operator' : 'no_recognized_mode';
+        }
+        const usable = denial === undefined;
         items.push({
           tenant_id: placement.tenant_id,
           alias: placement.alias,
@@ -125,12 +145,13 @@ export function registerTerminalTargetRoute(
               .map(fleetIdentity)
             : [],
           modes: usable ? modes : [],
+          writable_modes: usable ? modes.filter((mode) => isWritableMode(mode)) : [],
           pty_state: state,
           last_seen: observation?.observed_at ?? null,
           authorized: usable,
           reason: usable
             ? terminalTargetStateReason(resolution, placement.container)
-            : `sin autoridad sobre ${placement.tenant_id}:${placement.alias}`
+            : terminalTargetDenialReason(denial, `${placement.tenant_id}:${placement.alias}`)
         });
       }
       return {

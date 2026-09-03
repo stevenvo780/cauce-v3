@@ -7,7 +7,10 @@ import {
   DEFAULT_TERMINAL_GRANTS_FILE,
   DEFAULT_TERMINAL_WS_PATH,
   DEFAULT_TICKET_TTL_SECONDS,
+  DEFAULT_CONTROL_HOLD_SECONDS,
+  DEFAULT_SESSION_MAX_TOTAL_SECONDS,
   MAX_CLAIM_LEASE_SECONDS,
+  MAX_SESSION_MAX_TOTAL_SECONDS,
   MAX_SESSION_TTL_SECONDS,
   MAX_TICKET_TTL_SECONDS,
   MIN_CLAIM_LEASE_SECONDS,
@@ -64,6 +67,9 @@ const ENV_KEYS = [
   'CAUCE_TERMINAL_CLAIM_LEASE_SECONDS',
   'CAUCE_TERMINAL_TICKET_TTL_SECONDS',
   'CAUCE_TERMINAL_SESSION_TTL_SECONDS',
+  'CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS',
+  'CAUCE_TERMINAL_CONTROL_HOLD_SECONDS',
+  'CAUCE_TERMINAL_RW_ENABLED',
   'CAUCE_TERMINAL_OPERATORS'
 ] as const;
 
@@ -130,6 +136,10 @@ describe('constantes por defecto del plano terminal', () => {
     expect(MIN_CLAIM_LEASE_SECONDS).toBe(131);
     expect(MAX_CLAIM_LEASE_SECONDS).toBe(300);
     expect(DEFAULT_MAX_SESSIONS_PER_OPERATOR).toBe(2);
+    expect(DEFAULT_SESSION_MAX_TOTAL_SECONDS).toBe(MAX_SESSION_TTL_SECONDS);
+    expect(MAX_SESSION_MAX_TOTAL_SECONDS).toBe(14_400);
+    expect(DEFAULT_CONTROL_HOLD_SECONDS).toBe(900);
+    expect(DEFAULT_CONTROL_HOLD_SECONDS).toBeLessThanOrEqual(DEFAULT_SESSION_MAX_TOTAL_SECONDS);
     expect(MIN_CLAIM_LEASE_SECONDS).toBeLessThan(DEFAULT_CLAIM_LEASE_SECONDS);
     expect(DEFAULT_CLAIM_LEASE_SECONDS).toBeLessThanOrEqual(MAX_CLAIM_LEASE_SECONDS);
     expect(DEFAULT_TICKET_TTL_SECONDS).toBeLessThanOrEqual(MAX_TICKET_TTL_SECONDS);
@@ -161,6 +171,54 @@ describe('loadTerminalConfig', () => {
     expect(config.relayClientCertFile).toBeUndefined();
     expect(config.relayClientKeyFile).toBeUndefined();
     expect(config.relayCaFile).toBeUndefined();
+    expect(config.sessionMaxTotalSeconds).toBe(DEFAULT_SESSION_MAX_TOTAL_SECONDS);
+    expect(config.controlHoldSeconds).toBe(DEFAULT_CONTROL_HOLD_SECONDS);
+    expect(config.writableTuiEnabled).toBe(false);
+  });
+
+  it('valida el techo total de la sesión y no lo deja por debajo del TTL', async () => {
+    await expect(loadTerminalConfig({
+      ...baseEnv(), CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: '14401',
+    })).rejects.toThrow(/SESSION_MAX_TOTAL_SECONDS/);
+    await expect(loadTerminalConfig({
+      ...baseEnv(), CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: '0',
+    })).rejects.toThrow(/SESSION_MAX_TOTAL_SECONDS/);
+    await expect(loadTerminalConfig({
+      ...baseEnv(),
+      CAUCE_TERMINAL_SESSION_TTL_SECONDS: '1800',
+      CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: '1799',
+    })).rejects.toThrow(/must not be below/);
+    const config = exigir(await loadTerminalConfig({
+      ...baseEnv(), CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: '7200',
+    }), 'una configuración de terminal');
+    expect(config.sessionMaxTotalSeconds).toBe(7_200);
+  });
+
+  it('acota el arriendo de control al techo total de la sesión', async () => {
+    const config = exigir(await loadTerminalConfig({
+      ...baseEnv(),
+      CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: '1800',
+      CAUCE_TERMINAL_CONTROL_HOLD_SECONDS: '1800',
+    }), 'una configuración de terminal');
+    expect(config.controlHoldSeconds).toBe(1_800);
+    await expect(loadTerminalConfig({
+      ...baseEnv(),
+      CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: '1800',
+      CAUCE_TERMINAL_CONTROL_HOLD_SECONDS: '1801',
+    })).rejects.toThrow(/CONTROL_HOLD_SECONDS/);
+  });
+
+  it('la TUI escribible sólo se enciende con el valor exacto 1', async () => {
+    for (const value of ['0', '', 'true', 'yes']) {
+      const off = exigir(await loadTerminalConfig({
+        ...baseEnv(), CAUCE_TERMINAL_RW_ENABLED: value,
+      }), 'una configuración de terminal');
+      expect(off.writableTuiEnabled).toBe(false);
+    }
+    const on = exigir(await loadTerminalConfig({
+      ...baseEnv(), CAUCE_TERMINAL_RW_ENABLED: '1',
+    }), 'una configuración de terminal');
+    expect(on.writableTuiEnabled).toBe(true);
   });
 
   it('rechaza estar habilitado sin CAUCE_TERMINAL_TICKET_KEY_FILE', async () => {

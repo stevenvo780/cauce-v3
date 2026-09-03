@@ -1,3 +1,6 @@
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { DatabasePool } from '@cauce/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -132,6 +135,108 @@ describe('recordTerminalAudit', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it('las acciones del canal de documentos gobernados llegan intactas al column action', async () => {
+    const acciones = ['agent_document.write', 'agent_document.denied', 'agent_document.read'] as const;
+    for (const action of acciones) {
+      const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+      await recordTerminalAudit(poolCon(query), {
+        tenant_id: 'Steven',
+        actor_alias: 'zeus',
+        action,
+        decision: action === 'agent_document.denied' ? 'deny' : 'allow',
+        metadata: {
+          operator_id: 'Steven:zeus',
+          target_tenant: 'Miguel',
+          target_alias: 'kant',
+          kind: 'directive',
+          path: '/home/dev/.claude/CLAUDE.md',
+          sha_before: 'a'.repeat(64),
+          sha_after: 'b'.repeat(64),
+          bytes: 12,
+          harness_id: 'claude',
+          home_directory: '/home/dev',
+          facts_source: 'measured'
+        }
+      });
+      const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
+      expect(params[2]).toBe(action);
+      const metadata = JSON.parse(params[5] as string) as Record<string, unknown>;
+      expect(metadata).not.toHaveProperty('content');
+      expect(metadata).not.toHaveProperty('text');
+      expect(JSON.stringify(metadata)).not.toContain('CLAUDE.md contenido');
+      expect(metadata.target_tenant).toBe('Miguel');
+    }
+  });
+
+  it('la denegación de documentos nombra su canal y su razón sin cuerpo ninguno', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordTerminalAudit(poolCon(query), {
+      tenant_id: 'Steven',
+      actor_alias: 'zeus',
+      action: 'agent_document.denied',
+      decision: 'deny',
+      metadata: {
+        operator_id: 'Steven:zeus',
+        target_tenant: 'Miguel',
+        target_alias: 'kant',
+        channel: 'read',
+        reason: 'not_readable',
+        kind: 'tools',
+        path: null,
+        facts_source: 'measured'
+      }
+    });
+    const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
+    const metadata = JSON.parse(params[5] as string) as Record<string, unknown>;
+    expect(metadata.channel).toBe('read');
+    expect(metadata.reason).toBe('not_readable');
+    expect(metadata).not.toHaveProperty('content');
+  });
+
+  it('las cinco acciones del control de TUI llegan intactas al column action', async () => {
+    const acciones = [
+      'terminal.control_taken', 'terminal.control_released', 'terminal.session.extended',
+      'terminal.session.authz_denied', 'terminal.session.input'
+    ] as const;
+    for (const action of acciones) {
+      const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+      await recordTerminalAudit(poolCon(query), {
+        tenant_id: 'Steven',
+        actor_alias: 'zeus',
+        action,
+        decision: action === 'terminal.session.authz_denied' ? 'deny' : 'info',
+        metadata: {
+          operator_id: 'Steven:zeus',
+          session_id: '5d1f6b1e-0000-4000-8000-000000000001',
+          bytes: 12,
+          refusal: 'session_expired',
+          sha256_first16: 'a'.repeat(16)
+        }
+      });
+      const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
+      expect(params[2]).toBe(action);
+      const metadata = JSON.parse(params[5] as string) as Record<string, unknown>;
+      expect(metadata.sha256_first16).toHaveLength(16);
+      expect(metadata.bytes).toBe(12);
+    }
+  });
+
+  it('la negativa de autorización del relay se distingue de una revocación real', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordTerminalAudit(poolCon(query), {
+      tenant_id: 'Steven',
+      actor_alias: 'jarvis',
+      action: 'terminal.session.authz_denied',
+      decision: 'deny',
+      metadata: { session_id: 'sesion-1', refusal: 'session_expired', claim_epoch: '3' }
+    });
+    const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
+    expect(params[2]).toBe('terminal.session.authz_denied');
+    expect(params[3]).toBe('deny');
+    const metadata = JSON.parse(params[5] as string) as Record<string, unknown>;
+    expect(metadata.refusal).toBe('session_expired');
+  });
+
   it('cada decisión posible (allow, deny, info) llega al column decision intacta', async () => {
     for (const decision of ['allow', 'deny', 'info'] as const) {
       const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
@@ -145,6 +250,53 @@ describe('recordTerminalAudit', () => {
       const params = query.mock.calls[0]?.[1] as readonly unknown[] | undefined;
       expect(params?.[3]).toBe(decision);
     }
+  });
+});
+
+const EMISORES_DE_AUDITORIA = /(terminalAuditMetadata|recordTerminalAudit|recordTransactionalTerminalAudit)\(/g;
+const CLAVE_DE_CONTENIDO = /(^|[^\w$.])(content|text|body|payload|data|stdin|keystrokes|ticket|token|secret)\s*:/;
+
+function ficherosDeFuente(directorio: string): string[] {
+  return readdirSync(directorio).flatMap((nombre) => {
+    const completo = join(directorio, nombre);
+    if (statSync(completo).isDirectory()) return ficherosDeFuente(completo);
+    return completo.endsWith('.ts') && !completo.endsWith('.test.ts') ? [completo] : [];
+  });
+}
+
+function llamadasBalanceadas(fuente: string): string[] {
+  const encontradas: string[] = [];
+  for (const emisor of fuente.matchAll(EMISORES_DE_AUDITORIA)) {
+    let profundidad = 0;
+    let cursor = emisor.index + emisor[0].length - 1;
+    for (; cursor < fuente.length; cursor += 1) {
+      if (fuente[cursor] === '(') profundidad += 1;
+      else if (fuente[cursor] === ')') {
+        profundidad -= 1;
+        if (profundidad === 0) break;
+      }
+    }
+    encontradas.push(fuente.slice(emisor.index, cursor + 1));
+  }
+  return encontradas;
+}
+
+describe('«ni un byte de contenido» medido sobre los emisores reales, no sobre metadata fabricada', () => {
+  it('ninguna llamada de auditoría de services/gateway/src/terminal nombra una clave de contenido', () => {
+    const raiz = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const ficheros = ficherosDeFuente(join(raiz, 'services', 'gateway', 'src', 'terminal'));
+    expect(ficheros.length).toBeGreaterThan(10);
+    const ofensas: string[] = [];
+    let emisores = 0;
+    for (const fichero of ficheros) {
+      for (const llamada of llamadasBalanceadas(readFileSync(fichero, 'utf8'))) {
+        emisores += 1;
+        const clave = CLAVE_DE_CONTENIDO.exec(llamada);
+        if (clave) ofensas.push(`${fichero}: ${clave[0].trim()}`);
+      }
+    }
+    expect(emisores).toBeGreaterThan(15);
+    expect(ofensas).toEqual([]);
   });
 });
 

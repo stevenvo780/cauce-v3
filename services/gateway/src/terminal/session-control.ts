@@ -10,7 +10,8 @@ import {
 } from './audit.js';
 import {
   attributionAllows, cohortRoutingAuthority, containerCohort, fleetIdentity, fleetPlacement,
-  loadFleetPlacements, resolveOperator, type GrantStore, type ResolvedOperator,
+  loadFleetPlacements, resolveOperator, writableModeRequiresAttribution,
+  type GrantStore, type ResolvedOperator,
 } from './authority.js';
 import type { TerminalConfig } from './config.js';
 import {
@@ -19,11 +20,13 @@ import {
 } from './helpers.js';
 import type { AgentRegistry } from './registry.js';
 import { registerTerminalBrowserOwnerRoutes } from './session-control/browser-owner.js';
+import { registerTerminalControlRoute } from './session-control/control.js';
+import { registerTerminalExtendRoute } from './session-control/extend.js';
 import { registerTerminalTargetRoute } from './session-control/targets.js';
 import {
   deriveAliasKey, issueTicket, ticketDigest, ticketSha256, type TicketPayload,
 } from './tickets.js';
-import { type TerminalMode, type TerminalSessionRow } from './types.js';
+import { UNATTRIBUTED_OPERATOR, type TerminalMode, type TerminalSessionRow } from './types.js';
 
 const MAX_TERMINAL_CLOCK_SKEW_MS = 5_000;
 
@@ -38,6 +41,8 @@ export interface SessionRequestBody {
   tenant_id: string;
   alias: string;
   mode: TerminalMode;
+  /** TUI-09: `auto` marks a viewer the console opened by itself; a writable mode refuses it. */
+  initiator: 'operator' | 'auto';
   reason: string;
   cols: number;
   rows: number;
@@ -55,6 +60,13 @@ export interface DeleteSessionBody {
   request_id: string;
   owner_generation: string;
   owner_token: string;
+}
+
+export type ExtendSessionBody = DeleteSessionBody;
+
+export interface ControlRequestBody extends DeleteSessionBody {
+  action: 'take' | 'release';
+  reason?: string;
 }
 
 function terminalRelayWebsocketPath(relayInstanceId: string): string {
@@ -134,7 +146,7 @@ export interface TerminalSessionControlOptions {
   readonly grants: GrantStore;
   readonly repository: TerminalControlRepository;
   readonly principal: (request: FastifyRequest) => Promise<Principal>;
-  readonly openPredicate: (ttlParameter: number) => string;
+  readonly openPredicate: (ttlParameter: number, maxTotalParameter?: number) => string;
   readonly currentCohort: (
     tenantId: string,
     alias: string,
@@ -143,6 +155,8 @@ export interface TerminalSessionControlOptions {
   readonly parseSessionRequest: (value: unknown) => SessionRequestBody;
   readonly parseOwnerRotation: (value: unknown) => OwnerRotationBody;
   readonly parseDeleteSession: (value: unknown) => DeleteSessionBody;
+  readonly parseControlRequest: (value: unknown) => ControlRequestBody;
+  readonly parseSessionExtend: (value: unknown) => ExtendSessionBody;
   readonly browserOwnerGeneration: (value: string) => string;
   readonly replyError: (reply: FastifyReply, error: unknown) => void;
   readonly recordTransactionalTerminalAudit: (
@@ -166,6 +180,8 @@ export function registerTerminalSessionControl(
 
   registerTerminalTargetRoute(app, options);
   registerTerminalBrowserOwnerRoutes(app, options);
+  registerTerminalControlRoute(app, options);
+  registerTerminalExtendRoute(app, options);
 
   app.post('/v3/console/terminal/sessions', async (request, reply) => {
     const traceId = `trace-${randomUUID()}`;
@@ -204,6 +220,12 @@ export function registerTerminalSessionControl(
           : { error: 'forbidden', reason });
       };
 
+      // The writable TUI is a runbook kill switch, so it closes before the fleet table is read.
+      const writableTui = body.mode === 'harness_rw';
+      if (writableTui && config.writableTuiEnabled !== true) {
+        await denyRedacted(403, 'writable_tui_disabled');
+        return;
+      }
       // Canonical actor permission and target visibility run before the fleet table is expanded.
       // Missing and hidden targets therefore have one response and an audit row with no placement
       // or cohort metadata supplied by the server.
@@ -269,6 +291,16 @@ export function registerTerminalSessionControl(
         await deny(403, 'attribution_required');
         return;
       }
+      // TUI-08 applies to the writable TUI only. A `shell` opened with the shared console
+      // credential is today's behaviour and locking it out would close the owner's own consoles.
+      if (writableTui && operator.operator_id === UNATTRIBUTED_OPERATOR) {
+        await deny(403, 'writable_requires_named_operator');
+        return;
+      }
+      if (writableTui && writableModeRequiresAttribution(body.mode, operator.attributed)) {
+        await deny(403, 'writable_requires_attribution');
+        return;
+      }
       for (const member of cohort) {
         if (!attributionAllows(operator.attributed, actor.tenant_id, member.tenant_id)) {
           await deny(403, 'attribution_required');
@@ -283,11 +315,16 @@ export function registerTerminalSessionControl(
       }
       // Gate 5: grants file, re-read from disk, over the whole cohort.
       if (!(await grants.allowsCohort(operator.operator_id, cohort, body.mode))) {
-        await deny(403, 'no_grant');
+        await deny(403, writableTui ? 'no_grant_for_operator' : 'no_grant');
         return;
       }
       // Gate 6: a live pty-agent inside the target container.
       const resolution = registry.resolve(placement.tenant_id, body.alias);
+      if (writableTui && resolution.status === 'online'
+          && !resolution.observation.presence.modes.includes(body.mode)) {
+        await deny(409, 'no_recognized_mode');
+        return;
+      }
       if (resolution.status !== 'online' || !resolution.observation.presence.modes.includes(body.mode)) {
         await deny(409, 'agent_offline', {
           pty_state: registry.state(placement.tenant_id, body.alias),
@@ -386,6 +423,7 @@ export function registerTerminalSessionControl(
               metadata: terminalAuditMetadata(audit, {
                 session_id: previous.id,
                 operator_reason: previous.reason,
+                initiator: body.initiator,
                 ticket_sha256: ticketDigest(rebuilt),
                 receipt_recovered: true,
                 source_room_ids: authority.source_room_ids,
@@ -439,9 +477,9 @@ export function registerTerminalSessionControl(
            SELECT CASE
              WHEN (SELECT count(*) FROM terminal_sessions
                     WHERE ${operatorScopePredicate(1, 6, 7)}
-                      AND ${openPredicate(3)}) >= $4 THEN 'session_limit'
+                      AND ${openPredicate(3, 25)}) >= $4 THEN 'session_limit'
              WHEN EXISTS (SELECT 1 FROM terminal_sessions
-                    WHERE container=$2 AND ${openPredicate(3)}) THEN 'container_busy'
+                    WHERE container=$2 AND ${openPredicate(3, 25)}) THEN 'container_busy'
              ELSE 'ok'
            END AS reason
          ), inserted AS (
@@ -466,6 +504,7 @@ export function registerTerminalSessionControl(
               body.cols, body.rows, traceId, issuedAt.toISOString(), expiresAt.toISOString(),
               body.request_id, requestSha256, browserOwnerSha256,
               observation.relay_instance_id,
+              config.sessionMaxTotalSeconds ?? null,
             ]
           );
           const admission = admitted.rows[0];
@@ -488,6 +527,7 @@ export function registerTerminalSessionControl(
                 generation: observation.presence.generation,
                 runtime_user: observation.presence.runtime_user,
                 operator_reason: body.reason,
+                initiator: body.initiator,
                 cols: body.cols,
                 rows: body.rows,
                 ticket_sha256: ticketDigest(ticket),
@@ -552,7 +592,10 @@ export function registerTerminalSessionControl(
           alias: row.alias,
           mode: row.mode,
           opened_at: row.issued_at.toISOString(),
-          expires_at: (sessionExpiry(row, config.sessionTtlSeconds) ?? row.expires_at).toISOString(),
+          expires_at: (
+            sessionExpiry(row, config.sessionTtlSeconds, config.sessionMaxTotalSeconds)
+              ?? row.expires_at
+          ).toISOString(),
           state: sessionState(row, isLiteralTrue(row.occupies_slot)),
           request_id: row.request_id,
           owner_generation: browserOwnerGeneration(row.browser_owner_generation),

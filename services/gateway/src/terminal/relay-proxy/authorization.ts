@@ -1,10 +1,25 @@
+import type { FastifyBaseLogger } from 'fastify';
 import { withTransaction } from '@cauce/store';
 import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata } from '../audit.js';
+import type { TerminalConfig } from '../config.js';
 import { exactObjectKeys } from '../helpers.js';
 import { ticketSha256 } from '../tickets.js';
 import type { TerminalSessionRow } from '../types.js';
 import type { RelayProxyContext } from './context.js';
+
+/**
+ * The hard ceiling an extension may never push the window past, in seconds since `consumed_at`.
+ * While the terminal configuration does not declare it the clamp binds NULL, which `LEAST`
+ * ignores: the window is the plain TTL and an extension is bounded by nothing. That is a
+ * degraded position, so it is announced once, when the route is registered.
+ */
+function sessionWindowCeiling(config: TerminalConfig, log: FastifyBaseLogger): number | null {
+  const declared = config.sessionMaxTotalSeconds;
+  if (typeof declared === 'number' && Number.isFinite(declared) && declared > 0) return declared;
+  log.warn('terminal sessions have no hard ceiling: sessionMaxTotalSeconds is not configured');
+  return null;
+}
 
 export function registerRelayAuthorizationRoute(context: RelayProxyContext): void {
   const {
@@ -12,6 +27,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
     relayClaimToken, relayClaimEpoch, currentSessionPolicy, recordTransactionalTerminalAudit,
     databaseClaimEpoch, boundedMilliseconds, replyError,
   } = context;
+  const sessionMaxTotalSeconds = sessionWindowCeiling(config, app.log);
   app.post<{ Params: { sid: string } }>('/v3/terminal/relay/sessions/:sid/authz', async (request, reply) => {
     try {
       if (!UUID_ANY_PATTERN.test(request.params.sid)) throw new Error('session id is invalid');
@@ -45,11 +61,11 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
       await withTransaction(pool, async (client) => {
         const locked = await client.query<LockedAuthzSession>(
           `SELECT terminal_sessions.*,now() AS database_now,
-                  consumed_at+make_interval(secs => $2) AS session_expires_at,
+                  LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3)) AS session_expires_at,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND consumed_at+make_interval(secs => $2)>now() AS session_unexpired
+                    AND LEAST(GREATEST(consumed_at + make_interval(secs => $2), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $3))>now() AS session_unexpired
              FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
-          [request.params.sid, config.sessionTtlSeconds],
+          [request.params.sid, config.sessionTtlSeconds, sessionMaxTotalSeconds],
         );
         const row = locked.rows[0];
         if (row !== undefined) {
@@ -74,16 +90,16 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
                 const result = await client.query<RenewedSession>(
                   `UPDATE terminal_sessions
                       SET relay_claim_expires_at=LEAST(
-                        consumed_at+make_interval(secs => $4),
+                        LEAST(GREATEST(consumed_at + make_interval(secs => $4), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $8)),
                         now()+make_interval(secs => $3)
                       )
                     WHERE id=$1 AND relay_claim_sha256=$2 AND relay_claim_epoch=$5::bigint
                       AND relay_claim_expires_at>now()
                       AND relay_instance_id=$6 AND relay_boot_id=$7
                       AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                      AND consumed_at+make_interval(secs => $4)>now()
+                      AND LEAST(GREATEST(consumed_at + make_interval(secs => $4), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $8))>now()
                     RETURNING *,now() AS database_now,
-                              consumed_at+make_interval(secs => $4) AS session_expires_at`,
+                              LEAST(GREATEST(consumed_at + make_interval(secs => $4), COALESCE(window_extended_to, 'epoch'::timestamptz)), consumed_at + make_interval(secs => $8)) AS session_expires_at`,
                   [
                     request.params.sid,
                     claimSha256,
@@ -92,6 +108,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
                     claimEpoch,
                     identity.relay_instance_id,
                     identity.relay_boot_id,
+                    sessionMaxTotalSeconds,
                   ],
                 );
                 renewed = result.rows[0];
@@ -103,8 +120,8 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
             await recordTransactionalTerminalAudit(client, {
               tenant_id: row.tenant_id,
               actor_alias: row.alias,
-              action: 'terminal.session.revoked',
-              decision: 'info',
+              action: refusal === 'revoked' ? 'terminal.session.revoked' : 'terminal.session.authz_denied',
+              decision: refusal === 'revoked' ? 'info' : 'deny',
               ...(row.trace_id === null ? {} : { trace_id: row.trace_id }),
               metadata: terminalAuditMetadata({
                 operator_id: row.operator_id,
@@ -116,7 +133,7 @@ export function registerRelayAuthorizationRoute(context: RelayProxyContext): voi
                 mode: row.mode,
               }, {
                 session_id: row.id,
-                reason: refusal,
+                refusal,
                 claim_epoch: row.relay_claim_epoch,
               }),
             });

@@ -13,6 +13,7 @@ import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import {
   deriveAliasKey, verifyTicketSignature,
 } from '../../services/gateway/src/terminal/tickets.js';
+import { UNATTRIBUTED_OPERATOR } from '../../services/gateway/src/terminal/types.js';
 import type { DatabasePool } from '@cauce/store';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
@@ -21,32 +22,35 @@ const RELAY_TOKEN = 'relay-token-that-is-long-enough-for-tests-012345';
 const CLAIM_A = '11111111-1111-4111-8111-111111111111';
 const CLAIM_B = '22222222-2222-4222-8222-222222222222';
 const TICKET_KEY = Buffer.alloc(32, 7);
+const NAMED_OPERATORS = ['steven', 'miguel', UNATTRIBUTED_OPERATOR];
 const RELAY_INSTANCE_ID = 'a'.repeat(64);
 const RELAY_BOOT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
+const CEILING_SECONDS = 1_200;
 let app!: FastifyInstance;
 let directory!: string;
 
 const requireFromGateway = createRequire(new URL('../../services/gateway/package.json', import.meta.url));
 const Fastify = requireFromGateway('fastify') as (options: { logger: false }) => FastifyInstance;
 
-async function build(maxSessionsPerOperator: number): Promise<void> {
+async function build(maxSessionsPerOperator: number, sessionMaxTotalSeconds?: number): Promise<void> {
   directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-admission-'));
   const grantsFile = join(directory, 'grants.json');
   await writeFile(grantsFile, JSON.stringify({
     version: 1,
-    grants: [
-      { operator: '*', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] },
-      { operator: '*', tenant_id: 'Steven', alias: 'socrates', modes: ['shell'] },
-    ],
+    grants: NAMED_OPERATORS.flatMap((operator) => [
+      { operator, tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] },
+      { operator, tenant_id: 'Steven', alias: 'socrates', modes: ['shell'] },
+    ]),
   }));
   const config: TerminalConfig = {
     wsPath: '/v3/console/terminal/ws', ticketKey: TICKET_KEY, relayToken: RELAY_TOKEN,
     relayInstanceIds: new Set([RELAY_INSTANCE_ID]),
     grantsFile, ticketTtlSeconds: 30, sessionTtlSeconds: 900, claimLeaseSeconds: 150,
     maxSessionsPerOperator,
+    ...(sessionMaxTotalSeconds === undefined ? {} : { sessionMaxTotalSeconds }),
     operatorHeader: 'x-cauce-operator', operators: new Set(['steven', 'miguel']),
   };
   const principal: Principal = {
@@ -148,6 +152,15 @@ async function closeClaim(sessionId: string, claimToken?: string, claimEpoch?: s
   });
 }
 
+async function authorize(sessionId: string, claimEpoch: string, claimToken = CLAIM_A) {
+  return app.inject({
+    method: 'POST',
+    url: `/v3/terminal/relay/sessions/${sessionId}/authz`,
+    headers: { authorization: `Bearer ${RELAY_TOKEN}` },
+    payload: { claim_token: claimToken, claim_epoch: claimEpoch },
+  });
+}
+
 async function failAuditAction(action: string): Promise<void> {
   await pool.query(`
     CREATE OR REPLACE FUNCTION cauce_test_terminal_audit_fail() RETURNS trigger
@@ -173,7 +186,7 @@ beforeEach(async () => {
   await resetTestDatabase(pool);
   // terminal_sessions predates the shared reset table list and is intentionally independent of
   // message delivery state. This suite owns its rows, so clear them explicitly between races.
-  await pool.query('TRUNCATE TABLE terminal_sessions');
+  await pool.query('TRUNCATE TABLE terminal_sessions CASCADE');
   await pool.query(`
     INSERT INTO agents(
       tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,
@@ -408,6 +421,40 @@ describe('atomic PTY admission', () => {
     });
     expect(authz.statusCode).toBe(403);
     expect(authz.json()).toEqual({ ok: false, reason: 'session_expired' });
+  });
+
+  it('keeps an extended window alive past the spent TTL and clamps it to the hard ceiling', async () => {
+    await build(10, CEILING_SECONDS);
+    const opened = await request('steven');
+    const issued = opened.json<{ session_id: string; ticket: string }>();
+    const consumed = await consume(issued.session_id, issued.ticket, CLAIM_A);
+    expect(consumed.statusCode).toBe(200);
+    const epoch = consumed.json<{ claim_epoch: string }>().claim_epoch;
+
+    const consumedSecondsAgo = (seconds: number) => pool.query(
+      `UPDATE terminal_sessions
+          SET consumed_at=now() - make_interval(secs => $2),
+              window_extended_to=now() + make_interval(secs => 600)
+        WHERE id=$1`,
+      [issued.session_id, seconds],
+    );
+    await consumedSecondsAgo(CEILING_SECONDS - 200);
+    const extended = await authorize(issued.session_id, epoch);
+    expect(extended.statusCode).toBe(200);
+    const stored = await pool.query<{ consumed_at: Date }>(
+      'SELECT consumed_at FROM terminal_sessions WHERE id=$1',
+      [issued.session_id],
+    );
+    const consumedAt = stored.rows[0]?.consumed_at;
+    expect(consumedAt).toBeInstanceOf(Date);
+    if (!consumedAt) throw new Error('Expected a consumed terminal session row');
+    expect(new Date(extended.json<{ expires_at: string }>().expires_at).getTime() - consumedAt.getTime())
+      .toBe(CEILING_SECONDS * 1_000);
+
+    await consumedSecondsAgo(CEILING_SECONDS + 1_800);
+    const beyondCeiling = await authorize(issued.session_id, epoch);
+    expect(beyondCeiling.statusCode).toBe(403);
+    expect(beyondCeiling.json()).toEqual({ ok: false, reason: 'session_expired' });
   });
 
   it('serializes concurrent exact consumes into one transition and one recovered receipt', async () => {

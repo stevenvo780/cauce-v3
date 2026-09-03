@@ -3,7 +3,9 @@ import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import {
   terminalAuditMetadata, type TerminalAuditContext,
 } from '../audit.js';
-import { cohortLabels, exactObjectKeys, sessionExpiry } from '../helpers.js';
+import {
+  cohortLabels, exactObjectKeys, sessionExpiry, sessionWindowExpression,
+} from '../helpers.js';
 import {
   ticketSha256, verifyResumeTokenSignature, TicketError,
 } from '../tickets.js';
@@ -64,9 +66,9 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
         const locked = await client.query<LockedResumeSession>(
           `SELECT terminal_sessions.*,now() AS database_now,
                   consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                    AND consumed_at+make_interval(secs => $2)>now() AS session_unexpired
+                    AND ${sessionWindowExpression(2, 3)}>now() AS session_unexpired
              FROM terminal_sessions WHERE id=$1 FOR UPDATE`,
-          [sid, config.sessionTtlSeconds],
+          [sid, config.sessionTtlSeconds, config.sessionMaxTotalSeconds ?? null],
         );
         const row = locked.rows[0];
         if (row === undefined) {
@@ -78,7 +80,7 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
           } catch (error) {
             if (!(error instanceof TicketError)) throw error;
           }
-          const expiry = sessionExpiry(row, config.sessionTtlSeconds);
+          const expiry = sessionExpiry(row, config.sessionTtlSeconds, config.sessionMaxTotalSeconds);
           if (credential?.sid !== sid || credential.op !== row.operator_id
               || expiry === undefined || credential.exp !== Math.floor(expiry.getTime() / 1_000)) {
             refusal = { status: 401, reason: 'resume_invalid' };
@@ -125,18 +127,19 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                 const renewed = await client.query<ClaimedSession>(
                   `UPDATE terminal_sessions
                       SET relay_claim_expires_at=LEAST(
-                        consumed_at+make_interval(secs => $4),
+                        ${sessionWindowExpression(4, 8)},
                         now()+make_interval(secs => $3)
                       )
                     WHERE id=$1 AND relay_claim_sha256=$2 AND relay_claim_epoch=$5::bigint
                       AND relay_claim_expires_at>now()
                       AND relay_instance_id=$6 AND relay_boot_id=$7
                       AND consumed_at IS NOT NULL AND revoked_at IS NULL AND closed_at IS NULL
-                      AND consumed_at+make_interval(secs => $4)>now()
+                      AND ${sessionWindowExpression(4, 8)}>now()
                     RETURNING *,now() AS database_now`,
                   [
                     sid, claimSha256, config.claimLeaseSeconds, config.sessionTtlSeconds,
                     presentedEpoch, identity.relay_instance_id, identity.relay_boot_id,
+                    config.sessionMaxTotalSeconds ?? null,
                   ],
                 );
                 session = renewed.rows[0];
@@ -168,18 +171,19 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
                           relay_instance_id=$5,
                           relay_boot_id=$6,
                           relay_claim_expires_at=LEAST(
-                            consumed_at+make_interval(secs => $4),
+                            ${sessionWindowExpression(4, 7)},
                             now()+make_interval(secs => $3)
                           )
                     WHERE id=$1 AND consumed_at IS NOT NULL
                       AND revoked_at IS NULL AND closed_at IS NULL
-                      AND consumed_at+make_interval(secs => $4)>now()
+                      AND ${sessionWindowExpression(4, 7)}>now()
                       AND (relay_claim_expires_at IS NULL OR relay_claim_expires_at<=now())
                       AND relay_claim_epoch<9223372036854775807
                     RETURNING *,now() AS database_now`,
                   [
                     sid, claimSha256, config.claimLeaseSeconds, config.sessionTtlSeconds,
                     identity.relay_instance_id, identity.relay_boot_id,
+                    config.sessionMaxTotalSeconds ?? null,
                   ],
                 );
                 session = takeover.rows[0];

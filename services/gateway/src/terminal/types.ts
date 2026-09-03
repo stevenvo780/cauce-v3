@@ -4,10 +4,17 @@
  * on kratos. Everything crossing that host boundary is described here.
  */
 
-export type TerminalMode = 'shell' | 'harness';
+export type TerminalMode = 'shell' | 'harness' | 'harness_rw';
 
 export function isTerminalMode(value: unknown): value is TerminalMode {
-  return value === 'shell' || value === 'harness';
+  return value === 'shell' || value === 'harness' || value === 'harness_rw';
+}
+
+/** Modes whose STDIN reaches the pty. `harness` is the read-only TUI and is never one of them. */
+export const WRITABLE_MODES: readonly TerminalMode[] = ['shell', 'harness_rw'];
+
+export function isWritableMode(mode: TerminalMode): boolean {
+  return WRITABLE_MODES.includes(mode);
 }
 
 /** Operator identity used when the console cannot name the human behind basic auth. */
@@ -40,12 +47,10 @@ export interface AgentPresence {
   readonly runtime_facts_observed?: boolean;
   /**
    * The alias `$HOME` inside its container, measured by the agent running there.
-   *
    * OPTIONAL: a pty-agent older than this version does not send it, and requiring it would drop
    * its entire presence — `parseAgentPresence` throws and `registry.observe` loses the alias —,
    * meaning deploying the gateway before the agent would leave terminals down across the fleet.
    * Same lesson as the `features` comment on the agent itself.
-   *
    * `undefined` means "this agent does not report it", which is NOT the same as "it has none":
    * the documents path still answers "not measured", the same as before.
    */
@@ -79,6 +84,8 @@ export interface TerminalTarget {
   readonly image: string | null;
   readonly shares_container_with: readonly FleetIdentity[];
   readonly modes: readonly string[];
+  /** Subset of `modes` whose STDIN reaches the pty; the console never infers it from the names. */
+  readonly writable_modes: readonly string[];
   readonly pty_state: PtyState;
   readonly last_seen: string | null;
   readonly authorized: boolean;
@@ -91,6 +98,10 @@ export type TerminalDenial =
   | 'attribution_required'
   | 'no_routing_authority'
   | 'no_grant'
+  | 'no_grant_for_operator'
+  | 'no_recognized_mode'
+  | 'writable_requires_attribution'
+  | 'writable_requires_named_operator'
   | 'control_permission_required';
 
 export type TerminalConflict =
