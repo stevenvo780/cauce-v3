@@ -9,6 +9,8 @@ import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js'
 import { registerAgentProfileRoutes } from '../console/agent-profile.routes.js';
 import { SondaCompartida, sondaDiferida } from '../console/sonda-compartida.js';
 import { recordTerminalAudit } from '../terminal/audit.js';
+import { DEFAULT_OPERATOR_HEADER } from '../terminal/config.js';
+import { resolveOperator } from '../terminal/authority.js';
 import {
   safeAuditPage, safeDlqPage, sameTenantRows, visibleMessage, visibleOriginRelays, visibleQueue,
 } from '../facades.js';
@@ -280,6 +282,11 @@ function registerConsoleAgentRoutes(
        * with those exact words, which is what the screen already knows how to render.
        */
       probe: profileProbe,
+      resolveOperator: async (request) => resolveOperator(
+        request as FastifyRequest,
+        await principal(request as FastifyRequest, options.authProvider),
+        options.operatorResolution ?? { operatorHeader: DEFAULT_OPERATOR_HEADER, operators: new Set() },
+      ),
       // A denial leaving no audit row is worse than an unavailable route: the write is awaited.
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
     });

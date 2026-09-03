@@ -287,6 +287,27 @@ describe('login por contraseña de la consola', () => {
     }
   });
 
+  it('una persona con nombre y permiso control pasa la puerta de atribución del PUT de documentos', async () => {
+    const test = await fixture();
+    try {
+      const login = await test.login('steven@elenxos.com', PASSWORD);
+      const response = await test.app.inject({
+        method: 'PUT', url: '/v3/console/tenants/Steven/agents/kant/documents/directive/content',
+        headers: {
+          cookie: cookieFrom(login.headers),
+          origin: 'http://localhost',
+          'x-csrf-token': login.json<{ csrf_token: string }>().csrf_token,
+        },
+        payload: { content: 'escrito con nombre', create_if_absent: true, reason: 'prueba del cableado del operador' },
+      });
+      // Past the person gate the degraded probe answers: the write is refused for lack of facts, not of a name.
+      expect(response.statusCode).toBe(409);
+      expect(response.json<{ error: string }>().error).toBe('no_medido');
+    } finally {
+      await test.app.close();
+    }
+  });
+
   it('publica sin fabricar un origin_relay hacia un adapter console inexistente', async () => {
     const test = await fixture();
     try {

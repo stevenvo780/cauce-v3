@@ -222,7 +222,10 @@ const app = await buildGateway({
   ...(consoleOrigins === undefined ? {} : { consoleOrigins }),
   // Announcing the capability is what makes /v3/console/access emit `ultimate-terminal.connect`
   // and /v3/console/terminal/capability stop answering 501.
-  ...(terminal === undefined ? {} : { terminalCapability: terminalCapabilityAnnouncement(terminal) }),
+  ...(terminal === undefined ? {} : {
+    terminalCapability: terminalCapabilityAnnouncement(terminal),
+    operatorResolution: { operatorHeader: terminal.operatorHeader, operators: terminal.operators },
+  }),
   ...(https === undefined ? {} : { https })
 });
 // The routes live in a plugin registered after buildGateway so they inherit the console

@@ -27,6 +27,7 @@ import {
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
 } from './routes/shared.js';
 import { createConsoleRoutes, registerConsoleRoutes } from './routes/console.js';
+import type { OperatorResolution } from './terminal/authority.js';
 import { createCoreRoutePhases } from './routes/core.js';
 import { registerConsolePublishIntentRoutes } from './routes/console-publish.js';
 import { registerGatewayHealthRoutes } from './routes/health.js';
@@ -170,6 +171,7 @@ export interface GatewayOptions {
   consoleOrigins?: readonly string[];
   allowedJobKinds?: readonly string[];
   terminalCapability?: Readonly<Record<string, unknown>>;
+  operatorResolution?: OperatorResolution;
   https?: HttpsServerOptions;
   exposeHealthRoutes?: boolean;
   logger?: boolean;

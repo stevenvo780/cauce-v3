@@ -299,8 +299,10 @@ export interface ResolvedOperator {
  * 3. With neither, the session remains unattributed and `attributionAllows` confines it to its
  *    own tenant.
  */
+export type OperatorResolution = Pick<TerminalConfig, 'operatorHeader' | 'operators'>;
+
 export function resolveOperator(
-  request: FastifyRequest, actor: Principal, config: TerminalConfig
+  request: FastifyRequest, actor: Principal, config: OperatorResolution
 ): ResolvedOperator {
   if (actor.operator_id !== undefined && actor.operator_id.length > 0) {
     return { operator_id: actor.operator_id, attributed: true };
